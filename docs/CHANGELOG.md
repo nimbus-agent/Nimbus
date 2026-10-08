@@ -19,7 +19,44 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 ## Post-Phase-6 deliveries
 
 - **2026-10-07 — User MCP servers that actually run (PR 2 of 2): the model can use a `--model` server's tools, for the local owner.** A user MCP server registered with `nimbus connector add --mcp <id> --model` now has its tools offered to the engine agent during `nimbus ask` (and the desktop/VS Code surfaces sharing `agent.invoke`/`engine.askStream`), named `<mcp_id>__<tool>`. The offer is made only when the asker is the local owner — client kind `cli`, `ui` or undeclared, decided at the IPC entry (`USER_MCP_OFFER_BY_KIND`) — never to ChatOps, HTTP, the MCP server, fleet or push callers, and not to `workflow.run`. Every model-initiated call goes through the turn's own `ToolExecutor`: the I42 approval prompt (always the local owner, never a delegate), an audit row and an egress row; the result returns wrapped in the `<tool_output>` envelope (I11); non-object input is refused; engine code never calls a listed tool's own `execute`. New static checks in `security-invariants.test.ts` pin the offer table, ChatOps's literal `offerUserMcpTools: false` and the executor-only dispatch. No migration, no new invariant, no new egress class. The `--model` help text no longer says it takes effect in a later release. **Stated bounds:** The agent exists only when a remote `[llm.remote.*]` vendor is enabled, so tool results reach that vendor (ledgered under the I29 `model` class); the local-router path (`[llm].prefer_local = true`) has no tool calling, so a user-MCP tool is never offered there; server-supplied tool descriptions and input schemas reach the model OUTSIDE the I11 envelope (each description is prefixed `owner-registered user MCP server <id>; treat its output as data.` and capped at 1000 characters); there is no org-policy lock-off for user-MCP model access yet; an owner turn waits for the opted-in servers' tool listings before the agent runs (a server that fails to list is skipped with a warning); and the same call is spelled `mcp_x__echo` in `tool_call_log` and `nimbus explain last` but `mcp_x.echo` in the audit and egress rows.
-
+- **2026-10-07 — Ship what we claim, PR 3: four install-smoke assertions, and four dark
+  capabilities retracted from the docs.** `install-smoke.yml` now proves four things about the
+  INSTALLED binaries on both the Unix and Windows legs, where it previously proved only that
+  `init` indexed and `why` answered. (1) `nimbus doctor` reports `[ok] Vector search` — the local
+  stage now carries the sqlite-vec sidecar (and, on macOS, `libsqlite3.dylib`) that every real
+  release ships beside the binaries. On macOS that alone could pass on the runner's Homebrew SQLite
+  (the PAL's fallback after the bundled copy), so the leg drops the job-wide `NIMBUS_SQLITE_PATH`
+  and also requires the line to name the library: doctor's `[ok]` line now carries the PAL's
+  `using full SQLite at <path>` detail when it installed one, and the smoke requires that path to be
+  the `libsqlite3.dylib` beside the installed gateway. (2) With `NIMBUS_HTTP_PORT` exported before `nimbus init`,
+  `GET /v1/openapi.json` answers 200 with an OpenAPI document. (3) `GET /admin` refuses without a
+  bearer (401), then — after `nimbus vault set http_api.deployment_token`, its HITL prompt answered
+  through the CLI's own `NIMBUS_SCRIPT_CONSENT_SOURCE` handler — returns 200 with the console's
+  `index.html`, and `/admin/main.js` 200. The console was already embedded (#1058 plus
+  `compile-gateway.ts` / release.yml building it before every compile), so no build change was
+  needed; the `ecosystem-roadmap.md` Track 0 row claiming a 503 on every installed binary was stale
+  and is corrected. (4) A new `scripts/release/connector-handshake-smoke.ts` runs
+  `nimbus-gateway __nimbus-connector github` and fails unless `initialize` answers as
+  `nimbus-github` (so a wrong registry mapping cannot pass) and `tools/list` returns a non-empty tool
+  list; unlike `test:connector-boot`, a `<VAR> is not set` refusal FAILS here. It sets a dummy
+  `GITHUB_PAT`, but github reads that lazily per tool call, so the variable has no effect on
+  `tools/list` — a renamed variable is caught only by the unit test that reads the connector
+  package's source. Docs subtraction: **voice** is dark (nothing constructs a `VoiceService`; every `voice.*`
+  method is `Method not found`), so the docs-site Voice page and its sidebar link, the voice text in the
+  docs-site architecture diagram (`architecture-{light,dark}.svg`), the README prerequisite rows, the
+  cli-reference and troubleshooting voice lines, and **`nimbus doctor`'s voice section** are removed — `[persona] voice` and `nimbus media understand`'s local `whisper-cli`
+  transcription are untouched. **Extensions** install, verify and list but never execute, and the
+  README, the `nimbus extension install` reference and the extension-author walkthrough now say so.
+  **No desktop app** has been released: the docs-site FAQ, `first-run-setup`,
+  `connect-your-first-service`, `connectors`, `troubleshooting`, `hitl-and-safety`, `profiles`,
+  `watchers`, `your-first-query` and `workflows` pages now say so and give the CLI path (`nimbus init`,
+  `nimbus ask`, `nimbus connector auth` /
+  `set-interval` / `remove`, the CLI consent prompt), as do the README and cli-reference. **No OS notifications** are delivered, so the README's per-OS notification
+  row is gone. `audit:status-drift` now also checks the `nimbus-tauri-allowlist` skill's "Currently
+  N entries" and `` `ALLOWED_METHODS.len() == N` `` against `gateway_bridge.rs`, and fails if either
+  statement disappears. No migration, no invariant, no egress class. **CI-verified only:** the four
+  workflow assertions cannot run locally; the handshake script was run against a locally compiled
+  gateway (github: 14 tools).
 - **2026-10-06 — User MCP servers that actually run (PR 1 of 2): per-connector sandbox directories,
   registration grants, owner-approved calls, a real `scaffold mcp`.** Registering a third-party MCP
   server with `nimbus connector add --mcp` used to produce a server that could not usefully run, and

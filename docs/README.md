@@ -187,17 +187,17 @@ Nimbus maintains a local SQLite metadata index. Searching across 50,000 indexed 
 
 - **Credentials** are stored in your OS-native keystore (Windows DPAPI, macOS Keychain, Linux Secret Service). There is no code path that writes them to disk, logs, or IPC responses.
 - **The HITL consent gate** is implemented in the executor, not the prompt. A model that generates a plan to skip confirmation produces a plan that simply does not execute.
-- **Extensions** run in sandboxed child processes. They receive only credentials for their declared service and cannot enumerate Vault keys or access other connectors.
+- **Connectors** run in sandboxed child processes. They receive only credentials for their declared service and cannot enumerate Vault keys or access other connectors. (Third-party extensions can be installed and are signature-verified, but **are not executed yet** — see [Extensible](#extensible).)
 - **Prompt injection** is mitigated by injecting file content and API responses as typed `<tool_output>` data blocks, never as instructions.
 - **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the forty-one LIVE invariants — `I1`–`I27` and `I29`–`I42` — has a production wiring site *and* an enforcement test. `I28` is a reserved number with neither.
 
 ### True Cross-Platform
 
-Windows, macOS, and Linux are equally supported. Every PR runs a full gate on Ubuntu (typecheck, lint, build, tests). Pushes to `main` run the full three-platform matrix in parallel. Platform-specific code (IPC, secrets, autostart, notifications) lives behind a typed `PlatformServices` abstraction — business logic never knows which OS it's on.
+Windows, macOS, and Linux are equally supported. Every PR runs a full gate on Ubuntu (typecheck, lint, build, tests). Pushes to `main` run the full three-platform matrix in parallel. Platform-specific code (IPC, secrets, autostart) lives behind a typed `PlatformServices` abstraction — business logic never knows which OS it's on. OS desktop notifications are **not implemented yet** on any platform: the notification service records a dropped notification and delivers nothing.
 
 ### Extensible
 
-Third-party connectors ship as npm packages. Install in one command; the agent gains a new capability immediately. A local Extension Marketplace lives in the Tauri desktop app — code-complete in Phase 4 and shipping as the separate `desktop-v0.1.0` tag in Phase 13.
+Extensions are **not executable yet.** `nimbus extension install` copies a package, hashes it, verifies a publisher's Ed25519 signature and records it, and `nimbus extension list` shows it — but nothing ever spawns an installed extension, so installing one gives the agent no new capability today. The ~90 first-party connectors are what actually run. The execution path is tracked in [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark). A local Extension Marketplace is code-complete in the Tauri desktop app, which has not been released; it is planned as the separate `desktop-v0.1.0` tag in Phase 13.
 
 ---
 
@@ -409,7 +409,7 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 | 2 | The Bridge (15 connectors) | ✅ Complete |
 | 3 | Intelligence (semantic search, CI/CD, cloud) | ✅ Complete |
 | 3.5 | Observability & Developer Experience | ✅ Complete |
-| 4 | Presence (local LLM, multi-agent, voice, VS Code extension, TUI; desktop UI code-complete) | ✅ Complete |
+| 4 | Presence (local LLM, multi-agent, VS Code extension, TUI; desktop UI code-complete, not released; voice code written but never wired) | ✅ Complete |
 | 5 | The Extended Surface | ✅ Complete |
 | 6 | Team (federation, Team Vault, SSO/SCIM, ChatOps, Share) | ✅ Complete |
 | S1 | Local Brain — egress ledger, implicit knowledge, the built-in agent set | ✅ Complete |
@@ -431,7 +431,7 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 
 That closes S2's shipped set. A generated tool is reachable only from the CLI this release: the agent is not offered one, and agent-initiated tool proposal is a recorded deferral rather than an oversight — a model proposing its own network-reaching tool mid-conversation is a materially larger trust boundary, and it gets its own consent-UX pass. The design of all six capabilities is in [`architecture.md` § Spine S2 Subsystems](./architecture.md#spine-s2-subsystems).
 
-**Shipped alongside S2**, outside the spine: the v0.1.1 CLI batch — `nimbus index health`, `nimbus changelog`, `nimbus standup`, `nimbus oncall`, `nimbus tail` and `nimbus explain last` (2026-09-10 → 2026-09-14); `nimbus demo`, a seeded synthetic org in an isolated demo root (2026-09-18 → 2026-09-19); `nimbus connector detect`, which reuses the `gh`, `aws`, `kubectl` and `gcloud` logins you already have (2026-09-20); the `nimbus wow` guided tour, which `nimbus init` offers in an interactive terminal once it has indexed your repository (2026-09-21 → 2026-09-22); and the first slice of the on-call pushed brief (2026-10-02). With `[oncall.push]` enabled (it is off by default), a P1 incident assigned to you gets its `nimbus oncall` brief assembled as soon as a PagerDuty sync sees it, and `nimbus oncall pushed` reads it back. Nimbus has no OS notification implementation yet, so the brief does not pop up on its own; ChatOps delivery and a desktop On-call page followed (2026-10-03 / 2026-10-04).
+**Shipped alongside S2**, outside the spine: the v0.1.1 CLI batch — `nimbus index health`, `nimbus changelog`, `nimbus standup`, `nimbus oncall`, `nimbus tail` and `nimbus explain last` (2026-09-10 → 2026-09-14); `nimbus demo`, a seeded synthetic org in an isolated demo root (2026-09-18 → 2026-09-19); `nimbus connector detect`, which reuses the `gh`, `aws`, `kubectl` and `gcloud` logins you already have (2026-09-20); the `nimbus wow` guided tour, which `nimbus init` offers in an interactive terminal once it has indexed your repository (2026-09-21 → 2026-09-22); and the first slice of the on-call pushed brief (2026-10-02). With `[oncall.push]` enabled (it is off by default), a P1 incident assigned to you gets its `nimbus oncall` brief assembled as soon as a PagerDuty sync sees it, and `nimbus oncall pushed` reads it back. Nimbus has no OS notification implementation yet, so the brief does not pop up on its own; ChatOps delivery and a desktop On-call page (desktop app not yet released) followed (2026-10-03 / 2026-10-04).
 
 **Recorded direction — not built, and not in the current slot.** The agents are the product; a client is only a context-aware way to reach them without leaving where you already are. The browser extension is a web clipper today and the recorded direction is a browser-side gateway client; the editor extension gets the same treatment. Two things were considered and deliberately **rejected**: shipping a Nimbus fork of VS Code, and letting an agent write your source code. The reasoning and the conditions that would reopen either are recorded in [`roadmap.md` § Rejected Directions](./roadmap.md#rejected-directions) — read that before proposing them again.
 
@@ -483,9 +483,6 @@ Gateway binaries built with `bun build --compile` bundle JavaScript into a singl
 | **Local LLM (Ollama)** | [Ollama](https://ollama.com/download) running on `localhost:11434`, plus at least one pulled model (e.g. `ollama pull llama3.2`) | Default endpoint: `http://127.0.0.1:11434`. Set the local model with `nimbus config set llm.local_model <model>` and prefer it with `nimbus config set llm.prefer_local true`. |
 | **Local LLM (llama.cpp)** | A `llama-server` HTTP endpoint reachable from the Gateway | Default endpoint: `http://127.0.0.1:8080`; override with `nimbus config set llm.llamacpp_server_path http://127.0.0.1:8080`. The key stores the HTTP base URL, not the binary path. |
 | **Cloud LLM (Anthropic / OpenAI / Gemini / xAI)** | That vendor's API key | Two independent halves, both required. Store the key in the Vault — `nimbus vault set anthropic.api_key` (or `openai` / `gemini` / `xai`) — and opt the vendor in with an `[llm.remote.<vendor>]` table carrying `enabled = true` and a `model`. **No environment variable enables a vendor**, so a key alone does nothing. See [`cli-reference.md`](./cli-reference.md#configuration-file). |
-| **Voice — STT (push-to-talk hotkey / wake-word loop)** | `whisper-cli` (whisper.cpp) on PATH, plus `ffmpeg` for audio capture | Build whisper.cpp from source or install via `brew install whisper-cpp`; `ffmpeg` via your distro/`brew`. Set `voice.whisper_path` if not on PATH. |
-| **Voice — TTS** | macOS: `say` (built-in). Windows: PowerShell SAPI (built-in). Linux: `espeak-ng` (preferred) or `spd-say` | `sudo apt install espeak-ng` / `brew install espeak-ng`. |
-| **Wake-word loop** | Same as STT, plus a microphone configured at the OS level | Verify with `nimbus doctor` — voice section appears when `[voice].enabled = true`. |
 | **GPU acceleration for embeddings or LLM** | Provider-specific (CUDA, ROCm, Metal). Nimbus serializes GPU access via `GpuArbiter` | Configure your provider's GPU support; Nimbus does not require any extra config. |
 
 Once installed, run **`nimbus doctor`** — it checks every prerequisite above and prints actionable remediation for anything missing.
@@ -551,7 +548,7 @@ See [`cli-reference.md`](./cli-reference.md#configuration-file) for the full `ni
 ```bash
 nimbus start     # Start Gateway as a background process
 nimbus status    # Verify it's running; check connector health
-nimbus doctor    # Re-run any time something seems off — checks Bun, Vault, Gateway, index, voice, …
+nimbus doctor    # Re-run any time something seems off — checks Bun, Vault, Gateway, index, vector search, …
 ```
 
 ### Authenticate services
@@ -737,6 +734,8 @@ nimbus extension install @community/nimbus-notion
 nimbus extension list
 ```
 
+> **Installed extensions do not run yet.** Install verifies and records the package, and `list` shows it, but no code path spawns an installed extension — it adds no tools to the agent. See [Extensible](#extensible).
+
 The complete command reference — every subcommand, flag, exit code, and the full `nimbus.toml` schema — is [`cli-reference.md`](./cli-reference.md).
 
 ---
@@ -775,7 +774,6 @@ The complete command reference — every subcommand, flag, exit code, and the fu
 | **Gateway IPC** | Named Pipe | Unix Socket | Unix Socket |
 | **Secrets** | DPAPI | Keychain | libsecret |
 | **Autostart** | Registry | LaunchAgents | systemd user |
-| **Notifications** | Win32 Toast | NSUserNotification | libnotify/D-Bus |
 | **Config dir** | `%APPDATA%\Nimbus` | `~/Library/…/Nimbus` | `~/.config/nimbus` |
 | **Desktop UI** | WebView2 | WKWebView | WebKitGTK |
 | **CI runner** | `windows-2025` | `macos-15` | `ubuntu-24.04` |
@@ -791,7 +789,7 @@ The complete command reference — every subcommand, flag, exit code, and the fu
 
 - **No plaintext credentials** — OAuth tokens live in the OS keystore. There is no code path that writes them elsewhere.
 - **Structural HITL gate** — every delete, send, and move is blocked at the executor by a compile-time constant set. The agent cannot reason around a function that doesn't exist.
-- **Extension isolation** — third-party extensions run as sandboxed child processes (bwrap + seccomp on Linux, `sandbox-exec` on macOS, AppContainer on Windows), receive only their declared service's credentials, and cannot reach the Vault or other connectors. Publisher manifests are Ed25519-verified at install and on every Gateway startup.
+- **Connector isolation** — connectors run as sandboxed child processes (bwrap + seccomp on Linux, `sandbox-exec` on macOS, AppContainer on Windows), receive only their declared service's credentials, and cannot reach the Vault or other connectors. Third-party extension manifests are Ed25519-verified at install and on every Gateway startup, but installed extensions are **not executed yet** — there is no extension runtime to isolate.
 - **Full audit log** — every action, including every HITL decision, is recorded in a local BLAKE3-chained SQLite table before the action executes; `nimbus audit verify` proves the chain.
 - **Egress ledger** — every authorized outbound action is appended to an append-only, BLAKE3-chained ledger before dispatch, and a failed append aborts the action. `nimbus prove` reports what left the machine.
 - **Forty-one enumerated invariants** — `I1`–`I27` and `I29`–`I42`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. `I28` is a reserved number, deliberately skipped: it has no wiring, no section and no test, so it is not one of the forty-one. A static audit runs before the test suite; the runtime tests stay authoritative.
@@ -890,7 +888,7 @@ nimbus/
 │   │       ├── config/       # Config loader, profiles, env-var overrides, persona
 │   │       ├── llm/          # Ollama + llama.cpp providers, the four cloud adapters
 │   │       │                 #   (Anthropic/OpenAI/Gemini/xAI), router, registry, GPU arbiter
-│   │       ├── voice/        # STT (whisper-cli), TTS (NativeTtsProvider), wake-word
+│   │       ├── voice/        # STT/TTS/wake-word code — NOT wired, no production caller
 │   │       └── ipc/          # JSON-RPC 2.0 server, HTTP API, Prometheus endpoint
 │   ├── cli/                  # nimbus CLI (+ Ink TUI)
 │   │   └── src/commands/     # ask, search, query, why, prove, stats, glossary, decisions,

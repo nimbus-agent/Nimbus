@@ -121,7 +121,7 @@ import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts"
 import { githubFetchOneUrlIsSupported } from "../connectors/github-sync.ts";
 import { gitlabFetchOneUrlIsSupported } from "../connectors/gitlab-sync.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
-import { createConnectorDispatcher } from "../connectors/index.ts";
+import { createConnectorDispatcher, meshDispatcherClient } from "../connectors/index.ts";
 import { jenkinsFetchOneUrlIsSupported } from "../connectors/jenkins-sync.ts";
 import { jiraConfiguredBaseUrl, jiraFetchOneUrlIsSupported } from "../connectors/jira-sync.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
@@ -2314,10 +2314,7 @@ function bootTribalKnowledge(deps: {
   const tribalE2eSinkDir = processEnvGet("NIMBUS_CHATOPS_E2E_SINK_DIR");
   const tribalDispatcher: ConnectorDispatcher =
     tribalE2eSinkDir === undefined || tribalE2eSinkDir === ""
-      ? createConnectorDispatcher({
-          listTools: () => connectorMesh.listToolsForDispatcher(),
-          getToolsEpoch: () => connectorMesh.getToolsEpoch(),
-        })
+      ? createConnectorDispatcher(meshDispatcherClient(connectorMesh))
       : buildE2eSinkDispatcher(tribalE2eSinkDir);
   ipcOpts.tribalConnectorDispatcher = tribalDispatcher;
   // In-chat capture trigger (Task 19): `@nimbus tribal capture <id>` → I25 write-gate with the
@@ -2583,10 +2580,7 @@ async function bootChatopsIntoAssembly(deps: {
     dispatcher:
       chatopsE2eSinkDir === undefined || chatopsE2eSinkDir === ""
         ? createConnectorWriteDispatcher(
-            createConnectorDispatcher({
-              listTools: () => connectorMesh.listToolsForDispatcher(),
-              getToolsEpoch: () => connectorMesh.getToolsEpoch(),
-            }),
+            createConnectorDispatcher(meshDispatcherClient(connectorMesh)),
             connectorWriteDeps,
           )
         : buildE2eSinkDispatcher(chatopsE2eSinkDir),
@@ -3292,9 +3286,12 @@ export async function assemblePlatformServices(
     // seconds the revoke takes CAN trigger. So the mesh awaits this promise (never rejects) at the
     // top of `collectBuiltInToolMaps`, which holds EVERY dispatcher tool listing (all connector
     // dispatches, user-MCP list/call, share replay, tribal capture, ChatOps writes), not only the
-    // filesystem MCP. The helper calls have no per-call timeout, so a hung helper holds them until
-    // it exits; no marker is written, so the next boot retries. Nothing else at boot awaits it, and
-    // Linux/macOS/demo gateways never reach this branch, so they never wait.
+    // filesystem MCP (`listUserMcpTools` awaits it too, for the per-server user-MCP dispatch path).
+    // Each helper call has its own 15 s deadline (`BOOT_REVOKE_CALL_TIMEOUT_MS`): a hung helper is
+    // killed, the pass stops, no marker is written and the next boot retries. The calls are
+    // sequential, so the hold is the time the earlier calls took plus ONE deadline, rather than
+    // lasting until a hung helper exits. Nothing else at boot awaits it,
+    // and Linux/macOS/demo gateways never reach this branch, so they never wait.
     dataDirRevoke = revokeLegacyDataDirGrantsAtBoot({
       db,
       dataDir: paths.dataDir,

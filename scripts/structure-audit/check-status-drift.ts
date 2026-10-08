@@ -381,6 +381,48 @@ function auditAllowlistSize(repoRoot: string): string[] {
       );
     }
   }
+  errors.push(...auditAllowlistSkill(repoRoot, asserted));
+  return errors;
+}
+
+const TAURI_ALLOWLIST_SKILL = ".claude/commands/nimbus-tauri-allowlist.md";
+
+/**
+ * The same I7 count, as the `nimbus-tauri-allowlist` skill states it — twice, in two phrasings:
+ * "Currently N entries" and "`ALLOWED_METHODS.len() == N`". The skill tells its reader to verify
+ * against the Rust constant rather than trust the number, which is exactly the instruction an AI
+ * assistant skips; a stale number there is proposed back as fact.
+ *
+ * Both phrasings are REQUIRED to be present, not merely checked when found: a rewording that drops
+ * one would otherwise turn this into a check that can never fail. Absent skill file (a fixture
+ * repo) opts out, as every derived check here does — `audit:doc-refs` is what fails if the real
+ * repo stops having it.
+ */
+function auditAllowlistSkill(repoRoot: string, asserted: string): string[] {
+  const sources = readAll(repoRoot, [TAURI_ALLOWLIST_SKILL]);
+  if (sources === undefined) return [];
+  const skill = sources[0] as string;
+  const errors: string[] = [];
+  const phrasings: ReadonlyArray<readonly [string, RegExp]> = [
+    ['"Currently N entries"', /\bCurrently (\d+) entries\b/g],
+    ["`ALLOWED_METHODS.len() == N`", /(?<![A-Za-z_])ALLOWED_METHODS\.len\(\)\s*==\s*(\d+)/g],
+  ];
+  for (const [label, re] of phrasings) {
+    const hits = [...skill.matchAll(re)];
+    if (hits.length === 0) {
+      errors.push(
+        `${TAURI_ALLOWLIST_SKILL}: no ${label} statement found — the allowlist count check cannot run`,
+      );
+      continue;
+    }
+    for (const m of hits) {
+      if (m[1] !== asserted) {
+        errors.push(
+          `${TAURI_ALLOWLIST_SKILL}: ${label} says ${m[1]} — gateway_bridge.rs asserts ${asserted}`,
+        );
+      }
+    }
+  }
   return errors;
 }
 

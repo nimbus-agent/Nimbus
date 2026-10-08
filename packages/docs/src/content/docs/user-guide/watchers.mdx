@@ -45,7 +45,7 @@ when an item of `type = 'alert'` appears in the index with a `modified_at`
 timestamp newer than the watcher's last check.
 
 **Creating a watcher via IPC** (a CLI `nimbus watch add` subcommand is not yet
-implemented — use the IPC method directly or the Tauri Watchers panel):
+implemented — use the IPC method directly; the Tauri Watchers panel will offer it too, but the desktop app has not been released yet):
 
 ```json
 {
@@ -187,7 +187,7 @@ producing spurious ones.
 
 To attach a graph predicate to an existing watcher, call the IPC method
 `watcher.setGraphPredicate` with the watcher `id` and the predicate JSON
-string. The Tauri Watchers panel exposes a visual editor for this.
+string. The Tauri Watchers panel has a visual editor for this, but the desktop app has not been released yet.
 
 For a deeper explanation of the graph schema and relation types, see the
 [Architecture overview](/architecture-overview/).
@@ -222,8 +222,9 @@ nimbus watch pause <id>
 nimbus watch resume <id>
 ```
 
-**Removing** a watcher is done through the Tauri Watchers panel or the IPC
-method `watcher.delete`. Because deleting a watcher is a configuration write,
+**Removing** a watcher is done through the IPC method `watcher.delete` (there is no
+`nimbus watch delete` yet, and the Tauri Watchers panel that can remove one is in the desktop
+app, which has not been released). Because deleting a watcher is a configuration write,
 it is logged to the audit chain.
 
 ---

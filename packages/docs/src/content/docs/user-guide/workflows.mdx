@@ -9,7 +9,7 @@ A **workflow** is a saved sequence of natural-language steps that Nimbus
 executes on your behalf. Think of it as a playbook: write it once, run it
 whenever you need it, and trust that the agent will work through the steps in
 order — prompting for HITL consent where needed, collecting step outputs, and
-streaming progress back to your terminal or the Tauri UI.
+streaming progress back to your terminal (or the Tauri UI, once the desktop app is released — it has not been yet).
 
 Workflows are stored by name in the local index. They are per-profile, so a
 `work` profile and a `personal` profile have separate workflow libraries.
@@ -110,7 +110,7 @@ predicts it would need to call if run for real.
 
 A dry-run row is written to `workflow_run` with `dry_run = 1` and
 `status = "preview"`. This row is distinguishable from a real run in the
-audit log and in the Tauri Workflows panel.
+audit log (and in the Tauri Workflows panel, but the desktop app has not been released yet).
 
 <Aside type="tip">
 Use `--dry-run` before running a new workflow for the first time. Check the
@@ -162,10 +162,11 @@ Each run produces a `workflow_run` record in the local index with:
 The Gateway retains the last **100 runs** per workflow; older runs are pruned
 automatically after each execution.
 
-The **Tauri Workflows panel** shows recent runs for each saved workflow with
-per-step status badges and output previews. The CLI does not yet have a
-`nimbus workflow runs` subcommand; check the Tauri panel or query the index
-directly with `nimbus query --sql`.
+The CLI does not yet have a `nimbus workflow runs` subcommand, so today run
+history is read by querying the index directly with `nimbus query --sql` (the
+`workflow_run` and `workflow_run_step` tables). The **Tauri Workflows panel**
+shows recent runs for each saved workflow with per-step status badges and output
+previews, but the desktop app has not been released yet.
 
 ---
 

@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import type { PlannedAction } from "../engine/types.ts";
-import { createConnectorDispatcher, type McpToolListingClient } from "./registry.ts";
+import {
+  createConnectorDispatcher,
+  type McpToolListingClient,
+  meshDispatcherClient,
+} from "./registry.ts";
 
 describe("createConnectorDispatcher", () => {
   test("dispatches by action.type when mcpToolId is absent", async () => {
@@ -269,5 +273,127 @@ describe("createConnectorDispatcher — user-MCP keys dispatch only under their 
       payload: { mcpToolId: "mcp_x_echo", input: { q: "hi" }, requestedBy: "model" },
     });
     expect(received).toEqual([{ q: "hi" }]);
+  });
+});
+
+// Running one user-MCP tool must not list (and so spawn) the whole mesh: the dispatcher resolves a
+// user-MCP action against that server's own listing only, keeping the I42 pairing check.
+describe("createConnectorDispatcher — a user-MCP action lists only its own server", () => {
+  function perServer(ran: string[]): {
+    client: McpToolListingClient;
+    calls: { whole: number; perServer: string[] };
+  } {
+    const calls = { whole: 0, perServer: [] as string[] };
+    const listed = (key: string) => ({
+      async execute() {
+        ran.push(key);
+        return { key };
+      },
+    });
+    const servers: Record<string, Record<string, ReturnType<typeof listed>>> = {
+      mcp_a: { mcp_a_x: listed("mcp_a_x") },
+      mcp_b: { mcp_b_x: listed("mcp_b_x") },
+    };
+    return {
+      calls,
+      client: {
+        async listTools() {
+          calls.whole += 1;
+          return {
+            mcp_a_x: listed("mcp_a_x"),
+            mcp_b_x: listed("mcp_b_x"),
+            github_github_pr_list: listed("github_github_pr_list"),
+          };
+        },
+        async listUserMcpTools(serviceId: string) {
+          calls.perServer.push(serviceId);
+          return servers[serviceId];
+        },
+      },
+    };
+  }
+
+  test("mcp_a.x lists mcp_a exactly once and the whole mesh zero times", async () => {
+    const ran: string[] = [];
+    const { client, calls } = perServer(ran);
+    const d = createConnectorDispatcher(client);
+    await expect(
+      d.dispatch({ type: "mcp_a.x", payload: { mcpToolId: "mcp_a_x", input: { q: 1 } } }),
+    ).resolves.toEqual({ key: "mcp_a_x" });
+    expect(calls.perServer).toEqual(["mcp_a"]);
+    expect(calls.whole).toBe(0);
+    expect(ran).toEqual(["mcp_a_x"]);
+  });
+
+  test("an unknown tool on the server still fails with Tool not found", async () => {
+    const ran: string[] = [];
+    const { client, calls } = perServer(ran);
+    const d = createConnectorDispatcher(client);
+    await expect(
+      d.dispatch({ type: "mcp_a.nope", payload: { mcpToolId: "mcp_a_nope" } }),
+    ).rejects.toThrow(/Tool not found/);
+    expect(calls.perServer).toEqual(["mcp_a"]);
+    expect(calls.whole).toBe(0);
+    expect(ran).toEqual([]);
+  });
+
+  test("an unregistered server lists nothing and fails with Tool not found", async () => {
+    const ran: string[] = [];
+    const { client, calls } = perServer(ran);
+    const d = createConnectorDispatcher(client);
+    await expect(
+      d.dispatch({ type: "mcp_zz.x", payload: { mcpToolId: "mcp_zz_x" } }),
+    ).rejects.toThrow(/Tool not found/);
+    expect(calls.whole).toBe(0);
+  });
+
+  test("I42 pairing is still refused on the per-server path, before any listing", async () => {
+    const ran: string[] = [];
+    const { client, calls } = perServer(ran);
+    const d = createConnectorDispatcher(client);
+    // Another server's key under mcp_a's action type.
+    await expect(
+      d.dispatch({ type: "mcp_a.x", payload: { mcpToolId: "mcp_b_x" } }),
+    ).rejects.toThrow(/ERR_USER_MCP_ACTION_MISMATCH/);
+    // A first-party key under a user-MCP action type.
+    await expect(
+      d.dispatch({ type: "mcp_a.x", payload: { mcpToolId: "github_github_pr_list" } }),
+    ).rejects.toThrow(/ERR_USER_MCP_ACTION_MISMATCH/);
+    expect(calls.perServer).toEqual([]);
+    expect(calls.whole).toBe(0);
+    expect(ran).toEqual([]);
+  });
+
+  test("a first-party action still uses the whole-mesh listing (and the smuggle refusal)", async () => {
+    const ran: string[] = [];
+    const { client, calls } = perServer(ran);
+    const d = createConnectorDispatcher(client);
+    await expect(
+      d.dispatch({ type: "github.pr_list", payload: { mcpToolId: "mcp_a_x" } }),
+    ).rejects.toThrow(/ERR_USER_MCP_ACTION_MISMATCH/);
+    expect(calls.whole).toBe(1);
+    expect(calls.perServer).toEqual([]);
+    expect(ran).toEqual([]);
+  });
+});
+
+describe("meshDispatcherClient", () => {
+  test("routes each listing to the matching mesh method", async () => {
+    const seen: string[] = [];
+    const client = meshDispatcherClient({
+      async listToolsForDispatcher() {
+        seen.push("whole");
+        return {};
+      },
+      getToolsEpoch: () => 7,
+      async listUserMcpToolsForDispatcher(serviceId: string) {
+        seen.push(`one:${serviceId}`);
+        return undefined;
+      },
+    });
+    await client.listTools();
+    expect(await client.listUserMcpTools?.("mcp_a")).toBeUndefined();
+    expect(client.getToolsEpoch?.()).toBe(7);
+    expect(seen).toEqual(["whole", "one:mcp_a"]);
   });
 });

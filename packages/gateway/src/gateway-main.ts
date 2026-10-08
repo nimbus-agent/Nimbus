@@ -3,7 +3,11 @@ import pino from "pino";
 
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
-import { createConnectorDispatcher, type McpToolListingClient } from "./connectors/index.ts";
+import {
+  createConnectorDispatcher,
+  type McpToolListingClient,
+  meshDispatcherClient,
+} from "./connectors/index.ts";
 import { listModelAccessibleUserMcpIds } from "./connectors/user-mcp-store.ts";
 import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
@@ -146,10 +150,7 @@ export async function main(): Promise<void> {
   });
   process.stdout.write("[gateway] platform services ready; wiring engine\n");
   const mcp = platform.connectorMesh;
-  const dispatcherClient: McpToolListingClient = {
-    listTools: () => mcp.listToolsForDispatcher(),
-    getToolsEpoch: () => mcp.getToolsEpoch(),
-  };
+  const dispatcherClient: McpToolListingClient = meshDispatcherClient(mcp);
   const dispatcher = createConnectorWriteDispatcher(
     createConnectorDispatcher(dispatcherClient),
     platform.connectorWriteDeps,

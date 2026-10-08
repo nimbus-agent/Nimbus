@@ -116,13 +116,14 @@ after switching profiles to open the active profile's TOML in your editor.
 
 ## Active-profile indicator
 
-- **Tauri sidebar** — the profile name appears in the page header and the
+- **Tauri sidebar** (the desktop app has not been released yet) — the profile name appears in the page header and the
   system tray tooltip.
 - **CLI** — `nimbus profile list` marks the active profile with `*`.
-- **System tray** — the tray menu includes a profile-switcher submenu (shows
+- **System tray** (the desktop app has not been released yet) — the tray menu includes a profile-switcher submenu (shows
   all profiles; click to switch and restart).
 
-When the Gateway emits a `profile.switched` IPC notification, the Tauri UI
+Today, `nimbus profile list` and `nimbus profile switch <name>` are how you see and change the
+active profile. When the Gateway emits a `profile.switched` IPC notification, the Tauri UI
 re-broadcasts it globally so all open windows (main window, quick query, HITL
 popup) pick up the new state simultaneously.
 

@@ -37,7 +37,39 @@ export type McpToolListingClient = {
     >
   >;
   getToolsEpoch?: () => number;
+  /**
+   * The tools of ONE registered user MCP server (`undefined` when no such server is registered).
+   * When present, a user-MCP action (`mcp_<id>.<tool>`) is resolved against this listing ALONE, so
+   * running one user tool never lists — and so never spawns — every connector in the mesh.
+   */
+  listUserMcpTools?: (
+    serviceId: string,
+  ) => Promise<
+    | Record<string, { execute?: (input: unknown, context?: unknown) => Promise<unknown> }>
+    | undefined
+  >;
 };
+
+type DispatcherToolMap = Record<
+  string,
+  { execute?: (a: unknown, b?: unknown) => Promise<unknown> }
+>;
+
+/**
+ * The dispatcher client every production mesh dispatcher uses: the whole merged map for a
+ * first-party action, the action's OWN server for a user-MCP one.
+ */
+export function meshDispatcherClient(mesh: {
+  listToolsForDispatcher(): Promise<DispatcherToolMap>;
+  getToolsEpoch(): number;
+  listUserMcpToolsForDispatcher(serviceId: string): Promise<DispatcherToolMap | undefined>;
+}): McpToolListingClient {
+  return {
+    listTools: () => mesh.listToolsForDispatcher(),
+    getToolsEpoch: () => mesh.getToolsEpoch(),
+    listUserMcpTools: (serviceId) => mesh.listUserMcpToolsForDispatcher(serviceId),
+  };
+}
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
 export const MAX_TOOL_RESULT_BYTES = 4 * 1024 * 1024;
@@ -51,9 +83,7 @@ export function createConnectorDispatcher(
   let toolsPromise: ReturnType<McpToolListingClient["listTools"]> | undefined;
   let cachedEpoch = -1;
 
-  async function tools(): Promise<
-    Record<string, { execute?: (a: unknown, b?: unknown) => Promise<unknown> }>
-  > {
+  async function tools(): Promise<DispatcherToolMap> {
     const epoch = client.getToolsEpoch?.() ?? 0;
     if (toolsPromise === undefined || epoch !== cachedEpoch) {
       cachedEpoch = epoch;
@@ -62,12 +92,31 @@ export function createConnectorDispatcher(
     return toolsPromise;
   }
 
+  /**
+   * A user-MCP action lists its OWN server only, when the client offers that listing. The I42
+   * pairing is checked on the INPUT first: the per-server map holds only `<serviceId>_*` keys, so a
+   * smuggled key from another server would otherwise surface as "Tool not found" instead of the
+   * mismatch refusal the whole-mesh listing gave. The post-resolution check below still runs.
+   */
+  async function toolsFor(action: PlannedAction, toolId: string): Promise<DispatcherToolMap> {
+    const expected = userMcpToolKeyForActionType(action.type);
+    const listOne = client.listUserMcpTools;
+    if (expected === undefined || listOne === undefined) {
+      return tools();
+    }
+    const serviceId = serviceOf(action.type);
+    if (toolId !== expected && mcpClientToolKey(serviceId, toolId) !== expected) {
+      assertUserMcpKeyMatchesActionType(action.type, toolId);
+    }
+    return (await listOne(serviceId)) ?? {};
+  }
+
   return {
     async dispatch(action: PlannedAction): Promise<unknown> {
-      const map = await tools();
       const fromPayload = action.payload?.["mcpToolId"];
       const toolId =
         typeof fromPayload === "string" && fromPayload.length > 0 ? fromPayload : action.type;
+      const map = await toolsFor(action, toolId);
       // The mesh lists every tool as `<server>_<tool>`, so a bare id (the tribal KB capture's
       // `mcpToolId`) is resolved on the server of the action type the HITL gate approved (I3:
       // the gate consults action.type), never on another connector's server. An exact mesh key

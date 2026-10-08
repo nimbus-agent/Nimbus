@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -12,7 +12,7 @@ import {
 } from "../../connectors/lazy-mesh/first-party-manifests.ts";
 import { listUserMcpConnectors } from "../../connectors/user-mcp-store.ts";
 import { type ReapOpts, reapOrphanedAppContainers } from "./orphan-reap.ts";
-import { helperPath, helperRunner } from "./win32.ts";
+import { helperPath } from "./win32.ts";
 import { buildRevokeGrantsArgv, buildSweepArgv } from "./win32-argv.ts";
 import type { HelperRun } from "./win32-release.ts";
 
@@ -162,7 +162,8 @@ export function legacyDataDirGrantIds(userMcpServiceIds: readonly string[]): str
 /**
  * Revoke the stale per-SID ACEs on `dataDir`, once. Sequential on purpose: each revoke rewrites the
  * same DACL and concurrent rewrites race. The marker is written only when every revoke succeeded,
- * so a partial run is retried at the next boot.
+ * so a partial run is retried at the next boot. A call that times out (the boot wrapper's runner,
+ * {@link deadlineHelperRunner}) rejects like any other failure, so it counts as one here.
  */
 export async function revokeLegacyDataDirGrants(deps: {
   dataDir: string;
@@ -174,26 +175,109 @@ export async function revokeLegacyDataDirGrants(deps: {
 }): Promise<"skipped" | "done" | "partial"> {
   if (deps.markerExists()) return "skipped";
   const failed: string[] = [];
-  for (const id of deps.ids) {
+  let timedOut = false;
+  for (const [i, id] of deps.ids.entries()) {
     try {
       const argv = buildRevokeGrantsArgv(
         { id, permissions: { network: [], filesystem: { read: [], write: [] } } },
         { cwd: deps.dataDir },
       );
       await deps.run(argv); // NOSONAR S9382: sequential on purpose (see above): concurrent DACL rewrites race
-    } catch {
+    } catch (e) {
       failed.push(id);
+      // A helper that hung once will most likely hang again; with ~90 ids, waiting out each
+      // deadline would hold every tool listing for over twenty minutes. Stop, count the rest as
+      // not revoked, and let the next boot retry them all.
+      if (e instanceof HelperCallTimeoutError) {
+        timedOut = true;
+        failed.push(...deps.ids.slice(i + 1));
+        break;
+      }
     }
   }
   if (failed.length > 0) {
     deps.logger.warn(
-      { failed },
-      "sandbox: legacy data-directory grant revoke incomplete; will retry next boot",
+      { failed, timedOut },
+      timedOut
+        ? "sandbox: legacy data-directory grant revoke timed out; will retry next boot"
+        : "sandbox: legacy data-directory grant revoke incomplete; will retry next boot",
     );
     return "partial";
   }
   deps.writeMarker();
   return "done";
+}
+
+/** A helper call that outlived its deadline and was killed. */
+export class HelperCallTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`sandbox helper call exceeded ${timeoutMs} ms and was killed`);
+    this.name = "HelperCallTimeoutError";
+  }
+}
+
+/** The per-call deadline for each boot-revoke helper invocation. */
+export const BOOT_REVOKE_CALL_TIMEOUT_MS = 15_000;
+
+/** A launched helper: settles with its exit code (rejects when it could not be launched), and can be killed. */
+export interface HelperChild {
+  readonly exited: Promise<number | null>;
+  kill(): void;
+}
+
+/** Launches the helper ASYNCHRONOUSLY. Injected so a test can supply a child that never exits. */
+export type HelperSpawn = (helper: string, argv: readonly string[]) => HelperChild;
+
+/** The production {@link HelperSpawn}: `node:child_process` `spawn`, console hidden, output discarded. */
+export const nodeHelperSpawn: HelperSpawn = (helper, argv) => {
+  const child = spawn(helper, [...argv], { windowsHide: true, stdio: "ignore" });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code));
+  });
+  return {
+    exited,
+    kill: () => {
+      child.kill();
+    },
+  };
+};
+
+/**
+ * A {@link HelperRun} that gives each call its OWN deadline: past `timeoutMs` the child is killed and
+ * the call REJECTS, so a hung helper is a failed revoke (no marker, retried next boot) rather than a
+ * boot that never finishes — this promise gates every dispatcher tool listing. Deliberately an async
+ * spawn raced against a timer, not `spawnSync`'s `timeout`, whose `ETIMEDOUT` on Windows cannot be
+ * told apart from libuv's own `ERROR_SEM_TIMEOUT` and which would block the JS thread besides.
+ */
+export function deadlineHelperRunner(
+  helper: string,
+  launch: HelperSpawn,
+  timeoutMs: number,
+): HelperRun {
+  return async (argv) => {
+    const child = launch(helper, argv);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), timeoutMs);
+    });
+    try {
+      const outcome = await Promise.race([child.exited, deadline]);
+      if (outcome === "timeout") {
+        try {
+          child.kill();
+        } catch {
+          /* best-effort: the call has already failed */
+        }
+        throw new HelperCallTimeoutError(timeoutMs);
+      }
+      if (outcome !== 0) {
+        throw new Error(`sandbox helper exited with code ${String(outcome)}`);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 }
 
 /**
@@ -215,7 +299,7 @@ const PRODUCTION_REVOKE_BOOT_SEAMS: RevokeBootSeams = {
   platform: process.platform,
   helperPath,
   helperExists: existsSync,
-  helperRun: helperRunner,
+  helperRun: (helper) => deadlineHelperRunner(helper, nodeHelperSpawn, BOOT_REVOKE_CALL_TIMEOUT_MS),
   listUserServiceIds: (db) => listUserMcpConnectors(db).map((r) => r.service_id),
   markerExists: existsSync,
   writeMarker: (marker) => writeFileSync(marker, new Date().toISOString()),

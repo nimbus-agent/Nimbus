@@ -60,7 +60,7 @@ nimbus/
 | `config/` | TOML config loader, profiles, env-var overrides |
 | `ipc/` | JSON-RPC 2.0 server, HTTP API, Prometheus endpoint, LAN server |
 | `llm/` | Ollama provider, llama.cpp provider, LLM router, GPU arbiter *(Phase 4)*; the four cloud adapters — Anthropic, OpenAI, Gemini, xAI — behind per-vendor `[llm.remote.<vendor>]` opt-ins *(S2, 2026-08-28)* |
-| `voice/` | STT (Whisper.cpp), TTS, wake-word *(Phase 4)* |
+| `voice/` | STT (Whisper.cpp), TTS, wake-word *(Phase 4)* — **not wired**: nothing constructs `VoiceService` |
 
 **Key files to know:**
 - `engine/executor.ts` — HITL gate lives here. Touch carefully.

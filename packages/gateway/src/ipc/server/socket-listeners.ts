@@ -5,6 +5,7 @@ import net from "node:net";
 import { registerListener } from "../../locality/listener-registry.ts";
 import type { ClientSession, SessionWrite } from "../session.ts";
 import type { BunSessionData } from "./options.ts";
+import { createQueuedSocketWriter } from "./queued-socket-writer.ts";
 
 export function removeStaleUnixSocketIfPresent(listenPath: string): void {
   if (!existsSync(listenPath)) {
@@ -130,10 +131,16 @@ export function startBunUnixListener(
     unix: listenPath,
     socket: {
       open(socket) {
+        // Never `socket.write(line)` directly: Bun's raw write drops whatever the kernel did not
+        // accept, which truncated large replies on macOS (8 KiB send buffer). See the writer.
+        const writer = createQueuedSocketWriter(socket);
         const session = attachSession((line) => {
-          socket.write(line);
+          writer.write(line);
         });
-        socket.data = { session };
+        socket.data = { session, writer };
+      },
+      drain(socket) {
+        socket.data.writer.flush();
       },
       data(socket, data: Uint8Array) {
         socket.data.session.push(data);

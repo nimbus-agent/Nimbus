@@ -3,6 +3,9 @@ import { describe, expect, test } from "bun:test";
 import os from "node:os";
 import pino from "pino";
 import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
+import { insertUserMcpConnector } from "../connectors/user-mcp-store.ts";
+import { createUserMcpSyncable } from "../connectors/user-mcp-sync.ts";
+import { recordSyncEgress } from "../egress/sync-egress.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
@@ -1261,5 +1264,59 @@ describe("syncDisabled", () => {
     await scheduler.forceSync(fake.serviceId);
     expect(fakeSyncCalls()).toBe(1);
     await scheduler.stop();
+  });
+});
+
+// I29: a registered user MCP server is picked up by this scheduler, but its "sync" only ensures the
+// server process is running — no connector request — so the REAL appender (`recordSyncEgress`)
+// must append nothing for it, decided from the `user_mcp_connector` row rather than a caller flag.
+describe("appendSyncEgress — user MCP servers append no sync.run row", () => {
+  function egressCount(db: Database, destination: string): number {
+    return (
+      db
+        .query(
+          "SELECT COUNT(*) AS n FROM egress_ledger WHERE source_type = 'sync' AND destination = ?",
+        )
+        .get(destination) as { n: number }
+    ).n;
+  }
+
+  test("a run for a registered user-MCP id appends 0 rows; a normal connector still appends 1", async () => {
+    const db = openMemoryIndexDatabase();
+    insertUserMcpConnector(db, {
+      service_id: "mcp_local_tool",
+      command: "node",
+      args_json: "[]",
+      read_paths_json: "[]",
+      net_hosts_json: "[]",
+      model_access: 0,
+    });
+    const sched = new SyncScheduler(testContext(db), undefined, {
+      appendSyncEgress: (row) => recordSyncEgress(db, { ...row, now: Date.now() }),
+    });
+    let ensured = 0;
+    sched.register(
+      createUserMcpSyncable("mcp_local_tool", async () => {
+        ensured += 1;
+      }),
+    );
+    sched.register({
+      serviceId: "egress-normal-svc",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    });
+
+    // The normal connector first: a forced run's trailing tick would otherwise pick it up as due
+    // and run it a second time.
+    await sched.forceSync("egress-normal-svc");
+    await sched.forceSync("mcp_local_tool");
+    await sched.stop();
+
+    expect(ensured).toBeGreaterThanOrEqual(1);
+    expect(egressCount(db, "mcp_local_tool")).toBe(0);
+    expect(egressCount(db, "egress-normal-svc")).toBe(1);
   });
 });

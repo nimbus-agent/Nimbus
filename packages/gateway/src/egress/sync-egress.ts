@@ -1,6 +1,7 @@
 // packages/gateway/src/egress/sync-egress.ts
 
 import type { Database } from "bun:sqlite";
+import { getUserMcpConnector, USER_MCP_SERVICE_ID_PATTERN } from "../connectors/user-mcp-store.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import { redactEgressSummary } from "./egress-record.ts";
 
@@ -32,6 +33,27 @@ export const LOCAL_ONLY_SYNC_SERVICES: ReadonlySet<string> = new Set([
   "openapi", // connectors/openapi-indexer-sync.ts (a local API-spec FILE, not an HTTP call)
   "obsidian", // connectors/obsidian-sync.ts (a local vault)
 ]);
+
+/**
+ * Whether `destination` is a REGISTERED user MCP server (a `user_mcp_connector` row names it),
+ * DERIVED here from the index rather than told by a caller — the same in-appender shape as the
+ * `LOCAL_ONLY_SYNC_SERVICES` check below.
+ *
+ * Why such a destination appends nothing: the scheduler's user-MCP "sync" (`connectors/user-mcp-sync.ts`)
+ * makes no connector request of its own — it only ensures the server process is running — so a
+ * `sync.run` row for it would describe a connector sync that never happened and inflate
+ * `nimbus prove`. STATED BOUND: a user MCP server's OWN network traffic (its `--net` hosts) is
+ * NOT ledgered by Nimbus at all; it leaves through the sandbox's per-host network grant the owner
+ * approved at registration. What IS ledgered is every `mcp_*` ACTION dispatch, at the executor
+ * chokepoint (`engine/executor.ts`), like any other gated connector action.
+ *
+ * The pattern test runs first so a first-party destination never touches `user_mcp_connector`.
+ */
+function isRegisteredUserMcpService(db: Database, destination: string): boolean {
+  return (
+    USER_MCP_SERVICE_ID_PATTERN.test(destination) && getUserMcpConnector(db, destination) !== null
+  );
+}
 
 /**
  * The sole append site for `sync` egress rows (I29, D22(b)) — shared by FIVE of that class's
@@ -66,7 +88,8 @@ export const LOCAL_ONLY_SYNC_SERVICES: ReadonlySet<string> = new Set([
  * request, and the credential probe appends one row per probe — the weakest of the five shapes is
  * what the coverage vector must claim, and `per-run` is that shape.
  *
- * A `destination` in `LOCAL_ONLY_SYNC_SERVICES` is a no-op — deliberately, and checked HERE rather
+ * A `destination` in `LOCAL_ONLY_SYNC_SERVICES`, or one that is a registered user MCP server
+ * (`isRegisteredUserMcpService`), is a no-op — deliberately, and checked HERE rather
  * than at any call site, so all five appenders (and any future one) enforce the rule identically
  * instead of each needing its own copy of the exclusion list. Returns `undefined` in that case too,
  * so a caller cannot distinguish "skipped" from "appended" and is never tempted to branch on it.
@@ -123,7 +146,10 @@ export function recordSyncEgress(
     readonly expectedBytes?: number | null | undefined;
   },
 ): { rowHash: string } | undefined {
-  if (LOCAL_ONLY_SYNC_SERVICES.has(args.destination)) {
+  if (
+    LOCAL_ONLY_SYNC_SERVICES.has(args.destination) ||
+    isRegisteredUserMcpService(db, args.destination)
+  ) {
     return undefined;
   }
   // Guarded rather than trusted: `expectedBytes` originates in provider metadata read at index

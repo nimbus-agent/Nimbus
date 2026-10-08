@@ -48,8 +48,9 @@ import type { ToolgenRpcCtx } from "../toolgen-rpc.ts";
 import type { TribalRpcCtx } from "../tribal-rpc.ts";
 import type { WorkflowRunHandler } from "../workflow-invoke.ts";
 import type { ClientKindStore } from "./client-kind.ts";
+import type { QueuedSocketWriter } from "./queued-socket-writer.ts";
 
-export type BunSessionData = { session: ClientSession };
+export type BunSessionData = { session: ClientSession; writer: QueuedSocketWriter };
 
 export type CreateIpcServerOptions = {
   listenPath: string;

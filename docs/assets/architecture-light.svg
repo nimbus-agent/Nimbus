@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="360" viewBox="0 0 1080 360"
-     role="img" aria-label="Nimbus architecture: connectors feed a local SQLite index; the engine reads the index and exposes it via CLI, UI, and voice; everything runs on your machine">
+     role="img" aria-label="Nimbus architecture: connectors feed a local SQLite index; the engine reads the index and exposes it via CLI and UI; everything runs on your machine">
   <title>Nimbus architecture</title>
-  <desc>Connectors to Local SQLite index to Engine plus HITL to CLI, UI, and Voice — all on your machine</desc>
+  <desc>Connectors to Local SQLite index to Engine plus HITL to CLI and UI — all on your machine</desc>
 
   <rect x="20" y="40" width="1040" height="280" rx="16" ry="16"
         fill="none" stroke="#7c3aed" stroke-width="2" stroke-dasharray="6 6" opacity="0.5"/>
@@ -24,8 +24,7 @@
     <text x="680" y="198" text-anchor="middle">+ HITL</text>
 
     <rect x="840" y="140" width="200" height="80" rx="12" fill="#ffffff" stroke="#7c3aed" stroke-width="2"/>
-    <text x="940" y="180" text-anchor="middle">CLI · UI</text>
-    <text x="940" y="198" text-anchor="middle">· Voice</text>
+    <text x="940" y="189" text-anchor="middle">CLI · UI</text>
   </g>
 
   <g stroke="#7c3aed" stroke-width="2" fill="#7c3aed">

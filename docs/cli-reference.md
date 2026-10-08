@@ -1096,7 +1096,7 @@ retention_days = 90      # stored briefs older than this are pruned at boot (eve
 
 **What a push never does.** It never runs synthesis — the stored brief is the deterministic render, so nothing is sent to a model. The `oncall.briefPushed` event carries only `{incidentId, status}` (an `ok`/`failed` status), never the brief. The (currently dropped) notification would carry the incident title and id, never the brief, and would be capped at three per run plus one summary. An incident with no recorded opening time is never pushed, enabling push never backfills history, and the gateway reconciles the enable moment at boot rather than trusting a timestamp from an earlier run.
 
-**Bounds.** A GDPR purge does not sweep stored pushed briefs — retention is the bound, as for `fleet_brief`. The desktop app's On-call page shows the same briefs (it cannot retry; a failed row shows the `--retry` command above). **Not shipped:** approving a mitigation from the push, and ranking a cascade of alerts. `nimbus tail --filter oncall` follows the event live; `nimbus doctor` warns when push is enabled but your identity is unresolved, since nothing could then ever be selected; when `chatops_namespace` is set but ChatOps is not running; and when the newest pushed brief skipped ChatOps because that namespace has no `notify` channels in the org policy.
+**Bounds.** A GDPR purge does not sweep stored pushed briefs — retention is the bound, as for `fleet_brief`. The desktop app's On-call page reads the same briefs (it cannot retry; a failed row shows the `--retry` command above), but the desktop app **has not been released yet**, so today the CLI is the only way to read them. **Not shipped:** approving a mitigation from the push, and ranking a cascade of alerts. `nimbus tail --filter oncall` follows the event live; `nimbus doctor` warns when push is enabled but your identity is unresolved, since nothing could then ever be selected; when `chatops_namespace` is set but ChatOps is not running; and when the newest pushed brief skipped ChatOps because that namespace has no `notify` channels in the org policy.
 
 **Reach.** The three methods behind it (`oncall.pushedList`, `oncall.pushedGet`, `oncall.pushedRetry`) are not reachable over LAN, HTTP, MCP or ChatOps. Only the two reads are on the Tauri allowlist; `oncall.pushedRetry` is CLI-only.
 
@@ -3842,8 +3842,7 @@ nimbus doctor
 - Index total item count (warns if zero — suggests connecting a service)
 - On-call push: when `[oncall.push] enabled = true`, warns if your identity is unresolved (no incident could ever be selected); otherwise reports it enabled
 - Per-connector health table
-- Voice (when `voice.enabled = true` in config): `whisper-cli` on PATH, `ffmpeg` on PATH, platform TTS available (`espeak-ng` on Linux, `say` on macOS, PowerShell SAPI on Windows)
-- Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why
+- Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why. On macOS a passing line also names the full SQLite library it loaded through (`using full SQLite at <path>`), since that can be the bundled copy, `NIMBUS_SQLITE_PATH` or a Homebrew install
 
 **Exit codes:** `0` = all healthy, `1` = warnings, `2` = hard failures.
 
@@ -4212,6 +4211,8 @@ To re-enable: `nimbus config set telemetry.enabled true`
 ### `nimbus extension install <path|url|package>`
 
 Install a third-party extension. Accepts a local path, URL, or npm package name. The manifest SHA-256 is verified before installation.
+
+> **Installed extensions are not executed.** Install copies the package, hashes it, verifies a publisher's Ed25519 signature (I16), records it and enables it — and that is all. No code path spawns an installed extension today, so it adds no tools to `nimbus ask` or any agent; `list` / `info` describe a package on disk, not a running process. To run your own MCP server now, use `nimbus connector add --mcp` instead. The execution path is tracked in [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark).
 
 ```bash
 nimbus extension install @community/nimbus-notion

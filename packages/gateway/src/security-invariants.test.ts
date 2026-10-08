@@ -2097,7 +2097,7 @@ code_execution=true
     const chatops = bodyOf("async function bootChatopsIntoAssembly(");
     expect(chatops).toMatch(/const \{[^}]*\bconnectorWriteDeps\b[^}]*\} = deps;/);
     expect(chatops).toMatch(
-      /dispatcher:\s*chatopsE2eSinkDir === undefined \|\| chatopsE2eSinkDir === ""\s*\?\s*createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(\{[\s\S]*?\}\),\s*connectorWriteDeps,?\s*\)/,
+      /dispatcher:\s*chatopsE2eSinkDir === undefined \|\| chatopsE2eSinkDir === ""\s*\?\s*createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(meshDispatcherClient\(connectorMesh\)\),\s*connectorWriteDeps,?\s*\)/,
     );
   });
 

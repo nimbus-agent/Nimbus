@@ -591,3 +591,101 @@ describe("listUserMcpTools lists ONE user slot, never the merged map", () => {
     expect(fakeDiscord.listToolsCalls).toBe(0);
   });
 });
+
+describe("listUserMcpToolsForDispatcher lists ONE slot and keeps its drain refcount", () => {
+  function userRow(serviceId: string) {
+    return {
+      service_id: serviceId,
+      command: "/bin/echo",
+      args_json: "[]",
+      created_at: 0,
+      read_paths_json: "[]",
+      net_hosts_json: "[]",
+      model_access: 0,
+    };
+  }
+
+  test("no row for the id → undefined", async () => {
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      listUserMcpConnectors: () => [],
+    });
+    expect(await mesh.listUserMcpToolsForDispatcher("mcp_missing")).toBeUndefined();
+  });
+
+  test("registered id → its own tools, wrapped so an in-flight call holds the slot's drain", async () => {
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      listUserMcpConnectors: () => [userRow("mcp_a"), userRow("mcp_b")],
+    });
+    const drain = new LazyDrainTracker();
+    let countDuringCall = -1;
+    const fakeA = makeFakeMcpClient({
+      tools: {
+        mcp_a_echo: {
+          execute: async (): Promise<unknown> => {
+            countDuringCall = drain.count;
+            return "echo";
+          },
+        },
+      },
+    });
+    const fakeB = makeFakeMcpClient({
+      tools: { mcp_b_other: { execute: async (): Promise<unknown> => "b" } },
+    });
+    asPrivate(mesh).lazySlots.set(userMcpMeshKey("mcp_a"), {
+      client: fakeA as unknown as import("@mastra/mcp").MCPClient,
+      idleTimer: undefined,
+      drain,
+    });
+    asPrivate(mesh).lazySlots.set(userMcpMeshKey("mcp_b"), {
+      client: fakeB as unknown as import("@mastra/mcp").MCPClient,
+      idleTimer: undefined,
+      drain: new LazyDrainTracker(),
+    });
+
+    const tools = await mesh.listUserMcpToolsForDispatcher("mcp_a");
+    expect(Object.keys(tools ?? {})).toEqual(["mcp_a_echo"]);
+    expect(fakeA.listToolsCalls).toBe(1);
+    expect(fakeB.listToolsCalls).toBe(0);
+    expect(await tools?.["mcp_a_echo"]?.execute?.({})).toBe("echo");
+    expect(countDuringCall).toBe(1);
+    expect(drain.count).toBe(0);
+  });
+});
+
+describe("listUserMcpTools waits for the boot-revoke gate", () => {
+  test("no user slot is listed until the gate settles", async () => {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      open = r;
+    });
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      listUserMcpConnectors: () => [
+        {
+          service_id: "mcp_a",
+          command: "/bin/echo",
+          args_json: "[]",
+          created_at: 0,
+          read_paths_json: "[]",
+          net_hosts_json: "[]",
+          model_access: 0,
+        },
+      ],
+      filesystemSpawnGate: gate,
+    });
+    const fakeA = makeFakeMcpClient({
+      tools: { mcp_a_echo: { execute: async (): Promise<unknown> => "echo" } },
+    });
+    asPrivate(mesh).lazySlots.set(userMcpMeshKey("mcp_a"), {
+      client: fakeA as unknown as import("@mastra/mcp").MCPClient,
+      idleTimer: undefined,
+      drain: new LazyDrainTracker(),
+    });
+    const pending = mesh.listUserMcpToolsForDispatcher("mcp_a");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fakeA.listToolsCalls).toBe(0);
+    open();
+    expect(Object.keys((await pending) ?? {})).toEqual(["mcp_a_echo"]);
+    expect(fakeA.listToolsCalls).toBe(1);
+  });
+});
