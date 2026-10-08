@@ -7,7 +7,13 @@ import {
   expectServiceItemCount,
   syncTestContext,
 } from "../../connector-sync-test-helpers.ts";
-import { normalisedApiBase, syncGitlabEventsPages, webOriginFromApiBase } from "./events.ts";
+import { type CanonicalPrKey, PR_EMITTED_KEYS } from "../../pr-meta.ts";
+import {
+  gitlabMrMetadata,
+  normalisedApiBase,
+  syncGitlabEventsPages,
+  webOriginFromApiBase,
+} from "./events.ts";
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -1212,5 +1218,140 @@ describeWithFetchRestore("upsertFromIssueEvent — URL uses webOrigin", () => {
       | undefined;
     expect(row?.url).toContain("https://mygitlab.example");
     expect(row?.url).toContain("issues/7");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gitlabMrMetadata — the shared `pr` contract, transitions and carry-forward
+// ---------------------------------------------------------------------------
+
+const T_OPEN = "2026-10-01T09:00:00Z";
+const T_MERGE = "2026-10-03T09:00:00Z";
+const mrBase = { pathWithNamespace: "acme/app", iid: 5 };
+
+test("gitlabMrMetadata — an opened event sets state=open and opened_at_ms from the event time", () => {
+  const m = gitlabMrMetadata({ ...mrBase, actionName: "opened", eventCreatedAt: T_OPEN }, null);
+  expect(m["state"]).toBe("open");
+  expect(m["state_raw"]).toBe("opened");
+  expect(m["opened_at_ms"]).toBe(Date.parse(T_OPEN));
+  expect("merged_at" in m).toBe(false);
+  expect(m["repo"]).toBe("acme/app");
+  expect(m["meta_v"]).toBe(1);
+});
+
+test("gitlabMrMetadata — accepted after opened: merged, both timestamps", () => {
+  const opened = gitlabMrMetadata(
+    { ...mrBase, actionName: "opened", eventCreatedAt: T_OPEN },
+    null,
+  );
+  const merged = gitlabMrMetadata(
+    { ...mrBase, actionName: "accepted", eventCreatedAt: T_MERGE },
+    opened,
+  );
+  expect(merged["state"]).toBe("merged");
+  expect(merged["merged"]).toBe(true);
+  expect(merged["opened_at_ms"]).toBe(Date.parse(T_OPEN));
+  expect(merged["merged_at"]).toBe(Date.parse(T_MERGE));
+});
+
+test("gitlabMrMetadata — a non-transition event after a merge keeps it merged", () => {
+  const opened = gitlabMrMetadata(
+    { ...mrBase, actionName: "opened", eventCreatedAt: T_OPEN },
+    null,
+  );
+  const merged = gitlabMrMetadata(
+    { ...mrBase, actionName: "accepted", eventCreatedAt: T_MERGE },
+    opened,
+  );
+  const approved = gitlabMrMetadata(
+    { ...mrBase, actionName: "approved", eventCreatedAt: "2026-10-04T09:00:00Z" },
+    merged,
+  );
+  expect(approved["state"]).toBe("merged");
+  expect(approved["merged_at"]).toBe(Date.parse(T_MERGE));
+  expect(approved["opened_at_ms"]).toBe(Date.parse(T_OPEN));
+  expect(approved["action"]).toBe("approved"); // raw key still reports the latest event
+});
+
+test("gitlabMrMetadata — a non-transition event with no stored row leaves state unknown (absent)", () => {
+  const m = gitlabMrMetadata({ ...mrBase, actionName: "approved", eventCreatedAt: T_OPEN }, null);
+  expect("state" in m).toBe(false);
+  expect("merged" in m).toBe(false);
+});
+
+test("gitlabMrMetadata — reopened after closed drops nothing it should keep", () => {
+  const closed = gitlabMrMetadata(
+    { ...mrBase, actionName: "closed", eventCreatedAt: T_MERGE },
+    null,
+  );
+  const reopened = gitlabMrMetadata(
+    { ...mrBase, actionName: "reopened", eventCreatedAt: T_MERGE },
+    closed,
+  );
+  expect(reopened["state"]).toBe("open");
+  expect("merged_at" in reopened).toBe(false);
+});
+
+test("gitlabMrMetadata — fetchOne uses the MR resource's own fields", () => {
+  const m = gitlabMrMetadata(
+    {
+      ...mrBase,
+      actionName: "merged",
+      eventCreatedAt: T_MERGE,
+      mr: { state: "merged", createdAt: T_OPEN, mergedAt: T_MERGE },
+    },
+    null,
+  );
+  expect(m["state"]).toBe("merged");
+  expect(m["opened_at_ms"]).toBe(Date.parse(T_OPEN));
+  expect(m["merged_at"]).toBe(Date.parse(T_MERGE));
+  const canonical = Object.keys(m).filter((k) => PR_EMITTED_KEYS.gitlab.has(k as CanonicalPrKey));
+  expect(new Set(canonical)).toEqual(new Set(PR_EMITTED_KEYS.gitlab));
+});
+
+describeWithFetchRestore("events sync — accepted then approved", () => {
+  test("leaves the stored MR merged", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
+    const events = [
+      {
+        target_type: "MergeRequest",
+        target_iid: 5,
+        target_title: "Add cache",
+        action_name: "accepted",
+        created_at: T_MERGE,
+        author_username: "dana",
+        project: { path_with_namespace: "acme/app" },
+      },
+      {
+        target_type: "MergeRequest",
+        target_iid: 5,
+        target_title: "Add cache",
+        action_name: "approved",
+        created_at: "2026-10-04T09:00:00Z",
+        author_username: "sam",
+        project: { path_with_namespace: "acme/app" },
+      },
+    ];
+    globalThis.fetch = (() =>
+      Promise.resolve(makeEventsResponse(events))) as unknown as typeof fetch;
+
+    await syncGitlabEventsPages(
+      ctx,
+      "token",
+      "https://gitlab.com/api/v4",
+      "https://gitlab.com",
+      "2026-09-01T00:00:00Z",
+      1,
+      performance.now(),
+    );
+
+    const row = db
+      .prepare("SELECT metadata FROM item WHERE service = 'gitlab' AND type = 'pr'")
+      .get() as { metadata: string } | undefined;
+    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["state"]).toBe("merged");
+    expect(meta["merged_at"]).toBe(Date.parse(T_MERGE));
+    expect(meta["action"]).toBe("approved");
   });
 });
