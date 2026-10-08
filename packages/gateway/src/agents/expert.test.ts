@@ -1,5 +1,15 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createMemoryIndexDb,
+  EMPTY_NIMBUS_VAULT,
+  syncTestContext,
+} from "../connectors/connector-sync-test-helpers.ts";
+import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
+import { buildGitCommitMetadata } from "../connectors/git-commit-meta.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import {
@@ -594,68 +604,160 @@ describe("runExpert — sub-agent failure path", () => {
   });
 });
 
-describe("runExpert — subBlame data path", () => {
-  test("commit data produces a ranked expert with commit_authored evidence", async () => {
+describe("runExpert — subBlame (filesystem git_commit lane)", () => {
+  function insertCommit(
+    db: Database,
+    opts: { id: string; title: string; sha: string; authorId: string | null; email?: string },
+  ): void {
+    const now = Date.now();
+    const metadata = buildGitCommitMetadata(
+      { repoRoot: "/r", sha: opts.sha },
+      { authorEmail: opts.email },
+    );
+    db.run(
+      "INSERT INTO item (id, service, type, external_id, title, body_preview, modified_at, synced_at, author_id, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        opts.id,
+        "filesystem",
+        "git_commit",
+        opts.id,
+        opts.title,
+        opts.sha,
+        now,
+        now,
+        opts.authorId,
+        JSON.stringify(metadata),
+      ],
+    );
+  }
+
+  test("subBlame credits the resolved author of a matching filesystem commit", async () => {
+    const db = makePopulatedDb();
+    db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:alice", "Alice"]);
+    insertCommit(db, {
+      id: "fs:c1",
+      title: "Fix retry loop",
+      sha: "a".repeat(40),
+      authorId: "person:alice",
+      email: "alice@example.com",
+    });
+    insertCommit(db, {
+      id: "fs:c2",
+      title: "Tidy retry backoff",
+      sha: "b".repeat(40),
+      authorId: "person:alice",
+      email: "alice@example.com",
+    });
+    const brief = await runExpert(
+      { topicOrFile: "retry" },
+      { db, notify: () => {}, sessionId: "s-blame" },
+    );
+    const alice = brief.ranked.find((r) => r.personId === "person:alice");
+    expect(alice).toBeDefined();
+    expect(alice?.evidence.some((e) => e.type === "commit_authored")).toBe(true);
+    expect(alice?.evidence.filter((e) => e.type === "commit_authored")).toHaveLength(2);
+    db.close();
+  });
+
+  test("commits with no resolved author report missing_user_identity", async () => {
+    const db = makePopulatedDb();
+    // A pre-A1 row: no author_id, no author_email in metadata.
+    insertCommit(db, { id: "fs:c1", title: "Fix retry loop", sha: "a".repeat(40), authorId: null });
+    const brief = await runExpert(
+      { topicOrFile: "retry" },
+      { db, notify: () => {}, sessionId: "s-blame-noid" },
+    );
+    const gap = brief.gaps.find(
+      (g) => g.category === "missing_user_identity" && g.detail.includes("commit"),
+    );
+    expect(gap).toBeDefined();
+    expect(gap?.remediation).toContain("nimbus index rebody --service filesystem");
+    db.close();
+  });
+
+  test("no indexed commits reports missing_entity_type naming gitAware", async () => {
+    const db = makePopulatedDb();
+    const brief = await runExpert(
+      { topicOrFile: "retry" },
+      { db, notify: () => {}, sessionId: "s-blame-none" },
+    );
+    const gap = brief.gaps.find(
+      (g) => g.category === "missing_entity_type" && g.remediation?.includes("gitAware") === true,
+    );
+    expect(gap).toBeDefined();
+    db.close();
+  });
+
+  test("a legacy github/commit row is no longer read (no writer produces it)", async () => {
     const db = makePopulatedDb();
     const now = Date.now();
     db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:alice", "Alice"]);
-    // Two commits from Alice matching the search topic (exercises the merge-existing branch)
     db.run(
       "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       ["github:commit:1", "github", "commit", "c1", "auth fix", now, now, "person:alice"],
     );
-    db.run(
-      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        "github:commit:2",
-        "github",
-        "commit",
-        "c2",
-        "auth cleanup",
-        now - 1000,
-        now,
-        "person:alice",
-      ],
+    const brief = await runExpert(
+      { topicOrFile: "auth" },
+      { db, notify: () => {}, sessionId: "s-blame-legacy" },
     );
-
-    const ctx = { db, notify: () => {}, sessionId: "s-blame" };
-    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
-
-    const alice = brief.ranked.find((r) => r.personId === "person:alice");
-    expect(alice).toBeDefined();
-    expect(alice?.evidence.length).toBeGreaterThanOrEqual(1);
-    expect(alice?.evidence.some((e) => e.type === "commit_authored")).toBe(true);
+    expect(brief.ranked.some((r) => r.evidence.some((e) => e.type === "commit_authored"))).toBe(
+      false,
+    );
+    db.close();
   });
+});
 
-  test("no matching commits + github connector registered → no gap for github", async () => {
-    const db = makePopulatedDb();
-    // github connector IS registered but no commits match the topic
-    const ctx = { db, notify: () => {}, sessionId: "s-blame-empty" };
-    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
-    // Should NOT have missing_connector for github (connector is registered)
-    const githubGaps = brief.gaps.filter(
-      (g) => g.category === "missing_connector" && g.detail.includes("github"),
-    );
-    expect(githubGaps).toHaveLength(0);
-  });
+describe("runExpert — subBlame over a real git repo synced by the filesystem connector", () => {
+  test("the person resolved from user.email is returned", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-expert-git-"));
+    const db = createMemoryIndexDb();
+    try {
+      const git = async (...args: string[]): Promise<number> => {
+        const proc = Bun.spawn(["git", "-C", dir, ...args], {
+          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } as Record<string, string>,
+          stdout: "pipe",
+          stderr: "pipe",
+          windowsHide: true,
+        });
+        return await proc.exited;
+      };
+      await git("init", "-q", "-b", "main");
+      await git("config", "user.email", "grace@example.com");
+      await git("config", "user.name", "Grace");
+      writeFileSync(join(dir, "README.md"), "hello\n");
+      await git("add", "README.md");
+      await git("commit", "-q", "-m", "stabilise zebra scheduler");
 
-  test("no matching commits + github connector NOT registered → missing_connector gap", async () => {
-    const db = new Database(":memory:");
-    LocalIndex.ensureSchema(db);
-    const now = Date.now();
-    db.run(
-      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      ["seed:1", "jira", "issue", "seed:1", "auth seed", now, now],
-    );
-    // Only slack registered, NOT github
-    db.run("INSERT INTO sync_state (connector_id) VALUES (?)", ["slack"]);
+      const sync = createFilesystemV2Syncable({
+        roots: [
+          {
+            path: dir,
+            gitAware: true,
+            codeIndex: false,
+            dependencyGraph: false,
+            mediaIndex: false,
+            exclude: ["node_modules", ".git"],
+          },
+        ],
+      });
+      await sync.sync(syncTestContext(db, EMPTY_NIMBUS_VAULT, "filesystem"), null);
+      const authorId = (
+        db
+          .query("SELECT author_id FROM item WHERE service = 'filesystem' AND type = 'git_commit'")
+          .get() as { author_id: string | null } | null
+      )?.author_id;
+      expect(authorId).not.toBeNull();
 
-    const ctx = { db, notify: () => {}, sessionId: "s-blame-nogithub" };
-    const brief = await runExpert({ topicOrFile: "auth" }, ctx);
-    const githubGaps = brief.gaps.filter(
-      (g) => g.category === "missing_connector" && g.detail.includes("github"),
-    );
-    expect(githubGaps.length).toBeGreaterThan(0);
+      const brief = await runExpert(
+        { topicOrFile: "zebra" },
+        { db, notify: () => {}, sessionId: "s-real-git" },
+      );
+      expect(brief.ranked[0]?.personId).toBe(authorId as string);
+      expect(brief.ranked[0]?.evidence.some((e) => e.type === "commit_authored")).toBe(true);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -756,7 +858,11 @@ describe("runExpert — subPrReviewed / subIncidentResolved suppressed gaps", ()
     const ctx = { db, notify: () => {}, sessionId: "s-reviewed-inc" };
     const brief = await runExpert({ topicOrFile: "auth" }, ctx);
 
-    const cats = brief.gaps.map((g) => g.category);
+    // The commit-authorship lane legitimately reports no indexed git commits here; this test is
+    // about the reviewed/resolves lanes, so set that one aside.
+    const cats = brief.gaps
+      .filter((g) => g.remediation?.includes("gitAware") !== true)
+      .map((g) => g.category);
     expect(cats).not.toContain("missing_relation_emit");
     expect(cats).not.toContain("missing_entity_type");
   });
