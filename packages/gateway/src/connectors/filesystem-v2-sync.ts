@@ -10,6 +10,7 @@ import type { MediaModality } from "../multimodal/media-types.ts";
 import { type BlameRow, parseBlamePorcelain } from "../security/blame-store.ts";
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { buildGitCommitMetadata } from "./git-commit-meta.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 
 const SERVICE_ID = "filesystem";
@@ -91,7 +92,9 @@ export async function gitLogRecords(
   root: string,
   maxCount: number,
   spawn: SpawnFn = Bun.spawn,
-): Promise<{ sha: string; ct: number; subject: string }[]> {
+): Promise<
+  { sha: string; ct: number; subject: string; authorEmail: string; authorName: string }[]
+> {
   const args = [
     "git",
     "-C",
@@ -99,7 +102,7 @@ export async function gitLogRecords(
     "log",
     `--max-count=${String(maxCount)}`,
     "-z",
-    "--pretty=format:%H%x00%ct%x00%s",
+    "--pretty=format:%H%x00%ct%x00%s%x00%ae%x00%an",
   ];
   const proc = spawn(args, {
     env: extensionProcessEnv({}),
@@ -114,17 +117,36 @@ export async function gitLogRecords(
   if (code !== 0) {
     return [];
   }
-  const chunks = out.split("\0").filter((s) => s !== "");
-  const outList: { sha: string; ct: number; subject: string }[] = [];
-  for (let i = 0; i + 2 < chunks.length; i += 3) {
+  // Keep empty fields in place (an empty author email must not shift later fields); only the
+  // trailing empty chunk left by a final terminator is dropped.
+  const chunks = out.split("\0");
+  if (chunks.at(-1) === "") {
+    chunks.pop();
+  }
+  const outList: {
+    sha: string;
+    ct: number;
+    subject: string;
+    authorEmail: string;
+    authorName: string;
+  }[] = [];
+  for (let i = 0; i + 4 < chunks.length; i += 5) {
     const sha = chunks[i] ?? "";
     const ctRaw = chunks[i + 1] ?? "0";
     const subject = chunks[i + 2] ?? "";
+    const authorEmail = chunks[i + 3] ?? "";
+    const authorName = chunks[i + 4] ?? "";
     if (sha.length !== 40) {
       continue;
     }
     const ct = Number.parseInt(ctRaw, 10);
-    outList.push({ sha, ct: Number.isFinite(ct) ? ct * 1000 : Date.now(), subject });
+    outList.push({
+      sha,
+      ct: Number.isFinite(ct) ? ct * 1000 : Date.now(),
+      subject,
+      authorEmail,
+      authorName,
+    });
   }
   return outList;
 }
@@ -238,6 +260,13 @@ async function syncFilesystemGitCommits(
   const bytes = commits.length * 80;
   for (const c of commits) {
     const externalId = `${c.sha}_${rk}`;
+    const authorId =
+      c.authorEmail === ""
+        ? null
+        : ctx.resolvePerson({
+            canonicalEmail: c.authorEmail,
+            ...(c.authorName === "" ? {} : { displayName: c.authorName }),
+          });
     ctx.upsertItem({
       service: SERVICE_ID,
       type: "git_commit",
@@ -247,8 +276,11 @@ async function syncFilesystemGitCommits(
       url: null,
       canonicalUrl: null,
       modifiedAt: c.ct,
-      authorId: null,
-      metadata: { repoRoot: root, sha: c.sha, subject: c.subject },
+      authorId,
+      metadata: buildGitCommitMetadata(
+        { repoRoot: root, sha: c.sha, subject: c.subject },
+        { authorEmail: c.authorEmail },
+      ),
       pinned: false,
       syncedAt: now,
     });
