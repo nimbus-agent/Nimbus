@@ -109,6 +109,45 @@ function storedPrFields(stored: Record<string, unknown> | null): PrFields {
   };
 }
 
+type MrAuthor = { readonly login: string; readonly name?: string | undefined };
+
+function storedAuthor(stored: Record<string, unknown> | null): MrAuthor | undefined {
+  if (stored === null) {
+    return undefined;
+  }
+  const login = stored["author_login"];
+  if (typeof login !== "string" || login === "") {
+    return undefined;
+  }
+  const name = stored["author_name"];
+  return { login, name: typeof name === "string" && name !== "" ? name : undefined };
+}
+
+function withAuthor(
+  out: Record<string, unknown>,
+  author: MrAuthor | undefined,
+): Record<string, unknown> {
+  if (author === undefined) {
+    return out;
+  }
+  return {
+    ...out,
+    author_login: author.login,
+    ...(author.name === undefined ? {} : { author_name: author.name }),
+  };
+}
+
+/**
+ * A row whose state is still unknown after carry-forward has recovered nothing; stamping it with
+ * the contract version would tell `nimbus index rebody` it is done.
+ */
+function withoutVersionIfStateless(out: Record<string, unknown>): Record<string, unknown> {
+  if ("state" in out) {
+    return out;
+  }
+  return Object.fromEntries(Object.entries(out).filter(([k]) => k !== "meta_v"));
+}
+
 /**
  * The full `pr` metadata for a GitLab MR row. `upsertIndexedItem` REPLACES metadata wholesale, so
  * every canonical key this event does not itself establish is carried from the stored row
@@ -123,32 +162,40 @@ export function gitlabMrMetadata(
     readonly actionName: string;
     readonly eventCreatedAt: string | undefined;
     readonly mr?: GitlabEventUpsertFields["mr"];
+    readonly author?: MrAuthor;
   },
   stored: Record<string, unknown> | null,
 ): Record<string, unknown> {
   const raw = { iid: f.iid, project: f.pathWithNamespace, action: f.actionName };
   const prior = storedPrFields(stored);
+  const author = f.author ?? storedAuthor(stored);
+  const finish = (out: Record<string, unknown>): Record<string, unknown> =>
+    withoutVersionIfStateless(withAuthor(out, author));
   if (f.mr !== undefined) {
-    return buildPrMetadata(raw, {
-      state: normalizeGitlabMrState(f.mr.state) ?? prior.state,
-      stateRaw: f.mr.state ?? prior.stateRaw,
-      openedAtMs: canonicalEpochMs(f.mr.createdAt) ?? prior.openedAtMs,
-      mergedAtMs: canonicalEpochMs(f.mr.mergedAt) ?? prior.mergedAtMs,
-      repo: f.pathWithNamespace,
-    });
+    return finish(
+      buildPrMetadata(raw, {
+        state: normalizeGitlabMrState(f.mr.state) ?? prior.state,
+        stateRaw: f.mr.state ?? prior.stateRaw,
+        openedAtMs: canonicalEpochMs(f.mr.createdAt) ?? prior.openedAtMs,
+        mergedAtMs: canonicalEpochMs(f.mr.mergedAt) ?? prior.mergedAtMs,
+        repo: f.pathWithNamespace,
+      }),
+    );
   }
   const transition = gitlabEventTransition(f.actionName);
   if (transition === null) {
-    return buildPrMetadata(raw, { ...prior, repo: f.pathWithNamespace });
+    return finish(buildPrMetadata(raw, { ...prior, repo: f.pathWithNamespace }));
   }
   const eventMs = canonicalEpochMs(f.eventCreatedAt);
-  return buildPrMetadata(raw, {
-    state: transition,
-    stateRaw: f.actionName,
-    openedAtMs: f.actionName === "opened" ? (eventMs ?? prior.openedAtMs) : prior.openedAtMs,
-    mergedAtMs: transition === "merged" ? (eventMs ?? prior.mergedAtMs) : undefined,
-    repo: f.pathWithNamespace,
-  });
+  return finish(
+    buildPrMetadata(raw, {
+      state: transition,
+      stateRaw: f.actionName,
+      openedAtMs: f.actionName === "opened" ? (eventMs ?? prior.openedAtMs) : prior.openedAtMs,
+      mergedAtMs: transition === "merged" ? (eventMs ?? prior.mergedAtMs) : undefined,
+      repo: f.pathWithNamespace,
+    }),
+  );
 }
 
 function readStoredMetadata(ctx: SyncContext, itemId: string): Record<string, unknown> | null {
@@ -182,6 +229,16 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
   const encPath = encodeURIComponent(pathWithNamespace);
   const urlPath = `${shape.urlSegment}/${String(iid)}`;
   const modified = createdAt === undefined ? Number.NaN : Date.parse(createdAt);
+  // The MR author is known only when THIS write describes the MR itself: the `opened` event
+  // (its actor opened the MR) or `fetchOne` (the MR resource own `author`). Every other event actor
+  // is whoever approved, merged or commented - never credit them as the author.
+  const knownAuthor =
+    shape.type === "pr" &&
+    (f.mr !== undefined || actionName === "opened") &&
+    authorUsername !== undefined &&
+    authorUsername !== ""
+      ? { login: authorUsername, name: authorName }
+      : undefined;
   const meta: Record<string, unknown> =
     shape.type === "pr"
       ? gitlabMrMetadata(
@@ -191,15 +248,22 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
             actionName,
             eventCreatedAt: createdAt,
             ...(f.mr === undefined ? {} : { mr: f.mr }),
+            ...(knownAuthor === undefined ? {} : { author: knownAuthor }),
           },
           readStoredMetadata(ctx, itemPrimaryKey(SERVICE_ID, externalId)),
         )
       : { iid, project: pathWithNamespace, action: actionName };
+  const metaLogin = meta["author_login"];
+  const metaName = meta["author_name"];
+  const authorLogin =
+    shape.type === "pr" ? (typeof metaLogin === "string" ? metaLogin : undefined) : authorUsername;
+  const authorDisplay =
+    shape.type === "pr" ? (typeof metaName === "string" ? metaName : undefined) : authorName;
   const authorId =
-    authorUsername !== undefined && authorUsername !== ""
+    authorLogin !== undefined && authorLogin !== ""
       ? ctx.resolvePerson({
-          gitlabLogin: authorUsername,
-          displayName: authorName ?? authorUsername,
+          gitlabLogin: authorLogin,
+          displayName: authorDisplay ?? authorLogin,
         })
       : null;
   const rawUrl = `${webOrigin}/${pathWithNamespace}/-/${urlPath}`;
