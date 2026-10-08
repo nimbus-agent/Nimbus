@@ -290,9 +290,9 @@ export function buildStandupBrief(args: BuildStandupArgs): StandupBrief {
     gaps.push({
       category: "missing_connector",
       detail:
-        `${String(nonGithub)} merged pull request(s) of yours on a non-GitHub forge are not ` +
-        "listed under merged: `merged_at` is written by the GitHub connector alone, so GitLab " +
-        "and Bitbucket merges carry no merge timestamp to window on. That count is itself an " +
+        `${String(nonGithub)} merged pull request(s) of yours on a non-GitHub forge carry no ` +
+        "merge time and so are not listed under merged: Bitbucket never records a merge time, " +
+        "and a GitLab merge request merged before the synced window has none. That count is itself an " +
         "estimate for the same reason — with no merge timestamp it windows on when the index " +
         "last touched the row, so it omits a merge whose row has not been re-synced and " +
         "includes an older merge that was touched during the window.",

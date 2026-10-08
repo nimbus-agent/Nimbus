@@ -6,10 +6,14 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import { nonGithubMergedPrCount as changelogNonGithubMerged } from "../agents/changelog-queries.ts";
+import {
+  nonGithubMergedPrCount as changelogNonGithubMerged,
+  selectMergedPrs as changelogSelectMergedPrs,
+} from "../agents/changelog-queries.ts";
 import {
   selectActivePrs,
   nonGithubMergedPrCount as standupNonGithubMerged,
+  selectMergedPrs as standupSelectMergedPrs,
 } from "../agents/standup-queries.ts";
 import { gitlabMrMetadata } from "./_lib/gitlab/events.ts";
 import { bitbucketPrMetadata } from "./bitbucket-sync.ts";
@@ -56,23 +60,41 @@ function seeded(): Database {
 }
 
 describe("§3.1.1 collisions — reader results that change in A1", () => {
-  test("changelog counts non-GitHub merges it used to miss (was 0)", () => {
+  // The GitLab row carries merged_at, so it is LISTED; only the Bitbucket row (no merge time) is
+  // counted as unlisted — a listed row is never counted twice.
+  test("changelog lists the GitLab merge and counts only the Bitbucket one (was 0 and 0)", () => {
     const db = seeded();
-    expect(
-      changelogNonGithubMerged(db, { fromMs: NOW - 86_400_000, toMs: NOW, scope: { kind: "all" } }),
-    ).toBe(2);
+    const w = { fromMs: NOW - 86_400_000, toMs: NOW, scope: { kind: "all" } } as const;
+    expect(changelogSelectMergedPrs(db, w).map((r) => r.id)).toEqual(["gitlab:acme/app!2"]);
+    expect(changelogNonGithubMerged(db, w)).toBe(1);
     db.close();
   });
 
-  test("standup counts my non-GitHub merges (was 0)", () => {
+  test("standup lists my GitLab merge and counts only my Bitbucket one (was 0 and 0)", () => {
     const db = seeded();
-    expect(standupNonGithubMerged(db, { fromMs: NOW - 86_400_000, toMs: NOW }, ME)).toBe(2);
+    const w = { fromMs: NOW - 86_400_000, toMs: NOW };
+    expect(standupSelectMergedPrs(db, w, ME).map((r) => r.id)).toEqual(["gitlab:acme/app!2"]);
+    expect(standupNonGithubMerged(db, w, ME)).toBe(1);
     db.close();
   });
 
   test("standup no longer lists merged Bitbucket/GitLab PRs as active", () => {
     const db = seeded();
-    expect(selectActivePrs(db, { fromMs: NOW - 86_400_000, toMs: NOW }, ME)).toEqual([]);
+    // Positive control: an OPEN PR by the same author in the same window IS listed, so the
+    // absence of the merged rows is not an artefact of the fixture.
+    insertPr(
+      db,
+      "bitbucket:acme/app#3",
+      "bitbucket",
+      bitbucketPrMetadata(
+        "acme/app",
+        { id: 3, state: "OPEN", created_on: "2026-10-01T00:00:00Z" },
+        "Me",
+      ),
+    );
+    expect(
+      selectActivePrs(db, { fromMs: NOW - 86_400_000, toMs: NOW }, ME).map((r) => r.id),
+    ).toEqual(["bitbucket:acme/app#3"]);
     db.close();
   });
 });
