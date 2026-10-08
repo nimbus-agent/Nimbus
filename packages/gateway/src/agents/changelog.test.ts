@@ -1,6 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
+import { bitbucketPrMetadata } from "../connectors/bitbucket-sync.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import { githubActionsRunMetadata } from "../connectors/github-actions-sync.ts";
+import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
 import { DEFAULT_DEPLOY_WORKFLOW_PATTERN, type ServiceConfig } from "../metrics/dora-config.ts";
 import { buildChangelogBrief, CHANGELOG_CATEGORY_CAP, emitChangelogBrief } from "./changelog.ts";
 import type { ChangelogScope } from "./changelog-queries.ts";
@@ -47,6 +51,37 @@ function build(opts: { db?: Database; scope?: ChangelogScope } = {}) {
   });
 }
 
+/** A merged GitHub PR row's metadata, built by the real GitHub writer mapper. */
+function githubMergedMeta(repo: string, mergedAtMs: number): Record<string, unknown> {
+  return extractPrMetadataForIndex(
+    repo,
+    { number: 1, state: "closed", merged: true, merged_at: new Date(mergedAtMs).toISOString() },
+    NOW,
+  );
+}
+
+/** A merged GitLab MR row's metadata: an `accepted` event carries the merge time. */
+function gitlabMergedMeta(project: string, mergedAtMs: number): Record<string, unknown> {
+  return gitlabMrMetadata(
+    {
+      pathWithNamespace: project,
+      iid: 7,
+      actionName: "accepted",
+      eventCreatedAt: new Date(mergedAtMs).toISOString(),
+    },
+    null,
+  );
+}
+
+/** A merged Bitbucket PR row's metadata: the API records no merge time, so none is written. */
+function bitbucketMergedMeta(repo: string): Record<string, unknown> {
+  return bitbucketPrMetadata(
+    repo,
+    { id: 3, state: "MERGED", created_on: new Date(NOW - 9 * DAY).toISOString() },
+    "Dana",
+  );
+}
+
 function insertPr(
   db: Database,
   row: { id: string; service: string; title: string; meta: unknown },
@@ -73,7 +108,13 @@ function insertCiRun(db: Database, row: { id: string; title: string; repo: strin
       row.id,
       row.title,
       Date.now() - DAY,
-      JSON.stringify({ conclusion: "success", repo: row.repo }),
+      JSON.stringify(
+        githubActionsRunMetadata(
+          row.repo,
+          { id: 1, name: row.title, status: "completed", conclusion: "success" },
+          Date.now(),
+        ),
+      ),
       Date.now(),
     ],
   );
@@ -118,7 +159,7 @@ describe("buildChangelogBrief", () => {
       id: "github:1",
       service: "github",
       title: "Fix auth",
-      meta: { merged_at: NOW - 2 * DAY, repo: "org/payments" },
+      meta: githubMergedMeta("org/payments", NOW - 2 * DAY),
     });
     const brief = build({ db });
     expect(brief.counts.mergedPrs).toBe(1);
@@ -127,18 +168,60 @@ describe("buildChangelogBrief", () => {
     expect(brief.indexTimedCount).toBe(0);
   });
 
-  test("a merged GitLab PR is counted as invisible and disclosed as a gap", () => {
+  test("a merged GitLab MR carrying merged_at is listed, not counted as invisible", () => {
+    // A1 behaviour change: this fixture used to be a hand-written `{ state: "merged" }` row, which
+    // no writer produces and which sat in the unlisted non-GitHub count. The real writer stamps
+    // `merged_at` from the `accepted` event, so the MR is LISTED and nothing is disclosed.
     const db = emptyDb();
     insertPr(db, {
       id: "gitlab:7",
       service: "gitlab",
+      title: "Listed merge",
+      meta: gitlabMergedMeta("group/proj", NOW - 2 * DAY),
+    });
+    const brief = build({ db });
+    expect(brief.nonGithubMergedPrs).toBe(0);
+    expect(brief.counts.mergedPrs).toBe(1);
+    expect(brief.mergedPrs[0]?.title).toBe("Listed merge");
+    expect(brief.gaps.some((g) => g.detail.includes("non-GitHub forge"))).toBe(false);
+  });
+
+  test("a merged Bitbucket PR is counted as invisible and disclosed as a gap", () => {
+    // Bitbucket is the writer that really produces a merged row with no `merged_at`.
+    const db = emptyDb();
+    insertPr(db, {
+      id: "bitbucket:7",
+      service: "bitbucket",
       title: "Invisible merge",
-      meta: { state: "merged" },
+      meta: bitbucketMergedMeta("ws/repo"),
     });
     const brief = build({ db });
     expect(brief.nonGithubMergedPrs).toBe(1);
     expect(brief.counts.mergedPrs).toBe(0);
     expect(brief.gaps.some((g) => g.detail.includes("non-GitHub forge"))).toBe(true);
+  });
+
+  test("forge brief: lists the GitLab MR, reports the Bitbucket PR in the gaps", () => {
+    const db = emptyDb();
+    insertPr(db, {
+      id: "gitlab:8",
+      service: "gitlab",
+      title: "GitLab MR",
+      meta: gitlabMergedMeta("group/proj", NOW - 2 * DAY),
+    });
+    insertPr(db, {
+      id: "bitbucket:8",
+      service: "bitbucket",
+      title: "Bitbucket PR",
+      meta: bitbucketMergedMeta("ws/repo"),
+    });
+    const brief = build({ db });
+    expect(brief.mergedPrs.map((r) => r.title)).toEqual(["GitLab MR"]);
+    expect(brief.counts.mergedPrs).toBe(1);
+    expect(brief.nonGithubMergedPrs).toBe(1);
+    const gap = brief.gaps.find((g) => g.detail.includes("non-GitHub forge"));
+    expect(gap).toBeDefined();
+    expect(gap?.remediation).toContain("incomplete_merge_data");
   });
 
   test("no non-GitHub gap when every merged PR is visible", () => {
@@ -154,7 +237,7 @@ describe("buildChangelogBrief", () => {
         id: `github:${String(i)}`,
         service: "github",
         title: `PR ${String(i)}`,
-        meta: { merged_at: NOW - DAY, repo: "org/payments" },
+        meta: githubMergedMeta("org/payments", NOW - DAY),
       });
     }
     const brief = build({ db });
@@ -259,10 +342,10 @@ describe("buildChangelogBrief", () => {
     // ones would read as the same kind of number.
     const db = emptyDb();
     insertPr(db, {
-      id: "gitlab:1",
-      service: "gitlab",
-      title: "Merged MR",
-      meta: { state: "merged" },
+      id: "bitbucket:1",
+      service: "bitbucket",
+      title: "Merged PR",
+      meta: bitbucketMergedMeta("ws/repo"),
     });
 
     const brief = build({ db });
