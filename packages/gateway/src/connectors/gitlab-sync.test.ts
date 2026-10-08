@@ -291,6 +291,38 @@ describeWithFetchRestore("gitlab-sync fetchOne", () => {
     expect(row).not.toBeNull();
     expect(row?.resolve_key).toBe(callerUrl);
   });
+
+  test("a merged MR takes merged_at and opened_at_ms from the MR resource, not updated_at", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithPat(db, "t");
+    const callerUrl = "https://gitlab.com/g/p/-/merge_requests/7";
+    const T1 = "2026-07-30T00:00:00Z"; // created_at
+    const T2 = "2026-08-02T12:00:00Z"; // merged_at
+    const T3 = "2026-08-05T08:30:00Z"; // updated_at, deliberately != merged_at
+    globalThis.fetch = ((): Promise<Response> =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify(
+            mrPayload({ state: "merged", created_at: T1, merged_at: T2, updated_at: T3 }),
+          ),
+          { status: 200 },
+        ),
+      )) as unknown as typeof fetch;
+
+    const syncable = createGitlabSyncable({ ensureGitlabMcpRunning: async () => {} });
+    expect(await syncable.fetchOne?.(ctx, callerUrl)).toEqual({
+      status: "indexed",
+      itemId: "gitlab:g/p!7",
+    });
+    const row = db.query("SELECT metadata FROM item WHERE id = 'gitlab:g/p!7'").get() as {
+      metadata: string;
+    } | null;
+    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["state"]).toBe("merged");
+    expect(meta["merged_at"]).toBe(Date.parse(T2));
+    expect(meta["opened_at_ms"]).toBe(Date.parse(T1));
+    db.close();
+  });
 });
 
 test("mrDiffsUrl requests the diffs endpoint, a page number, and the page-size parameter", () => {
