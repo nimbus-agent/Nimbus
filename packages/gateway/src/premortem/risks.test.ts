@@ -25,7 +25,7 @@ const BASE = {
   nowMs: 30 * DAY,
   reviewDragMedianMs: null,
   repoReviewMedianMs: null,
-  cohortHasPrsMissingTimingData: false,
+  forgesMissingTiming: [] as readonly string[],
   incidentCoupling: { coupled: 0, measured: 1 },
   cohortIsMixedTracker: false,
 };
@@ -190,16 +190,25 @@ describe("computeRisks", () => {
     expect(ic?.summary.toLowerCase()).not.toContain("could not be checked");
   });
 
-  test("review drag names the real cause when the cohort has PRs but the index is missing timing data", () => {
+  test("review drag names each forge whose PRs lack timing, with the reason", () => {
     const risks = computeRisks({
       ...BASE,
       cohort: [candidate()],
-      cohortHasPrsMissingTimingData: true,
+      repoReviewMedianMs: 3_600_000,
+      forgesMissingTiming: ["bitbucket", "gitlab"],
     });
     const rd = risks.find((r) => r.kind === "review_drag");
     expect(rd?.value).toBeNull();
     expect(rd?.summary).not.toContain("No pull requests were found");
-    expect(rd?.summary.toLowerCase()).toContain("does not record both an opened and a merged");
+    expect(rd?.summary).toContain("Bitbucket never records a merge time");
+    expect(rd?.summary).toContain("GitLab");
+    expect(rd?.summary).not.toContain("GitHub");
+  });
+
+  test("a GitHub-only gap names re-sync as the recovery", () => {
+    const risks = computeRisks({ ...BASE, cohort: [candidate()], forgesMissingTiming: ["github"] });
+    const rd = risks.find((r) => r.kind === "review_drag");
+    expect(rd?.summary).toContain("nimbus index rebody");
   });
 
   // Important 1 (round 2 review): the message must not assert WHICH single
@@ -210,7 +219,7 @@ describe("computeRisks", () => {
     const risks = computeRisks({
       ...BASE,
       cohort: [candidate()],
-      cohortHasPrsMissingTimingData: true,
+      forgesMissingTiming: ["github"],
     });
     const rd = risks.find((r) => r.kind === "review_drag");
     expect(rd?.summary).not.toMatch(/no connector indexes a pull request's opened timestamp/i);
@@ -221,7 +230,7 @@ describe("computeRisks", () => {
     const risks = computeRisks({
       ...BASE,
       cohort: [candidate()],
-      cohortHasPrsMissingTimingData: false,
+      forgesMissingTiming: [],
     });
     const rd = risks.find((r) => r.kind === "review_drag");
     expect(rd?.value).toBeNull();
