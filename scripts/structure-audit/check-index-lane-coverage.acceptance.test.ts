@@ -12,10 +12,9 @@
  * (`docs/structure-audit/index-lane-census.json`):
  *   - `expert.ts:371` reads `item.type = 'commit'` — no writer in the corpus ever writes that
  *     type (a dead lane: `graph_entity` writes `commit`, `item` never does).
- *   - `preflight.ts:166` reads `item.metadata.workflow_name` scoped to `ci_run` — no `ci_run`
- *     writer emits it at all.
- *   - `preflight.ts:168` and `:175` read `item.metadata.branch` scoped to `ci_run` — of the
- *     `ci_run` writers, only `circleci` emits it (a PARTIAL match, not total absence).
+ *   - `preflight.ts` read `item.metadata.workflow_name` and `branch` scoped to `ci_run` — no writer
+ *     emitted `workflow_name` and only `circleci` emitted `branch`. Fixed by PR A1's writer contract;
+ *     the census stays blind to builder-made keys until PR A3 (see the two preflight tests below).
  *   - `premortem.ts:199`/`:205` read `item.metadata.opened_at_ms` on `pr`-scoped rows — no `pr`
  *     writer emits it (the key exists on other types, e.g. `dora.ts`'s matched read, but never on
  *     `pr` — this is the per-type-scoping guard, not a global-key check).
@@ -52,23 +51,31 @@ describe("lane census over the real tree", () => {
     expect(hits.some((h) => h.line === 371 && h.matchState === "unmatched")).toBe(true);
   });
 
-  test("preflight's workflow_name read is unmatched (total absence)", () => {
+  // PR A1 (index lane contract) fixed the preflight bug these two tests were written to catch:
+  // every ci_run writer except Jenkins now emits canonical `workflow_name`/`branch`, but through
+  // the `buildCiRunMetadata` builder, which this census cannot see yet. So both reads are still
+  // flagged — now as total absence, because the CircleCI `branch` write moved into the builder too.
+  // That is census blindness, not a dead lane. PR A3 teaches the census the contract tables; it MUST
+  // then flip these to matched (`workflow_name`: partial, no CircleCI/GitLab; `branch`: partial,
+  // no Jenkins). The read sites are located by their SQL text, not by line number, because the
+  // query was rewritten in A1 (failure filter moved out of the ranking CTE, repo scoping added).
+  const preflightSrc =
+    files.find((f) => f.relPath.endsWith("preflight/preflight.ts"))?.contents ?? "";
+  const lineOf = (needle: string): number =>
+    preflightSrc.split(/\r?\n/).findIndex((l) => l.includes(needle)) + 1;
+
+  test("preflight's workflow_name read is still flagged until the census learns the contract (A3)", () => {
+    const line = lineOf("'$.workflow_name'");
+    expect(line).toBeGreaterThan(0);
     const hits = unmatchedAt("workflow_name", "preflight/preflight.ts");
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits.some((h) => h.line === 166 && h.matchState === "unmatched")).toBe(true);
+    expect(hits.some((h) => h.line === line && h.matchState === "unmatched")).toBe(true);
   });
 
-  test("preflight's branch read is a PARTIAL match — only circleci emits it", () => {
+  test("preflight's branch filter is still flagged until the census learns the contract (A3)", () => {
+    const line = lineOf("'$.branch') = ?");
+    expect(line).toBeGreaterThan(0);
     const hits = unmatchedAt("branch", "preflight/preflight.ts");
-    const lines = new Set(hits.map((h) => h.line));
-    expect(lines.has(168)).toBe(true);
-    expect(lines.has(175)).toBe(true);
-    for (const h of hits) {
-      if (h.line !== 168 && h.line !== 175) continue;
-      expect(h.matchState).toBe("partial");
-      expect(h.partialCoverage).toBeDefined();
-      expect(h.partialCoverage).toContain("circleci");
-    }
+    expect(hits.some((h) => h.line === line && h.matchState === "unmatched")).toBe(true);
   });
 
   test("premortem's opened_at_ms read is unmatched ONLY on pr-scoped rows, not dora's", () => {
