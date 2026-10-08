@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
-import { CI_RUN_META_VERSION } from "../connectors/ci-run-meta.ts";
 import { GIT_COMMIT_META_VERSION } from "../connectors/git-commit-meta.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../connectors/pagerduty-attribution.ts";
 import { PR_META_VERSION } from "../connectors/pr-meta.ts";
@@ -151,10 +150,11 @@ export const REBODY_META_TARGETS: readonly RebodyMetaTarget[] = [
   // fetched, so unlike Sentry this is not recoverable from stored rows —
   // it needs a re-fetch.
   { service: "pagerduty", requiredMetaVersion: PAGERDUTY_INCIDENT_META_VERSION },
-  { service: "github_actions", type: "ci_run", requiredMetaVersion: CI_RUN_META_VERSION },
-  { service: "circleci", type: "ci_run", requiredMetaVersion: CI_RUN_META_VERSION },
-  { service: "gitlab", type: "ci_run", requiredMetaVersion: CI_RUN_META_VERSION },
-  { service: "jenkins", type: "ci_run", requiredMetaVersion: CI_RUN_META_VERSION },
+  // `ci_run` is deliberately NOT listed. The CI syncs fetch only the most recent runs (GitHub
+  // Actions `per_page=30` with no paging, Jenkins `{0,25}`), so rebody can never bring an older
+  // `ci_run` row to the current `meta_v`: listing it would keep `pendingMeta` non-zero forever and
+  // make every no-argument `nimbus index rebody` re-run outbound resyncs for no gain. Old CI rows
+  // age out of the DORA/preflight windows on their own.
   { service: "github", type: "pr", requiredMetaVersion: PR_META_VERSION },
   { service: "bitbucket", type: "pr", requiredMetaVersion: PR_META_VERSION },
   { service: "gitlab", type: "pr", requiredMetaVersion: PR_META_VERSION },

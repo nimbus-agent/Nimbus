@@ -1,7 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import pino from "pino";
-import { CI_RUN_META_VERSION } from "../connectors/ci-run-meta.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import { GIT_COMMIT_META_VERSION } from "../connectors/git-commit-meta.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../connectors/pagerduty-attribution.ts";
@@ -774,15 +773,13 @@ describe("REBODY_META_TARGETS", () => {
       requiredMetaVersion: PR_META_VERSION,
     });
     expect(REBODY_META_TARGETS).toContainEqual({
-      service: "github_actions",
-      type: "ci_run",
-      requiredMetaVersion: CI_RUN_META_VERSION,
-    });
-    expect(REBODY_META_TARGETS).toContainEqual({
       service: "filesystem",
       type: "git_commit",
       requiredMetaVersion: GIT_COMMIT_META_VERSION,
     });
+    // ci_run is never a target: the CI syncs fetch only recent runs, so older rows could never
+    // reach the current meta_v and would keep pendingMeta non-zero forever (ruling R10).
+    expect(REBODY_META_TARGETS.filter((t) => t.type === "ci_run")).toEqual([]);
   });
 
   test("a github issue below version is NOT pending; a github pr below version is", () => {
