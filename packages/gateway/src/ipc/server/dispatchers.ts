@@ -8,7 +8,7 @@ import {
   loadNimbusServiceConfigsFromConfigDir,
   resolveNimbusTomlForProfile,
 } from "../../config/nimbus-toml.ts";
-import { createConnectorDispatcher } from "../../connectors/registry.ts";
+import { createConnectorDispatcher, meshDispatcherClient } from "../../connectors/registry.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
 import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
@@ -1953,10 +1953,7 @@ export async function tryDispatchConnectorRpc(
         ? new ToolExecutor(
             bindConsentChannel(ctx.consentImpl, clientId),
             ctx.options.localIndex,
-            createConnectorDispatcher({
-              listTools: () => mesh.listToolsForDispatcher(),
-              getToolsEpoch: () => mesh.getToolsEpoch(),
-            }),
+            createConnectorDispatcher(meshDispatcherClient(mesh)),
             undefined,
             makeEgressSink(ctx.options.localIndex.getDatabase()),
             ctx.options.policyHitl ?? NO_POLICY_OVERLAY,

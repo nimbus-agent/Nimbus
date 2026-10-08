@@ -92,7 +92,8 @@ export class LazyConnectorMesh {
       filesystemSpawnGate?: Promise<void>;
     },
   ) {
-    // Only stored here; `collectBuiltInToolMaps` awaits it (undefined means no gate).
+    // Only stored here; `collectBuiltInToolMaps` and `listUserMcpTools` await it (undefined means
+    // no gate).
     this.filesystemSpawnGate = options?.filesystemSpawnGate;
     this.paths = paths;
     this.removeSandboxDir =
@@ -317,8 +318,35 @@ export class LazyConnectorMesh {
     if (!registered) {
       return undefined;
     }
+    // The same boot-revoke gate every merged listing waits on (`collectBuiltInToolMaps`): a user
+    // MCP's first listing spawns it through the Windows helper, whose grants rewrite DACLs under
+    // the directory the revoke is rewriting. The per-server dispatch path no longer goes through the
+    // merged listing, so it waits here instead.
+    await this.filesystemSpawnGate;
     await this.ensureUserMcpRunning(serviceId);
     return listLazyMeshClientTools(this.getLazyClient(userMcpMeshKey(serviceId)));
+  }
+
+  /**
+   * {@link listUserMcpTools} for the connector dispatcher: the same ONE-slot listing, with each tool
+   * wrapped in that slot's drain refcount exactly as {@link listToolsForDispatcher} wraps it, so a
+   * slot stop still waits for an in-flight user-MCP call. Running a user-MCP action therefore
+   * spawns only its own server, never every connector the merged listing would start.
+   */
+  async listUserMcpToolsForDispatcher(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+    const tools = await this.listUserMcpTools(serviceId);
+    if (tools === undefined) {
+      return undefined;
+    }
+    const drain = this.lazySlots.get(userMcpMeshKey(serviceId))?.drain;
+    const wrapped: LazyMeshToolMap = { ...tools };
+    if (drain !== undefined) {
+      this.wrapMergedToolsWithRefcount(
+        wrapped,
+        new Map(Object.keys(wrapped).map((key) => [key, drain])),
+      );
+    }
+    return wrapped;
   }
 
   private async ensureUserMcpConnectorsRunning(): Promise<void> {

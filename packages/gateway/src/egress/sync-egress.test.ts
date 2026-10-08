@@ -5,6 +5,7 @@ import { createBlameIndexSyncable } from "../connectors/blame-index-sync.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
 import { createObsidianSyncable } from "../connectors/obsidian-sync.ts";
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
+import { insertUserMcpConnector } from "../connectors/user-mcp-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { listEgress, verifyEgressChain } from "./egress-verify.ts";
@@ -149,6 +150,39 @@ describe("LOCAL_ONLY_SYNC_SERVICES", () => {
   });
 
   test("a real cloud destination (e.g. github) is NOT excluded — the filter is narrow, not a kill switch", () => {
+    recordSyncEgress(db, { destination: "github", method: "sync.run", now: 1_000 });
+    expect(listEgress(db, {})).toHaveLength(1);
+  });
+});
+
+describe("recordSyncEgress — registered user MCP servers", () => {
+  function registerUserMcp(serviceId: string): void {
+    insertUserMcpConnector(db, {
+      service_id: serviceId,
+      command: "node",
+      args_json: "[]",
+      read_paths_json: "[]",
+      net_hosts_json: "[]",
+      model_access: 0,
+    });
+  }
+
+  test("a REGISTERED user-MCP destination appends nothing — no row, not even a blocked one", () => {
+    registerUserMcp("mcp_notes");
+    expect(
+      recordSyncEgress(db, { destination: "mcp_notes", method: "sync.run", now: 1_000 }),
+    ).toBeUndefined();
+    expect(listEgress(db, {})).toHaveLength(0);
+  });
+
+  test("derived from the user_mcp_connector row: an UNREGISTERED mcp_ id still appends", () => {
+    registerUserMcp("mcp_notes");
+    recordSyncEgress(db, { destination: "mcp_other", method: "sync.run", now: 1_000 });
+    expect(listEgress(db, {}).map((r) => r.destination)).toEqual(["mcp_other"]);
+  });
+
+  test("a first-party destination is unaffected by registered user MCP servers", () => {
+    registerUserMcp("mcp_notes");
     recordSyncEgress(db, { destination: "github", method: "sync.run", now: 1_000 });
     expect(listEgress(db, {})).toHaveLength(1);
   });

@@ -4,4 +4,5 @@ export {
   createLazyConnectorMesh,
   LazyConnectorMesh,
   type McpToolListingClient,
+  meshDispatcherClient,
 } from "./registry.ts";
