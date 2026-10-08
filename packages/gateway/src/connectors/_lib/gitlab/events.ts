@@ -35,7 +35,12 @@ export type GitlabEventUpsertFields = {
   iid: number;
   title: string;
   actionName: string;
-  createdAt: string;
+  /**
+   * The event's own `created_at`, VERBATIM — `undefined` when the event carried none. Never
+   * substituted with the sync time: it becomes `opened_at_ms`/`merged_at`, where a guessed value
+   * would be a false claim. Only the row's `modifiedAt` falls back to `now`.
+   */
+  createdAt: string | undefined;
   now: number;
   webOrigin: string;
   authorUsername: string | undefined;
@@ -116,7 +121,7 @@ export function gitlabMrMetadata(
     readonly pathWithNamespace: string;
     readonly iid: number;
     readonly actionName: string;
-    readonly eventCreatedAt: string;
+    readonly eventCreatedAt: string | undefined;
     readonly mr?: GitlabEventUpsertFields["mr"];
   },
   stored: Record<string, unknown> | null,
@@ -176,7 +181,7 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
   const externalId = shape.externalId(pathWithNamespace, iid);
   const encPath = encodeURIComponent(pathWithNamespace);
   const urlPath = `${shape.urlSegment}/${String(iid)}`;
-  const modified = Date.parse(createdAt);
+  const modified = createdAt === undefined ? Number.NaN : Date.parse(createdAt);
   const meta: Record<string, unknown> =
     shape.type === "pr"
       ? gitlabMrMetadata(
@@ -246,7 +251,9 @@ function processEvent(
   const targetIid = numberField(ev, "target_iid");
   const title = stringField(ev, "target_title") ?? "(no title)";
   const actionName = stringField(ev, "action_name") ?? "unknown";
-  const createdAt = stringField(ev, "created_at") ?? new Date(now).toISOString();
+  // No sync-time fallback here: `createdAt` feeds `opened_at_ms`/`merged_at`, and only the row's
+  // `modifiedAt` (in `upsertGitlabEventItem`) may fall back to `now`.
+  const createdAt = stringField(ev, "created_at");
   const authorUsername = stringField(ev, "author_username");
   const authorName = stringField(ev, "author_name");
   const project = asRecord(ev["project"]);

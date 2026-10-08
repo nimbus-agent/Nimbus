@@ -603,6 +603,37 @@ describeWithFetchRestore("processEvent — created_at absent → uses generated 
     // modified_at should be within a few seconds of now
     expect(row?.modified_at).toBeGreaterThanOrEqual(t0 - 5000);
   });
+
+  test("an accepted event without created_at is merged but records NO merged_at (never the sync time)", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
+    const t0 = Date.now();
+
+    const { created_at: _removed, ...rest } = makeMrEvent({ action_name: "accepted" });
+    globalThis.fetch = (() =>
+      Promise.resolve(makeEventsResponse([{ ...rest }]))) as unknown as typeof fetch;
+
+    await syncGitlabEventsPages(
+      ctx,
+      "token",
+      "https://gitlab.com/api/v4",
+      "https://gitlab.com",
+      new Date(t0 - 86400_000).toISOString(),
+      1,
+      performance.now(),
+    );
+
+    const row = db
+      .prepare("SELECT modified_at, metadata FROM item WHERE service = 'gitlab' LIMIT 1")
+      .get() as { modified_at: number; metadata: string } | undefined;
+    const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
+    expect(meta["state"]).toBe("merged");
+    expect("merged_at" in meta).toBe(false);
+    expect("opened_at_ms" in meta).toBe(false);
+    // only the row's own modified_at falls back to the sync time
+    expect(row?.modified_at).toBeGreaterThanOrEqual(t0 - 5000);
+    db.close();
+  });
 });
 
 // ---------------------------------------------------------------------------
