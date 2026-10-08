@@ -209,6 +209,13 @@ describe("buildCiRunMetadata", () => {
     expect(out).toEqual({ conclusion: "unknown", meta_v: CI_RUN_META_VERSION });
   });
 
+  test("a raw vendor null smuggled past the types is omitted, not written as null", () => {
+    const fields = { conclusion: "unknown", branch: null, repo: 42 } as unknown as Parameters<
+      typeof buildCiRunMetadata
+    >[1];
+    expect(buildCiRunMetadata({}, fields)).toEqual({ conclusion: "unknown", meta_v: CI_RUN_META_VERSION });
+  });
+
   test("keeps identifiers verbatim", () => {
     const out = buildCiRunMetadata(
       {},
@@ -406,8 +413,12 @@ export function normalizeJenkinsResult(result: string | undefined, building: boo
   return lookup(JENKINS_RESULT, result);
 }
 
-function setIfPresent(out: Record<string, unknown>, key: string, value: string | undefined): void {
-  if (value !== undefined && value !== "") {
+/**
+ * `unknown`, not `string | undefined`: this is the contract boundary, and a caller that passes a
+ * raw vendor field (which can be `null` or a number) must still get omission, never `{ key: null }`.
+ */
+function setIfPresent(out: Record<string, unknown>, key: string, value: unknown): void {
+  if (typeof value === "string" && value !== "") {
     out[key] = value;
   }
 }
@@ -773,7 +784,8 @@ export function buildPrMetadata(
     out["state"] = fields.state;
     out["merged"] = fields.state === "merged";
   }
-  if (fields.stateRaw !== undefined && fields.stateRaw !== "") {
+  // `typeof` guards, not `!== undefined`: a raw vendor `null` must be omitted, not written.
+  if (typeof fields.stateRaw === "string" && fields.stateRaw !== "") {
     out["state_raw"] = fields.stateRaw;
   }
   const opened = canonicalEpochMs(fields.openedAtMs);
@@ -785,7 +797,7 @@ export function buildPrMetadata(
   if (mergedAt !== undefined && (fields.state === undefined || fields.state === "merged")) {
     out["merged_at"] = mergedAt;
   }
-  if (fields.repo !== undefined && fields.repo !== "") {
+  if (typeof fields.repo === "string" && fields.repo !== "") {
     out["repo"] = fields.repo;
   }
   out["meta_v"] = PR_META_VERSION;
@@ -1372,9 +1384,8 @@ test("upsertPr carries opened_at_ms forward when an events payload omits created
   const db = createMemoryIndexDb();
   const ctx = ctxWithPat(db, "pat") as unknown as Parameters<typeof upsertPr>[0];
   upsertPr(ctx, "acme/app", prPayload({ created_at: "2026-10-01T09:00:00Z" }), Date.now());
-  const trimmed = prPayload();
-  delete trimmed["created_at"];
-  upsertPr(ctx, "acme/app", trimmed, Date.now());
+  // An events-feed payload with no `created_at` (`stringField` reads `undefined` as absent).
+  upsertPr(ctx, "acme/app", prPayload({ created_at: undefined }), Date.now());
   const row = db.query("SELECT metadata FROM item WHERE service = 'github' AND type = 'pr'").get() as {
     metadata: string;
   };
@@ -1385,7 +1396,7 @@ test("upsertPr carries opened_at_ms forward when an events payload omits created
 });
 ```
 
-Before writing the second test, read how the existing tests in this file call `upsertPr` (search `upsertPr(`) and copy that exact context construction instead of the cast above if one exists. If `prPayload()` has no `created_at` by default, the `delete` is a no-op and still correct.
+Before writing the second test, read how the existing tests in this file call `upsertPr` (search `upsertPr(`) and copy that exact context construction instead of the cast above if one exists. Overriding with `created_at: undefined` (rather than `delete`) keeps the test clear of Biome's `noDelete`.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -2067,6 +2078,9 @@ export type RebodyMetaTarget = {
  * recovered — the SECOND eligibility reason beside `body_complete = 0`. Type-scoped where a service
  * writes several item types and only one carries the contract (`github`/`gitlab` also write
  * `issue` rows, which would otherwise stay eligible forever).
+ *
+ * A future metadata-depth bump for any item type (`issue`, `incident`, `message`...) adds an entry
+ * HERE; it does not add a mechanism or touch the RPC dispatch.
  */
 export const REBODY_META_TARGETS: readonly RebodyMetaTarget[] = [
   { service: "jira", requiredMetaVersion: TICKET_META_VERSION },
