@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791433925094,
+  "lastUpdate": 1791438477658,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b68254a2261c0caadab3d562c42b64da994c42bf",
-          "message": "docs: retire the ecosystem roadmap, fold sequencing into the product roadmap (#913)\n\nDeletes `docs/ecosystem-roadmap.md` and gives each of its two jobs a\nreal home.\n\n## Why\n\nIt **closed on 2026-07-24** — but never went away. Four days later three\nrepositories still cited it, and two of them called it *authoritative*,\nin the present tense:\n\n| Repo | Said |\n|---|---|\n| `docs/ecosystem-roadmap.md` | \"Closed… each surface owned by its own\nrepo's `ROADMAP.md`\" |\n| `nimbus-client/ROADMAP.md` | closed — **and claims** the vacated\ncross-surface role |\n| `nimbus-vscode/docs/ROADMAP.md` | \"**it owns** the client-surfaces /\ndelivery plan across all Nimbus clients\" |\n| `nimbus-sdk/docs/ROADMAP.md` | \"the cross-surface plan… **lives in**\nthe gateway repo's Ecosystem Roadmap\" |\n\nA closed document that three repos treat as live is worse than no\ndocument.\n\n## Where each job went\n\n**Sequencing folds into `roadmap.md`.** The Scope note used to delegate\n\"how capability reaches a human\" elsewhere. It no longer does — which\nsurface should exist next is a product question, and splitting it into a\nsecond sequencing document is precisely how two files came to claim the\nsame authority.\n\nThat note also claimed the client surface is **\"15 methods wide\"**. It\nis **58**, as of client 0.13.0.\n\n**Architecture moves to org level.** How the ecosystem fits together —\nthe repo map, the one-way MIT-into-AGPL contract rule — is not the\nbusiness of one of the repositories it describes. It now lives in\n[`nimbus-agent/.github`\n`ECOSYSTEM.md`](https://github.com/nimbus-agent/.github/blob/main/ECOSYSTEM.md)\n(.github#7, merged), which also corrected two things the old map had\nwrong: it listed 8 repositories when there are **18**, and called\n`nimbus-mcp-servers` \"proposed\" when it exists.\n\n## Other changes\n\n- `infrastructure-roadmap.md` said *\"Three roadmaps, three axes\"* and\n**yielded to** the ecosystem roadmap on client reachability. Now two\naxes, with a note recording where the third went so the change is\nlegible to anyone who remembers it.\n- `docs/CHANGELOG.md`'s historical entry is **delinked rather than\nrewritten**. It is a dated record of what happened, and the file it\nreferenced was real at the time — a link would 404, but the text stays\ntrue.\n- `docs/README.md`'s tree entry removed.\n\n## Verification\n\n`lint:markdown` 0 issues · `audit:doc-refs` **626** refs all resolve\n(down exactly one, as expected) · `lychee` 1062 links, **0 errors**\n\n## Companion PRs\n\nTwelve files across three satellites referenced the deleted document.\nRepointed at whichever successor each actually meant:\n\n- nimbus-agent/nimbus-sdk#53\n- nimbus-agent/nimbus-client#42\n- nimbus-agent/nimbus-vscode#61\n\n**Merge those first** — this PR is what makes their links 404.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-28T18:44:25Z",
-          "tree_id": "83967435ac0b8fd1d9f34016ed2fab2e3119de85",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b68254a2261c0caadab3d562c42b64da994c42bf"
-        },
-        "date": 1785265036456,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.151608700004,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 315.8476614499999,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 327.8361426500007,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "40e296b6ef69013a62abebc0e65288439cb6649f",
+          "message": "chore: release main (#1626)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.37.0</summary>\n\n##\n[7.37.0](https://github.com/nimbus-agent/Nimbus/compare/v7.36.1...v7.37.0)\n(2026-10-08)\n\n\n### Features\n\n* **user-mcp:** let the model call opted-in user MCP tools for the local\nowner ([#1628](https://github.com/nimbus-agent/Nimbus/issues/1628))\n([fee3b25](https://github.com/nimbus-agent/Nimbus/commit/fee3b2552287d381ee7ae5085e62430bd76163d5))\n* **user-mcp:** run user MCP servers confined, with owner-approved\ngrants ([#1623](https://github.com/nimbus-agent/Nimbus/issues/1623))\n([7797aa1](https://github.com/nimbus-agent/Nimbus/commit/7797aa17b178229afd8f68348ab745b7c96f1bb0))\n\n\n### Bug Fixes\n\n* prove the installed binary's claims in install-smoke and retract the\ndark ones from the docs\n([#1627](https://github.com/nimbus-agent/Nimbus/issues/1627))\n([d40fbcd](https://github.com/nimbus-agent/Nimbus/commit/d40fbcd9cf23eeed2f7fdcce8572147c2d454332))\n* **user-mcp:** per-server dispatch listing, no sync.run egress rows,\nbounded Windows boot revoke\n([#1629](https://github.com/nimbus-agent/Nimbus/issues/1629))\n([e1850af](https://github.com/nimbus-agent/Nimbus/commit/e1850af265e2ac81053fea2b0826ed2091286d32))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-08T08:34:52+03:00",
+          "tree_id": "a4349387b6a4af4e460050934c660d7a869305c6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/40e296b6ef69013a62abebc0e65288439cb6649f"
+        },
+        "date": 1791438472042,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 323.32803395000155,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 323.8953004999959,
             "unit": "ms"
           }
         ]
