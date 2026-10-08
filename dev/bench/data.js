@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791479430963,
+  "lastUpdate": 1791480239569,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "04961ba9edf1d2ba0ccd2a9c4f122996df546783",
-          "message": "feat(ci): widen audit:org-settings-drift from 2 settings to 12 across 4 endpoints (#918)\n\n## Why\n\n`audit:org-settings-drift` exists because \"manual UI settings revert\nsilently\" — that is its own docstring. It watched **2** settings. `GET\n/orgs/nimbus-agent` returns ~20 security-relevant ones, and the org\nActions policy endpoints (which hold `sha_pinning_required`,\n`default_workflow_permissions` and the fork-PR approval policy) were\n**not consulted at all**.\n\nThe org is on the Free plan, so `GET /orgs/{org}/audit-log` is\nunavailable: a revert of any of the other eighteen is both undetected\n*and* unreconstructable after the fact. The gate wasn't wrong — it was\nscoped to the two settings whose reversion had bitten at the time it was\nwritten, which is the pattern this roadmap's opening table exists to\nbreak.\n\n## What\n\n`.github/org-access.json` grows from 2 declared settings to 12, across 4\nread endpoints.\n\n| Endpoint | Newly gated |\n| --- | --- |\n| `orgs/nimbus-agent` | `two_factor_requirement_enabled`,\n`members_can_fork_private_repositories`,\n`members_can_delete_repositories`, `members_can_change_repo_visibility`,\n`members_can_create_public_repositories`,\n`members_can_create_private_repositories` |\n| `orgs/nimbus-agent/actions/permissions` | `sha_pinning_required` |\n| `orgs/nimbus-agent/actions/permissions/workflow` |\n`default_workflow_permissions`, `can_approve_pull_request_reviews` |\n| `orgs/nimbus-agent/actions/permissions/fork-pr-contributor-approval` |\n`approval_policy` |\n\n`sha_pinning_required` is the highest-value entry: it is a single UI\ntoggle and the only real-time unpinned-`uses:` control covering the\npublic repos **outside** the 8-repo `sha-pins` matrix. Disarming it\ntoday is invisible to every gate in the program.\n\n`ORG_SETTING_SOURCES` is the one place the endpoint → declared-block\nmapping lives, and `diffOrgSettings` is reused **unchanged** — it\nalready looped over whatever keys the JSON declares. Adding a further\nsetting on an already-listed endpoint is therefore a one-line JSON\nchange with no code edit.\n\n## Failure classification (the part worth reviewing)\n\n`decideExit` mirrors the shape already in `check-ruleset-drift.ts`:\n\n- drift found on a readable endpoint is **never** discarded because a\n*different* endpoint's `gh` call failed;\n- a **404** on a declared endpoint is a finding — it was declared, so\nits disappearance is drift of exactly the kind this gate catches;\n- a **403 / 5xx / network** failure is `indeterminate`: it warns, and is\nnever silently recorded as compliance;\n- only \"nothing readable at all\" degrades to the pre-existing soft-local\n/ strict-CI skip, so an unauthenticated local run behaves\n**byte-identically** to before.\n\n`buildJqProjection` validates every declared key against\n`^[a-z][a-z0-9_]*$` before interpolating it into the jq program, and a\ntest asserts no endpoint carries a leading slash (Git Bash rewrites\n`/orgs/...` into a filesystem path — that failure would classify as\n`indeterminate`, i.e. a silently unwatched setting).\n\n## Token permissions — no workflow change needed\n\nThe sweep already mints its App token with\n`permission-organization-administration: read`, which is what all three\nActions endpoints require. `org-drift-sweep.yml` is untouched. **Watch\nthe first scheduled run**: if any Actions endpoint 403s, the gate warns\nand stays green rather than going red, and the fix is a token-permission\nchange, not a revert.\n\n## `approval_policy` is deliberately recorded at its *current* value\n\nLive is `first_time_contributors`. Declaring it means a **loosening** is\ncaught. The settings audit separately recommends tightening to\n`all_external_contributors` — that is an owner decision and a separate,\ndeliberate change to this file **and** the org setting in one reviewed\ndiff, not something this PR smuggles in.\n\n## Verification\n\n- `bun test scripts/structure-audit/` → **357 pass, 0 fail** (26 files)\n- `tsc -p scripts/tsconfig.json` → clean\n- `bunx biome check packages scripts .github docs` → 3005 files, clean\n- `bunx markdownlint-cli2` → 0 issues\n- `bun scripts/preflight.ts --fast` → `typecheck` ✓ (the `lint` leg is\nthe documented `.claude/worktrees/` biome false-fail — \"Checked 0\nfiles\"; validated via the direct invocation above)\n- **Live green:** `bun\nscripts/structure-audit/check-org-settings-drift.ts` →\n`audit:org-settings-drift: OK (4 sources)` against the real org\n- **Red-proved:** flipping the declared `sha_pinning_required` and\n`two_factor_requirement_enabled` in a copy of the file exits **1** and\nnames both the source and the field:\n\n  ```text\naudit:org-settings-drift: org: two_factor_requirement_enabled: expected\nfalse, got true\naudit:org-settings-drift: actions/permissions: sha_pinning_required:\nexpected false, got true\n  ```\n\nNo new npm script, so `scripts/lib/preflight-gates.ts` needs no manifest\nentry — `audit:org-settings-drift` is already listed there as\nsweep-only.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-29T18:06:16+03:00",
-          "tree_id": "4b0306ac946325926551e08396dbe1ad6af853c2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/04961ba9edf1d2ba0ccd2a9c4f122996df546783"
-        },
-        "date": 1785338464920,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.4083240999997,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 309.8841382500024,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 256.9721302999984,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "232b778339848c2689b3ed31f2d1a240f27d75c3",
+          "message": "feat(index): canonical ci_run / pr / git_commit metadata contract (index lane A1) (#1632)\n\nEvery CI-run, pull-request and git-commit writer now emits one\ncanonical, versioned metadata shape, built by a shared contract builder.\nThis is PR A1 of the index lane contract (pre-S3 close-out item A, the\ngate half of the B4 bug-hunt row). Readers move fully onto the contract\nin A2; the census becomes an enforced gate in A3.\n\n## Why\n\nThe B4 census showed production queries reading `item.metadata` keys\nthat no writer produces. Each CI and forge writer named the same fact\ndifferently (`conclusion`/`state`/`status`/`result`,\n`branch`/`headBranch`/`ref`, `merged`/`MERGED`/`action`), and every test\nfixture hand-wrote the spelling its reader wanted. The result: preflight\npassed red builds, DORA never detected a CI deploy, changelog/standup\nnever saw non-GitHub merges, and pre-mortem's review drag was always\nempty.\n\n## What changed\n\n- **Contract modules**: `connectors/ci-run-meta.ts`,\n`connectors/pr-meta.ts`, `connectors/git-commit-meta.ts`. Each has a\nversion constant (`meta_v` = 1), exact-match `Object.hasOwn` normalizers\n(an unlisted vendor value maps to `unknown`, never to\n`success`/`open`/`merged`), a builder that strips colliding raw keys and\nomits anything the provider cannot supply, and a typed per-service\nemitted-keys table.\n- **Seven writers** go through exported pure mappers that call the\nbuilders:\n- CI runs: GitHub Actions (which now writes `repo`), CircleCI, GitLab\npipelines, Jenkins.\n- Pull requests: GitHub (which now writes `opened_at_ms`), Bitbucket,\nand GitLab MRs.\n- Commits: filesystem `git_commit` rows, which now record and resolve\ntheir author email.\n- GitLab MRs take state from `opened`/`accepted`/`closed`/`reopened`\nevents and carry the stored state forward on every other event.\n`upsertIndexedItem` replaces metadata, so without that an `approved`\nevent would erase a merge.\n- **Four keys collide** with raw keys writers already emitted; the\ncanonical value replaces the raw one, and the provider value moves to\n`*_raw`:\n  - GitHub Actions `conclusion` (`timed_out` → `failure`).\n  - CircleCI `branch` (a tag is no longer written as a branch).\n  - GitHub PR `state` (a merged PR reads `merged`, not `closed`).\n  - Bitbucket PR `state` (`MERGED` → `merged`).\n- **Rebody**: `REBODY_REQUIRED_META_VERSION` becomes\n`REBODY_META_TARGETS`, a type-scoped list. It covers\njira/linear/pagerduty (service-wide), plus `pr` on\ngithub/bitbucket/gitlab and `git_commit` on filesystem.\n- `ci_run` is deliberately not a target. The CI syncs fetch only recent\nruns, so older rows could never reach the new version.\n- **Demo corpus**: `pr`/`ci_run` rows are built through the same\nbuilders.\n- **Tests**: a drift test drives every real mapper against the\nemitted-keys tables. A collision test pins the reader results the four\ncollisions change, with rows built only by real writers.\n\n## User-visible behaviour changes\n\n- **preflight**: the failing-CI check now actually evaluates.\n- It reads the latest run per service, repo and workflow on the target\nbranch, scoped to the service's repos.\n- Under `--mode block`, a red latest GitHub Actions run, GitLab pipeline\nor errored CircleCI pipeline now fails the deploy. Before this the lane\nalways passed.\n- Two latent defects were fixed here because this PR brings the lane to\nlife: a failure superseded by a newer pass no longer reports, and a\nfailure in another repo sharing the branch name is ignored.\n- **DORA**: deploy detection now sees GitHub Actions, GitLab and Jenkins\nruns.\n- **changelog / standup**:\n- Both now list GitLab merges and count only the non-GitHub merges that\ncarry no merge time.\n  - Merged Bitbucket and GitLab PRs no longer appear as \"active\".\n- **pre-mortem review drag**: now has data for GitHub and GitLab.\n- **people graph**: local git commit authors are resolved into people.\n\n## Known limitations (follow-ups in A2)\n\n- **Jenkins and CircleCI in preflight**:\n- Jenkins records no branch, and CircleCI's pipeline state is not\npass/fail. Preflight cannot evaluate either yet.\n  - Nothing discloses this until A2.\n- **CI runs synced mid-run**: they are written once and stay `running`.\n- **DORA undercounting**: runs synced before this upgrade lack the new\nkeys, so DORA undercounts until they age out of the window.\n- **GitLab MR attribution**: rows credit the person who performed the\nevent (who merged), not the MR author.\n- **Readers on raw keys**: some readers still use the raw `headSha`.\n- **Stale docs**: some prose still says only the GitHub connector writes\n`merged_at` (`docs/cli-reference.md`, `docs/roadmap.md`).\n\n## Verification\n\n- `bun test` over connectors, agents, preflight, metrics, demo, rebody\nand the unit connector/preflight trees: 7,031 pass, 0 fail.\n- `bun run typecheck` and `typecheck:tests` are clean.\n- `preflight:fast` gates pass on Windows.\n- The census \"unmatched item reads\" count moved from 83 to 88. The\ncensus cannot yet see builder-made keys; the final review checked each\nnew entry, and none is a dead lane. A3 teaches the census about the\ncontract.\n\nNo `!`: no user action is required. Existing rows read as unknown until\nthey are re-synced, or until `nimbus index rebody` recovers PR and\ncommit depth.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* `nimbus index rebody` can now identify selected records with outdated\nmetadata as well as incomplete content. Dry-run totals report body and\nmetadata work separately; a record may appear in both counts.\n* **Bug Fixes**\n* CI preflight now evaluates the latest run per repository and workflow,\nand only for configured repositories.\n* Pull-request merge reporting avoids double-counting records with merge\ntimestamps and clarifies estimates when timestamps are unavailable.\n* Connector metadata is more consistently normalized, improving CI\nstatus, pull-request dates, and commit-author attribution.\n* **Documentation**\n* Updated the CLI reference and changelog with metadata recovery\neligibility and connector data behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T20:02:04+03:00",
+          "tree_id": "841298f6a86427a96a2452c14e631bf0d7a266b1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/232b778339848c2689b3ed31f2d1a240f27d75c3"
+        },
+        "date": 1791480233906,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 353.20144839999557,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 357.57271575000925,
             "unit": "ms"
           }
         ]
