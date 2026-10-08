@@ -93,11 +93,11 @@ Delivered as **three PRs from this one spec, landed in order**:
   same table.
 - Every row written through the builder carries `meta_v = <VERSION>`.
 - **Writers never assemble canonical keys by hand.** Each module exports a pure builder
-  (`buildCiRunMetadata(service, raw, fields)`, `buildPrMetadata(...)`) that normalizes, omits,
-  and stamps `meta_v`; a connector passes the fields it extracted and spreads the result. The
-  emitted-keys table is typed (`CanonicalCiRunKey` / `CanonicalPrKey` unions, a
-  `Record<Service, ReadonlySet<Key>>`), so a key the builder can emit but the table omits is a
-  compile error, not drift.
+  (`buildCiRunMetadata(raw, fields)`, `buildPrMetadata(raw, fields)`) that normalizes, omits,
+  and stamps `meta_v`; a connector passes the fields it extracted. The emitted-keys table is
+  typed (`CanonicalCiRunKey` / `CanonicalPrKey` unions, a `Record<Service, ReadonlySet<Key>>`), so
+  it can only name real canonical keys; that it matches what each writer actually emits is
+  enforced by a drift test driving every real mapper.
 - **Timestamps:** every canonical `*_at` / `*_ms` field is an integer epoch-millisecond `number`.
   ISO strings are parsed in the builder; seconds (git `ct`) are multiplied; an absent or
   unparseable value is omitted — never `NaN`, never `0`, never a string.
