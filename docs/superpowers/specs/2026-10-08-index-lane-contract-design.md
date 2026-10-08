@@ -278,8 +278,12 @@ standup, premortem, negotiate); A2 is what remains, plus four writer fixes from 
   as raw `author_login`/`author_name` in the MR row's metadata (and from `mr.author` on `fetchOne`)
   and carried forward like the canonical keys. `authorId` is resolved from the carried login,
   never from a later event's actor; with no known author it is `null` rather than the actor.
-- **No version stamp without recovered state.** A GitLab MR row whose state is still unknown after
-  carry-forward does not get `meta_v`, so `nimbus index rebody` keeps it eligible.
+- **Every GitLab `pr` write carries `meta_v`, state known or not** (replaces the earlier "no
+  version stamp without recovered state" rule). GitLab `/events` is user-scoped: an MR the user only
+  approved or commented on never gets a state-transition event, and rebody (clear cursor + forceSync)
+  replays the same events, so it can never recover state. Withholding `meta_v` would keep such rows
+  pending forever and make every no-arg `nimbus index rebody` resync GitLab for nothing. Absent
+  `state` already means unknown (§3.1).
 - **CI runs are refreshed until they finish.** A run already at or below the cursor is re-upserted
   when its stored canonical `conclusion` is `running` and the provider's existing fetch returns it
   again (GitHub Actions latest 30, CircleCI first page, Jenkins last 25; GitLab's loop stops

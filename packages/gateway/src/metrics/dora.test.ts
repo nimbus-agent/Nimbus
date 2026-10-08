@@ -768,6 +768,60 @@ describe("leadTimeForChanges", () => {
     expect(result.value).toBe(ONE_DAY / 1000);
   });
 
+  test("lead time raw headSha fallback applies only when meta_v is absent", () => {
+    const cfg = baseConfig({ deployEnvironments: [] });
+    const run = (name: string, versioned: boolean): Record<string, unknown> => {
+      const meta: Record<string, unknown> = {
+        ...githubActionsRunMetadata(
+          "org/repo",
+          {
+            id: 1,
+            name,
+            status: "completed",
+            conclusion: "success",
+            head_branch: "main",
+            head_sha: "m1",
+          },
+          NOW,
+        ),
+      };
+      // Only the raw key remains; a pre-A1 row additionally has no meta_v.
+      delete meta["head_sha"];
+      meta["headSha"] = "m1";
+      if (!versioned) {
+        delete meta["meta_v"];
+      }
+      return meta;
+    };
+    const pr = {
+      merged: true,
+      merged_at: NOW - 2 * ONE_DAY,
+      merge_commit_sha: "m1",
+      labels: [],
+    };
+    insertItem(
+      db,
+      "github_actions",
+      "ci_run",
+      "Deploy main",
+      NOW - ONE_DAY,
+      run("Deploy main", true),
+    );
+    insertPr(db, "github", NOW - 2 * ONE_DAY, pr);
+    expect(leadTimeForChanges(db, cfg, NOW, SINCE).value).toBeNull();
+    db.run("DELETE FROM item");
+    insertItem(
+      db,
+      "github_actions",
+      "ci_run",
+      "Deploy main",
+      NOW - ONE_DAY,
+      run("Deploy main", false),
+    );
+    insertPr(db, "github", NOW - 2 * ONE_DAY, pr);
+    expect(leadTimeForChanges(db, cfg, NOW, SINCE).value).toBe(ONE_DAY / 1000);
+  });
+
   test("DORA lead time is non-null over real-writer rows", () => {
     const cfg = baseConfig({ deployEnvironments: [] });
     const t = NOW - 5 * ONE_DAY;

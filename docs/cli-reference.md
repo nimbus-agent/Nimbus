@@ -1056,7 +1056,7 @@ nimbus oncall --since 3d --format slack
 - **What the change did.** No connector indexes a patch, a changed-file list or a commit message body, so a pull request is described by its title and its added/removed line counts and nothing more.
 - **Anything paged through OpsGenie.** There is no OpsGenie connector, so this brief has nothing to select from there and its silence is not evidence that nobody is paged.
 
-**A conditional gap names the missing merge commit:** a deployment is matched to its change by merge commit, and only the GitHub connector records one, so on GitLab and Bitbucket the change section is always empty. The brief says so as a `missing_connector` gap, with the fix (connect GitHub for the repository, or bind the deploy through `POST /v1/deployments` with its PR).
+**A conditional gap names the missing merge commit:** a deployment is matched to its change by merge commit, and only the GitHub connector records one, so on GitLab and Bitbucket the change section is always empty. The brief says so as a `missing_connector` gap, and states the limit plainly: there is no remedy on GitLab or Bitbucket today, and on GitHub the thing to check is that the pull request which merged the commit is indexed.
 
 **A fourth gap is conditional and worth fixing when you see it:** an incident whose PagerDuty service maps to no configured Nimbus service leaves the deployment, change, CI and chat sections structurally empty. The brief names the unmapped PagerDuty id and points at the `[metrics.dora.<service>]` / `[ci.service.<service>]` binding — the same one `nimbus metrics dora` already uses.
 
@@ -1315,7 +1315,7 @@ nimbus metrics dora --service payment-service --since 30d --json
 | `--since <duration>` | Window — `<n>d` or `<n>h`, e.g. `30d`, `24h` (default: `30d`) |
 | `--json` | Machine-readable JSON output |
 
-`deployment_frequency`, `lead_time` and `change_failure_rate` report `ci_not_evaluable` in place of `no_deployment_data` when every CI provider bound to the service is unevaluable (CircleCI, Bitbucket). `deployment_frequency` also carries it BESIDE a real value when only some bound providers are unevaluable, since their deploys are invisible and the count undercounts by an unknown amount. The gap changes no number.
+`deployment_frequency`, `lead_time` and `change_failure_rate` report `ci_not_evaluable` in place of `no_deployment_data` when every CI provider bound to the service is unevaluable (CircleCI, Bitbucket). `deployment_frequency` also carries it BESIDE a real value when only some bound providers are unevaluable, since their deploys are invisible and the count undercounts by an unknown amount. A zero deploy count with only SOME bound providers unevaluable reports `no_deployment_data`, not `ci_not_evaluable`. The gap changes no number.
 
 Read-only; no HITL.
 

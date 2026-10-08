@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import pino from "pino";
+import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
 import { GIT_COMMIT_META_VERSION } from "../connectors/git-commit-meta.ts";
 import { PAGERDUTY_INCIDENT_META_VERSION } from "../connectors/pagerduty-attribution.ts";
@@ -795,6 +796,27 @@ describe("REBODY_META_TARGETS", () => {
     ins("github:p1", "pr", {});
     ins("github:p2", "pr", { meta_v: PR_META_VERSION });
     expect(computePendingMetaByService(db)).toEqual({ github: 1 });
+    db.close();
+  });
+
+  test("a commented-only GitLab MR row written by the real writer is NOT pending", () => {
+    const db = createMemoryIndexDb();
+    const meta = gitlabMrMetadata(
+      {
+        pathWithNamespace: "acme/app",
+        iid: 9,
+        actionName: "commented on",
+        eventCreatedAt: "2026-10-03T09:00:00Z",
+      },
+      null,
+    );
+    expect("state" in meta).toBe(false);
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, url, modified_at, metadata, synced_at, body_complete)
+       VALUES ('gitlab:mr9', 'gitlab', 'pr', 'mr9', 't', NULL, 1, ?, 1, 1)`,
+      [JSON.stringify(meta)],
+    );
+    expect(computePendingMetaByService(db)["gitlab"] ?? 0).toBe(0);
     db.close();
   });
 

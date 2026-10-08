@@ -577,12 +577,27 @@ describe("failing_ci_runs gaps", () => {
       conclusion: "failure",
       branch: "main",
       createdAt: NOW - ONE_HOUR,
-      extra: { headSha: "abc123def456" },
+      // A row written before A1: raw key only, no meta_v (undefined is dropped by JSON.stringify).
+      extra: { headSha: "abc123def456", head_sha: undefined, meta_v: undefined },
     });
     const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
     expect(result.checks.failing_ci_runs.count).toBe(1);
     const finding = result.checks.failing_ci_runs.findings[0];
     expect(finding?.head_sha).toBe("abc123def456");
+  });
+
+  test("a versioned row with no canonical head_sha does not fall back to the raw headSha", () => {
+    insertGhRun(db, {
+      id: 113,
+      name: "Versioned raw only",
+      conclusion: "failure",
+      branch: "main",
+      createdAt: NOW - ONE_HOUR,
+      // meta_v stays (from the real mapper); canonical head_sha removed; raw key present.
+      extra: { headSha: "abc123def456", head_sha: undefined },
+    });
+    const result = computeDeployPreflight(db, baseConfig(), "main", NOW, 5);
+    expect(result.checks.failing_ci_runs.findings[0]?.head_sha).toBeNull();
   });
 
   test("deduplicates by workflow_name keeping latest run", () => {

@@ -138,17 +138,6 @@ function withAuthor(
 }
 
 /**
- * A row whose state is still unknown after carry-forward has recovered nothing; stamping it with
- * the contract version would tell `nimbus index rebody` it is done.
- */
-function withoutVersionIfStateless(out: Record<string, unknown>): Record<string, unknown> {
-  if ("state" in out) {
-    return out;
-  }
-  return Object.fromEntries(Object.entries(out).filter(([k]) => k !== "meta_v"));
-}
-
-/**
  * The full `pr` metadata for a GitLab MR row. `upsertIndexedItem` REPLACES metadata wholesale, so
  * every canonical key this event does not itself establish is carried from the stored row
  * (`stored`) — otherwise an `approved` event after a merge would erase the merge. An `opened`
@@ -169,8 +158,7 @@ export function gitlabMrMetadata(
   const raw = { iid: f.iid, project: f.pathWithNamespace, action: f.actionName };
   const prior = storedPrFields(stored);
   const author = f.author ?? storedAuthor(stored);
-  const finish = (out: Record<string, unknown>): Record<string, unknown> =>
-    withoutVersionIfStateless(withAuthor(out, author));
+  const finish = (out: Record<string, unknown>): Record<string, unknown> => withAuthor(out, author);
   if (f.mr !== undefined) {
     return finish(
       buildPrMetadata(raw, {
@@ -237,7 +225,7 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
     (f.mr !== undefined || actionName === "opened") &&
     authorUsername !== undefined &&
     authorUsername !== ""
-      ? { login: authorUsername, name: authorName }
+      ? { login: authorUsername, name: authorName === "" ? undefined : authorName }
       : undefined;
   const meta: Record<string, unknown> =
     shape.type === "pr"

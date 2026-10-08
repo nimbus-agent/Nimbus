@@ -25,7 +25,7 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   (CircleCI, Bitbucket); it is a gap, never a verdict change, and no count moves. **`nimbus stats
   pr-merges`** now counts GitLab merges and emits `incomplete_merge_data` for a GitLab or
   Bitbucket binding; `github_only_merge_data` stays in the enum but is no longer emitted.
-  **`nimbus pre-mortem`** names the forge behind unmeasurable review drag. **`nimbus negotiate`**
+  Existing GitLab MR rows lose a wrongly credited author until the MR's `opened` event or a targeted fetch supplies the real one. **`nimbus pre-mortem`** names the forge behind unmeasurable review drag. **`nimbus negotiate`**
   discloses `mergedCoverage` ("merge status known for N/M"). **`nimbus expert`'s** commit-authorship
   lane now reads local git authors from filesystem `git_commit` rows, with
   `missing_entity_type`/`missing_user_identity` gaps when they are absent. **`nimbus oncall`'s**

@@ -213,7 +213,7 @@ function selectFailingCiRuns(
         head_sha:
           typeof meta["head_sha"] === "string"
             ? meta["head_sha"]
-            : typeof meta["headSha"] === "string" // rows written before the contract (A1)
+            : typeof meta["headSha"] === "string" && meta["meta_v"] === undefined // pre-A1 rows only
               ? meta["headSha"]
               : null,
         url: r.url,

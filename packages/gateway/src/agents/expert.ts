@@ -403,8 +403,10 @@ function commitLaneGap(db: Database): GapNote | null {
       category: "missing_user_identity",
       detail:
         "Indexed commits carry no resolved author: commits indexed before this release have none, " +
-        "and a commit whose author email matches no known person stays unattributed.",
-      remediation: "Run `nimbus index rebody --service filesystem` to re-read authors from git.",
+        "and a commit with an empty author email or an automated/no-reply sender stays unattributed.",
+      remediation:
+        "Run `nimbus index rebody --service filesystem` to re-read authors for the most recent " +
+        "commits (the newest 40 per root).",
     };
   }
   return null;

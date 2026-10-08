@@ -3,6 +3,9 @@
  * therefore stay `conclusion: "running"` forever — and preflight would let that row hide an older
  * failure. A previously seen run is re-written only when its stored canonical conclusion is
  * `running` and the provider's EXISTING fetch returned it again; this never makes a request.
+ * Runs normalised to `running` that never finish (GitLab `manual`/`scheduled`, GitHub
+ * `waiting`/`requested`) are re-written on every sync while they stay in the fetched page: write
+ * churn only, no extra request.
  */
 import { itemPrimaryKey } from "../index/item-key.ts";
 import type { SyncContext } from "../sync/types.ts";

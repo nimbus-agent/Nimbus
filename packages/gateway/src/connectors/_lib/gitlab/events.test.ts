@@ -7,7 +7,7 @@ import {
   expectServiceItemCount,
   syncTestContext,
 } from "../../connector-sync-test-helpers.ts";
-import { type CanonicalPrKey, PR_EMITTED_KEYS } from "../../pr-meta.ts";
+import { type CanonicalPrKey, PR_EMITTED_KEYS, PR_META_VERSION } from "../../pr-meta.ts";
 import {
   gitlabMrMetadata,
   normalisedApiBase,
@@ -1431,8 +1431,9 @@ test("gitlabMrMetadata — a later event carries the author forward and ignores 
   expect(merged["author_login"]).toBe("dana");
 });
 
-test("gitlabMrMetadata — no state known means no meta_v, so rebody keeps the row eligible", () => {
-  // A pre-A1 row (no state, no meta_v): deliberately shaped, no current writer produces it.
+test("gitlabMrMetadata — a stateless row still carries meta_v (absent state already means unknown)", () => {
+  // A pre-A1 stored row (no state, no meta_v): deliberately shaped. The row WRITTEN from it by an
+  // approval is the stateless shape the current writer does produce (see the test above).
   const legacy = { iid: 9, project: "acme/app", action: "opened" };
   const m = gitlabMrMetadata(
     {
@@ -1444,7 +1445,8 @@ test("gitlabMrMetadata — no state known means no meta_v, so rebody keeps the r
     legacy,
   );
   expect("state" in m).toBe(false);
-  expect("meta_v" in m).toBe(false);
+  expect("merged" in m).toBe(false);
+  expect(m["meta_v"]).toBe(PR_META_VERSION);
 });
 
 describeWithFetchRestore("events sync — MR author attribution", () => {
@@ -1486,6 +1488,24 @@ describeWithFetchRestore("events sync — MR author attribution", () => {
       .get() as { author_id: string | null; metadata: string };
     expect(row.author_id).toBeNull();
     expect("author_login" in JSON.parse(row.metadata)).toBe(false);
+  });
+
+  test('an empty author_name is never written as author_name: ""', async () => {
+    const db = await run([
+      {
+        ...base,
+        action_name: "opened",
+        created_at: "2026-10-01T09:00:00Z",
+        author_username: "dana",
+        author_name: "",
+      },
+    ]);
+    const row = db
+      .prepare("SELECT metadata FROM item WHERE service = 'gitlab' AND type = 'pr'")
+      .get() as { metadata: string };
+    const meta = JSON.parse(row.metadata) as Record<string, unknown>;
+    expect(meta["author_login"]).toBe("dana");
+    expect("author_name" in meta).toBe(false);
   });
 
   test("opened by dana then accepted by sam keeps dana as the author", async () => {

@@ -247,8 +247,9 @@ function runtimeGaps(args: {
         "Bitbucket rows carry none, so on those forges this is always empty, and on GitHub it " +
         "means the deploy carried a commit that no indexed pull request merged.",
       remediation:
-        "Connect GitHub for this repository, or bind the deploy through `POST /v1/deployments` " +
-        "with its PR.",
+        "No remedy on GitLab or Bitbucket today: only the GitHub connector records the merge " +
+        "commit this match needs. On GitHub, check the pull request that merged this commit is " +
+        "indexed.",
     });
   }
 

@@ -672,6 +672,9 @@ describe("runExpert — subBlame (filesystem git_commit lane)", () => {
     );
     expect(gap).toBeDefined();
     expect(gap?.remediation).toContain("nimbus index rebody --service filesystem");
+    expect(gap?.detail).toContain("empty author email");
+    expect(gap?.detail).not.toContain("matches no known person");
+    expect(gap?.remediation).toContain("newest 40 per root");
     db.close();
   });
 
