@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
-import { createGithubActionsSyncable } from "../../../src/connectors/github-actions-sync.ts";
+import {
+  type CanonicalCiRunKey,
+  CI_RUN_EMITTED_KEYS,
+} from "../../../src/connectors/ci-run-meta.ts";
+import {
+  createGithubActionsSyncable,
+  githubActionsRunMetadata,
+} from "../../../src/connectors/github-actions-sync.ts";
 import type { SyncContext } from "../../../src/sync/types.ts";
 import {
   type ConnectorSyncFixture,
@@ -387,7 +394,9 @@ describe("github-actions-sync — with shared fixture", () => {
       const meta = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
       expect(meta.workflowName).toBeNull();
       expect(meta.event).toBeNull();
-      expect(meta.conclusion).toBeNull();
+      // canonical conclusion is "unknown" (never guessed); the raw vendor value is omitted
+      expect(meta.conclusion).toBe("unknown");
+      expect(meta.conclusion_raw).toBeUndefined();
       expect(meta.headSha).toBeNull();
       expect(meta.headBranch).toBeNull();
       expect(meta.status).toBeNull();
@@ -669,5 +678,53 @@ describe("github-actions-sync — with shared fixture", () => {
       );
       expect(res.itemsUpserted).toBe(1);
     });
+  });
+});
+
+describe("githubActionsRunMetadata (ci_run contract)", () => {
+  const NOW = Date.parse("2026-10-08T12:00:00Z");
+  const run = (o: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 99,
+    name: "Deploy production",
+    status: "completed",
+    conclusion: "timed_out",
+    event: "push",
+    head_branch: "main",
+    head_sha: "abc123",
+    run_started_at: "2026-10-08T11:00:00Z",
+    updated_at: "2026-10-08T11:10:00Z",
+    ...o,
+  });
+
+  test("writes canonical keys from the real API shape, including the new repo", () => {
+    const m = githubActionsRunMetadata("acme/repo-a", run(), NOW);
+    expect(m["conclusion"]).toBe("failure");
+    expect(m["conclusion_raw"]).toBe("timed_out");
+    expect(m["branch"]).toBe("main");
+    expect(m["repo"]).toBe("acme/repo-a");
+    expect(m["workflow_name"]).toBe("Deploy production");
+    expect(m["head_sha"]).toBe("abc123");
+    expect(m["meta_v"]).toBe(1);
+    // raw keys survive for display
+    expect(m["headBranch"]).toBe("main");
+    expect(m["durationMs"]).toBe(10 * 60 * 1000);
+  });
+
+  test("an in-progress run is running; conclusion_raw falls back to status", () => {
+    const m = githubActionsRunMetadata(
+      "acme/repo-a",
+      run({ status: "in_progress", conclusion: null }),
+      NOW,
+    );
+    expect(m["conclusion"]).toBe("running");
+    expect(m["conclusion_raw"]).toBe("in_progress");
+  });
+
+  test("emits exactly the keys the contract table declares", () => {
+    const m = githubActionsRunMetadata("acme/repo-a", run({ conclusion: "success" }), NOW);
+    const canonical = Object.keys(m).filter((k) =>
+      CI_RUN_EMITTED_KEYS.github_actions.has(k as CanonicalCiRunKey),
+    );
+    expect(new Set(canonical)).toEqual(new Set(CI_RUN_EMITTED_KEYS.github_actions));
   });
 });
