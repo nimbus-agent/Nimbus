@@ -49,6 +49,7 @@ function populatedNegotiateBrief(): NegotiateBrief {
     authoredPrs: {
       count: 4,
       merged: 2,
+      mergedCoverage: { covered: 4, total: 4 },
       evidence,
       stats: null,
       statsCoverage: { covered: 0, total: 0 },

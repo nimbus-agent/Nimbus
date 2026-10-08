@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
+import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
 import type { SubTaskResult } from "../engine/coordinator.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
@@ -29,7 +31,17 @@ function seedPr(
     modifiedAt: Date.now(),
     syncedAt: Date.now(),
     authorId,
-    metadata: { repo: "acme/app", number: num, merged: true, ...extraMeta },
+    // Real mapper output: a merged GitHub PR carries `merged: true` as production writes it.
+    metadata: {
+      ...extractPrMetadataForIndex("acme/app", {
+        number: num,
+        state: "closed",
+        merged: true,
+        merged_at: "2026-01-02T00:00:00Z",
+        created_at: "2026-01-01T00:00:00Z",
+      }),
+      ...extraMeta,
+    },
   });
 }
 
@@ -388,6 +400,35 @@ test("authored PRs are counted, with stats coverage when only some are enriched"
   expect(brief.authoredPrs?.count).toBe(2);
   expect(brief.authoredPrs?.statsCoverage).toEqual({ covered: 1, total: 2 });
   expect(brief.authoredPrs?.stats?.additions).toBe(100);
+  db.close();
+});
+
+test("the merged count discloses PRs whose merge status the index does not know", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  seedPr(db, 1, "person:me"); // GitHub, merged
+  // GitLab MR first seen through an `approved` event with nothing stored: no state, no `merged`.
+  upsertIndexedItem(db, {
+    service: "gitlab",
+    type: "pr",
+    externalId: "acme/app!7",
+    title: "MR 7",
+    bodyPreview: "",
+    modifiedAt: Date.now(),
+    syncedAt: Date.now(),
+    authorId: "person:me",
+    metadata: gitlabMrMetadata(
+      { pathWithNamespace: "acme/app", iid: 7, actionName: "approved", eventCreatedAt: undefined },
+      null,
+    ),
+  });
+
+  const brief = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+
+  expect(brief.authoredPrs?.count).toBe(2);
+  expect(brief.authoredPrs?.merged).toBe(1);
+  expect(brief.authoredPrs?.mergedCoverage).toEqual({ covered: 1, total: 2 });
+  expect(renderNegotiate(brief)).toContain("merge status known for 1/2");
   db.close();
 });
 
