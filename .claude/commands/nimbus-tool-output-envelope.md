@@ -36,6 +36,7 @@ If your new code hands a tool result to the LLM and does not call `wrapToolOutpu
 | [`packages/gateway/src/engine/tool-output-envelope.ts`](../../packages/gateway/src/engine/tool-output-envelope.ts) | `wrapToolOutput(ctx, result)` — the only correct way to produce the envelope |
 | [`packages/gateway/src/engine/agent.ts`](../../packages/gateway/src/engine/agent.ts) `wrapToolForLlm` (lines 25–76) | Tool-definition decorator applied to each Mastra-registered tool when the agent is built. Replaces the tool's `execute` so its return value flows through `wrapToolOutput` before reaching the LLM. Every `searchLocalIndex` / `fetchMoreIndexResults` / etc. result is wrapped here. |
 | [`packages/gateway/src/connectors/lazy-mesh/mesh.ts:478`](../../packages/gateway/src/connectors/lazy-mesh/mesh.ts) | Lazy-mesh dispatcher `listTools()` (lines 478–532) — wraps every MCP tool result that is exposed via Mastra to the LLM |
+| [`packages/gateway/src/engine/user-mcp-agent-tools.ts`](../../packages/gateway/src/engine/user-mcp-agent-tools.ts) | User-MCP `--model` tools: results go through the injected `wrapToolForLlm`; the server-supplied DESCRIPTION is delimited by `wrapToolDescription` (`<tool_description server="…">`, closers escaped by `escapeEnvelopeClosers`, capped before the closer) and the INPUT SCHEMA is rebuilt by [`user-mcp-input-schema.ts`](../../packages/gateway/src/engine/user-mcp-input-schema.ts)'s `sanitiseUserMcpInputSchema` (structural-keyword allowlist; `examples`/`default`/`$comment`/`$ref` dropped). Bound: `enum`/`const` values and property names reach the model verbatim. |
 | [`packages/gateway/src/security-invariants.test.ts`](../../packages/gateway/src/security-invariants.test.ts) | Enforcement test — fails if a known wiring site stops calling `wrapToolOutput` |
 
 If you add a third LLM-facing path, **you also add a wiring assertion in `security-invariants.test.ts`** so the next regression fails CI immediately.
@@ -46,13 +47,13 @@ If you add a third LLM-facing path, **you also add a wiring assertion in `securi
 export function wrapToolOutput(ctx: ToolOutputContext, result: unknown): string {
   const body = JSON.stringify(result ?? null);
   const safeBody = body.replaceAll("</tool_output>", String.raw`<\/tool_output>`);
-  return `<tool_output service="${escapeAttr(ctx.service)}" tool="${escapeAttr(ctx.tool)}">${safeBody}</tool_output>`;
+  return `<tool_output service="${escapeEnvelopeAttr(ctx.service)}" tool="${escapeEnvelopeAttr(ctx.tool)}">${safeBody}</tool_output>`;
 }
 ```
 
 Three load-bearing details:
 
-1. **`escapeAttr` on `service` and `tool`** — defends against attribute injection if either string is ever attacker-influenced. Don't pass in unescaped user input as `service`.
+1. **`escapeEnvelopeAttr` on `service` and `tool`** — defends against attribute injection if either string is ever attacker-influenced. Don't pass in unescaped user input as `service`.
 2. **Body is JSON-stringified** — the LLM is instructed to treat the inner content as JSON data. A bare string body would let an attacker drift the boundary.
 3. **Literal `</tool_output>` in the body is escaped to `<\/tool_output>`** — without this, any tool that ever returned the literal close tag could terminate the envelope and re-enter "instruction mode".
 
