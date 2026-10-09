@@ -24,8 +24,12 @@
  *
  * Openness: an object node whose listing leaves `additionalProperties` unset is emitted with an
  * explicit `additionalProperties: true` (the JSON Schema default, and what the listed validator
- * applies), because the validator wrapper (`toStandardSchema`) would otherwise close it. An
- * explicit `false` or schema value is kept as listed. A boolean `nullable` is kept beside `type`.
+ * applies), because the read-back (`standardSchemaToJSONSchema`'s default override) would
+ * otherwise close it. An explicit `false` or schema value is kept as listed — UNLESS this node
+ * dropped a key the listing would have accepted (a `patternProperties` key, or a property whose
+ * name exceeds the name cap): those keys would then fall to `additionalProperties` and be refused
+ * or re-validated, so the node is opened to `true` instead. The rebuilt schema is therefore never
+ * stricter than the listing's own validator. A boolean `nullable` is kept beside `type`.
  *
  * Bounds, stated: `enum`/`const` values, property NAMES and `pattern` reach the model VERBATIM
  * (data the model must echo or match exactly, so they are not escaped). An over-long value or
@@ -183,11 +187,25 @@ function copyScalarKeywords(raw: JsonObject, out: JsonObject): void {
   if ("const" in raw && isOfferableValue(raw["const"])) out["const"] = raw["const"];
 }
 
-function sanitiseProperties(raw: unknown, depth: number, walk: Walk): JsonObject | undefined {
+interface SanitisedProperties {
+  readonly properties: JsonObject;
+  /** True when a declared property was dropped (name over the cap), so its key is now undeclared. */
+  readonly droppedName: boolean;
+}
+
+function sanitiseProperties(
+  raw: unknown,
+  depth: number,
+  walk: Walk,
+): SanitisedProperties | undefined {
   if (!isPlainObject(raw)) return undefined;
   const properties: JsonObject = {};
+  let droppedName = false;
   for (const [name, sub] of Object.entries(raw)) {
-    if (name.length > PROPERTY_NAME_MAX) continue;
+    if (name.length > PROPERTY_NAME_MAX) {
+      droppedName = true;
+      continue;
+    }
     // defineProperty, not assignment: `properties["__proto__"] = x` would set the prototype and
     // silently drop the property (and, with it, its `required` entry).
     Object.defineProperty(properties, name, {
@@ -197,7 +215,7 @@ function sanitiseProperties(raw: unknown, depth: number, walk: Walk): JsonObject
       configurable: true,
     });
   }
-  return properties;
+  return { properties, droppedName };
 }
 
 function sanitiseBranches(raw: unknown, depth: number, walk: Walk): unknown[] | undefined {
@@ -231,8 +249,9 @@ function copyArrayKeywords(raw: JsonObject, out: JsonObject, depth: number, walk
 /**
  * An object node whose listing leaves `additionalProperties` unset is OPEN (the JSON Schema default,
  * and what @mastra/mcp's own validator applies). It is written out as an explicit `true` because
- * `toStandardSchema` otherwise adds `additionalProperties: false` to any object with
- * `properties`, which would refuse a call the server accepts.
+ * the read-back (`standardSchemaToJSONSchema`'s default override) otherwise adds
+ * `additionalProperties: false` to any object with `properties`, which would refuse a call the
+ * server accepts.
  */
 function describesObject(out: JsonObject): boolean {
   if (out["properties"] !== undefined) return true;
@@ -241,7 +260,8 @@ function describesObject(out: JsonObject): boolean {
 }
 
 function copyStructuralKeywords(raw: JsonObject, out: JsonObject, depth: number, walk: Walk): void {
-  const properties = sanitiseProperties(raw["properties"], depth, walk);
+  const sanitised = sanitiseProperties(raw["properties"], depth, walk);
+  const properties = sanitised?.properties;
   if (properties !== undefined) out["properties"] = properties;
   const required = raw["required"];
   if (Array.isArray(required) && properties !== undefined) {
@@ -253,7 +273,12 @@ function copyStructuralKeywords(raw: JsonObject, out: JsonObject, depth: number,
   }
   copyArrayKeywords(raw, out, depth, walk);
   const additional = raw["additionalProperties"];
-  if (typeof additional === "boolean") out["additionalProperties"] = additional;
+  // A key the listing accepted through a dropped `patternProperties` or a dropped over-long
+  // property name now falls to `additionalProperties`; open the node rather than refuse it.
+  const droppedAcceptedKeys = sanitised?.droppedName === true || "patternProperties" in raw;
+  if (droppedAcceptedKeys && additional !== true && additional !== undefined)
+    out["additionalProperties"] = true;
+  else if (typeof additional === "boolean") out["additionalProperties"] = additional;
   else if (isPlainObject(additional))
     out["additionalProperties"] = sanitiseNode(additional, depth + 1, walk);
   else if (describesObject(out)) out["additionalProperties"] = true;

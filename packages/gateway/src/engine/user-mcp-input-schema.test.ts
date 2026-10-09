@@ -327,6 +327,79 @@ describe("sanitiseUserMcpInputSchema (I11, user-MCP input schemas)", () => {
     });
   });
 
+  // "Never stricter than the listing's own validator": a key the listing accepted through a
+  // keyword or name this sanitiser DROPS must not then fall to a kept `additionalProperties`.
+  const LONG = "k".repeat(129);
+  test.each([
+    [
+      "patternProperties + additionalProperties:false",
+      {
+        type: "object",
+        properties: { a: { type: "string" } },
+        patternProperties: { "^x_": { type: "number" } },
+        additionalProperties: false,
+      },
+      { a: "s", x_1: 1 },
+    ],
+    [
+      "patternProperties + schema-valued additionalProperties",
+      {
+        type: "object",
+        patternProperties: { "^x_": { type: "number" } },
+        additionalProperties: { type: "string" },
+      },
+      { x_1: 1 },
+    ],
+    [
+      "over-long property name + additionalProperties:false",
+      {
+        type: "object",
+        properties: { a: { type: "string" }, [LONG]: { type: "number" } },
+        additionalProperties: false,
+      },
+      { a: "s", [LONG]: 1 },
+    ],
+    [
+      "over-long property name + schema-valued additionalProperties (nested)",
+      {
+        type: "object",
+        properties: {
+          inner: {
+            type: "object",
+            properties: { [LONG]: { type: "number" } },
+            additionalProperties: { type: "string" },
+          },
+        },
+      },
+      { inner: { [LONG]: 1 } },
+    ],
+  ])(
+    "a key accepted via a dropped keyword/name is not refused: %s",
+    async (_label, listed, call) => {
+      const listing = toStandardSchema(JSON.parse(JSON.stringify(listed)));
+      const before = await listing["~standard"].validate(call);
+      expect("issues" in before && before.issues !== undefined).toBe(false);
+      const rebuilt = toStandardSchema(
+        JSON.parse(JSON.stringify(sanitiseUserMcpInputSchema(listed))),
+      );
+      const after = await rebuilt["~standard"].validate(call);
+      expect("issues" in after && after.issues !== undefined).toBe(false);
+    },
+  );
+
+  test("an explicit additionalProperties:false with nothing dropped still refuses an undeclared key", async () => {
+    const listed = {
+      type: "object",
+      properties: { a: { type: "string" } },
+      additionalProperties: false,
+    };
+    const out = sanitiseUserMcpInputSchema(listed);
+    expect(out["additionalProperties"]).toBe(false);
+    const rebuilt = toStandardSchema(JSON.parse(JSON.stringify(out)));
+    const r = await rebuilt["~standard"].validate({ a: "s", other: 1 });
+    expect("issues" in r && r.issues !== undefined).toBe(true);
+  });
+
   test("a boolean nullable is kept beside type, and dropped without one", () => {
     const out = sanitiseUserMcpInputSchema({
       type: "object",
