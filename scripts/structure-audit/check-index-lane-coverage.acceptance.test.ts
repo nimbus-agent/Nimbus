@@ -109,6 +109,18 @@ describe("lane census over the real tree", () => {
     expect(readLines.length).toBeGreaterThanOrEqual(2);
     const premortemUnmatched = unmatchedAt("opened_at_ms", "agents/premortem.ts");
     for (const line of readLines) {
+      // Collected first: "not unmatched" alone would pass vacuously if these reads stopped being
+      // collected at all (final review M-6).
+      expect(
+        census.reads.some(
+          (r) =>
+            r.table === "item" &&
+            r.kind === "metadata-key" &&
+            r.value === "opened_at_ms" &&
+            r.file.endsWith("agents/premortem.ts") &&
+            r.line === line,
+        ),
+      ).toBe(true);
       expect(premortemUnmatched.some((h) => h.line === line)).toBe(false);
     }
 
