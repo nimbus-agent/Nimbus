@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.38.0](https://github.com/nimbus-agent/Nimbus/compare/v7.37.1...v7.38.0) (2026-10-09)
+
+
+### Features
+
+* **index:** canonical ci_run / pr / git_commit metadata contract (index lane A1) ([#1632](https://github.com/nimbus-agent/Nimbus/issues/1632)) ([232b778](https://github.com/nimbus-agent/Nimbus/commit/232b778339848c2689b3ed31f2d1a240f27d75c3))
+* **index:** readers answer from the contract and disclose what they cannot (index lane A2) ([#1634](https://github.com/nimbus-agent/Nimbus/issues/1634)) ([3515729](https://github.com/nimbus-agent/Nimbus/commit/351572970cf90b541a1addcc98930aeef0a72c7a))
+
 ## [7.37.1](https://github.com/nimbus-agent/Nimbus/compare/v7.37.0...v7.37.1) (2026-10-08)
 
 
