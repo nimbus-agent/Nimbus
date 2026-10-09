@@ -844,11 +844,29 @@ function resolveMetadataKeysFromCall(
     return directReturn;
   }
 
-  const ident = matchBareIdentifier(returnedTrimmed) ?? passThroughReturnIdent(returnedTrimmed);
-  if (ident === undefined) {
+  const ident = matchBareIdentifier(returnedTrimmed);
+  if (ident !== undefined) {
+    return resolveInBodyIdentifierMetadataKeys(ident, body, src, seen);
+  }
+
+  // `return f(…)`: a SAME-FILE `f` is resolved itself (one more hop, guarded by `seen`) — its
+  // first argument is not passed through, since `f`'s own body says what it returns. Only a
+  // cross-file wrapper passes its first argument's keys through, and only when that argument is a
+  // `const` declared in THIS body: a parameter has no key set here, and the whole-file fallback
+  // would credit an unrelated same-named declaration — over-crediting, the gate's dangerous
+  // direction.
+  const returnedCallee = matchCallExpression(returnedTrimmed);
+  if (returnedCallee === undefined) {
     return [];
   }
-  return resolveInBodyIdentifierMetadataKeys(ident, body, src, seen);
+  if (findFunctionBodyOrExpr(returnedCallee, src) !== undefined) {
+    return resolveMetadataKeysFromCall(returnedCallee, src, seen);
+  }
+  const passed = passThroughReturnIdent(returnedTrimmed);
+  if (passed === undefined || findConstDeclaration(passed, body) === undefined) {
+    return [];
+  }
+  return resolveInBodyIdentifierMetadataKeys(passed, body, src, seen);
 }
 
 /**

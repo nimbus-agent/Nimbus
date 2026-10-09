@@ -316,4 +316,21 @@ describe("A3 writer shapes", () => {
     expect(byType("pr")).toEqual(["labels", "number"]);
     expect(byType("issue")).toEqual(["number", "repo", "state", "user"]);
   });
+
+  test("return f(param, …) to a same-file builder resolves f, never the file's unrelated same-named const", () => {
+    const src = `
+      const row = { unrelated_key: 1 };
+      function inner(row: R, id: string): Record<string, unknown> { return { real_key: 1 }; }
+      function build(row: R): Record<string, unknown> { return inner(row, "x"); }
+      ctx.upsertItem({ service: "jira", type: "issue", metadata: build(r) });`;
+    expect(keysOf(src)).toEqual(["real_key"]);
+  });
+
+  test("return wrapper(param, …) to a cross-file wrapper credits nothing when param is no body const", () => {
+    const src = `
+      const out = { unrelated_key: 1 };
+      function build(out: R): Record<string, unknown> { return buildPrMetadata(out, { state: "open" }); }
+      ctx.upsertItem({ service: "github", type: "pr", metadata: build(r) });`;
+    expect(keysOf(src)).toEqual([]);
+  });
 });
