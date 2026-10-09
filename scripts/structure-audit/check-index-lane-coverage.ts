@@ -44,6 +44,7 @@
  */
 
 import type { FileEntry } from "./check-nimbus-invariants.ts";
+import { contractEmissions } from "./lane-census/contract-emissions.ts";
 import {
   extractNonItemJsReads,
   extractReadTriples,
@@ -285,7 +286,12 @@ function matchMetadataKeyAcrossTypes(
  *
  * Pure — takes file contents already in memory, does no filesystem access itself.
  */
-export function collectLaneCensus(files: readonly FileEntry[]): LaneCensus {
+export type CensusOptions = { readonly contractEmissions?: readonly WriterEmission[] };
+
+export function collectLaneCensus(
+  files: readonly FileEntry[],
+  opts: CensusOptions = {},
+): LaneCensus {
   const reads: ReadTriple[] = [];
   const writes: WriterEmission[] = [];
   const parameterizedReads: ParameterizedRead[] = [];
@@ -314,6 +320,7 @@ export function collectLaneCensus(files: readonly FileEntry[]): LaneCensus {
     }
   }
 
+  writes.push(...(opts.contractEmissions ?? []));
   const writerIndex = buildWriterIndex(writes);
 
   const unmatchedItemReads: UnmatchedReadTriple[] = [];
@@ -429,7 +436,7 @@ async function run(): Promise<void> {
     files.push({ relPath: f.relPath, contents: f.contents });
   }
 
-  const census = collectLaneCensus(files);
+  const census = collectLaneCensus(files, { contractEmissions: contractEmissions() });
 
   const totalUnmatched = census.unmatchedItemReads.filter(
     (r) => r.matchState === "unmatched",
