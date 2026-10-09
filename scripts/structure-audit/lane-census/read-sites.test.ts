@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractReadTriples } from "./read-sites.ts";
+import { extractNonItemJsReads, extractReadTriples } from "./read-sites.ts";
 
 describe("extractReadTriples", () => {
   test("binds a type literal to item, not to another table", () => {
@@ -102,5 +102,98 @@ describe("extractReadTriples", () => {
     const values = extractReadTriples("f.ts", src).map((t) => t.value);
     expect(values).toContain("repo");
     expect(values).toContain("project");
+  });
+});
+
+describe("JS metadata reads — A3 noise fixes", () => {
+  const keys = (src: string) => extractReadTriples("x.ts", src).map((t) => t.value);
+
+  test("an assignment target is a write, not a read", () => {
+    const src = [
+      "const meta: Record<string, unknown> = {};",
+      'meta["status_category"] = "done";',
+      "meta.other = 1;",
+      'if (meta["kept"] === 1) {}',
+    ].join("\n");
+    expect(keys(src)).toEqual(["kept"]);
+  });
+
+  test("== / === / => after the bracket are reads, not assignments", () => {
+    const src = 'function f(meta: R) { return meta["a"] == 1 || meta["b"] === 2; }';
+    expect(keys(src).sort()).toEqual(["a", "b"]);
+  });
+
+  test("meta built from a vendor object is not an item read", () => {
+    const src = [
+      'const meta = asRecord(row["metadata"]) ?? {};',
+      'const created = meta["creationTimestamp"];',
+    ].join("\n");
+    expect(keys(src)).toEqual([]);
+    expect(extractNonItemJsReads("x.ts", src).map((r) => r.value)).toEqual(["creationTimestamp"]);
+  });
+
+  test("meta parsed from an item row's metadata column stays an item read", () => {
+    for (const init of [
+      "JSON.parse(row.metadata) as Record<string, unknown>",
+      'parseMetadata(row["metadata"])',
+      "parsePrMetadata(row.metadata)",
+      "(item.rawMeta ?? {}) as Record<string, unknown>",
+      "readStoredMetadata(ctx, id)",
+    ]) {
+      expect(keys(`const meta = ${init};\nconst v = meta["k"];`)).toEqual(["k"]);
+    }
+  });
+
+  test("parameter meta stays an item read (fail-safe, Review Focus 1)", () => {
+    expect(keys('function f(meta: Record<string, unknown>) { return meta["k"]; }')).toEqual(["k"]);
+  });
+
+  test("a sibling function's vendor `const meta` does not leak into a later parameter `meta` (review 2.1)", () => {
+    const src = [
+      "function parseSlack(res: R) {",
+      '  const meta = asRecord(res.json["response_metadata"]);',
+      '  return meta["next_cursor"];',
+      "}",
+      "function formatItem(meta: Record<string, unknown>) {",
+      '  return meta["status"];',
+      "}",
+    ].join("\n");
+    expect(keys(src)).toEqual(["status"]);
+    expect(extractNonItemJsReads("x.ts", src).map((r) => r.value)).toEqual(["next_cursor"]);
+  });
+
+  test("a parameter shadowing an outer vendor `const meta` is an item read", () => {
+    const src = [
+      'const meta = asRecord(cfg["meta"]);',
+      'const f = (meta: Record<string, unknown>) => meta["status"];',
+    ].join("\n");
+    expect(keys(src)).toEqual(["status"]);
+  });
+
+  test("an assignment with aligned whitespace before = is still a write (review 2.2)", () => {
+    expect(keys('const meta: R = {};\nmeta["status_category"]    = "done";')).toEqual([]);
+  });
+
+  test("an uninitialised let stays an item read", () => {
+    expect(keys('let meta: R;\nmeta = load();\nconst v = meta["k"];')).toEqual(["k"]);
+  });
+
+  test("a dotted receiver is always an item read", () => {
+    const src = 'const meta = asRecord(x["meta"]);\nconst m = row.metadata["merged"];';
+    expect(keys(src)).toEqual(["merged"]);
+  });
+
+  test("an object-literal initializer with an `as` cast is item origin (Ruling B)", () => {
+    const src = 'const meta = { ...base, a: 1 } as Record<string, unknown>;\nconst v = meta["a"];';
+    expect(keys(src)).toEqual(["a"]);
+    expect(extractNonItemJsReads("x.ts", src)).toEqual([]);
+  });
+
+  test("a paren-less arrow parameter shadowing an outer vendor `const meta` is an item read", () => {
+    const src = [
+      'const meta = asRecord(cfg["meta"]);',
+      'const statuses = rows.map(meta => meta["status"]);',
+    ].join("\n");
+    expect(keys(src)).toEqual(["status"]);
   });
 });

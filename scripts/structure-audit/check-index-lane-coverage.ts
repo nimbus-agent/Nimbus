@@ -44,7 +44,12 @@
  */
 
 import type { FileEntry } from "./check-nimbus-invariants.ts";
-import { extractReadTriples, type ReadTriple } from "./lane-census/read-sites.ts";
+import {
+  extractNonItemJsReads,
+  extractReadTriples,
+  type NonItemRead,
+  type ReadTriple,
+} from "./lane-census/read-sites.ts";
 import { extractSqlLiterals, type SqlLiteral } from "./lane-census/sql-literals.ts";
 import {
   extractWriterEmissions,
@@ -87,6 +92,12 @@ export type LaneCensus = {
   readonly ambiguousReadCount: number;
   /** Every `type = ?` (or `qualifier.type = ?`) site, by file and line — never gated, always visible. */
   readonly parameterizedReads: readonly ParameterizedRead[];
+  /**
+   * JS-side `meta["k"]` reads in production files whose receiver R5 decided is NOT an `item` row's
+   * metadata (a vendor/config object). Dropped from `reads` and never gated — kept here so a wrong
+   * not-item verdict stays visible in the artifact instead of vanishing.
+   */
+  readonly nonItemReads: readonly NonItemRead[];
 };
 
 /**
@@ -142,6 +153,14 @@ function computeLiteralSpans(contents: string): readonly LiteralSpan[] {
 /** Whether `line` falls inside `span`. */
 function lineInSpan(span: LiteralSpan, line: number): boolean {
   return line >= span.startLine && line <= span.endLine;
+}
+
+/**
+ * Spec §5.1: test helpers are not production reads, even though `iterateSourceFiles` yields them
+ * (it excludes `*.test.ts`, not `*.test-helpers.ts` or a `test-helpers/` directory).
+ */
+export function isProductionReadFile(relPath: string): boolean {
+  return !/(?:^|[/.])test-helpers?(?:[/.]|$)/.test(relPath);
 }
 
 /**
@@ -270,6 +289,7 @@ export function collectLaneCensus(files: readonly FileEntry[]): LaneCensus {
   const reads: ReadTriple[] = [];
   const writes: WriterEmission[] = [];
   const parameterizedReads: ParameterizedRead[] = [];
+  const nonItemReads: NonItemRead[] = [];
 
   type PerFile = {
     readonly fileReads: readonly ReadTriple[];
@@ -278,12 +298,15 @@ export function collectLaneCensus(files: readonly FileEntry[]): LaneCensus {
   const perFile: PerFile[] = [];
 
   for (const f of files) {
-    const fileReads = extractReadTriples(f.relPath, f.contents);
-    reads.push(...fileReads);
-    perFile.push({ fileReads, spans: computeLiteralSpans(f.contents) });
+    if (isProductionReadFile(f.relPath)) {
+      const fileReads = extractReadTriples(f.relPath, f.contents);
+      reads.push(...fileReads);
+      perFile.push({ fileReads, spans: computeLiteralSpans(f.contents) });
+      nonItemReads.push(...extractNonItemJsReads(f.relPath, f.contents));
 
-    for (const p of findParameterizedTypeReads(f.contents)) {
-      parameterizedReads.push({ file: f.relPath, line: p.line });
+      for (const p of findParameterizedTypeReads(f.contents)) {
+        parameterizedReads.push({ file: f.relPath, line: p.line });
+      }
     }
 
     if (isWriterFile(f.relPath)) {
@@ -340,7 +363,14 @@ export function collectLaneCensus(files: readonly FileEntry[]): LaneCensus {
     }
   }
 
-  return { reads, writes, unmatchedItemReads, ambiguousReadCount, parameterizedReads };
+  return {
+    reads,
+    writes,
+    unmatchedItemReads,
+    ambiguousReadCount,
+    parameterizedReads,
+    nonItemReads,
+  };
 }
 
 // -------------------------------------------------------------------------------------------
@@ -424,12 +454,14 @@ async function run(): Promise<void> {
       partialCoverage: totalPartial,
       ambiguousReadCount: census.ambiguousReadCount,
       parameterizedReads: census.parameterizedReads.length,
+      nonItemReads: census.nonItemReads.length,
     },
     reads: census.reads,
     writes: census.writes,
     unmatchedItemReads: census.unmatchedItemReads,
     ambiguousReadCount: census.ambiguousReadCount,
     parameterizedReads: census.parameterizedReads,
+    nonItemReads: census.nonItemReads,
   };
   await Bun.write(outPath, `${JSON.stringify(artifact, null, 2)}\n`);
 
@@ -438,7 +470,8 @@ async function run(): Promise<void> {
       `${census.unmatchedItemReads.length} unmatched item reads ` +
       `(${totalUnmatched} total absence, ${totalPartial} partial coverage), ` +
       `${census.ambiguousReadCount} ambiguous (__ANY__-scoped), ` +
-      `${census.parameterizedReads.length} parameterized → ${outPath}`,
+      `${census.parameterizedReads.length} parameterized, ` +
+      `${census.nonItemReads.length} non-item JS reads (not gated) → ${outPath}`,
   );
   // Always exits 0 — this is a census, not a gate. A later task turns a slice of it into an
   // enforced gate, exactly as `db-run-census.json` precedes `check-nimbus-invariants.ts`'s

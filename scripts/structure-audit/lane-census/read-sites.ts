@@ -17,6 +17,13 @@ export type ReadTriple = {
 };
 
 /**
+ * A JS-side `meta["k"]` / `metadata["k"]` read whose receiver was decided NOT to hold an `item`
+ * row's metadata (R5: a vendor/config object — Slack's `response_metadata`, a Kubernetes object's
+ * `metadata`, a SCIM resource's `meta`). Reported beside the census for visibility, never gated.
+ */
+export type NonItemRead = { readonly file: string; readonly line: number; readonly value: string };
+
+/**
  * `[qualifier.]type = 'value'`. The qualifier group is optional so a bare `type = 'x'` (no table
  * alias in front) still matches — resolving *which* table that bare form means is `resolveTable`'s
  * job, not this regex's.
@@ -53,9 +60,12 @@ function quotedListItemRegex(): RegExp {
  * DORA bug turns on, so a regex without the `(?:\?\.)?` alternation would miss the read on the
  * very lane this gate was built for. Built fresh per call, never module-level — Task 1.2's hazard
  * (a shared `g`-flagged RegExp across nested/recursive scans hangs `bun test` rather than failing).
+ *
+ * Groups: 1 = a leading `.` when the receiver is dotted (`row.metadata[...]`), 2 = the receiver
+ * identifier (`meta` or `metadata`), 3 = the key. `metaOrigin` reads 1 and 2.
  */
 function jsMetadataReadRegex(): RegExp {
-  return /\bmeta(?:data)?(?:\?\.)?\[\s*['"]([A-Za-z0-9_]+)['"]\s*\]/g;
+  return /(\.)?\b(meta(?:data)?)(?:\?\.)?\[\s*['"]([A-Za-z0-9_]+)['"]\s*\]/g;
 }
 
 /** Matches a `function <name>(` declaration head, exported or not. Built fresh per call, same reason. */
@@ -105,9 +115,19 @@ export function extractReadTriples(file: string, contents: string): readonly Rea
     collectMetadataKey(literal, aliases, distinctTables, file, out);
   }
 
-  collectJsMetadataReads(contents, file, out);
+  collectJsMetadataReads(contents, file, out, []);
 
   return out;
+}
+
+/**
+ * The JS-side `meta["k"]` reads in `contents` that `extractReadTriples` drops as NOT `item`
+ * metadata (R5) — the same scan, the other half of its verdict, so the dropped reads stay visible.
+ */
+export function extractNonItemJsReads(file: string, contents: string): readonly NonItemRead[] {
+  const nonItem: NonItemRead[] = [];
+  collectJsMetadataReads(contents, file, [], nonItem);
+  return nonItem;
 }
 
 /** The set of distinct tables bound anywhere in an alias map — the ambiguity check reads its size, not the map's. */
@@ -234,15 +254,33 @@ function collectMetadataKey(
  * file — re-measure before trusting `item` attribution again if that ever happens, rather than
  * assuming this comment is still true.
  */
-function collectJsMetadataReads(contents: string, file: string, out: ReadTriple[]): void {
+function collectJsMetadataReads(
+  contents: string,
+  file: string,
+  out: ReadTriple[],
+  nonItem: NonItemRead[],
+): void {
   const stripped = stripComments(contents);
+  const sink: JsReadSink = { file, out, nonItem, braces: undefined };
 
-  scanJsMetadataReads(stripped, stripped, 0, file, out);
+  scanJsMetadataReads(stripped, stripped, 0, sink);
 
   for (const helper of findHelperBodies(stripped)) {
-    scanJsMetadataReads(stripped, helper.body, helper.start, file, out);
+    scanJsMetadataReads(stripped, helper.body, helper.start, sink);
   }
 }
+
+/**
+ * Where one file's JS-side reads land: `out` for item reads, `nonItem` for R5's not-item verdicts.
+ * `braces` is the file's `{…}` pair list, computed at most once (lazily, only when a declaration
+ * actually needs a scope check) and shared by the whole-file and helper-body passes.
+ */
+type JsReadSink = {
+  readonly file: string;
+  readonly out: ReadTriple[];
+  readonly nonItem: NonItemRead[];
+  braces: readonly BracePair[] | undefined;
+};
 
 /** A named helper's body text plus the absolute index (into the comment-stripped file) it starts at. */
 type HelperBody = { readonly body: string; readonly start: number };
@@ -310,6 +348,7 @@ function findMatchingDelimiter(
  * can.
  */
 function findStringLiteralEnd(src: string, start: number, quote: string): number {
+  if (quote === "`") return findTemplateEnd(src, start);
   let i = start + 1;
   while (i < src.length) {
     const ch = src[i];
@@ -325,27 +364,327 @@ function findStringLiteralEnd(src: string, start: number, quote: string): number
 }
 
 /**
- * Scans `text` (a slice of `fullStripped` starting at `baseIndex`) for JS-side metadata reads,
- * attributing each to `item` with a line number recovered from its absolute position in
- * `fullStripped`.
+ * Scans `text` (a slice of `fullStripped` starting at `baseIndex`) for JS-side metadata reads and
+ * classifies each one before recording it, with a line number recovered from its absolute position
+ * in `fullStripped`:
+ * - an assignment TARGET (`meta["k"] = v`) is a write a builder performs, not a read — skipped;
+ * - otherwise `metaOrigin` decides: `"item"` → an `item`/`metadata-key` triple in `sink.out`,
+ *   `"not-item"` → a `NonItemRead` in `sink.nonItem` (visible, never gated).
+ * One scanner feeds both `extractReadTriples` and `extractNonItemJsReads`, so the two can never
+ * disagree about which matches exist.
  */
 function scanJsMetadataReads(
   fullStripped: string,
   text: string,
   baseIndex: number,
-  file: string,
-  out: ReadTriple[],
+  sink: JsReadSink,
 ): void {
   const re = jsMetadataReadRegex();
   let m: RegExpExecArray | null = re.exec(text);
   while (m !== null) {
-    const value = m[1];
-    if (value !== undefined) {
-      const line = lineAtIndex(fullStripped, baseIndex + m.index);
-      addUniqueTriple(out, { table: "item", kind: "metadata-key", value, file, line });
+    const dotted = m[1] === ".";
+    const receiver = m[2];
+    const value = m[3];
+    if (
+      receiver !== undefined &&
+      value !== undefined &&
+      !isAssignmentTarget(text, m.index + m[0].length)
+    ) {
+      const receiverIndex = baseIndex + m.index + (dotted ? 1 : 0);
+      const line = lineAtIndex(fullStripped, receiverIndex);
+      const { file } = sink;
+      if (metaOrigin(fullStripped, receiverIndex, receiver, dotted, sink) === "item") {
+        addUniqueTriple(sink.out, { table: "item", kind: "metadata-key", value, file, line });
+      } else if (!sink.nonItem.some((r) => r.line === line && r.value === value)) {
+        sink.nonItem.push({ file, line, value });
+      }
     }
     m = re.exec(text);
   }
+}
+
+/**
+ * `X["k"]` followed by a plain `=` (not `==`, `===`, `=>`) is an assignment TARGET — a write. The
+ * 40-char window tolerates aligned whitespace / a line break before `=`.
+ */
+function isAssignmentTarget(text: string, endIndex: number): boolean {
+  return /^\s*=(?![=>])/.test(text.slice(endIndex, Math.min(text.length, endIndex + 40)));
+}
+
+export type MetaOrigin = "item" | "not-item";
+
+/**
+ * Initializer text that marks an `item` row's metadata: a `.metadata`/`.rawMeta` dereference or a
+ * `…Metadata(` / `metadata(` parser call. Built fresh per call (this directory's convention).
+ */
+function itemOriginRegex(): RegExp {
+  return /\.(?:metadata|rawMeta)\b|(?:^|[^A-Za-z0-9_$])metadata\s*\(|[A-Za-z0-9_$]Metadata\s*\(/;
+}
+
+/**
+ * R5 (amended by controller Ruling B): decides whether the `meta`/`metadata` identifier read at
+ * `index` holds an `item` row's metadata. Dotted receivers (`row.metadata[...]`) always do.
+ * Otherwise the NEAREST preceding, still-in-scope `const|let|var <name> … = <init>` decides:
+ * - an initializer showing item origin (`itemOriginRegex`) → item;
+ * - an object/array LITERAL initializer (`{…}`/`[…]`, optionally `as …`) → item — a builder-local
+ *   being read is item metadata being authored, and dropping it would be a silent miss;
+ * - any other initializer → not-item.
+ * No in-scope declaration, or one with no initializer (a parameter, `let x;`, `for (const x of …)`)
+ * → item, so a real read is never dropped silently. A parameter list that rebinds `name` between
+ * the declaration and the read (shadowing) also → item, for the same reason.
+ */
+function metaOrigin(
+  src: string,
+  index: number,
+  name: string,
+  dotted: boolean,
+  sink: JsReadSink,
+): MetaOrigin {
+  if (dotted) return "item";
+  const declRe = new RegExp(`\\b(?:const|let|var)\\s+${name}\\b\\s*(?::[^=;]*)?(=)?`, "g");
+  let last: RegExpExecArray | null = null;
+  let m = declRe.exec(src);
+  while (m !== null && m.index < index) {
+    // Scope check: a declaration whose smallest enclosing `{…}` closed before `index` cannot
+    // bind the name at `index` (a sibling function's local) — skip it.
+    if (declStillInScope(braceCache(src, sink), m.index, index)) last = m;
+    m = declRe.exec(src);
+  }
+  if (last === null || last[1] === undefined) return "item";
+  if (parameterShadows(src, last.index, index, name)) return "item";
+  const initStart = last.index + last[0].length;
+  if (isLiteralInitializer(src, initStart)) return "item";
+  const semi = src.indexOf(";", initStart);
+  const init = src.slice(initStart, semi === -1 ? Math.min(src.length, initStart + 300) : semi);
+  return itemOriginRegex().test(init) ? "item" : "not-item";
+}
+
+/**
+ * Ruling B: whether the initializer starting at `initStart` is exactly an object/array literal,
+ * optionally followed by an `as …` cast, up to its statement's `;`. `{} ?? x` or `[a].map(f)` is
+ * NOT a bare literal — the expression's value is whatever the rest computes.
+ */
+function isLiteralInitializer(src: string, initStart: number): boolean {
+  let i = initStart;
+  while (i < src.length && /\s/.test(src[i] ?? "")) i++;
+  const open = src[i];
+  if (open !== "{" && open !== "[") return false;
+  const close = findMatchingDelimiter(src, i, open, open === "{" ? "}" : "]");
+  if (close === -1) return false;
+  const semi = src.indexOf(";", close);
+  const rest = src.slice(close + 1, semi === -1 ? src.length : semi).trim();
+  return rest === "" || /^as\b/.test(rest);
+}
+
+/** One matched `{…}` pair: the absolute indices of its `{` and `}`. */
+type BracePair = { readonly start: number; readonly end: number };
+
+/** `sink.braces`, computed on first use. */
+function braceCache(src: string, sink: JsReadSink): readonly BracePair[] {
+  if (sink.braces === undefined) sink.braces = collectBracePairs(src);
+  return sink.braces;
+}
+
+/**
+ * Every matched `{…}` pair in `src`, skipping strings and templates (so a brace inside a literal
+ * never unbalances the scan). The same brace walk as `writer-emissions.ts`'s
+ * `findEnclosingBraceRange`, copied per this directory's convention and turned inside out: it
+ * records every pair once, so each declaration's scope check is a list lookup, not a rescan.
+ */
+function collectBracePairs(src: string): readonly BracePair[] {
+  const pairs: BracePair[] = [];
+  const stack: number[] = [];
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i = skipStringOrTemplate(src, i);
+      continue;
+    }
+    if (ch === "{") stack.push(i);
+    else if (ch === "}") {
+      const start = stack.pop();
+      if (start !== undefined) pairs.push({ start, end: i });
+    }
+    i++;
+  }
+  return pairs;
+}
+
+/**
+ * Whether a declaration at `declIndex` can still bind its name at `useIndex`: true when no `{…}`
+ * pair encloses the declaration (module scope), or the SMALLEST one that does closes after
+ * `useIndex`. A sibling function's local closed before the read and so cannot reach it.
+ */
+function declStillInScope(
+  pairs: readonly BracePair[],
+  declIndex: number,
+  useIndex: number,
+): boolean {
+  let best: BracePair | undefined;
+  for (const p of pairs) {
+    if (p.start < declIndex && p.end > declIndex) {
+      if (best === undefined || p.end - p.start < best.end - best.start) best = p;
+    }
+  }
+  return best === undefined || best.end > useIndex;
+}
+
+/** Control-flow keywords whose `(…) {` is a condition, not a parameter list. */
+const NON_BINDING_PAREN_KEYWORDS: readonly string[] = ["if", "while", "for", "switch", "with"];
+
+/**
+ * Whether some function head opening between `declIndex` and `useIndex` names `name` among its
+ * parameters AND its body contains `useIndex` — i.e. the read sees a parameter, not the earlier
+ * declaration. Covers `function f(meta)` / a method `m(meta) {` / `catch (meta) {` / an arrow
+ * `(meta) =>` or `(meta): T =>`, plus the paren-less arrow `meta =>`. Fail-safe: anything this
+ * finds makes the read an item read.
+ */
+function parameterShadows(src: string, declIndex: number, useIndex: number, name: string): boolean {
+  const nameRe = new RegExp(`\\b${name}\\b`);
+  let i = declIndex;
+  while (i < useIndex) {
+    const ch = src[i];
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i = skipStringOrTemplate(src, i);
+      continue;
+    }
+    if (ch === "(") {
+      const close = findMatchingDelimiter(src, i, "(", ")");
+      if (close !== -1 && close < useIndex && nameRe.test(src.slice(i + 1, close))) {
+        const body = functionBodyAfter(src, close, precedingWord(src, i));
+        if (body !== undefined && body.start <= useIndex && useIndex <= body.end) return true;
+      }
+    }
+    i++;
+  }
+  const bareArrow = new RegExp(`(?:^|[^A-Za-z0-9_$.])${name}\\s*=>`, "g");
+  bareArrow.lastIndex = declIndex;
+  let m = bareArrow.exec(src);
+  while (m !== null && m.index < useIndex) {
+    const body = arrowBody(src, m.index + m[0].length);
+    if (body.start <= useIndex && useIndex <= body.end) return true;
+    m = bareArrow.exec(src);
+  }
+  return false;
+}
+
+/** The identifier immediately before `parenIndex` (whitespace skipped), or `""`. */
+function precedingWord(src: string, parenIndex: number): string {
+  let j = parenIndex - 1;
+  while (j >= 0 && /\s/.test(src[j] ?? "")) j--;
+  const end = j + 1;
+  while (j >= 0 && /[A-Za-z0-9_$]/.test(src[j] ?? "")) j--;
+  return src.slice(j + 1, end);
+}
+
+/**
+ * The body span of the function whose parameter list closes at `closeParen`, or `undefined` when
+ * that `(…)` is not a parameter list. After the `)`: an optional `: ReturnType`, then either `=>`
+ * (an arrow — block or expression body) or `{` (a function/method/`catch` block). A `{` whose
+ * closing `}` is followed by another `{` was an object-literal return TYPE; the next block is the
+ * body.
+ */
+function functionBodyAfter(
+  src: string,
+  closeParen: number,
+  keyword: string,
+): BracePair | undefined {
+  let i = skipWhitespace(src, closeParen + 1);
+  const hasReturnType = src[i] === ":";
+  if (hasReturnType) {
+    const arrow = src.indexOf("=>", i);
+    const brace = src.indexOf("{", i);
+    if (arrow !== -1 && (brace === -1 || arrow < brace)) i = arrow;
+    else if (brace !== -1) i = brace;
+    else return undefined;
+  }
+  if (src.startsWith("=>", i)) return arrowBody(src, i + 2);
+  if (src[i] !== "{" || NON_BINDING_PAREN_KEYWORDS.includes(keyword)) return undefined;
+  const end = findMatchingDelimiter(src, i, "{", "}");
+  if (end === -1) return undefined;
+  const next = skipWhitespace(src, end + 1);
+  if (hasReturnType && src[next] === "{") {
+    const bodyEnd = findMatchingDelimiter(src, next, "{", "}");
+    if (bodyEnd !== -1) return { start: next, end: bodyEnd };
+  }
+  return { start: i, end };
+}
+
+/**
+ * An arrow's body starting at `from` (just past `=>`): a `{…}` block, or an expression running to
+ * the first `;`, `,` or unmatched closer at its own depth.
+ */
+function arrowBody(src: string, from: number): BracePair {
+  const start = skipWhitespace(src, from);
+  if (src[start] === "{") {
+    const end = findMatchingDelimiter(src, start, "{", "}");
+    return { start, end: end === -1 ? src.length : end };
+  }
+  let depth = 0;
+  let i = start;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i = skipStringOrTemplate(src, i);
+      continue;
+    }
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") {
+      if (depth === 0) break;
+      depth--;
+    } else if ((ch === ";" || ch === ",") && depth === 0) break;
+    i++;
+  }
+  return { start, end: i };
+}
+
+/** First non-whitespace index at or after `i`. */
+function skipWhitespace(src: string, i: number): number {
+  let j = i;
+  while (j < src.length && /\s/.test(src[j] ?? "")) j++;
+  return j;
+}
+
+/**
+ * Index of the backtick that closes the template literal opened at `start`, respecting nested
+ * `${ … }` (copied from `writer-emissions.ts`, per this directory's convention), so a backtick
+ * inside an interpolation does not end the template early. -1 if it never closes.
+ */
+function findTemplateEnd(src: string, start: number): number {
+  let i = start + 1;
+  let interpDepth = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "\\") {
+      i += 2;
+      continue;
+    }
+    if (interpDepth === 0) {
+      if (ch === "`") return i;
+      if (ch === "$" && src[i + 1] === "{") {
+        interpDepth = 1;
+        i += 2;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    if (ch === "{") interpDepth++;
+    else if (ch === "}") interpDepth--;
+    i++;
+  }
+  return -1;
+}
+
+/**
+ * Index just past the string/template literal opened at `i`. An unterminated single-/double-quoted
+ * string (a stray quote) advances one character rather than swallowing the rest of the file.
+ */
+function skipStringOrTemplate(src: string, i: number): number {
+  const quote = src[i] ?? "";
+  const end = findStringLiteralEnd(src, i, quote);
+  return end === -1 ? i + 1 : end + 1;
 }
 
 /** 1-indexed line of `index` within `src`, same counting rule as `sql-literals.ts`'s `lineAt`. */
