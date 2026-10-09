@@ -126,6 +126,7 @@ export function bitbucketPrMetadata(
       stateRaw: rawState,
       openedAtMs: canonicalEpochMs(stringField(pr, "created_on")),
       repo: repoFull,
+      number: numberField(pr, "id"),
     },
   );
 }

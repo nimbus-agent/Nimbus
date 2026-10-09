@@ -96,7 +96,6 @@ export function extractPrMetadataForIndex(
   const user = asRecord(pr["user"]);
   const login = user === undefined ? undefined : stringField(user, "login");
   const out: Record<string, unknown> = {
-    number: numberField(pr, "number"),
     draft: pr["draft"] === true,
     user: login,
     labels: extractLabelNames(pr["labels"]),
@@ -125,6 +124,7 @@ export function extractPrMetadataForIndex(
     openedAtMs: canonicalEpochMs(stringField(pr, "created_at")),
     mergedAtMs: merged ? canonicalEpochMs(stringField(pr, "merged_at")) : undefined,
     repo: repoFull,
+    number: numberField(pr, "number"),
   });
 }
 

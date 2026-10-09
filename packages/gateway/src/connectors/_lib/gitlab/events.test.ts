@@ -172,6 +172,13 @@ describeWithFetchRestore("syncGitlabEventsPages — Issue event", () => {
       .get() as { type: string; external_id: string } | undefined;
     expect(row?.type).toBe("issue");
     expect(row?.external_id).toContain("#7");
+    const meta = db
+      .prepare("SELECT metadata FROM item WHERE service = 'gitlab' AND type = 'issue'")
+      .get() as { metadata: string };
+    const parsed = JSON.parse(meta.metadata) as Record<string, unknown>;
+    expect(parsed["number"]).toBe(parsed["iid"]);
+    expect(parsed["repo"]).toBe(parsed["project"]);
+    expect(typeof parsed["repo"]).toBe("string");
   });
 });
 
@@ -1267,7 +1274,7 @@ test("gitlabMrMetadata — an opened event sets state=open and opened_at_ms from
   expect(m["opened_at_ms"]).toBe(Date.parse(T_OPEN));
   expect("merged_at" in m).toBe(false);
   expect(m["repo"]).toBe("acme/app");
-  expect(m["meta_v"]).toBe(1);
+  expect(m["meta_v"]).toBe(PR_META_VERSION);
 });
 
 test("gitlabMrMetadata — accepted after opened: merged, both timestamps", () => {
@@ -1534,4 +1541,20 @@ describeWithFetchRestore("events sync — MR author attribution", () => {
     expect(dana).toBeDefined();
     expect(row.author_id).toBe(dana?.id ?? "missing");
   });
+});
+
+test("every MR event writes number from iid and meta_v 2, so rebody converges", () => {
+  for (const actionName of ["opened", "approved", "commented on", "accepted", "closed"]) {
+    const m = gitlabMrMetadata(
+      {
+        pathWithNamespace: "g/p",
+        iid: 9,
+        actionName,
+        eventCreatedAt: "2026-01-01T00:00:00Z",
+      },
+      null,
+    );
+    expect(m["number"]).toBe(9);
+    expect(m["meta_v"]).toBe(PR_META_VERSION);
+  }
 });

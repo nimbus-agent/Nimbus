@@ -167,12 +167,13 @@ export function gitlabMrMetadata(
         openedAtMs: canonicalEpochMs(f.mr.createdAt) ?? prior.openedAtMs,
         mergedAtMs: canonicalEpochMs(f.mr.mergedAt) ?? prior.mergedAtMs,
         repo: f.pathWithNamespace,
+        number: f.iid,
       }),
     );
   }
   const transition = gitlabEventTransition(f.actionName);
   if (transition === null) {
-    return finish(buildPrMetadata(raw, { ...prior, repo: f.pathWithNamespace }));
+    return finish(buildPrMetadata(raw, { ...prior, repo: f.pathWithNamespace, number: f.iid }));
   }
   const eventMs = canonicalEpochMs(f.eventCreatedAt);
   return finish(
@@ -182,6 +183,7 @@ export function gitlabMrMetadata(
       openedAtMs: f.actionName === "opened" ? (eventMs ?? prior.openedAtMs) : prior.openedAtMs,
       mergedAtMs: transition === "merged" ? (eventMs ?? prior.mergedAtMs) : undefined,
       repo: f.pathWithNamespace,
+      number: f.iid,
     }),
   );
 }
@@ -249,7 +251,13 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
           },
           readStoredMetadata(ctx, itemPrimaryKey(SERVICE_ID, externalId)),
         )
-      : { iid, project: pathWithNamespace, action: actionName };
+      : {
+          iid,
+          number: iid,
+          project: pathWithNamespace,
+          repo: pathWithNamespace,
+          action: actionName,
+        };
   const { login: authorLogin, name: authorDisplay } = itemAuthor(shape, meta, f);
   const authorId =
     authorLogin !== undefined && authorLogin !== ""

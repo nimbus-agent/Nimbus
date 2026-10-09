@@ -116,3 +116,16 @@ describe("buildPrMetadata — merged only for a known state", () => {
     expect(buildPrMetadata({}, { state: "merged" })["merged"]).toBe(true);
   });
 });
+
+test("number is canonical: a positive integer is written, anything else omitted", () => {
+  expect(buildPrMetadata({}, { number: 42 })["number"]).toBe(42);
+  for (const bad of [0, -1, 1.5, Number.NaN]) {
+    expect(buildPrMetadata({}, { number: bad })).not.toHaveProperty("number");
+  }
+  // a raw `number` is dropped like every canonical key, so the builder alone decides it
+  expect(buildPrMetadata({ number: 7 }, {})).not.toHaveProperty("number");
+});
+
+test("PR_META_VERSION is 2 (canonical number)", () => {
+  expect(PR_META_VERSION).toBe(2);
+});

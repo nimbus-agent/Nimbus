@@ -24,7 +24,7 @@ import {
   throwGithubRateLimitErrorIfApplicable,
   upsertPr,
 } from "./github-sync.ts";
-import { type CanonicalPrKey, PR_EMITTED_KEYS } from "./pr-meta.ts";
+import { type CanonicalPrKey, PR_EMITTED_KEYS, PR_META_VERSION } from "./pr-meta.ts";
 
 function ctxWithPat(db: ReturnType<typeof createMemoryIndexDb>, pat: string | null) {
   return {
@@ -845,7 +845,7 @@ describe("extractPrMetadataForIndex (pr contract)", () => {
     expect(m["merged_at"]).toBe(Date.parse("2026-10-02T09:00:00Z"));
     expect(m["merge_commit_sha"]).toBe("m1");
     expect(m["repo"]).toBe("acme/app");
-    expect(m["meta_v"]).toBe(1);
+    expect(m["meta_v"]).toBe(PR_META_VERSION);
   });
 
   test("an unparseable created_at is omitted, never NaN", () => {
@@ -881,4 +881,8 @@ test("upsertPr carries opened_at_ms forward when an events payload omits created
     Date.parse("2026-10-01T09:00:00Z"),
   );
   db.close();
+});
+
+test("extractPrMetadataForIndex writes the canonical number", () => {
+  expect(extractPrMetadataForIndex("a/b", { number: 3, state: "open" })["number"]).toBe(3);
 });
