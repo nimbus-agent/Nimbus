@@ -18,7 +18,7 @@ describe("sanitiseUserMcpInputSchema (I11, user-MCP input schemas)", () => {
       $schema: D07,
       type: "object",
       properties: {
-        q: { type: "string", minLength: 1, maxLength: 80, pattern: "^[a-z]+$", format: "email" },
+        q: { type: "string", minLength: 1, maxLength: 80, format: "email" },
         n: { type: ["integer", "null"], minimum: 0, maximum: 10, multipleOf: 2 },
         x: { type: "number", exclusiveMinimum: 0, exclusiveMaximum: 1 },
         tags: {
@@ -35,6 +35,24 @@ describe("sanitiseUserMcpInputSchema (I11, user-MCP input schemas)", () => {
       additionalProperties: false,
     };
     expect(sanitiseUserMcpInputSchema(raw)).toEqual(raw);
+  });
+
+  test("pattern is dropped at every depth, so a server regex never runs in the gateway (ReDoS)", async () => {
+    const listed = {
+      type: "object",
+      properties: {
+        evil: { type: "string", pattern: "^(a+)+$" },
+        inner: { type: "object", properties: { s: { type: "string", pattern: "^[a-z]+$" } } },
+      },
+    };
+    const out = sanitiseUserMcpInputSchema(listed);
+    expect(JSON.stringify(out)).not.toContain("pattern");
+    // A near-match that makes `^(a+)+$` backtrack exponentially validates at once: nothing ran it.
+    const rebuilt = toStandardSchema(JSON.parse(JSON.stringify(out)));
+    const started = performance.now();
+    const r = await rebuilt["~standard"].validate({ evil: `${"a".repeat(40)}!` });
+    expect("issues" in r && r.issues !== undefined).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 
   test("drops examples, default, $comment, $ref/$defs and unrecognised keys at every level (a supported $schema is kept)", () => {

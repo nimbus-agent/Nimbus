@@ -3,8 +3,11 @@
  * the model reads, so it is REBUILT from an allowlist of structural keywords rather than passed
  * through. Kept: `type`, `properties`, `required` (only names declared in the same object's
  * `properties`), `items` (single, or a tuple), `prefixItems`, `additionalProperties`,
- * `anyOf`/`oneOf`/`allOf`, `enum`, `const`, the numeric / length / array bounds, `pattern` (only
- * when it compiles, at most 500 characters) and `format` (only a known JSON-Schema format name).
+ * `anyOf`/`oneOf`/`allOf`, `enum`, `const`, the numeric / length / array bounds and `format` (only a known JSON-Schema
+ * format name). `pattern` is DROPPED: the validator compiles it into a backtracking `RegExp` run
+ * in the gateway process against the model's argument, so a server-supplied `^(a+)+$` could stall
+ * the event loop (ReDoS), and no syntactic check proves a regex linear. Dropping it only loosens;
+ * the server still validates its own input.
  * `description`/`title` are kept as prose, with every I11 closer escaped (`escapeEnvelopeClosers`)
  * and then capped at {@link USER_MCP_SCHEMA_PROSE_MAX}. EVERYTHING else is dropped — `examples`,
  * `default`, `$comment`, `x-*` and any unrecognised keyword — and so are `$ref`/`$defs`: a node
@@ -31,8 +34,8 @@
  * or re-validated, so the node is opened to `true` instead. The rebuilt schema is therefore never
  * stricter than the listing's own validator. A boolean `nullable` is kept beside `type`.
  *
- * Bounds, stated: `enum`/`const` values, property NAMES and `pattern` reach the model VERBATIM
- * (data the model must echo or match exactly, so they are not escaped). An over-long value or
+ * Bounds, stated: `enum`/`const` values and property NAMES reach the model VERBATIM (data the
+ * model must echo exactly, so they are not escaped). An over-long value or
  * name is not truncated — a truncated enum value could never match — so the `enum`/`const`
  * constraint, or the property together with its `required` entry, is dropped instead. The real
  * ceiling on raw schema text the model can read is therefore {@link USER_MCP_SCHEMA_MAX_BYTES},
@@ -47,7 +50,6 @@ export const USER_MCP_SCHEMA_PROSE_MAX = 200;
 export const USER_MCP_SCHEMA_MAX_DEPTH = 16;
 export const USER_MCP_SCHEMA_MAX_NODES = 1000;
 export const USER_MCP_SCHEMA_MAX_BYTES = 32_768;
-export const USER_MCP_SCHEMA_PATTERN_MAX = 500;
 const PROPERTY_NAME_MAX = 128;
 const ENUM_MAX_VALUES = 100;
 const COMBINATOR_MAX_BRANCHES = 32;
@@ -125,15 +127,6 @@ function isOfferableValue(v: unknown): boolean {
   return isPrimitive(v);
 }
 
-function compiles(pattern: string): boolean {
-  try {
-    new RegExp(pattern, "u");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 type Walk = { nodes: number; is2020: boolean };
 
 function sanitiseType(v: unknown): string | string[] | undefined {
@@ -162,13 +155,6 @@ function copyScalarKeywords(raw: JsonObject, out: JsonObject): void {
   // OpenAPI-style `nullable` (which @mastra/mcp's validator honours): Ajv accepts it only beside
   // `type`, and dropping it would refuse a null the server takes.
   if (type !== undefined && typeof raw["nullable"] === "boolean") out["nullable"] = raw["nullable"];
-  const pattern = raw["pattern"];
-  if (
-    typeof pattern === "string" &&
-    pattern.length <= USER_MCP_SCHEMA_PATTERN_MAX &&
-    compiles(pattern)
-  )
-    out["pattern"] = pattern;
   const format = raw["format"];
   if (typeof format === "string" && KNOWN_FORMATS.has(format)) out["format"] = format;
   for (const k of PROSE_KEYWORDS) {
