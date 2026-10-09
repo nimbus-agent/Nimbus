@@ -369,6 +369,7 @@ export function collectLaneCensus(
   const unscopedReads: ReadTriple[] = [];
   let ambiguousReadCount = 0;
   const usedAnnotations = new Set<LaneAnnotation>();
+  const contradictionKeys = new Set<string>();
 
   for (const { annotations } of perFile) {
     for (const a of annotations) annotationErrors.push(...validateAnnotation(a, writerIndex));
@@ -390,14 +391,26 @@ export function collectLaneCensus(
         continue;
       }
 
-      // kind === "metadata-key". A covering annotation overrides the SQL-derived scope (R4).
+      // kind === "metadata-key". R4 (amended): a covering annotation SUPPLIES the type scope only
+      // when the read's own SQL literal has none; a read the SQL already scopes keeps its SQL
+      // types, and the annotation may only narrow it by service — never re-type it.
       const annotation = narrowestCovering(annotations, triple.line);
       if (annotation !== undefined) usedAnnotations.add(annotation);
-      const scopeTypes =
-        annotation !== undefined
-          ? new Set(annotation.types)
-          : scopeTypesFor(triple, spans, typeTriples);
-      const services = annotation?.services ? new Set(annotation.services) : null;
+      const { scopeTypes, services, contradiction } = resolveReadScope(
+        annotation,
+        scopeTypesFor(triple, spans, typeTriples),
+      );
+      if (contradiction !== null && annotation !== undefined) {
+        const key = `${annotation.file}:${triple.line}:${contradiction}`;
+        if (!contradictionKeys.has(key)) {
+          contradictionKeys.add(key);
+          annotationErrors.push({
+            file: annotation.file,
+            line: triple.line,
+            message: `annotation contradicts the statement's SQL type scope (${contradiction})`,
+          });
+        }
+      }
       if (scopeTypes.size === 0) {
         unscopedReads.push(triple);
         // "__ANY__" scope: unchanged from the per-type design — checked against the weaker
@@ -490,6 +503,40 @@ function validateAnnotation(a: LaneAnnotation, idx: WriterIndex): readonly Annot
     }
   }
   return out;
+}
+
+/**
+ * The type and service scope one metadata-key read is matched under (R4, amended by the final
+ * review's I-1 ruling).
+ *
+ * - No covering annotation: the SQL-derived scope, no service narrowing.
+ * - Annotation, SQL scope EMPTY (a JS `meta["k"]` read, or SQL scoped only by `type = ?`): the
+ *   annotation supplies the types, and `service=` narrows them.
+ * - Annotation, SQL scope NON-EMPTY and fully covered by the annotation's types: the SQL types stay
+ *   authoritative and `service=` still narrows them.
+ * - Annotation, SQL scope NON-EMPTY and NOT fully covered: the annotation contradicts the
+ *   statement. The read is matched against its OWN SQL types with no narrowing, and `contradiction`
+ *   names those types so the caller can report it — an annotation sized for one query must never
+ *   lend its type to a differently-typed query that happens to sit inside its span.
+ */
+function resolveReadScope(
+  annotation: LaneAnnotation | undefined,
+  sqlTypes: ReadonlySet<string>,
+): {
+  readonly scopeTypes: ReadonlySet<string>;
+  readonly services: ReadonlySet<string> | null;
+  readonly contradiction: string | null;
+} {
+  if (annotation === undefined)
+    return { scopeTypes: sqlTypes, services: null, contradiction: null };
+  const services = annotation.services === null ? null : new Set(annotation.services);
+  if (sqlTypes.size === 0) {
+    return { scopeTypes: new Set(annotation.types), services, contradiction: null };
+  }
+  if ([...sqlTypes].every((t) => annotation.types.includes(t))) {
+    return { scopeTypes: sqlTypes, services, contradiction: null };
+  }
+  return { scopeTypes: sqlTypes, services: null, contradiction: [...sqlTypes].sort().join(", ") };
 }
 
 /**

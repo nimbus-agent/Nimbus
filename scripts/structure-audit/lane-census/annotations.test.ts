@@ -289,3 +289,178 @@ describe("task-4 review fixes", () => {
     }
   });
 });
+
+describe("an annotation never re-types a SQL-scoped read (final review I-1, R4 amended)", () => {
+  const writers = [
+    {
+      relPath: "packages/gateway/src/connectors/gha.ts",
+      contents:
+        'ctx.upsertItem({ service: "github_actions", type: "ci_run", metadata: { conclusion: 1 } });',
+    },
+    {
+      relPath: "packages/gateway/src/connectors/deploy.ts",
+      contents:
+        'ctx.upsertItem({ service: "vercel", type: "deployment", metadata: { state: 1 } });',
+    },
+    {
+      relPath: "packages/gateway/src/connectors/pd.ts",
+      contents:
+        'ctx.upsertItem({ service: "pagerduty", type: "incident", metadata: { status: 1 } });',
+    },
+    {
+      relPath: "packages/gateway/src/connectors/og.ts",
+      contents:
+        'ctx.upsertItem({ service: "opsgenie", type: "incident", metadata: { other: 1 } });',
+    },
+  ];
+  const reader = (contents: string) => ({ relPath: "packages/gateway/src/agents/r.ts", contents });
+
+  test("a differently-typed query inside an annotated function is an error and is matched against its own SQL type", () => {
+    const c = collectLaneCensus([
+      ...writers,
+      reader(
+        [
+          "// lane-census: scope=ci_run", // 1
+          "function selectFailingCiRuns(db: D, meta: R) {", // 2
+          '  const c = meta["conclusion"];', // 3
+          "  return db.query(`SELECT id FROM item WHERE type = 'deployment' AND json_extract(metadata, '$.conclusion') = 'x'`);", // 4
+          "}", // 5
+        ].join("\n"),
+      ),
+    ]);
+    expect(c.annotationErrors.map((e) => [e.line, e.message])).toEqual([
+      [4, "annotation contradicts the statement's SQL type scope (deployment)"],
+    ]);
+    expect(c.unmatchedItemReads).toEqual([
+      expect.objectContaining({ line: 4, value: "conclusion", matchState: "unmatched" }),
+    ]);
+  });
+
+  test("the same query outside any annotation is unmatched, with no annotation error", () => {
+    const c = collectLaneCensus([
+      ...writers,
+      reader(
+        "db.query(`SELECT id FROM item WHERE type = 'deployment' AND json_extract(metadata, '$.conclusion') = 'x'`);",
+      ),
+    ]);
+    expect(c.annotationErrors).toEqual([]);
+    expect(c.unmatchedItemReads.map((r) => [r.value, r.matchState])).toEqual([
+      ["conclusion", "unmatched"],
+    ]);
+  });
+
+  test("an agreeing annotation's service= still narrows a SQL-scoped read", () => {
+    const sql =
+      "  return db.query(`SELECT id FROM item WHERE type = 'incident' AND json_extract(metadata, '$.status') = 'x'`);";
+    const narrowed = collectLaneCensus([
+      ...writers,
+      reader(
+        ["// lane-census: scope=incident service=pagerduty", "function f(db: D) {", sql, "}"].join(
+          "\n",
+        ),
+      ),
+    ]);
+    expect(narrowed.annotationErrors).toEqual([]);
+    expect(narrowed.unmatchedItemReads).toEqual([]);
+
+    const unnarrowed = collectLaneCensus([
+      ...writers,
+      reader(["function f(db: D) {", sql, "}"].join("\n")),
+    ]);
+    expect(unnarrowed.unmatchedItemReads.map((r) => r.matchState)).toEqual(["partial"]);
+  });
+
+  test("an annotation covering only part of a type IN (...) scope contradicts it", () => {
+    const c = collectLaneCensus([
+      ...writers,
+      reader(
+        [
+          "// lane-census: scope=incident",
+          "const rows = db.query(`SELECT id FROM item WHERE type IN ('incident', 'deployment') AND json_extract(metadata, '$.status') = 'x'`);",
+        ].join("\n"),
+      ),
+    ]);
+    expect(c.annotationErrors.map((e) => e.message)).toEqual([
+      "annotation contradicts the statement's SQL type scope (deployment, incident)",
+    ]);
+  });
+});
+
+describe("method and object-property spans (final review M-1)", () => {
+  test("an annotation above a class METHOD ends at the method's closing brace, not the class's", () => {
+    for (const head of [
+      "load(m: R) {",
+      "async load(m: R): Promise<number> {",
+      "private static get x(): number {",
+    ]) {
+      const src = [
+        "class C {", // 1
+        "  // lane-census: scope=pr", // 2
+        `  ${head}`, // 3
+        '    return m["number"];', // 4
+        "  }", // 5
+        "  other(m: R) {", // 6
+        '    return m["state"];', // 7
+        "  }", // 8
+        "}", // 9
+      ].join("\n");
+      expect(one(src).annotations[0]).toMatchObject({ startLine: 3, endLine: 5 });
+    }
+  });
+
+  test("a multi-line parameter list still reads as a method head", () => {
+    const src = [
+      "class C {",
+      "  // lane-census: scope=pr",
+      "  async load(",
+      "    m: R,",
+      "  ) {",
+      '    return m["number"];',
+      "  }",
+      "  other() {}",
+      "}",
+    ].join("\n");
+    expect(one(src).annotations[0]).toMatchObject({ startLine: 3, endLine: 7 });
+  });
+
+  test("a plain call statement is not mistaken for a method", () => {
+    const src = ["// lane-census: scope=pr", "load(m);", "const y = 1;"].join("\n");
+    expect(one(src).annotations[0]).toMatchObject({ startLine: 2, endLine: 2 });
+  });
+
+  test("an annotation above an object-literal PROPERTY covers that property only", () => {
+    const src = [
+      "const o = {", // 1
+      "  // lane-census: scope=pr", // 2
+      '  number: meta["number"],', // 3
+      '  state: meta["state"],', // 4
+      "};", // 5
+    ].join("\n");
+    expect(one(src).annotations[0]).toMatchObject({ startLine: 3, endLine: 3 });
+  });
+
+  test("a multi-line property value is covered through its own comma", () => {
+    const src = [
+      "const o = {", // 1
+      "  // lane-census: scope=pr", // 2
+      "  pair: {", // 3
+      '    a: meta["a"],', // 4
+      '    b: meta["b"],', // 5
+      "  },", // 6
+      '  state: meta["state"],', // 7
+      "};", // 8
+    ].join("\n");
+    expect(one(src).annotations[0]).toMatchObject({ startLine: 3, endLine: 6 });
+  });
+
+  test("a declaration's depth-0 comma (a generic type argument) does not end it", () => {
+    const src = [
+      "// lane-census: scope=pr", // 1
+      "const m: Map<string, number> = new Map([", // 2
+      '  ["k", meta["number"]],', // 3
+      "]);", // 4
+      "const y = 1;", // 5
+    ].join("\n");
+    expect(one(src).annotations[0]).toMatchObject({ startLine: 2, endLine: 4 });
+  });
+});

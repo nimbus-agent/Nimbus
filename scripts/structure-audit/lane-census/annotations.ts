@@ -7,6 +7,13 @@ import { stripComments, stripStringLiterals } from "../lib.ts";
  * its own: a JS `meta["k"]` read whose rows come from a query in another function, or a SQL read
  * scoped only by `type = ?`.
  *
+ * R4 (amended): the annotation's TYPES apply only to a read whose own SQL literal carries no type
+ * predicate. A read the SQL already scopes keeps its SQL types; an annotation whose types do not
+ * fully cover them is an error (`annotation contradicts the statement's SQL type scope (…)`), and
+ * the read is matched against its own SQL types. `service=` still narrows an agreeing SQL-scoped
+ * read. The span (R3, below) can be wider than one query, so without this an annotation sized for
+ * one query would re-type every other query inside it.
+ *
  * R3: the annotation covers the whole statement beginning on the next non-blank, non-comment line —
  * through its first top-level `;`, or, for a `function` declaration, through its closing `}`. A
  * `//` cannot sit on the line directly above a read that lives inside a multi-line SQL template
@@ -197,12 +204,24 @@ function functionEnd(code: string, start: number): number | null {
 }
 
 /**
+ * A declaration head whose depth-0 commas do NOT end it: `const a = 1, b = 2;` and, more often, a
+ * type annotation such as `const m: Map<string, number> = …;` (`<…>` is not tracked as a bracket,
+ * since `<` is also the less-than operator).
+ */
+function declarationHeadRegex(): RegExp {
+  return /^\s*(?:export\s+)?(?:declare\s+)?(?:const|let|var|type|import|using)\b/;
+}
+
+/**
  * End offset of an ordinary statement starting at `start`: its first `;` at bracket depth 0
- * (tracking `(){}[]`). A closer that takes the depth below 0 means the statement ended without a
+ * (tracking `(){}[]`) — or, unless `head` is a declaration, its first depth-0 `,`, so an annotation
+ * above an object-literal PROPERTY or a call ARGUMENT covers that one entry and not the later ones
+ * (final review M-1). A closer that takes the depth below 0 means the statement ended without a
  * `;` at the end of its enclosing block — it ends at the last code before that closer. No `;` at
  * all = end of file.
  */
-function plainStatementEnd(code: string, start: number): number {
+function plainStatementEnd(code: string, start: number, head: string): number {
+  const commaEnds = !declarationHeadRegex().test(head);
   let depth = 0;
   for (let i = start; i < code.length; i++) {
     const ch = code[i];
@@ -210,20 +229,69 @@ function plainStatementEnd(code: string, start: number): number {
     else if (ch === ")" || ch === "}" || ch === "]") {
       depth--;
       if (depth < 0) return Math.max(start, previousSignificant(code, i));
-    } else if (ch === ";" && depth === 0) return i;
+    } else if (depth === 0 && (ch === ";" || (ch === "," && commaEnds))) return i;
   }
   return Math.max(start, previousSignificant(code, code.length));
+}
+
+/** Words that can sit before `(` at the start of a line without naming a method. */
+const NOT_A_METHOD_NAME: ReadonlySet<string> = new Set([
+  "if",
+  "for",
+  "while",
+  "switch",
+  "catch",
+  "return",
+  "function",
+  "await",
+  "yield",
+  "typeof",
+  "new",
+  "delete",
+  "void",
+  "throw",
+  "super",
+  "this",
+  "import",
+  "with",
+]);
+
+/** Optional modifiers, a method name, an optional generic list, then `(`. */
+function methodHeadRegex(): RegExp {
+  return /^\s*(?:(?:public|private|protected|static|async|override|readonly|get|set)\s+)*\*?\s*([A-Za-z_$#][\w$]*)\s*(?:<[^>]*>)?\s*\(/;
+}
+
+/**
+ * A class METHOD (or object-literal method shorthand) head (final review M-1): `methodHeadRegex`
+ * AND the parameter list's `)` is followed by `{` (the body) or `:` (a return type). The second
+ * half is what separates `async load(x) {` from a plain call statement `load(x);`, which the regex
+ * alone also matches. Without this an annotation above a method was a plain statement, and
+ * `plainStatementEnd` ran on to the end of the CLASS.
+ */
+function isMethodHead(code: string, start: number, head: string): boolean {
+  const m = methodHeadRegex().exec(head);
+  if (m === null || NOT_A_METHOD_NAME.has(m[1] ?? "")) return false;
+  const open = start + m[0].length - 1;
+  if (code[open] !== "(") return false;
+  const close = matchingClose(code, open);
+  if (close === null) return false;
+  let k = close + 1;
+  while (k < code.length && /\s/.test(code[k] ?? "")) k++;
+  return code[k] === "{" || code[k] === ":";
 }
 
 /** End offset of the statement starting at `start` whose first line (code view) is `head`. */
 function statementEnd(code: string, start: number, head: string): number {
   if (functionHeadRegex().test(head)) {
-    return functionEnd(code, start) ?? plainStatementEnd(code, start);
+    return functionEnd(code, start) ?? plainStatementEnd(code, start, head);
   }
   if (braceDeclarationHeadRegex().test(head)) {
-    return braceDeclarationEnd(code, start) ?? plainStatementEnd(code, start);
+    return braceDeclarationEnd(code, start) ?? plainStatementEnd(code, start, head);
   }
-  return plainStatementEnd(code, start);
+  if (isMethodHead(code, start, head)) {
+    return functionEnd(code, start) ?? plainStatementEnd(code, start, head);
+  }
+  return plainStatementEnd(code, start, head);
 }
 
 /**
