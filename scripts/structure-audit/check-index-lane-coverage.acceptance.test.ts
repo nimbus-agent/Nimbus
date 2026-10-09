@@ -150,6 +150,8 @@ describe("lane census over the real tree", () => {
     // only to catch a collection that silently returned nothing (e.g. a broken glob).
     expect(census.reads.length).toBeGreaterThan(50);
     expect(census.writes.length).toBeGreaterThan(20);
-    expect(census.unmatchedItemReads.length).toBeGreaterThan(50);
+    // No lower bound on `unmatchedItemReads`: shrinking it is the whole point of the census (A3
+    // Task 2's writer resolution took it from 72 to 39), so a floor there reds on progress, not on
+    // a broken collection — which the two bounds above already catch.
   });
 });
