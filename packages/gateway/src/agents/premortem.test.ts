@@ -2,6 +2,9 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
 import { deleteWatcher } from "../automation/watcher-store.ts";
+import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
+import { bitbucketPrMetadata } from "../connectors/bitbucket-sync.ts";
+import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
 import {
   deterministicGraphEntityId,
   upsertGraphEntity,
@@ -71,15 +74,27 @@ function seedChildlessEpic(db: Database, key: string, createdAtMs: number): void
  * is genuinely linked but carries no timing metadata — the "PRs exist, no
  * connector recorded when they opened" shape, distinct from "no PRs at all".
  *
- * HONESTY NOTE for anyone reading a passing measured-review-drag test here:
- * `opened_at_ms` on a `pr` item is FIXTURE-ONLY today. No connector writes it —
- * `github-sync.ts` writes `merged_at` and nothing else timing-related, and the
- * only `opened_at_ms` writers in the tree are `pagerduty-sync.ts` (incidents)
- * and greenhouse (jobs). So the measured path these tests exercise is real code
- * that activates the day a connector starts recording the field, and reaches
- * zero real indexes until then. Every production brief takes the
- * cannot-be-measured branch; the docs say so in those words.
+ * Metadata comes from the REAL GitHub mapper (`extractPrMetadataForIndex`), so a row
+ * carries exactly what the writer emits: canonical `repo`, `opened_at_ms` (from
+ * `created_at`) and `merged_at` (only when `merged`). Omitting both times yields a PR with
+ * neither, as a row written before index lane A1 would be.
  */
+/** A GitHub REST pull-request body, run through the real mapper. */
+function githubPrMetadata(
+  repoFull: string,
+  openedAtMs: number | undefined,
+  mergedAtMs: number | undefined,
+): Record<string, unknown> {
+  const pr: Record<string, unknown> = {
+    number: 1,
+    state: mergedAtMs !== undefined ? "closed" : "open",
+    merged: mergedAtMs !== undefined,
+  };
+  if (openedAtMs !== undefined) pr["created_at"] = new Date(openedAtMs).toISOString();
+  if (mergedAtMs !== undefined) pr["merged_at"] = new Date(mergedAtMs).toISOString();
+  return extractPrMetadataForIndex(repoFull, pr, NOW);
+}
+
 function seedChildWithPr(
   db: Database,
   opts: {
@@ -111,9 +126,7 @@ function seedChildWithPr(
   });
 
   const prExternalId = `pr:${opts.epicKey}:${opts.childSuffix}`;
-  const prMetadata: Record<string, unknown> = { repo: opts.service };
-  if (opts.openedAtMs !== undefined) prMetadata["opened_at_ms"] = opts.openedAtMs;
-  if (opts.mergedAtMs !== undefined) prMetadata["merged_at"] = opts.mergedAtMs;
+  const prMetadata = githubPrMetadata(opts.service, opts.openedAtMs, opts.mergedAtMs);
   upsertIndexedItem(db, {
     service: "github",
     type: "pr",
@@ -135,15 +148,14 @@ function seedChildWithPr(
 }
 
 /**
- * The GitLab shape of `seedChildWithPr`: a merge-request ITEM carrying
- * `metadata.project` and NO `metadata.repo` (`connectors/_lib/gitlab/events.ts`
- * writes `{ iid, project, action }`, nothing else).
+ * The GitLab shape of `seedChildWithPr`, run through the real `gitlabMrMetadata`. With times it
+ * is the full-merge-request path (`mr` present); with neither it is a periodic-events row
+ * for an action that is no open/merge transition, which carries NO timing — the shape of a
+ * merge request whose open/merge event fell outside the synced window.
  *
  * The `pr` graph entity is left to the REAL populator, which runs inside
- * `upsertIndexedItem` and stores `repo: repoPathFromMetadata(metadata)` =
- * `repo ?? project`. That asymmetry — coalesced on the entity, not on the item
- * — is exactly what the queries under test have to account for, so hand-writing
- * the entity here would erase the thing being tested.
+ * `upsertIndexedItem` and stores `repo: repoPathFromMetadata(metadata)`, so hand-writing the
+ * entity here would erase the thing being tested.
  */
 function seedChildWithGitlabMr(
   db: Database,
@@ -169,9 +181,27 @@ function seedChildWithGitlabMr(
   const childItemId = itemPrimaryKey("jira", childExternalId);
 
   const mrExternalId = `${opts.project}!${opts.childSuffix}`;
-  const mrMetadata: Record<string, unknown> = { iid: 7, project: opts.project, action: "open" };
-  if (opts.openedAtMs !== undefined) mrMetadata["opened_at_ms"] = opts.openedAtMs;
-  if (opts.mergedAtMs !== undefined) mrMetadata["merged_at"] = opts.mergedAtMs;
+  const iso = (ms: number | undefined): string | undefined =>
+    ms === undefined ? undefined : new Date(ms).toISOString();
+  const timed = opts.openedAtMs !== undefined || opts.mergedAtMs !== undefined;
+  const mrMetadata = gitlabMrMetadata(
+    {
+      pathWithNamespace: opts.project,
+      iid: 7,
+      actionName: timed ? "accepted" : "commented",
+      eventCreatedAt: iso(opts.mergedAtMs ?? opts.openedAtMs),
+      ...(timed
+        ? {
+            mr: {
+              state: opts.mergedAtMs !== undefined ? "merged" : "opened",
+              createdAt: iso(opts.openedAtMs),
+              mergedAt: iso(opts.mergedAtMs),
+            },
+          }
+        : {}),
+    },
+    null,
+  );
   upsertIndexedItem(db, {
     service: "gitlab",
     type: "pr",
@@ -189,6 +219,45 @@ function seedChildWithGitlabMr(
     deterministicGraphEntityId("issue", childItemId),
     "resolves",
     modifiedAt,
+  );
+}
+
+/** A Bitbucket-linked PR via the real `bitbucketPrMetadata`: opened time only, never a merge time. */
+function seedChildWithBitbucketPr(
+  db: Database,
+  opts: { epicKey: string; childSuffix: string; repo: string; openedAtMs: number },
+): void {
+  const childExternalId = `${opts.epicKey}-${opts.childSuffix}`;
+  upsertIndexedItem(db, {
+    service: "jira",
+    type: "issue",
+    externalId: childExternalId,
+    title: childExternalId,
+    metadata: { parent_key: opts.epicKey },
+    modifiedAt: NOW,
+    syncedAt: NOW,
+  });
+  const childItemId = itemPrimaryKey("jira", childExternalId);
+  const prExternalId = `${opts.repo}#${opts.childSuffix}`;
+  upsertIndexedItem(db, {
+    service: "bitbucket",
+    type: "pr",
+    externalId: prExternalId,
+    title: prExternalId,
+    metadata: bitbucketPrMetadata(
+      opts.repo,
+      { id: 3, state: "MERGED", created_on: new Date(opts.openedAtMs).toISOString() },
+      "dev",
+    ),
+    modifiedAt: NOW,
+    syncedAt: NOW,
+  });
+  upsertGraphRelation(
+    db,
+    deterministicGraphEntityId("pr", itemPrimaryKey("bitbucket", prExternalId)),
+    deterministicGraphEntityId("issue", childItemId),
+    "resolves",
+    NOW,
   );
 }
 
@@ -634,11 +703,7 @@ describe("runPremortem", () => {
         type: "pr",
         externalId: "pr:unrelated:1",
         title: "unrelated PR",
-        metadata: {
-          repo: "acme/search",
-          opened_at_ms: NOW - 44 * DAY_MS,
-          merged_at: NOW - 40 * DAY_MS,
-        },
+        metadata: githubPrMetadata("acme/search", NOW - 44 * DAY_MS, NOW - 40 * DAY_MS),
         modifiedAt: NOW - 40 * DAY_MS,
         syncedAt: NOW - 40 * DAY_MS,
       });
@@ -676,8 +741,9 @@ describe("runPremortem", () => {
       expect(reviewDrag?.value).toBeNull();
       expect(reviewDrag?.summary).not.toContain("No pull requests were found");
       expect(reviewDrag?.summary.toLowerCase()).toContain(
-        "does not record both an opened and a merged",
+        "none records both an opened and a merged",
       );
+      expect(reviewDrag?.summary).toContain("nimbus index rebody");
     });
 
     // Round-2 review red-prove: an OPEN PR (opened_at_ms present, merged_at
@@ -714,8 +780,10 @@ describe("runPremortem", () => {
       expect(reviewDrag?.summary).not.toMatch(
         /no connector indexes a pull request's opened timestamp/i,
       );
+      // Real open-PR writer output: opened time present, no merge time by design.
+      expect(reviewDrag?.summary).toContain("not yet merged carry no merge time");
       expect(reviewDrag?.summary.toLowerCase()).toContain(
-        "does not record both an opened and a merged",
+        "none records both an opened and a merged",
       );
     });
 
@@ -794,12 +862,41 @@ describe("runPremortem", () => {
       const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
       expect(reviewDrag?.value).toBeNull();
       expect(reviewDrag?.summary).not.toContain("No pull requests were found");
-      // GitLab MR items carry no timestamps either (`connectors/_lib/gitlab/events.ts` writes
-      // only `iid`/`project`/`action`), so the honest post-fix message is the OTHER unmeasurable
-      // cause: the merge requests are there, the timestamps are not.
-      expect(reviewDrag?.summary).toContain(
-        "does not record both an opened and a merged timestamp",
-      );
+      // A GitLab MR whose open/merge event fell outside the synced window carries no timing
+      // (`gitlabMrMetadata`), so the honest message is the OTHER unmeasurable cause, and it
+      // names GitLab and why.
+      expect(reviewDrag?.summary).toContain("none records both an opened and a merged timestamp");
+      expect(reviewDrag?.summary).toContain("GitLab");
+      expect(reviewDrag?.summary).not.toContain("Bitbucket");
+    });
+
+    test("a Bitbucket-linked cohort names Bitbucket as never recording a merge time", async () => {
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-BB",
+        services: ["acme/bb-svc"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+      seedEpicWithServices(db, {
+        key: "HIST-BB",
+        services: ["acme/bb-svc"],
+        resolvedAtMs: NOW - 40 * DAY_MS,
+        createdAtMs: NOW - 70 * DAY_MS,
+      });
+      seedChildWithBitbucketPr(db, {
+        epicKey: "HIST-BB",
+        childSuffix: "c1",
+        repo: "acme/bb-svc",
+        openedAtMs: NOW - 50 * DAY_MS,
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-BB" }, ctx(db));
+
+      const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
+      expect(reviewDrag?.value).toBeNull();
+      expect(reviewDrag?.summary).toContain("Bitbucket never records a merge time");
+      expect(reviewDrag?.summary).not.toContain("GitLab");
     });
 
     test("a GitLab merge request counts toward the repo-wide baseline too", async () => {

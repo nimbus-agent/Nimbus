@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { nonGithubMergedPrCount, selectMergedPrs } from "../../src/agents/changelog-queries.ts";
+import { bitbucketPrMetadata } from "../../src/connectors/bitbucket-sync.ts";
 import { createMemoryIndexDb } from "../../src/connectors/connector-sync-test-helpers.ts";
+import { extractPrMetadataForIndex } from "../../src/connectors/github-sync.ts";
 import {
   DEFAULT_DEPLOY_WORKFLOW_PATTERN,
   type ServiceConfig,
@@ -66,7 +68,13 @@ const asBlob = (json: string): Uint8Array => new TextEncoder().encode(json);
 
 describe("selectMergedPrs — metadata SQLite accepts but JavaScript cannot read", () => {
   function seedMerged(db: Database): void {
-    const merged = JSON.stringify({ merged_at: NOW - DAY, repo: "org/web" });
+    const merged = JSON.stringify(
+      extractPrMetadataForIndex(
+        "org/web",
+        { number: 1, state: "closed", merged: true, merged_at: new Date(NOW - DAY).toISOString() },
+        NOW,
+      ),
+    );
     insertPr(db, { id: "github:text", service: "github", modifiedAt: NOW - DAY, metadata: merged });
     insertPr(db, {
       id: "github:blob",
@@ -78,7 +86,9 @@ describe("selectMergedPrs — metadata SQLite accepts but JavaScript cannot read
       id: "github:dup",
       service: "github",
       modifiedAt: NOW - DAY,
-      metadata: `{"merged_at": ${String(NOW - DAY)}, "repo": "org/web", "merged_at": "yesterday"}`,
+      // Deliberately a shape no writer produces: the real merged row plus a DUPLICATE `merged_at`
+      // key, which `json_extract` reads first (the number) and `JSON.parse` reads last (a string).
+      metadata: `${merged.slice(0, -1)},"merged_at":"yesterday"}`,
     });
   }
 
@@ -111,17 +121,29 @@ describe("selectMergedPrs — metadata SQLite accepts but JavaScript cannot read
 describe("nonGithubMergedPrCount — scoped count over unreadable metadata", () => {
   test("the SQL-level count includes a BLOB row; the repo-scoped count cannot attribute it", () => {
     const db = freshDb();
-    const meta = JSON.stringify({ state: "merged", project: "group/proj" });
-    insertPr(db, { id: "gitlab:text", service: "gitlab", modifiedAt: NOW - DAY, metadata: meta });
+    // Bitbucket is the writer that really produces a merged row with no `merged_at`.
+    const meta = JSON.stringify(
+      bitbucketPrMetadata(
+        "group/proj",
+        { id: 3, state: "MERGED", created_on: new Date(NOW - 9 * DAY).toISOString() },
+        "Dana",
+      ),
+    );
     insertPr(db, {
-      id: "gitlab:blob",
-      service: "gitlab",
+      id: "bitbucket:text",
+      service: "bitbucket",
+      modifiedAt: NOW - DAY,
+      metadata: meta,
+    });
+    insertPr(db, {
+      id: "bitbucket:blob",
+      service: "bitbucket",
       modifiedAt: NOW - DAY,
       metadata: asBlob(meta),
     });
 
     expect(nonGithubMergedPrCount(db, { ...WINDOW, scope: { kind: "all" } })).toBe(2);
-    const cfg = serviceConfig([{ provider: "gitlab", providerId: "group/proj" }]);
+    const cfg = serviceConfig([{ provider: "bitbucket", providerId: "group/proj" }]);
     expect(nonGithubMergedPrCount(db, { ...WINDOW, scope: { kind: "service", cfg } })).toBe(1);
   });
 });

@@ -10,8 +10,9 @@
  *
  * Four bugs are the reason this gate exists, confirmed by hand against the shipped artifact
  * (`docs/structure-audit/index-lane-census.json`):
- *   - `expert.ts:371` reads `item.type = 'commit'` — no writer in the corpus ever writes that
- *     type (a dead lane: `graph_entity` writes `commit`, `item` never does).
+ *   - `expert.ts` read `item.type = 'commit'` — no writer in the corpus ever wrote that
+ *     type (a dead lane: `graph_entity` writes `commit`, `item` never does). Fixed by PR A2, which
+ *     points the lane at the filesystem connector's `git_commit` rows.
  *   - `preflight.ts` read `item.metadata.workflow_name` and `branch` scoped to `ci_run` — no writer
  *     emitted `workflow_name` and only `circleci` emitted `branch`. Fixed by PR A1's writer contract;
  *     the census stays blind to builder-made keys until PR A3 (see the two preflight tests below).
@@ -45,10 +46,26 @@ describe("lane census over the real tree", () => {
   const unmatchedAt = (value: string, file: string) =>
     census.unmatchedItemReads.filter((r) => r.value === value && r.file.endsWith(file));
 
-  test("expert.ts's dead 'commit' item-type read is unmatched", () => {
-    const hits = unmatchedAt("commit", "agents/expert.ts");
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits.some((h) => h.line === 371 && h.matchState === "unmatched")).toBe(true);
+  // Fixed by PR A2: the lane now reads the filesystem connector's `git_commit` rows. This case
+  // MUST still fail if a read of the never-written `commit` item type is reintroduced in
+  // expert.ts, so it asserts on the reads actually collected, not merely on an empty list.
+  test("expert.ts reads no dead commit item type; its git_commit read matches the filesystem writer", () => {
+    expect(unmatchedAt("commit", "agents/expert.ts")).toHaveLength(0);
+    expect(
+      census.reads.some(
+        (r) => r.table === "item" && r.value === "commit" && r.file.endsWith("agents/expert.ts"),
+      ),
+    ).toBe(false);
+
+    const gitCommitReads = census.reads.filter(
+      (r) => r.table === "item" && r.value === "git_commit" && r.file.endsWith("agents/expert.ts"),
+    );
+    expect(gitCommitReads.length).toBeGreaterThan(0);
+    expect(unmatchedAt("git_commit", "agents/expert.ts")).toHaveLength(0);
+    // ...because a writer exists (a vacuous "matched" would pass with no writer at all).
+    expect(
+      census.writes.some((w) => w.service === "filesystem" && w.itemType === "git_commit"),
+    ).toBe(true);
   });
 
   // PR A1 (index lane contract) fixed the preflight bug these two tests were written to catch:
@@ -81,10 +98,19 @@ describe("lane census over the real tree", () => {
   test("premortem's opened_at_ms read is unmatched ONLY on pr-scoped rows, not dora's", () => {
     const premortemHits = unmatchedAt("opened_at_ms", "agents/premortem.ts");
     const premortemLines = new Set(premortemHits.map((h) => h.line));
-    expect(premortemLines.has(199)).toBe(true);
-    expect(premortemLines.has(205)).toBe(true);
+    // Located by SQL text, not line number: the premortem queries moved when its reader changed. The
+    // aliased `pr_item.metadata` read on the join query is not an unaliased item read the census sees.
+    const premortemSrc =
+      files.find((f) => f.relPath.endsWith("agents/premortem.ts"))?.contents ?? "";
+    const readLines = premortemSrc
+      .split(/\r?\n/)
+      .flatMap((l, i) => (l.includes("json_extract(metadata, '$.opened_at_ms')") ? [i + 1] : []));
+    expect(readLines.length).toBeGreaterThanOrEqual(2);
+    for (const line of readLines) {
+      expect(premortemLines.has(line)).toBe(true);
+    }
     for (const h of premortemHits) {
-      if (h.line === 199 || h.line === 205) expect(h.matchState).toBe("unmatched");
+      if (readLines.includes(h.line)) expect(h.matchState).toBe("unmatched");
     }
 
     // The per-literal type-scoping guard: dora.ts reads the SAME key on a type that IS covered,

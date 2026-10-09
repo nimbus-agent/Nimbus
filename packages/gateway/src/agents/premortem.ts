@@ -115,10 +115,10 @@ function toDurations(rows: readonly PrDurationRow[]): number[] {
  * `services` come from `epic-services.ts`, which reads the PR GRAPH ENTITY's
  * `metadata.repo` — and `graph-populator.ts` fills that from the item's
  * `repo ?? project` (`repoPathFromMetadata`). So the population every query
- * here selects must be derived the same way: GitHub and Bitbucket PR items
- * carry `metadata.repo`, GitLab merge-request items carry `metadata.project`
- * and NO `repo` at all (`connectors/_lib/gitlab/events.ts`). Matching only
- * `$.repo` selected zero GitLab rows, so a GitLab epic built a cohort fine and
+ * here selects must be derived the same way. Every current PR writer emits the
+ * canonical `metadata.repo` (GitLab merge-request items too since index lane A1, which
+ * also keeps `metadata.project`), but rows written before A1 carry only `project`.
+ * Matching only `$.repo` selected zero of those GitLab rows, so a GitLab epic built a cohort fine and
  * the brief then denied the very merge requests the cohort was selected with
  * ("No pull requests were found for this cohort"). Two derivations of one
  * vocabulary is the defect; this is the single one.
@@ -156,7 +156,12 @@ function cohortPrJoinSql(epicPlaceholders: string, repoPlaceholders: string): st
           AND ${prRepoExpr("pr_item")} IN (${repoPlaceholders})`;
 }
 
-type CohortPrTiming = { id: string; opened_at_ms: number | null; merged_at: number | null };
+type CohortPrTiming = {
+  id: string;
+  service: string;
+  opened_at_ms: number | null;
+  merged_at: number | null;
+};
 
 /**
  * Every PR linked to the cohort's own children in `services`, regardless of
@@ -176,6 +181,7 @@ function cohortPrTimings(
   return db
     .query(
       `SELECT DISTINCT pr_item.id AS id,
+              pr_item.service AS service,
               json_extract(pr_item.metadata, '$.opened_at_ms') AS opened_at_ms,
               json_extract(pr_item.metadata, '$.merged_at')    AS merged_at
          ${cohortPrJoinSql(epicPlaceholders, servicePlaceholders)}`,
@@ -221,12 +227,12 @@ function reviewDragMedians(
 ): {
   reviewDragMedianMs: number | null;
   repoReviewMedianMs: number | null;
-  cohortHasPrsMissingTimingData: boolean;
+  forgesMissingTiming: string[];
 } {
   const epicItemIds = cohort.members.map((m) => m.itemId);
   const timings = cohortPrTimings(db, epicItemIds, services);
   const timed = timings.filter(
-    (t): t is { id: string; opened_at_ms: number; merged_at: number } =>
+    (t): t is CohortPrTiming & { opened_at_ms: number; merged_at: number } =>
       t.opened_at_ms !== null && t.merged_at !== null,
   );
 
@@ -241,7 +247,9 @@ function reviewDragMedians(
     return {
       reviewDragMedianMs: null,
       repoReviewMedianMs: null,
-      cohortHasPrsMissingTimingData: timings.length > 0,
+      forgesMissingTiming: [...new Set(timings.map((t) => t.service))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
     };
   }
 
@@ -258,7 +266,7 @@ function reviewDragMedians(
   return {
     reviewDragMedianMs: median(toDurations(timed)),
     repoReviewMedianMs: median(repoDurations),
-    cohortHasPrsMissingTimingData: false,
+    forgesMissingTiming: [],
   };
 }
 
@@ -690,8 +698,12 @@ function analyseCohort(
 ): { risks: Risk[]; themes: PremortemTheme[]; gaps: GapNote[] } {
   const { cohort, services, now } = args;
   const gaps: GapNote[] = [];
-  const { reviewDragMedianMs, repoReviewMedianMs, cohortHasPrsMissingTimingData } =
-    reviewDragMedians(db, cohort, services, now);
+  const { reviewDragMedianMs, repoReviewMedianMs, forgesMissingTiming } = reviewDragMedians(
+    db,
+    cohort,
+    services,
+    now,
+  );
   const incidentCoupling = countIncidentCoupledEpics(db, cohort.members, args.configIdFor);
 
   const risks = computeRisks({
@@ -704,7 +716,7 @@ function analyseCohort(
     nowMs: now,
     reviewDragMedianMs,
     repoReviewMedianMs,
-    cohortHasPrsMissingTimingData,
+    forgesMissingTiming,
     incidentCoupling,
     // Structurally true, not merely intended: `selectCohort`'s candidate query filters
     // `service = 'jira'`, so the cohort cannot blend trackers with different cancel/done

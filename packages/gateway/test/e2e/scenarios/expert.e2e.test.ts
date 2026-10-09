@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { isExpertBrief } from "../../../src/agents/_lib/findings.ts";
 import { runExpert } from "../../../src/agents/expert.ts";
+import { buildGitCommitMetadata } from "../../../src/connectors/git-commit-meta.ts";
 import { upsertIndexedItem } from "../../../src/index/item-store.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
 
@@ -20,11 +21,15 @@ describe("nimbus expert (e2e, in-process)", () => {
 
     for (let i = 0; i < 4; i += 1) {
       upsertIndexedItem(db, {
-        service: "github",
-        type: "commit",
-        externalId: `acme/payment#commit-alice-${i}`,
+        service: "filesystem",
+        type: "git_commit",
+        externalId: `/repo/acme/payment#commit-alice-${i}`,
         title: `fix retry logic in ${TOPIC} (#${i})`,
         bodyPreview: `touches ${TOPIC} backoff`,
+        metadata: buildGitCommitMetadata(
+          { repoRoot: "/repo/acme/payment", sha: String(i).repeat(40) },
+          { authorEmail: "alice@example.com" },
+        ),
         modifiedAt: t - i * 1000,
         syncedAt: t,
         authorId: "alice",

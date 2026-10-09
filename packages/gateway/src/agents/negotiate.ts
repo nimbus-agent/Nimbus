@@ -350,24 +350,23 @@ function parsePrMetadata(json: string): Record<string, unknown> | undefined {
  * cognitive-complexity gate (Sonar `S3776`) — the loop and its five guards were the whole
  * of its score.
  *
- * Unparseable metadata contributes to neither the merged count nor stats coverage — but it
- * DOES stay in `count`/`statsCoverage.total` at the call site, because the PR itself is real
- * evidence and dropping it would understate the headline number. The consequence is
- * asymmetric disclosure: the stats half is self-disclosing (`statsCoverage` renders
- * `covered/total`, so an unparseable row visibly widens the gap), while the `merged` half is
- * not — `merged` carries no denominator of its own, so a PR whose metadata will not parse is
- * silently absent from it. Only a genuinely corrupt `item.metadata` reaches here (every
- * writer goes through `JSON.stringify`), so this is a never-in-practice edge rather than a
- * live undercount; a `mergedCoverage` companion field is the fix if it ever stops being one.
+ * Unparseable metadata contributes to neither the merged count nor either coverage tally — but
+ * it DOES stay in `count`/`statsCoverage.total`/`mergedCoverage.total` at the call site, because
+ * the PR itself is real evidence and dropping it would understate the headline number; an
+ * unparseable row therefore visibly widens both gaps. `mergedCoverage.covered` counts rows whose
+ * `merged` is a boolean: a writer omits `merged` when the PR state is unknown (index lane
+ * contract), and "unknown" must not read as "not merged".
  */
 function accumulateAuthoredPrStats(rows: ReadonlyArray<{ metadata: string }>): {
   merged: number;
+  mergedKnown: number;
   covered: number;
   additions: number;
   deletions: number;
   changedFiles: number;
 } {
   let merged = 0;
+  let mergedKnown = 0;
   let covered = 0;
   let additions = 0;
   let deletions = 0;
@@ -376,7 +375,9 @@ function accumulateAuthoredPrStats(rows: ReadonlyArray<{ metadata: string }>): {
     const meta = parsePrMetadata(row.metadata);
     // Unparseable JSON drops the row from both tallies, per the note above.
     if (meta === undefined) continue;
-    if (meta["merged"] === true) merged += 1;
+    const m = meta["merged"];
+    if (typeof m === "boolean") mergedKnown += 1;
+    if (m === true) merged += 1;
     const a = meta["additions"];
     // `additions` is the coverage key: a row without it counts toward neither `covered` nor
     // any of the three sums, exactly as when the whole block was nested under `typeof a`.
@@ -388,7 +389,7 @@ function accumulateAuthoredPrStats(rows: ReadonlyArray<{ metadata: string }>): {
     const c = meta["changed_files"];
     if (typeof c === "number") changedFiles += c;
   }
-  return { merged, covered, additions, deletions, changedFiles };
+  return { merged, mergedKnown, covered, additions, deletions, changedFiles };
 }
 
 function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): NegotiateAuthoredPrs {
@@ -404,7 +405,8 @@ function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): Negot
     )
     .all(personId, cutoff) as Array<{ metadata: string }>;
 
-  const { merged, covered, additions, deletions, changedFiles } = accumulateAuthoredPrStats(rows);
+  const { merged, mergedKnown, covered, additions, deletions, changedFiles } =
+    accumulateAuthoredPrStats(rows);
 
   const refs = evidenceRefsFor(
     db,
@@ -421,6 +423,7 @@ function laneAuthoredPrs(db: Database, personId: string, sinceMs: number): Negot
   return {
     count: rows.length,
     merged,
+    mergedCoverage: { covered: mergedKnown, total: rows.length },
     evidence: { refs, total: rows.length },
     stats: covered === 0 ? null : { additions, deletions, changedFiles },
     statsCoverage: { covered, total: rows.length },

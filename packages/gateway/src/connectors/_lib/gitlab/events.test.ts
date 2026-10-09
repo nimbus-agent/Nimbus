@@ -7,7 +7,7 @@ import {
   expectServiceItemCount,
   syncTestContext,
 } from "../../connector-sync-test-helpers.ts";
-import { type CanonicalPrKey, PR_EMITTED_KEYS } from "../../pr-meta.ts";
+import { type CanonicalPrKey, PR_EMITTED_KEYS, PR_META_VERSION } from "../../pr-meta.ts";
 import {
   gitlabMrMetadata,
   normalisedApiBase,
@@ -1384,5 +1384,154 @@ describeWithFetchRestore("events sync — accepted then approved", () => {
     expect(meta["state"]).toBe("merged");
     expect(meta["merged_at"]).toBe(Date.parse(T_MERGE));
     expect(meta["action"]).toBe("approved");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MR author attribution
+// ---------------------------------------------------------------------------
+
+const AUTHOR = { login: "dana", name: "Dana" } as const;
+
+test("gitlabMrMetadata — the opened event's actor is recorded as the MR author", () => {
+  const m = gitlabMrMetadata(
+    {
+      pathWithNamespace: "acme/app",
+      iid: 9,
+      actionName: "opened",
+      eventCreatedAt: "2026-10-01T09:00:00Z",
+      author: AUTHOR,
+    },
+    null,
+  );
+  expect(m["author_login"]).toBe("dana");
+  expect(m["author_name"]).toBe("Dana");
+});
+
+test("gitlabMrMetadata — a later event carries the author forward and ignores its own actor", () => {
+  const opened = gitlabMrMetadata(
+    {
+      pathWithNamespace: "acme/app",
+      iid: 9,
+      actionName: "opened",
+      eventCreatedAt: "2026-10-01T09:00:00Z",
+      author: AUTHOR,
+    },
+    null,
+  );
+  const merged = gitlabMrMetadata(
+    {
+      pathWithNamespace: "acme/app",
+      iid: 9,
+      actionName: "accepted",
+      eventCreatedAt: "2026-10-02T09:00:00Z",
+    },
+    opened,
+  );
+  expect(merged["author_login"]).toBe("dana");
+});
+
+test("gitlabMrMetadata — a stateless row still carries meta_v (absent state already means unknown)", () => {
+  // A pre-A1 stored row (no state, no meta_v): deliberately shaped. The row WRITTEN from it by an
+  // approval is the stateless shape the current writer does produce (see the test above).
+  const legacy = { iid: 9, project: "acme/app", action: "opened" };
+  const m = gitlabMrMetadata(
+    {
+      pathWithNamespace: "acme/app",
+      iid: 9,
+      actionName: "approved",
+      eventCreatedAt: "2026-10-03T09:00:00Z",
+    },
+    legacy,
+  );
+  expect("state" in m).toBe(false);
+  expect("merged" in m).toBe(false);
+  expect(m["meta_v"]).toBe(PR_META_VERSION);
+});
+
+describeWithFetchRestore("events sync — MR author attribution", () => {
+  async function run(events: Record<string, unknown>[]) {
+    const db = createMemoryIndexDb();
+    const ctx = syncTestContext(db, createStubVault({}), "gitlab");
+    globalThis.fetch = (() =>
+      Promise.resolve(makeEventsResponse(events))) as unknown as typeof fetch;
+    await syncGitlabEventsPages(
+      ctx,
+      "token",
+      "https://gitlab.com/api/v4",
+      "https://gitlab.com",
+      "2026-09-01T00:00:00Z",
+      1,
+      performance.now(),
+    );
+    return db;
+  }
+  const base = {
+    target_type: "MergeRequest",
+    target_iid: 9,
+    target_title: "Add cache",
+    project: { path_with_namespace: "acme/app" },
+  };
+
+  test("an approval alone does not credit the approver as author", async () => {
+    const db = await run([
+      {
+        ...base,
+        action_name: "approved",
+        created_at: "2026-10-03T09:00:00Z",
+        author_username: "sam",
+        author_name: "Sam",
+      },
+    ]);
+    const row = db
+      .prepare("SELECT author_id, metadata FROM item WHERE service = 'gitlab' AND type = 'pr'")
+      .get() as { author_id: string | null; metadata: string };
+    expect(row.author_id).toBeNull();
+    expect("author_login" in JSON.parse(row.metadata)).toBe(false);
+  });
+
+  test('an empty author_name is never written as author_name: ""', async () => {
+    const db = await run([
+      {
+        ...base,
+        action_name: "opened",
+        created_at: "2026-10-01T09:00:00Z",
+        author_username: "dana",
+        author_name: "",
+      },
+    ]);
+    const row = db
+      .prepare("SELECT metadata FROM item WHERE service = 'gitlab' AND type = 'pr'")
+      .get() as { metadata: string };
+    const meta = JSON.parse(row.metadata) as Record<string, unknown>;
+    expect(meta["author_login"]).toBe("dana");
+    expect("author_name" in meta).toBe(false);
+  });
+
+  test("opened by dana then accepted by sam keeps dana as the author", async () => {
+    const db = await run([
+      {
+        ...base,
+        action_name: "opened",
+        created_at: "2026-10-01T09:00:00Z",
+        author_username: "dana",
+        author_name: "Dana",
+      },
+      {
+        ...base,
+        action_name: "accepted",
+        created_at: "2026-10-02T09:00:00Z",
+        author_username: "sam",
+        author_name: "Sam",
+      },
+    ]);
+    const row = db
+      .prepare("SELECT author_id FROM item WHERE service = 'gitlab' AND type = 'pr'")
+      .get() as { author_id: string | null };
+    const dana = db.prepare("SELECT id FROM person WHERE gitlab_login = 'dana'").get() as
+      | { id: string }
+      | undefined;
+    expect(dana).toBeDefined();
+    expect(row.author_id).toBe(dana?.id ?? "missing");
   });
 });

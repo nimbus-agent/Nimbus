@@ -10,7 +10,7 @@ describe("eventTimeFor", () => {
   });
 
   test("an unmerged PR is excluded, never approximated", () => {
-    // github-sync.ts writes merged_at ONLY on a merged PR, so absence means "not merged".
+    // A PR row carries merged_at only once merged, so absence means "not merged".
     // Falling back to modified_at here would put every open PR in the changelog.
     expect(eventTimeFor("merged_pr", {}, 1_800_000_000_000)).toBeNull();
   });

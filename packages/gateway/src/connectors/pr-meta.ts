@@ -149,7 +149,11 @@ export function buildPrMetadata(
   );
   if (fields.state !== undefined) {
     out["state"] = fields.state;
-    out["merged"] = fields.state === "merged";
+    // `unknown` asserts nothing about merging; writing `merged: false` there would turn an
+    // unrecognised vendor value into a definite "not merged" for every reader of `$.merged`.
+    if (fields.state !== "unknown") {
+      out["merged"] = fields.state === "merged";
+    }
   }
   // `typeof` guards, not `!== undefined`: a raw vendor `null` must be omitted, not written.
   if (typeof fields.stateRaw === "string" && fields.stateRaw !== "") {

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { repoLikeMatchesUrn } from "../metrics/dora.ts";
+import { unevaluableCiServices } from "../metrics/ci-evaluability.ts";
+import { ciRunHeadSha, repoLikeMatchesUrn } from "../metrics/dora.ts";
 import type { ParsedDoraRepoUrn, ServiceConfig } from "../metrics/dora-config.ts";
 import { distinctCiServiceColumns, distinctPrServiceColumns } from "../metrics/dora-config.ts";
 
@@ -12,7 +13,10 @@ export type PreflightGap =
   | "no_pagerduty_mapping"
   | "no_repos"
   | "unknown_mergeable_state"
-  | "pagerduty_urgency_without_priority";
+  | "pagerduty_urgency_without_priority"
+  // A CI provider bound to the service cannot be judged by this check (Jenkins: no branch;
+  // CircleCI: no pass/fail; Bitbucket: no writer). Disclosure only; the verdict is unchanged.
+  | "ci_not_evaluable";
 
 export type IncidentFinding = {
   readonly id: string;
@@ -206,11 +210,17 @@ function selectFailingCiRuns(
         conclusion: meta["conclusion"] as "failure" | "cancelled" | "timed_out",
         modified_at_ms: r.modified_at,
         branch: typeof meta["branch"] === "string" ? meta["branch"] : targetRef,
-        head_sha: typeof meta["headSha"] === "string" ? meta["headSha"] : null,
+        head_sha: ciRunHeadSha(meta),
         url: r.url,
       };
     });
-  return { count, findings, gap: null };
+  // A bound provider this check cannot judge is DISCLOSED, never silently read as clean. It does
+  // not change the verdict (a user decision): the gap rides beside any real findings.
+  const gap: PreflightGap =
+    unevaluableCiServices(cfg.repos, "preflight_failing_runs").length > 0
+      ? "ci_not_evaluable"
+      : null;
+  return { count, findings, gap };
 }
 
 function selectMergeConflicts(

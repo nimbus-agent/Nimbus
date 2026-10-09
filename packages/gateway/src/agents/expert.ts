@@ -356,6 +356,8 @@ function subItemResolvedBy(db: Database, itemUrl: string): SubAgentResult {
 }
 
 function subBlame(db: Database, input: string): SubAgentResult {
+  // Local git history is the only commit-level source the index holds: the filesystem connector's
+  // `git_commit` rows, whose author is resolved from `git log`'s author email (index lane A1).
   const commits = db
     .query(
       `SELECT
@@ -367,20 +369,47 @@ function subBlame(db: Database, input: string): SubAgentResult {
          i.service                      AS service_id
        FROM item   i
        JOIN person p ON p.id = i.author_id
-       WHERE i.service = 'github'
-         AND i.type    = 'commit'
+       WHERE i.service = 'filesystem'
+         AND i.type    = 'git_commit'
          AND (i.title LIKE '%' || ? || '%' OR i.body_preview LIKE '%' || ? || '%')
        ORDER BY i.modified_at DESC
        LIMIT 50`,
     )
     .all(input, input) as ExpertLaneRow[];
 
-  if (commits.length === 0) {
-    const gap = detectMissingConnector(db, "github");
-    return gap === null ? {} : { gap };
+  if (commits.length > 0) {
+    return topLaneStream(commits, "commit_authored", 1);
   }
+  const gap = commitLaneGap(db);
+  return gap === null ? {} : { gap };
+}
 
-  return topLaneStream(commits, "commit_authored", 1);
+function commitLaneGap(db: Database): GapNote | null {
+  const counts = db
+    .query(
+      `SELECT COUNT(*) AS total, COUNT(author_id) AS attributed
+         FROM item WHERE service = 'filesystem' AND type = 'git_commit'`,
+    )
+    .get() as { total: number; attributed: number };
+  if (counts.total === 0) {
+    return {
+      category: "missing_entity_type",
+      detail: "No local git commits are indexed, so commit authorship cannot inform this answer.",
+      remediation: "Set `gitAware = true` on a `[[filesystem.roots]]` entry and sync.",
+    };
+  }
+  if (counts.attributed === 0) {
+    return {
+      category: "missing_user_identity",
+      detail:
+        "Indexed commits carry no resolved author: commits indexed before this release have none, " +
+        "and a commit with an empty author email or an automated/no-reply sender stays unattributed.",
+      remediation:
+        "Run `nimbus index rebody --service filesystem` to re-read authors for the most recent " +
+        "commits (the newest 40 per root).",
+    };
+  }
+  return null;
 }
 
 function subPrAuthored(db: Database, input: string): SubAgentResult {

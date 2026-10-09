@@ -53,6 +53,7 @@ function seedClosedEpic(
     service: "jira",
     metadata: null,
   });
+  // (Hand-built metadata: a deliberate minimal shape, not a writer's output.)
   // The PR carries its repo as `metadata.repo` — that JSON field IS the
   // service hop, not an `in_repo` edge (which exists only for commits and
   // files).

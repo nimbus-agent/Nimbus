@@ -384,6 +384,7 @@ components:
               low_sample,
               approximate_lead_time,
               mixed_source,
+              ci_not_evaluable,
             ]
     StatsSeries:
       type: object
@@ -427,7 +428,9 @@ components:
               low_sample,
               approximate_lead_time,
               mixed_source,
+              ci_not_evaluable,
               github_only_merge_data,
+              incomplete_merge_data,
               incidents_missing_opened_at,
             ]
     DeployPreflightResult:
@@ -489,6 +492,7 @@ components:
           no_repos,
           unknown_mergeable_state,
           pagerduty_urgency_without_priority,
+          ci_not_evaluable,
         ]
     IncidentFinding:
       type: object

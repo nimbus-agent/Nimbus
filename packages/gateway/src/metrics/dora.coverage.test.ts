@@ -7,6 +7,8 @@
  */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { githubActionsRunMetadata } from "../connectors/github-actions-sync.ts";
+import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { leadTimeForChanges, mttr, repoLikeMatchesUrn } from "./dora.ts";
@@ -54,6 +56,8 @@ describe("repoLikeMatchesUrn", () => {
    * repo under this provider's own key. Without them a provider that matched every row would pass —
    * and for `jenkins` and `circleci` nothing else in the suite would notice.
    */
+  // The metadata below is deliberately minimal and partly cross-provider: it pins which KEY each
+  // provider matches on, including shapes no writer produces (a miss is a defensive branch).
   type UrnCase = {
     urn: ParsedDoraRepoUrn;
     meta: Record<string, unknown>;
@@ -132,7 +136,18 @@ describe("leadTimeForChanges — PR labels", () => {
       externalId: "run-1",
       title: "Deploy prod",
       modifiedAt: NOW - HOUR,
-      metadata: { conclusion: "success", repo: "acme/payments", headSha: "abc1234" },
+      metadata: githubActionsRunMetadata(
+        "acme/payments",
+        {
+          id: 1,
+          name: "Deploy prod",
+          status: "completed",
+          conclusion: "success",
+          head_branch: "main",
+          head_sha: "abc1234",
+        },
+        NOW,
+      ),
     });
     put(db, {
       service: "github",
@@ -140,10 +155,20 @@ describe("leadTimeForChanges — PR labels", () => {
       externalId: "acme/payments#7",
       title: "Retry the settlement call",
       modifiedAt: NOW - 2 * HOUR,
+      // Real mapper output; `labels` is then overridden with a non-array value, a shape no
+      // writer produces, to pin the defensive "not an array excludes nothing" branch.
       metadata: {
-        merged: true,
-        merged_at: NOW - 3 * HOUR,
-        merge_commit_sha: "abc1234",
+        ...extractPrMetadataForIndex(
+          "acme/payments",
+          {
+            number: 7,
+            state: "closed",
+            merged: true,
+            merged_at: new Date(NOW - 3 * HOUR).toISOString(),
+            merge_commit_sha: "abc1234",
+          },
+          NOW,
+        ),
         ...(labels === undefined ? {} : { labels }),
       },
     });

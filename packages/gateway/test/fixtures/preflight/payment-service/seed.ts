@@ -3,6 +3,8 @@ import {
   EMPTY_NIMBUS_VAULT,
   syncTestContext,
 } from "../../../../src/connectors/connector-sync-test-helpers.ts";
+import { githubActionsRunMetadata } from "../../../../src/connectors/github-actions-sync.ts";
+import { extractPrMetadataForIndex } from "../../../../src/connectors/github-sync.ts";
 import { syncPagerdutyIncidentItems } from "../../../../src/connectors/pagerduty-sync.ts";
 import type { ServiceConfig } from "../../../../src/metrics/dora-config.ts";
 import { buildPagerdutyIncident } from "../../pagerduty/build-incident.ts";
@@ -95,13 +97,18 @@ export async function seedPaymentServicePreflightFixture(
     title: "CI lint",
     url: "https://github.com/nimbus-agent/payments/actions/runs/1",
     modified_at: now - 30 * MIN,
-    metadata: {
-      conclusion: "success",
-      branch: "main",
-      repo: "nimbus-agent/payments",
-      headSha: "sha_main_1",
-      workflow_name: "CI lint",
-    },
+    metadata: githubActionsRunMetadata(
+      "nimbus-agent/payments",
+      {
+        id: 1,
+        name: "CI lint",
+        status: "completed",
+        conclusion: "success",
+        head_branch: "main",
+        head_sha: "sha_main_1",
+      },
+      now,
+    ),
   });
   ins(db, {
     id: "github_actions:ci_main_fail",
@@ -111,13 +118,18 @@ export async function seedPaymentServicePreflightFixture(
     title: "Build and Test",
     url: "https://github.com/nimbus-agent/payments/actions/runs/2",
     modified_at: now - 20 * MIN,
-    metadata: {
-      conclusion: "failure",
-      branch: "main",
-      repo: "nimbus-agent/payments",
-      headSha: "sha_main_2",
-      workflow_name: "Build and Test",
-    },
+    metadata: githubActionsRunMetadata(
+      "nimbus-agent/payments",
+      {
+        id: 2,
+        name: "Build and Test",
+        status: "completed",
+        conclusion: "failure",
+        head_branch: "main",
+        head_sha: "sha_main_2",
+      },
+      now,
+    ),
   });
   ins(db, {
     id: "github_actions:ci_feature_fail_1",
@@ -127,13 +139,18 @@ export async function seedPaymentServicePreflightFixture(
     title: "Build and Test",
     url: null,
     modified_at: now - 1 * HOUR,
-    metadata: {
-      conclusion: "failure",
-      branch: "feature-x",
-      repo: "nimbus-agent/payments",
-      headSha: "sha_feature_1",
-      workflow_name: "Build and Test",
-    },
+    metadata: githubActionsRunMetadata(
+      "nimbus-agent/payments",
+      {
+        id: 3,
+        name: "Build and Test",
+        status: "completed",
+        conclusion: "failure",
+        head_branch: "feature-x",
+        head_sha: "sha_feature_1",
+      },
+      now,
+    ),
   });
   ins(db, {
     id: "github_actions:ci_feature_fail_2",
@@ -143,13 +160,18 @@ export async function seedPaymentServicePreflightFixture(
     title: "Lint",
     url: null,
     modified_at: now - 2 * HOUR,
-    metadata: {
-      conclusion: "failure",
-      branch: "feature-x",
-      repo: "nimbus-agent/payments",
-      headSha: "sha_feature_2",
-      workflow_name: "Lint",
-    },
+    metadata: githubActionsRunMetadata(
+      "nimbus-agent/payments",
+      {
+        id: 4,
+        name: "Lint",
+        status: "completed",
+        conclusion: "failure",
+        head_branch: "feature-x",
+        head_sha: "sha_feature_2",
+      },
+      now,
+    ),
   });
 
   ins(db, {
@@ -160,14 +182,16 @@ export async function seedPaymentServicePreflightFixture(
     title: "Refactor billing retry",
     url: "https://github.com/nimbus-agent/payments/pull/100",
     modified_at: now - 1 * HOUR,
-    metadata: {
-      number: 100,
-      state: "open",
-      repo: "nimbus-agent/payments",
-      mergeable_state: "dirty",
-      mergeable: false,
-      labels: [],
-    },
+    metadata: extractPrMetadataForIndex(
+      "nimbus-agent/payments",
+      {
+        number: 100,
+        state: "open",
+        mergeable_state: "dirty",
+        mergeable: false,
+      },
+      now,
+    ),
   });
   ins(db, {
     id: "github:pr_clean",
@@ -177,14 +201,16 @@ export async function seedPaymentServicePreflightFixture(
     title: "Add metric",
     url: "https://github.com/nimbus-agent/payments/pull/101",
     modified_at: now - 30 * MIN,
-    metadata: {
-      number: 101,
-      state: "open",
-      repo: "nimbus-agent/payments",
-      mergeable_state: "clean",
-      mergeable: true,
-      labels: [],
-    },
+    metadata: extractPrMetadataForIndex(
+      "nimbus-agent/payments",
+      {
+        number: 101,
+        state: "open",
+        mergeable_state: "clean",
+        mergeable: true,
+      },
+      now,
+    ),
   });
   ins(db, {
     id: "github:pr_unknown",
@@ -194,13 +220,14 @@ export async function seedPaymentServicePreflightFixture(
     title: "WIP big refactor",
     url: null,
     modified_at: now - 6 * HOUR,
-    metadata: {
-      number: 102,
-      state: "open",
-      repo: "nimbus-agent/payments",
-      mergeable_state: null,
-      labels: [],
-    },
+    metadata: extractPrMetadataForIndex(
+      "nimbus-agent/payments",
+      {
+        number: 102,
+        state: "open",
+      },
+      now,
+    ),
   });
 
   const config: ServiceConfig = {

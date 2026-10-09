@@ -11,7 +11,10 @@ import {
   selectReviews,
   selectTicketsOpened,
 } from "../../src/agents/standup-queries.ts";
+import { gitlabMrMetadata } from "../../src/connectors/_lib/gitlab/events.ts";
+import { bitbucketPrMetadata } from "../../src/connectors/bitbucket-sync.ts";
 import { createMemoryIndexDb } from "../../src/connectors/connector-sync-test-helpers.ts";
+import { extractPrMetadataForIndex } from "../../src/connectors/github-sync.ts";
 
 /**
  * Against the REAL migrated schema, not a hand-written one.
@@ -31,6 +34,42 @@ const ME = "person-me";
 const OTHER = "person-other";
 
 type Db = ReturnType<typeof createMemoryIndexDb>;
+
+/** An open GitHub PR's metadata from the real GitHub writer mapper. */
+function openPrMeta(): Record<string, unknown> {
+  return extractPrMetadataForIndex("org/web", { number: 1, state: "open", merged: false }, NOW);
+}
+
+/** A merged GitHub PR's metadata (`state: "merged"` plus `merged_at`) from the real mapper. */
+function githubMergedMeta(mergedAtMs: number): Record<string, unknown> {
+  return extractPrMetadataForIndex(
+    "org/web",
+    { number: 2, state: "closed", merged: true, merged_at: new Date(mergedAtMs).toISOString() },
+    NOW,
+  );
+}
+
+/** A merged GitLab MR's metadata: an `accepted` event stamps `merged_at`. */
+function gitlabMergedMeta(mergedAtMs: number): Record<string, unknown> {
+  return gitlabMrMetadata(
+    {
+      pathWithNamespace: "group/proj",
+      iid: 7,
+      actionName: "accepted",
+      eventCreatedAt: new Date(mergedAtMs).toISOString(),
+    },
+    null,
+  );
+}
+
+/** A merged Bitbucket PR's metadata: the API records no merge time, so none is written. */
+function bitbucketMergedMeta(): Record<string, unknown> {
+  return bitbucketPrMetadata(
+    "ws/repo",
+    { id: 3, state: "MERGED", created_on: new Date(NOW - 9 * DAY).toISOString() },
+    "Ada Lovelace",
+  );
+}
 
 function insertItem(
   db: Db,
@@ -112,7 +151,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "Mine, touched today",
         modifiedAt: NOW - HOUR,
         authorId: ME,
-        meta: { state: "open" },
+        meta: openPrMeta(),
       });
       insertItem(db, {
         id: "pr-theirs",
@@ -121,7 +160,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "Someone else's",
         modifiedAt: NOW - HOUR,
         authorId: OTHER,
-        meta: { state: "open" },
+        meta: openPrMeta(),
       });
       insertItem(db, {
         id: "pr-stale",
@@ -130,7 +169,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "Mine, untouched for a week",
         modifiedAt: NOW - 7 * DAY,
         authorId: ME,
-        meta: { state: "open" },
+        meta: openPrMeta(),
       });
       const rows = selectActivePrs(db, W, ME);
       expect(rows.map((r) => r.id)).toEqual(["pr-mine"]);
@@ -143,8 +182,8 @@ describe("standup queries against the real migrated schema", () => {
   test("active PRs exclude a merged one on EITHER merge signal, and on both forges", () => {
     const db = createMemoryIndexDb();
     try {
-      // GitHub writes `merged_at`; GitLab/Bitbucket write neither, leaving `state`/`merged` as
-      // the only evidence. Testing one signal would leave every merged MR in the active list.
+      // GitHub and GitLab write `merged_at`; Bitbucket writes only `state`. The legacy `merged`
+      // flag is a pre-contract shape. Testing one signal would leave merged PRs in the active list.
       insertItem(db, {
         id: "pr-merged-at",
         service: "github",
@@ -152,16 +191,25 @@ describe("standup queries against the real migrated schema", () => {
         title: "Merged, has merged_at",
         modifiedAt: NOW - HOUR,
         authorId: ME,
-        meta: { state: "closed", merged_at: NOW - 2 * HOUR },
+        meta: githubMergedMeta(NOW - 2 * HOUR),
       });
       insertItem(db, {
         id: "pr-state-merged",
-        service: "gitlab",
+        service: "bitbucket",
         type: "pr",
         title: "Merged, state only",
         modifiedAt: NOW - HOUR,
         authorId: ME,
-        meta: { state: "merged" },
+        meta: bitbucketMergedMeta(),
+      });
+      insertItem(db, {
+        id: "pr-gitlab-merged",
+        service: "gitlab",
+        type: "pr",
+        title: "Merged GitLab MR",
+        modifiedAt: NOW - HOUR,
+        authorId: ME,
+        meta: gitlabMergedMeta(NOW - 2 * HOUR),
       });
       insertItem(db, {
         id: "pr-merged-flag",
@@ -170,6 +218,8 @@ describe("standup queries against the real migrated schema", () => {
         title: "Merged, boolean flag only",
         modifiedAt: NOW - HOUR,
         authorId: ME,
+        // Deliberately a shape no current writer produces (the pre-contract `merged` flag): the
+        // reader's defensive branch for rows written before A1.
         meta: { merged: 1 },
       });
       insertItem(db, {
@@ -179,7 +229,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "Still open",
         modifiedAt: NOW - HOUR,
         authorId: ME,
-        meta: { state: "open", merged: 0 },
+        meta: openPrMeta(),
       });
       expect(selectActivePrs(db, W, ME).map((r) => r.id)).toEqual(["pr-open"]);
     } finally {
@@ -228,7 +278,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "Merged last week, commented today",
         modifiedAt: NOW - HOUR,
         authorId: ME,
-        meta: { state: "closed", merged_at: NOW - 8 * DAY },
+        meta: githubMergedMeta(NOW - 8 * DAY),
       });
       insertItem(db, {
         id: "pr-fresh-merge",
@@ -237,7 +287,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "Merged this morning",
         modifiedAt: NOW - 30 * 60_000,
         authorId: ME,
-        meta: { state: "closed", merged_at: NOW - 3 * HOUR },
+        meta: githubMergedMeta(NOW - 3 * HOUR),
       });
       const rows = selectMergedPrs(db, W, ME);
       expect(rows.map((r) => r.id)).toEqual(["pr-fresh-merge"]);
@@ -261,6 +311,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "merged_at is an ISO string",
         modifiedAt: NOW - HOUR,
         authorId: ME,
+        // Deliberately a shape no writer produces: `merged_at` as an ISO string, not epoch ms.
         meta: { state: "closed", merged_at: "2026-09-11T00:00:00Z" },
       });
       expect(selectMergedPrs(db, W, ME)).toEqual([]);
@@ -552,10 +603,21 @@ describe("standup queries against the real migrated schema", () => {
         id: "mr-gitlab",
         service: "gitlab",
         type: "pr",
-        title: "Merged MR with no merge timestamp",
+        title: "Merged MR WITH a merge timestamp",
         modifiedAt: NOW - 2 * HOUR,
         authorId: ME,
-        meta: { state: "merged" },
+        // A1 behaviour change: formerly a hand-written `{ state: "merged" }` row that was counted
+        // here. The real writer stamps `merged_at`, so it is LISTED and no longer counted.
+        meta: gitlabMergedMeta(NOW - 2 * HOUR),
+      });
+      insertItem(db, {
+        id: "pr-bitbucket-state",
+        service: "bitbucket",
+        type: "pr",
+        title: "Merged Bitbucket PR with no merge time",
+        modifiedAt: NOW - 2 * HOUR,
+        authorId: ME,
+        meta: bitbucketMergedMeta(),
       });
       insertItem(db, {
         id: "pr-bitbucket",
@@ -564,6 +626,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "Merged via boolean flag",
         modifiedAt: NOW - 2 * HOUR,
         authorId: ME,
+        // Deliberately a shape no current writer produces (the pre-contract `merged` flag).
         meta: { merged: 1 },
       });
       insertItem(db, {
@@ -573,18 +636,23 @@ describe("standup queries against the real migrated schema", () => {
         title: "GitHub merge — visible to the merged lane, so not counted here",
         modifiedAt: NOW - 2 * HOUR,
         authorId: ME,
-        meta: { state: "merged", merged_at: NOW - 2 * HOUR },
+        meta: githubMergedMeta(NOW - 2 * HOUR),
       });
       insertItem(db, {
         id: "mr-theirs",
-        service: "gitlab",
+        service: "bitbucket",
         type: "pr",
-        title: "A colleague's merged MR",
+        title: "A colleague's merged PR",
         modifiedAt: NOW - 2 * HOUR,
         authorId: OTHER,
-        meta: { state: "merged" },
+        meta: bitbucketMergedMeta(),
       });
       expect(nonGithubMergedPrCount(db, W, ME)).toBe(2);
+      expect(
+        selectMergedPrs(db, W, ME)
+          .map((r) => r.id)
+          .sort(),
+      ).toEqual(["mr-gitlab", "pr-github"]);
     } finally {
       db.close();
     }
@@ -618,7 +686,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "Not mine",
         modifiedAt: NOW - HOUR,
         authorId: OTHER,
-        meta: { state: "open" },
+        meta: openPrMeta(),
       });
       const ghost = "person-does-not-exist";
       expect(selectActivePrs(db, W, ghost)).toEqual([]);
@@ -647,7 +715,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "Exactly at the lower bound",
         modifiedAt: W.fromMs,
         authorId: ME,
-        meta: { state: "open" },
+        meta: openPrMeta(),
       });
       insertItem(db, {
         id: "pr-at-to",
@@ -656,7 +724,7 @@ describe("standup queries against the real migrated schema", () => {
         title: "Exactly at the upper bound",
         modifiedAt: W.toMs,
         authorId: ME,
-        meta: { state: "open" },
+        meta: openPrMeta(),
       });
       expect(selectActivePrs(db, W, ME).map((r) => r.id)).toEqual(["pr-at-from"]);
     } finally {

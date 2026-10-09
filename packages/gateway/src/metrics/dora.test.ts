@@ -1,5 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { circleciPipelineMetadata } from "../connectors/circleci-sync.ts";
+import { githubActionsRunMetadata } from "../connectors/github-actions-sync.ts";
+import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
 import {
   changeFailureRate,
   computeDoraMetrics,
@@ -117,11 +120,26 @@ function insertCiRun(
   repo: string,
   headSha?: string,
 ): string {
-  return insertItem(db, service, "ci_run", title, modifiedAt, {
-    conclusion: "success",
-    repo,
-    headSha: headSha ?? null,
-  });
+  // Metadata comes from the REAL writer mapper, so a reader that drifts from the contract fails here.
+  return insertItem(
+    db,
+    service,
+    "ci_run",
+    title,
+    modifiedAt,
+    githubActionsRunMetadata(
+      repo,
+      {
+        id: itemSeq + 1,
+        name: title,
+        status: "completed",
+        conclusion: "success",
+        head_branch: "main",
+        ...(headSha === undefined ? {} : { head_sha: headSha }),
+      },
+      modifiedAt,
+    ),
+  );
 }
 
 function insertDeploymentItem(
@@ -178,7 +196,26 @@ function insertPr(
   modifiedAt: number,
   meta: Record<string, unknown>,
 ): string {
-  return insertItem(db, service, "pr", "PR", modifiedAt, meta);
+  // `meta` keeps the old terse shape (merged, merged_at in ms, merge_commit_sha, labels); the row's
+  // metadata is what the real GitHub PR mapper produces from the equivalent API payload.
+  const mergedAt = meta["merged_at"];
+  const sha = meta["merge_commit_sha"];
+  const apiPr: Record<string, unknown> = {
+    number: itemSeq + 1,
+    state: meta["merged"] === true ? "closed" : "open",
+    merged: meta["merged"] === true,
+    labels: meta["labels"],
+    ...(typeof mergedAt === "number" ? { merged_at: new Date(mergedAt).toISOString() } : {}),
+    ...(typeof sha === "string" ? { merge_commit_sha: sha } : {}),
+  };
+  return insertItem(
+    db,
+    service,
+    "pr",
+    "PR",
+    modifiedAt,
+    extractPrMetadataForIndex("org/repo", apiPr, modifiedAt),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +289,47 @@ describe("deploymentFrequency", () => {
     expect(result.sample).toBe(3);
     expect(result.gap).toBeNull();
     expect(result.value).toBeGreaterThan(0);
+  });
+
+  test("a CircleCI-only service reports ci_not_evaluable, not no_deployment_data", () => {
+    const cfg = baseConfig({
+      repos: [{ provider: "circleci", providerId: "gh/org/repo" }],
+      deployEnvironments: [],
+    });
+    // A real CircleCI pipeline: state "created" is a creation state, so conclusion is "unknown".
+    itemSeq += 1;
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, metadata, synced_at)
+       VALUES (?, 'circleci', 'ci_run', 'gh/org/repo/1', 'Deploy main', ?, ?, ?)`,
+      [
+        `item-${itemSeq}`,
+        NOW - ONE_DAY,
+        JSON.stringify(
+          circleciPipelineMetadata("org/repo", "gh/org/repo", {
+            id: "p1",
+            number: 1,
+            state: "created",
+            vcs: { branch: "main", revision: "r1" },
+          }),
+        ),
+        NOW,
+      ],
+    );
+    const result = deploymentFrequency(db, cfg, NOW, SINCE);
+    expect(result.gap).toBe("ci_not_evaluable");
+    expect(result.value).toBeNull();
+  });
+
+  test("a mixed circleci + github service with no deploys is still no_deployment_data", () => {
+    const cfg = baseConfig({
+      repos: [
+        { provider: "circleci", providerId: "gh/org/repo" },
+        { provider: "github", providerId: "org/repo" },
+      ],
+      deployEnvironments: [],
+    });
+    const result = deploymentFrequency(db, cfg, NOW, SINCE);
+    expect(result.gap).toBe("no_deployment_data");
   });
 
   test("regex deploy path: low_sample gap when fewer than 3 deploys", () => {
@@ -354,6 +432,48 @@ describe("deploymentFrequency", () => {
     });
     const result = deploymentFrequency(db, cfg, NOW, SINCE);
     expect(result.gap).toBe("no_deployment_data");
+  });
+});
+
+describe("ci_not_evaluable across all three deploy-dependent metrics", () => {
+  let db: Database;
+  beforeEach(() => {
+    db = freshDb();
+    resetSeq();
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  const circleOnly = () =>
+    baseConfig({
+      repos: [{ provider: "circleci", providerId: "gh/org/repo" }],
+      deployEnvironments: [],
+    });
+  const mixed = () =>
+    baseConfig({
+      repos: [
+        { provider: "circleci", providerId: "gh/org/repo" },
+        { provider: "github", providerId: "org/repo" },
+      ],
+      deployEnvironments: [],
+    });
+
+  test("CircleCI-only: lead time and change failure rate report ci_not_evaluable", () => {
+    expect(leadTimeForChanges(db, circleOnly(), NOW, SINCE).gap).toBe("ci_not_evaluable");
+    expect(changeFailureRate(db, circleOnly(), NOW, SINCE).gap).toBe("ci_not_evaluable");
+  });
+
+  test("github + circleci with no deploys keeps no_deployment_data for them", () => {
+    expect(leadTimeForChanges(db, mixed(), NOW, SINCE).gap).toBe("no_deployment_data");
+    expect(changeFailureRate(db, mixed(), NOW, SINCE).gap).toBe("no_deployment_data");
+  });
+
+  test("ci_not_evaluable wins over low_sample when deploys are found but a provider is blind", () => {
+    insertCiRun(db, "github_actions", "Deploy main", NOW - ONE_DAY, "org/repo");
+    const result = deploymentFrequency(db, mixed(), NOW, SINCE);
+    expect(result.sample).toBe(1); // would be low_sample if the provider were evaluable
+    expect(result.gap).toBe("ci_not_evaluable");
   });
 });
 
@@ -618,6 +738,130 @@ describe("leadTimeForChanges", () => {
     const result = leadTimeForChanges(db, cfg, NOW, SINCE);
     expect(result.value).toBeNull();
     expect(result.gap).toBe("no_deployment_data");
+  });
+
+  test("lead time matches a deploy by canonical head_sha when the raw headSha is absent", () => {
+    const cfg = baseConfig({ deployEnvironments: [] });
+    const meta = githubActionsRunMetadata(
+      "org/repo",
+      {
+        id: 1,
+        name: "Deploy main",
+        status: "completed",
+        conclusion: "success",
+        head_branch: "main",
+        head_sha: "m1",
+      },
+      NOW,
+    );
+    // Strip the raw key: a post-A1 writer that stops emitting it must not break the join.
+    delete meta["headSha"];
+    expect(meta["head_sha"]).toBe("m1");
+    insertItem(db, "github_actions", "ci_run", "Deploy main", NOW - ONE_DAY, meta);
+    insertPr(db, "github", NOW - 2 * ONE_DAY, {
+      merged: true,
+      merged_at: NOW - 2 * ONE_DAY,
+      merge_commit_sha: "m1",
+      labels: [],
+    });
+    const result = leadTimeForChanges(db, cfg, NOW, SINCE);
+    expect(result.value).toBe(ONE_DAY / 1000);
+  });
+
+  test("lead time raw headSha fallback applies only when meta_v is absent", () => {
+    const cfg = baseConfig({ deployEnvironments: [] });
+    const run = (name: string, versioned: boolean): Record<string, unknown> => {
+      const meta: Record<string, unknown> = {
+        ...githubActionsRunMetadata(
+          "org/repo",
+          {
+            id: 1,
+            name,
+            status: "completed",
+            conclusion: "success",
+            head_branch: "main",
+            head_sha: "m1",
+          },
+          NOW,
+        ),
+      };
+      // Only the raw key remains; a pre-A1 row additionally has no meta_v.
+      delete meta["head_sha"];
+      meta["headSha"] = "m1";
+      if (!versioned) {
+        delete meta["meta_v"];
+      }
+      return meta;
+    };
+    const pr = {
+      merged: true,
+      merged_at: NOW - 2 * ONE_DAY,
+      merge_commit_sha: "m1",
+      labels: [],
+    };
+    insertItem(
+      db,
+      "github_actions",
+      "ci_run",
+      "Deploy main",
+      NOW - ONE_DAY,
+      run("Deploy main", true),
+    );
+    insertPr(db, "github", NOW - 2 * ONE_DAY, pr);
+    expect(leadTimeForChanges(db, cfg, NOW, SINCE).value).toBeNull();
+    db.run("DELETE FROM item");
+    insertItem(
+      db,
+      "github_actions",
+      "ci_run",
+      "Deploy main",
+      NOW - ONE_DAY,
+      run("Deploy main", false),
+    );
+    insertPr(db, "github", NOW - 2 * ONE_DAY, pr);
+    expect(leadTimeForChanges(db, cfg, NOW, SINCE).value).toBe(ONE_DAY / 1000);
+  });
+
+  test("DORA lead time is non-null over real-writer rows", () => {
+    const cfg = baseConfig({ deployEnvironments: [] });
+    const t = NOW - 5 * ONE_DAY;
+    insertItem(
+      db,
+      "github_actions",
+      "ci_run",
+      "Deploy prod",
+      t + 3_600_000,
+      githubActionsRunMetadata(
+        "org/repo",
+        {
+          id: 1,
+          name: "Deploy prod",
+          status: "completed",
+          conclusion: "success",
+          head_branch: "main",
+          head_sha: "m1",
+          created_at: new Date(t + 3_600_000).toISOString(),
+        },
+        NOW,
+      ),
+    );
+    insertItem(
+      db,
+      "github",
+      "pr",
+      "PR",
+      t,
+      extractPrMetadataForIndex("org/repo", {
+        number: 7,
+        state: "closed",
+        merged: true,
+        created_at: new Date(t - ONE_DAY).toISOString(),
+        merged_at: new Date(t).toISOString(),
+        merge_commit_sha: "m1",
+      }),
+    );
+    const result = leadTimeForChanges(db, cfg, NOW, SINCE);
+    expect(result.value).toBe(3600);
   });
 
   test("deploy without headSha (headSha is null) doesn't match PR", () => {

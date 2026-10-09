@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { githubActionsRunMetadata } from "../../../src/connectors/github-actions-sync.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { deploymentFrequency } from "../../../src/metrics/dora.ts";
 import type { ServiceConfig } from "../../../src/metrics/dora-config.ts";
@@ -68,12 +69,19 @@ describe("dora.deploymentFrequency — source preference", () => {
           "github_actions",
           `acme/payments#run-legacy-${i}`,
           modifiedAt,
-          JSON.stringify({
-            repo: "acme/payments",
-            workflowName: "Deploy",
-            conclusion: "success",
-            headBranch: "main",
-          }),
+          JSON.stringify(
+            githubActionsRunMetadata(
+              "acme/payments",
+              {
+                id: i,
+                name: "Deploy",
+                status: "completed",
+                conclusion: "success",
+                head_branch: "main",
+              },
+              modifiedAt,
+            ),
+          ),
           modifiedAt,
         ],
       );

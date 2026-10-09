@@ -329,7 +329,8 @@ test("a GitLab MR (metadata.project, NO metadata.repo) still yields its project 
     type: "pr",
     externalId: "acme/gitlab-svc!7",
     title: "acme/gitlab-svc!7",
-    // The GitLab shape verbatim (`connectors/_lib/gitlab/events.ts`): no `repo` key exists.
+    // Deliberate pre-A1 LEGACY shape (`project` only, no `repo` key) that no current writer
+    // produces; kept because rows written before index lane A1 still exist in real indexes.
     metadata: { iid: 7, project: "acme/gitlab-svc", action: "open" },
     modifiedAt: 1,
     syncedAt: 1,

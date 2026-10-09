@@ -1,6 +1,7 @@
 import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { buildCiRunMetadata, normalizeGithubActionsConclusion } from "./ci-run-meta.ts";
+import { storedRunIsUnfinished } from "./ci-run-refresh.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -137,7 +138,11 @@ function tryUpsertGithubActionsRun(
     return { upserted: 0, runId: null };
   }
   const id = numberField(run, "id");
-  if (id === undefined || id <= lastSeen) {
+  if (id === undefined) {
+    return { upserted: 0, runId: null };
+  }
+  const externalId = `${full}#run-${String(id)}`;
+  if (id <= lastSeen && !storedRunIsUnfinished(ctx.itemMetadata, SERVICE_ID, externalId)) {
     return { upserted: 0, runId: null };
   }
   const createdRaw = stringField(run, "created_at");
@@ -151,7 +156,6 @@ function tryUpsertGithubActionsRun(
   const conclusion = stringField(run, "conclusion");
   const status = stringField(run, "status");
   const title = buildGithubActionsRunTitle(display, name, id, conclusion, status);
-  const externalId = `${full}#run-${String(id)}`;
   const modifiedAt = Number.isFinite(createdMs) ? createdMs : now;
   ctx.upsertItem({
     service: SERVICE_ID,

@@ -419,18 +419,21 @@ describe("renderNegotiate", () => {
         authoredPrs: {
           count: 5,
           merged: 4,
+          mergedCoverage: { covered: 4, total: 5 },
           evidence: NO_EVIDENCE,
           stats: { additions: 120, deletions: 30, changedFiles: 9 },
           statsCoverage: { covered: 3, total: 5 },
         },
       }),
     );
+    expect(partial).toContain("5 PR(s), 4 merged (merge status known for 4/5)");
     expect(partial).toContain("- stats: +120 / -30 across 9 file(s) (stats coverage 3/5)");
     const full = renderNegotiate(
       negotiateBrief({
         authoredPrs: {
           count: 2,
           merged: 2,
+          mergedCoverage: { covered: 2, total: 2 },
           evidence: NO_EVIDENCE,
           stats: { additions: 7, deletions: 1, changedFiles: 2 },
           statsCoverage: { covered: 2, total: 2 },

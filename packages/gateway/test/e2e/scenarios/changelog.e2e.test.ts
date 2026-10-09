@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { emitChangelogBrief } from "../../../src/agents/changelog.ts";
+import { extractPrMetadataForIndex } from "../../../src/connectors/github-sync.ts";
 import { itemPrimaryKey } from "../../../src/index/item-key.ts";
 import { upsertIndexedItem } from "../../../src/index/item-store.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
@@ -30,7 +31,16 @@ function seedOneOfEach(db: Database): void {
     title: "Ship faster retry backoff",
     modifiedAt: NOW - DAY,
     syncedAt: NOW,
-    metadata: { merged_at: NOW - DAY, repo: "acme/payments" },
+    metadata: extractPrMetadataForIndex(
+      "acme/payments",
+      {
+        number: 900,
+        state: "closed",
+        merged: true,
+        merged_at: new Date(NOW - DAY).toISOString(),
+      },
+      NOW,
+    ),
   });
 
   // Annotated deployment — an `item` row of type `deployment` plus its `deployment_items`

@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gitlabPipelineMetadata } from "../../../src/connectors/_lib/gitlab/pipelines.ts";
+import { githubActionsRunMetadata } from "../../../src/connectors/github-actions-sync.ts";
+import { extractPrMetadataForIndex } from "../../../src/connectors/github-sync.ts";
+import { jenkinsBuildMetadata } from "../../../src/connectors/jenkins-sync.ts";
 import {
   changeFailureRate,
   computeDoraMetrics,
@@ -25,12 +29,41 @@ type SeedCiOpts = {
   externalId?: string;
 };
 
+// Metadata comes from the real writer mapper for each provider, so the reader is exercised over
+// rows shaped exactly as the sync writes them. Only a service with no mapper here falls through.
+function ciRunMetadata(opts: SeedCiOpts): Record<string, unknown> {
+  const failed = opts.conclusion !== "success";
+  switch (opts.service) {
+    case "github_actions":
+      return githubActionsRunMetadata(
+        opts.repo ?? "",
+        {
+          name: opts.title,
+          status: "completed",
+          conclusion: opts.conclusion,
+          head_branch: "main",
+          ...(opts.headSha === undefined ? {} : { head_sha: opts.headSha }),
+        },
+        opts.modifiedAt,
+      );
+    case "gitlab":
+      return gitlabPipelineMetadata(opts.project ?? "", {
+        status: failed ? "failed" : "success",
+        ref: "main",
+        ...(opts.headSha === undefined ? {} : { sha: opts.headSha }),
+      });
+    case "jenkins":
+      return jenkinsBuildMetadata(opts.jobName ?? "", {
+        result: failed ? "FAILURE" : "SUCCESS",
+        building: false,
+      });
+    default:
+      throw new Error(`no writer mapper for ci_run service ${opts.service}`);
+  }
+}
+
 function seedCiRun(db: Database, id: string, opts: SeedCiOpts): void {
-  const meta: Record<string, unknown> = { conclusion: opts.conclusion };
-  if (opts.repo !== undefined) meta["repo"] = opts.repo;
-  if (opts.project !== undefined) meta["project"] = opts.project;
-  if (opts.jobName !== undefined) meta["jobName"] = opts.jobName;
-  if (opts.headSha !== undefined) meta["headSha"] = opts.headSha;
+  const meta = ciRunMetadata(opts);
   const externalId = opts.externalId ?? id;
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url,
@@ -60,12 +93,19 @@ type SeedPrOpts = {
 };
 
 function seedPr(db: Database, id: string, opts: SeedPrOpts): void {
-  const meta: Record<string, unknown> = { merged: opts.merged };
-  if (opts.repo !== undefined) meta["repo"] = opts.repo;
-  if (opts.project !== undefined) meta["project"] = opts.project;
-  if (opts.mergedAt !== undefined) meta["merged_at"] = opts.mergedAt;
-  if (opts.mergeCommitSha !== undefined) meta["merge_commit_sha"] = opts.mergeCommitSha;
-  meta["labels"] = opts.labels ?? [];
+  // Real GitHub PR mapper over the equivalent API payload (the only PR service these tests seed).
+  const meta = extractPrMetadataForIndex(
+    opts.repo ?? "",
+    {
+      number: 1,
+      state: opts.merged ? "closed" : "open",
+      merged: opts.merged,
+      labels: [...(opts.labels ?? [])],
+      ...(opts.mergedAt === undefined ? {} : { merged_at: new Date(opts.mergedAt).toISOString() }),
+      ...(opts.mergeCommitSha === undefined ? {} : { merge_commit_sha: opts.mergeCommitSha }),
+    },
+    opts.modifiedAt,
+  );
   db.run(
     `INSERT INTO item (id, service, type, external_id, title, body_preview, url, canonical_url,
                        modified_at, author_id, metadata, synced_at, pinned)

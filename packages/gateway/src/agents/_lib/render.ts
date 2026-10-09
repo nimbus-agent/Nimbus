@@ -778,7 +778,15 @@ function renderNegotiateAuthoredPrs(a: NegotiateAuthoredPrs | null): string {
   if (a === null) {
     return negotiateNotComputedSection("PRs authored");
   }
-  const lines = ["## PRs authored", "", `- ${String(a.count)} PR(s), ${String(a.merged)} merged`];
+  const mergedSuffix =
+    a.mergedCoverage.covered < a.mergedCoverage.total
+      ? ` (merge status known for ${String(a.mergedCoverage.covered)}/${String(a.mergedCoverage.total)})`
+      : "";
+  const lines = [
+    "## PRs authored",
+    "",
+    `- ${String(a.count)} PR(s), ${String(a.merged)} merged${mergedSuffix}`,
+  ];
   if (a.stats === null) {
     // Only when there was something to enrich. With zero authored PRs in the window,
     // "no enriched PR in this window" reads as a coverage failure over a real population

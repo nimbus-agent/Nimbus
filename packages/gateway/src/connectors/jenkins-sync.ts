@@ -10,6 +10,7 @@ import {
   syncNoopResult,
 } from "../sync/types.ts";
 import { buildCiRunMetadata, normalizeJenkinsResult } from "./ci-run-meta.ts";
+import { storedRunIsUnfinished } from "./ci-run-refresh.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
 import {
   flattenJenkinsApiJobs,
@@ -175,7 +176,11 @@ function upsertJenkinsBuildRowIfNew(
     return null;
   }
   const num = numberField(b, "number");
-  if (num === undefined || num <= lastSeen) {
+  if (num === undefined) {
+    return null;
+  }
+  const externalId = jenkinsBuildExternalId(job.fullName, num);
+  if (num <= lastSeen && !storedRunIsUnfinished(ctx.itemMetadata, SERVICE_ID, externalId)) {
     return null;
   }
   const ts = numberField(b, "timestamp");
@@ -187,7 +192,6 @@ function upsertJenkinsBuildRowIfNew(
   const building = b["building"] === true;
   const url = webUrl ?? stringField(b, "url") ?? job.url ?? null;
   const titleRaw = buildTitle(job.fullName, num, result, building);
-  const externalId = jenkinsBuildExternalId(job.fullName, num);
   ctx.upsertItem({
     service: SERVICE_ID,
     type: "ci_run",

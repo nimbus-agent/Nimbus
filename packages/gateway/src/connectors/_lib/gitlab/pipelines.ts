@@ -1,5 +1,6 @@
 import type { SyncContext } from "../../../sync/types.ts";
 import { buildCiRunMetadata, normalizeGitlabPipelineStatus } from "../../ci-run-meta.ts";
+import { storedRunIsUnfinished } from "../../ci-run-refresh.ts";
 import { asRecord, numberField, stringField } from "../../unknown-record.ts";
 
 const SERVICE_ID = "gitlab";
@@ -7,7 +8,7 @@ const MAX_PIPELINE_PROJECTS_PER_SYNC = 15;
 
 type GitlabPipelineItemUpsertResult =
   | { kind: "skip" }
-  | { kind: "break" }
+  | { kind: "seen" }
   | { kind: "upserted"; id: number };
 
 /**
@@ -58,8 +59,9 @@ function tryUpsertGitlabPipelineItem(
   if (id === undefined) {
     return { kind: "skip" };
   }
-  if (id <= lastSeen) {
-    return { kind: "break" };
+  const externalId = `${path}#pipeline-${String(id)}`;
+  if (id <= lastSeen && !storedRunIsUnfinished(ctx.itemMetadata, SERVICE_ID, externalId)) {
+    return { kind: "seen" };
   }
   const createdRaw = stringField(row, "created_at");
   const createdMs = createdRaw === undefined ? Number.NaN : Date.parse(createdRaw);
@@ -72,7 +74,6 @@ function tryUpsertGitlabPipelineItem(
   const titleBase =
     ref !== undefined && ref !== "" ? `Pipeline on ${ref}` : `Pipeline #${String(id)}`;
   const title = status !== undefined && status !== "" ? `${titleBase} — ${status}` : titleBase;
-  const externalId = `${path}#pipeline-${String(id)}`;
   const modifiedAt = Number.isFinite(createdMs) ? createdMs : now;
   const linkUrl = webUrl ?? `${webOrigin}/${path}/-/pipelines/${String(id)}`;
   ctx.upsertItem({
@@ -105,8 +106,8 @@ function applyGitlabPipelineArray(
   let upserted = 0;
   for (const item of parsedRoot) {
     const r = tryUpsertGitlabPipelineItem(ctx, item, path, lastSeen, floorMs, now, webOrigin);
-    if (r.kind === "break") {
-      break;
+    if (r.kind === "seen") {
+      continue;
     }
     if (r.kind === "upserted") {
       upserted += 1;

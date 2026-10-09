@@ -80,6 +80,24 @@ describe("cursor counters", () => {
 });
 
 describe("pipeline lists and URLs", () => {
+  test("a previously seen created pipeline is not re-written (CircleCI never reports running)", async () => {
+    mock.respond("GET", PIPELINES_RE, {
+      items: [{ number: 5, id: "p5", state: "created", created_at: recentIso(), vcs: {} }],
+    });
+    const db = createMemoryIndexDb();
+    const first = await createCircleciSyncable(ENSURE).sync(ctxFor(db, ["acme/app"]), null);
+    expect(first.itemsUpserted).toBe(1);
+
+    const second = await createCircleciSyncable(ENSURE).sync(
+      ctxFor(db, ["acme/app"]),
+      first.cursor,
+    );
+
+    expect(second.itemsUpserted).toBe(0);
+    expect(projectsOf(second.cursor)).toEqual({ "gh/acme/app": 5 });
+    db.close();
+  });
+
   test("a repo whose owner is blank still syncs, but its pipelines carry no app URL", async () => {
     mock.respond("GET", PIPELINES_RE, {
       items: [{ number: 1, state: "success", created_at: recentIso(), vcs: { tag: "v1.0.0" } }],

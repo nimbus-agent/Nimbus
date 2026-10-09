@@ -153,6 +153,8 @@ export type NegotiateDecisions = {
 export type NegotiateAuthoredPrs = {
   readonly count: number;
   readonly merged: number;
+  /** Rows whose merge status is known (`metadata.merged` is a boolean) over all authored PRs. */
+  readonly mergedCoverage: NegotiateCoverage;
   /** The authored PRs behind `count`, newest first. */
   readonly evidence: NegotiateEvidence;
   readonly stats: {

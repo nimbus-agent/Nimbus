@@ -120,32 +120,44 @@ function computeSizeOverrun(input: {
   };
 }
 
+const FORGE_TIMING_REASON: Readonly<Record<string, string>> = {
+  bitbucket: "Bitbucket never records a merge time.",
+  gitlab:
+    "GitLab records opened and merged times only for merge requests whose open or merge event falls inside the synced window.",
+  github:
+    "GitHub pull requests that are not yet merged carry no merge time, and those indexed before this release carry no opened time until re-synced (`nimbus index rebody --service github`).",
+};
+
+function missingTimingSummary(forges: readonly string[]): string {
+  const reasons = forges.map(
+    (f) => FORGE_TIMING_REASON[f] ?? `${f} pull requests carry no opened or merged time.`,
+  );
+  return (
+    "Review drag cannot be measured: this cohort has linked pull requests, but none records both " +
+    `an opened and a merged timestamp. ${reasons.join(" ")}`
+  );
+}
+
 function computeReviewDrag(input: {
   reviewDragMedianMs: number | null;
   repoReviewMedianMs: number | null;
   /**
-   * True when the cohort DOES have linked pull requests but none carries
-   * BOTH an opened and a merged timestamp — a fact only the caller (which
-   * runs the database queries) can know, since this file is deliberately
-   * database-free. Picks between two distinct unmeasurable causes: "no PRs
-   * at all" (the pre-existing message) vs. "PRs exist, but the index is
-   * missing one of the two timestamps needed to measure drag on them".
+   * The distinct `item.service` values (forges) of cohort pull requests that lack an
+   * `opened_at_ms` or a `merged_at`; empty when none does. A fact only the caller (which
+   * runs the database queries) can know, since this file is deliberately database-free.
+   * Non-empty picks "PRs exist, but a forge's PRs lack timing" over the "no PRs at all"
+   * message, and names each forge with its own reason.
    *
-   * Deliberately NOT split into "missing opened" vs. "missing merged": an
-   * earlier version named only the opened timestamp as missing, which is
-   * false the moment a PR carries an opened timestamp but no merged one (an
-   * open PR) — the common case once a connector starts indexing PR-open
-   * events, which is exactly the moment this discriminator starts firing in
-   * practice. Naming what was actually checked (both fields, together)
-   * stays true regardless of which one (or both) is absent.
+   * Deliberately NOT split into "missing opened" vs. "missing merged": a PR can lack either
+   * or both, so the summary names the forge and why, not which single field is absent.
    */
-  cohortHasPrsMissingTimingData: boolean;
+  forgesMissingTiming: readonly string[];
 }): Risk {
   if (input.reviewDragMedianMs === null || input.repoReviewMedianMs === null) {
-    const summary = input.cohortHasPrsMissingTimingData
-      ? "Review drag cannot be measured: this cohort has linked pull requests, but the " +
-        "index does not record both an opened and a merged timestamp for these pull requests."
-      : "No pull requests were found for this cohort, so review drag cannot be measured.";
+    const summary =
+      input.forgesMissingTiming.length > 0
+        ? missingTimingSummary(input.forgesMissingTiming)
+        : "No pull requests were found for this cohort, so review drag cannot be measured.";
     return {
       kind: "review_drag",
       summary,
@@ -285,7 +297,7 @@ export function computeRisks(input: {
   nowMs: number;
   reviewDragMedianMs: number | null;
   repoReviewMedianMs: number | null;
-  cohortHasPrsMissingTimingData: boolean;
+  forgesMissingTiming: readonly string[];
   incidentCoupling: { coupled: number; measured: number } | null;
   cohortIsMixedTracker: boolean;
 }): Risk[] {
@@ -299,7 +311,7 @@ export function computeRisks(input: {
     computeReviewDrag({
       reviewDragMedianMs: input.reviewDragMedianMs,
       repoReviewMedianMs: input.repoReviewMedianMs,
-      cohortHasPrsMissingTimingData: input.cohortHasPrsMissingTimingData,
+      forgesMissingTiming: input.forgesMissingTiming,
     }),
     computeIncidentCoupling({
       cohort: input.cohort,

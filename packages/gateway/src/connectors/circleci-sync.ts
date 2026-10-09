@@ -1,6 +1,7 @@
 import { clampSyncTitle, syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { buildCiRunMetadata, normalizeCircleciPipelineState } from "./ci-run-meta.ts";
+import { storedRunIsUnfinished } from "./ci-run-refresh.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
@@ -133,7 +134,11 @@ function tryUpsertCircleciPipeline(
     return { upserted: 0, pipelineNum: lastSeen };
   }
   const num = numberField(row, "number");
-  if (num === undefined || num <= lastSeen) {
+  if (num === undefined) {
+    return { upserted: 0, pipelineNum: lastSeen };
+  }
+  const externalId = `${slug}#p${String(num)}`;
+  if (num <= lastSeen && !storedRunIsUnfinished(ctx.itemMetadata, SERVICE_ID, externalId)) {
     return { upserted: 0, pipelineNum: lastSeen };
   }
   const createdMs = circleciPipelineCreatedMs(stringField(row, "created_at"));
@@ -143,7 +148,6 @@ function tryUpsertCircleciPipeline(
   const state = stringField(row, "state");
   const titleBase = `Pipeline #${String(num)}`;
   const title = state !== undefined && state !== "" ? `${titleBase} — ${state}` : titleBase;
-  const externalId = `${slug}#p${String(num)}`;
   const modifiedAt = Number.isFinite(createdMs) ? createdMs : now;
   const htmlUrl = appPipelineUrl(slug, num);
   ctx.upsertItem({

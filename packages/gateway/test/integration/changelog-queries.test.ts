@@ -6,7 +6,11 @@ import {
   selectIncidentsResolved,
   selectMergedPrs,
 } from "../../src/agents/changelog-queries.ts";
+import { gitlabMrMetadata } from "../../src/connectors/_lib/gitlab/events.ts";
+import { bitbucketPrMetadata } from "../../src/connectors/bitbucket-sync.ts";
 import { createMemoryIndexDb } from "../../src/connectors/connector-sync-test-helpers.ts";
+import { githubActionsRunMetadata } from "../../src/connectors/github-actions-sync.ts";
+import { extractPrMetadataForIndex } from "../../src/connectors/github-sync.ts";
 import {
   DEFAULT_DEPLOY_WORKFLOW_PATTERN,
   type ServiceConfig,
@@ -42,6 +46,24 @@ function scopedWindow(cfg: ServiceConfig): {
   scope: { kind: "service"; cfg: ServiceConfig };
 } {
   return { fromMs: W.fromMs, toMs: W.toMs, scope: { kind: "service", cfg } };
+}
+
+/** Metadata for a merged GitHub PR, built by the real GitHub writer mapper. */
+function mergedGithubMeta(mergedAtMs: number, repo = "org/web"): Record<string, unknown> {
+  return extractPrMetadataForIndex(
+    repo,
+    { number: 1, state: "closed", merged: true, merged_at: new Date(mergedAtMs).toISOString() },
+    NOW,
+  );
+}
+
+/** Metadata for a successful GitHub Actions run, built by the real mapper. */
+function successfulRunMeta(repo: string, name: string): Record<string, unknown> {
+  return githubActionsRunMetadata(
+    repo,
+    { id: 1, name, status: "completed", conclusion: "success" },
+    NOW,
+  );
 }
 
 function insertItem(
@@ -80,7 +102,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "pr",
       title: "In window",
       modifiedAt: NOW,
-      meta: { merged_at: NOW - DAY },
+      meta: mergedGithubMeta(NOW - DAY),
     });
     insertItem(db, {
       id: "github:2",
@@ -88,7 +110,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "pr",
       title: "Too old",
       modifiedAt: NOW,
-      meta: { merged_at: NOW - 30 * DAY },
+      meta: mergedGithubMeta(NOW - 30 * DAY),
     });
 
     const rows = selectMergedPrs(db, W);
@@ -105,7 +127,16 @@ describe("changelog queries against the real migrated schema", () => {
       type: "pr",
       title: "Still open",
       modifiedAt: NOW - DAY,
-      meta: { state: "open" },
+      meta: extractPrMetadataForIndex(
+        "org/web",
+        {
+          number: 3,
+          state: "open",
+          merged: false,
+          created_at: new Date(NOW - 2 * DAY).toISOString(),
+        },
+        NOW,
+      ),
     });
     expect(selectMergedPrs(db, W)).toEqual([]);
   });
@@ -129,7 +160,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "pr",
       title: "On the edge",
       modifiedAt: NOW,
-      meta: { merged_at: NOW },
+      meta: mergedGithubMeta(NOW),
     });
     expect(selectMergedPrs(db, W)).toEqual([]);
   });
@@ -142,9 +173,32 @@ describe("changelog queries against the real migrated schema", () => {
       type: "pr",
       title: "Merged MR",
       modifiedAt: NOW - DAY,
-      meta: { state: "merged" },
+      meta: gitlabMrMetadata(
+        {
+          pathWithNamespace: "group/proj",
+          iid: 9,
+          actionName: "accepted",
+          eventCreatedAt: new Date(NOW - DAY).toISOString(),
+        },
+        null,
+      ),
     });
-    expect(selectMergedPrs(db, W)).toEqual([]);
+    insertItem(db, {
+      id: "bitbucket:9",
+      service: "bitbucket",
+      type: "pr",
+      title: "Merged Bitbucket PR",
+      modifiedAt: NOW - DAY,
+      meta: bitbucketPrMetadata(
+        "ws/repo",
+        { id: 9, state: "MERGED", created_on: new Date(NOW - 9 * DAY).toISOString() },
+        "Dana",
+      ),
+    });
+    // A1 behaviour change: the GitLab row (formerly hand-written `{ state: "merged" }`, counted as
+    // unlisted) now carries `merged_at` from the real writer and is LISTED; only the Bitbucket
+    // row, which has no merge time, is counted for disclosure.
+    expect(selectMergedPrs(db, W).map((r) => r.id)).toEqual(["gitlab:9"]);
     expect(nonGithubMergedPrCount(db, W)).toBe(1);
   });
 
@@ -157,7 +211,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "ci_run",
       title: "Run tests",
       modifiedAt: NOW - DAY,
-      meta: { conclusion: "success" },
+      meta: successfulRunMeta("org/web", "Run tests"),
     });
     insertItem(db, {
       id: "gha:2",
@@ -165,7 +219,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "ci_run",
       title: "Deploy to prod",
       modifiedAt: NOW - DAY,
-      meta: { conclusion: "success" },
+      meta: successfulRunMeta("org/web", "Deploy to prod"),
     });
 
     const rows = selectDeployments(db, W, new RegExp(DEFAULT_DEPLOY_WORKFLOW_PATTERN));
@@ -220,7 +274,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "pr",
       title: "In scope",
       modifiedAt: NOW,
-      meta: { merged_at: NOW - DAY, repo: "org/web" },
+      meta: mergedGithubMeta(NOW - DAY, "org/web"),
     });
     insertItem(db, {
       id: "github:11",
@@ -228,7 +282,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "pr",
       title: "Other repo",
       modifiedAt: NOW,
-      meta: { merged_at: NOW - DAY, repo: "org/other" },
+      meta: mergedGithubMeta(NOW - DAY, "org/other"),
     });
 
     const rows = selectMergedPrs(db, scopedWindow(cfg));
@@ -244,7 +298,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "ci_run",
       title: "Deploy to prod",
       modifiedAt: NOW - DAY,
-      meta: { conclusion: "success", repo: "org/web" },
+      meta: successfulRunMeta("org/web", "Deploy to prod"),
     });
     insertItem(db, {
       id: "gha:11",
@@ -252,7 +306,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "ci_run",
       title: "Deploy to prod",
       modifiedAt: NOW - DAY,
-      meta: { conclusion: "success", repo: "org/other" },
+      meta: successfulRunMeta("org/other", "Deploy to prod"),
     });
 
     const rows = selectDeployments(db, scopedWindow(cfg), cfg.deployWorkflowPattern);
@@ -401,7 +455,7 @@ describe("changelog queries against the real migrated schema", () => {
         type: "pr",
         title: id,
         modifiedAt: NOW,
-        meta: { merged_at: mergedAt },
+        meta: mergedGithubMeta(mergedAt),
       });
     }
     const ids = selectMergedPrs(db, W).map((r) => r.id);
@@ -418,7 +472,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "pr",
       title: "newest",
       modifiedAt: NOW,
-      meta: { merged_at: NOW - DAY },
+      meta: mergedGithubMeta(NOW - DAY),
     });
     insertItem(db, {
       id: "github:a",
@@ -426,7 +480,7 @@ describe("changelog queries against the real migrated schema", () => {
       type: "pr",
       title: "older",
       modifiedAt: NOW,
-      meta: { merged_at: NOW - 2 * DAY },
+      meta: mergedGithubMeta(NOW - 2 * DAY),
     });
     expect(selectMergedPrs(db, W).map((r) => r.id)).toEqual(["github:z", "github:a"]);
   });

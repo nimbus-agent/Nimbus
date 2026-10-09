@@ -50,7 +50,7 @@ const incidentResolved: Extractor = (meta, modifiedAt) =>
   meta["status"] === "resolved" ? { atMs: modifiedAt, source: "index" } : null;
 
 const EVENT_TIME = {
-  // Absence is a FILTER, not a fallback: github-sync.ts writes merged_at only on a merged PR,
+  // Absence is a FILTER, not a fallback: a PR row carries merged_at only once merged,
   // so a missing value means "not merged" and the row leaves the category entirely.
   merged_pr: eventField("merged_at"),
   deployment: fromIndex,

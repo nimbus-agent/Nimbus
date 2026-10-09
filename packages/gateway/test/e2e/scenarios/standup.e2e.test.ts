@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import type { StandupIdentity } from "../../../src/agents/_lib/standup-types.ts";
 import { emitStandupBrief } from "../../../src/agents/standup.ts";
+import { extractPrMetadataForIndex } from "../../../src/connectors/github-sync.ts";
 import { itemPrimaryKey } from "../../../src/index/item-key.ts";
 import { upsertIndexedItem } from "../../../src/index/item-store.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
@@ -51,7 +52,11 @@ function seedOneOfEach(db: Database): void {
     modifiedAt: NOW - 2 * HOUR,
     syncedAt: NOW,
     authorId: ME,
-    metadata: { state: "open", repo: "acme/payments" },
+    metadata: extractPrMetadataForIndex(
+      "acme/payments",
+      { number: 901, state: "open", merged: false },
+      NOW,
+    ),
   });
 
   // Merged PR — mine, windows on `metadata.merged_at`, the real event field GitHub writes.
@@ -63,7 +68,16 @@ function seedOneOfEach(db: Database): void {
     modifiedAt: NOW - 3 * HOUR,
     syncedAt: NOW,
     authorId: ME,
-    metadata: { state: "closed", merged_at: NOW - 4 * HOUR, repo: "acme/payments" },
+    metadata: extractPrMetadataForIndex(
+      "acme/payments",
+      {
+        number: 900,
+        state: "closed",
+        merged: true,
+        merged_at: new Date(NOW - 4 * HOUR).toISOString(),
+      },
+      NOW,
+    ),
   });
 
   // Review — a `review` ITEM, whose `modified_at` IS its `submitted_at` (one row per review id).
@@ -170,7 +184,11 @@ function seedOneOfEach(db: Database): void {
     modifiedAt: NOW - 2 * HOUR,
     syncedAt: NOW,
     authorId: "person-colleague",
-    metadata: { state: "open", repo: "acme/payments" },
+    metadata: extractPrMetadataForIndex(
+      "acme/payments",
+      { number: 901, state: "open", merged: false },
+      NOW,
+    ),
   });
 }
 

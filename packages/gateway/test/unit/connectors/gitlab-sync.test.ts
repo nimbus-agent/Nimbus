@@ -624,7 +624,7 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
     expect(meta["project"]).toBe("acme/app");
   });
 
-  test("pipeline id <= lastSeen → loop break (no further upserts for that project)", async () => {
+  test("a seen pipeline (id <= lastSeen, not running) is skipped; later items on the page are still scanned", async () => {
     seedGitlabIndexProject(fixture, "acme/app");
     fixture.fetchMock.respond("GET", EVENTS_RE_DEFAULT, []);
     fixture.fetchMock.respond("GET", PIPELINES_RE_ANY, [
@@ -641,7 +641,7 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
         created_at: new Date(Date.now() - 120 * 1000).toISOString(),
       },
       {
-        id: 200, // ignored — break already fired
+        id: 200, // still scanned: a seen pipeline is skipped, not a loop break
         status: "success",
         ref: "main",
         created_at: new Date(Date.now() - 30 * 1000).toISOString(),
@@ -658,14 +658,16 @@ describe("gitlab-sync — pipelines branch (indexing)", () => {
       fixture.createSyncContext("gitlab"),
       v2,
     );
-    expect(res.itemsUpserted).toBe(1);
+    expect(res.itemsUpserted).toBe(2);
     const rows = fixture.db
       .query<{ external_id: string }, []>(
-        "SELECT external_id FROM item WHERE service = 'gitlab' AND type = 'ci_run'",
+        "SELECT external_id FROM item WHERE service = 'gitlab' AND type = 'ci_run' ORDER BY external_id",
       )
       .all();
-    expect(rows).toHaveLength(1);
-    expect(rows[0].external_id).toBe("acme/app#pipeline-101");
+    expect(rows.map((r) => r.external_id)).toEqual([
+      "acme/app#pipeline-101",
+      "acme/app#pipeline-200",
+    ]);
   });
 
   test("pipeline with created_at < floor is skipped (time-window guard)", async () => {

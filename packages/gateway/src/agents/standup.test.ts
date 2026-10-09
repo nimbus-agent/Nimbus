@@ -1,6 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
+import { bitbucketPrMetadata } from "../connectors/bitbucket-sync.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
+import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
 import type { StandupIdentity } from "./_lib/standup-types.ts";
 import {
   buildStandupBrief,
@@ -25,6 +28,42 @@ const ME = "person-me";
  */
 function emptyDb(): Database {
   return createMemoryIndexDb();
+}
+
+/** An open GitHub PR's metadata, built by the real GitHub writer mapper. */
+function openPrMeta(): Record<string, unknown> {
+  return extractPrMetadataForIndex("org/repo", { number: 1, state: "open", merged: false }, NOW);
+}
+
+/** A merged GitHub PR's metadata (`state: "merged"` plus `merged_at`) from the real mapper. */
+function githubMergedMeta(mergedAtMs: number): Record<string, unknown> {
+  return extractPrMetadataForIndex(
+    "org/repo",
+    { number: 2, state: "closed", merged: true, merged_at: new Date(mergedAtMs).toISOString() },
+    NOW,
+  );
+}
+
+/** A merged GitLab MR's metadata: an `accepted` event stamps `merged_at`. */
+function gitlabMergedMeta(mergedAtMs: number): Record<string, unknown> {
+  return gitlabMrMetadata(
+    {
+      pathWithNamespace: "group/proj",
+      iid: 7,
+      actionName: "accepted",
+      eventCreatedAt: new Date(mergedAtMs).toISOString(),
+    },
+    null,
+  );
+}
+
+/** A merged Bitbucket PR's metadata: the API records no merge time, so none is written. */
+function bitbucketMergedMeta(): Record<string, unknown> {
+  return bitbucketPrMetadata(
+    "ws/repo",
+    { id: 3, state: "MERGED", created_on: new Date(NOW - 9 * DAY).toISOString() },
+    "Ada Lovelace",
+  );
 }
 
 function identity(overrides: Partial<StandupIdentity> = {}): StandupIdentity {
@@ -163,7 +202,7 @@ describe("buildStandupBrief", () => {
       // One active PR (last_touch) + one review and one Slack message (event_column). Only the
       // PR can sit in the wrong window, so only it may be counted — otherwise the disclosure's
       // number would include entries its warning does not apply to.
-      insertItem(db, { id: "pr-1", type: "pr", meta: { state: "open" } });
+      insertItem(db, { id: "pr-1", type: "pr", meta: openPrMeta() });
       insertItem(db, { id: "rev-1", type: "review" });
       insertItem(db, {
         id: "msg-1",
@@ -191,7 +230,7 @@ describe("buildStandupBrief", () => {
           id: `pr-${String(i).padStart(3, "0")}`,
           type: "pr",
           modifiedAt: NOW - HOUR - i,
-          meta: { state: "open" },
+          meta: openPrMeta(),
         });
       }
       const b = build({ db });
@@ -232,14 +271,38 @@ describe("buildStandupBrief", () => {
     }
   });
 
-  test("a non-GitHub merged PR is counted and disclosed, and the note says it is an estimate", () => {
+  test("a merged GitLab MR carrying merged_at is listed under merged, not counted as invisible", () => {
+    // A1 behaviour change: this fixture used to be a hand-written `{ state: "merged" }` GitLab
+    // row (counted in the unlisted non-GitHub tally). The real writer stamps `merged_at` from the
+    // `accepted` event, so the MR is LISTED and no gap is raised.
     const db = emptyDb();
     try {
       insertItem(db, {
         id: "mr-1",
         type: "pr",
         service: "gitlab",
-        meta: { state: "merged" },
+        modifiedAt: NOW - 2 * HOUR,
+        meta: gitlabMergedMeta(NOW - 2 * HOUR),
+      });
+      const b = build({ db });
+      expect(b.nonGithubMergedPrs).toBe(0);
+      expect(b.prsMerged.map((r) => r.id)).toEqual(["mr-1"]);
+      expect(b.prsActive).toEqual([]);
+      expect(b.gaps.some((g) => g.detail.includes("non-GitHub forge"))).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a non-GitHub merged PR is counted and disclosed, and the note says it is an estimate", () => {
+    const db = emptyDb();
+    try {
+      // Bitbucket is the writer that really produces a merged row with no `merged_at`.
+      insertItem(db, {
+        id: "mr-1",
+        type: "pr",
+        service: "bitbucket",
+        meta: bitbucketMergedMeta(),
       });
       const b = build({ db });
       expect(b.nonGithubMergedPrs).toBe(1);
@@ -250,6 +313,37 @@ describe("buildStandupBrief", () => {
       expect(gap?.detail).toContain("estimate");
       // And it must not also appear as an ACTIVE PR — it is merged.
       expect(b.counts.prsActive).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("forge brief: lists the GitLab MR, reports the Bitbucket PR in the gaps", () => {
+    const db = emptyDb();
+    try {
+      insertItem(db, {
+        id: "gitlab-mr",
+        type: "pr",
+        service: "gitlab",
+        title: "GitLab MR",
+        modifiedAt: NOW - 2 * HOUR,
+        meta: gitlabMergedMeta(NOW - 2 * HOUR),
+      });
+      insertItem(db, {
+        id: "bb-pr",
+        type: "pr",
+        service: "bitbucket",
+        title: "Bitbucket PR",
+        modifiedAt: NOW - 3 * HOUR,
+        meta: bitbucketMergedMeta(),
+      });
+      const b = build({ db });
+      expect(b.prsMerged.map((r) => r.title)).toEqual(["GitLab MR"]);
+      expect(b.counts.prsMerged).toBe(1);
+      expect(b.nonGithubMergedPrs).toBe(1);
+      const gap = b.gaps.find((g) => g.detail.includes("non-GitHub forge"));
+      expect(gap).toBeDefined();
+      expect(gap?.remediation).toContain("incomplete_merge_data");
     } finally {
       db.close();
     }
@@ -281,7 +375,7 @@ describe("buildStandupBrief", () => {
       // the NAME printed "every section below is empty because nothing can match it" directly
       // above sections that had legitimately populated — a disclosure that is wrong, which this
       // brief's own rules rank as worse than one that is absent.
-      insertItem(db, { id: "pr-1", type: "pr", meta: { state: "open" } });
+      insertItem(db, { id: "pr-1", type: "pr", meta: openPrMeta() });
       const b = build({
         db,
         identity: identity({ displayName: null, personRowExists: true }),
@@ -326,7 +420,7 @@ describe("buildStandupBrief", () => {
       insertItem(db, {
         id: "pr-merged",
         type: "pr",
-        meta: { state: "closed", merged_at: NOW - 2 * HOUR },
+        meta: githubMergedMeta(NOW - 2 * HOUR),
       });
       const b = build({ db });
       expect(b.prsMerged.map((r) => r.id)).toEqual(["pr-merged"]);
@@ -423,7 +517,7 @@ describe("emitStandupBrief identity resolution", () => {
         "Ada Lovelace",
         "ada@example.com",
       ]);
-      insertItem(db, { id: "pr-1", type: "pr", meta: { state: "open" } });
+      insertItem(db, { id: "pr-1", type: "pr", meta: openPrMeta() });
 
       const events: Array<{ method: string; params: unknown }> = [];
       const { sessionId } = await emitStandupBrief({

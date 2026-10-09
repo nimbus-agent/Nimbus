@@ -336,7 +336,7 @@ export function selectIncidentsResponded(db: Database, w: Window, personId: stri
  * `bitbucket-sync.ts` never writes it (the Bitbucket API records no merge time), and a GitLab MR
  * merged before the synced event window has none. This counts exactly those merged rows WITHOUT
  * `merged_at` — a listed row is never counted twice — turning a silent substrate hole into a
- * disclosed one, reusing the gap `metrics/stats.ts` already ships as `github_only_merge_data`.
+ * disclosed one, reusing the gap `metrics/stats.ts` already ships as `incomplete_merge_data`.
  *
  * **This is an ESTIMATE and its caller must say so.** The absence of `merged_at` is the entire
  * reason this function exists, so there is no merge timestamp to window on and it falls back to
