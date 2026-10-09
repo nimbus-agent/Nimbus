@@ -182,7 +182,9 @@ function computeReviewDrag(input: {
     kind: "review_drag",
     summary:
       `This cohort's pull requests took a median ${cohortHours} hours to merge, vs ${repoHours} hours across the repo over the same window.` +
-      (input.forgesMissingTiming.length > 0 ? ` ${leftOutSentence(input.forgesMissingTiming)}` : ""),
+      (input.forgesMissingTiming.length > 0
+        ? ` ${leftOutSentence(input.forgesMissingTiming)}`
+        : ""),
     value: delta,
     expectationOnly: false,
   };
