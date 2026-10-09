@@ -27,6 +27,7 @@ const TITLE = /^([A-Z]+) (\/\S*)$/;
 
 const SUMMARY_MAX = 200;
 
+// lane-census: scope=api_endpoint service=openapi
 function toEndpoint(item: RankedIndexItem): GroundedEndpoint | null {
   const m = TITLE.exec(item.name);
   if (m === null) return null;

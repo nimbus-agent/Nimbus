@@ -631,6 +631,7 @@ function metadataHasStats(metadata: string): boolean {
  * never be treated as "has stats" — that would incorrectly skip a row that
  * cannot be proven enriched.
  */
+// lane-census: scope=pr service=github
 export function selectPrEnrichCandidates(db: Database, limit: number): FallbackPrCandidate[] {
   const rows = db
     .query(

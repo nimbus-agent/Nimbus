@@ -33,6 +33,14 @@ const FAST: readonly Gate[] = [
   { name: "audit:boundaries", cmd: ["bun", "run", "audit:boundaries"], tier: "fast" },
   { name: "audit:invariants", cmd: ["bun", "run", "audit:invariants"], tier: "fast" },
   {
+    // Index lane contract (A3): every production read of an `item` metadata key or type must match
+    // a writer, carry a verified `// lane-census: scope=` annotation, or be exempted with a reason in
+    // `lane-census/exemptions.ts`. Exemptions that suppress nothing fail too.
+    name: "audit:lane-census",
+    cmd: ["bun", "run", "audit:lane-census", "--check"],
+    tier: "fast",
+  },
+  {
     // `agent-param-kinds.ts` is a hand-maintained coercion table living NEXT TO the validators in
     // `agents-rpc.ts` on the strength of this gate: without it, a new/renamed validator param can
     // drift from the map silently, and a `k=v` chat message would coerce it to the wrong

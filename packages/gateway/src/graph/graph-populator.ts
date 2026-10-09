@@ -334,6 +334,7 @@ function syncPrGraph(db: Database, row: IndexedItemGraphInput, now: number): voi
   const author = upsertAuthorEntityFor(db, row);
   if (author !== undefined) upsertGraphRelation(db, author.entityId, prEntityId, "authored", now);
 
+  // lane-census: scope=pr
   const merged = row.metadata["merged"] === true;
   const mergeSha = stringField(row.metadata, "merge_commit_sha");
   if (merged && mergeSha !== undefined && mergeSha.length > 0) {
@@ -371,6 +372,7 @@ function syncReviewGraph(db: Database, row: IndexedItemGraphInput, now: number):
     return;
   }
   const repoFull = stringField(row.metadata, "repo");
+  // lane-census: scope=review
   const prNumber = row.metadata["pr_number"];
   // `stringField` already returns `undefined` for an empty/whitespace-only value — an
   // `=== ""` disjunct here would be dead code (M-3).
@@ -487,6 +489,7 @@ function syncObsidianNoteGraph(db: Database, row: IndexedItemGraphInput, now: nu
   });
   clearRelationsTouchingEntity(db, noteEntityId);
 
+  // lane-census: scope=obsidian_note
   const resolved = row.metadata["resolved_wikilink_ids"];
   if (Array.isArray(resolved)) {
     for (const target of resolved) {
@@ -820,6 +823,7 @@ function syncIncidentPersonEdges(
   for (const email of stringArrayField(row.metadata, "assignee_emails")) {
     linkActorToEntity(db, row, incidentEntityId, email, "assigned", now);
   }
+  // lane-census: scope=incident
   linkActorToEntity(db, row, incidentEntityId, row.metadata["resolved_by_email"], "resolves", now);
 }
 
@@ -916,6 +920,7 @@ function syncTimelineEventGraph(
  * wrong one.
  */
 function sentryAssigneeEmail(metadata: Record<string, unknown>): unknown {
+  // lane-census: scope=error_issue
   const actor = asRecord(metadata["assignedTo"]);
   if (actor === undefined) return undefined;
   return stringField(actor, "type") === "user" ? actor["email"] : undefined;
@@ -934,6 +939,7 @@ function sentryAssigneeEmail(metadata: Record<string, unknown>): unknown {
  * to this function.
  */
 function syncErrorIssueGraph(db: Database, row: IndexedItemGraphInput, now: number): void {
+  // lane-census: scope=error_issue
   const projectRaw = row.metadata["project"];
   const project = typeof projectRaw === "string" && projectRaw !== "" ? projectRaw : undefined;
 

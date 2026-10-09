@@ -87,6 +87,91 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     reason:
       "resolveItemArm reads number for ANY URL-resolved item type into WhyItemSubject.number, a nullable display field the published SDK type documents as 'Null when the indexed item carried no number — an incident usually has none'. The PR reads in this file (prResolvingItem, findPrForSha) are annotated scope=pr and covered by the canonical PR contract.",
   },
+  // ── connectors/ ──────────────────────────────────────────────────────────────────────────
+  {
+    file: "packages/gateway/src/connectors/great-expectations-sync.ts",
+    key: "run_id",
+    category: "not-item",
+    reads: 2,
+    reason:
+      "deriveRunId/deriveRunTime read run_id from the meta object of a Great Expectations validation-result FILE (buildMappingContext: asRecord(parsed['meta']) of the JSON read off results_dir), a function parameter the census cannot trace — never an item row.",
+  },
+  {
+    file: "packages/gateway/src/connectors/great-expectations-sync.ts",
+    key: "active_batch_definition",
+    category: "not-item",
+    reads: 1,
+    reason:
+      "deriveBatchId reads active_batch_definition from the meta object of a Great Expectations validation-result FILE (buildMappingContext), a function parameter — never an item row.",
+  },
+  {
+    file: "packages/gateway/src/connectors/great-expectations-sync.ts",
+    key: "batch_spec",
+    category: "not-item",
+    reads: 1,
+    reason:
+      "deriveBatchId reads batch_spec from the meta object of a Great Expectations validation-result FILE (buildMappingContext), a function parameter — never an item row.",
+  },
+  {
+    file: "packages/gateway/src/connectors/_lib/gitlab/events.ts",
+    key: "author_login",
+    category: "by-design",
+    reads: 1,
+    reason:
+      "itemAuthor reads the metadata gitlabMrMetadata just built for the SAME upsert (upsertGitlabEventItem), where withAuthor adds author_login whenever the MR author is known — from this event (an opened event or fetchOne) or carried forward from the stored row. Absent means no author is known yet, and the row is credited to no one rather than to the event actor.",
+  },
+  {
+    file: "packages/gateway/src/connectors/_lib/gitlab/events.ts",
+    key: "author_name",
+    category: "by-design",
+    reads: 1,
+    reason:
+      "itemAuthor reads the metadata gitlabMrMetadata just built for the SAME upsert, where withAuthor adds author_name alongside author_login.",
+  },
+  // ── graph/ ───────────────────────────────────────────────────────────────────────────────
+  {
+    file: "packages/gateway/src/graph/graph-populator.ts",
+    key: "number",
+    category: "by-design",
+    reads: 1,
+    reason:
+      "findIssueEntityIds matches an issue by metadata number+repo only as a FALLBACK after the exact external-id lookup (findIssueByIndexedExternalId) misses. GitHub and GitLab issue rows both carry number and repo, but the GitLab writer takes its type from GitlabItemShape, which the census cannot see, so the read stays unscoped. A miss links no issue, never a wrong one.",
+  },
+  {
+    file: "packages/gateway/src/graph/graph-populator.ts",
+    key: "repo",
+    category: "by-design",
+    reads: 1,
+    reason:
+      "The repo half of the findIssueEntityIds number+repo fallback match (see the number exemption); a miss links no issue, never a wrong one.",
+  },
+  // ── index/ ───────────────────────────────────────────────────────────────────────────────
+  {
+    file: "packages/gateway/src/index/item-store.ts",
+    key: "bodyFetch",
+    category: "by-design",
+    reads: 1,
+    reason:
+      "selectItemBodyFetchState (annotated scope=page service=notion) reads the bodyFetch verdict connectors/notion-sync.ts writes into a metadata variable built by a ternary before ctx.upsertItem — a shape the census writer scan does not follow (it records the notion:page write with no keys). Absent by design means never attempted or errored, which marks the page retryable.",
+  },
+  // ── ipc/ ─────────────────────────────────────────────────────────────────────────────────
+  {
+    file: "packages/gateway/src/ipc/clip-rpc.ts",
+    key: "sourceWordCount",
+    category: "by-design",
+    reads: 3,
+    reason:
+      "rowToClipEntry (annotated scope=web_clip) reads sourceWordCount, which clips/clip-ingest.ts ingestClip writes only for an over-cap clip, inside a conditional spread the census writer scan does not follow. Absent by design means not truncated (also the reading of a clip ingested before the field existed).",
+  },
+  // ── multimodal/ ──────────────────────────────────────────────────────────────────────────
+  {
+    file: "packages/gateway/src/multimodal/media-discovery.ts",
+    key: "path",
+    category: "by-design",
+    reads: 1,
+    reason:
+      "findCandidates reads path into MediaCandidate.sourcePath; only filesystem media rows carry a local path, and a null sourcePath on a Google Photos/Drive/OneDrive candidate is what routes it to the cloud byte-fetch (multimodal/cloud-bytes.ts).",
+  },
   // ── metrics/ ─────────────────────────────────────────────────────────────────────────────
   {
     file: "packages/gateway/src/metrics/dora.ts",
