@@ -32,6 +32,7 @@ bun run verify:docker --full    # + build, test:ci, coverage floor   (--rebuild 
 bun run verify:docker --changed # ONLY the tests your branch touched, in the CI Linux image — the fast way to reproduce a Linux-only test failure (NOT a substitute for --full)
 bun run verify:pr               # reads the PR's real check state via gh; a conflicted or still-pending PR is never reported green
 bun run audit:platform-test-gaps # advisory (in preflight:fast): names tests in your diff that CANNOT run on your OS — skipIf(platform) is invisible locally
+bun run audit:lane-census --check # GATE form (in preflight:fast + _structure.yml, read-only): an unmatched `item` read needs a writer, a verified `// lane-census:` annotation, or a counted exemption; plain `audit:lane-census` is report mode and rewrites docs/structure-audit/index-lane-census.json
 ```
 
 ## Test

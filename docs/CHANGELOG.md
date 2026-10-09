@@ -18,6 +18,27 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-09 — Index lane contract (PR A3): the lane census is a gate.**
+  `bun run audit:lane-census --check` now runs in `preflight:fast` and `_structure.yml`: every
+  production read of an `item` type or metadata key must match a connector writer, carry a verified
+  `// lane-census: scope=<type>[,<type>] [service=<id>[,<id>]]` annotation, or be exempted in
+  `scripts/structure-audit/lane-census/exemptions.ts` (29 at ship; categories disclosed, legacy,
+  not-item, by-design, census-blind). Each exemption declares the exact `reads` count it suppresses,
+  so a new or removed read of an exempted key fails, and an exemption that suppresses nothing fails
+  as stale. `--check` is read-only; plain `audit:lane-census` still writes the artifact. The census
+  itself was fixed: assignment targets count as writes, test helpers are skipped, vendor `meta`
+  objects are reported separately, and writer resolution follows spreads, call-built and wrapper
+  metadata, same-file mutators, literal-array loops and `clips/`. User-visible fixes: the PR `number`
+  is canonical across GitHub, GitLab and Bitbucket (`PR_META_VERSION` 2 - run `nimbus index rebody
+  --service github|gitlab|bitbucket` to backfill stored rows), GitLab issue rows carry `number` and
+  `repo`, DORA lead time gains `incomplete_merge_data` (merged PR without a merge time, Bitbucket) and
+  `pr_labels_unavailable` (a measured PR with no labels array, so `excludePrLabels` could not apply),
+  pre-mortem's review drag names forges left out of either median, standup's Slack activity counts
+  Slack only, and service-identity's dead GitLab `project` / Jenkins `jobName` arms were removed with
+  no behaviour change. Bounds: reads through interpolated SQL fragments, a `jsonPath` passed as a
+  parameter or string concatenation are not detected, and two writers the census cannot see are
+  exempted as `census-blind`.
+
 - **2026-10-08 — Index lane contract (PR A2): readers disclose what the canonical contract cannot supply.**
   The A1 contract made absence meaningful, so the readers now say so instead of reporting a clean
   zero. **`ci_not_evaluable`** is a new gap on `nimbus preflight`'s `failing_ci_runs` (Jenkins,
