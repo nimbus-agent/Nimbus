@@ -1,13 +1,15 @@
 import type { Database } from "bun:sqlite";
 
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
+import type { AI_V2_CAPABILITIES } from "../policy/types.ts";
 import { listModelAccessibleUserMcpIds } from "./user-mcp-store.ts";
 
 /**
  * The `[policy.capabilities.ai_v2]` lock-off name for offering user-MCP (`--model`) tools to the
  * engine agent. A member of `AI_V2_CAPABILITIES` (`policy/types.ts`), so the policy parser keeps it.
  */
-export const USER_MCP_MODEL_ACCESS_CAPABILITY = "user_mcp_model_access";
+export const USER_MCP_MODEL_ACCESS_CAPABILITY =
+  "user_mcp_model_access" as const satisfies (typeof AI_V2_CAPABILITIES)[number];
 
 /**
  * Whether the model may currently be offered user-MCP `--model` tools, per the RESOLVED org policy

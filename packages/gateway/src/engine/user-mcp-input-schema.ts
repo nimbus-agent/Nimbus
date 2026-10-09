@@ -17,7 +17,14 @@
  * 2020-12 schema as draft-07 (Ajv's default) ignores `prefixItems` and applies `items` to every
  * element. So a supported dialect URI (2020-12 or draft-07, with or without the trailing `#`) is
  * kept and anything else becomes 2020-12, MCP's default; under 2020-12 a draft-07 tuple `items`
- * array becomes `prefixItems`, since Ajv 2020 rejects the array form outright.
+ * array becomes `prefixItems`, since Ajv 2020 rejects the array form outright, and
+ * `additionalItems: false` becomes `items: false` (kept as `additionalItems: false` under
+ * draft-07). Only a boolean `false` is carried; a schema-valued `additionalItems` is dropped, so
+ * that tuple's tail is left open.
+ *
+ * Strictness note: the validator wrapper (`toStandardSchema`) adds `additionalProperties: false`
+ * to an object with `properties` ONLY when the listing leaves `additionalProperties` unset; an
+ * explicit `true` or schema value is kept as listed.
  *
  * Bounds, stated: `enum`/`const` values, property NAMES and `pattern` reach the model VERBATIM
  * (data the model must echo or match exactly, so they are not escaped). An over-long value or
@@ -177,7 +184,14 @@ function sanitiseProperties(raw: unknown, depth: number, walk: Walk): JsonObject
   const properties: JsonObject = {};
   for (const [name, sub] of Object.entries(raw)) {
     if (name.length > PROPERTY_NAME_MAX) continue;
-    properties[name] = sanitiseNode(sub, depth + 1, walk);
+    // defineProperty, not assignment: `properties["__proto__"] = x` would set the prototype and
+    // silently drop the property (and, with it, its `required` entry).
+    Object.defineProperty(properties, name, {
+      value: sanitiseNode(sub, depth + 1, walk),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   return properties;
 }
@@ -196,8 +210,15 @@ function copyArrayKeywords(raw: JsonObject, out: JsonObject, depth: number, walk
     const tuple = sanitiseBranches(items, depth, walk);
     if (tuple === undefined) return;
     // Ajv 2020 rejects an array `items`; its 2020-12 spelling is `prefixItems`.
-    if (!walk.is2020) out["items"] = tuple;
-    else if (prefixItems === undefined) out["prefixItems"] = tuple;
+    if (!walk.is2020) {
+      out["items"] = tuple;
+      if (raw["additionalItems"] === false) out["additionalItems"] = false;
+    } else {
+      if (prefixItems === undefined) out["prefixItems"] = tuple;
+      // 2020-12 spells a closed tuple `items: false`. A schema-valued additionalItems stays
+      // dropped (stated bound): the tuple is left open, looser than the server's.
+      if (raw["additionalItems"] === false) out["items"] = false;
+    }
   } else if (isPlainObject(items) || typeof items === "boolean") {
     out["items"] = sanitiseNode(items, depth + 1, walk);
   }

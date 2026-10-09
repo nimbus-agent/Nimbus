@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { toStandardSchema } from "@mastra/core/schema";
+
 import {
   PERMISSIVE_USER_MCP_INPUT_SCHEMA,
   sanitiseUserMcpInputSchema,
@@ -201,6 +203,58 @@ describe("sanitiseUserMcpInputSchema (I11, user-MCP input schemas)", () => {
       type: "array",
       prefixItems: [{ type: "string" }, { type: "number" }],
     });
+  });
+
+  test("a closed draft-07 tuple (additionalItems:false) stays closed under 2020-12 via items:false", () => {
+    const out = sanitiseUserMcpInputSchema({
+      type: "object",
+      properties: {
+        t: { type: "array", items: [{ type: "string" }], additionalItems: false },
+        open: { type: "array", items: [{ type: "string" }], additionalItems: { type: "number" } },
+      },
+    }) as { properties: { t: Record<string, unknown>; open: Record<string, unknown> } };
+    expect(out.properties.t).toEqual({
+      type: "array",
+      prefixItems: [{ type: "string" }],
+      items: false,
+    });
+    // A schema-valued additionalItems stays dropped (stated bound): the tuple is left open.
+    expect(out.properties.open).toEqual({ type: "array", prefixItems: [{ type: "string" }] });
+  });
+
+  test("under draft-07 output additionalItems:false is kept next to the tuple items", () => {
+    const out = sanitiseUserMcpInputSchema({
+      $schema: D07,
+      type: "object",
+      properties: { t: { type: "array", items: [{ type: "string" }], additionalItems: false } },
+    }) as { properties: { t: Record<string, unknown> } };
+    expect(out.properties.t).toEqual({
+      type: "array",
+      items: [{ type: "string" }],
+      additionalItems: false,
+    });
+  });
+
+  test("a __proto__ property is kept as an own property, with its required entry, and validates", async () => {
+    const raw = JSON.parse(
+      '{"type":"object","properties":{"__proto__":{"type":"string"},"a":{"type":"number"}},"required":["__proto__"]}',
+    );
+    const out = sanitiseUserMcpInputSchema(raw) as {
+      properties: Record<string, unknown>;
+      required?: string[];
+    };
+    expect(Object.hasOwn(out.properties, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(out.properties)).toBe(Object.prototype);
+    expect(out.required).toEqual(["__proto__"]);
+    expect(JSON.stringify(out)).toContain('"__proto__":{"type":"string"}');
+    const schema = toStandardSchema(JSON.parse(JSON.stringify(out)));
+    // Bound: the validator (Ajv-compiled) neither enforces the type nor the `required` entry of a
+    // __proto__ property, so validation is looser there; the schema the model SEES carries both.
+    // Every other property is still validated.
+    const bad = await schema["~standard"].validate(JSON.parse('{"__proto__":"x","a":"s"}'));
+    expect("issues" in bad && bad.issues !== undefined).toBe(true);
+    const good = await schema["~standard"].validate(JSON.parse('{"__proto__":"x","a":1}'));
+    expect("issues" in good && good.issues !== undefined).toBe(false);
   });
 
   test("format: only a known JSON-Schema format survives", () => {

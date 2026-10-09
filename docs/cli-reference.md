@@ -2872,7 +2872,7 @@ The gateway resolves and validates the registration **before** the approval prom
 user_mcp_model_access = false
 ```
 
-Only `false` carries meaning, matching `nimbus exec`'s lockoff. It is enforced where the model's tool list is built: no `--model` server is listed, so nothing is offered on any path, and a gateway that cannot read the resolved policy treats model access as locked off. The registration and the `model_access` flag are left as they are. `nimbus connector tools` and `nimbus connector call` are owner-initiated, not model access, and keep working.
+Only `false` carries meaning, matching `nimbus exec`'s lockoff. It is enforced where the model's tool list is built: no `--model` server is listed, so nothing is offered on any path, and a gateway that cannot read the resolved policy treats model access as locked off. It is read per turn: a turn already in flight keeps the tool list it built, and the lock-off takes effect from the next turn. The registration and the `model_access` flag are left as they are. `nimbus connector tools` and `nimbus connector call` are owner-initiated, not model access, and keep working.
 
 ---
 

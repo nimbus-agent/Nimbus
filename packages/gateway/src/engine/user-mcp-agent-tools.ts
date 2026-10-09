@@ -19,8 +19,9 @@
  * reach the model verbatim, so the ceiling on raw schema text is the 32 KiB rebuilt-size cap, not
  * the 1000-char description cap. Validation of the rebuilt schema is looser than the server's
  * where a constraint was dropped, and stricter in one way: `standardSchemaToJSONSchema` adds
- * `additionalProperties: false` to an object with `properties`, so an undeclared key is refused
- * here, before the owner is prompted.
+ * `additionalProperties: false` to an object with `properties` when the listing leaves
+ * `additionalProperties` unset, so then an undeclared key is refused here, before the owner is
+ * prompted.
  */
 import type { ToolsInput } from "@mastra/core/agent";
 import {
