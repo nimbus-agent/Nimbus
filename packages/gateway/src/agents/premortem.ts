@@ -71,6 +71,7 @@ type RawJiraItemRow = {
  * such as `Épica`) can be told apart and reported with the cause actually
  * checked, rather than both collapsing into the same false "not found" claim.
  */
+// lane-census: scope=issue service=jira
 function lookupJiraItem(db: Database, key: string): RawJiraItemRow | null {
   return db
     .query(
@@ -89,6 +90,7 @@ function lookupJiraItem(db: Database, key: string): RawJiraItemRow | null {
  * Mirrors `cohort.ts`'s `childCountsFor`, but for the single TARGET epic
  * rather than a batch of already-selected cohort candidates.
  */
+// lane-census: scope=issue service=jira
 function childCountFor(db: Database, epicItemId: string, epicKey: string): number {
   const row = db
     .query(

@@ -45,6 +45,7 @@ type ChildCountRow = {
  * Computed only for the final cohort members (not every scanned candidate),
  * since it plays no role in the overlap gate or the IDF score.
  */
+// lane-census: scope=issue service=jira
 function childCountsFor(db: Database, epicItemIds: readonly string[]): Map<string, number> {
   const result = new Map<string, number>();
   if (epicItemIds.length === 0) {
@@ -104,6 +105,7 @@ function childCountsFor(db: Database, epicItemIds: readonly string[]): Map<strin
  * near-zero weight reflects the true candidate pool. No smoothing constant:
  * a zero score after the gate is an honest tie, not a bug to hide.
  */
+// lane-census: scope=issue service=jira
 export function selectCohort(
   db: Database,
   targetServices: readonly string[],

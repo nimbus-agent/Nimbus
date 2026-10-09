@@ -77,10 +77,13 @@ export function repoLikeMatchesUrn(
   switch (urn.provider) {
     case "github":
     case "bitbucket":
+      // lane-census: scope=ci_run,pr service=github_actions,github,bitbucket
       return metadata["repo"] === urn.providerId;
     case "gitlab":
+      // lane-census: scope=ci_run,pr service=gitlab
       return metadata["project"] === urn.providerId || metadata["repo"] === urn.providerId;
     case "jenkins":
+      // lane-census: scope=ci_run service=jenkins
       return metadata["jobName"] === urn.providerId;
     case "circleci":
       return externalId.includes(urn.providerId);
@@ -95,6 +98,7 @@ type CiRunRow = {
   metadata: string | null;
 };
 
+// lane-census: scope=ci_run
 function selectDeploys(
   db: Database,
   cfg: ServiceConfig,
@@ -226,6 +230,7 @@ type DeployIdx = {
  * A `ci_run` row's head commit: canonical `head_sha`, else the raw `headSha` key, but only on a
  * row written before A1 (no `meta_v`). A versioned row without `head_sha` has none.
  */
+// lane-census: scope=ci_run
 export function ciRunHeadSha(meta: Record<string, unknown> | null): string | null {
   if (meta === null) return null;
   const canonical = meta["head_sha"];
@@ -261,6 +266,7 @@ function leadTimeGap(
   return f.labelsUnknown ? "pr_labels_unavailable" : null;
 }
 
+// lane-census: scope=pr
 function prLeadTime(
   pr: PrRow,
   deployIdx: readonly DeployIdx[],
@@ -374,6 +380,7 @@ type ResolvedIncident = {
   pdService: string;
 };
 
+// lane-census: scope=incident service=pagerduty
 function selectResolvedIncidents(
   db: Database,
   cfg: ServiceConfig,

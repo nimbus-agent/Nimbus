@@ -9,6 +9,7 @@ type DemoSymbolRow = {
   start_line?: number | null;
 };
 
+// lane-census: scope=code_symbol service=filesystem
 const DEMO_SYMBOL_SQL = `SELECT json_extract(e.metadata, '$.file') AS file,
               json_extract(e.metadata, '$.name') AS name,
               CAST(json_extract(i.metadata, '$.excerptStartLine') AS INTEGER) AS start_line

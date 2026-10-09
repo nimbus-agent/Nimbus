@@ -274,6 +274,7 @@ export function selectMessages(db: Database, w: Window, personId: string): Stand
  * The lane is Slack's: its heading, thread key and `ts`-based time basis are all Slack-shaped;
  * Discord messages are not counted (`AND i.service = 'slack'`).
  */
+// lane-census: scope=message service=slack
 export function countMessageThreads(db: Database, w: Window, personId: string): number {
   const row = db
     .query(
@@ -360,6 +361,7 @@ export function selectIncidentsResponded(db: Database, w: Window, personId: stri
  * that matters is "no connector wrote `merged_at` for this row", whichever non-GitHub forge it
  * came from, including one added later.
  */
+// lane-census: scope=pr service=gitlab,bitbucket
 export function nonGithubMergedPrCount(db: Database, w: Window, personId: string): number {
   const row = db
     .query(

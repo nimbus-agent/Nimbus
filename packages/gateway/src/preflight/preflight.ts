@@ -82,6 +82,7 @@ function repoFilterClause(repos: readonly ParsedDoraRepoUrn[]): {
   };
 }
 
+// lane-census: scope=incident service=pagerduty
 function selectActiveP1Incidents(
   db: Database,
   cfg: ServiceConfig,
@@ -150,6 +151,7 @@ function selectActiveP1Incidents(
   return { count: countRow.c, findings, gap };
 }
 
+// lane-census: scope=ci_run
 function selectFailingCiRuns(
   db: Database,
   cfg: ServiceConfig,
@@ -223,6 +225,7 @@ function selectFailingCiRuns(
   return { count, findings, gap };
 }
 
+// lane-census: scope=pr
 function selectMergeConflicts(
   db: Database,
   cfg: ServiceConfig,

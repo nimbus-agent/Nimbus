@@ -66,6 +66,7 @@ function lookupSymbol(
   db: Database,
   token: string,
 ): { file: string; repoRoot: string; lineNo: number | null; name: string } | null {
+  // lane-census: scope=code_symbol service=filesystem
   const row = (db
     .query(
       `SELECT json_extract(e.metadata, '$.file')     AS file,

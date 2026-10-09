@@ -357,6 +357,7 @@ function parsePrMetadata(json: string): Record<string, unknown> | undefined {
  * `merged` is a boolean: a writer omits `merged` when the PR state is unknown (index lane
  * contract), and "unknown" must not read as "not merged".
  */
+// lane-census: scope=pr
 function accumulateAuthoredPrStats(rows: ReadonlyArray<{ metadata: string }>): {
   merged: number;
   mergedKnown: number;

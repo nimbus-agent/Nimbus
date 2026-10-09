@@ -162,6 +162,7 @@ function prMerges(
     );
     params.push(...gitlabRepos);
   }
+  // lane-census: scope=pr service=github,gitlab
   const row = db
     .query(
       `SELECT COUNT(*) AS c FROM item
