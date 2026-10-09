@@ -387,9 +387,7 @@ export function collectLaneCensus(
       }
 
       // kind === "metadata-key". A covering annotation overrides the SQL-derived scope (R4).
-      const annotation = annotations.find(
-        (a) => triple.line >= a.startLine && triple.line <= a.endLine,
-      );
+      const annotation = narrowestCovering(annotations, triple.line);
       if (annotation !== undefined) usedAnnotations.add(annotation);
       const scopeTypes =
         annotation !== undefined
@@ -464,7 +462,8 @@ function validateAnnotation(a: LaneAnnotation, idx: WriterIndex): readonly Annot
       });
     }
   }
-  for (const s of a.services ?? []) {
+  if (a.services === null) return out;
+  for (const s of a.services) {
     if (!a.types.some((t) => idx.servicesByType.get(t)?.has(s) === true)) {
       out.push({
         file: a.file,
@@ -473,7 +472,36 @@ function validateAnnotation(a: LaneAnnotation, idx: WriterIndex): readonly Annot
       });
     }
   }
+  // A scoped type the listed services do not write is left with no writer at all, so a read it
+  // scopes could never be matched. (A type no writer emits is already reported above.)
+  for (const t of a.types) {
+    if (!idx.writtenTypes.has(t)) continue;
+    const writers = idx.servicesByType.get(t);
+    if (!a.services.some((s) => writers?.has(s) === true)) {
+      out.push({
+        file: a.file,
+        line: a.line,
+        message: `annotation scopes type '${t}', which none of ${a.services.join(", ")} writes`,
+      });
+    }
+  }
   return out;
+}
+
+/**
+ * The NARROWEST annotation whose span contains `line` — an inner statement annotation inside an
+ * annotated function wins over the function's, so the inner one is never falsely reported stale.
+ */
+function narrowestCovering(
+  annotations: readonly LaneAnnotation[],
+  line: number,
+): LaneAnnotation | undefined {
+  let best: LaneAnnotation | undefined;
+  for (const a of annotations) {
+    if (line < a.startLine || line > a.endLine) continue;
+    if (best === undefined || a.endLine - a.startLine < best.endLine - best.startLine) best = a;
+  }
+  return best;
 }
 
 // -------------------------------------------------------------------------------------------

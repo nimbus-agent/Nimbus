@@ -30,9 +30,14 @@ export type AnnotationError = {
   readonly message: string;
 };
 
-/** Any line carrying the marker at all — a well-formed annotation or a malformed attempt at one. Built fresh per call (this directory's shared-`g`-RegExp hazard). */
+/**
+ * A line that IS an annotation candidate — a well-formed annotation or a malformed attempt at one:
+ * its trimmed text starts with `//` then `lane-census:`. A mention inside a JSDoc block
+ * (` * … // lane-census: …`), a string, or trailing a code line is prose, not an annotation.
+ * Built fresh per call (this directory's shared-`g`-RegExp hazard).
+ */
 function markerRegex(): RegExp {
-  return /\/\/\s*lane-census:/;
+  return /^\s*\/\/\s*lane-census:/;
 }
 
 /** The one accepted form, as the whole line. */
@@ -43,6 +48,40 @@ function annotationRegex(): RegExp {
 /** A `function` declaration statement head (optionally exported / default / async). */
 function functionHeadRegex(): RegExp {
   return /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\b/;
+}
+
+/**
+ * A brace-terminated declaration head other than `function`: a class (optionally exported /
+ * default / abstract / declared), an interface or an enum. None ends in `;`, so a `;` search would
+ * bleed into the NEXT statement (Review Focus 2).
+ */
+function braceDeclarationHeadRegex(): RegExp {
+  return /^\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:const\s+)?(?:class|interface|enum)\b/;
+}
+
+/**
+ * End offset of a brace-terminated declaration starting at `start`: the `}` matching the first
+ * `{` of its head at bracket depth 0 — `(…)`, `[…]` and `<…>` (a generic constraint such as
+ * `<T extends { a: string }>`) are skipped. `null` when no balanced body is found.
+ */
+function braceDeclarationEnd(code: string, start: number): number | null {
+  let angle = 0;
+  for (let i = start; i < code.length; i++) {
+    const ch = code[i];
+    if (ch === "<") angle++;
+    else if (ch === ">" && angle > 0) angle--;
+    else if (ch === "(" || ch === "[") {
+      const end = matchingClose(code, i);
+      if (end === null) return null;
+      i = end;
+    } else if (ch === "{") {
+      const end = matchingClose(code, i);
+      if (end === null) return null;
+      if (angle === 0) return end;
+      i = end;
+    }
+  }
+  return null;
 }
 
 /**
@@ -176,6 +215,17 @@ function plainStatementEnd(code: string, start: number): number {
   return Math.max(start, previousSignificant(code, code.length));
 }
 
+/** End offset of the statement starting at `start` whose first line (code view) is `head`. */
+function statementEnd(code: string, start: number, head: string): number {
+  if (functionHeadRegex().test(head)) {
+    return functionEnd(code, start) ?? plainStatementEnd(code, start);
+  }
+  if (braceDeclarationHeadRegex().test(head)) {
+    return braceDeclarationEnd(code, start) ?? plainStatementEnd(code, start);
+  }
+  return plainStatementEnd(code, start);
+}
+
 /**
  * Every lane-census annotation in `contents` (parsed from the RAW text — the comments are what is
  * being read) and every annotation error a file-local check can find: a malformed annotation, two
@@ -244,9 +294,7 @@ export function extractAnnotations(
       });
       continue;
     }
-    const endOffset = functionHeadRegex().test(head)
-      ? (functionEnd(code, start) ?? plainStatementEnd(code, start))
-      : plainStatementEnd(code, start);
+    const endOffset = statementEnd(code, start, head);
 
     annotations.push({
       file,

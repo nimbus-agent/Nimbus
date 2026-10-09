@@ -131,10 +131,6 @@ describe("extractAnnotations edges", () => {
     const src = "// lane-census: scope=pr\r\nconst a = db\r\n  .all(x);\r\nconst b = 1;";
     expect(one(src).annotations[0]).toMatchObject({ startLine: 2, endLine: 3 });
   });
-
-  test("a trailing annotation on a code line is malformed, not silently ignored", () => {
-    expect(one("const x = 1; // lane-census: scope=pr").errors[0]?.message).toContain("malformed");
-  });
 });
 
 describe("annotation service narrowing in the census", () => {
@@ -181,5 +177,115 @@ describe("annotation service narrowing in the census", () => {
       },
     ]);
     expect(c.annotationErrors).toHaveLength(0);
+  });
+});
+
+describe("task-4 review fixes", () => {
+  test("a class is brace-terminated, not bled into the next statement (finding 1)", () => {
+    const src =
+      '// lane-census: scope=pr\nclass C {\n  f(m) { return m["k"]; }\n}\nconst b = meta["k"];';
+    expect(one(src).annotations[0]).toMatchObject({ startLine: 2, endLine: 4 });
+    for (const head of [
+      "export default abstract class C<T extends { a: 1 }> {",
+      "export interface I {",
+      "enum E {",
+    ]) {
+      const s = `// lane-census: scope=pr\n${head}\n  x;\n}\nconst b = 1;`;
+      expect(one(s).annotations[0]).toMatchObject({ startLine: 2, endLine: 4 });
+    }
+  });
+
+  test("the read after an annotated class stays unscoped (finding 1)", () => {
+    const writer = {
+      relPath: "packages/gateway/src/connectors/gh.ts",
+      contents: 'ctx.upsertItem({ service: "github", type: "pr", metadata: { k: 1 } });',
+    };
+    const c = collectLaneCensus([
+      writer,
+      {
+        relPath: "packages/gateway/src/agents/r.ts",
+        contents:
+          '// lane-census: scope=pr\nclass C {\n  f(meta: R) { return meta["k"]; }\n}\nfunction g(meta: R) { return meta["k"]; }',
+      },
+    ]);
+    expect(c.unscopedReads.map((r) => r.line)).toEqual([5]);
+  });
+
+  test("a scoped type none of the listed services writes is an error (finding 2)", () => {
+    const c = collectLaneCensus([
+      {
+        relPath: "packages/gateway/src/connectors/pd.ts",
+        contents:
+          'ctx.upsertItem({ service: "pagerduty", type: "incident", metadata: { status: 1 } });',
+      },
+      {
+        relPath: "packages/gateway/src/connectors/gh.ts",
+        contents: 'ctx.upsertItem({ service: "github", type: "pr", metadata: { status: 1 } });',
+      },
+      {
+        relPath: "packages/gateway/src/agents/r.ts",
+        contents:
+          '// lane-census: scope=incident,pr service=pagerduty\nfunction f(meta: R) { return meta["status"]; }',
+      },
+    ]);
+    expect(c.annotationErrors.map((e) => e.message)).toEqual([
+      "annotation scopes type 'pr', which none of pagerduty writes",
+    ]);
+  });
+
+  test("the narrowest covering annotation wins (finding 3)", () => {
+    const c = collectLaneCensus([
+      {
+        relPath: "packages/gateway/src/connectors/pd.ts",
+        contents:
+          'ctx.upsertItem({ service: "pagerduty", type: "incident", metadata: { status: 1 } });',
+      },
+      {
+        relPath: "packages/gateway/src/connectors/gh.ts",
+        contents: 'ctx.upsertItem({ service: "github", type: "pr", metadata: { number: 1 } });',
+      },
+      {
+        relPath: "packages/gateway/src/agents/r.ts",
+        contents: [
+          "// lane-census: scope=pr",
+          "function f(meta: R, metadata: R) {",
+          '  const n = meta["number"];',
+          "  // lane-census: scope=incident",
+          '  const s = metadata["status"];',
+          "  return [n, s];",
+          "}",
+        ].join("\n"),
+      },
+    ]);
+    expect(c.annotationErrors).toEqual([]);
+    expect(c.unmatchedItemReads).toEqual([]);
+  });
+
+  test("an inner annotation alone leaves the outer one stale (finding 3)", () => {
+    const c = collectLaneCensus([
+      {
+        relPath: "packages/gateway/src/connectors/pd.ts",
+        contents:
+          'ctx.upsertItem({ service: "pagerduty", type: "incident", metadata: { status: 1 } });',
+      },
+      {
+        relPath: "packages/gateway/src/agents/r.ts",
+        contents:
+          '// lane-census: scope=incident\nfunction f(inc: R) {\n  // lane-census: scope=incident\n  const s = metadata["status"];\n  return s;\n}',
+      },
+    ]);
+    expect(c.annotationErrors.map((e) => [e.line, e.message])).toEqual([
+      [1, "annotation covers no metadata read"],
+    ]);
+  });
+
+  test("a mention inside JSDoc, a string or after code is prose, not an annotation (finding 5)", () => {
+    for (const src of [
+      "/**\n * use // lane-census: scope=<type>\n */\nconst x = 1;",
+      'const s = "// lane-census: scope=pr";',
+      "const x = 1; // lane-census: scope=pr",
+    ]) {
+      expect(one(src)).toEqual({ annotations: [], errors: [] });
+    }
   });
 });
