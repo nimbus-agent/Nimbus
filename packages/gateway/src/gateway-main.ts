@@ -8,7 +8,7 @@ import {
   type McpToolListingClient,
   meshDispatcherClient,
 } from "./connectors/index.ts";
-import { listModelAccessibleUserMcpIds } from "./connectors/user-mcp-store.ts";
+import { listPolicyGatedModelAccessibleUserMcpIds } from "./connectors/user-mcp-model-capability.ts";
 import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
@@ -183,9 +183,16 @@ export async function main(): Promise<void> {
           // executor's I42 owner prompt, and every result through `wrapToolForLlm` (I11).
           // `deps.toolgen` and `deps.computerUse` stay UNWIRED here: the model still cannot invoke
           // a generated tool or a computer-use lane.
+          // The org-policy lock-off (`[policy.capabilities.ai_v2] user_mcp_model_access = false`)
+          // is enforced HERE, at the source: locked off — or no policy accessor (fail-closed) —
+          // no `--model` server is listed, so the model is offered nothing on any path. Read per
+          // call, so a policy applied after boot takes effect on the next turn.
           userMcp: {
             listModelAccessibleIds: () =>
-              listModelAccessibleUserMcpIds(platform.localIndex.getDatabase()),
+              listPolicyGatedModelAccessibleUserMcpIds(
+                platform.localIndex.getDatabase(),
+                platform.enforcedPolicy?.(),
+              ),
             listTools: (serviceId) => platform.connectorMesh.listUserMcpTools(serviceId),
             warn: (bindings, msg) => userMcpLogger.warn(bindings, msg),
           },

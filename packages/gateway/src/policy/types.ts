@@ -53,6 +53,13 @@ export const AI_V2_CAPABILITIES = [
   "multimodal_input",
   "local_finetuning",
   "agent_fleet",
+  /**
+   * The engine agent being OFFERED the tools of user MCP servers registered with `--model` (I42).
+   * Locked off, no `--model` server is listed to the model on any path (enforced at the tool
+   * source, `connectors/user-mcp-model-capability.ts`). The owner's own `nimbus connector call` /
+   * `connector tools` are owner-initiated, not model access, and are not affected.
+   */
+  "user_mcp_model_access",
 ] as const;
 
 /** Where a persisted policy came from. */

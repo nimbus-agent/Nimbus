@@ -5,7 +5,15 @@ import { AI_V2_CAPABILITIES } from "./types.ts";
 describe("AI_V2_CAPABILITIES", () => {
   test("agent_fleet is a lockoff-able ai_v2 capability", () => {
     expect([...AI_V2_CAPABILITIES]).toContain("agent_fleet");
-    expect(AI_V2_CAPABILITIES).toHaveLength(6);
+    expect(AI_V2_CAPABILITIES).toHaveLength(7);
+  });
+
+  test("user_mcp_model_access is a lockoff-able ai_v2 capability that parses to a lockoff", () => {
+    expect([...AI_V2_CAPABILITIES]).toContain("user_mcp_model_access");
+    const parsed = parsePolicyToml(
+      `[policy]\nversion=1\norg="x"\n[policy.capabilities.ai_v2]\nuser_mcp_model_access=false\n`,
+    );
+    expect(parsed.capabilities.disabled).toContain("user_mcp_model_access");
   });
 
   /**

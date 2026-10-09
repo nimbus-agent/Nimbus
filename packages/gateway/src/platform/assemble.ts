@@ -4448,6 +4448,10 @@ export async function assemblePlatformServices(
     askExplainRecorder,
     oncallPush,
     policyHitl,
+    // A GETTER, not `policyGate.enforced()` evaluated here: a signed policy applied after boot
+    // (`policyGate.applyVerified`) must reach the user-MCP model tool source (I42's
+    // `user_mcp_model_access` lock-off) on the next turn, not the next restart.
+    enforcedPolicy: () => policyGate.enforced(),
     disposeSidecars(): void {
       for (const s of sidecarStops) {
         try {
