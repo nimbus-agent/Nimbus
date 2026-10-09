@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import { loadNimbusServiceConfigsFromConfigDir } from "../config/nimbus-toml.ts";
+import { PR_META_VERSION } from "../connectors/pr-meta.ts";
 import { AnnotateError } from "../deployment/annotate.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -399,5 +400,21 @@ describe("seedDemoCorpus corpus-integrity guards", () => {
     const { db, configDir, dataDir } = fresh();
     const r = await seedDemoCorpus(db, { configDir, dataDir, nowMs: 5 * DAY * 365 });
     expect(r.counts.people).toBe(8);
+  });
+});
+
+describe("seeded pr rows follow the canonical contract", () => {
+  test("every type='pr' row has an integer $.number and the current meta_v", async () => {
+    const { db, configDir, dataDir } = fresh();
+    await seedDemoCorpus(db, { configDir, dataDir, nowMs: 5 * DAY * 365 });
+    const rows = db.query("SELECT metadata FROM item WHERE type = 'pr'").all() as {
+      metadata: string;
+    }[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      const m = JSON.parse(r.metadata) as Record<string, unknown>;
+      expect(Number.isInteger(m["number"])).toBe(true);
+      expect(m["meta_v"]).toBe(PR_META_VERSION);
+    }
   });
 });

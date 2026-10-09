@@ -1558,3 +1558,18 @@ test("every MR event writes number from iid and meta_v 2, so rebody converges", 
     expect(m["meta_v"]).toBe(PR_META_VERSION);
   }
 });
+
+test("the fetchOne (mr) branch also writes number from iid and the current meta_v", () => {
+  const m = gitlabMrMetadata(
+    {
+      pathWithNamespace: "g/p",
+      iid: 9,
+      actionName: "x",
+      eventCreatedAt: undefined,
+      mr: { state: "merged", createdAt: T_OPEN, mergedAt: T_MERGE },
+    },
+    null,
+  );
+  expect(m["number"]).toBe(9);
+  expect(m["meta_v"]).toBe(PR_META_VERSION);
+});
