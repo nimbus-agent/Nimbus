@@ -14,6 +14,12 @@ export type DoraGap =
   | "no_deployment_data"
   | "low_sample"
   | "approximate_lead_time"
+  // A merged PR whose forge recorded no merge time (Bitbucket never does), so its lead time cannot
+  // be measured. Distinct from "no PRs": the PR exists and is dropped from the sample.
+  | "incomplete_merge_data"
+  // `excludePrLabels` is set but a counted PR carries no labels array (GitLab and Bitbucket never
+  // write one), so the filter could not apply to it and a revert PR may be in the sample.
+  | "pr_labels_unavailable"
   | "mixed_source"
   // A CI provider bound to the service cannot be judged from the index (no writer, or no success
   // signal), so "no deploys" or a low count may only mean we cannot see them. Disclosure only.
@@ -234,7 +240,25 @@ function buildDeployIndex(deploys: readonly CiRunRow[]): DeployIdx[] {
   });
 }
 
-type PrLeadTime = { leadTime: number | null; approximate: boolean };
+type PrLeadTime = {
+  leadTime: number | null;
+  approximate: boolean;
+  /** Merged, but the forge recorded no merge time (Bitbucket never does): unmeasurable, not absent. */
+  mergeTimeUnknown: boolean;
+  /** `excludePrLabels` is set but this PR carries no labels array, so the filter could not apply. */
+  labelsUnknown: boolean;
+};
+
+/** One gap slot, most consequential first: an approximation, then unmeasurable merges, then an unapplied label filter. */
+function leadTimeGap(
+  f: { approximate: boolean; mergeTimeUnknown: boolean; labelsUnknown: boolean },
+  measured: boolean,
+): DoraGap {
+  if (f.approximate) return "approximate_lead_time";
+  if (f.mergeTimeUnknown) return "incomplete_merge_data";
+  if (!measured) return "no_deployment_data";
+  return f.labelsUnknown ? "pr_labels_unavailable" : null;
+}
 
 function prLeadTime(
   pr: PrRow,
@@ -242,21 +266,35 @@ function prLeadTime(
   excludePrLabels: readonly string[],
 ): PrLeadTime {
   const meta = pr.metadata ? (JSON.parse(pr.metadata) as Record<string, unknown>) : null;
-  if (meta?.["merged"] !== true) return { leadTime: null, approximate: false };
+  if (meta?.["merged"] !== true) {
+    return { leadTime: null, approximate: false, mergeTimeUnknown: false, labelsUnknown: false };
+  }
+  const labelsUnknown = excludePrLabels.length > 0 && !Array.isArray(meta["labels"]);
   const mergedAtRaw = meta["merged_at"];
   const mergedAt = typeof mergedAtRaw === "number" ? mergedAtRaw : null;
-  if (mergedAt === null) return { leadTime: null, approximate: false };
+  if (mergedAt === null) {
+    return { leadTime: null, approximate: false, mergeTimeUnknown: true, labelsUnknown };
+  }
   const labelsRaw = meta["labels"];
   const labels: readonly unknown[] = Array.isArray(labelsRaw) ? labelsRaw : [];
   if (labels.some((l) => typeof l === "string" && excludePrLabels.includes(l))) {
-    return { leadTime: null, approximate: false };
+    return { leadTime: null, approximate: false, mergeTimeUnknown: false, labelsUnknown };
   }
   const mergeShaRaw = meta["merge_commit_sha"];
   const mergeSha = typeof mergeShaRaw === "string" ? mergeShaRaw : null;
-  if (mergeSha === null) return { leadTime: null, approximate: true };
+  if (mergeSha === null) {
+    return { leadTime: null, approximate: true, mergeTimeUnknown: false, labelsUnknown };
+  }
   const match = deployIdx.find((d) => d.headSha === mergeSha && d.modifiedAt >= mergedAt);
-  if (match === undefined) return { leadTime: null, approximate: true };
-  return { leadTime: Math.floor((match.modifiedAt - mergedAt) / 1000), approximate: false };
+  if (match === undefined) {
+    return { leadTime: null, approximate: true, mergeTimeUnknown: false, labelsUnknown };
+  }
+  return {
+    leadTime: Math.floor((match.modifiedAt - mergedAt) / 1000),
+    approximate: false,
+    mergeTimeUnknown: false,
+    labelsUnknown,
+  };
 }
 
 export function leadTimeForChanges(
@@ -290,17 +328,26 @@ export function leadTimeForChanges(
   const deployIdx = buildDeployIndex(deploys);
   const leadTimes: number[] = [];
   let anyApproximate = false;
+  let anyMergeTimeUnknown = false;
+  let anyLabelsUnknown = false;
   for (const pr of prRows) {
-    const { leadTime, approximate } = prLeadTime(pr, deployIdx, cfg.excludePrLabels);
-    if (approximate) anyApproximate = true;
-    if (leadTime !== null) leadTimes.push(leadTime);
+    const r = prLeadTime(pr, deployIdx, cfg.excludePrLabels);
+    if (r.approximate) anyApproximate = true;
+    if (r.mergeTimeUnknown) anyMergeTimeUnknown = true;
+    if (r.labelsUnknown) anyLabelsUnknown = true;
+    if (r.leadTime !== null) leadTimes.push(r.leadTime);
   }
+  const flags = {
+    approximate: anyApproximate,
+    mergeTimeUnknown: anyMergeTimeUnknown,
+    labelsUnknown: anyLabelsUnknown,
+  };
   if (leadTimes.length === 0) {
     return {
       value: null,
       unit: "seconds_median",
       sample: 0,
-      gap: anyApproximate ? "approximate_lead_time" : "no_deployment_data",
+      gap: leadTimeGap(flags, false),
     };
   }
   leadTimes.sort((a, b) => a - b);
@@ -309,7 +356,7 @@ export function leadTimeForChanges(
     value: median,
     unit: "seconds_median",
     sample: leadTimes.length,
-    gap: anyApproximate ? "approximate_lead_time" : null,
+    gap: leadTimeGap(flags, true),
   });
 }
 

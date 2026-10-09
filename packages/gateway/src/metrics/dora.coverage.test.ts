@@ -179,8 +179,14 @@ describe("leadTimeForChanges — PR labels", () => {
     seedDeployAndPr(db, "revert");
     const m = leadTimeForChanges(db, cfg, NOW, SINCE);
     db.close();
-    // merged 3h before now, deployed 1h before now: two hours of lead time.
-    expect(m).toEqual({ value: 7_200, unit: "seconds_median", sample: 1, gap: "low_sample" });
+    // merged 3h before now, deployed 1h before now: two hours of lead time. The filter could not
+    // apply to the unreadable labels, which is now disclosed (it outranks low_sample).
+    expect(m).toEqual({
+      value: 7_200,
+      unit: "seconds_median",
+      sample: 1,
+      gap: "pr_labels_unavailable",
+    });
   });
 
   test("a PR with no labels at all is counted the same way", () => {
