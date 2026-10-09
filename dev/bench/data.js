@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791536666963,
+  "lastUpdate": 1791539473343,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0d2d006f4af18cbeeb0be6be3d08e897cedfbf97",
-          "message": "feat(audit): gate the workflow_run pwn-request premise (#921)\n\nCloses out the four open code-scanning alerts by **making the safe\nanswer\ncheckable**, not by dismissing anything. **No alert was dismissed — that\nis the\nowner's call.** Once this is on `main` and CodeQL re-scans, alert 161\nshould\nclose itself as fixed; 158/159/160 stay open pending the owner's\ndecision, now\nbacked by a gate instead of a comment.\n\n## 1. Scorecard `DangerousWorkflowID` x3 (alerts 158, 159, 160)\n\n`ref: ${{ github.event.workflow_run.head_sha ||\ngithub.event.inputs.tag_name }}`\non `actions/checkout` inside a privileged `workflow_run` job —\n`publish-package-managers.yml` (`generate-and-publish`, `winget`) and\n`publish-linux-repo.yml`.\n\n**The shape is real.** Verified from source, not taken from the prior\nwrite-up:\n\n- All three jobs run `uses: ./.github/actions/setup-nimbus-ci`, whose\ncomposite\nsteps run `bun install --frozen-lockfile` **from the checked-out tree**,\nand\n  then run `bun scripts/release/*.ts` from that same tree.\n- The same jobs hold `secrets.RELEASE_BOT_CLIENT_ID` /\n`RELEASE_BOT_PRIVATE_KEY`\n(minted with `permission-contents: write` on `homebrew-tap`,\n`scoop-bucket`,\n  `linux-repo`), `secrets.WINGET_PAT`, `secrets.GPG_SIGNING_SUBKEY` and\n  `secrets.GPG_PASSPHRASE`.\n\nIf the checked-out commit were attacker-controlled this would be a\ntextbook\npwn-request.\n\n**The premise fails — there is no fork path in.** Chain, verified file\nby file:\n\n1. `on.workflow_run.workflows` is `[\"Release\"]` in both files.\n2. Exactly one workflow is named `Release` —\n`.github/workflows/release.yml`.\n3. `release.yml`'s only trigger is\n   `push: tags: [\"v[0-9]+.[0-9]+.[0-9]+\", \"v[0-9]+.[0-9]+.[0-9]+-*\"]`.\n4. Pushing a tag to this repo requires write access; a fork's tag push\nraises no\n   event here, and `workflow_run` observes runs in this repository only.\n\n**Worth stating explicitly: the job-level `if:` guards are NOT the\ncontrol.**\nFor a fork PR, `workflow_run.head_branch` is the contributor's own\nbranch name,\nso a branch called `v1` satisfies both `startsWith(..., 'v')` and\n`!contains(..., '-')`. Step 3 is the entire defense — which is exactly\nthe kind\nof assumption, held about a *different file*, that rots silently.\n\n### The gate\n\nNew `audit:workflow-run-triggers`\n(`scripts/structure-audit/check-workflow-run-triggers.ts`). For every\n`workflow_run` consumer in `.github/workflows`:\n\n- its `workflows:` filter must be present and non-empty (an absent\nfilter fires\non the completion of **every** workflow, including the `pull_request`\nones);\n- every named upstream must resolve to a real workflow in this repo (an\n  unresolvable name means the premise cannot be checked at all);\n- every resolved upstream may trigger only on `push`,\n`workflow_dispatch` or\n`schedule` — **deny-by-default**, so `pull_request`,\n`pull_request_target`,\n`issue_comment`, `fork`, `repository_dispatch`, a `workflow_run` chain\nand\n  anything invented later are all findings;\n- an unparsable workflow file is a finding, not a skip (fail-closed).\n\nAdd `pull_request` to `release.yml` later and the two publish workflows\nbecome a\nlive pwn-request — and this gate reds. A dismissal made today therefore\ncannot\nquietly outlive its justification.\n\n**Red-proved against the real tree**, not only against fixtures. Adding\n`pull_request:` to `release.yml` produced:\n\n```\naudit:workflow-run-triggers: FAILED - 2 finding(s)\n.github/workflows/publish-linux-repo.yml: upstream \"Release\" (.github/workflows/release.yml)\n  triggers on `pull_request` - an outside contributor can then cause the privileged\n  `workflow_run` job to check out and execute their commit.\n```\n\nand flipped the real-tree test red; reverting restored green. 20 unit\ntests\ncover each finding path plus the YAML-shape edges (`on:` as scalar /\nsequence /\nmapping, a loader that booleanises the `on` key, one name shared by two\nfiles, a\nmulti-entry `workflows:` list). The real-tree test also asserts `checked\n> 0`, so\na future refactor that drops `workflow_run` cannot turn the gate into a\nvacuous\npass.\n\nRegistered like its siblings: `package.json`,\n`scripts/lib/preflight-gates.ts`\n(fast tier), the `_test-suite.yml` static-gates job next to\n`audit:action-sha-pins`, and the two `.claude/commands` catalogues.\n\n## 2. CodeQL `js/useless-regexp-character-escape` (alert 161) — false\npositive, fixed anyway\n\n`scripts/release/documented-asset-urls.test.ts:32`. The flagged `\\$`\nsits in a\n**template literal**, where it is load-bearing: it stops\n`${GITHUB_REF_NAME}`\nbeing parsed as an interpolation. The query's own message — *\"may still\nrepresent a meta-character when it is used in a regular expression\"* —\nstates a\npremise that does not hold here: the string is a YAML fixture handed to\n`stagedAssetNames()`, and the regexes in `documented-asset-urls.ts`\n(`STAGE_CP`,\n`WHOLESALE_CP`) are applied **to** it, never compiled **from** it. So:\n**false\npositive**.\n\nIt is still fixable at the source, which beats a suppression. Note that\nthe\nobvious rewrite just trades one linter for another — plain-quoting\n`'...${GITHUB_REF_NAME}...'` trips Biome's\n`suspicious/noTemplateCurlyInString`\n— so the fixture now interpolates the dollar (`const DOLLAR = \"$\"`) and\nneeds\nneither escape. The literal value is byte-identical (proved by direct\ncomparison), and a new assertion guards the fixture itself, because the\nexisting\n`toEqual(new Set())` would also pass on a fixture that had silently lost\nits\n`${...}` and stopped testing anything.\n\n## Verification\n\n`bun run lint`, `bun run typecheck`, `bun run lint:markdown`,\n`bun run audit:doc-refs`, `bun run preflight:fast` — all green.\n`bun test scripts/structure-audit/check-workflow-run-triggers.test.ts\nscripts/release/documented-asset-urls.test.ts scripts/preflight.test.ts\nscripts/lib/preflight-gates.test.ts` — 36 pass.\n\n## Follow-up, deliberately not in this PR\n\nThe gate accepts `--root <path>`, so the `sha-pins` job in\n`org-drift-sweep.yml` could run it across the 8 public org repos as one\nextra\nstep and no extra job slot. None of them uses `workflow_run` today\n(checked via\nthe API), so it would be green on arrival — but it means renaming that\njob,\nwhich is drift the P4b latency work has only just finished settling.\nOwner's\ncall.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-29T19:39:19+03:00",
-          "tree_id": "9b9face6db4faef81d42cc5a65ffd34b7413cbba",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0d2d006f4af18cbeeb0be6be3d08e897cedfbf97"
-        },
-        "date": 1785344731424,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 238.04294265000024,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 238.09089209999365,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 332.628805250004,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "672ef168bf20305cb00884d22cf756bbd2758263",
+          "message": "feat(index): the lane census is an enforced gate (index lane A3) (#1635)\n\nThis is the third and last PR for the index lane contract (pre-S3 item\nA), after #1632 (writers) and #1634 (readers). It turns `bun run\naudit:lane-census` from a report that always exits 0 into an enforced\ngate. Before switching it on, I had all 149 reads the census could not\nverify classified by hand. That turned up gaps no user was ever told\nabout, and this PR fixes all of them, as agreed.\n\n## The gate\n\n`audit:lane-census --check` now runs in `preflight:fast` and in\n`_structure.yml`. It covers every production SQL read of an `item` type,\nplus every SQL `json_extract` read and every `meta[...]`/`metadata[...]`\nread of a metadata key. Each such read has to do one of three things:\n\n- **Match a writer:** some connector writer emits that key for that item\ntype and service.\n- **Carry a verified annotation:** `// lane-census:\nscope=<type>[,<type>] [service=<id>[,<id>]]`.\n  - The annotation covers the statement that follows it.\n  - Placing one above an `if` / `for` / `try` block is refused.\n- It only supplies a type to a read whose SQL has none; one that\ncontradicts the SQL's own type is an error.\n- **Be exempted:** an entry in\n`scripts/structure-audit/lane-census/exemptions.ts`.\n- There are 29 at ship, in five categories: disclosed, legacy, not-item,\nby-design, census-blind.\n- Each entry declares exactly how many reads it covers, so adding or\nremoving a read of an exempted key fails the gate.\n  - An exemption that covers nothing fails too.\n\n`--check` never writes files. The plain command still regenerates the\nartifact.\n\n## Census fixes\n\n- **Assignments are writes:** `meta[\"k\"] = v` counts as a write, not a\nread.\n- **Fewer false reads:** test-helper files are skipped, and reads of\nvendor objects (k8s ObjectMeta, Slack/Zendesk pagination, SCIM) are\nreported separately instead of being gated.\n- **More writes seen:** writer resolution now follows spreads, metadata\nbuilt by function calls (including the `mergeForwardPrStats(…,\nextractPrMetadataForIndex(…))` wrapper), mutators in the same file\n(`putIfNonEmpty(meta, \"k\")`), loops over literal arrays, and `clips/`.\n- **Contract keys count:** the A1 tables `CI_RUN_EMITTED_KEYS` and\n`PR_EMITTED_KEYS` are treated as writer emissions.\n\n## User-visible fixes\n\n- **PR `number` is now canonical** on GitHub, GitLab (from `iid`) and\nBitbucket (from `id`), so `why` and the PR subject no longer show `#?`.\n- `PR_META_VERSION` goes to 2, so stored rows are now pending rebody. To\nbackfill, run `nimbus index rebody --service github`, then `--service\ngitlab`, then `--service bitbucket`.\n  - The demo corpus PRs carry it too.\n- **GitLab issue rows** carry `number` and `repo`.\n- **DORA lead time** has two new gaps:\n- `incomplete_merge_data`: a merged PR with no merge time. Previously a\nmerged Bitbucket PR was dropped silently and an all-Bitbucket service\nreported `no_deployment_data`.\n- `pr_labels_unavailable`: a measured PR with no labels array, so\n`excludePrLabels` could not be applied to it.\n  - Both are added to the OpenAPI enums.\n- **`nimbus pre-mortem`**: a measured review drag now names the forges\nwhose merged PRs were left out of either the cohort median or the repo\nmedian.\n- **`nimbus standup`**: Slack activity counts Slack messages only.\nDiscord messages were being counted under the \"Slack\" heading.\n- **Service identity**: the GitLab `project` and Jenkins `jobName` match\nrules are removed. No writer could ever satisfy them, so behaviour does\nnot change.\n\n## Review notes\n\n- **Review process:** each of the 13 tasks had its own review, followed\nby one review of the whole branch.\n- That final review found that an annotation could override a read's own\nSQL type, which let a new dead query pass. That is fixed and covered by\na test.\n- It also found that the docs overclaimed coverage. The wording is\ncorrected and the uncovered read shapes are now listed.\n- **Red-proof:** changing preflight's `'$.workflow_name'` back to the\npre-A1 key `'$.workflowName'` makes `--check` exit 1.\n- **Stated limits:** the gate does not detect these reads:\n- reads through an interpolated SQL fragment, a `jsonPath` passed as a\nparameter, or string concatenation\n  - accessor-helper reads (`stringField(meta, \"k\")` and similar)\n  - dotted reads (`meta.k`)\n  - reads on any other variable name\n\nSeparately, two writers the census cannot see are exempted as\n`census-blind`.\n- **Known follow-ups:**\n- Teach the census the conditional-spread and ternary writer shapes,\nplus helper and dotted reads.\n  - Check `service=` against the statement's own service filter.\n- The comma rule that ends an annotation's span ignores `<…>`, so a\nmulti-line `db.query<A, B>(` call can end a span early. No annotated\nsite has this shape today.\n- Rebody of filesystem `git_commit` rows beyond 40 commits, inherited\nfrom A1.\n- **Not a breaking change:** OpenAPI enums only gained values, and no\nuser action is required apart from the optional rebody backfill.\n\n## Verification\n\n- `bun test packages/gateway packages/cli scripts`: 28,033 pass, 97\nskip, 2 fail. Both failures are in\n`scripts/install/install-remote-windows.test.ts`: on this Windows dev\nbox the real `install.ps1` run hangs and is killed during user-PATH\ncleanup (exit 143). They also fail when run alone, and this branch\ntouches no installer file, so the CI Windows leg is the check for them.\n- `bun run preflight:fast`: passed, including the new\n`audit:lane-census` gate (`ok (29 exemptions)`).\n\nNo migration, no new invariant, no new egress class.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Pull request numbers are now consistently recorded across GitHub,\nGitLab, and Bitbucket.\n* DORA lead-time metrics now report when merge data or configured\npull-request labels are unavailable, with clearer precedence when\nmultiple gaps apply.\n* Review-drag summaries identify forges with pull requests excluded due\nto missing timestamps.\n* Standup activity counts now include Slack messages and threads only;\nDiscord messages are excluded.\n* **Documentation**\n* Updated metric and standup references to explain data gaps and\nactivity-counting rules.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-09T09:38:03Z",
+          "tree_id": "f5cdd1a98af97a0349c7061daa118571fdb889ad",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/672ef168bf20305cb00884d22cf756bbd2758263"
+        },
+        "date": 1791539468836,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 332.2206604999974,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 331.89874264999963,
             "unit": "ms"
           }
         ]
