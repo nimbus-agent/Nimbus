@@ -205,6 +205,32 @@ describe("computeRisks", () => {
     expect(rd?.summary).not.toContain("GitHub");
   });
 
+  test("a measured review drag names forges whose PRs were left out", () => {
+    const risks = computeRisks({
+      ...BASE,
+      cohort: [candidate()],
+      reviewDragMedianMs: 7_200_000,
+      repoReviewMedianMs: 3_600_000,
+      forgesMissingTiming: ["bitbucket"],
+    });
+    const r = risks.find((x) => x.kind === "review_drag");
+    expect(r?.value).toBe(3_600_000);
+    expect(r?.summary).toContain("Bitbucket never records a merge time.");
+    expect(r?.summary).toContain("left out");
+  });
+
+  test("a measured review drag with nothing left out is unchanged", () => {
+    const risks = computeRisks({
+      ...BASE,
+      cohort: [candidate()],
+      reviewDragMedianMs: 7_200_000,
+      repoReviewMedianMs: 3_600_000,
+      forgesMissingTiming: [],
+    });
+    const r = risks.find((x) => x.kind === "review_drag");
+    expect(r?.summary).not.toContain("left out");
+  });
+
   test("a GitHub-only gap names re-sync as the recovery", () => {
     const risks = computeRisks({ ...BASE, cohort: [candidate()], forgesMissingTiming: ["github"] });
     const rd = risks.find((r) => r.kind === "review_drag");

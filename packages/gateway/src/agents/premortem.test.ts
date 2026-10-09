@@ -899,6 +899,42 @@ describe("runPremortem", () => {
       expect(reviewDrag?.summary).not.toContain("GitLab");
     });
 
+    test("a measured review drag names a forge whose PRs were left out", async () => {
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-MIX",
+        services: ["acme/mix-svc"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+      seedEpicWithServices(db, {
+        key: "HIST-MIX",
+        services: ["acme/mix-svc"],
+        resolvedAtMs: NOW - 40 * DAY_MS,
+        createdAtMs: NOW - 70 * DAY_MS,
+      });
+      seedChildWithPr(db, {
+        epicKey: "HIST-MIX",
+        childSuffix: "c1",
+        service: "acme/mix-svc",
+        openedAtMs: NOW - 50 * DAY_MS,
+        mergedAtMs: NOW - 45 * DAY_MS,
+      });
+      seedChildWithBitbucketPr(db, {
+        epicKey: "HIST-MIX",
+        childSuffix: "c2",
+        repo: "acme/mix-svc",
+        openedAtMs: NOW - 50 * DAY_MS,
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-MIX" }, ctx(db));
+
+      const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
+      expect(reviewDrag?.value).not.toBeNull();
+      expect(reviewDrag?.summary).toContain("Bitbucket never records a merge time");
+      expect(reviewDrag?.summary).toContain("left out");
+    });
+
     test("a GitLab merge request counts toward the repo-wide baseline too", async () => {
       // `repoPrDurations` had the SAME `$.repo`-only filter, so a GitLab repo's baseline was
       // empty even when its merge requests did carry both timestamps. Proven through the

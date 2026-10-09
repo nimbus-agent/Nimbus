@@ -128,14 +128,22 @@ const FORGE_TIMING_REASON: Readonly<Record<string, string>> = {
     "GitHub pull requests that are not yet merged carry no merge time, and those indexed before this release carry no opened time until re-synced (`nimbus index rebody --service github`).",
 };
 
+/** The per-forge reasons, shared by the unmeasurable and the left-out wordings. */
+function forgeTimingReasons(forges: readonly string[]): string {
+  return forges
+    .map((f) => FORGE_TIMING_REASON[f] ?? `${f} pull requests carry no opened or merged time.`)
+    .join(" ");
+}
+
 function missingTimingSummary(forges: readonly string[]): string {
-  const reasons = forges.map(
-    (f) => FORGE_TIMING_REASON[f] ?? `${f} pull requests carry no opened or merged time.`,
-  );
   return (
     "Review drag cannot be measured: this cohort has linked pull requests, but none records both " +
-    `an opened and a merged timestamp. ${reasons.join(" ")}`
+    `an opened and a merged timestamp. ${forgeTimingReasons(forges)}`
   );
+}
+
+function leftOutSentence(forges: readonly string[]): string {
+  return `Pull requests without both timestamps are left out of both medians. ${forgeTimingReasons(forges)}`;
 }
 
 function computeReviewDrag(input: {
@@ -143,9 +151,10 @@ function computeReviewDrag(input: {
   repoReviewMedianMs: number | null;
   /**
    * The distinct `item.service` values (forges) of cohort pull requests that lack an
-   * `opened_at_ms` or a `merged_at`; empty when none does. A fact only the caller (which
+   * `opened_at_ms` or a `merged_at`; empty when none does (non-empty in the measured case
+   * too: those PRs are left out of both medians and the summary says so). A fact only the caller (which
    * runs the database queries) can know, since this file is deliberately database-free.
-   * Non-empty picks "PRs exist, but a forge's PRs lack timing" over the "no PRs at all"
+   * When unmeasurable, non-empty picks "PRs exist, but a forge's PRs lack timing" over the "no PRs at all"
    * message, and names each forge with its own reason.
    *
    * Deliberately NOT split into "missing opened" vs. "missing merged": a PR can lack either
@@ -171,7 +180,9 @@ function computeReviewDrag(input: {
   const delta = input.reviewDragMedianMs - input.repoReviewMedianMs;
   return {
     kind: "review_drag",
-    summary: `This cohort's pull requests took a median ${cohortHours} hours to merge, vs ${repoHours} hours across the repo over the same window.`,
+    summary:
+      `This cohort's pull requests took a median ${cohortHours} hours to merge, vs ${repoHours} hours across the repo over the same window.` +
+      (input.forgesMissingTiming.length > 0 ? ` ${leftOutSentence(input.forgesMissingTiming)}` : ""),
     value: delta,
     expectationOnly: false,
   };

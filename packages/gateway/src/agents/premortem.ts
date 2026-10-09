@@ -231,6 +231,11 @@ function reviewDragMedians(
 } {
   const epicItemIds = cohort.members.map((m) => m.itemId);
   const timings = cohortPrTimings(db, epicItemIds, services);
+  const forgesMissingTiming = [
+    ...new Set(
+      timings.filter((t) => t.opened_at_ms === null || t.merged_at === null).map((t) => t.service),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
   const timed = timings.filter(
     (t): t is CohortPrTiming & { opened_at_ms: number; merged_at: number } =>
       t.opened_at_ms !== null && t.merged_at !== null,
@@ -247,9 +252,7 @@ function reviewDragMedians(
     return {
       reviewDragMedianMs: null,
       repoReviewMedianMs: null,
-      forgesMissingTiming: [...new Set(timings.map((t) => t.service))].sort((a, b) =>
-        a.localeCompare(b),
-      ),
+      forgesMissingTiming,
     };
   }
 
@@ -266,7 +269,7 @@ function reviewDragMedians(
   return {
     reviewDragMedianMs: median(toDurations(timed)),
     repoReviewMedianMs: median(repoDurations),
-    forgesMissingTiming: [],
+    forgesMissingTiming,
   };
 }
 
