@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791480239569,
+  "lastUpdate": 1791517918688,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0f0b14029396f4bc6cc5f73ce6427f115d03d1e5",
-          "message": "feat(audit): detect when main is red (#917)\n\nNothing in this repo answered **\"is `main` broken?\"** — and on\n2026-07-28 `main` was red for **4.75 hours across six consecutive\npushes**, noticed only because a human happened to be looking.\n\n## The blindness is structural\n\n`collect.ts:157` requests:\n\n```\nactions/runs?...&event=push&status=success\n```\n\nFailed runs are **never fetched at all**, and the collector then drops\nany job whose conclusion isn't `success`. A workflow that fails 100% of\nthe time therefore produces **zero observations** and is reported as\n*nothing* rather than as *broken*.\n\nThat is not hypothetical either: the scheduled `Performance Reference\nRun` has **11 runs and 0 successes** and is invisible to every existing\ncontrol for exactly this reason.\n\n## What this adds\n\n`assessMainHealth()` — pure, clock injected — plus a fetcher that asks\nfor push runs on `main` **without the status filter**. The missing\nfilter is the entire point.\n\nFour deliberate behaviours, each with a **red-proved** test:\n\n| Behaviour | Why |\n|---|---|\n| A **cancelled** run is neutral — skipped entirely, neither starting\nnor ending a red streak | Cancellations here are usually concurrency\nevictions. Counting them red manufactures outages from ordinary CI\nbehaviour; counting them green lets a cancel mask a real failure behind\nit. |\n| An **in-progress** run is ignored, not treated as failing | Otherwise\nthe gate flaps every time a push is mid-flight. |\n| **No completed run yields `known: false`, not green** | Absence of\nevidence reported as absence — the same rule the credential-health\ndesign turns on, and the exact failure mode this gate exists to close. |\n| **`startup_failure` counts as a failure** | A workflow that dies at\nstartup is precisely what a success-only collector cannot see. |\n\n## Where it runs, and when it fails\n\nWired into the existing `audit:ci-latency` entry point — **adds no CI\njob.** That job already runs on a schedule, so the assessment rides\nalong.\n\n**Reported always; fails only under `--strict`** (the scheduled sweep).\nA contributor's PR cannot fix a `main` that someone else broke, and a\ngate that reds for something nobody can act on is one everybody learns\nto ignore. That's the same rule `check.ts` already applies to queue and\nDAG wait, stated in its own header.\n\n## Verification\n\n9 new tests (96 across the module) · `typecheck` exit 0 · `lint` exit 0\n\nBoth load-bearing guards were red-proved — breaking the\ncancelled-is-neutral rule fails 1 test, breaking absence-is-not-health\nfails 2.\n\nImplements Finding B from the CI/CD improvement plan (#911).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-29T18:06:51+03:00",
-          "tree_id": "abfd2be2d3da82756fbda329834f248311cd1240",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0f0b14029396f4bc6cc5f73ce6427f115d03d1e5"
-        },
-        "date": 1785339272236,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.3387241500033,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.9621900500009,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 357.57271575000925,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "351572970cf90b541a1addcc98930aeef0a72c7a",
+          "message": "feat(index): readers answer from the contract and disclose what they cannot (index lane A2) (#1634)\n\nSecond of three PRs for the index lane contract, pre-S3 item A. #1632\nmade every CI, PR and git-commit writer emit one canonical metadata\nshape. This PR moves the remaining readers onto that shape and makes\nthem say when the index cannot answer, rather than reporting a clean\nzero. It also fixes four writer defects that A1's review found.\n\n## User-visible changes\n\n- **`ci_not_evaluable`** is a new gap. It never changes a verdict and no\ncount moves.\n- **`nimbus deploy preflight`** reports it on `failing_ci_runs` when the\nservice is bound to a CI provider the check cannot judge: Jenkins\nrecords no branch, CircleCI has no pass/fail signal, and Bitbucket has\nno CI runs at all.\n- **DORA** reports it for CircleCI and Bitbucket on deploy frequency,\nlead time and change failure rate.\n- One helper, `metrics/ci-evaluability.ts`, derives both lists from A1's\ncontract tables, so the two cannot drift apart.\n- **`nimbus stats pr-merges`** counts GitLab merges beside GitHub ones.\n- A new gap, `incomplete_merge_data`, is reported whenever a GitLab or\nBitbucket repo is bound.\n- `github_only_merge_data` is no longer emitted. It stays in the type\nand in the OpenAPI enum, so a consumer that matches on it does not\nbreak.\n- **`nimbus pre-mortem`** names the forge whose pull requests have no\ntiming data, and why. A still-open GitHub PR is not told to re-sync.\n- **`nimbus negotiate`** discloses how many authored PRs have a known\nmerge status: \"merge status known for N/M\".\n- **`nimbus expert`**'s commit-authorship lane read an item type no\nwriter ever produced. It now reads local git commits from `gitAware`\nfilesystem roots. When there are none, or none has a resolved author, it\nreports a `missing_entity_type` or `missing_user_identity` gap.\n- **`nimbus oncall`**'s change-lane gap now names the real limit: only\nthe GitHub connector records the merge commit that the deployment-to-PR\nmatch needs.\n\n## Writer fixes\n\n- `merged` is no longer written when a PR's state is unknown.\n- A GitLab merge request is credited to its author, taken from the\n`opened` event or a targeted fetch, never to whoever last approved or\nmerged it. Existing rows lose a wrongly credited author until the real\none is known.\n- A CI run synced while still running is rewritten once it finishes,\nusing the run lists each sync already fetches, so no request is added.\n- Preflight and DORA match on the canonical `head_sha`. They fall back\nto the raw `headSha` key only for rows written before A1, which have no\n`meta_v`.\n\n## Review notes\n\n- Every `ci_run`, `pr` and `git_commit` row a test inserts now gets its\nmetadata from the real writer mapper. The exceptions are deliberate\nlegacy or defensive shapes, and each says so in a comment.\n- No DORA expected number changed, and the payment-service preflight\nenvelope is unchanged.\n- The final review caught one regression the plan would have shipped.\nGitLab's events API only returns the user's own events, so a merge\nrequest the user only reviewed never gets a state. Leaving those rows\nunversioned would have kept `nimbus index rebody` re-syncing GitLab\nforever, the same trap A1 avoided for `ci_run`. They are now versioned,\nand a test shows they are not counted as pending.\n- OpenAPI enums only gained values: `ci_not_evaluable` on the preflight,\nDORA and stats gap enums, and `incomplete_merge_data` on stats. No user\naction is required, so this is not a breaking change.\n- The lane census rose from 88 to 94 unmatched reads. Every new entry is\na read of a key that a writer emits through the A1 builders, which the\ncensus cannot see yet. PR A3 teaches it the contract tables and turns it\ninto a gate.\n\n## Verification\n\n- `bun test packages/gateway packages/cli scripts`, the exact CI paths:\n27,942 pass, 97 skip, 0 fail.\n- `bun run preflight:fast` passes. That covers typecheck,\n`typecheck:tests`, Biome, markdown lint and every static audit,\nincluding boundaries, invariants and doc refs.\n- `audit:platform-test-gaps`: 34 changed test files, and every test in\nthem runs on win32.\n\nNo migration, no new invariant, no new egress class.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Merge reporting includes GitLab merge requests with available\ntimestamps and discloses incomplete merge data where timestamps are\nunavailable.\n* Negotiation summaries show merge-status coverage when some authored\npull requests have unknown merge status.\n* Preflight and DORA reports disclose when bound CI providers cannot be\nevaluated, without changing findings or verdicts.\n* Expert reports use locally indexed commits as authorship evidence, and\npre-mortem reports explain provider-specific review-timing gaps.\n\n* **Bug Fixes**\n* In-progress CI runs are refreshed on later syncs, and GitLab\nmerge-request authorship is more accurately preserved.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-09T03:41:56Z",
+          "tree_id": "ed2179a33413b57c3aec44a04b1a056f06d2ebd6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/351572970cf90b541a1addcc98930aeef0a72c7a"
+        },
+        "date": 1791517913794,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 256.1472959999981,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 261.19091584999984,
             "unit": "ms"
           }
         ]
