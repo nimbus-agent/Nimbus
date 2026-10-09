@@ -79,6 +79,13 @@ rulings below. The spec travels on this branch only and is stripped before the P
   working tree, change preflight's `'$.workflow_name'` read back to the pre-A1 key
   `'$.workflowName'`, confirm `--check` exits 1 naming it, restore.
 
+- **R10 — plan review (2026-10-09).** Applied: scope-aware `metaOrigin` with parameter shadowing
+  (Task 1), a 40-char assignment window (Task 1), nested-builder arguments of a wrapper call (Task 2,
+  the real `github-sync.ts` `mergeForwardPrStats` shape), an annotation above a compound statement is
+  an error (Task 4), duplicate exemptions are invalid (Task 5). Declined: path normalisation in the
+  gate (`lib.ts`'s `iterateGlob` already normalises `relPath` to `/`), exporting/redefining
+  `FORGE_TIMING_REASON` (it already exists in `premortem/risks.ts`, the same file Task 9 edits).
+
 ## Review Focus
 
 1. A JS read whose `meta` is a function parameter must stay counted as an item read — the R5
@@ -179,6 +186,32 @@ describe("JS metadata reads — A3 noise fixes", () => {
     expect(keys('function f(meta: Record<string, unknown>) { return meta["k"]; }')).toEqual(["k"]);
   });
 
+  test("a sibling function's vendor `const meta` does not leak into a later parameter `meta` (review 2.1)", () => {
+    const src = [
+      "function parseSlack(res: R) {",
+      '  const meta = asRecord(res.json["response_metadata"]);',
+      '  return meta["next_cursor"];',
+      "}",
+      "function formatItem(meta: Record<string, unknown>) {",
+      '  return meta["status"];',
+      "}",
+    ].join("\n");
+    expect(keys(src)).toEqual(["status"]);
+    expect(extractNonItemJsReads("x.ts", src).map((r) => r.value)).toEqual(["next_cursor"]);
+  });
+
+  test("a parameter shadowing an outer vendor `const meta` is an item read", () => {
+    const src = [
+      'const meta = asRecord(cfg["meta"]);',
+      'const f = (meta: Record<string, unknown>) => meta["status"];',
+    ].join("\n");
+    expect(keys(src)).toEqual(["status"]);
+  });
+
+  test("an assignment with aligned whitespace before = is still a write (review 2.2)", () => {
+    expect(keys('const meta: R = {};\nmeta["status_category"]    = "done";')).toEqual([]);
+  });
+
   test("an uninitialised let stays an item read", () => {
     expect(keys('let meta: R;\nmeta = load();\nconst v = meta["k"];')).toEqual(["k"]);
   });
@@ -227,9 +260,9 @@ Expected: FAIL (`extractNonItemJsReads` / `isProductionReadFile` not exported; a
 Replace `scanJsMetadataReads`'s body so each match is classified before it is pushed. Add:
 
 ```ts
-/** `X["k"]` followed by a plain `=` (not `==`, `===`, `=>`) is an assignment TARGET — a write. */
+/** `X["k"]` followed by a plain `=` (not `==`, `===`, `=>`) is an assignment TARGET — a write. The 40-char window tolerates aligned whitespace / a line break before `=`. */
 function isAssignmentTarget(text: string, endIndex: number): boolean {
-  return /^\s*=(?![=>])/.test(text.slice(endIndex, endIndex + 4));
+  return /^\s*=(?![=>])/.test(text.slice(endIndex, Math.min(text.length, endIndex + 40)));
 }
 
 export type MetaOrigin = "item" | "not-item";
@@ -252,16 +285,31 @@ function metaOrigin(src: string, index: number, name: string, dotted: boolean): 
   let last: RegExpExecArray | null = null;
   let m = declRe.exec(src);
   while (m !== null && m.index < index) {
-    last = m;
+    // Scope check: a declaration whose smallest enclosing `{…}` closed before `index` cannot
+    // bind the name at `index` (a sibling function's local) — skip it.
+    if (declStillInScope(src, m.index, index)) last = m;
     m = declRe.exec(src);
   }
   if (last === null || last[1] === undefined) return "item";
+  // Shadowing: a parameter list naming `name` that opens after the declaration and whose
+  // function body contains `index` rebinds it — a parameter is always an item read (fail-safe).
+  if (parameterShadows(src, last.index, index, name)) return "item";
   const initStart = last.index + last[0].length;
   const semi = src.indexOf(";", initStart);
   const init = src.slice(initStart, semi === -1 ? Math.min(src.length, initStart + 300) : semi);
   return itemOriginRegex().test(init) ? "item" : "not-item";
 }
 ```
+
+`declStillInScope(src, declIndex, useIndex)`: find the smallest `{…}` pair containing `declIndex`
+(a brace scan skipping strings/templates, the same shape as `writer-emissions.ts`'s
+`findEnclosingBraceRange` — copy it, per the directory convention); return `true` when there is none
+(module scope) or its closing `}` is after `useIndex`.
+`parameterShadows(src, declIndex, useIndex, name)`: for each function head between `declIndex` and
+`useIndex` — `function <id>(`, a method/arrow parameter list `(…) =>` or `(…): T =>`, matched by
+regex then paren-matched — whose parameter text contains `\bname\b` and whose body (the `{…}` after
+the head, or the arrow's expression to the next top-level `;`/`,`/`)`) contains `useIndex`, return
+`true`.
 
 Change `jsMetadataReadRegex` to capture the receiver and whether it is dotted:
 
@@ -350,6 +398,17 @@ describe("A3 writer shapes", () => {
     expect(keysOf(src).sort()).toEqual(["labels", "number"]);
   });
 
+  test("a wrapper call's nested builder argument contributes its keys (github-sync shape, review 2.3)", () => {
+    const src = `
+      function extract(pr: R): Record<string, unknown> { return { number: 1, labels: [] }; }
+      function mergeForward(prior: R, meta: Record<string, unknown>, id: string): Record<string, unknown> {
+        return { ...meta };
+      }
+      const meta = mergeForward(ctx.itemMetadata, extract(pr), id);
+      ctx.upsertItem({ service: "github", type: "pr", metadata: meta });`;
+    expect(keysOf(src).sort()).toEqual(["labels", "number"]);
+  });
+
   test("a same-file mutator called on the metadata var credits its literal keys and key-argument keys", () => {
     const src = `
       function putIfNonEmpty(meta: R, key: string, v: string | undefined): void { if (v) meta[key] = v; }
@@ -394,7 +453,7 @@ describe("A3 writer shapes", () => {
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `bun test scripts/structure-audit/lane-census/writer-emissions.test.ts`
-Expected: FAIL on all six.
+Expected: FAIL on all seven.
 
 - [ ] **Step 3: Implement**
 
@@ -411,8 +470,13 @@ Expected: FAIL on all six.
 3. Call-initialised identifier: in `resolveTopLevelIdentifierMetadataKeys` and
    `resolveInBodyIdentifierMetadataKeys`, when `tryObjectLiteralTopLevelKeys(decl.exprText)` is
    `undefined` and `matchCallExpression(decl.exprText)` names a callee, use
-   `resolveMetadataKeysFromCall(callee, src)` as the literal keys, then extend with assignments in
-   the enclosing scope exactly as today.
+   `resolveMetadataKeysFromCall(callee, src)` as the literal keys, UNIONED with the keys of every
+   same-file call that appears directly in that call's argument list (one level: split the
+   arguments with `splitTopLevelCommas`, and for each argument that is itself a call to a same-file
+   function, add `resolveMetadataKeysFromCall`). This is the real `github-sync.ts` shape —
+   `const meta = mergeForwardPrStats(ctx.itemMetadata, extractPrMetadataForIndex(repoFull, pr, now), externalId)`,
+   where the wrapper returns a spread of its parameter and only the nested builder carries the keys
+   (review 2.3). Then extend with assignments in the enclosing scope exactly as today.
 4. Mutators + for-of: replace `findExtraAssignedKeys(varName, scopeText)` calls with
    `findAssignedKeys(varName, scopeText, src)`, which returns the union of:
    - today's direct `X["k"] =` / `X.k =` keys;
@@ -620,6 +684,14 @@ describe("extractAnnotations", () => {
     expect(one("// lane-census: scope=pr\n// lane-census: scope=issue\nconst x = 1;").errors).toHaveLength(1);
   });
 
+  test("an annotation above a compound statement is an error, not a span that bleeds (review 2.4)", () => {
+    for (const head of ["for (const r of rows) {", "if (x) {", "try {"]) {
+      const src = `// lane-census: scope=pr\n${head}\n  r["k"];\n}\nconst next = 1;`;
+      expect(one(src).errors[0]?.message).toContain("compound statement");
+      expect(one(src).annotations).toHaveLength(0);
+    }
+  });
+
   test("an annotation followed by nothing is an error", () => {
     expect(one("const x = 1;\n// lane-census: scope=pr\n").errors[0]?.message).toContain("covers nothing");
   });
@@ -684,8 +756,12 @@ Algorithm over `lines = contents.split(/\r?\n/)`:
    (both from `../lib.ts`; verify in a test that both preserve newlines so line numbers survive — the
    template test above does). If the statement text matches
    `/^\s*(?:export\s+)?(?:async\s+)?function\b/`, end at the `}` matching the first `{` after the
-   parameter list's closing `)`. Otherwise end at the first `;` at bracket depth 0 (track `(){}[]`),
-   or end of file. Return its 1-based line.
+   parameter list's closing `)`. If it begins with a compound-statement keyword
+   (`/^\s*(?:if|for|while|do|switch|try|else)\b/`), do NOT compute a span: record the error
+   `annotation sits above a compound statement; annotate the enclosing function or a statement
+   inside the block` (review 2.4 — a `;` search would run past the block's `}` into the next
+   statement, and `else`/`catch` chains make any brace rule fragile). Otherwise end at the first
+   `;` at bracket depth 0 (track `(){}[]`), or end of file. Return its 1-based line.
 4. Record `{ file, line: i + 1, types, services, startLine: j + 1, endLine }`.
 
 In `collectLaneCensus`: per production file, call `extractAnnotations`. For each item
@@ -777,6 +853,10 @@ describe("evaluateLaneGate", () => {
   test("an exemption with an empty reason is invalid", () => {
     expect(evaluateLaneGate(collectLaneCensus([W, dead]), [ex("ghost", { reason: " " })]).some((v) => v.kind === "invalid-exemption")).toBe(true);
   });
+  test("a duplicate (file, key) exemption is invalid, not reported as stale", () => {
+    const v = evaluateLaneGate(collectLaneCensus([W, dead]), [ex("ghost"), ex("ghost")]);
+    expect(v.map((x) => x.kind)).toEqual(["invalid-exemption"]);
+  });
   test("a contract partial fails unless exempted", () => {
     // partial: two incident writers, only one emits `sev`
     const W2 = { relPath: "packages/gateway/src/connectors/og.ts", contents: 'ctx.upsertItem({ service: "opsgenie", type: "incident", metadata: {} });' };
@@ -795,16 +875,23 @@ describe("evaluateLaneGate", () => {
 ```ts
 export function evaluateLaneGate(census: LaneCensus, exemptions: readonly LaneExemption[]): readonly GateViolation[] {
   const out: GateViolation[] = [];
-  const used = new Set<LaneExemption>();
+  const idOf = (file: string, key: string): string => `${file}\u0000${key}`;
+  const used = new Set<string>(); // by (file, key), so a duplicate is reported once, as invalid
   const exemptFor = (file: string, key: string): LaneExemption | undefined => {
     const e = exemptions.find((x) => x.file === file && x.key === key);
-    if (e !== undefined) used.add(e);
+    if (e !== undefined) used.add(idOf(file, key));
     return e;
   };
+  const seen = new Set<string>();
   for (const e of exemptions) {
     if (e.reason.trim() === "") {
       out.push({ kind: "invalid-exemption", file: e.file, line: 0, key: e.key, message: "exemption has no reason" });
     }
+    const id = idOf(e.file, e.key);
+    if (seen.has(id)) {
+      out.push({ kind: "invalid-exemption", file: e.file, line: 0, key: e.key, message: `duplicate exemption for '${e.key}' — merge the reasons` });
+    }
+    seen.add(id);
   }
   for (const r of census.unmatchedItemReads) {
     if (exemptFor(r.file, r.value) !== undefined) continue;
@@ -826,8 +913,11 @@ export function evaluateLaneGate(census: LaneCensus, exemptions: readonly LaneEx
   for (const a of census.annotationErrors) {
     out.push({ kind: "annotation", file: a.file, line: a.line, key: "", message: a.message });
   }
+  const reportedStale = new Set<string>();
   for (const e of exemptions) {
-    if (!used.has(e)) {
+    const id = idOf(e.file, e.key);
+    if (!used.has(id) && !reportedStale.has(id)) {
+      reportedStale.add(id);
       out.push({ kind: "stale-exemption", file: e.file, line: 0, key: e.key, message: `exemption (${e.category}) suppresses nothing — delete it` });
     }
   }
