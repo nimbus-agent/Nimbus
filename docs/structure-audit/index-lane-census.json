@@ -1,6 +1,8 @@
 {
   "knownBlindSpots": [
-    "imap and protonmail write item rows through a generic cross-file mapper called with plain function-call arguments rather than an inline `{ service, type, metadata }` object literal, so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry in unmatchedItemReads is this blind spot, not a confirmed dead lane."
+    "imap and protonmail write item rows through a generic cross-file mapper called with plain function-call arguments rather than an inline `{ service, type, metadata }` object literal, so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry in unmatchedItemReads is this blind spot, not a confirmed dead lane.",
+    "Reads are collected only as SQL `json_extract` paths and bracket-indexed JS reads spelled `meta[\"k\"]` / `metadata[\"k\"]`. Accessor-helper reads (`stringField(meta, \"k\")`, `finiteNumberField`, `nonEmptyStringField`, `stringArrayField`, …), dotted reads (`meta.k`) and reads on another receiver name (e.g. `stringField(row.metadata, \"merge_commit_sha\")`) are not in `reads` at all, so a dead key read that way is invisible to this census.",
+    "Annotation spans are computed over comment- and string-stripped code, but regex literals are not stripped: a regex literal containing `//` or an unbalanced `(` inside an annotated statement can end or extend that annotation's span at the wrong place."
   ],
   "sqlLiteralScopeNote": "A raw scan of packages/gateway/src/**/*.ts (minus *.test.ts) with extractSqlLiterals finds 483 SQL-shaped literals. This artifact's file set additionally excludes *-sql.ts files (an existing, repo-wide iterateSourceFiles() convention, not specific to this gate), which drops exactly 4 literals in 4 files: index/entity-metadata-v54-sql.ts, index/fleet-subjects-v63-sql.ts, index/glossary-manual-v46-sql.ts, index/unified-item-v3-sql.ts. Three are schema DDL (their only SQL-shaped text is an internal FTS-sync SELECT inside a CREATE TRIGGER body); the fourth is a one-time graph_entity migration UPDATE, already out of scope by table. None is a live read predicate reachable at runtime, so this fully explains the 483-vs-479 gap with zero effect on reads/writes/unmatchedItemReads below.",
   "counts": {
@@ -742,21 +744,7 @@
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 169
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 172
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 173
+      "line": 171
     },
     {
       "table": "item",
@@ -764,6 +752,20 @@
       "value": "merged_at",
       "file": "packages/gateway/src/metrics/stats.ts",
       "line": 174
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/metrics/stats.ts",
+      "line": 175
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/metrics/stats.ts",
+      "line": 176
     },
     {
       "table": "item",
@@ -1925,112 +1927,112 @@
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 210
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 207
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 208
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/agents/premortem.ts",
       "line": 213
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "merged_at",
+      "value": "opened_at_ms",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 214
+      "line": 210
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 215
+      "line": 211
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "opened_at_ms",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 216
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 217
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 218
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 248
+      "line": 251
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 251
+      "line": 254
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 252
+      "line": 255
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 253
+      "line": 256
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 254
+      "line": 257
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "correlates_with",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 430
+      "line": 436
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 431
+      "line": 437
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "deployment",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 432
+      "line": 438
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "affectedService",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 434
+      "line": 440
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "occurredAt",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 435
+      "line": 441
     },
     {
       "table": "item",
@@ -4939,7 +4941,7 @@
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 208,
+      "line": 211,
       "matchState": "partial",
       "partialCoverage": [
         "github",
@@ -4951,7 +4953,7 @@
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 214,
+      "line": 217,
       "matchState": "partial",
       "partialCoverage": [
         "github",
@@ -4963,7 +4965,7 @@
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 215,
+      "line": 218,
       "matchState": "partial",
       "partialCoverage": [
         "github",
@@ -4975,7 +4977,7 @@
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 253,
+      "line": 256,
       "matchState": "partial",
       "partialCoverage": [
         "github",
@@ -4987,7 +4989,7 @@
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 254,
+      "line": 257,
       "matchState": "partial",
       "partialCoverage": [
         "github",

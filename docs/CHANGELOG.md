@@ -20,7 +20,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 - **2026-10-09 — Index lane contract (PR A3): the lane census is a gate.**
   `bun run audit:lane-census --check` now runs in `preflight:fast` and `_structure.yml`: every
-  production read of an `item` type or metadata key must match a connector writer, carry a verified
+  production SQL read of an `item` type, and every SQL `json_extract` and bracket-indexed
+  `meta[...]`/`metadata[...]` read of a metadata key, must match a connector writer, carry a verified
   `// lane-census: scope=<type>[,<type>] [service=<id>[,<id>]]` annotation, or be exempted in
   `scripts/structure-audit/lane-census/exemptions.ts` (29 at ship; categories disclosed, legacy,
   not-item, by-design, census-blind). Each exemption declares the exact `reads` count it suppresses,
@@ -36,8 +37,12 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   pre-mortem's review drag names forges left out of either median, standup's Slack activity counts
   Slack only, and service-identity's dead GitLab `project` / Jenkins `jobName` arms were removed with
   no behaviour change. Bounds: reads through interpolated SQL fragments, a `jsonPath` passed as a
-  parameter or string concatenation are not detected, and two writers the census cannot see are
-  exempted as `census-blind`.
+  parameter or string concatenation are not detected; neither are accessor-helper reads
+  (`stringField(meta, "k")`, `finiteNumberField`, `nonEmptyStringField`, `stringArrayField` …),
+  dotted reads (`meta.k`) or bracket reads on another receiver name (`row.metadata` passed to a
+  helper); a regex literal containing `//` or an unbalanced `(` can mis-span an annotation; and two
+  writers the census cannot see are exempted as `census-blind`. An annotation supplies types only to
+  a read whose SQL carries none — one that contradicts a read's own SQL type scope is an error.
 
 - **2026-10-08 — Index lane contract (PR A2): readers disclose what the canonical contract cannot supply.**
   The A1 contract made absence meaningful, so the readers now say so instead of reporting a clean

@@ -504,12 +504,17 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
   `docs/structure-audit/index-lane-census.json` — **this closes the audit half of the row, not the
   row**: turning the census into an enforced CI gate over the found gaps is deferred follow-up
   work, not yet scheduled. **2026-10-09: the gate half shipped** - `bun run audit:lane-census --check`
-  runs in `preflight:fast` and `_structure.yml`; every production `item` read must match a writer, carry a
+  runs in `preflight:fast` and `_structure.yml`; every production SQL `item` read, and every SQL `json_extract`
+  and bracket-indexed `meta[...]`/`metadata[...]` metadata read, must match a writer, carry a
   verified `// lane-census:` annotation, or be a counted exemption (29 at ship), and a stale or
   miscounted exemption fails. Stated bounds: reads through interpolated SQL fragments, a `jsonPath`
-  parameter or string concatenation are not detected, and two writers the census cannot see are
-  exempted as `census-blind`. **Not shipped:** teaching the writer-emission pass the conditional-spread
-  and ternary-metadata shapes; filesystem `git_commit` rebody beyond 40 commits (inherited from A1).
+  parameter or string concatenation are not detected; neither are accessor-helper reads
+  (`stringField(meta, "k")` and its siblings), dotted reads (`meta.k`) or other receiver names; a regex
+  literal containing `//` or an unbalanced `(` can mis-span an annotation; and two writers the census
+  cannot see are exempted as `census-blind`. **Not shipped:** teaching the writer-emission pass the
+  conditional-spread and ternary-metadata shapes; teaching the read census accessor-helper and dotted
+  reads; checking an annotation's `service=` against the statement's own SQL service literal;
+  filesystem `git_commit` rebody beyond 40 commits (inherited from A1).
 - [x] **B5 (high-priority) — WAL concurrency hardening** — **DONE (2026-07-21, #426).** Finding confirmed first on a live 21 MB gateway DB: `PRAGMA journal_mode` returned `delete`. `applyWritablePragmas()` (`db/writable-pragmas.ts`) now sets `journal_mode = WAL` + `busy_timeout` at all three production writable open sites (main writer, embedding worker, `I13` HTTP write handle); `journal_mode` is a file-level property, so read-only handles inherit WAL without setting it. The shutdown `wal_checkpoint(TRUNCATE)` is no longer a no-op. Regression guard ships with it: runtime tests assert `wal` is actually adopted on a file-backed handle, plus a per-site assertion that each production open site still calls the helper (the first version of that guard matched the leftover import and had to be tightened to the call). Backups were checked and are WAL-safe — they use `VACUUM INTO`, not a file copy.
 - [ ] **Third-party package upgrades** — npm + cargo crate upgrades **deferred from the toolchain refresh** (the refresh PR bumped runner OSes, Node, and Rust MSRV but left dependency upgrades for a focused follow-up).
 

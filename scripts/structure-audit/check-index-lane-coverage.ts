@@ -575,6 +575,14 @@ const KNOWN_BLIND_SPOTS: readonly string[] = [
     "function-call arguments rather than an inline `{ service, type, metadata }` object literal, " +
     "so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry " +
     "in unmatchedItemReads is this blind spot, not a confirmed dead lane.",
+  "Reads are collected only as SQL `json_extract` paths and bracket-indexed JS reads spelled " +
+    '`meta["k"]` / `metadata["k"]`. Accessor-helper reads (`stringField(meta, "k")`, ' +
+    "`finiteNumberField`, `nonEmptyStringField`, `stringArrayField`, …), dotted reads (`meta.k`) " +
+    'and reads on another receiver name (e.g. `stringField(row.metadata, "merge_commit_sha")`) ' +
+    "are not in `reads` at all, so a dead key read that way is invisible to this census.",
+  "Annotation spans are computed over comment- and string-stripped code, but regex literals are " +
+    "not stripped: a regex literal containing `//` or an unbalanced `(` inside an annotated " +
+    "statement can end or extend that annotation's span at the wrong place.",
 ];
 
 /**
