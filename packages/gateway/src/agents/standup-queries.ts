@@ -238,9 +238,16 @@ export function selectTicketsOpened(db: Database, w: Window, personId: string): 
  * `event_column` for {@link selectReviews}' reason: `slack-sync.ts` writes one row per
  * `<channel>:<ts>` and sets `modifiedAt` to `round(parseFloat(ts) * 1000)` — the post instant,
  * taken from the row's own key.
+ *
+ * The lane is Slack's: its heading, thread key and `ts`-based time basis are all Slack-shaped;
+ * Discord messages are not counted.
  */
 export function selectMessages(db: Database, w: Window, personId: string): StandupRow[] {
-  return selectByModifiedAt(db, w, personId, { type: "message", basis: "event_column" });
+  return selectByModifiedAt(db, w, personId, {
+    type: "message",
+    basis: "event_column",
+    extraSql: "AND i.service = 'slack'",
+  });
 }
 
 /**
@@ -263,6 +270,9 @@ export function selectMessages(db: Database, w: Window, personId: string): Stand
  * collision is unlikely rather than impossible, and "unlikely" is not a basis for a number the
  * brief prints. `service` is included too, since `thread_ts` is a Slack-shaped id and a second
  * chat connector indexing `message` items would otherwise share the keyspace.
+ *
+ * The lane is Slack's: its heading, thread key and `ts`-based time basis are all Slack-shaped;
+ * Discord messages are not counted (`AND i.service = 'slack'`).
  */
 export function countMessageThreads(db: Database, w: Window, personId: string): number {
   const row = db
@@ -276,6 +286,7 @@ export function countMessageThreads(db: Database, w: Window, personId: string): 
                 i.external_id)) AS n
          FROM item i
         WHERE i.type = 'message'
+          AND i.service = 'slack'
           AND i.author_id = ?
           AND i.modified_at >= ?
           AND i.modified_at < ?`,

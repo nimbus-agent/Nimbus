@@ -1009,7 +1009,7 @@ nimbus standup --json
 
 `## Pull requests active` is deliberately not called "opened": a `pr` row carries no creation timestamp at all, so "pull requests I opened in the last 24 hours" is not a question this index can answer. What it can answer is which of your pull requests moved, which for a standup is the more useful one. Merged pull requests are excluded from that section, since they are reported under their own heading.
 
-**Slack activity is summarised by THREAD as well as by message** (`N messages across M threads`), because eleven replies in one thread is one conversation rather than eleven items of work.
+**Slack activity is summarised by THREAD as well as by message** (`N messages across M threads`), because eleven replies in one thread is one conversation rather than eleven items of work. Only Slack messages are counted; Discord messages are not.
 
 **Entry lists are capped at 50 per lane**, so a chatty day is not handed wholesale to the synthesis model. `counts` (visible via `--json`) always carries the true pre-cap total per lane, so the truncation is recoverable.
 
