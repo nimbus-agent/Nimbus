@@ -199,34 +199,43 @@ function readStoredMetadata(ctx: SyncContext, itemId: string): Record<string, un
   }
 }
 
+/**
+ * The MR author is known only when THIS write describes the MR itself: the `opened` event (its
+ * actor opened the MR) or `fetchOne` (the MR resource's own `author`). Every other event actor is
+ * whoever approved, merged or commented — never credit them as the author.
+ */
+function knownMrAuthor(
+  f: GitlabEventUpsertFields,
+  shape: GitlabItemShape,
+): { login: string; name: string | undefined } | undefined {
+  if (shape.type !== "pr") return undefined;
+  if (f.mr === undefined && f.actionName !== "opened") return undefined;
+  if (f.authorUsername === undefined || f.authorUsername === "") return undefined;
+  return { login: f.authorUsername, name: f.authorName === "" ? undefined : f.authorName };
+}
+
+/** A `pr` row is credited from its carried-forward metadata author; an issue from the event actor. */
+function itemAuthor(
+  shape: GitlabItemShape,
+  meta: Record<string, unknown>,
+  f: GitlabEventUpsertFields,
+): { login: string | undefined; name: string | undefined } {
+  if (shape.type !== "pr") return { login: f.authorUsername, name: f.authorName };
+  const login = meta["author_login"];
+  const name = meta["author_name"];
+  return {
+    login: typeof login === "string" ? login : undefined,
+    name: typeof name === "string" ? name : undefined,
+  };
+}
+
 function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShape): void {
-  const {
-    ctx,
-    pathWithNamespace,
-    iid,
-    title,
-    actionName,
-    createdAt,
-    now,
-    webOrigin,
-    authorUsername,
-    authorName,
-    webUrl,
-  } = f;
+  const { ctx, pathWithNamespace, iid, title, actionName, createdAt, now, webOrigin, webUrl } = f;
   const externalId = shape.externalId(pathWithNamespace, iid);
   const encPath = encodeURIComponent(pathWithNamespace);
   const urlPath = `${shape.urlSegment}/${String(iid)}`;
   const modified = createdAt === undefined ? Number.NaN : Date.parse(createdAt);
-  // The MR author is known only when THIS write describes the MR itself: the `opened` event
-  // (its actor opened the MR) or `fetchOne` (the MR resource's own `author`). Every other event actor
-  // is whoever approved, merged or commented — never credit them as the author.
-  const knownAuthor =
-    shape.type === "pr" &&
-    (f.mr !== undefined || actionName === "opened") &&
-    authorUsername !== undefined &&
-    authorUsername !== ""
-      ? { login: authorUsername, name: authorName === "" ? undefined : authorName }
-      : undefined;
+  const knownAuthor = knownMrAuthor(f, shape);
   const meta: Record<string, unknown> =
     shape.type === "pr"
       ? gitlabMrMetadata(
@@ -241,12 +250,7 @@ function upsertGitlabEventItem(f: GitlabEventUpsertFields, shape: GitlabItemShap
           readStoredMetadata(ctx, itemPrimaryKey(SERVICE_ID, externalId)),
         )
       : { iid, project: pathWithNamespace, action: actionName };
-  const metaLogin = meta["author_login"];
-  const metaName = meta["author_name"];
-  const authorLogin =
-    shape.type === "pr" ? (typeof metaLogin === "string" ? metaLogin : undefined) : authorUsername;
-  const authorDisplay =
-    shape.type === "pr" ? (typeof metaName === "string" ? metaName : undefined) : authorName;
+  const { login: authorLogin, name: authorDisplay } = itemAuthor(shape, meta, f);
   const authorId =
     authorLogin !== undefined && authorLogin !== ""
       ? ctx.resolvePerson({

@@ -247,7 +247,9 @@ function reviewDragMedians(
     return {
       reviewDragMedianMs: null,
       repoReviewMedianMs: null,
-      forgesMissingTiming: [...new Set(timings.map((t) => t.service))].sort(),
+      forgesMissingTiming: [...new Set(timings.map((t) => t.service))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
     };
   }
 

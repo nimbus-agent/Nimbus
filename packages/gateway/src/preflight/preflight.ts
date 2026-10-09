@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { unevaluableCiServices } from "../metrics/ci-evaluability.ts";
-import { repoLikeMatchesUrn } from "../metrics/dora.ts";
+import { ciRunHeadSha, repoLikeMatchesUrn } from "../metrics/dora.ts";
 import type { ParsedDoraRepoUrn, ServiceConfig } from "../metrics/dora-config.ts";
 import { distinctCiServiceColumns, distinctPrServiceColumns } from "../metrics/dora-config.ts";
 
@@ -210,12 +210,7 @@ function selectFailingCiRuns(
         conclusion: meta["conclusion"] as "failure" | "cancelled" | "timed_out",
         modified_at_ms: r.modified_at,
         branch: typeof meta["branch"] === "string" ? meta["branch"] : targetRef,
-        head_sha:
-          typeof meta["head_sha"] === "string"
-            ? meta["head_sha"]
-            : typeof meta["headSha"] === "string" && meta["meta_v"] === undefined // pre-A1 rows only
-              ? meta["headSha"]
-              : null,
+        head_sha: ciRunHeadSha(meta),
         url: r.url,
       };
     });

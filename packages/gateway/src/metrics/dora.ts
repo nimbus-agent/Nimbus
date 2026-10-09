@@ -215,19 +215,22 @@ type DeployIdx = {
   modifiedAt: number;
 };
 
+/**
+ * A `ci_run` row's head commit: canonical `head_sha`, else the raw `headSha` key, but only on a
+ * row written before A1 (no `meta_v`). A versioned row without `head_sha` has none.
+ */
+export function ciRunHeadSha(meta: Record<string, unknown> | null): string | null {
+  if (meta === null) return null;
+  const canonical = meta["head_sha"];
+  if (typeof canonical === "string") return canonical;
+  const raw = meta["headSha"];
+  return typeof raw === "string" && meta["meta_v"] === undefined ? raw : null;
+}
+
 function buildDeployIndex(deploys: readonly CiRunRow[]): DeployIdx[] {
   return deploys.map((d) => {
     const meta = d.metadata ? (JSON.parse(d.metadata) as Record<string, unknown>) : null;
-    // Canonical `head_sha`; raw `headSha` only for rows written before A1 (no `meta_v`).
-    const canonicalHead = meta === null ? undefined : meta["head_sha"];
-    const rawHead = meta === null ? undefined : meta["headSha"];
-    const headSha =
-      typeof canonicalHead === "string"
-        ? canonicalHead
-        : typeof rawHead === "string" && meta?.["meta_v"] === undefined
-          ? rawHead
-          : null;
-    return { headSha, modifiedAt: d.modified_at };
+    return { headSha: ciRunHeadSha(meta), modifiedAt: d.modified_at };
   });
 }
 

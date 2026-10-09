@@ -305,7 +305,7 @@
       "TS2532": 15
     },
     "packages/gateway/test/unit/connectors/gitlab-sync.test.ts": {
-      "TS2532": 15,
+      "TS2532": 14,
       "TS2741": 1
     },
     "packages/gateway/test/unit/connectors/great-expectations-result-mapping.test.ts": {
