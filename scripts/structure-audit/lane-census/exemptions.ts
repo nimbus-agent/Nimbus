@@ -150,7 +150,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     category: "by-design",
     reads: 1,
     reason:
-      "findIssueEntityIds matches an issue by metadata number+repo only as a FALLBACK after the exact external-id lookup (findIssueByIndexedExternalId) misses. GitHub and GitLab issue rows both carry number and repo, but the GitLab writer takes its type from GitlabItemShape, which the census cannot see, so the read stays unscoped. A miss links no issue, never a wrong one.",
+      "findIssueEntityIds matches an issue by metadata number+repo only as a FALLBACK after the exact external-id lookup (findIssueByIndexedExternalId) misses. The fallback query's only type predicate is on the graph_entity alias (e.type = 'issue'), so the item metadata read is unscoped regardless of writer visibility; GitHub and GitLab issue rows both carry number and repo (the GitLab writer takes its type from GitlabItemShape, which the census cannot see either). A miss links no issue, never a wrong one.",
   },
   {
     file: "packages/gateway/src/graph/graph-populator.ts",
@@ -167,7 +167,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     category: "census-blind",
     reads: 1,
     reason:
-      "selectItemBodyFetchState (annotated scope=page service=notion) reads bodyFetch, which upsertNotionPage in connectors/notion-sync.ts writes into a metadata variable initialised by a ternary before ctx.upsertItem — a shape the census writer scan does not follow (it records the notion:page write with no keys). Absent means never attempted or errored, which marks the page retryable.",
+      "selectItemBodyFetchState (annotated scope=page service=notion) reads bodyFetch, which notionConsumeSearchResultRow in connectors/notion-sync.ts writes into a metadata variable initialised by a ternary before ctx.upsertItem — a shape the census writer scan does not follow (it records the notion:page write with no keys). Absent means never attempted or errored, which marks the page retryable.",
   },
   // ── ipc/ ─────────────────────────────────────────────────────────────────────────────────
   {
