@@ -280,7 +280,6 @@ const STORY_PRS: readonly DemoItem[] = [
     metadata: (at) =>
       buildPrMetadata(
         {
-          number: 412,
           draft: false,
           merge_commit_sha: SHA_412,
           additions: 18,
@@ -294,6 +293,7 @@ const STORY_PRS: readonly DemoItem[] = [
           openedAtMs: at(-3 * HOUR - DAY),
           mergedAtMs: at(-3 * HOUR),
           repo: "acme/payments",
+          number: 412,
         },
       ),
   },
@@ -493,7 +493,6 @@ function background(): {
         metadata: (at) =>
           buildPrMetadata(
             {
-              number: n,
               draft: false,
               merge_commit_sha: mergeSha,
               additions: 20 + k * 3,
@@ -507,6 +506,7 @@ function background(): {
               openedAtMs: at(offsetMs - DAY),
               mergedAtMs: at(offsetMs),
               repo: svc.repo,
+              number: n,
             },
           ),
       });
@@ -586,8 +586,14 @@ const SAM_TODAY_PRS: readonly DemoItem[] = [
     url: PR_URL("acme/payments", 415),
     metadata: (at) =>
       buildPrMetadata(
-        { number: 415, draft: false, labels: [] },
-        { state: "open", stateRaw: "open", openedAtMs: at(-5 * HOUR), repo: "acme/payments" },
+        { draft: false, labels: [] },
+        {
+          state: "open",
+          stateRaw: "open",
+          openedAtMs: at(-5 * HOUR),
+          repo: "acme/payments",
+          number: 415,
+        },
       ),
   },
 ];

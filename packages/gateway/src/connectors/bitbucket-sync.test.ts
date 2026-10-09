@@ -339,3 +339,7 @@ describe("bitbucketPrMetadata (pr contract)", () => {
     expect(new Set(canonical)).toEqual(new Set(PR_EMITTED_KEYS.bitbucket));
   });
 });
+
+test("bitbucketPrMetadata writes the canonical number from id", () => {
+  expect(bitbucketPrMetadata("a/b", { id: 5, state: "OPEN" }, undefined)["number"]).toBe(5);
+});

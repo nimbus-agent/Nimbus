@@ -75,6 +75,7 @@ function absoluteLineFor(item: ScanItem, body: string, offset: number): number |
   } catch {
     return null;
   }
+  // lane-census: scope=code_symbol service=filesystem
   const start = meta["excerptStartLine"];
   if (typeof start !== "number") return null;
   // Count newlines up to offset (allocation-free) → 0-based body line.

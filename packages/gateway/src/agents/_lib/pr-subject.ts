@@ -39,6 +39,7 @@ export function resolvePrSubject(db: Database, url: string): PrResolveHit | PrRe
   // tiebreak between candidates. The join is safe on casing for the same reason
   // the design rests on — `syncPrGraph` writes `externalId: row.id`, so both
   // sides of `i.id = e.external_id` are the same string from the same write.
+  // lane-census: scope=pr service=github,gitlab,bitbucket
   const row = db
     .query(
       `SELECT e.id                                  AS entity_id,

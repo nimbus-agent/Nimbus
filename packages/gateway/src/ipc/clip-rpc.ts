@@ -73,6 +73,7 @@ function parseMetadata(raw: unknown): Record<string, unknown> {
   }
 }
 
+// lane-census: scope=web_clip service=nimbus
 function rowToClipEntry(row: Record<string, unknown>): ClipListEntry {
   const meta = parseMetadata(row["metadata"]);
   const tags = Array.isArray(meta["tags"])

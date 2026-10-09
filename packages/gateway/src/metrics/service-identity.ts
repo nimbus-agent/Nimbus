@@ -54,10 +54,13 @@ function stringField(meta: Record<string, unknown>, key: string): string | undef
 /**
  * Matches an item's repo-shaped metadata against a `[metrics.dora.<id>]` /
  * `[ci.service.<id>]` repo URN. Mirrors `repoLikeMatchesUrn` in
- * `metrics/dora.ts`, minus its `circleci` external-id branch: this
+ * `metrics/dora.ts` for `repo`-shaped URNs, minus that function's `project` / `jobName`
+ * arms (they read `ci_run` rows, which GitLab and Jenkins write; this resolver binds
+ * deployments and PRs, and no writer there records either) and its `circleci` external-id branch: this
  * resolver's item shape (`SyncContext.resolveServiceId`) carries no
  * external id, only metadata, so a circleci URN never matches here.
  */
+// lane-census: scope=deployment,incident,pr
 function repoMetadataMatchesUrn(
   metadata: Record<string, unknown>,
   urn: ParsedDoraRepoUrn,
@@ -67,9 +70,12 @@ function repoMetadataMatchesUrn(
     case "bitbucket":
       return metadata["repo"] === urn.providerId;
     case "gitlab":
-      return metadata["project"] === urn.providerId || metadata["repo"] === urn.providerId;
+      // No deployment writer records a GitLab project id: annotated deployments bind through
+      // `nimbus_service_id`; Vercel and premortem's synthetic row carry `repo`.
+      return metadata["repo"] === urn.providerId;
     case "jenkins":
-      return metadata["jobName"] === urn.providerId;
+    // No deployment writer records a Jenkins job name (annotated deployments bind through
+    // `nimbus_service_id`), so a job-name match could never fire.
     case "circleci":
       return false;
   }
@@ -241,7 +247,7 @@ function reportAmbiguityIfBound(
  *      known service (guards against a stale/foreign id passing through).
  *   2. `metadata.pagerduty_service_id` — matched against the `ServiceConfig`
  *      whose `pagerdutyServices` contains it.
- *   3. `metadata.repo` / `metadata.project` — matched against the
+ *   3. `metadata.repo` — matched against the
  *      `ServiceConfig` whose `repos` contains a matching URN.
  *
  * A `deployment`-typed item additionally passes `deploymentBindingResolution`

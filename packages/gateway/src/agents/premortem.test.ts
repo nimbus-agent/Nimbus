@@ -222,10 +222,19 @@ function seedChildWithGitlabMr(
   );
 }
 
-/** A Bitbucket-linked PR via the real `bitbucketPrMetadata`: opened time only, never a merge time. */
+/**
+ * A Bitbucket-linked PR via the real `bitbucketPrMetadata`: opened time only, never a merge time.
+ * `state` is Bitbucket's raw PR state (default `MERGED`).
+ */
 function seedChildWithBitbucketPr(
   db: Database,
-  opts: { epicKey: string; childSuffix: string; repo: string; openedAtMs: number },
+  opts: {
+    epicKey: string;
+    childSuffix: string;
+    repo: string;
+    openedAtMs: number;
+    state?: "MERGED" | "OPEN";
+  },
 ): void {
   const childExternalId = `${opts.epicKey}-${opts.childSuffix}`;
   upsertIndexedItem(db, {
@@ -246,7 +255,7 @@ function seedChildWithBitbucketPr(
     title: prExternalId,
     metadata: bitbucketPrMetadata(
       opts.repo,
-      { id: 3, state: "MERGED", created_on: new Date(opts.openedAtMs).toISOString() },
+      { id: 3, state: opts.state ?? "MERGED", created_on: new Date(opts.openedAtMs).toISOString() },
       "dev",
     ),
     modifiedAt: NOW,
@@ -897,6 +906,138 @@ describe("runPremortem", () => {
       expect(reviewDrag?.value).toBeNull();
       expect(reviewDrag?.summary).toContain("Bitbucket never records a merge time");
       expect(reviewDrag?.summary).not.toContain("GitLab");
+    });
+
+    test("a measured review drag names a forge whose PRs were left out", async () => {
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-MIX",
+        services: ["acme/mix-svc"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+      seedEpicWithServices(db, {
+        key: "HIST-MIX",
+        services: ["acme/mix-svc"],
+        resolvedAtMs: NOW - 40 * DAY_MS,
+        createdAtMs: NOW - 70 * DAY_MS,
+      });
+      seedChildWithPr(db, {
+        epicKey: "HIST-MIX",
+        childSuffix: "c1",
+        service: "acme/mix-svc",
+        openedAtMs: NOW - 50 * DAY_MS,
+        mergedAtMs: NOW - 45 * DAY_MS,
+      });
+      seedChildWithBitbucketPr(db, {
+        epicKey: "HIST-MIX",
+        childSuffix: "c2",
+        repo: "acme/mix-svc",
+        openedAtMs: NOW - 50 * DAY_MS,
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-MIX" }, ctx(db));
+
+      const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
+      expect(reviewDrag?.value).not.toBeNull();
+      expect(reviewDrag?.summary).toContain("Bitbucket never records a merge time");
+      expect(reviewDrag?.summary).toContain("left out");
+    });
+
+    test("a measured review drag does not name the forge of an OPEN cohort PR, only a MERGED one", async () => {
+      // An open PR is not part of a merge-time median, so it is not "left out" of one — the same
+      // `merged = 1` rule the baseline-forge query applies (final review M-5).
+      const seed = (state: "MERGED" | "OPEN"): Database => {
+        const db = makeDb();
+        seedEpicWithServices(db, {
+          key: "PROJ-OPEN",
+          services: ["acme/open-svc"],
+          resolvedAtMs: NOW - 5 * DAY_MS,
+          createdAtMs: NOW - 15 * DAY_MS,
+        });
+        seedEpicWithServices(db, {
+          key: "HIST-OPEN",
+          services: ["acme/open-svc"],
+          resolvedAtMs: NOW - 40 * DAY_MS,
+          createdAtMs: NOW - 70 * DAY_MS,
+        });
+        seedChildWithPr(db, {
+          epicKey: "HIST-OPEN",
+          childSuffix: "c1",
+          service: "acme/open-svc",
+          openedAtMs: NOW - 50 * DAY_MS,
+          mergedAtMs: NOW - 45 * DAY_MS,
+        });
+        seedChildWithBitbucketPr(db, {
+          epicKey: "HIST-OPEN",
+          childSuffix: "c2",
+          repo: "acme/open-svc",
+          openedAtMs: NOW - 50 * DAY_MS,
+          state,
+        });
+        return db;
+      };
+
+      const open = (await runPremortem({ epicRef: "PROJ-OPEN" }, ctx(seed("OPEN")))).risks.find(
+        (r) => r.kind === "review_drag",
+      );
+      expect(open?.value).not.toBeNull();
+      expect(open?.summary).not.toContain("Bitbucket");
+      expect(open?.summary).not.toContain("left out");
+
+      const merged = (await runPremortem({ epicRef: "PROJ-OPEN" }, ctx(seed("MERGED")))).risks.find(
+        (r) => r.kind === "review_drag",
+      );
+      expect(merged?.value).not.toBeNull();
+      expect(merged?.summary).toContain("Bitbucket never records a merge time");
+      expect(merged?.summary).toContain("left out");
+    });
+
+    test("a measured review drag names a forge left out of the repo-wide BASELINE only", async () => {
+      // The cohort's own PRs are all timed GitHub PRs; the untimed Bitbucket PR sits only in the
+      // repo-wide baseline (`repoPrDurations`), which drops it too — so the left-out sentence
+      // must name Bitbucket, not only forges seen among the cohort's PRs.
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-BASE",
+        services: ["acme/base-svc"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+      seedEpicWithServices(db, {
+        key: "HIST-BASE",
+        services: ["acme/base-svc"],
+        resolvedAtMs: NOW - 40 * DAY_MS,
+        createdAtMs: NOW - 70 * DAY_MS,
+      });
+      seedChildWithPr(db, {
+        epicKey: "HIST-BASE",
+        childSuffix: "c1",
+        service: "acme/base-svc",
+        openedAtMs: NOW - 50 * DAY_MS,
+        mergedAtMs: NOW - 45 * DAY_MS,
+      });
+      // Baseline-only: linked to no cohort child, in the same repo, touched inside the window.
+      upsertIndexedItem(db, {
+        service: "bitbucket",
+        type: "pr",
+        externalId: "acme/base-svc#77",
+        title: "acme/base-svc#77",
+        metadata: bitbucketPrMetadata(
+          "acme/base-svc",
+          { id: 77, state: "MERGED", created_on: new Date(NOW - 30 * DAY_MS).toISOString() },
+          "dev",
+        ),
+        modifiedAt: NOW - 20 * DAY_MS,
+        syncedAt: NOW - 20 * DAY_MS,
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-BASE" }, ctx(db));
+
+      const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
+      expect(reviewDrag?.value).not.toBeNull();
+      expect(reviewDrag?.summary).toContain("left out");
+      expect(reviewDrag?.summary).toContain("Bitbucket never records a merge time");
     });
 
     test("a GitLab merge request counts toward the repo-wide baseline too", async () => {

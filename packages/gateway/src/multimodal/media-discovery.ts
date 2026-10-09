@@ -197,6 +197,7 @@ export function findCandidates(db: Database, opts: DiscoveryOptions): MediaCandi
   const out: MediaCandidate[] = [];
   for (const row of rows) {
     const meta = parseMetadata(row.metadata);
+    // lane-census: scope=media_av,media_image,photo,file service=filesystem,google_photos,google_drive,onedrive
     const mime = stringOrNull(meta["mimeType"]);
     const modality = modalityForItem(row.service, row.type, mime);
     if (modality === undefined) continue;

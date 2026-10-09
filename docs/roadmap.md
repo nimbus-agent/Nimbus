@@ -488,8 +488,8 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 
 - [x] **B2 — Perf bench (Phase 1)** — S8/S9/S10 drivers implemented; reference-machine baseline established; wired into CI via `_perf.yml`.
 - [x] **B3 — Structure audit (Phases 1 & 2)** — Phase 1 tooling (`check-nimbus-invariants.ts`, `count-any-usage.ts`) implemented; Phase 2 ranking and findings documented in `docs/structure-audit/baseline.md`.
-- [ ] **B4 — Bug-hunt audit** — ranked by user-facing impact / engineering cost. **2026-09-20: the
-  audit ran and a report-only census landed; the gate is still pending.** A table-aware static
+- [x] **B4 — Bug-hunt audit** — ranked by user-facing impact / engineering cost. **2026-09-20: the
+  audit ran and a report-only census landed; the gate followed on 2026-10-09 (below).** A table-aware static
   census (`bun run audit:lane-census`, `scripts/structure-audit/check-index-lane-coverage.ts`)
   diffs what production code reads from `item` (type literals, `json_extract` metadata keys,
   JS-side `meta["k"]` reads) against what every connector writes, and reproduces all four bugs the
@@ -500,10 +500,20 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
   `circleci` `ci_run` writer emits it, `github_actions` writes `headBranch`), and an unmatched
   `opened_at_ms` read (`agents/premortem.ts:199`/`:205` only — the same key IS matched at
   `metrics/dora.ts`'s incident-scoped read, which is what proves the census scopes per-literal
-  type rather than matching on key name alone). It always exits `0` and only writes
-  `docs/structure-audit/index-lane-census.json` — **this closes the audit half of the row, not the
-  row**: turning the census into an enforced CI gate over the found gaps is deferred follow-up
-  work, not yet scheduled.
+  type rather than matching on key name alone). As shipped then, it always exited `0` and only wrote
+  `docs/structure-audit/index-lane-census.json` — that closed the audit half of the row; the gate
+  half was deferred until A3. **2026-10-09: the gate half shipped** - `bun run audit:lane-census --check`
+  runs in `preflight:fast` and `_structure.yml`; every production SQL `item` read, and every SQL `json_extract`
+  and bracket-indexed `meta[...]`/`metadata[...]` metadata read, must match a writer, carry a
+  verified `// lane-census:` annotation, or be a counted exemption (29 at ship), and a stale or
+  miscounted exemption fails. Stated bounds: reads through interpolated SQL fragments, a `jsonPath`
+  parameter or string concatenation are not detected; neither are accessor-helper reads
+  (`stringField(meta, "k")` and its siblings), dotted reads (`meta.k`) or other receiver names; a regex
+  literal containing `//` or an unbalanced `(` can mis-span an annotation; and two writers the census
+  cannot see are exempted as `census-blind`. **Not shipped:** teaching the writer-emission pass the
+  conditional-spread and ternary-metadata shapes; teaching the read census accessor-helper and dotted
+  reads; checking an annotation's `service=` against the statement's own SQL service literal;
+  filesystem `git_commit` rebody beyond 40 commits (inherited from A1).
 - [x] **B5 (high-priority) — WAL concurrency hardening** — **DONE (2026-07-21, #426).** Finding confirmed first on a live 21 MB gateway DB: `PRAGMA journal_mode` returned `delete`. `applyWritablePragmas()` (`db/writable-pragmas.ts`) now sets `journal_mode = WAL` + `busy_timeout` at all three production writable open sites (main writer, embedding worker, `I13` HTTP write handle); `journal_mode` is a file-level property, so read-only handles inherit WAL without setting it. The shutdown `wal_checkpoint(TRUNCATE)` is no longer a no-op. Regression guard ships with it: runtime tests assert `wal` is actually adopted on a file-backed handle, plus a per-site assertion that each production open site still calls the helper (the first version of that guard matched the leftover import and had to be tightened to the call). Backups were checked and are WAL-safe — they use `VACUUM INTO`, not a file copy.
 - [ ] **Third-party package upgrades** — npm + cargo crate upgrades **deferred from the toolchain refresh** (the refresh PR bumped runner OSes, Node, and Rust MSRV but left dependency upgrades for a focused follow-up).
 

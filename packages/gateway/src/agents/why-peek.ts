@@ -29,6 +29,7 @@ function commitSubjectFor(
     .get(sha, repoRoot) as { id: string; label: string } | null;
 }
 
+// lane-census: scope=pr
 function prForSha(
   db: Database,
   sha: string,

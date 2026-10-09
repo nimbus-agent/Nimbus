@@ -190,3 +190,147 @@ describe("extractWriterEmissions", () => {
     expect(out).toHaveLength(0);
   });
 });
+
+describe("A3 writer shapes", () => {
+  const keysOf = (src: string) =>
+    extractWriterEmissions("packages/gateway/src/connectors/x.ts", src).flatMap(
+      (e) => e.metadataKeys,
+    );
+
+  test("a spread of a same-file builder contributes the builder's keys", () => {
+    const src = `
+      function depth(f: R): Record<string, unknown> {
+        const meta: Record<string, unknown> = { meta_v: 1 };
+        meta["status_category"] = "x";
+        return meta;
+      }
+      ctx.upsertItem({ service: "jira", type: "issue", metadata: { key, ...depth(fields) } });`;
+    expect(keysOf(src).sort()).toEqual(["key", "meta_v", "status_category"]);
+  });
+
+  test("metadata: ident whose const is initialised by a same-file call resolves through the callee", () => {
+    const src = `
+      function build(): Record<string, unknown> { return { number: 1, labels: [] }; }
+      const meta = build();
+      ctx.upsertItem({ service: "github", type: "pr", metadata: meta });`;
+    expect(keysOf(src).sort()).toEqual(["labels", "number"]);
+  });
+
+  test("a wrapper call's nested builder argument contributes its keys (github-sync shape, review 2.3)", () => {
+    const src = `
+      function extract(pr: R): Record<string, unknown> { return { number: 1, labels: [] }; }
+      function mergeForward(prior: R, meta: Record<string, unknown>, id: string): Record<string, unknown> {
+        return { ...meta };
+      }
+      const meta = mergeForward(ctx.itemMetadata, extract(pr), id);
+      ctx.upsertItem({ service: "github", type: "pr", metadata: meta });`;
+    expect(keysOf(src).sort()).toEqual(["labels", "number"]);
+  });
+
+  test("a same-file mutator called on the metadata var credits its literal keys and key-argument keys", () => {
+    const src = `
+      function putIfNonEmpty(meta: R, key: string, v: string | undefined): void { if (v) meta[key] = v; }
+      function applySha(out: R, pr: R): void { out["merge_commit_sha"] = "s"; }
+      function build(): Record<string, unknown> {
+        const meta: Record<string, unknown> = {};
+        putIfNonEmpty(meta, "issue_type", t);
+        applySha(meta, pr);
+        return meta;
+      }
+      ctx.upsertItem({ service: "jira", type: "issue", metadata: build() });`;
+    expect(keysOf(src).sort()).toEqual(["issue_type", "merge_commit_sha"]);
+  });
+
+  test("a for-of over a literal array assigning X[k] credits every element", () => {
+    const src = `
+      function build(): Record<string, unknown> {
+        const out: Record<string, unknown> = { number: 1 };
+        for (const key of ["additions", "deletions"] as const) { out[key] = 1; }
+        return out;
+      }
+      ctx.upsertItem({ service: "github", type: "pr", metadata: build() });`;
+    expect(keysOf(src).sort()).toEqual(["additions", "deletions", "number"]);
+  });
+
+  test("return wrapper(X, …) passes X's keys through (the raw map a contract builder keeps)", () => {
+    const src = `
+      function build(): Record<string, unknown> {
+        const out: Record<string, unknown> = { number: 1 };
+        return buildPrMetadata(out, { state: "open" });
+      }
+      ctx.upsertItem({ service: "github", type: "pr", metadata: build() });`;
+    expect(keysOf(src)).toEqual(["number"]);
+  });
+
+  test("clips/ is a writer directory", () => {
+    expect(WRITER_INCLUDE).toContain("packages/gateway/src/clips/");
+  });
+
+  test("a mutator whose parameter types carry generic commas still maps P0/P1 (real jira-sync shape)", () => {
+    const src = `
+      function putIfNonEmpty(meta: Record<string, unknown>, key: string, v: string | undefined): void {
+        if (v !== undefined && v !== "") {
+          meta[key] = v;
+        }
+      }
+      function putIfDefined(meta: Record<string, unknown>, key: string, v: number | undefined): void {
+        if (v !== undefined) {
+          meta[key] = v;
+        }
+      }
+      function jiraDepthMetadata(fields: Record<string, unknown> | undefined): Record<string, unknown> {
+        const meta: Record<string, unknown> = { meta_v: TICKET_META_VERSION };
+        if (fields === undefined) {
+          meta["status_category"] = normalizeJiraStatusCategory(undefined);
+          return meta;
+        }
+        putIfNonEmpty(meta, "issue_type", nestedStringField(fields, "issuetype", "name"));
+        putIfDefined(meta, "created_at_ms", msFromIso(stringField(fields, "created")));
+        return meta;
+      }
+      ctx.upsertItem({ service: "jira", type: "issue", metadata: { jiraId: id ?? key, key, ...jiraDepthMetadata(fields) } });`;
+    expect(keysOf(src).sort()).toEqual([
+      "created_at_ms",
+      "issue_type",
+      "jiraId",
+      "key",
+      "meta_v",
+      "status_category",
+    ]);
+  });
+
+  test("metadata: ident resolves the NEAREST preceding const, not the file's first same-named one (github-sync pr vs issue)", () => {
+    const src = `
+      function upsertPr(): void {
+        const meta = build();
+        ctx.upsertItem({ service: "github", type: "pr", metadata: meta });
+      }
+      function build(): Record<string, unknown> { return { number: 1, labels: [] }; }
+      function upsertIssue(): void {
+        const meta: Record<string, unknown> = { number: num, repo: repoFull, state: s, user: login };
+        ctx.upsertItem({ service: "github", type: "issue", metadata: meta });
+      }`;
+    const out = extractWriterEmissions("packages/gateway/src/connectors/x.ts", src);
+    const byType = (t: string) =>
+      [...(out.find((e) => e.itemType === t)?.metadataKeys ?? [])].sort();
+    expect(byType("pr")).toEqual(["labels", "number"]);
+    expect(byType("issue")).toEqual(["number", "repo", "state", "user"]);
+  });
+
+  test("return f(param, …) to a same-file builder resolves f, never the file's unrelated same-named const", () => {
+    const src = `
+      const row = { unrelated_key: 1 };
+      function inner(row: R, id: string): Record<string, unknown> { return { real_key: 1 }; }
+      function build(row: R): Record<string, unknown> { return inner(row, "x"); }
+      ctx.upsertItem({ service: "jira", type: "issue", metadata: build(r) });`;
+    expect(keysOf(src)).toEqual(["real_key"]);
+  });
+
+  test("return wrapper(param, …) to a cross-file wrapper credits nothing when param is no body const", () => {
+    const src = `
+      const out = { unrelated_key: 1 };
+      function build(out: R): Record<string, unknown> { return buildPrMetadata(out, { state: "open" }); }
+      ctx.upsertItem({ service: "github", type: "pr", metadata: build(r) });`;
+    expect(keysOf(src)).toEqual([]);
+  });
+});

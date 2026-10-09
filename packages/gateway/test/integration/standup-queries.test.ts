@@ -551,6 +551,36 @@ describe("standup queries against the real migrated schema", () => {
     }
   });
 
+  test("the chat lane is Slack's: a Discord message by the owner is not selected or counted", () => {
+    const db = createMemoryIndexDb();
+    try {
+      insertItem(db, {
+        id: "msg-slack",
+        service: "slack",
+        type: "message",
+        externalId: "C1:700.1",
+        title: "slack post",
+        modifiedAt: NOW - HOUR,
+        authorId: ME,
+        meta: { channel: "C1", thread_ts: null },
+      });
+      insertItem(db, {
+        id: "msg-discord",
+        service: "discord",
+        type: "message",
+        externalId: "D1:701.1",
+        title: "discord post",
+        modifiedAt: NOW - 2 * HOUR,
+        authorId: ME,
+        meta: { channel: "D1", thread_ts: null },
+      });
+      expect(selectMessages(db, W, ME).map((r) => r.id)).toEqual(["msg-slack"]);
+      expect(countMessageThreads(db, W, ME)).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test("threads: two replies in ONE channel and thread are still one thread", () => {
     const db = createMemoryIndexDb();
     try {

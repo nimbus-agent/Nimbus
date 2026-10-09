@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
+import { bitbucketPrMetadata } from "../connectors/bitbucket-sync.ts";
 import { circleciPipelineMetadata } from "../connectors/circleci-sync.ts";
 import { githubActionsRunMetadata } from "../connectors/github-actions-sync.ts";
 import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
@@ -625,7 +627,7 @@ describe("leadTimeForChanges", () => {
     expect(result.gap).toBe("no_deployment_data"); // no approximate flag either
   });
 
-  test("PR with no merged_at returns no lead time (not approximate)", () => {
+  test("PR with no merged_at returns no lead time (not approximate, but disclosed)", () => {
     const cfg = baseConfig({ deployEnvironments: [] });
     const sha = "sha-nomerge";
     insertCiRun(db, "github_actions", "Deploy main", NOW - ONE_DAY, "org/repo", sha);
@@ -637,8 +639,8 @@ describe("leadTimeForChanges", () => {
     });
     const result = leadTimeForChanges(db, cfg, NOW, SINCE);
     expect(result.value).toBeNull();
-    // merged_at is null → leadTime=null, approximate=false
-    expect(result.gap).toBe("no_deployment_data");
+    // merged_at is null → leadTime=null, approximate=false, but the merge is unmeasurable.
+    expect(result.gap).toBe("incomplete_merge_data");
   });
 
   test("PR with no merge_commit_sha sets approximate=true", () => {
@@ -862,6 +864,110 @@ describe("leadTimeForChanges", () => {
     );
     const result = leadTimeForChanges(db, cfg, NOW, SINCE);
     expect(result.value).toBe(3600);
+  });
+
+  describe("merge-time and label disclosure", () => {
+    const multiForge = (overrides?: Partial<ServiceConfig>): ServiceConfig =>
+      baseConfig({
+        deployEnvironments: [],
+        repos: [
+          { provider: "github", providerId: "org/repo" },
+          { provider: "bitbucket", providerId: "org/repo" },
+          { provider: "gitlab", providerId: "org/repo" },
+        ],
+        ...overrides,
+      });
+    const seedBitbucketMerged = (): void => {
+      insertItem(
+        db,
+        "bitbucket",
+        "pr",
+        "BB PR",
+        NOW - 2 * ONE_DAY,
+        bitbucketPrMetadata("org/repo", { id: 5, state: "MERGED" }, undefined),
+      );
+    };
+    const seedGitlabMerged = (): void => {
+      insertItem(
+        db,
+        "gitlab",
+        "pr",
+        "GL MR",
+        NOW - 2 * ONE_DAY,
+        gitlabMrMetadata(
+          {
+            pathWithNamespace: "org/repo",
+            iid: 9,
+            actionName: "accepted",
+            eventCreatedAt: new Date(NOW - 2 * ONE_DAY).toISOString(),
+          },
+          null,
+        ),
+      );
+    };
+    const seedMeasuredGithub = (stripLabels: boolean): void => {
+      insertCiRun(db, "github_actions", "Deploy main", NOW - ONE_DAY, "org/repo", "sha-ok");
+      const meta = extractPrMetadataForIndex("org/repo", {
+        number: 3,
+        state: "closed",
+        merged: true,
+        labels: [],
+        merged_at: new Date(NOW - 2 * ONE_DAY).toISOString(),
+        merge_commit_sha: "sha-ok",
+      });
+      // Deliberate legacy shape: a measured PR row that carries no labels array at all.
+      if (stripLabels) delete meta["labels"];
+      insertItem(db, "github", "pr", "GH PR", NOW - 2 * ONE_DAY, meta);
+    };
+
+    test("a merged Bitbucket PR with no merge time reports incomplete_merge_data, not no_deployment_data", () => {
+      insertCiRun(db, "github_actions", "Deploy main", NOW - ONE_DAY, "org/repo", "sha-x");
+      seedBitbucketMerged();
+      expect(leadTimeForChanges(db, multiForge(), NOW, SINCE).gap).toBe("incomplete_merge_data");
+    });
+
+    test("a GitHub-only service with default excludePrLabels gains no new gap", () => {
+      seedMeasuredGithub(false);
+      const r = leadTimeForChanges(db, baseConfig({ deployEnvironments: [] }), NOW, SINCE);
+      expect(r.gap === null || r.gap === "low_sample").toBe(true);
+    });
+
+    test("a measured lead time with a PR that carries no labels reports pr_labels_unavailable", () => {
+      seedMeasuredGithub(true);
+      // Enough measured samples to clear low_sample is not needed: the label gap outranks it.
+      const r = leadTimeForChanges(db, baseConfig({ deployEnvironments: [] }), NOW, SINCE);
+      expect(r.value).not.toBeNull();
+      expect(r.gap).toBe("pr_labels_unavailable");
+    });
+
+    test("a GitLab MR (no labels, no merge sha) next to a measured PR is approximate, which outranks", () => {
+      seedMeasuredGithub(false);
+      seedGitlabMerged();
+      expect(leadTimeForChanges(db, multiForge(), NOW, SINCE).gap).toBe("approximate_lead_time");
+    });
+
+    test("approximate_lead_time outranks incomplete_merge_data", () => {
+      insertCiRun(db, "github_actions", "Deploy main", NOW - ONE_DAY, "org/repo", "sha-x");
+      insertPr(db, "github", NOW - 2 * ONE_DAY, {
+        merged: true,
+        merged_at: NOW - 2 * ONE_DAY,
+        merge_commit_sha: "no-such-deploy",
+        labels: [],
+      });
+      seedBitbucketMerged();
+      expect(leadTimeForChanges(db, multiForge(), NOW, SINCE).gap).toBe("approximate_lead_time");
+    });
+
+    test("an empty excludePrLabels never reports pr_labels_unavailable", () => {
+      seedMeasuredGithub(true);
+      const r = leadTimeForChanges(
+        db,
+        baseConfig({ deployEnvironments: [], excludePrLabels: [] }),
+        NOW,
+        SINCE,
+      );
+      expect(r.gap).not.toBe("pr_labels_unavailable");
+    });
   });
 
   test("deploy without headSha (headSha is null) doesn't match PR", () => {

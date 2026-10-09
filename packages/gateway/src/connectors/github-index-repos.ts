@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 export function listGithubReposFromIndex(db: Database): string[] {
+  // lane-census: scope=pr,review,issue service=github
   const rows = db
     .query(
       `SELECT DISTINCT json_extract(metadata, '$.repo') AS repo

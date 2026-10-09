@@ -8,8 +8,11 @@
  * does not recognise.
  */
 
-/** Bump when a mapper starts writing a key consumers may rely on. Drives `rebody` eligibility. */
-export const PR_META_VERSION = 1;
+/**
+ * Bump when a mapper starts writing a key consumers may rely on. Drives `rebody` eligibility.
+ * 2 (A3): canonical `number` (GitHub number, GitLab iid, Bitbucket id).
+ */
+export const PR_META_VERSION = 2;
 
 export type PrService = "github" | "bitbucket" | "gitlab";
 
@@ -22,6 +25,7 @@ export type CanonicalPrKey =
   | "opened_at_ms"
   | "merged_at"
   | "repo"
+  | "number"
   | "meta_v";
 
 export const CANONICAL_PR_KEYS: readonly CanonicalPrKey[] = [
@@ -31,6 +35,7 @@ export const CANONICAL_PR_KEYS: readonly CanonicalPrKey[] = [
   "opened_at_ms",
   "merged_at",
   "repo",
+  "number",
   "meta_v",
 ];
 
@@ -50,6 +55,7 @@ export const PR_EMITTED_KEYS: Readonly<Record<PrService, ReadonlySet<CanonicalPr
     "merged",
     "opened_at_ms",
     "repo",
+    "number",
     "meta_v",
   ]),
   gitlab: new Set<CanonicalPrKey>(CANONICAL_PR_KEYS),
@@ -61,6 +67,7 @@ export type PrFields = {
   readonly openedAtMs?: number | undefined;
   readonly mergedAtMs?: number | undefined;
   readonly repo?: string | undefined;
+  readonly number?: number | undefined;
 };
 
 function lookup(
@@ -170,6 +177,9 @@ export function buildPrMetadata(
   }
   if (typeof fields.repo === "string" && fields.repo !== "") {
     out["repo"] = fields.repo;
+  }
+  if (typeof fields.number === "number" && Number.isInteger(fields.number) && fields.number > 0) {
+    out["number"] = fields.number;
   }
   out["meta_v"] = PR_META_VERSION;
   return out;

@@ -46,6 +46,7 @@ const fromIndex: Extractor = (_meta, modifiedAt) => ({ atMs: modifiedAt, source:
  * ignores the only field distinguishing a resolved incident from an open one is also a
  * function whose unit test cannot fail in the direction that matters.
  */
+// lane-census: scope=incident service=pagerduty
 const incidentResolved: Extractor = (meta, modifiedAt) =>
   meta["status"] === "resolved" ? { atMs: modifiedAt, source: "index" } : null;
 

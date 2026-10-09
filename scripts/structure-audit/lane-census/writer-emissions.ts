@@ -19,13 +19,19 @@ export type WriterEmission = {
 const UNRESOLVED = "__UNRESOLVED__";
 
 /**
- * The only two places a real item write can originate: the first-party connectors (one package,
- * bundled into the compiled binary — see `CLAUDE.md` § Subsystems) and the one non-connector path
- * that also inserts directly into `item`, `deployment/annotate.ts`.
+ * The only places a real item write can originate: the first-party connectors (one package,
+ * bundled into the compiled binary — see `CLAUDE.md` § Subsystems) and the two non-connector
+ * paths that also insert directly into `item`, `deployment/annotate.ts` and `clips/`.
+ *
+ * `index/item-store.ts` is deliberately NOT here (A3 Ruling R2): its own `mime_type`/
+ * `size_bytes`/`parent_id`/`created_at` writes are reached only through `LocalIndex.upsert`, which
+ * has no production caller, so crediting them would manufacture coverage for keys nothing writes.
  */
 export const WRITER_INCLUDE: readonly string[] = [
   "packages/gateway/src/connectors/",
   "packages/gateway/src/deployment/annotate.ts",
+  // `clip-ingest.ts` writes `nimbus:web_clip` through `upsertIndexedItem`.
+  "packages/gateway/src/clips/",
 ];
 
 /**
@@ -77,7 +83,9 @@ export function extractWriterEmissions(file: string, contents: string): readonly
     const itemTypeValues = resolveStringValues(propValueExpr(typeProp), src);
     const metadataProp = props.find((p) => p.key === "metadata");
     const metadataKeys =
-      metadataProp === undefined ? [] : resolveMetadataKeys(propValueExpr(metadataProp), src);
+      metadataProp === undefined
+        ? []
+        : resolveMetadataKeys(propValueExpr(metadataProp), src, literal.start);
     const line = lineAt(src, literal.start);
 
     for (const service of serviceValues) {
@@ -329,7 +337,7 @@ function matchCallExpression(text: string): string | undefined {
 type ConstDeclaration = { readonly exprText: string; readonly declEnd: number };
 
 /**
- * Finds the first `const NAME = <expr>;` in `text` (module-level or local — this is a whole-text
+ * Finds the first (given `before`, the nearest preceding) `const NAME = <expr>;` in `text` (module-level or local — this is a whole-text
  * search, not scope-aware, which is the deliberate approximation this whole file makes: precise
  * enough for the flat, mostly-single-scope shape real connector files use, and consistent with
  * `alias-binding.ts`/`read-sites.ts`'s own regex-over-text approach rather than a real parser),
@@ -339,11 +347,26 @@ type ConstDeclaration = { readonly exprText: string; readonly declEnd: number };
  * / `resolveInBodyIdentifierMetadataKeys` use to look for further bracket/dot-assignment statements
  * in the same enclosing scope.
  */
-function findConstDeclaration(name: string, text: string): ConstDeclaration | undefined {
-  const re = new RegExp(`\\bconst\\s+${escapeRegExp(name)}\\b\\s*(?::[^=;]*)?=\\s*`);
-  const m = re.exec(text);
+function findConstDeclaration(
+  name: string,
+  text: string,
+  before?: number,
+): ConstDeclaration | undefined {
+  const re = new RegExp(`\\bconst\\s+${escapeRegExp(name)}\\b\\s*(?::[^=;]*)?=\\s*`, "g");
+  let m: RegExpExecArray | null = re.exec(text);
   if (m === null) {
     return undefined;
+  }
+  // With a `before` position (the write site), prefer the NEAREST declaration preceding it: two
+  // functions in one file each declaring their own `const meta` (`github-sync.ts`'s `upsertPr` and
+  // its issue writer) must not both resolve to the file's first one. No preceding match keeps
+  // today's first-match behaviour.
+  if (before !== undefined) {
+    let next: RegExpExecArray | null = re.exec(text);
+    while (next !== null && next.index < before) {
+      m = next;
+      next = re.exec(text);
+    }
   }
   const start = m.index + m[0].length;
   const semi = findTopLevelSemicolon(text, start);
@@ -390,8 +413,10 @@ function findTopLevelSemicolon(text: string, start: number): number {
 /**
  * Resolves a `metadata:` property value to its object literal's top-level key names. Three forms,
  * all confirmed in the real tree:
- *  - an inline object literal (`{ workflowName: name, conclusion, headSha }`) — read directly;
- *  - a bare identifier (`meta`) — one hop to `const meta = { … }` anywhere in the same file;
+ *  - an inline object literal (`{ workflowName: name, conclusion, headSha }`) — read directly,
+ *    plus the keys of every top-level `...sameFileBuilder(…)` spread in it (`spreadCallees`);
+ *  - a bare identifier (`meta`) — one hop to `const meta = { … }` anywhere in the same file, or
+ *    to `const meta = build(…)` resolved through the call (`resolveDeclInitKeys`);
  *  - a call whose callee is defined in the same file (`buildPagerdutyMetadata(row, id, …)`) — one
  *    hop into the callee's body, reading either what it directly returns as an object literal, or
  *    (the shape `pagerduty-sync.ts` actually uses) a local variable the body assigns the object to
@@ -402,25 +427,34 @@ function findTopLevelSemicolon(text: string, start: number): number {
  * declaration — the shape `pagerduty-sync.ts`'s `buildPagerdutyMetadata` uses to set
  * `opened_at_ms`/`pagerduty_service_id`/`severity`/`urgency` conditionally, after building the base
  * object literal. A conditional assignment still counts: the key is emitted on at least some writer
- * rows, and a read scoped to it is not reading a dead lane. See `findExtraAssignedKeys` for what is
- * deliberately NOT chased (a computed key, an object spread) and why.
+ * rows, and a read scoped to it is not reading a dead lane. `findAssignedKeys` also credits keys set
+ * through a same-file mutator and a literal-array `for…of`; see `findDirectAssignedKeys` for what
+ * is deliberately NOT chased (a computed key, an object spread) and why.
  * Anything else (a property-access expression, `a ?? b`, …) resolves to no keys — `[]`, not
  * `__UNRESOLVED__`: `__UNRESOLVED__` is reserved for `itemType`, since a writer with an
  * unresolvable TYPE cannot be attributed to any read lane at all, where a writer with unresolvable
  * metadata keys is still a real, attributable write with (as far as this extractor can tell) no
  * metadata — the same "record it as empty rather than invent a key" posture the spec calls out.
  */
-function resolveMetadataKeys(exprTextRaw: string, src: string): readonly string[] {
+function resolveMetadataKeys(
+  exprTextRaw: string,
+  src: string,
+  writeAt?: number,
+): readonly string[] {
   const exprText = exprTextRaw.trim();
 
   const direct = tryObjectLiteralTopLevelKeys(exprText);
   if (direct !== undefined) {
-    return direct;
+    let keys = direct;
+    for (const callee of spreadCallees(exprText)) {
+      keys = mergeUniqueKeys(keys, resolveMetadataKeysFromCall(callee, src));
+    }
+    return keys;
   }
 
   const ident = matchBareIdentifier(exprText);
   if (ident !== undefined) {
-    return resolveTopLevelIdentifierMetadataKeys(ident, src);
+    return resolveTopLevelIdentifierMetadataKeys(ident, src, new Set(), writeAt);
   }
 
   const callee = matchCallExpression(exprText);
@@ -440,18 +474,23 @@ function resolveMetadataKeys(exprTextRaw: string, src: string): readonly string[
  * declaration nested one level deeper (inside an `if`, say) is not over-scoped to the whole
  * function.
  */
-function resolveTopLevelIdentifierMetadataKeys(ident: string, src: string): readonly string[] {
-  const decl = findConstDeclaration(ident, src);
+function resolveTopLevelIdentifierMetadataKeys(
+  ident: string,
+  src: string,
+  seen: ReadonlySet<string> = new Set(),
+  writeAt?: number,
+): readonly string[] {
+  const decl = findConstDeclaration(ident, src, writeAt);
   if (decl === undefined) {
     return [];
   }
-  const literalKeys = tryObjectLiteralTopLevelKeys(decl.exprText);
-  if (literalKeys === undefined) {
+  const initKeys = resolveDeclInitKeys(decl.exprText, src, seen);
+  if (initKeys === undefined) {
     return [];
   }
   const enclosing = findEnclosingBraceRange(src, decl.declEnd) ?? { start: 0, end: src.length };
   const tail = src.slice(decl.declEnd, enclosing.end);
-  return mergeUniqueKeys(literalKeys, findExtraAssignedKeys(ident, tail));
+  return mergeUniqueKeys(initKeys, findAssignedKeys(ident, tail, src));
 }
 
 /**
@@ -465,17 +504,96 @@ function resolveInBodyIdentifierMetadataKeys(
   ident: string,
   body: string,
   src: string,
+  seen: ReadonlySet<string> = new Set(),
 ): readonly string[] {
   const declInBody = findConstDeclaration(ident, body);
   if (declInBody !== undefined) {
-    const literalKeys = tryObjectLiteralTopLevelKeys(declInBody.exprText);
-    if (literalKeys === undefined) {
+    const initKeys = resolveDeclInitKeys(declInBody.exprText, src, seen);
+    if (initKeys === undefined) {
       return [];
     }
     const tail = body.slice(declInBody.declEnd);
-    return mergeUniqueKeys(literalKeys, findExtraAssignedKeys(ident, tail));
+    return mergeUniqueKeys(initKeys, findAssignedKeys(ident, tail, src));
   }
-  return resolveTopLevelIdentifierMetadataKeys(ident, src);
+  return resolveTopLevelIdentifierMetadataKeys(ident, src, seen);
+}
+
+/**
+ * The keys a metadata `const`'s INITIALISER contributes, before any later assignment: an object
+ * literal's top-level keys, or — when the initialiser is a call (`const meta = build(…)`) — the
+ * same-file callee's resolved keys UNIONED with those of every same-file call sitting directly in
+ * that call's argument list. The second half is the real `github-sync.ts` shape,
+ * `const meta = mergeForwardPrStats(ctx.itemMetadata, extractPrMetadataForIndex(…), externalId)`:
+ * the wrapper only returns (a spread of) its parameter, so the keys live in the nested builder
+ * argument, not in the wrapper (A3 review 2.3).
+ *
+ * Deliberately only ONE level of arguments, and only arguments that are themselves a whole call
+ * expression — an identifier or property-access argument (`ctx.itemMetadata`) carries no key set
+ * this file can see. `undefined` (not `[]`) for any other initialiser, so callers keep today's
+ * "unresolvable declaration contributes nothing, not even later assignments" posture.
+ */
+function resolveDeclInitKeys(
+  exprText: string,
+  src: string,
+  seen: ReadonlySet<string>,
+): readonly string[] | undefined {
+  const literalKeys = tryObjectLiteralTopLevelKeys(exprText);
+  if (literalKeys !== undefined) {
+    return literalKeys;
+  }
+  const init = stripTrailingAsConst(exprText.trim());
+  const callee = matchCallExpression(init);
+  if (callee === undefined) {
+    return undefined;
+  }
+  let keys = resolveMetadataKeysFromCall(callee, src, seen);
+  for (const arg of callArguments(init)) {
+    const argCallee = matchCallExpression(arg.trim());
+    if (argCallee !== undefined) {
+      keys = mergeUniqueKeys(keys, resolveMetadataKeysFromCall(argCallee, src, seen));
+    }
+  }
+  return keys;
+}
+
+/** The top-level argument texts of a whole call expression `callee(a, b(c), d)` — `[]` when it is not one. */
+function callArguments(callText: string): readonly string[] {
+  const open = callText.indexOf("(");
+  if (open === -1) {
+    return [];
+  }
+  const close = findMatchingParen(callText, open);
+  if (close === -1) {
+    return [];
+  }
+  return splitTopLevelCommas(callText.slice(open + 1, close)).filter((a) => a.trim() !== "");
+}
+
+/**
+ * Callee names of every top-level `...callee(args)` spread in an object literal's text — the shape
+ * `jira-sync.ts` / `linear-sync.ts` use (`{ jiraId, key, ...jiraDepthMetadata(fields) }`), where
+ * the ticket-depth keys live entirely in the same-file builder. `parseTopLevelProps` skips every
+ * spread; this recovers only the CALL form. A spread of an identifier or a property access
+ * (`...apiResponse`, `...row.fields`) is open-world — its keys are whatever a vendor sent — and
+ * stays unchased, for the same reason `findAssignedKeys` does not chase a computed key.
+ */
+function spreadCallees(objectText: string): readonly string[] {
+  const t = stripTrailingAsConst(objectText.trim());
+  if (!t.startsWith("{")) {
+    return [];
+  }
+  const close = findMatchingBrace(t, 0);
+  if (close === -1) {
+    return [];
+  }
+  const out: string[] = [];
+  for (const raw of splitTopLevelCommas(t.slice(1, close))) {
+    const m = /^\.\.\.\s*([A-Za-z_$][\w$]*)\s*\(/.exec(raw.trim());
+    if (m?.[1] !== undefined) {
+      out.push(m[1]);
+    }
+  }
+  return out;
 }
 
 /** `a` with every `b` entry appended that is not already present, order preserved. */
@@ -502,7 +620,7 @@ function mergeUniqueKeys(a: readonly string[], b: readonly string[]): readonly s
  * data or another service's response shape, not on anything sitting in the source as a literal —
  * unlike a literal key already sitting right there in the assignment.
  */
-function findExtraAssignedKeys(varName: string, scopeText: string): readonly string[] {
+function findDirectAssignedKeys(varName: string, scopeText: string): readonly string[] {
   const re = new RegExp(
     `\\b${escapeRegExp(varName)}\\s*(?:\\[\\s*(['"])([A-Za-z0-9_]+)\\1\\s*\\]|\\.([A-Za-z_$][A-Za-z0-9_$]*))\\s*=(?!=)`,
     "g",
@@ -517,6 +635,121 @@ function findExtraAssignedKeys(varName: string, scopeText: string): readonly str
     m = re.exec(scopeText);
   }
   return out;
+}
+
+/**
+ * Every literal key `scopeText` sets on `varName`, through any of three shapes:
+ *  - a direct `varName["k"] = …` / `varName.k = …` (`findDirectAssignedKeys`);
+ *  - a SAME-FILE mutator called with `varName` as its first argument — `jira-sync.ts`'s
+ *    `putIfNonEmpty(meta, "issue_type", …)` and `github-sync.ts`'s `applyMergeCommitSha(out, pr)`
+ *    (`findMutatorAssignedKeys`);
+ *  - a `for (const k of ["a", "b"]) { varName[k] = … }` loop over a literal array
+ *    (`findForOfAssignedKeys`) — `github-sync.ts`'s PR size-stat loop.
+ * `src` is the whole file, where a mutator's declaration is looked up. Each shape resolves only
+ * keys sitting in the source as a string literal; see the per-helper docs for what is not chased.
+ */
+function findAssignedKeys(varName: string, scopeText: string, src: string): readonly string[] {
+  return mergeUniqueKeys(
+    mergeUniqueKeys(
+      findDirectAssignedKeys(varName, scopeText),
+      findMutatorAssignedKeys(varName, scopeText, src),
+    ),
+    findForOfAssignedKeys(varName, scopeText),
+  );
+}
+
+/**
+ * For every call `callee(varName, …)` in `scopeText` whose `callee` is a same-file `function`
+ * declaration with first parameter `P0` (and second `P1`), credits (a) every literal key the
+ * callee's body assigns on `P0` (`P0["k"] =` / `P0.k =`), and (b) the call's own string-literal
+ * second argument when the body assigns `P0[P1] =` — `putIfNonEmpty(meta, "issue_type", v)`, whose
+ * body is `meta[key] = v`. One hop only: a mutator that hands `P0` on to a further mutator is not
+ * followed, and an arrow-function mutator or a cross-file one (an import) is not resolved — the
+ * real connector mutators are all same-file `function` declarations.
+ */
+function findMutatorAssignedKeys(
+  varName: string,
+  scopeText: string,
+  src: string,
+): readonly string[] {
+  const re = new RegExp(
+    `\\b([A-Za-z_$][\\w$]*)\\s*\\(\\s*${escapeRegExp(varName)}\\s*(?=[,)])(?:,\\s*(['"])([A-Za-z0-9_]+)\\2)?`,
+    "g",
+  );
+  const out: string[] = [];
+  let m: RegExpExecArray | null = re.exec(scopeText);
+  while (m !== null) {
+    const callee = m[1];
+    const fn = callee === undefined ? undefined : findFunctionDeclaration(callee, src);
+    const p0 = fn?.params[0];
+    if (fn !== undefined && p0 !== undefined && p0 !== "") {
+      for (const key of findDirectAssignedKeys(p0, fn.body)) {
+        if (!out.includes(key)) out.push(key);
+      }
+      const p1 = fn.params[1];
+      const keyArg = m[3];
+      if (p1 !== undefined && p1 !== "" && keyArg !== undefined && !out.includes(keyArg)) {
+        const computed = new RegExp(
+          `\\b${escapeRegExp(p0)}\\s*\\[\\s*${escapeRegExp(p1)}\\s*\\]\\s*=(?!=)`,
+        );
+        if (computed.test(fn.body)) {
+          out.push(keyArg);
+        }
+      }
+    }
+    m = re.exec(scopeText);
+  }
+  return out;
+}
+
+/**
+ * For every `for (const K of [ "a", "b", … ] …) { … }` in `scopeText` whose block assigns
+ * `varName[K] =`, every string literal in the array. Only a braced block, and only an array made
+ * of nothing but string literals — a loop over a variable or a spread is open-world (its elements
+ * are runtime data), the same reason a computed key is not chased.
+ */
+function findForOfAssignedKeys(varName: string, scopeText: string): readonly string[] {
+  const re = /\bfor\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s+\[([^\]]*)\]/g;
+  const out: string[] = [];
+  let m: RegExpExecArray | null = re.exec(scopeText);
+  while (m !== null) {
+    const loopVar = m[1];
+    const elements = splitTopLevelCommas(m[2] ?? "")
+      .map((e) => e.trim())
+      .filter((e) => e !== "");
+    const literals = elements.map((e) => /^(['"])([A-Za-z0-9_]+)\1$/.exec(e)?.[2]);
+    const parenOpen = scopeText.indexOf("(", m.index);
+    const parenClose = findMatchingParen(scopeText, parenOpen);
+    const blockOpen =
+      parenClose === -1 ? -1 : parenClose + 1 + leadingWhitespace(scopeText, parenClose + 1);
+    if (
+      loopVar !== undefined &&
+      literals.length > 0 &&
+      literals.every((l) => l !== undefined) &&
+      blockOpen !== -1 &&
+      scopeText[blockOpen] === "{"
+    ) {
+      const blockClose = findMatchingBrace(scopeText, blockOpen);
+      const block = blockClose === -1 ? "" : scopeText.slice(blockOpen + 1, blockClose);
+      const assigns = new RegExp(
+        `\\b${escapeRegExp(varName)}\\s*\\[\\s*${escapeRegExp(loopVar)}\\s*\\]\\s*=(?!=)`,
+      );
+      if (assigns.test(block)) {
+        for (const l of literals) {
+          if (l !== undefined && !out.includes(l)) out.push(l);
+        }
+      }
+    }
+    m = re.exec(scopeText);
+  }
+  return out;
+}
+
+/** Count of whitespace characters in `text` starting at `from`. */
+function leadingWhitespace(text: string, from: number): number {
+  let n = 0;
+  while (from + n < text.length && /\s/.test(text[from + n] ?? "")) n++;
+  return n;
 }
 
 /**
@@ -578,7 +811,18 @@ function tryObjectLiteralTopLevelKeys(text: string): readonly string[] | undefin
  * declared inside that SAME function body (checked before falling back to a whole-file lookup, so
  * this does not accidentally resolve to an unrelated same-named const elsewhere in the file).
  */
-function resolveMetadataKeysFromCall(calleeName: string, src: string): readonly string[] {
+function resolveMetadataKeysFromCall(
+  calleeName: string,
+  src: string,
+  seenIn: ReadonlySet<string> = new Set(),
+): readonly string[] {
+  // A callee already being resolved further up this chain contributes nothing more: the
+  // whole-file identifier fallback can otherwise loop (a wrapper's `return meta;` names its
+  // PARAMETER, the fallback finds the caller's `const meta = wrapper(…)`, which calls the wrapper).
+  if (seenIn.has(calleeName)) {
+    return [];
+  }
+  const seen = new Set([...seenIn, calleeName]);
   const body = findFunctionBodyOrExpr(calleeName, src);
   if (body === undefined) {
     return [];
@@ -601,10 +845,102 @@ function resolveMetadataKeysFromCall(calleeName: string, src: string): readonly 
   }
 
   const ident = matchBareIdentifier(returnedTrimmed);
-  if (ident === undefined) {
+  if (ident !== undefined) {
+    return resolveInBodyIdentifierMetadataKeys(ident, body, src, seen);
+  }
+
+  // `return f(…)`: a SAME-FILE `f` is resolved itself (one more hop, guarded by `seen`) — its
+  // first argument is not passed through, since `f`'s own body says what it returns. Only a
+  // cross-file wrapper passes its first argument's keys through, and only when that argument is a
+  // `const` declared in THIS body: a parameter has no key set here, and the whole-file fallback
+  // would credit an unrelated same-named declaration — over-crediting, the gate's dangerous
+  // direction.
+  const returnedCallee = matchCallExpression(returnedTrimmed);
+  if (returnedCallee === undefined) {
     return [];
   }
-  return resolveInBodyIdentifierMetadataKeys(ident, body, src);
+  if (findFunctionBodyOrExpr(returnedCallee, src) !== undefined) {
+    return resolveMetadataKeysFromCall(returnedCallee, src, seen);
+  }
+  const passed = passThroughReturnIdent(returnedTrimmed);
+  if (passed === undefined || findConstDeclaration(passed, body) === undefined) {
+    return [];
+  }
+  return resolveInBodyIdentifierMetadataKeys(passed, body, src, seen);
+}
+
+/**
+ * For a `return wrapper(X, …)` expression, the bare identifier `X` — `github-sync.ts`'s
+ * `return buildPrMetadata(out, { state, … })`, where the cross-file contract builder keeps every
+ * non-canonical key of the raw map `out` it is handed. Crediting `X`'s keys is what this file can
+ * see; the keys the wrapper ADDS (cross-file, here `pr-meta.ts`'s canonical set) are not chased,
+ * since the wrapper's own definition lives in another file this per-file extractor never reads.
+ * The flip side, stated: a wrapper that FILTERS `X` (as `buildPrMetadata` does for a raw key that
+ * collides with a canonical one) is still credited with every key of `X`.
+ */
+function passThroughReturnIdent(returned: string): string | undefined {
+  return /^[A-Za-z_$][\w$]*\s*\(\s*([A-Za-z_$][\w$]*)\s*[,)]/.exec(returned)?.[1];
+}
+
+/**
+ * A same-file `function name(P0, P1, …) { … }` declaration: its parameter NAMES (type annotations,
+ * defaults and `?` stripped; a destructured parameter yields `""`) and its body text. Only the
+ * `function` form — the mutator shape `findMutatorAssignedKeys` resolves; an arrow is not read here.
+ */
+function findFunctionDeclaration(
+  name: string,
+  src: string,
+): { readonly params: readonly string[]; readonly body: string } | undefined {
+  const fnRe = new RegExp(`\\bfunction\\s+${escapeRegExp(name)}\\s*(?:<[^>(]*>)?\\s*\\(`);
+  const fnMatch = fnRe.exec(src);
+  if (fnMatch === null) {
+    return undefined;
+  }
+  const parenOpen = fnMatch.index + fnMatch[0].length - 1;
+  const parenClose = findMatchingParen(src, parenOpen);
+  if (parenClose === -1) {
+    return undefined;
+  }
+  const braceOpen = src.indexOf("{", parenClose);
+  const braceClose = braceOpen === -1 ? -1 : findMatchingBrace(src, braceOpen);
+  if (braceClose === -1) {
+    return undefined;
+  }
+  const params = splitParamList(src.slice(parenOpen + 1, parenClose)).map(
+    (p) => /^\s*([A-Za-z_$][\w$]*)/.exec(p)?.[1] ?? "",
+  );
+  return { params, body: src.slice(braceOpen + 1, braceClose) };
+}
+
+/**
+ * Splits a parameter list on top-level commas — `splitTopLevelCommas` plus `<…>` depth, since a
+ * parameter TYPE carries generic commas (`meta: Record<string, unknown>, key: string` is two
+ * parameters, not three). The `>` of an arrow (`=>`, in a function-typed parameter) never closes
+ * a generic. Used only on a parameter list, where `<` is never a less-than comparison.
+ */
+function splitParamList(text: string): readonly string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let last = 0;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i = skipStringOrTemplate(text, i);
+      continue;
+    }
+    if (ch === "{" || ch === "(" || ch === "[" || ch === "<") {
+      depth++;
+    } else if (ch === "}" || ch === ")" || ch === "]" || (ch === ">" && text[i - 1] !== "=")) {
+      depth = Math.max(0, depth - 1);
+    } else if (ch === "," && depth === 0) {
+      parts.push(text.slice(last, i));
+      last = i + 1;
+    }
+    i++;
+  }
+  parts.push(text.slice(last));
+  return parts;
 }
 
 /**

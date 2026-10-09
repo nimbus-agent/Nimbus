@@ -32,6 +32,7 @@
 import { describe, expect, test } from "bun:test";
 import { collectLaneCensus } from "./check-index-lane-coverage.ts";
 import type { FileEntry } from "./check-nimbus-invariants.ts";
+import { contractEmissions } from "./lane-census/contract-emissions.ts";
 import { iterateSourceFiles } from "./lib.ts";
 
 const files: FileEntry[] = [];
@@ -40,7 +41,7 @@ for await (const f of iterateSourceFiles()) {
   files.push({ relPath: f.relPath, contents: f.contents });
 }
 
-const census = collectLaneCensus(files);
+const census = collectLaneCensus(files, { contractEmissions: contractEmissions() });
 
 describe("lane census over the real tree", () => {
   const unmatchedAt = (value: string, file: string) =>
@@ -68,53 +69,61 @@ describe("lane census over the real tree", () => {
     ).toBe(true);
   });
 
-  // PR A1 (index lane contract) fixed the preflight bug these two tests were written to catch:
-  // every ci_run writer except Jenkins now emits canonical `workflow_name`/`branch`, but through
-  // the `buildCiRunMetadata` builder, which this census cannot see yet. So both reads are still
-  // flagged — now as total absence, because the CircleCI `branch` write moved into the builder too.
-  // That is census blindness, not a dead lane. PR A3 teaches the census the contract tables; it MUST
-  // then flip these to matched (`workflow_name`: partial, no CircleCI/GitLab; `branch`: partial,
-  // no Jenkins). The read sites are located by their SQL text, not by line number, because the
+  // PR A1 (index lane contract) fixed the preflight bug these two tests were written to catch, and
+  // PR A3 taught the census the contract: the A1 emitted-keys tables enter it as writer rows
+  // (`line: 0`). Both reads are now honest PARTIALS — not dead lanes — because not every ci_run
+  // provider emits the key; the gap is disclosed by `ci_not_evaluable` / by design (Task 12 exempts
+  // them). The read sites are located by their SQL text, not by line number, because the
   // query was rewritten in A1 (failure filter moved out of the ranking CTE, repo scoping added).
   const preflightSrc =
     files.find((f) => f.relPath.endsWith("preflight/preflight.ts"))?.contents ?? "";
   const lineOf = (needle: string): number =>
     preflightSrc.split(/\r?\n/).findIndex((l) => l.includes(needle)) + 1;
 
-  test("preflight's workflow_name read is still flagged until the census learns the contract (A3)", () => {
+  test("preflight's workflow_name read is a partial naming the providers that emit it", () => {
     const line = lineOf("'$.workflow_name'");
     expect(line).toBeGreaterThan(0);
     const hits = unmatchedAt("workflow_name", "preflight/preflight.ts");
-    expect(hits.some((h) => h.line === line && h.matchState === "unmatched")).toBe(true);
+    const hit = hits.find((h) => h.line === line);
+    expect(hit?.matchState).toBe("partial");
+    expect(hit?.partialCoverage).toEqual(["github_actions", "jenkins"]);
   });
 
-  test("preflight's branch filter is still flagged until the census learns the contract (A3)", () => {
+  test("preflight's branch filter is a partial naming the providers that emit it", () => {
     const line = lineOf("'$.branch') = ?");
     expect(line).toBeGreaterThan(0);
     const hits = unmatchedAt("branch", "preflight/preflight.ts");
-    expect(hits.some((h) => h.line === line && h.matchState === "unmatched")).toBe(true);
+    const hit = hits.find((h) => h.line === line);
+    expect(hit?.matchState).toBe("partial");
+    expect(hit?.partialCoverage).toEqual(["circleci", "github_actions", "gitlab"]);
   });
 
-  test("premortem's opened_at_ms read is unmatched ONLY on pr-scoped rows, not dora's", () => {
-    const premortemHits = unmatchedAt("opened_at_ms", "agents/premortem.ts");
-    const premortemLines = new Set(premortemHits.map((h) => h.line));
-    // Located by SQL text, not line number: the premortem queries moved when its reader changed. The
-    // aliased `pr_item.metadata` read on the join query is not an unaliased item read the census sees.
+  test("premortem's pr-scoped opened_at_ms reads are matched by the PR contract, and dora's too", () => {
+    // Every `pr` writer now emits `opened_at_ms` through `buildPrMetadata`, so the reads that were
+    // once the per-type-scoping proof case are matched. Located by SQL text, not line number.
     const premortemSrc =
       files.find((f) => f.relPath.endsWith("agents/premortem.ts"))?.contents ?? "";
     const readLines = premortemSrc
       .split(/\r?\n/)
       .flatMap((l, i) => (l.includes("json_extract(metadata, '$.opened_at_ms')") ? [i + 1] : []));
     expect(readLines.length).toBeGreaterThanOrEqual(2);
+    const premortemUnmatched = unmatchedAt("opened_at_ms", "agents/premortem.ts");
     for (const line of readLines) {
-      expect(premortemLines.has(line)).toBe(true);
-    }
-    for (const h of premortemHits) {
-      if (readLines.includes(h.line)) expect(h.matchState).toBe("unmatched");
+      // Collected first: "not unmatched" alone would pass vacuously if these reads stopped being
+      // collected at all (final review M-6).
+      expect(
+        census.reads.some(
+          (r) =>
+            r.table === "item" &&
+            r.kind === "metadata-key" &&
+            r.value === "opened_at_ms" &&
+            r.file.endsWith("agents/premortem.ts") &&
+            r.line === line,
+        ),
+      ).toBe(true);
+      expect(premortemUnmatched.some((h) => h.line === line)).toBe(false);
     }
 
-    // The per-literal type-scoping guard: dora.ts reads the SAME key on a type that IS covered,
-    // so it must never appear in unmatchedItemReads — only premortem.ts's pr-scoped reads should.
     const doraUnmatched = census.unmatchedItemReads.filter(
       (r) => r.value === "opened_at_ms" && r.file.endsWith("metrics/dora.ts"),
     );
@@ -150,6 +159,8 @@ describe("lane census over the real tree", () => {
     // only to catch a collection that silently returned nothing (e.g. a broken glob).
     expect(census.reads.length).toBeGreaterThan(50);
     expect(census.writes.length).toBeGreaterThan(20);
-    expect(census.unmatchedItemReads.length).toBeGreaterThan(50);
+    // Contract rows (`line: 0`) are present — a broken import of the A1 tables would drop them.
+    expect(census.writes.some((w) => w.line === 0)).toBe(true);
+    // No lower bound on `unmatchedItemReads`: shrinking it is the whole point of the census.
   });
 });

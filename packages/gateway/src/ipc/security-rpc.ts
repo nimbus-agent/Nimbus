@@ -121,7 +121,9 @@ function blameResolverFor(
     } catch {
       return null;
     }
+    // lane-census: scope=code_symbol service=filesystem
     const repoRoot = meta["repoRoot"];
+    // lane-census: scope=code_symbol service=filesystem
     const file = meta["file"];
     if (typeof repoRoot !== "string" || typeof file !== "string") return null;
     return lookupBlame(db, repoRoot, file, absLine);

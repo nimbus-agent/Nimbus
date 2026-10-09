@@ -71,6 +71,7 @@ type RawJiraItemRow = {
  * such as `Épica`) can be told apart and reported with the cause actually
  * checked, rather than both collapsing into the same false "not found" claim.
  */
+// lane-census: scope=issue service=jira
 function lookupJiraItem(db: Database, key: string): RawJiraItemRow | null {
   return db
     .query(
@@ -89,6 +90,7 @@ function lookupJiraItem(db: Database, key: string): RawJiraItemRow | null {
  * Mirrors `cohort.ts`'s `childCountsFor`, but for the single TARGET epic
  * rather than a batch of already-selected cohort candidates.
  */
+// lane-census: scope=issue service=jira
 function childCountFor(db: Database, epicItemId: string, epicKey: string): number {
   const row = db
     .query(
@@ -161,6 +163,8 @@ type CohortPrTiming = {
   service: string;
   opened_at_ms: number | null;
   merged_at: number | null;
+  /** `json_extract` of `$.merged`: `1` for a merged PR, `0` for an open/closed one, `null` when unknown. */
+  merged: number | null;
 };
 
 /**
@@ -183,7 +187,8 @@ function cohortPrTimings(
       `SELECT DISTINCT pr_item.id AS id,
               pr_item.service AS service,
               json_extract(pr_item.metadata, '$.opened_at_ms') AS opened_at_ms,
-              json_extract(pr_item.metadata, '$.merged_at')    AS merged_at
+              json_extract(pr_item.metadata, '$.merged_at')    AS merged_at,
+              json_extract(pr_item.metadata, '$.merged')       AS merged
          ${cohortPrJoinSql(epicPlaceholders, servicePlaceholders)}`,
     )
     .all(...epicItemIds, ...services) as CohortPrTiming[];
@@ -219,6 +224,42 @@ function repoPrDurations(
   return toDurations(rows);
 }
 
+/**
+ * The forges (`item.service`) of MERGED baseline PRs in `services` that `repoPrDurations` drops for
+ * lacking `opened_at_ms` or `merged_at` — so the left-out disclosure names a forge whose PRs are
+ * missing only from the repo-wide baseline, not just those seen among the cohort's own PRs.
+ *
+ * The window cannot be `merged_at BETWEEN` (that is the very field a Bitbucket row lacks), so it is
+ * the merge time where one exists, else `modified_at` — the same last-touch fallback the
+ * changelog's non-GitHub merged count uses. Restricted to `merged = 1`: an open PR is not part of a
+ * merge-time median at all, so it is not "left out" of one.
+ */
+function repoForgesMissingTiming(
+  db: Database,
+  services: readonly string[],
+  windowFromMs: number,
+  windowToMs: number,
+): string[] {
+  if (services.length === 0) {
+    return [];
+  }
+  const placeholders = services.map(() => "?").join(", ");
+  const rows = db
+    .query(
+      `SELECT DISTINCT service
+         FROM item
+        WHERE type = 'pr'
+          AND json_valid(metadata)
+          AND ${prRepoExpr("item")} IN (${placeholders})
+          AND json_extract(metadata, '$.merged') = 1
+          AND (json_extract(metadata, '$.opened_at_ms') IS NULL
+               OR json_extract(metadata, '$.merged_at') IS NULL)
+          AND COALESCE(json_extract(metadata, '$.merged_at'), modified_at) BETWEEN ? AND ?`,
+    )
+    .all(...services, windowFromMs, windowToMs) as Array<{ service: string }>;
+  return rows.map((r) => r.service);
+}
+
 function reviewDragMedians(
   db: Database,
   cohort: CohortResult,
@@ -231,6 +272,11 @@ function reviewDragMedians(
 } {
   const epicItemIds = cohort.members.map((m) => m.itemId);
   const timings = cohortPrTimings(db, epicItemIds, services);
+  const forgesMissingTiming = [
+    ...new Set(
+      timings.filter((t) => t.opened_at_ms === null || t.merged_at === null).map((t) => t.service),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
   const timed = timings.filter(
     (t): t is CohortPrTiming & { opened_at_ms: number; merged_at: number } =>
       t.opened_at_ms !== null && t.merged_at !== null,
@@ -247,9 +293,7 @@ function reviewDragMedians(
     return {
       reviewDragMedianMs: null,
       repoReviewMedianMs: null,
-      forgesMissingTiming: [...new Set(timings.map((t) => t.service))].sort((a, b) =>
-        a.localeCompare(b),
-      ),
+      forgesMissingTiming,
     };
   }
 
@@ -263,10 +307,21 @@ function reviewDragMedians(
   // ordering.
   const windowFromMs = Math.min(...timed.map((t) => t.merged_at));
   const repoDurations = repoPrDurations(db, services, windowFromMs, nowMs);
+  // Measured: a PR is "left out of both medians" whether it was dropped from the cohort's or the
+  // baseline's, so name the forges of both. The cohort side counts only MERGED untimed PRs, the
+  // same `merged = 1` restriction `repoForgesMissingTiming` applies: an open PR is not part of a
+  // merge-time median at all, so it is not "left out" of one. (The unmeasured branch above keeps
+  // every untimed PR — there it explains why NOTHING could be measured.)
+  const cohortLeftOut = timings
+    .filter((t) => t.merged === 1 && (t.opened_at_ms === null || t.merged_at === null))
+    .map((t) => t.service);
+  const leftOutForges = [
+    ...new Set([...cohortLeftOut, ...repoForgesMissingTiming(db, services, windowFromMs, nowMs)]),
+  ].sort((a, b) => a.localeCompare(b));
   return {
     reviewDragMedianMs: median(toDurations(timed)),
     repoReviewMedianMs: median(repoDurations),
-    forgesMissingTiming: [],
+    forgesMissingTiming: leftOutForges,
   };
 }
 

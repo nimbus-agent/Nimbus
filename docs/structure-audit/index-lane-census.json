@@ -1,25 +1,23 @@
 {
   "knownBlindSpots": [
-    "imap and protonmail write item rows through a generic cross-file mapper called with plain function-call arguments rather than an inline `{ service, type, metadata }` object literal, so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry in unmatchedItemReads is this blind spot, not a confirmed dead lane."
+    "imap and protonmail write item rows through a generic cross-file mapper called with plain function-call arguments rather than an inline `{ service, type, metadata }` object literal, so their real writes produce zero WriterEmission rows here. An `imap:*`/`protonmail:*` entry in unmatchedItemReads is this blind spot, not a confirmed dead lane.",
+    "Reads are collected only as SQL `json_extract` paths and bracket-indexed JS reads spelled `meta[\"k\"]` / `metadata[\"k\"]`. Accessor-helper reads (`stringField(meta, \"k\")`, `finiteNumberField`, `nonEmptyStringField`, `stringArrayField`, …), dotted reads (`meta.k`) and reads on another receiver name (e.g. `stringField(row.metadata, \"merge_commit_sha\")`) are not in `reads` at all, so a dead key read that way is invisible to this census.",
+    "Annotation spans are computed over comment- and string-stripped code, but regex literals are not stripped: a regex literal containing `//` or an unbalanced `(` inside an annotated statement can end or extend that annotation's span at the wrong place."
   ],
   "sqlLiteralScopeNote": "A raw scan of packages/gateway/src/**/*.ts (minus *.test.ts) with extractSqlLiterals finds 483 SQL-shaped literals. This artifact's file set additionally excludes *-sql.ts files (an existing, repo-wide iterateSourceFiles() convention, not specific to this gate), which drops exactly 4 literals in 4 files: index/entity-metadata-v54-sql.ts, index/fleet-subjects-v63-sql.ts, index/glossary-manual-v46-sql.ts, index/unified-item-v3-sql.ts. Three are schema DDL (their only SQL-shaped text is an internal FTS-sync SELECT inside a CREATE TRIGGER body); the fourth is a one-time graph_entity migration UPDATE, already out of scope by table. None is a live read predicate reachable at runtime, so this fully explains the 483-vs-479 gap with zero effect on reads/writes/unmatchedItemReads below.",
   "counts": {
-    "reads": 401,
-    "writes": 117,
-    "unmatchedItemReads": 83,
-    "totalAbsence": 73,
-    "partialCoverage": 10,
-    "ambiguousReadCount": 122,
-    "parameterizedReads": 19
+    "reads": 384,
+    "writes": 125,
+    "unmatchedItemReads": 38,
+    "totalAbsence": 10,
+    "partialCoverage": 28,
+    "ambiguousReadCount": 10,
+    "parameterizedReads": 19,
+    "nonItemReads": 7,
+    "unscopedReads": 10,
+    "annotationErrors": 0
   },
   "reads": [
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "tags",
-      "file": "packages/gateway/src/toolgen/toolgen-grounding.ts",
-      "line": 34
-    },
     {
       "table": "item",
       "kind": "metadata-key",
@@ -30,23 +28,30 @@
     {
       "table": "item",
       "kind": "metadata-key",
+      "value": "tags",
+      "file": "packages/gateway/src/toolgen/toolgen-grounding.ts",
+      "line": 36
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
       "value": "service_name",
       "file": "packages/gateway/src/toolgen/toolgen-grounding.ts",
-      "line": 38
+      "line": 39
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "operation_id",
       "file": "packages/gateway/src/toolgen/toolgen-grounding.ts",
-      "line": 41
+      "line": 42
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "excerptStartLine",
       "file": "packages/gateway/src/security/scan.ts",
-      "line": 78
+      "line": 79
     },
     {
       "table": "item",
@@ -86,58 +91,44 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "created_at_ms",
-      "file": "packages/gateway/src/premortem/cohort.test-helpers.ts",
-      "line": 48
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
       "value": "parent_key",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 59
+      "line": 60
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "created_at_ms",
-      "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 117
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "resolved_at_ms",
-      "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 118
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status_category",
       "file": "packages/gateway/src/premortem/cohort.ts",
       "line": 119
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "issue_type",
+      "value": "resolved_at_ms",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 123
+      "line": 120
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status_category",
       "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 124
+      "line": 121
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "resolved_at_ms",
+      "value": "issue_type",
       "file": "packages/gateway/src/premortem/cohort.ts",
       "line": 125
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "status_category",
+      "file": "packages/gateway/src/premortem/cohort.ts",
+      "line": 126
     },
     {
       "table": "item",
@@ -147,270 +138,263 @@
       "line": 127
     },
     {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "resolved_at_ms",
+      "file": "packages/gateway/src/premortem/cohort.ts",
+      "line": 129
+    },
+    {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 56
+      "line": 57
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 58
+      "line": 59
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 54
+      "line": 55
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "parent_key",
       "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 61
+      "line": 62
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 65
+      "line": 66
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
-      "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 115
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "resolves",
       "file": "packages/gateway/src/premortem/epic-services.ts",
       "line": 117
     },
     {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "resolves",
+      "file": "packages/gateway/src/premortem/epic-services.ts",
+      "line": 119
+    },
+    {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 109
+      "line": 111
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "parent_key",
       "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 112
+      "line": 114
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 121
+      "line": 123
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status_category",
       "file": "packages/gateway/src/premortem/theme-discover.ts",
-      "line": 40
+      "line": 41
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "issue_type",
       "file": "packages/gateway/src/premortem/theme-discover.ts",
-      "line": 41
+      "line": 42
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_at_ms",
       "file": "packages/gateway/src/premortem/theme-discover.ts",
-      "line": 58
+      "line": 59
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 107
+      "line": 113
     },
     {
       "table": "item",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 135
+      "line": 141
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 136
+      "line": 142
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 137
+      "line": 143
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "urgency",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 138
+      "line": 144
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "severity",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 139
+      "line": 145
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "severity",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 140
+      "line": 146
     },
     {
       "table": "item",
       "kind": "type",
       "value": "ci_run",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 174
+      "line": 179
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "repo",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 173
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "workflow_name",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 166
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "headSha",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 168
+      "line": 174
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "branch",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 168
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "branch",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 175
+      "line": 181
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "conclusion",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 176
+      "line": 185
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "mergeable_state",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 229
+      "line": 250
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "mergeable_state",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 236
+      "line": 257
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "mergeable_state",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 244
+      "line": 265
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 121
+      "line": 127
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "severity",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 122
+      "line": 128
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 123
+      "line": 129
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 125
+      "line": 131
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "conclusion",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 198
+      "line": 212
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "branch",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 200
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "headSha",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 201
+      "line": 214
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "number",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 260
+      "line": 281
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "mergeable_state",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 262
+      "line": 283
     },
     {
       "table": "graph_relation",
@@ -526,269 +510,283 @@
     },
     {
       "table": "item",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/oncall-push/push-store.ts",
+      "line": 173
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/oncall-push/push-store.ts",
+      "line": 211
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/oncall-push/push-store.ts",
+      "line": 218
+    },
+    {
+      "table": "item",
       "kind": "metadata-key",
       "value": "mimeType",
       "file": "packages/gateway/src/multimodal/media-discovery.ts",
-      "line": 200
+      "line": 201
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "path",
       "file": "packages/gateway/src/multimodal/media-discovery.ts",
-      "line": 213
+      "line": 214
     },
     {
       "table": "item",
       "kind": "type",
       "value": "ci_run",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 101
+      "line": 116
     },
     {
       "table": "item",
       "kind": "type",
       "value": "deployment",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 136
+      "line": 151
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 245
+      "line": 329
     },
     {
       "table": "item",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 303
+      "line": 397
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 304
+      "line": 398
     },
     {
       "table": "item",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 380
+      "line": 474
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 377
+      "line": 471
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 382
+      "line": 476
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 383
+      "line": 477
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 384
+      "line": 478
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 69
+      "line": 81
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "project",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 71
+      "line": 84
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 71
+      "line": 84
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "jobName",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 73
+      "line": 87
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "conclusion",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 110
+      "line": 125
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "head_sha",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 236
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "headSha",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 192
+      "line": 238
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "meta_v",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 239
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 206
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 207
+      "line": 276
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "labels",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 210
+      "line": 279
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 280
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "labels",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 285
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merge_commit_sha",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 215
+      "line": 290
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 312
+      "line": 406
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 313
+      "line": 407
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pagerduty_service_id",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 315
+      "line": 409
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/metrics/service-identity.ts",
-      "line": 68
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "project",
-      "file": "packages/gateway/src/metrics/service-identity.ts",
-      "line": 70
+      "line": 71
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/metrics/service-identity.ts",
-      "line": 70
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "jobName",
-      "file": "packages/gateway/src/metrics/service-identity.ts",
-      "line": 72
+      "line": 75
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 156
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "repo",
-      "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 158
+      "line": 171
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 159
+      "line": 174
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 160
+      "line": 175
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 161
+      "line": 176
     },
     {
       "table": "item",
       "kind": "type",
       "value": "web_clip",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 122
+      "line": 123
     },
     {
       "table": "item",
       "kind": "type",
       "value": "web_clip",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 128
+      "line": 129
     },
     {
       "table": "item",
       "kind": "type",
       "value": "web_clip",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 135
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "tags",
-      "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 78
+      "line": 136
     },
     {
       "table": "item",
@@ -800,23 +798,23 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "mode",
+      "value": "tags",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 87
+      "line": 80
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "wordCount",
+      "value": "mode",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
       "line": 88
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "sourceWordCount",
+      "value": "wordCount",
       "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 92
+      "line": 89
     },
     {
       "table": "item",
@@ -835,23 +833,23 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "meta_v",
-      "file": "packages/gateway/src/ipc/index-rebody-rpc.ts",
-      "line": 418
+      "value": "sourceWordCount",
+      "file": "packages/gateway/src/ipc/clip-rpc.ts",
+      "line": 95
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "repoRoot",
       "file": "packages/gateway/src/ipc/security-rpc.ts",
-      "line": 124
+      "line": 125
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "file",
       "file": "packages/gateway/src/ipc/security-rpc.ts",
-      "line": 125
+      "line": 127
     },
     {
       "table": "item",
@@ -872,35 +870,7 @@
       "kind": "metadata-key",
       "value": "bodyFetch",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 310
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "mime_type",
-      "file": "packages/gateway/src/index/item-store.ts",
-      "line": 235
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "size_bytes",
-      "file": "packages/gateway/src/index/item-store.ts",
-      "line": 238
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "parent_id",
-      "file": "packages/gateway/src/index/item-store.ts",
-      "line": 241
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "created_at",
-      "file": "packages/gateway/src/index/item-store.ts",
-      "line": 244
+      "line": 311
     },
     {
       "table": "graph_relation",
@@ -1036,20 +1006,6 @@
       "line": 126
     },
     {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "lastModified",
-      "file": "packages/gateway/src/identity/scim-service.ts",
-      "line": 28
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "lastModified",
-      "file": "packages/gateway/src/identity/scim-service.ts",
-      "line": 29
-    },
-    {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
@@ -1096,77 +1052,77 @@
       "kind": "type",
       "value": "obsidian_note",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 497
+      "line": 500
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "commit",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 576
+      "line": 579
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "occurredAt",
-      "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 727
-    },
-    {
-      "table": "graph_entity",
-      "kind": "metadata-key",
-      "value": "affectedService",
       "file": "packages/gateway/src/graph/graph-populator.ts",
       "line": 730
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
+      "value": "affectedService",
+      "file": "packages/gateway/src/graph/graph-populator.ts",
+      "line": 733
+    },
+    {
+      "table": "graph_entity",
+      "kind": "metadata-key",
       "value": "occurredAt",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 731
+      "line": 734
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 337
+      "line": 338
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pr_number",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 374
+      "line": 376
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_wikilink_ids",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 490
+      "line": 493
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_by_email",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 823
+      "line": 827
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "assignedTo",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 919
+      "line": 924
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "project",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 937
+      "line": 943
     },
     {
       "table": "graph_entity",
@@ -1241,37 +1197,9 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "creationTimestamp",
-      "file": "packages/gateway/src/connectors/argocd-application-mapping.ts",
-      "line": 52
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "excerptStartLine",
-      "file": "packages/gateway/src/connectors/filesystem-v2-sync.ts",
-      "line": 348
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "creationTimestamp",
-      "file": "packages/gateway/src/connectors/flux-resource-mapping.ts",
-      "line": 70
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/connectors/github-index-repos.ts",
-      "line": 6
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "repo",
-      "file": "packages/gateway/src/connectors/github-index-repos.ts",
-      "line": 9
+      "line": 7
     },
     {
       "table": "item",
@@ -1282,171 +1210,66 @@
     },
     {
       "table": "item",
+      "kind": "metadata-key",
+      "value": "repo",
+      "file": "packages/gateway/src/connectors/github-index-repos.ts",
+      "line": 11
+    },
+    {
+      "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/connectors/github-sync.ts",
-      "line": 645
+      "line": 639
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "additions",
       "file": "packages/gateway/src/connectors/github-sync.ts",
-      "line": 649
+      "line": 643
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "run_id",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 38
+      "line": 42
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "run_id",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 50
+      "line": 54
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "active_batch_definition",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 65
+      "line": 69
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "batch_spec",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 75
+      "line": 79
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "status_category",
-      "file": "packages/gateway/src/connectors/jira-sync.ts",
-      "line": 396
+      "value": "author_login",
+      "file": "packages/gateway/src/connectors/_lib/gitlab/events.ts",
+      "line": 226
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "status_category",
-      "file": "packages/gateway/src/connectors/jira-sync.ts",
-      "line": 410
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 170
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status_category_raw",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 174
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status_category",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 176
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "created_at_ms",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 180
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "resolved_at_ms",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 187
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "due_at_ms",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 191
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "parent_key",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 197
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "project_id",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 203
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "summary",
-      "file": "packages/gateway/src/connectors/mlflow-model-mapping.ts",
-      "line": 139
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 88
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 89
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "severity",
-      "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 90
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "urgency",
-      "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 91
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "next_cursor",
-      "file": "packages/gateway/src/connectors/slack-sync.ts",
-      "line": 196
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "next_cursor",
-      "file": "packages/gateway/src/connectors/slack-sync.ts",
-      "line": 354
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "has_more",
-      "file": "packages/gateway/src/connectors/zendesk-sync.ts",
-      "line": 75
+      "value": "author_name",
+      "file": "packages/gateway/src/connectors/_lib/gitlab/events.ts",
+      "line": 227
     },
     {
       "table": "graph_entity",
@@ -1460,28 +1283,28 @@
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/catchup.ts",
-      "line": 336
+      "line": 314
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/catchup.ts",
-      "line": 354
+      "line": 328
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/agents/catchup.ts",
-      "line": 355
+      "line": 329
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/catchup.ts",
-      "line": 357
+      "line": 331
     },
     {
       "table": "item",
@@ -1495,840 +1318,805 @@
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/changelog-queries.ts",
-      "line": 318
+      "line": 321
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "state",
       "file": "packages/gateway/src/agents/changelog-queries.ts",
-      "line": 323
+      "line": 326
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/agents/changelog-queries.ts",
+      "line": 327
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 311
+      "line": 296
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "opened",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 314
+      "line": 299
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 352
+      "line": 337
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 355
+      "line": 340
     },
     {
       "table": "item",
       "kind": "type",
-      "value": "commit",
+      "value": "git_commit",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 386
+      "line": 373
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "git_commit",
+      "file": "packages/gateway/src/agents/expert.ts",
+      "line": 391
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 414
+      "line": 428
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 466
+      "line": 480
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 468
+      "line": 482
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "reviewed",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 470
+      "line": 484
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 495
+      "line": 509
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 497
+      "line": 511
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "reviewed",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 499
+      "line": 513
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 538
+      "line": 552
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 540
+      "line": 554
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 542
+      "line": 556
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "message",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 583
+      "line": 597
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "posted",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 584
+      "line": 598
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 585
+      "line": 599
     },
     {
       "table": "item",
       "kind": "type",
       "value": "message",
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 587
+      "line": 601
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "source_file",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 151
+      "line": 136
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "symbol",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 158
+      "line": 143
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "symbol",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 164
+      "line": 149
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "repo",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 186
+      "line": 171
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "triggers",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 251
+      "line": 228
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "ci_run",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 250
+      "line": 227
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pipeline_run",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 250
+      "line": 227
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "oncall_rotation",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 299
+      "line": 272
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "belongs_to",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 300
+      "line": 273
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "dashboard",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 333
+      "line": 302
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "upstream_refs",
       "file": "packages/gateway/src/agents/impact.ts",
-      "line": 334
+      "line": 303
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 106
+      "line": 107
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 210
+      "line": 211
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "authored",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 212
+      "line": 213
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "opened",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 212
+      "line": 213
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "reviewed",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 212
+      "line": 213
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 247
+      "line": 248
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "authored",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 249
+      "line": 250
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "opened",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 249
+      "line": 250
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "reviewed",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 249
+      "line": 250
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 399
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "pr",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 400
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "authored",
       "file": "packages/gateway/src/agents/negotiate.ts",
       "line": 402
     },
     {
       "table": "graph_entity",
       "kind": "type",
-      "value": "person",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 412
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 413
+      "line": 403
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "authored",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 415
+      "line": 405
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "person",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 416
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "pr",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 417
+    },
+    {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "authored",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 419
     },
     {
       "table": "item",
       "kind": "type",
       "value": "review",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 455
+      "line": 460
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "state",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 452
+      "line": 457
     },
     {
       "table": "item",
       "kind": "type",
       "value": "review",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 474
+      "line": 479
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 503
+      "line": 508
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 504
+      "line": 509
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "opened",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 506
+      "line": 511
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 514
+      "line": 519
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 515
+      "line": 520
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 517
+      "line": 522
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "authored",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 518
+      "line": 523
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 526
+      "line": 531
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 527
+      "line": 532
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "opened",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 529
+      "line": 534
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 587
+      "line": 592
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "owns",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 589
+      "line": 594
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "service",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 591
+      "line": 596
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "directory",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 591
+      "line": 596
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 626
+      "line": 631
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 650
+      "line": 655
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 718
+      "line": 723
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 719
+      "line": 724
     },
     {
       "table": "item",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 731
+      "line": 736
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 737
+      "line": 742
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "assigned",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 736
+      "line": 741
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 736
+      "line": 741
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 752
+      "line": 757
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "error_issue",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 753
+      "line": 758
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "assigned",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 755
+      "line": 760
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 764
+      "line": 769
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 765
+      "line": 770
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 767
+      "line": 772
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 378
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "additions",
       "file": "packages/gateway/src/agents/negotiate.ts",
       "line": 379
     },
     {
       "table": "item",
       "kind": "metadata-key",
+      "value": "additions",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 382
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
       "value": "deletions",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 385
+      "line": 388
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "changed_files",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 387
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "person",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 129
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "incident",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 130
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "incident",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 134
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "assigned",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 132
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "resolves",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 132
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "incident",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 154
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "incident",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 182
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 184
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "pr",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 310
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merge_commit_sha",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 313
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "ci_run",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 349
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "incident",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 455
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "pagerduty_service_id",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 458
+      "line": 390
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "issue_type",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 78
+      "line": 79
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "created_at_ms",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 79
+      "line": 80
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "parent_key",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 98
+      "line": 100
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 202
+      "line": 213
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 199
+      "line": 210
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 200
+      "line": 211
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "opened_at_ms",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 205
+      "line": 216
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 206
+      "line": 217
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 207
+      "line": 218
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "pr",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 251
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 254
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "opened_at_ms",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 255
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 256
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 257
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "correlates_with",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 373
+      "line": 436
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 374
+      "line": 437
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "deployment",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 375
+      "line": 438
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "affectedService",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 377
+      "line": 440
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "occurredAt",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 378
+      "line": 441
     },
     {
       "table": "item",
       "kind": "type",
       "value": "message",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 275
+      "line": 289
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "thread_ts",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 269
+      "line": 283
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "channel",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 270
+      "line": 284
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "thread_ts",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 271
+      "line": 285
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 307
+      "line": 322
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 308
+      "line": 323
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "assigned",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 310
+      "line": 325
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 310
+      "line": 325
     },
     {
       "table": "item",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 353
+      "line": 370
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "state",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 359
+      "line": 376
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 360
+      "line": 377
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
+      "file": "packages/gateway/src/agents/standup-queries.ts",
+      "line": 378
     },
     {
       "table": "graph_entity",
@@ -2349,175 +2137,189 @@
       "kind": "type",
       "value": "commit",
       "file": "packages/gateway/src/agents/why-peek.ts",
-      "line": 43
+      "line": 44
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/why-peek.ts",
-      "line": 44
+      "line": 45
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "merged_as",
       "file": "packages/gateway/src/agents/why-peek.ts",
-      "line": 46
+      "line": 47
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "number",
       "file": "packages/gateway/src/agents/why-peek.ts",
-      "line": 39
+      "line": 40
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/why-peek.ts",
-      "line": 69
+      "line": 70
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/agents/why-peek.ts",
-      "line": 70
+      "line": 71
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/why-peek.ts",
-      "line": 72
+      "line": 73
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "mentions",
       "file": "packages/gateway/src/agents/why-peek.ts",
-      "line": 94
+      "line": 95
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "depends_on",
       "file": "packages/gateway/src/agents/why-peek.ts",
-      "line": 101
+      "line": 102
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "correlates_with",
       "file": "packages/gateway/src/agents/why-peek.ts",
-      "line": 113
+      "line": 114
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 158
+      "line": 145
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 160
+      "line": 147
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "number",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 156
+      "line": 143
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "number",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 207
+      "line": 194
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "commit",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 426
+      "line": 414
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "repoRoot",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 427
+      "line": 415
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "commit",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 454
+      "line": 443
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 455
+      "line": 444
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "merged_as",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 457
+      "line": 446
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "number",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 449
+      "line": 438
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 494
+      "line": 483
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 495
+      "line": 484
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 497
+      "line": 486
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 612
+      "line": 601
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "reviewed",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 613
+      "line": 602
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "person",
+      "file": "packages/gateway/src/agents/why.ts",
+      "line": 632
+    },
+    {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "authored",
+      "file": "packages/gateway/src/agents/why.ts",
+      "line": 633
     },
     {
       "table": "graph_entity",
@@ -2529,7 +2331,7 @@
     {
       "table": "graph_relation",
       "kind": "type",
-      "value": "authored",
+      "value": "reviewed",
       "file": "packages/gateway/src/agents/why.ts",
       "line": 644
     },
@@ -2538,154 +2340,140 @@
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/why.ts",
+      "line": 653
+    },
+    {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "reviewed",
+      "file": "packages/gateway/src/agents/why.ts",
       "line": 654
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "reviewed",
-      "file": "packages/gateway/src/agents/why.ts",
-      "line": 655
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "person",
-      "file": "packages/gateway/src/agents/why.ts",
-      "line": 664
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "reviewed",
-      "file": "packages/gateway/src/agents/why.ts",
-      "line": 665
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "message",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 780
+      "line": 769
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "mentions",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 782
+      "line": 771
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "incident",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 827
+      "line": 816
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "occurredAt",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 824
+      "line": 813
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "occurredAt",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 828
+      "line": 817
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "deployment",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 844
+      "line": 833
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "correlates_with",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 845
+      "line": 834
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "symbol",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 898
+      "line": 887
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "file",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 899
+      "line": 888
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "repoRoot",
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 900
+      "line": 889
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "status",
       "file": "packages/gateway/src/agents/_lib/changelog-event-time.ts",
-      "line": 50
+      "line": 51
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "symbol",
       "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 17
+      "line": 18
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "file",
       "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 12
+      "line": 13
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "name",
       "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 13
+      "line": 14
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "excerptStartLine",
       "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 14
+      "line": 15
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "file",
       "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 18
+      "line": 19
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "repoRoot",
       "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 19
+      "line": 20
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "excerptStartLine",
       "file": "packages/gateway/src/agents/_lib/demo-symbol.ts",
-      "line": 20
+      "line": 21
     },
     {
       "table": "graph_relation",
@@ -2718,19 +2506,110 @@
     {
       "table": "graph_entity",
       "kind": "type",
-      "value": "pr",
-      "file": "packages/gateway/src/agents/_lib/pr-subject.ts",
-      "line": 51
+      "value": "person",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 130
     },
     {
       "table": "graph_entity",
-      "kind": "metadata-key",
-      "value": "repo",
-      "file": "packages/gateway/src/agents/_lib/pr-subject.ts",
-      "line": 46
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 131
     },
     {
       "table": "item",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 135
+    },
+    {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "assigned",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 133
+    },
+    {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "resolves",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 133
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 155
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 166
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 198
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "pagerduty_service_id",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 200
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "pr",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 327
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merge_commit_sha",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 330
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "ci_run",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 366
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 472
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "pagerduty_service_id",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 475
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "pr",
+      "file": "packages/gateway/src/agents/_lib/pr-subject.ts",
+      "line": 52
+    },
+    {
+      "table": "graph_entity",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/agents/_lib/pr-subject.ts",
@@ -2739,86 +2618,93 @@
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "number",
+      "value": "repo",
       "file": "packages/gateway/src/agents/_lib/pr-subject.ts",
       "line": 48
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "number",
+      "file": "packages/gateway/src/agents/_lib/pr-subject.ts",
+      "line": 49
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "symbol",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 77
+      "line": 78
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "file",
-      "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 71
-    },
-    {
-      "table": "graph_entity",
-      "kind": "metadata-key",
-      "value": "repoRoot",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
       "line": 72
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
-      "value": "name",
+      "value": "repoRoot",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
       "line": 73
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "excerptStartLine",
-      "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 74
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "name",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 77
+      "line": 74
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "excerptStartLine",
+      "file": "packages/gateway/src/agents/_lib/why-subject.ts",
+      "line": 75
+    },
+    {
+      "table": "graph_entity",
+      "kind": "metadata-key",
+      "value": "name",
+      "file": "packages/gateway/src/agents/_lib/why-subject.ts",
+      "line": 78
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "symbol",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 89
+      "line": 90
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "file",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 83
+      "line": 84
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "repoRoot",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 84
+      "line": 85
     },
     {
       "table": "graph_entity",
       "kind": "metadata-key",
       "value": "name",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 85
+      "line": 86
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "excerptStartLine",
       "file": "packages/gateway/src/agents/_lib/why-subject.ts",
-      "line": 86
+      "line": 87
     }
   ],
   "writes": [
@@ -2839,7 +2725,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/airflow-dag-mapping.ts",
-      "line": 124
+      "line": 103
     },
     {
       "service": "apple",
@@ -2878,7 +2764,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/argocd-application-mapping.ts",
-      "line": 93
+      "line": 80
     },
     {
       "service": "athena",
@@ -2901,7 +2787,7 @@
         "name"
       ],
       "file": "packages/gateway/src/connectors/aws-sync.ts",
-      "line": 88
+      "line": 81
     },
     {
       "service": "azure",
@@ -2944,14 +2830,9 @@
     {
       "service": "bitbucket",
       "itemType": "pr",
-      "metadataKeys": [
-        "id",
-        "repo",
-        "state",
-        "author"
-      ],
+      "metadataKeys": [],
       "file": "packages/gateway/src/connectors/bitbucket-sync.ts",
-      "line": 164
+      "line": 175
     },
     {
       "service": "bitrise",
@@ -2963,19 +2844,28 @@
         "is_disabled"
       ],
       "file": "packages/gateway/src/connectors/bitrise-build-mapping.ts",
-      "line": 65
+      "line": 55
     },
     {
       "service": "bitrise",
       "itemType": "build",
       "metadataKeys": [
-        "project_type",
-        "repo_url",
-        "default_branch",
-        "is_disabled"
+        "app_slug",
+        "status",
+        "status_code",
+        "workflow_id",
+        "branch",
+        "commit_hash",
+        "commit_message",
+        "triggered_by",
+        "pull_request_id",
+        "triggered_at",
+        "started_at",
+        "finished_at",
+        "duration_ms"
       ],
       "file": "packages/gateway/src/connectors/bitrise-build-mapping.ts",
-      "line": 145
+      "line": 135
     },
     {
       "service": "canva",
@@ -3000,12 +2890,11 @@
         "pipelineNumber",
         "pipelineId",
         "state",
-        "branch",
         "revision",
         "githubRepo"
       ],
       "file": "packages/gateway/src/connectors/circleci-sync.ts",
-      "line": 140
+      "line": 153
     },
     {
       "service": "cloud_logging",
@@ -3035,18 +2924,25 @@
         "branches"
       ],
       "file": "packages/gateway/src/connectors/codemagic-build-mapping.ts",
-      "line": 72
+      "line": 62
     },
     {
       "service": "codemagic",
       "itemType": "build",
       "metadataKeys": [
-        "repository",
-        "workflow_ids",
-        "branches"
+        "app_id",
+        "status",
+        "workflow_id",
+        "branch",
+        "tag",
+        "version",
+        "started_at",
+        "finished_at",
+        "duration_ms",
+        "commit"
       ],
       "file": "packages/gateway/src/connectors/codemagic-build-mapping.ts",
-      "line": 144
+      "line": 134
     },
     {
       "service": "confluence",
@@ -3055,7 +2951,7 @@
         "confluencePageId"
       ],
       "file": "packages/gateway/src/connectors/confluence-sync.ts",
-      "line": 162
+      "line": 163
     },
     {
       "service": "dagster",
@@ -3071,7 +2967,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/dagster-job-mapping.ts",
-      "line": 123
+      "line": 120
     },
     {
       "service": "dataprofile",
@@ -3106,7 +3002,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/databricks-job-mapping.ts",
-      "line": 99
+      "line": 86
     },
     {
       "service": "datadog",
@@ -3137,7 +3033,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/dbt-job-mapping.ts",
-      "line": 116
+      "line": 103
     },
     {
       "service": "dependencytrack",
@@ -3159,7 +3055,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/dependencytrack-project-mapping.ts",
-      "line": 100
+      "line": 79
     },
     {
       "service": "discord",
@@ -3221,13 +3117,9 @@
     {
       "service": "filesystem",
       "itemType": "git_commit",
-      "metadataKeys": [
-        "repoRoot",
-        "sha",
-        "subject"
-      ],
+      "metadataKeys": [],
       "file": "packages/gateway/src/connectors/filesystem-v2-sync.ts",
-      "line": 249
+      "line": 270
     },
     {
       "service": "filesystem",
@@ -3240,7 +3132,7 @@
         "repoRoot"
       ],
       "file": "packages/gateway/src/connectors/filesystem-v2-sync.ts",
-      "line": 287
+      "line": 311
     },
     {
       "service": "filesystem",
@@ -3253,7 +3145,7 @@
         "excerptStartLine"
       ],
       "file": "packages/gateway/src/connectors/filesystem-v2-sync.ts",
-      "line": 351
+      "line": 375
     },
     {
       "service": "filesystem",
@@ -3265,7 +3157,7 @@
         "mediaKind"
       ],
       "file": "packages/gateway/src/connectors/filesystem-v2-sync.ts",
-      "line": 690
+      "line": 714
     },
     {
       "service": "filesystem",
@@ -3277,7 +3169,7 @@
         "mediaKind"
       ],
       "file": "packages/gateway/src/connectors/filesystem-v2-sync.ts",
-      "line": 690
+      "line": 714
     },
     {
       "service": "firebase",
@@ -3293,7 +3185,7 @@
         "binary_download_uri"
       ],
       "file": "packages/gateway/src/connectors/firebase-release-mapping.ts",
-      "line": 82
+      "line": 72
     },
     {
       "service": "flagsmith",
@@ -3313,7 +3205,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/flagsmith-feature-mapping.ts",
-      "line": 100
+      "line": 90
     },
     {
       "service": "flux",
@@ -3334,7 +3226,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/flux-resource-mapping.ts",
-      "line": 107
+      "line": 97
     },
     {
       "service": "gcp",
@@ -3352,21 +3244,32 @@
         "workflowName",
         "runId",
         "event",
-        "conclusion",
         "headSha",
         "headBranch",
         "durationMs",
         "status"
       ],
       "file": "packages/gateway/src/connectors/github-actions-sync.ts",
-      "line": 139
+      "line": 160
     },
     {
       "service": "github",
       "itemType": "pr",
-      "metadataKeys": [],
+      "metadataKeys": [
+        "draft",
+        "user",
+        "labels",
+        "mergeable",
+        "mergeable_state",
+        "mergeable_state_fetched_at_ms",
+        "merge_commit_sha",
+        "additions",
+        "deletions",
+        "changed_files",
+        "commits"
+      ],
       "file": "packages/gateway/src/connectors/github-sync.ts",
-      "line": 330
+      "line": 323
     },
     {
       "service": "github",
@@ -3378,14 +3281,19 @@
         "state"
       ],
       "file": "packages/gateway/src/connectors/github-sync.ts",
-      "line": 379
+      "line": 372
     },
     {
       "service": "github",
       "itemType": "issue",
-      "metadataKeys": [],
+      "metadataKeys": [
+        "number",
+        "repo",
+        "state",
+        "user"
+      ],
       "file": "packages/gateway/src/connectors/github-sync.ts",
-      "line": 425
+      "line": 418
     },
     {
       "service": "google_drive",
@@ -3461,7 +3369,7 @@
         "runTime"
       ],
       "file": "packages/gateway/src/connectors/great-expectations-result-mapping.ts",
-      "line": 137
+      "line": 187
     },
     {
       "service": "greenhouse",
@@ -3508,7 +3416,7 @@
         "tick"
       ],
       "file": "packages/gateway/src/connectors/iac-sync.ts",
-      "line": 33
+      "line": 34
     },
     {
       "service": "__UNRESOLVED__",
@@ -3564,17 +3472,26 @@
         "duration_ms"
       ],
       "file": "packages/gateway/src/connectors/jenkins-sync.ts",
-      "line": 179
+      "line": 195
     },
     {
       "service": "jira",
       "itemType": "issue",
       "metadataKeys": [
         "jiraId",
-        "key"
+        "key",
+        "meta_v",
+        "status_category",
+        "issue_type",
+        "status",
+        "status_category_raw",
+        "created_at_ms",
+        "resolved_at_ms",
+        "due_at_ms",
+        "parent_key"
       ],
       "file": "packages/gateway/src/connectors/jira-sync.ts",
-      "line": 442
+      "line": 436
     },
     {
       "service": "kubernetes",
@@ -3585,7 +3502,7 @@
         "kind"
       ],
       "file": "packages/gateway/src/connectors/kubernetes-sync.ts",
-      "line": 76
+      "line": 73
     },
     {
       "service": "launchdarkly",
@@ -3609,7 +3526,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/launchdarkly-flag-mapping.ts",
-      "line": 119
+      "line": 96
     },
     {
       "service": "lever",
@@ -3632,17 +3549,26 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/lever-posting-mapping.ts",
-      "line": 140
+      "line": 131
     },
     {
       "service": "linear",
       "itemType": "issue",
       "metadataKeys": [
         "linearId",
-        "identifier"
+        "identifier",
+        "meta_v",
+        "status",
+        "status_category_raw",
+        "status_category",
+        "created_at_ms",
+        "resolved_at_ms",
+        "due_at_ms",
+        "parent_key",
+        "project_id"
       ],
       "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 234
+      "line": 228
     },
     {
       "service": "localdb",
@@ -3754,7 +3680,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/metabase-dashboard-mapping.ts",
-      "line": 102
+      "line": 89
     },
     {
       "service": "miro",
@@ -3789,7 +3715,7 @@
         "summary"
       ],
       "file": "packages/gateway/src/connectors/mlflow-model-mapping.ts",
-      "line": 141
+      "line": 128
     },
     {
       "service": "montecarlo",
@@ -3843,7 +3769,7 @@
       "itemType": "page",
       "metadataKeys": [],
       "file": "packages/gateway/src/connectors/notion-sync.ts",
-      "line": 233
+      "line": 234
     },
     {
       "service": "obsidian",
@@ -3920,7 +3846,7 @@
         "urgency"
       ],
       "file": "packages/gateway/src/connectors/pagerduty-sync.ts",
-      "line": 108
+      "line": 102
     },
     {
       "service": "pipedrive",
@@ -4001,7 +3927,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/raindrop-bookmark-mapping.ts",
-      "line": 110
+      "line": 101
     },
     {
       "service": "raindrop",
@@ -4080,7 +4006,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/readwise-highlight-mapping.ts",
-      "line": 92
+      "line": 80
     },
     {
       "service": "sagemaker",
@@ -4134,7 +4060,7 @@
         "line_of_code_url"
       ],
       "file": "packages/gateway/src/connectors/semgrep-finding-mapping.ts",
-      "line": 129
+      "line": 108
     },
     {
       "service": "sentry",
@@ -4162,7 +4088,7 @@
         "slug"
       ],
       "file": "packages/gateway/src/connectors/sentry-sync.ts",
-      "line": 196
+      "line": 176
     },
     {
       "service": "slack",
@@ -4173,7 +4099,7 @@
         "thread_ts"
       ],
       "file": "packages/gateway/src/connectors/slack-sync.ts",
-      "line": 271
+      "line": 265
     },
     {
       "service": "snowflake",
@@ -4205,7 +4131,7 @@
         "published_at"
       ],
       "file": "packages/gateway/src/connectors/snyk-issue-mapping.ts",
-      "line": 112
+      "line": 99
     },
     {
       "service": "sonarqube",
@@ -4230,7 +4156,7 @@
         "organization"
       ],
       "file": "packages/gateway/src/connectors/sonarqube-issue-mapping.ts",
-      "line": 150
+      "line": 108
     },
     {
       "service": "stackoverflow",
@@ -4307,7 +4233,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/superset-dashboard-mapping.ts",
-      "line": 89
+      "line": 76
     },
     {
       "service": "tableau",
@@ -4330,18 +4256,22 @@
         "sku"
       ],
       "file": "packages/gateway/src/connectors/testflight-build-mapping.ts",
-      "line": 62
+      "line": 52
     },
     {
       "service": "testflight",
       "itemType": "build",
       "metadataKeys": [
-        "name",
-        "bundle_id",
-        "sku"
+        "app_id",
+        "version",
+        "processing_state",
+        "expired",
+        "uploaded_date",
+        "min_os_version",
+        "uses_non_exempt_encryption"
       ],
       "file": "packages/gateway/src/connectors/testflight-build-mapping.ts",
-      "line": 128
+      "line": 118
     },
     {
       "service": "vercel",
@@ -4397,7 +4327,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/wiz-issue-mapping.ts",
-      "line": 136
+      "line": 120
     },
     {
       "service": "workday",
@@ -4449,7 +4379,7 @@
         "canonical_url"
       ],
       "file": "packages/gateway/src/connectors/zendesk-ticket-mapping.ts",
-      "line": 102
+      "line": 89
     },
     {
       "service": "zoom",
@@ -4509,7 +4439,7 @@
         "publication_title"
       ],
       "file": "packages/gateway/src/connectors/zotero-reference-mapping.ts",
-      "line": 155
+      "line": 143
     },
     {
       "service": "__UNRESOLVED__",
@@ -4545,13 +4475,9 @@
     {
       "service": "gitlab",
       "itemType": "__UNRESOLVED__",
-      "metadataKeys": [
-        "iid",
-        "project",
-        "action"
-      ],
+      "metadataKeys": [],
       "file": "packages/gateway/src/connectors/_lib/gitlab/events.ts",
-      "line": 106
+      "line": 271
     },
     {
       "service": "gitlab",
@@ -4565,320 +4491,326 @@
         "sha"
       ],
       "file": "packages/gateway/src/connectors/_lib/gitlab/pipelines.ts",
-      "line": 56
+      "line": 79
+    },
+    {
+      "service": "nimbus",
+      "itemType": "web_clip",
+      "metadataKeys": [
+        "tags",
+        "mode",
+        "wordCount",
+        "clippedAt"
+      ],
+      "file": "packages/gateway/src/clips/clip-ingest.ts",
+      "line": 264
+    },
+    {
+      "service": "github_actions",
+      "itemType": "ci_run",
+      "metadataKeys": [
+        "branch",
+        "conclusion",
+        "conclusion_raw",
+        "head_sha",
+        "meta_v",
+        "repo",
+        "workflow_name"
+      ],
+      "file": "packages/gateway/src/connectors/ci-run-meta.ts",
+      "line": 0
+    },
+    {
+      "service": "circleci",
+      "itemType": "ci_run",
+      "metadataKeys": [
+        "branch",
+        "conclusion",
+        "conclusion_raw",
+        "head_sha",
+        "meta_v",
+        "repo"
+      ],
+      "file": "packages/gateway/src/connectors/ci-run-meta.ts",
+      "line": 0
+    },
+    {
+      "service": "gitlab",
+      "itemType": "ci_run",
+      "metadataKeys": [
+        "branch",
+        "conclusion",
+        "conclusion_raw",
+        "head_sha",
+        "meta_v",
+        "repo"
+      ],
+      "file": "packages/gateway/src/connectors/ci-run-meta.ts",
+      "line": 0
+    },
+    {
+      "service": "jenkins",
+      "itemType": "ci_run",
+      "metadataKeys": [
+        "conclusion",
+        "conclusion_raw",
+        "meta_v",
+        "workflow_name"
+      ],
+      "file": "packages/gateway/src/connectors/ci-run-meta.ts",
+      "line": 0
+    },
+    {
+      "service": "github",
+      "itemType": "pr",
+      "metadataKeys": [
+        "merged",
+        "merged_at",
+        "meta_v",
+        "number",
+        "opened_at_ms",
+        "repo",
+        "state",
+        "state_raw"
+      ],
+      "file": "packages/gateway/src/connectors/pr-meta.ts",
+      "line": 0
+    },
+    {
+      "service": "bitbucket",
+      "itemType": "pr",
+      "metadataKeys": [
+        "merged",
+        "meta_v",
+        "number",
+        "opened_at_ms",
+        "repo",
+        "state",
+        "state_raw"
+      ],
+      "file": "packages/gateway/src/connectors/pr-meta.ts",
+      "line": 0
+    },
+    {
+      "service": "gitlab",
+      "itemType": "pr",
+      "metadataKeys": [
+        "merged",
+        "merged_at",
+        "meta_v",
+        "number",
+        "opened_at_ms",
+        "repo",
+        "state",
+        "state_raw"
+      ],
+      "file": "packages/gateway/src/connectors/pr-meta.ts",
+      "line": 0
     }
   ],
   "unmatchedItemReads": [
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "created_at_ms",
-      "file": "packages/gateway/src/premortem/cohort.test-helpers.ts",
-      "line": 48,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "parent_key",
-      "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 59,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "created_at_ms",
-      "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 117,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "resolved_at_ms",
-      "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 118,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status_category",
-      "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 119,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "issue_type",
-      "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 123,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status_category",
-      "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 124,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "resolved_at_ms",
-      "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 125,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "resolved_at_ms",
-      "file": "packages/gateway/src/premortem/cohort.ts",
-      "line": 127,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "parent_key",
-      "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 61,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "parent_key",
-      "file": "packages/gateway/src/premortem/epic-services.ts",
-      "line": 112,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status_category",
-      "file": "packages/gateway/src/premortem/theme-discover.ts",
-      "line": 40,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "issue_type",
-      "file": "packages/gateway/src/premortem/theme-discover.ts",
-      "line": 41,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "resolved_at_ms",
-      "file": "packages/gateway/src/premortem/theme-discover.ts",
-      "line": 58,
-      "matchState": "unmatched"
+      "value": "repo",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 173,
+      "matchState": "partial",
+      "partialCoverage": [
+        "circleci",
+        "github_actions",
+        "gitlab"
+      ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "workflow_name",
       "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 166,
-      "matchState": "unmatched"
+      "line": 174,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github_actions",
+        "jenkins"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "branch",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 181,
+      "matchState": "partial",
+      "partialCoverage": [
+        "circleci",
+        "github_actions",
+        "gitlab"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "mergeable_state",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 250,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "mergeable_state",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 257,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "mergeable_state",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 265,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "branch",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 214,
+      "matchState": "partial",
+      "partialCoverage": [
+        "circleci",
+        "github_actions",
+        "gitlab"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "mergeable_state",
+      "file": "packages/gateway/src/preflight/preflight.ts",
+      "line": 283,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "project",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 84,
+      "matchState": "partial",
+      "partialCoverage": [
+        "gitlab"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "head_sha",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 236,
+      "matchState": "partial",
+      "partialCoverage": [
+        "circleci",
+        "github_actions",
+        "gitlab"
+      ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "headSha",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 168,
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 238,
       "matchState": "partial",
       "partialCoverage": [
         "github_actions"
       ]
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "branch",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 168,
-      "matchState": "partial",
-      "partialCoverage": [
-        "circleci"
-      ]
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "branch",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 175,
-      "matchState": "partial",
-      "partialCoverage": [
-        "circleci"
-      ]
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "conclusion",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 176,
-      "matchState": "partial",
-      "partialCoverage": [
-        "github_actions"
-      ]
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "mergeable_state",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 229,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "mergeable_state",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 236,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "mergeable_state",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 244,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "mergeable_state",
-      "file": "packages/gateway/src/preflight/preflight.ts",
-      "line": 262,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 206,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 207,
-      "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "labels",
       "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 210,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merge_commit_sha",
-      "file": "packages/gateway/src/metrics/dora.ts",
-      "line": 215,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "repo",
-      "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 158,
+      "line": 279,
       "matchState": "partial",
       "partialCoverage": [
-        "bitbucket"
+        "github"
       ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
-      "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 159,
-      "matchState": "unmatched"
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 280,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github",
+        "gitlab"
+      ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 160,
-      "matchState": "unmatched"
+      "value": "labels",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 285,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/metrics/stats.ts",
-      "line": 161,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "web_clip",
-      "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 122,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "web_clip",
-      "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 128,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "web_clip",
-      "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 135,
-      "matchState": "unmatched"
+      "value": "merge_commit_sha",
+      "file": "packages/gateway/src/metrics/dora.ts",
+      "line": 290,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "mode",
-      "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 87,
-      "matchState": "unmatched"
+      "value": "repo",
+      "file": "packages/gateway/src/metrics/service-identity.ts",
+      "line": 71,
+      "matchState": "partial",
+      "partialCoverage": [
+        "bitbucket",
+        "github",
+        "gitlab",
+        "vercel"
+      ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "wordCount",
-      "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 88,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "sourceWordCount",
-      "file": "packages/gateway/src/ipc/clip-rpc.ts",
-      "line": 92,
-      "matchState": "unmatched"
+      "value": "repo",
+      "file": "packages/gateway/src/metrics/service-identity.ts",
+      "line": 75,
+      "matchState": "partial",
+      "partialCoverage": [
+        "bitbucket",
+        "github",
+        "gitlab",
+        "vercel"
+      ]
     },
     {
       "table": "item",
@@ -4899,73 +4831,17 @@
     {
       "table": "item",
       "kind": "metadata-key",
+      "value": "sourceWordCount",
+      "file": "packages/gateway/src/ipc/clip-rpc.ts",
+      "line": 95,
+      "matchState": "unmatched"
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
       "value": "bodyFetch",
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 310,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "mime_type",
-      "file": "packages/gateway/src/index/item-store.ts",
-      "line": 235,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "size_bytes",
-      "file": "packages/gateway/src/index/item-store.ts",
-      "line": 238,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "lastModified",
-      "file": "packages/gateway/src/identity/scim-service.ts",
-      "line": 28,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "lastModified",
-      "file": "packages/gateway/src/identity/scim-service.ts",
-      "line": 29,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged",
-      "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 337,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "creationTimestamp",
-      "file": "packages/gateway/src/connectors/argocd-application-mapping.ts",
-      "line": 52,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "creationTimestamp",
-      "file": "packages/gateway/src/connectors/flux-resource-mapping.ts",
-      "line": 70,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "additions",
-      "file": "packages/gateway/src/connectors/github-sync.ts",
-      "line": 649,
+      "line": 311,
       "matchState": "unmatched"
     },
     {
@@ -4973,7 +4849,7 @@
       "kind": "metadata-key",
       "value": "run_id",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 38,
+      "line": 42,
       "matchState": "unmatched"
     },
     {
@@ -4981,7 +4857,7 @@
       "kind": "metadata-key",
       "value": "run_id",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 50,
+      "line": 54,
       "matchState": "unmatched"
     },
     {
@@ -4989,7 +4865,7 @@
       "kind": "metadata-key",
       "value": "active_batch_definition",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 65,
+      "line": 69,
       "matchState": "unmatched"
     },
     {
@@ -4997,274 +4873,153 @@
       "kind": "metadata-key",
       "value": "batch_spec",
       "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
-      "line": 75,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status_category",
-      "file": "packages/gateway/src/connectors/jira-sync.ts",
-      "line": 396,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status_category",
-      "file": "packages/gateway/src/connectors/jira-sync.ts",
-      "line": 410,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status_category_raw",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 174,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "status_category",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 176,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "created_at_ms",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 180,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "resolved_at_ms",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 187,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "due_at_ms",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 191,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "parent_key",
-      "file": "packages/gateway/src/connectors/linear-sync.ts",
-      "line": 197,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "next_cursor",
-      "file": "packages/gateway/src/connectors/slack-sync.ts",
-      "line": 196,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "next_cursor",
-      "file": "packages/gateway/src/connectors/slack-sync.ts",
-      "line": 354,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "has_more",
-      "file": "packages/gateway/src/connectors/zendesk-sync.ts",
-      "line": 75,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "state",
-      "file": "packages/gateway/src/agents/changelog-queries.ts",
-      "line": 323,
-      "matchState": "partial",
-      "partialCoverage": [
-        "bitbucket"
-      ]
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "commit",
-      "file": "packages/gateway/src/agents/expert.ts",
-      "line": 386,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 378,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "additions",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 379,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "deletions",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 385,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "changed_files",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 387,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merge_commit_sha",
-      "file": "packages/gateway/src/agents/oncall-queries.ts",
-      "line": 313,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "issue_type",
-      "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 78,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "created_at_ms",
-      "file": "packages/gateway/src/agents/premortem.ts",
       "line": 79,
       "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "parent_key",
-      "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 98,
+      "value": "author_login",
+      "file": "packages/gateway/src/connectors/_lib/gitlab/events.ts",
+      "line": 226,
       "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 199,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "merged_at",
-      "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 200,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "opened_at_ms",
-      "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 205,
+      "value": "author_name",
+      "file": "packages/gateway/src/connectors/_lib/gitlab/events.ts",
+      "line": 227,
       "matchState": "unmatched"
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
-      "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 206,
-      "matchState": "unmatched"
+      "file": "packages/gateway/src/agents/changelog-queries.ts",
+      "line": 327,
+      "matchState": "partial",
+      "partialCoverage": [
+        "gitlab"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "additions",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 382,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "deletions",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 388,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "changed_files",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 390,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged_at",
       "file": "packages/gateway/src/agents/premortem.ts",
-      "line": 207,
-      "matchState": "unmatched"
-    },
-    {
-      "table": "item",
-      "kind": "metadata-key",
-      "value": "thread_ts",
-      "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 269,
+      "line": 211,
       "matchState": "partial",
       "partialCoverage": [
-        "slack"
+        "github",
+        "gitlab"
       ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "channel",
-      "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 270,
+      "value": "merged_at",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 217,
       "matchState": "partial",
       "partialCoverage": [
-        "slack"
+        "github",
+        "gitlab"
       ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "thread_ts",
-      "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 271,
+      "value": "merged_at",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 218,
       "matchState": "partial",
       "partialCoverage": [
-        "slack"
+        "github",
+        "gitlab"
       ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "state",
-      "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 359,
+      "value": "merged_at",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 256,
       "matchState": "partial",
       "partialCoverage": [
-        "bitbucket"
+        "github",
+        "gitlab"
       ]
     },
     {
       "table": "item",
       "kind": "metadata-key",
-      "value": "merged",
+      "value": "merged_at",
+      "file": "packages/gateway/src/agents/premortem.ts",
+      "line": 257,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github",
+        "gitlab"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merged_at",
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 360,
-      "matchState": "unmatched"
+      "line": 378,
+      "matchState": "partial",
+      "partialCoverage": [
+        "gitlab"
+      ]
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "merge_commit_sha",
+      "file": "packages/gateway/src/agents/_lib/oncall-queries.ts",
+      "line": 330,
+      "matchState": "partial",
+      "partialCoverage": [
+        "github"
+      ]
     }
   ],
-  "ambiguousReadCount": 122,
+  "ambiguousReadCount": 10,
   "parameterizedReads": [
     {
       "file": "packages/gateway/src/ownership/ownership-store.ts",
@@ -5272,15 +5027,15 @@
     },
     {
       "file": "packages/gateway/src/index/item-store.ts",
-      "line": 327
+      "line": 328
     },
     {
       "file": "packages/gateway/src/index/local-index.ts",
-      "line": 784
+      "line": 782
     },
     {
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 729
+      "line": 732
     },
     {
       "file": "packages/gateway/src/engine/index-count-question.ts",
@@ -5292,7 +5047,7 @@
     },
     {
       "file": "packages/gateway/src/automation/watcher-engine.ts",
-      "line": 199
+      "line": 200
     },
     {
       "file": "packages/gateway/src/agents/changelog-queries.ts",
@@ -5304,11 +5059,11 @@
     },
     {
       "file": "packages/gateway/src/agents/expert.ts",
-      "line": 284
+      "line": 269
     },
     {
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 721
+      "line": 726
     },
     {
       "file": "packages/gateway/src/agents/ownership.ts",
@@ -5316,15 +5071,15 @@
     },
     {
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 93
+      "line": 94
     },
     {
       "file": "packages/gateway/src/agents/standup-queries.ts",
-      "line": 134
+      "line": 135
     },
     {
       "file": "packages/gateway/src/agents/why.ts",
-      "line": 202
+      "line": 189
     },
     {
       "file": "packages/gateway/src/agents/_lib/gap-notes.ts",
@@ -5342,5 +5097,115 @@
       "file": "packages/gateway/src/agents/_lib/gap-notes.ts",
       "line": 97
     }
-  ]
+  ],
+  "nonItemReads": [
+    {
+      "file": "packages/gateway/src/identity/scim-service.ts",
+      "line": 28,
+      "value": "lastModified"
+    },
+    {
+      "file": "packages/gateway/src/identity/scim-service.ts",
+      "line": 29,
+      "value": "lastModified"
+    },
+    {
+      "file": "packages/gateway/src/connectors/argocd-application-mapping.ts",
+      "line": 39,
+      "value": "creationTimestamp"
+    },
+    {
+      "file": "packages/gateway/src/connectors/flux-resource-mapping.ts",
+      "line": 60,
+      "value": "creationTimestamp"
+    },
+    {
+      "file": "packages/gateway/src/connectors/slack-sync.ts",
+      "line": 190,
+      "value": "next_cursor"
+    },
+    {
+      "file": "packages/gateway/src/connectors/slack-sync.ts",
+      "line": 341,
+      "value": "next_cursor"
+    },
+    {
+      "file": "packages/gateway/src/connectors/zendesk-sync.ts",
+      "line": 72,
+      "value": "has_more"
+    }
+  ],
+  "unscopedReads": [
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "path",
+      "file": "packages/gateway/src/multimodal/media-discovery.ts",
+      "line": 214
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "number",
+      "file": "packages/gateway/src/graph/graph-populator.ts",
+      "line": 279
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "repo",
+      "file": "packages/gateway/src/graph/graph-populator.ts",
+      "line": 280
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "run_id",
+      "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
+      "line": 42
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "run_id",
+      "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
+      "line": 54
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "active_batch_definition",
+      "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
+      "line": 69
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "batch_spec",
+      "file": "packages/gateway/src/connectors/great-expectations-sync.ts",
+      "line": 79
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "author_login",
+      "file": "packages/gateway/src/connectors/_lib/gitlab/events.ts",
+      "line": 226
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "author_name",
+      "file": "packages/gateway/src/connectors/_lib/gitlab/events.ts",
+      "line": 227
+    },
+    {
+      "table": "item",
+      "kind": "metadata-key",
+      "value": "number",
+      "file": "packages/gateway/src/agents/why.ts",
+      "line": 194
+    }
+  ],
+  "annotationErrors": []
 }

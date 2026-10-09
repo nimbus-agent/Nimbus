@@ -135,6 +135,7 @@ function resolvePrArm(db: Database, prUrl: string): WhyLaneResolution {
  * find the change that closed it. The direction is the whole difference between the two
  * arms, and it is why the item arm could not simply reuse the PR arm's queries.
  */
+// lane-census: scope=pr
 function prResolvingItem(db: Database, itemEntityId: string): PrForSha | null {
   const row = db
     .query(
@@ -429,6 +430,7 @@ type PrForSha = {
   modifiedAt: number | null;
 };
 
+// lane-census: scope=pr
 function findPrForSha(db: Database, sha: string): PrForSha | null {
   const row = db
     .query(

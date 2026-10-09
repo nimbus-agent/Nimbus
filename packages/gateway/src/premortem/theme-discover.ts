@@ -27,6 +27,7 @@ export type DiscoveredEpic = {
  * `modified_at > ?` alone would skip every row after the first in that group
  * while `>=` would re-scan them forever.
  */
+// lane-census: scope=issue service=jira
 export function discoverClosedEpics(
   db: Database,
   opts: { watermarkMs: number; watermarkId: string; batchSize: number },

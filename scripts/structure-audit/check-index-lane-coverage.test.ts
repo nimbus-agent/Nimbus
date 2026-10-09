@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { collectLaneCensus } from "./check-index-lane-coverage.ts";
+import { collectLaneCensus, isProductionReadFile } from "./check-index-lane-coverage.ts";
 import type { FileEntry } from "./check-nimbus-invariants.ts";
 
 describe("collectLaneCensus", () => {
@@ -314,5 +314,28 @@ describe("collectLaneCensus", () => {
       census.reads.some((r) => r.table === "graph_entity" && r.value === "nobody_writes_this"),
     ).toBe(true);
     expect(census.unmatchedItemReads).toHaveLength(0);
+  });
+
+  test("reads in a test-helpers file are not production reads", () => {
+    const census = collectLaneCensus([
+      {
+        relPath: "packages/gateway/src/premortem/cohort.test-helpers.ts",
+        contents: 'function f(metadata: R) { metadata["created_at_ms"] === 1; }',
+      },
+    ]);
+    expect(census.reads).toHaveLength(0);
+    expect(isProductionReadFile("packages/gateway/src/x/test-helpers/a.ts")).toBe(false);
+    expect(isProductionReadFile("packages/gateway/src/agents/expert.ts")).toBe(true);
+  });
+
+  test("non-item JS reads are reported separately, never gated", () => {
+    const census = collectLaneCensus([
+      {
+        relPath: "packages/gateway/src/connectors/slack-sync.ts",
+        contents: 'const meta = asRecord(res.json["response_metadata"]);\nmeta["next_cursor"];',
+      },
+    ]);
+    expect(census.reads).toHaveLength(0);
+    expect(census.nonItemReads.map((r) => r.value)).toEqual(["next_cursor"]);
   });
 });

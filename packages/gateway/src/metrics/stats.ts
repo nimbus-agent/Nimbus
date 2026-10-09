@@ -18,21 +18,23 @@ export type StatsMetricId =
   | "pr-merges"
   | "incidents-opened";
 
-/** DORA's own union stays frozen; this feature's extra reasons live here. */
+/**
+ * `DoraGap` plus the reasons only this feature emits. `incomplete_merge_data` is NOT one of them
+ * any more: DORA's lead time emits it too, so it comes in through `DoraGap`.
+ */
 export type StatsGap =
   | DoraGap
   // Retained for API compatibility (public OpenAPI enum); no longer emitted — superseded by
   // "incomplete_merge_data".
   | "github_only_merge_data"
-  | "incomplete_merge_data"
   | "incidents_missing_opened_at";
 
 /**
  * `DoraMetricValue` with its `gap` field widened from `DoraGap` to `StatsGap`. A DORA
  * calculator's `DoraMetricValue` is still assignable here — `DoraGap` is a subset of
- * `StatsGap` — so `wrapDora` needs no conversion; only the two evaluators that return a
- * `StatsGap`-only reason (`incomplete_merge_data`, `incidents_missing_opened_at`) need the
- * wider type, and get it without a cast.
+ * `StatsGap` — so `wrapDora` needs no conversion; only an evaluator that returns a
+ * `StatsGap`-only reason (`incidents_missing_opened_at`) needs the wider type, and gets it
+ * without a cast.
  */
 type StatsMetricValue = Omit<DoraMetricValue, "gap"> & { readonly gap: StatsGap };
 
@@ -162,6 +164,7 @@ function prMerges(
     );
     params.push(...gitlabRepos);
   }
+  // lane-census: scope=pr service=github,gitlab
   const row = db
     .query(
       `SELECT COUNT(*) AS c FROM item

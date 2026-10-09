@@ -49,6 +49,7 @@ export function affectedServicesForEpic(
   // graph entity, so it would be a no-op that falsely implies one exists. The identical-looking
   // expression against ITEM metadata DOES need the coalesce, and `agents/premortem.ts`'s
   // `PR_REPO_SQL` carries it — one expression, two sources, only one of them pre-coalesced.
+  // lane-census: scope=issue service=jira
   const rows = db
     .query(
       `SELECT DISTINCT json_extract(pr.metadata, '$.repo') AS service
@@ -104,6 +105,7 @@ export function affectedServicesForEpics(
   // Same `$.repo`-on-the-GRAPH-ENTITY rule as the single-epic query above: already
   // `repo ?? project` via `graph-populator.ts`'s `repoPathFromMetadata`, so no COALESCE belongs
   // here, and one against ITEM metadata would be a different (and necessary) expression.
+  // lane-census: scope=issue service=jira
   const rows = db
     .query(
       `SELECT epic.id AS epicItemId, json_extract(pr.metadata, '$.repo') AS service

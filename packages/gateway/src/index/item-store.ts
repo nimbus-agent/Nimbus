@@ -304,6 +304,7 @@ export type ItemBodyFetchState = { modifiedAt: number; bodyFetch: string | null 
  * already advanced past it by the time the fetch fails, so the item is
  * re-examined only on a later edit or an explicit `nimbus index rebody`.
  */
+// lane-census: scope=page service=notion
 export function selectItemBodyFetchState(db: Database, id: string): ItemBodyFetchState | null {
   const row = db
     .query<{ modified_at: number; body_fetch: string | null }, [string]>(

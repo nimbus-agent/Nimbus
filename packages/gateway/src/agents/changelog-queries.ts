@@ -312,6 +312,7 @@ export function selectIncidentsResolved(db: Database, w: Window): ChangelogRow[]
  * comment or label touched during the window IS. `changelog.ts`'s gap note discloses that; a
  * bare count presented beside four event-windowed ones would read as the same kind of number.
  */
+// lane-census: scope=pr service=gitlab,bitbucket
 export function nonGithubMergedPrCount(db: Database, w: Window): number {
   const raw = db
     .query(
