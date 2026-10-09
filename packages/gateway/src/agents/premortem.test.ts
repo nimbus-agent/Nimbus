@@ -935,6 +935,53 @@ describe("runPremortem", () => {
       expect(reviewDrag?.summary).toContain("left out");
     });
 
+    test("a measured review drag names a forge left out of the repo-wide BASELINE only", async () => {
+      // The cohort's own PRs are all timed GitHub PRs; the untimed Bitbucket PR sits only in the
+      // repo-wide baseline (`repoPrDurations`), which drops it too — so the left-out sentence
+      // must name Bitbucket, not only forges seen among the cohort's PRs.
+      const db = makeDb();
+      seedEpicWithServices(db, {
+        key: "PROJ-BASE",
+        services: ["acme/base-svc"],
+        resolvedAtMs: NOW - 5 * DAY_MS,
+        createdAtMs: NOW - 15 * DAY_MS,
+      });
+      seedEpicWithServices(db, {
+        key: "HIST-BASE",
+        services: ["acme/base-svc"],
+        resolvedAtMs: NOW - 40 * DAY_MS,
+        createdAtMs: NOW - 70 * DAY_MS,
+      });
+      seedChildWithPr(db, {
+        epicKey: "HIST-BASE",
+        childSuffix: "c1",
+        service: "acme/base-svc",
+        openedAtMs: NOW - 50 * DAY_MS,
+        mergedAtMs: NOW - 45 * DAY_MS,
+      });
+      // Baseline-only: linked to no cohort child, in the same repo, touched inside the window.
+      upsertIndexedItem(db, {
+        service: "bitbucket",
+        type: "pr",
+        externalId: "acme/base-svc#77",
+        title: "acme/base-svc#77",
+        metadata: bitbucketPrMetadata(
+          "acme/base-svc",
+          { id: 77, state: "MERGED", created_on: new Date(NOW - 30 * DAY_MS).toISOString() },
+          "dev",
+        ),
+        modifiedAt: NOW - 20 * DAY_MS,
+        syncedAt: NOW - 20 * DAY_MS,
+      });
+
+      const brief = await runPremortem({ epicRef: "PROJ-BASE" }, ctx(db));
+
+      const reviewDrag = brief.risks.find((r) => r.kind === "review_drag");
+      expect(reviewDrag?.value).not.toBeNull();
+      expect(reviewDrag?.summary).toContain("left out");
+      expect(reviewDrag?.summary).toContain("Bitbucket never records a merge time");
+    });
+
     test("a GitLab merge request counts toward the repo-wide baseline too", async () => {
       // `repoPrDurations` had the SAME `$.repo`-only filter, so a GitLab repo's baseline was
       // empty even when its merge requests did carry both timestamps. Proven through the

@@ -152,7 +152,8 @@ function computeReviewDrag(input: {
   /**
    * The distinct `item.service` values (forges) of cohort pull requests that lack an
    * `opened_at_ms` or a `merged_at`; empty when none does (non-empty in the measured case
-   * too: those PRs are left out of both medians and the summary says so). A fact only the caller (which
+   * too: those PRs are left out of both medians and the summary says so — in that case it also
+   * includes forges of merged repo-wide BASELINE PRs dropped for the same reason). A fact only the caller (which
    * runs the database queries) can know, since this file is deliberately database-free.
    * When unmeasurable, non-empty picks "PRs exist, but a forge's PRs lack timing" over the "no PRs at all"
    * message, and names each forge with its own reason.
