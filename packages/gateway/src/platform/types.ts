@@ -10,6 +10,7 @@ import type { IPCServer } from "../ipc/index.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
+import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { NimbusVault } from "../vault/index.ts";
@@ -80,6 +81,13 @@ export interface PlatformServices {
   // Always present: a gateway with no org policy still gets an overlay that adds nothing,
   // so a consumer never has to decide what `undefined` means.
   policyHitl: ExecutorPolicyDep;
+  /**
+   * LIVE read of the resolved org policy (I22) — a getter over `policyGate.enforced()`, never a
+   * boot-time snapshot, so a policy applied after boot is seen on the next call. Consumers that
+   * gate a capability on it must treat ABSENCE as locked off (fail-closed): today
+   * `gateway-main.ts`'s user-MCP model tool source (`user_mcp_model_access`, I42).
+   */
+  enforcedPolicy?: () => EnforcedPolicy;
   // ChatOps (Slice 5). Present when [chatops].enabled: src/index.ts late-binds the engine read
   // path (bindAskEngine) once the engine agent exists.
   chatops?: ChatopsBoot;

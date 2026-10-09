@@ -1837,6 +1837,39 @@ code_execution=true
     expect(locked.enforced().capabilitiesDisabled.has("code_execution")).toBe(true);
   });
 
+  test("(cap-4) a signed user_mcp_model_access lockoff empties the model's user-MCP tool source", async () => {
+    // The seventh ai_v2 name. Driven end to end over a REAL signed policy and a REAL migrated
+    // user_mcp_connector table: a `--model` server that IS listed under an ungoverned gate is NOT
+    // listed once the verified policy disables the capability (I42's org-policy lock-off).
+    const { listPolicyGatedModelAccessibleUserMcpIds } = await import(
+      "./connectors/user-mcp-model-capability.ts"
+    );
+    const { insertUserMcpConnector } = await import("./connectors/user-mcp-store.ts");
+    const index = new Database(":memory:");
+    LocalIndex.ensureSchema(index);
+    insertUserMcpConnector(index, {
+      service_id: "mcp_notes",
+      command: "bun",
+      args_json: "[]",
+      read_paths_json: "[]",
+      net_hosts_json: "[]",
+      model_access: 1,
+    });
+    const kp = generateEd25519Keypair();
+    const pub = encodeBase64(kp.pubkey);
+    const allowToml = `[policy]\nversion=1\norg="acme"\n`;
+    const allow = gateWith(allowToml, signPolicy(allowToml, encodeBase64(kp.privkey)), pub);
+    // Non-vacuity: the same server IS offered when the policy does not lock it off.
+    expect(listPolicyGatedModelAccessibleUserMcpIds(index, allow.enforced())).toEqual([
+      "mcp_notes",
+    ]);
+    const lockToml = `[policy]\nversion=1\norg="acme"\n[policy.capabilities.ai_v2]\nuser_mcp_model_access=false\n`;
+    const lock = gateWith(lockToml, signPolicy(lockToml, encodeBase64(kp.privkey)), pub);
+    expect(lock.enforced().capabilitiesDisabled.has("user_mcp_model_access")).toBe(true);
+    expect(listPolicyGatedModelAccessibleUserMcpIds(index, lock.enforced())).toEqual([]);
+    index.close();
+  });
+
   test("(a) a tampered policy is rejected; the gate stays ungoverned (falls back to baseline)", () => {
     const kp = generateEd25519Keypair();
     const good = `[policy]\nversion=1\norg="acme"\n[policy.retention]\nmin_days=30\n`;
@@ -1923,8 +1956,9 @@ code_execution=true
 
   test("I22: multimodal_input is enforced, not merely listed", async () => {
     // Through PR 1 this capability was a real AI_V2_CAPABILITIES member whose lockoff did
-    // nothing, because the dispatcher hardcoded `capabilityDisabled: false`. All five members
-    // must now reach a gate.
+    // nothing, because the dispatcher hardcoded `capabilityDisabled: false`. Every member but
+    // the config-forward `local_finetuning` must now reach a gate (`user_mcp_model_access`'s is
+    // pinned by `(cap-4)` above and the I42 block).
     // `read()`, not a bare relative `Bun.file("packages/...")`: CI's coverage job `cd`s into
     // `packages/gateway` before running `bun test`, so a cwd-relative path ENOENTs there while
     // resolving fine from the repo root. That is why this helper exists.
@@ -5380,14 +5414,43 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     expect(src).toMatch(/if \(isUserMcpActionType\(action\.type\)\) return action\.payload;/);
   });
 
-  test("gateway-main offers the agent only --model servers: listModelAccessibleIds reads listModelAccessibleUserMcpIds", async () => {
+  test("gateway-main offers the agent only --model servers, through the org-policy lock-off", async () => {
     // `listUserMcpConnectors` would offer EVERY registered user MCP server to the model,
-    // including ones the owner registered without --model.
+    // including ones the owner registered without --model; the un-gated
+    // `listModelAccessibleUserMcpIds` would ignore a `user_mcp_model_access = false` org policy.
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
-      /listModelAccessibleIds:\s*\(\)\s*=>\s*listModelAccessibleUserMcpIds\(\s*platform\.localIndex\.getDatabase\(\)\s*\)/,
+      /listModelAccessibleIds:\s*\(\)\s*=>\s*listPolicyGatedModelAccessibleUserMcpIds\(\s*platform\.localIndex\.getDatabase\(\),\s*platform\.enforcedPolicy\?\.\(\),?\s*\)/,
     );
     expect(main).not.toMatch(/listUserMcpConnectors/);
+    expect(main).not.toMatch(/\blistModelAccessibleUserMcpIds\b/);
+    // The gated lister consults the predicate BEFORE it reads the table.
+    const gated = stripComments(
+      await read("packages/gateway/src/connectors/user-mcp-model-capability.ts"),
+    );
+    const fnAt = gated.indexOf("export function listPolicyGatedModelAccessibleUserMcpIds(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const body = gated.slice(fnAt);
+    expect(body.indexOf("isUserMcpModelAccessEnabled(")).toBeGreaterThan(-1);
+    expect(body.indexOf("isUserMcpModelAccessEnabled(")).toBeLessThan(
+      body.indexOf("listModelAccessibleUserMcpIds("),
+    );
+  });
+
+  test("the org-policy lock-off is fail-closed and read LAZILY from the live policy gate", async () => {
+    const { isUserMcpModelAccessEnabled } = await import(
+      "./connectors/user-mcp-model-capability.ts"
+    );
+    // Absent accessor → locked off; never "cannot tell, so allowed".
+    expect(isUserMcpModelAccessEnabled(undefined)).toBe(false);
+    expect(
+      isUserMcpModelAccessEnabled({ capabilitiesDisabled: new Set(["user_mcp_model_access"]) }),
+    ).toBe(false);
+    expect(isUserMcpModelAccessEnabled({ capabilitiesDisabled: new Set() })).toBe(true);
+    // assemble.ts hands PlatformServices a GETTER over policyGate.enforced(), not a snapshot, so
+    // a policy applied after boot takes effect on the next turn rather than the next restart.
+    const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    expect(assemble).toMatch(/enforcedPolicy:\s*\(\)\s*=>\s*policyGate\.enforced\(\)/);
   });
 
   test("share replay refuses an OFFERED user-MCP tool name (<mcp_id>__<tool>) whatever its verb", async () => {
