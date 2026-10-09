@@ -90,7 +90,7 @@ describe("buildServiceIdentityResolver", () => {
       ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
 
-    it("resolves a gitlab repo URN via metadata.project", () => {
+    it("resolves a gitlab repo URN via metadata.repo, as Vercel and premortem's synthetic row carry it", () => {
       const resolve = buildServiceIdentityResolver(
         configs(
           baseConfig({
@@ -103,12 +103,12 @@ describe("buildServiceIdentityResolver", () => {
         resolve({
           service: "gitlab",
           type: "pr",
-          metadata: { project: "group/checkout" },
+          metadata: { repo: "group/checkout" },
         }),
       ).toEqual({ kind: "bound", serviceId: "checkout" });
     });
 
-    it("resolves a jenkins URN via metadata.jobName", () => {
+    it("never binds a jenkins URN through metadata.jobName (no deployment writer records a job name)", () => {
       const resolve = buildServiceIdentityResolver(
         configs(
           baseConfig({
@@ -122,8 +122,8 @@ describe("buildServiceIdentityResolver", () => {
           service: "jenkins",
           type: "ci_run",
           metadata: { jobName: "checkout-pipeline" },
-        }),
-      ).toEqual({ kind: "bound", serviceId: "checkout" });
+        }).kind,
+      ).not.toBe("bound");
     });
 
     it("never matches a circleci URN (no external id in this item shape)", () => {
