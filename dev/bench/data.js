@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791539473343,
+  "lastUpdate": 1791542422439,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d9a4708318fc0ccd321f1e1dd96ad6fc074e863d",
-          "message": "feat(connectors): index Mercury transactions (`mercury:transaction`) (#924)\n\nCloses #890.\n\n## Endpoint used\n\n`GET\nhttps://api.mercury.com/api/v1/account/{accountId}/transactions?limit=500&offset=N&order=desc`\n— confirmed against Mercury's current API reference (\"List account\ntransactions\"), which\ndocuments `limit` (1..1000), `offset`, `order` (default `desc`),\n`start`/`end`, `status`,\n`search`, and a `{ total, transactions: [...] }` 200 envelope.\nTransactions are **per account**,\nso the sync walks the accounts it just indexed.\n\nNo new endpoint host, vault key, tool or schema: `connector-catalog.ts`,\n`connector-secrets-manifest.ts`, `sync/rate-limiter.ts`,\n`assemble-sync-registrations.ts`, the\nlazy-mesh manifest (`api.mercury.com`) and `phase3AddMercuryMcp` were\nall already wired by the\naccounts release. I verified each before touching anything.\n\n## Pagination + caps\n\nOffset pagination; a short page ends the walk. Two caps, because the\nconnector's\n`defaultIntervalMs` is 10 minutes:\n\n- `MAX_TRANSACTION_PAGES_PER_ACCOUNT = 4` → 2 000 rows per account per\ncycle, deliberately the\n  same ceiling as Ramp's `MAX_PAGES=20` × `page_size=100`.\n- `MAX_TRANSACTION_PAGES = 20` → a budget **shared across accounts**, so\nan operator with 25\n  accounts cannot turn one cycle into hundreds of requests.\n\nA transactions-page failure (HTTP or parse) warns and stops **that\naccount's** walk only. The\naccounts pass has already succeeded by that point and must not be\ndiscarded — so the result is\nstill a success with the accounts committed.\n\n## What is indexed, and what is deliberately not\n\nThis is a finance connector, so the omissions are the design rather than\nan oversight.\n\n**Never indexed — `details`.** It carries the **counterparty's** payment\ncredentials:\n`electronicRoutingInfo` / `domesticWireRoutingInfo` /\n`internationalWireRoutingInfo` (account +\nrouting numbers), `address` (a postal address), and `debitCardInfo` /\n`creditCardInfo` (card\ndigits). `mapMercuryAccountToItem` already refuses to store the owner's\nown full account number\n(`account_number_last4`); a counterparty's is no less sensitive.\n\nAlso omitted: `attachments` (receipt names + download links),\n`glAllocations`,\n`relatedTransactions`, `merchant`, `categoryData`,\n`currencyExchangeInfo`, `checkNumber`,\n`trackingNumber`, `feeId`, `requestId`, `creditAccountPeriodId`,\n`counterpartyId`,\n`counterpartyNickname`, `failedAt`, `reasonForFailure`,\n`compliantWithReceiptPolicy`,\n`hasGeneratedReceipt`. `status` already carries the failure signal.\n\n**Indexed:** `transaction_id`, `account_id`, `amount`, `status`, `kind`,\n`counterparty_name`,\n`bank_description`, `mercury_category`, `note`, `external_memo`,\n`created_at`, `posted_at`,\n`canonical_url` — the Ramp field set, translated. Both memo fields are\ntruncated at Ramp's\n500-char `MEMO_MAX`.\n\nTwo guard tests hold this line, and both were red-proved by temporarily\nletting `details` /\n`attachments` through:\n\n- the unit guard asserts the serialized row contains none of the routing\nnumber, account number,\nbank name, postal address or card digits from a fully-populated fixture,\n**and** pins the exact\n  metadata key set so a future field cannot be added silently;\n- the integration guard re-asserts it against the real SQLite row after\na sync.\n\n## Other decisions\n\n- **Timestamps** — `createdAt` / `postedAt` are ISO-8601 → epoch-ms via\n`parseIsoMs`;\n  `modifiedAt` = posted ?? created ?? syncedAt.\n- **Currency** — the transaction payload has no currency field (only\n`currencyExchangeInfo`, not\nindexed). The \"USD\" suffix in the title mirrors\n`mapMercuryAccountToItem`, which formats\n  balances the same way; Mercury accounts are USD-denominated.\n- **`canonical_url`** — unlike the account row, a transaction *does*\nhave a permalink\n  (`dashboardLink`), so `url` + `canonical_url` are populated.\n- **`account_id`** — the row's own `accountId`, falling back to the\naccount the page was fetched\n  under.\n- **Embedding routing** — `mercury:transaction` is **not** added to\n`PROSE_HEAVY_TYPES`, as the\nissue asks. A regression test names the decision so a future contributor\nsees the reason\n(routing to OpenAI would bill per bank transaction) rather than just an\nabsence.\n- **MCP connector untouched** — the indexed item comes from the gateway\nsyncable calling the REST\nAPI directly, and the mandatory `list`/`get`/`search` tool surface\nalready exists. Adding\ntransaction tools to `packages/mcp-connectors/mercury/` is not needed\nfor anything in the\n  acceptance list, so it stayed out.\n\n## Verification\n\n- `bun run typecheck` ✅\n- `bun run preflight:fast --no-bail` — every gate ✅ except `lint\n(biome)`, which reports\n`Checked 0 files` inside `.claude/worktrees/` (a known worktree-path\nartifact, not this diff).\nValidated directly instead: `bunx biome check packages scripts docs` →\nclean.\n- `bun test packages/gateway/src/connectors\npackages/gateway/test/unit/connectors` → 4 315 pass,\n  0 fail.\n- `bun test packages/gateway/test/integration/connectors` → 262 pass, 0\nfail.\n- New: 22 mapper unit tests + 8 sync integration tests.\n\n## Docs\n\n`docs/roadmap.md` Mercury row updated (the deferral line now records\nwhat ships and what is still\ndeferred), plus a dated `docs/CHANGELOG.md` entry.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-29T20:03:04+03:00",
-          "tree_id": "023443c073da28c869fee72f009a0c079941d97a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d9a4708318fc0ccd321f1e1dd96ad6fc074e863d"
-        },
-        "date": 1785345504074,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.84435969999686,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.250537049997,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 331.89874264999963,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b79be42fd29a712ba647c6bb493aa2af8cbd78cf",
+          "message": "chore: release main (#1636)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.39.0</summary>\n\n##\n[7.39.0](https://github.com/nimbus-agent/Nimbus/compare/v7.38.0...v7.39.0)\n(2026-10-09)\n\n\n### Features\n\n* **index:** the lane census is an enforced gate (index lane A3)\n([#1635](https://github.com/nimbus-agent/Nimbus/issues/1635))\n([672ef16](https://github.com/nimbus-agent/Nimbus/commit/672ef168bf20305cb00884d22cf756bbd2758263))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-09T13:27:17+03:00",
+          "tree_id": "4083d2a5604691215b1b43909aeb6c3ed8032a5c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b79be42fd29a712ba647c6bb493aa2af8cbd78cf"
+        },
+        "date": 1791542418171,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 332.6460382499969,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 333.28934645000226,
             "unit": "ms"
           }
         ]
