@@ -172,6 +172,13 @@ describe("I38 composed path — fleet invoker → real dispatch → real changel
     });
     expect(budget.spent()).toBe(1);
     const synthesis = JSON.parse(out.synthesisJson ?? "null") as Record<string, unknown>;
+    // The provenance records a USED remote synthesis — not merely the absence of a withholding.
+    expect(synthesis).toMatchObject({
+      attempted: true,
+      used: true,
+      model: REMOTE_MODEL,
+      remote: true,
+    });
     expect(synthesis).not.toHaveProperty("fleetRemoteWithheld");
 
     // Same run, budget now spent: the second job is withheld and nothing more leaves.

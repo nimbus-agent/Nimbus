@@ -880,12 +880,11 @@ CREATE TABLE IF NOT EXISTS fleet_job_state (
 --     configured" from "wanted to run and was stopped short".
 --   remote_calls_made -- how many NON-LOCAL synthesis calls this run actually spent, recorded
 --     beside the cap it HAD. **No CLI subcommand reads this column today** -- `nimbus fleet` has no
---     per-run view (that is PR 2's digest); it is queryable directly and is the ONLY place I38's
---     budget disclosure lands. There is no per-brief half: `wrapFleetSynthesisRouter` names the
---     exhausted budget only at `generateMarkdown`, which the production runner never reaches --
---     it resolves first, and the exhausted budget has already withheld the provider, so the brief
---     records `no_eligible_provider` with no detail, indistinguishable from "no provider was
---     configured". Stated as a bound on I38's row in docs/SECURITY-INVARIANTS.md.
+--     per-run view (that is PR 2's digest); it is queryable directly and is I38's PER-RUN
+--     budget disclosure. The PER-BRIEF half is `fleetRemoteWithheld`, which
+--     `fleet/fleet-invoker.ts` writes onto each brief's `synthesis_json` when the wrapper withheld
+--     a remote provider for that job (the wrapper's own door 1 is silent, so the brief alone would
+--     read `no_eligible_provider`, indistinguishable from "no provider was configured").
 --   remote_call_budget -- the EFFECTIVE cap this run had, not the raw config number. The two
 --     differ when `[fleet] allow_remote = false`, where the effective cap is 0 whatever
 --     `remote_call_budget` says in nimbus.toml. The budget is PER RUN and is reset at each run

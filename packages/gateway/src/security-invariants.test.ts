@@ -4441,9 +4441,11 @@ describe("I38 — an unattended fleet run reaches a non-local model only under g
    * with no `detail`, indistinguishable on the brief row from "no provider was configured". The
    * final assertion below is that silent path, asserted as the fact it is, NOT as disclosure.
    *
-   * Per-BRIEF disclosure of budget exhaustion is therefore a STATED BOUND of I38, not a property
-   * this test establishes (see the I38 row in `docs/SECURITY-INVARIANTS.md`). The disclosure I38
-   * does deliver is PER RUN: `fleet_run.remote_calls_made` beside `remote_call_budget`.
+   * Door 1 is silent BY DESIGN — the wrapper discloses nothing per brief. The per-brief disclosure
+   * lives one level up: the INVOKER (`fleet/fleet-invoker.ts`) writes `fleetRemoteWithheld` onto
+   * the brief's synthesis provenance, proven end to end in
+   * `packages/gateway/test/integration/fleet/fleet-i38-composed.test.ts`. Per run, the disclosure is
+   * `fleet_run.remote_calls_made` beside `remote_call_budget`.
    */
   test("an exhausted budget is a HARD refusal at door 2 and a silent withhold at door 1", async () => {
     const budget = createFleetRemoteBudget(true, 1);
@@ -4469,8 +4471,8 @@ describe("I38 — an unattended fleet run reaches a non-local model only under g
     );
     expect(calls).toEqual(["anthropic"]);
     // Door 1 closes too — SILENTLY. `undefined` is the same answer the runner gets when no remote
-    // provider is configured at all, so the brief that results says nothing about the budget. This
-    // is the per-brief gap I38's row states as a bound; it is asserted here so a reader sees it.
+    // provider is configured at all, so the wrapper alone says nothing about the budget; the
+    // invoker's `fleetRemoteWithheld` is what discloses it on the brief (see the comment above).
     expect(await wrapped.resolveForSynthesis(true)).toBeUndefined();
   });
 
