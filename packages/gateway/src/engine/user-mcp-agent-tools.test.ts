@@ -255,6 +255,89 @@ describe("buildUserMcpAgentTools", () => {
     }
   });
 
+  /** The schema the model is offered for a listing built by the REAL @mastra/mcp converter. */
+  async function offeredFromRealConverter(serverSchema: unknown): Promise<StandardSchemaWithJSON> {
+    const client = new InternalMastraMCPClient({
+      name: "probe",
+      server: { command: "nimbus-never-spawned" },
+    });
+    const converter = client as unknown as { convertInputSchema(s: unknown): unknown };
+    const listed = createTool({
+      id: "mcp_notes_probe",
+      description: "probe",
+      inputSchema: converter.convertInputSchema(serverSchema) as StandardSchemaWithJSON,
+      execute: async () => "SERVER RAN DIRECTLY",
+    });
+    const tools = await buildUserMcpAgentTools(
+      fakeSource(["mcp_notes"], { mcp_notes: { mcp_notes_probe: listed } as LazyMeshToolMap }),
+      () => fakeExecutor({ status: "ok", result: "r" }),
+      wrapSpy().wrap,
+    );
+    const offered = (tools["mcp_notes__probe"] as { inputSchema: unknown }).inputSchema;
+    if (!isStandardSchemaWithJSON(offered)) throw new Error("offered schema is not standard");
+    return offered;
+  }
+
+  async function accepts(schema: StandardSchemaWithJSON, input: unknown): Promise<boolean> {
+    const r = await schema["~standard"].validate(input);
+    return !("issues" in r && (r.issues?.length ?? 0) > 0);
+  }
+
+  test("undeclared keys the REAL converter's listing accepts are still accepted (root, nested, array items)", async () => {
+    const serverSchema = {
+      type: "object",
+      properties: {
+        meta: { type: "object", properties: { a: { type: "string" }, b: { type: "number" } } },
+        xs: { type: "array", items: { type: "object", properties: { n: { type: "number" } } } },
+        u: { anyOf: [{ type: "object", properties: { k: { type: "string" } } }, { type: "null" }] },
+      },
+    };
+    const offered = await offeredFromRealConverter(serverSchema);
+    expect(await accepts(offered, { extra: 1 })).toBe(true);
+    expect(await accepts(offered, { meta: { a: "x", b: 1 }, extra: 1 })).toBe(true);
+    expect(await accepts(offered, { meta: { a: "x", b: 1, extra: 2 } })).toBe(true);
+    expect(await accepts(offered, { xs: [{ n: 1, extra: 2 }] })).toBe(true);
+    expect(await accepts(offered, { u: { k: "v", extra: 3 } })).toBe(true);
+    // Declared constraints still bind.
+    expect(await accepts(offered, { meta: { a: 1 } })).toBe(false);
+    // What the model is SHOWN (the default read-back) keeps the explicit `true`, not a `false`.
+    const shown = standardSchemaToJSONSchema(offered, { io: "input" }) as {
+      additionalProperties?: unknown;
+      properties: Record<string, { additionalProperties?: unknown }>;
+    };
+    expect(shown.additionalProperties).toBe(true);
+    expect(shown.properties["meta"]?.additionalProperties).toBe(true);
+  });
+
+  test("an explicit additionalProperties:false in the listing still refuses an undeclared key", async () => {
+    const offered = await offeredFromRealConverter({
+      type: "object",
+      properties: {
+        a: { type: "string" },
+        meta: {
+          type: "object",
+          properties: { b: { type: "number" } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    });
+    expect(await accepts(offered, { a: "x" })).toBe(true);
+    expect(await accepts(offered, { a: "x", extra: 1 })).toBe(false);
+    expect(await accepts(offered, { meta: { b: 1, extra: 1 } })).toBe(false);
+  });
+
+  test("a nullable:true property still accepts null, as the REAL converter's listing does", async () => {
+    const serverSchema = {
+      type: "object",
+      properties: { a: { type: "string", nullable: true } },
+    };
+    const offered = await offeredFromRealConverter(serverSchema);
+    expect(await accepts(offered, { a: null })).toBe(true);
+    expect(await accepts(offered, { a: "s" })).toBe(true);
+    expect(await accepts(offered, { a: 1 })).toBe(false);
+  });
+
   test("the offered input schema is the SANITISED listing schema, and still validates a call", async () => {
     const listed = createTool({
       id: "mcp_notes_search",

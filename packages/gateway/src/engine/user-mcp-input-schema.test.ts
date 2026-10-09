@@ -98,13 +98,18 @@ describe("sanitiseUserMcpInputSchema (I11, user-MCP input schemas)", () => {
       items: 4,
     });
     // `properties` was malformed, so no `required` name is declared and none survives.
-    expect(out).toEqual({ $schema: D2020, type: "object" });
+    expect(out).toEqual({ $schema: D2020, type: "object", additionalProperties: true });
   });
 
   test("an unknown type name is dropped, not passed through", () => {
     expect(
       sanitiseUserMcpInputSchema({ type: "object", properties: { a: { type: "evil" } } }),
-    ).toEqual({ $schema: D2020, type: "object", properties: { a: {} } });
+    ).toEqual({
+      $schema: D2020,
+      type: "object",
+      properties: { a: {} },
+      additionalProperties: true,
+    });
   });
 
   test("enum/const values are kept verbatim; an over-long or non-primitive value drops the constraint", () => {
@@ -139,6 +144,7 @@ describe("sanitiseUserMcpInputSchema (I11, user-MCP input schemas)", () => {
       type: "object",
       properties: { ok: { type: "string" } },
       required: ["ok"],
+      additionalProperties: true,
     });
   });
 
@@ -283,5 +289,57 @@ describe("sanitiseUserMcpInputSchema (I11, user-MCP input schemas)", () => {
     expect(
       sanitiseUserMcpInputSchema({ type: "object", required: ["x"] })["required"],
     ).toBeUndefined();
+  });
+
+  test("an object node with additionalProperties UNSET is emitted open at every depth; an explicit value is kept", () => {
+    const out = sanitiseUserMcpInputSchema({
+      type: "object",
+      properties: {
+        meta: { type: "object", properties: { a: { type: "string" } } },
+        bare: { type: ["object", "null"] },
+        xs: { type: "array", items: { properties: { n: { type: "number" } } } },
+        u: { anyOf: [{ type: "object" }, { type: "string" }] },
+        closed: {
+          type: "object",
+          properties: { b: { type: "string" } },
+          additionalProperties: false,
+        },
+        typed: { type: "object", additionalProperties: { type: "number" } },
+        s: { type: "string" },
+      },
+    });
+    expect(out["additionalProperties"]).toBe(true);
+    expect(out["properties"]).toEqual({
+      meta: { type: "object", properties: { a: { type: "string" } }, additionalProperties: true },
+      bare: { type: ["object", "null"], additionalProperties: true },
+      xs: {
+        type: "array",
+        items: { properties: { n: { type: "number" } }, additionalProperties: true },
+      },
+      u: { anyOf: [{ type: "object", additionalProperties: true }, { type: "string" }] },
+      closed: {
+        type: "object",
+        properties: { b: { type: "string" } },
+        additionalProperties: false,
+      },
+      typed: { type: "object", additionalProperties: { type: "number" } },
+      s: { type: "string" },
+    });
+  });
+
+  test("a boolean nullable is kept beside type, and dropped without one", () => {
+    const out = sanitiseUserMcpInputSchema({
+      type: "object",
+      properties: {
+        a: { type: "string", nullable: true },
+        b: { nullable: true },
+        c: { type: "string", nullable: "yes" },
+      },
+    }) as { properties: Record<string, unknown> };
+    expect(out.properties).toEqual({
+      a: { type: "string", nullable: true },
+      b: {},
+      c: { type: "string" },
+    });
   });
 });

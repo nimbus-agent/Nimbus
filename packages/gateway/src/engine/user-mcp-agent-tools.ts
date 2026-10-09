@@ -18,10 +18,7 @@
  * model ignore it; and schema `enum`/`const` values, property names and `pattern` (≤ 500 chars)
  * reach the model verbatim, so the ceiling on raw schema text is the 32 KiB rebuilt-size cap, not
  * the 1000-char description cap. Validation of the rebuilt schema is looser than the server's
- * where a constraint was dropped, and stricter in one way: `standardSchemaToJSONSchema` adds
- * `additionalProperties: false` to an object with `properties` when the listing leaves
- * `additionalProperties` unset, so then an undeclared key is refused here, before the owner is
- * prompted.
+ * where a constraint was dropped, and never stricter than the listing's own validator.
  */
 import type { ToolsInput } from "@mastra/core/agent";
 import {
@@ -81,11 +78,20 @@ function describeFor(serviceId: string, serverDescription: string): string {
  * whose conversion throws — gets an open object rather than a guess, so the model still reaches
  * the tool and the server validates.
  */
+/**
+ * The read-back override. The default one closes every object that has `properties` and leaves
+ * `additionalProperties` unset (`additionalProperties: false`), which the listing's OWN
+ * validator never applied — so an explicit `false` and an unset key would become
+ * indistinguishable and the rebuilt schema would refuse calls the listing accepts. Reading the
+ * schema verbatim keeps that distinction for `sanitiseUserMcpInputSchema`.
+ */
+const readListingVerbatim = (): undefined => undefined;
+
 function offeredInputSchema(listed: unknown): StandardSchemaWithJSON {
   let json: unknown;
   if (isStandardSchemaWithJSON(listed)) {
     try {
-      json = standardSchemaToJSONSchema(listed, { io: "input" });
+      json = standardSchemaToJSONSchema(listed, { io: "input", override: readListingVerbatim });
     } catch {
       json = undefined;
     }

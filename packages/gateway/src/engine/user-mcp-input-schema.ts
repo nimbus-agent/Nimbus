@@ -22,9 +22,10 @@
  * draft-07). Only a boolean `false` is carried; a schema-valued `additionalItems` is dropped, so
  * that tuple's tail is left open.
  *
- * Strictness note: the validator wrapper (`toStandardSchema`) adds `additionalProperties: false`
- * to an object with `properties` ONLY when the listing leaves `additionalProperties` unset; an
- * explicit `true` or schema value is kept as listed.
+ * Openness: an object node whose listing leaves `additionalProperties` unset is emitted with an
+ * explicit `additionalProperties: true` (the JSON Schema default, and what the listed validator
+ * applies), because the validator wrapper (`toStandardSchema`) would otherwise close it. An
+ * explicit `false` or schema value is kept as listed. A boolean `nullable` is kept beside `type`.
  *
  * Bounds, stated: `enum`/`const` values, property NAMES and `pattern` reach the model VERBATIM
  * (data the model must echo or match exactly, so they are not escaped). An over-long value or
@@ -154,6 +155,9 @@ function copyScalarKeywords(raw: JsonObject, out: JsonObject): void {
     if (typeof v === "number" && Number.isInteger(v) && v >= 0) out[k] = v;
   }
   if (typeof raw["uniqueItems"] === "boolean") out["uniqueItems"] = raw["uniqueItems"];
+  // OpenAPI-style `nullable` (which @mastra/mcp's validator honours): Ajv accepts it only beside
+  // `type`, and dropping it would refuse a null the server takes.
+  if (type !== undefined && typeof raw["nullable"] === "boolean") out["nullable"] = raw["nullable"];
   const pattern = raw["pattern"];
   if (
     typeof pattern === "string" &&
@@ -224,6 +228,18 @@ function copyArrayKeywords(raw: JsonObject, out: JsonObject, depth: number, walk
   }
 }
 
+/**
+ * An object node whose listing leaves `additionalProperties` unset is OPEN (the JSON Schema default,
+ * and what @mastra/mcp's own validator applies). It is written out as an explicit `true` because
+ * `toStandardSchema` otherwise adds `additionalProperties: false` to any object with
+ * `properties`, which would refuse a call the server accepts.
+ */
+function describesObject(out: JsonObject): boolean {
+  if (out["properties"] !== undefined) return true;
+  const type = out["type"];
+  return type === "object" || (Array.isArray(type) && type.includes("object"));
+}
+
 function copyStructuralKeywords(raw: JsonObject, out: JsonObject, depth: number, walk: Walk): void {
   const properties = sanitiseProperties(raw["properties"], depth, walk);
   if (properties !== undefined) out["properties"] = properties;
@@ -240,6 +256,7 @@ function copyStructuralKeywords(raw: JsonObject, out: JsonObject, depth: number,
   if (typeof additional === "boolean") out["additionalProperties"] = additional;
   else if (isPlainObject(additional))
     out["additionalProperties"] = sanitiseNode(additional, depth + 1, walk);
+  else if (describesObject(out)) out["additionalProperties"] = true;
   for (const k of COMBINATORS) {
     const branches = sanitiseBranches(raw[k], depth, walk);
     if (branches !== undefined) out[k] = branches;
