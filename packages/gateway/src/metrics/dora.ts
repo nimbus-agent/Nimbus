@@ -17,8 +17,9 @@ export type DoraGap =
   // A merged PR whose forge recorded no merge time (Bitbucket never does), so its lead time cannot
   // be measured. Distinct from "no PRs": the PR exists and is dropped from the sample.
   | "incomplete_merge_data"
-  // `excludePrLabels` is set but a counted PR carries no labels array (GitLab and Bitbucket never
-  // write one), so the filter could not apply to it and a revert PR may be in the sample.
+  // `excludePrLabels` is set but a MEASURED pull request (one that contributed a lead time) carries
+  // no labels array, so the filter could not apply to it. In practice only GitHub rows stored
+  // before labels were indexed: GitLab/Bitbucket PRs never reach a lead time today.
   | "pr_labels_unavailable"
   | "mixed_source"
   // A CI provider bound to the service cannot be judged from the index (no writer, or no success
