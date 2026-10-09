@@ -44,6 +44,11 @@
  */
 
 import type { FileEntry } from "./check-nimbus-invariants.ts";
+import {
+  type AnnotationError,
+  extractAnnotations,
+  type LaneAnnotation,
+} from "./lane-census/annotations.ts";
 import { contractEmissions } from "./lane-census/contract-emissions.ts";
 import {
   extractNonItemJsReads,
@@ -99,6 +104,19 @@ export type LaneCensus = {
    * not-item verdict stays visible in the artifact instead of vanishing.
    */
   readonly nonItemReads: readonly NonItemRead[];
+  /**
+   * `item` metadata-key reads with no SQL type scope AND no covering `// lane-census: scope=…`
+   * annotation (spec §5.3). Still counted in `ambiguousReadCount` and matched against the weaker
+   * `"__ANY__"` pool for the report; listed here because the gate needs each one scoped.
+   */
+  readonly unscopedReads: readonly ReadTriple[];
+  /**
+   * Every annotation defect: the file-local ones `extractAnnotations` finds (malformed, doubled,
+   * covers nothing, above a compound statement) plus the corpus-level ones found here — a scoped
+   * type no writer emits, a listed service that writes none of the scoped types, and an annotation
+   * that scoped no metadata read at all (stale).
+   */
+  readonly annotationErrors: readonly AnnotationError[];
 };
 
 /**
@@ -248,10 +266,24 @@ type TypeCoverage = {
   readonly emittingServices: ReadonlySet<string>;
 };
 
-function coverageForType(idx: WriterIndex, type: string, key: string): TypeCoverage {
-  const writingServices = idx.servicesByType.get(type) ?? new Set<string>();
-  const emittingServices = idx.emittingServicesByType.get(type)?.get(key) ?? new Set<string>();
-  return { writingServices, emittingServices };
+/**
+ * `services` (non-null only for an annotation carrying `service=…`, R4) narrows both sets to the
+ * listed services. A scoped type none of the listed services writes is left with zero writers and
+ * therefore never fully covered — fail closed rather than vacuously matched.
+ */
+function coverageForType(
+  idx: WriterIndex,
+  type: string,
+  key: string,
+  services: ReadonlySet<string> | null,
+): TypeCoverage {
+  const writing = idx.servicesByType.get(type) ?? new Set<string>();
+  const emitting = idx.emittingServicesByType.get(type)?.get(key) ?? new Set<string>();
+  if (services === null) return { writingServices: writing, emittingServices: emitting };
+  return {
+    writingServices: new Set([...writing].filter((s) => services.has(s))),
+    emittingServices: new Set([...emitting].filter((s) => services.has(s))),
+  };
 }
 
 /**
@@ -266,11 +298,12 @@ function matchMetadataKeyAcrossTypes(
   idx: WriterIndex,
   scopeTypes: ReadonlySet<string>,
   key: string,
+  services: ReadonlySet<string> | null,
 ): { readonly matched: boolean; readonly emittingServices: readonly string[] } {
   const emitting = new Set<string>();
   let fullyCovered = true;
   for (const type of scopeTypes) {
-    const { writingServices, emittingServices } = coverageForType(idx, type, key);
+    const { writingServices, emittingServices } = coverageForType(idx, type, key, services);
     for (const s of emittingServices) emitting.add(s);
     if (writingServices.size === 0 || emittingServices.size < writingServices.size) {
       fullyCovered = false;
@@ -297,9 +330,12 @@ export function collectLaneCensus(
   const parameterizedReads: ParameterizedRead[] = [];
   const nonItemReads: NonItemRead[] = [];
 
+  const annotationErrors: AnnotationError[] = [];
+
   type PerFile = {
     readonly fileReads: readonly ReadTriple[];
     readonly spans: readonly LiteralSpan[];
+    readonly annotations: readonly LaneAnnotation[];
   };
   const perFile: PerFile[] = [];
 
@@ -307,7 +343,9 @@ export function collectLaneCensus(
     if (isProductionReadFile(f.relPath)) {
       const fileReads = extractReadTriples(f.relPath, f.contents);
       reads.push(...fileReads);
-      perFile.push({ fileReads, spans: computeLiteralSpans(f.contents) });
+      const { annotations, errors } = extractAnnotations(f.relPath, f.contents);
+      annotationErrors.push(...errors);
+      perFile.push({ fileReads, spans: computeLiteralSpans(f.contents), annotations });
       nonItemReads.push(...extractNonItemJsReads(f.relPath, f.contents));
 
       for (const p of findParameterizedTypeReads(f.contents)) {
@@ -324,9 +362,15 @@ export function collectLaneCensus(
   const writerIndex = buildWriterIndex(writes);
 
   const unmatchedItemReads: UnmatchedReadTriple[] = [];
+  const unscopedReads: ReadTriple[] = [];
   let ambiguousReadCount = 0;
+  const usedAnnotations = new Set<LaneAnnotation>();
 
-  for (const { fileReads, spans } of perFile) {
+  for (const { annotations } of perFile) {
+    for (const a of annotations) annotationErrors.push(...validateAnnotation(a, writerIndex));
+  }
+
+  for (const { fileReads, spans, annotations } of perFile) {
     const typeTriples = fileReads.filter((t) => t.kind === "type");
 
     for (const triple of fileReads) {
@@ -342,9 +386,18 @@ export function collectLaneCensus(
         continue;
       }
 
-      // kind === "metadata-key"
-      const scopeTypes = scopeTypesFor(triple, spans, typeTriples);
+      // kind === "metadata-key". A covering annotation overrides the SQL-derived scope (R4).
+      const annotation = annotations.find(
+        (a) => triple.line >= a.startLine && triple.line <= a.endLine,
+      );
+      if (annotation !== undefined) usedAnnotations.add(annotation);
+      const scopeTypes =
+        annotation !== undefined
+          ? new Set(annotation.types)
+          : scopeTypesFor(triple, spans, typeTriples);
+      const services = annotation?.services ? new Set(annotation.services) : null;
       if (scopeTypes.size === 0) {
+        unscopedReads.push(triple);
         // "__ANY__" scope: unchanged from the per-type design — checked against the weaker
         // global union (any writer of any type emitting the key counts), never per-service,
         // since there is no type context here to check per-writer coverage against.
@@ -359,6 +412,7 @@ export function collectLaneCensus(
         writerIndex,
         scopeTypes,
         triple.value,
+        services,
       );
       if (!matched) {
         unmatchedItemReads.push(
@@ -370,6 +424,18 @@ export function collectLaneCensus(
     }
   }
 
+  for (const { annotations } of perFile) {
+    for (const a of annotations) {
+      if (!usedAnnotations.has(a)) {
+        annotationErrors.push({
+          file: a.file,
+          line: a.line,
+          message: "annotation covers no metadata read",
+        });
+      }
+    }
+  }
+
   return {
     reads,
     writes,
@@ -377,7 +443,37 @@ export function collectLaneCensus(
     ambiguousReadCount,
     parameterizedReads,
     nonItemReads,
+    unscopedReads,
+    annotationErrors,
   };
+}
+
+/**
+ * Corpus-level checks on one annotation (R4): every scoped type must have a writer, and every
+ * listed service must write at least one of the scoped types — otherwise the annotation narrows
+ * the read to a writer set that cannot exist, which would make its verdict meaningless.
+ */
+function validateAnnotation(a: LaneAnnotation, idx: WriterIndex): readonly AnnotationError[] {
+  const out: AnnotationError[] = [];
+  for (const t of a.types) {
+    if (!idx.writtenTypes.has(t)) {
+      out.push({
+        file: a.file,
+        line: a.line,
+        message: `annotation names type '${t}', which no writer emits`,
+      });
+    }
+  }
+  for (const s of a.services ?? []) {
+    if (!a.types.some((t) => idx.servicesByType.get(t)?.has(s) === true)) {
+      out.push({
+        file: a.file,
+        line: a.line,
+        message: `annotation lists service '${s}', which writes none of ${a.types.join(", ")}`,
+      });
+    }
+  }
+  return out;
 }
 
 // -------------------------------------------------------------------------------------------
@@ -462,6 +558,8 @@ async function run(): Promise<void> {
       ambiguousReadCount: census.ambiguousReadCount,
       parameterizedReads: census.parameterizedReads.length,
       nonItemReads: census.nonItemReads.length,
+      unscopedReads: census.unscopedReads.length,
+      annotationErrors: census.annotationErrors.length,
     },
     reads: census.reads,
     writes: census.writes,
@@ -469,6 +567,8 @@ async function run(): Promise<void> {
     ambiguousReadCount: census.ambiguousReadCount,
     parameterizedReads: census.parameterizedReads,
     nonItemReads: census.nonItemReads,
+    unscopedReads: census.unscopedReads,
+    annotationErrors: census.annotationErrors,
   };
   await Bun.write(outPath, `${JSON.stringify(artifact, null, 2)}\n`);
 
@@ -478,7 +578,8 @@ async function run(): Promise<void> {
       `(${totalUnmatched} total absence, ${totalPartial} partial coverage), ` +
       `${census.ambiguousReadCount} ambiguous (__ANY__-scoped), ` +
       `${census.parameterizedReads.length} parameterized, ` +
-      `${census.nonItemReads.length} non-item JS reads (not gated) → ${outPath}`,
+      `${census.nonItemReads.length} non-item JS reads (not gated), ` +
+      `${census.unscopedReads.length} unscoped, ${census.annotationErrors.length} annotation errors → ${outPath}`,
   );
   // Always exits 0 — this is a census, not a gate. A later task turns a slice of it into an
   // enforced gate, exactly as `db-run-census.json` precedes `check-nimbus-invariants.ts`'s

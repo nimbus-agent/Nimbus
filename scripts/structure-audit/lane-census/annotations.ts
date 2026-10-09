@@ -1,0 +1,261 @@
+import { stripComments, stripStringLiterals } from "../lib.ts";
+
+/**
+ * A verified `// lane-census: scope=<type>[,<type>] [service=<id>[,<id>]]` annotation (spec §5.3,
+ * rulings R3/R4/R10). It tells the census which item type(s) — and optionally which writing
+ * services — the metadata reads inside one STATEMENT are about, for the reads it cannot scope on
+ * its own: a JS `meta["k"]` read whose rows come from a query in another function, or a SQL read
+ * scoped only by `type = ?`.
+ *
+ * R3: the annotation covers the whole statement beginning on the next non-blank, non-comment line —
+ * through its first top-level `;`, or, for a `function` declaration, through its closing `}`. A
+ * `//` cannot sit on the line directly above a read that lives inside a multi-line SQL template
+ * (it would be SQL text), which is why the span is a statement and not a single line.
+ */
+export type LaneAnnotation = {
+  readonly file: string;
+  /** The comment's own line (1-indexed). */
+  readonly line: number;
+  readonly types: readonly string[];
+  readonly services: readonly string[] | null;
+  /** First covered line (1-indexed). */
+  readonly startLine: number;
+  /** Last covered line, inclusive. */
+  readonly endLine: number;
+};
+
+export type AnnotationError = {
+  readonly file: string;
+  readonly line: number;
+  readonly message: string;
+};
+
+/** Any line carrying the marker at all — a well-formed annotation or a malformed attempt at one. Built fresh per call (this directory's shared-`g`-RegExp hazard). */
+function markerRegex(): RegExp {
+  return /\/\/\s*lane-census:/;
+}
+
+/** The one accepted form, as the whole line. */
+function annotationRegex(): RegExp {
+  return /^\s*\/\/\s*lane-census:\s*scope=([a-z0-9_]+(?:,[a-z0-9_]+)*)(?:\s+service=([a-z0-9_]+(?:,[a-z0-9_]+)*))?\s*$/;
+}
+
+/** A `function` declaration statement head (optionally exported / default / async). */
+function functionHeadRegex(): RegExp {
+  return /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\b/;
+}
+
+/**
+ * A compound-statement head. R10: an annotation above one of these is an ERROR, not a span — a `;`
+ * search would run past the block's `}` into the next statement, and `else`/`catch` chains make any
+ * brace rule fragile.
+ */
+function compoundHeadRegex(): RegExp {
+  return /^\s*(?:if|for|while|do|switch|try|else)\b/;
+}
+
+const FORM = "`// lane-census: scope=<type>[,<type>] [service=<id>[,<id>]]`";
+
+/**
+ * `contents` with comments removed and string/template bodies blanked, but with EVERY original
+ * newline kept, so a line index into the result is a line index into the raw file.
+ * `stripComments` already keeps one `\n` per original `\n`; `stripStringLiterals` does not — it
+ * blanks a template body's newlines to spaces along with the rest of its text — so its output is
+ * re-newlined against its (equal-length) input.
+ */
+function newlinePreservingCode(contents: string): string {
+  const noComments = stripComments(contents);
+  const blanked = stripStringLiterals(noComments);
+  const out = blanked.split("");
+  for (let i = 0; i < out.length; i++) {
+    if (noComments[i] === "\n") out[i] = "\n";
+  }
+  return out.join("");
+}
+
+/** 0-based offset of the start of each line of `code`. */
+function lineStarts(code: string): readonly number[] {
+  const starts = [0];
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === "\n") starts.push(i + 1);
+  }
+  return starts;
+}
+
+/** 1-indexed line of `offset` in `code`. */
+function lineOfOffset(starts: readonly number[], offset: number): number {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if ((starts[mid] ?? 0) <= offset) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo + 1;
+}
+
+/** Offset of the bracket closing the one at `open` (same kind), or `null` when unbalanced. */
+function matchingClose(code: string, open: number): number | null {
+  const openCh = code[open];
+  const closeCh = openCh === "(" ? ")" : openCh === "[" ? "]" : "}";
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    const ch = code[i];
+    if (ch === openCh) depth++;
+    else if (ch === closeCh) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return null;
+}
+
+/** The last non-whitespace character before `offset`, and its offset (`-1` when none). */
+function previousSignificant(code: string, offset: number): number {
+  let k = offset - 1;
+  while (k >= 0 && /\s/.test(code[k] ?? "")) k--;
+  return k;
+}
+
+/**
+ * Whether the `{` at `brace` (after a function's parameter list) opens a TYPE rather than the body:
+ * an object return type (`): { a: T } {`), a generic argument (`Promise<{ a: T }>`), a union /
+ * intersection member, or the result of a function type (`(): () => { a: T } {`).
+ */
+function bracePrecedesType(code: string, brace: number): boolean {
+  const k = previousSignificant(code, brace);
+  const ch = code[k];
+  if (ch === ":" || ch === "|" || ch === "&" || ch === "<" || ch === "," || ch === "(") return true;
+  return ch === ">" && code[k - 1] === "=";
+}
+
+/**
+ * End offset of a `function` declaration starting at `start`: the `}` closing its body — the first
+ * `{` after the parameter list's `)` that does not open a return TYPE — or an overload signature's
+ * `;` reached first. `null` when no parameter list or body can be found.
+ */
+function functionEnd(code: string, start: number): number | null {
+  const open = code.indexOf("(", start);
+  if (open === -1) return null;
+  const close = matchingClose(code, open);
+  if (close === null) return null;
+  for (let i = close + 1; i < code.length; i++) {
+    const ch = code[i];
+    if (ch === ";") return i;
+    if (ch === "(" || ch === "[") {
+      const end = matchingClose(code, i);
+      if (end === null) return null;
+      i = end;
+      continue;
+    }
+    if (ch !== "{") continue;
+    const end = matchingClose(code, i);
+    if (end === null) return null;
+    if (!bracePrecedesType(code, i)) return end;
+    i = end;
+  }
+  return null;
+}
+
+/**
+ * End offset of an ordinary statement starting at `start`: its first `;` at bracket depth 0
+ * (tracking `(){}[]`). A closer that takes the depth below 0 means the statement ended without a
+ * `;` at the end of its enclosing block — it ends at the last code before that closer. No `;` at
+ * all = end of file.
+ */
+function plainStatementEnd(code: string, start: number): number {
+  let depth = 0;
+  for (let i = start; i < code.length; i++) {
+    const ch = code[i];
+    if (ch === "(" || ch === "{" || ch === "[") depth++;
+    else if (ch === ")" || ch === "}" || ch === "]") {
+      depth--;
+      if (depth < 0) return Math.max(start, previousSignificant(code, i));
+    } else if (ch === ";" && depth === 0) return i;
+  }
+  return Math.max(start, previousSignificant(code, code.length));
+}
+
+/**
+ * Every lane-census annotation in `contents` (parsed from the RAW text — the comments are what is
+ * being read) and every annotation error a file-local check can find: a malformed annotation, two
+ * annotations on one statement, an annotation that covers nothing, and an annotation above a
+ * compound statement (R10). Type/service validity needs the writer corpus and is checked by the
+ * census, not here.
+ */
+export function extractAnnotations(
+  file: string,
+  contents: string,
+): {
+  readonly annotations: readonly LaneAnnotation[];
+  readonly errors: readonly AnnotationError[];
+} {
+  const annotations: LaneAnnotation[] = [];
+  const errors: AnnotationError[] = [];
+  const lines = contents.split(/\r?\n/);
+  let code: string | null = null;
+  let starts: readonly number[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i] ?? "";
+    if (!markerRegex().test(raw)) continue;
+    const m = annotationRegex().exec(raw);
+    if (m === null) {
+      errors.push({
+        file,
+        line: i + 1,
+        message: `malformed lane-census annotation; expected ${FORM}`,
+      });
+      continue;
+    }
+
+    let j = i + 1;
+    let doubled = false;
+    while (j < lines.length) {
+      const trimmed = (lines[j] ?? "").trim();
+      if (trimmed !== "" && !trimmed.startsWith("//")) break;
+      if (markerRegex().test(lines[j] ?? "")) doubled = true;
+      j++;
+    }
+    if (doubled) {
+      errors.push({ file, line: i + 1, message: "two lane-census annotations on one statement" });
+      continue;
+    }
+    if (j >= lines.length) {
+      errors.push({ file, line: i + 1, message: "annotation covers nothing" });
+      continue;
+    }
+
+    if (code === null) {
+      code = newlinePreservingCode(contents);
+      starts = lineStarts(code);
+    }
+    const start = starts[j] ?? code.length;
+    const head = code.slice(
+      start,
+      code.indexOf("\n", start) === -1 ? code.length : code.indexOf("\n", start),
+    );
+    if (compoundHeadRegex().test(head)) {
+      errors.push({
+        file,
+        line: i + 1,
+        message:
+          "annotation sits above a compound statement; annotate the enclosing function or a statement inside the block",
+      });
+      continue;
+    }
+    const endOffset = functionHeadRegex().test(head)
+      ? (functionEnd(code, start) ?? plainStatementEnd(code, start))
+      : plainStatementEnd(code, start);
+
+    annotations.push({
+      file,
+      line: i + 1,
+      types: (m[1] ?? "").split(","),
+      services: m[2] === undefined ? null : m[2].split(","),
+      startLine: j + 1,
+      endLine: Math.max(j + 1, lineOfOffset(starts, endOffset)),
+    });
+  }
+  return { annotations, errors };
+}
