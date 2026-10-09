@@ -450,6 +450,11 @@ function metaOrigin(
     if (declStillInScope(braceCache(src, sink), m.index, index)) last = m;
     m = declRe.exec(src);
   }
+  // A destructuring declaration binding `name` (`const { metadata: meta } = row`) that is in
+  // scope and comes AFTER the plain declaration shadows it — always item (fail-safe: what the
+  // pattern pulls apart is unknown, so the read is kept).
+  const destructured = lastDestructuringBinding(src, index, name, sink);
+  if (destructured !== -1 && (last === null || destructured > last.index)) return "item";
   if (last === null || last[1] === undefined) return "item";
   if (parameterShadows(src, last.index, index, name)) return "item";
   const initStart = last.index + last[0].length;
@@ -457,6 +462,40 @@ function metaOrigin(
   const semi = src.indexOf(";", initStart);
   const init = src.slice(initStart, semi === -1 ? Math.min(src.length, initStart + 300) : semi);
   return itemOriginRegex().test(init) ? "item" : "not-item";
+}
+
+/**
+ * The index of the nearest `const|let|var { … } ` / `[ … ]` destructuring declaration before
+ * `useIndex`, still in scope there, whose pattern BINDS `name` — as a shorthand (`{ meta }`), a
+ * rename target (`{ metadata: meta }`), a default (`{ meta = {} }`) or an array element
+ * (`[meta]`); a bare property KEY (`{ meta: m }`) binds `m`, not `name`, and does not count.
+ * -1 when there is none.
+ */
+function lastDestructuringBinding(
+  src: string,
+  useIndex: number,
+  name: string,
+  sink: JsReadSink,
+): number {
+  const headRe = /\b(?:const|let|var)\s*([{[])/g;
+  const bindsRe = new RegExp(`(?<![A-Za-z0-9_$.])${name}\\b(?!\\s*:)`);
+  let found = -1;
+  let m = headRe.exec(src);
+  while (m !== null && m.index < useIndex) {
+    const open = m.index + m[0].length - 1;
+    const opener = m[1] === "[" ? "[" : "{";
+    const close = findMatchingDelimiter(src, open, opener, opener === "[" ? "]" : "}");
+    if (
+      close !== -1 &&
+      close < useIndex &&
+      bindsRe.test(src.slice(open + 1, close)) &&
+      declStillInScope(braceCache(src, sink), m.index, useIndex)
+    ) {
+      found = m.index;
+    }
+    m = headRe.exec(src);
+  }
+  return found;
 }
 
 /**
@@ -580,10 +619,10 @@ function precedingWord(src: string, parenIndex: number): string {
 
 /**
  * The body span of the function whose parameter list closes at `closeParen`, or `undefined` when
- * that `(…)` is not a parameter list. After the `)`: an optional `: ReturnType`, then either `=>`
- * (an arrow — block or expression body) or `{` (a function/method/`catch` block). A `{` whose
- * closing `}` is followed by another `{` was an object-literal return TYPE; the next block is the
- * body.
+ * that `(…)` is not a parameter list. After the `)`: an optional `: ReturnType` (skipped by
+ * `skipReturnType`, so a `{` INSIDE the type — `Promise<{ a: T }>`, `: { a: T } =>` — is never
+ * taken as the body), then either `=>` (an arrow — block or expression body) or `{` (a
+ * function/method/`catch` block).
  */
 function functionBodyAfter(
   src: string,
@@ -591,24 +630,61 @@ function functionBodyAfter(
   keyword: string,
 ): BracePair | undefined {
   let i = skipWhitespace(src, closeParen + 1);
-  const hasReturnType = src[i] === ":";
-  if (hasReturnType) {
-    const arrow = src.indexOf("=>", i);
-    const brace = src.indexOf("{", i);
-    if (arrow !== -1 && (brace === -1 || arrow < brace)) i = arrow;
-    else if (brace !== -1) i = brace;
-    else return undefined;
+  if (src[i] === ":") {
+    const afterType = skipReturnType(src, i + 1);
+    if (afterType === -1) return undefined;
+    i = afterType;
   }
   if (src.startsWith("=>", i)) return arrowBody(src, i + 2);
   if (src[i] !== "{" || NON_BINDING_PAREN_KEYWORDS.includes(keyword)) return undefined;
   const end = findMatchingDelimiter(src, i, "{", "}");
   if (end === -1) return undefined;
-  const next = skipWhitespace(src, end + 1);
-  if (hasReturnType && src[next] === "{") {
-    const bodyEnd = findMatchingDelimiter(src, next, "{", "}");
-    if (bodyEnd !== -1) return { start: next, end: bodyEnd };
-  }
   return { start: i, end };
+}
+
+/**
+ * Walks a return-type annotation starting at `from` (just past its `:`) with bracket-depth
+ * tracking over `<>`, `{}`, `()` and `[]` (string-aware), and returns the index of the first `=>`
+ * or body `{` at depth 0 after it, or -1 when neither appears. A `{` at depth 0 that OPENS a type
+ * (the annotation's first token, or one following `|`, `&`, `,` or `?`/`:` of a conditional type)
+ * is an object-literal type and is descended into rather than taken as the body; a `=>` inside the
+ * type (a function type nested in `<…>`/`(…)`) is consumed as one token so its `>` never closes an
+ * angle bracket.
+ */
+function skipReturnType(src: string, from: number): number {
+  let depth = 0;
+  let expectingType = true;
+  let i = from;
+  while (i < src.length) {
+    const ch = src[i] ?? "";
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i = skipStringOrTemplate(src, i);
+      expectingType = false;
+      continue;
+    }
+    if (ch === "=" && src[i + 1] === ">") {
+      if (depth === 0) return i;
+      i += 2;
+      expectingType = true;
+      continue;
+    }
+    if (ch === "{" && depth === 0 && !expectingType) return i;
+    if (ch === "<" || ch === "{" || ch === "(" || ch === "[") {
+      depth++;
+      expectingType = true;
+    } else if (ch === ">" || ch === "}" || ch === ")" || ch === "]") {
+      if (depth > 0) depth--;
+      expectingType = false;
+    } else {
+      expectingType = "|&,?:".includes(ch);
+    }
+    i++;
+  }
+  return -1;
 }
 
 /**

@@ -196,4 +196,28 @@ describe("JS metadata reads — A3 noise fixes", () => {
     ].join("\n");
     expect(keys(src)).toEqual(["status"]);
   });
+
+  test("a `{` inside a return-type annotation is not taken as the body (fix round 1)", () => {
+    for (const fn of [
+      'function f(meta: R): Promise<{ a: T }> { return meta["status"]; }',
+      'const f = (meta: R): { a: T } => ({ s: meta["status"] });',
+      'const f = async (meta: R): Promise<{a: T}> => { return meta["status"]; };',
+    ]) {
+      const src = `const meta = vendor();\n${fn}`;
+      expect(keys(src)).toEqual(["status"]);
+      expect(extractNonItemJsReads("x.ts", src)).toEqual([]);
+    }
+  });
+
+  test("a destructuring declaration that binds the name shadows an outer vendor `const meta` (fix round 1)", () => {
+    const src = [
+      'const meta = asRecord(cfg["x"]);',
+      "function g(row: R) {",
+      "  const { metadata: meta } = row;",
+      '  return meta["status"];',
+      "}",
+    ].join("\n");
+    expect(keys(src)).toEqual(["status"]);
+    expect(extractNonItemJsReads("x.ts", src)).toEqual([]);
+  });
 });
