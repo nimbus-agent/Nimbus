@@ -7,6 +7,7 @@ export type GateViolationKind =
   | "unscoped"
   | "annotation"
   | "stale-exemption"
+  | "exemption-count"
   | "invalid-exemption";
 
 export type GateViolation = {
@@ -17,16 +18,27 @@ export type GateViolation = {
   readonly message: string;
 };
 
+/**
+ * Evaluates the census against the exemptions. An exemption matches on `(file, key)` and must
+ * declare in `reads` the EXACT number of violations it suppresses (ruling amending R6): a (file,
+ * key) match alone would also silence a FUTURE dead read of the same key in the same file, so a
+ * count that drifts (more or fewer, but above zero) is an `exemption-count` violation, and zero
+ * stays `stale-exemption`.
+ */
 export function evaluateLaneGate(
   census: LaneCensus,
   exemptions: readonly LaneExemption[],
 ): readonly GateViolation[] {
   const out: GateViolation[] = [];
   const idOf = (file: string, key: string): string => `${file}\u0000${key}`;
-  const used = new Set<string>(); // by (file, key), so a duplicate is reported once, as invalid
+  // Suppressed-violation count by (file, key), so a duplicate is reported once, as invalid.
+  const used = new Map<string, number>();
   const exemptFor = (file: string, key: string): LaneExemption | undefined => {
     const e = exemptions.find((x) => x.file === file && x.key === key);
-    if (e !== undefined) used.add(idOf(file, key));
+    if (e !== undefined) {
+      const id = idOf(file, key);
+      used.set(id, (used.get(id) ?? 0) + 1);
+    }
     return e;
   };
   const seen = new Set<string>();
@@ -86,14 +98,24 @@ export function evaluateLaneGate(
   const reportedStale = new Set<string>();
   for (const e of exemptions) {
     const id = idOf(e.file, e.key);
-    if (!used.has(id) && !reportedStale.has(id)) {
-      reportedStale.add(id);
+    if (reportedStale.has(id)) continue;
+    reportedStale.add(id);
+    const suppressed = used.get(id) ?? 0;
+    if (suppressed === 0) {
       out.push({
         kind: "stale-exemption",
         file: e.file,
         line: 0,
         key: e.key,
         message: `exemption (${e.category}) suppresses nothing — delete it`,
+      });
+    } else if (suppressed !== e.reads) {
+      out.push({
+        kind: "exemption-count",
+        file: e.file,
+        line: 0,
+        key: e.key,
+        message: `exemption for '${e.key}' suppresses ${suppressed} read(s), declares ${e.reads} — a read was added or removed; review it`,
       });
     }
   }

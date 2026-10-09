@@ -11,10 +11,18 @@ const R = (body: string) => ({ relPath: "packages/gateway/src/agents/r.ts", cont
 const dead = R(
   "db.query(`SELECT 1 FROM item WHERE type = 'incident' AND json_extract(metadata, '$.ghost') = 1`);",
 );
+/** Two dead reads of the same key in the same file. */
+const twoGhostReads = R(
+  [
+    "db.query(`SELECT 1 FROM item WHERE type = 'incident' AND json_extract(metadata, '$.ghost') = 1`);",
+    "db.query(`SELECT 2 FROM item WHERE type = 'incident' AND json_extract(metadata, '$.ghost') = 2`);",
+  ].join("\n"),
+);
 const ex = (key: string, extra: Partial<LaneExemption> = {}): LaneExemption => ({
   file: "packages/gateway/src/agents/r.ts",
   key,
   category: "disclosed",
+  reads: 1,
   reason: "disclosed as `x_gap` by the agent",
   ...extra,
 });
@@ -65,6 +73,22 @@ describe("evaluateLaneGate", () => {
   test("a duplicate (file, key) exemption is invalid, not reported as stale", () => {
     const v = evaluateLaneGate(collectLaneCensus([W, dead]), [ex("ghost"), ex("ghost")]);
     expect(v.map((x) => x.kind)).toEqual(["invalid-exemption"]);
+  });
+  test("an exemption whose declared reads match exactly passes", () => {
+    expect(
+      evaluateLaneGate(collectLaneCensus([W, twoGhostReads]), [ex("ghost", { reads: 2 })]),
+    ).toEqual([]);
+  });
+  test("an extra dead read of an exempted key in the same file fails as exemption-count", () => {
+    const v = evaluateLaneGate(collectLaneCensus([W, twoGhostReads]), [ex("ghost")]);
+    expect(v.map((x) => x.kind)).toEqual(["exemption-count"]);
+    expect(v[0]?.message).toBe(
+      "exemption for 'ghost' suppresses 2 read(s), declares 1 — a read was added or removed; review it",
+    );
+  });
+  test("a removed read under an exemption fails as exemption-count, not stale", () => {
+    const v = evaluateLaneGate(collectLaneCensus([W, dead]), [ex("ghost", { reads: 2 })]);
+    expect(v.map((x) => x.kind)).toEqual(["exemption-count"]);
   });
   test("a contract partial fails unless exempted", () => {
     const W2 = {
