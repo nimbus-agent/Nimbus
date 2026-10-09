@@ -10,9 +10,11 @@
  *
  * `collectLaneCensus` is pure (no I/O, no filesystem access) — only `run()` below touches disk.
  *
- * Without `--check` it is a report and always exits 0, like `collectDbRunCensus` in
- * `check-nimbus-invariants.ts`. With `--check` it is a gate: `lane-census/gate.ts`
- * `evaluateLaneGate` over `LANE_EXEMPTIONS`, exit 1 on any violation.
+ * Without `--check` it is a report: it writes `docs/structure-audit/index-lane-census.json` and
+ * always exits 0, like `collectDbRunCensus` in `check-nimbus-invariants.ts`. With `--check` it is
+ * a READ-ONLY gate: it computes the same census but writes nothing (so a preflight or CI run never
+ * dirties the committed artifact), then runs `lane-census/gate.ts` `evaluateLaneGate` over
+ * `LANE_EXEMPTIONS` and exits 1 on any violation.
  *
  * **The matching rule this file owns:** a metadata key is matched against the `type` it was read
  * *beside* — the type predicate(s) found in the same SQL string literal — never against a global
@@ -600,7 +602,9 @@ async function run(): Promise<void> {
     unscopedReads: census.unscopedReads,
     annotationErrors: census.annotationErrors,
   };
-  await Bun.write(outPath, `${JSON.stringify(artifact, null, 2)}\n`);
+  // `--check` is read-only: a preflight or CI gate run must never dirty the committed artifact.
+  const check = process.argv.includes("--check");
+  if (!check) await Bun.write(outPath, `${JSON.stringify(artifact, null, 2)}\n`);
 
   console.log(
     `index-lane census: ${census.reads.length} reads, ${census.writes.length} writes, ` +
@@ -609,9 +613,10 @@ async function run(): Promise<void> {
       `${census.ambiguousReadCount} ambiguous (__ANY__-scoped), ` +
       `${census.parameterizedReads.length} parameterized, ` +
       `${census.nonItemReads.length} non-item JS reads (not gated), ` +
-      `${census.unscopedReads.length} unscoped, ${census.annotationErrors.length} annotation errors → ${outPath}`,
+      `${census.unscopedReads.length} unscoped, ${census.annotationErrors.length} annotation errors` +
+      (check ? " (--check: artifact not written)" : ` → ${outPath}`),
   );
-  if (!process.argv.includes("--check")) return;
+  if (!check) return;
   const violations = evaluateLaneGate(census, LANE_EXEMPTIONS);
   for (const v of violations) console.log(`${v.file}:${v.line} [${v.kind}] ${v.message}`);
   if (violations.length > 0) {

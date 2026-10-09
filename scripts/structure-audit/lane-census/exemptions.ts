@@ -8,7 +8,22 @@
  * key in the same file; with the count pinned, a read added or removed under an existing exemption
  * fails as `exemption-count` until someone reviews it and updates `reads` (or the reason).
  */
-export type LaneExemptionCategory = "disclosed" | "legacy" | "not-item" | "by-design";
+/**
+ * - `disclosed` — a partial/dead read whose gap the brief or metric discloses to the user.
+ * - `legacy` — a pre-contract key read only for rows written before the canonical key existed.
+ * - `not-item` — the receiver is not item metadata (e.g. a parsed vendor file).
+ * - `by-design` — absence of the key is an intended, handled state, not a gap.
+ * - `census-blind` — a read whose real production writer the census writer scan cannot see; the
+ *   reason must name that writer function and file (e.g. `ingestClip` in clips/clip-ingest.ts
+ *   writes `sourceWordCount` inside a conditional spread). Teaching `writer-emissions.ts` the
+ *   shape makes the exemption go stale, which is the intended way to retire it.
+ */
+export type LaneExemptionCategory =
+  | "disclosed"
+  | "legacy"
+  | "not-item"
+  | "by-design"
+  | "census-blind";
 
 export type LaneExemption = {
   /** Repo-relative, e.g. "packages/gateway/src/metrics/dora.ts". */
@@ -149,19 +164,19 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
   {
     file: "packages/gateway/src/index/item-store.ts",
     key: "bodyFetch",
-    category: "by-design",
+    category: "census-blind",
     reads: 1,
     reason:
-      "selectItemBodyFetchState (annotated scope=page service=notion) reads the bodyFetch verdict connectors/notion-sync.ts writes into a metadata variable built by a ternary before ctx.upsertItem — a shape the census writer scan does not follow (it records the notion:page write with no keys). Absent by design means never attempted or errored, which marks the page retryable.",
+      "selectItemBodyFetchState (annotated scope=page service=notion) reads bodyFetch, which upsertNotionPage in connectors/notion-sync.ts writes into a metadata variable initialised by a ternary before ctx.upsertItem — a shape the census writer scan does not follow (it records the notion:page write with no keys). Absent means never attempted or errored, which marks the page retryable.",
   },
   // ── ipc/ ─────────────────────────────────────────────────────────────────────────────────
   {
     file: "packages/gateway/src/ipc/clip-rpc.ts",
     key: "sourceWordCount",
-    category: "by-design",
+    category: "census-blind",
     reads: 3,
     reason:
-      "rowToClipEntry (annotated scope=web_clip) reads sourceWordCount, which clips/clip-ingest.ts ingestClip writes only for an over-cap clip, inside a conditional spread the census writer scan does not follow. Absent by design means not truncated (also the reading of a clip ingested before the field existed).",
+      "rowToClipEntry (annotated scope=web_clip) reads sourceWordCount, which ingestClip in clips/clip-ingest.ts writes (for an over-cap clip only) inside a conditional object spread the census writer scan does not follow. Absent means not truncated (also the reading of a clip ingested before the field existed).",
   },
   // ── multimodal/ ──────────────────────────────────────────────────────────────────────────
   {
