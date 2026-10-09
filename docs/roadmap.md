@@ -489,7 +489,7 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
 - [x] **B2 — Perf bench (Phase 1)** — S8/S9/S10 drivers implemented; reference-machine baseline established; wired into CI via `_perf.yml`.
 - [x] **B3 — Structure audit (Phases 1 & 2)** — Phase 1 tooling (`check-nimbus-invariants.ts`, `count-any-usage.ts`) implemented; Phase 2 ranking and findings documented in `docs/structure-audit/baseline.md`.
 - [x] **B4 — Bug-hunt audit** — ranked by user-facing impact / engineering cost. **2026-09-20: the
-  audit ran and a report-only census landed; the gate is still pending.** A table-aware static
+  audit ran and a report-only census landed; the gate followed on 2026-10-09 (below).** A table-aware static
   census (`bun run audit:lane-census`, `scripts/structure-audit/check-index-lane-coverage.ts`)
   diffs what production code reads from `item` (type literals, `json_extract` metadata keys,
   JS-side `meta["k"]` reads) against what every connector writes, and reproduces all four bugs the
@@ -500,10 +500,9 @@ The B1 security audit completed in Phase 4. Three more initiatives are active or
   `circleci` `ci_run` writer emits it, `github_actions` writes `headBranch`), and an unmatched
   `opened_at_ms` read (`agents/premortem.ts:199`/`:205` only — the same key IS matched at
   `metrics/dora.ts`'s incident-scoped read, which is what proves the census scopes per-literal
-  type rather than matching on key name alone). It always exits `0` and only writes
-  `docs/structure-audit/index-lane-census.json` — **this closes the audit half of the row, not the
-  row**: turning the census into an enforced CI gate over the found gaps is deferred follow-up
-  work, not yet scheduled. **2026-10-09: the gate half shipped** - `bun run audit:lane-census --check`
+  type rather than matching on key name alone). As shipped then, it always exited `0` and only wrote
+  `docs/structure-audit/index-lane-census.json` — that closed the audit half of the row; the gate
+  half was deferred until A3. **2026-10-09: the gate half shipped** - `bun run audit:lane-census --check`
   runs in `preflight:fast` and `_structure.yml`; every production SQL `item` read, and every SQL `json_extract`
   and bracket-indexed `meta[...]`/`metadata[...]` metadata read, must match a writer, carry a
   verified `// lane-census:` annotation, or be a counted exemption (29 at ship), and a stale or
