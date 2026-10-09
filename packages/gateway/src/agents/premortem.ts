@@ -163,6 +163,8 @@ type CohortPrTiming = {
   service: string;
   opened_at_ms: number | null;
   merged_at: number | null;
+  /** `json_extract` of `$.merged`: `1` for a merged PR, `0` for an open/closed one, `null` when unknown. */
+  merged: number | null;
 };
 
 /**
@@ -185,7 +187,8 @@ function cohortPrTimings(
       `SELECT DISTINCT pr_item.id AS id,
               pr_item.service AS service,
               json_extract(pr_item.metadata, '$.opened_at_ms') AS opened_at_ms,
-              json_extract(pr_item.metadata, '$.merged_at')    AS merged_at
+              json_extract(pr_item.metadata, '$.merged_at')    AS merged_at,
+              json_extract(pr_item.metadata, '$.merged')       AS merged
          ${cohortPrJoinSql(epicPlaceholders, servicePlaceholders)}`,
     )
     .all(...epicItemIds, ...services) as CohortPrTiming[];
@@ -305,12 +308,15 @@ function reviewDragMedians(
   const windowFromMs = Math.min(...timed.map((t) => t.merged_at));
   const repoDurations = repoPrDurations(db, services, windowFromMs, nowMs);
   // Measured: a PR is "left out of both medians" whether it was dropped from the cohort's or the
-  // baseline's, so name the forges of both.
+  // baseline's, so name the forges of both. The cohort side counts only MERGED untimed PRs, the
+  // same `merged = 1` restriction `repoForgesMissingTiming` applies: an open PR is not part of a
+  // merge-time median at all, so it is not "left out" of one. (The unmeasured branch above keeps
+  // every untimed PR — there it explains why NOTHING could be measured.)
+  const cohortLeftOut = timings
+    .filter((t) => t.merged === 1 && (t.opened_at_ms === null || t.merged_at === null))
+    .map((t) => t.service);
   const leftOutForges = [
-    ...new Set([
-      ...forgesMissingTiming,
-      ...repoForgesMissingTiming(db, services, windowFromMs, nowMs),
-    ]),
+    ...new Set([...cohortLeftOut, ...repoForgesMissingTiming(db, services, windowFromMs, nowMs)]),
   ].sort((a, b) => a.localeCompare(b));
   return {
     reviewDragMedianMs: median(toDurations(timed)),

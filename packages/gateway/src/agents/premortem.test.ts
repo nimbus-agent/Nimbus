@@ -222,10 +222,19 @@ function seedChildWithGitlabMr(
   );
 }
 
-/** A Bitbucket-linked PR via the real `bitbucketPrMetadata`: opened time only, never a merge time. */
+/**
+ * A Bitbucket-linked PR via the real `bitbucketPrMetadata`: opened time only, never a merge time.
+ * `state` is Bitbucket's raw PR state (default `MERGED`).
+ */
 function seedChildWithBitbucketPr(
   db: Database,
-  opts: { epicKey: string; childSuffix: string; repo: string; openedAtMs: number },
+  opts: {
+    epicKey: string;
+    childSuffix: string;
+    repo: string;
+    openedAtMs: number;
+    state?: "MERGED" | "OPEN";
+  },
 ): void {
   const childExternalId = `${opts.epicKey}-${opts.childSuffix}`;
   upsertIndexedItem(db, {
@@ -246,7 +255,7 @@ function seedChildWithBitbucketPr(
     title: prExternalId,
     metadata: bitbucketPrMetadata(
       opts.repo,
-      { id: 3, state: "MERGED", created_on: new Date(opts.openedAtMs).toISOString() },
+      { id: 3, state: opts.state ?? "MERGED", created_on: new Date(opts.openedAtMs).toISOString() },
       "dev",
     ),
     modifiedAt: NOW,
@@ -933,6 +942,55 @@ describe("runPremortem", () => {
       expect(reviewDrag?.value).not.toBeNull();
       expect(reviewDrag?.summary).toContain("Bitbucket never records a merge time");
       expect(reviewDrag?.summary).toContain("left out");
+    });
+
+    test("a measured review drag does not name the forge of an OPEN cohort PR, only a MERGED one", async () => {
+      // An open PR is not part of a merge-time median, so it is not "left out" of one — the same
+      // `merged = 1` rule the baseline-forge query applies (final review M-5).
+      const seed = (state: "MERGED" | "OPEN"): Database => {
+        const db = makeDb();
+        seedEpicWithServices(db, {
+          key: "PROJ-OPEN",
+          services: ["acme/open-svc"],
+          resolvedAtMs: NOW - 5 * DAY_MS,
+          createdAtMs: NOW - 15 * DAY_MS,
+        });
+        seedEpicWithServices(db, {
+          key: "HIST-OPEN",
+          services: ["acme/open-svc"],
+          resolvedAtMs: NOW - 40 * DAY_MS,
+          createdAtMs: NOW - 70 * DAY_MS,
+        });
+        seedChildWithPr(db, {
+          epicKey: "HIST-OPEN",
+          childSuffix: "c1",
+          service: "acme/open-svc",
+          openedAtMs: NOW - 50 * DAY_MS,
+          mergedAtMs: NOW - 45 * DAY_MS,
+        });
+        seedChildWithBitbucketPr(db, {
+          epicKey: "HIST-OPEN",
+          childSuffix: "c2",
+          repo: "acme/open-svc",
+          openedAtMs: NOW - 50 * DAY_MS,
+          state,
+        });
+        return db;
+      };
+
+      const open = (await runPremortem({ epicRef: "PROJ-OPEN" }, ctx(seed("OPEN")))).risks.find(
+        (r) => r.kind === "review_drag",
+      );
+      expect(open?.value).not.toBeNull();
+      expect(open?.summary).not.toContain("Bitbucket");
+      expect(open?.summary).not.toContain("left out");
+
+      const merged = (await runPremortem({ epicRef: "PROJ-OPEN" }, ctx(seed("MERGED")))).risks.find(
+        (r) => r.kind === "review_drag",
+      );
+      expect(merged?.value).not.toBeNull();
+      expect(merged?.summary).toContain("Bitbucket never records a merge time");
+      expect(merged?.summary).toContain("left out");
     });
 
     test("a measured review drag names a forge left out of the repo-wide BASELINE only", async () => {
