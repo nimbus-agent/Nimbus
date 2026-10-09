@@ -15,7 +15,12 @@
  * the closer is appended so a cap never removes it), and the input schema is REBUILT from an
  * allowlist of structural keywords (`user-mcp-input-schema.ts`). Stated bounds: a delimited
  * description is still prose the model reads — the block marks it as data, it cannot make the
- * model ignore it; and schema `enum`/`const` values and property names reach the model verbatim.
+ * model ignore it; and schema `enum`/`const` values, property names and `pattern` (≤ 500 chars)
+ * reach the model verbatim, so the ceiling on raw schema text is the 32 KiB rebuilt-size cap, not
+ * the 1000-char description cap. Validation of the rebuilt schema is looser than the server's
+ * where a constraint was dropped, and stricter in one way: `standardSchemaToJSONSchema` adds
+ * `additionalProperties: false` to an object with `properties`, so an undeclared key is refused
+ * here, before the owner is prompted.
  */
 import type { ToolsInput } from "@mastra/core/agent";
 import {

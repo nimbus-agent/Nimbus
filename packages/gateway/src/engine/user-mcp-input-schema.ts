@@ -1,23 +1,32 @@
 /**
  * I11 for a user-MCP tool's INPUT SCHEMA: the JSON Schema a server lists is server-supplied text
  * the model reads, so it is REBUILT from an allowlist of structural keywords rather than passed
- * through. Kept: `type`, `properties`, `required`, `items` (single or tuple), `prefixItems`,
- * `additionalProperties`, `anyOf`/`oneOf`/`allOf`, `enum`, `const`, the numeric / length / array
- * bounds, `pattern` (only when it compiles) and `format`. `description`/`title` are kept as prose,
- * with every I11 closer escaped (`escapeEnvelopeClosers`) and then capped at
- * {@link USER_MCP_SCHEMA_PROSE_MAX}. EVERYTHING else is dropped — `examples`, `default`,
- * `$comment`, `$schema`, `x-*` and any unrecognised keyword — and so are `$ref`/`$defs`: a node
+ * through. Kept: `type`, `properties`, `required` (only names declared in the same object's
+ * `properties`), `items` (single, or a tuple), `prefixItems`, `additionalProperties`,
+ * `anyOf`/`oneOf`/`allOf`, `enum`, `const`, the numeric / length / array bounds, `pattern` (only
+ * when it compiles, at most 500 characters) and `format` (only a known JSON-Schema format name).
+ * `description`/`title` are kept as prose, with every I11 closer escaped (`escapeEnvelopeClosers`)
+ * and then capped at {@link USER_MCP_SCHEMA_PROSE_MAX}. EVERYTHING else is dropped — `examples`,
+ * `default`, `$comment`, `x-*` and any unrecognised keyword — and so are `$ref`/`$defs`: a node
  * that was only a `$ref` becomes the permissive `{}`, never a resolved copy of server text. The
  * server still validates its own input, so a dropped constraint loosens what the model may send,
  * never what the server accepts.
  *
- * Bounds, stated: `enum`/`const` values and property NAMES reach the model VERBATIM (they are
- * data the model must echo exactly, so they are not escaped). An over-long value or name is not
- * truncated — a truncated enum value could never match — so the `enum`/`const` constraint, or the
- * property together with its `required` entry, is dropped instead. Past
- * {@link USER_MCP_SCHEMA_MAX_DEPTH} a subtree becomes `{}`; a schema with more than
- * {@link USER_MCP_SCHEMA_MAX_NODES} nodes, or whose rebuilt form exceeds
- * {@link USER_MCP_SCHEMA_MAX_BYTES}, or whose root is not an object, falls back to
+ * `$schema` is the one root-only keyword with a structural job: it picks the validator's dialect.
+ * `@mastra/mcp` stamps every listed schema 2020-12 when the server declares none, and validating a
+ * 2020-12 schema as draft-07 (Ajv's default) ignores `prefixItems` and applies `items` to every
+ * element. So a supported dialect URI (2020-12 or draft-07, with or without the trailing `#`) is
+ * kept and anything else becomes 2020-12, MCP's default; under 2020-12 a draft-07 tuple `items`
+ * array becomes `prefixItems`, since Ajv 2020 rejects the array form outright.
+ *
+ * Bounds, stated: `enum`/`const` values, property NAMES and `pattern` reach the model VERBATIM
+ * (data the model must echo or match exactly, so they are not escaped). An over-long value or
+ * name is not truncated — a truncated enum value could never match — so the `enum`/`const`
+ * constraint, or the property together with its `required` entry, is dropped instead. The real
+ * ceiling on raw schema text the model can read is therefore {@link USER_MCP_SCHEMA_MAX_BYTES},
+ * not the 1000-character description cap. Past {@link USER_MCP_SCHEMA_MAX_DEPTH} a subtree becomes
+ * `{}`; a schema with more than {@link USER_MCP_SCHEMA_MAX_NODES} nodes, or whose rebuilt form
+ * exceeds {@link USER_MCP_SCHEMA_MAX_BYTES}, or whose root is not an object, falls back to
  * {@link PERMISSIVE_USER_MCP_INPUT_SCHEMA}. Nothing here throws.
  */
 import { escapeEnvelopeClosers } from "./tool-output-envelope.ts";
@@ -26,11 +35,18 @@ export const USER_MCP_SCHEMA_PROSE_MAX = 200;
 export const USER_MCP_SCHEMA_MAX_DEPTH = 16;
 export const USER_MCP_SCHEMA_MAX_NODES = 1000;
 export const USER_MCP_SCHEMA_MAX_BYTES = 32_768;
+export const USER_MCP_SCHEMA_PATTERN_MAX = 500;
 const PROPERTY_NAME_MAX = 128;
-const PATTERN_MAX = 500;
-const FORMAT_MAX = 64;
 const ENUM_MAX_VALUES = 100;
 const COMBINATOR_MAX_BRANCHES = 32;
+
+const JSON_SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema";
+const SUPPORTED_DIALECTS: ReadonlySet<string> = new Set([
+  JSON_SCHEMA_2020_12,
+  `${JSON_SCHEMA_2020_12}#`,
+  "http://json-schema.org/draft-07/schema",
+  "http://json-schema.org/draft-07/schema#",
+]);
 
 export const PERMISSIVE_USER_MCP_INPUT_SCHEMA: Readonly<Record<string, unknown>> = Object.freeze({
   type: "object",
@@ -46,6 +62,28 @@ const JSON_TYPES: ReadonlySet<string> = new Set([
   "object",
   "array",
   "null",
+]);
+/** The JSON-Schema (2020-12 / draft-07) format vocabulary; any other `format` text is dropped. */
+const KNOWN_FORMATS: ReadonlySet<string> = new Set([
+  "date-time",
+  "date",
+  "time",
+  "duration",
+  "email",
+  "idn-email",
+  "hostname",
+  "idn-hostname",
+  "ipv4",
+  "ipv6",
+  "uri",
+  "uri-reference",
+  "iri",
+  "iri-reference",
+  "uuid",
+  "uri-template",
+  "json-pointer",
+  "relative-json-pointer",
+  "regex",
 ]);
 const NUMERIC_KEYWORDS = [
   "minimum",
@@ -84,7 +122,7 @@ function compiles(pattern: string): boolean {
   }
 }
 
-type Walk = { nodes: number };
+type Walk = { nodes: number; is2020: boolean };
 
 function sanitiseType(v: unknown): string | string[] | undefined {
   if (typeof v === "string") return JSON_TYPES.has(v) ? v : undefined;
@@ -110,10 +148,14 @@ function copyScalarKeywords(raw: JsonObject, out: JsonObject): void {
   }
   if (typeof raw["uniqueItems"] === "boolean") out["uniqueItems"] = raw["uniqueItems"];
   const pattern = raw["pattern"];
-  if (typeof pattern === "string" && pattern.length <= PATTERN_MAX && compiles(pattern))
+  if (
+    typeof pattern === "string" &&
+    pattern.length <= USER_MCP_SCHEMA_PATTERN_MAX &&
+    compiles(pattern)
+  )
     out["pattern"] = pattern;
   const format = raw["format"];
-  if (typeof format === "string" && format.length <= FORMAT_MAX) out["format"] = format;
+  if (typeof format === "string" && KNOWN_FORMATS.has(format)) out["format"] = format;
   for (const k of PROSE_KEYWORDS) {
     const v = raw[k];
     if (typeof v === "string")
@@ -130,22 +172,14 @@ function copyScalarKeywords(raw: JsonObject, out: JsonObject): void {
   if ("const" in raw && isOfferableValue(raw["const"])) out["const"] = raw["const"];
 }
 
-function sanitiseProperties(
-  raw: unknown,
-  depth: number,
-  walk: Walk,
-): { properties: JsonObject; dropped: Set<string> } | undefined {
+function sanitiseProperties(raw: unknown, depth: number, walk: Walk): JsonObject | undefined {
   if (!isPlainObject(raw)) return undefined;
   const properties: JsonObject = {};
-  const dropped = new Set<string>();
   for (const [name, sub] of Object.entries(raw)) {
-    if (name.length > PROPERTY_NAME_MAX) {
-      dropped.add(name);
-      continue;
-    }
+    if (name.length > PROPERTY_NAME_MAX) continue;
     properties[name] = sanitiseNode(sub, depth + 1, walk);
   }
-  return { properties, dropped };
+  return properties;
 }
 
 function sanitiseBranches(raw: unknown, depth: number, walk: Walk): unknown[] | undefined {
@@ -154,26 +188,33 @@ function sanitiseBranches(raw: unknown, depth: number, walk: Walk): unknown[] | 
   return raw.map((b) => sanitiseNode(b, depth + 1, walk));
 }
 
-function copyStructuralKeywords(raw: JsonObject, out: JsonObject, depth: number, walk: Walk): void {
-  const props = sanitiseProperties(raw["properties"], depth, walk);
-  if (props !== undefined) out["properties"] = props.properties;
-  const required = raw["required"];
-  if (Array.isArray(required)) {
-    const names = required.filter(
-      (n): n is string =>
-        typeof n === "string" && n.length <= PROPERTY_NAME_MAX && !props?.dropped.has(n),
-    );
-    if (names.length > 0) out["required"] = names;
-  }
+function copyArrayKeywords(raw: JsonObject, out: JsonObject, depth: number, walk: Walk): void {
+  const prefixItems = sanitiseBranches(raw["prefixItems"], depth, walk);
+  if (prefixItems !== undefined) out["prefixItems"] = prefixItems;
   const items = raw["items"];
   if (Array.isArray(items)) {
     const tuple = sanitiseBranches(items, depth, walk);
-    if (tuple !== undefined) out["items"] = tuple;
+    if (tuple === undefined) return;
+    // Ajv 2020 rejects an array `items`; its 2020-12 spelling is `prefixItems`.
+    if (!walk.is2020) out["items"] = tuple;
+    else if (prefixItems === undefined) out["prefixItems"] = tuple;
   } else if (isPlainObject(items) || typeof items === "boolean") {
     out["items"] = sanitiseNode(items, depth + 1, walk);
   }
-  const prefixItems = sanitiseBranches(raw["prefixItems"], depth, walk);
-  if (prefixItems !== undefined) out["prefixItems"] = prefixItems;
+}
+
+function copyStructuralKeywords(raw: JsonObject, out: JsonObject, depth: number, walk: Walk): void {
+  const properties = sanitiseProperties(raw["properties"], depth, walk);
+  if (properties !== undefined) out["properties"] = properties;
+  const required = raw["required"];
+  if (Array.isArray(required) && properties !== undefined) {
+    // Only a DECLARED name survives: an undeclared one is free text with no structural job.
+    const names = required.filter(
+      (n): n is string => typeof n === "string" && Object.hasOwn(properties, n),
+    );
+    if (names.length > 0) out["required"] = names;
+  }
+  copyArrayKeywords(raw, out, depth, walk);
   const additional = raw["additionalProperties"];
   if (typeof additional === "boolean") out["additionalProperties"] = additional;
   else if (isPlainObject(additional))
@@ -196,6 +237,14 @@ function sanitiseNode(raw: unknown, depth: number, walk: Walk): unknown {
   return out;
 }
 
+/** A supported dialect URI is kept verbatim; anything else (or none) is MCP's default, 2020-12. */
+function rootDialect(raw: JsonObject): string {
+  const declared = raw["$schema"];
+  return typeof declared === "string" && SUPPORTED_DIALECTS.has(declared)
+    ? declared
+    : JSON_SCHEMA_2020_12;
+}
+
 /**
  * The listed JSON Schema rebuilt from the allowlist above, or
  * {@link PERMISSIVE_USER_MCP_INPUT_SCHEMA} when the root is not an object or a bound is exceeded.
@@ -203,11 +252,13 @@ function sanitiseNode(raw: unknown, depth: number, walk: Walk): unknown {
 export function sanitiseUserMcpInputSchema(raw: unknown): Record<string, unknown> {
   if (!isPlainObject(raw)) return { ...PERMISSIVE_USER_MCP_INPUT_SCHEMA };
   try {
-    const out = sanitiseNode(raw, 1, { nodes: 0 });
+    const dialect = rootDialect(raw);
+    const out = sanitiseNode(raw, 1, { nodes: 0, is2020: dialect.startsWith(JSON_SCHEMA_2020_12) });
     if (!isPlainObject(out)) return { ...PERMISSIVE_USER_MCP_INPUT_SCHEMA };
-    if (JSON.stringify(out).length > USER_MCP_SCHEMA_MAX_BYTES)
+    const rebuilt = { $schema: dialect, ...out };
+    if (JSON.stringify(rebuilt).length > USER_MCP_SCHEMA_MAX_BYTES)
       return { ...PERMISSIVE_USER_MCP_INPUT_SCHEMA };
-    return out;
+    return rebuilt;
   } catch {
     // SchemaTooLarge, or anything a hostile object could raise mid-walk: never throw.
     return { ...PERMISSIVE_USER_MCP_INPUT_SCHEMA };

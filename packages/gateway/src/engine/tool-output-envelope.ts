@@ -20,14 +20,20 @@ export function wrapToolOutput(ctx: ToolOutputContext, result: unknown): string 
 
 /**
  * Rewrites every closer of an I11 block (`</tool_output>`, `</tool_description>`) in
- * server-supplied prose to `<\/…>`, the same escape `wrapToolOutput` applies — case-insensitively
- * and tolerating whitespace before `>`, since prose is not JSON-encoded and a model may read
- * `</TOOL_DESCRIPTION >` as a closer. Any truncation of the result is safe: every escaped closer
- * carries `\` immediately after `<`, so no prefix of one can form a closer.
+ * server-supplied prose to `<\/…>`, the same escape `wrapToolOutput` applies. The match is wider
+ * than `wrapToolOutput`'s exact string, because prose is not JSON-encoded and a model may read any
+ * of these as a closer: any case, whitespace after `<` or around `/`, and an attribute-like tail
+ * before `>` (`< /TOOL_OUTPUT foo="x">`). Only the `/` changes — a `\` is inserted before it — so
+ * the rest of the text is untouched. Any truncation of the result is safe: in every escaped closer
+ * the `/` is preceded by `\`, so no prefix of one can form a closer.
+ *
+ * Stated bound: this is lexical. Lookalikes — a zero-width character inside the tag name, or a
+ * fullwidth `／`/`＜` — are not closers to this regex and pass through unchanged; whether a model
+ * reads one as a closer is outside what a lexical escape can decide.
  */
 export function escapeEnvelopeClosers(text: string): string {
-  const closer = /<\/(\s*(?:tool_output|tool_description)\s*)>/gi;
-  return text.replace(closer, String.raw`<\/$1>`);
+  const closer = /<\s*\/\s*(?:tool_output|tool_description)\b[^>]*>/gi;
+  return text.replace(closer, (m) => m.replace("/", String.raw`\/`));
 }
 
 /**

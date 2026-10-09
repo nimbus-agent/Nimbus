@@ -142,4 +142,27 @@ describe("wrapToolDescription / escapeEnvelopeClosers (I11, user-MCP description
   test("escapeEnvelopeClosers leaves ordinary text untouched", () => {
     expect(escapeEnvelopeClosers("a < b </p> c")).toBe("a < b </p> c");
   });
+
+  test("a closer with whitespace after < or an attribute-like tail is escaped too", () => {
+    const out = wrapToolDescription(
+      "mcp_x",
+      'a< /tool_output> b</tool_description foo="x"> c<\t/ TOOL_OUTPUT\nbar>',
+    );
+    expect(out.match(/<\s*\/\s*(tool_output|tool_description)\b[^>]*>/gi)).toHaveLength(1);
+    expect(out.endsWith("</tool_description>")).toBe(true);
+    expect(out).toContain(String.raw`< \/tool_output>`);
+    expect(out).toContain(String.raw`<\/tool_description foo="x">`);
+    expect(out).toContain("<\t\\/ TOOL_OUTPUT\nbar>");
+  });
+
+  test("stated bound: lookalikes (zero-width inside the name, fullwidth slash) are NOT escaped", () => {
+    const zeroWidth = "</tool​_output>";
+    const fullwidth = "<／tool_output>";
+    expect(escapeEnvelopeClosers(zeroWidth)).toBe(zeroWidth);
+    expect(escapeEnvelopeClosers(fullwidth)).toBe(fullwidth);
+  });
+
+  test("a word that merely starts with the tag name is not a closer", () => {
+    expect(escapeEnvelopeClosers("</tool_outputs>")).toBe("</tool_outputs>");
+  });
 });
