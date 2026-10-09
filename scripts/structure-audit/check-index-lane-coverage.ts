@@ -10,9 +10,9 @@
  *
  * `collectLaneCensus` is pure (no I/O, no filesystem access) — only `run()` below touches disk.
  *
- * Always exits 0: this is a census, not a gate, exactly like `collectDbRunCensus` in
- * `check-nimbus-invariants.ts`. A later task turns a slice of this artifact into an enforced,
- * exemption-listed gate.
+ * Without `--check` it is a report and always exits 0, like `collectDbRunCensus` in
+ * `check-nimbus-invariants.ts`. With `--check` it is a gate: `lane-census/gate.ts`
+ * `evaluateLaneGate` over `LANE_EXEMPTIONS`, exit 1 on any violation.
  *
  * **The matching rule this file owns:** a metadata key is matched against the `type` it was read
  * *beside* — the type predicate(s) found in the same SQL string literal — never against a global
@@ -50,6 +50,8 @@ import {
   type LaneAnnotation,
 } from "./lane-census/annotations.ts";
 import { contractEmissions } from "./lane-census/contract-emissions.ts";
+import { LANE_EXEMPTIONS } from "./lane-census/exemptions.ts";
+import { evaluateLaneGate } from "./lane-census/gate.ts";
 import {
   extractNonItemJsReads,
   extractReadTriples,
@@ -609,9 +611,14 @@ async function run(): Promise<void> {
       `${census.nonItemReads.length} non-item JS reads (not gated), ` +
       `${census.unscopedReads.length} unscoped, ${census.annotationErrors.length} annotation errors → ${outPath}`,
   );
-  // Always exits 0 — this is a census, not a gate. A later task turns a slice of it into an
-  // enforced gate, exactly as `db-run-census.json` precedes `check-nimbus-invariants.ts`'s
-  // enforced D12 checks.
+  if (!process.argv.includes("--check")) return;
+  const violations = evaluateLaneGate(census, LANE_EXEMPTIONS);
+  for (const v of violations) console.log(`${v.file}:${v.line} [${v.kind}] ${v.message}`);
+  if (violations.length > 0) {
+    console.log(`index-lane census gate: ${violations.length} violation(s)`);
+    process.exit(1);
+  }
+  console.log(`index-lane census gate: ok (${LANE_EXEMPTIONS.length} exemptions)`);
 }
 
 if (import.meta.main) await run();
