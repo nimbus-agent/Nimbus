@@ -60,7 +60,7 @@ function stringField(meta: Record<string, unknown>, key: string): string | undef
  * resolver's item shape (`SyncContext.resolveServiceId`) carries no
  * external id, only metadata, so a circleci URN never matches here.
  */
-// lane-census: scope=deployment,pr
+// lane-census: scope=deployment,incident,pr
 function repoMetadataMatchesUrn(
   metadata: Record<string, unknown>,
   urn: ParsedDoraRepoUrn,

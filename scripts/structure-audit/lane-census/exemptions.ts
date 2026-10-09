@@ -76,9 +76,9 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
   {
     file: "packages/gateway/src/metrics/dora.ts",
     key: "project",
-    category: "by-design",
+    category: "legacy",
     reason:
-      "repoLikeMatchesUrn's GitLab arm is project OR repo: GitLab ci_run rows carry the raw project key, GitLab pr rows carry only the canonical repo key, which the second operand matches.",
+      "repoLikeMatchesUrn's GitLab arm reads project OR repo; project only matters for GitLab ci_run rows written before A1. Since A1, connectors/_lib/gitlab/pipelines.ts also writes repo with the same projectPath, so the repo operand already matches every current GitLab ci_run and pr row.",
   },
   {
     file: "packages/gateway/src/metrics/dora.ts",
@@ -119,7 +119,7 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     key: "repo",
     category: "by-design",
     reason:
-      "Prefect deployment definitions never carry a repo, so repoMetadataMatchesUrn never binds them by repo; buildServiceIdentityResolver tries nimbus_service_id and pagerduty_service_id first and returns unknown otherwise, which the graph populator resolves from metadata.service.",
+      "Prefect deployment definitions and PagerDuty incidents never carry a repo, so repoMetadataMatchesUrn never binds them by repo: buildServiceIdentityResolver tries nimbus_service_id and pagerduty_service_id first (an incident binds on pagerduty_service_id) and otherwise returns unknown, which graph/graph-populator.ts resolveAffectedService resolves from metadata.service.",
   },
   // ── preflight/ ───────────────────────────────────────────────────────────────────────────
   {
