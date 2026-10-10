@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791619814589,
+  "lastUpdate": 1791626058672,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "69282ef9712ec966afd9b5e6f4bc11527aa77d35",
-          "message": "feat(connectors): index Google Meet participant detail on conference records (#927)\n\nCloses #893.\n\n## Endpoint + scope\n\n`GET\nhttps://meet.googleapis.com/v2/conferenceRecords/{conferenceRecord}/participants?pageSize=100`\n— the Meet REST v2 `conferenceRecords.participants.list` method,\nresponse envelope\n`{ participants, nextPageToken, totalSize }`.\n\n**No scope change.** `participants.list` accepts\n`https://www.googleapis.com/auth/meetings.space.readonly`, which this\nconnector already declares\nin `connector-catalog.ts`. No re-consent, no new `OAuthProvider`, and no\n`oauth-registry.ts` /\n`config.ts` / Tauri-allowlist edit — exactly as the issue predicted.\nCatalog / secrets-manifest /\nrate-limiter wiring was already in place; I verified before touching\nanything.\n\n## The decision the issue asked for: metadata, not a new item type\n\nParticipants **extend the existing `google_meet:meeting` item**.\nReasons, in order of weight:\n\n1. A participant is not independently addressable content — no title, no\nbody, no URL, and no\nmeaning outside its conference record. As its own item type it would add\nN low-signal rows per\n   meeting that dilute every search.\n2. The question the issue names — *\"who was actually in that meeting\"* —\nis a property of the\n   meeting.\n3. The item primary key is `service:external_id`; a participant item\nwould need a synthetic\ncomposite id, breaking the \"external_id is the vendor's stable id\" rule.\n4. Precedent already exists in this codebase: `apple:event` stores\n`attendees` in the event's\nmetadata, `imap:email` / `fastmail:email` store `participants` in the\nemail's metadata. There\n   is no attendee/participant item type anywhere.\n\n## People data: what is stored, and what is left out\n\nEach participant is reduced to `{ kind, id, displayName }`:\n\n- `kind` — `\"signed_in\" | \"anonymous\" | \"phone\"`, distinguishing the\nAPI's three mutually\nexclusive union members. \"Ada signed in with a Workspace account\" and\n\"someone typed 'Ada' into\nthe anonymous join box\" are very different claims about identity, and\ncollapsing them would be\n  misleading.\n- `id` — the `users/{id}` directory id, interoperable with the People\nAPI / Admin SDK. Present\nonly for signed-in users. This is the durable identity a future\npeople-graph link would key on.\n- `displayName` — for a **phone** join this is the partially-redacted\nnumber Google itself\nreturns. **Kept deliberately:** it is the only thing identifying a\ndial-in participant, it is\nwhat Google already shows the meeting owner, and dropping it would leave\nan unattributable\n  blank in the roster.\n\n**Left out deliberately — `earliestStartTime` / `latestEndTime`.** They\nanswer *\"how long did\neach person stay\"*, which is attendance surveillance, not *\"who was in\nthat meeting\"*. The\nconference record's own `startTime` / `endTime` already bound the\nmeeting. This is a guard, not a\ncomment: a unit test asserts the mapped participant's exact key set and\nthat neither timestamp\nsurvives serialization, and an integration test re-asserts it against\nthe stored SQLite row. Both\nwere red-proved by temporarily carrying `earliestStartTime` through.\n\n**Left out — the participant resource `name`**\n(`conferenceRecords/{c}/participants/{p}`), an\nopaque per-conference handle with no identity value once `id` is kept.\n\n## Title change — deliberate, and called out per the issue\n\n`Meeting 2024-01-02` is effectively unsearchable; nobody recalls a\nmeeting by its date. The title\nnow leads with who was there:\n\n```\nMeeting with Ada Lovelace, Grace Hopper — 2024-01-02\nMeeting with A, B, C +37 — 2024-01-02      (capped at 3 names)\nMeeting 2024-01-02                          (unchanged fallback: no participant carried a name)\n```\n\nThe `+N` remainder counts against `totalSize`, so a roster clipped by\nthe fetch cap still reports\nthe real head-count. `body_preview` carries the **full stored roster**\nso every attendee is\nsearchable, not just the three the title has room for.\n\n## Request cost + caps\n\nOne extra request per conference record — at a 6-hour interval and\n`pageSize=50` records per\ncycle, that is ~51 requests per cycle. The roster is fetched in a\n**single** page:\n`MAX_INDEXED_PARTICIPANTS = 100` (~8 KB, comfortably inside the 64 KB\nper-item metadata ceiling)\nand the collection's `totalSize` supplies the true head-count for\nanything clipped, so a second\npage would buy nothing.\n\nA record with no `name` — which the mapper rejects anyway — costs no\nparticipants request; the\nsync guards on the same field the mapper's skip rule uses, so the two\ncannot drift.\n\n## Failure posture\n\n`fetchGoogleJson` throws on any non-OK response, so an unguarded\nparticipants call would let a\nsingle per-record `403`/`404` abort the whole cycle and lose the\nconference records. Instead:\n\n- `403` / `404` / invalid JSON → warn, index the record with an empty\nroster;\n- `UnauthenticatedError` (401, a genuinely dead token) → rethrown, so\nthe scheduler still sees the\n  credential failure.\n\nBoth paths are tested.\n\n## Out of scope\n\n**Transcripts**, as the issue directs — separately deferred, and they\nneed their own scope and\nconsent design. Nothing here touches them.\n\nThe MCP connector's `google_meet_list` / `google_meet_get` /\n`google_meet_search` tools are\nunchanged: the acceptance criterion is participant detail on *synced\nitems*, which is the gateway\nsyncable's path.\n\n## Embedding routing\n\n`google_meet:meeting` stays on local MiniLM — **not** added to\n`PROSE_HEAVY_TYPES`, as the issue\nasks. A regression test names the decision so the absence reads as a\nchoice.\n\n## Verification\n\n- `bun run typecheck` ✅\n- `bun run preflight:fast --no-bail` — every gate ✅ except `lint\n(biome)`, which reports\n`Checked 0 files` inside `.claude/worktrees/` (a known worktree-path\nartifact, not this diff).\nValidated directly instead: `bunx biome check packages scripts docs` →\nclean.\n- `bun test packages/gateway/src/connectors\npackages/gateway/test/unit/connectors packages/gateway/src/embedding`\n  → 4 502 pass, 0 fail.\n- New: 15 mapper unit tests + 9 sync tests (happy path, empty roster,\nclipped roster, `totalSize`\nfallback, 403 degrade, 401 propagate, bad JSON, nameless record, PII\nguard).\n\n## Docs\n\n`docs/roadmap.md` Google Meet row updated (the deferral line now records\nparticipants as shipped\nand transcripts as still deferred), plus a dated `docs/CHANGELOG.md`\nentry.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-29T23:16:56+03:00",
-          "tree_id": "ceff984f31c5393b29852eb63b56e8d2c177973d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/69282ef9712ec966afd9b5e6f4bc11527aa77d35"
-        },
-        "date": 1785357644744,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.3213661500038,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 306.29573464999487,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 336.0307192500019,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0ce275a8c3aa32cdfcbc00797726d5ad04f80163",
+          "message": "test(cli): give the --demo CLI-subprocess e2e tests a cold-start timeout (#1645)\n\nFixes the red `E2E CLI — windows-2025` job on `main` at cc25fbe0 ([run\n38036226203](https://github.com/nimbus-agent/Nimbus/actions/runs/38036226203/job/114167091818)).\n\n## Cause\n\n`packages/cli/test/e2e/demo-flag.e2e.test.ts` › \"--demo --version:\nversion printed, CLI log under the DEMO logDir, real logDir never\ncreated\" was killed by bun's **default 5 s per-test timeout** (`this\ntest timed out after 5000ms`, exit 143). None of its assertions failed.\n\nEvery test in that file spawns a full CLI cold start from TypeScript\nsource. Its env also points `HOME`, `USERPROFILE` and `TEMP` at fresh\ntemp dirs, so no transpiler cache from an earlier run applies. The first\nspawn on the Windows runner simply took longer than 5 s.\n\nThis is not a product regression. The commit that went red (#1644)\nchanges docs only, and the same test passed on the two preceding `main`\nruns (57d9f25b and 3ad654f0).\n\n## Fix\n\nEach test in the file now passes an explicit `CLI_SPAWN_TIMEOUT_MS =\n60_000`, and a comment records why. This follows\n`zero-config-onboarding.e2e.test.ts`, which already sets 30 s on its\nsubprocess test.\n\n## Rulings and costs\n\n- **60 s, not a smaller number.** CI runners are roughly 13–18× slower\nthan a dev machine (CLAUDE.md § CI gating), and a cold start that takes\n~0.4 s locally can legitimately take several seconds there. *Cost:* a\ngenuinely hung CLI now takes 60 s to fail instead of 5 s.\n- **The timeout covers all six tests, including the `homedir()` premise\ntest.** That one spawns `bun -e` rather than the CLI, so it needs less,\nbut one constant keeps the file uniform. *Cost:* none in practice.\n- **I did not warm a transpiler cache instead.** Sharing a cache would\nmake the test depend on state from earlier runs, which is exactly what\nthe temp roots exist to rule out.\n\n## Verification\n\n- `bun test packages/cli/test/e2e/demo-flag.e2e.test.ts`: 6 pass.\n- `bun test packages/cli`: 4,109 pass, 0 fail.\n- `bun run preflight:fast`: PASSED.\n- The Windows CI leg is the real check, since a dev machine is too fast\nto reproduce the timeout.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Increased the time allowed for each real-CLI subprocess test to 60\nseconds.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-10T09:40:57Z",
+          "tree_id": "8869e89c77b0558c6fc3c94303273ba7daea3d20",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0ce275a8c3aa32cdfcbc00797726d5ad04f80163"
+        },
+        "date": 1791626053788,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 335.00354989999903,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 336.0717432500023,
             "unit": "ms"
           }
         ]
