@@ -413,13 +413,13 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 | 5 | The Extended Surface | ✅ Complete |
 | 6 | Team (federation, Team Vault, SSO/SCIM, ChatOps, Share) | ✅ Complete |
 | S1 | Local Brain — egress ledger, implicit knowledge, the built-in agent set | ✅ Complete |
-| **S2** | **Local Compute Fleet — sandboxed code execution, local computer-use, agent fleets** | **◐ Current build slot** |
-| S3–S5 | Sequencing Spine overlay — see the roadmap | Planned |
+| S2 | Local Compute Fleet — sandboxed code execution, local computer-use, agent fleets | ✅ Complete (2026-10-10) |
+| S3–S5 | Sequencing Spine overlay — see the roadmap | Planned (S3 next, after a pre-S3 close-out) |
 | 13 | Desktop Distribution (*ships `desktop-v0.1.0`* Tauri signed installers + auto-update) | Planned |
 
 **S1 (Local Brain) shipped and closed** on 2026-08-20 — the always-on egress ledger and `nimbus prove` (invariant `I29`), the research-briefs HTTP surface, the full-body store that made briefs answerable at all, zero-config onboarding, and the fourteen built-in read-only agents: `expert`, `impact`, `catchup`, `ghost`, `conflicts`, `huddle`, `janitor`, `preflight`, `why`, `glossary`, `decisions`, `ownership`, `pre-mortem` and `negotiate`. The Wave 6 answer-quality set followed and closed it out: agent brief synthesis (`[agents] synthesis`, invariant `I31`), `nimbus ask --devil`, the `[persona]` `tone`/`voice` vocabulary, `nimbus stats` for bucketed time series over the index, and first-class negation queries.
 
-**Now building (S2 — Local Compute Fleet)**, opened 2026-08-21. S1 made the local index answerable; S2 makes local compute usable. Shipped in it so far, all **default off**:
+**S2 (Local Compute Fleet) shipped and closed** (2026-08-21 → 2026-10-10). S1 made the local index answerable; S2 made local compute usable. Shipped, all **default off**:
 
 - **Sandboxed code execution** (2026-08-23, invariant `I33`) — `nimbus exec` runs a script you approve VERBATIM inside the platform sandbox, with no network at all, loopback included. CLI/owner-only: the LLM cannot invoke an execution.
 - **Bring-your-own-frontier-model routing** (2026-08-28) — Anthropic, OpenAI, Gemini and xAI adapters, each behind a per-vendor `[llm.remote.<vendor>]` opt-in with its key read from the Vault and never the environment. This is what made the egress ledger's `model` class live rather than latent.
