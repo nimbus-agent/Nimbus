@@ -8,6 +8,7 @@ import { runNotifications, runNotificationsCmd } from "./notifications.ts";
 import {
   doctorNotificationsLine,
   formatNotificationsStatus,
+  formatNotificationsTest,
   type NotificationsStatusView,
   parseNotificationsStatus,
   parseNotificationsTest,
@@ -169,5 +170,131 @@ describe("doctor notifications line", () => {
     const bad = fakeClient(() => Promise.resolve({ backend: 1 }));
     expect(await doctorPrintNotifications(bad.client)).toBe(1);
     expect(logs).toContain("[warn] Notifications: malformed");
+  });
+});
+
+describe("parse: every malformed field is named", () => {
+  const cases: ReadonlyArray<[string, Record<string, unknown>]> = [
+    ["backend", { ...ON, backend: 7 }],
+    ["content", { ...ON, content: null }],
+    ["available", { ...ON, available: "yes" }],
+    ["reason", { ...ON, reason: 42 }],
+    ["disabledBy", { ...ON, disabledBy: 3 }],
+    ["rateLimitedTotal", { ...ON, rateLimitedTotal: "2" }],
+    ["delivers", { ...ON, delivers: undefined }],
+  ];
+  for (const [field, raw] of cases) {
+    test(`rejects a bad ${field}`, () => {
+      expect(() => parseNotificationsStatus(raw)).toThrow(
+        `malformed notifications response from the gateway: ${field}`,
+      );
+    });
+  }
+
+  test("non-object status shapes are refused", () => {
+    expect(() => parseNotificationsStatus([ON])).toThrow("status is not an object");
+    expect(() => parseNotificationsStatus("ON")).toThrow("status is not an object");
+  });
+
+  test("every disabledBy value the gateway can send is accepted", () => {
+    for (const d of ["config", "env", "demo", "config_error"] as const) {
+      expect(parseNotificationsStatus({ ...ENV_OFF, disabledBy: d }).disabledBy).toBe(d);
+    }
+  });
+
+  test("an absent reason/disabledBy is omitted, not set to undefined", () => {
+    const parsed = parseNotificationsStatus(ON);
+    expect("reason" in parsed).toBe(false);
+    expect("disabledBy" in parsed).toBe(false);
+  });
+
+  test("test result: non-object, bad status, and bad delivered/reason are refused", () => {
+    expect(() => parseNotificationsTest(null)).toThrow("test result is not an object");
+    expect(() => parseNotificationsTest([])).toThrow("test result is not an object");
+    expect(() => parseNotificationsTest({ delivered: true })).toThrow("status is not an object");
+    expect(() => parseNotificationsTest({ delivered: "yes", status: ON })).toThrow(
+      "delivered/reason",
+    );
+    expect(() => parseNotificationsTest({ delivered: false, reason: 1, status: ON })).toThrow(
+      "delivered/reason",
+    );
+    expect(
+      parseNotificationsTest({ delivered: false, reason: "rate limited", status: ON }),
+    ).toEqual({ delivered: false, reason: "rate limited", status: ON });
+  });
+});
+
+describe("format: availability and enabled lines", () => {
+  test("unavailable with and without a reason", () => {
+    expect(formatNotificationsStatus({ ...ON, available: false, reason: "no bus" })).toContain(
+      "  Available:   no — no bus\n",
+    );
+    expect(formatNotificationsStatus({ ...ON, available: false })).toContain("  Available:   no\n");
+  });
+
+  test("unknown availability with and without a reason", () => {
+    expect(formatNotificationsStatus({ ...ON, available: null, reason: "probing" })).toContain(
+      "  Available:   unknown — probing\n",
+    );
+    expect(formatNotificationsStatus({ ...ON, available: null })).toContain(
+      "  Available:   unknown\n",
+    );
+  });
+
+  test("disabled with and without a reason", () => {
+    expect(formatNotificationsStatus(ENV_OFF)).toContain(
+      "  Enabled:     no — disabled by NIMBUS_NOTIFICATIONS=off\n",
+    );
+    const { reason: _r, ...noReason } = ENV_OFF;
+    expect(formatNotificationsStatus(noReason)).toContain("  Enabled:     no\n");
+  });
+
+  test("the full rendered status for a working backend", () => {
+    expect(formatNotificationsStatus(ON)).toBe(
+      [
+        "OS notifications",
+        "  Backend:     windows-toast",
+        "  Enabled:     yes",
+        "  Content:     full",
+        "  Available:   yes",
+        "  Rate-limited since the gateway started: 2",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("a delivered test on macOS adds the Script Editor hint; other backends do not", () => {
+    const mac = { ...ON, backend: "macos-osascript" };
+    expect(formatNotificationsTest({ delivered: true, status: mac })).toContain(
+      "allow notifications for Script Editor",
+    );
+    expect(formatNotificationsTest({ delivered: true, status: ON })).toBe(
+      "Test notification sent — check your notification centre.\n",
+    );
+  });
+});
+
+describe("doctor line fallbacks when the gateway sends no reason", () => {
+  const { reason: _r, ...offNoReason } = ENV_OFF;
+  test("each state has its own fallback text", () => {
+    expect(doctorNotificationsLine({ ...offNoReason, disabledBy: "config_error" })).toEqual({
+      line: "[warn] Notifications: off — invalid config",
+      exit: 1,
+    });
+    expect(doctorNotificationsLine(offNoReason)).toEqual({
+      line: "[info] Notifications: off — disabled",
+      exit: 0,
+    });
+    expect(doctorNotificationsLine({ ...ON, available: false })).toEqual({
+      line: "[warn] Notifications: unavailable — unknown reason",
+      exit: 1,
+    });
+    expect(doctorNotificationsLine({ ...ON, available: null })).toEqual({
+      line: "[info] Notifications: availability not yet known (probe pending)",
+      exit: 0,
+    });
+    expect(doctorNotificationsLine(ON).line).toBe(
+      "[ok] Notifications: windows-toast (content: full). Try `nimbus notifications test`.",
+    );
   });
 });

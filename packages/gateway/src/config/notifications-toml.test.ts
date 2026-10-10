@@ -109,3 +109,47 @@ describe("loadNimbusNotificationsFromPath", () => {
     expect(() => loadNimbusNotificationsFromPath(p, noEnv)).toThrow(NotificationsConfigError);
   });
 });
+
+describe("[notifications] parser edge cases", () => {
+  test("blank, comment-only and key-less lines are skipped; unknown keys are ignored", () => {
+    const src = [
+      "# a leading comment",
+      "",
+      "[notifications]",
+      "   ",
+      "# enabled = false",
+      "not a key value line",
+      "volume = 11",
+      'content = "title_only"',
+    ].join("\r\n");
+    expect(parseNimbusTomlNotifications(src, noEnv)).toEqual({
+      enabled: true,
+      content: "title_only",
+    });
+  });
+
+  test("a later table header ends the section", () => {
+    const src = '[notifications]\nenabled = true\n[fleet]\nenabled = false\ncontent = "bogus"\n';
+    expect(parseNimbusTomlNotifications(src, noEnv)).toEqual(DEFAULT_NOTIFICATIONS_CONFIG);
+  });
+
+  test("a later [notifications] header re-enters the section", () => {
+    const src = "[notifications]\n[fleet]\nenabled = false\n[notifications]\nenabled = false\n";
+    expect(parseNimbusTomlNotifications(src, noEnv).enabled).toBe(false);
+  });
+
+  test("content is trimmed inside the quotes before validation", () => {
+    expect(
+      parseNimbusTomlNotifications('[notifications]\ncontent = " title_only "\n', noEnv).content,
+    ).toBe("title_only");
+  });
+
+  test("the default env reader is the process environment", () => {
+    // Whatever the real environment holds, the defaulted calls must agree with each other.
+    const off = notificationsDisabledByEnv();
+    expect(parseNimbusTomlNotifications("").enabled).toBe(!off);
+    expect(
+      loadNimbusNotificationsFromPath(join(tmpdir(), "nimbus-notif-no-such.toml")).enabled,
+    ).toBe(!off);
+  });
+});
