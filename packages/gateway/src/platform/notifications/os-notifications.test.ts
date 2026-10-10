@@ -186,6 +186,46 @@ describe("delivers getter across probe states", () => {
     expect(svc.delivers).toBe(true);
   });
 
+  test("delivers turns true once the retry interval passes, so a delivers-gated consumer retries", async () => {
+    // The on-call push records `skipped` while delivers is false and never calls show() itself, so
+    // without this a gateway autostarted before the desktop session would skip every pushed toast.
+    let available = false;
+    const clock = fakeClock();
+    const { backend, probeCount, sent } = fakeBackend({
+      probe: () => Promise.resolve(available ? { available: true } : { available: false }),
+    });
+    const svc = createOsNotifications({
+      backend,
+      config: ON,
+      logger: recordingLogger().logger,
+      now: clock.now,
+      setTimer: clock.setTimer,
+    });
+    await svc.ready();
+    expect(svc.delivers).toBe(false);
+    clock.advance(PROBE_RETRY_MS);
+    expect(svc.delivers).toBe(true); // nothing called show() or ready() in between
+    available = true;
+    await svc.show("t", "b");
+    expect(probeCount()).toBe(2);
+    expect(sent).toHaveLength(1);
+  });
+
+  test("a probe that throws SYNCHRONOUSLY settles as unavailable, never stuck at pending", async () => {
+    const backend: NotificationBackend = {
+      id: "windows-toast",
+      probe: () => {
+        throw new Error("boom");
+      },
+      send: () => Promise.resolve(),
+    };
+    const svc = createOsNotifications({ backend, config: ON, logger: recordingLogger().logger });
+    const st = await svc.ready();
+    expect(st.available).toBe(false);
+    expect(st.reason).toBe("notification probe failed");
+    expect(svc.status().reason).not.toBe("probe pending");
+  });
+
   test("an AVAILABLE result is never re-probed", async () => {
     const clock = fakeClock();
     const { backend, probeCount } = fakeBackend();
@@ -277,6 +317,21 @@ describe("rate limit", () => {
     clock.fireDue();
     await flush();
     expect(sent).toHaveLength(RATE_LIMIT_MAX + 1);
+  });
+
+  test("an urgent toast (the approval hop) is never dropped by the limit, but takes a slot", async () => {
+    const { clock, svc, sent } = setup();
+    for (let i = 0; i < RATE_LIMIT_MAX; i += 1) await svc.show(`t${i}`, "b");
+    clock.advance(RATE_LIMIT_WINDOW_MS / 2);
+    await svc.show("approval", "b", { urgent: true });
+    expect(sent.at(-1)?.title).toBe("approval");
+    expect(svc.status().rateLimitedTotal).toBe(0);
+    // It occupied a slot: once the first five leave the window it is still inside it, so only
+    // RATE_LIMIT_MAX - 1 ordinary toasts fit.
+    clock.advance(RATE_LIMIT_WINDOW_MS / 2 + 1);
+    for (let i = 0; i < RATE_LIMIT_MAX - 1; i += 1) await svc.show(`u${i}`, "b");
+    const over = await svc.show("over", "b").catch((e: unknown) => e);
+    expect(over).toBeInstanceOf(NotificationRateLimitedError);
   });
 
   test("the window is rolling, not fixed", async () => {

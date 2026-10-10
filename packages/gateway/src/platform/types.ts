@@ -33,8 +33,17 @@ export interface NotificationService {
    * must not record "delivered" for it.
    */
   readonly delivers?: boolean;
-  show(title: string, body: string): Promise<void>;
+  show(title: string, body: string, options?: NotificationShowOptions): Promise<void>;
 }
+
+export type NotificationShowOptions = {
+  /**
+   * Bypass the rate limit (the toast still occupies a slot). Only the approval-pending hop sets
+   * it: a HITL prompt nobody sees blocks an action, so a burst of watcher toasts must not be able
+   * to drop it.
+   */
+  readonly urgent?: boolean;
+};
 
 export interface PlatformServices {
   vault: NimbusVault;

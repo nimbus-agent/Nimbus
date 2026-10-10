@@ -3345,7 +3345,7 @@ export async function assemblePlatformServices(
   void notificationsRuntime.ready();
   // The consent hop (T3): a fixed-text toast while a HITL approval is pending. The hop itself
   // swallows a throwing/rejecting notifier, so a toast failure can never break consent.
-  setApprovalPendingNotifier((title, body) => notifications.show(title, body));
+  setApprovalPendingNotifier((title, body) => notifications.show(title, body, { urgent: true }));
   sidecarStops.push(() => {
     setApprovalPendingNotifier(undefined);
     notificationsRuntime.close();

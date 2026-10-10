@@ -1836,11 +1836,15 @@ require allowing Script Editor's notifications once, and `display notification` 
 `$XDG_RUNTIME_DIR/bus`) and one of the two tools on PATH; it does not confirm a notification server is running, so a
 missing one surfaces as a send failure. An unavailable probe is retried at most once per 5 minutes on the next
 toast, since the usual cause is a gateway autostarted before the desktop session. `NotificationService.delivers` is
-a GETTER, so the on-call push reads it at delivery time rather than copying it at construction.
+a GETTER, so the on-call push reads it at delivery time rather than copying it at construction, and it turns `true`
+again once the retry interval has passed: the push gates on `delivers` and never calls `show()` while it is false,
+so without that it would record every pushed toast `skipped` until some other producer happened to trigger the retry.
 
 **Rate limit.** At most 5 toasts per rolling 60 s. Excess toasts are dropped and counted; when the window has room
 again, ONE fixed-text summary toast (`Nimbus: N more notifications`) reports them. The summary counts against the
-window like any other toast. `nimbus notifications status` shows the running total.
+window like any other toast. `nimbus notifications status` shows the running total. The approval-pending toast is
+the one exception: it is shown even when the window is full (it still takes a slot), because a HITL prompt nobody
+sees blocks an action, and a burst of watcher toasts must not be able to drop it.
 
 **`title_only`.** Replaces every body a caller passes to `show()` — producers, the consent hop and the test toast —
 with `Open Nimbus for details`; the rate-limit summary's body is fixed text already. The default is the full body (an owner ruling), and the lock screen and the OS

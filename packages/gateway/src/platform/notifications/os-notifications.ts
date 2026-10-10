@@ -42,7 +42,7 @@ import type {
   NimbusNotificationsToml,
   NotificationContentMode,
 } from "../../config/notifications-toml.ts";
-import type { NotificationService } from "../types.ts";
+import type { NotificationService, NotificationShowOptions } from "../types.ts";
 import { createDarwinNotificationBackend } from "./darwin.ts";
 import { createLinuxNotificationBackend } from "./linux.ts";
 import {
@@ -169,7 +169,10 @@ export function createOsNotifications(opts: CreateOsNotificationsOptions): OsNot
   };
 
   const runProbe = (): Promise<void> => {
-    const promise = (async () => {
+    // The body runs on a later microtask, so `probe = pending` below is assigned BEFORE the body's
+    // `probe = done` — even when `backend.probe()` throws synchronously. Run inline, a synchronous
+    // throw would set `done` first and then be overwritten with `pending`, forever.
+    const promise = Promise.resolve().then(async () => {
       let result: NotificationProbeResult;
       try {
         result = await backend.probe();
@@ -184,7 +187,7 @@ export function createOsNotifications(opts: CreateOsNotificationsOptions): OsNot
           reason: result.reason ?? "unknown",
         });
       }
-    })();
+    });
     probe = { kind: "pending", promise };
     return promise;
   };
@@ -259,7 +262,7 @@ export function createOsNotifications(opts: CreateOsNotificationsOptions): OsNot
     }, delay);
   };
 
-  const showImpl = async (title: string, body: string): Promise<void> => {
+  const showImpl = async (title: string, body: string, urgent: boolean): Promise<void> => {
     if (!config.enabled) return;
     const st = await ready();
     if (st.available !== true) {
@@ -267,7 +270,10 @@ export function createOsNotifications(opts: CreateOsNotificationsOptions): OsNot
     }
     const shownBody = config.content === "title_only" ? TITLE_ONLY_BODY : body;
     flushSummary();
-    if (!reserve()) {
+    if (urgent) {
+      pruneWindow();
+      sentAt.push(now());
+    } else if (!reserve()) {
       droppedPending += 1;
       rateLimitedTotal += 1;
       armSummaryTimer();
@@ -279,10 +285,17 @@ export function createOsNotifications(opts: CreateOsNotificationsOptions): OsNot
   return {
     get delivers(): boolean {
       if (!config.enabled) return false;
-      return !(probe.kind === "done" && !probe.result.available);
+      if (probe.kind !== "done" || probe.result.available) return true;
+      // An unavailable probe is retried by the next `show()` once PROBE_RETRY_MS has passed. A
+      // consumer that gates on `delivers` (the on-call push records `skipped` and never calls
+      // `show()`) would otherwise never trigger that retry: a gateway autostarted before the desktop
+      // session would skip every toast until something else called `show()`. So once the interval
+      // has passed, report true — `show()` re-probes, and rejects if the backend is still unavailable.
+      return now() - probe.at >= PROBE_RETRY_MS;
     },
     // An `async` function cannot throw synchronously; every failure becomes a rejection.
-    show: (title: string, body: string): Promise<void> => showImpl(title, body),
+    show: (title: string, body: string, options?: NotificationShowOptions): Promise<void> =>
+      showImpl(title, body, options?.urgent === true),
     status,
     ready: () => ready().catch(() => status()),
     close(): void {

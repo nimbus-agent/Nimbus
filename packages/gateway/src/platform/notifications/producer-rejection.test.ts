@@ -196,7 +196,7 @@ describe("assemble.ts wiring", () => {
     const bare = src.match(/notifications\.show\(/g) ?? [];
     expect(bare).toHaveLength(1);
     expect(src).toContain(
-      "setApprovalPendingNotifier((title, body) => notifications.show(title, body));",
+      "setApprovalPendingNotifier((title, body) => notifications.show(title, body, { urgent: true }));",
     );
   });
 });
