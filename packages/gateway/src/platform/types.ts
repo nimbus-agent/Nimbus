@@ -12,6 +12,7 @@ import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
+import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import type { AgentVendor } from "./assemble.ts";
@@ -105,6 +106,13 @@ export interface PlatformServices {
    * in-memory-only and has no on/off switch of its own.
    */
   askExplainRecorder: AskExplainRecorder;
+  /**
+   * Telemetry `agent_invocation_latency_p50_ms`/`_p95_ms`. ONE in-memory ring for the process,
+   * written by both `runAsk` call sites in `gateway-main.ts` and by every `agents.*` brief
+   * dispatched over the socket, HTTP and ChatOps; read by the telemetry flush and preview.
+   * Durations only, never persisted. Always constructed, like `askExplainRecorder`.
+   */
+  agentLatencyRecorder: AgentLatencyRecorder;
   /**
    * The on-call pushed brief runtime. Exposed so the assembly test can assert the ChatOps poster
    * was settled (`chatopsSinkState()`); the IPC surface reaches it through `oncallPushRpcCtx`.

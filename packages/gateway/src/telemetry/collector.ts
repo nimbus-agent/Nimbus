@@ -118,6 +118,11 @@ export type TelemetryPreviewPayload = {
   extension_uninstalls_by_id: Record<string, number>;
 };
 
+/** A finite duration as a non-negative integer of ms; `0` when absent or non-finite. */
+function nonNegativeRoundedMs(ms: number | undefined): number {
+  return ms !== undefined && Number.isFinite(ms) ? Math.max(0, Math.round(ms)) : 0;
+}
+
 export function buildTelemetryPreview(params: {
   nimbusVersion: string;
   queryLatencyP50Ms: number;
@@ -126,6 +131,12 @@ export function buildTelemetryPreview(params: {
   sessionId?: string;
   db?: Database;
   coldStartMs?: number;
+  /**
+   * From the process's `AgentLatencyRecorder` (`telemetry/agent-latency.ts`). Absent means no
+   * recorder reached this caller; the keys then carry `0`, as they did before instrumentation.
+   */
+  agentInvocationLatencyP50Ms?: number;
+  agentInvocationLatencyP95Ms?: number;
 }): TelemetryPreviewPayload {
   const plat = process.platform;
   const platform: TelemetryPreviewPayload["platform"] =
@@ -139,13 +150,10 @@ export function buildTelemetryPreview(params: {
     query_latency_p50_ms: params.queryLatencyP50Ms,
     query_latency_p95_ms: params.queryLatencyP95Ms,
     query_latency_p99_ms: params.queryLatencyP99Ms,
-    agent_invocation_latency_p50_ms: 0,
-    agent_invocation_latency_p95_ms: 0,
+    agent_invocation_latency_p50_ms: nonNegativeRoundedMs(params.agentInvocationLatencyP50Ms),
+    agent_invocation_latency_p95_ms: nonNegativeRoundedMs(params.agentInvocationLatencyP95Ms),
     sync_duration_p50_ms: {},
-    cold_start_ms:
-      params.coldStartMs !== undefined && Number.isFinite(params.coldStartMs)
-        ? Math.max(0, Math.round(params.coldStartMs))
-        : 0,
+    cold_start_ms: nonNegativeRoundedMs(params.coldStartMs),
     extension_installs_by_id: {},
     extension_uninstalls_by_id: {},
   };

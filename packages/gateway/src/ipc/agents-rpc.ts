@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { timeBriefSettlement } from "../agents/_lib/brief-latency.ts";
 import type { DecisionsInput } from "../agents/_lib/decisions-types.ts";
 import type { GlossaryInput } from "../agents/_lib/glossary-types.ts";
 import type { OwnershipInput } from "../agents/_lib/ownership-types.ts";
@@ -48,6 +49,7 @@ import { resolveFileByRemote } from "../index/resolve-file-by-remote.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
+import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import {
   dispatchByMethod,
@@ -77,6 +79,12 @@ export type AgentsRpcContext = {
   sendOverWire?: typeof sendFederatedOverWire;
   /** Who is calling. Server-derived; absent in unit tests and non-socket callers. */
   caller?: { clientId: string; kind: ClientKind };
+  /**
+   * Telemetry `agent_invocation_latency_p50_ms`/`_p95_ms`: when present, `dispatchAgentsRpc`
+   * records the time from a RECOGNISED dispatch to that brief's first `briefReady`/`briefError`
+   * (`agents/_lib/brief-latency.ts`). A duration only. Absent records nothing.
+   */
+  agentLatencyRecorder?: AgentLatencyRecorder;
 };
 
 const MIN_TOPIC_LEN = 1;
@@ -1577,5 +1585,10 @@ export async function dispatchAgentsRpc(
       now: Date.now(),
     });
   }
-  return dispatchByMethod<AgentsRpcContext>(method, params, ctx, AGENTS_RPC_HANDLERS);
+  const recorder = ctx.agentLatencyRecorder;
+  const timedCtx =
+    recorder !== undefined && Object.hasOwn(AGENTS_RPC_HANDLERS, method)
+      ? { ...ctx, notify: timeBriefSettlement(ctx.notify, recorder) }
+      : ctx;
+  return dispatchByMethod<AgentsRpcContext>(method, params, timedCtx, AGENTS_RPC_HANDLERS);
 }

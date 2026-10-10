@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { interpolatedPercentile } from "../util/interpolated-percentile.ts";
 import { dbRun } from "./write.ts";
 
 export type QueryLatencyKind = "fts" | "vector" | "hybrid" | "sql";
@@ -75,24 +76,6 @@ export class LatencyRingBuffer {
 
 export const latencyRingBuffer = new LatencyRingBuffer();
 
-function percentile(sorted: readonly number[], p: number): number {
-  if (sorted.length === 0) {
-    return 0;
-  }
-  const idx = (sorted.length - 1) * p;
-  const lo = Math.floor(idx);
-  const hi = Math.ceil(idx);
-  const loV = sorted[lo];
-  const hiV = sorted[hi];
-  if (loV === undefined || hiV === undefined) {
-    return sorted.at(-1) ?? 0;
-  }
-  if (lo === hi) {
-    return loV;
-  }
-  return loV * (hi - idx) + hiV * (idx - lo);
-}
-
 export function computeLatencyPercentilesMs(samples: readonly LatencySample[]): {
   p50Ms: number;
   p95Ms: number;
@@ -103,9 +86,9 @@ export function computeLatencyPercentilesMs(samples: readonly LatencySample[]): 
   }
   const ms = samples.map((s) => s.latencyMs).sort((a, b) => a - b);
   return {
-    p50Ms: percentile(ms, 0.5),
-    p95Ms: percentile(ms, 0.95),
-    p99Ms: percentile(ms, 0.99),
+    p50Ms: interpolatedPercentile(ms, 0.5),
+    p95Ms: interpolatedPercentile(ms, 0.95),
+    p99Ms: interpolatedPercentile(ms, 0.99),
   };
 }
 

@@ -10,6 +10,7 @@ import { LocalIndex } from "../index/local-index.ts";
 import { openMigratedDb } from "../index/migrated-db-template.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
+import { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import type { DiagnosticsRpcContext } from "./diagnostics-rpc.ts";
 import {
   buildSandboxDiagPayload,
@@ -1611,6 +1612,41 @@ describe("telemetry.preview", () => {
       rmTmp(dir);
     }
   });
+});
+
+type AgentLatencyKeys = {
+  agent_invocation_latency_p50_ms?: unknown;
+  agent_invocation_latency_p95_ms?: unknown;
+};
+
+describe("telemetry agent-invocation latency (both diagnostics callers)", () => {
+  function recorderWith(...ms: number[]): AgentLatencyRecorder {
+    const r = new AgentLatencyRecorder();
+    for (const v of ms) r.record(v);
+    return r;
+  }
+
+  for (const method of ["telemetry.preview", "telemetry.getStatus"] as const) {
+    test(`${method} carries the injected recorder's p50/p95`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-agentlat-"));
+      try {
+        const { ctx, db } = makeCtxWithIndex(dir);
+        try {
+          const r = await dispatchDiagnosticsRpc(method, null, {
+            ...ctx,
+            agentLatencyRecorder: recorderWith(100, 200, 300),
+          });
+          const v = (r as { value: AgentLatencyKeys }).value;
+          expect(v.agent_invocation_latency_p50_ms).toBe(200);
+          expect(v.agent_invocation_latency_p95_ms).toBe(290);
+        } finally {
+          db.close();
+        }
+      } finally {
+        rmTmp(dir);
+      }
+    });
+  }
 });
 
 describe("diag.snapshot", () => {

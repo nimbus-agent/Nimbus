@@ -295,6 +295,7 @@ import {
 } from "../teamvault/team-tool-invoke.ts";
 import { spawnTeamToolAndCall, spawnTeamWriteAndCall } from "../teamvault/team-tool-spawn.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
+import { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import { startTelemetryFlushScheduler } from "../telemetry/flush-scheduler.ts";
 import { reconcileSavedToolsOrWarn } from "../toolgen/toolgen-boot-reconcile.ts";
 import { ToolgenBroker } from "../toolgen/toolgen-broker.ts";
@@ -2775,6 +2776,7 @@ function bootAgentsIntoHttpSidecar(deps: {
   selfIdentity: Parameters<typeof createIpcServer>[0]["federationIdentity"];
   llmRouter: SynthesisRouter;
   httpSidecarOpts: HttpSidecarOpts;
+  agentLatencyRecorder?: AgentLatencyRecorder;
 }): void {
   const agentRuns = new AgentRunController({ nowMs: () => Date.now() });
   deps.httpSidecarOpts.agentRuns = agentRuns;
@@ -2785,6 +2787,9 @@ function bootAgentsIntoHttpSidecar(deps: {
     configDir: deps.configDir,
     router: deps.llmRouter,
     ...(deps.selfIdentity === undefined ? {} : { selfIdentity: deps.selfIdentity }),
+    ...(deps.agentLatencyRecorder === undefined
+      ? {}
+      : { agentLatencyRecorder: deps.agentLatencyRecorder }),
   });
 }
 
@@ -2834,6 +2839,7 @@ export function bootChatopsAgentInvoker(deps: {
   configDir: string;
   selfIdentity: Parameters<typeof createIpcServer>[0]["federationIdentity"];
   llmRouter: SynthesisRouter | undefined;
+  agentLatencyRecorder?: AgentLatencyRecorder;
   buildInvoker?: (deps: Parameters<typeof buildChatopsAgentInvoker>[0]) => ChatopsAgentInvoker;
 }): void {
   if (deps.chatopsBoot === undefined) return;
@@ -2845,6 +2851,9 @@ export function bootChatopsAgentInvoker(deps: {
       configDir: deps.configDir,
       router: deps.llmRouter,
       ...(deps.selfIdentity === undefined ? {} : { selfIdentity: deps.selfIdentity }),
+      ...(deps.agentLatencyRecorder === undefined
+        ? {}
+        : { agentLatencyRecorder: deps.agentLatencyRecorder }),
     }),
   );
 }
@@ -3614,6 +3623,11 @@ export async function assemblePlatformServices(
   // Agents over HTTP. Placed AFTER bootFederationIntoIpcOpts (above) so `federationIdentity` is
   // already populated when the invoker captures it — the socket path reads it per call, this one
   // captures once, so the ordering is load-bearing rather than cosmetic.
+  // Telemetry agent-invocation latency. ONE in-memory ring for the process, constructed before
+  // every writer (socket/HTTP/ChatOps `agents.*` dispatch, both `runAsk` sites in
+  // `gateway-main.ts`) and reader (`telemetry.preview`/`getStatus`, the opt-in flush) is built.
+  const agentLatencyRecorder = new AgentLatencyRecorder();
+  ipcOpts.agentLatencyRecorder = agentLatencyRecorder;
   bootAgentsIntoHttpSidecar({
     db,
     localIndex,
@@ -3621,6 +3635,7 @@ export async function assemblePlatformServices(
     selfIdentity: ipcOpts.federationIdentity,
     llmRouter: llmRegistry.llmRouter,
     httpSidecarOpts,
+    agentLatencyRecorder,
   });
 
   // Targeted fetch-on-miss (Task 11). Unconditional, like agents: reaching it requires the
@@ -3724,6 +3739,7 @@ export async function assemblePlatformServices(
     // `ZERO_IDENTITY` in that case, same as the HTTP invoker).
     selfIdentity: ipcOpts.federationIdentity,
     llmRouter: llmRegistry.llmRouter,
+    agentLatencyRecorder,
   });
 
   // Observability snapshot (Task 15). Cheap, synchronous readers assembled here where every
@@ -4425,6 +4441,7 @@ export async function assemblePlatformServices(
       gatewayVersion: GATEWAY_VERSION,
       logger: syncLogger,
       coldStartMs: gatewayAssemblyMs,
+      agentLatencyRecorder,
     });
     sidecarStops.push(telemetryStop.stop);
   }
@@ -4446,6 +4463,7 @@ export async function assemblePlatformServices(
     connectorWriteDeps,
     embeddingReadiness,
     askExplainRecorder,
+    agentLatencyRecorder,
     oncallPush,
     policyHitl,
     // A GETTER, not `policyGate.enforced()` evaluated here: a signed policy applied after boot

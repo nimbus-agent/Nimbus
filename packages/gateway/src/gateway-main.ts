@@ -221,6 +221,7 @@ export async function main(): Promise<void> {
       dispatcher,
       egressSink: askEgressSink,
       explainRecorder: platform.askExplainRecorder,
+      agentLatencyRecorder: platform.agentLatencyRecorder,
       // Spread-conditional: `conversationalAgent` is OPTIONAL and `run-ask` already handles its
       // absence, but under `exactOptionalPropertyTypes` an explicit `undefined` is a different
       // type from an absent key.
@@ -263,6 +264,7 @@ export async function main(): Promise<void> {
       dispatcher,
       egressSink: askEgressSink,
       explainRecorder: platform.askExplainRecorder,
+      agentLatencyRecorder: platform.agentLatencyRecorder,
       sendChunk: () => {},
       ...(() => {
         const a = resolveEngineAgent(undefined);

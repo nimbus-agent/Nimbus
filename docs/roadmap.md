@@ -315,7 +315,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 **Telemetry**
 
 - [x] **Opt-in pipeline** — `[telemetry]` TOML + env overrides, payload safety gate, `nimbus telemetry show` / `disable`, flush scheduler POST to configured endpoint (`packages/gateway/src/config/telemetry-toml.ts`, `packages/gateway/src/telemetry/*`, `packages/cli/src/commands/telemetry.ts`)
-- [x] **Telemetry catalog (aggregate-only)** — flush + `telemetry.preview` include `connector_error_rate`, `sync_duration_p50_ms` (7d window), `connector_health_transitions`, `extension_installs_by_id`, `cold_start_ms` (Gateway assembly), plus latency percentiles; agent invocation histograms remain `0` until instrumented
+- [x] **Telemetry catalog (aggregate-only)** — flush + `telemetry.preview` include `connector_error_rate`, `sync_duration_p50_ms` (7d window), `connector_health_transitions`, `extension_installs_by_id`, `cold_start_ms` (Gateway assembly), plus query latency percentiles and agent invocation latency (`agent_invocation_latency_p50_ms` / `_p95_ms`, instrumented 2026-10-10: wall-clock durations of `runAsk` calls and of socket/HTTP/ChatOps `agents.*` briefs, from dispatch to `briefReady`/`briefError`, over an in-memory 1440-sample window that a restart empties; `0` until a sample exists). These are two percentile numbers, not histogram buckets; fleet and on-call-push briefs are not timed
 
 **Documentation & extension testing**
 
