@@ -81,7 +81,7 @@ export const WIN32_TOAST_ENV_KEYS = [
 const REGISTER_AUMID = [
   "$ErrorActionPreference = 'Stop'",
   `$aumid = '${WIN32_TOAST_AUMID}'`,
-  "$key = 'HKCU:\\Software\\Classes\\AppUserModelId\\' + $aumid",
+  String.raw`$key = 'HKCU:\Software\Classes\AppUserModelId\' + $aumid`,
   "if (-not (Test-Path -LiteralPath $key)) { $null = New-Item -Path $key -Force }",
   `$null = New-ItemProperty -LiteralPath $key -Name 'DisplayName' -Value '${WIN32_TOAST_DISPLAY_NAME}' -PropertyType String -Force`,
   "$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]",
@@ -143,7 +143,7 @@ export function encodePowershellCommand(script: string): string {
 }
 
 export function win32PowershellPath(env: NotificationEnvSource): string {
-  const root = env["SystemRoot"] ?? env["windir"] ?? "C:\\Windows";
+  const root = env["SystemRoot"] ?? env["windir"] ?? String.raw`C:\Windows`;
   return winPath.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 }
 

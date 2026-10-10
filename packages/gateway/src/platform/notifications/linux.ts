@@ -73,8 +73,8 @@ export function gvariantStringLiteral(text: string): string {
   let out = "'";
   for (const ch of text) {
     const cp = ch.codePointAt(0) ?? 0;
-    if (ch === "\\") out += "\\\\";
-    else if (ch === "'") out += "\\'";
+    if (ch === "\\") out += String.raw`\\`;
+    else if (ch === "'") out += String.raw`\'`;
     else if (cp < 0x20 || cp === 0x7f) out += `\\u${cp.toString(16).padStart(4, "0")}`;
     else out += ch;
   }

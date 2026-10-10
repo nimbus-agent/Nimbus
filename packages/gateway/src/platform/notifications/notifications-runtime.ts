@@ -137,6 +137,15 @@ function safeLog(
   }
 }
 
+/** A loaded, valid config that is off was turned off either by the env override or by the file. */
+function resolveDisabledBy(
+  enabled: boolean,
+  envGet: NotificationsEnvGet,
+): NotificationsDisabledBy | undefined {
+  if (enabled) return undefined;
+  return notificationsDisabledByEnv(envGet) ? "env" : "config";
+}
+
 export function createNotificationsRuntime(
   opts: CreateNotificationsRuntimeOptions,
 ): NotificationsRuntime {
@@ -192,11 +201,7 @@ export function createNotificationsRuntime(
     });
   }
 
-  const disabledBy: NotificationsDisabledBy | undefined = config.enabled
-    ? undefined
-    : notificationsDisabledByEnv(envGet)
-      ? "env"
-      : "config";
+  const disabledBy = resolveDisabledBy(config.enabled, envGet);
   if (disabledBy !== undefined) {
     safeLog(
       logger,
@@ -266,14 +271,15 @@ export function createNotificationsRuntime(
  * `platform/exit-diagnostics.ts` turns into a gateway exit. The returned promise never rejects; the
  * service already logged any failure (title + reason, never the body).
  */
-export function showIgnoringFailure(
+export async function showIgnoringFailure(
   service: Pick<NotificationService, "show">,
   title: string,
   body: string,
 ): Promise<void> {
+  // One `try` covers both a synchronous throw from `show()` and its rejection.
   try {
-    return service.show(title, body).catch(() => {});
+    await service.show(title, body);
   } catch {
-    return Promise.resolve();
+    // Already logged by the service; swallowing is the point of this adapter.
   }
 }

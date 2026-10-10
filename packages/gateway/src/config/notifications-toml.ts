@@ -79,8 +79,9 @@ function applyNotificationsKey(out: NotificationsDraft, key: string, valRaw: str
     case "content": {
       const v = parseString(valRaw).trim();
       if (!isContentMode(v)) {
+        const allowed = NOTIFICATION_CONTENT_MODES.map((m) => JSON.stringify(m)).join(", ");
         throw new NotificationsConfigError(
-          `[notifications].content must be one of ${NOTIFICATION_CONTENT_MODES.map((m) => `"${m}"`).join(", ")} (got: ${JSON.stringify(v)})`,
+          `[notifications].content must be one of ${allowed} (got: ${JSON.stringify(v)})`,
         );
       }
       out.content = v;

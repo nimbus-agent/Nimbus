@@ -138,7 +138,7 @@ describe("approvalKindLabel", () => {
       `send "${SENTINEL}" to ceo@example.com`,
       "a b",
       "x\nInjected line",
-      "slack.message.post‮gnp.exe",
+      "slack.message.post\u202Egnp.exe",
       "a".repeat(200),
     ]) {
       expect(approvalKindLabel({ source: "executor", actionType: bad })).toBe(

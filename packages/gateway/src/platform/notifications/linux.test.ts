@@ -27,7 +27,7 @@ const HOSTILE: readonly string[] = [
   "line one\nline two\ttab",
   "$(touch /tmp/pwned) `id`",
   "--urgency=critical",
-  "unicode: café, 日本語, emoji 😀, ‮evil",
+  "unicode: café, 日本語, emoji 😀, \u202Eevil",
   "nul\u0000byte and esc\u001B[31m",
 ];
 

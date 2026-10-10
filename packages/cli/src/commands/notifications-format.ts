@@ -89,7 +89,8 @@ function availabilityText(s: NotificationsStatusView): string {
 }
 
 export function formatNotificationsStatus(s: NotificationsStatusView): string {
-  const enabled = s.enabled ? "yes" : `no${s.reason === undefined ? "" : ` — ${s.reason}`}`;
+  const reasonSuffix = s.reason === undefined ? "" : ` — ${s.reason}`;
+  const enabled = s.enabled ? "yes" : `no${reasonSuffix}`;
   const lines = [
     "OS notifications",
     `  Backend:     ${s.backend}`,
