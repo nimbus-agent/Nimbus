@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791614080274,
+  "lastUpdate": 1791615925551,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "81d6f6edd9d510aab40fa5800e4468326fedee0c",
-          "message": "chore: release main (#930)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.7.0</summary>\n\n##\n[1.7.0](https://github.com/nimbus-agent/Nimbus/compare/v1.6.0...v1.7.0)\n(2026-07-29)\n\n\n### Features\n\n* **ci:** split secret-health's \"expiring\" from \"dead\" so a new failure\nis visible ([#922](https://github.com/nimbus-agent/Nimbus/issues/922))\n([2adae3c](https://github.com/nimbus-agent/Nimbus/commit/2adae3cc3d036ca97b1771ae9f880fbea5929881))\n* **connectors:** index Mercury transactions (`mercury:transaction`)\n([#924](https://github.com/nimbus-agent/Nimbus/issues/924))\n([d9a4708](https://github.com/nimbus-agent/Nimbus/commit/d9a4708318fc0ccd321f1e1dd96ad6fc074e863d))\n\n\n### Bug Fixes\n\n* **gateway:** bind IPC before the embedding model loads\n([#928](https://github.com/nimbus-agent/Nimbus/issues/928))\n([#934](https://github.com/nimbus-agent/Nimbus/issues/934))\n([79b18f0](https://github.com/nimbus-agent/Nimbus/commit/79b18f0e484d22a381324f660aa0631dce1385d5))\n* **security:** close the last two bun audit advisories —\n@hono/node-server fixed, @ai-sdk/provider-utils accepted with a re-check\ndate ([#923](https://github.com/nimbus-agent/Nimbus/issues/923))\n([ede61eb](https://github.com/nimbus-agent/Nimbus/commit/ede61eb4772b443abc1f7d24f843f04b8b90d7b5))\n* **vault:** probe the Linux Secret Service instead of secret-tool's\nPATH ([#935](https://github.com/nimbus-agent/Nimbus/issues/935))\n([ccba4aa](https://github.com/nimbus-agent/Nimbus/commit/ccba4aa2dde285c7145ca2b6a94f3a6677954199))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-29T19:40:05Z",
-          "tree_id": "c5d0afcba84e40a7864637a39881b5947087013d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/81d6f6edd9d510aab40fa5800e4468326fedee0c"
-        },
-        "date": 1785354698555,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 309.1611530499973,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 308.5477130500054,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 339.91983775001063,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "57d9f25becb23cecf73279288eb45c0da023691f",
+          "message": "feat(engine): disclose step-budget exhaustion, emit agent.gasLimitReached, make [llm] loop-guard keys live (#1640)\n\nPre-S3 item C2. Makes `agent.gasLimitReached` real. The docs had called\nit \"reserved\", but nothing ever emitted it. This PR also fixes the\nsilent truncation that the notification exists to report.\n\n## What changes\n\n- **Running out of the step budget is now disclosed.** `nimbus ask` /\n`agent.invoke` pass `maxSteps` (`NIMBUS_ASK_MAX_STEPS`, default 20) to\nthe Mastra agent and never read why it stopped. A turn cut off while the\nmodel still wanted tools came back looking complete.\n`engine/step-budget.ts` now detects exhaustion: `finishReason ===\n\"tool-calls\"` AND `steps.length >= cap`. On exhaustion the turn:\n- gets a fixed line appended through `appendDeterministicDisclosures`,\nso the text is built in code and never left to the model: *\"Note: this\nanswer stopped at the N-step tool budget before the model finished; it\nmay be incomplete. Raise NIMBUS_ASK_MAX_STEPS to allow more.\"*\n- records `stepBudgetExhausted: { cap, used }` on the `nimbus explain\nlast` record;\n- sends **`agent.gasLimitReached`** `{ limit: \"steps\", cap, used,\nstreamId? }` to the acting IPC session only. It is not broadcast, is not\na `gateway.event` kind, and needs no Tauri allowlist entry. ChatOps,\nworkflow and the other callers get the disclosure line only.\n- **Coordinator caps throw a typed `AgentLimitError`** (`limit: \"depth\"\n| \"tool_calls\"`). Its message starts with `ERR_AGENT_LIMIT_REACHED:`,\nreplacing a plain `Error`.\n- **`[llm] max_agent_depth` / `max_tool_calls_per_session` now take\neffect.** They were parsed and documented but never read. The new\n`engine/agent-limits.ts` resolves each limit as env (when set and\nvalid), then TOML, then the default. It is wired in `assemble.ts` and\nread by the coordinator and by `gateway.ping`'s `agentLimits`.\n- **Docs:** every \"reserved / not emitted\" restatement is corrected\n(roadmap, architecture, cli-reference, and three skills). The\n`nimbus-ipc` skill listed an `ERR_GAS_LIMIT -32002` that never existed\n(that code is used for other errors); that row is removed. CHANGELOG\nentry added.\n\n## Rulings and their costs\n\n1. **The coordinator limit gets no JSON-RPC error code or mapping.**\nPlanned, but not possible as written: every coordinator-using agent runs\ninside `emitBriefWithSynthesis`'s fire-and-forget task, so `agents.*`\nhas already returned `{sessionId}` when the limit trips. The typed error\ntherefore reaches clients as the `error` string of `<agent>.briefError`,\nwith a stable prefix. Cost: a client distinguishes it by prefix, not by\nnumeric code.\n2. **Only `\"steps\"` sends a notification.** A coordinator limit fails\nthe brief, and that failure is the signal. `limit` is a discriminant, so\nadding another kind later is additive.\n3. **The cap's counting is unchanged, and this is a stated bound.** The\ncoordinator counts sub-tasks per brief, not tool calls per session.\nMaking it count real tool calls per session would be an architectural\nchange.\n4. **`engine.askStream` gets the disclosure line but not the\nnotification.** Its inner context has no `streamId`.\n5. **`nimbus explain last` doesn't show `stepBudgetExhausted` yet.** The\nCLI parser ignores the unknown field, and the reply line already states\nit.\n6. **A rejected `steps`/`finishReason` promise reads as \"not\nexhausted\".** `@mastra/core` 1.64 rejects any delayed promise that is\nstill pending when a stream finishes. Every finish path that resolves\n`text` also resolves these two today (checked in the dist source).\nDetection must still never be what fails a turn that has already\nanswered, so a rejection is treated as \"not exhausted\".\n\n## Verification\n\n- `bun run typecheck` ✅ and `bun run preflight:fast` ✅.\n`typecheck:tests` runs as one of preflight's gates.\n- New tests, each seen failing before its fix:\n- 11 step-budget cases: generate and stream; exactly at the cap with\n`\"stop\"` reads as not exhausted and leaves the reply unchanged; below\nthe cap; missing fields; a rejected promise; the explain record and\nnotifier through `runAsk`;\n- 2 inline-handler cases, one using two sessions to prove only the\nacting session receives the notification;\n- 11 cases on limit precedence, coordinator behaviour and error fields;\n  - 1 `gateway.ping` case.\n- `bun test packages/gateway packages/cli scripts`: **28,105 pass, 0\nfail.** The sandbox helper was built.\n`scripts/install/install-remote-windows.test.ts` was excluded because it\nhangs on this Windows machine; that's environmental.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-10T09:58:43+03:00",
+          "tree_id": "a8e8eadd432b56016ce0d81b657339e5ef331d2f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/57d9f25becb23cecf73279288eb45c0da023691f"
+        },
+        "date": 1791615922371,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 189.8623482999974,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 190.32980674999635,
             "unit": "ms"
           }
         ]
