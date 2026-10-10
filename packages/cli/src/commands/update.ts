@@ -45,9 +45,34 @@ export async function runUpdateCheck(client: IPCClient): Promise<void> {
   process.exitCode = result.updateAvailable ? 1 : 0;
 }
 
+/** The gateway refuses `updater.applyUpdate` with this code when it has no installer to run. */
+const INSTALL_UNSUPPORTED_CODE = "ERR_UPDATER_INSTALL_UNSUPPORTED";
+
+/**
+ * Success is printed ONLY when the gateway call returned — which it does only after an installer
+ * actually ran. No per-OS installer ships yet, so today every apply is refused with
+ * `ERR_UPDATER_INSTALL_UNSUPPORTED`; that refusal is printed plainly with a non-zero exit rather
+ * than surfacing as a raw RPC error. Nothing here promises a restart: the gateway does not restart
+ * itself.
+ */
 export async function runUpdateApply(client: IPCClient): Promise<void> {
-  await client.call<unknown>("updater.applyUpdate", {});
-  console.log("Update applied. Gateway will restart.");
+  try {
+    await client.call<unknown>("updater.applyUpdate", {});
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes(INSTALL_UNSUPPORTED_CODE)) {
+      console.error(
+        "This gateway cannot install updates on this platform yet — nothing was downloaded or installed.",
+      );
+      console.error(
+        "Run `nimbus update --check` to see the latest version, then download the release manually.",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
+  }
+  console.log("Update installed.");
 }
 
 export interface RunUpdateOptions {

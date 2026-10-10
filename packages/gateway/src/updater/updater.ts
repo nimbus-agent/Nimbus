@@ -2,7 +2,7 @@ import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import { fetchUpdateManifest, isPermittedSchemeForUpdater } from "./manifest-fetcher.ts";
 import { redactUrlUserinfo } from "./redact-url-userinfo.ts";
 import { sha256Hex, verifyBinarySignature, verifyManifestEnvelope } from "./signature-verifier.ts";
-import type { PlatformTarget, UpdateManifest, UpdaterStatus } from "./types.ts";
+import type { PlatformTarget, UpdateManifest, UpdaterLastCheck, UpdaterStatus } from "./types.ts";
 
 // Re-exported because `platform/assemble.ts` and `updater.test.ts` both import it from here.
 export { redactUrlUserinfo };
@@ -37,6 +37,25 @@ export interface UpdaterOptions {
   maxDownloadBytes?: number;
 }
 
+export const ERR_UPDATER_INSTALL_UNSUPPORTED = "ERR_UPDATER_INSTALL_UNSUPPORTED";
+
+const INSTALL_UNSUPPORTED_DETAIL =
+  "no installer is available for this platform yet; download the release manually from the project's releases page";
+
+/**
+ * `applyUpdate` was asked to install with no `invokeInstaller` wired — the production shape on
+ * every platform until the per-OS installers ship. Refused BEFORE any download, emit or audit
+ * row: nothing was attempted, so there is nothing to record. Before this refusal existed the
+ * same call downloaded and verified the binary, recorded `system.update.installed`, broadcast
+ * `updater.restarting`, and installed nothing.
+ */
+export class UpdaterInstallUnsupportedError extends Error {
+  constructor(detail: string = INSTALL_UNSUPPORTED_DETAIL) {
+    super(`${ERR_UPDATER_INSTALL_UNSUPPORTED}: ${detail}`);
+    this.name = "UpdaterInstallUnsupportedError";
+  }
+}
+
 export interface CheckNowResult {
   currentVersion: string;
   latestVersion: string;
@@ -49,6 +68,7 @@ export class Updater {
   private lastManifest?: UpdateManifest;
   private lastError?: string;
   private lastCheckAt?: string;
+  private lastCheck?: UpdaterLastCheck;
 
   constructor(private readonly opts: UpdaterOptions) {}
 
@@ -59,7 +79,8 @@ export class Updater {
         timeoutMs: this.opts.timeoutMs,
       });
       this.lastManifest = manifest;
-      this.lastCheckAt = new Date().toISOString();
+      const checkedAt = new Date().toISOString();
+      this.lastCheckAt = checkedAt;
       const updateAvailable = semverGreater(manifest.version, this.opts.currentVersion);
       if (updateAvailable) {
         const payload: Record<string, unknown> = { version: manifest.version };
@@ -77,6 +98,17 @@ export class Updater {
       if (manifest.notes !== undefined) {
         result.notes = manifest.notes;
       }
+      // Cached ONLY on success: a failed check leaves the previous result in place, and
+      // `lastError` reports the failure.
+      const lastCheck: UpdaterLastCheck = {
+        latestVersion: manifest.version,
+        updateAvailable,
+        checkedAt,
+      };
+      if (manifest.notes !== undefined) {
+        lastCheck.notes = manifest.notes;
+      }
+      this.lastCheck = lastCheck;
       return result;
     } catch (err) {
       this.state = "failed";
@@ -86,6 +118,12 @@ export class Updater {
   }
 
   async applyUpdate(): Promise<void> {
+    // FIRST, before any state change: with no installer wired, every later step (download,
+    // verify, "installed" audit row, restarting broadcast) would be a claim nothing backs.
+    if (this.opts.invokeInstaller === undefined) {
+      throw new UpdaterInstallUnsupportedError();
+    }
+    const invokeInstaller = this.opts.invokeInstaller;
     const { manifest, asset } = this.requireApplyPreconditions();
     this.opts.recordUpdateEvent?.("system.update.start", {
       fromVersion: this.opts.currentVersion,
@@ -96,7 +134,7 @@ export class Updater {
     });
     const bytes = await this.downloadOrFail(asset.url, manifest.version);
     this.verifyOrFail(bytes, asset, manifest.version);
-    await this.installOrFail(bytes, manifest.version);
+    await this.installOrFail(bytes, manifest.version, invokeInstaller);
   }
 
   private requireApplyPreconditions(): {
@@ -172,13 +210,15 @@ export class Updater {
     this.opts.recordUpdateEvent?.("system.update.failed", { toVersion, reason });
   }
 
-  private async installOrFail(bytes: Uint8Array, toVersion: string): Promise<void> {
+  private async installOrFail(
+    bytes: Uint8Array,
+    toVersion: string,
+    invokeInstaller: (binaryPath: string) => Promise<void>,
+  ): Promise<void> {
     this.state = "applying";
     const { dir, path: binaryPath } = await writeToTempFile(bytes);
     try {
-      if (this.opts.invokeInstaller) {
-        await this.opts.invokeInstaller(binaryPath);
-      }
+      await invokeInstaller(binaryPath);
       this.opts.recordUpdateEvent?.("system.update.installed", {
         fromVersion: this.opts.currentVersion,
         toVersion,
@@ -280,6 +320,9 @@ export class Updater {
     }
     if (this.lastError !== undefined) {
       status.lastError = this.lastError;
+    }
+    if (this.lastCheck !== undefined) {
+      status.lastCheck = { ...this.lastCheck };
     }
     return status;
   }

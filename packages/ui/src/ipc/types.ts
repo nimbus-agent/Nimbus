@@ -232,12 +232,21 @@ export type UpdaterStateName =
   | "rolled_back"
   | "failed";
 
+/** Mirrors the gateway's cached result of its last SUCCESSFUL `updater.checkNow`. */
+export interface UpdaterLastCheck {
+  readonly latestVersion: string;
+  readonly updateAvailable: boolean;
+  readonly notes?: string;
+  readonly checkedAt: string;
+}
+
 export interface UpdaterStatus {
   readonly state: UpdaterStateName;
   readonly currentVersion: string;
   readonly configUrl: string;
   readonly lastCheckAt?: string;
   readonly lastError?: string;
+  readonly lastCheck?: UpdaterLastCheck;
 }
 
 export interface UpdaterCheckResult {

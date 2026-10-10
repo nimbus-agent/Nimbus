@@ -57,8 +57,9 @@ export interface ToolSpec {
  *
  * Every `nimbus <cmd>` named here must be a real command. `nimbus restart` does not exist — it is
  * not in `COMMAND_NAMES` — and naming it sent the operator to a dead end at the exact moment they
- * were told how to fix something. `nimbus update` already reports "Gateway will restart", so no
- * second command is needed. `tool-runtime.test.ts` checks every `nimbus <cmd>` in this string
+ * were told how to fix something. `nimbus update` is the one entry point: on a package-manager
+ * install it prints the channel's upgrade command, and on a direct install it refuses with a manual
+ * download hint until the per-OS installers ship. `tool-runtime.test.ts` checks every `nimbus <cmd>` in this string
  * against the registry, the same way `audit:readme-cli` does for the docs.
  */
 export const AGENT_TOOLS_UNSUPPORTED_MESSAGE =

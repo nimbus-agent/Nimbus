@@ -281,7 +281,7 @@ nimbus bench --all --reference        # interactive protocol confirmation requir
 ```bash
 # Auto-update
 nimbus update --check                  # exit 1 if newer available
-nimbus update [--yes]                  # download, verify Ed25519, install
+nimbus update [--yes]                  # apply: REFUSED today (ERR_UPDATER_INSTALL_UNSUPPORTED — no installer yet)
 
 # LAN remote access
 nimbus lan [status]                    # default; enabled / pairing-open / listen addr

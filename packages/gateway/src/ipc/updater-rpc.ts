@@ -1,4 +1,11 @@
-import { ManifestFetchError, type Updater } from "../updater/updater.ts";
+import {
+  ManifestFetchError,
+  type Updater,
+  UpdaterInstallUnsupportedError,
+} from "../updater/updater.ts";
+
+/** Server-error-range code for "this gateway cannot install updates" (distinct from -32603). */
+export const UPDATER_INSTALL_UNSUPPORTED_RPC_CODE = -32000;
 
 export class UpdaterRpcError extends Error {
   readonly rpcCode: number;
@@ -41,6 +48,11 @@ export async function dispatchUpdaterRpc(
         await ctx.updater.applyUpdate();
         return { jobId: Date.now().toString(36) };
       } catch (err) {
+        // Checked BEFORE the message regex: the refusal is a typed error, and its wording must
+        // never be able to land it in the signature arm.
+        if (err instanceof UpdaterInstallUnsupportedError) {
+          throw new UpdaterRpcError(UPDATER_INSTALL_UNSUPPORTED_RPC_CODE, err.message);
+        }
         const message = err instanceof Error ? err.message : String(err);
         if (/signature|hash/i.test(message)) {
           throw new UpdaterRpcError(-32603, `ERR_UPDATER_SIGNATURE_INVALID: ${message}`);
