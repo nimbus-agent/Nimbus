@@ -65,6 +65,15 @@ async function runCli(args: string[], env: Record<string, string>) {
   return { stdout, stderr, code };
 }
 
+/**
+ * Every test spawns a FULL CLI cold start from TypeScript source, and the env points HOME,
+ * USERPROFILE and TEMP at fresh temp dirs, so no transpiler cache from an earlier run applies.
+ * bun's default 5 s per-test budget is a dev-machine number: on the windows-2025 runner the first
+ * `--demo --version` spawn exceeded it and was killed (exit 143) on main at cc25fbe0, with every
+ * assertion still unrun. CI runners are ~13-18x slower than a dev box (CLAUDE.md § CI gating).
+ */
+const CLI_SPAWN_TIMEOUT_MS = 60_000;
+
 afterAll(() => {
   try {
     // Retries are for the LEAK (issue #972), not for flakiness: a failure is already swallowed.
@@ -75,49 +84,73 @@ afterAll(() => {
 });
 
 describe("nimbus --demo (real CLI subprocess, temp roots)", () => {
-  test("premise: the child resolves homedir() to the temp HOME (else every other assertion is about the REAL home)", async () => {
-    const proc = Bun.spawn({
-      cmd: [process.execPath, "-e", "process.stdout.write(require('node:os').homedir())"],
-      stdout: "pipe",
-      env: baseEnv(),
-    });
-    const home = await new Response(proc.stdout).text();
-    await proc.exited;
-    expect(home).toBe(dirs.home);
-  });
+  test(
+    "premise: the child resolves homedir() to the temp HOME (else every other assertion is about the REAL home)",
+    async () => {
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", "process.stdout.write(require('node:os').homedir())"],
+        stdout: "pipe",
+        env: baseEnv(),
+      });
+      const home = await new Response(proc.stdout).text();
+      await proc.exited;
+      expect(home).toBe(dirs.home);
+    },
+    CLI_SPAWN_TIMEOUT_MS,
+  );
 
-  test("--demo --version: version printed, CLI log under the DEMO logDir, real logDir never created", async () => {
-    const r = await runCli(["--demo", "--version"], baseEnv());
-    expect(r.code).toBe(0);
-    expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
-    const demoLogs = join(realDataDir(), "demo", "data", "logs");
-    expect(existsSync(demoLogs)).toBe(true);
-    expect(readdirSync(demoLogs).some((f) => f.startsWith("cli-"))).toBe(true);
-    expect(existsSync(join(realDataDir(), "logs"))).toBe(false);
-  });
+  test(
+    "--demo --version: version printed, CLI log under the DEMO logDir, real logDir never created",
+    async () => {
+      const r = await runCli(["--demo", "--version"], baseEnv());
+      expect(r.code).toBe(0);
+      expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+      const demoLogs = join(realDataDir(), "demo", "data", "logs");
+      expect(existsSync(demoLogs)).toBe(true);
+      expect(readdirSync(demoLogs).some((f) => f.startsWith("cli-"))).toBe(true);
+      expect(existsSync(join(realDataDir(), "logs"))).toBe(false);
+    },
+    CLI_SPAWN_TIMEOUT_MS,
+  );
 
-  test("--demo is stripped before dispatch: an unknown command is named, not '--demo'", async () => {
-    const r = await runCli(["--demo", "no-such-command"], baseEnv());
-    expect(r.code).not.toBe(0);
-    expect(r.stderr).toContain("Unknown command: no-such-command");
-    expect(r.stderr).not.toContain("Unknown command: --demo");
-  });
+  test(
+    "--demo is stripped before dispatch: an unknown command is named, not '--demo'",
+    async () => {
+      const r = await runCli(["--demo", "no-such-command"], baseEnv());
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("Unknown command: no-such-command");
+      expect(r.stderr).not.toContain("Unknown command: --demo");
+    },
+    CLI_SPAWN_TIMEOUT_MS,
+  );
 
-  test("an ambiguous NIMBUS_DEMO value refuses with a message, exit 1", async () => {
-    const r = await runCli(["--version"], baseEnv({ NIMBUS_DEMO: "true" }));
-    expect(r.code).toBe(1);
-    expect(r.stderr).toContain("NIMBUS_DEMO must be 1 or unset");
-  });
+  test(
+    "an ambiguous NIMBUS_DEMO value refuses with a message, exit 1",
+    async () => {
+      const r = await runCli(["--version"], baseEnv({ NIMBUS_DEMO: "true" }));
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("NIMBUS_DEMO must be 1 or unset");
+    },
+    CLI_SPAWN_TIMEOUT_MS,
+  );
 
-  test("--demo with NIMBUS_CONFIG_DIR refuses, naming the variable", async () => {
-    const r = await runCli(["--demo", "--version"], baseEnv({ NIMBUS_CONFIG_DIR: dirs.tmp }));
-    expect(r.code).toBe(1);
-    expect(r.stderr).toContain("NIMBUS_CONFIG_DIR");
-  });
+  test(
+    "--demo with NIMBUS_CONFIG_DIR refuses, naming the variable",
+    async () => {
+      const r = await runCli(["--demo", "--version"], baseEnv({ NIMBUS_CONFIG_DIR: dirs.tmp }));
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("NIMBUS_CONFIG_DIR");
+    },
+    CLI_SPAWN_TIMEOUT_MS,
+  );
 
-  test("with no demo gateway running, the hint names the DEMO gateway", async () => {
-    const r = await runCli(["--demo", "catchup"], baseEnv());
-    expect(r.code).not.toBe(0);
-    expect(r.stderr).toContain("nimbus --demo start");
-  });
+  test(
+    "with no demo gateway running, the hint names the DEMO gateway",
+    async () => {
+      const r = await runCli(["--demo", "catchup"], baseEnv());
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("nimbus --demo start");
+    },
+    CLI_SPAWN_TIMEOUT_MS,
+  );
 });
