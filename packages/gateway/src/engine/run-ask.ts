@@ -42,6 +42,7 @@ import { type PlanResult, planFromIntent } from "./planner.ts";
 import { fallbackSearchTerms, questionSearchTerms } from "./question-search-terms.ts";
 import { type ClassifiedIntent, type ClassifierEgressPolicy, classifyIntent } from "./router.ts";
 import { runConversationalAgent } from "./run-conversational-agent.ts";
+import type { NotifyGasLimit, StepBudgetExhausted } from "./step-budget.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
 import type { ConnectorDispatcher, PlannedAction } from "./types.ts";
 
@@ -111,6 +112,12 @@ export type RunAskParams = {
    * as the local owner — if this function looked it up.
    */
   offerUserMcpTools?: boolean;
+  /**
+   * Told when the agent step budget cut this turn short (`engine/step-budget.ts`). Only the IPC
+   * entry supplies it, as a UNICAST `agent.gasLimitReached` to the acting session; every other
+   * caller (ChatOps, workflow) relies on the deterministic disclosure line in the reply.
+   */
+  notifyGasLimit?: NotifyGasLimit;
 };
 
 /**
@@ -266,6 +273,7 @@ type ExplainPartial = {
   classifier?: BaseExplainRecord["classifier"];
   modelRoute?: BaseExplainRecord["modelRoute"];
   fallbackFromLocalRouter?: { readonly error: string };
+  stepBudgetExhausted?: StepBudgetExhausted;
   route?: ExplainRoute;
 };
 
@@ -330,10 +338,14 @@ async function answerConversationally(
     // picked up with no restart (D3). No logger: the boot-time resolution in
     // `platform/assemble.ts` owns the warning — warning on every turn would be noise.
     persona: resolvePersona(p.paths.configDir),
+    ...(p.notifyGasLimit === undefined ? {} : { notifyGasLimit: p.notifyGasLimit }),
   });
 
   if (result.fallbackFromLocalRouter !== undefined) {
     partial.fallbackFromLocalRouter = result.fallbackFromLocalRouter;
+  }
+  if (result.stepBudgetExhausted !== undefined) {
+    partial.stepBudgetExhausted = result.stepBudgetExhausted;
   }
   if (result.modelMeta !== undefined) {
     partial.modelRoute = {
@@ -1085,6 +1097,9 @@ function buildExplainRecord(
     ...(partial.fallbackFromLocalRouter === undefined
       ? {}
       : { fallbackFromLocalRouter: partial.fallbackFromLocalRouter }),
+    ...(partial.stepBudgetExhausted === undefined
+      ? {}
+      : { stepBudgetExhausted: partial.stepBudgetExhausted }),
   };
 
   if (error !== undefined) {

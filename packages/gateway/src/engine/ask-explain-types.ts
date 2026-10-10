@@ -98,6 +98,12 @@ export type BaseExplainRecord = {
       };
   /** Set when the local router threw and the turn silently re-ran on the agent (spec §4.2). */
   readonly fallbackFromLocalRouter?: { readonly error: string };
+  /**
+   * Set when the agent's step budget (`NIMBUS_ASK_MAX_STEPS`) stopped the turn while the model
+   * still wanted tools — the reply then carries a deterministic "may be incomplete" line. `used`
+   * is the step count the agent reported; absent means the budget did not cut the turn short.
+   */
+  readonly stepBudgetExhausted?: { readonly cap: number; readonly used: number };
 };
 
 export type AskExplainRecord = BaseExplainRecord &

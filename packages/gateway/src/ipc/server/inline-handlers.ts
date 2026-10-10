@@ -1,17 +1,18 @@
 import { randomUUID } from "node:crypto";
 
-import { Config } from "../../config.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
 import {
   describeEmbeddingWarming,
   EMBEDDING_WARMING_CODE,
   EMBEDDING_WARMING_RPC_CODE,
 } from "../../embedding/embedding-readiness.ts";
+import { getAgentLimits } from "../../engine/agent-limits.ts";
 import {
   type AgentRequestContext,
   agentRequestContext,
 } from "../../engine/agent-request-context.ts";
 import { GatewayAgentUnavailableError } from "../../engine/gateway-agent-error.ts";
+import { GAS_LIMIT_REACHED_NOTIFICATION, type GasLimitEvent } from "../../engine/step-budget.ts";
 import { driftHintsFromIndex } from "../../index/drift-hints.ts";
 import type { IndexSearchQuery } from "../../index/local-index.ts";
 import { describeRetrieval } from "../../index/search-retrieval.ts";
@@ -87,6 +88,23 @@ function sendAgentChunkIfStreaming(
   });
 }
 
+/**
+ * UNICAST to the acting session — never `ctx.broadcastNotification`: the event describes one
+ * caller's turn, and its `streamId` is that caller's own. Sent whether or not the call streams
+ * (the reply's disclosure line carries the same fact for clients that ignore notifications).
+ */
+function sendGasLimitReached(
+  session: ClientSession,
+  event: GasLimitEvent,
+  streamId: string | undefined,
+): void {
+  session.writeNotification({
+    jsonrpc: "2.0",
+    method: GAS_LIMIT_REACHED_NOTIFICATION,
+    params: streamId === undefined ? { ...event } : { ...event, streamId },
+  });
+}
+
 export async function dispatchAgentInvoke(
   ctx: ServerCtx,
   session: ClientSession,
@@ -130,6 +148,9 @@ export async function dispatchAgentInvoke(
           sendAgentChunkIfStreaming(session, stream, text, streamId);
         },
         offerUserMcpTools,
+        notifyGasLimit: (event: GasLimitEvent) => {
+          sendGasLimitReached(session, event, streamId);
+        },
       };
       if (sessionId !== undefined) {
         payload.sessionId = sessionId;
@@ -262,10 +283,8 @@ export function rpcGatewayPing(ctx: ServerCtx, params: unknown): unknown {
   const base: Record<string, unknown> = {
     version: ctx.options.version,
     uptime: Date.now() - ctx.startedAtMs,
-    agentLimits: {
-      maxAgentDepth: Config.maxAgentDepth,
-      maxToolCallsPerSession: Config.maxToolCallsPerSession,
-    },
+    // The boot-resolved caps (env > [llm] toml > default), not `Config`'s env-only snapshot.
+    agentLimits: { ...getAgentLimits() },
     ...extra,
   };
   const rec = asRecord(params);

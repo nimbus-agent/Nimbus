@@ -381,7 +381,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 #### Local LLM & Multi-Agent
 
 - [x] **Local LLM support** — Ollama integration (model discovery, pull, load, unload via Gateway IPC); llama.cpp fallback (GGUF model files, no Ollama required); per-task model routing (fast local model for classification; remote for multi-step reasoning; configurable); fully air-gapped operation when a local model is loaded
-- [x] **Multi-agent orchestration** — coordinator agent decomposes complex tasks into independent sub-tasks; sub-agents run in parallel in isolated tool scopes; all sub-agent write operations remain HITL-gated; coordinator cannot approve on behalf of the user *(loop-guard config stubs in place: `NIMBUS_MAX_AGENT_DEPTH` default 3, `NIMBUS_MAX_TOOL_CALLS_PER_SESSION` default 20; `agent.gasLimitReached` notification reserved)*
+- [x] **Multi-agent orchestration** — coordinator agent decomposes complex tasks into independent sub-tasks; sub-agents run in parallel in isolated tool scopes; all sub-agent write operations remain HITL-gated; coordinator cannot approve on behalf of the user *(loop guards: `NIMBUS_MAX_AGENT_DEPTH` / `[llm] max_agent_depth` default 3 and `NIMBUS_MAX_TOOL_CALLS_PER_SESSION` / `[llm] max_tool_calls_per_session` default 20 — env wins over TOML — raise a typed `AgentLimitError` (`ERR_AGENT_LIMIT_REACHED:`); `agent.gasLimitReached` is emitted, unicast, only for `nimbus ask` step-budget (`NIMBUS_ASK_MAX_STEPS`) exhaustion, which is also disclosed in the reply — 2026-10-10)*
 
 #### Built-in Agent Workflows
 

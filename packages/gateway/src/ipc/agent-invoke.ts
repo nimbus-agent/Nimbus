@@ -1,6 +1,7 @@
 // Type-only module: NO executable runtime logic. It is exact-path-excluded from the coverage floor
 // in scripts/coverage-floor/exclusions.ts (a type-only file emits no SF: lcov record). Adding runtime
 // logic here would silently bypass the floor — put runtime logic in a separate, covered module.
+import type { NotifyGasLimit } from "../engine/step-budget.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
 
 export type AgentInvokeContext = {
@@ -24,6 +25,12 @@ export type AgentInvokeContext = {
    * clientId is not a registered kind at all and would read as `unknown`.
    */
   offerUserMcpTools?: boolean;
+  /**
+   * Set by `agent.invoke` only: writes a UNICAST `agent.gasLimitReached` to the session that
+   * made the call when the agent step budget cut the turn short (`engine/step-budget.ts`). Never
+   * a broadcast — the event describes one caller's turn.
+   */
+  notifyGasLimit?: NotifyGasLimit;
 };
 
 export type AgentInvokeResult = {

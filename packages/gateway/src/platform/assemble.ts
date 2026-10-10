@@ -158,6 +158,7 @@ import {
   embedQueryDualOutcome,
 } from "../embedding/embedding-readiness.ts";
 import type { EmbeddingRuntime as ConcreteEmbeddingRuntime } from "../embedding/embedding-runtime.ts";
+import { readAgentLimitEnv, resolveAgentLimits, setAgentLimits } from "../engine/agent-limits.ts";
 import { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
 import { buildDelegatedRequestRemote } from "../engine/delegated-request-remote.ts";
@@ -3324,6 +3325,10 @@ export async function assemblePlatformServices(
   // design review raised (Q2).
   resolvePersona(paths.configDir, syncLogger);
   const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
+  // `[llm] max_agent_depth` / `max_tool_calls_per_session` are LIVE from here on: resolved
+  // once (a set, valid env var still wins) and read by `AgentCoordinator` and `gateway.ping`.
+  const bootLlmToml = loadNimbusLlmFromPath(activeTomlPath);
+  setAgentLimits(resolveAgentLimits({ env: readAgentLimitEnv(), toml: bootLlmToml }));
   // AWAITED, never fire-and-forget: the registry must be fully populated before the router
   // answers anything, or a remote route could be missing from the first turn after boot.
   const llmRegistry = await buildLlmRegistryFromToml(db, activeTomlPath, vault, {
@@ -3332,7 +3337,7 @@ export async function assemblePlatformServices(
   // `undefined` here means the Mastra engine agent is NOT CONSTRUCTED at all (gateway-main.ts),
   // which is what makes `enabled = false` mean no remote inference anywhere — including the
   // default `nimbus ask`, which Mastra would otherwise serve off an environment credential.
-  const agentVendor = await resolveAgentVendor(loadNimbusLlmFromPath(activeTomlPath), vault, {
+  const agentVendor = await resolveAgentVendor(bootLlmToml, vault, {
     warn: (m: string) => syncLogger.warn(m),
   });
 

@@ -85,11 +85,13 @@ When a method needs to stream results, it returns a handle immediately and emits
 |---|---|---|
 | `agent.invoke` | request | One turn through the shared `runAsk` pipeline (`{ input, stream?, sessionId? }`) — the pipeline `nimbus ask` and the ChatOps read path also use |
 | `agent.chunk` | notification | `{ streamId?, text }`, sent while `agent.invoke` or `workflow.run` runs with `stream: true` |
+| `agent.gasLimitReached` | notification | `{ limit: "steps", cap, used, streamId? }`, UNICAST to the session that called `agent.invoke` (streaming or not) when the `NIMBUS_ASK_MAX_STEPS` step budget stopped the turn while the model still wanted tools. Never broadcast, not a `gateway.event` kind, not classified in the Tauri bridge. The reply carries the same fact as a deterministic disclosure line, which is all ChatOps / `workflow.run` / `engine.askStream` get |
 
-**Not emitted: `agent.subTaskProgress`, `agent.hitlBatch`, `agent.gasLimitReached`.** Older text
-documented these three as the multi-agent orchestration events, with a `HitlAction` payload, but
-nothing in `packages/gateway/src` names them. A depth or tool-call limit makes
-`AgentCoordinator.run` throw (`Agent depth limit reached` / `Tool call limit reached`), and consent
+**Not emitted: `agent.subTaskProgress`, `agent.hitlBatch`.** Older text documented these (and a
+broadcast `agent.gasLimitReached`) as the multi-agent orchestration events, with a `HitlAction`
+payload, but nothing in `packages/gateway/src` emits the first two. A depth or tool-call limit makes
+`AgentCoordinator.run` throw a typed `AgentLimitError` (message prefix `ERR_AGENT_LIMIT_REACHED:`,
+surfacing as `<agent>.briefError` — no notification and no JSON-RPC error code), and consent
 reaches the acting client as a unicast `consent.request`, answered with `consent.respond`. The TUI
 still subscribes to `agent.hitlBatch` (`packages/cli/src/tui/App.tsx`), so that listener never fires.
 
@@ -577,17 +579,17 @@ two HITL kinds carry `{ requestId, actionType }` only, never the rendered prompt
 | -32603 | `INTERNAL_ERROR` | Unhandled server error |
 | -32000 | `ERR_METHOD_NOT_ALLOWED` | Method exists but blocked by Tauri allowlist |
 | -32001 | `ERR_HITL_REJECTED` | User rejected a HITL action |
-| -32002 | `ERR_GAS_LIMIT` | `maxToolCallsPerSession` exceeded |
 | -32003 | `ERR_VAULT_LOCKED` | Vault unavailable (e.g. screen locked on macOS) |
 | -32004 | `ERR_CONNECTOR_UNAVAILABLE` | Connector not running or unauthenticated |
 | -32005 | `ERR_AIR_GAP` | *Reserved, not implemented.* Air-gap refusal on the `ask` path surfaces as a `GatewayAgentUnavailableError` with `reason: "air_gap"`, not as this code. |
 | -32021 | `EMBEDDING_WARMING_RPC_CODE` | The local embedding model is still loading, so a semantic request cannot be answered YET. Carries `data.code = "embedding_warming"` + `data.readiness` (state / elapsedMs / model / dims / download progress / reason). Raised by `index.searchRanked` when `semantic` is not `false`; retry, or pass `semantic: false` for keyword-only results. Transient by definition — `disabled`/`unavailable` are served normally. |
 
 
-**Five of the codes above are RESERVED, not implemented** — verified by grepping
+**Four of the codes above are RESERVED, not implemented** — verified by grepping
 `packages/gateway/src` and `packages/cli/src` for each name: `ERR_HITL_REJECTED`,
-`ERR_GAS_LIMIT`, `ERR_VAULT_LOCKED`, `ERR_CONNECTOR_UNAVAILABLE` and `ERR_AIR_GAP`
-appear in no production file. Only `ERR_METHOD_NOT_ALLOWED` and
+`ERR_VAULT_LOCKED`, `ERR_CONNECTOR_UNAVAILABLE` and `ERR_AIR_GAP`
+appear in no production file. (An `ERR_GAS_LIMIT` -32002 row was removed 2026-10-10: nothing
+ever raised it, -32002 is in use elsewhere, and a coordinator limit is the string-coded `AgentLimitError`.) Only `ERR_METHOD_NOT_ALLOWED` and
 `EMBEDDING_WARMING_RPC_CODE` are wired. Do not write a client branch against a reserved
 code expecting it to fire; check the condition you actually care about instead. If you
 implement one, delete its "reserved" mention here in the same commit.

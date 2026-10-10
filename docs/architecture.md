@@ -1056,12 +1056,15 @@ The multi-agent system extends the single-agent cognitive loop with a **Coordina
 
 **Loop guard invariants — structural, not configurable via IPC or extension API:**
 
-| Guard | Environment variable | Default |
-|---|---|---|
-| Max sub-agent recursion depth | `NIMBUS_MAX_AGENT_DEPTH` | `3` |
-| Max total tool calls per session | `NIMBUS_MAX_TOOL_CALLS_PER_SESSION` | `20` |
+| Guard | Environment variable | `[llm]` key | Default |
+|---|---|---|---|
+| Max sub-agent recursion depth | `NIMBUS_MAX_AGENT_DEPTH` | `max_agent_depth` (1–10) | `3` |
+| Max sub-tasks per coordinator | `NIMBUS_MAX_TOOL_CALLS_PER_SESSION` | `max_tool_calls_per_session` (1–200) | `20` |
+| Agent step budget for `nimbus ask` / `agent.invoke` | `NIMBUS_ASK_MAX_STEPS` (1–64) | — | `20` |
 
-Both limits are checked in `AgentCoordinator.run` *before* any sub-task is dispatched: exceeding either throws (`Agent depth limit reached: …` / `Tool call limit reached: …`) and halts decomposition, so no sub-agent for that batch starts. The `agent.gasLimitReached` IPC notification is reserved and not yet emitted by any code path.
+The two coordinator caps are resolved once at boot by `engine/agent-limits.ts` — per key, an env var that is set and valid wins over the `[llm]` key, which wins over the default (the TOML keys were parsed but read by nothing until 2026-10-10) — and `gateway.ping`'s `agentLimits` reports the resolved values. Both are checked in `AgentCoordinator.run` *before* any sub-task is dispatched: exceeding either throws a typed `AgentLimitError` (`limit: "depth" | "tool_calls"`, `cap`, `attempted`) whose message starts `ERR_AGENT_LIMIT_REACHED:`, so no sub-agent for that batch starts. Every built-in brief runs its coordinator inside a fire-and-forget task, so the error reaches a client as the `error` string of `<agent>.briefError`, not as a JSON-RPC error response; no notification is sent for it. Stated bound: the tool-call cap counts sub-tasks per coordinator, and each brief builds its own coordinator with a fresh counter — it is not a per-conversation tool-call budget.
+
+**Step-budget exhaustion is disclosed, not silent.** The conversational agent runs with `maxSteps = NIMBUS_ASK_MAX_STEPS`. When a turn ends with `finishReason === "tool-calls"` and at least that many steps — the model still wanted tools when the cap stopped it — `run-conversational-agent.ts` appends a fixed, deterministically constructed line to the reply (and, when streaming, as a final chunk): `Note: this answer stopped at the N-step tool budget before the model finished; it may be incomplete. Raise NIMBUS_ASK_MAX_STEPS to allow more.`. A turn that finished normally exactly at the cap is not exhausted, and the toolless local-router path never is. The explain record (`nimbus explain last`) gains `stepBudgetExhausted: { cap, used }`, and `agent.invoke` sends the acting session — UNICAST, never a broadcast — an `agent.gasLimitReached` notification `{ limit: "steps", cap, used, streamId? }`. ChatOps, `workflow.run` and `engine.askStream` get the disclosure line only. The notification is not a `gateway.event` kind and is not classified in the Tauri bridge.
 
 ### Voice (not shipped) and Rich TUI
 

@@ -3029,8 +3029,8 @@ local_model        = "llama3.2" # Any pulled Ollama model name
 # llama.cpp HTTP base URL; not the filesystem path to the llama-server binary.
 # llamacpp_server_path = "http://127.0.0.1:8080"
 # enforce_air_gap   = false
-# max_agent_depth   = 3              # 1–10
-# max_tool_calls_per_session = 20    # 1–200
+# max_agent_depth   = 3              # 1–10; NIMBUS_MAX_AGENT_DEPTH wins when set and valid
+# max_tool_calls_per_session = 20    # 1–200; NIMBUS_MAX_TOOL_CALLS_PER_SESSION wins when set and valid
 
 [embedding]
 enabled = true
@@ -5112,9 +5112,9 @@ nimbus lan remove abc123
 | `NIMBUS_EMBEDDINGS` | Set to `false` to disable background embedding generation after index upserts |
 | `NIMBUS_ENGINE_CONTEXT_WINDOW_ITEMS` | Top-N index items passed in full to the agent after ranked search (1–200; default 10) |
 | `NIMBUS_SEARCH_PRIORITY_JSON` | Per-service search priority weights (0–1) as a JSON object e.g. `{"github":0.8,"slack":0.7}` |
-| `NIMBUS_ASK_MAX_STEPS` | Mastra tool-loop depth for `nimbus ask` sessions (1–64) |
-| `NIMBUS_MAX_AGENT_DEPTH` | Maximum sub-agent recursion depth for multi-agent tasks (1–10; default 3) |
-| `NIMBUS_MAX_TOOL_CALLS_PER_SESSION` | Hard cap on total tool calls per session (1–200; default 20) |
+| `NIMBUS_ASK_MAX_STEPS` | Mastra tool-loop depth for `nimbus ask` sessions (1–64; default 20). When this budget stops a turn while the model still wanted tools, the answer ends with `Note: this answer stopped at the N-step tool budget before the model finished; it may be incomplete. Raise NIMBUS_ASK_MAX_STEPS to allow more.` (N is the cap), `nimbus explain last` records it, and `agent.invoke` sends the calling session an `agent.gasLimitReached` notification |
+| `NIMBUS_MAX_AGENT_DEPTH` | Maximum sub-agent recursion depth for multi-agent tasks (1–10; default 3). Overrides `[llm] max_agent_depth` when set and valid |
+| `NIMBUS_MAX_TOOL_CALLS_PER_SESSION` | Cap on sub-tasks one agent coordinator may fan out (1–200; default 20). Overrides `[llm] max_tool_calls_per_session` when set and valid. Exceeding it fails the brief with `ERR_AGENT_LIMIT_REACHED:` |
 | `NIMBUS_RUN_QUERY_BENCH` | Set to `1` to enable strict `< 100ms` p95 assertion in the query latency benchmark |
 | `NIMBUS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` (default: `info`) |
 | `NIMBUS_SQLITE_PATH` | **macOS only.** Path to a full `libsqlite3.dylib`. Checked first, ahead of the `libsqlite3.dylib` released builds ship beside the binaries and then the Homebrew prefixes (`/opt/homebrew/opt/sqlite/lib/`, then `/usr/local/opt/sqlite/lib/`). Bun links Apple's system SQLite on macOS, which has extension loading compiled out, so sqlite-vec — and therefore vector search, hybrid ranking and session-memory recall — needs one of these present; on a released install the bundled one always is, and this variable is an override rather than a requirement. Mainly useful on a dev checkout, where `process.execPath` is `bun` and no library sits beside it. Ignored on Linux and Windows, which use Bun's own full build. `nimbus doctor` reports the resolved state. |
