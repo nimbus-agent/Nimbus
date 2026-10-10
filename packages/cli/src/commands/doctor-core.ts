@@ -755,15 +755,21 @@ export function doctorPrintHealthFromSnapshot(snap: { connectorHealth?: unknown 
 /**
  * OS notifications (pre-S3 item E): `[info]` when off by the owner's choice, `[warn]` when they
  * should work and do not (see `doctorNotificationsLine`). Tolerant of an older gateway that does not
- * serve `notifications.status` (-32601) — doctor stays quiet rather than failing. A malformed
- * response is reported, not thrown, so one bad line cannot hide the rest of the sweep.
+ * serve `notifications.status` (-32601) — doctor stays quiet rather than failing. Any OTHER RPC
+ * failure is a `[warn]`: the check did not complete, and reading that as healthy would be a false
+ * all-clear. A malformed response is reported, not thrown, so one bad line cannot hide the rest of
+ * the sweep.
  */
 export async function doctorPrintNotifications(client: Pick<IPCClient, "call">): Promise<number> {
   let raw: unknown;
   try {
     raw = await client.call<unknown>("notifications.status", {});
-  } catch {
-    return 0;
+  } catch (e) {
+    if (isMethodNotFound(e)) return 0;
+    console.log(
+      `[warn] Notifications: status check failed (${e instanceof Error ? e.message : String(e)}).`,
+    );
+    return 1;
   }
   try {
     const { line, exit } = doctorNotificationsLine(parseNotificationsStatus(raw));
@@ -773,6 +779,11 @@ export async function doctorPrintNotifications(client: Pick<IPCClient, "call">):
     console.log(`[warn] Notifications: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
+}
+
+/** JSON-RPC -32601: the gateway does not serve the method (an older binary). */
+function isMethodNotFound(e: unknown): boolean {
+  return typeof e === "object" && e !== null && "code" in e && e.code === -32601;
 }
 
 async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {

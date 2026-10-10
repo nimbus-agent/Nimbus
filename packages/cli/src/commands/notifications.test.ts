@@ -92,6 +92,11 @@ describe("nimbus notifications", () => {
   test("a bad subcommand is a usage error before any gateway contact", async () => {
     await expect(runNotificationsCmd(["bogus"])).rejects.toThrow(/usage: nimbus notifications/);
     await expect(runNotificationsCmd([])).rejects.toThrow(/usage/);
+    // An unrecognised flag is refused, not ignored (a script expecting JSON must not get text).
+    await expect(runNotificationsCmd(["status", "--jso"])).rejects.toThrow(
+      /Unknown argument: --jso/,
+    );
+    await expect(runNotificationsCmd(["test", "--json", "extra"])).rejects.toThrow(/usage/);
     const { client, calls } = fakeClient(() => Promise.reject(new Error("must not be called")));
     await expect(runNotifications(client, ["nope"])).rejects.toThrow(/usage/);
     expect(calls).toEqual([]);
@@ -164,12 +169,23 @@ describe("doctor notifications line", () => {
   });
 
   test("an older gateway (-32601) keeps doctor quiet; a malformed reply warns", async () => {
-    const old = fakeClient(() => Promise.reject(new Error("Method not found")));
+    const notFound = Object.assign(new Error("Method not found"), { code: -32601 });
+    const old = fakeClient(() => Promise.reject(notFound));
     expect(await doctorPrintNotifications(old.client)).toBe(0);
     expect(logs).toBe("");
     const bad = fakeClient(() => Promise.resolve({ backend: 1 }));
     expect(await doctorPrintNotifications(bad.client)).toBe(1);
     expect(logs).toContain("[warn] Notifications: malformed");
+  });
+
+  test("any OTHER RPC failure warns rather than reading as healthy", async () => {
+    const internal = Object.assign(new Error("Internal error"), { code: -32603 });
+    const failing = fakeClient(() => Promise.reject(internal));
+    expect(await doctorPrintNotifications(failing.client)).toBe(1);
+    expect(logs).toContain("[warn] Notifications: status check failed (Internal error).");
+    // An error with no code at all is not "method not found" either.
+    const bare = fakeClient(() => Promise.reject(new Error("socket closed")));
+    expect(await doctorPrintNotifications(bare.client)).toBe(1);
   });
 });
 

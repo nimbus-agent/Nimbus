@@ -15,6 +15,13 @@ export async function runNotificationsCmd(args: string[]): Promise<void> {
   if (sub !== "status" && sub !== "test") {
     throw new Error(USAGE);
   }
+  // Validated BEFORE opening IPC: an unrecognised flag (`--jso`) would otherwise be ignored and a
+  // script expecting JSON would silently receive text with exit 0.
+  const unknown = args.slice(1).filter((a) => a !== "--json");
+  if (unknown.length > 0) {
+    throw new Error(`Unknown argument: ${unknown[0] ?? ""}
+${USAGE}`);
+  }
   await withGatewayIpc((c) => runNotifications(c, args));
 }
 
