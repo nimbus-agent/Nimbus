@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791626058672,
+  "lastUpdate": 1791630881913,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "af9d246b5f06dceaeee4f43e8665c8b70932e956",
-          "message": "fix(ci): repair the coverage-gate count assertion broken by #936 (#941)\n\n## main is red\n\n```\n(fail) auditCoverageGatePal > the real workflow carries all 24 gates, 9 PAL and 15 Linux-only\nExpected length: 24\nReceived length: 12\n```\n\n#936 batched `coverage-gates-linux` from 15 one-gate jobs into 3. The\naudit's own test file hard-coded 24/9/15.\n\n**My miss, and a specific one.** Before merging #936 I ran the audit\n*script* (`bun run audit:coverage-gate-pal` → OK) and treated that green\nas proof the audit was satisfied. I never ran the audit's own *test\nfile*, where the hard-coded counts lived. A passing script is not a\npassing suite — and I even red-proved the script against a bad `pal:`\nvalue, which made the green feel more thorough than it was.\n\n## The fix is stronger than a number change\n\nCounts corrected to 12/9/3. But the useful half is what replaces\n`toHaveLength(15)`.\n\nThat number was really protecting coverage **breadth**, which the entry\ncount no longer expresses: batching changed how many jobs run, not how\nmuch is covered. A batch that silently dropped a script would keep the\nentry count at 3 and sail straight through.\n\nThe test now parses the `scripts:` lists and asserts all **15 distinct\n`test:coverage:*` scripts appear exactly once**.\n\n**Red-proved:** deleting `test:coverage:lan` from a batch reds the test.\nThe old assertion could not have caught that either — it counted matrix\nentries, never scripts — so this is strictly stronger than what #936\nbroke.\n\n## Blast radius\n\nI checked for other fallout rather than assuming this was the only\nbreakage: **404 structure-audit tests, this was the single failure.**\nThe `Sync scheduler` / `Rate limiter` references in `nimbus-testing.md`\nand `architecture.md` are coverage *thresholds* per subsystem, not job\nnames — unchanged and still accurate, since all 15 scripts still run at\nthe same thresholds.\n\nThis unblocks #926, #939 and #940, which are all based on the red main.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-29T21:06:35Z",
-          "tree_id": "7151f74c82604d52551ca572eef5340d3f4855e9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/af9d246b5f06dceaeee4f43e8665c8b70932e956"
-        },
-        "date": 1785359775517,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 288.0910688000007,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 288.51768050000175,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 336.0717432500023,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d0d7a613a8fab4477510d0dc9741b07045cda9de",
+          "message": "feat(notifications): deliver OS notifications on Windows, macOS and Linux (pre-S3 E) (#1646)\n\nPre-S3 item E, the last item of the pre-S3 close-out. Nimbus now raises\nreal OS notifications on Windows, macOS and Linux. Until now\n`createUnimplementedNotifications` was the only `NotificationService`,\nand every toast was dropped (`notification.dropped`).\n\nNo migration, no new invariant, no new egress class: a notification goes\nfrom the gateway to the local operating system only.\n\n## What ships\n\n- **Per-OS backends** under `platform/notifications/`. Each is started\nas a child process through `spawnCapture`: argument lists, never a\nshell, a hidden window, a 10 s timeout and a minimal environment.\n- **Windows:** a WinRT toast through Windows PowerShell 5.1. The app id\n`NimbusAgent.Nimbus` (display name \"Nimbus\") is registered under\n`HKCU\\Software\\Classes\\AppUserModelId`. The script is a constant passed\nwith `-EncodedCommand`. The title and body travel inside it only as\nbase64 literals and become XML through `CreateTextNode`, never through\nstring concatenation.\n- **macOS:** `osascript` with `on run argv`, so the title and body are\nplain arguments and never AppleScript source.\n- **Linux:** `notify-send`, falling back to `gdbus`. For `gdbus` the\ntext is quoted as a GVariant string literal, and the body is escaped for\nnotification markup.\n- **All three:** control characters are stripped, the title is capped at\n128 code points and the body at 512.\n- **`[notifications]` config** (`enabled`, default `true`; `content`,\n`\"full\"` or `\"title_only\"`). `NIMBUS_NOTIFICATIONS=off` can only\ndisable. A bad `content` value is logged at ERROR and notifications run\noff; boot never crashes.\n- **`delivers` is now a live, probed fact.** The probe runs at boot\nwithout blocking. A failed probe is retried at most every 5 minutes, and\n`delivers` turns true again once that interval passes, so the on-call\npush, which gates on `delivers`, retries too.\n- **Rate limit:** at most 5 toasts per rolling 60 s. The rest are\ndropped and counted, followed by one fixed-text summary toast (\"Nimbus:\nN more notifications\").\n- **Approval alerts:** while a HITL approval is pending, a toast titled\n\"Nimbus is waiting for your approval\" names only the kind of action.\nThat is an action-type id matching a strict shape, or a fixed label such\nas \"code execution\". The prompt, arguments and payload never appear. It\nis hooked at every approval path:\n  - executor `consent.request`;\n- every `ConsentBroker` subclass (exec, share, toolgen create and save,\ncomputer-use envelope and action, federated preflight);\n- `FederationConsentBroker`, `QuorumCoordinator` and\n`DelegatedApprovalBroker`.\n\n  A test fails if a new broker appears without a label.\n- **Surfaces:**\n- `nimbus notifications status|test [--json]`, over the new IPC methods\n`notifications.status` and `notifications.test`. They are CLI-only,\nblocked from LAN clients and not on the Tauri allowlist.\n  - A `nimbus doctor` line.\n- The on-call push records `skipped` with the reason \"OS notifications\nare off or unavailable on this gateway\".\n- **No crash path.** `show()` now rejects on failure, and an unhandled\nrejection exits the gateway (`exit-diagnostics`). So every\nfire-and-forget producer (the sync scheduler and both watcher paths)\ngoes through `showIgnoringFailure`, and a test drives each real producer\nagainst a rejecting service.\n- **Demo-rooted gateways (I41) and unsupported platforms** keep the\nnon-delivering service.\n- **Tests never pop a real toast.** `NIMBUS_NOTIFICATIONS=off` is set in\nthe root test preload, in the e2e gateway runner, in every e2e test that\nspawns a gateway, and in the in-process `assemble` tests.\n\n## Rulings and their costs\n\n**Owner rulings, made before implementation:**\n- **On by default.** *Cost:* a headless Linux gateway with no session\nbus now shows `[warn] Notifications: unavailable` in `nimbus doctor`,\nand that counts toward its exit code. `install-smoke` ignores doctor's\nexit code.\n- **The full body by default.** *Cost:* watcher and on-call bodies carry\nindexed item and incident titles, which can show on the lock screen and\nstay in the OS notification history. `content = \"title_only\"` hides\nthem.\n- **Approval alerts are part of E.**\n\n**Rulings I made during implementation:**\n- **Child processes, not a native module.** A native module would not\nsurvive `bun build --compile`. *Cost:* about 0.5 s and one child process\nper Windows toast.\n- **The Windows app id is registered at the first probe**, under the\ncurrent user only and idempotently. *Cost:* the gateway writes one\nregistry key under\n`HKCU\\Software\\Classes\\AppUserModelId\\NimbusAgent.Nimbus`.\n- **An empty Windows `Setting` counts as available.** The live\nacceptance run found that Windows creates an app's notification setting\nonly on its first toast, so a newly registered app id reads empty.\nTreating empty as unavailable blocked the first toast on every fresh\ninstall. Only an explicit `Disabled*` value refuses. *Cost:* if Windows\never drops a toast silently while the setting is still empty, we would\nrecord `delivered`.\n- **Approval toasts bypass the rate limit (`show(…, { urgent: true })`),\nbut still take a slot.** A HITL prompt nobody sees blocks an action, so\na burst of watcher toasts must not be able to drop it. This was not in\nthe agreed design. *Cost:* approval toasts have no upper bound, though\neach one corresponds to a real pending approval.\n- **Federation quorum and delegated approvals also get the alert.** Both\nask the human at this gateway (answered through `nimbus team respond`).\n*Cost:* none.\n- **A toast that isn't delivered is a result, not an error.**\n`notifications.test` returns `{delivered:false, reason}` and the CLI\nexits 1. *Cost:* none.\n- **I kept `--` before the `osascript` arguments.** I couldn't run\n`osascript` here, so a darwin-only, self-checking test in\n`darwin.test.ts` runs the real binary with the backend's exact arguments\non the macOS CI leg. It swaps the statement that shows the notification\nfor one that returns the arguments, so no toast is raised. **Result: it\npassed on this PR's macOS CI leg** (`osascript argv round trip (real\nosascript; darwin only)`, 413 ms). `osascript` consumes `--`, and the\ntitle and body arrive verbatim, including values that start with `-`.\n*Cost:* none.\n- **The probe detects missing tools, not a missing notification\nserver.** The Linux probe checks for a session bus and a tool, not a\nrunning notification server, so a missing server shows up as a send\nfailure. *Cost:* `status` can read \"available\" on a Linux desktop that\nhas no notification daemon.\n\n## Verification\n\n- **Live acceptance on Windows 11 (this machine)**, starting from a\nfresh-install state: no app id key and no toast history, an isolated\nsandbox gateway run from source, and isolated config and data roots.\n  - `notifications status`: `available: true`.\n- `notifications test`: `delivered: true`, and the toast is in the\nWindows notification history.\n  - `nimbus doctor`: `[ok] Notifications: windows-toast`.\n  - Windows then reports the app's setting as `Enabled`.\n- `content = \"title_only\"`: delivered with the body \"Open Nimbus for\ndetails\".\n  - `enabled = false`: `{delivered:false, disabledBy:\"config\"}`, exit 1.\n  - Afterwards I removed the registry key and the toast history again.\n- **Earlier Windows spike:** a title and body shaped like an injection\nattempt were stored escaped.\n- **Argument passing verified on real macOS (CI), but no real toast:**\nthe real `osascript` round trip passed on the macOS leg. Not verified on\nreal hardware: an actual macOS toast and anything on Linux (unit tests\nonly). The approval alert, the rate-limit summary toast and the probe\nretry are covered by unit tests, not live.\n- **Whole-branch review** (injection, privacy, crash paths, IPC\nexposure, test isolation, doc accuracy) found no injection, privacy or\ncrash defects. One gap was fixed: the on-call push would never retry a\nfailed probe. Three smaller items were also fixed: the order the probe\nstate was set in, approval alerts and the rate limit, and a stale\ncomment.\n- **CI paths** `bun test packages/gateway packages/cli scripts`: 28,316\npass, 0 fail, 98 skip. `scripts/install/install-remote-windows.test.ts`\nis excluded because it hangs on this Windows machine for environmental\nreasons. Afterwards no Windows registry key had been created.\n- **Coverage floor:** the first CI run found two new files below the 80%\nbranch floor (`config/notifications-toml.ts` at 79.17%,\n`cli/src/commands/notifications-format.ts` at 77.03%). Tests for their\nremaining branches were added in `32403181`.\n- `bun run preflight:fast`: PASSED. `audit:doc-refs`,\n`audit:status-drift`, `lint:markdown` and `audit:windows-console` are\nclean.\n\n## Docs\n\nThe roadmap now shows the pre-S3 close-out as complete, with S3 next\nonce its scope is chosen. Also updated: `docs/architecture.md` (new § OS\nnotifications), `docs/cli-reference.md` (`nimbus notifications`, the\ndoctor line, `[notifications]`, `NIMBUS_NOTIFICATIONS`, the on-call\ntoast outcomes), `docs/ecosystem-roadmap.md`, `docs/cross-platform.md`,\nthe README, SECURITY, the user guide (watchers, troubleshooting), the\nI41 section, `CLAUDE.md`/`GEMINI.md` line 8 (still identical), the\nskills, and the CHANGELOG.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-10T11:01:47Z",
+          "tree_id": "09562da105aa1aab2fb5524548e5da2774f9edc0",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d0d7a613a8fab4477510d0dc9741b07045cda9de"
+        },
+        "date": 1791630876146,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 337.63322234999976,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 344.6341094999974,
             "unit": "ms"
           }
         ]
