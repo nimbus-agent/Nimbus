@@ -24,9 +24,15 @@
  * ## The app identity
  *
  * A toast needs an AppUserModelID registered under `HKCU:\Software\Classes\AppUserModelId\<AUMID>`
- * with a `DisplayName`; an unregistered AUMID's notifier reports an empty `Setting` and shows
- * nothing. Both scripts register it first (idempotent, current-user only), so a key removed after
- * the probe does not silently break later toasts.
+ * with a `DisplayName`. Both scripts register it first (idempotent, current-user only), so a key
+ * removed after the probe does not silently break later toasts.
+ *
+ * ★ Windows creates the app's notification `Setting` only when the FIRST toast is shown under the
+ * AUMID: a freshly registered AUMID reads an EMPTY `Setting` — in the registering process and in a
+ * fresh one — until then, and `Enabled` from that toast on (verified live on Windows 11,
+ * 2026-10-10). So empty means "registered, never used", NOT "unavailable": treating it as
+ * unavailable made the first toast on every fresh install impossible. Only an explicit `Disabled*`
+ * value refuses.
  *
  * The probe reports the notifier's `Setting`: `Enabled`, or one of `DisabledForApplication` /
  * `DisabledForUser` / `DisabledByGroupPolicy` / `DisabledByManifest` — so an owner who turned
@@ -94,7 +100,7 @@ export const WIN32_PROBE_SCRIPT = [
  */
 export const WIN32_TOAST_SCRIPT_TEMPLATE = [
   ...REGISTER_AUMID,
-  `if ([string]$notifier.Setting -ne 'Enabled') { exit ${WIN32_TOAST_DISABLED_EXIT} }`,
+  `if ([string]$notifier.Setting -like 'Disabled*') { exit ${WIN32_TOAST_DISABLED_EXIT} }`,
   `$title = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${WIN32_TITLE_TOKEN}'))`,
   `$body = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${WIN32_BODY_TOKEN}'))`,
   "$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]",
@@ -164,9 +170,8 @@ const KNOWN_SETTINGS = new Set([
 export function interpretWin32ProbeOutput(stdout: string): NotificationProbeResult {
   const setting = stdout.trim().split(/\r?\n/).pop()?.trim() ?? "";
   if (setting === "Enabled") return { available: true };
-  if (setting === "") {
-    return { available: false, reason: "Windows reported no notification setting for Nimbus" };
-  }
+  // Registered but never used: Windows creates the Setting on the first toast (see the header).
+  if (setting === "") return { available: true };
   if (KNOWN_SETTINGS.has(setting)) {
     return { available: false, reason: `Windows notifications are off for Nimbus (${setting})` };
   }

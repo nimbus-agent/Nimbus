@@ -187,7 +187,9 @@ describe("win32 toast — probe", () => {
       expect(r.available).toBe(false);
       expect(r.reason).toContain(s);
     }
-    expect(interpretWin32ProbeOutput("").available).toBe(false);
+    // A freshly registered AUMID reads an empty Setting until its first toast: usable, not off.
+    expect(interpretWin32ProbeOutput("")).toEqual({ available: true });
+    expect(interpretWin32ProbeOutput("\r\n")).toEqual({ available: true });
     const odd = interpretWin32ProbeOutput("<script>whatever</script>");
     expect(odd.available).toBe(false);
     // Unrecognised output is not echoed into the reason.
