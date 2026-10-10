@@ -42,7 +42,9 @@ describe("AgentCoordinator", () => {
       },
     ];
 
-    await expect(coordinator.run(tasks)).rejects.toThrow("Agent depth limit");
+    await expect(coordinator.run(tasks)).rejects.toThrow(
+      /^ERR_AGENT_LIMIT_REACHED: Agent depth limit/,
+    );
   });
 
   test("stops at maxToolCallsPerSession and returns error", async () => {
@@ -65,7 +67,9 @@ describe("AgentCoordinator", () => {
       },
     ];
 
-    await expect(coordinator.run(tasks)).rejects.toThrow("Tool call limit");
+    await expect(coordinator.run(tasks)).rejects.toThrow(
+      /^ERR_AGENT_LIMIT_REACHED: Tool call limit/,
+    );
   });
 
   test("marks rejected tasks as rejected status", async () => {

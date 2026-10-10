@@ -14,6 +14,12 @@ import {
 } from "./negation-shaped-question.ts";
 import { applyPersona } from "./persona.ts";
 import { sanitizeExternalError } from "./sanitize-external-error.ts";
+import {
+  detectStepBudgetExhaustion,
+  type NotifyGasLimit,
+  type StepBudgetExhausted,
+  stepBudgetExhaustedLine,
+} from "./step-budget.ts";
 
 const conversationalLog = pino({
   name: "conversational-agent",
@@ -50,6 +56,13 @@ export type RunConversationalAgentParams = {
    * `devil` is. Undefined and neutral both mean "no directive"; see `engine/persona.ts`.
    */
   persona?: NimbusPersonaToml;
+  /**
+   * Told when the Mastra agent's step budget stopped this turn early (`engine/step-budget.ts`).
+   * Supplied only by the IPC entry (`agent.invoke`), which turns it into a UNICAST
+   * `agent.gasLimitReached` to the acting session. Absent for ChatOps / workflow / other callers,
+   * which still get the deterministic disclosure line in the reply.
+   */
+  notifyGasLimit?: NotifyGasLimit;
 };
 
 function isTextDeltaChunk(chunk: unknown): chunk is {
@@ -182,10 +195,16 @@ async function runViaAgent(
   promptArg: PromptArg,
   p: RunConversationalAgentParams,
   maxSteps: number,
-): Promise<{ reply: string }> {
+): Promise<{ reply: string; stepBudgetExhausted?: StepBudgetExhausted }> {
   if (!p.stream) {
     const out = await agent.generate(promptArg, { maxSteps });
-    return { reply: out.text };
+    // Read as `unknown`: a test double (or an SDK shape change) may omit either field, and a
+    // missing field must mean "not exhausted", never a throw out of a turn that answered.
+    const outRec = out as unknown as Record<string, unknown>;
+    return withExhaustion(
+      out.text,
+      detectStepBudgetExhaustion(outRec["finishReason"], outRec["steps"], maxSteps),
+    );
   }
   const streamOut = await agent.stream(promptArg, { maxSteps });
   for await (const chunk of streamOut.fullStream) {
@@ -193,7 +212,17 @@ async function runViaAgent(
       p.sendChunk(chunk.payload.text);
     }
   }
-  return { reply: await streamOut.text };
+  const reply = await streamOut.text;
+  const streamRec = streamOut as unknown as Record<string, unknown>;
+  const [finishReason, steps] = await Promise.all([streamRec["finishReason"], streamRec["steps"]]);
+  return withExhaustion(reply, detectStepBudgetExhaustion(finishReason, steps, maxSteps));
+}
+
+function withExhaustion(
+  reply: string,
+  exhausted: StepBudgetExhausted | undefined,
+): { reply: string; stepBudgetExhausted?: StepBudgetExhausted } {
+  return exhausted === undefined ? { reply } : { reply, stepBudgetExhausted: exhausted };
 }
 
 /**
@@ -220,6 +249,11 @@ type ConversationalTurnResult = {
    * for a turn that ultimately answered through the agent.
    */
   fallbackFromLocalRouter?: { error: string };
+  /**
+   * Set only when the Mastra agent's step budget stopped the turn while the model still wanted
+   * tools (`engine/step-budget.ts`). Never set on the toolless local-router path.
+   */
+  stepBudgetExhausted?: StepBudgetExhausted;
 };
 
 async function runTurn(
@@ -274,10 +308,9 @@ async function runTurn(
  * from a correct one. Streaming clients get the block as a final chunk, since the reply text
  * they render came from chunks and never from the returned string.
  */
-function appendDeterministicDisclosures<T extends { reply: string; toolless: boolean }>(
-  res: T,
-  p: RunConversationalAgentParams,
-): T {
+function appendDeterministicDisclosures<
+  T extends { reply: string; toolless: boolean; stepBudgetExhausted?: StepBudgetExhausted },
+>(res: T, p: RunConversationalAgentParams): T {
   const lines = drainNegationDisclosures();
   // F21: the tool-less path records nothing, so an EMPTY `lines` there is ambiguous — the
   // appender cannot tell "nothing to disclose" from "the disclosing component never ran". The
@@ -296,6 +329,11 @@ function appendDeterministicDisclosures<T extends { reply: string; toolless: boo
   // the model, which answered "how many PRs are in the index?" with 3, then 2.2, against a true
   // 173 — it was describing the handful of retrieved items, not the index.
   if (p.indexCountLine !== undefined) lines.push(p.indexCountLine);
+  // C2: the step budget stopped the agent while it still wanted tools, so the text above may be
+  // missing what those calls would have fetched. Constructed here, never asked of the model.
+  if (res.stepBudgetExhausted !== undefined) {
+    lines.push(stepBudgetExhaustedLine(res.stepBudgetExhausted.cap));
+  }
   if (lines.length === 0) {
     return res;
   }
@@ -304,6 +342,20 @@ function appendDeterministicDisclosures<T extends { reply: string; toolless: boo
     p.sendChunk(text);
   }
   return { ...res, reply: `${res.reply}${text}` };
+}
+
+/**
+ * Tell the acting session the step budget ran out. Best-effort: the turn already produced an
+ * answer (with the disclosure line in it), so a notifier that throws — e.g. a session whose
+ * socket closed mid-turn — must not turn that answer into a failure.
+ */
+function notifyGasLimitSafely(p: RunConversationalAgentParams, ex: StepBudgetExhausted): void {
+  if (p.notifyGasLimit === undefined) return;
+  try {
+    p.notifyGasLimit({ limit: "steps", cap: ex.cap, used: ex.used });
+  } catch (err) {
+    conversationalLog.warn({ err }, "agent.gasLimitReached notification failed");
+  }
 }
 
 /**
@@ -337,7 +389,11 @@ export async function runConversationalAgent(
   const promptArg = buildPromptArg(promptWithContext, p.priorTurns ?? []);
 
   try {
-    return appendDeterministicDisclosures(await runTurn(p, promptArg, maxSteps), p);
+    const res = appendDeterministicDisclosures(await runTurn(p, promptArg, maxSteps), p);
+    if (res.stepBudgetExhausted !== undefined) {
+      notifyGasLimitSafely(p, res.stepBudgetExhausted);
+    }
+    return res;
   } catch (e) {
     // A step that recorded a disclosure and then threw must not leave it sitting in the
     // (possibly shared, e.g. workflow.run's one-store-per-workflow) request store for the

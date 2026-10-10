@@ -592,11 +592,12 @@ NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE=1  # hard-disable the polling daemon at Ga
 ### Multi-agent loop guards (Phase 4)
 
 ```
-NIMBUS_MAX_AGENT_DEPTH=3              # sub-agent recursion limit (1–10; default 3)
-NIMBUS_MAX_TOOL_CALLS_PER_SESSION=20  # hard cap on tool calls per session (1–200; default 20)
+NIMBUS_MAX_AGENT_DEPTH=3              # sub-agent recursion limit (1–10; default 3); overrides [llm] max_agent_depth
+NIMBUS_MAX_TOOL_CALLS_PER_SESSION=20  # sub-task cap per coordinator (1–200; default 20); overrides [llm] max_tool_calls_per_session
+NIMBUS_ASK_MAX_STEPS=20               # agent step budget for nimbus ask / agent.invoke (1–64; default 20)
 ```
 
-Exceeding either makes `AgentCoordinator.run` throw (`Agent depth limit reached: …` / `Tool call limit reached: …`) before any sub-task of that batch is dispatched. No notification is sent: `agent.gasLimitReached` is named in older text, but nothing in the gateway emits it.
+Precedence per key: env var (set and valid) > `[llm]` TOML key > default, resolved once at boot (`engine/agent-limits.ts`). Exceeding either coordinator cap makes `AgentCoordinator.run` throw a typed `AgentLimitError` (message prefix `ERR_AGENT_LIMIT_REACHED:`) before any sub-task of that batch is dispatched; it surfaces as the brief's `<agent>.briefError`, and no notification is sent. `agent.gasLimitReached` IS emitted, unicast to the `agent.invoke` caller, but only when the `NIMBUS_ASK_MAX_STEPS` step budget stops a turn while the model still wanted tools — the reply then also ends with a deterministic "may be incomplete" line.
 
 ### Release infrastructure (Phase 4 WS4)
 

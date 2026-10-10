@@ -5,6 +5,7 @@ import {
   EMBEDDING_WARMING_RPC_CODE,
   type EmbeddingReadiness,
 } from "../../embedding/embedding-readiness.ts";
+import { resetAgentLimitsForTests, setAgentLimits } from "../../engine/agent-limits.ts";
 import { GatewayAgentUnavailableError } from "../../engine/gateway-agent-error.ts";
 import { LocalIndex } from "../../index/local-index.ts";
 import { createMockVault } from "../../vault/mock.ts";
@@ -117,6 +118,16 @@ describe("rpcGatewayPing", () => {
       maxToolCallsPerSession: expect.any(Number),
     });
     expect(r["drift"]).toBeUndefined();
+  });
+
+  test("agentLimits reports the boot-resolved limits (TOML-aware), not the env snapshot", () => {
+    setAgentLimits({ maxAgentDepth: 7, maxToolCallsPerSession: 120 });
+    try {
+      const r = rpcGatewayPing(makeCtx(), {}) as Record<string, unknown>;
+      expect(r["agentLimits"]).toEqual({ maxAgentDepth: 7, maxToolCallsPerSession: 120 });
+    } finally {
+      resetAgentLimitsForTests();
+    }
   });
 
   test("includes embedding-status extras when provider is wired", () => {
@@ -1094,5 +1105,64 @@ describe("offerUserMcpTools crosses both agent entry points from the session's k
     });
     expect(seen).toEqual(["client-42"]);
     expect(captured?.["offerUserMcpTools"]).toBe(false);
+  });
+});
+
+describe("agent.gasLimitReached — unicast to the acting session only", () => {
+  type Notify = (e: { limit: "steps"; cap: number; used: number }) => void;
+
+  test("only the session that invoked the turn receives it; nothing is broadcast", async () => {
+    const broadcasts: unknown[] = [];
+    const handler = async (payload: unknown): Promise<{ reply: string }> => {
+      const rec = payload as Record<string, unknown>;
+      if (rec["input"] === "exhaust") {
+        (rec["notifyGasLimit"] as Notify)({ limit: "steps", cap: 20, used: 20 });
+      }
+      return { reply: "ok" };
+    };
+    const ctx: ServerCtx = {
+      ...makeCtx({ agentInvokeHandler: handler }),
+      broadcastNotification: (m: string, p: Record<string, unknown>) => {
+        broadcasts.push({ m, p });
+      },
+    };
+    const a = makeSession();
+    const b = makeSession();
+    await dispatchAgentInvoke(ctx, b.session, "client-b", { input: "normal" });
+    await dispatchAgentInvoke(ctx, a.session, "client-a", {
+      input: "exhaust",
+      stream: true,
+      streamId: "s-1",
+    });
+    expect(a.notifications).toEqual([
+      {
+        jsonrpc: "2.0",
+        method: "agent.gasLimitReached",
+        params: { limit: "steps", cap: 20, used: 20, streamId: "s-1" },
+      },
+    ]);
+    expect(b.notifications).toEqual([]);
+    expect(broadcasts).toEqual([]);
+  });
+
+  test("a non-streaming turn still gets it, with no streamId", async () => {
+    const handler = async (payload: unknown): Promise<{ reply: string }> => {
+      ((payload as Record<string, unknown>)["notifyGasLimit"] as Notify)({
+        limit: "steps",
+        cap: 5,
+        used: 6,
+      });
+      return { reply: "ok" };
+    };
+    const ctx = makeCtx({ agentInvokeHandler: handler });
+    const { session, notifications } = makeSession();
+    await dispatchAgentInvoke(ctx, session, "c", { input: "x" });
+    expect(notifications).toEqual([
+      {
+        jsonrpc: "2.0",
+        method: "agent.gasLimitReached",
+        params: { limit: "steps", cap: 5, used: 6 },
+      },
+    ]);
   });
 });

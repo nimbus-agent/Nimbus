@@ -88,7 +88,7 @@ nimbus/
 | Namespace | Owns |
 |---|---|
 | `engine.*` | `askStream`, `cancelStream`, `getSessionTranscript`; `streamToken` / `streamDone` / `streamError` (notifications) |
-| `agent.*` | `invoke` (the shared `runAsk` pipeline); `chunk` (notification, `{ streamId?, text }`, sent when `agent.invoke` or `workflow.run` is called with `stream: true`). `subTaskProgress`, `hitlBatch` and `gasLimitReached` are named in older text but nothing in the gateway emits them, and a coordinator limit throws instead |
+| `agent.*` | `invoke` (the shared `runAsk` pipeline); `chunk` (notification, `{ streamId?, text }`, sent when `agent.invoke` or `workflow.run` is called with `stream: true`). `gasLimitReached` (notification, UNICAST to the `agent.invoke` caller, `{ limit: "steps", cap, used, streamId? }`) when the `NIMBUS_ASK_MAX_STEPS` step budget cut the turn short — the reply also carries a deterministic disclosure line. `subTaskProgress` and `hitlBatch` are named in older text but nothing emits them; a coordinator depth/tool-call limit throws a typed `AgentLimitError` (`ERR_AGENT_LIMIT_REACHED:`) instead |
 | `connector.*` | `listStatus`, `status`, `healthHistory`, `sync`, `pause`, `resume`, `remove`, `reindex`, `setConfig`, `setInterval`, `auth`, `addMcp`, `detectLocalAuth`, `adoptLocalAuth`; `healthChanged`, `configChanged` (notifications) |
 | `llm.*` | `listModels`, `pullModel`, `cancelPull`, `loadModel`, `unloadModel`, `setDefault`, `use`, `status`, `getStatus`, `getRouterStatus` |
 | `watcher.*` | `list`, `create`, `delete`, `pause`, `resume`, `listHistory`, `listCandidateRelations`, `validateCondition` (a firing rides `gateway.event` as `watcher.fired`) |
