@@ -173,6 +173,8 @@ async function bootGateway(tag: string, proxyPort: number): Promise<Booted> {
     ...(process.env as Record<string, string>),
     NIMBUS_E2E_PATHS_JSON: JSON.stringify(paths),
     NIMBUS_EMBEDDING_MODEL_DIR: modelDir,
+    // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+    NIMBUS_NOTIFICATIONS: "off",
     // Hybrid needs a key present to reach the local-model load at all.
     OPENAI_API_KEY: "sk-e2e-not-used-no-request-is-made",
     HTTPS_PROXY: proxy,

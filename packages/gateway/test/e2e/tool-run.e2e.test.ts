@@ -253,6 +253,8 @@ async function startTestGateway(
     ...(process.env as Record<string, string>),
     NIMBUS_E2E_PATHS_JSON: JSON.stringify(paths),
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+    // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+    NIMBUS_NOTIFICATIONS: "off",
     NIMBUS_E2E_SEED_VAULT_JSON: JSON.stringify(vaultSeeds),
   };
 

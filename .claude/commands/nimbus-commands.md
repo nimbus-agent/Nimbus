@@ -369,6 +369,7 @@ nimbus oncall [--incident <item-id>] [--service <name>] [--since <duration>] [--
 nimbus oncall pushed [list] [--json] | nimbus oncall pushed <incident-id> [--retry] [--json]       # IPC: oncall.pushedList/pushedGet/pushedRetry
 nimbus tail [--filter connector,watcher,sync,extension,hitl,oncall] [--json]                       # follow-only gateway event stream
 nimbus explain last [--json]                                                                       # IPC: ask.explainLast — the newest of the last 10 asks
+nimbus notifications status|test [--json]                                                          # IPC: notifications.status / .test — OS toast backend + one fixed-text test toast
 ```
 
 `USAGE` in each `packages/cli/src/commands/<name>.ts` is canonical. `oncall pushed` reads briefs the

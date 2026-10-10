@@ -261,6 +261,8 @@ describe("chatops e2e (real gateway subprocess + mock connector sink)", () => {
       env: {
         ...process.env,
         NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+        // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+        NIMBUS_NOTIFICATIONS: "off",
         NIMBUS_CHATOPS_E2E_SINK_DIR: sinkDir,
         NIMBUS_E2E_PATHS_JSON: JSON.stringify(paths),
         NIMBUS_E2E_SEED_SCIM_JSON: JSON.stringify([

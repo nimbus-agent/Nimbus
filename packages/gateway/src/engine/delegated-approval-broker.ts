@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { notifyApprovalPending } from "../util/approval-pending.ts";
 import type { RemoteApprovalOutcome } from "./delegated-approval.ts";
 
 interface Pending {
@@ -31,6 +32,10 @@ class DelegatedApprovalBroker {
       }, timeoutMs);
       this.pending.set(requestId, { prompt: input.prompt, resolve, timer });
       this.channel(requestId, input.prompt);
+      // The person at THIS gateway is being asked (a delegate answering an owner's routed approval,
+      // or the local owner on the ChatOps fallback leg) — raise the fixed-text consent hop. Never
+      // the prompt: it names the action type and is request-derived text.
+      notifyApprovalPending({ source: "broker", method: "federation.approvalRequest" });
     });
   }
 

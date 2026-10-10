@@ -8,6 +8,8 @@
  * after `--`; they are never part of the script source, so a quote, backslash or `" & (do shell
  * script …) & "` in a ticket title is just text. `--` ends option parsing, so a title that begins
  * with `-` is not read as an `osascript` flag. `execve` passes argv verbatim — there is no shell.
+ * That `osascript` CONSUMES `--` (rather than passing it through as `item 1 of argv`) is pinned by
+ * a darwin-only test in `darwin.test.ts` that runs the real `osascript` with this exact argv.
  *
  * ## Stated limits (verified by tests and CI only, not on a real Mac by this change)
  *

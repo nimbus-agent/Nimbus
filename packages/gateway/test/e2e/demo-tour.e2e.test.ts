@@ -204,6 +204,8 @@ beforeAll(async () => {
     TEMP: dirs.tmp,
     TMP: dirs.tmp,
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+    // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+    NIMBUS_NOTIFICATIONS: "off",
     // These must be ignored by a demo boot (I41 clause 4/spec § 11.3) — proven by test 5 (HTTP
     // sidecar) and by `outbound` staying empty (telemetry flush + updater startup check). The
     // telemetry flush ticks once IMMEDIATELY at boot and the updater checks on startup, so a

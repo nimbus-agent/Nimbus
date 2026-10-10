@@ -1,5 +1,13 @@
-// Real-socket routing proof for the oncall.pushed* IPC namespace: a handler present in
-// dispatchOncallPushRpc but missing from PHASE4_PLATFORM_DISPATCHERS returns "Method not found" here.
+// E2E over a REAL gateway socket for `notifications.status` / `notifications.test` (pre-S3 item E).
+//
+// Proves the OUTER routing in `ipc/server/dispatchers.ts` (the `PHASE4_PLATFORM_DISPATCHERS` table
+// entry), not only the inner handler map — a handler wired without its routing entry compiles,
+// passes every unit test that calls it directly, and returns "Method not found" over a real socket.
+// Also proves the assemble.ts wiring end to end: the runtime `assemblePlatformServices` builds is
+// the one the IPC context reads, and the env override reaches it.
+//
+// Boots the shared `gateway-runner.ts` fixture with NIMBUS_NOTIFICATIONS=off, so no toast is ever
+// raised and no platform tool is ever spawned.
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -14,7 +22,7 @@ const TEST_TIMEOUT_MS = 120_000;
 
 function pipeOrSocket(dir: string, tag: string): string {
   return process.platform === "win32"
-    ? `\\\\.\\pipe\\nimbus-oncallpush-${tag}-${process.pid}-${randomUUID().slice(0, 8)}`
+    ? `\\\\.\\pipe\\nimbus-notif-${tag}-${process.pid}-${randomUUID().slice(0, 8)}`
     : join(dir, `gw-${tag}.sock`);
 }
 
@@ -36,8 +44,8 @@ type RpcReply = {
 
 /**
  * A minimal JSON-RPC 2.0 client over the raw socket — request/response only, no notification
- * routing needed here (unlike `tail-stream.e2e.test.ts`'s `TailTestClient`), since
- * `oncall.pushedList` and the `demo.firePage` miss probe are both plain call/reply methods.
+ * routing needed here (unlike `tail-stream.e2e.test.ts`'s `TailTestClient`), since both
+ * `notifications.*` methods are plain call/reply methods.
  */
 class TinyIpcClient {
   private sock: net.Socket | undefined;
@@ -87,9 +95,7 @@ class TinyIpcClient {
     });
   }
 
-  /**
-   * Calls `method` and returns the result, throwing on a JSON-RPC error.
-   */
+  /** Calls `method` and returns the result, throwing on a JSON-RPC error. */
   async call<T>(method: string, params: unknown): Promise<T> {
     const reply = await this.raw(method, params);
     if (reply.error !== undefined) {
@@ -107,7 +113,7 @@ async function startTestGateway(tag: string): Promise<{
   socketPath: string;
   stop: () => Promise<void>;
 }> {
-  const tmp = mkdtempSync(join(tmpdir(), `nimbus-oncallpush-${tag}-`));
+  const tmp = mkdtempSync(join(tmpdir(), `nimbus-notif-${tag}-`));
   const paths = {
     configDir: join(tmp, "config"),
     dataDir: join(tmp, "data"),
@@ -123,11 +129,11 @@ async function startTestGateway(tag: string): Promise<{
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     NIMBUS_E2E_PATHS_JSON: JSON.stringify(paths),
-    // `oncall.pushedList` on a default (push-disabled) gateway touches neither search nor embeddings —
-    // skipping the runtime avoids a real (or stalled) MiniLM/CDN fetch slowing boot for no reason
-    // relevant to what this test asserts.
+    // Nothing here touches search or embeddings.
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
-    // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+    // The point of this test: a gateway booted by a test NEVER raises a real toast. With the env
+    // override the service is disabled, never probes (no PowerShell/osascript/notify-send spawn),
+    // and notifications.test reports that it did not deliver.
     NIMBUS_NOTIFICATIONS: "off",
   };
 
@@ -176,23 +182,44 @@ async function startTestGateway(tag: string): Promise<{
   };
 }
 
-describe("oncall.* routing over a real socket", () => {
+const EXPECTED_BACKEND: Record<string, string> = {
+  win32: "windows-toast",
+  darwin: "macos-osascript",
+  linux: "linux-libnotify",
+};
+
+describe("notifications.* over a real socket", () => {
   test(
-    "oncall.pushedList is ROUTED (not Method not found) on a default gateway",
+    "status reports disabled-by-env with the real backend; test reports it did not deliver",
     async () => {
-      const gw = await startTestGateway("route");
+      const gw = await startTestGateway("off");
       const client = new TinyIpcClient();
       try {
         await client.connect(gw.socketPath);
-        const r = await client.call<{ enabled: boolean; briefs: unknown[] }>(
-          "oncall.pushedList",
-          {},
-        );
-        expect(r.enabled).toBe(false); // default off
-        expect(r.briefs).toEqual([]);
-        // demo.firePage is claimed only by a demo-rooted gateway (Task 10)
-        const miss = await client.raw("demo.firePage", {});
-        expect(JSON.stringify(miss.error)).toContain("Method not found");
+
+        const status = await client.call<Record<string, unknown>>("notifications.status", {});
+        expect(status).toEqual({
+          backend: EXPECTED_BACKEND[process.platform] ?? "none",
+          enabled: false,
+          content: "full",
+          available: null,
+          reason: "disabled by NIMBUS_NOTIFICATIONS=off",
+          disabledBy: "env",
+          rateLimitedTotal: 0,
+          delivers: false,
+        });
+
+        const result = await client.call<Record<string, unknown>>("notifications.test", {});
+        expect(result).toEqual({
+          delivered: false,
+          reason: "disabled by NIMBUS_NOTIFICATIONS=off",
+          status,
+        });
+
+        // Negative control: the router answers "Method not found" for a name nobody claims, so the
+        // two successes above are the routing entry at work, not a catch-all.
+        const missing = await client.raw("notifications.nope", {});
+        expect(missing.error?.code).toBe(-32601);
       } finally {
         client.disconnect();
         await gw.stop();

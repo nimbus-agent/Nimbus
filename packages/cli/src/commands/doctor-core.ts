@@ -5,6 +5,7 @@ import { nimbusCommand } from "../lib/demo-hint.ts";
 import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
+import { doctorNotificationsLine, parseNotificationsStatus } from "./notifications-format.ts";
 
 const LINUX_SECRET_TOOL_HINT =
   "secret-tool not found. Install libsecret-tools (Debian/Ubuntu) or libsecret (Fedora/Arch) to use the OS vault on Linux.";
@@ -751,6 +752,29 @@ export function doctorPrintHealthFromSnapshot(snap: { connectorHealth?: unknown 
   return sev === "ok" ? 0 : 1;
 }
 
+/**
+ * OS notifications (pre-S3 item E): `[info]` when off by the owner's choice, `[warn]` when they
+ * should work and do not (see `doctorNotificationsLine`). Tolerant of an older gateway that does not
+ * serve `notifications.status` (-32601) — doctor stays quiet rather than failing. A malformed
+ * response is reported, not thrown, so one bad line cannot hide the rest of the sweep.
+ */
+export async function doctorPrintNotifications(client: Pick<IPCClient, "call">): Promise<number> {
+  let raw: unknown;
+  try {
+    raw = await client.call<unknown>("notifications.status", {});
+  } catch {
+    return 0;
+  }
+  try {
+    const { line, exit } = doctorNotificationsLine(parseNotificationsStatus(raw));
+    console.log(line);
+    return exit;
+  } catch (e) {
+    console.log(`[warn] Notifications: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+}
+
 async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   const ping = await client.call<{ uptime?: number }>("gateway.ping", {});
   const uptime = typeof ping.uptime === "number" && Number.isFinite(ping.uptime) ? ping.uptime : 0;
@@ -792,6 +816,7 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
           .catch(() => undefined)
       : undefined;
   exit = Math.max(exit, doctorPrintOncallPush(push, newest));
+  exit = Math.max(exit, await doctorPrintNotifications(client));
   // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the
   // whole gateway run, which outranks any one connector being unreachable.
   exit = Math.max(exit, doctorPrintEmbeddingFromSnapshot(snap));

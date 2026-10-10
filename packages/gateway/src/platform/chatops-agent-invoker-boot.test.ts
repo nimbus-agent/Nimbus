@@ -66,6 +66,10 @@ describe("FIX 1 (boot-level): the ChatOps agent invoker carries the real federat
     const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "nimbus-chatops-selfid-")));
     const originalSkipEmbed = process.env["NIMBUS_SKIP_EMBEDDING_RUNTIME"];
     processEnvSet("NIMBUS_SKIP_EMBEDDING_RUNTIME", "1");
+    // An in-process boot must never probe/raise a real OS toast — set here too, not only by the
+    // repo-root test preload, which a run from a package directory does not load.
+    const originalNotifications = process.env["NIMBUS_NOTIFICATIONS"];
+    processEnvSet("NIMBUS_NOTIFICATIONS", "off");
     let services: PlatformServices | null = null;
     try {
       // Reserve a free LAN port on loopback, mDNS off — same pattern as
@@ -155,6 +159,7 @@ describe("FIX 1 (boot-level): the ChatOps agent invoker carries the real federat
         }
       }
       processEnvSet("NIMBUS_SKIP_EMBEDDING_RUNTIME", originalSkipEmbed);
+      processEnvSet("NIMBUS_NOTIFICATIONS", originalNotifications);
       try {
         rmSync(tmpDir, { recursive: true, force: true });
       } catch {

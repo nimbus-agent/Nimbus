@@ -65,6 +65,7 @@ import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
 import { dispatchLocalityRpc, LocalityRpcError } from "../locality-rpc.ts";
 import { dispatchMediaRpc } from "../media-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
+import { dispatchNotificationsRpc } from "../notifications-rpc.ts";
 import { dispatchOncallPushRpc, OncallPushRpcError } from "../oncall-push-rpc.ts";
 import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
 import { dispatchPeopleRpc, PeopleRpcError } from "../people-rpc.ts";
@@ -1449,6 +1450,23 @@ export async function tryDispatchOncallPushRpc(
   return phase4RpcSkipped;
 }
 
+/**
+ * `notifications.*` (pre-S3 item E) — OS toast status and a fixed-text test toast. CLI-only:
+ * LAN-forbidden (I5) and absent from the Tauri allowlist (I7). Neither method throws a domain error;
+ * an undelivered test toast is reported as `{ delivered: false, reason }`.
+ */
+export async function tryDispatchNotificationsRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("notifications.")) return phase4RpcSkipped;
+  const rpc = ctx.options.notificationsRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  const out = await dispatchNotificationsRpc(method, params, rpc);
+  return out.kind === "hit" ? out.value : phase4RpcSkipped;
+}
+
 export async function tryDispatchShareRpc(
   ctx: ServerCtx,
   method: string,
@@ -1727,6 +1745,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchComputerRpc,
   tryDispatchFleetRpc,
   tryDispatchOncallPushRpc,
+  tryDispatchNotificationsRpc,
   tryDispatchMediaRpc,
   tryDispatchEgressRpc,
   tryDispatchGlossaryRpc,

@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import type { SpawnCaptureOptions, SpawnCaptureResult } from "../spawn-capture.ts";
+import {
+  type SpawnCaptureOptions,
+  type SpawnCaptureResult,
+  spawnCapture,
+} from "../spawn-capture.ts";
 import {
   buildOsascriptArgv,
   createDarwinNotificationBackend,
@@ -148,4 +152,53 @@ describe("macOS osascript — backend", () => {
     expect(err).toBeInstanceOf(NotificationSendError);
     expect((err as Error).message).toBe("osascript exited with code 1");
   });
+});
+
+/**
+ * SELF-VALIDATING, macOS only (the macOS CI leg runs it): does `osascript` CONSUME the `--` the
+ * backend puts before title/body, or pass it through as `item 1 of argv`? If it passed it through,
+ * every toast would be titled "--" with the real title as its body. This runs the REAL
+ * `/usr/bin/osascript` with the SAME argv the backend builds — only the `display notification`
+ * statement is swapped for one that RETURNS the two items, so no notification is raised — and
+ * asserts the round trip, including a title and a body that start with `-` (the case `--` exists
+ * for) and the hostile strings above.
+ */
+describe("osascript argv round trip (real osascript; darwin only)", () => {
+  const ECHO = 'return (item 1 of argv) & "|" & (item 2 of argv)';
+
+  function echoArgv(title: string, body: string): string[] {
+    const argv = buildOsascriptArgv(title, body);
+    const i = argv.indexOf(OSASCRIPT_STATEMENTS[1]);
+    // Premise check: the swap targets the backend's own display statement, so the rest of the argv
+    // (the `-e` layout and the `--` separator) is exactly what production spawns.
+    expect(i).toBeGreaterThan(0);
+    expect(argv[i - 1]).toBe("-e");
+    expect(argv).toContain("--");
+    return argv.map((a, j) => (j === i ? ECHO : a));
+  }
+
+  test.skipIf(process.platform !== "darwin")(
+    "item 1 / item 2 of argv are exactly the prepared title / body",
+    async () => {
+      const cases: Array<[string, string]> = [
+        ["Nimbus watcher", "pagerduty: db down"],
+        ["-n dash title", '-e display dialog "x"'],
+        ["--", "-- body"],
+        // ASCII, single-line only: this test is about argv POSITION. Non-ASCII stdout depends on the
+        // runner's locale, and a newline would make the "|" join ambiguous.
+        ...HOSTILE.filter(
+          (h) => !h.includes("\n") && [...h].every((c) => (c.codePointAt(0) ?? 0) < 0x80),
+        ).map((h): [string, string] => [h, `b ${h}`]),
+      ];
+      for (const [title, body] of cases) {
+        const r = await spawnCapture(echoArgv(title, body), {
+          timeoutMs: NOTIFICATION_SPAWN_TIMEOUT_MS,
+        });
+        expect({ title, ok: r.ok, code: r.code }).toEqual({ title, ok: true, code: 0 });
+        expect(r.stdout.replace(/\n$/, "")).toBe(
+          `${prepareNotificationText(title, NOTIFICATION_TITLE_MAX_CHARS)}|${prepareNotificationText(body, NOTIFICATION_BODY_MAX_CHARS)}`,
+        );
+      }
+    },
+  );
 });

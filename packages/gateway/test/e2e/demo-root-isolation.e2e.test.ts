@@ -128,6 +128,8 @@ beforeAll(async () => {
     TEMP: dirs.tmp,
     TMP: dirs.tmp,
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+    // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+    NIMBUS_NOTIFICATIONS: "off",
     NIMBUS_HTTP_PORT: String(httpPort),
     NIMBUS_DEMO: "1",
     // An owner's shell may export a profile. The demo config dir holds no `nimbus.work.toml`,

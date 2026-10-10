@@ -11,6 +11,7 @@ import { AnnotateError } from "../deployment/annotate.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { assembleOncallPushRuntime } from "../oncall-push/push-runtime.ts";
+import { NO_NOTIFIER_REASON } from "../oncall-push/push-sinks.ts";
 import { createUnimplementedNotifications } from "../platform/assemble.ts";
 import { buildAcmeCorpus } from "./corpus/acme.ts";
 import { DAY, type DemoPerson, MINUTE } from "./corpus/types.ts";
@@ -149,7 +150,7 @@ describe("seedDemoCorpus", () => {
     await fireDemoPage(db, rt, nowMs);
     expect(rt.store.get("pagerduty:PDEMO412")?.delivery["toast"]).toMatchObject({
       outcome: "skipped",
-      reason: "no OS notification implementation on this platform",
+      reason: NO_NOTIFIER_REASON,
     });
     expect(infoCalls).toHaveLength(0); // show() was never even called
     // The demo config names no ChatOps namespace, so the chat sink posts nothing (I41).

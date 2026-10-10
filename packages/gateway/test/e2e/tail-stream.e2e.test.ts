@@ -165,6 +165,8 @@ async function startTestGateway(tag: string): Promise<TestGateway> {
     // This test never touches search or embeddings; skipping the runtime avoids a real (or
     // stalled) MiniLM/CDN fetch slowing every boot down for no reason relevant to what is tested.
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+    // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+    NIMBUS_NOTIFICATIONS: "off",
   };
 
   const proc = Bun.spawn(["bun", RUNNER], {

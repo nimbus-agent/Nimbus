@@ -9,7 +9,8 @@ export type ChatopsPoster = (text: string) => Promise<number>;
 /** Spec § 2.5: briefs are ALL stored; only human interruptions are capped. */
 export const PUSH_NOTIFY_CAP = 3;
 const TITLE = "Nimbus on-call";
-export const NO_NOTIFIER_REASON = "no OS notification implementation on this platform";
+export const NO_NOTIFIER_REASON =
+  "OS notifications are off or unavailable on this gateway (see nimbus notifications status)";
 export const NO_NAMESPACE_REASON = "no [oncall.push] chatops_namespace";
 export const CHATOPS_NOT_RUNNING_REASON = "ChatOps not running";
 const noChannelsReason = (ns: string): string => `namespace ${ns} has no notify channels`;
@@ -28,10 +29,12 @@ export interface PushSinkDeps {
   readonly store: PushStore;
   readonly notify: (title: string, body: string) => void | Promise<void>;
   /**
-   * Mirrors `NotificationService.delivers`: absent means true. `false` means `notify` would drop
-   * the notification, so no toast is attempted and every row's toast is recorded `skipped`.
+   * Mirrors `NotificationService.delivers`, READ AT DELIVERY TIME (a getter, never a construction-time
+   * snapshot: the OS service's probe can flip `delivers` after boot). Absent means true. Returning
+   * `false` means `notify` would drop the notification, so no toast is attempted and every row's
+   * toast is recorded `skipped`.
    */
-  readonly notifyDelivers?: boolean;
+  readonly notifyDelivers?: () => boolean;
   readonly emit: (payload: OncallBriefPushedPayload) => void;
   readonly now: () => number;
   /** Absent: no chatops sink and no `chatops` delivery record (PR 1 callers). */
@@ -169,7 +172,7 @@ export function createPushDeliverer(
     );
     // Design § 2.2 (2026-10-02-oncall-push-chatops-design.md): BEFORE the toast's "no notifier" early return, so chat does not depend on it.
     if (deps.chatops !== undefined) await chatSink(deps.chatops, items, newestFirst);
-    if (deps.notifyDelivers === false) {
+    if (deps.notifyDelivers?.() === false) {
       // Honest record: nothing would be shown, so nothing is attempted and no summary is sent.
       for (const d of items) {
         record(d.row.incidentId, "toast", { outcome: "skipped", reason: NO_NOTIFIER_REASON });

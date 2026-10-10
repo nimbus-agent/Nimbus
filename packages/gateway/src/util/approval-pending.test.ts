@@ -6,6 +6,8 @@ import {
   CuActionConsentBroker,
   CuEnvelopeConsentBroker,
 } from "../computer-use/cu-consent-broker.ts";
+import { delegatedApprovalBroker } from "../engine/delegated-approval-broker.ts";
+import { QuorumCoordinator } from "../engine/quorum/quorum-coordinator.ts";
 import { ExecConsentBroker } from "../exec/exec-consent-broker.ts";
 import { FederationConsentBroker } from "../federation/consent-broker.ts";
 import { PreflightConsentBroker } from "../federation/preflight-consent-broker.ts";
@@ -320,5 +322,80 @@ describe("seam: FederationConsentBroker (inbound federated query; not a ConsentB
     expect(await p).toBe("denied");
     expect(toasts).toHaveLength(1);
     assertClean(toasts);
+  });
+});
+
+describe("seam: quorum aggregator + delegated-approval broker (not ConsentBroker subclasses)", () => {
+  test("QuorumCoordinator.collect: one hop per vote request, none on respond, no request text", async () => {
+    const toasts = capture();
+    const ids: string[] = [];
+    const q = new QuorumCoordinator((id) => {
+      ids.push(id);
+    });
+    const p = q.collect({ approvers: 1, windowMs: 60_000 });
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]?.body).toContain(BROKER_METHOD_LABELS["federation.quorumRequest"] ?? "?");
+    expect(toasts[0]?.body).not.toContain(GENERIC_APPROVAL_KIND_LABEL);
+    // The request id is never in the toast either.
+    expect(toasts[0]?.body).not.toContain(ids[0] ?? "<no id>");
+    expect(q.respond(ids[0] ?? "", "peer-a", true)).toBe(true);
+    expect((await p).outcome).toBe("approved");
+    expect(toasts).toHaveLength(1);
+    assertClean(toasts);
+  });
+
+  test("delegatedApprovalBroker.request: one hop, never the prompt", async () => {
+    const toasts = capture();
+    let id = "";
+    delegatedApprovalBroker.setBroadcast((requestId) => {
+      id = requestId;
+    });
+    try {
+      const p = delegatedApprovalBroker.request(
+        { prompt: `Approve delegated action: ${SENTINEL}?` },
+        60_000,
+      );
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0]?.body).toContain(BROKER_METHOD_LABELS["federation.approvalRequest"] ?? "?");
+      expect(delegatedApprovalBroker.respond(id, "peer-a", false)).toBe(true);
+      expect(await p).toEqual({ kind: "answered", peerId: "peer-a", approved: false });
+      expect(toasts).toHaveLength(1);
+      assertClean(toasts);
+    } finally {
+      delegatedApprovalBroker.setBroadcast(() => {});
+    }
+  });
+
+  test("every hand-raised broker hop in the tree names a LABELLED method (total over call sites)", () => {
+    const root = join(import.meta.dir, "..");
+    const methods: Array<{ file: string; method: string }> = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== "node_modules") walk(p);
+          continue;
+        }
+        if (!e.name.endsWith(".ts") || e.name.endsWith(".test.ts")) continue;
+        const src = readFileSync(p, "utf8");
+        const re = /notifyApprovalPending\(\s*\{\s*source:\s*"broker",\s*method:\s*"([^"]+)"/g;
+        for (let m = re.exec(src); m !== null; m = re.exec(src)) {
+          methods.push({ file: e.name, method: m[1] ?? "" });
+        }
+      }
+    };
+    walk(root);
+    // Negative control: the scan sees the three literal call sites that exist today.
+    expect(methods.map((m) => m.method).sort()).toEqual([
+      "federation.approvalRequest",
+      "federation.consentRequest",
+      "federation.quorumRequest",
+    ]);
+    for (const m of methods) {
+      expect({ ...m, labelled: m.method in BROKER_METHOD_LABELS }).toEqual({
+        ...m,
+        labelled: true,
+      });
+    }
   });
 });

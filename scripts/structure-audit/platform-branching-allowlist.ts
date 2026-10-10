@@ -188,6 +188,26 @@ export const PLATFORM_BRANCHING_ALLOWLIST: readonly PlatformFileEntry[] = [
   { file: "packages/gateway/src/platform/darwin.ts", gate: "none", why: "PAL implementation" },
   { file: "packages/gateway/src/platform/linux.ts", gate: "none", why: "PAL implementation" },
   {
+    file: "packages/gateway/src/platform/assemble.ts",
+    gate: "none",
+    why: "picks the OS notification backend by process.platform (pre-S3 item E); no coverage-threshold gate targets src/platform, and no gate's tests import assemble.ts",
+  },
+  {
+    file: "packages/gateway/src/platform/notifications/win32.ts",
+    gate: "none",
+    why: "Windows toast backend (powershell.exe WinRT); same gap as platform/win32.ts — no coverage-threshold gate targets src/platform",
+  },
+  {
+    file: "packages/gateway/src/platform/notifications/darwin.ts",
+    gate: "none",
+    why: "macOS osascript toast backend; same gap as platform/darwin.ts",
+  },
+  {
+    file: "packages/gateway/src/platform/notifications/linux.ts",
+    gate: "none",
+    why: "Linux notify-send/gdbus toast backend; same gap as platform/linux.ts",
+  },
+  {
     file: "packages/gateway/src/platform/browser.ts",
     gate: "none",
     why: "per-OS browser-open command",

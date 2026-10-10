@@ -39,7 +39,10 @@ export interface OncallPushBootDeps {
   readonly db: Database;
   readonly configDir: string;
   readonly localIndex?: LocalIndex;
-  /** Structurally `NotificationService`: `delivers: false` makes every toast record `skipped`. */
+  /**
+   * Structurally `NotificationService`: `delivers: false` makes every toast record `skipped`. Read
+   * at delivery time — pass the service itself (whose `delivers` may be a getter), never a copy.
+   */
   readonly notifications: {
     show(title: string, body: string): void | Promise<void>;
     readonly delivers?: boolean;
@@ -107,7 +110,8 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
     deliver: createPushDeliverer({
       store,
       notify: (title, body) => deps.notifications.show(title, body),
-      notifyDelivers: deps.notifications.delivers !== false,
+      // LIVE: read on every delivery, so a probe that resolves (or fails) after boot is honoured.
+      notifyDelivers: () => deps.notifications.delivers !== false,
       emit: (p) =>
         emitGatewayEvent("oncall.briefPushed", { incidentId: p.incidentId, status: p.status }),
       now,

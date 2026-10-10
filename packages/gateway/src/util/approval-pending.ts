@@ -35,7 +35,8 @@ export const GENERIC_APPROVAL_KIND_LABEL = "an action";
 
 /**
  * Human labels for every `ConsentBroker` request method (and the one broker that predates that
- * base class, `federation/consent-broker.ts`). `approval-pending.test.ts` enumerates every
+ * base class, `federation/consent-broker.ts`; plus the quorum aggregator and the delegated-approval
+ * broker, which raise their hop by these method names). `approval-pending.test.ts` enumerates every
  * `extends ConsentBroker` subclass in the tree and fails if one's method is missing here, so a new
  * broker cannot silently fall through to the generic label.
  */
@@ -48,6 +49,9 @@ export const BROKER_METHOD_LABELS: Readonly<Record<string, string>> = Object.fre
   "share.approvalRequest": "a share",
   "federation.preflightRequest": "a federated preflight",
   "federation.consentRequest": "a federated query",
+  // Not ConsentBroker subclasses either: the quorum aggregator and the delegated-approval broker.
+  "federation.quorumRequest": "a quorum approval",
+  "federation.approvalRequest": "a delegated approval",
 });
 
 /**

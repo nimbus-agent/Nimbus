@@ -44,6 +44,12 @@ const vaultSeeds = envJson<Record<string, string>>("NIMBUS_E2E_SEED_VAULT_JSON")
   }
 }
 
+// A gateway booted by a test must never raise a real OS toast on the developer's desktop (nor, on
+// Windows, register a notification AUMID under HKCU via the probe). Every spawning test also sets
+// this in the child env; forcing it here covers any that build the env from scratch. A test that
+// needs notifications ON must set a different value explicitly.
+process.env["NIMBUS_NOTIFICATIONS"] ??= "off";
+
 const services = await assemblePlatformServices(paths);
 
 // Seed SCIM users + an active operator session for the configured issuer (I18 inputs).

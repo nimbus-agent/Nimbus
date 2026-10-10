@@ -523,6 +523,7 @@ file is the authority for its method set.
 | `ask.*` | `explainLast` | `ipc/diagnostics-rpc.ts` | `nimbus explain last`; also needs its entry in `tryDispatchDiagnosticsRpc`'s outer match |
 | `oncall.*` | `pushedList`, `pushedGet`, `pushedRetry` | `ipc/oncall-push-rpc.ts` | the on-call pushed brief, default-off `[oncall.push]`; `pushedList`/`pushedGet` ARE on the Tauri `ALLOWED_METHODS` (desktop On-call page), `pushedRetry` is CLI-only |
 | `demo.*` | `seed`, `firePage` | `ipc/demo-rpc.ts` | claimed only by a demo-rooted gateway (I41) |
+| `notifications.*` | `status`, `test` | `ipc/notifications-rpc.ts` | OS toasts (pre-S3 E). `status` awaits the backend probe; `test` sends one fixed-text toast through the real service (rate limit + `title_only` apply) and returns `{ delivered: true, status }` or `{ delivered: false, reason, status }` — an undelivered toast is a result, never a JSON-RPC error. `nimbus notifications`, `nimbus doctor` |
 
 **`gateway.event`** is the single notification envelope behind `nimbus tail`: `{ kind, ts, payload }`,
 where `kind` is one of `watcher.fired`, `sync.completed`, `extension.stateChanged`, `hitl.requested`,
