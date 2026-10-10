@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791610671771,
+  "lastUpdate": 1791614080274,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "bbe2be71a72fbea2f336ae47787c9aa535f755a0",
-          "message": "feat(connectors): index Raindrop collections as `raindrop:collection` (#929)\n\nRefs #892 — adds the `raindrop:collection` item type alongside the\nexisting `raindrop:bookmark`. (Leaving the issue open for you to close\nafter review.)\n\n## What ships\n\nA second, independent walk in `raindrop-sync.ts` over Raindrop's **two**\ncollection endpoints. Verified against the current API docs\n(<https://developer.raindrop.io/v1/collections/methods>) before coding,\nas the issue asked:\n\n| Endpoint | Returns |\n| --- | --- |\n| `GET /rest/v1/collections` | the root collections |\n| `GET /rest/v1/collections/childrens` | every nested collection (the\nonly shape difference is the `parent.$id` a child carries) |\n\n**Neither is paginated** — no `page`/`perpage` parameters, each returns\neverything in one `{ result, items }` response. So each is walked with\n`maxPages: 1`, exactly one request each. The issue's warning was right:\nthe existing bookmark call could not be reused. It reads collection id\n`0`, the \"all raindrops\" pseudo-collection — a *query* id that neither\ncollections endpoint returns, so `0` is never indexed as an item.\n\nNew pure mapper `mapRaindropCollectionToItem` →\n`packages/gateway/src/connectors/raindrop-collection-mapping.ts`. One\nmapper covers both endpoints.\n\n## Three decisions worth your attention\n\n### 1. `external_id` is `collection/<id>`, not the bare numeric id —\nthis is a correctness fix, and it contradicts the issue text\n\nThe issue says \"`external_id` is the vendor's stable numeric `_id` as a\nstring, exactly as the bookmark mapper does\". I checked that against\nsource and it does not hold for a **second** type on the same service:\n\n- `itemPrimaryKey(service, externalId)` returns `<service>:<externalId>`\n(`packages/gateway/src/index/item-key.ts`)\n- `upsertIndexedItem` writes `INSERT … ON CONFLICT(id) DO UPDATE SET …\ntype = excluded.type …`\n\nRaindrop numbers collections and raindrops in **separate id spaces** —\nthe repo's own bookmark fixture is `_id: 123456, collectionId: 9001`.\nWith bare ids, collection 9001 and bookmark 9001 both map to\n`raindrop:9001` and each sync silently overwrites whichever ran first,\nflipping the row's `type`, `title`, `url` and `metadata`.\n\nCollections get the `collection/` prefix; **bookmarks keep their\nexisting bare id** — re-prefixing them would orphan every\nalready-indexed bookmark row for every current user. The asymmetry is\ndocumented in the module header, the README, and the roadmap row.\n\nProven, not asserted:\n`packages/gateway/test/integration/connectors/raindrop-sync-fake-server.test.ts`\ndrives a real sync with bookmark 9001 and collection 9001 and asserts\n**both** rows survive. I red-proved it by dropping the prefix — 6 tests\nfail, including that one.\n\n### 2. `metadata.collection_id` is the raw **number**\n\n`raindrop:bookmark` stores its parent as `metadata.collection_id` (a\nnumber, via `numberField`). Storing the collection's own id as a string\nwould have broken the exact join the issue calls out as the payoff.\nThere is an integration test that runs the join in SQL and asserts one\nmatch. `parent_id` comes from `parent.$id` (null for a root collection,\nand null for a malformed/non-numeric `$id`).\n\n### 3. `raindrop:collection` stays OFF `PROSE_HEAVY_TYPES` — MiniLM\n384-dim\n\nThe issue guessed this would be the answer and it is, for a stronger\nreason than \"short text\": per the Collection object schema, Raindrop\ncollections have **no description field at all** — the fields are `_id`,\n`access`, `collaborators`, `color`, `count`, `cover`, `created`,\n`expanded`, `lastUpdate`, `parent`, `public`, `sort`, `title`, `user`,\n`view`. A title plus counts is not prose; there is nothing for a\n1536-dim model to earn. Adding it would push every hybrid-mode user's\ncollection tree through OpenAI on the next embed pass. No change to\n`packages/gateway/src/embedding/routing.ts`.\n\nThat absence also drove two smaller calls: `bodyPreview` is the title\n(there is no description to prefer over it), and the search filter's\nhaystack is title + view + color.\n\n## Other choices\n\n- **`url` / `canonical_url` are null.** The API returns no URL for a\ncollection. `https://app.raindrop.io/my/<id>` would work as a deep link,\nbut the vendor did not send it — inventing it is exactly the kind of\nthing the issue's restraint note warns against. `looker:dashboard` and\n`testflight:app` set `url: null` for the same reason.\n- **Restraint kept**: `cover` is not indexed (mirroring the bookmark\nmapper's documented `cover` restraint), and neither are `access` /\n`collaborators` / `user` / `expanded` — ACL and UI state, not content. A\ntest asserts all five are absent.\n- **`ensureRunning` / `loadCreds` resolved once** in `sync()`, before\neither walk, so the unconfigured case still returns the exact\n`syncNoopResult` (no MCP spawn, no HTTP) it did when this connector\nindexed bookmarks only. The existing \"noop when token unset — no\nrequests\" test still asserts zero requests.\n- **Walks are independent.** A first-page failure in one leaves the\nother's upserts intact. Covered by a test where the raindrops body is\ngarbage and the collections walk still upserts.\n- **`public` is read with a `typeof === \"boolean\"` guard**, not a\ntruthiness coercion — a test pins that `public: \"yes\"` maps to `null`,\nnot `true`.\n- **MCP tool surface** grew by three read-only tools —\n`raindrop_collections_list`, `raindrop_collection_get`,\n`raindrop_collections_search` — following the `looker_models_list`\nprecedent. `raindrop_collections_list` drains *both* endpoints and\nconcatenates, because \"list my collections\" means both.\n`raindrop_collection_get` uses the SINGULAR `GET\n/rest/v1/collection/{id}` (same singular/plural trap as `raindrop_get`)\nand its description warns that the collection id space is separate from\nthe bookmark id space. `hitlRequired` stays `[]`.\n\n## Wiring already present (verified, not re-added)\n\nContrary to the issue's heads-up, all of these already carry `raindrop`\nand needed **no** change: `connector-catalog.ts`,\n`connector-secrets-manifest.ts`, `sync/rate-limiter.ts`,\n`platform/assemble-sync-registrations.ts`,\n`lazy-mesh/first-party-manifests.ts`, `lazy-mesh/phase3-config.ts`. The\nextension manifest version is left at `0.1.0` — all 94 connector\nmanifests are at `0.1.0`, so bumping just this one would create drift.\n\n## Verification\n\n- `bun run typecheck` — clean (exit 0).\n- `bunx biome check packages scripts docs` — clean. (`bun run lint`\nreports \"0 files processed\" inside `.claude/worktrees/**` because biome\nhonours `.gitignore`; that is the known worktree false-fail, so\n`preflight:fast` aborts on it and the remaining gates were run\nindividually.)\n- Every other `preflight:fast` gate run individually and green:\n`lint:markdown`, `audit:doc-refs`, `audit:openapi-drift`,\n`audit:boundaries`, `audit:invariants`, `audit:any --check`,\n`audit:release-please`, `audit:js-licenses`, `audit:svg-assets`,\n`audit:readme-cli`, `audit:package-readmes`, `audit:cross-platform`,\n`audit:status-drift`, `audit:action-sha-pins`,\n`audit:coverage-gate-pal`, `audit:consumed-by`,\n`audit:secret-inventory`, `audit:exclusion-parity`, `jscpd`.\n- `bun test packages/gateway/src/connectors\npackages/gateway/test/unit/connectors\npackages/gateway/test/integration/connectors\npackages/mcp-connectors/raindrop` — 4586 pass, 0 fail.\n- Istanbul coverage of the touched sources:\n`raindrop-collection-mapping.ts` **100% line / 100% branch**;\n`raindrop-sync.ts` **100% line / 91.7% branch** (the one uncovered arm\nis the `?? 0` fallback on the optional `SyncResult.bytesTransferred`,\nwhich `runSinglePassPaginatedSync` always populates — it is a type-level\nguard, folded into a single `bytesOf` helper so it is not counted three\ntimes).\n\n## Acceptance checklist (from #892)\n\n- [x] `raindrop:collection` items appear after a sync\n- [x] A pure mapper unit test covers the happy path plus a row with a\nmissing/non-numeric id\n- [x] `bun run typecheck` passes; `preflight:fast` gates pass (see the\nworktree-biome caveat above)\n- [x] The `docs/roadmap.md` Raindrop row is updated to reflect what now\nships\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-29T21:59:29+03:00",
-          "tree_id": "3ead95f13fec90bf60df96bebf05cbccd86cba40",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/bbe2be71a72fbea2f336ae47787c9aa535f755a0"
-        },
-        "date": 1785352336436,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 319.0442358499975,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.51456064999473,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 337.3896826500044,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "749656cae8b73485f90778b682b4e6dd36348cc3",
+          "message": "feat(updater): refuse apply without an installer, audit apply phases, cache last check (#1639)\n\nPre-S3 item C1. Closes roadmap S6-F1 follow-ups `recordUpdateEvent`\naudit-log integration and `Updater.getStatus()` cached `CheckNowResult`.\n\n## What changes\n\n- **`applyUpdate` refuses when no installer is wired\n(`ERR_UPDATER_INSTALL_UNSUPPORTED`, RPC `-32000`).** Production never\nsupplies `invokeInstaller` (the per-OS installers are still open roadmap\nrows), yet `applyUpdate` downloaded and verified the binary, then\nreported `system.update.installed`, broadcast `updater.restarting`, and\nthe CLI printed \"Update applied. Gateway will restart.\" — nothing was\ninstalled. The refusal runs first, before any state change, download,\nbroadcast or audit row. The RPC maps the typed error before the\n`/signature|hash/` message regex, so its wording can never be\nmisreported as a signature failure.\n- **Apply phases are audited.** New `updater/update-audit.ts`\n`buildUpdateAuditRecorder(db, logger)` writes one BLAKE3-chained\n`audit_log` row per phase\n(`system.update.{start,verified,installed,failed}`, `hitl_status =\nnot_required`), with `manifestUrl` userinfo stripped via\n`redactUrlUserinfo`. It is wired in `assemble.ts` `wireUpdaterIntoIpc`\nthrough `createUpdaterFromConfig`'s new `recordUpdateEvent` option.\n- **`updater.getStatus` carries `lastCheck`** (`latestVersion`,\n`updateAvailable`, `notes?`, `checkedAt`), set only by a successful\n`checkNow`. The desktop Updates panel seeds its check result from it, so\na panel opened after the startup check shows that check's result without\nfetching the manifest again.\n- **CLI:** `nimbus update` prints the refusal plainly on stderr and\nexits 1. It prints \"Update installed.\" only when the gateway call\nsucceeded, and no longer promises a restart.\n- **Docs:** roadmap rows marked done, plus `cli-reference.md`,\n`release/signing-keys.md`, the `nimbus-commands` and `nimbus-ipc`\nskills, `help.ts`, a `tool-runtime.ts` comment, and a CHANGELOG entry. A\n`cli-reference` \"Headless note\" described a hint that no code prints; it\nis removed.\n\n## Rulings and their costs\n\n1. **Refuse, rather than record a new `staged` phase.** Cost: `nimbus\nupdate --yes` and the desktop Install button refuse on every direct\ninstall until the per-OS installers ship. Before this change they\nreported success without installing anything.\n2. **What happens when an audit append fails depends on the phase.** A\nfailed `start` append aborts the apply before anything is downloaded. A\nfailure in a later phase is logged as a warning and the apply continues,\nbecause throwing after a real install would report a completed install\nas failed. Cost: on a database that has broken partway through an apply,\na later-phase row can be missing. The warning log is the only record of\nthat.\n3. **Not covered:** `checkNow` events are not audited, and the\n`updater.rollback` stub (it returns `{ok:true}`) is untouched. A refused\napply writes no audit row, because nothing was attempted.\n4. **Found but not fixed:** `redactUrlUserinfo` turns\n`https://u:p@host/x` into `https://host//x`, with a double slash. The\nsecret is still removed, so the test asserts the security property, and\nthe cosmetic bug is left as a follow-up.\n\n## Verification\n\n- `bun run typecheck` ✅. `typecheck:tests` reports 0 new errors.\n- `bun run preflight:fast` ✅.\n- Focused tests: gateway updater, updater RPC and CLI update tests pass\n(266), and the UI vitest suite passes (44).\n- New tests failed before their fixes:\n- the refusal makes no download request, which is counted against a real\nserver, and emits and records nothing;\n  - the RPC code mapping;\n  - real-SQLite audit rows checked by `verifyAuditChain`;\n  - the factory forwards the recorder;\n  - the CLI's exit code on refusal;\n  - the panel seeds itself from `lastCheck`.\n- `bun test packages/gateway packages/cli scripts`: 28,053 pass, 9 fail.\nAll 9 failures are in `test/integration/toolgen` and come from the\nsandbox helper not being built in a fresh worktree\n(`ERR_TOOLGEN_SANDBOX_DEGRADED`). With the helper built, that directory\npasses 15/15. `scripts/install/install-remote-windows.test.ts` was\nexcluded, because it hangs on this Windows machine (environmental).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* `nimbus update` now reports when updates can’t be installed, provides\nmanual-download guidance, and exits with an error rather than claiming\nthe gateway will restart.\n* Update attempts are refused before downloading when installation isn’t\nsupported.\n\n* **New Features**\n* The Updates panel can show the latest successful check, including the\navailable version, update status, notes, and check time.\n  * Update activity is recorded in the audit log.\n\n* **Documentation**\n* Updated CLI and updater guidance to reflect installation limits, audit\nlogging, and saved check results.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-10T09:22:11+03:00",
+          "tree_id": "869ddb7d63e2cf55462ab6c7d6a4ab1573c26065",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/749656cae8b73485f90778b682b4e6dd36348cc3"
+        },
+        "date": 1791614075067,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 344.52918434999884,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 339.91983775001063,
             "unit": "ms"
           }
         ]
