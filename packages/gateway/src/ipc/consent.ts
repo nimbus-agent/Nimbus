@@ -1,3 +1,4 @@
+import { notifyApprovalPending } from "../util/approval-pending.ts";
 import { emitGatewayEvent } from "./gateway-events.ts";
 import type { JsonRpcNotification } from "./jsonrpc.ts";
 
@@ -76,6 +77,9 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       // nobody has approved yet. `actionType` gives a passive observer (`nimbus tail`) what KIND
       // of action is pending without any of that riding along.
       emitGatewayEvent("hitl.requested", { requestId, actionType: actionType ?? "unknown" });
+      // The consent hop: a fixed-text OS toast naming only the action TYPE, for the same reason
+      // the broadcast above omits `prompt`. A no-op until wiring sets a notifier; never throws.
+      notifyApprovalPending({ source: "executor", actionType });
     });
   }
 
