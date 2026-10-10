@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791616753285,
+  "lastUpdate": 1791619814589,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0a1838abe98d22d9143dbb003fcbbcaf05bf3355",
-          "message": "ci: cut PR fan-out from ~34 jobs to ~11 (#936)\n\n## Why\n\nPRs were taking hours, all queued. Measured before changing anything:\n\n| runner | queued | running | cap |\n|---|---|---|---|\n| ubuntu | 85 | 6 | — |\n| macOS | 3 | 5 | **5 (saturated)** |\n| windows | 0 | 7 | — |\n| **total** | **89** | **18** | **20 (saturated)** |\n\nTwo consecutive samples showed macOS at exactly 5/5 and the total at 18\nthen 19 — the account-wide cap was the binding constraint, not any\nmisconfiguration. One push fanned out to ~34 jobs across 9 workflows,\nagainst ~10 branches in flight.\n\nThe org has since moved to Team (20 → 60 concurrent; verified live — a\nlater sample showed **36** running, above the old ceiling). This PR\nremoves the fan-out that made the cap bind in the first place.\n\n## What\n\n| change | jobs |\n|---|---|\n| `coverage-gates-linux`: 15 one-gate jobs → 3 batched | **−12** |\n| `docs-quality`: 8 jobs → 2 | **−6** |\n| `cargo-audit`/`cargo-deny` skipped on non-Rust PRs | −2 |\n| cross-platform matrix narrowed to affected packages | −2 |\n| `js-licenses` folded into `Dependency audit` | −1 |\n\nEach of the 15 coverage legs ran 0.6–1.3 min but **queued 11–20 min**,\nand ~0.5 min of every leg was runner start + checkout + `bun install` —\nthe matrix spent more wall time on setup and queueing than on the\nthresholds it enforced. Five `Vault`/`Sandbox` prep steps in that job\nwere deleted as provably dead: its matrix has never contained either\ngate, so every `matrix.gate.name == '…'` condition was permanently\nfalse.\n\n## Ruleset safety\n\nTwo changes touch **required** contexts, so both were verified against\nthe live ruleset rather than the comments describing it:\n\n- The `ci.yml` comment asserting that rulesets require the expanded\n`Cross-platform (pkg, os)` names is **stale**. The General ruleset\nrequires only `PR quality — required gates`, the six Security contexts,\nthe two CodeQL contexts, and `cla`.\n- Every `name:` in `security.yml` is a literal with no `${{ }}`. The\ntrap that once blocked docs-only PRs fires only on names carrying an\nunexpanded expression, so a skipped job posts its exact required context\nand counts as passing.\n\nFail-open by construction: the Rust gate reads `!= 'false'` (not `==\n'true'`) and carries `!cancelled()`, so a failed detector, an\nunresolvable base SHA, a non-PR event, or a red gitleaks all **run** the\nscans rather than posting a passing `skipped`. The cross-platform matrix\ncan never be emitted empty — verified across all four GW/CLI\ncombinations — since an empty matrix fails a job rather than skipping\nit, which would red every docs-only PR.\n\n`audit:coverage-gate-pal` was **red-proved** against the new batch\nentries: flipping one `pal:` makes it name \"Runtime services\"\nexplicitly, so its green means it parsed them rather than skipped them.\n\n## Deliberately not taken\n\n- **`_perf.yml` `pull_request` trigger** — saves 1 job but removes the\nonly perf regression gate PRs have.\n- **Merging `integration` into `e2e-gateway`** — saves 1 job at the cost\nof sharing a process lifetime and temp-dir namespace between two suites\nthat currently cannot contaminate each other.\n\n## Trade-off\n\nThe coverage branch of the DAG gets **slower in isolation** (~1 min of\nparallel legs → ~3–5 min of serial ones). It wins because queueing, not\nexecution, is the dominant term — and it stops being the right call if\nthat ceases to be true.\n\n## Also\n\n- Pruned 8 dead `ci-latency-baseline.json` rows (7 deleted jobs + a\n`Bencher Report` entry naming no job). `check.ts` fails only on\nregressions, so these were inert, but they were drift.\n- **Separate finding, not fixed here:** `Validate PR title` is not in\nthe ruleset's required contexts, and `.github/BRANCH_PROTECTION.md` is\nstale against the live ruleset.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-29T23:16:42+03:00",
-          "tree_id": "3d79a87cb91e9e9cceba0b579e905a12038599e9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0a1838abe98d22d9143dbb003fcbbcaf05bf3355"
-        },
-        "date": 1785356950485,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 319.25392879999816,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 321.99078124999943,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 348.0098012499904,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cc25fbe0202d6c8c553d767f22d29a25d8583ef3",
+          "message": "docs: close Spine S2, tidy the roadmap and re-home pre-S3 leftovers (pre-S3 B) (#1644)\n\nPre-S3 item B. Docs only: no code, no migration, no new invariant, no\nnew egress class.\n\n## What this records\n\n- **Spine S2 is closed (2026-08-21 → 2026-10-10).** Its record moves\nfrom `docs/roadmap.md` § Active to § Shipped, directly after S1's, under\na status line in S1's shape. The line says what shipped: the six spine\ncapabilities, plus user MCP servers, the v0.1.1 CLI batch and the\non-call pushed brief, all from the same window. It also says where each\ndeferral went.\n- **§ Active is now \"Pre-S3 close-out\".** A, D and C are merged and this\nPR is B. What remains is E, an OS notification backend: today every\ntoast is dropped and records `skipped`. S3 (Open Surface) opens after E\nand keeps its spine-row scope until a leaner one is chosen.\n- **Current-slot drift fixed everywhere it appeared:**\n- the roadmap's Contents, status lines, spine table, and the Phase 6 and\nS1 clauses;\n- `CLAUDE.md` / `GEMINI.md` (line 8 only; it is still byte-identical\nbetween them);\n  - the `nimbus-architecture` skill;\n  - `docs/README.md`;\n- `docs/SECURITY.md`, which still named **S1** as the current slot, two\nslots behind.\n\n  Links that used `#active` to mean \"S2\" now point at `#spine-s2`.\n- **Counts reconciled.** The roadmap said \"5 of 5 rows\" and also \"six\ncheckboxes\", while everything else said six capabilities. It now says\nsix spine capabilities; the Zoom deferral and the user-MCP row are\nlisted but not counted. The lockoff history now runs to the seventh\nname, `user_mcp_model_access`.\n- **Checkboxes ticked, each checked against code or git history:**\n- Phase 14: browser automation, HITL on every execution, runtime tool\ngeneration and tool persistence (both with notes on the shape that\nactually shipped), and the org-level lockoff.\n- Phase 17: pushed incident brief. Approve-from-push is split into its\nown open row.\n  - Phase 4: third-party upgrades (#1597).\n- **Left open, with notes added:**\n  - the exec runner: Bun only, no Deno;\n- the image and video input rows: captions, transcripts and frames\nshipped; entity extraction, OCR and diarization did not;\n- release-please: `version.ts` has been bumped by release-please since\n#762; only `packages/gateway/package.json` is still hand-edited.\n- **Phase 10's \"Phase 3 proactive anomaly detection\" dependency\ncorrected.** Only `AnomalyDetectorStub` exists. It computes a rolling\nz-score that is only logged, with no baseline learning and no user\nnotification.\n- **Re-homed leftovers.** Each source row keeps its text and gains a\ndated \"→ re-homed to …\" link, and the destination gains the item.\n\n  | Destination | Items |\n  |---|---|\n| New **Carried into S4** list under the spine table | model access to\ngenerated tools / computer use (F, below); user-MCP write grants;\nanomaly user notifications; ChatOps watcher notifications; team-owned\nworkflow pipelines (the S4 row had dropped this); workflow branching;\n`nimbus pre-mortem`'s limits |\n| New **Carried into S5** list | full IaC drift; RUM connectors and the\nweb-vitals watcher; Bedrock/SigV4 and a local OpenAI-compatible runtime\n|\n| Phase 9.5 | extensions actually running (install verifies them, but\nnothing ever starts them); ratings and reviews |\n| Phase 9.7 Wave 4 | mobile release writes (TestFlight, Firebase App\nDistribution, Codemagic) |\n| Phase 12 | cross-gateway audit identity subject\n(`resolveIdentitySubject` is set only by tests) |\n| Phase 13 | the Linux and macOS/Windows `invokeInstaller` (the old\n\"(Phase 13 entry)\" pointer pointed at nothing); HITL diff view /\nedit-before-approve |\n| Phase 14 | PowerShell terminal lane; Zoom recording frame captions;\nagent-initiated tool proposal (the screen lane and diarization already\nhad rows) |\n| Phase 19 | wiring the Phase 4 voice primitives (no production code\nconstructs a `VoiceService`) |\n\n- **Stale pointers fixed:**\n- Phase 5 sent the mobile and web-vitals writes to Phase 8 or Phase 12,\nneither of which had rows for them.\n  - Phase 6 claimed ratings and reviews landed in Phase 5 T2.\n- `nimbus explain` called SQLCipher \"still-deferred\"; it was rejected\n2026-09-15. The durable table and `list`/`<n>` navigation stay open\nfollow-ups.\n- The \"Already covered\" table pointed the OpenAI-compatible runtime at\nthe closed S2.\n\n## Rulings and their costs\n\n- **F, model access to generated tools and computer use, is re-homed to\nS4 and stays unwired** (owner's ruling). `gateway-main.ts` still\nsupplies neither `deps.toolgen` nor `deps.computerUse`. The recorded\npreconditions:\n- **Generated tools:** owner-only turns, plus a per-call owner HITL\nprompt in I42's shape. I39 limits where a tool may send data, not what\nit sends, so a prompt injected into indexed content could otherwise make\nthe model send private data to an approved host with no prompt.\n- **Computer use:** a per-turn session binding (the agent is built once\nat boot) and a consent experience in the desktop app.\n\n  *Cost:* both stay CLI-only through S3.\n- **`nimbus prep` is rejected, not re-homed** (part of the B design the\nowner approved). *Cost:* the Rejected Directions entry says plainly that\n`catchup` does **not** read calendar events, so it is not a full\nsubstitute. It reopens only for a brief anchored to one specific\ncalendar event.\n- **S4 and S5 got \"Carried into\" lists, not sections.** Neither slot has\nopened, so a full section would claim a design that doesn't exist.\n*Cost:* each slot's detail is now split between its spine-table cell,\nthese lists and the phase sections the overlay already points to.\n- **No pointers on the Phase 10 drift row or the Phase 17 anomaly row.**\nThey overlap the new S4/S5 items but are not their sources, so the\ndestinations link to them instead. *Cost:* someone reading from the old\nrow sees no link forward.\n- **Not re-homed: \"script-mode servers on Windows\"**, the user-MCP gap.\nIt was not in the agreed list and stays where it is.\n- **`docs/README.md`'s claim that \"a generated tool is reachable only\nfrom the CLI\" is left unchanged.** An audit called it wrong because\n`agent.ts` spreads in `buildGeneratedTools`. That spread only happens\nwhen `deps.toolgen` is supplied, and production never supplies it, so\nthe claim is correct.\n\n## Verification\n\n- `bun run preflight:fast`: PASSED.\n- `audit:doc-refs`: 1667 refs, all resolve.\n- `audit:status-drift`: OK. `lint:markdown`: 0 issues.\n- Every in-page `](#…)` link in `docs/roadmap.md` was checked with a\nscript, and the script was proved able to fail with a planted broken\nlink.\n- An independent whole-branch review checked every \"not shipped\" claim\nagainst code. One finding (three \"§ Active\" pointers that should point\nat the S2 record) and one lower-confidence note (the two partly shipped\nmultimodal rows) were both fixed in the last commit.\n- CI paths `bun test packages/gateway packages/cli scripts`: 28,146\npass, 0 fail, 97 skip. `scripts/install/install-remote-windows.test.ts`\nis excluded; it hangs on this Windows machine for environmental reasons.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated project status and release records to show the Local Compute\nFleet milestone completed on October 10, 2026, with the next milestone\nplanned.\n* Clarified that operating-system notification work remains before the\nnext milestone.\n* Updated security and project status references to reflect the\ncompleted milestone and remaining close-out work.\n  * Revised the stated count of AI-v2 policy lockoffs.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-10T07:57:43Z",
+          "tree_id": "883e222af97e27b78a84fe80b00d8a04f79ccb54",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/cc25fbe0202d6c8c553d767f22d29a25d8583ef3"
+        },
+        "date": 1791619809381,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 334.86078675000425,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 336.0307192500019,
             "unit": "ms"
           }
         ]
