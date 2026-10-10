@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.40.0](https://github.com/nimbus-agent/Nimbus/compare/v7.39.0...v7.40.0) (2026-10-09)
+
+
+### Features
+
+* **user-mcp:** org-policy lock-off and I11 wrapping for model-offered tools; prove I38 end to end ([#1637](https://github.com/nimbus-agent/Nimbus/issues/1637)) ([0cf3df0](https://github.com/nimbus-agent/Nimbus/commit/0cf3df04ebf9d11e729813394561325b59637a7f))
+
 ## [7.39.0](https://github.com/nimbus-agent/Nimbus/compare/v7.38.0...v7.39.0) (2026-10-09)
 
 
