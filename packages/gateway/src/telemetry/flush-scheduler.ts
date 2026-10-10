@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import { loadNimbusTelemetryFromPath } from "../config/telemetry-toml.ts";
 import { collectIndexMetrics } from "../db/metrics.ts";
 
+import type { AgentLatencyRecorder } from "./agent-latency.ts";
 import { assertTelemetryPayloadSafe, buildTelemetryPreview } from "./collector.ts";
 
 export type TelemetryFlushHandle = {
@@ -90,6 +91,8 @@ export function startTelemetryFlushScheduler(opts: {
   readonly gatewayVersion: string;
   readonly logger: Logger;
   readonly coldStartMs?: number;
+  /** Source of `agent_invocation_latency_p50_ms`/`_p95_ms`; absent posts `0`/`0`. */
+  readonly agentLatencyRecorder?: AgentLatencyRecorder;
 }): TelemetryFlushHandle {
   let stopped = false;
   const cfg0 = loadNimbusTelemetryFromPath(opts.activeTomlPath);
@@ -116,6 +119,7 @@ export function startTelemetryFlushScheduler(opts: {
       const db = opts.getDatabase();
       const m = collectIndexMetrics(db);
       const sessionId = readOrCreateSessionId(opts.dataDir);
+      const agentLatency = opts.agentLatencyRecorder?.percentiles();
       const payload = buildTelemetryPreview({
         nimbusVersion: opts.gatewayVersion,
         queryLatencyP50Ms: m.queryLatencyP50Ms,
@@ -124,6 +128,12 @@ export function startTelemetryFlushScheduler(opts: {
         sessionId,
         db,
         ...(opts.coldStartMs === undefined ? {} : { coldStartMs: opts.coldStartMs }),
+        ...(agentLatency === undefined
+          ? {}
+          : {
+              agentInvocationLatencyP50Ms: agentLatency.p50Ms,
+              agentInvocationLatencyP95Ms: agentLatency.p95Ms,
+            }),
       });
       assertTelemetryPayloadSafe(payload);
       fetch(cfg.endpoint, {

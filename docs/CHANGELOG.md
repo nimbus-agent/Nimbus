@@ -18,6 +18,20 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-10 — Pre-S3 item C3: telemetry agent invocation latency is measured, not hardcoded.**
+  `agent_invocation_latency_p50_ms` / `_p95_ms` had been a literal `0` in every telemetry payload
+  and `nimbus telemetry show` since the catalog shipped. A new in-memory `AgentLatencyRecorder`
+  (`telemetry/agent-latency.ts`, 1440-sample ring, never persisted) is built once in
+  `platform/assemble.ts` and injected: `runAsk` records one duration per call on both exits (the
+  same population `nimbus explain last` sees), and `dispatchAgentsRpc` times every recognised
+  `agents.*` dispatch to its first `briefReady`/`briefError` on the socket, HTTP and ChatOps
+  paths. Fleet runs and on-call pushed briefs are deliberately not timed (unattended, not
+  user-facing), and the synchronous `agents.whyPeek` never emits a brief so it records nothing. Only
+  the number is recorded — no agent name, input or session id; the payload keys and
+  `assertTelemetryPayloadSafe` are unchanged, and an empty window still reports `0`. The
+  interpolated percentile moved to `util/interpolated-percentile.ts`, shared with the query-latency
+  ring.
+
 - **2026-10-09 — Pre-S3 item D: I38 proven end to end, and the user-MCP model path gets an org lock-off and I11 coverage.** The fleet's remote-synthesis cap (I38) is now exercised through a real built-in agent rather than only at the wrapper: an integration test drives the real fleet invoker, real agent dispatch and the real synthesis runner against a fake remote vendor registered through a real `LlmRegistry`, and shows that with `allow_remote` off no remote call and no `model`-class ledger row occurs and the brief records `fleetRemoteWithheld`, while with a one-call budget exactly one call and exactly one row occurs; the I38 text and its docs no longer carry the "not through a real agent" bound. A seventh `[policy.capabilities.ai_v2]` name, `user_mcp_model_access`, lets a signed org policy stop the engine agent being offered any `--model` user MCP server's tools: it is enforced at the tool source, so nothing is offered on any path, it fails closed when the gateway cannot read the resolved policy, it is read per turn (a turn already in flight keeps the tool list it built; the lock-off takes effect from the next turn), and the owner's own `nimbus connector call` is untouched. I11 now also covers what a user MCP server says about its tools: the description is delimited in an escaped `<tool_description>` block, and the input schema is rebuilt from a structural-keyword allowlist (descriptions and titles capped at 200 characters; `examples`, `default` and `$comment` dropped; only known `format` names kept; `pattern` dropped, since the validator would run a server-supplied regex in the gateway process (ReDoS); `required` filtered to declared properties; the schema dialect kept). Stated bounds: `enum`, `const` and property names reach the model verbatim under a 32 KiB ceiling on the rebuilt schema; the gateway's validation can be looser than the server's where a constraint was dropped, and is never stricter than the listing's own validator: an object that leaves `additionalProperties` unset stays open (emitted as an explicit `true`), an object that dropped a key its listing accepted (a `patternProperties` key or an over-long property name) is opened even when the listing closed it, and a boolean `nullable` is kept. The rebuild also now keeps a `__proto__` property and a closed draft-07 tuple (`additionalItems: false`, emitted as `items: false` under 2020-12). No migration, no new invariant (I42, I11 and I22 were extended), and no new egress class.
 
 - **2026-10-09 — Index lane contract (PR A3): the lane census is a gate.**

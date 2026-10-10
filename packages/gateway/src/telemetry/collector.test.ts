@@ -140,4 +140,43 @@ describe("buildTelemetryPreview", () => {
     });
     expect(preview.cold_start_ms).toBe(0);
   });
+
+  test("defaults the agent-invocation percentiles to 0 when no recorder values are passed", () => {
+    const preview = buildTelemetryPreview({
+      nimbusVersion: "0.13.1",
+      queryLatencyP50Ms: 1,
+      queryLatencyP95Ms: 2,
+      queryLatencyP99Ms: 3,
+    });
+    expect(preview.agent_invocation_latency_p50_ms).toBe(0);
+    expect(preview.agent_invocation_latency_p95_ms).toBe(0);
+  });
+
+  test("carries the recorded agent-invocation percentiles, rounded; same key set", () => {
+    const preview = buildTelemetryPreview({
+      nimbusVersion: "0.13.1",
+      queryLatencyP50Ms: 1,
+      queryLatencyP95Ms: 2,
+      queryLatencyP99Ms: 3,
+      agentInvocationLatencyP50Ms: 1234.4,
+      agentInvocationLatencyP95Ms: 5678.6,
+    });
+    expect(preview.agent_invocation_latency_p50_ms).toBe(1234);
+    expect(preview.agent_invocation_latency_p95_ms).toBe(5679);
+    expect(Object.keys(preview).sort()).toEqual(Object.keys(validPayload()).sort());
+    expect(() => assertTelemetryPayloadSafe(preview)).not.toThrow();
+  });
+
+  test("a non-finite or negative agent-invocation value falls back to 0", () => {
+    const preview = buildTelemetryPreview({
+      nimbusVersion: "0.13.1",
+      queryLatencyP50Ms: 1,
+      queryLatencyP95Ms: 2,
+      queryLatencyP99Ms: 3,
+      agentInvocationLatencyP50Ms: Number.NaN,
+      agentInvocationLatencyP95Ms: -4,
+    });
+    expect(preview.agent_invocation_latency_p50_ms).toBe(0);
+    expect(preview.agent_invocation_latency_p95_ms).toBe(0);
+  });
 });

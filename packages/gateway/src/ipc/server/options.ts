@@ -25,6 +25,7 @@ import type { PremortemRefresher } from "../../premortem/premortem-refresh.ts";
 import type { ShareFile } from "../../share/share-format.ts";
 import type { ForwardShareDeps, ReceiveShareDeps } from "../../share/share-forward.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
+import type { AgentLatencyRecorder } from "../../telemetry/agent-latency.ts";
 import type { Updater } from "../../updater/updater.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { VoiceService } from "../../voice/service.ts";
@@ -245,4 +246,7 @@ export type CreateIpcServerOptions = {
   // the index.* diagnostics methods. LAN-forbidden (I5) and absent from the Tauri allowlist (I7):
   // the record carries the owner's question verbatim plus titles from the owner's private index.
   askExplainRecorder?: AskExplainRecorder;
+  // Telemetry agent-invocation latency (`telemetry/agent-latency.ts`): written by every socket
+  // `agents.*` brief dispatch, read by `telemetry.preview`/`telemetry.getStatus`. Durations only.
+  agentLatencyRecorder?: AgentLatencyRecorder;
 };

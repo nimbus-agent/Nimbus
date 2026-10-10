@@ -11,6 +11,7 @@ import type { LlmRouter } from "../llm/router.ts";
 import type { LlmGenerateResult } from "../llm/types.ts";
 import type { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
+import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import {
   agentRequestContext,
   getAgentRequestSessionId,
@@ -92,6 +93,13 @@ export type RunAskParams = {
    * PREVIOUS successful ask at the moment the user most needs the truth.
    */
   explainRecorder?: AskExplainRecorder;
+  /**
+   * Telemetry `agent_invocation_latency_p50_ms`/`_p95_ms`: one DURATION per call, recorded at the
+   * same two exits as the explain entry (success and throw), so the timed population is exactly
+   * the one `nimbus explain last` sees. Only the number is recorded — no question, no client id.
+   * Absent means nothing is recorded.
+   */
+  agentLatencyRecorder?: AgentLatencyRecorder;
   /**
    * Offer the owner-registered user-MCP tools (`connector add --mcp --model`, I42) on this turn.
    * Only `=== true` offers: `runAsk` then puts this turn's dispatching executor into the request
@@ -1249,6 +1257,25 @@ function demoAwareAskError(p: RunAskParams, e: unknown): unknown {
   return e;
 }
 
+/**
+ * Records this call's wall-clock duration for telemetry. Best-effort exactly like
+ * {@link recordExplainSafely}: a recorder failure must never change what the caller receives or
+ * throws.
+ */
+function recordLatencySafely(p: RunAskParams, startedAt: number): void {
+  if (p.agentLatencyRecorder === undefined) {
+    return;
+  }
+  try {
+    p.agentLatencyRecorder.record(Date.now() - startedAt);
+  } catch (e) {
+    runAskLog.warn(
+      { err: e },
+      "failed to record agent-invocation latency; the answer is unaffected",
+    );
+  }
+}
+
 export async function runAsk(
   p: RunAskParams,
 ): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
@@ -1257,10 +1284,12 @@ export async function runAsk(
   try {
     const out = await runAskInner(p, partial);
     recordExplainSafely(p, partial, startedAt, undefined);
+    recordLatencySafely(p, startedAt);
     return out;
   } catch (error) {
     const e = demoAwareAskError(p, error);
     recordExplainSafely(p, partial, startedAt, e);
+    recordLatencySafely(p, startedAt);
     throw e;
   }
 }

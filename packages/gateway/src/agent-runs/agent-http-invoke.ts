@@ -11,6 +11,7 @@ import {
   resolveExternalAgentMethod,
 } from "../ipc/agents-rpc.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
+import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import type { AgentRunController } from "./agent-run-store.ts";
 
 export type AgentInvokeResult =
@@ -38,6 +39,8 @@ export type AgentHttpInvokerDeps = {
    * runner entirely, same as `[agents].synthesis = "off"`.
    */
   readonly router: SynthesisRouter | undefined;
+  /** Telemetry agent-invocation latency; forwarded to `dispatchAgentsRpc`. Durations only. */
+  readonly agentLatencyRecorder?: AgentLatencyRecorder;
 };
 
 /**
@@ -135,6 +138,9 @@ export function buildAgentHttpInvoker(deps: AgentHttpInvokerDeps): AgentHttpInvo
         // literal the gateway sets after verifying the token, and `clientId` is that token's
         // verified label — stronger attribution than stdio's self-declared kind, not weaker.
         caller: { clientId: clientLabel, kind: "http" },
+        ...(deps.agentLatencyRecorder === undefined
+          ? {}
+          : { agentLatencyRecorder: deps.agentLatencyRecorder }),
       });
     } catch (e) {
       deps.runs.abandon();

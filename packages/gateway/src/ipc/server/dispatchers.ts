@@ -196,6 +196,9 @@ export async function tryDispatchAgentsRpc(
         : { selfIdentity: ctx.options.federationIdentity }),
       caller: { clientId, kind: ctx.getClientKind(clientId) },
       ...(runner === undefined ? {} : { runner }),
+      ...(ctx.options.agentLatencyRecorder === undefined
+        ? {}
+        : { agentLatencyRecorder: ctx.options.agentLatencyRecorder }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {
@@ -2033,6 +2036,10 @@ export async function tryDispatchDiagnosticsRpc(
       ...(ctx.options.askExplainRecorder === undefined
         ? {}
         : { askExplainRecorder: ctx.options.askExplainRecorder }),
+      // telemetry.preview / telemetry.getStatus read the agent-invocation percentiles from it.
+      ...(ctx.options.agentLatencyRecorder === undefined
+        ? {}
+        : { agentLatencyRecorder: ctx.options.agentLatencyRecorder }),
     };
     const diagCtx =
       ctx.options.localIndex === undefined

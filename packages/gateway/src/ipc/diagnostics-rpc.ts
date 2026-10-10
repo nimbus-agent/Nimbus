@@ -36,6 +36,7 @@ import { isVecLoaded, lastVecLoadFailure } from "../index/sqlite-vec-load.ts";
 import { mediaSourceBytes } from "../multimodal/media-source-registry.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
+import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import { buildTelemetryPreview } from "../telemetry/collector.ts";
 import type { ConsentCoordinator } from "./consent.ts";
 
@@ -74,7 +75,24 @@ export type DiagnosticsRpcContext = {
    * always constructs one; a test context may omit it).
    */
   readonly askExplainRecorder?: AskExplainRecorder;
+  /**
+   * Source of the telemetry payload's `agent_invocation_latency_p50_ms`/`_p95_ms` for
+   * `telemetry.preview` and `telemetry.getStatus`, the SAME instance the opt-in flush reads, so the
+   * preview shows what would be sent. Absent (a test context) reports `0`/`0`.
+   */
+  readonly agentLatencyRecorder?: AgentLatencyRecorder;
 };
+
+/** The recorder's percentiles as `buildTelemetryPreview` params; empty when none is wired. */
+function agentLatencyPreviewParams(ctx: DiagnosticsRpcContext): {
+  agentInvocationLatencyP50Ms?: number;
+  agentInvocationLatencyP95Ms?: number;
+} {
+  const p = ctx.agentLatencyRecorder?.percentiles();
+  return p === undefined
+    ? {}
+    : { agentInvocationLatencyP50Ms: p.p50Ms, agentInvocationLatencyP95Ms: p.p95Ms };
+}
 
 export function buildSandboxDiagPayload(runner: SandboxRunner | undefined): {
   platform_capabilities: { network: "per_host" | "all_or_nothing"; reason: string | null };
@@ -654,6 +672,7 @@ function rpcTelemetryPreview(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome 
       queryLatencyP95Ms: m.queryLatencyP95Ms,
       queryLatencyP99Ms: m.queryLatencyP99Ms,
       db: d,
+      ...agentLatencyPreviewParams(ctx),
     }),
   };
 }
@@ -800,6 +819,7 @@ export function dispatchDiagnosticsRpc(
         queryLatencyP95Ms: m.queryLatencyP95Ms,
         queryLatencyP99Ms: m.queryLatencyP99Ms,
         db: d,
+        ...agentLatencyPreviewParams(ctx),
       });
       return { kind: "hit", value: { enabled: true, ...preview } };
     }

@@ -25,6 +25,7 @@ import { LocalIndex } from "../index/local-index.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import type { ChatopsPoster } from "../oncall-push/push-sinks.ts";
 import type { Syncable } from "../sync/types.ts";
+import { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import {
   appendBootMarkerOrWarn,
   assemblePlatformServices,
@@ -160,6 +161,30 @@ describe("bootChatopsAgentInvoker (FIX 1: selfIdentity reaches the ChatOps agent
       // since it had no federation-identity field to read.
       expect(captured?.selfIdentity).toBeDefined();
       expect(captured?.selfIdentity).toEqual(identity);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("forwards the process agent-latency recorder to the ChatOps invoker (telemetry)", () => {
+    const db = openMigratedMemoryDb();
+    try {
+      const recorder = new AgentLatencyRecorder();
+      let captured: ChatopsAgentInvokerDeps | undefined;
+      bootChatopsAgentInvoker({
+        chatopsBoot: { bindAgentInvoker: () => {} },
+        db,
+        localIndex: new LocalIndex(db),
+        configDir: "unused-in-this-test",
+        selfIdentity: undefined,
+        llmRouter: undefined,
+        agentLatencyRecorder: recorder,
+        buildInvoker: (deps) => {
+          captured = deps;
+          return () => Promise.resolve({ ok: false, detail: "stub" });
+        },
+      });
+      expect(captured?.agentLatencyRecorder).toBe(recorder);
     } finally {
       db.close();
     }

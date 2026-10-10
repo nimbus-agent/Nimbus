@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
+import { AgentLatencyRecorder } from "./agent-latency.ts";
 import {
   parseStoredTelemetrySessionId,
   readErrorCode,
@@ -181,6 +182,45 @@ describe("startTelemetryFlushScheduler — initial tick on start", () => {
 
     const ms = fakeTimers.capturedIntervalMs();
     expect(ms).toBe(60_000);
+    handle.stop();
+  });
+});
+
+describe("startTelemetryFlushScheduler — agent-invocation latency in the POSTed payload", () => {
+  let fakeTimers: ReturnType<typeof installFakeTimers>;
+  let fetchSpy: ReturnType<typeof installFetchSpy>;
+  let harness: Harness;
+
+  beforeEach(() => {
+    fakeTimers = installFakeTimers();
+    fetchSpy = installFetchSpy({ ok: true });
+    harness = makeHarness();
+  });
+
+  afterEach(() => {
+    fakeTimers.restore();
+    fetchSpy.restore();
+    harness.cleanup();
+  });
+
+  it("posts the injected recorder's p50/p95", async () => {
+    const recorder = new AgentLatencyRecorder();
+    for (const ms of [100, 200, 300]) recorder.record(ms);
+    const handle = startTelemetryFlushScheduler({
+      dataDir: harness.dataDir,
+      activeTomlPath: harness.tomlPath,
+      getDatabase: () => harness.db,
+      gatewayVersion: "0.1.0-test",
+      logger: silentLogger,
+      agentLatencyRecorder: recorder,
+    });
+    await yieldMs(80);
+    const body = fetchSpy.lastBody() as {
+      agent_invocation_latency_p50_ms?: unknown;
+      agent_invocation_latency_p95_ms?: unknown;
+    };
+    expect(body.agent_invocation_latency_p50_ms).toBe(200);
+    expect(body.agent_invocation_latency_p95_ms).toBe(290);
     handle.stop();
   });
 });

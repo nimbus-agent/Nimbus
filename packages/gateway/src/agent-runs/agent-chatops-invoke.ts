@@ -10,6 +10,7 @@ import {
   resolveExternalAgentMethod,
 } from "../ipc/agents-rpc.ts";
 import type { BoxKeypair } from "../ipc/lan-crypto.ts";
+import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import { requireRunId } from "./agent-http-invoke.ts";
 
 /**
@@ -35,6 +36,8 @@ export type ChatopsAgentInvokerDeps = {
    *  `undefined` explicitly for "no synthesis", same as `[agents].synthesis = "off"`. */
   readonly router: SynthesisRouter | undefined;
   readonly timeoutMs?: number;
+  /** Telemetry agent-invocation latency; forwarded to `dispatchAgentsRpc`. Durations only. */
+  readonly agentLatencyRecorder?: AgentLatencyRecorder;
 };
 
 /**
@@ -206,6 +209,9 @@ export function buildChatopsAgentInvoker(deps: ChatopsAgentInvokerDeps): Chatops
         ...(runner === undefined ? {} : { runner }),
         // Server-derived. `chatops` is not in `RECOGNISED`, so no socket client can claim it.
         caller: { clientId: "chatops", kind: "chatops" },
+        ...(deps.agentLatencyRecorder === undefined
+          ? {}
+          : { agentLatencyRecorder: deps.agentLatencyRecorder }),
       });
       // I5: refuse rather than accept-anything. A `miss` or a sessionId-less hit throws here
       // (unreachable in production -- see `requireRunId`'s own doc comment -- but a real refusal,

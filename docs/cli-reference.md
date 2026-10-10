@@ -4208,7 +4208,7 @@ Show the current telemetry configuration and a preview of the next payload.
 nimbus telemetry show
 ```
 
-**Payload preview includes:** `connector_error_rate`, `sync_duration_p50_ms`, `connector_health_transitions`, `extension_installs_by_id`, `cold_start_ms`, query latency percentiles. All values are aggregate counters — no content.
+**Payload preview includes:** `connector_error_rate`, `sync_duration_p50_ms`, `connector_health_transitions`, `extension_installs_by_id`, `cold_start_ms`, query latency percentiles, agent invocation latency p50/p95 (`nimbus ask` and `agents.*` briefs; durations only, `0` until one has run since the gateway started). All values are aggregate counters — no content.
 
 ---
 
