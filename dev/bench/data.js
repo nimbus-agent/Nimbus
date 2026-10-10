@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791575621741,
+  "lastUpdate": 1791602055481,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ccba4aa2dde285c7145ca2b6a94f3a6677954199",
-          "message": "fix(vault): probe the Linux Secret Service instead of secret-tool's PATH (#935)\n\nCloses #925 (gateway + doctor half).\n\n`doctor-core.ts:81` did `Bun.which(\"secret-tool\") === null` and then\nprinted\n`[ok] Vault: secret-tool is on PATH.` — a PATH check reported as a\nhealth check.\n`platform/linux.ts:12/17` had the same shape. On a headless box with\n`libsecret-tools` installed but no D-Bus session, both said fine and\nthen every\nVault operation failed.\n\nlibsecret is only a *client*. It reaches a Secret Service provider over\nthe\nD-Bus session bus, and that provider must expose an unlocked default\ncollection\nbefore one credential can be stored.\n\n## Reproduced first, on real Linux\n\nDocker daemon was down; started Docker Desktop and used `ubuntu:24.04`\nas the\nissue prescribes. Verbatim measurements:\n\n| state | `secret-tool lookup <absent>` | `secret-tool search --all` |\n`ReadAlias(\"default\")` | `Collection.Locked` | `store` |\n|---|---|---|---|---|---|\n| **A** no session bus | rc 1, `Cannot autolaunch D-Bus without X11\n$DISPLAY` | same | — | — | fails |\n| **C2** bus, no provider | rc 1, `The name org.freedesktop.secrets was\nnot provided by any .service files` | rc 1, same | `ServiceUnknown` |\n`ServiceUnknown` | fails |\n| **C** provider, no default collection | **rc 1, empty stderr** | **rc\n0** | `o \"/\"` | `Object does not exist` | fails |\n| **D** collection exists, locked | **rc 1, empty stderr** | **rc 0** |\n`o \"/…/login\"` | `b true` | fails (`Cannot create an item in a locked\ncollection`) |\n| **B** working | **rc 1, empty stderr** | **rc 0** | `o \"/…/login\"` |\n`b false` | succeeds |\n\n**The load-bearing result:** rows C, D and B are *indistinguishable* by\n`secret-tool lookup` or `search` — identical exit code, identical empty\nstderr.\nA lookup-only probe would have been exactly as lenient as the PATH check\nit\nreplaced, just harder to notice. Only the Secret Service itself\nseparates them,\nso the probe reads `ReadAlias(\"default\")` and then `Collection.Locked`.\nThose\nare spec-defined (`org.freedesktop.Secret.Service`), so the probe is not\ngnome-keyring-specific — KWallet and KeePassXC answer the same calls.\n\n`$DBUS_SESSION_BUS_ADDRESS` and a bare `NameHasOwner` check were also\ntested and\nrejected: `NameHasOwner` returns `true` in state C as well, because\nD-Bus\n*activates* gnome-keyring on demand.\n\n## The probe is read-only — verified, not assumed\n\nIt runs one `secret-tool lookup` plus at most two D-Bus property reads.\nThe\nlookup uses `application=nimbus-vault-probe`, deliberately **not** the\n`application=nimbus` that `LinuxSecretToolVault` writes, so it is\nstructurally\nguaranteed to miss and can never read back a real credential. stdout is\n`\"ignore\"`, never `\"pipe\"` — a matched secret has nowhere to leak. After\nrunning\nthe real probe in every state, `secret-tool search --all application\nnimbus-vault-probe` returns empty (asserted in CI by a Linux-only test,\nand\nobserved in the end-to-end run below).\n\n## Result — real code, real headless Linux\n\n| state | `probeLinuxVault()` | gateway startup | `nimbus doctor` |\n|---|---|---|---|\n| A no session bus | `no-session-bus` | **aborts** | `[fail]`, exit 2 |\n| C2 no provider | `no-secret-service` | **aborts** | `[fail]`, exit 2 |\n| C no collection | `no-collection` | **aborts** | `[fail]`, exit 2 |\n| B working | `ok` | continues | `[ok]`, exit 0 |\n\nBefore this change every one of those rows printed `[ok] Vault:\nsecret-tool is\non PATH.` and the gateway started.\n\nThe startup error now names the actual cause and the remedy:\n\n```\nA Secret Service provider is running but exposes no default keyring collection,\nso every Vault write fails.\nNimbus keeps credentials in the OS keyring through libsecret, which needs BOTH a\nD-Bus session bus AND an unlocked Secret Service keyring — installing secret-tool\nalone is not enough. On a headless machine, start Nimbus inside a session:\n  dbus-run-session -- bash -c 'echo \"\" | gnome-keyring-daemon --unlock --components=secrets; nimbus start'\nDiagnostic: org.freedesktop.secrets has no default collection\n```\n\nThe distinct \"not installed\" case keeps its original message and does\n**not**\nget the D-Bus remedy — a test asserts the two never blur.\n\n## Red-proved\n\nBoth guards were broken on purpose and watched fail before being\nrestored:\n\n- gateway: degenerating `probeLinuxVault` to `return {state:\"ok\"}` right\nafter\n  resolution → **15 failures**, including all 5 tests in\n  *\"the probe must not degenerate back into a PATH check\"*.\n- CLI: the same sabotage → **12 failures**, including all 4 rows of\n  *\"doctor must not report a PATH check as a health check\"*.\n\nEvery fixture in those tests is verbatim Docker output, so a probe that\nonly\nhandles invented message shapes cannot pass.\n\n## Notes for review\n\n- **Fatality is deliberately asymmetric for one state.** `locked`\n(collection\n  exists but `Locked=true`) aborts the gateway only when `$DISPLAY` /\n`$WAYLAND_DISPLAY` are unset. With a display libsecret raises an unlock\nprompt\nand the write succeeds, so aborting would regress desktop users who\nstart the\ngateway before unlocking. `nimbus doctor` reports it `[fail]`\nunconditionally —\n  a diagnostic being stricter than production is the safe direction.\n- **`unverified` warns, never oks.** If neither `busctl` (systemd) nor\n`dbus-send` (dbus) is installed, collection state cannot be read; doctor\nemits\n`[warn]` and the gateway logs but continues. Reachable only when a\nsession bus\n  exists without either tool, which is close to impossible in practice.\n- CI is unaffected: `scripts/linux/linux-dbus-tests.sh`\n(`dbus-run-session` +\n`echo \"\" | gnome-keyring-daemon --unlock`) produces `ReadAlias →\n/…/login`,\n`Locked → b false` → `ok`. Verified by running the real suite in the\ncontainer\n  under that exact wrapper: 1584 tests, 0 failures.\n- The probe logic is duplicated across `packages/gateway` and\n`packages/cli`\nbecause `cli` may not import gateway source. jscpd reports no clone\nbetween\n  the two files.\n- `doctor` resolves `secret-tool` with `Bun.which` only, while the\ngateway also\nfalls back to `/usr/bin/secret-tool`. Unchanged from before, and\nstricter\n  rather than more lenient, so left as is.\n\n## Open question for the owner — not built here\n\nIssue #925 asks whether a headless Linux vault backend should exist at\nall. My\nread: **yes, eventually, but not as part of this fix.** The ICP is\non-call and\nplatform engineers, so a large share of target machines have no desktop\nsession,\nand the current answer — \"wrap your gateway in `dbus-run-session` plus\n`gnome-keyring-daemon --unlock`\" — is a real barrier at install time.\nBut a\nfile-backed keyring is a credential-storage design decision: it touches\nnon-negotiable #3 (no plaintext credentials), needs a key-derivation and\nat-rest-encryption story, and deserves its own review rather than being\nsmuggled\nin behind a diagnostics fix. This PR only makes the existing failure\nhonest and\nactionable.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-29T21:40:16+03:00",
-          "tree_id": "d5ae80de3a23d22450efc56381605bc4290f4c95",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ccba4aa2dde285c7145ca2b6a94f3a6677954199"
-        },
-        "date": 1785350929453,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 245.43584349999838,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 246.83379445000028,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 369.8657679499891,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eef14394cf01ee498223bf577eca82aa4c7d819a",
+          "message": "chore: release main (#1638)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.40.0</summary>\n\n##\n[7.40.0](https://github.com/nimbus-agent/Nimbus/compare/v7.39.0...v7.40.0)\n(2026-10-09)\n\n\n### Features\n\n* **user-mcp:** org-policy lock-off and I11 wrapping for model-offered\ntools; prove I38 end to end\n([#1637](https://github.com/nimbus-agent/Nimbus/issues/1637))\n([0cf3df0](https://github.com/nimbus-agent/Nimbus/commit/0cf3df04ebf9d11e729813394561325b59637a7f))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-10T06:01:21+03:00",
+          "tree_id": "8071b3f511e9eafa6bc283a1ed20a169cd2a9719",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/eef14394cf01ee498223bf577eca82aa4c7d819a"
+        },
+        "date": 1791602050731,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 332.56590755000286,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 334.3206309000023,
             "unit": "ms"
           }
         ]
