@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.41.0](https://github.com/nimbus-agent/Nimbus/compare/v7.40.0...v7.41.0) (2026-10-10)
+
+
+### Features
+
+* **telemetry:** measure agent invocation latency p50/p95 ([#1641](https://github.com/nimbus-agent/Nimbus/issues/1641)) ([082311b](https://github.com/nimbus-agent/Nimbus/commit/082311bbeaccc495dcdd920a62d4e8540eba1fac))
+* **updater:** refuse apply without an installer, audit apply phases, cache last check ([#1639](https://github.com/nimbus-agent/Nimbus/issues/1639)) ([749656c](https://github.com/nimbus-agent/Nimbus/commit/749656cae8b73485f90778b682b4e6dd36348cc3))
+
 ## [7.40.0](https://github.com/nimbus-agent/Nimbus/compare/v7.39.0...v7.40.0) (2026-10-09)
 
 
