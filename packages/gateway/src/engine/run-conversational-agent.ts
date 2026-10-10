@@ -214,8 +214,22 @@ async function runViaAgent(
   }
   const reply = await streamOut.text;
   const streamRec = streamOut as unknown as Record<string, unknown>;
-  const [finishReason, steps] = await Promise.all([streamRec["finishReason"], streamRec["steps"]]);
+  // `@mastra/core` REJECTS any delayed promise still pending when the stream finishes. Today every
+  // finish path that resolves `text` also resolves these two, but detection must never be what
+  // fails a turn that already answered, so a rejection reads as "not exhausted".
+  const [finishReason, steps] = await Promise.all([
+    settleOrUndefined(streamRec["finishReason"]),
+    settleOrUndefined(streamRec["steps"]),
+  ]);
   return withExhaustion(reply, detectStepBudgetExhaustion(finishReason, steps, maxSteps));
+}
+
+async function settleOrUndefined(value: unknown): Promise<unknown> {
+  try {
+    return await value;
+  } catch {
+    return undefined;
+  }
 }
 
 function withExhaustion(

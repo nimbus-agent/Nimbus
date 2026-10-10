@@ -127,6 +127,30 @@ describe("step-budget exhaustion (non-stream)", () => {
 });
 
 describe("step-budget exhaustion (stream)", () => {
+  test("a REJECTED steps/finishReason promise reads as not exhausted, never fails the turn", async () => {
+    // @mastra/core rejects any delayed promise still pending when the stream finishes.
+    const agent = {
+      stream: mock(async () => {
+        const unresolved = Promise.reject(new Error("promise 'steps' was not resolved"));
+        unresolved.catch(() => undefined);
+        return {
+          fullStream: oneDelta("answer"),
+          text: Promise.resolve("answer"),
+          steps: unresolved,
+          finishReason: unresolved,
+        };
+      }),
+    } as unknown as Agent;
+    const r = await runConversationalAgent({
+      agent,
+      input: "q",
+      stream: true,
+      sendChunk: () => undefined,
+    });
+    expect(r.reply).toBe("answer");
+    expect(r.stepBudgetExhausted).toBeUndefined();
+  });
+
   test("the disclosure arrives as the final chunk and in the reply", async () => {
     const chunks: string[] = [];
     const events: GasLimitEvent[] = [];
