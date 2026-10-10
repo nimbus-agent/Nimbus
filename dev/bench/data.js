@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791602055481,
+  "lastUpdate": 1791610671771,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "79b18f0e484d22a381324f660aa0631dce1385d5",
-          "message": "fix(gateway): bind IPC before the embedding model loads (#928) (#934)\n\nCloses #928.\n\n## The block\n\n`assemblePlatformServices` awaited the embedding runtime **before**\n`ipc.start()`. With\n`[embedding] provider = \"hybrid\"` (or `openai`) that awaits\n`createLocalEmbedder(...)` — a MiniLM\nfetch from a third-party CDN, with no timeout of its own. On a cold\nmachine the IPC socket never\nappeared, the boot log stopped at `starting embedding runtime`, and\n`nimbus init` — the first\ncommand a new user ever runs — was indistinguishable from a hang.\n\n**One correction to the issue's premise, verified in code:** the 600 s\n`DEFAULT_EMBEDDING_INIT_TIMEOUT_MS` in `worker-bridge.ts` was *never* on\nthe bind path —\n`tryCreateEmbeddingWorkerBridge` is synchronous and `waitUntilReady` is\nconsumed by a floating\n`.then()`. The real blocking path is `provider = \"hybrid\" | \"openai\"`,\nand it had **no timeout at\nall**. That is the path this PR fixes (and the one the e2e reproduces).\n\nThe issue's other claim checks out: no agent (`why` included) and not\n`index.demoSymbol` reads a\nvector table. The only query-time vector readers are `search/hybrid.ts`\n(via\n`localIndex.searchRankedAsync`) and `memory/session-memory-store.ts`.\n\n## Bind-first\n\n`createEmbeddingRuntimeNonBlocking` returns on the same tick, behind\n`createDeferredEmbeddingRuntime` which runs the real construction in the\nbackground. `null` still\nmeans \"no embeddings at all in this process\", decided from the cheap\nsynchronous checks only\n(`NIMBUS_SKIP_EMBEDDING_RUNTIME`, `[embedding] enabled`, schema `uv <\n6`) — so nothing downstream\nchanges shape. A rejected fetch settles to `unavailable`; the gateway\nstays up and degrades.\n\n## The false green (the more interesting half)\n\nA warming runtime used to hand back a **`null` query vector**. Hybrid\nsearch then silently dropped\nto BM25, and a query with no lexical overlap returned `[]` — reading\nexactly like a legitimate\n\"searched everything, found nothing\". Note the pre-existing\n`worker-bridge.test.ts` asserted\n`toBeNull()` for exactly this: the bug was encoded as the contract.\nThose assertions are now\ninverted.\n\nWarming is a typed condition, never a null:\n\n| | meaning |\n|---|---|\n| `null` vector | vectors are permanently unavailable for this process\n(`disabled` / `unavailable`) — degrading is correct |\n| `EmbeddingWarmingError` | vectors are not available **yet**\n(`warming`) — degrading is the false green |\n\n- `EmbeddingRuntime.getReadiness()` → `warming` \\| `ready` \\|\n`unavailable` \\| `disabled`, with\nelapsed time, model/dims, failure reason, and **live model-download\nprogress** plumbed from\n@xenova's `progress_callback` through the worker as a `model_progress`\nmessage.\n- The deferred wrapper and the worker bridge **throw** rather than\nresolve `null` while warming.\n- `index.searchRanked` returns JSON-RPC **`-32021`** with `data.code =\n\"embedding_warming\"` plus\nthe readiness, instead of a lexical-only result the caller would read as\ncomplete.\n`semantic: false` is served as before; `disabled`/`unavailable` still\nreturn keyword results.\n- `gateway.ping` carries the readiness block so a client can render real\nprogress instead of a\ngeneric spinner (additive — the existing `embeddingBackfill` field is\nuntouched, so\n`nimbus status` is unaffected). Boot log gains `[gateway] embeddings:\n<state>` at bind time.\n\n### Deliberate degradation, made greppable\n\n`searchRankedAsync` runs on every `engine.ask` / agent / brief path, so\na warming throw there would\ntake `nimbus ask` down for the length of the download. That seam, plus\nsession-memory recall and\ntribal clustering, degrades through the explicitly named\n`embedQueryBestEffort` /\n`embedQueryDualBestEffort` helpers. Degradation is never the accidental\ndefault, and every\nsilent-degrade site is one grep away. The user-facing zero-reporting\nsurface\n(`index.searchRanked`) is the one that surfaces warming.\n\n## Verification\n\n**Bind-first, red-proved against a real gateway.**\n`gateway-bind-first.e2e.test.ts` boots a REAL\ngateway subprocess with `provider = \"hybrid\"` and points its\n`HTTPS_PROXY` at a local TCP server\nthat accepts and then never answers — a slow CDN, made deterministic,\n**with no network**.\n\n- Restoring the blocking `await`: `timed out waiting for stall gateway\nbind after 60000ms`, gateway\n  log empty past startup — the exact symptom in the issue.\n- With the fix: binds in ~2 s and answers `gateway.ping`,\n`index.searchRanked` (warming),\n  `audit.list`, `index.demoSymbol` while the fetch is still stalled.\n\n**False-green guard, red-proved at both layers.**\n\n- Replacing the runtime throw with a `null` return → 3 failures, incl.\n`Expected: \"not-called\" /\n  Received: null`.\n- Removing the RPC check → `Expected: \"not-called\" / Received: []` — the\nfalse green itself.\n\n**Failed fetch stays up.** A second gateway points at a proxy that hangs\nup immediately; it boots,\nreports a non-`ready` state, and keeps serving `audit.list` and\n`gateway.ping`.\n\nAlso run: `bun run preflight:fast` (all 22 gates PASSED), full gateway\nsuite `8945 pass / 0 fail`,\n`packages/gateway/test` `2561 pass / 1 fail` — that one failure\n(`integration/updater/wiring.test.ts`) reproduces on the base commit and\nis not from this change.\n\n## Also in here\n\n- The lazy runtime warms **eagerly** — nothing has to call `embedQuery`\nto start the load,\notherwise a readiness-guarded caller would see `warming` forever — and\nsettles to `unavailable`\n  if warm-up cannot progress.\n- A terminated worker bridge stops claiming `warming`.\n- `normalizeModelProgress` lives in a covered module, not in the\ncoverage-floor-excluded\n  `load-feature-extraction-pipeline.ts`.\n\n## Not in here\n\n`packages/cli/src/commands/init.ts` is untouched (owned by a parallel\nchange). The CLI has no\nhandler for `-32021` yet, so today a semantic `nimbus search` during\nwarm-up surfaces the error\nmessage rather than a formatted progress line — the message is written\nto stand alone. Engine /\nagent / brief paths still degrade silently by design; `agent.ts` already\nhas a\n`buildSearchLocalIndexHealthExtras` seam that could carry an\n`embeddingWarming` note to the model,\nwhich is the natural follow-up.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-29T21:40:50+03:00",
-          "tree_id": "e8ca6a21e701425c62675f4fe596f63446a92d00",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/79b18f0e484d22a381324f660aa0631dce1385d5"
-        },
-        "date": 1785351606804,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 305.2058136500062,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.09907395000266,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 334.3206309000023,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "082311bbeaccc495dcdd920a62d4e8540eba1fac",
+          "message": "feat(telemetry): measure agent invocation latency p50/p95 (#1641)\n\nPre-S3 item C3. The two telemetry keys `agent_invocation_latency_p50_ms`\nand `agent_invocation_latency_p95_ms` were always `0`, because nothing\nmeasured agent latency (roadmap row 318: \"agent invocation histograms\nremain `0` until instrumented\"). They now carry real values.\n\n## What changes\n\n- **New `telemetry/agent-latency.ts` (`AgentLatencyRecorder`).** It\nkeeps an in-memory ring of the last 1440 agent-invocation durations, in\nms. Nothing is persisted, so an empty window after a restart reports\n`0`/`0`, the old value. A sample is only a number: no agent name, input\nor session id.\n- It is built once in `assemble.ts` and passed in where needed. There is\nno module-level singleton.\n- **What is timed:**\n- **`runAsk`, every call, success and throw.** This covers `nimbus ask`,\n`agent.invoke` and the ChatOps read path. It is the same set of calls\n`nimbus explain last` records.\n- **`agents.*` briefs, from dispatch to their first\n`briefReady`/`briefError`.** This is measured at `dispatchAgentsRpc`.\nStatic rule D22(d) already forces every brief through that one function,\nso it is the only seam there is; `emitBriefWithSynthesis` has 17\ncallers. The socket, HTTP and ChatOps-agent paths all use it.\n- **`buildTelemetryPreview` takes the two percentiles.** Both callers\nsupply them: the opt-in flush POST and `telemetry.preview`/`getStatus`.\n- **The interpolated-percentile helper moved to\n`util/interpolated-percentile.ts`.** `db/latency-ring-buffer.ts` imports\nit from there, so the code is not duplicated.\n- **Docs:** roadmap row 318 reworded to say what ships, plus\n`cli-reference.md`, `packages/docs` `telemetry.mdx`, and a CHANGELOG\nentry.\n\n## Rulings and their costs\n\n1. **\"Histograms\" means the two existing percentile keys.** There is no\nnew payload key and no Prometheus histogram type, and\n`TELEMETRY_TOP_LEVEL_KEYS` and `assertTelemetryPayloadSafe` are\nunchanged. Cost: no distribution beyond p50/p95.\n2. **Fleet runs and on-call push briefs are not timed.** They reach\n`dispatchAgentsRpc` without the recorder, because unattended runs would\nskew a user-facing latency figure. Also not recorded:\n   - `agents.whyPeek`, which is synchronous and emits no brief;\n   - a dispatch refused by parameter validation.\n3. **Values are lost on restart.** The ring lives in memory only, so a\nrestarted gateway reports `0` until new invocations arrive. This mirrors\nthe query-latency ring's in-memory side.\n\n## Verification\n\n- `bun run typecheck` ✅. `bun run preflight:fast` ✅, including jscpd,\n`audit:invariants` (D22(d)), `audit:lane-census` and `typecheck:tests`.\n- New tests, each seen failing first:\n  - the recorder and the percentile helper;\n  - `runAsk` timing on success and on throw;\n  - `agents-rpc` brief timing for ready and for error;\n- `collector`, the flush POST, and the two diagnostics cases\n(`telemetry.preview` and `getStatus`);\n- ChatOps forwarding in `assemble.test.ts`, proved red by temporarily\nremoving the forwarding.\n- `bun test packages/gateway packages/cli scripts`: **28,110 pass, 0\nfail.** The sandbox helper was built.\n`scripts/install/install-remote-windows.test.ts` was excluded because it\nhangs on this Windows box (environmental).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-10T08:25:25+03:00",
+          "tree_id": "1d25bb9ecf2733b27c9eaeabd64946fb15eacc9e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/082311bbeaccc495dcdd920a62d4e8540eba1fac"
+        },
+        "date": 1791610667452,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 334.17534605000253,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 337.3896826500044,
             "unit": "ms"
           }
         ]
