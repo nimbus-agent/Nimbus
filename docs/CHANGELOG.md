@@ -18,6 +18,58 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-10 — Pre-S3 item E: OS notifications are delivered on Windows, macOS and Linux.**
+  The last of the pre-S3 close-out's five items, so the close-out is complete and S3 is next.
+  Until now the only `NotificationService` was `createUnimplementedNotifications` (`delivers:
+  false`): every toast — repeated sync failure, lost authentication, a fired watcher, an on-call
+  pushed brief — was dropped with a `notification.dropped` log line, and the on-call push
+  recorded its toast `skipped`. `platform/notifications/` now raises real toasts through a
+  spawned platform tool (`spawnCapture`, hidden window, 10 s timeout, a minimal named
+  environment): Windows PowerShell 5.1 + the WinRT `ToastNotificationManager` under the app id
+  `NimbusAgent.Nimbus` (registered under HKCU on first use), `osascript` on macOS, and
+  `notify-send` (else `gdbus`) on Linux — tools rather than a native module, which would not
+  survive `bun build --compile`. Title and body are untrusted (a watcher body carries an indexed
+  item title), so none of them is spliced into anything a tool parses: base64 into a constant
+  `-EncodedCommand` script and an XML text node on Windows, argv after `--` on macOS and for
+  `notify-send`, an escaped GVariant literal for `gdbus`, with the body's markup escaped on
+  Linux; control characters are stripped and lengths capped at 128 / 512 code points. Owner
+  rulings: **on by default** (`[notifications] enabled = false`, or `NIMBUS_NOTIFICATIONS=off`,
+  which can only disable); the **full body by default**, with `content = "title_only"` replacing
+  every body with "Open Nimbus for details" for lock screens and the OS notification history (an
+  unrecognised `content` is refused loudly and notifications run OFF, never silently `full`);
+  and a **consent hop** — "Nimbus is waiting for your approval", naming only the KIND of the
+  pending approval (an executor action type, or a fixed label per broker method), never the
+  prompt, payload, code body or any argument, raised from the executor's `ConsentCoordinatorImpl`,
+  the `ConsentBroker` base (every subclass), `FederationConsentBroker`, `QuorumCoordinator` and
+  `DelegatedApprovalBroker`, and swallowed if it fails, so a toast can never break consent. At
+  most 5 toasts per rolling 60 s, then one fixed-text "Nimbus: N more notifications" summary. A
+  body is never logged. The backend's availability is probed at boot (never awaited) and retried
+  at most every 5 minutes; `delivers` became a live getter, and the on-call push now reads it at
+  delivery time instead of snapshotting it at construction. New `nimbus notifications
+  status|test [--json]` over two CLI-only methods, `notifications.status` / `notifications.test`
+  — the `notifications` namespace is LAN-forbidden and absent from the Tauri allowlist — and a
+  `nimbus doctor` line (`[ok]`, `[info]` when off by choice, `[warn]` when it should work and
+  does not). A demo-rooted gateway keeps the non-delivering service (`BootPolicy.osNotifications`,
+  I41), and every test harness that boots a real gateway sets `NIMBUS_NOTIFICATIONS=off`. No
+  migration, no new invariant, no egress class: a toast goes to the local OS only. **Verified live
+  on Windows 11** from a fresh-install state (no app-id key, no toast history) in an isolated
+  sandbox gateway: `nimbus notifications status` reported `windows-toast` available; `nimbus
+  notifications test` delivered, and the toast landed in the Windows notification history;
+  `nimbus doctor` printed `[ok] Notifications: windows-toast (content: full)`; `title_only`
+  delivered with the fixed body; `enabled = false` returned `delivered: false`, `disabledBy:
+  "config"`, exit 1. That run **found a bug, fixed before merge:** Windows creates an app's
+  notification `Setting` only when the first toast is shown under its app id, so a freshly
+  registered id reads an EMPTY `Setting`, and the probe had read empty as unavailable — which
+  made the first toast on every fresh install impossible. Empty now means "registered, never
+  used"; only an explicit `Disabled*` value refuses. **Not verified on real hardware:** macOS
+  (toasts are attributed to Script Editor, which may need allowing once in System Settings, and
+  `osascript` exits 0 either way) and Linux (needs a desktop session bus and a running
+  notification server; the probe checks the bus and the tool, not the server) are covered by unit
+  tests plus a darwin-only test on the macOS CI leg that runs the real `osascript` with the exact
+  argv shape; the consent hop and the rate-limit summary toast were verified by unit tests, not
+  live. Still not shipped: approve-from-toast, and anomaly notifications (the detector is a stub;
+  re-homed to S4).
+
 - **2026-10-10 — Pre-S3 item B: Spine S2 closed and the roadmap tidied.** Docs only — no code, no migration, no new invariant, no new egress class. Spine S2 (Local Compute Fleet, opened 2026-08-21) is recorded as ✅ complete on 2026-10-10 and its section moves from `docs/roadmap.md` § Active to § Shipped, directly after the S1 record: all six spine capabilities shipped (sandboxed code execution, BYO frontier-model routing, the browser and terminal computer-use lanes, multimodal I/O, overnight fleets, runtime tool generation), alongside user MCP servers and the v0.1.1 CLI batch and on-call pushed brief in the same window. § Active becomes a "Pre-S3 close-out": the owner chose to close every S1/S2/earlier leftover before S3 opens — items A (index lane contract), C (small wiring) and D (safety gaps) are merged and this is B — and what remains is E, an OS notification backend for Windows, macOS and Linux (today every toast is dropped and records `skipped`), which the on-call push and S4's proactive delivery both need. S3 (Open Surface) opens after E, with the spine row's scope until a leaner one is chosen. Current-slot drift is fixed wherever it lived: the roadmap's Contents, spine status lines, spine table and Phase 6 / S1 status clauses; `CLAUDE.md` and `GEMINI.md`; the `nimbus-architecture` skill; `docs/README.md`'s phase table and S2 paragraph; and `docs/SECURITY.md`, which still named S1 as the current slot, two slots behind. The status paragraph also no longer reads `agent_fleet` as the current lockoff count: there are seven `[policy.capabilities.ai_v2]` names since `user_mcp_model_access` (2026-10-09). Stale roadmap checkboxes are ticked where the work shipped, with a dated note where the shape differs from what the row promised (runtime tool generation shipped owner-initiated, not agent-initiated; tool persistence is an Ed25519 Vault-key signature, I40, not an extension-manifest hash; the pushed incident brief is ticked for its three PRs and approve-from-push split into its own open row; third-party package upgrades, #1597). Unshipped leftovers are re-homed with a dated pointer at the source row rather than left under closed phases: to S4 (anomaly user notifications, ChatOps watcher notifications, team-owned workflow pipelines, workflow branching, pre-mortem limits, user-MCP write grants), S5 (full IaC drift, RUM/web-vitals connectors, Bedrock/SigV4 and a local OpenAI-compatible runtime), Phase 9.5 (extensions that actually run; ratings and reviews), Phase 9.7 (mobile-connector write actions), Phase 12 (a cross-gateway audit identity subject), Phase 13 (the `invokeInstaller` rows; a HITL diff view), Phase 14 (the PowerShell terminal lane, Zoom recording frame captions, agent-initiated tool proposal) and Phase 19 (wiring the Phase 4 voice primitives). S4 and S5 have no sections of their own yet, so their items sit in new *Carried into S4* / *Carried into S5* lists directly under the spine table, and the two spine-table cells link to them. Stale pointers fixed on the way: Phase 5 Wave B sent mobile write tools to Phase 8 or Phase 12, neither of which had a row for them; Phase 6's paid-extensions row said ratings and reviews landed in Phase 5 T2, where only verified-publisher badges did; the `nimbus explain last` row still called SQLCipher deferred (rejected 2026-09-15), and its durable `ask_explain` table and `list`/`<n>` navigation are now marked open follow-ups; Rejected Directions' "Already covered" table sent a local OpenAI-compatible runtime to the closed S2 record; and Phase 19's dependency and Core intro assumed the Phase 4 voice primitives work, which they do not until wired. Model access to generated tools and to computer-use is now an S4 row with its preconditions stated (`gateway-main.ts` supplies neither `deps.toolgen` nor `deps.computerUse` today): for generated tools, owner-only turns plus a per-call owner HITL prompt on every model invocation, because I39 bounds where a tool may send and never what, so an injected prompt could otherwise send private index data to an approved host unprompted; for computer-use, a per-turn session binding (the engine agent is built once at boot, a session is per request) plus a desktop consent UX. `nimbus prep` is moved to Rejected Directions, since `nimbus catchup` covers it. And Phase 10's dependency on "proactive anomaly detection (watcher baseline learning)" is corrected: only `watcher/anomaly-detector.ts`'s `AnomalyDetectorStub` exists — a rolling z-score over sync duration and items upserted that only logs, with no baseline learning and no user notification.
 
 - **2026-10-10 — Pre-S3 item C3: telemetry agent invocation latency is measured, not hardcoded.**

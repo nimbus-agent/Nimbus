@@ -170,7 +170,7 @@ nimbus demo reset
 Seeds a synthetic "Acme" org — people, issues, commits, pull requests, reviews, CI runs,
 deployments, incidents, and chat messages, all with timestamps offset from "now" so the data always
 looks current — into the isolated demo root (`--demo` / `NIMBUS_DEMO=1`; see the `--demo` global
-flag above and invariant **I41**), restarts the demo gateway and fires a page — `demo.firePage`, an IPC method only a demo-rooted gateway claims — that runs the SAME on-call push path a real install uses (see [`nimbus oncall pushed`](#nimbus-oncall-pushed)); the page's brief is the tour's first step. The OS notification that path attempts is currently dropped — Nimbus has no platform notification implementation yet — so the brief surfaces through `nimbus oncall pushed` and the `oncall.briefPushed` event (`nimbus tail --filter oncall`). It then tours three built-in agent briefs against it and closes on
+flag above and invariant **I41**), restarts the demo gateway and fires a page — `demo.firePage`, an IPC method only a demo-rooted gateway claims — that runs the SAME on-call push path a real install uses (see [`nimbus oncall pushed`](#nimbus-oncall-pushed)); the page's brief is the tour's first step. A demo-rooted gateway never raises an OS notification (invariant I41 — it would land on your real desktop), so the brief surfaces through `nimbus oncall pushed` and the `oncall.briefPushed` event (`nimbus tail --filter oncall`). It then tours three built-in agent briefs against it and closes on
 the locality panel. It never touches your real config, data, or vault, and the demo gateway makes
 no outbound call of any kind, at boot or afterward (see below).
 
@@ -1066,7 +1066,7 @@ nimbus oncall --since 3d --format slack
 
 ### `nimbus oncall pushed`
 
-Read the brief the gateway assembled **on its own** when a P1 page reached you — the on-call push. This is the read side of an unattended pass: with `[oncall.push] enabled = true` (default **off**), every PagerDuty sync checks for an ACTIVE (`triggered`/`acknowledged`) incident assigned to you, with a severity in `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or the `[oncall.push] severities` list, which replaces that set), that opened at or after the moment push was enabled (minus five minutes). Each such incident gets **one** brief, assembled exactly as [`nimbus oncall --incident`](#nimbus-oncall) would assemble it, stored, announced by an `oncall.briefPushed` gateway event, and readable here. The OS notification is attempted but currently dropped — Nimbus has no platform notification implementation yet, so the stored record shows the toast as `skipped` — which makes `nimbus tail --filter oncall` (the event) and this command the delivery surfaces today. When `chatops_namespace` names a namespace with policy `notify` channels and `[chatops]` is enabled, a three-line headline is also posted there (at most three per delivery, then one summary); `delivery.chatops` in `--json` shows the outcome.
+Read the brief the gateway assembled **on its own** when a P1 page reached you — the on-call push. This is the read side of an unattended pass: with `[oncall.push] enabled = true` (default **off**), every PagerDuty sync checks for an ACTIVE (`triggered`/`acknowledged`) incident assigned to you, with a severity in `{"p1"} ∪ [pagerduty] severity_p1_aliases` (or the `[oncall.push] severities` list, which replaces that set), that opened at or after the moment push was enabled (minus five minutes). Each such incident gets **one** brief, assembled exactly as [`nimbus oncall --incident`](#nimbus-oncall) would assemble it, stored, announced by an `oncall.briefPushed` gateway event, and readable here. It also raises an OS notification ([`nimbus notifications`](#nimbus-notifications); real since 2026-10-10), recorded as `skipped` when OS notifications are off or unavailable on this gateway; `nimbus tail --filter oncall` (the event) and this command remain the durable delivery surfaces. When `chatops_namespace` names a namespace with policy `notify` channels and `[chatops]` is enabled, a three-line headline is also posted there (at most three per delivery, then one summary); `delivery.chatops` in `--json` shows the outcome.
 
 ```bash
 nimbus oncall pushed
@@ -1096,7 +1096,7 @@ chatops_namespace = ""   # "" = post nothing; else the namespace whose policy no
 retention_days = 90      # stored briefs older than this are pruned at boot (even when disabled) and on each run
 ```
 
-**What a push never does.** It never runs synthesis — the stored brief is the deterministic render, so nothing is sent to a model. The `oncall.briefPushed` event carries only `{incidentId, status}` (an `ok`/`failed` status), never the brief. The (currently dropped) notification would carry the incident title and id, never the brief, and would be capped at three per run plus one summary. An incident with no recorded opening time is never pushed, enabling push never backfills history, and the gateway reconciles the enable moment at boot rather than trusting a timestamp from an earlier run.
+**What a push never does.** It never runs synthesis — the stored brief is the deterministic render, so nothing is sent to a model. The `oncall.briefPushed` event carries only `{incidentId, status}` (an `ok`/`failed` status), never the brief. The OS notification ([`nimbus notifications`](#nimbus-notifications)) carries the incident title and id, never the brief, and is capped at three per run plus one summary. Each row records its toast outcome: `delivered`; `coalesced` into the summary; `skipped` when OS notifications are off or unavailable on this gateway (the reason points at `nimbus notifications status`); or `failed` with the reason when the notification service refused it, e.g. its rate limit. An incident with no recorded opening time is never pushed, enabling push never backfills history, and the gateway reconciles the enable moment at boot rather than trusting a timestamp from an earlier run.
 
 **Bounds.** A GDPR purge does not sweep stored pushed briefs — retention is the bound, as for `fleet_brief`. The desktop app's On-call page reads the same briefs (it cannot retry; a failed row shows the `--retry` command above), but the desktop app **has not been released yet**, so today the CLI is the only way to read them. **Not shipped:** approving a mitigation from the push, and ranking a cascade of alerts. `nimbus tail --filter oncall` follows the event live; `nimbus doctor` warns when push is enabled but your identity is unresolved, since nothing could then ever be selected; when `chatops_namespace` is set but ChatOps is not running; and when the newest pushed brief skipped ChatOps because that namespace has no `notify` channels in the org policy.
 
@@ -3859,6 +3859,7 @@ nimbus doctor
 - Configuration file validates
 - Index total item count (warns if zero — suggests connecting a service)
 - On-call push: when `[oncall.push] enabled = true`, warns if your identity is unresolved (no incident could ever be selected); otherwise reports it enabled
+- Notifications: `[ok]` with the backend and `content` mode when OS notifications work; `[info]` when they are off by your choice (`[notifications] enabled = false`, `NIMBUS_NOTIFICATIONS=off`, a demo gateway) or the availability probe has not finished; `[warn]` with the reason when they should work and do not (an invalid `[notifications]` section, an unavailable backend, a platform with none). Silent against a gateway too old to serve `notifications.status`. See [`nimbus notifications`](#nimbus-notifications)
 - Per-connector health table
 - Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why. On macOS a passing line also names the full SQLite library it loaded through (`using full SQLite at <path>`), since that can be the bundled copy, `NIMBUS_SQLITE_PATH` or a Homebrew install
 
@@ -3907,6 +3908,45 @@ nimbus doctor --fix-keyring --dry-run
 pre-existing keyring material, or verification failed).
 
 ---
+
+### `nimbus notifications`
+
+Check and test OS notifications (toasts): the notification the gateway raises when a sync keeps failing, a connector loses authentication, a watcher fires, an on-call brief is pushed, or a HITL approval is waiting for you.
+
+```bash
+nimbus notifications status
+nimbus notifications test
+nimbus notifications status --json
+```
+
+| Subcommand | What it does |
+|---|---|
+| `status` | Prints the backend (`windows-toast`, `macos-osascript`, `linux-libnotify`, or `none`), whether notifications are enabled and why not, the `content` mode, whether the backend is available (it waits for the gateway's availability probe), and how many notifications the rate limit has dropped since the gateway started. |
+| `test` | Raises ONE fixed-text notification ("Nimbus test notification") through the same service every other notification uses — the rate limit and `content = "title_only"` apply to it too. An undelivered test prints `Test notification NOT delivered: <reason>`; it is an answer, not a gateway error. |
+
+| Flag | Description |
+|---|---|
+| `--json` | Print the validated result as JSON. `status`: `{ backend, enabled, content, available, reason?, disabledBy?, rateLimitedTotal, delivers }`, where `available` is `null` while unknown (probe pending, or never run because notifications are off) and `disabledBy` is one of `config`, `env`, `demo`, `config_error`. `test`: `{ delivered: true, status }` or `{ delivered: false, reason, status }`. |
+
+**Exit codes:** `0` on success; `1` when `test` did not deliver, on a usage error, when the gateway is not running, or on a malformed gateway response.
+
+**How it is delivered, per OS.** Windows: Windows PowerShell 5.1 and the WinRT toast API, under the app id `NimbusAgent.Nimbus` (registered for the current user on first use); if you turn Nimbus off in Windows Settings → Notifications, `status` names that as the reason. macOS: `osascript`, so notifications are shown as coming from **Script Editor**, and macOS may require you to allow Script Editor's notifications once (System Settings → Notifications) — `osascript` reports success either way, so on macOS `delivered: true` means the notification was handed to the OS, not that it was displayed. Linux: `notify-send`, or `gdbus` when that is missing; both need a desktop session bus and a running notification server, so a headless gateway reports unavailable.
+
+**Configuration** (`nimbus.toml`):
+
+```toml
+[notifications]
+enabled = true     # default; false turns every OS notification off
+content = "full"   # default; "title_only" replaces every body with "Open Nimbus for details"
+```
+
+`content = "full"` shows the producer's body, which can name indexed items (a watcher's body carries a fired item's title) — and notifications are visible on a lock screen and, on some desktops, kept in the OS notification history. Use `"title_only"` to keep indexed text off both. Any other `content` value is refused: the gateway logs the error and runs with notifications **off** until it is fixed, rather than falling back to `full`. `NIMBUS_NOTIFICATIONS=off` (also `0`/`false`) turns them off whatever the file says; no environment value turns them on.
+
+**Behaviour you will notice.** At most 5 notifications per rolling minute; past that they are dropped and counted, and one "Nimbus: N more notifications" summary follows once the minute has room. While a HITL approval is pending, a notification titled "Nimbus is waiting for your approval" names only the kind of action (an action type such as `slack.message.post`, or e.g. "code execution") — never the prompt, the arguments or the payload; there is no approve-from-notification. Every event a notification announces is persisted first, so nothing is lost if one is not shown. A `--demo` gateway never raises one.
+
+**Reach.** `notifications.status` / `notifications.test` are CLI-only: not reachable over the LAN, the local HTTP API, MCP or ChatOps, and not on the Tauri allowlist. Nothing leaves the machine — a notification goes to the local OS only, so it appends no egress-ledger row.
+
+**Verification, stated.** Delivered live on Windows 11. The macOS and Linux backends are covered by unit tests (and, on macOS CI, a test that runs the real `osascript` with the exact argument shape), not yet by a notification seen on real macOS or Linux hardware.
 
 ### `nimbus diag`
 
@@ -5116,6 +5156,7 @@ nimbus lan remove abc123
 | `NIMBUS_MAX_AGENT_DEPTH` | Maximum sub-agent recursion depth for multi-agent tasks (1–10; default 3). Overrides `[llm] max_agent_depth` when set and valid |
 | `NIMBUS_MAX_TOOL_CALLS_PER_SESSION` | Cap on sub-tasks one agent coordinator may fan out (1–200; default 20). Overrides `[llm] max_tool_calls_per_session` when set and valid. Exceeding it fails the brief with `ERR_AGENT_LIMIT_REACHED:` |
 | `NIMBUS_RUN_QUERY_BENCH` | Set to `1` to enable strict `< 100ms` p95 assertion in the query latency benchmark |
+| `NIMBUS_NOTIFICATIONS` | `off` (also `0` / `false`, case-insensitive) forces `[notifications] enabled = false`. It can only disable; no value enables notifications a config turned off. Test harnesses that boot a real gateway set it so no test raises a real notification |
 | `NIMBUS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` (default: `info`) |
 | `NIMBUS_SQLITE_PATH` | **macOS only.** Path to a full `libsqlite3.dylib`. Checked first, ahead of the `libsqlite3.dylib` released builds ship beside the binaries and then the Homebrew prefixes (`/opt/homebrew/opt/sqlite/lib/`, then `/usr/local/opt/sqlite/lib/`). Bun links Apple's system SQLite on macOS, which has extension loading compiled out, so sqlite-vec — and therefore vector search, hybrid ranking and session-memory recall — needs one of these present; on a released install the bundled one always is, and this variable is an override rather than a requirement. Mainly useful on a dev checkout, where `process.execPath` is `bun` and no library sits beside it. Ignored on Linux and Windows, which use Bun's own full build. `nimbus doctor` reports the resolved state. |
 | `NIMBUS_UPDATER_URL` | Override the update manifest URL (default: official endpoint) |

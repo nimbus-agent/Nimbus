@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Nimbus is in active development (**Phase 6 — Team** is complete; Spines **S1 — Local Brain** and **S2 — Local Compute Fleet** are complete; a pre-S3 close-out is in progress). Security fixes land on `main` and ship in the next patch release.
+Nimbus is in active development (**Phase 6 — Team** is complete; Spines **S1 — Local Brain** and **S2 — Local Compute Fleet** are complete; the pre-S3 close-out finished 2026-10-10, and S3 is next). Security fixes land on `main` and ship in the next patch release.
 
 Only the latest release is supported. There is no long-term-support branch and no backport programme — if you are not on the newest tag, the fix is to upgrade.
 
