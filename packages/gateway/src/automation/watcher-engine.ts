@@ -278,7 +278,7 @@ export interface ChatopsWatcherNotifyDeps {
  * (Slice 5). When no namespace maps, this is a no-op (local-only watcher).
  *
  * NOT WIRED. This function has no production caller — only its own unit test. Every
- * watcher-notify callsite in `platform/assemble.ts` passes `notifications.show` alone,
+ * watcher-notify callsite in `platform/assemble.ts` passes the OS notification service alone,
  * so watcher alerts do not reach Slack/Teams today. An earlier version of this comment
  * claimed it "composes with the existing IPC-notify callback at the wiring site (both
  * are called)", describing a wiring site that has never existed.

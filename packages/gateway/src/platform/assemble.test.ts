@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -38,6 +38,19 @@ import { processEnvSet } from "./env-access.ts";
 import { gatewayDailyLogPath } from "./gateway-log-file.ts";
 import type { PlatformPaths } from "./paths.ts";
 import type { PlatformServices } from "./types.ts";
+
+// Every in-process `assemblePlatformServices` below builds the REAL notification runtime. It must
+// never probe for (Windows: register an AUMID under HKCU) or raise a real OS toast. The repo-root
+// test preload already forces this, but a `bun test` run from a package directory does not load
+// that preload, so the file sets it itself.
+let originalNotificationsEnv: string | undefined;
+beforeAll(() => {
+  originalNotificationsEnv = process.env["NIMBUS_NOTIFICATIONS"];
+  processEnvSet("NIMBUS_NOTIFICATIONS", "off");
+});
+afterAll(() => {
+  processEnvSet("NIMBUS_NOTIFICATIONS", originalNotificationsEnv);
+});
 
 describe("assemblePlatformServices (smoke)", () => {
   it("is an async function with arity 2 (paths, customVault?)", () => {

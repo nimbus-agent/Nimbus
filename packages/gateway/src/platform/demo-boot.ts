@@ -25,6 +25,9 @@ import type { PlatformPaths } from "./paths.ts";
  * - `chatops`: a `[chatops]` bot opens an outbound Slack/Teams socket and posts. A demo config has
  *   no `[chatops]` section, but that is config, not construction — and the on-call push would
  *   post a demo page's headline through it.
+ * - `osNotifications`: an OS toast lands on the owner's REAL desktop notification centre (and, on
+ *   Windows, the probe registers an AUMID under HKCU) — host-global state a throwaway demo root has
+ *   no business touching. The demo fires a P1 page, so the on-call push would raise one.
  *
  * A pure function so the decision is unit-testable; `assemble.ts` is too large to execute in a
  * unit test, and `security-invariants.test.ts` pins that it consults this.
@@ -38,6 +41,7 @@ export type BootPolicy = {
   readonly embeddingRuntime: boolean;
   readonly extensionsAutoUpdate: boolean;
   readonly chatops: boolean;
+  readonly osNotifications: boolean;
 };
 
 /**
@@ -55,5 +59,6 @@ export function bootPolicyFor(paths: Pick<PlatformPaths, "demo">): BootPolicy {
     embeddingRuntime: !demo,
     extensionsAutoUpdate: !demo,
     chatops: !demo,
+    osNotifications: !demo,
   };
 }

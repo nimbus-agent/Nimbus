@@ -116,3 +116,11 @@ if (blanked.length > 0 && process.env["NIMBUS_TEST_PRELOAD_QUIET"] !== "1") {
     `[test-preload] blanked ${blanked.length} env var(s) for hermetic tests: ${blanked.join(", ")}`,
   );
 }
+
+// OS notifications (pre-S3 item E) are ON by default once a backend probes available. A test that
+// boots a gateway — in process (`assemblePlatformServices`) or as a child that inherits this env —
+// must never raise a real toast on the developer's desktop, nor (on Windows) register the toast
+// AUMID under HKCU via the probe. FORCED rather than defaulted: a developer who exported a different
+// value for their own gateway must not leak it into the suite. A test that needs notifications on
+// sets the variable itself, after preload; the config loader reads it at load time, not import.
+process.env["NIMBUS_NOTIFICATIONS"] = "off";

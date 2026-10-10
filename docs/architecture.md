@@ -33,6 +33,7 @@
 - [Built-in Agents Pattern](#built-in-agents-pattern)
 - [Phase 6+ Subsystems](#phase-6-subsystems)
 - [Spine S2 Subsystems — Local Compute Fleet](#spine-s2-subsystems)
+- [OS notifications](#os-notifications)
 - [Nimbus Gateway: Process Lifecycle](#nimbus-gateway-process-lifecycle)
 - [Local Database Schema](#local-database-schema)
 - [Testing Architecture](#testing-architecture)
@@ -123,7 +124,7 @@ export async function createPlatformServices(): Promise<PlatformServices> {
 | **Config dir** | `%APPDATA%\Nimbus` | `~/Library/Application Support/Nimbus` | `~/.config/nimbus` (XDG Base Dir) |
 | **Data dir** | `%LOCALAPPDATA%\Nimbus\data` | `~/Library/Application Support/Nimbus` (shares the config root; no `/data` segment) | `~/.local/share/nimbus` |
 | **Extensions dir** | `%LOCALAPPDATA%\Nimbus\extensions` | `~/Library/Application Support/Nimbus/extensions` | `~/.local/share/nimbus/extensions` |
-| **Notifications** | Win32 Toast API (via Tauri plugin) | `NSUserNotification` (via Tauri plugin) | `libnotify` via D-Bus |
+| **Notifications** | Windows PowerShell 5.1 + WinRT `ToastNotificationManager` (spawned by the gateway) | `osascript` `display notification` (attributed to Script Editor) | `notify-send`, else `gdbus` → `org.freedesktop.Notifications` (needs a session bus and a running notification server) |
 | **Shell setup** | PowerShell profile + `$PATH` | `~/.zshrc` / `~/.bashrc` | `~/.bashrc` / `~/.zshrc` / fish config |
 | **CI runner** | `windows-2025` | `macos-15` | `ubuntu-24.04` |
 | **Release artifact** | `.zip` + `.msi` (currently unsigned)¹ | `.tar.gz` + `.pkg` (currently unsigned)¹ | `.deb` / `.rpm` (GPG-signed apt/yum repo) + AppImage + tarball |
@@ -1707,11 +1708,12 @@ the stored brief is the deterministic render, so a push needs no model and canno
 stored as `status = 'failed'` with a `failure_code` and is retryable.
 
 **Delivery** (`push-sinks.ts`): one `oncall.briefPushed` event on the `gateway.event` stream carrying
-`{incidentId, status}` and nothing else (never the brief), and an OS notification that is attempted but currently
-dropped — Nimbus has no platform notification implementation yet (`NotificationService.delivers` is `false`), so
-every row's toast is recorded `skipped` with that reason and no summary is sent. Were one implemented, it would be
-capped at 3 per run plus one summary and would carry the incident title and id, never the brief. Today the delivery
-surfaces are `nimbus tail --filter oncall` (the event) and `nimbus oncall pushed`. Read it with
+`{incidentId, status}` and nothing else (never the brief), and an OS toast ([OS notifications](#os-notifications),
+real since 2026-10-10) capped at 3 per run plus one summary, carrying the incident title and id, never the brief.
+`delivers` is read at delivery time: when `[notifications]` is off or no backend is available, every row's toast is
+recorded `skipped` with that reason and no summary is sent; a toast the service refused (rate limit, send failure)
+is recorded `failed`. The durable delivery surfaces are `nimbus tail --filter oncall` (the event) and
+`nimbus oncall pushed`. Read it with
 `nimbus oncall pushed [list|<incident-id>] [--retry] [--json]` through three methods,
 `oncall.pushedList` / `oncall.pushedGet` / `oncall.pushedRetry`; the whole `oncall` namespace is LAN-forbidden, and of the
 three only the two reads are on the Tauri allowlist (105 → 107); `oncall.pushedRetry` stays CLI-only. `nimbus tail --filter oncall` follows the event and `nimbus doctor` warns when
@@ -1771,6 +1773,107 @@ four cloud adapters — Anthropic, OpenAI, Gemini and xAI — each behind a defa
 `[llm.remote.<vendor>] enabled` opt-in with its key read from the **Vault and never the
 environment**. See [Model Router](#model-router-local-llm) above for how a route is selected, and
 `I29`'s `model` coverage class for how every non-local call is ledgered before it is made.
+
+## OS notifications
+
+**Shipped 2026-10-10 (pre-S3 item E).** Until then the only `NotificationService` was
+`createUnimplementedNotifications` (`platform/assemble.ts`, `delivers: false`), so every toast was dropped with a
+`notification.dropped` log line. It survives as the FALLBACK, used where the gateway cannot or must not deliver: a
+demo-rooted gateway (I41 — `BootPolicy.osNotifications` is `false`, so a demo's fired page never reaches the owner's
+real notification centre), a platform with no backend, or a `[notifications]` section that failed to load (logged at
+ERROR; notifications then run OFF until it is fixed — the fail-closed direction for a privacy setting).
+
+**Where it lives.** `packages/gateway/src/platform/notifications/`:
+
+- `win32.ts` / `darwin.ts` / `linux.ts` — one `NotificationBackend` each (`probe()`, `send(title, body)`), every spawn
+  through `platform/spawn-capture.ts` (hidden window on Windows, never rejects) with a 10 s timeout and a minimal,
+  named environment — no credential or token in the gateway's own environment reaches the child. The spawner is
+  injected, so no unit test starts a real platform tool.
+- `os-notifications.ts` — the policy around one backend: config, the probe state, `title_only`, the rate limit and
+  text-free logging. `createPlatformNotificationBackend` picks the backend by `process.platform`.
+- `notifications-runtime.ts` — what `assemble.ts` builds: the one service every producer is handed (sync failure,
+  lost authentication, a fired watcher, the on-call pushed brief, the consent hop), plus the `status` / `test`
+  surface behind `notifications.status` / `notifications.test`. Producers fire toasts through
+  `showIgnoringFailure`, because `show()` REJECTS (unavailable, rate-limited, send failure) and an unhandled
+  rejection exits the gateway.
+- `config/notifications-toml.ts` — `[notifications] enabled` (default `true`) and `content` (`"full"` default, or
+  `"title_only"`; any other value is refused loudly rather than defaulted, since a typo silently falling back to
+  `full` would put indexed text on a lock screen). `NIMBUS_NOTIFICATIONS=off` (also `0`/`false`) can only DISABLE;
+  every test harness that boots a real gateway sets it.
+
+**Why spawned OS tools, not a native module.** A native addon does not survive `bun build --compile` cleanly (the
+same reason the computer-use terminal lane is pipe-backed rather than a PTY), and each platform already ships a tool
+that raises a toast: Windows PowerShell 5.1 with the WinRT `ToastNotificationManager` (the WinRT type projection
+does not exist in PowerShell 7, so `pwsh` is no fallback; `powershell.exe` is resolved by absolute path under
+`%SystemRoot%`, never PATH), `/usr/bin/osascript`'s `display notification` on macOS, and `notify-send` (else
+`gdbus` against `org.freedesktop.Notifications`) on Linux. The cost is roughly half a second per Windows toast.
+
+**Data passing — title and body are untrusted.** A watcher body carries an indexed item title, i.e. anything a third
+party typed into a ticket, so no backend splices text into something a tool PARSES:
+
+- **Windows:** the script is a constant template; title and body enter it only as base64 of their UTF-8 bytes
+  inside single-quoted literals, decoded inside the script, and the whole script travels as `-EncodedCommand`. The
+  base64 alphabet holds no quote, `$`, backtick or newline. The decoded text becomes an XML text node via
+  `XmlDocument.CreateTextNode`, never concatenated into toast XML.
+- **macOS:** three constant `-e` statements form an `on run argv` handler; title and body are argv elements after
+  `--`, never script source.
+- **Linux:** `notify-send` takes plain argv after `--`. `gdbus` parses its arguments as GVariant text, so both
+  strings become single-quoted GVariant literals with `\` and `'` escaped and control characters as `\uXXXX`. The
+  BODY is markup on most notification servers, so `&`, `<` and `>` are escaped for either tool.
+
+Every string is stripped of C0 controls (bar TAB and LF) and capped at 128 (title) / 512 (body) code points. Each
+backend's tests drive it with hostile strings.
+
+**Availability is a probe, and `delivers` is live.** The probe runs at boot, never awaited. Windows registers the app
+id `NimbusAgent.Nimbus` under `HKCU:\Software\Classes\AppUserModelId` (idempotent, current user only) and reads
+the notifier's `Setting`: an explicit `Disabled*` value (`DisabledForApplication`, `DisabledForUser`,
+`DisabledByGroupPolicy`, `DisabledByManifest`) is reported as the reason; an EMPTY `Setting` means "registered,
+never used" and counts as available, because Windows creates the Setting only when the first toast is shown — the
+live acceptance run found the probe refusing the first toast on every fresh install when it read empty as
+unavailable. macOS checks only that `/usr/bin/osascript` exists; toasts are attributed to Script Editor, macOS may
+require allowing Script Editor's notifications once, and `display notification` exits 0 either way, so a
+`delivered` there cannot prove a toast was displayed. Linux needs a session bus (`DBUS_SESSION_BUS_ADDRESS`, or
+`$XDG_RUNTIME_DIR/bus`) and one of the two tools on PATH; it does not confirm a notification server is running, so a
+missing one surfaces as a send failure. An unavailable probe is retried at most once per 5 minutes on the next
+toast, since the usual cause is a gateway autostarted before the desktop session. `NotificationService.delivers` is
+a GETTER, so the on-call push reads it at delivery time rather than copying it at construction, and it turns `true`
+again once the retry interval has passed: the push gates on `delivers` and never calls `show()` while it is false,
+so without that it would record every pushed toast `skipped` until some other producer happened to trigger the retry.
+
+**Rate limit.** At most 5 toasts per rolling 60 s. Excess toasts are dropped and counted; when the window has room
+again, ONE fixed-text summary toast (`Nimbus: N more notifications`) reports them. The summary counts against the
+window like any other toast. `nimbus notifications status` shows the running total. The approval-pending toast is
+the one exception: it is shown even when the window is full (it still takes a slot), because a HITL prompt nobody
+sees blocks an action, and a burst of watcher toasts must not be able to drop it.
+
+**`title_only`.** Replaces every body a caller passes to `show()` — producers, the consent hop and the test toast —
+with `Open Nimbus for details`; the rate-limit summary's body is fixed text already. The default is the full body (an owner ruling), and the lock screen and the OS
+notification history are the exposure it trades against.
+
+**The consent hop** (`util/approval-pending.ts`). A fixed-text toast, `Nimbus is waiting for your approval`, raised
+whenever a HITL approval becomes pending, so an owner not watching the terminal learns that Nimbus is blocked on
+them. Its only variable is the KIND: an executor action-type id (accepted only in action-type shape, else a generic
+label) or a fixed label per consent method. It NEVER carries the prompt, `details`, a code body, a grant set, an
+argument value or a payload — `approval-pending.test.ts` plants a sentinel in every field of each request and
+asserts it never reaches the toast. It is raised at every seam that asks a human: the executor's
+`ConsentCoordinatorImpl` (next to the `hitl.requested` event), the `ConsentBroker` base class (so every subclass —
+exec, computer-use envelope and action, toolgen create and save, share, federated preflight — and the test fails
+when a new subclass's method has no label), and the
+three brokers outside that base: `FederationConsentBroker`, `QuorumCoordinator` and `DelegatedApprovalBroker`. The
+brokers are module singletons built before the notification service, so `assemble.ts` hands the service in once
+through `setApprovalPendingNotifier`; until then the hop is a no-op, and a throwing or rejecting notifier is
+swallowed — a toast failure is never a consent failure. There is no approve-from-toast.
+
+**Logging.** A body is never logged: watcher bodies carry indexed item titles and the log redactor scrubs secrets,
+not indexed content. Failures log the title (every producer's title is fixed text) and a text-free reason; a send
+error never carries stderr, which can echo argv.
+
+**What it is not.** No egress — a toast goes to the local OS notification service only, so no egress class and no
+ledger row; no new invariant; no migration. `notifications.status` / `notifications.test` are CLI-only: the whole
+`notifications` namespace is LAN-forbidden (a paired peer must not raise toasts on this desktop or learn whether
+its owner can see them) and absent from the Tauri allowlist. **Verified live on Windows 11 only**; the macOS and
+Linux backends are covered by unit tests plus a darwin-only test on the macOS CI leg that runs the real
+`osascript` with the exact argv shape, not by a toast seen on real hardware.
 
 ---
 

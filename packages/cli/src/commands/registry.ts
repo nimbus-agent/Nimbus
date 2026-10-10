@@ -39,6 +39,7 @@ export const COMMAND_NAMES = [
   "media",
   "metrics",
   "negotiate",
+  "notifications",
   "owners",
   "people",
   "policy",

@@ -193,7 +193,7 @@ Nimbus maintains a local SQLite metadata index. Searching across 50,000 indexed 
 
 ### True Cross-Platform
 
-Windows, macOS, and Linux are equally supported. Every PR runs a full gate on Ubuntu (typecheck, lint, build, tests). Pushes to `main` run the full three-platform matrix in parallel. Platform-specific code (IPC, secrets, autostart) lives behind a typed `PlatformServices` abstraction — business logic never knows which OS it's on. OS desktop notifications are **not implemented yet** on any platform: the notification service records a dropped notification and delivers nothing.
+Windows, macOS, and Linux are equally supported. Every PR runs a full gate on Ubuntu (typecheck, lint, build, tests). Pushes to `main` run the full three-platform matrix in parallel. Platform-specific code (IPC, secrets, autostart) lives behind a typed `PlatformServices` abstraction — business logic never knows which OS it's on. OS desktop notifications are delivered on all three (since 2026-10-10; verified live on Windows 11, by tests on macOS and Linux) — see `nimbus notifications status|test` and `[notifications]` in [`cli-reference.md`](./cli-reference.md#nimbus-notifications).
 
 ### Extensible
 
@@ -414,7 +414,7 @@ Nimbus uses phases, not calendar dates. A phase completes when its acceptance cr
 | 6 | Team (federation, Team Vault, SSO/SCIM, ChatOps, Share) | ✅ Complete |
 | S1 | Local Brain — egress ledger, implicit knowledge, the built-in agent set | ✅ Complete |
 | S2 | Local Compute Fleet — sandboxed code execution, local computer-use, agent fleets | ✅ Complete (2026-10-10) |
-| S3–S5 | Sequencing Spine overlay — see the roadmap | Planned (S3 next, after a pre-S3 close-out) |
+| S3–S5 | Sequencing Spine overlay — see the roadmap | Planned (S3 next; the pre-S3 close-out finished 2026-10-10) |
 | 13 | Desktop Distribution (*ships `desktop-v0.1.0`* Tauri signed installers + auto-update) | Planned |
 
 **S1 (Local Brain) shipped and closed** on 2026-08-20 — the always-on egress ledger and `nimbus prove` (invariant `I29`), the research-briefs HTTP surface, the full-body store that made briefs answerable at all, zero-config onboarding, and the fourteen built-in read-only agents: `expert`, `impact`, `catchup`, `ghost`, `conflicts`, `huddle`, `janitor`, `preflight`, `why`, `glossary`, `decisions`, `ownership`, `pre-mortem` and `negotiate`. The Wave 6 answer-quality set followed and closed it out: agent brief synthesis (`[agents] synthesis`, invariant `I31`), `nimbus ask --devil`, the `[persona]` `tone`/`voice` vocabulary, `nimbus stats` for bucketed time series over the index, and first-class negation queries.

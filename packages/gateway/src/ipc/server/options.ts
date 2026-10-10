@@ -41,6 +41,7 @@ import type { BoxKeypair } from "../lan-crypto.ts";
 import type { PairingWindow } from "../lan-pairing.ts";
 import type { LanServer } from "../lan-server.ts";
 import type { MediaRpcCtx } from "../media-rpc.ts";
+import type { NotificationsRpcCtx } from "../notifications-rpc.ts";
 import type { OncallPushRpcCtx } from "../oncall-push-rpc.ts";
 import type { PolicyRpcCtx } from "../policy-rpc.ts";
 import type { ClientSession } from "../session.ts";
@@ -179,6 +180,10 @@ export type CreateIpcServerOptions = {
   // On-call pushed brief (2026-10-02). Backs the oncall.pushed* namespace; LAN-forbidden (I5), not
   // Tauri-exposed (I7).
   oncallPushRpcCtx?: OncallPushRpcCtx;
+  // OS notifications (pre-S3 item E). Backs notifications.status / notifications.test; CLI-only —
+  // LAN-forbidden (I5) and not Tauri-exposed (I7). Present once assembled at boot (a demo or an
+  // unsupported platform still reports its inactive status); the dispatcher skips when unset.
+  notificationsRpcCtx?: NotificationsRpcCtx;
   // S2 runtime tool generation (I39). toolgen.create gates through the owner consent broker
   // (fail-closed on timeout/deny) inside `createGeneratedTool`; toolgen.approvalRespond is the
   // owner's answer channel. Present only when assembled at boot; the dispatcher skips cleanly when

@@ -152,6 +152,7 @@ Snapshots live in `<dataDir>/snapshots/` and pre-migration backups in `<dataDir>
 | `Gateway is not running` | Gateway process exited or was not started | Run `nimbus start` from a terminal |
 | Slow queries accumulate | Large index without FTS5 vacuum; vec alignment drift | Run `nimbus diag slow-queries` to identify culprits; then `nimbus db verify` and `nimbus db repair --yes` if findings are reported |
 | `nimbus connector sync` hangs | Rate-limit or network timeout on the upstream API | Check `nimbus connector list` for `rate_limited` state; wait for backoff to expire; verify connectivity |
+| No OS notifications appear | Turned off in `[notifications]`; turned off for Nimbus in the OS; on macOS, Script Editor's notifications not yet allowed; on Linux, no session bus or notification server | Run `nimbus notifications status` for the reason, then `nimbus notifications test` |
 
 ---
 

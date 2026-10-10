@@ -7,7 +7,7 @@ Windows 10+, macOS 13+, and Ubuntu 22.04+ are equally supported. Every PR runs a
 | **Gateway IPC** | Named Pipe | Unix Socket | Unix Socket |
 | **Secrets** | DPAPI | Keychain | libsecret |
 | **Autostart** | Registry | LaunchAgents | systemd user |
-| **Notifications** | Win32 Toast | NSUserNotification | libnotify/D-Bus |
+| **Notifications** | WinRT toast via Windows PowerShell 5.1 | `osascript` (shown as Script Editor) | `notify-send` / `gdbus` (D-Bus) |
 | **Config dir** | `%APPDATA%\Nimbus` | `~/Library/…/Nimbus` | `~/.config/nimbus` |
 | **Desktop UI** | WebView2 | WKWebView | WebKitGTK |
 | **CI runner** | `windows-2025` | `macos-15` | `ubuntu-24.04` |

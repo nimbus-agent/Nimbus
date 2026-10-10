@@ -209,6 +209,57 @@ test("a notification service that does not deliver records the toast skipped; no
   expect(rt.store.get("pagerduty:PSK")?.delivery["toast"]?.outcome).toBe("skipped");
 });
 
+test("delivers is read LIVE at delivery time, not snapshotted at construction (both directions)", async () => {
+  const meId = seedP1("PLV");
+  writeFileSync(
+    join(configDir, "nimbus.toml"),
+    `[user]\nme_person_id = "${meId}"\n\n[oncall.push]\nenabled = true\n`,
+  );
+  // Starts TRUE (an OS service whose probe is still pending), flips FALSE after construction (the
+  // probe resolved unavailable) — a snapshot would still say true and attempt the toast.
+  let live = true;
+  let shown = 0;
+  const notifications = {
+    get delivers(): boolean {
+      return live;
+    },
+    show: (): void => {
+      shown += 1;
+    },
+  };
+  const rt = assembleOncallPushRuntime({
+    settleImmediately: true,
+    db,
+    configDir,
+    notifications,
+    logger: { error: () => {} },
+    now: () => T0 - 1000,
+  });
+  live = false;
+  await rt.run("pagerduty");
+  expect(shown).toBe(0);
+  expect(rt.store.get("pagerduty:PLV")?.delivery["toast"]?.outcome).toBe("skipped");
+
+  // Other direction: constructed while false, flipped true before the run → delivered.
+  const meId2 = seedP1("PLW");
+  writeFileSync(
+    join(configDir, "nimbus.toml"),
+    `[user]\nme_person_id = "${meId2}"\n\n[oncall.push]\nenabled = true\n`,
+  );
+  live = false;
+  const rt2 = assembleOncallPushRuntime({
+    settleImmediately: true,
+    db,
+    configDir,
+    notifications,
+    logger: { error: () => {} },
+    now: () => T0 - 1000,
+  });
+  live = true;
+  await rt2.run("pagerduty");
+  expect(rt2.store.get("pagerduty:PLW")?.delivery["toast"]?.outcome).toBe("delivered");
+});
+
 test("trigger logs a non-Error rejection as its string form", async () => {
   writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = true\n");
   const errs: Record<string, unknown>[] = [];

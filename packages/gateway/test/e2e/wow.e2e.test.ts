@@ -245,6 +245,8 @@ beforeAll(async () => {
     TEMP: dirs.tmp,
     TMP: dirs.tmp,
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+    // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+    NIMBUS_NOTIFICATIONS: "off",
     // Belt-and-suspenders against a real outbound update check: I41 already skips the updater
     // startup check for a demo-rooted gateway (`bootPolicy.updaterStartupCheck`), so this should
     // never matter — but if that gate ever regressed, an unset value here would let a real

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { notifyApprovalPending } from "../util/approval-pending.ts";
 import type { ConsentDecision } from "./query-gate.ts";
 
 export interface ConsentRequestInput {
@@ -39,6 +40,8 @@ export class FederationConsentBroker {
       timer.unref?.(); // don't hold the event loop open while a consent request is pending
       this.pending.set(requestId, { resolve, timer });
       this.broadcast("federation.consentRequest", { requestId, ...input });
+      // Consent hop (util/approval-pending.ts): the kind only, never the peer/namespace/purpose.
+      notifyApprovalPending({ source: "broker", method: "federation.consentRequest" });
     });
   }
 

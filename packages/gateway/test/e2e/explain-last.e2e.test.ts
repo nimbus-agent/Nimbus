@@ -140,6 +140,8 @@ async function startTestGateway(tag: string): Promise<{
     // skipping the runtime avoids a real (or stalled) MiniLM/CDN fetch slowing boot for no reason
     // relevant to what this test asserts.
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+    // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+    NIMBUS_NOTIFICATIONS: "off",
   };
 
   const proc = Bun.spawn(["bun", RUNNER], {

@@ -126,7 +126,7 @@ Every row below was verified against the tree on 2026-08-02; the Extension syste
 | Extension system | `install` copies, hashes, Ed25519-verifies (I16), rows and enables — then nothing ever spawns the entry file. User docs (`README.md`, `cli-reference.md`) now say so plainly (2026-10-07) | `listExtensions` is consumed only by `ipc/automation-rpc.ts` list/info/remove; every `wrapServerSpec()` call site is first-party or user-MCP |
 | Desktop app | Code-complete Tauri app — a 107-method Rust allowlist, `tauri build` runs in CI — that has never shipped a binary. The FAQ and `cli-reference.md` now say it is not released (2026-10-07) | `tauri build` runs only in `ci.yml`; no release workflow publishes a desktop artifact |
 | Admin console | **Repaired.** The console's three files are embedded in the compiled gateway (`ipc/embedded-assets.ts`, #1058) and built before every compile (`compile-gateway.ts`, release.yml's "Build the admin console" step). `install-smoke.yml` asserts `GET /admin` → 200 with the console's `index.html` on the installed binary, behind the `http_api.deployment_token` bearer (2026-10-07) | `EMBEDDED_CONSOLE_ASSETS`; the install-smoke `/admin` assertion |
-| OS notifications | `NotificationService.show()` delivers nothing, and it is the only implementation — so watchers notify nobody and a pending consent prompt reaches you only if you are looking at the right terminal. The events themselves are persisted before the notify, so this is a reachability gap, not data loss; the drop is now logged as `notification.dropped` rather than being silent | `createUnimplementedNotifications()` in `packages/gateway/src/platform/assemble.ts`, wired in `assemblePlatformServices` |
+| OS notifications | **Delivered (2026-10-10, pre-S3 item E).** Real toasts on Windows, macOS and Linux for sync failure, lost authentication, a fired watcher, an on-call pushed brief, and a fixed-text consent hop while a HITL approval is pending. Default on, full body by default (`[notifications] content = "title_only"` hides it), 5 per rolling 60 s then one summary. Verified live on Windows 11; macOS and Linux by tests only. The non-delivering `createUnimplementedNotifications()` remains the fallback for a demo-rooted gateway, an unsupported platform, or an invalid `[notifications]` section, and still logs `notification.dropped` | `packages/gateway/src/platform/notifications/` (`createNotificationsRuntime`, wired in `assemblePlatformServices`); `nimbus notifications status\|test` |
 | Voice subsystem | Dark: no production code constructs a `VoiceService`, so every `voice.*` method is `Method not found` and there is no CLI or desktop entry point. The user-facing claims are retracted (the docs-site Voice page, the README prerequisite rows, `nimbus doctor`'s voice section — 2026-10-07); the code remains | `ctx.options.voiceService` is never set outside tests (`ipc/server/dispatchers.ts` `tryDispatchVoiceRpc`) |
 | Portability layer | `data export/import/delete`, `db snapshot/restore`, recovery seeds, backup manifests and signed deletion records all ship, with no coherent story on top | `packages/gateway/src/db/`, `ipc/data-rpc.ts` |
 | Profile isolation | `profile.list/create/switch/delete` ships and is correctly LAN-forbidden, but nothing proves it is an isolation *boundary* | `ipc/profile-rpc.ts` |
@@ -181,9 +181,10 @@ Where the work actually happens, beyond a developer at a keyboard.
   context and the index never moves. It is also the cheapest distribution available, because
   directory listings are currently unreachable purely for packaging reasons. *Needs:*
   session-correlated notifications. *Effort:* S–M.
-- **OS notification delivery** — three platform implementations of `show()`, plus the consent
+- ~~**OS notification delivery** — three platform implementations of `show()`, plus the consent
   hop. This is a human-reachability argument, not a UX one: a local-first product has no push
-  channel, so structural HITL depends on it. *Needs:* nothing. *Effort:* S per platform.
+  channel, so structural HITL depends on it. *Needs:* nothing. *Effort:* S per platform.~~
+  ✅ **Shipped 2026-10-10** as pre-S3 item E (see the OS notifications row above).
 - **ChatOps agent commands** — let a chat mention invoke a read-only agent, not just receive
   dispatched replies. *Needs:* session correlation. *Effort:* M.
 - **Git and shell integration** — a pre-push hook running impact and conflicts, with a hard
@@ -470,6 +471,14 @@ strings — the body is index-derived text); the consent hop as a pointer carryi
 client label only, with a golden test that no payload field can reach it; a read-only pending
 listing with no answer path; and the desktop app as the first non-CLI approver, including replacing
 the renderer-supplied import path with a native dialog.
+
+**Status (2026-10-10):** the first two parts shipped as pre-S3 item E — per-platform toasts
+(`platform/notifications/`; the text never reaches a parser it could break out of: base64 into a
+constant PowerShell script on Windows, argv on macOS and for `notify-send`, a GVariant-escaped
+literal for `gdbus`) and the consent hop, whose only variable is the KIND of the pending approval
+(an executor action type, or a fixed label per consent broker) — `util/approval-pending.test.ts`
+asserts a sentinel planted in each request's payload never reaches the toast. The rest of this
+cluster — the pending listing and the desktop app as an approver — was not part of E.
 
 Explicitly **no** approve-from-toast in v1: actionable toasts need Windows app-identity registration
 and a signed macOS bundle, which would make the approval channel Linux-only.

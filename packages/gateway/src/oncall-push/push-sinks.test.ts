@@ -331,7 +331,7 @@ test("notifyDelivers false → every toast skipped with the reason, notify never
     notify: () => {
       notifyCalls += 1;
     },
-    notifyDelivers: false,
+    notifyDelivers: () => false,
     emit: (p) => events.push(p),
     now: () => 7,
   })(items);
@@ -343,7 +343,9 @@ test("notifyDelivers false → every toast skipped with the reason, notify never
       toast: { outcome: "skipped", reason: NO_NOTIFIER_REASON, at: 7 },
     });
   }
-  expect(NO_NOTIFIER_REASON).toBe("no OS notification implementation on this platform");
+  expect(NO_NOTIFIER_REASON).toBe(
+    "OS notifications are off or unavailable on this gateway (see nimbus notifications status)",
+  );
 });
 
 test("an incident with no openedAtMs sorts as oldest: toasted after dated ones, and coalesced first when over the cap", async () => {
@@ -423,7 +425,9 @@ function chatDeliverer(
   return createPushDeliverer({
     store,
     notify: over.notify ?? (() => {}),
-    ...(over.notifyDelivers === undefined ? {} : { notifyDelivers: over.notifyDelivers }),
+    ...(over.notifyDelivers === undefined
+      ? {}
+      : { notifyDelivers: () => over.notifyDelivers === true }),
     emit: () => {},
     now: () => 7,
     chatops: { namespace: over.namespace ?? NS, post: () => post },

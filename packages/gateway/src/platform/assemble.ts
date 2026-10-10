@@ -354,6 +354,7 @@ import {
 import { createUpdaterFromConfig } from "../updater/factory.ts";
 import { buildUpdateAuditRecorder } from "../updater/update-audit.ts";
 import { redactUrlUserinfo } from "../updater/updater.ts";
+import { setApprovalPendingNotifier } from "../util/approval-pending.ts";
 import { createNimbusVault } from "../vault/factory.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../version.ts";
@@ -365,6 +366,10 @@ import { ensurePlatformDirectories } from "./dirs.ts";
 import { processEnvGet } from "./env-access.ts";
 import { createGatewayPinoLogger } from "./gateway-log-file.ts";
 import { createHostActivity, type HostActivity } from "./host-activity.ts";
+import {
+  createNotificationsRuntime,
+  showIgnoringFailure,
+} from "./notifications/notifications-runtime.ts";
 import type { PlatformPaths } from "./paths.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
 import { sandboxCwdFor } from "./sandbox/sandbox-cwd.ts";
@@ -384,13 +389,13 @@ function createStubAutostart(): AutostartManager {
 }
 
 /**
- * The ONLY `NotificationService` implementation in the tree: OS notification delivery
- * is **not implemented on any platform**. `win32.ts`, `darwin.ts` and `linux.ts` all
- * delegate to `assemblePlatformServices`, so this no-op is what every install runs —
- * there is no per-platform variant to find. Tracked in `docs/ecosystem-roadmap.md`
- * ("OS notification delivery", effort S per platform).
+ * The NON-delivering `NotificationService` (`delivers: false`). Since pre-S3 item E it is no
+ * longer the only implementation: `platform/notifications/` raises real OS toasts on Windows,
+ * macOS and Linux, and `createNotificationsRuntime` falls back to THIS service only where it
+ * cannot or must not deliver — a demo-rooted gateway (I41), a platform with no backend, or a
+ * `[notifications]` section that failed to load (notifications then run OFF until it is fixed).
  *
- * What this does NOT mean: no alert is lost. All three producers — repeated sync
+ * What a fallback does NOT mean: no alert is lost. All three producers — repeated sync
  * failure, connector auth loss, and a watcher fire — write durable state BEFORE they
  * call `show()`. A fire is persisted by `insertWatcherEvent` + `updateWatcherLastFired`
  * one statement ahead of the notify; auth loss is persisted by `transitionHealth` to
@@ -416,7 +421,7 @@ export function createUnimplementedNotifications(logger: Logger): NotificationSe
       return Promise.try(() => {
         logger.info(
           { event: "notification.dropped", title },
-          "OS notification not delivered (no platform implementation); the underlying event is still persisted and readable",
+          "OS notification not delivered (no OS notification backend in use); the underlying event is still persisted and readable",
         );
       });
     },
@@ -829,15 +834,16 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     db,
     configDir: paths.configDir,
     localIndex,
-    // Passed WHOLE so the push sinks see `delivers: false` and record "skipped", not "delivered".
+    // Passed WHOLE so the push sinks read `delivers` LIVE at delivery time (the OS service's probe
+    // can flip it after boot) and record "skipped" rather than attempting a toast that cannot show.
     notifications,
     logger: syncLogger,
   });
 
   const syncScheduler = new SyncScheduler(syncContext, undefined, {
-    notify: async (title, body) => {
-      await notifications.show(title, body);
-    },
+    // `show()` REJECTS (unavailable / rate-limited / send failure) and the scheduler fires this as
+    // `void this.notify?.(...)`; an unhandled rejection exits the gateway (exit-diagnostics.ts).
+    notify: (title, body) => showIgnoringFailure(notifications, title, body),
     onConnectorSyncSuccess: (serviceId, result, durationMs) => {
       // FIRST: the scheduler calls this hook unguarded, so a throw below would skip the push;
       // trigger() never throws (and returns at once for anything but pagerduty).
@@ -856,7 +862,13 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
           : { bytesTransferred: result.bytesTransferred }),
         hasMore: result.hasMore,
       });
-      evaluateWatchersAfterSync(db, serviceId, at, (t, b) => notifications.show(t, b), watcherOpts);
+      evaluateWatchersAfterSync(
+        db,
+        serviceId,
+        at,
+        (t, b) => showIgnoringFailure(notifications, t, b),
+        watcherOpts,
+      );
       glossaryRefresher.trigger();
       decisionsRefresher?.trigger();
       premortemRefresher?.trigger();
@@ -918,7 +930,12 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     registerUserMcpSyncablesFromDatabase(db, policyFilteredRegistrar, connectorMesh);
     syncScheduler.start();
   }
-  evaluateWatchersStartupCatchUp(db, Date.now(), (t, b) => notifications.show(t, b), watcherOpts);
+  evaluateWatchersStartupCatchUp(
+    db,
+    Date.now(),
+    (t, b) => showIgnoringFailure(notifications, t, b),
+    watcherOpts,
+  );
   return {
     syncScheduler,
     connectorMesh,
@@ -3311,9 +3328,28 @@ export async function assemblePlatformServices(
       logger: syncLogger,
     });
   }
-  const notifications = createUnimplementedNotifications(syncLogger);
   const rateLimiter = new ProviderRateLimiter();
   const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
+  // pre-S3 item E: real OS toasts. A demo-rooted gateway (I41), a platform with no backend, or an
+  // invalid `[notifications]` section (logged at ERROR; never crashes boot) keep the non-delivering
+  // service. The probe is kicked off here and never awaited — boot does not wait on a PowerShell
+  // spawn — and `ready()` never rejects.
+  const notificationsRuntime = createNotificationsRuntime({
+    allowed: bootPolicy.osNotifications,
+    platform: process.platform,
+    tomlPath: activeTomlPath,
+    logger: syncLogger,
+    fallback: createUnimplementedNotifications(syncLogger),
+  });
+  const notifications = notificationsRuntime.service;
+  void notificationsRuntime.ready();
+  // The consent hop (T3): a fixed-text toast while a HITL approval is pending. The hop itself
+  // swallows a throwing/rejecting notifier, so a toast failure can never break consent.
+  setApprovalPendingNotifier((title, body) => notifications.show(title, body, { urgent: true }));
+  sidecarStops.push(() => {
+    setApprovalPendingNotifier(undefined);
+    notificationsRuntime.close();
+  });
   // A2: resolve the persona ONCE at boot, discarding the result, purely so an unrecognised
   // `[persona]` value is reported. This is the ONLY site that passes a logger.
   //
@@ -4028,6 +4064,8 @@ export async function assemblePlatformServices(
     now: () => Date.now(),
   };
   ipcOpts.oncallPushRpcCtx = { runtime: oncallPush };
+  // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
+  ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
 
   // I39 (S2 runtime tool generation): the sandboxed, owner-approved, session-ephemeral tool
   // registration surface. DEFAULT OFF -- `enabled` is read from `[tool_generation]`, and

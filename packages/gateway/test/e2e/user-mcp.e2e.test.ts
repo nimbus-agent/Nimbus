@@ -356,6 +356,8 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
         ...(process.env as Record<string, string>),
         NIMBUS_E2E_PATHS_JSON: JSON.stringify(paths),
         NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+        // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+        NIMBUS_NOTIFICATIONS: "off",
       },
     });
     const collect = async (stream: ReadableStream<Uint8Array>): Promise<void> => {

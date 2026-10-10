@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { notifyApprovalPending } from "./approval-pending.ts";
 
 export type ConsentBroadcast = (method: string, params: unknown) => void;
 
@@ -39,6 +40,9 @@ export class ConsentBroker<TInput extends object> {
       }, ttlMs);
       this.pending.set(requestId, { resolve, timer });
       this.broadcast(this.requestMethod, { requestId, ...input });
+      // The consent hop: a fixed-text OS toast whose only variable is a label derived from
+      // `requestMethod`, never from `input`. A no-op until wiring sets a notifier; never throws.
+      notifyApprovalPending({ source: "broker", method: this.requestMethod });
     });
   }
 

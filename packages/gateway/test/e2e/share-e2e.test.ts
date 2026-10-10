@@ -198,6 +198,8 @@ describe("share e2e (real gateway subprocess — I27 create → owner approve �
       env: {
         ...process.env,
         NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+        // Never raise a real OS toast (or probe for one) from a test-booted gateway.
+        NIMBUS_NOTIFICATIONS: "off",
         NIMBUS_E2E_PATHS_JSON: JSON.stringify(paths),
         NIMBUS_E2E_SEED_SESSION_JSON: JSON.stringify([
           { sessionId: SESSION_ID, role: "user", text: `ping ${SECRET_EMAIL} on ${SECRET_IP}` },

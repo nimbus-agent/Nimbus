@@ -137,6 +137,8 @@ CONFIG & DIAGNOSTICS
   nimbus diag [--json] | diag slow-queries [--limit N] [--since 7d]
   nimbus tail [--filter sync] [--json]   Follow gateway events live — health, syncs, watchers,
                               extensions, HITL (follow-only, no backfill)
+  nimbus notifications status|test [--json]   OS notification (toast) backend status; send one
+                              fixed-text test toast ([notifications] enabled/content in nimbus.toml)
 
 Environment (optional):
   NIMBUS_GATEWAY_EXECUTABLE   Path to nimbus-gateway binary (overrides auto-detection)

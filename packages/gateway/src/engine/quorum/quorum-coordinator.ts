@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { notifyApprovalPending } from "../../util/approval-pending.ts";
+
 export type QuorumOutcome = "approved" | "denied" | "failed";
 export interface QuorumResult {
   readonly outcome: QuorumOutcome;
@@ -43,6 +45,9 @@ export class QuorumCoordinator {
         timer,
       });
       this.broadcast(requestId);
+      // A quorum vote is requested of the people at THIS gateway's subscribers (owner UI / approver
+      // poll, answered via `nimbus team respond`) — raise the fixed-text consent hop.
+      notifyApprovalPending({ source: "broker", method: "federation.quorumRequest" });
     });
   }
 

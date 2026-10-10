@@ -5007,6 +5007,7 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       embeddingRuntime: true,
       extensionsAutoUpdate: true,
       chatops: true,
+      osNotifications: true,
     });
     expect(bootPolicyFor(demo)).toEqual({
       reapAppContainers: false,
@@ -5017,6 +5018,7 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       embeddingRuntime: false,
       extensionsAutoUpdate: false,
       chatops: false,
+      osNotifications: false,
     });
   });
 
@@ -5027,6 +5029,9 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     expect(src.match(/collectSidecarsFromEnv\(db,/g)?.length).toBe(1);
     expect(src).toMatch(/if \(bootPolicy\.envSidecars\) \{\s*collectSidecarsFromEnv\(db,/);
     expect(src).toContain("const bootPolicy = bootPolicyFor(paths);");
+    // OS toasts (pre-S3 E): the ONE runtime construction is gated on the demo boot policy.
+    expect(src.match(/createNotificationsRuntime\(\{/g)?.length).toBe(1);
+    expect(src).toMatch(/createNotificationsRuntime\(\{\s*allowed: bootPolicy\.osNotifications,/);
   });
 
   test("clause 3 wiring: linux.ts resolves paths before probing the real OS keyring, and skips the probe entirely in demo mode", async () => {

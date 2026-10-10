@@ -24,6 +24,7 @@ describe("bootPolicyFor", () => {
       embeddingRuntime: true,
       extensionsAutoUpdate: true,
       chatops: true,
+      osNotifications: true,
     });
   });
 
@@ -37,6 +38,7 @@ describe("bootPolicyFor", () => {
       embeddingRuntime: false,
       extensionsAutoUpdate: false,
       chatops: false,
+      osNotifications: false,
     });
   });
 });

@@ -195,6 +195,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // `nimbus wow` — a paired peer has no use for this machine's tour plan or listener list.
   "tour",
   "locality",
+  // OS notifications (pre-S3 item E): a paired peer must not raise toasts on this desktop, nor learn
+  // whether its owner can see them. CLI-only.
+  "notifications",
   // NOTE: egress.prune is deliberately NOT forbidden here — like federation.purge above, it is
   // HITL-gated inside its own handler (handlePrune in egress-rpc.ts calls
   // ctx.requestPruneApproval(beforeTs) and returns { approved: false, prunedCount: 0 } on denial),
