@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import { jsonResponse, makeKeypair } from "../updater/testing/updater-test-fixtures.ts";
-import { ManifestFetchError, Updater } from "../updater/updater.ts";
+import { ManifestFetchError, Updater, UpdaterInstallUnsupportedError } from "../updater/updater.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "./updater-rpc.ts";
 import { expectRpcError } from "./updater-rpc-test-helpers.ts";
 
@@ -196,6 +196,40 @@ describe("dispatchUpdaterRpc", () => {
       dispatchUpdaterRpc("updater.applyUpdate", {}, { updater: stub }),
       -32603,
       /ERR_UPDATER_SIGNATURE_INVALID.*signature check failed/,
+    );
+  });
+
+  test("applyUpdate maps a missing installer to its own code, never the signature arm", async () => {
+    // A REAL Updater with no invokeInstaller — the production shape today. The refusal's message
+    // must not reach the /signature|hash/ arm, whatever wording it carries.
+    const u = new Updater({
+      currentVersion: "0.1.0",
+      manifestUrl: "https://cdn.example.com/latest.json",
+      publicKey: kp.publicKey,
+      target: "linux-x86_64",
+      emit: () => {},
+      timeoutMs: 500,
+    });
+    const err = await dispatchUpdaterRpc("updater.applyUpdate", {}, { updater: u }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(UpdaterRpcError);
+    expect((err as UpdaterRpcError).rpcCode).toBe(-32000);
+    expect((err as UpdaterRpcError).message).toMatch(/^ERR_UPDATER_INSTALL_UNSUPPORTED: /);
+    expect((err as UpdaterRpcError).message).not.toMatch(/ERR_UPDATER_SIGNATURE_INVALID/);
+  });
+
+  test("an install-unsupported message mentioning 'signature' is still not the signature arm", async () => {
+    const stub = makeStubUpdater({
+      applyUpdate: () =>
+        Promise.reject(
+          new UpdaterInstallUnsupportedError("no installer; signature check never ran"),
+        ),
+    });
+    await expectRpcError(
+      dispatchUpdaterRpc("updater.applyUpdate", {}, { updater: stub }),
+      -32000,
+      /^ERR_UPDATER_INSTALL_UNSUPPORTED: /,
     );
   });
 

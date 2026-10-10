@@ -351,6 +351,7 @@ import {
   parseTribalCaptureCommand,
 } from "../tribal/tribal-chat-capture.ts";
 import { createUpdaterFromConfig } from "../updater/factory.ts";
+import { buildUpdateAuditRecorder } from "../updater/update-audit.ts";
 import { redactUrlUserinfo } from "../updater/updater.ts";
 import { createNimbusVault } from "../vault/factory.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -2155,6 +2156,7 @@ function wireUpdaterIntoIpc(
   configDir: string,
   ipc: ReturnType<typeof createIpcServer>,
   syncLogger: Logger,
+  db: Database,
 ): void {
   const updaterCfg = loadNimbusUpdaterFromConfigDir(configDir);
   const updater = createUpdaterFromConfig({
@@ -2162,6 +2164,7 @@ function wireUpdaterIntoIpc(
     currentVersion: GATEWAY_VERSION,
     emit: (name, payload) => ipc.broadcast(name, payload ?? {}),
     logger: syncLogger,
+    recordUpdateEvent: buildUpdateAuditRecorder(db, syncLogger),
   });
   if (updater !== undefined) {
     ipc.setUpdater(updater);
@@ -4429,7 +4432,7 @@ export async function assemblePlatformServices(
   }
 
   if (bootPolicy.updaterStartupCheck) {
-    wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger);
+    wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger, db);
   }
 
   const gatewayAssemblyMs = Math.max(0, Math.round(performance.now() - assemblyStartedMs));

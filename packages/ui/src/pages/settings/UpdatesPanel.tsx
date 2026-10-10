@@ -45,11 +45,22 @@ export function UpdatesPanel() {
     try {
       const next = await createIpcClient().updaterGetStatus();
       setStatus(next);
+      // Seed from the gateway's cached check (e.g. its startup check) so a panel opened later
+      // shows the result without a re-fetch. Never overwrite a result this session already holds.
+      const last = next.lastCheck;
+      if (last !== undefined && useNimbusStore.getState().updaterCheck === null) {
+        setCheck({
+          currentVersion: next.currentVersion,
+          latestVersion: last.latestVersion,
+          updateAvailable: last.updateAvailable,
+          ...(last.notes === undefined ? {} : { notes: last.notes }),
+        });
+      }
       setFetchError(null);
     } catch (e) {
       setFetchError((e as Error).message);
     }
-  }, [setStatus]);
+  }, [setStatus, setCheck]);
 
   useEffect(() => {
     refresh().catch(() => undefined);

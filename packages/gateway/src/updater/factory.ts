@@ -4,7 +4,7 @@ import type { NimbusUpdaterToml } from "../config/nimbus-toml.ts";
 import { derivePlatformTarget } from "./platform-target.ts";
 import { loadUpdaterPublicKey } from "./public-key.ts";
 import type { PlatformTarget } from "./types.ts";
-import { Updater, type UpdaterEmit } from "./updater.ts";
+import { Updater, type UpdaterEmit, type UpdaterOptions } from "./updater.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -13,6 +13,8 @@ export interface CreateUpdaterFromConfigArgs {
   currentVersion: string;
   emit: UpdaterEmit;
   logger: Logger;
+  /** Production: `buildUpdateAuditRecorder(db, logger)` (update-audit.ts). Optional for tests. */
+  recordUpdateEvent?: UpdaterOptions["recordUpdateEvent"];
   _platformOverride?: PlatformTarget | undefined;
   _forceUnsupported?: boolean;
   /** Test seam: override the detected distribution channel. */
@@ -47,12 +49,18 @@ export function createUpdaterFromConfig(args: CreateUpdaterFromConfigArgs): Upda
     return undefined;
   }
 
-  return new Updater({
+  // No `invokeInstaller`: no per-OS installer ships yet, so `applyUpdate` refuses with
+  // ERR_UPDATER_INSTALL_UNSUPPORTED rather than reporting an install that never happened.
+  const opts: UpdaterOptions = {
     currentVersion,
     manifestUrl: updaterCfg.url,
     publicKey: loadUpdaterPublicKey(),
     target,
     emit,
     timeoutMs: DEFAULT_TIMEOUT_MS,
-  });
+  };
+  if (args.recordUpdateEvent !== undefined) {
+    opts.recordUpdateEvent = args.recordUpdateEvent;
+  }
+  return new Updater(opts);
 }

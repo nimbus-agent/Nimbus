@@ -224,7 +224,7 @@ Available to LAN peers. Never mutates data.
 
 | Method | Type | Description |
 |---|---|---|
-| `updater.applyUpdate` | request | User-initiated; verifies Ed25519 signature before applying |
+| `updater.applyUpdate` | request | User-initiated; verifies Ed25519 signature before applying. Refuses with `ERR_UPDATER_INSTALL_UNSUPPORTED` (-32000) before any download while no platform installer is wired — today, every platform |
 
 **Notifications (updater):**
 

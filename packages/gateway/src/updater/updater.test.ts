@@ -9,7 +9,12 @@ import {
   makeKeypair,
 } from "./testing/updater-test-fixtures.ts";
 import type { UpdaterEmit, UpdaterOptions } from "./updater.ts";
-import { MAX_DOWNLOAD_BYTES, redactUrlUserinfo, Updater } from "./updater.ts";
+import {
+  MAX_DOWNLOAD_BYTES,
+  redactUrlUserinfo,
+  Updater,
+  UpdaterInstallUnsupportedError,
+} from "./updater.ts";
 
 const kp = makeKeypair();
 
@@ -24,6 +29,9 @@ function makeUpdater(overrides?: Partial<UpdaterOptions>): Updater {
     target: "linux-x86_64",
     emit: () => {},
     timeoutMs: 2000,
+    // A no-op installer by default: without one `applyUpdate` refuses up front (R1), and these
+    // tests exercise what happens AFTER that gate. The refusal has its own describe block.
+    invokeInstaller: async () => {},
     ...overrides,
   });
 }
@@ -768,6 +776,7 @@ describe("B11 — requireApplyPreconditions branches", () => {
       target: "linux-x86_64",
       emit: () => {},
       timeoutMs: 2000,
+      invokeInstaller: async () => {},
     });
     await expect(u.applyUpdate()).rejects.toThrow(/no manifest loaded/);
   });
@@ -812,6 +821,7 @@ describe("B11 — downloadAsset branches", () => {
       target: "linux-x86_64",
       emit: () => {},
       timeoutMs: 2000,
+      invokeInstaller: async () => {},
     });
     await u.checkNow();
     await expect(u.applyUpdate()).rejects.toThrow(/asset URL must be https/);
@@ -843,6 +853,7 @@ describe("B11 — downloadAsset branches", () => {
       target: "linux-x86_64",
       emit: () => {},
       timeoutMs: 2000,
+      invokeInstaller: async () => {},
     });
     await u.checkNow();
     await expect(u.applyUpdate()).rejects.toThrow(/asset URL must be https/);
@@ -871,6 +882,7 @@ describe("B11 — downloadAsset branches", () => {
       target: "linux-x86_64",
       emit: (name) => events.push(name),
       timeoutMs: 2000,
+      invokeInstaller: async () => {},
     });
     await u.checkNow();
     await expect(u.applyUpdate()).rejects.toThrow(/download HTTP 404/);
@@ -906,6 +918,7 @@ describe("B11 — downloadAsset branches", () => {
       target: "linux-x86_64",
       emit: () => {},
       timeoutMs: 2000,
+      invokeInstaller: async () => {},
       maxDownloadBytes: cap,
     });
     await u.checkNow();
@@ -948,18 +961,22 @@ describe("B11 — downloadAsset branches", () => {
   });
 });
 
-describe("B11 — installOrFail without invokeInstaller", () => {
+describe("R1 — applyUpdate refuses when no installer is wired", () => {
   afterEach(() => {
     server?.stop(true);
     downloadServer?.stop(true);
   });
 
-  test("applyUpdate succeeds without invokeInstaller and emits restarting", async () => {
+  test("refuses before any download, emit, or audit event, leaving state idle", async () => {
     const binary = new Uint8Array(randomBytes(256));
+    let downloadHits = 0;
     downloadServer = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch: () => new Response(binary),
+      fetch: () => {
+        downloadHits++;
+        return new Response(binary);
+      },
     });
     server = Bun.serve({
       hostname: "127.0.0.1",
@@ -979,14 +996,29 @@ describe("B11 — installOrFail without invokeInstaller", () => {
       emit: (name) => events.push(name),
       timeoutMs: 2000,
       recordUpdateEvent: (phase) => recordedPhases.push(phase),
-      // invokeInstaller deliberately omitted
+      // invokeInstaller deliberately omitted — production supplies none today
     });
     await u.checkNow();
-    await u.applyUpdate();
-    expect(events).toContain("updater.restarting");
-    expect(recordedPhases).toContain("system.update.installed");
-    const status = u.getStatus();
-    expect(status.state).toBe("idle");
+    events.length = 0; // drop checkNow's updateAvailable
+    const err = await u.applyUpdate().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UpdaterInstallUnsupportedError);
+    expect((err as Error).message).toMatch(/^ERR_UPDATER_INSTALL_UNSUPPORTED: /);
+    expect(downloadHits).toBe(0);
+    expect(events).toEqual([]);
+    expect(recordedPhases).toEqual([]);
+    expect(u.getStatus().state).toBe("idle");
+  });
+
+  test("the refusal precedes the manifest precondition", async () => {
+    const u = new Updater({
+      currentVersion: "0.1.0",
+      manifestUrl: "https://cdn.example.com/latest.json",
+      publicKey: kp.publicKey,
+      target: "linux-x86_64",
+      emit: () => {},
+      timeoutMs: 2000,
+    });
+    await expect(u.applyUpdate()).rejects.toBeInstanceOf(UpdaterInstallUnsupportedError);
   });
 });
 
@@ -1041,6 +1073,57 @@ describe("B11 — getStatus before and after checkNow", () => {
     expect(status.lastError).toBeUndefined();
     // lastCheckAt should be a valid ISO string
     expect(new Date(status.lastCheckAt!).toISOString()).toBe(status.lastCheckAt!);
+  });
+
+  test("getStatus carries no lastCheck before any check", () => {
+    const u = new Updater({
+      currentVersion: "0.1.0",
+      manifestUrl: "https://cdn.example.com/latest.json",
+      publicKey: kp.publicKey,
+      target: "linux-x86_64",
+      emit: () => {},
+      timeoutMs: 2000,
+    });
+    expect(u.getStatus().lastCheck).toBeUndefined();
+  });
+
+  test("getStatus exposes the cached result of a successful check, kept across a failed one", async () => {
+    let failNext = false;
+    const binary = new Uint8Array(randomBytes(64));
+    server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => {
+        if (failNext) return new Response("boom", { status: 500 });
+        return jsonResponse({
+          ...buildSignedManifest(binary, kp, "https://cdn.example.com/bin", "0.3.0"),
+          notes: "release notes",
+        });
+      },
+    });
+    const u = new Updater({
+      currentVersion: "0.1.0",
+      manifestUrl: `http://127.0.0.1:${server.port}/latest.json`,
+      publicKey: kp.publicKey,
+      target: "linux-x86_64",
+      emit: () => {},
+      timeoutMs: 2000,
+    });
+    await u.checkNow();
+    const first = u.getStatus();
+    expect(first.lastCheck).toEqual({
+      latestVersion: "0.3.0",
+      updateAvailable: true,
+      notes: "release notes",
+      checkedAt: first.lastCheckAt!,
+    });
+
+    failNext = true;
+    await expect(u.checkNow()).rejects.toBeDefined();
+    const second = u.getStatus();
+    expect(second.state).toBe("failed");
+    expect(second.lastError).toBeDefined();
+    expect(second.lastCheck).toEqual(first.lastCheck);
   });
 });
 
@@ -1187,6 +1270,7 @@ describe("B11 — applyUpdate download-failure audit events", () => {
       target: "linux-x86_64",
       emit: (name) => emitted.push(name),
       timeoutMs: 2000,
+      invokeInstaller: async () => {},
       recordUpdateEvent: (phase) => recordedPhases.push(phase),
     });
     await u.checkNow();

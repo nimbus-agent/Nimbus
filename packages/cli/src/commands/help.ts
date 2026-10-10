@@ -30,7 +30,7 @@ GETTING STARTED
   nimbus stop               Stop gateway
   nimbus status [--verbose] [--drift] [--json]   Ping gateway; --verbose adds health + index metrics
   nimbus doctor             Bun version, data dir, Linux vault (secret-tool), gateway state + IPC
-  nimbus update             Check for and install a newer Nimbus release
+  nimbus update             Check for a newer Nimbus release (in-place install not yet supported)
   nimbus version            Show the installed Nimbus version (also: --version, -v)
   nimbus help               Show this message
 

@@ -55,6 +55,50 @@ describe("UpdatesPanel (slimmed; subscriptions live in UpdaterRestartChrome)", (
     expect(await screen.findByText("0.1.0")).toBeTruthy();
   });
 
+  it("seeds the check store from status.lastCheck so a late panel shows the startup check", async () => {
+    updaterGetStatusMock.mockResolvedValue({
+      state: "idle",
+      currentVersion: "0.1.0",
+      configUrl: "https://updates.nimbus-agent.dev/manifest.json",
+      lastCheckAt: "2026-10-10T00:00:00.000Z",
+      lastCheck: {
+        latestVersion: "0.2.0",
+        updateAvailable: true,
+        notes: "Startup-check notes.",
+        checkedAt: "2026-10-10T00:00:00.000Z",
+      },
+    });
+    render(<UpdatesPanel />);
+    expect(await screen.findByText(/New version available: 0.2.0/)).toBeTruthy();
+    expect(screen.getByText(/Startup-check notes/)).toBeTruthy();
+    expect(useNimbusStore.getState().updaterCheck).toEqual({
+      currentVersion: "0.1.0",
+      latestVersion: "0.2.0",
+      updateAvailable: true,
+      notes: "Startup-check notes.",
+    });
+    expect(updaterCheckNowMock).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a check result the panel already holds", async () => {
+    const held = { currentVersion: "0.1.0", latestVersion: "0.3.0", updateAvailable: true };
+    useNimbusStore.setState({ updaterCheck: held });
+    updaterGetStatusMock.mockResolvedValue({
+      state: "idle",
+      currentVersion: "0.1.0",
+      configUrl: "https://updates.nimbus-agent.dev/manifest.json",
+      lastCheck: {
+        latestVersion: "0.2.0",
+        updateAvailable: true,
+        checkedAt: "2026-10-10T00:00:00.000Z",
+      },
+    });
+    render(<UpdatesPanel />);
+    await waitFor(() => expect(updaterGetStatusMock).toHaveBeenCalled());
+    await waitFor(() => expect(useNimbusStore.getState().updaterStatus).not.toBeNull());
+    expect(useNimbusStore.getState().updaterCheck).toEqual(held);
+  });
+
   it("Check now success with no update keeps state idle", async () => {
     updaterCheckNowMock.mockResolvedValueOnce({
       currentVersion: "0.1.0",

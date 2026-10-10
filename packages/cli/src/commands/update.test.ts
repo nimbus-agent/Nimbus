@@ -112,12 +112,38 @@ describe("runUpdateApply", () => {
     await runUpdateApply(client);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({ method: "updater.applyUpdate", params: {} });
-    expect(out.stdout).toContain("Update applied. Gateway will restart.");
+    expect(out.stdout).toContain("Update installed.");
   });
 
   it("propagates IPC errors from updater.applyUpdate", async () => {
     const { client } = createMockIpcClient([new Error("signature verification failed")]);
     await expect(runUpdateApply(client)).rejects.toThrow(/signature verification failed/);
+    expect(out.stdout).not.toContain("Update installed.");
+  });
+
+  describe("when the gateway has no installer for this platform", () => {
+    let origExitCode: typeof process.exitCode;
+    beforeEach(() => {
+      origExitCode = process.exitCode;
+      process.exitCode = 0;
+    });
+    afterEach(() => {
+      process.exitCode = origExitCode;
+    });
+
+    it("prints a clear refusal, exits non-zero, and claims nothing was installed", async () => {
+      const { client } = createMockIpcClient([
+        new Error(
+          "ERR_UPDATER_INSTALL_UNSUPPORTED: no installer is available for this platform yet; download the release manually",
+        ),
+      ]);
+      await runUpdateApply(client);
+      expect(process.exitCode).toBe(1);
+      expect(out.stderr).toContain("cannot install updates");
+      expect(out.stderr).toContain("download the release manually");
+      expect(out.stdout).not.toContain("Update installed.");
+      expect(out.stdout).not.toMatch(/restart/i);
+    });
   });
 });
 
@@ -195,7 +221,7 @@ describe("runUpdate dispatcher", () => {
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
     await runUpdate(["--yes"], { channel: null });
     expect(mock.calls.map((c) => c.method)).toEqual(["updater.applyUpdate"]);
-    expect(out.stdout).toContain("Update applied. Gateway will restart.");
+    expect(out.stdout).toContain("Update installed.");
   });
 
   it("bare invocation with no update available prints No update available.", async () => {
@@ -256,7 +282,7 @@ describe("runUpdate dispatcher", () => {
       setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
       await runUpdate([], { channel: null });
       expect(mock.calls.map((c) => c.method)).toEqual(["updater.checkNow", "updater.applyUpdate"]);
-      expect(out.stdout).toContain("Update applied. Gateway will restart.");
+      expect(out.stdout).toContain("Update installed.");
     } finally {
       process.stdin.isTTY = origIsTTY;
       process.stdin.read = origRead;
@@ -289,7 +315,7 @@ describe("runUpdate dispatcher", () => {
         clearTimeout(emitTimer);
       }
       expect(mock.calls.map((c) => c.method)).toEqual(["updater.checkNow", "updater.applyUpdate"]);
-      expect(out.stdout).toContain("Update applied. Gateway will restart.");
+      expect(out.stdout).toContain("Update installed.");
     } finally {
       process.stdin.isTTY = origIsTTY;
       process.stdin.read = origRead;

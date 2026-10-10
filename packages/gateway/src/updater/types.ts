@@ -22,10 +22,19 @@ export type UpdaterStateName =
   | "rolled_back"
   | "failed";
 
+/** The cached result of the most recent SUCCESSFUL `checkNow` (a failed check keeps it). */
+export interface UpdaterLastCheck {
+  latestVersion: string;
+  updateAvailable: boolean;
+  notes?: string;
+  checkedAt: string;
+}
+
 export interface UpdaterStatus {
   state: UpdaterStateName;
   currentVersion: string;
   configUrl: string;
   lastCheckAt?: string;
   lastError?: string;
+  lastCheck?: UpdaterLastCheck;
 }

@@ -4873,12 +4873,12 @@ The harness writes a structured `HistoryLine` per surface/run to `history.jsonl`
 
 ### `nimbus update`
 
-Check for or apply a Nimbus software update. Updates are downloaded, verified against an Ed25519 signature, and then handed off to the platform installer. No update is applied until the binary signature is confirmed.
+Check for a Nimbus software update. The apply path is designed to download the release, verify it against an Ed25519 signature, and hand it to a platform installer — but **no platform installer ships yet**, so on a direct (non-package-manager) install `nimbus update` / `nimbus update --yes` currently refuses with `ERR_UPDATER_INSTALL_UNSUPPORTED` before downloading anything, prints a manual-download hint, and exits `1`. Nothing is downloaded, nothing is installed, and no audit row is written. Use `nimbus update --check` to see whether a newer release exists, then download it manually. On a package-manager install (Homebrew, Scoop, …) `nimbus update` prints that channel's upgrade command instead.
 
 ```bash
 nimbus update --check               # Print current vs. latest version; exit 1 if update available, 0 if current
-nimbus update                       # Download, verify signature, prompt for confirmation, run installer
-nimbus update --yes                 # Skip confirmation prompt (for scripted/unattended use)
+nimbus update                       # Check, prompt, then apply — refused today (no installer yet; exit 1)
+nimbus update --yes                 # Skip confirmation prompt — likewise refused today
 ```
 
 **Options:**
@@ -4888,9 +4888,9 @@ nimbus update --yes                 # Skip confirmation prompt (for scripted/una
 | `--check` | Check-only mode — no download, no install |
 | `--yes` | Skip the "Apply update?" confirmation |
 
-**Security:** The downloaded binary's SHA-256 hash is computed and verified against the Ed25519-signed manifest before any installer is invoked. A tampered binary is rejected and automatically rolled back.
+**Security:** Once an installer exists, the downloaded binary's SHA-256 hash is computed and verified against the Ed25519-signed manifest before it is invoked, and a tampered binary is rejected. Each apply attempt that gets past the installer check writes BLAKE3-chained `audit_log` rows (`system.update.start` / `verified` / `installed` / `failed`, `hitl_status = not_required`, the manifest URL with any `user:password@` stripped); a failure to write the `start` row aborts the apply before any download, so `nimbus audit verify` covers every install attempt.
 
-**Headless note:** When the Gateway starts in headless mode (no Tauri connection detected) and an update is available, it prints a one-line hint to stdout: `"A new version of Nimbus is available (X.Y.Z). Run 'nimbus update' to install."`
+**Status:** `updater.getStatus` also carries `lastCheck` (`latestVersion`, `updateAvailable`, `notes`, `checkedAt`) from the most recent SUCCESSFUL check — including the gateway's startup check — so a client that connects later (the desktop Updates panel) can show it without re-fetching. A failed check keeps the previous `lastCheck` and reports the failure in `lastError`.
 
 **Environment overrides:** `NIMBUS_UPDATER_URL` overrides the manifest URL. `NIMBUS_UPDATER_DISABLE=1` disables all update checks (only the value `1` counts; `true` is ignored).
 

@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import type { NimbusUpdaterToml } from "../config/nimbus-toml.ts";
 import { DEFAULT_NIMBUS_UPDATER_TOML } from "../config/nimbus-toml.ts";
 import { createUpdaterFromConfig } from "./factory.ts";
+import type { UpdaterOptions } from "./updater.ts";
 
 const noopLogger = {
   warn: () => {},
@@ -48,6 +49,22 @@ describe("createUpdaterFromConfig", () => {
     expect(result).toBeDefined();
     expect(result?.getStatus().currentVersion).toBe("0.1.0");
     expect(result?.getStatus().configUrl).toBe(updaterCfg.url);
+  });
+
+  test("forwards recordUpdateEvent into the Updater it builds", () => {
+    const updaterCfg: NimbusUpdaterToml = { ...DEFAULT_NIMBUS_UPDATER_TOML, enabled: true };
+    const recordUpdateEvent: NonNullable<UpdaterOptions["recordUpdateEvent"]> = () => {};
+    const result = createUpdaterFromConfig({
+      ...baseArgs,
+      updaterCfg,
+      _platformOverride: "linux-x86_64",
+      recordUpdateEvent,
+    });
+    // `opts` is private; reading it is the only way to see the wiring without driving a full
+    // apply, which refuses up front while production supplies no installer (R1).
+    const opts = (result as unknown as { opts: UpdaterOptions }).opts;
+    expect(opts.recordUpdateEvent).toBe(recordUpdateEvent);
+    expect(opts.invokeInstaller).toBeUndefined();
   });
 
   test("returns undefined and logs a warning when platform is unsupported", () => {
