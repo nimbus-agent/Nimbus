@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791633821430,
+  "lastUpdate": 1791745489871,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5d54bd1438992298988fbf8d8de7979ad4189ddc",
-          "message": "chore: release main (#939)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.8.0</summary>\n\n##\n[1.8.0](https://github.com/nimbus-agent/Nimbus/compare/v1.7.0...v1.8.0)\n(2026-07-29)\n\n\n### Features\n\n* **connectors:** index Google Meet participant detail on conference\nrecords ([#927](https://github.com/nimbus-agent/Nimbus/issues/927))\n([69282ef](https://github.com/nimbus-agent/Nimbus/commit/69282ef9712ec966afd9b5e6f4bc11527aa77d35))\n\n\n### Bug Fixes\n\n* **ci:** repair the coverage-gate count assertion broken by\n[#936](https://github.com/nimbus-agent/Nimbus/issues/936)\n([#941](https://github.com/nimbus-agent/Nimbus/issues/941))\n([af9d246](https://github.com/nimbus-agent/Nimbus/commit/af9d246b5f06dceaeee4f43e8665c8b70932e956))\n* **cli:** handle the embedding warm-up error in `nimbus search`\n([#937](https://github.com/nimbus-agent/Nimbus/issues/937))\n([8640972](https://github.com/nimbus-agent/Nimbus/commit/8640972adbc81a88c7999597a6feaf381491fc39))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-30T00:46:39+03:00",
-          "tree_id": "0205dfe46c7c2f8f83cb6e074ca9a8c2172a8858",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5d54bd1438992298988fbf8d8de7979ad4189ddc"
-        },
-        "date": 1785362300738,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 324.92739394999626,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 326.98042985000427,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 263.66999260000557,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7b3cb4aeab0bb097b3b1a002e323b191cca0ddb7",
+          "message": "Extension runtime PR 1: install gate + tree digest (S3 opens) (#1648)\n\n## Summary\n\nThis PR implements the first slice of S3 (Open Surface), closing two\ncritical gaps that must be fixed before any installed extension can\nsafely run:\n\n1. **Install approval moves to the executor** (closing Non-Negotiable 2\nviolation): `extension.install` was in the I2 frozen HITL set but had no\nexecutor action — the only consent was a CLI-side `@clack/prompts`\nconfirm that `--yes` skipped and no other socket client ever saw. The\ngateway now resolves the install plan, gates it through\n`ToolExecutor.gate()` with action type `extension.install`, and installs\nonly what the owner approved. The install audit row now records the\ntruth.\n\n2. **Tree digest covers the whole package** (closing design § 3.2):\n`manifest_hash` + `entry_hash` left every sibling module and\n`node_modules/` entry unhashed. A runtime trusting only those two would\nexecute bytes nobody verified. The gateway now computes and stores a\nSHA-256 digest over every file in the installed tree, deterministic\nacross platforms (using `/` separators everywhere). At runtime (PR 3),\nthe spawn will refuse if the live digest differs from the approved one.\n\nThe design spec is\n`docs/superpowers/specs/2026-10-11-extension-runtime-design.md` § 1–4.6.\n\n## Related Issue\n\nCloses #S3-opens (Phase 9.5 prerequisite row *Extensions actually run*)\n\n## Type of Change\n\n- [x] New feature (extension install gate + tree digest infrastructure)\n- [x] Test improvement (new tests for gate enforcement, tree digest\ndeterminism, and compiled-binary import)\n- [x] Documentation only (design spec + CLI reference updates)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome)\n- [x] All existing tests pass (`bun test`)\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values in logs, IPC, config, or\nfixtures\n- [x] Platform-specific code behind `PlatformServices` (tree digest uses\n`/` separators on all OSes)\n- [x] HITL consent gate strengthened, not weakened: install now requires\nexecutor gate; `--yes` only skips client-side confirm, not the gate\nitself\n\n## Coverage\n\n- **New files:** `tree-digest.ts` (59 lines, 100% covered by\n`tree-digest.test.ts`), `tree-digest.test.ts` (91 lines),\n`extension-tree-digest-v66-sql.ts` (9 lines, schema migration),\n`runner-v66.test.ts` (28 lines), `compiled-import.test.ts` (90 lines,\nintegration test for compiled binary import).\n- **Modified files:** `automation-rpc.ts` (install gate enforcement),\n`install-from-local.ts` (tree digest computation), `extension-store.ts`\n(schema V66 support), `automation-rpc.edges.test.ts` (gate enforcement\ntests), `install-from-local.test.ts` (tree digest + approval hook\ntests), `extension.test.ts` (CLI gate handling), `extension.ts` (CLI\ninteractive gate registration), `auto-update-init.ts` (tree digest\nrehash on update), `verify-extensions.test.ts` (schema compatibility),\n`security-invariants.test.ts` (I2 gate enforcement test).\n- All new source files meet ≥85% line / ≥80% branch coverage. Schema\nmigration is exempt (data-only).\n\n## Testing\n\n- **Unit tests:** `tree-digest.test.ts` verifies digest determinism,\nfile-change detection, symlink rejection, and cross-platform `/`\nseparator handling. `automation-rpc.edges.test.ts` tests gate\nenforcement (refuses without gate, refuses on denial, asks before copy,\npayload matches resolved plan). `install-from-local.test.ts` tests tree\ndigest storage and approval hook integration.\n- **Integration test:** `compiled-import.test.ts` compiles a minimal Bun\n\nhttps://claude.ai/code/session_01KkUDwLZgvufiDM4Pjnm7hH\n\n---------\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+          "timestamp": "2026-10-11T18:50:51Z",
+          "tree_id": "e64cb49b2bda3e941e6c2db4df5646d39fd23e37",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7b3cb4aeab0bb097b3b1a002e323b191cca0ddb7"
+        },
+        "date": 1791745484256,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 336.45065610000165,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 335.3266681500005,
             "unit": "ms"
           }
         ]
