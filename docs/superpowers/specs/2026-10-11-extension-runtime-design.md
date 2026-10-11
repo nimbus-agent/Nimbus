@@ -3,7 +3,7 @@
 - **Date:** 2026-10-11
 - **Slot:** S3 — Open Surface, first slice (the Phase 9.5 prerequisite row *Extensions actually run*)
 - **Status:** approved 2026-10-11 (Q1 and Q2 both resolved as option A, section 9); PR 1 implemented (section 10)
-- **Invariant budget:** one new invariant (I43), one widened invariant (I42), one new static rule (D32), one migration (V66)
+- **Invariant budget:** one new invariant (I43), one widened invariant (I42), one new static rule (D32), two migrations (V66 in PR 1, V67 in PR 2)
 
 ## 1. Problem
 
@@ -163,7 +163,7 @@ grants, whenever a tool is needed, unattended".
   3. Run `toolExecutor.gate({ type: "extension.run", payload })`. Anything other than `proceed`
      stops here.
   4. Store exactly what was approved.
-- **New table `extension_run_grant` (schema V66):** `extension_id` (PK, FK → `extension.id`
+- **New table `extension_run_grant` (schema V67):** `extension_id` (PK, FK → `extension.id`
   ON DELETE CASCADE), `service_id` (UNIQUE), `version`, `tree_digest`, `permissions_json` (the
   resolved runtime grants), `model_access`, `approved_at`.
 - **A grant binds to bytes and grants, not to a name.** The slot spawns only if, at spawn time, the
@@ -303,7 +303,7 @@ is reworded in the same commit (triple rule).
 
 - **(a)** The `__nimbus-extension` sentinel and `selfSpawn("extension"` may appear only in
   `platform/runtime-layout.ts`, `index.ts` and `extensions/extension-runtime.ts`.
-- **(b)** `extension_run_grant` (bare or SQLite-quoted) may appear only in the grant store, the V66
+- **(b)** `extension_run_grant` (bare or SQLite-quoted) may appear only in the grant store, the V67
   DDL file and `extensions/extension-runtime.ts`.
 
 As with D27(b), the stated bound is that a dynamically assembled identifier evades a text scan, so
@@ -404,7 +404,7 @@ Four PRs. Each is green on its own, and the user-visible capability lands only i
    it, so crash recovery's `_prev` promotion leaves it NULL. Rehash re-hashes after approval and
    refuses if the tree changed while the owner was deciding. R1 holds on Linux (Bun 1.3.14 and
    1.4.2), and `test/integration/extensions/compiled-import.test.ts` checks it on every PR leg.
-2. **Runtime manifest + grant store (closes 3.3).** Add the V66 `extension_run_grant` table, the
+2. **Runtime manifest + grant store (closes 3.3).** Add the V67 `extension_run_grant` table, the
    service-id derivation, the runtime-manifest builder, and `approveRun` / `revokeRun` behind
    `extension.run`. Grants can be created, but nothing spawns.
 3. **The runtime (closes 3.4).** Add the self-role, the `mesh:ext:` slot,
