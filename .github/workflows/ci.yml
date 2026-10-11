@@ -284,9 +284,14 @@ jobs:
         shell: pwsh
         run: ./scripts/ci/setup-windows-dev-drive.ps1
 
+      # `windows-linker: hoisted` makes the Windows leg's node_modules cacheable (Bun's default
+      # layout uses junctions the cache cannot round-trip — see the action). It is a no-op on macOS.
+      # This leg only: the push matrix and release.yml keep the default layout.
       - name: Setup Bun and install dependencies
         if: needs.filter.outputs.code-changed == 'true'
         uses: ./.github/actions/setup-nimbus-ci
+        with:
+          windows-linker: hoisted
 
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS' && needs.filter.outputs.code-changed == 'true'

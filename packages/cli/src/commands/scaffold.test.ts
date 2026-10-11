@@ -169,10 +169,27 @@ describe("runScaffold", () => {
   });
 });
 
+/**
+ * Where `pkg` is installed for code under `from`, found the way Node resolution walks up: the
+ * nearest `node_modules/<pkg>` at or above `from`. Not a hard-coded package directory, because
+ * the answer depends on Bun's linker — the isolated layout puts the CLI's own dependencies under
+ * `packages/cli/node_modules`, the hoisted one (used on the Windows CI leg so `node_modules`
+ * can be cached) puts them at the repo root.
+ */
+function installedPackageDir(pkg: string, from: string): string {
+  let dir = from;
+  for (;;) {
+    const candidate = join(dir, "node_modules", ...pkg.split("/"));
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) throw new Error(`${pkg} is not installed at or above ${from}`);
+    dir = parent;
+  }
+}
+
 describe("generated project", () => {
   it("its own test really runs and passes", async () => {
     const cliRoot = resolve(import.meta.dir, "..", "..");
-    const repoRoot = resolve(cliRoot, "..", "..");
     const dir = mkdtempSync(join(tmpdir(), "nimbus-scaffold-run-"));
     try {
       for (const f of buildScaffoldFiles("echo", process.platform, dir)) {
@@ -184,12 +201,12 @@ describe("generated project", () => {
       // relative symlink re-resolved from inside a junction would dangle.
       mkdirSync(join(dir, "node_modules", "@modelcontextprotocol"), { recursive: true });
       symlinkSync(
-        realpathSync(join(cliRoot, "node_modules", "@modelcontextprotocol", "sdk")),
+        realpathSync(installedPackageDir("@modelcontextprotocol/sdk", cliRoot)),
         join(dir, "node_modules", "@modelcontextprotocol", "sdk"),
         "junction",
       );
       symlinkSync(
-        realpathSync(join(repoRoot, "node_modules", "zod")),
+        realpathSync(installedPackageDir("zod", cliRoot)),
         join(dir, "node_modules", "zod"),
         "junction",
       );
