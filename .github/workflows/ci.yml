@@ -275,6 +275,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # Must precede dependency setup so `bun install` already runs under the Defender
+      # exclusions, and the TEMP/TMP it exports reach every later step (the test run's
+      # `os.tmpdir()` fixtures above all). Fail-soft: a failure warns and leaves the leg exactly
+      # as it was. Rationale and measurements: the header of the script.
+      - name: Windows — Dev Drive for TEMP + Defender exclusions
+        if: runner.os == 'Windows' && needs.filter.outputs.code-changed == 'true'
+        shell: pwsh
+        run: ./scripts/ci/setup-windows-dev-drive.ps1
+
       - name: Setup Bun and install dependencies
         if: needs.filter.outputs.code-changed == 'true'
         uses: ./.github/actions/setup-nimbus-ci
@@ -416,7 +425,7 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun scripts/run-with-timeout.ts 1500 bun test packages/gateway packages/cli scripts --timeout 60000 > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
+            bun scripts/run-with-timeout.ts 1500 bun test packages/gateway packages/cli scripts --timeout 60000 --reporter=junit --reporter-outfile="${RUNNER_TEMP}/junit-attempt-${attempt}.xml" > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
             cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then
@@ -457,6 +466,29 @@ jobs:
           done
         env:
           CI: "true"
+
+      # Where the single-process run spends its time, per test file, so speeding this leg up
+      # starts from data. Diagnostics only: `always()` so a failed or retried run still reports,
+      # and the summarizer exits 0 when a killed attempt left no report.
+      - name: Slowest test files (job summary + JUnit artifact)
+        if: always() && needs.filter.outputs.code-changed == 'true'
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            report="${RUNNER_TEMP}/junit-attempt-${attempt}.xml"
+            if [ "$attempt" -eq 2 ] && [ ! -f "$report" ]; then break; fi
+            bun scripts/ci/junit-slowest-files.ts "$report" --top=30 \
+              "--title=Slowest test files — ${{ matrix.os }}, attempt ${attempt}" >> "$GITHUB_STEP_SUMMARY" || true
+          done
+
+      - name: Upload test timings
+        if: always() && needs.filter.outputs.code-changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-timings-${{ matrix.os }}
+          path: ${{ runner.temp }}/junit-attempt-*.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
       # There is no separate "platform-sensitive integration tests" step any more.
       # #1298 added one because the step above was scoped to `packages/<pkg>/src` and
