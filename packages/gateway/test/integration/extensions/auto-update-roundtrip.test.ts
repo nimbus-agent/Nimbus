@@ -20,6 +20,7 @@ import {
   dispatchAutoUpdateRpc,
 } from "../../../src/extensions/auto-update-rpc.ts";
 import { writePublisherKey } from "../../../src/extensions/publisher-keys.ts";
+import { computeExtensionTreeDigest } from "../../../src/extensions/tree-digest.ts";
 import {
   encodeBase64,
   generateEd25519Keypair,
@@ -258,6 +259,9 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
 
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.1.0");
+      // The swap replaced the bytes, so the digest is the NEW tree's, recomputed — not the
+      // install-time one, and not cleared.
+      expect(row?.tree_digest).toBe(computeExtensionTreeDigest(row?.install_path ?? ""));
     } finally {
       db.close();
       rmSync(extensionsDir, { recursive: true, force: true });
@@ -357,6 +361,7 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
 
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.0.0");
+      expect(row?.tree_digest).toBe(computeExtensionTreeDigest(row?.install_path ?? ""));
     } finally {
       db.close();
       rmSync(extensionsDir, { recursive: true, force: true });
@@ -473,6 +478,9 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       expect(existsSync(join(extRoot, "active"))).toBe(true);
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.0.0");
+      // Crash recovery promotes whatever sits in _prev without asking anyone, so it does NOT adopt
+      // those bytes as trusted: the digest stays cleared until the owner runs a rehash.
+      expect(row?.tree_digest).toBeNull();
       const auditRow = db
         .query(`SELECT action_type FROM audit_log WHERE action_type = ? ORDER BY id DESC LIMIT 1`)
         .get("extension.autoUpdate.crash_recovered") as { action_type: string } | undefined;
