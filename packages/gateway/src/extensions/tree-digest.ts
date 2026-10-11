@@ -24,9 +24,7 @@ import { join, relative, sep } from "node:path";
 export function computeExtensionTreeDigest(root: string): string {
   const lines: string[] = [];
   const stack: string[] = [root];
-  while (stack.length > 0) {
-    const dir = stack.pop();
-    if (dir === undefined) continue;
+  for (let dir = stack.pop(); dir !== undefined; dir = stack.pop()) {
     const entries: Dirent[] = readdirSync(dir, { withFileTypes: true });
     for (const ent of entries) {
       const full = join(dir, ent.name);
@@ -46,14 +44,10 @@ export function computeExtensionTreeDigest(root: string): string {
       lines.push(`${rel}\0${fileHex}\n`);
     }
   }
-  lines.sort(byteOrder);
+  // Every line starts with a distinct relative path, so no two lines are ever equal and the
+  // comparator needs no "equal" arm.
+  lines.sort((a, b) => (a < b ? -1 : 1));
   const hash = createHash("sha256");
   for (const line of lines) hash.update(line);
   return hash.digest("hex");
-}
-
-function byteOrder(a: string, b: string): number {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
 }

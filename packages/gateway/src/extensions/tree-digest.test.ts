@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -88,4 +89,13 @@ describe("computeExtensionTreeDigest", () => {
       expect(() => computeExtensionTreeDigest(root)).toThrow(/symlink/);
     },
   );
+
+  test.skipIf(process.platform === "win32")("THROWS on a non-regular file (a FIFO)", () => {
+    // A FIFO, socket or device is neither a file whose bytes can be hashed nor a directory to walk.
+    const root = tree(BASE);
+    const fifo = join(root, "dist", "pipe");
+    const made = spawnSync("mkfifo", [fifo]);
+    expect(made.status).toBe(0);
+    expect(() => computeExtensionTreeDigest(root)).toThrow(/non-regular file/);
+  });
 });
