@@ -1029,6 +1029,16 @@ CREATE TABLE IF NOT EXISTS oncall_push_state (
 ALTER TABLE user_mcp_connector ADD COLUMN read_paths_json TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE user_mcp_connector ADD COLUMN net_hosts_json  TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE user_mcp_connector ADD COLUMN model_access    INTEGER NOT NULL DEFAULT 0;
+
+-- V66 -- extension tree digest (2026-10-11). Additive column on the V10 `extension` table.
+-- Authoritative source: packages/gateway/src/index/extension-tree-digest-v66-sql.ts
+-- SHA-256 over every file under `install_path` (packages/gateway/src/extensions/tree-digest.ts),
+-- computed at install and after an owner-approved auto-update or downgrade swap. NULL for rows
+-- that predate V66, and cleared to NULL by any version change that did not recompute it (crash
+-- recovery included); `nimbus extension rehash <id>` adopts the bytes on disk, behind the same
+-- owner approval as an install. Nothing reads it to decide anything yet: it is the substrate the
+-- extension runtime will verify before every spawn.
+ALTER TABLE extension ADD COLUMN tree_digest TEXT;
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.

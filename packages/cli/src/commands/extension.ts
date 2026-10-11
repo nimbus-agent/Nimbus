@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
-import { IPCClient } from "../ipc-client/index.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
 import {
   decodeBase64,
   encodeBase64,
@@ -11,6 +11,8 @@ import {
 } from "../lib/extension-signing.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
+import { registerConsentFor } from "../lib/interactive-ipc-handlers.ts";
+import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import {
   formatNetworkIsolationLine,
@@ -300,21 +302,16 @@ export async function runExtensionInstall(
     throw new Error("Usage: nimbus extension install <path> [--yes]");
   }
   const accept = hasFlag(args, "--yes") || hasFlag(args, "-y");
-  if (!accept) {
-    if (process.stdout.isTTY !== true) {
-      throw new Error(
-        "Refusing to install without confirmation in non-TTY mode. Pass --yes to proceed.",
-      );
-    }
-    const ok = await confirm({
-      message:
-        "Install copies the extension into your Nimbus extensions directory. Only proceed if you trust this code.",
-    });
-    if (isCancel(ok) || ok !== true) {
-      console.log("Cancelled.");
-      return;
-    }
+  if (!accept && process.stdout.isTTY !== true) {
+    throw new Error(
+      "Refusing to install without confirmation in non-TTY mode. Pass --yes to proceed.",
+    );
   }
+  // The approval is the GATEWAY's HITL prompt (Non-Negotiable 2), raised over the resolved plan —
+  // every package the install adds, the claimed publisher and the declared permissions — before
+  // anything is copied. This command only decides how this connection answers it: interactively,
+  // or, with --yes, by approving on the owner's behalf and echoing what was approved to stderr.
+  registerConsentFor(client, accept ? { kind: "auto", sourceLabel: "--yes" } : { kind: "prompt" });
   const sourcePath = resolve(process.cwd(), sourceRaw);
   const publisherKeyPath = takeFlagValue(args, "--publisher-key");
   const installParams: Record<string, unknown> = { sourcePath };
@@ -327,6 +324,38 @@ export async function runExtensionInstall(
     installPath: string;
   }>("extension.install", installParams);
   console.log(JSON.stringify(out, undefined, 2));
+}
+
+/**
+ * `nimbus extension rehash <id>` — adopt the files now under an installed extension as trusted, by
+ * recording their digest. The gateway asks the owner exactly as it does for an install, and
+ * refuses outright when the manifest or entry no longer match their install-time hashes.
+ */
+export async function runExtensionRehash(
+  client: IPCClient,
+  args: string[],
+  rest: string[],
+): Promise<void> {
+  const id = rest[0]?.trim() ?? "";
+  if (id === "") {
+    throw new Error("Usage: nimbus extension rehash <id> [--yes]");
+  }
+  const accept = hasFlag(args, "--yes") || hasFlag(args, "-y");
+  if (!accept && process.stdout.isTTY !== true) {
+    throw new Error(
+      "Refusing to rehash without confirmation in non-TTY mode. Pass --yes to proceed.",
+    );
+  }
+  registerConsentFor(client, accept ? { kind: "auto", sourceLabel: "--yes" } : { kind: "prompt" });
+  const out = await client.call<{ id: string; treeDigest: string; changed: boolean }>(
+    "extension.rehash",
+    { id },
+  );
+  console.log(
+    out.changed
+      ? `${out.id}: adopted tree digest ${out.treeDigest}`
+      : `${out.id}: unchanged (tree digest ${out.treeDigest})`,
+  );
 }
 
 export async function runExtensionEnable(client: IPCClient, rest: string[]): Promise<void> {
@@ -544,7 +573,7 @@ export async function runExtensionSync(client: IPCClient, args: string[]): Promi
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | rehash <id> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
 
 async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
   if (sub === "keygen") {
@@ -594,6 +623,9 @@ async function dispatchExtensionVoid(
     case "install":
       await runExtensionInstall(client, args, rest);
       return true;
+    case "rehash":
+      await runExtensionRehash(client, args, rest);
+      return true;
     case "enable":
       await runExtensionEnable(client, rest);
       return true;
@@ -622,7 +654,12 @@ export async function runExtension(args: string[]): Promise<void> {
     throw new Error(gatewayNotRunningMessage(paths.demo === true));
   }
 
-  const client = new IPCClient(state.socketPath);
+  // `install` and `rehash` block on the owner's HITL prompt, so it gets the human-bound budget rather than the
+  // 30s default that would time out while the owner is still reading the prompt.
+  const client = createIpcClient(
+    state.socketPath,
+    sub === "install" || sub === "rehash" ? INTERACTIVE_RPC_TIMEOUT_MS : undefined,
+  );
   await client.connect();
   try {
     if (await dispatchExtensionVoid(sub, client, args, rest)) {

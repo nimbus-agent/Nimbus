@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CLACK_CANCEL, clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
+import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
@@ -22,6 +22,7 @@ const {
   runExtensionInstall,
   runExtensionKeygen,
   runExtensionList,
+  runExtensionRehash,
   runExtensionRemove,
   runExtensionSign,
   runExtensionSyncWithCaller,
@@ -319,38 +320,84 @@ describe("runExtensionInstall", () => {
     expect(calls).toHaveLength(1);
   });
 
-  test("TTY mode with confirm-true completes install", async () => {
+  test("TTY mode answers the GATEWAY's prompt interactively — no client-side confirm first", async () => {
     Object.defineProperty(process.stdout, "isTTY", {
       configurable: true,
       value: true,
     });
-    setFixture({ clackAnswer: true });
-    const { client, calls } = createMockIpcClient([{ id: "ext", version: "1", installPath: "/p" }]);
+    const handlers = new Map<string, (params: unknown) => void>();
+    const { client, calls } = createMockIpcClient(
+      [{ id: "ext", version: "1", installPath: "/p" }],
+      handlers,
+    );
     await runExtensionInstall(client, ["install", "./ext"], ["./ext"]);
-    expect(calls).toHaveLength(1);
+    expect(calls.map((c) => c.method)).toEqual(["extension.install"]);
+    expect(handlers.has("consent.request")).toBe(true);
   });
 
-  test("TTY mode with confirm-false aborts install (prints Cancelled)", async () => {
+  test("--yes approves the gateway's prompt on the owner's behalf", async () => {
     Object.defineProperty(process.stdout, "isTTY", {
       configurable: true,
-      value: true,
+      value: false,
     });
-    setFixture({ clackAnswer: false });
-    const { client, calls } = createMockIpcClient([]);
-    await runExtensionInstall(client, ["install", "./ext"], ["./ext"]);
-    expect(calls).toHaveLength(0);
-    expect(out.stdout).toContain("Cancelled.");
+    const handlers = new Map<string, (params: unknown) => void>();
+    const { client, calls, emit } = createMockIpcClient(
+      [{ id: "ext", version: "1", installPath: "/p" }, {}],
+      handlers,
+    );
+    await runExtensionInstall(client, ["install", "./ext", "--yes"], ["./ext"]);
+    emit("consent.request", { requestId: "r-1", prompt: "Type: extension.install" });
+    await Bun.sleep(0);
+    expect(calls[1]).toEqual({
+      method: "consent.respond",
+      params: { requestId: "r-1", approved: true },
+    });
+  });
+});
+
+describe("runExtensionRehash", () => {
+  const origIsTty = process.stdout.isTTY;
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: origIsTty });
   });
 
-  test("TTY mode with isCancel symbol aborts install", async () => {
-    Object.defineProperty(process.stdout, "isTTY", {
-      configurable: true,
-      value: true,
-    });
-    setFixture({ clackAnswer: CLACK_CANCEL });
+  test("throws when the id is missing", async () => {
+    const { client } = createMockIpcClient([]);
+    await expect(runExtensionRehash(client, ["rehash"], [])).rejects.toThrow(/extension rehash/);
+  });
+
+  test("refuses without --yes in non-TTY mode, before any call", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
     const { client, calls } = createMockIpcClient([]);
-    await runExtensionInstall(client, ["install", "./ext"], ["./ext"]);
+    await expect(runExtensionRehash(client, ["rehash", "x"], ["x"])).rejects.toThrow(
+      /Refusing to rehash without confirmation/,
+    );
     expect(calls).toHaveLength(0);
+  });
+
+  test("--yes calls extension.rehash, answers the gateway prompt, and reports the adoption", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const handlers = new Map<string, (params: unknown) => void>();
+    const { client, calls } = createMockIpcClient(
+      [{ id: "x", treeDigest: "ab".repeat(32), changed: true }],
+      handlers,
+    );
+    await runExtensionRehash(client, ["rehash", "x", "--yes"], ["x"]);
+    expect(calls[0]).toEqual({ method: "extension.rehash", params: { id: "x" } });
+    expect(handlers.has("consent.request")).toBe(true);
+    expect(out.stdout).toContain("adopted tree digest");
+  });
+
+  test("an unchanged tree says so", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client } = createMockIpcClient([
+      { id: "x", treeDigest: "cd".repeat(32), changed: false },
+    ]);
+    await runExtensionRehash(client, ["rehash", "x"], ["x"]);
+    expect(out.stdout).toContain("unchanged");
   });
 });
 

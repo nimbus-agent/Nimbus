@@ -160,6 +160,7 @@ describe("verifyOneExtensionStrict (S7-F3)", () => {
       enabled: 1 as const,
       installed_at: 0,
       last_verified_at: 0,
+      tree_digest: null,
     };
     expect(verifyOneExtensionStrict(row)).toBe(true);
     writeFileSync(entryPath, "/* TAMPERED */", "utf8");
@@ -182,6 +183,7 @@ describe("verifyOneExtensionStrict (S7-F3)", () => {
       enabled: 1 as const,
       installed_at: 0,
       last_verified_at: 0,
+      tree_digest: null,
     };
     expect(verifyOneExtensionStrict(row)).toBe(true);
     writeFileSync(
@@ -684,6 +686,7 @@ describe("verifyOneExtensionStrict — branch coverage", () => {
       enabled: 1 as const,
       installed_at: 0,
       last_verified_at: 0,
+      tree_digest: null,
     };
     try {
       expect(verifyOneExtensionStrict(row)).toBe(false);
@@ -711,6 +714,7 @@ describe("verifyOneExtensionStrict — branch coverage", () => {
       enabled: 1 as const,
       installed_at: 0,
       last_verified_at: 0,
+      tree_digest: null,
     };
     try {
       expect(verifyOneExtensionStrict(row)).toBe(false);
@@ -741,6 +745,7 @@ describe("verifyOneExtensionStrict — branch coverage", () => {
       enabled: 1 as const,
       installed_at: 0,
       last_verified_at: 0,
+      tree_digest: null,
     };
     try {
       expect(verifyOneExtensionStrict(row)).toBe(false);
@@ -775,6 +780,7 @@ describe("verifyOneExtensionStrict — branch coverage", () => {
       enabled: 1 as const,
       installed_at: 0,
       last_verified_at: 0,
+      tree_digest: null,
     };
     try {
       expect(verifyOneExtensionStrict(row)).toBe(false);

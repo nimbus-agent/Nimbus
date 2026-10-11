@@ -29,6 +29,7 @@ import {
   EXTENSION_SESSION_V10_MIGRATION_SQL,
   EXTENSION_SESSION_V10_NO_VEC_MIGRATION_SQL,
 } from "../extension-session-v10-sql.ts";
+import { EXTENSION_TREE_DIGEST_V66_SQL } from "../extension-tree-digest-v66-sql.ts";
 import { V33_FEDERATION_SQL } from "../federation-v33-sql.ts";
 import { FLEET_SUBJECTS_V63_SQL } from "../fleet-subjects-v63-sql.ts";
 import { FLEET_V60_SQL } from "../fleet-v60-sql.ts";
@@ -590,6 +591,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "user MCP grants (read paths, network hosts, model access)",
     USER_MCP_GRANTS_V65_SQL,
   ),
+  simpleStep(65, 66, "extension tree digest", EXTENSION_TREE_DIGEST_V66_SQL),
 ];
 
 /**

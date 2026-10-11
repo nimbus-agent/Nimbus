@@ -2,7 +2,7 @@
 
 - **Date:** 2026-10-11
 - **Slot:** S3 — Open Surface, first slice (the Phase 9.5 prerequisite row *Extensions actually run*)
-- **Status:** proposed; nothing here is implemented
+- **Status:** approved 2026-10-11 (Q1 and Q2 both resolved as option A, section 9); PR 1 implemented (section 10)
 - **Invariant budget:** one new invariant (I43), one widened invariant (I42), one new static rule (D32), one migration (V66)
 
 ## 1. Problem
@@ -377,22 +377,33 @@ silent.
   idle disconnect), so this is acceptable. If measurement says otherwise, cap the tree size at
   install (`ERR_EXTENSION_TOO_LARGE`) rather than cache the digest. Caching would reintroduce the
   trust-an-earlier-pass shape that I40 forbids.
-- **Q1 (owner decision): reuse `user_mcp_model_access` or add an eighth lockoff name?** This design
-  reuses it (4.7). A separate name would let an org allow one and lock the other. That is easy to
+- **Q1 — decided 2026-10-11: reuse `user_mcp_model_access`.** This design reuses it (4.7). A separate name would let an org allow one and lock the other. That is easy to
   add later, and adding it then only narrows, so starting with the shared name is the conservative
   choice.
-- **Q2 (owner decision): `ext_` or one shared namespace with `mcp_`?** Separate prefixes keep
+- **Q2 — decided 2026-10-11: `ext_`.** Separate prefixes keep
   `nimbus connector list` honest about where a server came from, and keep the two registries'
-  collision rules independent. This design proposes `ext_`.
+  collision rules independent.
+- **R4 (found in PR 1, not fixed there): the registry's `entryHash` means two different things.**
+  Auto-update compares it to the downloaded TARBALL's SHA-256 (`auto-update-orchestrate.ts`) and
+  then stores it as the row's `entry_hash`; dependency install compares it to the ENTRY FILE's
+  SHA-256 (`install-from-local.ts` `installDepFromRegistry`). No registry can satisfy both, and an
+  auto-updated row's `entry_hash` can never match its entry file at the next startup check. It
+  needs fixing before PR 3 makes `entry_hash` part of the pre-spawn verification.
 
 ## 10. Delivery
 
 Four PRs. Each is green on its own, and the user-visible capability lands only in PR 3.
 
 1. **Gate install + tree digest (closes 3.1, 3.2).** Route `extension.install` through the
-   executor, add V66 `extension.tree_digest` and symlink refusal, and add `nimbus extension
-   rehash`. No runtime yet. Includes the R1 spike's findings, so the launch shape is settled before
-   anything depends on it.
+   executor, add V66 `extension.tree_digest`, and add `nimbus extension rehash`. No runtime yet.
+   Includes the R1 spike's findings, so the launch shape is settled before anything depends on it.
+   **As built:** symlink refusal already existed at install (`scanForSymlinks` for a directory
+   source, `assertNoEntryEscapes` for an archive), so it is not new. The digest walk refuses a
+   symlink anyway, because it also runs on trees that changed after install. Any version change
+   clears the digest in the same `UPDATE`; only an owner-approved upgrade or downgrade recomputes
+   it, so crash recovery's `_prev` promotion leaves it NULL. Rehash re-hashes after approval and
+   refuses if the tree changed while the owner was deciding. R1 holds on Linux (Bun 1.3.14 and
+   1.4.2), and `test/integration/extensions/compiled-import.test.ts` checks it on every PR leg.
 2. **Runtime manifest + grant store (closes 3.3).** Add the V66 `extension_run_grant` table, the
    service-id derivation, the runtime-manifest builder, and `approveRun` / `revokeRun` behind
    `extension.run`. Grants can be created, but nothing spawns.

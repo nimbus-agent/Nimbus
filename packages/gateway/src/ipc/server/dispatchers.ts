@@ -1827,20 +1827,7 @@ function buildAutoUpdateDeps(
   ) {
     return undefined;
   }
-  const stubDispatcher: ConnectorDispatcher = {
-    dispatch(): Promise<unknown> {
-      return Promise.reject(new Error("auto-update gate does not dispatch to MCP"));
-    },
-  };
-  // I29: gate-only executor — local mutation, no connector dispatch, so no egress to ledger.
-  const toolExecutor = new ToolExecutor(
-    bindConsentChannel(ctx.consentImpl, clientId),
-    ctx.options.localIndex,
-    stubDispatcher,
-    undefined,
-    NULL_EGRESS_SINK,
-    ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
-  );
+  const toolExecutor = buildExtensionGateExecutor(ctx, ctx.options.localIndex, clientId);
   return {
     ...ctx.options.extensionsAutoUpdate,
     gate: async (action) => {
@@ -1849,6 +1836,50 @@ function buildAutoUpdateDeps(
       return { status: "rejected" };
     },
   };
+}
+
+/**
+ * The gate-only executor every extension-lifecycle approval runs through (auto-update, install,
+ * rehash).
+ * I29: gate-only — a local mutation with no connector dispatch, so there is no egress to ledger;
+ * its dispatcher rejects, so nothing can reach a connector through it.
+ */
+function buildExtensionGateExecutor(
+  ctx: ServerCtx,
+  localIndex: NonNullable<ServerCtx["options"]["localIndex"]>,
+  clientId: string,
+): ToolExecutor {
+  const stubDispatcher: ConnectorDispatcher = {
+    dispatch(): Promise<unknown> {
+      return Promise.reject(new Error("extension gate does not dispatch to MCP"));
+    },
+  };
+  return new ToolExecutor(
+    bindConsentChannel(ctx.consentImpl, clientId),
+    localIndex,
+    stubDispatcher,
+    undefined,
+    NULL_EGRESS_SINK,
+    ctx.options.policyHitl ?? NO_POLICY_OVERLAY,
+  );
+}
+
+/** Methods whose handler asks the local owner through {@link buildExtensionGateExecutor}. */
+const OWNER_GATED_EXTENSION_METHODS: ReadonlySet<string> = new Set([
+  "extension.install",
+  "extension.rehash",
+]);
+
+function buildExtensionOwnerGate(
+  ctx: ServerCtx,
+  clientId: string,
+  method: string,
+): Parameters<typeof dispatchAutomationRpc>[0]["ownerGate"] {
+  if (!OWNER_GATED_EXTENSION_METHODS.has(method) || ctx.options.localIndex === undefined) {
+    return undefined;
+  }
+  const toolExecutor = buildExtensionGateExecutor(ctx, ctx.options.localIndex, clientId);
+  return async (action) => (await toolExecutor.gate(action)) === "proceed";
 }
 
 async function dispatchExtensionAutomationRpc(
@@ -1862,6 +1893,7 @@ async function dispatchExtensionAutomationRpc(
   }
   try {
     const autoUpdateDeps = buildAutoUpdateDeps(ctx, clientId, method);
+    const ownerGate = buildExtensionOwnerGate(ctx, clientId, method);
     const out = await dispatchAutomationRpc({
       method,
       params,
@@ -1878,6 +1910,7 @@ async function dispatchExtensionAutomationRpc(
         ? {}
         : { enforceAirGap: ctx.options.extensionsEnforceAirGap }),
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
+      ...(ownerGate === undefined ? {} : { ownerGate }),
     });
     if (out.kind === "hit") {
       return out.value;

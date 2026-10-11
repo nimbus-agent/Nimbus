@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -431,7 +431,7 @@ describe("ipc server integration", () => {
     }
   });
 
-  test("extension.install over IPC", async () => {
+  test("extension.install over IPC asks the owner first, and installs nothing unanswered", async () => {
     const listenPath = testListenPath();
     const db = new Database(":memory:");
     LocalIndex.ensureSchema(db);
@@ -463,17 +463,18 @@ describe("ipc server integration", () => {
     });
     await server.start();
     try {
+      // The first line the server sends is the HITL prompt, not a result: the gate runs before
+      // anything is copied (Non-Negotiable 2). The helper then closes the socket without
+      // answering, which the consent coordinator treats as a refusal.
       const line = await rpcCall(listenPath, "extension.install", { sourcePath: src });
-      const res = JSON.parse(line) as {
-        result?: { id?: string; installPath?: string };
-        error?: { message?: string };
-      };
-      expect(res.error).toBeUndefined();
-      expect(res.result?.id).toBe("ipc.ext.demo");
-      expect(res.result?.installPath).toBe(join(extensionsDir, "ipc.ext.demo"));
+      const notif = JSON.parse(line) as { method?: string; params?: { prompt?: string } };
+      expect(notif.method).toBe("consent.request");
+      expect(notif.params?.prompt).toContain("extension.install");
+      expect(notif.params?.prompt).toContain("ipc.ext.demo");
     } finally {
       await server.stop();
     }
+    expect(existsSync(join(extensionsDir, "ipc.ext.demo"))).toBe(false);
   });
 
   test("workflow.run uses registered handler", async () => {

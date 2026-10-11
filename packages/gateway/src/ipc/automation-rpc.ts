@@ -6,6 +6,7 @@ import {
   type ExtensionRow,
   listExtensions,
   setExtensionEnabled,
+  setExtensionTreeDigest,
 } from "../automation/extension-store.ts";
 import {
   countItemsMatchingGraphPredicate,
@@ -38,9 +39,14 @@ import {
   signatureDisabledRegistry,
   signatureDisableMessage,
 } from "../extensions/hard-disable.ts";
-import { installExtensionFromLocalDirectory } from "../extensions/install-from-local.ts";
+import {
+  ExtensionInstallNotApprovedError,
+  installExtensionFromLocalDirectory,
+} from "../extensions/install-from-local.ts";
 import type { PublisherKeyFetcher } from "../extensions/registry-client.ts";
 import { syncPublisherKeys } from "../extensions/sync.ts";
+import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
+import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
@@ -93,6 +99,16 @@ export interface AutomationRpcExtensionMeshHandle {
   stopExtensionClient(extensionId: string): Promise<void>;
 }
 
+/**
+ * The local owner's HITL gate, as the executor runs it (`ToolExecutor.gate`): resolves `true` only
+ * for "proceed". Built per call by the server dispatcher with the caller's own consent channel, so
+ * the prompt reaches the client that asked.
+ */
+export type AutomationOwnerGate = (action: {
+  type: string;
+  payload: Record<string, unknown>;
+}) => Promise<boolean>;
+
 interface AutomationCtx {
   db: Database;
   extensionsDir?: string;
@@ -101,6 +117,7 @@ interface AutomationCtx {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   autoUpdate?: AutoUpdateRpcDeps;
+  ownerGate?: AutomationOwnerGate;
 }
 
 type AutomationHandler = (
@@ -228,6 +245,8 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       throw e;
     }
   },
+
+  "extension.rehash": async (rec, ctx) => handleExtensionRehash(rec, ctx),
 
   "extension.sync": async (rec, ctx) => handleExtensionSync(rec, ctx),
 
@@ -526,6 +545,13 @@ async function handleExtensionInstall(
   if (dir === undefined || dir.trim() === "") {
     throw new AutomationRpcError(-32603, "Gateway is not configured with an extensions directory");
   }
+  // Non-Negotiable 2: the consent gate lives in the executor. Without one this REFUSES rather than
+  // installing on a client-side prompt the gateway never saw — that was the whole of install's
+  // consent before this gate existed, and `--yes` skipped it.
+  const ownerGate = ctx.ownerGate;
+  if (ownerGate === undefined) {
+    throw new AutomationRpcError(-32603, "extension.install requires the owner's HITL gate");
+  }
   const publisherKeyPath =
     rec !== undefined && typeof rec["publisherKeyPath"] === "string"
       ? rec["publisherKeyPath"].trim()
@@ -539,6 +565,7 @@ async function handleExtensionInstall(
       ...(ctx.fetcher !== undefined && { fetcher: ctx.fetcher }),
       ...(ctx.enforceAirGap !== undefined && { enforceAirGap: ctx.enforceAirGap }),
       ...(publisherKeyPath !== undefined && publisherKeyPath !== "" && { publisherKeyPath }),
+      approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
     });
     return {
       kind: "hit",
@@ -548,11 +575,83 @@ async function handleExtensionInstall(
         installPath: installed.installPath,
         manifestHash: installed.manifestHash,
         entryHash: installed.entryHash,
+        treeDigest: installed.treeDigest,
       },
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    throw new AutomationRpcError(-32602, msg);
+    throw new AutomationRpcError(
+      e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
+      msg,
+    );
+  }
+}
+
+/**
+ * Adopt the bytes now under an extension's install path as its trusted tree, by recording their
+ * digest. That is exactly what an install approves, so it is gated as one: the owner is asked
+ * under the `extension.install` action type, over the digest that will be stored.
+ *
+ * Refused, without prompting, when the manifest or entry no longer match their install-time
+ * hashes — that is tampering or a half-applied update, and adopting it would launder the change;
+ * the fix is a reinstall. The tree is hashed again after approval and must still match what the
+ * owner saw, so bytes that change during the prompt are never the ones adopted.
+ */
+async function handleExtensionRehash(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
+  const id = requireString(rec, "id");
+  const ownerGate = ctx.ownerGate;
+  if (ownerGate === undefined) {
+    throw new AutomationRpcError(-32603, "extension.rehash requires the owner's HITL gate");
+  }
+  const row = listExtensions(ctx.db).find((r) => r.id === id);
+  if (row === undefined) {
+    throw new AutomationRpcError(-32602, "Extension not found");
+  }
+  if (!verifyOneExtensionStrict(row)) {
+    throw new AutomationRpcError(
+      -32602,
+      `ERR_EXTENSION_REHASH_MISMATCH: ${id}'s manifest or entry no longer matches what was installed; reinstall it instead`,
+    );
+  }
+  const treeDigest = digestOrRefuse(row.install_path);
+  if (treeDigest === row.tree_digest) {
+    return { kind: "hit", value: { id, treeDigest, changed: false } };
+  }
+  const approved = await ownerGate({
+    type: "extension.install",
+    payload: {
+      id,
+      version: row.version,
+      installPath: row.install_path,
+      adopt: "rehash",
+      treeDigest,
+      previousTreeDigest: row.tree_digest,
+    },
+  });
+  if (!approved) {
+    throw new AutomationRpcError(
+      -32603,
+      `ERR_EXTENSION_REHASH_NOT_APPROVED: rehash of ${id} was not approved`,
+    );
+  }
+  if (digestOrRefuse(row.install_path) !== treeDigest) {
+    throw new AutomationRpcError(
+      -32603,
+      `ERR_EXTENSION_REHASH_CHANGED: ${id}'s files changed while approval was pending; nothing was adopted`,
+    );
+  }
+  setExtensionTreeDigest(ctx.db, id, treeDigest);
+  return { kind: "hit", value: { id, treeDigest, changed: true } };
+}
+
+function digestOrRefuse(installPath: string): string {
+  try {
+    return computeExtensionTreeDigest(installPath);
+  } catch (e) {
+    throw new AutomationRpcError(-32602, e instanceof Error ? e.message : String(e));
   }
 }
 
@@ -578,6 +677,7 @@ export async function dispatchAutomationRpc(options: {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   autoUpdate?: AutoUpdateRpcDeps;
+  ownerGate?: AutomationOwnerGate;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -591,6 +691,7 @@ export async function dispatchAutomationRpc(options: {
     ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
     ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
     ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
+    ...(options.ownerGate !== undefined && { ownerGate: options.ownerGate }),
   };
   return await handler(asRecord(options.params), ctx);
 }

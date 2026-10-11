@@ -55,6 +55,7 @@ import type {
   PublisherKeyFetcher,
   RegistryClient,
 } from "./registry-client.ts";
+import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { verifyManifestSignature } from "./verify-signature.ts";
 
 function sha256HexOfBytes(buf: Buffer): string {
@@ -189,6 +190,7 @@ async function completeExtensionInstallAfterCopy(options: {
   }
   const entryBytes = readFileSync(entryPath);
   const entryHex = sha256HexOfBytes(entryBytes);
+  const treeDigest = computeExtensionTreeDigest(options.dest);
 
   const now = Date.now();
   insertExtensionRow(options.db, {
@@ -197,6 +199,7 @@ async function completeExtensionInstallAfterCopy(options: {
     install_path: options.dest,
     manifest_hash: manifestHex,
     entry_hash: entryHex,
+    tree_digest: treeDigest,
     enabled: 1,
     installed_at: now,
     last_verified_at: now,
@@ -208,6 +211,7 @@ async function completeExtensionInstallAfterCopy(options: {
     installPath: options.dest,
     manifestHash: manifestHex,
     entryHash: entryHex,
+    treeDigest,
   };
 }
 
@@ -293,6 +297,7 @@ async function installExtensionFromArchive(options: {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   publisherKeyPath?: string;
+  approve?: ExtensionInstallApprover;
 }): Promise<InstallExtensionFromLocalResult> {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-tgz-"));
   try {
@@ -308,6 +313,8 @@ async function installExtensionFromArchive(options: {
       ...(options.publisherKeyPath !== undefined && {
         publisherKeyPath: options.publisherKeyPath,
       }),
+      ...(options.approve !== undefined && { approve: options.approve }),
+      displaySourcePath: options.archivePath,
     });
   } finally {
     try {
@@ -351,7 +358,39 @@ type SingleInstallResult = {
   installPath: string;
   manifestHash: string;
   entryHash: string;
+  treeDigest: string;
 };
+
+/**
+ * What the local owner approves before an install writes anything (Non-Negotiable 2: the consent
+ * gate lives in the executor, never in a client prompt). Built from the RESOLVED plan, so the owner
+ * sees every package the install will add — dependencies included — and nothing is copied, fetched
+ * or rowed for a plan they did not approve.
+ *
+ * `publisher` is what the manifest CLAIMS. The I16 signature is verified after approval, against
+ * the copied bytes, and a failure there still rolls the whole install back — so approval never
+ * substitutes for verification, it only precedes it.
+ */
+export type ExtensionInstallApprovalRequest = {
+  readonly id: string;
+  readonly version: string;
+  readonly sourcePath: string;
+  /**
+   * `fingerprint` is the first 32 hex chars of SHA-256 over the decoded Ed25519 public key. It is
+   * deliberately NOT named `key`: the consent display redacts any payload field whose name
+   * contains "key" (`executor.ts` `SENSITIVE_PAYLOAD_KEY`), which would hide the one value that
+   * lets the owner tell two publishers with the same id apart.
+   */
+  readonly publisher: { readonly id: string; readonly fingerprint: string } | null;
+  readonly permissions: ExtensionManifest["permissions"];
+  /** Packages this install adds, root first, then each newly installed dependency. */
+  readonly installs: ReadonlyArray<{ readonly id: string; readonly version: string }>;
+};
+
+/** Resolves `true` only when the local owner approved; anything else installs nothing. */
+export type ExtensionInstallApprover = (
+  request: ExtensionInstallApprovalRequest,
+) => Promise<boolean>;
 
 export type InstallExtensionFromLocalResult = SingleInstallResult & {
   installed: readonly ResolvedNode[];
@@ -691,10 +730,47 @@ async function installPlanNodes(
   }
 }
 
+/** Thrown when the owner declined (or the gate timed out); nothing was written. */
+export class ExtensionInstallNotApprovedError extends Error {
+  constructor(id: string) {
+    super(`ERR_EXTENSION_INSTALL_NOT_APPROVED: install of ${id} was not approved`);
+    this.name = "ExtensionInstallNotApprovedError";
+  }
+}
+
+export function publisherKeyFingerprint(base64Key: string): string {
+  return createHash("sha256").update(Buffer.from(base64Key, "base64")).digest("hex").slice(0, 32);
+}
+
+function buildInstallApprovalRequest(
+  manifest: ExtensionManifest,
+  plan: { nodes: readonly ResolvedNode[] },
+  sourcePath: string,
+): ExtensionInstallApprovalRequest {
+  const others = plan.nodes
+    .filter((n) => n.newlyInstalled && n.id !== manifest.id)
+    .map((n) => ({ id: n.id, version: n.version }));
+  return {
+    id: manifest.id,
+    version: manifest.version,
+    sourcePath,
+    publisher:
+      manifest.publisher === undefined
+        ? null
+        : {
+            id: manifest.publisher.id,
+            fingerprint: publisherKeyFingerprint(manifest.publisher.key),
+          },
+    permissions: manifest.permissions,
+    installs: [{ id: manifest.id, version: manifest.version }, ...others],
+  };
+}
+
 function recordPlanInstallAndAudit(
   db: Database,
   plan: { nodes: readonly ResolvedNode[] },
   manifest: ExtensionManifest,
+  hitlStatus: "approved" | "not_required",
 ): void {
   const now = Date.now();
   db.transaction(() => {
@@ -705,7 +781,7 @@ function recordPlanInstallAndAudit(
 
   appendAuditEntry(db, {
     actionType: "extension.install_complete",
-    hitlStatus: "approved",
+    hitlStatus,
     actionJson: JSON.stringify({
       root: manifest.id,
       rootVersion: manifest.version,
@@ -745,6 +821,7 @@ function buildRootInstallResult(
     installPath: rootDest,
     manifestHash: rootManifestHex,
     entryHash: rootEntryHex,
+    treeDigest: computeExtensionTreeDigest(rootDest),
     installed: plan.nodes,
   };
 }
@@ -759,6 +836,15 @@ export async function installExtensionFromLocalDirectory(options: {
   publisherKeyPath?: string;
   registryClient?: RegistryClient;
   abortSignal?: AbortSignal;
+  /**
+   * The local owner's approval, asked after the plan resolves and before anything is written. The
+   * production IPC path always supplies one (`ipc/automation-rpc.ts`); a direct library call
+   * without one installs ungated and records the install audit row as `not_required`, never as
+   * `approved`.
+   */
+  approve?: ExtensionInstallApprover;
+  /** The path to show the owner when `sourcePath` is an archive's temporary extraction. */
+  displaySourcePath?: string;
 }): Promise<InstallExtensionFromLocalResult> {
   const sourceResolved = resolve(options.sourcePath);
   if (!existsSync(sourceResolved)) {
@@ -782,6 +868,7 @@ export async function installExtensionFromLocalDirectory(options: {
       }),
       ...(options.registryClient !== undefined && { registryClient: options.registryClient }),
       ...(options.abortSignal !== undefined && { abortSignal: options.abortSignal }),
+      ...(options.approve !== undefined && { approve: options.approve }),
     });
   }
   if (!st.isDirectory()) {
@@ -814,9 +901,23 @@ export async function installExtensionFromLocalDirectory(options: {
     activeConstraints,
   });
 
+  if (options.approve !== undefined) {
+    const approved = await options.approve(
+      buildInstallApprovalRequest(manifest, plan, options.displaySourcePath ?? sourceResolved),
+    );
+    if (!approved) {
+      throw new ExtensionInstallNotApprovedError(manifest.id);
+    }
+  }
+
   await installPlanNodes(options, plan, sourceResolved, manifest, signal);
 
-  recordPlanInstallAndAudit(options.db, plan, manifest);
+  recordPlanInstallAndAudit(
+    options.db,
+    plan,
+    manifest,
+    options.approve === undefined ? "not_required" : "approved",
+  );
 
   return buildRootInstallResult(options.extensionsDir, manifest, plan);
 }

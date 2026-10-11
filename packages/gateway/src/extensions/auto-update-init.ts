@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as tar from "tar";
 
-import { listExtensions, updateExtensionRowVersion } from "../automation/extension-store.ts";
+import {
+  listExtensions,
+  selectExtensionInstallPath,
+  setExtensionTreeDigest,
+  updateExtensionRowVersion,
+} from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { ExtensionAutoUpdater, type InstalledExtensionRow } from "./auto-update.ts";
@@ -19,6 +24,7 @@ import type { AvailableUpdate } from "./auto-update-types.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
 import { createRegistryClient, type RegistryClient } from "./registry-client.ts";
+import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { verifyManifestSignature } from "./verify-signature.ts";
 
 export interface AutoUpdateInitOpts {
@@ -104,6 +110,22 @@ async function extractTarballToDir(bytes: Uint8Array, destDir: string): Promise<
   }
 }
 
+/**
+ * After an owner-approved upgrade or downgrade swapped new bytes into place, hash the tree that is
+ * now there. `updateExtensionRowVersion` has already cleared the old digest, so a failure here
+ * (a symlink in the swapped-in tree, an unreadable file) leaves the row at NULL — a digest that
+ * vouches for nothing — rather than failing an update whose files are already swapped.
+ */
+function recordTreeDigestAfterSwap(db: Database, id: string): void {
+  const installPath = selectExtensionInstallPath(db, id);
+  if (installPath === null) return;
+  try {
+    setExtensionTreeDigest(db, id, computeExtensionTreeDigest(installPath));
+  } catch {
+    /* left NULL by updateExtensionRowVersion; see above */
+  }
+}
+
 export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRuntime {
   const cache = new AutoUpdateCache();
   const registry: RegistryClient = createRegistryClient({ baseUrl: opts.registryBaseUrl });
@@ -137,6 +159,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   ) =>
     Promise.try(() => {
       updateExtensionRowVersion(opts.db, id, version, manifestHash, entryHash, Date.now());
+      recordTreeDigestAfterSwap(opts.db, id);
     });
 
   const daemon = new ExtensionAutoUpdater({

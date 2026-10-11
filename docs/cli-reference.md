@@ -4278,6 +4278,23 @@ nimbus extension install ./nimbus-my-connector
 nimbus extension install https://example.com/nimbus-ext.tar.gz
 ```
 
+**Approval is the gateway's, not the CLI's.** Before anything is copied, fetched or recorded, the gateway resolves the install plan and asks you to approve it through its HITL gate (action type `extension.install`): the extension's id and version, the source path, the publisher id and a fingerprint of its key as the manifest *claims* them, the declared permissions, and every package the install adds, dependencies included. The publisher signature is still verified after approval, and a failure there rolls the whole install back. On a TTY the prompt is interactive; `--yes` approves it on your behalf and echoes what it approved to stderr; without a TTY and without `--yes` the command refuses. A declined or timed-out approval installs nothing.
+
+Install also records a digest of **every** file in the installed package (`tree_digest`), not only the manifest and entry file. Nothing acts on it yet; it is what the extension runtime will check before it runs anything.
+
+---
+
+### `nimbus extension rehash <id> [--yes]`
+
+Adopt the files currently under an installed extension as trusted, by recording their digest. Use it for an extension installed before the digest existed (schema V66), or after crash recovery promoted a previous version, both of which leave the digest empty.
+
+It is gated exactly like an install: the gateway shows the new digest and the one it replaces, and stores nothing unless you approve. It **refuses without asking** when the extension's manifest or entry file no longer match their install-time hashes, because that is tampering or a half-applied update rather than something to adopt (reinstall instead), and it refuses if the files change while the approval is pending. An unchanged tree reports `unchanged` and does not prompt.
+
+```bash
+nimbus extension rehash com.example.notion
+nimbus extension rehash com.example.notion --yes
+```
+
 ---
 
 ### `nimbus extension list [--tree] [--json]`
