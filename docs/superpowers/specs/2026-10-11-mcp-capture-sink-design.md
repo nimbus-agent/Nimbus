@@ -151,7 +151,7 @@ structured fields **refuse** (`ERR_CAPTURE_INVALID`) — the I32 split.
 | | `note` | string | truncate 500 |
 
 Unknown sibling keys are dropped silently by construction (never read). The total rebuilt payload
-is additionally refused above 32 KiB, independent of the per-field caps, so the bound holds even if
+is additionally refused above 64 KiB (UTF-8 bytes of the rebuilt JSON; 32 KiB would refuse a max-length 16,384-char body in non-ASCII text that the body cap says should TRUNCATE), independent of the per-field caps, so the bound holds even if
 a future field is added without a cap.
 
 **Item-existence check** is one `SELECT id FROM item WHERE id IN (…)`. A `relatesTo` / `evidence`
@@ -518,7 +518,7 @@ Each rule is red-proved by a fixture that must fail.
 
 | Layer | File(s) | Proves |
 |---|---|---|
-| unit | `capture-validate.test.ts` | sibling keys dropped; prose truncates; structured fields refuse; 32 KiB total cap; empty required fields refuse |
+| unit | `capture-validate.test.ts` | sibling keys dropped; prose truncates; structured fields refuse; 64 KiB total cap; empty required fields refuse |
 | unit | `capture-client-policy.test.ts` | `Record` total over `ClientKind`; only `mcp` submits; `mcp` never owner |
 | unit | `capture-gate.test.ts` | each refusal code at its step; order (a disabled sink refuses before validation — no payload read; the attempt limit refuses before validation); audit row for steps 4–8 and success, NONE for steps 1–3 (counted in `refusedSinceStart` instead); audit failure rolls back |
 | unit | `capture-rate-limit.test.ts` | window edges; ONE window shared across two `mcp` connections (a reconnect does not reset it) |
