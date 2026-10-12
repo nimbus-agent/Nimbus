@@ -142,6 +142,17 @@ describe("PR cross-platform legs run the same tests as the push matrix", () => {
       }
     }
   });
+
+  test("both legs run with --parallel, or neither does", () => {
+    // `--parallel` is not just a speed flag: it implies `--isolate`, so it decides whether a
+    // `mock.module` in one file can leak into another. That is the process SHAPE the paths check
+    // above cannot see, and the one #1307 was red on. One leg isolated and the other not would
+    // pass every path assertion and still not run the same thing.
+    const hasParallel = (line: string): boolean => /\s--parallel(?:=\d+)?(?:\s|$)/.test(line);
+    expect(hasParallel(prLines[0] ?? "")).toBe(hasParallel(pushLines[0] ?? ""));
+    // Positive, not just equal: equality alone would also pass if both dropped it.
+    expect(hasParallel(prLines[0] ?? "")).toBe(true);
+  });
 });
 
 describe("the local entry points run the same tests as the push matrix", () => {

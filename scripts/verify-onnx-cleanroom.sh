@@ -13,7 +13,7 @@
 # node_modules, no bun and no system onnxruntime — the only thing mounted is the binary under test.
 #
 # Two stages, deliberately in different images:
-#   build  oven/bun:1.3     repo mounted read-only; produces a standalone probe
+#   build  oven/bun:1.4     repo mounted read-only; produces a standalone probe
 #   run    debian:slim      nothing mounted but the probe
 #
 # Usage: bash scripts/verify-onnx-cleanroom.sh
@@ -53,7 +53,7 @@ INNER
 export MSYS_NO_PATHCONV=1
 
 echo "[cleanroom] building probe (repo mounted read-only)..."
-docker run --rm -v "$REPO_M:/repo:ro" -v "$WORK_M:/host" oven/bun:1.3 bash /host/build.sh >/dev/null
+docker run --rm -v "$REPO_M:/repo:ro" -v "$WORK_M:/host" oven/bun:1.4 bash /host/build.sh >/dev/null
 
 echo "[cleanroom] running in a bare image with NOTHING of ours mounted..."
 # `|| true` is load-bearing: under `set -e` a failing probe would kill this script before it could
