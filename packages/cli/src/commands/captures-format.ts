@@ -148,6 +148,13 @@ export function formatCaptureDetail(d: CaptureDetailView): string {
     lines.push("(payload cleared on revoke)");
   } else {
     for (const [k, v] of Object.entries(d.payload)) {
+      if (typeof v === "string" && /\r?\n/.test(v)) {
+        // The owner reviews text as stored: keep line structure, strip each line on its own.
+        lines.push(`${stripControl(k)}:`);
+        for (const line of v.split(/\r?\n/))
+          lines.push(`  ${stripControl(line.replaceAll("\t", "  "))}`);
+        continue;
+      }
       const text = typeof v === "string" ? v : JSON.stringify(v);
       lines.push(`${stripControl(k)}: ${stripControl(text)}`);
     }
@@ -163,6 +170,12 @@ export function doctorCapturesLines(s: CaptureStatusView): { lines: string[]; ex
           "[warn] MCP capture sink: [mcp_sink] is invalid in nimbus.toml; the sink is OFF (see the gateway log).",
         ],
         exit: 1,
+      };
+    }
+    if (s.disabledReason === "policy") {
+      return {
+        lines: ["[info] MCP capture sink: locked off by org policy (mcp_capture)."],
+        exit: 0,
       };
     }
     return { lines: [], exit: 0 };

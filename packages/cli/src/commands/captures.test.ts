@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { parseCapturesArgs, runCapturesWith } from "./captures.ts";
-import { doctorCapturesLines, formatCaptureTable, stripControl } from "./captures-format.ts";
+import {
+  doctorCapturesLines,
+  formatCaptureDetail,
+  formatCaptureTable,
+  stripControl,
+} from "./captures-format.ts";
 import { doctorPrintCaptures } from "./doctor-core.ts";
 
 const ROW = {
@@ -257,6 +262,13 @@ describe("doctor", () => {
     expect(r.lines.join("\n")).toContain("ERR_CAPTURE_RATE_LIMITED×4");
   });
 
+  test("policy lock-off → info line, exit 0", () => {
+    expect(doctorCapturesLines({ ...BASE, enabled: false, disabledReason: "policy" })).toEqual({
+      lines: ["[info] MCP capture sink: locked off by org policy (mcp_capture)."],
+      exit: 0,
+    });
+  });
+
   test("config_error → warning, exit 1", () => {
     const r = doctorCapturesLines({ ...BASE, enabled: false, disabledReason: "config_error" });
     expect(r.exit).toBe(1);
@@ -296,6 +308,28 @@ describe("stripControl / formatCaptureTable", () => {
 
   test("strip removes bidi, zero-width and line-separator characters", () => {
     expect(stripControl("a\u202Eb\u2066c\u200Bd\uFEFFe\u2028f\u2029g")).toBe("abcdefg");
+  });
+
+  test("detail keeps line structure of a multi-line value, stripping each line", () => {
+    const out = formatCaptureDetail({
+      id: "cap_1",
+      kind: "note",
+      state: "live",
+      title: "T",
+      clientLabel: null,
+      createdAt: 0,
+      decidedAt: null,
+      payload: { title: "one\u001b", body: "first line\r\n\tsecond \u202Eline" },
+      payloadBytes: 10,
+      itemId: null,
+      nativeRef: null,
+    });
+    const lines = out.split("\n");
+    expect(lines).toContain("title: one");
+    const i = lines.indexOf("body:");
+    expect(i).toBeGreaterThan(-1);
+    expect(lines[i + 1]).toBe("  first line");
+    expect(lines[i + 2]).toBe("    second line");
   });
 
   test("table has a header row", () => {

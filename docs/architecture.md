@@ -1824,7 +1824,7 @@ per kind), `item_id`, `payload_json`, `payload_bytes`, `client_label`, `session_
 embedded by the LOCAL embedder only (`LOCAL_ONLY_PROSE_TYPES`), so a note never reaches a remote
 embedding vendor. Text that later reaches a model is delimited by the I11 envelope, not sanitised.
 
-**Owner side.** `captures.list` / `captures.get` / `captures.revoke` (and `capture.status`) are owner
+**Owner side.** `captures.list` / `captures.get` / `captures.revoke` are owner
 methods: they refuse the `mcp` kind, and the MCP adapter registers no tool that reaches them. Revoke
 deletes the item and its embeddings, clears the payload, and records `capture.revoke` with
 `hitl_status = 'not_required'` (I4 forbids an `approved` row a gate did not earn). It is idempotent:

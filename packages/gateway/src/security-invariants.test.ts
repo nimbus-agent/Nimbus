@@ -2623,7 +2623,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "CAPTURE_ROLE_BY_KIND[caller.kind]",
       "deps.limiter.tryAcquire",
       "cap.kinds.includes",
-      "validateNotePayload",
+      "validateNotePayload(params",
       "missingItem(",
       "deps.store.countCreatedSince",
       "deps.db.transaction",

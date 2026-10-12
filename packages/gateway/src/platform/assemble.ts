@@ -3430,14 +3430,6 @@ export async function assemblePlatformServices(
     isConnectorAllowed,
   });
 
-  // Timeline correlation (deployment <-> incident, `correlates_with`): binds an item's
-  // PagerDuty/repo metadata to a nimbus service id via the [metrics.dora.<id>] /
-  // [ci.service.<id>] config, so cross-provider service identifiers (PagerDuty's
-  // "PSVC1" vs. a forge's "checkout-web") resolve to the same `ServiceConfig.serviceId`.
-  //
-  // M-1 (see `loadServiceConfigsOrDegrade`): a malformed `[metrics.dora.*]`/
-  // `[ci.service.*]` block degrades to no service-identity bindings rather than
-  // aborting boot. This is the only call site reached unconditionally at boot.
   // MCP capture sink (I28). Config at boot; org policy LIVE per call (I22) — an absent/undefined
   // policy result fails closed inside resolveCaptureCapability.
   const mcpSinkLoad = loadNimbusMcpSinkFromPath(activeTomlPath);
@@ -3462,6 +3454,14 @@ export async function assemblePlatformServices(
       : { scheduleEmbedding: (id: string) => scheduleItemEmbedding(id) }),
   };
 
+  // Timeline correlation (deployment <-> incident, `correlates_with`): binds an item's
+  // PagerDuty/repo metadata to a nimbus service id via the [metrics.dora.<id>] /
+  // [ci.service.<id>] config, so cross-provider service identifiers (PagerDuty's
+  // "PSVC1" vs. a forge's "checkout-web") resolve to the same `ServiceConfig.serviceId`.
+  //
+  // M-1 (see `loadServiceConfigsOrDegrade`): a malformed `[metrics.dora.*]`/
+  // `[ci.service.*]` block degrades to no service-identity bindings rather than
+  // aborting boot. This is the only call site reached unconditionally at boot.
   const serviceConfigs = loadServiceConfigsOrDegrade(paths.configDir, syncLogger);
   // M-2: two ServiceConfigs claiming the same pagerdutyServices entry or repo URN
   // (a monorepo) resolve deterministically but silently otherwise; surface it the

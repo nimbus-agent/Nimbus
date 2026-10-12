@@ -1518,7 +1518,7 @@ turned `mcp_capture` off. **The decision is made once, when the MCP server proce
 after enabling `[mcp_sink]` (and restarting the Gateway), restart the editor's MCP server so it
 asks again. A Gateway that is down at spawn yields no capture tool, never a guessed one. Every
 submit goes through a fixed-order gate (invariant `I28`) and may be refused with an
-`ERR_CAPTURE_*` code (disabled, rate limited, invalid, unknown `relatesTo` item, queue full).
+`ERR_CAPTURE_*` code (disabled, rate limited, invalid, unknown `relatesTo` item).
 
 `agents.preflight` is deliberately **not** exposed: it is the `I24` federated action path,
 and triggers sandboxed execution on peers behind the owner's HITL gate. The only write
@@ -1549,7 +1549,7 @@ Config, all under `[mcp_sink]` in `nimbus.toml`, read at Gateway start:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `false` | Master switch. Off, `capture.submit` refuses and no tool is offered. |
-| `kinds` | all four | Allowed capture kinds (`note`, `decision`, `term`, `link`). Only `note` is acted on in PR 1. |
+| `kinds` | all four | Allowed capture kinds (`note`, `decision`, `term`, `link`). This release accepts only `note`. |
 | `max_per_hour` | `30` | Accepted captures per rolling hour (1..1000). Attempts are limited at 4x this. |
 | `max_pending` | `100` | Pending-proposal queue bound (1..10000). |
 

@@ -136,9 +136,19 @@ describe("submitCapture — success", () => {
     });
   });
 
+  test("a 600-character body lands in full (long-body cap, end to end)", () => {
+    const body = "x".repeat(600);
+    submitCapture(deps, MCP, { kind: "note", payload: { title: "Long", body } });
+    const row = db.query("SELECT body FROM item WHERE id = 'nimbus:cap_1'").get() as {
+      body: string;
+    };
+    expect(row.body).toHaveLength(600);
+    expect(row.body).toBe(body);
+  });
+
   test("audit failure rolls the whole write back (fail-closed)", () => {
     db.run("DROP TABLE audit_log");
-    expect(() => submitCapture(deps, MCP, NOTE)).toThrow();
+    expect(() => submitCapture(deps, MCP, NOTE)).toThrow(/audit_log/);
     expect(deps.store.get("cap_1")).toBeUndefined();
     expect(db.query("SELECT 1 FROM item WHERE id = 'nimbus:cap_1'").get()).toBeNull();
     expect(embedded).toEqual([]);
@@ -168,6 +178,7 @@ describe("submitCapture — ordered refusals", () => {
     for (let i = 0; i < 4; i++)
       codeOf(() => submitCapture(deps, MCP, { kind: "note", payload: {} }));
     expect(codeOf(() => submitCapture(deps, MCP, NOTE))).toBe("ERR_CAPTURE_RATE_LIMITED");
+    expect(auditRows()).toHaveLength(4);
     expect(
       auditRows().every((r) => JSON.parse(r.action_json).outcome === "ERR_CAPTURE_INVALID"),
     ).toBe(true);
@@ -279,6 +290,38 @@ describe("revokeCapture", () => {
     expect(codeOf(() => revokeCapture(deps, MCP, "cap_1"))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     expect(codeOf(() => revokeCapture(deps, OWNER, "cap_404"))).toBe("ERR_CAPTURE_NOT_FOUND");
     expect(codeOf(() => revokeCapture(deps, OWNER, 7))).toBe("ERR_CAPTURE_INVALID");
+  });
+
+  // Wrap the real store; only markRevoked loses the race, and the post-race get reports `after`.
+  function lostRaceDeps(after: "revoked" | "live"): CaptureGateDeps {
+    const real = deps.store;
+    let raced = false;
+    const store = Object.create(real) as CaptureStore;
+    store.markRevoked = () => {
+      raced = true;
+      return false;
+    };
+    store.get = (id: string) => {
+      const r = real.get(id);
+      return raced && r !== undefined ? { ...r, state: after } : r;
+    };
+    return { ...deps, store };
+  }
+
+  test("lost race, winner already revoked: success, no capture.revoke audit row from the loser", () => {
+    submitCapture(deps, MCP, NOTE);
+    expect(revokeCapture(lostRaceDeps("revoked"), OWNER, "cap_1")).toEqual({
+      id: "cap_1",
+      state: "revoked",
+    });
+    expect(auditRows().filter((r) => r.action_type === "capture.revoke")).toHaveLength(0);
+  });
+
+  test("lost race, row still live afterwards: ERR_CAPTURE_STATE", () => {
+    submitCapture(deps, MCP, NOTE);
+    expect(codeOf(() => revokeCapture(lostRaceDeps("live"), OWNER, "cap_1"))).toBe(
+      "ERR_CAPTURE_STATE",
+    );
   });
 
   test("a live note whose item was already deleted (data.delete) still revokes", () => {
