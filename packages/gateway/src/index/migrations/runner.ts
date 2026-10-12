@@ -80,6 +80,7 @@ import {
   UNIFIED_ITEM_V3_SCHEMA_SQL,
 } from "../unified-item-v3-sql.ts";
 import { USER_MCP_GRANTS_V65_SQL } from "../user-mcp-grants-v65-sql.ts";
+import { CAPTURE_V66_SQL } from "../capture-v66-sql.ts";
 import { USER_MCP_V11_MIGRATION_SQL } from "../user-mcp-v11-sql.ts";
 import {
   VEC_ITEMS_1536_V30_NO_VEC_SQL,
@@ -590,6 +591,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "user MCP grants (read paths, network hosts, model access)",
     USER_MCP_GRANTS_V65_SQL,
   ),
+  simpleStep(65, 66, "MCP capture sink queue (capture)", CAPTURE_V66_SQL),
 ];
 
 /**
