@@ -258,7 +258,7 @@ describe("revokeCapture", () => {
     });
     const revokes = auditRows().filter((r) => r.action_type === "capture.revoke");
     expect(revokes).toHaveLength(1);
-    expect(revokes[0]?.hitl_status).toBe("approved");
+    expect(revokes[0]?.hitl_status).toBe("not_required");
   });
 
   test("Review Focus 2: revoking twice is a no-op success with no second audit row", () => {

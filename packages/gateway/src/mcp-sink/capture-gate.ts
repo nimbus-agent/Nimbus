@@ -306,7 +306,7 @@ export function revokeCapture(
     if (row.itemId !== null) deleteItemByPrimaryKey(deps.db, row.itemId);
     appendAuditEntry(deps.db, {
       actionType: "capture.revoke",
-      hitlStatus: "approved",
+      hitlStatus: "not_required",
       actionJson: JSON.stringify({ captureId: id, kind: row.kind, outcome: "revoked" }),
       timestamp: now,
       sessionId: caller.clientId,
