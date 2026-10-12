@@ -58,8 +58,8 @@ function readAll(repoRoot: string, rels: readonly string[]): string[] | undefine
  * seven were ranges in these files, and the gate's silence was evidence about its scan set rather
  * than about the claims. The header's warning about ambiguity still holds and is why this stays a
  * RANGE check — a bare count like "32 live security invariants" is deliberately NOT matched, since
- * the live count is not the ceiling whenever a number is reserved. I28 is reserved today, so the
- * count is 39 while the ceiling is I40, and a naive comparison would read a correct 39 as stale.
+ * the live count is not the ceiling whenever a number is reserved. I28 was reserved until the capture
+ * sink landed; a number can be reserved again, so the live count is never assumed to equal the ceiling.
  *
  * The list is an ALLOW-list, so anything absent is simply unscanned rather than actively
  * excluded. These are the ones deliberately left off, because rewriting them would falsify a

@@ -7,6 +7,8 @@ import {
   checkActuationConfinement,
   checkAgentEmitterImportConfinement,
   checkBrokeredFetchLiteralConfinement,
+  checkCaptureGateCallers,
+  checkCaptureTableConfinement,
   checkChatopsUnwrappedPost,
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
@@ -2022,6 +2024,92 @@ describe("D27(b) media_grant table confinement", () => {
         ),
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("D32(a) — the capture table is named only by its store and its DDL", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const store = "packages/gateway/src/mcp-sink/capture-store.ts";
+  const sql = "packages/gateway/src/index/capture-v66-sql.ts";
+
+  test("allows the store and the V66 SQL module", () => {
+    expect(
+      checkCaptureTableConfinement([
+        file(store, "SELECT * FROM capture WHERE id = ?"),
+        file(sql, "CREATE TABLE IF NOT EXISTS capture ("),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["a read", "SELECT 1 FROM capture"],
+    ["a write", "INSERT INTO capture (id) VALUES (?)"],
+    ["an update", "UPDATE capture SET state = 'x'"],
+    ["a quoted name", 'SELECT 1 FROM "capture"'],
+    ["a backtick name", "SELECT 1 FROM `capture`"],
+    ["a bracket name", "SELECT 1 FROM [capture]"],
+  ])("FAILS on %s from anywhere else", (_n, sqlText) => {
+    expect(
+      checkCaptureTableConfinement([file("packages/gateway/src/ipc/capture-rpc.ts", sqlText)]),
+    ).toHaveLength(1);
+  });
+
+  test("does not match look-alike identifiers or comments", () => {
+    expect(
+      checkCaptureTableConfinement([
+        file(
+          "packages/gateway/src/x.ts",
+          "SELECT 1 FROM capture_log; // FROM capture\nconst tribalCapture = 1;",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("ignores test files", () => {
+    expect(
+      checkCaptureTableConfinement([file("packages/gateway/src/x.test.ts", "FROM capture")]),
+    ).toEqual([]);
+  });
+});
+
+describe("D32(b) — gate entry points are called only from ipc/capture-rpc.ts", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+
+  test("allows the rpc dispatcher and the gate's own definitions", () => {
+    expect(
+      checkCaptureGateCallers([
+        file(
+          "packages/gateway/src/ipc/capture-rpc.ts",
+          "submitCapture(c.gate, c.caller, p); revokeCapture(a, b, c);",
+        ),
+        file(
+          "packages/gateway/src/mcp-sink/capture-gate.ts",
+          "export function submitCapture(deps) {}",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each(["submitCapture", "acceptCapture", "rejectCapture", "revokeCapture"])(
+    "FAILS when %s is called anywhere else",
+    (fn) => {
+      expect(
+        checkCaptureGateCallers([
+          file("packages/gateway/src/platform/assemble.ts", `${fn}(deps, caller, x)`),
+        ]),
+      ).toHaveLength(1);
+    },
+  );
+
+  test("an aliased import is also caught", () => {
+    expect(
+      checkCaptureGateCallers([
+        file(
+          "packages/gateway/src/x.ts",
+          'import { submitCapture as sc } from "../mcp-sink/capture-gate.ts";',
+        ),
+      ]),
+    ).toHaveLength(1);
   });
 });
 

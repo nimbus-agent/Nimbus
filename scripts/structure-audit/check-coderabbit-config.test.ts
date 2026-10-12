@@ -83,7 +83,7 @@ describe("the monorepo's .coderabbit.yaml", () => {
     // have let `enforce I31` or `(I30/I31)` through — precisely the stale
     // guidance this test exists to catch. Parsing also scopes the scan to
     // instructions, so the file's header comment (which legitimately mentions
-    // the I1-I35 range and the reserved I28) is not swept in.
+    // the I1-I42 range) is not swept in.
     const cited = new Set(
       instructionEntries().flatMap((e) =>
         [...e.instructions.matchAll(/\bI\d+\b/g)].map((m) => m[0]),
@@ -93,13 +93,5 @@ describe("the monorepo's .coderabbit.yaml", () => {
 
     const unknown = [...cited].filter((i) => !defined.has(i));
     expect(unknown).toEqual([]);
-  });
-
-  test("no path_instruction tells the reviewer to enforce the reserved I28", () => {
-    // I28 is reserved for a parked branch, not a live defense. The file's header
-    // comment may SAY that (it is useful context for whoever edits this next);
-    // what must not happen is an instruction asking the reviewer to enforce it.
-    const offending = instructionEntries().filter((e) => /\bI28\b/.test(e.instructions));
-    expect(offending).toEqual([]);
   });
 });

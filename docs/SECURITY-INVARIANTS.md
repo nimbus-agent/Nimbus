@@ -1,6 +1,6 @@
 # Nimbus Security Invariants
 
-**Current ceiling:** invariants I1–I42 (static rules D10–D31; I31, I32, I34, I36, I41 and I42 have no static rule — see their own sections for why). Three static rules run the other way and belong to no invariant, so they have no section here: **D24** (the SyncContext capability boundary), **D30** (every non-test file that value-imports the `bun:sqlite` `Database` constructor must name `ensureFullSqlite`, so the macOS full-SQLite install cannot be missed by a new process or Worker entry point — a platform-equality correctness rule, not a defense against an adversary; see `platform/sqlite-runtime.ts`), and **D31** (every non-test gateway file that opens a listening socket via `Bun.serve`/`Bun.listen`/`net.createServer` must name a `registerListener(` CALL, anchored so `unregisterListener` — which contains that identifier as a substring — cannot satisfy it, so a new listen site among those three shapes cannot silently miss `nimbus wow`'s locality panel; STATED BOUND, two shapes this rule cannot see: a socket a LIBRARY opens internally, such as `bonjour-service`'s UDP 5353 multicast bind in `federation/mdns-discovery-provider.ts`, is invisible to this text scan and registers by hand instead, proven only by its own test; and a socket opened by a gateway-SPAWNED CHILD PROCESS, such as the CDP debugging port Chromium binds during a live `nimbus computer` browser session (`computer-use/cu-lanes/browser-launch.ts`'s `--remote-debugging-port=0`), which is why the `nimbus wow` locality panel's own heading reads "Listeners the gateway has open right now:" rather than an unqualified claim; see `locality/listener-registry.ts`). Note: I28 is reserved for the MCP-server owner-sink and is unimplemented — no wiring, no section below, no enforcement test. The I27→I29 gap is documented intent, reconciled if and when that work lands.
+**Current ceiling:** invariants I1–I42 (static rules D10–D32; I31, I32, I34, I36, I41 and I42 have no static rule — see their own sections for why). Three static rules run the other way and belong to no invariant, so they have no section here: **D24** (the SyncContext capability boundary), **D30** (every non-test file that value-imports the `bun:sqlite` `Database` constructor must name `ensureFullSqlite`, so the macOS full-SQLite install cannot be missed by a new process or Worker entry point — a platform-equality correctness rule, not a defense against an adversary; see `platform/sqlite-runtime.ts`), and **D31** (every non-test gateway file that opens a listening socket via `Bun.serve`/`Bun.listen`/`net.createServer` must name a `registerListener(` CALL, anchored so `unregisterListener` — which contains that identifier as a substring — cannot satisfy it, so a new listen site among those three shapes cannot silently miss `nimbus wow`'s locality panel; STATED BOUND, two shapes this rule cannot see: a socket a LIBRARY opens internally, such as `bonjour-service`'s UDP 5353 multicast bind in `federation/mdns-discovery-provider.ts`, is invisible to this text scan and registers by hand instead, proven only by its own test; and a socket opened by a gateway-SPAWNED CHILD PROCESS, such as the CDP debugging port Chromium binds during a live `nimbus computer` browser session (`computer-use/cu-lanes/browser-launch.ts`'s `--remote-debugging-port=0`), which is why the `nimbus wow` locality panel's own heading reads "Listeners the gateway has open right now:" rather than an unqualified claim; see `locality/listener-registry.ts`).
 
 Canonical list of structural defenses Nimbus relies on. Each invariant names the defense, points to the production wiring that makes it active (not just defined), and lists the anti-pattern that would regress it. The B1 internal audit (Phase 4, 2026-04-25) found that several of these defenses *existed* in the codebase but had **zero production callers** — the most common root cause of High-severity findings. This file exists so that gap is impossible to re-introduce silently.
 
@@ -762,9 +762,34 @@ consult the list.
 
 ---
 
+## I28 — MCP content enters only through the capture gate
+
+**Statement:** content from an MCP client enters Nimbus only through `mcp-sink/capture-gate.ts`'s
+`submitCapture()`. Submit runs a fixed order: capability (config + live org policy `mcp_capture`,
+fail-closed on an absent accessor) → declared `mcp` client kind only → ONE gateway-wide attempt
+limit (4 × `max_per_hour`, before any validation) → kind allowed → whitelist rebuild → referenced
+items exist → durable hourly cap read from the table → one-transaction write of the `capture` row,
+the `nimbus:capture` item and the `capture.submit` audit row (an audit failure rolls all of it
+back). Owner methods (`captures.*`) refuse the `mcp` kind, and the MCP adapter registers no tool
+that reaches them. `capture.revoke` records `hitl_status = 'not_required'`: no consent gate runs on
+the owner's own command, and I4 forbids an `approved` row a gate did not earn. Capture items are
+excluded from decision/glossary extraction and embed locally only (`LOCAL_ONLY_PROSE_TYPES`).
+
+**Wiring:** `mcp-sink/{capture-gate,capture-store,capture-capability,capture-client-policy,capture-rate-limit,capture-validate}.ts`, `ipc/capture-rpc.ts`, `ipc/server/dispatchers.ts` (`tryDispatchCaptureRpc`), `ipc/lan-rpc.ts`, `platform/assemble.ts`.
+
+**Static complement:** D32(a) confines the `capture` table identifier to `capture-store.ts` + `index/capture-v66-sql.ts`; D32(b) confines every mention of `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture` to `ipc/capture-rpc.ts` + `capture-gate.ts`. Stated bound: a dynamically composed identifier evades D32(a); capability confinement is the real defense.
+
+**Bounds:** a live note is searchable unreviewed, by design (PR 1 ships notes only; proposals that
+count only after owner acceptance are PR 2); text reaching a model is delimited by I11, not
+sanitised; the attempt limit is in-memory and resets on gateway restart (the durable hourly cap does
+not); refusals before the attempt limit are counted (`capture.status`), not audited; `data.delete
+--service nimbus` removes capture items but not `capture` rows.
+
+**Enforcement test:** `security-invariants.test.ts` → `I28 — …`.
+
 ## I29 — egress-ledger completeness over the executor chokepoint
 
-**Statement:** Every gated CONNECTOR action that can reach `connectors.dispatch` appends one `egress_ledger` row to the BLAKE3-chained append-only ledger BEFORE dispatch is called — so a 0-row window from a wired, dispatch-capable executor is structurally impossible. A denied action appends a `blocked` row (and never dispatches); an append failure aborts the action entirely (fail-closed — dispatch never runs). Gate-only executors (vault, teamvault, reindex, data, auto-update, connector.auth, egress.prune) pair with a rejecting dispatcher and perform local mutations, not egress — they are wired with the named `NULL_EGRESS_SINK` and intentionally emit no egress row; this is a documented exclusion, not a gap in coverage (`connector.auth`'s gate-only EXECUTOR emits none; the pre-store credential probe it runs is ledgered separately, by the sync-class appender described below). The ledger is tamper-evident (BLAKE3 chain, timing-safe verify per I10), and the sole mutation (`egress.prune` — a continuing-tombstone retention edit) is gated by the owner's HITL approval (I2 frozen set member). Marker rows (`prune`/`boot`/`degraded`) are bookkeeping, not egress, and are excluded from the outbound count — before this exclusion landed, every `egress.prune` tombstone inflated the reported figure. Note: I28 is reserved for the MCP-server owner-sink and is unimplemented — hence the I27→I29 gap.
+**Statement:** Every gated CONNECTOR action that can reach `connectors.dispatch` appends one `egress_ledger` row to the BLAKE3-chained append-only ledger BEFORE dispatch is called — so a 0-row window from a wired, dispatch-capable executor is structurally impossible. A denied action appends a `blocked` row (and never dispatches); an append failure aborts the action entirely (fail-closed — dispatch never runs). Gate-only executors (vault, teamvault, reindex, data, auto-update, connector.auth, egress.prune) pair with a rejecting dispatcher and perform local mutations, not egress — they are wired with the named `NULL_EGRESS_SINK` and intentionally emit no egress row; this is a documented exclusion, not a gap in coverage (`connector.auth`'s gate-only EXECUTOR emits none; the pre-store credential probe it runs is ledgered separately, by the sync-class appender described below). The ledger is tamper-evident (BLAKE3 chain, timing-safe verify per I10), and the sole mutation (`egress.prune` — a continuing-tombstone retention edit) is gated by the owner's HITL approval (I2 frozen set member). Marker rows (`prune`/`boot`/`degraded`) are bookkeeping, not egress, and are excluded from the outbound count — before this exclusion landed, every `egress.prune` tombstone inflated the reported figure.
 
 A second append path exists for MCP-originated agent briefs. An agent brief served to a client that
 declared itself `mcp` at connect time is egress — the gateway synthesises from the private index and
@@ -1396,7 +1421,7 @@ function dispatchToolCall(toolId: string, scope: ReadonlySet<string>) {
 }
 ```
 
-**2. Entry in this file** — a new `## I33 — Sub-agent tool scope enforcement` section (the next free number after the current ceiling `I32`; note `I28` is reserved, not free) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
+**2. Entry in this file** — a new `## I33 — Sub-agent tool scope enforcement` section (the next free number after the current ceiling `I32`) naming the defense, the wiring site (`sub-agent.ts:dispatchToolCall`), the anti-pattern (any code that bypasses `dispatchToolCall`, or any mutable scope container), and the compliance recipe (always frozen sets; never call `tools[id].invoke()` directly).
 
 **3. Enforcement test** — in `packages/gateway/src/security-invariants.test.ts`:
 
