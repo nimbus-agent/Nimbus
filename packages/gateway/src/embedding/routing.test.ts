@@ -153,4 +153,9 @@ describe("routing — local-only prose types", () => {
       expect(PROSE_HEAVY_TYPES.has(key)).toBe(false);
     }
   });
+
+  test("nimbus:capture is local-only prose and never remote-routable", () => {
+    expect(LOCAL_ONLY_PROSE_TYPES.has("nimbus:capture")).toBe(true);
+    expect(PROSE_HEAVY_TYPES.has("nimbus:capture")).toBe(false);
+  });
 });

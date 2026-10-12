@@ -81,6 +81,10 @@ export const LOCAL_ONLY_PROSE_TYPES: ReadonlySet<string> = new Set([
   // deliberate price, exactly as it already is for web clips.
   "nimbus:image_understanding",
   "nimbus:video_understanding",
+  // MCP capture sink (spec 2026-10-11 § 4.3): agent-authored notes ABOUT the private index. Local
+  // embedding keeps "nothing here is egress" true (success criterion 5); membership also gives the
+  // 16,384 body cap via LONG_BODY_TYPES.
+  "nimbus:capture",
 ]);
 
 export function routingKey(service: string, type: string): string {
