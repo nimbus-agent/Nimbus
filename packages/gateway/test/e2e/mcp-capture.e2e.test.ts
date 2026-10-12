@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Subprocess } from "bun";
@@ -126,6 +127,78 @@ async function stopGateway(): Promise<void> {
   gateway = undefined;
 }
 
+/** Minimal newline-delimited JSON-RPC client over the gateway IPC socket (as user-mcp.e2e.test.ts). */
+class RawIpcClient {
+  private sock: net.Socket | undefined;
+  private buffer = "";
+  private nextId = 1;
+  private readonly pending = new Map<number, (v: { result?: unknown; error?: unknown }) => void>();
+
+  private failAllPending(reason: string): void {
+    for (const [, cb] of this.pending) cb({ error: { message: reason } });
+    this.pending.clear();
+  }
+
+  async connect(socketPath: string): Promise<void> {
+    await new Promise<void>((resolveConn, reject) => {
+      const sock = net.createConnection(socketPath);
+      sock.on("connect", () => resolveConn());
+      sock.on("error", (e) => {
+        reject(e);
+        this.failAllPending(`socket error: ${e.message}`);
+      });
+      sock.on("close", () => this.failAllPending("socket closed"));
+      sock.on("data", (chunk) => {
+        this.buffer += chunk.toString("utf8");
+        let idx = this.buffer.indexOf("\n");
+        while (idx !== -1) {
+          const line = this.buffer.slice(0, idx).trim();
+          this.buffer = this.buffer.slice(idx + 1);
+          if (line !== "") this.onLine(line);
+          idx = this.buffer.indexOf("\n");
+        }
+      });
+      this.sock = sock;
+    });
+  }
+
+  private onLine(line: string): void {
+    let msg: Record<string, unknown>;
+    try {
+      msg = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    const id = msg["id"];
+    if (typeof id !== "number") return;
+    const cb = this.pending.get(id);
+    if (cb === undefined) return;
+    this.pending.delete(id);
+    cb(msg as { result?: unknown; error?: unknown });
+  }
+
+  call<T>(method: string, params: unknown): Promise<T> {
+    const id = this.nextId++;
+    return new Promise<T>((resolveCall, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${method}: IPC call timed out`)), 30_000);
+      this.pending.set(id, (msg) => {
+        clearTimeout(timer);
+        if (msg.error !== undefined) {
+          reject(new Error(`${method}: ${JSON.stringify(msg.error)}`));
+          return;
+        }
+        resolveCall(msg.result as T);
+      });
+      this.sock?.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}
+`);
+    });
+  }
+
+  close(): void {
+    this.sock?.destroy();
+  }
+}
+
 /** A minimal MCP stdio client: newline-delimited JSON-RPC 2.0. */
 class StdioMcp {
   private readonly proc = Bun.spawn(["bun", CLI_ENTRY, "mcp-server", "--stdio"], {
@@ -135,10 +208,16 @@ class StdioMcp {
     env: cliEnv(),
   });
   private buf = "";
+  private stderrText = "";
+  private readonly parseErrors: string[] = [];
   private nextId = 1;
   private readonly pending = new Map<number, (msg: Record<string, unknown>) => void>();
 
   constructor() {
+    void (async () => {
+      for await (const chunk of this.proc.stderr)
+        this.stderrText += new TextDecoder().decode(chunk);
+    })();
     void (async () => {
       for await (const chunk of this.proc.stdout) {
         this.buf += new TextDecoder().decode(chunk);
@@ -147,9 +226,13 @@ class StdioMcp {
           const line = this.buf.slice(0, nl).trim();
           this.buf = this.buf.slice(nl + 1);
           if (line !== "") {
-            const msg = JSON.parse(line) as Record<string, unknown>;
-            const id = msg["id"];
-            if (typeof id === "number") this.pending.get(id)?.(msg);
+            try {
+              const msg = JSON.parse(line) as Record<string, unknown>;
+              const id = msg["id"];
+              if (typeof id === "number") this.pending.get(id)?.(msg);
+            } catch {
+              this.parseErrors.push(line);
+            }
           }
           nl = this.buf.indexOf("\n");
         }
@@ -171,8 +254,16 @@ class StdioMcp {
     this.send({ jsonrpc: "2.0", id, method, params });
     const msg = await Promise.race([
       reply,
-      Bun.sleep(30_000).then(() => {
-        throw new Error(`MCP ${method} timed out`);
+      Bun.sleep(60_000).then(() => {
+        throw new Error(
+          `MCP ${method} timed out
+--- mcp stderr ---
+${this.stderrText}
+--- unparseable stdout lines ---
+${this.parseErrors.join("\n")}
+--- gateway log ---
+${gatewayLog}`,
+        );
       }),
     ]);
     if (msg["error"] !== undefined) throw new Error(JSON.stringify(msg["error"]));
@@ -271,16 +362,38 @@ describe("MCP capture sink — end to end", () => {
     }
   }, 120_000);
 
-  test("an MCP connection cannot reach the owner methods (no tool, and the gateway refuses)", async () => {
+  test("an mcp-declared socket connection is refused the owner captures.* methods, and no owner tool is offered", async () => {
     const mcp = new StdioMcp();
     try {
       await mcp.initialize();
       const names = await mcp.toolNames();
+      // Positive control: the sink is on and the tool list is real, so the absence below means something.
+      expect(names).toContain("capture_note");
       expect(names.some((n) => /revoke|accept|reject/i.test(n))).toBe(false);
     } finally {
       await mcp.close();
     }
-  }, 60_000);
+
+    const ipc = new RawIpcClient();
+    await ipc.connect(gw.socketPath);
+    try {
+      await ipc.call("session.declareKind", { kind: "mcp" });
+      for (const [method, params] of [
+        ["captures.revoke", { id: "cap_x" }],
+        ["captures.list", {}],
+      ] as const) {
+        let failure = "";
+        try {
+          await ipc.call(method, params);
+        } catch (e) {
+          failure = String(e);
+        }
+        expect(failure).toContain("ERR_CAPTURE_FORBIDDEN_CLIENT");
+      }
+    } finally {
+      ipc.close();
+    }
+  }, 180_000);
 
   test("sink OFF → capture_note is absent from tools/list", async () => {
     await stopGateway();
