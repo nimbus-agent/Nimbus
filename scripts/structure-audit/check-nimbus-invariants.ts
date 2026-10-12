@@ -1791,8 +1791,15 @@ export function checkMediaGrantStoreConfinement(files: readonly FileEntry[]): Vi
 //     `tribalCapture` never match. Comments are stripped; string literals are NOT (SQL lives there).
 //     Stated bound: a dynamically composed identifier evades a text scan; capability confinement —
 //     only CaptureStore is ever handed queries against the table — is the real defense.
-const D32_CAPTURE_TABLE_RE =
-  /\b(?:FROM|INTO|UPDATE|TABLE|JOIN)\s+[`"[]?capture[`"\]]?(?![A-Za-z0-9_])/i;
+//     Widened beyond D27(b)'s shape: an `OR <conflict>` clause after UPDATE, an optional schema
+//     qualifier (`main.capture`, `"main"."capture"`), `REFERENCES`, and a comma join after a FROM
+//     list (`FROM item, capture`).
+const D32_CAPTURE_IDENT =
+  '(?:[`"[]?[A-Za-z_]\\w*[`"\\]]?\\.)?[`"[]?capture[`"\\]]?(?![A-Za-z0-9_])';
+const D32_CAPTURE_TABLE_RE = new RegExp(
+  `\\b(?:(?:FROM|INTO|UPDATE(?:\\s+OR\\s+\\w+)?|TABLE|JOIN|REFERENCES)\\s+|FROM\\s+[^;()]*?,\\s*)${D32_CAPTURE_IDENT}`,
+  "i",
+);
 const D32_CAPTURE_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/mcp-sink/capture-store.ts",
   "packages/gateway/src/index/capture-v66-sql.ts",
@@ -1840,6 +1847,35 @@ export function checkCaptureGateCallers(files: readonly FileEntry[]): Violation[
       const line = code.slice(0, m.index).split("\n").length;
       out.push({
         rule: "capture-gate-callers",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
+// (c) No module outside ipc/capture-rpc.ts may VALUE-import (or re-export, or dynamically import)
+//     capture-gate.ts. (b) is an identifier scan, which a barrel `export * from ".../capture-gate.ts"`
+//     or a namespace import called through a computed key evades; this closes it at the module edge.
+//     `import type` / `export type` carry no runtime reference and are allowed anywhere.
+const D32_GATE_MODULE_RE =
+  /\b(?:import|export)\b[^;]*?\bfrom\s*["'][^"']*capture-gate(?:\.ts)?["']|\bimport\s*\(\s*["'][^"']*capture-gate(?:\.ts)?["']/g;
+
+export function checkCaptureGateImporters(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (f.relPath === "packages/gateway/src/ipc/capture-rpc.ts") continue;
+    const code = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    for (const m of code.matchAll(D32_GATE_MODULE_RE)) {
+      if (/^(?:import|export)\s+type\b/.test(m[0])) continue;
+      const line = code.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "capture-gate-importers",
         file: f.relPath,
         line,
         snippet: (original[line - 1] ?? "").trim(),
@@ -2811,7 +2847,13 @@ async function run(): Promise<void> {
         `::error file=${e.file},line=${e.line}::D32(b) a capture gate entry point named outside ipc/capture-rpc.ts — I28 regression: ${e.snippet}`,
       );
     }
-    if (a.length > 0 || b.length > 0) exit = 1;
+    const c = checkCaptureGateImporters(files);
+    for (const e of c) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D32(c) capture-gate.ts value-imported outside ipc/capture-rpc.ts — I28 regression: ${e.snippet}`,
+      );
+    }
+    if (a.length > 0 || b.length > 0 || c.length > 0) exit = 1;
   }
   if (mode === "binary-only" || mode === "all") {
     const v = checkBrokeredFetchLiteralConfinement(files);

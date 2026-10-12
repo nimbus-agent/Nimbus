@@ -777,7 +777,7 @@ excluded from decision/glossary extraction and embed locally only (`LOCAL_ONLY_P
 
 **Wiring:** `mcp-sink/{capture-gate,capture-store,capture-capability,capture-client-policy,capture-rate-limit,capture-validate}.ts`, `ipc/capture-rpc.ts`, `ipc/server/dispatchers.ts` (`tryDispatchCaptureRpc`), `ipc/lan-rpc.ts`, `platform/assemble.ts`.
 
-**Static complement:** D32(a) confines the `capture` table identifier to `capture-store.ts` + `index/capture-v66-sql.ts`; D32(b) confines every mention of `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture` to `ipc/capture-rpc.ts` + `capture-gate.ts`. Stated bound: a dynamically composed identifier evades D32(a); capability confinement is the real defense.
+**Static complement:** D32(a) confines the `capture` table identifier — bare, quoted, schema-qualified, comma-joined, or after `UPDATE OR …`/`REFERENCES` — to `capture-store.ts` + `index/capture-v66-sql.ts`; D32(b) confines every mention of `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture` to `ipc/capture-rpc.ts` + `capture-gate.ts`; D32(c) forbids any non-test gateway module other than `ipc/capture-rpc.ts` from value-importing, re-exporting (barrel `export *`) or dynamically importing `capture-gate.ts` (`import type` is allowed). Stated bound: a dynamically composed identifier evades D32(a); capability confinement is the real defense.
 
 **Bounds:** a live note is searchable unreviewed, by design (PR 1 ships notes only; proposals that
 count only after owner acceptance are PR 2); text reaching a model is delimited by I11, not
