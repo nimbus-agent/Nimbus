@@ -112,6 +112,15 @@ describe("V66 migration — capture sink queue", () => {
     db.close();
   });
 
+  test("the item_id lookup is indexed (gate step 6 runs it per relatesTo id)", () => {
+    const db = migrated();
+    const plan = db
+      .query("EXPLAIN QUERY PLAN SELECT state FROM capture WHERE item_id = ?")
+      .all("nimbus:cap_1") as Array<{ detail: string }>;
+    expect(plan.some((r) => r.detail.includes("idx_capture_item_id"))).toBe(true);
+    db.close();
+  });
+
   test("a live note with a payload is accepted", () => {
     const db = migrated();
     db.run(INSERT, ["cap_1", "note", "live", "nimbus:cap_1", "{}", 2, "x", "s1", 1]);
@@ -170,6 +179,8 @@ export const CAPTURE_V66_SQL: readonly string[] = [
    )`,
   "CREATE INDEX IF NOT EXISTS idx_capture_state_created ON capture(state, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS idx_capture_created ON capture(created_at)",
+  // stateOfItem (gate step 6) looks a capture up by its item; partial, since revoked rows hold NULL.
+  "CREATE INDEX IF NOT EXISTS idx_capture_item_id ON capture(item_id) WHERE item_id IS NOT NULL",
 ];
 ```
 
@@ -288,6 +299,16 @@ describe("validateNotePayload", () => {
     expect(code(() => validateNotePayload(raw))).toBe("ERR_CAPTURE_INVALID");
   });
 
+  test("control characters are stripped at write time: all of them in the title, all but \\t\\n\\r in the body", () => {
+    const p = validateNotePayload({ title: "a\u001b[2Jb\nc", body: "x\u001b]0;pwn\u0007y\n\tz\r\n" });
+    expect(p.title).toBe("a[2Jbc");
+    expect(p.body).toBe("x]0;pwny\n\tz\r\n");
+  });
+
+  test("a body made only of control characters is empty, so refused", () => {
+    expect(code(() => validateNotePayload({ body: "\u001b\u0007" }))).toBe("ERR_CAPTURE_INVALID");
+  });
+
   test("tags and relatesTo are trimmed and de-duplicated, order kept", () => {
     const p = validateNotePayload({ body: "b", tags: [" a", "a", "b"], relatesTo: ["x:1", "x:1"] });
     expect(p.tags).toEqual(["a", "b"]);
@@ -397,9 +418,12 @@ export const CLIENT_LABEL_MAX = 100;
  */
 export const PAYLOAD_MAX_BYTES = 65_536;
 
-// C0 controls, DEL, C1 controls. Agent-supplied strings are printed to a terminal by
-// `nimbus captures`; an ESC here would let a client restyle or rewrite the owner's screen.
+// C0 controls, DEL, C1 controls. Agent text lands in `item.title`/`item.body`, which other surfaces
+// (`nimbus query`, briefs, the desktop) render without knowing it came from an agent. An ESC there
+// would let a client restyle or rewrite the owner's terminal, so it is stripped AT WRITE TIME, not
+// only by `nimbus captures`. The body keeps \t \n \r — it is markdown.
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
+const BODY_CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 
 function invalid(detail: string): never {
   throw new CaptureError("ERR_CAPTURE_INVALID", detail);
@@ -434,11 +458,12 @@ export function validateNotePayload(raw: unknown): NotePayload {
   if (titleRaw !== undefined && typeof titleRaw !== "string") invalid("title must be a string");
   const bodyRaw = o["body"];
   if (typeof bodyRaw !== "string") invalid("body must be a string");
-  if (bodyRaw.trim() === "") invalid("body must not be empty");
-  const title = typeof titleRaw === "string" ? titleRaw.trim() : "";
+  const body = bodyRaw.replace(BODY_CONTROL_RE, "");
+  if (body.trim() === "") invalid("body must not be empty");
+  const title = typeof titleRaw === "string" ? titleRaw.replace(CONTROL_RE, "").trim() : "";
   const payload: NotePayload = {
     title: title === "" ? "(untitled)" : clampBody(title, NOTE_TITLE_MAX),
-    body: clampBody(bodyRaw, BODY_MAX_PROSE),
+    body: clampBody(body, BODY_MAX_PROSE),
     tags: stringList(o["tags"], "tags", TAG_MAX_COUNT, TAG_MAX_LEN),
     // Ids are bounded by the existence check, not by length; 512 only stops a pathological string.
     relatesTo: stringList(o["relatesTo"], "relatesTo", REF_MAX_COUNT, 512),
@@ -2188,6 +2213,7 @@ The wiring, the docs and the test land in ONE commit (the triple rule).
 - Modify: `CLAUDE.md` and `GEMINI.md` (replace the I28 "reserved" bullet; update "Invariants through I42 (I28 reserved)" → "Invariants I1–I42"; append D32 to the static-complement paragraph)
 - Modify: `scripts/structure-audit/check-coderabbit-config.test.ts:98-102` (that test forbids a path instruction enforcing the RESERVED I28. Update its premise: I28 is now live, so delete the test or invert it, whichever the file's other tests make natural)
 - Modify: `scripts/structure-audit/check-status-drift.ts:61` (comment says "I28 is reserved today"; update it)
+- Modify: `.coderabbit.yaml` — line 5 ("41 live security invariants" → 42) and lines 15-16 ("I1-I42; I28 is reserved, so the LIVE count is 41, not 42 …" → "I1-I42, all live"). Then grep the repo for every other "41 live" / "I28 is reserved" / "I28 reserved" phrase (`git grep -n -e "41 live" -e "I28 is reserved" -e "I28 reserved" -e "I28 stays reserved"`) and update each live statement. Leave dated CHANGELOG entries alone.
 
 **Interfaces:**
 - Produces: `checkCaptureTableConfinement(files: readonly FileEntry[]): Violation[]` (D32(a)) and `checkCaptureGateCallers(files: readonly FileEntry[]): Violation[]` (D32(b)).
@@ -2456,7 +2482,7 @@ Expected: all PASS / exit 0. `check-status-drift` takes the ceiling from the hig
 
 ```bash
 git rev-parse --abbrev-ref HEAD
-git add scripts/structure-audit packages/gateway/src/security-invariants.test.ts docs/SECURITY-INVARIANTS.md CLAUDE.md GEMINI.md
+git add scripts/structure-audit packages/gateway/src/security-invariants.test.ts docs/SECURITY-INVARIANTS.md CLAUDE.md GEMINI.md .coderabbit.yaml   # + every file the "41 live" grep changed
 git commit -m "feat(mcp-sink): I28 invariant + static D32 (capture table, gate callers)"
 ```
 
@@ -2937,9 +2963,10 @@ describe("doctor", () => {
     expect(r.lines.join("\n")).toContain("capture queue full (100/100)");
   });
 
-  test("refusals since start → warning naming codes and counts", () => {
+  test("refusals since start → info line naming codes and counts, but exit 0 (history, not a fault)", () => {
     const r = doctorCapturesLines({ ...BASE, refusedSinceStart: { ERR_CAPTURE_RATE_LIMITED: 4 } });
-    expect(r.exit).toBe(1);
+    expect(r.exit).toBe(0);
+    expect(r.lines.join("\n")).toContain("[info]");
     expect(r.lines.join("\n")).toContain("ERR_CAPTURE_RATE_LIMITED×4");
   });
 
@@ -3144,8 +3171,9 @@ export function doctorCapturesLines(s: CaptureStatusView): { lines: string[]; ex
   }
   const refused = Object.entries(s.refusedSinceStart);
   if (refused.length > 0) {
-    lines.push(`[warn] MCP capture sink: refused since gateway start: ${refused.map(([k, n]) => `${k}×${String(n)}`).join(", ")}`);
-    exit = 1;
+    // A counter that only grows for the process lifetime: one rate-limited burst must not fail
+    // `nimbus doctor` until the next restart. Reported, never an exit code.
+    lines.push(`[info] MCP capture sink: refused since gateway start: ${refused.map(([k, n]) => `${k}×${String(n)}`).join(", ")}`);
   }
   if (lines.length === 0) {
     lines.push(`[ok] MCP capture sink: on (kinds: ${s.kinds.join(", ")}). Review with \`nimbus captures\`.`);
@@ -3157,7 +3185,7 @@ export function doctorCapturesLines(s: CaptureStatusView): { lines: string[]; ex
 - [ ] **Step 4: Implement `captures.ts`**
 
 ```ts
-import type { IPCClient } from "../ipc-client.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
@@ -3516,7 +3544,7 @@ describe("MCP capture sink — end to end", () => {
       const marker = `zebracapture${randomUUID().slice(0, 6)}`;
       const cap = await mcp.callTool("capture_note", { title: `Decision ${marker}`, body: `We chose WAL. ${marker}` });
       expect(cap.isError).toBe(false);
-      const id = /Captured note (cap_[0-9a-f-]+)/.exec(cap.text)?.[1];
+      const id = /Captured note (cap_[A-Za-z0-9_-]+)/.exec(cap.text)?.[1];
       expect(id).toBeDefined();
 
       const found = await mcp.callTool("searchIndex", { query: marker });

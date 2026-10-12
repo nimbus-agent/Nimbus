@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS capture (
 );
 CREATE INDEX IF NOT EXISTS idx_capture_state_created ON capture(state, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_capture_created ON capture(created_at);
+CREATE INDEX IF NOT EXISTS idx_capture_item_id ON capture(item_id) WHERE item_id IS NOT NULL;
 ```
 
 `session_id` is kept for forensics (which connection submitted what) but is never queried by the
@@ -134,8 +135,8 @@ structured fields **refuse** (`ERR_CAPTURE_INVALID`) — the I32 split.
 
 | kind | field | type | bound |
 |---|---|---|---|
-| note | `title` | string | truncate 200 |
-| | `body` | markdown string | truncate `BODY_MAX_PROSE` (16,384); refuse empty |
+| note | `title` | string | control chars stripped; truncate 200 |
+| | `body` | markdown string | control chars except tab/LF/CR stripped; truncate `BODY_MAX_PROSE` (16,384); refuse empty |
 | | `tags` | string[] | ≤ 10 entries, each ≤ 50, refuse beyond |
 | | `relatesTo` | item id[] | ≤ 10, each must exist in `item` |
 | decision | `statement` | string | truncate 500; refuse empty |
@@ -460,7 +461,7 @@ what native row was written. Exit codes: `0` success, `1` refusal (code printed)
 
 `nimbus doctor`, when `[mcp_sink]` is enabled: an info line when proposals are pending
 (`N captures awaiting review — nimbus captures`); a WARNING when `pending >= max_pending`
-(`capture queue full (N/N): new proposals are being refused — nimbus captures`); and a warning when
+(`capture queue full (N/N): new proposals are being refused — nimbus captures`); and an INFO line (never a failing exit; the counter only grows for the process lifetime) when
 `refusedSinceStart` (§ 5.1) is non-zero, naming the codes and counts.
 
 ## 9. The act door (sketch only — separate spec)
