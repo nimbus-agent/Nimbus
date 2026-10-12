@@ -18,7 +18,7 @@ import {
   signManifest,
 } from "../../../src/extensions/verify-signature.ts";
 import { MockVault } from "../../../src/vault/mock.ts";
-import { setupFreshExtensionDb } from "../../fixtures/extension.ts";
+import { cleanupExtensionTestDirs, setupFreshExtensionDb } from "../../fixtures/extension.ts";
 
 interface RegistryEntry {
   version: string;
@@ -143,6 +143,7 @@ beforeEach(async () => {
 afterEach(() => {
   registry.stop();
   rmSync(tmpRoot, { recursive: true, force: true });
+  cleanupExtensionTestDirs();
 });
 
 describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () => {

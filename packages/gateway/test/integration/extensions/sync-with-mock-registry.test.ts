@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 
 import type { Server } from "bun";
 
@@ -7,9 +7,15 @@ import { createPublisherKeyFetcher } from "../../../src/extensions/registry-clie
 import { AirGapEnforcementError, syncPublisherKeys } from "../../../src/extensions/sync.ts";
 import { encodeBase64, generateEd25519Keypair } from "../../../src/extensions/verify-signature.ts";
 import { MockVault } from "../../../src/vault/mock.ts";
-import { setupFreshExtensionDb, stageSignedExtensionOnDisk } from "../../fixtures/extension.ts";
+import {
+  cleanupExtensionTestDirs,
+  setupFreshExtensionDb,
+  stageSignedExtensionOnDisk,
+} from "../../fixtures/extension.ts";
 
 describe("syncPublisherKeys end-to-end with mock HTTP registry (T2 PR 2 Task 23)", () => {
+  afterEach(cleanupExtensionTestDirs);
+
   const publishers = new Map<string, string>();
   let server: Server;
   let baseUrl = "";
