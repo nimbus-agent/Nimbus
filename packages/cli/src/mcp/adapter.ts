@@ -6,6 +6,7 @@ import { readGatewayState } from "../lib/gateway-process.ts";
 import { parseSearchRankedResponse } from "../lib/search-ranked-response.ts";
 import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
 import { AGENT_TOOL_SPECS, failBriefsForClient } from "./agent-tools.ts";
+import { type CaptureToolSpec, captureToolsFor } from "./capture-tools.ts";
 import {
   type ClosableClient,
   type IpcCallable,
@@ -57,6 +58,7 @@ const META_WHITELIST = [
   "environment",
   "conclusion",
   "repo",
+  "agentAuthored",
 ] as const;
 const META_STRING_MAX = 200;
 
@@ -103,6 +105,11 @@ function pickMeta(meta: unknown): Record<string, unknown> | undefined {
 export function projectRankedItem(item: unknown): Record<string, unknown> {
   const r = asRecord(item);
   const out: Record<string, unknown> = {};
+  // The index primary key: the only id `capture_note`'s relatesTo (and PR 2's evidence/link
+  // endpoints) can name. Conditional, so rows without one project exactly as before.
+  if (typeof r["indexPrimaryKey"] === "string") {
+    out["id"] = r["indexPrimaryKey"];
+  }
   if (typeof r["name"] === "string") {
     out["name"] = r["name"];
   }
@@ -606,13 +613,24 @@ export async function agentToolsSupported(deps: AdapterDeps): Promise<boolean> {
  * reports a clean scope is the exact failure this feature exists to close, so the honest answer is
  * to withhold the surface, not to warn about it on a stream the editor discards.
  */
-export function buildMcpServer(deps: AdapterDeps, includeAgentTools = true): McpServer {
+export function buildMcpServer(
+  deps: AdapterDeps,
+  includeAgentTools = true,
+  captureTools: readonly CaptureToolSpec[] = [],
+): McpServer {
   const server = new McpServer({ name: "nimbus", version: "0.1.0" });
   for (const s of includeAgentTools ? TOOL_SPECS : INDEX_TOOL_SPECS) {
     server.registerTool(
       s.name,
       { description: s.description, inputSchema: s.schema },
       (args: unknown) => s.run(deps, asRecord(args)),
+    );
+  }
+  for (const s of captureTools) {
+    server.registerTool(
+      s.name,
+      { description: s.description, inputSchema: s.schema, annotations: s.annotations },
+      (args: unknown) => s.run(deps, asRecord(args), () => server.server.getClientVersion()?.name),
     );
   }
   return server;
@@ -629,7 +647,8 @@ export function buildMcpServer(deps: AdapterDeps, includeAgentTools = true): Mcp
  * argument.
  */
 export async function buildMcpServerForGateway(deps: AdapterDeps): Promise<McpServer> {
-  return buildMcpServer(deps, await agentToolsSupported(deps));
+  const agent = await agentToolsSupported(deps);
+  return buildMcpServer(deps, agent, await captureToolsFor(deps));
 }
 
 /** Run the MCP server over stdio (this process is launched by the editor). */

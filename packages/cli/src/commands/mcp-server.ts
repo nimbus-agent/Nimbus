@@ -61,6 +61,7 @@ export function formatHelp(demo: boolean = false): string {
   const indexToolCount = INDEX_TOOL_SPECS.length;
   const agentToolCount = TOOL_SPECS.length - indexToolCount;
   return `nimbus mcp-server — expose the Nimbus local index to editor AIs over MCP
+(read; optional local note capture)
 
 Usage:
   nimbus mcp-server            Print the MCP server config block to paste into your editor
@@ -69,7 +70,9 @@ Usage:
 Read-only tools (${String(names.length)}):
 ${wrapList(names, HELP_WIDTH)}
 
-Every tool is read-only: none reaches a write or HITL-gated action. The Gateway
+Every tool above is read-only. One WRITE tool, capture_note, is added only when
+the Gateway's [mcp_sink] is enabled in nimbus.toml: it stores an agent-authored
+note in the LOCAL index, which you review with \`nimbus captures\`. The Gateway
 must be running (start it with: ${gatewayStartCommand(demo)}).
 
 On a Gateway too old to support session.declareKind, the ${String(agentToolCount)} agent tools are

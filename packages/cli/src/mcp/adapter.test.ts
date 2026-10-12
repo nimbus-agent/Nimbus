@@ -45,6 +45,23 @@ describe("clampLimit", () => {
 });
 
 describe("projectRankedItem", () => {
+  it("projects the index primary key as id, and agentAuthored from meta", () => {
+    const out = projectRankedItem({
+      name: "Why WAL",
+      service: "nimbus",
+      indexedType: "capture",
+      indexPrimaryKey: "nimbus:cap_1",
+      rawMeta: { agentAuthored: true, captureId: "cap_1" },
+    });
+    expect(out).toEqual({
+      id: "nimbus:cap_1",
+      name: "Why WAL",
+      service: "nimbus",
+      type: "capture",
+      meta: { agentAuthored: true },
+    });
+  });
+
   it("keeps core fields and maps indexedType -> type", () => {
     const out = projectRankedItem({
       name: "Fix login bug",
