@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791749992087,
+  "lastUpdate": 1791818114673,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f232802f61894d69c7b543fa17d4b7e0487ac729",
-          "message": "ci(audit): add audit:workflow-lint so an invalid workflow fails before the push (#942)\n\n## Why\n\nAn invalid GitHub Actions workflow is uniquely expensive to diagnose:\nGitHub records a run with **zero jobs** and a `failure` conclusion, so\nthere is no job, no log and no annotation to read. It reads like a\nproduct failure. This bit `install-smoke.yml` during the launch work\n(#920) and cost a full CI round trip.\n\nThe specific shape is a heredoc body starting at column 0 inside a `run:\n|` block. Column 0 **terminates the enclosing YAML block scalar**, which\ninvalidates the file. `js-yaml` parses it without complaint, so \"it\nparses\" is not sufficient validation — hence the explicit textual\ncolumn-0 check, which is the real point of this gate.\n\n## What\n\n- `scripts/audit/workflow-lint.ts` — column-0 escape check (textual,\ndeliberately not AST-based, since the parser is exactly what fails to\nnotice) plus a `bash -n` pass over every bash `run:` body.\n- `scripts/audit/workflow-lint.test.ts` — 16 tests.\n- Wired into the preflight **fast** tier and the **Static** CI job.\n\nLocal and deterministic — checked-in files only, no network, no token.\n\n## Verification\n\nBoth halves red-proved against a **real** workflow tree, not just\nfixtures:\n\n| Check | Result |\n| --- | --- |\n| Clean tree | `OK (23 workflow(s), 161 bash body(ies) parsed)` |\n| Column-0 heredoc spliced into a copy of `install-smoke.yml` | exit 1,\ncorrect line numbers |\n| Unterminated `if` in a bash body | reported against its job + step\nname |\n\nAll fast-tier preflight gates pass locally. (`bun run lint` false-fails\ninside `.claude/worktrees` with \"0 files\" — verified separately via\n`bunx biome check packages scripts`: clean.)\n\n## Known gap\n\nStated rather than implied: `bash -n` is a *parser*, so an unbound\nvariable under `set -u` still parses and would need shellcheck-grade\nanalysis to catch. The runner reports plainly when bash is unavailable,\nso a green line never overstates what was actually checked.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-30T06:52:19+03:00",
-          "tree_id": "e34c67e1f69f1f42e4180deb26b895944fabb1d1",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f232802f61894d69c7b543fa17d4b7e0487ac729"
-        },
-        "date": 1785384220718,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.307620000001,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.8271554499981,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 215.03595890000034,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4a2c961e9083f8e80ce7c69bb232db45df54cab8",
+          "message": "ci: cache node_modules on the Windows PR leg via Bun's hoisted layout (#1650)\n\n## Summary\n\nThis is the follow-up to #1649. With Defender excluded, the Windows\ncross-platform leg's dependency setup still takes about 200 s, against\nabout 75 s on macOS. The reason is that it reinstalls `node_modules` on\nevery run. Its cache is turned off because Bun's default (\"isolated\")\nlayout is built from NT junctions, and `actions/cache`'s tar step cannot\nsave and restore those (see the existing comment in `setup-nimbus-ci`).\n\nWhat this PR changes:\n\n- **`setup-nimbus-ci` gets a `windows-linker` input** (empty by\ndefault).\n- Set to `hoisted`, the Windows install runs with `--linker=hoisted`,\nwhich produces plain directories, and caches `node_modules` under its\nown key (`Windows-node-modules-hoisted-<lock hash>`).\n- In that layout the only junctions left are the five workspace links\n(`node_modules/@nimbus/*` and `node_modules/@nimbus-dev/admin-console`).\nThe cache leaves them out, and the install step re-creates them.\n- The cache paths list individual entries (`node_modules/*` plus\nexclusions) instead of the whole directory. An exclusion only removes an\nitem the include pattern actually listed; tar would otherwise recurse\nstraight into the junctions.\n- **Only the PR cross-platform leg opts in.** `release.yml` and the push\nmatrix keep the default layout, so no released binary is built from a\ntree that no other OS installs. The input does nothing on macOS.\n- **Two tests no longer assume a layout.**\n`packages/cli/src/commands/scaffold.test.ts` and\n`packages/gateway/test/e2e/user-mcp.e2e.test.ts` both linked\n`@modelcontextprotocol/sdk` from a fixed `packages/cli/node_modules`\npath, which only exists in the isolated layout. Both now walk up\n`node_modules` the way Node resolution does, and pass in either layout.\n- The e2e test only runs where the OS sandbox works, so the Linux layout\ncomparison below skipped it. It is what turned the first Windows run\nred, and fixing it turned that leg green.\n\n## Related Issue\n\nNone. This came out of the CI-speed work in #1649.\n\n## Type of Change\n\n- [x] CI / tooling\n- [x] Test improvement\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`; see Testing)\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (this PR changes CI and two tests only)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] No source files changed.\n\n## Testing\n\nMeasured locally on Linux with Bun 1.4.2; CI uses Bun 1.3:\n\n- `bun install --frozen-lockfile --linker=hoisted` in a fresh worktree\n**leaves `bun.lock` unchanged**, so the composite action's\nlock-verification step still passes.\n- After deleting all five workspace links, which is what a cache restore\nwithout them looks like, the same install re-creates them (7 s) and the\nlock stays unchanged.\n- `bun run typecheck:no-docs` passes on the hoisted tree.\n- Hoisted against isolated, `bun test packages/cli scripts` and the full\n`packages/gateway` suite (22,135 tests): the only failure unique to\nhoisted was `scaffold.test.ts`, fixed here. All other failures occur in\nboth layouts in this sandbox.\n- `bun run preflight:fast` passes.\n- CI on `7d9a498` is green on all legs, Windows included.\n\n**The cache only helps from the second run onward:**\n\n- That green run was a cache miss: it installed (setup 222 s) and saved\nthe cache. The earlier red run never saved one, because the cache is\nsaved only on job success.\n- The next Windows run on the same `bun.lock` restores instead of\ninstalling, so its \"Setup Bun and install dependencies\" time is the\nnumber that decides this PR.\n- **If restoring roughly 1.3 GB of `node_modules` on Windows is no\nfaster than `bun install`, this PR isn't worth keeping.**\n\n## Notes for Reviewers\n\n- **Layout divergence:** Windows on the PR leg now runs in a hoisted\ntree. Hoisted is the more permissive layout, so a missing dependency\ndeclaration that it hides is still caught on Ubuntu, macOS and the push\nmatrix, which all stay isolated. The risk is a test that assumes one\nlayout, like the two fixed here.\n- **Cache size:** this adds about 1.3 GB per lockfile hash to the repo's\nActions cache (10 GB limit, least-recently-used entries evicted first).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_014HT9yGfRK52JPScsN6EVuP\n\n---------\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+          "timestamp": "2026-10-12T18:02:55+03:00",
+          "tree_id": "8ddcf962e82d8dd1b548f3df273d710530789595",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4a2c961e9083f8e80ce7c69bb232db45df54cab8"
+        },
+        "date": 1791818108987,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 332.9804159999985,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 334.88634120000063,
             "unit": "ms"
           }
         ]
