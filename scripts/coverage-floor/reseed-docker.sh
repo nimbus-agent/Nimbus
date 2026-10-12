@@ -17,7 +17,7 @@ export MSYS2_ARG_CONV_EXCL='*'
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # The Bun CI installs: `setup-nimbus-ci`'s `bun-version` default, also pinned by verify:docker.
-# NOT `latest`, which moved to 1.4.x while CI stayed on 1.3, so it stopped matching CI.
+# An explicit minor, NOT `latest`: `latest` moves to the next Bun minor before CI does.
 IMAGE="oven/bun:1.4"
 CACHE_VOL="nimbus-bun-cache"   # named volume: bun install cache, paid once
 

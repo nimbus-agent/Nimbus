@@ -197,10 +197,16 @@ describe("FakeGateway", () => {
         );
       });
       let buf = "";
+      // Respond ONCE. `buf` is never drained, so without this every later chunk re-matched the
+      // first newline and wrote again — and a chunk landing after the 30 ms `client.end()` threw
+      // ERR_STREAM_WRITE_AFTER_END, which Bun attributes to whichever test runs next. Bun 1.4
+      // splits the stream into more chunks than 1.3 did, which turned this into a regular failure.
+      let responded = false;
       client.on("data", (chunk) => {
         buf += chunk.toString("utf8");
         const nl = buf.indexOf("\n");
-        if (nl !== -1) {
+        if (nl !== -1 && !responded) {
+          responded = true;
           client.write(
             `${JSON.stringify({
               jsonrpc: "2.0",
