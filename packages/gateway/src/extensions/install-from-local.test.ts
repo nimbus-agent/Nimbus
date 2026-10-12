@@ -20,6 +20,7 @@ import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import {
   assertSafeExtensionId,
+  ExtensionInstallNotApprovedError,
   extensionInstallDirectory,
   extractTarGzToDirectory,
   installExtensionFromLocalDirectory,
@@ -27,6 +28,7 @@ import {
 } from "./install-from-local.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
 import type { FetchManifestResponse, RegistryClient } from "./registry-client.ts";
+import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import {
   encodeBase64,
   generateEd25519Keypair,
@@ -2518,5 +2520,68 @@ describe("extractTarGzToDirectory leading-hyphen paths regression test", () => {
         /* Windows EBUSY */
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Extension-runtime PR 1: the tree digest, and an install audit row that tells the truth about
+// whether an approval happened.
+// ---------------------------------------------------------------------------
+
+describe("installExtensionFromLocalDirectory — tree digest + approval hook", () => {
+  function sampleSource(prefix: string): { extensionsDir: string; src: string; db: Database } {
+    const f = createExtensionInstallFixture(prefix, "src");
+    writeFileSync(
+      join(f.src, "nimbus.extension.json"),
+      JSON.stringify({ id: "test.ext.tree", version: "1.0.0", entry: "dist/index.js" }),
+      "utf8",
+    );
+    writeFileSync(join(f.src, "dist", "index.js"), 'import "./chunk.js";\n', "utf8");
+    writeFileSync(join(f.src, "dist", "chunk.js"), "export {};\n", "utf8");
+    return f;
+  }
+
+  test("stores a digest of the WHOLE installed tree, and returns the same one", async () => {
+    const { extensionsDir, src, db } = sampleSource("nimbus-install-tree-");
+    const r = await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
+    const row = listExtensions(db)[0];
+    expect(row?.tree_digest).toBe(computeExtensionTreeDigest(join(extensionsDir, "test.ext.tree")));
+    expect(r.treeDigest).toBe(row?.tree_digest ?? "");
+  });
+
+  test("an approve hook that declines installs nothing and throws the not-approved error", async () => {
+    const { extensionsDir, src, db } = sampleSource("nimbus-install-decline-");
+    await expect(
+      installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        approve: async () => false,
+      }),
+    ).rejects.toBeInstanceOf(ExtensionInstallNotApprovedError);
+    expect(listExtensions(db)).toEqual([]);
+    expect(existsSync(join(extensionsDir, "test.ext.tree"))).toBe(false);
+    expect(getAuditRows(db, "extension.install_complete")).toEqual([]);
+  });
+
+  test("the install audit row reads approved ONLY when an approval was actually asked", async () => {
+    const hitlOf = (db: Database): string | undefined =>
+      (
+        db
+          .query("SELECT hitl_status FROM audit_log WHERE action_type = ?")
+          .get("extension.install_complete") as { hitl_status: string } | null
+      )?.hitl_status;
+
+    const gated = sampleSource("nimbus-install-gated-");
+    await installExtensionFromLocalDirectory({
+      ...gated,
+      sourcePath: gated.src,
+      approve: async () => true,
+    });
+    expect(hitlOf(gated.db)).toBe("approved");
+
+    const ungated = sampleSource("nimbus-install-ungated-");
+    await installExtensionFromLocalDirectory({ ...ungated, sourcePath: ungated.src });
+    expect(hitlOf(ungated.db)).toBe("not_required");
   });
 });

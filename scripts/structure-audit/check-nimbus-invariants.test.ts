@@ -2031,9 +2031,9 @@ describe("D27(b) media_grant table confinement", () => {
 describe("D32(a) — the capture table is named only by its store and its DDL", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
   const store = "packages/gateway/src/mcp-sink/capture-store.ts";
-  const sql = "packages/gateway/src/index/capture-v66-sql.ts";
+  const sql = "packages/gateway/src/index/capture-v67-sql.ts";
 
-  test("allows the store and the V66 SQL module", () => {
+  test("allows the store and the V67 SQL module", () => {
     expect(
       checkCaptureTableConfinement([
         file(store, "SELECT * FROM capture WHERE id = ?"),

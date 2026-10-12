@@ -1,12 +1,12 @@
 /**
- * V66 — the MCP capture sink's queue (spec 2026-10-11 § 4.1, invariant I28).
+ * V67 — the MCP capture sink's queue (spec 2026-10-11 § 4.1, invariant I28).
  *
  * Only `mcp-sink/capture-store.ts` names this table at runtime (static rule D32(a)); this module is
  * the other allow-listed file. `session_id` is kept for forensics and deliberately NOT indexed: it
  * is a per-connection UUID, useless as a rate-limit key. `idx_capture_created` serves the durable
  * hourly cap and retention.
  */
-export const CAPTURE_V66_SQL: readonly string[] = [
+export const CAPTURE_V67_SQL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS capture (
      id            TEXT PRIMARY KEY,
      kind          TEXT NOT NULL CHECK(kind IN ('note','decision','term','link')),

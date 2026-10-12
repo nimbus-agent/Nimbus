@@ -24,10 +24,19 @@ describe("DOCS_GLOBS — dot-directory scanning", () => {
     for (const pattern of DOCS_GLOBS) expect(pattern.startsWith(".")).toBe(true);
   });
 
-  test("scanning WITHOUT dot:true finds nothing — the original defect", () => {
+  test("a dot:true scan finds every file a default scan does — the gate never depends on the runtime's dot default", () => {
+    // The original defect: on Bun 1.3 a default scan of an explicit `.claude/...` pattern matched
+    // NOTHING, so the gate silently read zero files. Bun 1.4 matches those (the pattern names the
+    // dot segment), so asserting "default finds nothing" now fails for a reason unrelated to the
+    // gate. What the gate needs is that its own `dot: true` scan never sees LESS than a default
+    // scan, whichever behaviour the runtime has.
     for (const pattern of DOCS_GLOBS) {
-      const hits = [...new Glob(pattern).scanSync({ cwd: REPO_ROOT })];
-      expect(hits).toHaveLength(0);
+      const withDot = new Set(new Glob(pattern).scanSync({ cwd: REPO_ROOT, dot: true }));
+      // Without this, two empty scans would satisfy the subset check vacuously.
+      expect(withDot.size).toBeGreaterThan(0);
+      for (const hit of new Glob(pattern).scanSync({ cwd: REPO_ROOT })) {
+        expect(withDot.has(hit)).toBe(true);
+      }
     }
   });
 

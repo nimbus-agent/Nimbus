@@ -90,6 +90,7 @@ const FORBIDDEN_OVER_LAN = new Set([
   "extension.enable",
   "extension.disable",
   "extension.remove",
+  "extension.rehash", // adopts on-disk bytes as trusted — gated like an install, CLI-only
   "index.reembed", // T6 PR 3 — write-class index method (writes embedding_chunk + vec_items_*)
   "index.reembedCancel", // T6 PR 3 — paired cancel for the long-running reembed job
   // index.rebody is a STRONGER case than reembed: reembed only recomputes local embeddings

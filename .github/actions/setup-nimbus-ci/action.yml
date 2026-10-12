@@ -5,7 +5,7 @@ inputs:
   bun-version:
     description: Bun version passed to oven-sh/setup-bun
     required: false
-    default: "1.3"
+    default: "1.4"
   verify-lock:
     description: Run bun install and fail if bun.lock is out of date
     required: false
@@ -14,6 +14,13 @@ inputs:
     description: Run bun install --frozen-lockfile
     required: false
     default: "true"
+  windows-linker:
+    description: >-
+      Windows only. Set to "hoisted" to install with `--linker=hoisted` and cache node_modules
+      (see the Windows cache step below for why the default layout cannot be cached). Empty keeps
+      Bun's default layout and no node_modules cache. Ignored on Linux and macOS.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -115,21 +122,50 @@ runs:
           packages/github-actions/*/node_modules
         key: ${{ runner.os }}-node-modules-${{ hashFiles('bun.lock') }}
 
+    # WINDOWS, opt-in via `windows-linker: hoisted`. The hoisted layout is plain directories, so the
+    # tar pack/restore problem above does not apply — except for the five workspace links
+    # (`node_modules/@nimbus/*`, `node_modules/@nimbus-dev/admin-console`), which are junctions in
+    # either layout. Those are excluded from the cache and re-created by the install step below:
+    # measured on bun 1.4 with all five deleted, `bun install --frozen-lockfile --linker=hoisted`
+    # re-links them and leaves bun.lock unchanged.
+    #
+    # Opt-in rather than the Windows default because the layout differs from every other leg's.
+    # Only the PR cross-platform leg uses it; release.yml and the push matrix keep Bun's default,
+    # so a released binary is never built from a tree no other OS installs.
+    - name: Cache node_modules (Windows, hoisted layout)
+      if: runner.os == 'Windows' && inputs.windows-linker == 'hoisted'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        # Entries, not whole directories: an exclusion only removes an item the include patterns
+        # actually listed, and tar recurses into a listed directory on its own — so `node_modules`
+        # plus `!node_modules/@nimbus` would still archive the junctions. Patterns are applied in
+        # order, last match wins.
+        path: |
+          node_modules/*
+          !node_modules/@nimbus
+          !node_modules/@nimbus-dev
+          node_modules/@nimbus-dev/*
+          !node_modules/@nimbus-dev/admin-console
+          packages/*/node_modules
+          packages/github-actions/*/node_modules
+        key: ${{ runner.os }}-node-modules-hoisted-${{ hashFiles('bun.lock') }}
+
     - name: Install and verify dependencies
       shell: bash
       env:
         VERIFY_LOCK: ${{ inputs.verify-lock }}
         FROZEN_INSTALL: ${{ inputs.frozen-install }}
+        LINKER_FLAG: ${{ runner.os == 'Windows' && inputs.windows-linker != '' && format('--linker={0}', inputs.windows-linker) || '' }}
       # On a node_modules cache hit, `bun install --frozen-lockfile` still
       # runs — it verifies the lockfile and the installed tree match, which
       # is the safety net for cache restores that lose Bun's internal
       # symlinks. With both caches warm this is near-instant (~2-3 s).
       run: |
         if [ "$VERIFY_LOCK" = "true" ]; then
-          bun install --frozen-lockfile
+          bun install --frozen-lockfile $LINKER_FLAG
           git diff --exit-code -- bun.lock
         elif [ "$FROZEN_INSTALL" = "true" ]; then
-          bun install --frozen-lockfile
+          bun install --frozen-lockfile $LINKER_FLAG
         else
-          bun install
+          bun install $LINKER_FLAG
         fi

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { existsSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -84,6 +84,11 @@ async function main(): Promise<void> {
     );
     process.exit(workersBuild.status ?? 1);
   }
+
+  // Bun 1.4 on Windows no longer creates a missing `--outfile` directory reached through `..`
+  // ("could not open output directory ..\..\dist"); 1.3 did, and Linux 1.4 still does. A fresh
+  // checkout has no `dist/`, so create it rather than rely on either behaviour.
+  mkdirSync(distDir, { recursive: true });
 
   const r = spawnSync(
     process.execPath,

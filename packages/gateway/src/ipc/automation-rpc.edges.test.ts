@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
@@ -15,8 +15,10 @@ import {
   preT2DisabledRegistry,
   preT2DisableMessage,
 } from "../extensions/hard-disable.ts";
+import { publisherKeyFingerprint } from "../extensions/install-from-local.ts";
 import { readPublisherKey, writePublisherKey } from "../extensions/publisher-keys.ts";
 import type { PublisherKeyFetcher } from "../extensions/registry-client.ts";
+import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import {
   encodeBase64,
   generateEd25519Keypair,
@@ -174,6 +176,8 @@ describe("extension.install through the RPC", () => {
   }
 
   const NOT_FOUND: PublisherKeyFetcher = { fetch: async () => ({ kind: "not_found" }) };
+  /** Stands in for the executor gate the server dispatcher builds; approves everything. */
+  const approveAll = async (): Promise<boolean> => true;
 
   test("an unsigned extension installs, and the event names the INSTALLED id, not the source path", async () => {
     const root = tempDir("nimbus-auto-install-");
@@ -184,6 +188,7 @@ describe("extension.install through the RPC", () => {
 
     const out = await dispatchAutomationRpc({
       method: "extension.install",
+      ownerGate: approveAll,
       params: { sourcePath: src },
       db,
       extensionsDir,
@@ -209,6 +214,7 @@ describe("extension.install through the RPC", () => {
 
     const out = await dispatchAutomationRpc({
       method: "extension.install",
+      ownerGate: approveAll,
       // Padded on purpose: read untrimmed, the path names no file and the install fails.
       params: { sourcePath: src, publisherKeyPath: `  ${keyFile}  ` },
       db: indexDb(),
@@ -232,6 +238,7 @@ describe("extension.install through the RPC", () => {
     const err = await rejectionOf(
       dispatchAutomationRpc({
         method: "extension.install",
+        ownerGate: approveAll,
         params: { sourcePath: src, publisherKeyPath: "   " },
         db: indexDb(),
         extensionsDir: join(root, "extensions"),
@@ -263,6 +270,7 @@ describe("extension.install through the RPC", () => {
     const err = await rejectionOf(
       dispatchAutomationRpc({
         method: "extension.install",
+        ownerGate: approveAll,
         params: { sourcePath: src },
         db: indexDb(),
         extensionsDir: join(root, "extensions"),
@@ -276,6 +284,86 @@ describe("extension.install through the RPC", () => {
     expect(events.map((e) => e.error)).toEqual(["registry socket closed"]);
   });
 
+  test("REFUSES without the owner gate, and writes nothing (Non-Negotiable 2)", async () => {
+    const root = tempDir("nimbus-auto-nogate-");
+    const src = unsignedSource(root, "test.ext.nogate", "1.0.0");
+    const extensionsDir = join(root, "extensions");
+    const db = indexDb();
+    const err = await rejectionOf(
+      dispatchAutomationRpc({
+        method: "extension.install",
+        params: { sourcePath: src },
+        db,
+        extensionsDir,
+      }),
+    );
+    expect((err as AutomationRpcError).rpcCode).toBe(-32603);
+    expect((err as AutomationRpcError).message).toContain("HITL gate");
+    expect(listExtensions(db)).toEqual([]);
+    expect(existsSync(join(extensionsDir, "test.ext.nogate"))).toBe(false);
+  });
+
+  test("a DENIED gate installs nothing: no row, no directory", async () => {
+    const root = tempDir("nimbus-auto-deny-");
+    const src = unsignedSource(root, "test.ext.denied", "1.0.0");
+    const extensionsDir = join(root, "extensions");
+    const db = indexDb();
+    const err = await rejectionOf(
+      dispatchAutomationRpc({
+        method: "extension.install",
+        ownerGate: async () => false,
+        params: { sourcePath: src },
+        db,
+        extensionsDir,
+      }),
+    );
+    expect((err as AutomationRpcError).message).toStartWith("ERR_EXTENSION_INSTALL_NOT_APPROVED");
+    expect(listExtensions(db)).toEqual([]);
+    expect(existsSync(join(extensionsDir, "test.ext.denied"))).toBe(false);
+  });
+
+  test("the gate is asked as extension.install, over the RESOLVED plan, before the copy", async () => {
+    const root = tempDir("nimbus-auto-payload-");
+    const keypair = generateEd25519Keypair();
+    const src = await signedSource(root, keypair);
+    const extensionsDir = join(root, "extensions");
+    const seen: Array<{ type: string; payload: Record<string, unknown>; copied: boolean }> = [];
+    // The signed source fails I16 later (no key is resolvable), which is fine: this test is about
+    // what the owner was asked, and that the question came before anything reached the disk.
+    await rejectionOf(
+      dispatchAutomationRpc({
+        method: "extension.install",
+        ownerGate: async (action) => {
+          seen.push({
+            ...action,
+            copied: existsSync(join(extensionsDir, "test.ext.signed")),
+          });
+          return true;
+        },
+        params: { sourcePath: src },
+        db: indexDb(),
+        extensionsDir,
+        vault: new MockVault(),
+        fetcher: NOT_FOUND,
+      }),
+    );
+    expect(seen).toHaveLength(1);
+    const [asked] = seen;
+    expect(asked?.type).toBe("extension.install");
+    expect(asked?.copied).toBe(false);
+    expect(asked?.payload).toEqual({
+      id: "test.ext.signed",
+      version: "1.0.0",
+      sourcePath: src,
+      publisher: {
+        id: "test-pub",
+        fingerprint: publisherKeyFingerprint(encodeBase64(keypair.pubkey)),
+      },
+      permissions: { network: [], filesystem: { read: [], write: [] } },
+      installs: [{ id: "test.ext.signed", version: "1.0.0" }],
+    });
+  });
+
   test("enforceAirGap reaches the install: an uncached publisher key is refused before any fetch", async () => {
     const root = tempDir("nimbus-auto-airgap-");
     const src = await signedSource(root, generateEd25519Keypair());
@@ -283,6 +371,7 @@ describe("extension.install through the RPC", () => {
     const err = await rejectionOf(
       dispatchAutomationRpc({
         method: "extension.install",
+        ownerGate: approveAll,
         params: { sourcePath: src },
         db: indexDb(),
         extensionsDir: join(root, "extensions"),
@@ -633,5 +722,108 @@ describe("extension.sync — prerequisites and defaults", () => {
       "test-pub",
     ]);
     expect(await readPublisherKey(vault, "test-pub")).toBeUndefined();
+  });
+});
+
+describe("extension.rehash — adopting on-disk bytes is gated like an install", () => {
+  async function installed(): Promise<{ db: Database; installPath: string }> {
+    const root = tempDir("nimbus-rehash-");
+    const src = join(root, "src");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({ id: "test.ext.rehash", version: "1.0.0", entry: "dist/index.js" }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), 'import "./chunk.js";\n');
+    writeFileSync(join(src, "dist", "chunk.js"), "export {};\n");
+    const db = indexDb();
+    const extensionsDir = join(root, "extensions");
+    await dispatchAutomationRpc({
+      method: "extension.install",
+      ownerGate: async () => true,
+      params: { sourcePath: src },
+      db,
+      extensionsDir,
+    });
+    return { db, installPath: join(extensionsDir, "test.ext.rehash") };
+  }
+
+  const rehash = (db: Database, ownerGate?: (a: { type: string }) => Promise<boolean>) =>
+    dispatchAutomationRpc({
+      method: "extension.rehash",
+      params: { id: "test.ext.rehash" },
+      db,
+      ...(ownerGate === undefined ? {} : { ownerGate }),
+    });
+
+  const digestOf = (db: Database): string | null | undefined =>
+    listExtensions(db).find((r) => r.id === "test.ext.rehash")?.tree_digest;
+
+  test("an unchanged tree reports changed:false and never prompts", async () => {
+    const { db } = await installed();
+    let asked = 0;
+    const out = await rehash(db, async () => {
+      asked++;
+      return true;
+    });
+    expect((out as { value: { changed: boolean } }).value.changed).toBe(false);
+    expect(asked).toBe(0);
+  });
+
+  test("a changed SIBLING file is adopted only on approval, asked as extension.install", async () => {
+    const { db, installPath } = await installed();
+    const before = digestOf(db);
+    writeFileSync(join(installPath, "dist", "chunk.js"), "export const v = 2;\n");
+    const types: string[] = [];
+    await rehash(db, async (a) => {
+      types.push(a.type);
+      return true;
+    });
+    expect(types).toEqual(["extension.install"]);
+    expect(digestOf(db)).toBe(computeExtensionTreeDigest(installPath));
+    expect(digestOf(db)).not.toBe(before);
+  });
+
+  test("a DENIED rehash leaves the stored digest untouched", async () => {
+    const { db, installPath } = await installed();
+    const before = digestOf(db);
+    writeFileSync(join(installPath, "dist", "chunk.js"), "export const v = 3;\n");
+    const err = await rejectionOf(rehash(db, async () => false));
+    expect((err as AutomationRpcError).message).toStartWith("ERR_EXTENSION_REHASH_NOT_APPROVED");
+    expect(digestOf(db)).toBe(before);
+  });
+
+  test("a changed ENTRY is refused before any prompt — that is tampering, not a rehash", async () => {
+    const { db, installPath } = await installed();
+    writeFileSync(join(installPath, "dist", "index.js"), "steal();\n");
+    let asked = 0;
+    const err = await rejectionOf(
+      rehash(db, async () => {
+        asked++;
+        return true;
+      }),
+    );
+    expect((err as AutomationRpcError).message).toStartWith("ERR_EXTENSION_REHASH_MISMATCH");
+    expect(asked).toBe(0);
+  });
+
+  test("bytes that change WHILE the owner is deciding are not adopted", async () => {
+    const { db, installPath } = await installed();
+    const before = digestOf(db);
+    writeFileSync(join(installPath, "dist", "chunk.js"), "export const v = 4;\n");
+    const err = await rejectionOf(
+      rehash(db, async () => {
+        writeFileSync(join(installPath, "dist", "chunk.js"), "export const v = 5;\n");
+        return true;
+      }),
+    );
+    expect((err as AutomationRpcError).message).toStartWith("ERR_EXTENSION_REHASH_CHANGED");
+    expect(digestOf(db)).toBe(before);
+  });
+
+  test("REFUSES without the owner gate", async () => {
+    const { db } = await installed();
+    const err = await rejectionOf(rehash(db));
+    expect((err as AutomationRpcError).message).toContain("HITL gate");
   });
 });

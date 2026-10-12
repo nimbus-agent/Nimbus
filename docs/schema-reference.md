@@ -1030,11 +1030,21 @@ ALTER TABLE user_mcp_connector ADD COLUMN read_paths_json TEXT NOT NULL DEFAULT 
 ALTER TABLE user_mcp_connector ADD COLUMN net_hosts_json  TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE user_mcp_connector ADD COLUMN model_access    INTEGER NOT NULL DEFAULT 0;
 
--- V66 -- the MCP capture sink queue (I28). One row per capture an MCP client submitted through
+-- V66 -- extension tree digest (2026-10-11). Additive column on the V10 `extension` table.
+-- Authoritative source: packages/gateway/src/index/extension-tree-digest-v66-sql.ts
+-- SHA-256 over every file under `install_path` (packages/gateway/src/extensions/tree-digest.ts),
+-- computed at install and after an owner-approved auto-update or downgrade swap. NULL for rows
+-- that predate V66, and cleared to NULL by any version change that did not recompute it (crash
+-- recovery included); `nimbus extension rehash <id>` adopts the bytes on disk, behind the same
+-- owner approval as an install. Nothing reads it to decide anything yet: it is the substrate the
+-- extension runtime will verify before every spawn.
+ALTER TABLE extension ADD COLUMN tree_digest TEXT;
+
+-- V67 -- the MCP capture sink queue (I28). One row per capture an MCP client submitted through
 -- mcp-sink/capture-gate.ts. kind is note|decision|term|link; a note is live|revoked, every other
 -- kind proposed|accepted|rejected|revoked (CHECK). revoked clears payload_json (CHECK) and keeps
 -- everything else. Only mcp-sink/capture-store.ts names the table (static D32(a)).
--- Authoritative source: packages/gateway/src/index/capture-v66-sql.ts
+-- Authoritative source: packages/gateway/src/index/capture-v67-sql.ts
 CREATE TABLE IF NOT EXISTS capture (
     id            TEXT PRIMARY KEY,
     kind          TEXT NOT NULL CHECK(kind IN ('note','decision','term','link')),

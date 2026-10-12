@@ -65,7 +65,7 @@ and using it produces **no bypass annotation anywhere on the PR**. Nothing in th
 
 ## When your local green still doesn't match CI
 
-- `bun run verify:docker` — runs the manifest's **fast**-tier gates inside `oven/bun:1.3` (the CI bun) at `/src`, a normal path. Reach for it when a gate is green locally for a reason that isn't correctness: a path exclusion (a worktree under `.claude/` excluded itself from Biome) or an OS difference. `--full` adds build + `test:ci` + coverage floor; `--rebuild` refreshes the cached image after a `BASE_IMAGE`/apt change.
+- `bun run verify:docker` — runs the manifest's **fast**-tier gates inside `oven/bun:1.4` (the CI bun) at `/src`, a normal path. Reach for it when a gate is green locally for a reason that isn't correctness: a path exclusion (a worktree under `.claude/` excluded itself from Biome) or an OS difference. `--full` adds build + `test:ci` + coverage floor; `--rebuild` refreshes the cached image after a `BASE_IMAGE`/apt change.
 - `bun run verify:docker --changed` — runs **only the tests your branch touched** in the CI Linux image: the changed `.test.ts` files, plus the colocated `.test.ts` sibling of every changed source file. This is the answer to the largest *real* PR-failure category — "Unit tests (with coverage) — Linux" was 6 of the 15 identified step failures in the 2026-08-21 sample, and it does not reproduce on a Windows or macOS box at all, so the only way to see one was to push and wait ~12 minutes. Typically seconds once the image is cached. **It is not a substitute for `--full`:** `mock.module` contamination is a CROSS-FILE effect that appears only in the combined `bun test packages/cli/src` run, so a narrow run cannot reproduce it — a green `--changed` is evidence about your files, never about the suite. With no changed test file and no colocated sibling it exits 0 and says so rather than degrading into a whole-suite run.
 - `bun run verify:pr` — reads the PR's real check state via `gh` and refuses to call a **conflicted or still-pending** PR green. A merge-conflicting PR runs no `pull_request` workflows at all and looks passing. It also fails when the merge-gating check is **absent** from the list entirely — the #1298 shape, where reported checks were green because the aggregator had not been created yet.
 - `bun run typecheck:tests` — typechecks `packages/{gateway,ui}/test/**`, which no package's tsconfig `include` covers, so plain `typecheck` is blind to them (#1038). Ratchets against `docs/structure-audit/typecheck-tests-baseline.json`: only NEW errors fail. Part of `preflight:fast`; also runs in the ubuntu PR gate.
@@ -83,10 +83,10 @@ and using it produces **no bypass annotation anywhere on the PR**. Nothing in th
 Develop on one OS, but CI runs all three — and **PRs now gate on macOS + Windows too**, not just
 Ubuntu: `pr-quality-cross-platform` runs one leg on `macos-15` and one on `windows-2025`, each
 executing the SAME whole-repo command as the push matrix
-(`bun test packages/gateway packages/cli scripts`, one process). Treat "it
-passes on Ubuntu" as covering roughly half the gate. Note what that equality buys and what it does
-not: the legs now load the same FILES in the same PROCESS as the push run, which is what makes a
-green PR leg predictive at all — but they still run on runners ~13–18× slower than a dev machine,
+(`bun test packages/gateway packages/cli scripts --parallel`, each file isolated in a worker).
+Treat "it passes on Ubuntu" as covering roughly half the gate. Note what that equality buys and
+what it does not: the legs load the same FILES in the same process SHAPE as the push run, which is
+what makes a green PR leg predictive at all — but they still run on runners ~13–18× slower than a dev machine,
 so a wall-clock assumption that holds locally can still fail there. Build paths with `path.join()` / `os.tmpdir()` / `PlatformServices`, never hardcoded separators. `bun run audit:cross-platform` flags hardcoded **Windows-separator** path literals (backslash, drive-letter `C:\`, UNC `\\server`) in `*.test.ts(x)` assertions — the "passes on my Windows machine, fails on the Ubuntu PR gate" footgun. POSIX forward-slash absolutes (`/tmp/...`, `/home/...`) are intentionally **not** flagged: in this codebase they are overwhelmingly legitimate data values (socket-path fixtures, env-var pass-throughs, HTTP/API routes) that a regex cannot distinguish from a constructed path — an empirical pass produced 52 false positives and 0 real bugs, so reliable POSIX-absolute detection is deferred to the AST v2 rewrite (see the script header). Genuinely platform-specific literal? End the line with `// cross-platform-ok`.
 
 `bun run audit:windows-console` covers the opposite direction — a Windows-only defect no Linux

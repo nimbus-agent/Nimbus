@@ -11,7 +11,7 @@ import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
-import { CAPTURE_V66_SQL } from "../capture-v66-sql.ts";
+import { CAPTURE_V67_SQL } from "../capture-v67-sql.ts";
 import { COMPUTER_USE_V57_SQL } from "../computer-use-v57-sql.ts";
 import { CONNECTOR_CONFIGURED_V56_SQL } from "../connector-configured-v56-sql.ts";
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
@@ -30,6 +30,7 @@ import {
   EXTENSION_SESSION_V10_MIGRATION_SQL,
   EXTENSION_SESSION_V10_NO_VEC_MIGRATION_SQL,
 } from "../extension-session-v10-sql.ts";
+import { EXTENSION_TREE_DIGEST_V66_SQL } from "../extension-tree-digest-v66-sql.ts";
 import { V33_FEDERATION_SQL } from "../federation-v33-sql.ts";
 import { FLEET_SUBJECTS_V63_SQL } from "../fleet-subjects-v63-sql.ts";
 import { FLEET_V60_SQL } from "../fleet-v60-sql.ts";
@@ -591,7 +592,8 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "user MCP grants (read paths, network hosts, model access)",
     USER_MCP_GRANTS_V65_SQL,
   ),
-  simpleStep(65, 66, "MCP capture sink queue (capture)", CAPTURE_V66_SQL),
+  simpleStep(65, 66, "extension tree digest", EXTENSION_TREE_DIGEST_V66_SQL),
+  simpleStep(66, 67, "MCP capture sink queue (capture)", CAPTURE_V67_SQL),
 ];
 
 /**

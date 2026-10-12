@@ -18,6 +18,38 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-11 — S3 opens: extension runtime PR 1 of 4 — the install gate and the tree digest.**
+  The first slice of S3 (design: `docs/superpowers/specs/2026-10-11-extension-runtime-design.md`)
+  closes two gaps that must be closed before any installed extension may run. **Install is now
+  approved in the executor, not the CLI.** `extension.install` had been in the I2 frozen HITL set
+  all along while no code built an action of that type: the only consent was a `@clack/prompts`
+  confirm in `nimbus extension install` that `--yes` skipped and no other socket client ever saw,
+  and the install audit row recorded `hitl_status = 'approved'` for an approval nobody gave. The
+  gateway now resolves the install plan, asks the local owner through a gate-only `ToolExecutor`
+  (the one auto-update already used, now shared as `buildExtensionGateExecutor`) over the id,
+  version, source, the publisher id and key fingerprint the manifest claims, the declared
+  permissions and every package the install adds, and copies nothing unless the owner approves;
+  the handler REFUSES when no gate is wired, and the audit row reads `approved` only when an
+  approval was asked (`not_required` for a direct library call). **Every installed file is now
+  hashed.** Schema **V66** adds `extension.tree_digest`, SHA-256 over every regular file under the
+  install path (`extensions/tree-digest.ts`; symlinks and other non-regular files throw), computed
+  at install and after an owner-approved upgrade or downgrade swap, and cleared to NULL by any
+  other version change — crash recovery's `_prev` promotion included, since nobody approved those
+  bytes. New CLI-only, LAN-forbidden `extension.rehash` (`nimbus extension rehash <id> [--yes]`)
+  adopts the bytes on disk behind the same `extension.install` approval, refusing without a prompt
+  when the manifest or entry no longer match their install-time hashes and refusing when the files
+  change while approval is pending. Nothing reads the digest to decide anything yet; PR 3's
+  runtime verifies it before every spawn. **R1 answered on Linux, pending CI for macOS and
+  Windows:** a `bun build --compile` binary can `import()` an on-disk ES module, follow its
+  relative imports and resolve its own `node_modules`, ESM and CommonJS alike (verified locally
+  on Bun 1.3.14 and 1.4.2; `test/integration/extensions/compiled-import.test.ts` now asks the
+  same question on every PR leg). Not on the Tauri allowlist (unchanged at 107); no new
+  invariant; no egress class. **Found, not fixed here:** the registry's `entryHash` is compared
+  against the downloaded TARBALL's SHA-256 by auto-update (and then stored as the row's
+  `entry_hash`) but against the ENTRY FILE's SHA-256 by dependency install, and no real registry
+  can satisfy both — an auto-updated extension's `entry_hash` can never match its entry file at
+  the next startup verification.
+
 - **2026-10-10 — Pre-S3 item E: OS notifications are delivered on Windows, macOS and Linux.**
   The last of the pre-S3 close-out's five items, so the close-out is complete and S3 is next.
   Until now the only `NotificationService` was `createUnimplementedNotifications` (`delivers:

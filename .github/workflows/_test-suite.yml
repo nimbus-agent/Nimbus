@@ -346,7 +346,7 @@ jobs:
             # last command and silently mask every failure. Same shape as `ci.yml`'s
             # cross-platform retry, and for the same reason — a silent retry costs a full
             # suite run and leaves nothing in the summary to investigate.
-            bun test packages/gateway packages/cli scripts --timeout 60000 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
+            bun test packages/gateway packages/cli scripts --timeout 60000 --parallel --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
             cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then

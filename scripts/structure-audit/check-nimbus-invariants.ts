@@ -1802,7 +1802,7 @@ const D32_CAPTURE_TABLE_RE = new RegExp(
 );
 const D32_CAPTURE_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/mcp-sink/capture-store.ts",
-  "packages/gateway/src/index/capture-v66-sql.ts",
+  "packages/gateway/src/index/capture-v67-sql.ts",
 ];
 
 export function checkCaptureTableConfinement(files: readonly FileEntry[]): Violation[] {

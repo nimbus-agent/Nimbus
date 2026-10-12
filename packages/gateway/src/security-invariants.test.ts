@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -281,6 +281,42 @@ describe("I2 — HITL frozen-set membership", () => {
     const src = await read("packages/gateway/src/connectors/local-auth/adopt-local-auth.ts");
     expect(src).toMatch(/ADOPT_ACTION_TYPE = "connector\.adoptLocalAuth"/);
   });
+
+  test("extension.install is not merely listed: the IPC install REFUSES without the executor gate and installs nothing on a denial", async () => {
+    // Membership alone proved nothing here for a long time: `extension.install` sat in the frozen
+    // set while no code ever built an action of that type, and the only consent was a CLI-side
+    // prompt that `--yes` skipped. The gate is now the executor's (the server dispatcher builds a
+    // gate-only ToolExecutor per call); this pins both halves of that at the handler.
+    expect(HITL_REQUIRED.has("extension.install")).toBe(true);
+    const { dispatchAutomationRpc } = await import("./ipc/automation-rpc.ts");
+    const { listExtensions } = await import("./automation/extension-store.ts");
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-i2-ext-install-"));
+    try {
+      const src = join(tmp, "src");
+      mkdirSync(join(src, "dist"), { recursive: true });
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "i2.ext", version: "1.0.0", entry: "dist/index.js" }),
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      const base = { method: "extension.install", params: { sourcePath: src }, db };
+      const extensionsDir = join(tmp, "extensions");
+      await expect(dispatchAutomationRpc({ ...base, extensionsDir })).rejects.toThrow(
+        /requires the owner's HITL gate/,
+      );
+      await expect(
+        dispatchAutomationRpc({ ...base, extensionsDir, ownerGate: async () => false }),
+      ).rejects.toThrow(/ERR_EXTENSION_INSTALL_NOT_APPROVED/);
+      expect(listExtensions(db)).toEqual([]);
+      const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers.ts");
+      expect(dispatchers).toMatch(/OWNER_GATED_EXTENSION_METHODS[^;]*"extension\.install"/);
+      db.close();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("I3 — HITL gate consults action.type (not payload.mcpToolId)", () => {
@@ -313,7 +349,7 @@ describe("I4 — hitlStatus is consent-output-only in production paths", () => {
     ["packages/gateway/src/egress/egress-prune.ts", "egress.prune ∈ HITL_REQUIRED (I2 frozen set)"],
     [
       "packages/gateway/src/extensions/install-from-local.ts",
-      "extension.install_complete records the outcome of the install gate",
+      "extension.install_complete records the executor-gated extension.install approval (approve hook)",
     ],
     [
       "packages/gateway/src/ipc/federation-rpc.ts",

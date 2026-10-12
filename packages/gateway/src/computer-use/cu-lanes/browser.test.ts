@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { BrowserLane } from "../cu-types.ts";
-import { type BrowserLaneRuntime, openBrowserLane } from "./browser.ts";
+import { type BrowserLaneRuntime, defaultBrowserLaneRuntime, openBrowserLane } from "./browser.ts";
 import { buildChromiumLaunchPolicy } from "./browser-launch.ts";
 import type { CdpSocket } from "./cdp-session.ts";
 import { resolveChromiumPath } from "./chromium-path.ts";
@@ -919,6 +919,16 @@ describe("openBrowserLane — malformed protocol payloads fail safe", () => {
  * standing guarantee on every leg. Stated here rather than implied, because a `describe.skip` that
  * nothing counts is exactly how a suite quietly stops testing the thing it was written for.
  */
+/**
+ * Deadlines for a REAL browser, set apart from the fake-driver tests above. A cold Chromium launch on
+ * a loaded runner is the slow step: on windows-2025 under `bun test --parallel` (four workers on four
+ * vCPUs, alongside gateway-booting e2e files) the first launch of the file ran past the 30 s default
+ * launch timeout and the 30 s test cap together. 60 s matches the job's per-test `--timeout`; the
+ * test cap leaves room for the launch plus the test's own steps.
+ */
+const REAL_LAUNCH_TIMEOUT_MS = 60_000;
+const REAL_TEST_TIMEOUT_MS = 90_000;
+
 const chromium = resolveChromiumPath();
 const withChrome = chromium === null ? describe.skip : describe;
 
@@ -939,15 +949,18 @@ withChrome("openBrowserLane — against a REAL Chromium (I35 re-verify item 1)",
    * cannot leak into the next test.
    */
   async function realLane(): Promise<BrowserLane> {
-    const lane = await openBrowserLane({
-      launch: buildChromiumLaunchPolicy({
-        profileDir: mkdtempSync(join(tmpdir(), "nimbus-cu-e2e-")),
-      }),
-      executablePath: chromium as string,
-      db: makeDb(),
-      sessionId: "real-1",
-      target: { navigateOrigins: [], scriptOrigins: [] },
-    });
+    const lane = await openBrowserLane(
+      {
+        launch: buildChromiumLaunchPolicy({
+          profileDir: mkdtempSync(join(tmpdir(), "nimbus-cu-e2e-")),
+        }),
+        executablePath: chromium as string,
+        db: makeDb(),
+        sessionId: "real-1",
+        target: { navigateOrigins: [], scriptOrigins: [] },
+      },
+      { ...defaultBrowserLaneRuntime, launchTimeoutMs: REAL_LAUNCH_TIMEOUT_MS },
+    );
     openLanes.push(lane);
     return lane;
   }
@@ -956,99 +969,127 @@ withChrome("openBrowserLane — against a REAL Chromium (I35 re-verify item 1)",
     await lane.navigate(`data:text/html,${encodeURIComponent(html)}`);
   }
 
-  test("the closest()-based isSubmitControl sees a SPAN inside a submit button", async () => {
-    // The exact markup the contract was rewritten for: `<button type=submit><span>Pay</span>`.
-    // A model's selector routinely resolves to the inner span, the click bubbles, and the form
-    // submits — so "IS a submit control" was the wrong predicate.
-    const lane = await realLane();
-    await load(
-      lane,
-      "<form><button type='submit' id='go'><span id='inner'>Pay</span></button></form>",
-    );
-    expect((await lane.observe("#go"))?.isSubmitControl).toBe(true);
-    const inner = await lane.observe("#inner");
-    expect(inner?.tagName).toBe("SPAN");
-    expect(inner?.isSubmitControl).toBe(true);
-  }, 30_000);
+  test(
+    "the closest()-based isSubmitControl sees a SPAN inside a submit button",
+    async () => {
+      // The exact markup the contract was rewritten for: `<button type=submit><span>Pay</span>`.
+      // A model's selector routinely resolves to the inner span, the click bubbles, and the form
+      // submits — so "IS a submit control" was the wrong predicate.
+      const lane = await realLane();
+      await load(
+        lane,
+        "<form><button type='submit' id='go'><span id='inner'>Pay</span></button></form>",
+      );
+      expect((await lane.observe("#go"))?.isSubmitControl).toBe(true);
+      const inner = await lane.observe("#inner");
+      expect(inner?.tagName).toBe("SPAN");
+      expect(inner?.isSubmitControl).toBe(true);
+    },
+    REAL_TEST_TIMEOUT_MS,
+  );
 
-  test("a plain field inside a form is NOT a submit control, and password forms are detected", async () => {
-    // The other half of the `form`-in-the-selector decision: taking it literally would make a
-    // click on ANY element inside ANY form actuating, which trains the owner to approve
-    // reflexively — the fatigue failure this whole design exists to avoid.
-    const lane = await realLane();
-    await load(lane, "<form><input id='u' type='text'><input type='password'></form>");
-    const node = await lane.observe("#u");
-    expect(node?.isSubmitControl).toBe(false);
-    expect(node?.inForm).toBe(true);
-    expect(node?.inFormWithPassword).toBe(true);
-    expect(node?.type).toBe("text");
-  }, 30_000);
+  test(
+    "a plain field inside a form is NOT a submit control, and password forms are detected",
+    async () => {
+      // The other half of the `form`-in-the-selector decision: taking it literally would make a
+      // click on ANY element inside ANY form actuating, which trains the owner to approve
+      // reflexively — the fatigue failure this whole design exists to avoid.
+      const lane = await realLane();
+      await load(lane, "<form><input id='u' type='text'><input type='password'></form>");
+      const node = await lane.observe("#u");
+      expect(node?.isSubmitControl).toBe(false);
+      expect(node?.inForm).toBe(true);
+      expect(node?.inFormWithPassword).toBe(true);
+      expect(node?.type).toBe("text");
+    },
+    REAL_TEST_TIMEOUT_MS,
+  );
 
-  test("hrefScheme and hrefOrigin come back resolved, and an opaque origin is JS null", async () => {
-    const lane = await realLane();
-    await load(
-      lane,
-      "<a id='ext' href='https://other.example.com/x'>l</a><a id='js' href='JavaScript:alert(1)'>j</a>",
-    );
-    const ext = await lane.observe("#ext");
-    expect(ext?.hrefScheme).toBe("https");
-    expect(ext?.hrefOrigin).toBe("https://other.example.com");
+  test(
+    "hrefScheme and hrefOrigin come back resolved, and an opaque origin is JS null",
+    async () => {
+      const lane = await realLane();
+      await load(
+        lane,
+        "<a id='ext' href='https://other.example.com/x'>l</a><a id='js' href='JavaScript:alert(1)'>j</a>",
+      );
+      const ext = await lane.observe("#ext");
+      expect(ext?.hrefScheme).toBe("https");
+      expect(ext?.hrefOrigin).toBe("https://other.example.com");
 
-    const js = await lane.observe("#js");
-    expect(js?.hrefScheme).toBe("javascript");
-    // Verified live: `new URL("JavaScript:alert(1)").origin` is the STRING "null".
-    expect(js?.hrefOrigin).toBeNull();
-  }, 30_000);
+      const js = await lane.observe("#js");
+      expect(js?.hrefScheme).toBe("javascript");
+      // Verified live: `new URL("JavaScript:alert(1)").origin` is the STRING "null".
+      expect(js?.hrefOrigin).toBeNull();
+    },
+    REAL_TEST_TIMEOUT_MS,
+  );
 
-  test("a data: document reports a NULL currentOrigin, not the opaque string", async () => {
-    const lane = await realLane();
-    await load(lane, "<p>hi</p>");
-    expect(lane.currentOrigin()).toBeNull();
-  }, 30_000);
+  test(
+    "a data: document reports a NULL currentOrigin, not the opaque string",
+    async () => {
+      const lane = await realLane();
+      await load(lane, "<p>hi</p>");
+      expect(lane.currentOrigin()).toBeNull();
+    },
+    REAL_TEST_TIMEOUT_MS,
+  );
 
-  test("readText, domSnapshot and screenshot all work against a live page", async () => {
-    const lane = await realLane();
-    await load(lane, "<h1>Hello</h1><p>World</p>");
-    expect(await lane.readText()).toContain("Hello");
-    expect(await lane.domSnapshot()).toContain("<h1>");
-    const png = await lane.screenshot();
-    expect(png.length).toBeGreaterThan(0);
-    // The PNG magic number — proof these are real pixels, not an empty buffer.
-    expect(Array.from(png.slice(0, 4))).toEqual([137, 80, 78, 71]);
-  }, 30_000);
+  test(
+    "readText, domSnapshot and screenshot all work against a live page",
+    async () => {
+      const lane = await realLane();
+      await load(lane, "<h1>Hello</h1><p>World</p>");
+      expect(await lane.readText()).toContain("Hello");
+      expect(await lane.domSnapshot()).toContain("<h1>");
+      const png = await lane.screenshot();
+      expect(png.length).toBeGreaterThan(0);
+      // The PNG magic number — proof these are real pixels, not an empty buffer.
+      expect(Array.from(png.slice(0, 4))).toEqual([137, 80, 78, 71]);
+    },
+    REAL_TEST_TIMEOUT_MS,
+  );
 
-  test("click actually fires a handler on a live page", async () => {
-    const lane = await realLane();
-    await load(lane, "<button id='b' onclick='document.title=\"clicked\"'>Go</button>");
-    await lane.click("#b");
-    await Bun.sleep(200);
-    expect(await lane.readText()).toBeDefined();
-    const dom = await lane.domSnapshot();
-    expect(dom).toContain("<button");
-  }, 30_000);
+  test(
+    "click actually fires a handler on a live page",
+    async () => {
+      const lane = await realLane();
+      await load(lane, "<button id='b' onclick='document.title=\"clicked\"'>Go</button>");
+      await lane.click("#b");
+      await Bun.sleep(200);
+      expect(await lane.readText()).toBeDefined();
+      const dom = await lane.domSnapshot();
+      expect(dom).toContain("<button");
+    },
+    REAL_TEST_TIMEOUT_MS,
+  );
 
-  test("type inserts text WITHOUT submitting the form it is typed into", async () => {
-    // The live proof that `Input.insertText` cannot press Enter: a form whose submit handler
-    // would rewrite the document must be untouched afterwards.
-    //
-    // The typed value is mirrored into a <p> by an `oninput` handler rather than read back from the
-    // DOM snapshot: `outerHTML` serialises the value ATTRIBUTE, which typing never changes, so a
-    // snapshot assertion fails even on a perfectly working `type()` (observed). Mirroring is also
-    // the stronger claim -- it proves `Input.insertText` fires REAL `input` events, which assigning
-    // `.value` programmatically would not.
-    const lane = await realLane();
-    await load(
-      lane,
-      '<form onsubmit=\'document.getElementById("sub").textContent="SUBMITTED";return false\'>' +
-        "<input id='u' oninput='document.getElementById(\"out\").textContent=this.value'>" +
-        "</form><p id='out'></p><p id='sub'></p>",
-    );
-    await lane.type("#u", "alice");
-    await Bun.sleep(200);
-    // Asserted over readText, not domSnapshot: the snapshot serialises the `onsubmit` ATTRIBUTE,
-    // whose source text contains the sentinel whether or not the handler ever ran.
-    const text = await lane.readText();
-    expect(text).toContain("alice");
-    expect(text).not.toContain("SUBMITTED");
-  }, 30_000);
+  test(
+    "type inserts text WITHOUT submitting the form it is typed into",
+    async () => {
+      // The live proof that `Input.insertText` cannot press Enter: a form whose submit handler
+      // would rewrite the document must be untouched afterwards.
+      //
+      // The typed value is mirrored into a <p> by an `oninput` handler rather than read back from the
+      // DOM snapshot: `outerHTML` serialises the value ATTRIBUTE, which typing never changes, so a
+      // snapshot assertion fails even on a perfectly working `type()` (observed). Mirroring is also
+      // the stronger claim -- it proves `Input.insertText` fires REAL `input` events, which assigning
+      // `.value` programmatically would not.
+      const lane = await realLane();
+      await load(
+        lane,
+        '<form onsubmit=\'document.getElementById("sub").textContent="SUBMITTED";return false\'>' +
+          "<input id='u' oninput='document.getElementById(\"out\").textContent=this.value'>" +
+          "</form><p id='out'></p><p id='sub'></p>",
+      );
+      await lane.type("#u", "alice");
+      await Bun.sleep(200);
+      // Asserted over readText, not domSnapshot: the snapshot serialises the `onsubmit` ATTRIBUTE,
+      // whose source text contains the sentinel whether or not the handler ever ran.
+      const text = await lane.readText();
+      expect(text).toContain("alice");
+      expect(text).not.toContain("SUBMITTED");
+    },
+    REAL_TEST_TIMEOUT_MS,
+  );
 });

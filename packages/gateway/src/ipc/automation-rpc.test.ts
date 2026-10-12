@@ -1053,6 +1053,7 @@ describe("extension.install", () => {
           params: { sourcePath: "/definitely/not/a/real/source-xyz-12345" },
           db,
           extensionsDir: tmpDir,
+          ownerGate: async () => true,
         });
       } catch (e) {
         caught = e;

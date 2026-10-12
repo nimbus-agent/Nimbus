@@ -54,8 +54,8 @@ export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL='*'
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-# CI pins bun 1.3 (.github/actions/setup-nimbus-ci/action.yml default) — `latest` is NOT CI.
-BASE_IMAGE="oven/bun:1.3"
+# CI pins bun 1.4 (.github/actions/setup-nimbus-ci/action.yml default) — `latest` is NOT CI.
+BASE_IMAGE="oven/bun:1.4"
 IMAGE="nimbus-verify:local"      # BASE_IMAGE + the apt layer + non-root plumbing, built once
 CACHE_VOL="nimbus-bun-cache"
 # A deterministic name so an interrupted run can be force-removed. `docker run --rm` is a
