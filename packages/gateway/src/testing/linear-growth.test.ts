@@ -27,7 +27,7 @@ test("one stalled trial at the largest size does not fail a linear curve", () =>
     sizes: SIZES,
     repeats: 20,
     perSizeCeilingMs: 1000,
-    prepare: (n) => {
+    makeCall: (n) => {
       let calls = 0;
       return () => {
         calls += 1;
@@ -53,7 +53,7 @@ test("a quadratic curve still fails", () => {
       // Sized so the SMALLEST size is ~1 ms, twice the 0.5 ms baseline floor, leaving the largest
       // ~64x past it. Smaller and the floor flattens the curve, so this would pass for the wrong
       // reason (observed at n * n / 400: 0.05 ms -> 3.1 ms, a "ratio" of 6).
-      prepare: (n) => () => {
+      makeCall: (n) => () => {
         linearWork((n * n) / 20);
       },
     }),
@@ -67,7 +67,7 @@ test("a size whose best trial still exceeds the ceiling fails without running ev
       sizes: [1],
       repeats: 1,
       perSizeCeilingMs: 5,
-      prepare: () => () => {
+      makeCall: () => () => {
         calls += 1;
         stall(10);
       },

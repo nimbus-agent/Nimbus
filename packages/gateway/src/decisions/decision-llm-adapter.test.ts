@@ -160,7 +160,7 @@ test("an unterminated fence followed by whitespace costs linear, not quadratic, 
     sizes: GROWTH_SIZES,
     repeats: GROWTH_REPEATS,
     perSizeCeilingMs: GROWTH_PER_SIZE_CEILING_MS,
-    prepare: (n) => {
+    makeCall: (n) => {
       const raw = build(n);
       // Every timed call must take the throw path, or the curve measures the wrong code.
       return () => {

@@ -47,14 +47,14 @@ export interface GrowthCase {
    * Builds the input for size `n` and returns the call to time. It runs once untimed to warm the
    * JIT, which is also where a caller can assert the call's result.
    */
-  readonly prepare: (n: number) => () => void;
+  readonly makeCall: (n: number) => () => void;
 }
 
 /** Best-of-{@link TRIALS} batch time, in ms, for each size in order. */
 export function bestTimingsAcrossSizes(c: GrowthCase): number[] {
   const timings: number[] = [];
   for (const n of c.sizes) {
-    const call = c.prepare(n);
+    const call = c.makeCall(n);
     call();
     let best = Number.POSITIVE_INFINITY;
     for (let t = 0; t < TRIALS; t += 1) {

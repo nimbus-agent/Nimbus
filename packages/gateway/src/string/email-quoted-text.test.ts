@@ -264,7 +264,7 @@ test("a long trailing whitespace run on the kept region costs linear, not quadra
     sizes: GROWTH_SIZES,
     repeats: GROWTH_REPEATS,
     perSizeCeilingMs: GROWTH_PER_SIZE_CEILING_MS,
-    prepare: (n) => {
+    makeCall: (n) => {
       const input = build(n);
       return () => {
         stripQuotedTail(input);
