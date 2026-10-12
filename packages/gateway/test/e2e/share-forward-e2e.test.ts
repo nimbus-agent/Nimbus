@@ -600,7 +600,15 @@ test("P4 (seam) — onPairComplete seam drives the drain end-to-end via real Pee
   expect(row!.direction).toBe("received");
   expect(row!.originLabel).toBe("drain-seam-gw");
 
-  // P4b: markDelivered worked — drainPending returns empty.
+  // P4b: markDelivered worked — drainPending returns empty. Polled, not asserted at once: B stores
+  // the share BEFORE it answers, and A marks it delivered only after that answer arrives, so B's
+  // inbox row is observable while A's `markDelivered` is still pending. Under load (the macOS leg
+  // with `bun test --parallel`) that window was wide enough to fail an immediate check.
+  await until(
+    () => (drainPending(aDb, bPubkeyB64).length === 0 ? true : undefined),
+    "A's pending forward marked delivered after B received it",
+    10_000,
+  );
   expect(drainPending(aDb, bPubkeyB64)).toHaveLength(0);
 
   // Cleanup

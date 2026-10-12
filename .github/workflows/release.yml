@@ -128,6 +128,8 @@ jobs:
         if: matrix.target.os != 'windows'
         run: |
           cd packages/gateway
+          # Bun 1.4 on Windows will not create a missing --outfile directory; create it on every OS.
+          mkdir -p ../../dist
           bun build src/index.ts --compile --outfile ../../dist/${{ matrix.target.artifact }}${{ matrix.target.ext }} --target bun
 
       # Windows PE resources (Details tab: Product name / File version / Company)
@@ -145,6 +147,8 @@ jobs:
           $winver = $env:REF_NAME.TrimStart("v").Split("-")[0] + ".0"
           if ($winver -notmatch '^[0-9]+(\.[0-9]+){3}$') { throw "unexpected version from ref '$env:REF_NAME': $winver" }
           cd packages/gateway
+          # Bun 1.4 on Windows will not create a missing --outfile directory ("could not open output directory").
+          New-Item -ItemType Directory -Force -Path ../../dist | Out-Null
           bun build src/index.ts --compile --outfile ../../dist/${{ matrix.target.artifact }}${{ matrix.target.ext }} --target bun `
             --windows-title "Nimbus Gateway" `
             --windows-publisher "Nimbus Contributors" `
@@ -301,6 +305,8 @@ jobs:
         if: matrix.target.os != 'windows'
         run: |
           cd packages/cli
+          # Bun 1.4 on Windows will not create a missing --outfile directory; create it on every OS.
+          mkdir -p ../../dist
           bun build src/index.ts --compile --outfile ../../dist/${{ matrix.target.artifact }}${{ matrix.target.ext }} --target bun
 
       # Stamp Windows PE resources so `nimbus.exe` reports Nimbus metadata in the
@@ -317,6 +323,8 @@ jobs:
           $winver = $env:REF_NAME.TrimStart("v").Split("-")[0] + ".0"
           if ($winver -notmatch '^[0-9]+(\.[0-9]+){3}$') { throw "unexpected version from ref '$env:REF_NAME': $winver" }
           cd packages/cli
+          # Bun 1.4 on Windows will not create a missing --outfile directory ("could not open output directory").
+          New-Item -ItemType Directory -Force -Path ../../dist | Out-Null
           bun build src/index.ts --compile --outfile ../../dist/${{ matrix.target.artifact }}${{ matrix.target.ext }} --target bun `
             --windows-title "Nimbus CLI" `
             --windows-publisher "Nimbus Contributors" `

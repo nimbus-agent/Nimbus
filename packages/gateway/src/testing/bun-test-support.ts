@@ -128,10 +128,17 @@ async function pkceTestHttpGetStatus(url: string): Promise<number> {
   }
   const mod = u.protocol === "https:" ? https : http;
   return await new Promise((resolve, reject) => {
-    const req = mod.request(u, { method: "GET", headers: { Connection: "close" } }, (res) => {
-      res.resume();
-      resolve(res.statusCode ?? 0);
-    });
+    // `agent: false`: no pooled socket. On Bun 1.4 a second request through the default agent to a
+    // `Bun.serve` that answered the first with `Connection: close` fails with ECONNRESET ("socket
+    // hang up"); Bun 1.3 did not. Each callback here is a one-shot request, so pooling buys nothing.
+    const req = mod.request(
+      u,
+      { method: "GET", agent: false, headers: { Connection: "close" } },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      },
+    );
     req.on("error", reject);
     req.end();
   });
