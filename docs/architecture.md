@@ -33,6 +33,7 @@
 - [Built-in Agents Pattern](#built-in-agents-pattern)
 - [Phase 6+ Subsystems](#phase-6-subsystems)
 - [Spine S2 Subsystems — Local Compute Fleet](#spine-s2-subsystems)
+- [Spine S3 Subsystems — Open Surface](#spine-s3-subsystems--open-surface)
 - [OS notifications](#os-notifications)
 - [Nimbus Gateway: Process Lifecycle](#nimbus-gateway-process-lifecycle)
 - [Local Database Schema](#local-database-schema)
@@ -1256,12 +1257,12 @@ Everything in S2 is **default off**. Not one of these capabilities does anything
 install; each needs an explicit `nimbus.toml` opt-in.
 
 The S2 capabilities can additionally be locked off org-wide by signed policy (`I22`,
-`EnforcedPolicy.capabilitiesDisabled`). `[policy.capabilities.ai_v2]` carries seven names
+`EnforcedPolicy.capabilitiesDisabled`). `[policy.capabilities.ai_v2]` carries eight names
 (`AI_V2_CAPABILITIES`): `code_execution`, `computer_use`, `tool_generation`, `multimodal_input`
 and `agent_fleet` each gate one S2 capability; `local_finetuning` is config-forward and gates
 nothing yet; and `user_mcp_model_access` gates no S2 capability but the engine agent being offered
 the tools of user MCP servers registered with `--model` (I42), enforced at that tool source,
-fail-closed, and read per turn (a turn already in flight keeps the tool list it built). **Cloud model
+fail-closed, and read per turn (a turn already in flight keeps the tool list it built); and `mcp_capture` gates agent-submitted notes arriving over MCP (I28), read per call. **Cloud model
 routing is the exception and has no lockoff name of its own** — it is governed by the per-vendor
 `[llm.remote.<vendor>] enabled` opt-in and, gateway-wide, by the local `[llm] enforce_air_gap`,
 which refuses every non-local route rather than one named capability. A signed org policy cannot
@@ -1773,6 +1774,95 @@ four cloud adapters — Anthropic, OpenAI, Gemini and xAI — each behind a defa
 `[llm.remote.<vendor>] enabled` opt-in with its key read from the **Vault and never the
 environment**. See [Model Router](#model-router-local-llm) above for how a route is selected, and
 `I29`'s `model` coverage class for how every non-local call is ledgered before it is made.
+
+## Spine S3 Subsystems — Open Surface
+
+S3 opens the Gateway to other agents and to third-party code. Two slices have shipped: the extension
+runtime's install gate (PR 1 of 4, 2026-10-11, recorded in [`CHANGELOG.md`](./CHANGELOG.md)) and the
+MCP capture sink's first slice (below).
+
+### MCP capture sink
+
+**PR 1 of 3 shipped 2026-10-12** (invariant `I28`, static `D32`, schema `V67`). Until then the MCP
+server was read-only. An MCP client can now write ONE kind of thing into the local index: a note,
+through the `capture_note` tool. Everything about the design follows from one fact: the writer is
+an untrusted agent, so the human reviews and revokes afterwards instead of approving each write.
+
+**One door.** Content from an MCP client enters Nimbus only through `mcp-sink/capture-gate.ts`'s
+`submitCapture()`, reached from the IPC method `capture.submit` (`ipc/capture-rpc.ts`). The gate runs
+a fixed order and refuses at the first failing step:
+
+1. **Capability.** `[mcp_sink] enabled` (default off) AND the live org policy
+   (`EnforcedPolicy.capabilitiesDisabled`, name `mcp_capture`, the eighth `AI_V2_CAPABILITIES`
+   entry). An absent policy accessor refuses (fail-closed). Config is read at Gateway start; policy
+   is read per call.
+2. **Client kind.** Only a connection that declared `kind: "mcp"` may submit. A CLI/UI/ChatOps/HTTP
+   caller is refused; the kind is derived from the connection, never a parameter.
+3. **Attempt limit.** One gateway-wide, in-memory limit of `4 x max_per_hour`, applied BEFORE any
+   validation so a flood of malformed calls costs nothing but a counter. It resets on restart.
+4. **Kind allowed** by `[mcp_sink] kinds`.
+5. **Whitelist rebuild** (`capture-validate.ts`). The payload is reconstructed from named fields,
+   never spread: title truncates at 200, body at `BODY_MAX_PROSE` (16,384) and an empty body refuses,
+   at most 10 tags of at most 50 characters, at most 10 `relatesTo` ids, client label truncated at
+   100, rebuilt payload refused above 64 KiB.
+6. **Referenced items exist.** Every `relatesTo` id must resolve to a live item; a revoked note's
+   former id does not (`ERR_CAPTURE_UNKNOWN_ITEM`).
+7. **Durable hourly cap**, read from the `capture` table, so a restart cannot reset it.
+8. **One transaction** writes the `capture` row, the `nimbus:capture` item and the `capture.submit`
+   audit row; an audit failure rolls all of it back. A successful submit records
+   `hitl_status = 'not_required'` (no consent gate ran); a refusal at steps 4 to 8 records `rejected`.
+
+**The table.** `capture` (V67, `index/capture-v67-sql.ts`): `id`, `kind`
+(`note|decision|term|link`), `state` (`live|proposed|accepted|rejected|revoked`, CHECK-constrained
+per kind), `item_id`, `payload_json`, `payload_bytes`, `client_label`, `session_id`, `native_ref`,
+`created_at`, `decided_at`. A revoked row clears `payload_json` (CHECK) and keeps the rest. Only
+`mcp-sink/capture-store.ts` names the table (static D32(a)).
+
+**Items.** A note is an ordinary indexed item of type `nimbus:capture`, labelled agent-authored
+(`agentAuthored` appears in MCP read results beside the item `id`, so a client can cite it back as
+`relatesTo`). Capture items are excluded from decision and glossary extraction, and their text is
+embedded by the LOCAL embedder only (`LOCAL_ONLY_PROSE_TYPES`), so a note never reaches a remote
+embedding vendor. Text that later reaches a model is delimited by the I11 envelope, not sanitised.
+
+**Owner side.** `captures.list` / `captures.get` / `captures.revoke` (and `capture.status`) are owner
+methods: they refuse the `mcp` kind, and the MCP adapter registers no tool that reaches them. Revoke
+deletes the item and its embeddings, clears the payload, and records `capture.revoke` with
+`hitl_status = 'not_required'` (I4 forbids an `approved` row a gate did not earn). It is idempotent:
+a racing second revoke succeeds and writes no second audit row. `nimbus captures list|show|revoke`
+and the `nimbus doctor` capture-sink lines drive them. The whole `capture` and `captures`
+namespaces are LAN-forbidden (the LAN check is a denylist, so the namespaces are added to it) and
+absent from the Tauri allowlist; none has an HTTP route.
+
+**MCP side.** `packages/cli/src/mcp/capture-tools.ts` registers `capture_note` only if
+`capture.status` reports the sink enabled for the kind. The decision is made once, when the MCP
+server process spawns; a gateway that is down at that moment, or a failed `session.declareKind`,
+yields no capture tool rather than a guessed one.
+
+**IPC methods.**
+
+| Method | Caller | Purpose |
+| --- | --- | --- |
+| `capture.status` | any local client | enabled flag, allowed kinds, pending count, limits, refusal counters since start |
+| `capture.submit` | `mcp` kind only | the gate above |
+| `captures.list` | owner | filter by state and kind |
+| `captures.get` | owner | one capture in full |
+| `captures.revoke` | owner | delete item and embeddings, clear payload |
+
+**Config.** `[mcp_sink]`: `enabled` (false), `kinds` (all four), `max_per_hour` (30, 1..1000),
+`max_pending` (100, 1..10000). Out-of-range values and unknown kinds refuse at load, naming the key
+and value; nothing is clamped.
+
+**Static D32** has three clauses: (a) the `capture` table identifier only in `capture-store.ts` and
+the V67 SQL module; (b) `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture` named only in
+`ipc/capture-rpc.ts` and `capture-gate.ts`; (c) `capture-gate.ts` value-imported (or re-exported, or
+dynamically imported) by no gateway module except `ipc/capture-rpc.ts`.
+
+**Not shipped, and recorded as such.** Proposals for `decision`, `term` and `link` captures
+(counted only after the owner accepts them) are PR 2; the kinds exist in the schema and config but
+the gate accepts only `note`. The act door (an agent asking Nimbus to do something) is PR 3 and has its
+own spec. There is no desktop UI for captures. `data.delete --service nimbus` removes capture items
+but does not clear `capture` rows. The attempt limit is in-memory. A live note is searchable
+unreviewed, by design.
 
 ## OS notifications
 

@@ -18,6 +18,33 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-12 — S3: the MCP capture sink, PR 1 of 3 — agent-authored notes over MCP (invariant I28).**
+  The MCP server was read-only; an editor agent can now write ONE kind of thing into the local
+  index, a note, through an opt-in `capture_note` tool (design: `docs/superpowers/specs/2026-10-11-mcp-capture-sink-design.md`).
+  `[mcp_sink] enabled` is DEFAULT OFF, as is the new `mcp_capture` org-policy name (the eighth
+  `[policy.capabilities.ai_v2]` entry, read live per call, fail-closed on an absent accessor).
+  Every submit passes `mcp-sink/capture-gate.ts`'s `submitCapture()` in a fixed order: capability,
+  declared `mcp` client kind only, a gateway-wide attempt limit (4 x `max_per_hour`) before any
+  validation, kind allowed, whitelist rebuild with hard caps (title 200, body 16,384, 10 tags,
+  10 `relatesTo` ids, 64 KiB payload), referenced items must exist, a durable hourly cap read from
+  the table, then one transaction for the `capture` row (schema **V67**), the `nimbus:capture` item
+  and the `capture.submit` audit row. The note is searchable at once, labelled agent-authored,
+  excluded from decision/glossary extraction, and embedded by the LOCAL embedder only. MCP read
+  results now carry each item's `id` and an `agentAuthored` flag so a client can cite a note back.
+  The owner reviews with `nimbus captures list|show|revoke` (revoke deletes the item and
+  embeddings, clears the payload and is idempotent) and `nimbus doctor` prints capture-sink lines.
+  The `capture` and `captures` IPC namespaces (five methods) are LAN-forbidden, absent from the
+  Tauri allowlist and have no HTTP route; `captures.*` refuse the `mcp` client kind. New invariant
+  **I28** (the number reserved since the S1 MCP server shipped) with static **D32** (three clauses:
+  the `capture` table, the gate entry points, the gate's importers). The capture tool is decided
+  once when the MCP server process spawns, so restart the editor's server after enabling the sink.
+  **Not shipped:** proposals for `decision`/`term`/`link` captures, which count only after owner
+  acceptance, are PR 2; the act door is PR 3 and has its own spec; there is no desktop UI; `data.delete`
+  does not clear `capture` rows (it removes the items); the attempt limit is in-memory and resets
+  on restart; and the live run on macOS and Linux has not been seen, since the end-to-end test
+  (real gateway, real stdio MCP) has run on Windows only until CI executes it. The migration was
+  written as V66 and renumbered V67 when the extension tree digest (#1648) took V66 on `main`.
+
 - **2026-10-11 — S3 opens: extension runtime PR 1 of 4 — the install gate and the tree digest.**
   The first slice of S3 (design: `docs/superpowers/specs/2026-10-11-extension-runtime-design.md`)
   closes two gaps that must be closed before any installed extension may run. **Install is now
