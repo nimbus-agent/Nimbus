@@ -31,6 +31,7 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { VoiceService } from "../../voice/service.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { AgentInvokeHandler } from "../agent-invoke.ts";
+import type { CaptureRpcCtx } from "../capture-rpc.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
 import type { ComputerRpcCtx } from "../computer-rpc.ts";
 import type { EgressRpcCtx } from "../egress-rpc.ts";
@@ -184,6 +185,8 @@ export type CreateIpcServerOptions = {
   // LAN-forbidden (I5) and not Tauri-exposed (I7). Present once assembled at boot (a demo or an
   // unsupported platform still reports its inactive status); the dispatcher skips when unset.
   notificationsRpcCtx?: NotificationsRpcCtx;
+  /** MCP capture sink (I28). LAN-forbidden (I5), not Tauri (I7); the dispatcher skips when unset. */
+  captureRpcCtx?: CaptureRpcCtx;
   // S2 runtime tool generation (I39). toolgen.create gates through the owner consent broker
   // (fail-closed on timeout/deny) inside `createGeneratedTool`; toolgen.approvalRespond is the
   // owner's answer channel. Present only when assembled at boot; the dispatcher skips cleanly when

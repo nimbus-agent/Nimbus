@@ -198,6 +198,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // OS notifications (pre-S3 item E): a paired peer must not raise toasts on this desktop, nor learn
   // whether its owner can see them. CLI-only.
   "notifications",
+  // MCP capture sink (I28): agent notes and their owner review are local-only surfaces.
+  "capture",
+  "captures",
   // NOTE: egress.prune is deliberately NOT forbidden here — like federation.purge above, it is
   // HITL-gated inside its own handler (handlePrune in egress-rpc.ts calls
   // ctx.requestPruneApproval(beforeTs) and returns { approved: false, prunedCount: 0 } on denial),

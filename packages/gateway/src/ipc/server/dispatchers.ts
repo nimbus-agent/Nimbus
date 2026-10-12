@@ -39,6 +39,7 @@ import { buildStatus } from "../admin-status-rpc.ts";
 import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
 import { AuditRpcError, dispatchAuditRpc } from "../audit-rpc.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "../automation-rpc.ts";
+import { dispatchCaptureRpc } from "../capture-rpc.ts";
 import { dispatchChatopsRpc } from "../chatops-rpc.ts";
 import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
@@ -1467,6 +1468,26 @@ export async function tryDispatchNotificationsRpc(
   return out.kind === "hit" ? out.value : phase4RpcSkipped;
 }
 
+/**
+ * `capture.*` / `captures.*` (MCP capture sink, I28). LAN-forbidden (I5), absent from the Tauri
+ * allowlist (I7). The caller's kind is the CONNECTION's, never a param.
+ */
+export async function tryDispatchCaptureRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("capture.") && !method.startsWith("captures.")) return phase4RpcSkipped;
+  const rpc = ctx.options.captureRpcCtx;
+  if (rpc === undefined) return phase4RpcSkipped;
+  const out = await dispatchCaptureRpc(method, params, rpc, {
+    clientId,
+    kind: ctx.getClientKind(clientId),
+  });
+  return out.kind === "hit" ? out.value : phase4RpcSkipped;
+}
+
 export async function tryDispatchShareRpc(
   ctx: ServerCtx,
   method: string,
@@ -1746,6 +1767,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchFleetRpc,
   tryDispatchOncallPushRpc,
   tryDispatchNotificationsRpc,
+  tryDispatchCaptureRpc,
   tryDispatchMediaRpc,
   tryDispatchEgressRpc,
   tryDispatchGlossaryRpc,
