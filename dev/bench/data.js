@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791818114673,
+  "lastUpdate": 1791828299906,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ad3331a789245fd66acc984e0c53787ebb7dbfe2",
-          "message": "chore: release main (#943)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.9.0</summary>\n\n##\n[1.9.0](https://github.com/nimbus-agent/Nimbus/compare/v1.8.0...v1.9.0)\n(2026-07-30)\n\n\n### Features\n\n* **connectors:** index Readwise books as `readwise:book`\n([#926](https://github.com/nimbus-agent/Nimbus/issues/926))\n([83b83f4](https://github.com/nimbus-agent/Nimbus/commit/83b83f491479c3ca8f0f8f45e12d4d08c0b425f2))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-30T06:53:33+03:00",
-          "tree_id": "1826122fa31a5c63d8498089a615b24627efb26e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ad3331a789245fd66acc984e0c53787ebb7dbfe2"
-        },
-        "date": 1785384770539,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 271.94824270000026,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 275.51404849999017,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 334.88634120000063,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "48b48cc4de94cccb74db484cafbb633ff240a752",
+          "message": "ci: move CI and release builds to Bun 1.4 and run the cross-platform suites with --parallel (#1651)\n\n## Summary\n\nThis is the third CI-speed PR, after #1649 and #1650. On the\nwindows-2025 PR leg, about 18 of its ~22 minutes go to one `bun test`\nprocess that runs ~1,600 files one after another. Bun 1.4's `bun test\n--parallel` spreads the files across worker processes. It also implies\n`--isolate`, so each file gets a fresh global and module registry.\n\nMeasured locally on 4 cores (Bun 1.4.2), with the same flags CI uses:\n\n| Suite | Sequential | `--parallel` | Pass / fail set |\n|---|---|---|---|\n| `packages/gateway/src` (19,083 tests) | 384 s | **112 s** | identical\n|\n| `packages/cli` + `scripts` (6,323 tests) | 60 s | 49 s | identical |\n\nOn this PR's own CI the macOS leg's full suite ran in about 212 s with\n`--parallel`, against about 500 s before.\n\nWhat changes:\n\n- **Bun 1.3 → 1.4 everywhere CI pins it.** That covers the\n`setup-nimbus-ci` default plus the explicit pins in\n`release-please.yml`, `install-smoke.yml`, `released-install-smoke.yml`\nand `ci.yml`'s PR-title job. It also covers the Docker images used by\n`verify:docker`, the coverage-floor reseed and the ONNX clean room.\n- **This is a runtime upgrade for shipped binaries, by decision.** The\nsame default compiles the release binary (`bun build --compile`).\nKeeping tests and release on one Bun was preferred over running tests on\n1.4 while still shipping 1.3.\n- **`--parallel` on both legs that must match.** That means the PR\ncross-platform legs (`ci.yml`) and the macOS/Windows push leg\n(`_test-suite.yml`). `cross-platform-parity.test.ts` now requires\n`--parallel` on both legs, because a path-only comparison would pass\nwith one leg isolated and the other not.\n- **`report-coverage.ts` now writes one coverage shard per global, not\none per process.** Under `--isolate`, every file starts with an empty\n`__coverage__`, so with one shard file per process each file overwrote\nthe one before it. On `packages/gateway/src/egress` that meant 407\ncovered lines with `--parallel` against 619 sequentially. After the fix\nboth modes give 619 lines and 256 branches.\n- **Bun 1.4 changed four behaviours this repo relied on. This PR handles\neach of them:**\n- **Windows `bun build --compile --outfile ..\\..\\dist\\...` no longer\ncreates a missing directory.** The windows-2022 install smoke failed\nwith `could not open output directory`. `compile-gateway.ts` now runs\n`mkdirSync(distDir, { recursive: true })` first, and `release.yml`\ncreates `dist/` before both compile steps on every OS.\n- **Socket data arrives in more chunks.** `fake-gateway.test.ts`'s\nconsent test never drained its buffer, so each new chunk sent the reply\nagain. A chunk that landed after `client.end()` threw\n`ERR_STREAM_WRITE_AFTER_END`, and Bun counted that error against the\nnext test. The test now replies only once (15 of 15 runs pass).\n- **`Glob.scan` without `dot: true` now matches an explicit\n`.claude/...` pattern.** The test that asserted a default scan finds\nnothing now asserts what the gate actually depends on: a `dot: true`\nscan finds a superset of what a default scan finds.\n- **A second `node:http` request through the default agent to a\n`Bun.serve` that answered `Connection: close` fails with ECONNRESET.**\nThis broke the PKCE test helper in `bun-test-support.ts`, which now\npasses `agent: false`. No production code makes `node:http` requests, so\nthe helper is the only call site affected.\n- **Docs:** `CLAUDE.md` and `GEMINI.md` (kept identical) and the\n`nimbus-preflight` / `nimbus-commands` skills now say Bun 1.4 and\ndescribe the isolated shape.\n\n## Related Issue\n\nNone. This is follow-up CI-speed work from #1649 and #1650.\n\n## Type of Change\n\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (see Testing)\n- [x] New behaviour is covered by tests (the parity test's new\n`--parallel` assertion)\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no product code changes)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] No product runtime code changed. The non-test files touched are\n`compile-gateway.ts` (the build script) and\n`testing/bun-test-support.ts` (a test helper). The Linux `Unit +\nCoverage` leg, which feeds the authoritative coverage floor, still runs\nserially per package, now on Bun 1.4.\n\n## Testing\n\nLocal runs on Linux:\n\n- **Sequential vs `--parallel`:** same pass/fail sets, with the timings\nin the table above.\n- **Coverage merge:** identical results sequentially and with\n`--parallel` after the shard fix.\n- **Bun 1.3.14 vs 1.4.2 on the full gateway suite:** the PKCE helper was\nthe only failure specific to 1.4. The other failures in this sandbox are\nthe same on both versions, because it runs as root.\n- **Release build on 1.4.2:** `bun run build` compiles both binaries.\n`nimbus --version` prints `7.42.0`, and the compiled gateway boots to\n`ready` in demo mode.\n- **Lockfile:** `bun install --frozen-lockfile` on 1.4.2 leaves\n`bun.lock` unchanged.\n- **Static gates:** `bun run preflight:fast` passes.\n\n## Notes for Reviewers\n\n- **Isolation changes what the cross-platform legs can catch.** A\n`mock.module` in one file can no longer leak into another there, so\nthose legs can no longer reproduce an order-dependent failure. The Linux\n`Unit + Coverage` leg still runs each package in a single process, so\ncross-file leakage can still show up there.\n- **More coverage files on disk:** one shard per test file under\n`--parallel` on the macOS/Windows push leg. That leg never merges its\nshards, so the cost is disk space only.\n- **Not changed:** the local `bun run test` and `test:ci` scripts stay\nsequential, so contributors still on Bun 1.3 aren't broken.\n- **No `!`:** nothing a user has to change. The shipped runtime moves\nwithin 1.x.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_014HT9yGfRK52JPScsN6EVuP\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Development & Reliability**\n* Cross-platform checks now run test files in parallel, isolated\nworkers, matching the push validation process.\n  * Coverage results remain distinct when tests run in parallel.\n  * Build, verification, and release checks now use Bun 1.4.\n  * Build workflows create the output directory before compiling.\n* Updated checks accommodate runtime differences in file matching,\nprevent repeated consent requests in a test scenario, and avoid\nconnection pooling for one-shot test requests.\n* **Testing**\n* Real-browser tests allow more time for browser startup and execution.\n  * Windows integration checks use a private working directory.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+          "timestamp": "2026-10-12T17:53:31Z",
+          "tree_id": "3d7dbcde80e8417a3b44d66b6103f8cd404c7759",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/48b48cc4de94cccb74db484cafbb633ff240a752"
+        },
+        "date": 1791828294835,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 261.173322299997,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 263.8057010000008,
             "unit": "ms"
           }
         ]
