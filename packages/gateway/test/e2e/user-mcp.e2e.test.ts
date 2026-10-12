@@ -139,6 +139,19 @@ async function until<T>(probe: () => T | undefined, what: string, ms = 30_000): 
 const RUNNER = join(import.meta.dir, "_fixtures", "gateway-runner.ts");
 const REPO = resolve(import.meta.dir, "..", "..", "..", "..");
 const CLI_ENTRY = join(REPO, "packages", "cli", "src", "index.ts");
+
+/**
+ * The nearest `node_modules/<pkg>` at or above `from`, the way Node resolution walks up. Not a
+ * fixed directory: the isolated layout puts the CLI's dependencies under `packages/cli/node_modules`,
+ * the hoisted one (the Windows PR leg, so `node_modules` can be cached) puts them at the repo root.
+ */
+function installedPackageDir(pkg: string, from: string): string {
+  for (let dir = from; ; dir = dirname(dir)) {
+    const candidate = join(dir, "node_modules", ...pkg.split("/"));
+    if (existsSync(candidate)) return candidate;
+    if (dirname(dir) === dir) throw new Error(`${pkg} is not installed at or above ${from}`);
+  }
+}
 const IS_CI = process.env["CI"] === "true";
 
 /** The helper CI (and `bun run build:sandbox-helper:win32`) builds in this checkout. */
@@ -318,12 +331,12 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     //    junction to the `@modelcontextprotocol` SCOPE dir does not resolve the package).
     mkdirSync(join(project, "node_modules", "@modelcontextprotocol"), { recursive: true });
     symlinkSync(
-      realpathSync(join(REPO, "packages", "cli", "node_modules", "@modelcontextprotocol", "sdk")),
+      realpathSync(installedPackageDir("@modelcontextprotocol/sdk", join(REPO, "packages", "cli"))),
       join(project, "node_modules", "@modelcontextprotocol", "sdk"),
       "junction",
     );
     symlinkSync(
-      realpathSync(join(REPO, "node_modules", "zod")),
+      realpathSync(installedPackageDir("zod", join(REPO, "packages", "cli"))),
       join(project, "node_modules", "zod"),
       "junction",
     );
