@@ -78,7 +78,7 @@ owner:  nimbus captures list|show|accept|reject|revoke   →  ipc/capture-rpc.ts
 | `packages/gateway/src/mcp-sink/capture-capability.ts` | config + policy resolution, read live per call |
 | `packages/gateway/src/mcp-sink/capture-client-policy.ts` | total `Record<ClientKind, …>` for submit vs owner methods |
 | `packages/gateway/src/ipc/capture-rpc.ts` | `capture.*` + `captures.*` dispatcher |
-| `packages/gateway/src/config/nimbus-toml-mcp-sink.ts` | `[mcp_sink]` loader |
+| `packages/gateway/src/config/mcp-sink-toml.ts` | `[mcp_sink]` loader (per-section file, the `notifications-toml.ts` pattern; not registered in `nimbus-toml.ts`) |
 | `packages/gateway/src/index/capture-v66-sql.ts` | V66 DDL (PR 1) |
 | `packages/gateway/src/index/capture-native-v67-sql.ts` | V67 rebuilds + relation types (PR 2) |
 | `packages/cli/src/mcp/capture-tools.ts` | the four MCP tools |
@@ -90,7 +90,7 @@ owner:  nimbus captures list|show|accept|reject|revoke   →  ipc/capture-rpc.ts
 
 ```sql
 CREATE TABLE IF NOT EXISTS capture (
-  id            TEXT PRIMARY KEY,               -- 'cap_' || ULID
+  id            TEXT PRIMARY KEY,               -- 'cap_' || randomUUID() (no ULID helper exists; ids are injected via deps.newId)
   kind          TEXT NOT NULL CHECK(kind IN ('note','decision','term','link')),
   state         TEXT NOT NULL CHECK(state IN ('live','proposed','accepted','rejected','revoked')),
   item_id       TEXT,                           -- nimbus:capture item; NULL while proposed / after revoke
@@ -177,6 +177,14 @@ is what `relatesTo` is for.
 derived by the existing `itemPrimaryKey("nimbus", id)`. Written via `upsertIndexedItem` and then
 scheduled for embedding (the `ingestClip` pattern).
 
+`nimbus:capture` joins `LOCAL_ONLY_PROSE_TYPES` (`embedding/routing.ts`), exactly as `nimbus:web_clip`
+did. That gives it the 16,384 body cap (`LONG_BODY_TYPES`) AND pins its embedding to the local model.
+Without it the body cap is 512, and — had it gone into `PROSE_HEAVY_TYPES` instead — agent text
+about private index content would be embedded remotely, contradicting success criterion 5.
+
+The MCP adapter's `META_WHITELIST` gains `agentAuthored`, so an agent reading search results sees
+the label (`type: "capture"` is already projected).
+
 - **note** — created at submit. Title = note title; body = note body; `metadata` =
   `{ captureKind: "note", captureId, agentAuthored: true, clientLabel, tags, relatesTo }`.
 - **decision / term / link** — **no item while proposed.** The item is created at accept time with
@@ -230,8 +238,14 @@ OFF**, and asserts every `decision_evidence` row survives both.
 `pushed_brief`). There is no nightly prune hook in the gateway: `pushed_brief` prunes
 opportunistically, at boot (`oncall-push/push-runtime.ts`) and per push run. The sink does the same —
 `capture-store.ts`'s `pruneRejected(cutoffMs)` runs once at gateway boot and after every
-`rejectCapture`. `live`, `accepted` and `revoked` (payload-free) rows are kept. A GDPR purge deletes
-all capture rows and their items.
+`rejectCapture`. `live`, `accepted` and `revoked` (payload-free) rows are kept.
+
+**Deletion paths (corrected at planning).** The gateway has no table-enumerating purge: the GDPR
+purge (`policy/gdpr-purge.ts`) only revokes namespace grants, and `data.delete` deletes `item` rows
+by service. So `data.delete --service nimbus` removes capture ITEMS (notes become unsearchable) but
+leaves `capture` rows; a `live` note whose item is gone still revokes cleanly (the item delete is a
+no-op). Extending `data.delete` to the `capture` table is out of scope for PR 1 and recorded as a
+follow-up.
 
 ## 5. The gate (I28)
 
@@ -509,10 +523,10 @@ Each rule is red-proved by a fixture that must fail.
 | unit | `capture-gate.test.ts` | each refusal code at its step; order (a disabled sink refuses before validation — no payload read; the attempt limit refuses before validation); audit row for steps 4–8 and success, NONE for steps 1–3 (counted in `refusedSinceStart` instead); audit failure rolls back |
 | unit | `capture-rate-limit.test.ts` | window edges; ONE window shared across two `mcp` connections (a reconnect does not reset it) |
 | unit | `projectRankedItem` test (cli) | `id` is emitted from `indexPrimaryKey` |
-| unit | `nimbus-toml-mcp-sink.test.ts` | defaults; loud refusal for each bad value (80% branch floor — write branch tests up front) |
+| unit | `mcp-sink-toml.test.ts` | defaults; loud refusal for each bad value (80% branch floor — write branch tests up front) |
 | unit | `capture-tools.test.ts` (cli) | tools absent when disabled / declareKind failed / Method not found; registered per `kinds`; result texts |
 | integration (real SQLite, `CURRENT_SCHEMA_VERSION`) | `test/integration/mcp-sink/*.test.ts` | V66 applies on a populated DB; proposal absent from search/decisions/glossary/graph; accept writes native row + item in one txn; revoke removes all and tombstones; vetoed/manual term wins; link unresolved stays proposed; lost-race transition refuses; `DECISION_SOURCE_TYPES`/`GLOSSARY_SOURCE_TYPES` exclude `nimbus:capture`; durable hourly cap survives a store reopen; rejected rows pruned from `decided_at`; (PR 2) V67 rebuilds preserve every existing row byte-identically, and every `decision_evidence` row survives with `foreign_keys` ON and OFF; the manual glossary pass leaves `'agent'` rows alone; a link touching a capture item refuses at submit; second accepted term takes the row over and revoking the first leaves it; a shared link triple survives revoking one of its two captures; revoking a note removes the evidence rows citing it |
-| E2E | `packages/gateway/test/e2e/mcp-capture.e2e.test.ts` | real gateway + real `nimbus mcp-server` subprocess driven by the MCP SDK client over stdio: `capture_note` → found by `search`; (PR 2) `propose_decision` → absent from `nimbus decisions`; `nimbus captures accept` → present with disclosure; `revoke` → gone; sink off → tools absent from `tools/list`. Proves outer IPC routing. |
+| E2E | `packages/gateway/test/e2e/mcp-capture.e2e.test.ts` | real gateway + real `nimbus mcp-server` subprocess driven over stdio by a minimal line-delimited JSON-RPC client in the test (the gateway package does not depend on the MCP SDK): `capture_note` → found by `search`; (PR 2) `propose_decision` → absent from `nimbus decisions`; `nimbus captures accept` → present with disclosure; `revoke` → gone; sink off → tools absent from `tools/list`. Proves outer IPC routing. |
 | invariant | `security-invariants.test.ts` | I28 row |
 | static | `check-nimbus-invariants` fixtures | D32(a)(b)(c) each red-proved |
 
