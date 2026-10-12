@@ -11,6 +11,7 @@ import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
+import { CAPTURE_V66_SQL } from "../capture-v66-sql.ts";
 import { COMPUTER_USE_V57_SQL } from "../computer-use-v57-sql.ts";
 import { CONNECTOR_CONFIGURED_V56_SQL } from "../connector-configured-v56-sql.ts";
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
@@ -80,7 +81,6 @@ import {
   UNIFIED_ITEM_V3_SCHEMA_SQL,
 } from "../unified-item-v3-sql.ts";
 import { USER_MCP_GRANTS_V65_SQL } from "../user-mcp-grants-v65-sql.ts";
-import { CAPTURE_V66_SQL } from "../capture-v66-sql.ts";
 import { USER_MCP_V11_MIGRATION_SQL } from "../user-mcp-v11-sql.ts";
 import {
   VEC_ITEMS_1536_V30_NO_VEC_SQL,
