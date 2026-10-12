@@ -32,6 +32,8 @@ describe("DOCS_GLOBS — dot-directory scanning", () => {
     // scan, whichever behaviour the runtime has.
     for (const pattern of DOCS_GLOBS) {
       const withDot = new Set(new Glob(pattern).scanSync({ cwd: REPO_ROOT, dot: true }));
+      // Without this, two empty scans would satisfy the subset check vacuously.
+      expect(withDot.size).toBeGreaterThan(0);
       for (const hit of new Glob(pattern).scanSync({ cwd: REPO_ROOT })) {
         expect(withDot.has(hit)).toBe(true);
       }

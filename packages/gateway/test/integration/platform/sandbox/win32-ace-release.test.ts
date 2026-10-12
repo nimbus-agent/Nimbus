@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import type { NimbusCodeExecutionToml } from "../../../../src/config/nimbus-toml.ts";
 import { runExecution } from "../../../../src/exec/exec-gate.ts";
@@ -20,7 +20,8 @@ import { createSandboxRunner } from "../../../../src/platform/sandbox/sandbox-ru
  * spawn on the machine failed closed. Measured at 1366 ACEs on a development machine.
  *
  * The unit suites prove the gateway ASKS for a release; only this proves the release REMOVES the
- * ACE, on the directory that actually accumulated them.
+ * ACE. It measures on this file's private cwd, which the release revokes in the same pass as the
+ * runtime bin dir that accumulated them (see `measured` below).
  *
  * Same readiness guard as `exec-sandbox.test.ts`: a missing helper skips locally but FAILS on CI.
  */
@@ -133,24 +134,30 @@ describe.skipIf(!IS_WIN || (!READY && !IS_CI))("Windows sandbox ACE release (rea
     return;
   }
 
-  // The runtime bin dir: the one path EVERY execution is granted, and the one that accumulated.
-  const binDir = dirname(process.execPath);
+  // The path whose ACE count is measured. It is THIS file's `work` dir, not the runtime bin dir that
+  // actually accumulated ACEs: the bin dir is granted to every execution on the machine, and under
+  // `bun test --parallel` other files' sandboxed runs add and remove ACEs there concurrently, so a
+  // global count never settled back to this file's baseline (windows-2025, "a KILLED execution"
+  // failing its 30 s wait). The release revokes the SID on EVERY granted path in one pass — the cwd
+  // first (`buildRevokeGrantsArgv`) — so the private cwd proves the same release with nobody else's
+  // grants in the count.
+  const measured = work;
 
   it("an execution's ACE exists while it runs and is gone after it exits", async () => {
-    const baseline = explicitAppContainerAces(binDir).length;
+    const baseline = explicitAppContainerAces(measured).length;
 
     // A script that outlives several polls, so the grant is observable mid-run. Without seeing the
     // count RISE first, "back to baseline" would pass for a helper that never granted anything.
     const running = execReal("await new Promise((r) => setTimeout(r, 4000));");
-    const rose = await waitFor(() => explicitAppContainerAces(binDir).length > baseline, 15_000);
+    const rose = await waitFor(() => explicitAppContainerAces(measured).length > baseline, 15_000);
     const out = await running;
 
     expect(out.status).toBe("ran");
     expect(rose).toBe(true);
     // The release is asynchronous (it runs from the child's exit event), so poll for it.
-    expect(await waitFor(() => explicitAppContainerAces(binDir).length === baseline, 20_000)).toBe(
-      true,
-    );
+    expect(
+      await waitFor(() => explicitAppContainerAces(measured).length === baseline, 20_000),
+    ).toBe(true);
     // ...and the profile itself is deleted, after the revoke. Waited for rather than assumed: the
     // delete is the SECOND async step, and a process that exits the moment the ACE count recovers
     // would otherwise leave it registered.
@@ -160,15 +167,15 @@ describe.skipIf(!IS_WIN || (!READY && !IS_CI))("Windows sandbox ACE release (rea
   it("a KILLED execution releases too — the path a helper-side cleanup would have missed", async () => {
     // A wall-clock kill terminates the helper process itself (TerminateProcess), so nothing the
     // helper might run after its own wait ever happens. The gateway-side release must still fire.
-    const baseline = explicitAppContainerAces(binDir).length;
+    const baseline = explicitAppContainerAces(measured).length;
     const outs: Array<{ status: string; profile: string }> = [];
     for (let i = 0; i < 3; i++) {
       outs.push(await execReal("for (;;) {}", 1_500));
     }
     expect(outs.map((o) => o.status)).toEqual(["ran", "ran", "ran"]);
-    expect(await waitFor(() => explicitAppContainerAces(binDir).length === baseline, 30_000)).toBe(
-      true,
-    );
+    expect(
+      await waitFor(() => explicitAppContainerAces(measured).length === baseline, 30_000),
+    ).toBe(true);
     expect(await waitFor(() => outs.every((o) => !profileRegistered(o.profile)), 30_000)).toBe(
       true,
     );
