@@ -311,7 +311,7 @@ pattern).
      regraph.
 6. In ONE transaction: create the `nimbus:capture` item; write the native row via
    `capture-native.ts`; set `state='accepted'`, `native_ref`, `decided_at`; append `capture.accept`
-   audit row with `hitl_status='approved'`.
+   audit row with `hitl_status='approved'` — **PR 2 must re-check this against I4**: `approved` is admitted only where a consent gate made the decision (security-invariants.test.ts APPROVED_ROW_IS_EARNED); PR 1 found revoke could not earn it and records `not_required`.
    - **decision** → `decision_record` (`status='extracted'`, `extraction_source='agent'`,
      `confidence=1.0`, `cue_tier='explicit'`, `cue_text='agent capture'`, `capture_id` = this capture, `source_item_id` = the
      capture item, `decided_at` = payload) + one `decision_evidence` row per evidence id
