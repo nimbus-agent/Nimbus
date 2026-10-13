@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { load as loadYaml } from "js-yaml";
+
 import { unitTestCommand } from "../lib/ci-tests.ts";
 import { REPO_ROOT } from "../structure-audit/lib.ts";
 
@@ -152,6 +154,53 @@ describe("PR cross-platform legs run the same tests as the push matrix", () => {
     expect(hasParallel(prLines[0] ?? "")).toBe(hasParallel(pushLines[0] ?? ""));
     // Positive, not just equal: equality alone would also pass if both dropped it.
     expect(hasParallel(prLines[0] ?? "")).toBe(true);
+  });
+});
+
+describe("the PR legs' shards add up to the whole suite", () => {
+  // The Windows leg runs as `--shard=1/2` and `--shard=2/2` jobs. A shard set with a gap — `1/2`
+  // with no `2/2`, or `1/3` and `2/3` with no `3/3` — still passes every path assertion above,
+  // because each job's COMMAND names the whole repo; the files it drops are dropped silently by
+  // `--shard`. Parity with the push leg holds only over the union of the shards, so that union is
+  // what this checks.
+  const prLine = matchingLines(CI_YML, (l) => /run-with-timeout\.ts \d+ bun test/.test(l))[0] ?? "";
+
+  type Leg = { readonly os?: unknown; readonly shard?: unknown };
+  const workflow = loadYaml(readFileSync(CI_YML, "utf8")) as {
+    jobs?: Record<string, { strategy?: { matrix?: { include?: readonly Leg[] } } }>;
+  };
+  const legs = workflow.jobs?.["pr-quality-cross-platform"]?.strategy?.matrix?.include ?? [];
+
+  test("the command shards by the matrix value, after the paths", () => {
+    // After the paths: `bunTestPaths` ends the path list at the first flag, so a `--shard` placed
+    // before them would hide paths from the parity check above. `=` form keeps the value from
+    // reading as a path to `everyBunTestPath`-style parsers.
+    expect(prLine).toMatch(/--shard=\$\{\{ matrix\.shard \}\}/);
+    expect(prLine.indexOf("--shard=")).toBeGreaterThan(prLine.indexOf(" scripts "));
+  });
+
+  test("every OS's shards are exactly 1/N … N/N", () => {
+    expect(legs.length).toBeGreaterThan(0);
+    const byOs = new Map<string, string[]>();
+    for (const leg of legs) {
+      expect(typeof leg.os).toBe("string");
+      expect(typeof leg.shard).toBe("string");
+      const list = byOs.get(String(leg.os)) ?? [];
+      list.push(String(leg.shard));
+      byOs.set(String(leg.os), list);
+    }
+    for (const [os, shards] of byOs) {
+      const totals = new Set(shards.map((s) => s.split("/")[1]));
+      expect({ os, totals: [...totals] }).toEqual({ os, totals: [String(shards.length)] });
+      const expected = shards.map((_, i) => `${i + 1}/${shards.length}`);
+      expect({ os, shards: [...shards].sort() }).toEqual({ os, shards: expected.sort() });
+    }
+  });
+
+  test("both OSes the PR gate promises are present", () => {
+    const oses = new Set(legs.map((l) => String(l.os)));
+    expect(oses.has("macos-15")).toBe(true);
+    expect(oses.has("windows-2025")).toBe(true);
   });
 });
 

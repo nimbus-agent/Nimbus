@@ -346,7 +346,7 @@ jobs:
             # last command and silently mask every failure. Same shape as `ci.yml`'s
             # cross-platform retry, and for the same reason — a silent retry costs a full
             # suite run and leaves nothing in the summary to investigate.
-            bun test packages/gateway packages/cli scripts --timeout 60000 --parallel --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
+            bun test packages/gateway packages/cli scripts --timeout 60000 --parallel --timings="${RUNNER_TEMP}/test-timings.json" --update-timings --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
             cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then
@@ -372,6 +372,20 @@ jobs:
           done
         env:
           CI: "true"
+
+      # Publishes this run's per-file durations for the PR cross-platform legs in `ci.yml`, which
+      # restore the newest entry by prefix to balance `--shard` by time and order `--parallel`
+      # slowest-first. Saved only on a PUSH: a cache written on `main` is readable by every PR,
+      # while one written by a PR run serves only that PR. Each run gets its own key (cache
+      # entries are immutable), so the newest push always wins the prefix restore; old entries
+      # age out of the 10 GB quota on their own. `always()` because timings from a run with a
+      # failing test are as good as any — `--update-timings` writes them either way.
+      - name: Save per-file test timings (macOS/Windows push runs)
+        if: always() && github.event_name == 'push' && runner.os != 'Linux'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/test-timings.json
+          key: test-timings-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: UI unit coverage (WS5 Sub-project A)
         # Run BEFORE the Sonar scan so packages/ui/coverage/lcov.info is on
