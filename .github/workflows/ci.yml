@@ -46,6 +46,9 @@ jobs:
       # paying for a full 3-runner test cycle.
       code-changed: ${{ steps.changes.outputs.code-changed }}
       embedding-native: ${{ steps.changes.outputs.embedding-native }}
+      # "true" when this run uploaded ONE Windows timings snapshot for both Windows shards of
+      # `pr-quality-cross-platform` to read. See the snapshot steps below.
+      windows-timings: ${{ steps.windows-timings.outputs.present }}
       # There is deliberately no per-package narrowing output here any more.
       # `pr-quality-cross-platform` used to emit a {os, pkg} matrix so a cli-only
       # PR could drop the two gateway legs; it now runs ONE leg per OS executing
@@ -111,6 +114,48 @@ jobs:
           else
             echo "embedding-native=$(grep -qE '^(scripts/(onnx-binding-plugin\.ts|build-workers\.ts|verify-onnx-cleanroom\.sh)|packages/gateway/src/(workers|embedding)/|packages/gateway/package\.json$|bun\.lock|\.github/workflows/ci\.yml$)' <<<"$CHANGED" && echo true || echo false)" >> "$GITHUB_OUTPUT"
           fi
+
+      # ONE snapshot of the Windows per-file timings, taken here and handed to both Windows shards
+      # of `pr-quality-cross-platform` as an artifact. Each shard must split the suite with the SAME
+      # table: `--shard=k/N` partitions by the timings it reads, so two shards reading different
+      # tables need not partition the same file list, and a test file can drop out of the PR gate
+      # with every check green. Restoring "newest by prefix" inside each shard could do exactly
+      # that — the jobs start minutes apart, and every push to `main` saves a newer entry.
+      #
+      # It lives in THIS job, not a job of its own, because `pr-quality-required` counts `skipped`
+      # as passing: a failed snapshot job would skip both shards and leave the gate green. `filter`
+      # is already a `needs:` of everything, and these steps are `continue-on-error`, so the worst a
+      # cache problem can do is leave the shards balanced by file count. `enableCrossOsArchive`
+      # lets this Ubuntu job read an entry the Windows push leg saved, and the workspace-relative
+      # path is what makes the two sides' cache versions match. No leading dot in the name:
+      # upload-artifact skips hidden files.
+      - name: Snapshot Windows test timings (PR only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ci-test-timings.json
+          key: test-timings-Windows-pr-${{ github.run_id }}
+          restore-keys: |
+            test-timings-Windows-
+          enableCrossOsArchive: true
+
+      - name: Hand the snapshot to the Windows shards
+        id: upload-windows-timings
+        if: github.event_name == 'pull_request' && hashFiles('ci-test-timings.json') != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-timings-snapshot-windows
+          path: ci-test-timings.json
+          retention-days: 1
+
+      - name: Record whether a snapshot was handed over
+        id: windows-timings
+        shell: bash
+        env:
+          UPLOADED: ${{ steps.upload-windows-timings.outcome == 'success' }}
+        run: echo "present=${UPLOADED}" >> "$GITHUB_OUTPUT"
 
   # ── PR: fast feedback (three jobs run in parallel) ─────────────────────────
 
@@ -193,15 +238,16 @@ jobs:
   # where it should surface — at PR time, on the contributor's branch, instead
   # of on `main` where it is everyone's problem.
   pr-quality-cross-platform:
-    name: PR quality — Cross-platform (${{ matrix.os }})
-    # ONE leg per OS, running the SAME whole-repo `bun test` command as the push
-    # matrix. That equality is the entire point of this job's shape, and it was
-    # not true before 2026-08-23: this job ran `bun test packages/<pkg>/src` while
-    # the push leg ran `bun test packages/gateway packages/cli
-    # scripts` in ONE process. Over the 200 CI runs on `main` between 2026-08-02 and
-    # 2026-08-22, 50 failed and 35 of those had a failing macOS job — and 33 of the
-    # 35 were files this job never loaded at all (`scripts/`, `test/integration/`,
-    # `test/e2e/`). They were only ever discovered after merge, on `main`.
+    name: PR quality — Cross-platform (${{ matrix.label }})
+    # One leg per OS (Windows split into two shards of it, see the matrix), running the
+    # SAME whole-repo `bun test` command as the push matrix. That equality is the
+    # entire point of this job's shape, and it was not true before 2026-08-23: this
+    # job ran `bun test packages/<pkg>/src` while the push leg ran `bun test
+    # packages/gateway packages/cli scripts` in ONE process. Over the 200 CI runs on
+    # `main` between 2026-08-02 and 2026-08-22, 50 failed and 35 of those had a
+    # failing macOS job — and 33 of the 35 were files this job never loaded at all
+    # (`scripts/`, `test/integration/`, `test/e2e/`). They were only ever
+    # discovered after merge, on `main`.
     #
     # Both legs now pass `--parallel` (Bun 1.4): files run across worker processes,
     # each in a fresh global (`--parallel` implies `--isolate`). The parity that
@@ -237,8 +283,21 @@ jobs:
     needs: filter
     strategy:
       fail-fast: false
+      # Windows runs as TWO shards of the same suite; macOS as one. Measured on #1654's run, the
+      # windows-2025 leg spent ~610 s of ~15 min in the test step against ~200 s for macOS, so the
+      # test step IS that leg's critical path and splitting it is the one change that halves it.
+      # `bun test --shard=k/N` partitions the file list, so the shards together run exactly the
+      # files the single command did — parity with the push leg is on the UNION of the shards,
+      # and `cross-platform-parity.test.ts` checks the shard set is complete. macOS stays `1/1`
+      # (no split), which still gets slowest-first ordering from the timings file below.
+      #
+      # `label` is the check name and `id` names the artifact (an artifact name cannot hold `/`).
+      # The macOS label is the bare OS, so its check name is unchanged.
       matrix:
-        os: [macos-15, windows-2025]
+        include:
+          - { os: macos-15, shard: "1/1", label: "macos-15", id: "macos-15" }
+          - { os: windows-2025, shard: "1/2", label: "windows-2025, 1/2", id: "windows-2025-shard-1" }
+          - { os: windows-2025, shard: "2/2", label: "windows-2025, 2/2", id: "windows-2025-shard-2" }
     runs-on: ${{ matrix.os }}
     # Backstop only — each test attempt has its own 25-min wall-clock cap (see the
     # unit-tests step), so a hang fails fast via retry rather than burning this
@@ -293,14 +352,9 @@ jobs:
         shell: pwsh
         run: ./scripts/ci/setup-windows-dev-drive.ps1
 
-      # `windows-linker: hoisted` makes the Windows leg's node_modules cacheable (Bun's default
-      # layout uses junctions the cache cannot round-trip — see the action). It is a no-op on macOS.
-      # This leg only: the push matrix and release.yml keep the default layout.
       - name: Setup Bun and install dependencies
         if: needs.filter.outputs.code-changed == 'true'
         uses: ./.github/actions/setup-nimbus-ci
-        with:
-          windows-linker: hoisted
 
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS' && needs.filter.outputs.code-changed == 'true'
@@ -356,6 +410,40 @@ jobs:
         if: needs.filter.outputs.code-changed == 'true' && runner.os == 'Windows'
         shell: pwsh
         run: bun run build:sandbox-helper:win32
+
+      # Per-file durations from push runs on `main` (written by `_test-suite.yml`'s macOS/Windows
+      # step with `--update-timings`). With them, `--shard` splits the suite by measured TIME rather
+      # than by file count, and `--parallel` starts the slowest files first so one long e2e file
+      # does not start last and stretch the run. Written on `main`, so every PR can read them — a
+      # PR-scoped entry would only ever serve that PR, the trap #1654 removed. With no timings at
+      # all the shards still cover every file, balanced by count.
+      #
+      # Windows takes the ONE snapshot `filter` uploaded, so both shards split with the same table
+      # (see the snapshot steps there). The download is NOT continue-on-error: if a snapshot
+      # exists and one shard cannot fetch it, that shard would split differently from its sibling,
+      # so it fails instead. macOS is a single `1/1` job with nothing to keep in step, so it
+      # restores the newest entry directly.
+      - name: Windows — fetch the shared timings snapshot
+        if: needs.filter.outputs.code-changed == 'true' && runner.os == 'Windows' && needs.filter.outputs.windows-timings == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-timings-snapshot-windows
+          path: ${{ runner.temp }}
+
+      - name: macOS — restore per-file test timings (from main)
+        if: needs.filter.outputs.code-changed == 'true' && runner.os == 'macOS'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ci-test-timings.json
+          key: test-timings-macOS-pr-${{ github.run_id }}
+          restore-keys: |
+            test-timings-macOS-
+          enableCrossOsArchive: true
+
+      - name: macOS — move the timings out of the checkout
+        if: needs.filter.outputs.code-changed == 'true' && runner.os == 'macOS'
+        shell: bash
+        run: if [ -f ci-test-timings.json ]; then mv ci-test-timings.json "${RUNNER_TEMP}/"; fi
 
       - name: Unit + integration tests (retry once on slow runners)
         if: needs.filter.outputs.code-changed == 'true'
@@ -440,12 +528,12 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun scripts/run-with-timeout.ts 1500 bun test packages/gateway packages/cli scripts --timeout 60000 --parallel --reporter=junit --reporter-outfile="${RUNNER_TEMP}/junit-attempt-${attempt}.xml" > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
+            bun scripts/run-with-timeout.ts 1500 bun test packages/gateway packages/cli scripts --timeout 60000 --parallel --shard=${{ matrix.shard }} --timings="${RUNNER_TEMP}/ci-test-timings.json" --reporter=junit --reporter-outfile="${RUNNER_TEMP}/junit-attempt-${attempt}.xml" > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
             cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then
               if [ "$attempt" -eq 2 ]; then
-                echo "::warning title=Retry masked a failure::${{ matrix.os }} FAILED on attempt 1 and passed on attempt 2. The job is green but paid for two full suite runs — see the annotations naming the failing test(s)."
+                echo "::warning title=Retry masked a failure::${{ matrix.label }} FAILED on attempt 1 and passed on attempt 2. The job is green but paid for two full suite runs — see the annotations naming the failing test(s)."
               fi
               exit 0
             fi
@@ -465,7 +553,7 @@ jobs:
               echo "::warning title=Attempt 1 failed with no (fail) line::exit ${code} — a timeout, crash or hang rather than an assertion. See the attempt-1 output above."
             fi
             {
-              echo "### ⚠ ${{ matrix.os }} needed a retry"
+              echo "### ⚠ ${{ matrix.label }} needed a retry"
               echo ""
               echo "Attempt 1 exited \`${code}\`; attempt 2 follows. A retry costs a full suite run."
               echo ""
@@ -493,14 +581,14 @@ jobs:
             report="${RUNNER_TEMP}/junit-attempt-${attempt}.xml"
             if [ "$attempt" -eq 2 ] && [ ! -f "$report" ]; then break; fi
             bun scripts/ci/junit-slowest-files.ts "$report" --top=30 \
-              "--title=Slowest test files — ${{ matrix.os }}, attempt ${attempt}" >> "$GITHUB_STEP_SUMMARY" || true
+              "--title=Slowest test files — ${{ matrix.label }}, attempt ${attempt}" >> "$GITHUB_STEP_SUMMARY" || true
           done
 
       - name: Upload test timings
         if: always() && needs.filter.outputs.code-changed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: test-timings-${{ matrix.os }}
+          name: test-timings-${{ matrix.id }}
           path: ${{ runner.temp }}/junit-attempt-*.xml
           if-no-files-found: ignore
           retention-days: 14
