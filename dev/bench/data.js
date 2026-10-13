@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791864145270,
+  "lastUpdate": 1791874349290,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "461cc55c35807d4e5e7658ae16135143337c3d76",
-          "message": "ci(install-smoke): run the shipped embedding config; refresh the Gate 1 runbook (#949)\n\nNow that #925, #928 and #932 are all closed, two related cleanups.\n\n## 1. Stop skipping the embedding runtime\n\n`NIMBUS_SKIP_EMBEDDING_RUNTIME=1` existed because the gateway wouldn't\nbind its socket until the embedding runtime finished, so a cold machine\nwaited on a third-party CDN. **#928 removed that coupling** —\nbind-first: the runtime constructs in the background, a failed fetch\nsettles to `unavailable`, and the gateway keeps serving.\n\nSo the skip no longer buys anything. It just hid the exact configuration\nevery real user runs.\n\n**This is less of a leap than it looks.** The flag was only ever set on\nthe *Unix* step — the **Windows leg has been running with embeddings\nenabled all along and passing**. This brings Unix in line with what\nWindows already demonstrates.\n\n**Green stays decoupled from the CDN.** Nothing asserted needs a vector,\nand I verified rather than assumed: `index.demoSymbol` is a synchronous\nDB read, and the `why` agent has zero embedding references.\n\n## 2. Make the change verifiable\n\nThe gateway logs `[gateway] embeddings: <state>` at bind time (#928).\nBoth legs now assert on it:\n\n| State | Result | Why |\n| --- | --- | --- |\n| `ready` | pass | model loaded |\n| `warming` | **pass** | fetch still running — bind-first says this must\nnot block |\n| `unavailable` | **pass** | fetch failed — same reason |\n| `disabled` | **fail** | the skip is back |\n| no line at all | **fail** | gateway never reported readiness |\n\nRequiring `ready` would re-couple green CI to the CDN, which is what\nmade this job painful in the first place. The assertion's real job is to\nfail if someone quietly restores the skip and turns this job back into a\ntest of a configuration nobody ships.\n\nBoth variants were rehearsed locally against all five states in their\nreal shells — bash for Unix, pwsh for Windows — and only the last two\nfail.\n\n## 3. Refresh the Gate 1 runbook\n\nIt had gone stale enough to actively mislead: still said Linux was\n\"**Blocked by #925**\" and warned about a #928 caveat, both closed — and\nit predated #932 entirely. Someone picking it up would have skipped\nLinux and chased a resolved caveat.\n\nNow records all three as resolved with what fixed them, while **keeping\nthe checks**: a closed issue is evidence the fix landed, not evidence a\nforeign machine works. Also flags Windows as the least-covered platform\n(no first-run defect was ever found there, which is weaker evidence than\nit looks — the macOS and Linux failures were only found because CI ran\nthem), and states the remaining macOS gap precisely.\n\n**The macOS gap is narrowed, not closed.** The job now proves the\nshipped configuration *boots*; it does not prove the MiniLM download\n*completes*. A human cold macOS first-run is still required for that,\nand the runbook says so.\n\nAlso corrects the `nimbus doctor` note — it no longer PATH-checks\n`secret-tool`; `doctor-core.ts` probes the session bus and collection\nstate.\n\n## Verification\n\n`audit:workflow-lint`, `audit:workflow-run-triggers`,\n`audit:action-sha-pins`, `lint:markdown`, `audit:doc-refs`,\n`audit:status-drift`, biome, and lychee at CI's exact scope (0 errors).\n\nThe real proof is this PR's own install-smoke run: it touches\n`.github/workflows/install-smoke.yml`, so the full 3-OS matrix executes\nwith embeddings enabled.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-30T04:46:26Z",
-          "tree_id": "7f514a702487bf5540b80b92b232b5a27ac5f60e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/461cc55c35807d4e5e7658ae16135143337c3d76"
-        },
-        "date": 1785387484606,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.9073311499993,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.6127406000036,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 192.91418639999975,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4e38897d79094ecedfbfbd9761c1773197568ea4",
+          "message": "ci: remove the Windows hoisted node_modules cache (#1654)\n\n## Summary\n\nThis removes the Windows `node_modules` cache that #1650 added. #1650's\nown description set the test for keeping it: *\"If restoring roughly 1.3\nGB of `node_modules` on Windows is no faster than `bun install`, this PR\nisn't worth keeping.\"* The runs since then fail that test.\n\n**What the windows-2025 PR leg's \"Setup Bun and install dependencies\"\nstep measured:**\n\n| Runs | Setup | Post step | Cache |\n|---|---|---|---|\n| Before #1650 (8 runs) | 194–336 s | ~1 s | none |\n| First push of a PR since #1650 (#1651, #1652, `s3-mcp-capture-sink`) |\n181–245 s | 11–23 s | miss, then saved |\n| Second push of `s3-mcp-capture-sink`, with `bun.lock` unchanged |\n**370 s** | 1 s | **hit** |\n\n`actions/cache` saves only after a miss, so a post step of about 1 s on\na key that already existed means the cache hit. I identified hits and\nmisses this way because the caches API and the full job logs are not\nreachable from where I ran this.\n\n**Why it can't pay off as built:**\n\n- **It hits less often than it looks.** Only the PR cross-platform leg\nused the hoisted layout. The push matrix and `release.yml` keep Bun's\ndefault layout, so no run on `main` ever saved the entry. GitHub scopes\na cache saved by a PR run to that PR, so every PR's first push missed.\n- **When it hit, it was not faster.** One hit is one sample, and this\nrunner's setup varies between 181 and 336 s with no cache at all. It\nstill came out slower than every miss in the sample. Restoring about 1.3\nGB of small files onto the runner's NTFS workspace disk is not cheaper\nthan `bun install` linking from the warm download cache, which is cached\non every OS anyway. The Dev Drive from #1649 covers TEMP only.\n\n**What changes:**\n\n- `setup-nimbus-ci` loses the `windows-linker` input, the hoisted cache\nstep and `LINKER_FLAG`. The install step goes back to exactly what it\nwas before #1650.\n- `ci.yml`'s cross-platform leg no longer passes `windows-linker:\nhoisted`. The Windows PR leg is back on Bun's default layout, the same\nas every other leg.\n- One sentence is added to the action's existing \"SKIPPED ON WINDOWS\"\ncomment, recording what was tried and why it was dropped, with the\nnumbers.\n\n**Kept:** #1650's two test changes, `scaffold.test.ts` and\n`user-mcp.e2e.test.ts`. They find `@modelcontextprotocol/sdk` the way\nNode resolution does instead of assuming one layout, and that is correct\nin either layout.\n\n## Related Issue\n\nNone. This follows up #1650.\n\n## Type of Change\n\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`)\n- [ ] New behaviour is covered by tests (not applicable: this removes CI\nconfiguration)\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] No source files changed.\n\n## Testing\n\n- The two CI files were produced by reverse-applying #1650's own diff\nfor them, which applied cleanly. Both files parse as YAML, and no\n`windows-linker`, `LINKER_FLAG` or `hoisted` reference is left under\n`.github/`.\n- `bun run preflight:fast` passes, and so do the `scripts/ci` tests\n(151).\n- **Still needs this PR's own CI:** the Windows leg installing with the\ndefault layout again. Expect a setup time of roughly 190–275 s, as\nbefore #1650.\n\n## Notes for Reviewers\n\n- The stale `Windows-node-modules-hoisted-*` cache entries will age out\nof the 10 GB Actions cache on their own, since nothing restores them any\nmore.\n- No `!` is needed: this changes CI only, and no user has to do\nanything.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_014HT9yGfRK52JPScsN6EVuP\n\n---\n_Generated by [Claude\nCode](https://claude.ai/code/session_014HT9yGfRK52JPScsN6EVuP)_\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Simplified Bun installation across platforms by removing the\nWindows-specific linker override. Windows continues to skip the shared\n`node_modules` cache.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+          "timestamp": "2026-10-13T09:45:08+03:00",
+          "tree_id": "0f6a181fb3a66ca2570c5b0ee36e8e2e47dd81dc",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4e38897d79094ecedfbfbd9761c1773197568ea4"
+        },
+        "date": 1791874344939,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 149.09340839999714,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 146.09606415000198,
             "unit": "ms"
           }
         ]
