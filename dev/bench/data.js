@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791877298759,
+  "lastUpdate": 1791907753909,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2a3187bd4942e33b128a09df3e59d9680d275960",
-          "message": "feat(p6): gate ruleset bypass actors — owner-run audit + credential-free attestation (#954)\n\nCloses P6's last remaining item — the bypass-actor audit.\n\n## The hole\n\n`audit:ruleset-drift` structurally **cannot** check a ruleset's\n`bypass_actors`, and a bypass actor exempts a principal from every rule\nthe ruleset enforces — including the `pull_request` rule that is the\nwhole point of the `General` ruleset. The reason it can't is recorded in\nthe P1 progress log: the sweep's credential is an App installation token\nwith `Administration: read`, and GitHub returns an **empty**\n`bypass_actors` to it for org-level actors. Proven live that\n`organization-administration: read` does not restore the field, and\nreading it otherwise needs `Administration: write` — which a read-only\naudit gate must not hold.\n\nSo the intended shape has lived in a JSON `$comment` **string** since\nP1. Prose in a comment is not a gate.\n\n## The approach: two gates sharing one pure diff\n\nRather than upgrade the credential, the field is gated by a pair:\n\n| gate | runs | credential |\n| --- | --- | --- |\n| `audit:bypass-actors` | owner's machine | personal `admin:org` (which\n*does* return the field) |\n| `audit:bypass-attestation` | weekly `org-drift-sweep` | **none** |\n\nThe owner-run gate diffs live state against a new machine-readable\n`bypass` block and, on a green **and complete** read, writes a committed\nattestation snapshot. The sweep gate re-runs the *same pure diff*\noffline against that snapshot, plus checks freshness (90 days, flipping\nto 30 at contributor-two as a fourth `$contributor_two` switch), repo\ncoverage, and continued agreement with declared intent.\n\nSweep-only, deliberately not the fast preflight tier: this gate's red\ndepends on the owner's re-attestation cadence, so a stale attestation\nmust never block an external contributor's unrelated PR.\n\n## What this does not prove\n\nThe attestation is a committed file and can be hand-edited. The gate\nproves *a green attestation was committed recently and still agrees with\ndeclared intent* — **not** *the org is clean right now*. The control is\nthat the file is PR-visible and diff-reviewed. Signing it was considered\nand rejected as theatre: the only plausible signer is the same person\nwho could forge it.\n\nStated explicitly because by this program's own standard — *\"a gate that\nchecks a control's presence cannot see that the control is structurally\nunable to execute\"* — naming the limit is the difference between a real\ngate and a comforting one.\n\n## Red-proves\n\nThese gates ship **green by construction** (live state already matches\ndeclared intent), so a passing gate proves nothing on its own. Five\ndeliberate red-proves, each reverted:\n\n| # | mutation | result |\n| --- | --- | --- |\n| 1 | flip a declared `bypass_mode` | exit 1, mode-change finding |\n| 2 | add an unreachable repo, `--attest` | exit 1, `cannot attest: …\nunreachable (read 5 of 6)`, **no file written** |\n| 3 | backdate `attested_at` 91 days | exit 1, `attestation is 91d old\n(grace 90d)` |\n| 4 | duplicate actor identity | exit 1, both orderings |\n| 5 | `OrganizationAdmin` with a numeric `actor_id` | exit 1,\nunsupported-actor finding |\n\n## Defects found by review, before merge\n\nWorth recording, because three were real and none were found by the\nimplementation pass:\n\n1. **Duplicate actor identities collapsed** through `new Map()`,\nsilently dropping the *more permissive* bypass — exactly the state the\ngate exists to catch, and order-dependent. A test named\n\"order-independent\" was itself locking the defect in by asserting a\nnumeric-id `OrganizationAdmin` passes.\n2. **The null-id rule was enforced by type name only**, so `{actor_type:\n\"OrganizationAdmin\", actor_id: 4382579}` passed — defeating the\nreviewability rationale documented 100 lines above it.\n3. **A 404 was laundered into a warning.** A renamed or deleted repo\nprinted `OK (4 repos) — WARNING` and exited **0** — this sub-program's\nfounding failure mode. Now a named finding at exit 1, using\n`classifyReadFailure` from `_gh-audit.ts` as the sibling\n`check-cla-coverage.ts` already does.\n4. **Two NaN fail-opens**, caught at design and plan review: every\ncomparison with `NaN` is false, so an unparseable `attested_at` *or* a\nmissing `attestation_grace_days` would have made a naive staleness check\nsilently pass. A 3650-day-old attestation read as fresh. Both guarded,\nboth red-proved by test.\n\n## Stale assertions corrected\n\nFour places claimed bypass actors were ungated. `ruleset-drift` still\ndoesn't diff them — its credential can't — but its comment now points at\nthe gate that does, instead of describing a follow-up.\n\n## Verification\n\n- `bun test scripts/structure-audit/` — **469 pass, 0 fail**\n- `bun run typecheck` — exit 0\n- `bunx biome check packages scripts` — clean (`bun run lint` reports 0\nfiles inside `.claude/worktrees/`; a known false pass)\n- every fast-tier gate run individually — pass, including\n`audit:workflow-lint`, `audit:action-sha-pins`,\n`audit:secret-inventory`, `audit:coverage-gate-pal`\n- `lint:markdown`, `audit:doc-refs` (635 refs), `audit:status-drift`,\nlychee — clean\n- `audit:coverage-floor` does not apply: it tracks no paths under\n`scripts/`\n\n## Not done here\n\n- **P6's actual bar is not this merge.** It is `bypass-attestation`\ngreen in a dispatched `org-drift-sweep`. The roadmap row therefore reads\n`sweep proof pending (run id TBD)` with no invented run id; the run id\ngets backfilled after the first dispatch on `main`.\n- **Follow-up, deliberately deferred:** nothing verifies the running\ncredential can actually *see* `bypass_actors` — an empty array is\nindistinguishable from \"none\". Harmless while 3 of 5 repos declare\nactors (a wrong token reds immediately), but once `by_repo` goes\nall-empty, a run under the App token could write a false-clean\nattestation honoured for 90 days. A cheap scope probe would close it.\n\nDesign, review response, plan and plan review are all included under\n`docs/superpowers/`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-30T09:12:13Z",
-          "tree_id": "69daa80d1c202b5bb27273fef042d0cbe8c812ce",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2a3187bd4942e33b128a09df3e59d9680d275960"
-        },
-        "date": 1785403411617,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 306.48008545000084,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 306.26052374999927,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 194.15549059999648,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "486aa798d3179c3e60a93ff1fe47b3bdc916991f",
+          "message": "feat(mcp): capture sink — agent notes over MCP (S3, I28) (#1653)\n\nOpens Spine S3 with its lean scope: the MCP **capture sink**, filling\nthe I28 slot that has been reserved since 2026-08-20. This is PR 1 of 3:\nnotes, end to end.\n\n## What it does\n\nAn MCP client connected to `nimbus mcp-server` (Claude Code, Cursor, …)\ncan call a new **`capture_note`** tool. The note it writes:\n\n- lands in the user's **local** index as a `nimbus:capture` item\n- is searchable at once\n- is labelled agent-authored (`agentAuthored` in MCP read results)\n- is embedded with the **local** model only, because `nimbus:capture` is\nin `LOCAL_ONLY_PROSE_TYPES`\n\nNothing leaves the machine, so `nimbus prove` is unaffected. The owner\nreviews and withdraws notes with **`nimbus captures list|show|revoke`**,\nand `nimbus doctor` reports the sink's state.\n\nIt is **off by default** (`[mcp_sink] enabled = false`). Org policy can\nlock it off through `mcp_capture`, the eighth\n`[policy.capabilities.ai_v2]` name.\n\n## The I28 gate\n\nContent from an MCP client enters only through\n`mcp-sink/capture-gate.ts`'s `submitCapture()`, which runs these checks\nin a fixed order:\n\n1. Capability: config plus live org policy, fail-closed when the policy\naccessor is absent.\n2. Caller kind: only a connection that declared `mcp` may submit. The\nkind comes from the connection, never from params.\n3. A gateway-wide attempt limit, checked before any validation.\n4. The kind is allowed.\n5. Whitelist rebuild of the payload (the I32 shape). Control characters\nare stripped when the note is written.\n6. Every `relatesTo` item exists.\n7. A durable hourly cap, read from the table so it survives restarts.\n8. One transaction writes the `capture` row, the item and the\n`capture.submit` audit row. If the audit append fails, all three roll\nback.\n\nAudit rows: refusals at steps 1–3 are counted (`capture.status`, `nimbus\ndoctor`) rather than audited, so the limit cannot become an unbounded\nwrite path. Refusals at steps 4–7 are audited `rejected`.\n`capture.revoke` records `not_required`: I4 admits `approved` only where\na consent gate made the decision.\n\nThe owner methods (`captures.*`) refuse the `mcp` kind, and the MCP\nadapter registers no tool that reaches them. The E2E test proves the\nrefusal over a real socket.\n\n**Static D32**, red-proved by fixtures, has three clauses:\n- **(a)** the `capture` table, including comma-join, `OR <conflict>`,\nschema-qualified and `REFERENCES` shapes, is named only by its store and\nits DDL;\n- **(b)** the gate entry points are named only in `ipc/capture-rpc.ts`;\n- **(c)** value imports or re-exports of `capture-gate` are allowed only\nthere, which closes barrel and namespace-import evasion.\n\nBoth `capture.*` and `captures.*` are LAN-forbidden by namespace.\nNeither is on the Tauri allowlist, and neither has an HTTP route.\n\n## Schema\n\n**V67**, the `capture` table. It is V67 because `main` took V66 (the\nextension tree digest, #1648), and this branch merged `main` and\nrenumbered.\n\n## MCP read tools\n\nItem-returning read results now carry `id`, the index primary key, which\n`capture_note`'s `relatesTo` takes. `agentAuthored` joins the meta\nwhitelist. This is additive.\n\n## What is NOT in this PR\n\n- **Proposals** (decision/term/link that count only after `nimbus\ncaptures accept`): PR 2.\n- **The act door** (HITL-gated connector actions proposed over MCP): PR\n3, which has its own spec.\n- **No desktop UI.**\n- **`data.delete --service nimbus`** removes capture items but not\n`capture` rows.\n- **Not yet labelled on owner-side surfaces:** `nimbus query`, `nimbus\nask`, briefs and the desktop show agent-authored notes as service\n`nimbus`, type `capture`, with no explicit \"agent-authored\" label.\nFollow-up.\n- **Small follow-ups:**\n  - `nimbus captures list` has no `--limit`; the gateway default is 50.\n  - Unknown `[mcp_sink]` keys are ignored silently.\n- An enabled sink whose `kinds` names no submittable kind offers no tool\nand only says `kinds: ` in doctor.\n- **Capture tools are decided once, when the MCP server spawns.**\nRestart the editor's MCP server after enabling `[mcp_sink]`.\n\n## Verification\n\n- **Full CI-path suite** (`bun test packages/gateway packages/cli\nscripts`) on Windows: 28,573 pass, 0 fail.\n- **Fast preflight** (`bun run preflight:fast`): passes.\n- **New E2E** (`packages/gateway/test/e2e/mcp-capture.e2e.test.ts`)\ndrives a **real gateway** and a **real `nimbus mcp-server --stdio`**\nover newline-delimited JSON-RPC. It covers capture → `searchIndex` finds\nit → `nimbus captures list` → revoke → gone; an mcp-declared socket\nrefused on owner methods; and the sink off meaning no tool.\n- **Not yet run here:** the E2E is verified on Windows only. Linux and\nmacOS see it first on this PR's legs, and Docker was not available\nlocally.\n- **Not measured locally:** per-file coverage and Sonar. CI is\nauthoritative for both.\n\nNo `!`: the sink is off by default, and nothing an existing user does\nchanges.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added an optional, default-off MCP tool for submitting agent-authored\nnotes to the local index.\n* Added `nimbus captures` commands to list and view captured notes and\nrevoke them.\n* Capture access is controlled by configuration and organization policy,\nwith submission limits and owner-only review and revocation.\n* **Documentation**\n* Updated product and security documentation to describe MCP capture,\nits controls, and the expanded invariant range.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-13T15:57:12Z",
+          "tree_id": "bc36e2c929ca7b724178c9da2567e0513ce3ae1a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/486aa798d3179c3e60a93ff1fe47b3bdc916991f"
+        },
+        "date": 1791907746708,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 246.8044592999962,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 248.01918149999693,
             "unit": "ms"
           }
         ]
