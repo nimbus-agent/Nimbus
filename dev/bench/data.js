@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791874349290,
+  "lastUpdate": 1791877298759,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c595cc12f2523cceedf18fe43da22de9a4c864e3",
-          "message": "chore: release main (#950)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.10.0</summary>\n\n##\n[1.10.0](https://github.com/nimbus-agent/Nimbus/compare/v1.9.0...v1.10.0)\n(2026-07-30)\n\n\n### Features\n\n* **ci:** audit:review-coverage — close P3's org-wide half\n([#948](https://github.com/nimbus-agent/Nimbus/issues/948))\n([5ad05a8](https://github.com/nimbus-agent/Nimbus/commit/5ad05a8c69e98624897f3996b6989fc145e69bba))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-30T08:22:02+03:00",
-          "tree_id": "da51e17cc38a80e1013f90783e94dc8997eabd9e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c595cc12f2523cceedf18fe43da22de9a4c864e3"
-        },
-        "date": 1785389609553,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 302.9417987499961,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 306.1309087499958,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 146.09606415000198,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "25136a69d0abecfb2d64271aafc38f25c95f482c",
+          "message": "ci: shard the Windows PR test leg in two, balanced by timings from main (#1655)\n\n## Summary\n\nThe windows-2025 PR leg is the PR critical path, and most of it is one\nstep. On #1654's run the leg took about 15 minutes: about 610 s in `bun\ntest --parallel`, about 223 s in setup, and the rest fixed overhead.\nmacOS spends about 200 s in the same test step.\n\nThis PR splits the Windows test step across two runners and gives Bun\nreal per-file timings to balance the split.\n\n**What changes:**\n\n- **`pr-quality-cross-platform` runs Windows as two jobs.** They run\n`--shard=1/2` and `--shard=2/2` of the same whole-repo command. macOS\nstays a single `1/1` job, so its check name is unchanged. The Windows\ncheck names become `PR quality — Cross-platform (windows-2025, 1/2)` and\n`(… 2/2)`. Neither is a required context; `PR quality — required gates`\nis, and it `needs:` the whole matrix.\n- **Per-file timings come from `main`.**\n- The macOS/Windows push leg in `_test-suite.yml` now passes\n`--timings=… --update-timings` and saves the result to an Actions cache\nkeyed per run.\n- It saves from a workspace-relative path with `enableCrossOsArchive`,\nso an Ubuntu job can read a Windows entry.\n- The file is written on `main`, so every PR can read it. #1654 removed\na cache whose entries were only ever written by PR runs and so only ever\nserved that same PR; this one avoids that by construction.\n- **Both Windows shards read ONE timings snapshot.** This change came\nout of CodeRabbit's review. `--shard` partitions by the table it reads,\nso if each shard restored \"the newest\" entry itself, a push to `main`\nlanding between the two restores could hand them different tables. Their\nhalves would then not have to add up to the whole suite, and a test file\ncould drop out of the PR gate.\n- `filter` now restores the newest Windows entry once and uploads it as\none artifact. Both shards download that artifact.\n- If the artifact exists but a shard can't fetch it, that shard\n**fails** instead of splitting differently from its sibling.\n- With no snapshot, both shards split by file count, which is still a\ncomplete partition.\n- The snapshot steps live in `filter` rather than a job of their own,\nbecause `pr-quality-required` counts `skipped` as passing. A failed\nsnapshot job would skip both shards and leave the gate green.\n- macOS is a single `1/1` job, so it restores its own entry directly and\nuses it for slowest-first ordering.\n- **Parity is checked over the union of the shards.** Each shard's\ncommand still names the whole repo, so a matrix with `1/2` and no `2/2`\nwould pass every existing path assertion while silently dropping half\nthe files. `cross-platform-parity.test.ts` now checks:\n  - every OS's shard set is exactly `1/N … N/N`;\n  - both OSes are present;\n  - `--shard` comes after the paths;\n  - no step restores Windows timings per shard;\n  - the snapshot download is never `continue-on-error`.\n- **`CLAUDE.md` and `GEMINI.md`** describe the sharded leg, and are kept\nidentical.\n\n**Behaviour verified locally (Bun 1.4.2):**\n- `--shard=1/2` plus `2/2` always covers every file, with or without\ntimings.\n- A timings file that lists only some files is fine.\n- A `--timings` path that doesn't exist is ignored.\n- `--update-timings` creates the file when it is missing.\n\n## Related Issue\n\nNone. This is the next step of the CI-speed work in #1649, #1651, #1652\nand #1654.\n\n## Type of Change\n\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`)\n- [x] New behaviour is covered by tests (the shard-set and\nshared-snapshot checks in `cross-platform-parity.test.ts`)\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] No source files changed.\n\n## Testing\n\n- **New parity checks:** each one fails on the shape it guards against.\nI checked three mutations, saw each fail, and restored the file:\n  - removing the `2/2` shard;\n  - adding a per-shard restore of Windows timings;\n  - marking the snapshot download `continue-on-error`.\n- **The PR leg's exact command:** run as two shards over `scripts/ci`\nand `scripts/ci-latency`, through `run-with-timeout.ts` with the JUnit\nreporter. Both shards exited 0 and together ran every file: 82 + 72 test\ncases.\n- **Other gates:** `bun run preflight:fast` passes (workflow lint and\naction SHA pins included), and so do the `scripts/ci` tests (155).\n\n**What this PR's own CI can and can't show:**\n- **The two-shard time is visible now.** Each Windows shard's test step\nshould take roughly half of the ~610 s.\n- **The timings path is not exercised yet.** Nothing on `main` has\nwritten timings, so this PR's shards split by file count. The first push\nto `main` after merge seeds the cache, and the next PR is the first to\nuse the snapshot.\n\n## Notes for Reviewers\n\n- **Cost:** about one extra windows-2025 runner per code PR, because\neach shard repeats setup (~3.7 min). In exchange, the leg's wall-clock\ntime should drop from about 15 minutes to about 10.\n- **Timings source:** they come from the push leg, which runs with\nIstanbul coverage preloads. That inflates absolute durations roughly\nevenly. Balancing only needs relative weights.\n- **Stale entries:** each push saves a new small entry, and old ones are\nevicted from the 10 GB quota oldest-unused first.\n- **No `!`:** this changes CI only.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_014HT9yGfRK52JPScsN6EVuP\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **CI Improvements**\n* Windows cross-platform tests run in two balanced shards, while macOS\ntests run in one. Together, the shards cover the complete test suite.\n* Shard workloads use saved per-file timing data. Timing data is updated\non macOS and Windows push runs, including failed runs.\n* CI checks that each operating system has a complete shard set and that\nthe shards cover all test files.\n* **Documentation**\n* Updated CI guidance to describe Windows sharding, timing data, and\ncoverage checks.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+          "timestamp": "2026-10-13T07:32:58Z",
+          "tree_id": "ed0f824976922602235c4692f7894b711b83d068",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/25136a69d0abecfb2d64271aafc38f25c95f482c"
+        },
+        "date": 1791877292954,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 192.67591574999642,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 194.15549059999648,
             "unit": "ms"
           }
         ]
