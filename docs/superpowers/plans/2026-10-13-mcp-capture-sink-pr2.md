@@ -27,13 +27,18 @@
 | the V68 step runs `PRAGMA foreign_key_check` and throws on any row | **a COUNT check**: restored evidence rows must equal the held rows whose decision still exists. Orphans that pre-date V68 are dropped, not fatal | A pre-existing orphan would fail `foreign_key_check` on every boot and brick the gateway | A pre-existing orphan evidence row (which pointed at nothing) is dropped |
 | `nimbus why` gets the disclosure | **dropped** | `agents/why.ts` never reads `decision_record` | none |
 | disclosure says "accepted by the owner on <date>" | **no date** | `decision_record` has no accept-time column; the anchor excludes the date anyway; `nimbus captures show` prints `decidedAt` | Less detail in the brief |
-| an accepted term is a normal glossary row | **it is never PROJECTED** (no `nimbus:glossary_term` item); the reconcile pass skips projection for it | `nimbus:glossary_term` is in `PROSE_HEAVY_TYPES` (`embedding/routing.ts`), so projecting agent text would send it to a remote embedder when an OpenAI key is set, breaking success criterion 5. The capture item (`nimbus:capture`, local-only) is what search finds | An accepted term is found in search via its capture item, not a glossary item |
+| an accepted term is a normal glossary row | **it is never PROJECTED** (no `nimbus:glossary_term` item); the reconcile pass skips projection for it; and accepting over an llm/snippet row that WAS projected UNPROJECTS that item in the same transaction (Task 6) | `nimbus:glossary_term` is in `PROSE_HEAVY_TYPES` (`embedding/routing.ts`), so projecting agent text would send it to a remote embedder when an OpenAI key is set, breaking success criterion 5. The capture item (`nimbus:capture`, local-only) is what search finds. Without the unproject, the superseded llm definition would stay searchable forever, because reconcile now skips the row | An accepted term is found in search via its capture item, not a glossary item |
 | (not in spec) | **the graph populator must not delete `captured_*` edges** | `graph-populator.ts`'s `clearRelationsTouchingEntity` deletes every edge on an entity whose type is outside `CROSS_ITEM_RELATION_TYPES`, on each re-sync | none |
 | (not in spec) | **`decisions --rebuild` and `glossary --rebuild` keep `'agent'` rows** | `clearDecisions` / `clearGlossary` delete everything, and no pass can re-derive an owner-accepted row | A rebuild is no longer a full reset for agent rows (revoke is how they go) |
 | (not in spec) | **every glossary pass leaves `'agent'` rows alone**: reconcile demotion, `markConsolidated`/`markVetoed`, the mined `display_term` overwrite | the reconcile sweep would demote an accepted term with few mentions within 12 h | none |
 | (not in spec) | **`upsertManualTerm` taking over an `'agent'` row clears `capture_id`** | manual wins (spec §5.2); without clearing ownership, revoking the capture later would delete the owner's manual term | none |
 | `list` defaults to `--state proposed` | **kept as shipped: no default filter** | PR 1 shipped `list` showing every state; a proposed-only default would hide live notes | none |
 | (PR 1 follow-ups) | **`--limit` on `captures list`; an "agent-authored" tag on `nimbus query` capture cards** | promised in #1653's description; both files are edited here anyway | ~20 lines |
+
+**Considered and NOT taken** (from the 2026-10-13 plan review, `…-pr2-review.md`):
+
+- **An advisory "this term is vetoed" note in the `propose_term` response.** Rejected, not deferred. It would tell an external MCP client what the owner has vetoed or authored, which is index state the sink never discloses to a submitter. The submit response stays a function of the payload alone. The owner sees `ERR_CAPTURE_SUPERSEDED` at accept time, which is where the decision is made.
+- **Multi-id / `--all` accept and reject.** Deferred to a follow-up, with no PR 3 dependency. Single-id verbs keep one audit row per explicit owner act. A batch form needs its own answer to partial failure (one superseded term in ten), and that is a design question, not a flag.
 
 ## Global Constraints
 
@@ -105,7 +110,8 @@ Gateway (`packages/gateway/src/`):
 | `agents/_lib/brief-disclosures.ts` | `decisionsAgentDisclosure`; glossary `'agent'` branch |
 | `agents/_lib/render.ts` | per-decision source line; ` — agent-authored` list label |
 | `agents/_lib/brief-contract.ts` | a `decisions` arm |
-| `security-invariants.test.ts` | I28 rows for accept/reject/revoke |
+| `security-invariants.test.ts` | the PR 1 submit-order test follows the new validator (Task 7); I28 rows for accept/reject/revoke (Task 10) |
+| `platform/assemble.ts` | the boot `pruneRejected` uses `REJECTED_RETENTION_MS` (Task 8) |
 | `scripts/structure-audit/check-nimbus-invariants.ts` (+ test) | D32(d) |
 
 CLI (`packages/cli/src/`): `mcp/capture-tools.ts` (three tools), `commands/captures.ts` + `captures-format.ts` (accept/reject verbs, `--limit`, native status), `commands/query.ts` (agent-authored tag).
@@ -984,9 +990,10 @@ export function deleteEvidenceCitingItem(db: Database, itemId: string): number {
 }
 ```
 
-Before writing the `alternatives` column, check how `markExtracted` serialises it. If it is not `JSON.stringify`, match it. Change `clearDecisions` as follows, updating its doc comment to say that agent rows survive and revoke is how they leave:
+Before writing the `alternatives` column, check how `markExtracted` serialises it. If it is not `JSON.stringify`, match it. Change `clearDecisions` as follows, updating its doc comment to say that agent rows survive and revoke is how they leave. The whole body is shown: the `decision_pass_state` delete STAYS, because a rebuild must reset the watermark or no historical item is re-scanned:
 
 ```ts
+  db.transaction(() => {
     dbRun(
       db,
       `DELETE FROM decision_evidence
@@ -994,7 +1001,11 @@ Before writing the `alternatives` column, check how `markExtracted` serialises i
       [],
     );
     dbRun(db, "DELETE FROM decision_record WHERE extraction_source IS NOT 'agent'", []);
+    dbRun(db, "DELETE FROM decision_pass_state", []);
+  })();
 ```
+
+Extend the `clearDecisions` test to also assert that `decision_pass_state` is empty afterwards.
 
 Then grep for every other `DELETE FROM decision_record` and `UPDATE decision_record` in non-test code. Confirm that each one either cannot reach an `'agent'` row (it filters on `status='pending'`, on `extraction_source='snippet'`, or on an id the pass itself produced), or add the same `extraction_source IS NOT 'agent'` guard. List what you found in the report.
 
@@ -1199,7 +1210,7 @@ export function termOwnership(
      - `upsertCandidate`'s `display_term` CASE becomes `WHEN definition_source IN ('manual','agent')`.
      - `markConsolidated`, `markVetoed` and `demoteTerm` each gain `AND definition_source IS NOT 'agent'` in their `WHERE`.
      - `upsertManualTerm`'s `ON CONFLICT … SET` gains `capture_id = NULL`. Its doc comment gains: "Taking over an agent row clears its ownership, so revoking that capture later cannot delete the owner's manual term."
-     - `clearGlossary` becomes `DELETE FROM glossary_term WHERE definition_source IS NOT 'agent'`. Update its doc comment.
+     - `clearGlossary`'s first statement becomes `DELETE FROM glossary_term WHERE definition_source IS NOT 'agent'`. Its second statement, `DELETE FROM glossary_pass_state`, STAYS, so a rebuild still resets the watermark. Update its doc comment, and extend the `clearGlossary` test to assert `glossary_pass_state` is empty afterwards.
   4. **`glossary-reconcile.ts`:** right after `computeTermStats`, add:
 
 ```ts
@@ -1339,6 +1350,7 @@ const CROSS_ITEM_RELATION_TYPES: readonly string[] = Object.freeze([
   - Task 2: `ValidatedCapture`, `CAPTURED_RELATION_TYPES`.
   - Task 3: `insertAgentDecision`, `deleteAgentDecision`, `agentDecisionOwned`.
   - Task 4: `upsertAgentTerm`, `deleteAgentTerm`, `termOwnership`, and the existing `computeTermStats`.
+  - The existing `unprojectTerm(db, termKey)` (`glossary/glossary-project.ts:76`), which is what the reconcile demotion uses.
   - Task 5: `resolveItemGraphEntityId`, `graphRelationExists`, `deleteGraphRelation`, and the existing `upsertGraphRelation`.
   - The existing `scoreTerm` (`glossary/term-scoring.ts`).
 - Produces:
@@ -1376,6 +1388,7 @@ export function captureNativeStatus(db: Database, row: { id: string; kind: Captu
     - `assertAcceptable` throws `ERR_CAPTURE_SUPERSEDED` over a vetoed row and over a manual row (build the manual row with `applyManualTerms`).
     - It passes over an llm row.
     - `writeCaptureNative` returns the `termKey`.
+    - **Takeover unprojects.** Build an llm row through the real pass path (`upsertCandidate` + `markConsolidated` + `projectTerm`), and assert a `nimbus:glossary_term` item exists for it (`SELECT COUNT(*) FROM item WHERE service = 'nimbus' AND type = 'glossary_term'` is 1). This is the positive control. After `writeCaptureNative` for the same key, the count is 0. A refused write (vetoed row) leaves any projection alone.
     - A second capture's `writeCaptureNative` makes the first's `nativeStatus` `superseded`.
     - `revokeCaptureNative` of the first leaves the row, and `revokeCaptureNative` of the second deletes it.
     - `writeCaptureNative` throws `ERR_CAPTURE_SUPERSEDED` when a vetoed row appears between the check and the write: veto it after `assertAcceptable`, then call `writeCaptureNative`.
@@ -1410,6 +1423,7 @@ import {
   termOwnership,
   upsertAgentTerm,
 } from "../glossary/glossary-store.ts";
+import { unprojectTerm } from "../glossary/glossary-project.ts";
 import { scoreTerm } from "../glossary/term-scoring.ts";
 import {
   CAPTURED_RELATION_TYPES,
@@ -1572,6 +1586,10 @@ export function writeCaptureNative(
           `the glossary term "${v.payload.termKey}" is vetoed or authored; the owner's entry wins`,
         );
       }
+      // The row may have been a projected llm/snippet term. Reconcile now skips agent rows, so
+      // nothing else would ever remove that `nimbus:glossary_term` item, and it would keep serving
+      // the superseded definition in search. Same transaction as the takeover.
+      unprojectTerm(db, v.payload.termKey);
       return v.payload.termKey;
     }
     case "link": {
@@ -1648,6 +1666,7 @@ Confirm `scoreTerm`'s argument shape against `glossary/term-scoring.ts` (the res
 - Modify: `packages/gateway/src/mcp-sink/capture-types.ts` (`SUBMITTABLE_KINDS` = all four)
 - Modify: `packages/gateway/src/mcp-sink/capture-gate.ts` (`submitCapture`, `titleOf`)
 - Modify: `packages/gateway/src/mcp-sink/capture-gate.test.ts`, `capture-capability.test.ts` (kinds)
+- Modify: `packages/gateway/src/security-invariants.test.ts` (the PR 1 I28 submit-order test, ~:2617)
 
 **Interfaces:**
 - Consumes: `validateCapturePayload` and `referencedItemIds` (Task 2), and `resolveLinkEndpoints` (Task 6).
@@ -1754,9 +1773,45 @@ Add a `graphedItems(n)` helper to the test file that builds `n` graphed `pr` ite
 
   3. **Write path:** `state = proposal ? "proposed" : "live"`, and `itemId = proposal ? null : itemPrimaryKey(…)`. Only a note calls `upsertIndexedItem`, using `v.payload` and narrowing via `if (v.kind === "note")`. The audit `outcome` is `proposal ? "proposed" : "captured"`. Only a note calls `deps.scheduleEmbedding`.
   4. **Comment:** update `submitCapture`'s doc comment from "notes only" to cover all four kinds. A proposal gets no item, no native row and no embedding until accept (spec § 4.3).
-  5. **`titleOf`:** add the link preview `${p["relation"]}: ${p["fromItemId"]} → ${p["toItemId"]}` when `p["relation"]` is a string.
+  5. **`titleOf`** (`capture-gate.ts:136`): add the link preview, clamped like every other title (the two ids can be 512 characters each):
 
-- [ ] **Step 4: Run the tests.** `bun test packages/gateway/src/mcp-sink packages/gateway/src/ipc/capture-rpc.test.ts` must PASS, and every PR 1 test must stay green.
+```ts
+function titleOf(row: CaptureRow): string {
+  if (row.payloadJson === null) return "(revoked)";
+  const p = JSON.parse(row.payloadJson) as Record<string, unknown>;
+  if (row.kind === "link") {
+    const rel = typeof p["relation"] === "string" ? p["relation"] : "link";
+    const from = typeof p["fromItemId"] === "string" ? p["fromItemId"] : "";
+    const to = typeof p["toItemId"] === "string" ? p["toItemId"] : "";
+    return `${rel}: ${from} → ${to}`.slice(0, 120);
+  }
+  const t = p["title"] ?? p["statement"] ?? p["term"];
+  return typeof t === "string" ? t.slice(0, 120) : "";
+}
+```
+
+  Add a test: a link whose two ids are 300 characters each lists with a title of exactly 120 characters.
+
+  6. **The PR 1 submit-order test** (`security-invariants.test.ts`, `I28 — MCP content enters only through the capture gate…`). Its `order` array names `"validateNotePayload(params"`, which step 5 above removes, so the test goes red. Change the array to:
+
+```ts
+    const order = [
+      "deps.capability()",
+      "CAPTURE_ROLE_BY_KIND[caller.kind]",
+      "deps.limiter.tryAcquire(",
+      "cap.kinds.includes(",
+      "validateCapturePayload(kindRaw",
+      "missingItem(",
+      "resolveLinkEndpoints(",
+      "deps.store.countCreatedSince(",
+      'deps.store.countByState("proposed")',
+      "deps.db.transaction(",
+    ];
+```
+
+  Rename the test to match: `… → validate → items → link endpoints → durable cap → pending cap, in that order`. Red-prove the new entries by swapping steps 7 and 8, seeing the test fail, then restoring.
+
+- [ ] **Step 4: Run the tests.** `bun test packages/gateway/src/mcp-sink packages/gateway/src/ipc/capture-rpc.test.ts packages/gateway/src/security-invariants.test.ts` must PASS, and every PR 1 test must stay green.
 
 - [ ] **Step 5: Commit.** Message: `feat(mcp): submit accepts decision, term and link proposals (pending cap, link resolvability)`.
 
@@ -1768,11 +1823,14 @@ Add a `graphedItems(n)` helper to the test file that builds `n` graphed `pr` ite
 - Modify: `packages/gateway/src/mcp-sink/capture-store.ts` (+ test)
 - Modify: `packages/gateway/src/mcp-sink/capture-gate.ts` (+ test)
 - Modify: `packages/gateway/src/ipc/capture-rpc.ts` (+ test)
+- Modify: `packages/gateway/src/platform/assemble.ts:3443` (use `REJECTED_RETENTION_MS`)
 
 **Interfaces:**
 - Produces:
 
 ```ts
+// capture-store.ts (module scope)
+export const REJECTED_RETENTION_MS: number; // 90 days
 // CaptureStore
 markAccepted(id: string, itemId: string, nativeRef: string, nowMs: number): boolean; // WHERE state='proposed'
 markRejected(id: string, nowMs: number): boolean;                                   // WHERE state='proposed'
@@ -1910,7 +1968,14 @@ Write the `/* … */` bodies out in full. Each comment says exactly what to seed
   }
 ```
 
-In `capture-gate.ts`, add the following, plus a `storedPayload` helper. Find PR 1's 90-day retention constant (used by the boot-time `pruneRejected` in `platform/assemble.ts`) and reuse it. Do not define a second one. If it is module-private, export it from the module that owns it.
+In `capture-gate.ts`, add the following, plus a `storedPayload` helper. PR 1 has NO retention constant: `platform/assemble.ts:3443` passes the literal `90 * 86_400_000` to the boot-time `pruneRejected`. Name it once, in `capture-store.ts` beside `pruneRejected` (the module that owns the rule), and use it at both sites, so the boot prune and the reject-time prune cannot drift:
+
+```ts
+/** How long a rejected capture's row is kept before `pruneRejected` deletes it (spec § 5.2). */
+export const REJECTED_RETENTION_MS = 90 * 86_400_000;
+```
+
+Then change `assemble.ts:3443` to `captureStore.pruneRejected(Date.now() - REJECTED_RETENTION_MS);` and add the import. Add `platform/assemble.ts` to this task's commit.
 
 ```ts
 /** Re-validate a stored payload: the stored JSON is already rebuilt, so this only re-types it. */
@@ -2149,7 +2214,15 @@ describe("revoke — accepted captures", () => {
       sessionId: caller.clientId,
     });
   })();
+  // UNCHANGED from PR 1 — keep the tail: a lost race is success only if the winner also revoked.
+  if (!won && deps.store.get(id)?.state !== "revoked") {
+    throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
+  }
+  return { id, state: "revoked" };
+}
 ```
+
+The block above replaces everything in `revokeCapture` from the `row.state !== "live"` check to the end of the function. The lines before it (`requireOwner`, `requireId`, the not-found check and the `revoked` early return) stay as they are. `markRevoked`'s `expected: CaptureState` parameter already accepts `"accepted"`, so no store change is needed.
 
 `getCapture` adds:
 
@@ -2329,7 +2402,7 @@ Docs, written in the same commit (the triple rule):
   - **`brief-contract.coverage.test.ts`:**
     - `requiredPhrases` for a decisions brief with one agent entry returns exactly `[decisionsAgentDisclosure()]`, and with no agent entry returns `[]`.
     - A synthesized markdown that drops the anchor under `## Decisions …` produces a `contractViolations` entry, and one that keeps it produces none.
-    - Update the `:665` comment, which currently says decisions disclose only via gap notes.
+    - (There is no `:665` comment to update: that pointer was stale. The comment that changes is in `brief-contract.ts` itself, above the `[]` block, `// Every other brief kind returns [] until its contractual strings are added.` It stays true once `decisions` leaves that block in Step 3; leave it as is.)
   - **Glossary:**
     - `glossaryProvenanceDisclosure("WAL", "agent")` returns a disclosure whose `anchors` equal `[AGENT_CAPTURE_ANCHOR]` and whose `line` contains the anchor.
     - Term-mode render includes the line.
@@ -2374,16 +2447,17 @@ In `renderDecisionsEntry`, add right after the first `lines` element:
   if (e.extractionSource === "agent") lines.push(decisionsAgentDisclosure().line);
 ```
 
-In `renderGlossaryTermsSection`:
+In `render.ts`, add a module-level helper, and use it in `renderGlossaryTermsSection` in place of the current manual-only label (`render.ts:439`, `const authored = …`). A nested ternary would be a Sonar S3358 finding, and the helper keeps the section function's cognitive complexity where it is:
 
 ```ts
-    const label =
-      e.definitionSource === "manual"
-        ? " — authored"
-        : e.definitionSource === "agent"
-          ? " — agent-authored"
-          : "";
+function provenanceLabel(source: DefinitionSource | null): string {
+  if (source === "manual") return " — authored";
+  if (source === "agent") return " — agent-authored";
+  return "";
+}
 ```
+
+Likewise keep `renderDecisionsEntry`'s addition to the single `if` line above. Do not nest further conditions inside it. `DefinitionSource` is imported from `./glossary-types.ts` if `render.ts` does not already import it (today it compares `e.definitionSource` inline at `:439`).
 
 In `brief-contract.ts`, add this before the `[]` block and remove `brief.kind === "decisions"` from that block:
 
@@ -2549,6 +2623,8 @@ The schema is never stricter than the gateway, which stays authoritative. Keep `
 
 **Files:**
 - Modify: `packages/gateway/test/e2e/mcp-capture.e2e.test.ts`
+
+- [ ] **Step 0: Enable the proposal kinds in the e2e gateway.** `bootGateway` (`mcp-capture.e2e.test.ts:88-94`) writes `kinds = ["note"]`, and `captureToolsFor` registers a tool only for a kind `capture.status` reports. As written, the MCP server would offer no `propose_*` tool, and the `toContain("propose_decision")` assertion below would fail. Change that line to `'kinds = ["note", "decision", "term", "link"]'`. PR 1's note tests are unaffected, since `note` stays in the list. Confirm that the "sink OFF" test still asserts NO capture tool at all when `enabled = false`.
 
 - [ ] **Step 1: Write the test** inside the existing `describe`, BEFORE the "sink OFF" test, which reboots the gateway:
 
