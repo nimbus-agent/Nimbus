@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.43.0](https://github.com/nimbus-agent/Nimbus/compare/v7.42.0...v7.43.0) (2026-10-13)
+
+
+### Features
+
+* **mcp:** capture sink — agent notes over MCP (S3, I28) ([#1653](https://github.com/nimbus-agent/Nimbus/issues/1653)) ([486aa79](https://github.com/nimbus-agent/Nimbus/commit/486aa798d3179c3e60a93ff1fe47b3bdc916991f))
+
 ## [7.42.0](https://github.com/nimbus-agent/Nimbus/compare/v7.41.0...v7.42.0) (2026-10-10)
 
 
