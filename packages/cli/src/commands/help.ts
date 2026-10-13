@@ -139,6 +139,8 @@ CONFIG & DIAGNOSTICS
                               extensions, HITL (follow-only, no backfill)
   nimbus notifications status|test [--json]   OS notification (toast) backend status; send one
                               fixed-text test toast ([notifications] enabled/content in nimbus.toml)
+  nimbus captures [list|show <id>|revoke <id>] [--json]   Review notes MCP clients captured into the
+                              local index ([mcp_sink] in nimbus.toml); revoke deletes one
 
 Environment (optional):
   NIMBUS_GATEWAY_EXECUTABLE   Path to nimbus-gateway binary (overrides auto-detection)

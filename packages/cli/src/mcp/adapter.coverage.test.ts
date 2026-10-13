@@ -29,6 +29,7 @@ import {
   type AdapterDeps,
   AGENT_TOOLS_UNSUPPORTED_MESSAGE,
   buildMcpServer,
+  buildMcpServerForGateway,
   type ConnectionEnv,
   createDeps,
   createProductionDeps,
@@ -325,6 +326,82 @@ async function connectEditor(server: McpServer): Promise<Client> {
   return editor;
 }
 
+describe("capture tool composition", () => {
+  test.each([
+    [
+      {
+        enabled: true,
+        kinds: ["note"],
+        pending: 0,
+        maxPending: 100,
+        maxPerHour: 30,
+        refusedSinceStart: {},
+      },
+      true,
+    ],
+    [
+      {
+        enabled: false,
+        kinds: [],
+        pending: 0,
+        maxPending: 100,
+        maxPerHour: 30,
+        refusedSinceStart: {},
+        disabledReason: "config",
+      },
+      false,
+    ],
+  ])(
+    "tools/list carries capture_note only when the sink is enabled (%#)",
+    async (status, present) => {
+      const client: IpcCallable = {
+        call: async <T>(m: string): Promise<T> =>
+          (m === "capture.status" ? status : { kind: "mcp" }) as T,
+        disconnect: async () => {},
+      };
+      const deps: AdapterDeps = { getClient: async () => client };
+      const editor = await connectEditor(await buildMcpServerForGateway(deps));
+      const tools = (await editor.listTools()).tools;
+      const names = tools.map((t) => t.name);
+      expect(names.includes("capture_note")).toBe(present);
+      expect(names).toContain("searchIndex");
+      if (present) {
+        expect(tools.find((t) => t.name === "capture_note")?.annotations?.readOnlyHint).toBe(false);
+      }
+    },
+  );
+
+  test("capture_note forwards the connected client's name as the label", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const client: IpcCallable = {
+      call: async <T>(m: string, p?: unknown): Promise<T> => {
+        calls.push([m, p]);
+        if (m === "capture.status") {
+          return { enabled: true, kinds: ["note"] } as T;
+        }
+        if (m === "capture.submit") {
+          return { id: "cap_9", state: "live" } as T;
+        }
+        return { kind: "mcp" } as T;
+      },
+      disconnect: async () => {},
+    };
+    const editor = await connectEditor(
+      await buildMcpServerForGateway({ getClient: async () => client }),
+    );
+    const res = await editor.callTool({
+      name: "capture_note",
+      arguments: { title: "t", body: "b" },
+    });
+    expect(JSON.stringify(res)).toContain("Captured note cap_9");
+    expect(calls.find(([m]) => m === "capture.submit")?.[1]).toEqual({
+      kind: "note",
+      payload: { title: "t", body: "b" },
+      clientLabel: "editor",
+    });
+  });
+});
+
 describe("a registered tool reached through MCP tools/call", () => {
   test("runs with the arguments the schema validated, and returns projected rows", async () => {
     const { deps, calls } = recordingDeps([
@@ -512,7 +589,12 @@ describe("runMcpServerStdio", () => {
       const res = await editor.callTool({ name: "getConnectorStatus", arguments: {} });
       expect(res.isError).toBeUndefined();
       expect(firstText(res)).toContain('"healthState": "healthy"');
-      expect(gatewayCalls).toEqual(["session.declareKind", "connector.listStatus"]);
+      // capture.status is the sink probe: a write tool is offered only on the gateway's say-so.
+      expect(gatewayCalls).toEqual([
+        "session.declareKind",
+        "capture.status",
+        "connector.listStatus",
+      ]);
     } finally {
       await editor.close();
     }

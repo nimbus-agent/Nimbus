@@ -130,6 +130,20 @@ describe("checkLanMethodAllowed", () => {
     },
   );
 
+  test.each([
+    "capture.status",
+    "capture.submit",
+    "captures.list",
+    "captures.get",
+    "captures.revoke",
+  ])("%s is not callable over LAN regardless of grant-write", (method) => {
+    for (const writeAllowed of [true, false]) {
+      expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+        /not callable over LAN/,
+      );
+    }
+  });
+
   test("negative control: the match is the exact namespace, not a prefix", () => {
     expect(() =>
       checkLanMethodAllowed("oncallish.read", { peerId: "p", writeAllowed: false }),

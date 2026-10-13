@@ -2614,6 +2614,65 @@ describe("I27 — outbound share gated by share.publish HITL action", () => {
   });
 });
 
+describe("I28 — MCP content enters only through the capture gate, in a fixed order", () => {
+  test("submitCapture checks capability → client kind → attempt limit → kind → validate → items → durable cap, in that order", async () => {
+    const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    const body = src.slice(src.indexOf("export function submitCapture"));
+    const order = [
+      "deps.capability()",
+      "CAPTURE_ROLE_BY_KIND[caller.kind]",
+      "deps.limiter.tryAcquire(",
+      "cap.kinds.includes(",
+      "validateNotePayload(params",
+      "missingItem(",
+      "deps.store.countCreatedSince(",
+      "deps.db.transaction(",
+    ];
+    const idx = order.map((s) => body.indexOf(s));
+    expect(idx.every((i) => i >= 0)).toBe(true);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+  });
+
+  test("the role table is total and only mcp submits; mcp is never owner", async () => {
+    const { CAPTURE_ROLE_BY_KIND } = await import("./mcp-sink/capture-client-policy.ts");
+    const submitters = Object.entries(CAPTURE_ROLE_BY_KIND)
+      .filter(([, r]) => r === "submit")
+      .map(([k]) => k);
+    expect(submitters).toEqual(["mcp"]);
+    expect(CAPTURE_ROLE_BY_KIND.mcp).not.toBe("owner");
+  });
+
+  test("an absent policy accessor DISABLES the sink (fail-closed, I22)", async () => {
+    const { resolveCaptureCapability } = await import("./mcp-sink/capture-capability.ts");
+    const { DEFAULT_MCP_SINK_CONFIG } = await import("./config/mcp-sink-toml.ts");
+    const c = resolveCaptureCapability(
+      { ok: true, config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true } },
+      undefined,
+    );
+    expect(c.enabled).toBe(false);
+  });
+
+  test("both namespaces are LAN-forbidden and absent from the Tauri allowlist", async () => {
+    const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    expect(lan).toMatch(/"capture",\s*"captures"/);
+    const tauri = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(tauri).not.toMatch(/"captures?\./);
+  });
+
+  test("capture items are never extraction input", async () => {
+    const { DECISION_SOURCE_TYPES } = await import("./decisions/decision-source-types.ts");
+    const { GLOSSARY_SOURCE_TYPES } = await import("./glossary/glossary-source-types.ts");
+    expect(DECISION_SOURCE_TYPES.has("nimbus:capture")).toBe(false);
+    expect(GLOSSARY_SOURCE_TYPES.has("nimbus:capture")).toBe(false);
+  });
+
+  test("capture items embed LOCALLY only (no remote egress through the embedder)", async () => {
+    const { LOCAL_ONLY_PROSE_TYPES, PROSE_HEAVY_TYPES } = await import("./embedding/routing.ts");
+    expect(LOCAL_ONLY_PROSE_TYPES.has("nimbus:capture")).toBe(true);
+    expect(PROSE_HEAVY_TYPES.has("nimbus:capture")).toBe(false);
+  });
+});
+
 describe("I29 — egress-ledger completeness over the executor chokepoint", () => {
   test("egress.prune is in the I2 HITL frozen set", async () => {
     const { HITL_REQUIRED } = await import("./engine/executor.ts");

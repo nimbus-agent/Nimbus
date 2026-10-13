@@ -3,6 +3,7 @@ export const COMMAND_NAMES = [
   "ask",
   "audit",
   "bench",
+  "captures",
   "catchup",
   "changelog",
   "chatops",

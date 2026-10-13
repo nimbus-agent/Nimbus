@@ -7,6 +7,9 @@ import {
   checkActuationConfinement,
   checkAgentEmitterImportConfinement,
   checkBrokeredFetchLiteralConfinement,
+  checkCaptureGateCallers,
+  checkCaptureGateImporters,
+  checkCaptureTableConfinement,
   checkChatopsUnwrappedPost,
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
@@ -2022,6 +2025,158 @@ describe("D27(b) media_grant table confinement", () => {
         ),
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("D32(a) — the capture table is named only by its store and its DDL", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const store = "packages/gateway/src/mcp-sink/capture-store.ts";
+  const sql = "packages/gateway/src/index/capture-v67-sql.ts";
+
+  test("allows the store and the V67 SQL module", () => {
+    expect(
+      checkCaptureTableConfinement([
+        file(store, "SELECT * FROM capture WHERE id = ?"),
+        file(sql, "CREATE TABLE IF NOT EXISTS capture ("),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["a read", "SELECT 1 FROM capture"],
+    ["a write", "INSERT INTO capture (id) VALUES (?)"],
+    ["an update", "UPDATE capture SET state = 'x'"],
+    ["a quoted name", 'SELECT 1 FROM "capture"'],
+    ["a backtick name", "SELECT 1 FROM `capture`"],
+    ["a bracket name", "SELECT 1 FROM [capture]"],
+    ["a comma join", "SELECT 1 FROM item, capture"],
+    ["an UPDATE OR clause", "UPDATE OR IGNORE capture SET x = 1"],
+    ["an INSERT OR REPLACE", "INSERT OR REPLACE INTO capture (id) VALUES (1)"],
+    ["a schema-qualified name", "SELECT 1 FROM main.capture"],
+    ["a quoted schema-qualified name", 'SELECT 1 FROM "main"."capture"'],
+    ["a foreign key", "FOREIGN KEY (a) REFERENCES capture(id)"],
+    ["an index target", "CREATE INDEX idx_capture_state ON capture (state)"],
+    ["an IF NOT EXISTS index target", "CREATE UNIQUE INDEX IF NOT EXISTS i ON main.capture(id)"],
+    ["a trigger target", "CREATE TRIGGER t AFTER UPDATE OF state, item_id ON capture BEGIN"],
+  ])("FAILS on %s from anywhere else", (_n, sqlText) => {
+    expect(
+      checkCaptureTableConfinement([file("packages/gateway/src/ipc/capture-rpc.ts", sqlText)]),
+    ).toHaveLength(1);
+  });
+
+  test("does not match look-alike identifiers or comments", () => {
+    expect(
+      checkCaptureTableConfinement([
+        file(
+          "packages/gateway/src/x.ts",
+          "SELECT 1 FROM capture_log; // FROM capture\nconst tribalCapture = 1;",
+        ),
+        file("packages/gateway/src/y.ts", "CREATE INDEX i ON capture_log(id)"),
+        file("packages/gateway/src/z.ts", 'log("index rebuilt on capture of the sync state")'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("ignores test files", () => {
+    expect(
+      checkCaptureTableConfinement([file("packages/gateway/src/x.test.ts", "FROM capture")]),
+    ).toEqual([]);
+  });
+});
+
+describe("D32(c) — capture-gate.ts is value-imported only by ipc/capture-rpc.ts", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const rpc = "packages/gateway/src/ipc/capture-rpc.ts";
+
+  test("allows the rpc value import and type imports anywhere", () => {
+    expect(
+      checkCaptureGateImporters([
+        file(rpc, 'import { submitCapture } from "../mcp-sink/capture-gate.ts";'),
+        file(
+          "packages/gateway/src/platform/assemble.ts",
+          'import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";',
+        ),
+        file("packages/gateway/src/y.ts", 'export type { X } from "../mcp-sink/capture-gate.ts";'),
+        file("packages/gateway/src/x.test.ts", 'import * as g from "../mcp-sink/capture-gate.ts";'),
+        file(
+          "packages/gateway/src/z.ts",
+          'import "./polyfill"\nimport type { Y } from "../mcp-sink/capture-gate.ts"',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["a barrel export *", 'export * from "../mcp-sink/capture-gate.ts";'],
+    ["a namespace import", 'import * as gate from "../mcp-sink/capture-gate.ts";'],
+    ["a value import", 'import { CaptureGateDeps } from "../mcp-sink/capture-gate";'],
+    ["a multi-line import", 'import {\n  a,\n  b,\n} from "../mcp-sink/capture-gate.ts";'],
+    ["a dynamic import", 'const g = await import("../mcp-sink/capture-gate.ts");'],
+    ["a side-effect import", 'import "../mcp-sink/capture-gate.ts";'],
+    [
+      "a value import after a semicolon-free type import",
+      'import type { X } from "./other"\nimport * as gate from "../mcp-sink/capture-gate.ts"',
+    ],
+    [
+      "a value import after a semicolon-free side-effect import",
+      'import "./polyfill"\nimport { a } from "../mcp-sink/capture-gate.ts"',
+    ],
+  ])("FAILS on %s outside capture-rpc.ts", (_n, src) => {
+    expect(
+      checkCaptureGateImporters([file("packages/gateway/src/platform/assemble.ts", src)]),
+    ).toHaveLength(1);
+  });
+
+  test("ignores a mention in a comment and unrelated modules", () => {
+    expect(
+      checkCaptureGateImporters([
+        file(
+          "packages/gateway/src/x.ts",
+          '// import { a } from "./capture-gate.ts";\nimport { b } from "./capture-gates.ts";',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("D32(b) — gate entry points are called only from ipc/capture-rpc.ts", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+
+  test("allows the rpc dispatcher and the gate's own definitions", () => {
+    expect(
+      checkCaptureGateCallers([
+        file(
+          "packages/gateway/src/ipc/capture-rpc.ts",
+          "submitCapture(c.gate, c.caller, p); revokeCapture(a, b, c);",
+        ),
+        file(
+          "packages/gateway/src/mcp-sink/capture-gate.ts",
+          "export function submitCapture(deps) {}",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each(["submitCapture", "acceptCapture", "rejectCapture", "revokeCapture"])(
+    "FAILS when %s is called anywhere else",
+    (fn) => {
+      expect(
+        checkCaptureGateCallers([
+          file("packages/gateway/src/platform/assemble.ts", `${fn}(deps, caller, x)`),
+        ]),
+      ).toHaveLength(1);
+    },
+  );
+
+  test("an aliased import is also caught", () => {
+    expect(
+      checkCaptureGateCallers([
+        file(
+          "packages/gateway/src/x.ts",
+          'import { submitCapture as sc } from "../mcp-sink/capture-gate.ts";',
+        ),
+      ]),
+    ).toHaveLength(1);
   });
 });
 

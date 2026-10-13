@@ -60,6 +60,8 @@ export const AI_V2_CAPABILITIES = [
    * `connector tools` are owner-initiated, not model access, and are not affected.
    */
   "user_mcp_model_access",
+  /** The MCP capture sink accepting agent-submitted notes (I28). Locked off, `capture.submit` refuses. */
+  "mcp_capture",
 ] as const;
 
 /** Where a persisted policy came from. */

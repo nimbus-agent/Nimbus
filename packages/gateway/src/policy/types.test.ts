@@ -5,7 +5,11 @@ import { AI_V2_CAPABILITIES } from "./types.ts";
 describe("AI_V2_CAPABILITIES", () => {
   test("agent_fleet is a lockoff-able ai_v2 capability", () => {
     expect([...AI_V2_CAPABILITIES]).toContain("agent_fleet");
-    expect(AI_V2_CAPABILITIES).toHaveLength(7);
+    expect(AI_V2_CAPABILITIES).toHaveLength(8);
+  });
+
+  test("mcp_capture is a lockoff-able ai_v2 capability", () => {
+    expect([...AI_V2_CAPABILITIES]).toContain("mcp_capture");
   });
 
   test("user_mcp_model_access is a lockoff-able ai_v2 capability that parses to a lockoff", () => {

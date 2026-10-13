@@ -681,10 +681,10 @@ was genuinely missing was the *review* layer, in two halves.
   triple rule and the PAL ban. `check-coderabbit-config.test.ts` validates it
   locally and deeply: that it parses, that every instruction's glob resolves to
   a real directory, that every cited `I<n>` exists as a heading in
-  `SECURITY-INVARIANTS.md`, and that nothing instructs the reviewer to enforce
-  the reserved I28. That last check is the load-bearing one — the config is
-  prose, so a renumbered invariant would otherwise teach the reviewer something
-  false forever, silently.
+  `SECURITY-INVARIANTS.md`. (It also once checked that nothing told the reviewer
+  to enforce the then-reserved I28; that check went when I28 went live.) The
+  citation check is the load-bearing one — the config is prose, so a renumbered
+  invariant would otherwise teach the reviewer something false forever, silently.
 - **Half two — `audit:review-coverage` (2026-07-30).** The monorepo's config was
   tested; the four satellites' were not. That is the sub-program's own founding
   pattern — a control that stops where it was written — sitting inside P3

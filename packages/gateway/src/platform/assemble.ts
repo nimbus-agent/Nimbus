@@ -58,6 +58,7 @@ import {
   type NimbusFleetJobToml,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
+import { loadNimbusMcpSinkFromPath } from "../config/mcp-sink-toml.ts";
 import {
   type ConnectorsConfig,
   DEFAULT_NIMBUS_LLM_TOML,
@@ -241,6 +242,10 @@ import { makeRouteId, parseRouteRef } from "../llm/route-id.ts";
 import type { LlmProvider } from "../llm/types.ts";
 import { vendorApiKeyName } from "../llm/vendor-vault-keys.ts";
 import { XaiProvider } from "../llm/xai-provider.ts";
+import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
+import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
+import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
+import { CaptureStore } from "../mcp-sink/capture-store.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { assembleOncallPushRuntime, type OncallPushRuntime } from "../oncall-push/push-runtime.ts";
@@ -3425,6 +3430,30 @@ export async function assemblePlatformServices(
     isConnectorAllowed,
   });
 
+  // MCP capture sink (I28). Config at boot; org policy LIVE per call (I22) — an absent/undefined
+  // policy result fails closed inside resolveCaptureCapability.
+  const mcpSinkLoad = loadNimbusMcpSinkFromPath(activeTomlPath);
+  if (!mcpSinkLoad.ok) {
+    syncLogger.error(
+      { event: "mcp_sink.config_invalid", error: mcpSinkLoad.error },
+      "[mcp_sink] is invalid; the capture sink is OFF",
+    );
+  }
+  const captureStore = new CaptureStore(db);
+  captureStore.pruneRejected(Date.now() - 90 * 86_400_000);
+  const captureGate: CaptureGateDeps = {
+    db,
+    store: captureStore,
+    capability: () => resolveCaptureCapability(mcpSinkLoad, policyGate.enforced()),
+    limiter: new CaptureAttemptLimiter(),
+    refusals: new CaptureRefusalCounter(),
+    newId: () => `cap_${randomUUID()}`,
+    now: () => Date.now(),
+    ...(scheduleItemEmbedding === undefined
+      ? {}
+      : { scheduleEmbedding: (id: string) => scheduleItemEmbedding(id) }),
+  };
+
   // Timeline correlation (deployment <-> incident, `correlates_with`): binds an item's
   // PagerDuty/repo metadata to a nimbus service id via the [metrics.dora.<id>] /
   // [ci.service.<id>] config, so cross-provider service identifiers (PagerDuty's
@@ -4066,6 +4095,8 @@ export async function assemblePlatformServices(
   ipcOpts.oncallPushRpcCtx = { runtime: oncallPush };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
+  // MCP capture sink (I28): capture.* / captures.* (LAN-forbidden by namespace, not Tauri, no HTTP).
+  ipcOpts.captureRpcCtx = { gate: captureGate };
 
   // I39 (S2 runtime tool generation): the sandboxed, owner-approved, session-ephemeral tool
   // registration surface. DEFAULT OFF -- `enabled` is read from `[tool_generation]`, and

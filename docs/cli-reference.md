@@ -1481,36 +1481,81 @@ A first-party GitHub Action wraps the endpoint for use directly in workflows —
 
 ### `nimbus mcp-server`
 
-Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code, Copilot) as a read-only MCP stdio server.
+Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code, Copilot) as an MCP stdio server: 21 read-only tools, plus one opt-in write tool, `capture_note`, when the capture sink is enabled.
 
 ```bash
 nimbus mcp-server            # print the MCP config block to paste into your editor (mcp.json)
 nimbus mcp-server --stdio    # run the server over stdio (your editor launches this)
 ```
 
-The Gateway must be running (`nimbus start`). Seventeen tools are registered; run
+The Gateway must be running (`nimbus start`). Twenty-one read-only tools are always registered; run
 `nimbus mcp-server --help` for the live list, which is derived from the registry rather
 than restated.
 
 **Index and metrics (6, synchronous):** `searchIndex`, `getConnectorStatus`,
 `getRecentIncidents`, `getRecentPullRequests`, `getRecentDeployments`, `getDoraMetrics`.
 
+**Negation queries (3, synchronous):** `findPrsNotTouching`, `findDeploymentsWithoutIncident`,
+`findPeopleWithoutReviews`.
+
 **Why-lens probe (1, synchronous):** `peekWhy` — a sub-300 ms one-liner for a
 `path[:line]` or symbol.
 
-**Agent briefs (10, asynchronous):** `explainWhy`, `getCatchup`, `findExpert`,
-`assessImpact`, `findConflicts`, `findDecisions`, `getGlossary`, `checkResourceUsage`,
-`getPeerContext`, `getTeamHuddle`. Each starts an `agents.*` run and returns the markdown
+**Agent briefs (11, asynchronous):** `explainWhy`, `getCatchup`, `findExpert`,
+`assessImpact`, `findConflicts`, `findDecisions`, `getGlossary`, `findOwners`,
+`checkResourceUsage`, `getPeerContext`, `getTeamHuddle`. Each starts an `agents.*` run and returns the markdown
 brief plus its typed findings once the matching `briefReady` notification arrives; the
 wait is bounded at 60 s, overridable with `NIMBUS_MCP_TIMEOUT_MS`. `getPeerContext` and
 `getTeamHuddle` reach paired peers across the federation mesh, not just this machine.
 
+Read results carry each item's `id` and an `agentAuthored` flag, so a client can pass an id
+back as `relatesTo` and can tell a captured note from indexed source data.
+
+**Capture (1, write, opt-in):** `capture_note { title, body, tags?, relatesTo? }` saves a note into
+the local index (labelled agent-authored, searchable immediately via `searchIndex`, embedded
+locally only). It is registered only when `[mcp_sink] enabled = true` and the org policy has not
+turned `mcp_capture` off. **The decision is made once, when the MCP server process spawns:**
+after enabling `[mcp_sink]` (and restarting the Gateway), restart the editor's MCP server so it
+asks again. A Gateway that is down at spawn yields no capture tool, never a guessed one. Every
+submit goes through a fixed-order gate (invariant `I28`) and may be refused with an
+`ERR_CAPTURE_*` code (disabled, rate limited, invalid, unknown `relatesTo` item).
+
 `agents.preflight` is deliberately **not** exposed: it is the `I24` federated action path,
-and triggers sandboxed execution on peers behind the owner's HITL gate. No write or HITL
-surface is exposed.
+and triggers sandboxed execution on peers behind the owner's HITL gate. The only write
+surface is `capture_note`; no HITL-gated action is exposed.
 
 Briefs served over MCP are recorded in the egress ledger (`I29`) — the adapter declares
 `kind: "mcp"` on connect, so `nimbus prove` accounts for them.
+
+### `nimbus captures`
+
+Review what MCP clients have written into your index. These are owner commands: they refuse the
+`mcp` client kind, so an editor agent cannot list, read or revoke captures.
+
+```bash
+nimbus captures [list] [--state live|proposed|accepted|rejected|revoked] [--kind note|decision|term|link] [--json]
+nimbus captures show <id> [--json]
+nimbus captures revoke <id> [--json]
+```
+
+`list` shows id, kind, state, title, client label and age. `show` prints one capture in full. `revoke`
+deletes the note's item and embeddings and clears the record's payload (the row stays, as the
+history of what was captured and when); it is idempotent, so a second revoke reports success and
+writes no second audit row. Titles, bodies and client labels are agent-supplied: control
+characters are stripped before printing. `nimbus doctor` prints a capture-sink line when the sink is on.
+
+Config, all under `[mcp_sink]` in `nimbus.toml`, read at Gateway start:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Master switch. Off, `capture.submit` refuses and no tool is offered. |
+| `kinds` | all four | Allowed capture kinds (`note`, `decision`, `term`, `link`). This release accepts only `note`. |
+| `max_per_hour` | `30` | Accepted captures per rolling hour (1..1000). Attempts are limited at 4x this. |
+| `max_pending` | `100` | Pending-proposal queue bound (1..10000). |
+
+Out-of-range values and unknown kinds refuse at config load, naming the key and the value; they are
+never clamped. An org policy can switch the capability off with
+`[policy.capabilities.ai_v2] mcp_capture = false`.
 
 ---
 

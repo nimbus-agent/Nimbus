@@ -96,6 +96,13 @@ describe("formatHelp", () => {
     expect(help).toContain(`Read-only tools (${String(TOOL_SPECS.length)}):`);
   });
 
+  it("names the opt-in write tool and how to review it", () => {
+    const help = formatHelp();
+    expect(help).toContain("capture_note");
+    expect(help).toContain("[mcp_sink]");
+    expect(help).toContain("nimbus captures");
+  });
+
   it("wraps the tool list so no line runs past the terminal width", () => {
     for (const line of formatHelp().split("\n")) {
       expect(line.length).toBeLessThanOrEqual(90);

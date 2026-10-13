@@ -2,6 +2,7 @@ export { runAdmin } from "./admin.ts";
 export { runAsk } from "./ask.ts";
 export { runAudit } from "./audit.ts";
 export { runBench } from "./bench.ts";
+export { runCapturesCmd } from "./captures.ts";
 export { runCatchupCli } from "./catchup.ts";
 export { runChangelogCommand } from "./changelog.ts";
 export { runChatops } from "./chatops.ts";

@@ -4,6 +4,7 @@ import type { IPCClient } from "../ipc-client/index.ts";
 import { nimbusCommand } from "../lib/demo-hint.ts";
 import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import type { CliPlatformPaths } from "../paths.ts";
+import { doctorCapturesLines, parseStatus } from "./captures-format.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
 import { doctorNotificationsLine, parseNotificationsStatus } from "./notifications-format.ts";
 
@@ -781,6 +782,31 @@ export async function doctorPrintNotifications(client: Pick<IPCClient, "call">):
   }
 }
 
+/**
+ * MCP capture sink: silent when off by config, `[ok]`/`[info]` when on, `[warn]` for a full queue or
+ * an invalid `[mcp_sink]`. Quiet on an older gateway (-32601); any other failure is a `[warn]`.
+ */
+export async function doctorPrintCaptures(client: Pick<IPCClient, "call">): Promise<number> {
+  let raw: unknown;
+  try {
+    raw = await client.call<unknown>("capture.status", {});
+  } catch (e) {
+    if (isMethodNotFound(e)) return 0;
+    console.log(
+      `[warn] MCP capture sink: status check failed (${e instanceof Error ? e.message : String(e)}).`,
+    );
+    return 1;
+  }
+  try {
+    const { lines, exit } = doctorCapturesLines(parseStatus(raw));
+    for (const l of lines) console.log(l);
+    return exit;
+  } catch (e) {
+    console.log(`[warn] MCP capture sink: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+}
+
 /** JSON-RPC -32601: the gateway does not serve the method (an older binary). */
 function isMethodNotFound(e: unknown): boolean {
   return typeof e === "object" && e !== null && "code" in e && e.code === -32601;
@@ -828,6 +854,7 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
       : undefined;
   exit = Math.max(exit, doctorPrintOncallPush(push, newest));
   exit = Math.max(exit, await doctorPrintNotifications(client));
+  exit = Math.max(exit, await doctorPrintCaptures(client));
   // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the
   // whole gateway run, which outranks any one connector being unreachable.
   exit = Math.max(exit, doctorPrintEmbeddingFromSnapshot(snap));
