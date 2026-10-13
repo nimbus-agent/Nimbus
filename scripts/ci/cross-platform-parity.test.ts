@@ -166,10 +166,22 @@ describe("the PR legs' shards add up to the whole suite", () => {
   const prLine = matchingLines(CI_YML, (l) => /run-with-timeout\.ts \d+ bun test/.test(l))[0] ?? "";
 
   type Leg = { readonly os?: unknown; readonly shard?: unknown };
-  const workflow = loadYaml(readFileSync(CI_YML, "utf8")) as {
-    jobs?: Record<string, { strategy?: { matrix?: { include?: readonly Leg[] } } }>;
+  type Step = {
+    readonly name?: unknown;
+    readonly uses?: unknown;
+    readonly if?: unknown;
+    readonly "continue-on-error"?: unknown;
+    readonly with?: Record<string, unknown>;
   };
-  const legs = workflow.jobs?.["pr-quality-cross-platform"]?.strategy?.matrix?.include ?? [];
+  const workflow = loadYaml(readFileSync(CI_YML, "utf8")) as {
+    jobs?: Record<
+      string,
+      { strategy?: { matrix?: { include?: readonly Leg[] } }; steps?: readonly Step[] }
+    >;
+  };
+  const crossPlatform = workflow.jobs?.["pr-quality-cross-platform"];
+  const legs = crossPlatform?.strategy?.matrix?.include ?? [];
+  const steps = crossPlatform?.steps ?? [];
 
   test("the command shards by the matrix value, after the paths", () => {
     // After the paths: `bunTestPaths` ends the path list at the first flag, so a `--shard` placed
@@ -195,6 +207,27 @@ describe("the PR legs' shards add up to the whole suite", () => {
       const expected = shards.map((_, i) => `${i + 1}/${shards.length}`);
       expect({ os, shards: [...shards].sort() }).toEqual({ os, shards: expected.sort() });
     }
+  });
+
+  test("the Windows shards read one shared timings snapshot, never their own restore", () => {
+    // `--shard=k/N` partitions by the timings it reads. If each shard restored "the newest" entry
+    // itself, a push to `main` landing between the two restores would hand them different tables,
+    // and their partitions need not cover the suite. So no step in this job may restore Windows
+    // timings from the cache; they arrive as the one artifact `filter` uploaded.
+    const restoresWindowsTimings = steps.filter((st) => {
+      if (typeof st.uses !== "string" || !st.uses.startsWith("actions/cache")) return false;
+      return JSON.stringify(st.with ?? {}).includes("test-timings-Windows");
+    });
+    expect(restoresWindowsTimings).toEqual([]);
+
+    const fetch = steps.filter(
+      (st) => typeof st.uses === "string" && st.uses.startsWith("actions/download-artifact"),
+    );
+    expect(fetch).toHaveLength(1);
+    expect(fetch[0]?.with?.["name"]).toBe("test-timings-snapshot-windows");
+    // Fail, never continue: a shard that silently ran without the snapshot its sibling used would
+    // split the suite differently — the gap this exists to close.
+    expect(fetch[0]?.["continue-on-error"]).toBeUndefined();
   });
 
   test("both OSes the PR gate promises are present", () => {

@@ -46,6 +46,9 @@ jobs:
       # paying for a full 3-runner test cycle.
       code-changed: ${{ steps.changes.outputs.code-changed }}
       embedding-native: ${{ steps.changes.outputs.embedding-native }}
+      # "true" when this run uploaded ONE Windows timings snapshot for both Windows shards of
+      # `pr-quality-cross-platform` to read. See the snapshot steps below.
+      windows-timings: ${{ steps.windows-timings.outputs.present }}
       # There is deliberately no per-package narrowing output here any more.
       # `pr-quality-cross-platform` used to emit a {os, pkg} matrix so a cli-only
       # PR could drop the two gateway legs; it now runs ONE leg per OS executing
@@ -111,6 +114,48 @@ jobs:
           else
             echo "embedding-native=$(grep -qE '^(scripts/(onnx-binding-plugin\.ts|build-workers\.ts|verify-onnx-cleanroom\.sh)|packages/gateway/src/(workers|embedding)/|packages/gateway/package\.json$|bun\.lock|\.github/workflows/ci\.yml$)' <<<"$CHANGED" && echo true || echo false)" >> "$GITHUB_OUTPUT"
           fi
+
+      # ONE snapshot of the Windows per-file timings, taken here and handed to both Windows shards
+      # of `pr-quality-cross-platform` as an artifact. Each shard must split the suite with the SAME
+      # table: `--shard=k/N` partitions by the timings it reads, so two shards reading different
+      # tables need not partition the same file list, and a test file can drop out of the PR gate
+      # with every check green. Restoring "newest by prefix" inside each shard could do exactly
+      # that — the jobs start minutes apart, and every push to `main` saves a newer entry.
+      #
+      # It lives in THIS job, not a job of its own, because `pr-quality-required` counts `skipped`
+      # as passing: a failed snapshot job would skip both shards and leave the gate green. `filter`
+      # is already a `needs:` of everything, and these steps are `continue-on-error`, so the worst a
+      # cache problem can do is leave the shards balanced by file count. `enableCrossOsArchive`
+      # lets this Ubuntu job read an entry the Windows push leg saved, and the workspace-relative
+      # path is what makes the two sides' cache versions match. No leading dot in the name:
+      # upload-artifact skips hidden files.
+      - name: Snapshot Windows test timings (PR only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ci-test-timings.json
+          key: test-timings-Windows-pr-${{ github.run_id }}
+          restore-keys: |
+            test-timings-Windows-
+          enableCrossOsArchive: true
+
+      - name: Hand the snapshot to the Windows shards
+        id: upload-windows-timings
+        if: github.event_name == 'pull_request' && hashFiles('ci-test-timings.json') != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-timings-snapshot-windows
+          path: ci-test-timings.json
+          retention-days: 1
+
+      - name: Record whether a snapshot was handed over
+        id: windows-timings
+        shell: bash
+        env:
+          UPLOADED: ${{ steps.upload-windows-timings.outcome == 'success' }}
+        run: echo "present=${UPLOADED}" >> "$GITHUB_OUTPUT"
 
   # ── PR: fast feedback (three jobs run in parallel) ─────────────────────────
 
@@ -366,21 +411,39 @@ jobs:
         shell: pwsh
         run: bun run build:sandbox-helper:win32
 
-      # Per-file durations from the newest push run on `main` for this OS (written by
-      # `_test-suite.yml`'s macOS/Windows step with `--update-timings`). With them, `--shard` splits
-      # the suite by measured TIME rather than by file count, and `--parallel` starts the slowest
-      # files first so one long e2e file does not start last and stretch the run. The cache is
-      # written on `main`, so every PR can read it — a PR-scoped entry would only ever serve that
-      # PR, the trap #1654 removed. A miss is harmless: `--timings` naming a missing file is
-      # ignored, and the shards still cover every file, just balanced by count.
-      - name: Restore per-file test timings (from main)
-        if: needs.filter.outputs.code-changed == 'true'
+      # Per-file durations from push runs on `main` (written by `_test-suite.yml`'s macOS/Windows
+      # step with `--update-timings`). With them, `--shard` splits the suite by measured TIME rather
+      # than by file count, and `--parallel` starts the slowest files first so one long e2e file
+      # does not start last and stretch the run. Written on `main`, so every PR can read them — a
+      # PR-scoped entry would only ever serve that PR, the trap #1654 removed. With no timings at
+      # all the shards still cover every file, balanced by count.
+      #
+      # Windows takes the ONE snapshot `filter` uploaded, so both shards split with the same table
+      # (see the snapshot steps there). The download is NOT continue-on-error: if a snapshot
+      # exists and one shard cannot fetch it, that shard would split differently from its sibling,
+      # so it fails instead. macOS is a single `1/1` job with nothing to keep in step, so it
+      # restores the newest entry directly.
+      - name: Windows — fetch the shared timings snapshot
+        if: needs.filter.outputs.code-changed == 'true' && runner.os == 'Windows' && needs.filter.outputs.windows-timings == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-timings-snapshot-windows
+          path: ${{ runner.temp }}
+
+      - name: macOS — restore per-file test timings (from main)
+        if: needs.filter.outputs.code-changed == 'true' && runner.os == 'macOS'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/test-timings.json
-          key: test-timings-${{ runner.os }}-pr-${{ github.run_id }}
+          path: ci-test-timings.json
+          key: test-timings-macOS-pr-${{ github.run_id }}
           restore-keys: |
-            test-timings-${{ runner.os }}-
+            test-timings-macOS-
+          enableCrossOsArchive: true
+
+      - name: macOS — move the timings out of the checkout
+        if: needs.filter.outputs.code-changed == 'true' && runner.os == 'macOS'
+        shell: bash
+        run: if [ -f ci-test-timings.json ]; then mv ci-test-timings.json "${RUNNER_TEMP}/"; fi
 
       - name: Unit + integration tests (retry once on slow runners)
         if: needs.filter.outputs.code-changed == 'true'
@@ -465,7 +528,7 @@ jobs:
         run: |
           set +e
           for attempt in 1 2; do
-            bun scripts/run-with-timeout.ts 1500 bun test packages/gateway packages/cli scripts --timeout 60000 --parallel --shard=${{ matrix.shard }} --timings="${RUNNER_TEMP}/test-timings.json" --reporter=junit --reporter-outfile="${RUNNER_TEMP}/junit-attempt-${attempt}.xml" > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
+            bun scripts/run-with-timeout.ts 1500 bun test packages/gateway packages/cli scripts --timeout 60000 --parallel --shard=${{ matrix.shard }} --timings="${RUNNER_TEMP}/ci-test-timings.json" --reporter=junit --reporter-outfile="${RUNNER_TEMP}/junit-attempt-${attempt}.xml" > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
             code=$?
             cat "${RUNNER_TEMP}/attempt-${attempt}.log"
             if [ "$code" -eq 0 ]; then
