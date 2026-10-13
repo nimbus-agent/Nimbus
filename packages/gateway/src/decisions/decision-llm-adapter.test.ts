@@ -2,6 +2,7 @@ import { describe, expect, it, test } from "bun:test";
 
 import { LlmRouter } from "../llm/router.ts";
 import type { LlmProvider } from "../llm/types.ts";
+import { expectLinearGrowth } from "../testing/linear-growth.ts";
 import {
   buildExtractionPrompt,
   createDecisionLlm,
@@ -144,9 +145,8 @@ test("extractDecision still throws on malformed non-null output", async () => {
 
 /** Four sizes = three doublings. Linear predicts ~8x end to end, quadratic ~64x. */
 const GROWTH_SIZES = [4_000, 8_000, 16_000, 32_000] as const;
-/** Repeats per size, so the linear timings are milliseconds rather than noise. */
+/** Repeats per trial, so the linear timings are milliseconds rather than noise. */
 const GROWTH_REPEATS = 500;
-const GROWTH_MAX_END_TO_END = 16;
 /** The quadratic form blows this at the FIRST size, so a regression fails fast. */
 const GROWTH_PER_SIZE_CEILING_MS = 1000;
 
@@ -156,31 +156,23 @@ test("an unterminated fence followed by whitespace costs linear, not quadratic, 
   const build = (n: number): string => `\`\`\`${" ".repeat(n)}`;
   expect(() => parseExtraction(build(8))).toThrow("model output was not parseable JSON");
 
-  const timings: number[] = [];
-  for (const n of GROWTH_SIZES) {
-    const raw = build(n);
-    let thrown = 0;
-    const count = (): void => {
-      try {
-        parseExtraction(raw);
-      } catch {
-        thrown += 1;
-      }
-    };
-    count(); // warm the JIT outside the measured batch
-    const startedAt = performance.now();
-    for (let i = 0; i < GROWTH_REPEATS; i += 1) count();
-    const elapsedMs = performance.now() - startedAt;
-    expect(thrown).toBe(GROWTH_REPEATS + 1);
-    expect(elapsedMs).toBeLessThan(GROWTH_PER_SIZE_CEILING_MS);
-    timings.push(elapsedMs);
-  }
-
-  const first = timings[0] ?? 0;
-  const last = timings[timings.length - 1] ?? 0;
-  // Floor the baseline so a fast machine measuring the smallest size near the
-  // clock's resolution cannot manufacture a huge ratio out of noise.
-  expect(last / Math.max(first, 0.5)).toBeLessThan(GROWTH_MAX_END_TO_END);
+  expectLinearGrowth({
+    sizes: GROWTH_SIZES,
+    repeats: GROWTH_REPEATS,
+    perSizeCeilingMs: GROWTH_PER_SIZE_CEILING_MS,
+    makeCall: (n) => {
+      const raw = build(n);
+      // Every timed call must take the throw path, or the curve measures the wrong code.
+      return () => {
+        try {
+          parseExtraction(raw);
+        } catch {
+          return;
+        }
+        throw new Error("expected parseExtraction to throw on an unterminated fence");
+      };
+    },
+  });
 });
 
 describe("createDecisionLlm", () => {

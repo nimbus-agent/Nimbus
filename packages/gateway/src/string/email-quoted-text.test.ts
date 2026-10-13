@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { expectLinearGrowth } from "../testing/linear-growth.ts";
 import { stripQuotedTail } from "./email-quoted-text.ts";
 
 test("cuts a trailing > quote block", () => {
@@ -241,34 +242,14 @@ test("many non-terminal dividers do not cost quadratic time", () => {
 
 /** Four sizes = three doublings. Linear predicts ~8x end to end, quadratic ~64x. */
 const GROWTH_SIZES = [8_000, 16_000, 32_000, 64_000] as const;
-/** Repeats per size, so the linear timings are milliseconds rather than noise. */
+/** Repeats per trial, so the linear timings are milliseconds rather than noise. */
 const GROWTH_REPEATS = 50;
-const GROWTH_MAX_END_TO_END = 16;
 /**
  * Per-size ceiling. The linear form runs the whole 50-repeat batch in well
  * under 50 ms even at 64 KB; the quadratic form blows this at the FIRST size,
  * so a regression fails fast instead of hanging the suite.
  */
 const GROWTH_PER_SIZE_CEILING_MS = 500;
-
-function timeAcrossDoublings(build: (n: number) => string): number[] {
-  const timings: number[] = [];
-  for (const n of GROWTH_SIZES) {
-    const input = build(n);
-    // Warm the JIT (and prove the result is what the caller expects) outside
-    // the measured batch, so the batch times the trim and nothing else.
-    let sink = stripQuotedTail(input).length;
-    const startedAt = performance.now();
-    for (let i = 0; i < GROWTH_REPEATS; i += 1) {
-      sink += stripQuotedTail(input).length;
-    }
-    const elapsedMs = performance.now() - startedAt;
-    expect(sink).toBeGreaterThan(0);
-    expect(elapsedMs).toBeLessThan(GROWTH_PER_SIZE_CEILING_MS);
-    timings.push(elapsedMs);
-  }
-  return timings;
-}
 
 test("a long trailing whitespace run on the kept region costs linear, not quadratic, time", () => {
   // Both an INTERNAL whitespace run and a trailing one: the internal run is
@@ -279,10 +260,15 @@ test("a long trailing whitespace run on the kept region costs linear, not quadra
   // Correctness first: the trailing run is stripped and the quote is cut.
   expect(stripQuotedTail(build(4))).toBe("Reply.    done.");
 
-  const timings = timeAcrossDoublings(build);
-  const first = timings[0] ?? 0;
-  const last = timings[timings.length - 1] ?? 0;
-  // Floor the baseline so a fast machine measuring the smallest size near the
-  // clock's resolution cannot manufacture a huge ratio out of noise.
-  expect(last / Math.max(first, 0.5)).toBeLessThan(GROWTH_MAX_END_TO_END);
+  expectLinearGrowth({
+    sizes: GROWTH_SIZES,
+    repeats: GROWTH_REPEATS,
+    perSizeCeilingMs: GROWTH_PER_SIZE_CEILING_MS,
+    makeCall: (n) => {
+      const input = build(n);
+      return () => {
+        stripQuotedTail(input);
+      };
+    },
+  });
 });
