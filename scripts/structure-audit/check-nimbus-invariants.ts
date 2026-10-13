@@ -1864,9 +1864,10 @@ export function checkCaptureGateCallers(files: readonly FileEntry[]): Violation[
 //     `import type` / `export type` carry no runtime reference and are allowed anywhere. The span
 //     between the keyword and `from` may not cross another `import`/`export` keyword or a completed
 //     `from "…"` clause, so in semicolon-free code a match cannot start at an earlier `import type`
-//     and carry that statement's exemption onto the value import after it.
+//     and carry that statement's exemption onto the value import after it. The last alternative
+//     takes both a dynamic `import("…")` and a side-effect `import "…"`, which has no `from` clause.
 const D32_GATE_MODULE_RE =
-  /\b(?:import|export)\b(?:(?!\bfrom\s*["']|\b(?:import|export)\b)[^;])*?\bfrom\s*["'][^"']*capture-gate(?:\.ts)?["']|\bimport\s*\(\s*["'][^"']*capture-gate(?:\.ts)?["']/g;
+  /\b(?:import|export)\b(?:(?!\bfrom\s*["']|\b(?:import|export)\b)[^;])*?\bfrom\s*["'][^"']*capture-gate(?:\.ts)?["']|\bimport\s*\(?\s*["'][^"']*capture-gate(?:\.ts)?["']/g;
 
 export function checkCaptureGateImporters(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];

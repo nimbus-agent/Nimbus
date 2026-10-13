@@ -2112,6 +2112,7 @@ describe("D32(c) — capture-gate.ts is value-imported only by ipc/capture-rpc.t
     ["a value import", 'import { CaptureGateDeps } from "../mcp-sink/capture-gate";'],
     ["a multi-line import", 'import {\n  a,\n  b,\n} from "../mcp-sink/capture-gate.ts";'],
     ["a dynamic import", 'const g = await import("../mcp-sink/capture-gate.ts");'],
+    ["a side-effect import", 'import "../mcp-sink/capture-gate.ts";'],
     [
       "a value import after a semicolon-free type import",
       'import type { X } from "./other"\nimport * as gate from "../mcp-sink/capture-gate.ts"',

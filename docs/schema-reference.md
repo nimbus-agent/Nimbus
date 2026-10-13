@@ -1042,8 +1042,9 @@ ALTER TABLE extension ADD COLUMN tree_digest TEXT;
 
 -- V67 -- the MCP capture sink queue (I28). One row per capture an MCP client submitted through
 -- mcp-sink/capture-gate.ts. kind is note|decision|term|link; a note is live|revoked, every other
--- kind proposed|accepted|rejected|revoked (CHECK). revoked clears payload_json (CHECK) and keeps
--- everything else. Only mcp-sink/capture-store.ts names the table (static D32(a)).
+-- kind proposed|accepted|rejected|revoked (CHECK). revoke clears payload_json and item_id and keeps
+-- everything else; the CHECK enforces only the payload_json half. Only mcp-sink/capture-store.ts
+-- names the table (static D32(a)).
 -- Authoritative source: packages/gateway/src/index/capture-v67-sql.ts
 CREATE TABLE IF NOT EXISTS capture (
     id            TEXT PRIMARY KEY,

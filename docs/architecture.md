@@ -1815,7 +1815,8 @@ a fixed order and refuses at the first failing step:
 **The table.** `capture` (V67, `index/capture-v67-sql.ts`): `id`, `kind`
 (`note|decision|term|link`), `state` (`live|proposed|accepted|rejected|revoked`, CHECK-constrained
 per kind), `item_id`, `payload_json`, `payload_bytes`, `client_label`, `session_id`, `native_ref`,
-`created_at`, `decided_at`. A revoked row clears `payload_json` (CHECK) and keeps the rest. Only
+`created_at`, `decided_at`. Revoking a row clears `payload_json` and `item_id` and keeps the rest; the CHECK enforces only
+the `payload_json` half. Only
 `mcp-sink/capture-store.ts` names the table (static D32(a)).
 
 **Items.** A note is an ordinary indexed item of type `nimbus:capture`, labelled agent-authored
