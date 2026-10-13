@@ -961,10 +961,10 @@ CREATE INDEX IF NOT EXISTS idx_fleet_brief_subject ON fleet_brief (subject_key, 
 CREATE INDEX IF NOT EXISTS idx_fleet_brief_expires ON fleet_brief (expires_at);
 CREATE INDEX IF NOT EXISTS idx_fleet_run_started ON fleet_run (started_at DESC);
 
--- V61 -- saved (persisted) generated tools. Reserves invariant I40 and static rule D29(d) BY
--- NAME only -- this delivery (Task 2 of a 12-task branch) ships the table and its repository
--- module only; nothing writes a row yet. The save gate, the signature/schema verification, the
--- boot-time orphan sweep, and the load path that make I40 real are later tasks on this branch.
+-- V61 -- saved (persisted) generated tools (invariant I40, static rule D29(d)). The save gate
+-- (`nimbus tool save`) writes the row; the live Ed25519 signature is re-verified at boot, at
+-- registry load, and immediately before every spawn (`nimbus tool run`), and revocation drops the
+-- row. The model still cannot invoke a generated tool: `deps.toolgen` stays unwired.
 -- Authoritative source: packages/gateway/src/index/generated-tool-v61-sql.ts
 --
 -- The row governs EXISTENCE; disk plus signature govern CONTENT. A `saved/<toolId>` directory on
@@ -1056,8 +1056,16 @@ CREATE TABLE IF NOT EXISTS capture (
     session_id    TEXT NOT NULL,
     native_ref    TEXT,
     created_at    INTEGER NOT NULL,
-    decided_at    INTEGER
+    decided_at    INTEGER,
+    CHECK (
+      (kind = 'note' AND state IN ('live','revoked'))
+      OR (kind <> 'note' AND state IN ('proposed','accepted','rejected','revoked'))
+    ),
+    CHECK ((state = 'revoked') = (payload_json IS NULL))
 );
+CREATE INDEX IF NOT EXISTS idx_capture_state_created ON capture(state, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_capture_created ON capture(created_at);
+CREATE INDEX IF NOT EXISTS idx_capture_item_id ON capture(item_id) WHERE item_id IS NOT NULL;
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.

@@ -2055,6 +2055,9 @@ describe("D32(a) — the capture table is named only by its store and its DDL", 
     ["a schema-qualified name", "SELECT 1 FROM main.capture"],
     ["a quoted schema-qualified name", 'SELECT 1 FROM "main"."capture"'],
     ["a foreign key", "FOREIGN KEY (a) REFERENCES capture(id)"],
+    ["an index target", "CREATE INDEX idx_capture_state ON capture (state)"],
+    ["an IF NOT EXISTS index target", "CREATE UNIQUE INDEX IF NOT EXISTS i ON main.capture(id)"],
+    ["a trigger target", "CREATE TRIGGER t AFTER UPDATE OF state, item_id ON capture BEGIN"],
   ])("FAILS on %s from anywhere else", (_n, sqlText) => {
     expect(
       checkCaptureTableConfinement([file("packages/gateway/src/ipc/capture-rpc.ts", sqlText)]),
@@ -2068,6 +2071,8 @@ describe("D32(a) — the capture table is named only by its store and its DDL", 
           "packages/gateway/src/x.ts",
           "SELECT 1 FROM capture_log; // FROM capture\nconst tribalCapture = 1;",
         ),
+        file("packages/gateway/src/y.ts", "CREATE INDEX i ON capture_log(id)"),
+        file("packages/gateway/src/z.ts", 'log("index rebuilt on capture of the sync state")'),
       ]),
     ).toEqual([]);
   });
@@ -2093,6 +2098,10 @@ describe("D32(c) — capture-gate.ts is value-imported only by ipc/capture-rpc.t
         ),
         file("packages/gateway/src/y.ts", 'export type { X } from "../mcp-sink/capture-gate.ts";'),
         file("packages/gateway/src/x.test.ts", 'import * as g from "../mcp-sink/capture-gate.ts";'),
+        file(
+          "packages/gateway/src/z.ts",
+          'import "./polyfill"\nimport type { Y } from "../mcp-sink/capture-gate.ts"',
+        ),
       ]),
     ).toEqual([]);
   });
@@ -2103,6 +2112,14 @@ describe("D32(c) — capture-gate.ts is value-imported only by ipc/capture-rpc.t
     ["a value import", 'import { CaptureGateDeps } from "../mcp-sink/capture-gate";'],
     ["a multi-line import", 'import {\n  a,\n  b,\n} from "../mcp-sink/capture-gate.ts";'],
     ["a dynamic import", 'const g = await import("../mcp-sink/capture-gate.ts");'],
+    [
+      "a value import after a semicolon-free type import",
+      'import type { X } from "./other"\nimport * as gate from "../mcp-sink/capture-gate.ts"',
+    ],
+    [
+      "a value import after a semicolon-free side-effect import",
+      'import "./polyfill"\nimport { a } from "../mcp-sink/capture-gate.ts"',
+    ],
   ])("FAILS on %s outside capture-rpc.ts", (_n, src) => {
     expect(
       checkCaptureGateImporters([file("packages/gateway/src/platform/assemble.ts", src)]),

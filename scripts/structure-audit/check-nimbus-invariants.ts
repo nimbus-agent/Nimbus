@@ -1793,11 +1793,13 @@ export function checkMediaGrantStoreConfinement(files: readonly FileEntry[]): Vi
 //     only CaptureStore is ever handed queries against the table — is the real defense.
 //     Widened beyond D27(b)'s shape: an `OR <conflict>` clause after UPDATE, an optional schema
 //     qualifier (`main.capture`, `"main"."capture"`), `REFERENCES`, and a comma join after a FROM
-//     list (`FROM item, capture`).
+//     list (`FROM item, capture`), and the `ON` target of a `CREATE INDEX` or `CREATE TRIGGER` (only
+//     event words and a column list may sit between the trigger name and `ON`). Those two require the
+//     `CREATE` keyword, so prose like "index rebuilt on capture" in a log string does not match.
 const D32_CAPTURE_IDENT =
   '(?:[`"[]?[A-Za-z_]\\w*[`"\\]]?\\.)?[`"[]?capture[`"\\]]?(?![A-Za-z0-9_])';
 const D32_CAPTURE_TABLE_RE = new RegExp(
-  `\\b(?:(?:FROM|INTO|UPDATE(?:\\s+OR\\s+\\w+)?|TABLE|JOIN|REFERENCES)\\s+|FROM\\s+[^;()]*?,\\s*)${D32_CAPTURE_IDENT}`,
+  `\\b(?:(?:FROM|INTO|UPDATE(?:\\s+OR\\s+\\w+)?|TABLE|JOIN|REFERENCES)\\s+|FROM\\s+[^;()]*?,\\s*|CREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[\\w"\`[\\].]+\\s+ON\\s+|CREATE\\s+(?:TEMP(?:ORARY)?\\s+)?TRIGGER\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[\\w"\`[\\].]+\\s+[A-Za-z_,\\s]*?\\bON\\s+)${D32_CAPTURE_IDENT}`,
   "i",
 );
 const D32_CAPTURE_TABLE_ALLOWED: readonly string[] = [
@@ -1859,9 +1861,12 @@ export function checkCaptureGateCallers(files: readonly FileEntry[]): Violation[
 // (c) No module outside ipc/capture-rpc.ts may VALUE-import (or re-export, or dynamically import)
 //     capture-gate.ts. (b) is an identifier scan, which a barrel `export * from ".../capture-gate.ts"`
 //     or a namespace import called through a computed key evades; this closes it at the module edge.
-//     `import type` / `export type` carry no runtime reference and are allowed anywhere.
+//     `import type` / `export type` carry no runtime reference and are allowed anywhere. The span
+//     between the keyword and `from` may not cross another `import`/`export` keyword or a completed
+//     `from "…"` clause, so in semicolon-free code a match cannot start at an earlier `import type`
+//     and carry that statement's exemption onto the value import after it.
 const D32_GATE_MODULE_RE =
-  /\b(?:import|export)\b[^;]*?\bfrom\s*["'][^"']*capture-gate(?:\.ts)?["']|\bimport\s*\(\s*["'][^"']*capture-gate(?:\.ts)?["']/g;
+  /\b(?:import|export)\b(?:(?!\bfrom\s*["']|\b(?:import|export)\b)[^;])*?\bfrom\s*["'][^"']*capture-gate(?:\.ts)?["']|\bimport\s*\(\s*["'][^"']*capture-gate(?:\.ts)?["']/g;
 
 export function checkCaptureGateImporters(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];

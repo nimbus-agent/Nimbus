@@ -2621,12 +2621,12 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     const order = [
       "deps.capability()",
       "CAPTURE_ROLE_BY_KIND[caller.kind]",
-      "deps.limiter.tryAcquire",
-      "cap.kinds.includes",
+      "deps.limiter.tryAcquire(",
+      "cap.kinds.includes(",
       "validateNotePayload(params",
       "missingItem(",
-      "deps.store.countCreatedSince",
-      "deps.db.transaction",
+      "deps.store.countCreatedSince(",
+      "deps.db.transaction(",
     ];
     const idx = order.map((s) => body.indexOf(s));
     expect(idx.every((i) => i >= 0)).toBe(true);
