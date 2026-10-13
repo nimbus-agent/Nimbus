@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791828299906,
+  "lastUpdate": 1791864145270,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5ad05a8c69e98624897f3996b6989fc145e69bba",
-          "message": "feat(ci): audit:review-coverage — close P3's org-wide half (#948)\n\nCompletes **P3 (Review Layer)**. The sub-program's stated gate was\nalready met, so this delivers what was actually missing rather than\ndeclaring it done.\n\n## The gap\n\n`.coderabbit.yaml` shipped for the monorepo in #846, and\n`check-coderabbit-config.test.ts` validates it deeply — globs resolve to\nreal directories, every cited `I<n>` exists in `SECURITY-INVARIANTS.md`,\nnothing tells the reviewer to enforce the reserved I28.\n\n**Nothing validated the four satellites' configs.** That is this\nsub-program's own founding pattern — a control that stops where it was\nwritten — sitting inside P3 itself.\n\n## What the gate asserts\n\n`audit:review-coverage` reads `.coderabbit.yaml` from all five code\nrepos and requires it be present, parseable **and active**:\n\n- `auto_review.enabled === true` — written as `!== true`, so a *missing*\nkey fails closed rather than defaulting to enabled\n- `auto_review.base_branches` includes `main`\n- `reviews.path_instructions` is non-empty\n\n**Active, not merely present**, is the direct lesson from the CLA outage\nand from `audit:actions-allowlist`'s `startup_failure` half: a control\ncan be committed, valid-looking and completely inert. A config with\n`auto_review` off reviews nothing while reading as covered — presence\nalone passes it.\n\n`unparseable` is a **distinct verdict from absent**, because CodeRabbit\nsilently ignores a config it cannot parse and the repair differs. A YAML\ndocument parsing to a scalar or list is also `unparseable`: legal YAML,\nunusable config.\n\n## Two deliberate non-goals\n\n- **Instruction CONTENT is not gated.** The five repos are different\nproducts under different licences — the SDK must stay dependency-free,\nthe gateway carries I1–I30 — so a shared-content assertion could only be\nsatisfied by making every instruction vaguer. A gate that degrades what\nit guards isn't worth having; content stays the owning repo's local\ntest's job.\n- **`awesome-nimbus` is an explicit `EXEMPT_REPOS` entry with a stated\nreason** (curated link list, no source tree), covered by a test, so the\nnext reader can tell \"decided\" from \"forgotten\".\n\n## Verification\n\n- **Live green:** `audit:review-coverage: OK (5 repos, 1 exempt)`\n- **Red-proved:** added the exempt `awesome-nimbus` to the gated set,\n**verified the mutation had actually landed in the file** before\ntrusting the result, and confirmed exit 1 with `awesome-nimbus: no\n.coderabbit.yaml`. Reverted, re-confirmed green.\n- Scope honesty: the live red-prove exercised the **absent** path. The\ninert and unparseable paths are proved by unit test — red-proving those\nlive would mean degrading a real repo's config.\n- `bun test scripts/` — **943 pass, 0 fail** (includes the\npreflight-gate manifest drift test, which accepts the new\n`CI_ONLY_GATES` entry)\n- 23 unit tests covering the pure diff, the parse verdicts and the read\nclassification\n- `bun run typecheck` — **exit 0**, 0 errors across the full log\n- `bunx biome check packages scripts .github docs` — 3009 files, no\nfixes\n- `markdownlint-cli2` — 0 issues; `lychee` — 1071 links, **0 errors**\n(whole branch)\n\nRegistered in `package.json`, `CI_ONLY_GATES` (network + `gh`,\nsweep-only), and a new `review-coverage` job on `org-drift-sweep.yml`.\nPer the known constraint, the net-new sweep job's first real run is\npost-merge.\n\n> Touches `docs/infrastructure-roadmap.md`, as does #944 — different\nregions, but whichever merges second may need a trivial rebase.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-30T07:25:48+03:00",
-          "tree_id": "0f2a875dc8b460bb0927d07e9f65b176e8e7247c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5ad05a8c69e98624897f3996b6989fc145e69bba"
-        },
-        "date": 1785386234596,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 307.4283524499995,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 305.3155214499981,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 263.8057010000008,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cab102ef0a11fd1c2179324ffa32bf0f36cafd69",
+          "message": "test: time the linear-growth checks best-of-five, under one shared bound (#1652)\n\n## Summary\n\nA follow-up to #1651. Three tests check that a parser costs linear, not\nquadratic, time:\n- `cue-mining.test.ts`\n- `email-quoted-text.test.ts`\n- `decision-llm-adapter.test.ts`\n\nEach one times a batch of calls at four input sizes and asserts that the\nratio from the first size to the last stays under a bound. Each size was\ntimed **once**, so a single batch that lost the CPU set that size's\nsample. A GC pause or another `--parallel` worker was enough. On\nwindows-2025 the cue-mining check failed after 83 ms total with nothing\nwrong in the code. The retry passed, but the leg paid for a second full\ntest run.\n\nThis PR adds a shared helper,\n`packages/gateway/src/testing/linear-growth.ts`:\n\n- **Best of five trials per size.** Interference only ever adds time, so\nthe fastest trial is the closest estimate of the work itself. A\nquadratic regression is slow on every trial, so it still fails. Every\ntrial runs on the healthy path, because a preempted *first* trial is\nexactly the sample this change exists to discard. The only early exit is\ntwo trials over the per-size ceiling, so a regression still fails fast.\n- **One bound, 32×, instead of three copies of 16×.** Ideal linear\ngrowth is 8× and quadratic is 64×. Even with best-of-five, linear code\nunder contention measured 17.1–17.7×. A larger input stops fitting in a\ncache that other processes share, so 16 was too close to linear. 32\nleaves a 2× margin on each side.\n\nThe three tests keep their own sizes, repeat counts, per-size ceilings\nand correctness checks. The adapter test still makes every timed call\ntake the throw path.\n\n## Related Issue\n\nNone. Seen as the windows-2025 retry on #1651.\n\n## Type of Change\n\n- [x] Test improvement\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`)\n- [x] New behaviour is covered by tests (`linear-growth.test.ts`)\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] The only new non-test file is under\n`packages/gateway/src/testing/`, which the coverage floor exempts\nstructurally. `linear-growth.test.ts` covers it anyway.\n\n## Testing\n\n**Stress test, run locally.** Four copies of the suite ran at once while\nfour busy-loops held the CPUs, so 8 processes shared 4 cores. That is\nharsher than a CI leg.\n\n| Version | Failing runs |\n|---|---|\n| Before (single sample, bound 16) | **9 / 20** (cue-mining 9×,\nemail-quoted-text 2×) |\n| Best-of-five, bound still 16 | 4 / 20 (ratios 17.1–17.7) |\n| This PR (best-of-five, bound 32) | **0 / 40** |\n\n**`linear-growth.test.ts` pins the helper's three properties:**\n- A single 40 ms stall at the largest size no longer fails a linear\ncurve.\n- A quadratic curve still fails. It is sized so the smallest size sits\nabout 2× above the 0.5 ms baseline floor; at a tenth of that size the\nfloor flattened the curve to a \"ratio\" of 6, and the test passed for the\nwrong reason.\n- A size whose trials stay over the ceiling stops after two trials.\n\n**Gates:** `bun run preflight:fast` and `typecheck:tests` pass.\n\n## Notes for Reviewers\n\n- **Cost:** a healthy run now takes about 5× the old measured time per\nsize. The four files together take about 1.5 s locally.\n- **Weaker check:** a 32× bound would no longer catch something growing\nat around 3× per doubling (roughly n^1.6). The tests exist to catch the\nspecific quadratic regex backtracking documented above each one, which\ngrows at 4× per doubling.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_014HT9yGfRK52JPScsN6EVuP\n\n---\n_Generated by [Claude\nCode](https://claude.ai/code/session_014HT9yGfRK52JPScsN6EVuP)_\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Tests**\n* Improved performance regression checks for email quoted-text handling\nand malformed decision input parsing across multiple input sizes.\n* Added coverage to verify that timing noise does not cause false\nfailures, inefficient growth is detected, and operations exceeding time\nlimits are flagged consistently. These checks also validate that\nperformance measurements account for warm-up and repeated trials.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+          "timestamp": "2026-10-13T06:52:37+03:00",
+          "tree_id": "c0b17f49a95120160d85d110b9324f449f930b27",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/cab102ef0a11fd1c2179324ffa32bf0f36cafd69"
+        },
+        "date": 1791864140392,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 197.30929770000586,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 192.91418639999975,
             "unit": "ms"
           }
         ]
