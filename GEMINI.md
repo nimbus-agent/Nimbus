@@ -140,7 +140,7 @@ not here. Where the Gateway also carries per-connector sync/indexing logic, a fe
 ### CI gating
 
 PRs run the Ubuntu `pr-quality` set **and** `pr-quality-cross-platform` — one macOS leg and one
-Windows leg. Pushes run the full 3-OS matrix.
+Windows leg, the Windows one split into two `--shard` jobs. Pushes run the full 3-OS matrix.
 
 **TEN status checks gate the merge, not one.** The _General_ ruleset (14784377) requires all of:
 `PR quality — required gates`, `Dependency audit`, `Trivy vulnerability scan`, `Gitleaks secret
@@ -196,7 +196,10 @@ file gets a fresh global and module registry, so a `mock.module` in one file can
 into another on these legs. The Linux `Unit + Coverage` leg still runs each package serially in
 one process, so cross-file mock leakage remains possible there. Only the remaining flags differ:
 the push leg adds coverage instrumentation and the PR legs a wall-clock wrapper, which is why the
-parity test compares positional paths only. **`--parallel` is part of the shape: drop it from one
+parity test compares positional paths only. The Windows PR leg runs those paths as `--shard=1/2`
+and `--shard=2/2`, balanced by per-file timings that each push run on `main` caches
+(`--update-timings`); parity holds over the UNION of the shards, and the parity test checks that
+every OS's shard set is exactly `1/N … N/N`. **`--parallel` is part of the shape: drop it from one
 leg and not the other and the two stop running the same thing.**
 That equality is load-bearing and was only established on 2026-08-23. Before it, the PR
 leg ran `bun test packages/<pkg>/src` per package while the push leg ran everything in one process,
