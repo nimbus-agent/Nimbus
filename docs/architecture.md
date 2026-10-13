@@ -1810,13 +1810,13 @@ a fixed order and refuses at the first failing step:
 7. **Durable hourly cap**, read from the `capture` table, so a restart cannot reset it.
 8. **One transaction** writes the `capture` row, the `nimbus:capture` item and the `capture.submit`
    audit row; an audit failure rolls all of it back. A successful submit records
-   `hitl_status = 'not_required'` (no consent gate ran); a refusal at steps 4 to 8 records `rejected`.
+   `hitl_status = 'not_required'` (no consent gate ran); a refusal at steps 4 to 7 records `rejected`.
 
 **The table.** `capture` (V67, `index/capture-v67-sql.ts`): `id`, `kind`
 (`note|decision|term|link`), `state` (`live|proposed|accepted|rejected|revoked`, CHECK-constrained
 per kind), `item_id`, `payload_json`, `payload_bytes`, `client_label`, `session_id`, `native_ref`,
-`created_at`, `decided_at`. Revoking a row clears `payload_json` and `item_id` and keeps the rest; the CHECK enforces only
-the `payload_json` half. Only
+`created_at`, `decided_at`. Revoking a row sets `state = 'revoked'` and `decided_at`, clears `payload_json` and `item_id`, and
+leaves every other column unchanged; the CHECK enforces only the `payload_json` half. Only
 `mcp-sink/capture-store.ts` names the table (static D32(a)).
 
 **Items.** A note is an ordinary indexed item of type `nimbus:capture`, labelled agent-authored
