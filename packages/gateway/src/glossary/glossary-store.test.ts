@@ -422,11 +422,20 @@ describe("agent terms (capture sink)", () => {
     expect(getTerm(db, "wal")?.definition).toBe("newer");
   });
 
-  test("never takes over a vetoed or a manual row", () => {
+  test("takes over a model-vetoed row: the owner's explicit accept outranks the classifier", () => {
     seedCandidate("wal", 1);
     markVetoed(db, "wal", 3);
-    expect(upsertAgentTerm(db, agent("cap_1"))).toBe(false);
-    expect(termOwnership(db, "wal")?.status).toBe("vetoed");
+    expect(termOwnership(db, "wal")?.status).toBe("vetoed"); // positive control
+    expect(upsertAgentTerm(db, agent("cap_1"))).toBe(true);
+    expect(termOwnership(db, "wal")).toEqual({
+      status: "consolidated",
+      definitionSource: "agent",
+      captureId: "cap_1",
+    });
+  });
+
+  test("never takes over a manual row", () => {
+    seedCandidate("wal", 1);
     upsertManualTerm(db, {
       termKey: "wal",
       displayTerm: "WAL",

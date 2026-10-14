@@ -1883,8 +1883,8 @@ graph edge of one of five new `captured_*` relation types. The row carries `capt
 currently OWNS it. The same transaction writes the local-embedder-only `nimbus:capture` item, so search finds
 the capture, and audits `capture.accept` as `hitl_status = 'not_required'` with `outcome: "accepted"`: the
 owner's own CLI command is not a consent gate, and I4 admits `approved` only where one decided. Refusals are
-`ERR_CAPTURE_SUPERSEDED` (another source took the term over meanwhile) and `ERR_CAPTURE_LINK_UNRESOLVED` (an
-endpoint item has gone). **Reject** (`rejectCapture`) needs NO capability, so the owner can drain the queue
+`ERR_CAPTURE_SUPERSEDED` (the owner defines that term in `nimbus.toml`, a `manual` row, and that entry wins) and `ERR_CAPTURE_LINK_UNRESOLVED` (an
+endpoint item has gone). A `vetoed` term is NOT a refusal: the veto is the local model's "not a domain term" classification, never the owner's, so the owner's explicit accept takes the row over. **Reject** (`rejectCapture`) needs NO capability, so the owner can drain the queue
 under a policy lock; it writes nothing and audits `rejected`. **Revoke** now also works on accepted captures and
 deletes only what the capture still owns (`revokeCaptureNative`): a row a manual edit or a later capture took
 over, or one already gone, is left alone. `nimbus captures show` prints that native status (owned, superseded

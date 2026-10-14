@@ -60,20 +60,22 @@ export function resolveLinkEndpoints(
   return { fromEntityId, toEntityId };
 }
 
+function termSuperseded(termKey: string): CaptureError {
+  return new CaptureError(
+    "ERR_CAPTURE_SUPERSEDED",
+    `the glossary term "${termKey}" is defined in the owner's nimbus.toml (manual); that entry wins`,
+  );
+}
+
+/**
+ * Accept preconditions. A term refuses ONLY over a `manual` row (the owner's own config). A
+ * `vetoed` row is the local model's classification ("not a domain term"), never the owner's: the
+ * owner's explicit accept outranks it and takes the row over like any other.
+ */
 export function assertAcceptable(db: Database, v: ValidatedCapture): LinkEndpoints | undefined {
   if (v.kind === "term") {
-    const o = termOwnership(db, v.payload.termKey);
-    if (o?.status === "vetoed") {
-      throw new CaptureError(
-        "ERR_CAPTURE_SUPERSEDED",
-        `the glossary term "${v.payload.termKey}" is vetoed; the owner's veto wins`,
-      );
-    }
-    if (o?.definitionSource === "manual") {
-      throw new CaptureError(
-        "ERR_CAPTURE_SUPERSEDED",
-        `the glossary term "${v.payload.termKey}" is authored in nimbus.toml; the owner's entry wins`,
-      );
+    if (termOwnership(db, v.payload.termKey)?.definitionSource === "manual") {
+      throw termSuperseded(v.payload.termKey);
     }
     return undefined;
   }
@@ -169,12 +171,7 @@ export function writeCaptureNative(
         score,
         nowMs: p.nowMs,
       });
-      if (!wrote) {
-        throw new CaptureError(
-          "ERR_CAPTURE_SUPERSEDED",
-          `the glossary term "${v.payload.termKey}" is vetoed or authored; the owner's entry wins`,
-        );
-      }
+      if (!wrote) throw termSuperseded(v.payload.termKey);
       // The row may have been a projected llm/snippet term. Reconcile now skips agent rows, so
       // nothing else would ever remove that `nimbus:glossary_term` item, and it would keep serving
       // the superseded definition in search. Same transaction as the takeover.

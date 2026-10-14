@@ -153,7 +153,7 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
     description:
       "Propose a glossary term for the user's LOCAL Nimbus glossary. " +
       PROPOSAL_NOTE +
-      "A term the owner vetoed or defined in nimbus.toml cannot be overridden.",
+      "A term the owner defined in nimbus.toml cannot be overridden.",
     schema: {
       term: z.string(),
       definition: z.string(),

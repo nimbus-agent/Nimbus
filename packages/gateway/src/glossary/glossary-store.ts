@@ -670,12 +670,14 @@ export interface AgentTermUpsert {
 /**
  * The ONLY writer of a `definition_source = 'agent'` row (static D32(d): callable only from
  * `mcp-sink/capture-native.ts`). Takes over an llm/snippet/agent row (the newer accepted definition
- * wins and OWNERSHIP moves, spec 5.2); never a vetoed or manual one, the owner's own veto or
- * config wins. The accept precondition refuses those first; this WHERE is the second door.
+ * wins and OWNERSHIP moves, spec 5.2), and a model-`vetoed` row too (status becomes
+ * `consolidated`): a veto is the local model's classification, and the owner's explicit accept
+ * overrides it. Never a manual one; the owner's config wins. The accept precondition refuses a
+ * manual row first; this WHERE is the second door.
  * Never projected: `nimbus:glossary_term` embeds remotely when a key is set, and agent text must
  * not (spec criterion 5) - the capture item is what search finds.
  *
- * @returns false when a vetoed or manual row holds the key (nothing written).
+ * @returns false when a manual row holds the key (nothing written).
  */
 export function upsertAgentTerm(db: Database, p: AgentTermUpsert): boolean {
   const seen = p.stats.docFreq > 0;
@@ -696,7 +698,7 @@ export function upsertAgentTerm(db: Database, p: AgentTermUpsert): boolean {
          synonyms = excluded.synonyms, consolidated_at = excluded.consolidated_at,
          stats_verified_at = excluded.stats_verified_at, updated_at = excluded.updated_at,
          capture_id = excluded.capture_id
-       WHERE glossary_term.status <> 'vetoed' AND glossary_term.definition_source IS NOT 'manual'`,
+       WHERE glossary_term.definition_source IS NOT 'manual'`,
       [
         p.termKey,
         p.displayTerm,

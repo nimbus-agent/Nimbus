@@ -429,7 +429,7 @@ export function acceptCapture(
       `no indexed item ${missing}; the capture stays proposed`,
     );
   }
-  // 5. Kind-specific precondition (owner's veto/config wins; link endpoints still graphed).
+  // 5. Kind-specific precondition (the owner's nimbus.toml term wins; link endpoints still graphed).
   const link = assertAcceptable(deps.db, v);
   // 6. ONE transaction: native row, state, capture item, audit. Any failure rolls all of it back.
   const now = deps.now();

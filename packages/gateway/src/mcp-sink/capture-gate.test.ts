@@ -2,7 +2,13 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
-import { computeTermStats, markVetoed, upsertCandidate } from "../glossary/glossary-store.ts";
+import {
+  computeTermStats,
+  getTerm,
+  markVetoed,
+  upsertCandidate,
+  upsertManualTerm,
+} from "../glossary/glossary-store.ts";
 import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
 import { deleteItemByPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
@@ -619,7 +625,32 @@ describe("accept", () => {
     expect(deps.store.get(id)?.state).toBe("proposed");
   });
 
-  test("term over a vetoed row refuses ERR_CAPTURE_SUPERSEDED and stays proposed", () => {
+  function seedManualWal(): void {
+    upsertManualTerm(db, {
+      termKey: "wal",
+      displayTerm: "WAL",
+      definition: "the owner's own",
+      synonyms: [],
+      nearMisses: [],
+      stats: computeTermStats(db, "wal"),
+      score: 0,
+      nowMs: 1,
+    });
+  }
+
+  test("term over a manual row refuses ERR_CAPTURE_SUPERSEDED and stays proposed", () => {
+    seedManualWal();
+    const { id } = submitCapture(deps, MCP, {
+      kind: "term",
+      payload: { term: "WAL", definition: "log" },
+    });
+    expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_SUPERSEDED");
+    expect(deps.store.get(id)?.state).toBe("proposed");
+    expect(auditRows().filter((a) => a.action_type === "capture.accept")).toHaveLength(0);
+    expect(getTerm(db, "wal")?.definition).toBe("the owner's own");
+  });
+
+  test("term over a MODEL-vetoed row accepts: the owner's accept outranks the classifier", () => {
     upsertCandidate(db, {
       key: "wal",
       surface: "WAL",
@@ -629,13 +660,19 @@ describe("accept", () => {
       nowMs: 1,
     });
     markVetoed(db, "wal", 2);
+    expect(getTerm(db, "wal")?.status).toBe("vetoed"); // positive control
     const { id } = submitCapture(deps, MCP, {
       kind: "term",
       payload: { term: "WAL", definition: "log" },
     });
-    expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_SUPERSEDED");
-    expect(deps.store.get(id)?.state).toBe("proposed");
-    expect(auditRows().filter((a) => a.action_type === "capture.accept")).toHaveLength(0);
+    expect(acceptCapture(deps, OWNER, id).state).toBe("accepted");
+    expect(getTerm(db, "wal")).toMatchObject({
+      status: "consolidated",
+      definitionSource: "agent",
+      definition: "log",
+    });
+    expect(revokeCapture(deps, OWNER, id).state).toBe("revoked");
+    expect(getTerm(db, "wal")).toBeNull();
   });
 
   test("link whose endpoint left the graph refuses ERR_CAPTURE_LINK_UNRESOLVED and stays proposed", () => {

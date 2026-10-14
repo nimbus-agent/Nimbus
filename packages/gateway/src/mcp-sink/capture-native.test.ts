@@ -147,12 +147,14 @@ describe("term", () => {
     ).n;
   }
 
-  test("assertAcceptable refuses vetoed and manual rows, passes llm and absent", () => {
+  test("assertAcceptable refuses a manual row, passes llm, model-vetoed and absent", () => {
     expect(assertAcceptable(db, term())).toBeUndefined();
     seedLlmTerm(false);
     expect(assertAcceptable(db, term())).toBeUndefined();
+    // A veto is the local model's classification, not the owner's: the owner's accept outranks it.
     markVetoed(db, "wal", NOW);
-    expect(() => assertAcceptable(db, term())).toThrow(/ERR_CAPTURE_SUPERSEDED/);
+    expect(getTerm(db, "wal")?.status).toBe("vetoed"); // positive control
+    expect(assertAcceptable(db, term())).toBeUndefined();
     upsertManualTerm(db, {
       termKey: "man",
       displayTerm: "MAN",
@@ -175,12 +177,37 @@ describe("term", () => {
     expect(projectedCount()).toBe(0);
   });
 
-  test("a refused write (vetoed after the check) throws and leaves the projection alone", () => {
+  test("a refused write (manual after the check) throws and leaves the projection alone", () => {
     seedLlmTerm(true);
     assertAcceptable(db, term());
+    upsertManualTerm(db, {
+      termKey: "wal",
+      displayTerm: "WAL",
+      definition: "mine",
+      synonyms: [],
+      nearMisses: [],
+      stats: computeTermStats(db, "wal"),
+      score: 0,
+      nowMs: NOW,
+    });
+    const projectedBefore = projectedCount();
+    expect(() => write("cap_1")).toThrow(/ERR_CAPTURE_SUPERSEDED.*nimbus\.toml/);
+    expect(projectedCount()).toBe(projectedBefore);
+    expect(getTerm(db, "wal")?.definition).toBe("mine");
+  });
+
+  test("a model-vetoed key is taken over by the accept, then revoke deletes it", () => {
+    seedLlmTerm(false);
     markVetoed(db, "wal", NOW);
-    expect(() => write("cap_1")).toThrow(/ERR_CAPTURE_SUPERSEDED/);
-    expect(projectedCount()).toBe(1);
+    expect(getTerm(db, "wal")?.status).toBe("vetoed"); // positive control
+    expect(write("cap_1")).toBe("wal");
+    const t = getTerm(db, "wal");
+    expect(t?.status).toBe("consolidated");
+    expect(t?.definitionSource).toBe("agent");
+    const row = { id: "cap_1", kind: "term" as const, nativeRef: "wal" };
+    expect(captureNativeStatus(db, row)).toBe("owned");
+    revokeCaptureNative(db, row, false);
+    expect(getTerm(db, "wal")).toBeNull();
   });
 
   test("supersession and revoke ownership", () => {
