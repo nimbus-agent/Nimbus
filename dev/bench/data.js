@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792004358737,
+  "lastUpdate": 1792005852460,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1d75dceab295f21493def7bb822b81ddb2388733",
-          "message": "test(gateway): drive the pidusage-throws sampler test from the virtual clock (#958)\n\n## Summary\n\nThe `v1.11.0` Release run failed its *Unit + Coverage* gate on **one**\ntest out of 11,670 — `sampleRss > intervalsMissed increments when\npidusage throws`. Because that gate is a release gate, every build and\npublish job was skipped, so **`v1.11.0` was never published** (the tag\nexists at `31177cd`; there is no release). This makes that test\ndeterministic.\n\nThe test ran on **real timers** while asserting a *count*:\n\n```ts\ndurationMs: 100, intervalMs: 20        // boundaries at 0/20/40/60/80\npidusage: fakePidusage([100, \"throw\", 200, \"throw\", 300])\nexpect(result.samples.length).toBeGreaterThanOrEqual(2);   // needs 3 of the 5 boundaries\n```\n\n`sampleRss` loops on `while (now() < deadline)` against a fixed `start +\ndurationMs`, so on a loaded runner each `setTimeout` overshoot\naccumulates against that deadline and fewer boundaries fit. Two\nboundaries produce one sample, and `>= 2` fails. The failing run took\n**109.35 ms** — right at the edge.\n\nThis is precisely the failure mode `virtualClock()` in this same file\nwas written to eliminate, as its own comment records:\n\n> a loaded CI runner overshoots each `setTimeout`, the overshoot\naccumulates against the deadline, and a run that should produce 5\nsamples produced 3 — which is how `>= 4` flaked on a release PR.\n\nThat fix reached the sibling count test but this one kept a count\nassertion against the real clock. This injects the clock here too.\n\n**The assertions get stricter, not more forgiving** — exact values\nrather than floors, which is what the file's own comment argues for:\n\n```diff\n-    expect(result.intervalsMissed).toBeGreaterThan(0);\n-    expect(result.samples.length).toBeGreaterThanOrEqual(2);\n+    expect(result.intervalsMissed).toBe(2);\n+    expect(result.samples).toEqual([100, 200, 300]);\n```\n\nThe other real-clock tests in the file are deliberately left alone —\nthey exercise the real-clock default, abort-listener accumulation, and\none-sided injection, where real timers are the point.\n\n## Related Issue\n\nRelates to #957\n\nDeliberately *not* `Closes` — merging this removes the cause, but it\ndoes not publish `v1.11.0`. That still needs a release re-run, which is\na separate decision (the existing tag points at `31177cd`, which\npredates this fix).\n\n## Type of Change\n\n- [x] Test improvement\n- [ ] Bug fix (non-breaking change that fixes an issue)\n- [ ] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [ ] Documentation only\n- [ ] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [ ] All existing tests pass (`bun test`) — **see the note below; one\npre-existing unrelated failure on Windows**\n- [x] New behaviour is covered by tests — no behaviour change; this\nstrengthens an existing test's assertions\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md`, a screenshot of the rendered\npage (light + dark) is attached — n/a, not touched\n\n`bun run preflight:fast` passes in full (all static gates + typecheck +\nlint + 20 audits).\n\n## Coverage (if engine/ or vault/ was changed)\n\nn/a — neither `engine/` nor `vault/` was modified. One test file under\n`packages/gateway/src/perf/` changed.\n\n## Testing\n\n- `bun test packages/gateway/src/perf/rss-sampler.test.ts` — 9 pass, 0\nfail.\n- **Determinism:** the test no longer reads the real clock, so runner\nload cannot affect the sample count — the count is now a pure function\nof `durationMs`/`intervalMs`. Also ran 16 concurrent instances under CPU\ncontention with no failures (weak evidence on its own, since the\noriginal also survived that locally on a many-core machine; the\nstructural argument is the real one).\n- **Strictness, verified by mutation:** introducing an off-by-one extra\nboundary in the sampler (`deadline = start + durationMs + intervalMs`)\nmakes the amended test **fail**, where the previous `>= 2` floor\naccepted it. Reverted after checking.\n- `bun test packages/gateway` — 11637 pass, 32 skip, **1 fail**, and\nthat failure is unrelated and pre-existing (see below).\n- Platform: Windows. The flake itself is load-dependent and did not\nreproduce locally; the diagnosis rests on the loop arithmetic plus the\nhistory already recorded in the file.\n\n## Notes for Reviewers\n\n**One pre-existing failure, unrelated to this change.**\n`packages/gateway/test/integration/updater/wiring.test.ts:78` — *\"S6-F1:\nUpdater wiring … configured Updater returns CheckNowResult instead of\nERR_UPDATER_NOT_CONFIGURED\"* fails on Windows. Verified identical with\nthis change stashed, and the Ubuntu CI run that failed the release did\n**not** hit it, so it is Windows-only and predates this PR.\n\nIt may be worth its own issue: the test passes `_platformOverride:\n\"linux-x86_64\"` specifically so it is platform-independent, and\n`createUpdaterFromConfig` still returns `undefined` on Windows — so the\noverride does not appear to be fully honoured, which reads like a\nplatform-equality gap rather than a test bug. Not touched here to keep\nthis PR to the release blocker.\n\n**Local checkout note:** `bun run typecheck` initially failed with\n`Cannot find type definition file for 'bun'` in\n`@nimbus-dev/admin-console`. That was an incomplete local install, not a\ncode issue — `bun install --frozen-lockfile` pulled 2342 missing\npackages and left `bun.lock` untouched. Mentioned only in case another\ncontributor hits it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Improved performance sampling test reliability by using a virtual\nclock.\n* Added precise assertions for missed intervals and collected memory\nsamples.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-30T10:20:44Z",
-          "tree_id": "e19426ef320c5e0d8bcc01ef989a3042483a39a0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1d75dceab295f21493def7bb822b81ddb2388733"
-        },
-        "date": 1785407524953,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.35022964999735,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 315.95772839999773,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 243.43632819999547,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "436937b9255adfb3d0f2226615a01cf717eec60d",
+          "message": "chore: release main (#1658)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.44.0</summary>\n\n##\n[7.44.0](https://github.com/nimbus-agent/Nimbus/compare/v7.43.0...v7.44.0)\n(2026-10-14)\n\n\n### Features\n\n* **mcp:** capture sink proposals — decisions, terms and links over MCP\n(S3, I28) ([#1657](https://github.com/nimbus-agent/Nimbus/issues/1657))\n([9b7ac3d](https://github.com/nimbus-agent/Nimbus/commit/9b7ac3d70983433f870e0740fbb420d36d78e434))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-14T19:12:07Z",
+          "tree_id": "c3f9a583057e99fa5c13f3062e34860a74e105bc",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/436937b9255adfb3d0f2226615a01cf717eec60d"
+        },
+        "date": 1792005847154,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 263.91862069999735,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 266.38711204999817,
             "unit": "ms"
           }
         ]
