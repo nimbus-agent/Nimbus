@@ -64,7 +64,6 @@ describe("validateNotePayload", () => {
     ["11 tags", { body: "b", tags: Array.from({ length: 11 }, (_, i) => `t${String(i)}`) }],
     ["a 51-char tag", { body: "b", tags: ["x".repeat(51)] }],
     ["a non-string tag", { body: "b", tags: [1] }],
-    ["a blank tag", { body: "b", tags: ["  "] }],
     ["tags not an array", { body: "b", tags: "a" }],
     [
       "11 relatesTo",
@@ -109,6 +108,30 @@ describe("validateNotePayload", () => {
     const p = validateNotePayload({ body: "b", tags: [" a", "a", "b"], relatesTo: ["x:1", "x:1"] });
     expect(p.tags).toEqual(["a", "b"]);
     expect(p.relatesTo).toEqual(["x:1"]);
+  });
+});
+
+describe("free-text lists strip invisible and bidi characters", () => {
+  const ZWSP = String.fromCodePoint(0x200b);
+  const RLO = String.fromCodePoint(0x202e);
+
+  test("a synonym W+ZWSP+AL is stored as WAL; an RLO is removed", () => {
+    const v = validateCapturePayload(
+      "term",
+      {
+        term: "t",
+        definition: "d",
+        synonyms: [`W${ZWSP}AL`, `a${RLO}b`, `${ZWSP}`, "WAL"],
+      },
+      NOW,
+    );
+    if (v.kind !== "term") throw new Error("kind");
+    expect(v.payload.synonyms).toEqual(["WAL", "ab"]);
+  });
+
+  test("a tag with a zero-width space is stored without it; one that becomes empty is dropped", () => {
+    const p = validateNotePayload({ body: "b", tags: [`t${ZWSP}ag`, ZWSP, "  "] });
+    expect(p.tags).toEqual(["tag"]);
   });
 });
 

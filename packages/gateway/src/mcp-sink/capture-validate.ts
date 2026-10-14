@@ -67,6 +67,26 @@ function stringList(raw: unknown, field: string, maxCount: number, maxLen: numbe
   return out;
 }
 
+/**
+ * A free-text list (tags, synonyms): each entry is stripped of control and bidi characters
+ * BEFORE the length check, entries that become empty are dropped, and the rest are deduped.
+ * Structural id lists keep `stringList`, which only trims (an id is bounded by an existence check).
+ */
+function textList(raw: unknown, field: string, maxCount: number, maxLen: number): string[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) invalid(`${field} must be an array of strings`);
+  if (raw.length > maxCount) invalid(`${field} allows at most ${String(maxCount)} entries`);
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v !== "string") invalid(`${field} entries must be strings`);
+    const t = v.replace(CONTROL_RE, "").trim();
+    if (t === "") continue;
+    if (t.length > maxLen) invalid(`${field} entries must be at most ${String(maxLen)} characters`);
+    if (!out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
 /** Whitelist-rebuild a note payload (spec § 4.2, the I32 shape): prose truncates, structure refuses. */
 export function validateNotePayload(raw: unknown): NotePayload {
   const o = asObject(raw);
@@ -80,7 +100,7 @@ export function validateNotePayload(raw: unknown): NotePayload {
   const payload: NotePayload = {
     title: title === "" ? "(untitled)" : clampBody(title, NOTE_TITLE_MAX),
     body: clampBody(body, BODY_MAX_PROSE),
-    tags: stringList(o["tags"], "tags", TAG_MAX_COUNT, TAG_MAX_LEN),
+    tags: textList(o["tags"], "tags", TAG_MAX_COUNT, TAG_MAX_LEN),
     // Ids are bounded by the existence check, not by length; 512 only stops a pathological string.
     relatesTo: stringList(o["relatesTo"], "relatesTo", REF_MAX_COUNT, 512),
   };
@@ -185,7 +205,7 @@ function validateTermPayload(raw: unknown): TermPayload {
     term,
     termKey,
     definition: prose(o["definition"], "definition", TERM_DEFINITION_MAX, true) ?? "",
-    synonyms: stringList(o["synonyms"], "synonyms", REF_MAX_COUNT, SYNONYM_MAX_LEN),
+    synonyms: textList(o["synonyms"], "synonyms", REF_MAX_COUNT, SYNONYM_MAX_LEN),
   });
 }
 
