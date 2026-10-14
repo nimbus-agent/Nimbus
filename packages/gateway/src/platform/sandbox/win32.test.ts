@@ -1,7 +1,16 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { canonicalPath } from "./canonical-path.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
@@ -72,14 +81,26 @@ describe("createWin32SandboxRunner", () => {
   // Whichever file wins the import order, this suite no longer depends on the answer. afterEach
   // RESTORES rather than deletes — the two files set it for their own use, and this suite must
   // not become the reason they stop working.
+  //
+  // The DEFAULT path has the filesystem version of the same trap. `tool-run.e2e.test.ts` and
+  // `user-mcp.e2e.test.ts` copy the built helper next to `process.execPath` (shared, real state)
+  // and remove it afterwards best-effort. On a Windows CI runner that removal can fail — a
+  // running executable cannot be deleted, only renamed — and the stray copy then turns the two
+  // default-path cases below red for the rest of the process, including the retry. So whatever
+  // sits at the default path is moved aside for each case and put back afterwards: renaming,
+  // unlike deleting, works on a file another process still has open.
+  const defaultHelper = join(dirname(process.execPath), "nimbus-sandbox-helper.exe");
+  const asideHelper = `${defaultHelper}.win32-test-aside`;
   let priorHelperPath: string | undefined;
   beforeEach(() => {
     priorHelperPath = process.env["NIMBUS_SANDBOX_HELPER_PATH"];
     delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+    if (existsSync(defaultHelper)) renameSync(defaultHelper, asideHelper);
   });
   afterEach(() => {
     if (priorHelperPath === undefined) delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
     else process.env["NIMBUS_SANDBOX_HELPER_PATH"] = priorHelperPath;
+    if (existsSync(asideHelper)) renameSync(asideHelper, defaultHelper);
   });
 
   it("reports the win32 platform tag", () => {
