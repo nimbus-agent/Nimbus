@@ -102,19 +102,12 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
     annotations: WRITE_ANNOTATIONS,
     run: (deps, args, clientLabel) =>
       runTool(deps, async (c: IpcCallable) => {
-        const payload: Record<string, unknown> = { title: args["title"], body: args["body"] };
-        if (args["tags"] !== undefined) {
-          payload["tags"] = args["tags"];
-        }
-        if (args["relatesTo"] !== undefined) {
-          payload["relatesTo"] = args["relatesTo"];
-        }
-        const label = clientLabel();
-        const params: Record<string, unknown> = { kind: "note", payload };
-        if (label !== undefined) {
-          params["clientLabel"] = label;
-        }
-        const id = idOf(await c.call<unknown>("capture.submit", params));
+        const payload: Record<string, unknown> = {
+          title: args["title"],
+          body: args["body"],
+          ...pick(args, ["tags", "relatesTo"]),
+        };
+        const id = await submit(c, "note", payload, clientLabel);
         return {
           content: [
             {
