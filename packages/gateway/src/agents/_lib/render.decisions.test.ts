@@ -118,3 +118,18 @@ test("renders the confidence breakdown only when explain is set", () => {
   expect(renderDecisions(withExplain)).toContain("heading cue");
   expect(renderDecisions(brief())).not.toContain("heading cue");
 });
+
+test("an agent-sourced entry discloses its provenance directly under the statement line", () => {
+  const base = brief().entries[0];
+  if (base === undefined) throw new Error("fixture");
+  const md = renderDecisions(brief({ entries: [{ ...base, extractionSource: "agent" }] }));
+  const lines = md.split("\n");
+  const i = lines.findIndex((l) => l.includes("Move billing to Postgres"));
+  expect(lines[i + 1]).toBe(
+    "      source        agent-authored (captured via MCP, accepted by the owner)",
+  );
+});
+
+test("an llm-sourced entry renders no agent provenance line", () => {
+  expect(renderDecisions(brief())).not.toContain("agent-authored");
+});

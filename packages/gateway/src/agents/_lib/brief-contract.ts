@@ -1,6 +1,7 @@
 import type { Disclosure } from "./brief-disclosures.ts";
 import {
   changelogDisclosures,
+  decisionsAgentDisclosure,
   glossaryProvenanceDisclosure,
   negotiateDecisionsDisclosure,
   negotiateIncidentsDisclosure,
@@ -122,6 +123,11 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
       truncatedCount: brief.truncatedCount,
     });
   }
+  if (brief.kind === "decisions") {
+    return brief.entries.some((e) => e.extractionSource === "agent")
+      ? [decisionsAgentDisclosure()]
+      : [];
+  }
   // Every other brief kind returns [] until its contractual strings are added.
   // Listed explicitly so a seventeenth kind is a COMPILE error, not a silent [].
   if (
@@ -132,7 +138,6 @@ export function requiredPhrases(brief: SynthInput): readonly Disclosure[] {
     brief.kind === "conflict" ||
     brief.kind === "janitor" ||
     brief.kind === "preflight" ||
-    brief.kind === "decisions" ||
     brief.kind === "ownership" ||
     brief.kind === "huddle" ||
     brief.kind === "premortem"

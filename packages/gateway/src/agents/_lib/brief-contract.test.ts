@@ -204,7 +204,7 @@ describe("a required section must be opened by a level-TWO heading", () => {
 
 describe("requiredPhrases — non-negotiate kinds", () => {
   // Every kind besides `negotiate` deliberately returns `[]` today — see brief-contract.ts's
-  // comment on the if-chain. Table-driven so each of the 13 explicit arms is taken by name
+  // comment on the if-chain. Table-driven so each of the remaining explicit arms is taken by name
   // once, rather than relying on `negotiate` coverage to imply the rest of the chain works.
   const OTHER_KINDS = [
     "expert",
@@ -216,7 +216,6 @@ describe("requiredPhrases — non-negotiate kinds", () => {
     "preflight",
     "why",
     "glossary",
-    "decisions",
     "ownership",
     "huddle",
     "premortem",

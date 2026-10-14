@@ -3,6 +3,7 @@ import type { Risk } from "../../premortem/risks.ts";
 import type { WatcherProposal } from "../../premortem/watcher-proposals.ts";
 import {
   changelogDisclosures,
+  decisionsAgentDisclosure,
   glossaryProvenanceDisclosure,
   negotiateDecisionsDisclosure,
   negotiateIncidentsDisclosure,
@@ -433,10 +434,16 @@ function renderGlossaryEntry(brief: GlossaryBrief, e: GlossaryEntry): string[] {
  */
 export const GLOSSARY_TERMS_HEADING = "## Terms";
 
+function provenanceLabel(source: GlossaryEntry["definitionSource"]): string {
+  if (source === "manual") return " — authored";
+  if (source === "agent") return " — agent-authored";
+  return "";
+}
+
 export function renderGlossaryTermsSection(entries: readonly GlossaryEntry[]): string {
   if (entries.length === 0) return "";
   const rows = entries.map((e) => {
-    const authored = e.definitionSource === "manual" ? " — authored" : "";
+    const authored = provenanceLabel(e.definitionSource);
     const head = `- **${e.term}** — ${String(e.docFreq)} mention(s), score ${e.score.toFixed(2)}${authored}`;
     // A consolidated term can legitimately have no definition. Say so, rather than render an
     // empty tail that reads as a definition which happens to be blank.
@@ -590,6 +597,7 @@ function renderDecisionsExplain(e: DecisionsEntry): string[] {
 
 function renderDecisionsEntry(brief: DecisionsBrief, e: DecisionsEntry): string {
   const lines = [`${e.confidence.toFixed(2)}  ${e.statement}  ${isoDay(e.decidedAt)}`];
+  if (e.extractionSource === "agent") lines.push(decisionsAgentDisclosure().line);
   if (!e.hasAdr) lines.push("      ⚠ no ADR found");
   if (e.rationale !== null) lines.push(`      rationale     ${e.rationale}`);
   if (e.alternatives.length > 0) {

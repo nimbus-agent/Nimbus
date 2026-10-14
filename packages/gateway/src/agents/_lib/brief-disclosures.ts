@@ -295,7 +295,28 @@ export function glossaryProvenanceDisclosure(
       anchors: ["not derived from indexed sources"],
     };
   }
+  if (source === "agent") {
+    return {
+      scope: section(term),
+      line: `- _Agent-authored: ${AGENT_CAPTURE_ANCHOR}._`,
+      anchors: [AGENT_CAPTURE_ANCHOR],
+    };
+  }
   return undefined;
+}
+
+/**
+ * Owner-ACCEPTED agent text (capture sink, I28) is never presented as extracted or owner-authored
+ * (spec § 5.4). The anchor is the fixed fragment — never a date, never the full sentence.
+ */
+export const AGENT_CAPTURE_ANCHOR = "captured via MCP, accepted by the owner";
+
+export function decisionsAgentDisclosure(): Disclosure {
+  return {
+    scope: section("Decisions"),
+    line: `      source        agent-authored (${AGENT_CAPTURE_ANCHOR})`,
+    anchors: [AGENT_CAPTURE_ANCHOR],
+  };
 }
 
 // ---------------------------------------------------------------------------
