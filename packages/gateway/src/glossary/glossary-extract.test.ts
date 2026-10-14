@@ -19,10 +19,12 @@ import { loadGlossaryCandidates, rebuildGlossary, runGlossaryPass } from "./glos
 import { projectTerm } from "./glossary-project.ts";
 import {
   clearGlossary,
+  computeTermStats,
   getTerm,
   listAllKeys,
   markConsolidated,
   readPassState,
+  upsertAgentTerm,
   upsertCandidate,
   upsertManualTerm,
 } from "./glossary-store.ts";
@@ -939,4 +941,21 @@ test("discovery mines a term mentioned only past the old 512-character mark from
   const out = await runGlossaryPass(db, OPTS);
   expect(out.discovered).toBeGreaterThan(0);
   expect(getTerm(db, "cdr")?.status).toBe("consolidated");
+});
+
+test("a rebuild keeps an owner-accepted agent term", async () => {
+  upsertAgentTerm(db, {
+    termKey: "wal",
+    displayTerm: "WAL",
+    definition: "agent def",
+    synonyms: [],
+    captureId: "cap_1",
+    stats: computeTermStats(db, "wal"),
+    score: 0,
+    nowMs: 10,
+  });
+  await rebuildGlossary(db, { ...PASS_OPTS });
+  const t = getTerm(db, "wal");
+  expect(t?.definitionSource).toBe("agent");
+  expect(t?.definition).toBe("agent def");
 });

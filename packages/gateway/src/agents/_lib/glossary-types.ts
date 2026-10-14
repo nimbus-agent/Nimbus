@@ -20,7 +20,7 @@ export type GlossarySourceRef = {
 export type GlossaryEntry = {
   term: string;
   definition: string | null;
-  definitionSource: "llm" | "snippet" | "manual" | null;
+  definitionSource: "llm" | "snippet" | "manual" | "agent" | null;
   docFreq: number;
   /**
    * The value the list is ORDERED by (F31b). Rendered, because it was not: the list showed only

@@ -36,6 +36,19 @@ export function reconcilePass(
 
   for (const term of stale) {
     const stats = computeTermStats(db, term.termKey);
+    if (term.definitionSource === "agent") {
+      // An owner-ACCEPTED agent term: its evidence floor does not apply (the owner vouched for it,
+      // as for a manual term), and it is never projected — projection would embed agent text
+      // remotely (spec criterion 5). Only the stats are refreshed.
+      applyStats(
+        db,
+        term.termKey,
+        stats,
+        scoreTerm({ docFreq: stats.docFreq, serviceSpread: stats.serviceSpread, form: term.form }),
+        opts.nowMs,
+      );
+      continue;
+    }
     // A human assertion outranks a doc-frequency floor, so an authored term is
     // never demoted — but it IS still swept. Skipping it entirely (the literal
     // reading of the base spec's §12) would freeze its `top_sources` forever,
