@@ -5,6 +5,7 @@ import { deleteItemByPrimaryKey, itemPrimaryKey, upsertIndexedItem } from "../in
 import type { ClientKind } from "../ipc/server/client-kind.ts";
 import type { CaptureCapability } from "./capture-capability.ts";
 import { CAPTURE_ROLE_BY_KIND } from "./capture-client-policy.ts";
+import { resolveLinkEndpoints } from "./capture-native.ts";
 import type { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
 import type { CaptureStore } from "./capture-store.ts";
 import {
@@ -15,11 +16,17 @@ import {
   type CaptureState,
   isCaptureKind,
   isCaptureState,
+  type ValidatedCapture,
 } from "./capture-types.ts";
-import { sanitizeClientLabel, validateNotePayload } from "./capture-validate.ts";
+import {
+  referencedItemIds,
+  sanitizeClientLabel,
+  validateCapturePayload,
+} from "./capture-validate.ts";
 
 /**
  * Invariant I28 — the ONE door by which content from an MCP client enters Nimbus (spec § 5).
+ * Submit takes all four kinds: a note goes live at once, a decision/term/link is stored PROPOSED.
  * Submit runs a FIXED order; read it top to bottom in `submitCapture`. Static D32(b) confines the
  * callers of `submitCapture`/`revokeCapture` to `ipc/capture-rpc.ts`.
  */
@@ -136,6 +143,12 @@ function missingItem(deps: CaptureGateDeps, ids: readonly string[]): string | un
 function titleOf(row: CaptureRow): string {
   if (row.payloadJson === null) return "(revoked)";
   const p = JSON.parse(row.payloadJson) as Record<string, unknown>;
+  if (row.kind === "link") {
+    const rel = typeof p["relation"] === "string" ? p["relation"] : "link";
+    const from = typeof p["fromItemId"] === "string" ? p["fromItemId"] : "";
+    const to = typeof p["toItemId"] === "string" ? p["toItemId"] : "";
+    return `${rel}: ${from} → ${to}`.slice(0, 120);
+  }
   const t = p["title"] ?? p["statement"] ?? p["term"];
   return typeof t === "string" ? t.slice(0, 120) : "";
 }
@@ -194,17 +207,18 @@ export function submitCapture(
       `kind ${kindName} is not enabled`,
     );
   }
-  // 5. Whitelist rebuild.
-  let payload: ReturnType<typeof validateNotePayload>;
+  // 5. Whitelist rebuild, per kind.
+  let v: ValidatedCapture;
   try {
-    payload = validateNotePayload(params["payload"]);
+    v = validateCapturePayload(kindRaw, params["payload"], now);
   } catch (e) {
     if (e instanceof CaptureError)
       refuseAudited(deps, caller, kindRaw, clientLabel, e.code, e.message);
     throw e;
   }
-  // 6. Referenced items exist (a capture item only while live/accepted).
-  const missing = missingItem(deps, payload.relatesTo);
+  // 6. Referenced items exist (a capture item only while live/accepted); a link's endpoints must
+  //    also be graph-linkable NOW, so a proposal that can never be accepted is not queued.
+  const missing = missingItem(deps, referencedItemIds(v));
   if (missing !== undefined) {
     refuseAudited(
       deps,
@@ -214,6 +228,15 @@ export function submitCapture(
       "ERR_CAPTURE_UNKNOWN_ITEM",
       `no indexed item ${missing}`,
     );
+  }
+  if (v.kind === "link") {
+    try {
+      resolveLinkEndpoints(deps.db, v.payload.fromItemId, v.payload.toItemId);
+    } catch (e) {
+      if (e instanceof CaptureError)
+        refuseAudited(deps, caller, kindRaw, clientLabel, e.code, e.message);
+      throw e;
+    }
   }
   // 7. Durable hourly cap — read from the table, survives restarts.
   if (deps.store.countCreatedSince(now - HOUR_MS) >= cap.config.maxPerHour) {
@@ -226,18 +249,31 @@ export function submitCapture(
       "hourly capture cap reached",
     );
   }
-  // 8. Pending cap applies to proposals only; a note is never pending (PR 2 adds the check here).
+  // 8. Pending cap — proposals only; a note is never pending.
+  const proposal = v.kind !== "note";
+  if (proposal && deps.store.countByState("proposed") >= cap.config.maxPending) {
+    refuseAudited(
+      deps,
+      caller,
+      kindRaw,
+      clientLabel,
+      "ERR_CAPTURE_QUEUE_FULL",
+      `the review queue is full (${String(cap.config.maxPending)} proposals await the owner)`,
+    );
+  }
 
-  // 9 + 10. One transaction: capture row, item, audit. An audit failure rolls all of it back.
+  // 9 + 10. One transaction: capture row, item (notes only), audit. An audit failure rolls all of it
+  //    back. A proposal gets no item, no native row and no embedding until accept (spec § 4.3).
   const id = deps.newId();
-  const itemId = itemPrimaryKey(CAPTURE_ITEM_SERVICE, id);
-  const payloadJson = JSON.stringify(payload);
+  const itemId = proposal ? null : itemPrimaryKey(CAPTURE_ITEM_SERVICE, id);
+  const payloadJson = JSON.stringify(v.payload);
   const payloadBytes = Buffer.byteLength(payloadJson, "utf8");
+  const state: CaptureState = proposal ? "proposed" : "live";
   deps.db.transaction(() => {
     deps.store.insert({
       id,
       kind: kindRaw,
-      state: "live",
+      state,
       itemId,
       payloadJson,
       payloadBytes,
@@ -245,23 +281,26 @@ export function submitCapture(
       sessionId: caller.clientId,
       createdAt: now,
     });
-    upsertIndexedItem(deps.db, {
-      service: CAPTURE_ITEM_SERVICE,
-      type: CAPTURE_ITEM_TYPE,
-      externalId: id,
-      title: payload.title,
-      body: payload.body,
-      modifiedAt: now,
-      syncedAt: now,
-      metadata: {
-        captureKind: kindRaw,
-        captureId: id,
-        agentAuthored: true,
-        clientLabel,
-        tags: payload.tags,
-        relatesTo: payload.relatesTo,
-      },
-    });
+    if (v.kind === "note") {
+      const payload = v.payload;
+      upsertIndexedItem(deps.db, {
+        service: CAPTURE_ITEM_SERVICE,
+        type: CAPTURE_ITEM_TYPE,
+        externalId: id,
+        title: payload.title,
+        body: payload.body,
+        modifiedAt: now,
+        syncedAt: now,
+        metadata: {
+          captureKind: kindRaw,
+          captureId: id,
+          agentAuthored: true,
+          clientLabel,
+          tags: payload.tags,
+          relatesTo: payload.relatesTo,
+        },
+      });
+    }
     appendAuditEntry(deps.db, {
       actionType: "capture.submit",
       hitlStatus: "not_required",
@@ -270,14 +309,14 @@ export function submitCapture(
         kind: kindRaw,
         payloadBytes,
         clientLabel,
-        outcome: "captured",
+        outcome: proposal ? "proposed" : "captured",
       }),
       timestamp: now,
       sessionId: caller.clientId,
     });
   })();
-  deps.scheduleEmbedding?.(itemId);
-  return { id, state: "live" };
+  if (itemId !== null) deps.scheduleEmbedding?.(itemId);
+  return { id, state };
 }
 
 // ---- revoke (spec § 5.3) -------------------------------------------------------------------------

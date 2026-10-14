@@ -2615,7 +2615,7 @@ describe("I27 — outbound share gated by share.publish HITL action", () => {
 });
 
 describe("I28 — MCP content enters only through the capture gate, in a fixed order", () => {
-  test("submitCapture checks capability → client kind → attempt limit → kind → validate → items → durable cap, in that order", async () => {
+  test("submitCapture checks capability → client kind → attempt limit → kind → validate → items → link endpoints → durable cap → pending cap, in that order", async () => {
     const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
     const body = src.slice(src.indexOf("export function submitCapture"));
     const order = [
@@ -2623,9 +2623,11 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "CAPTURE_ROLE_BY_KIND[caller.kind]",
       "deps.limiter.tryAcquire(",
       "cap.kinds.includes(",
-      "validateNotePayload(params",
+      "validateCapturePayload(kindRaw",
       "missingItem(",
+      "resolveLinkEndpoints(",
       "deps.store.countCreatedSince(",
+      'deps.store.countByState("proposed")',
       "deps.db.transaction(",
     ];
     const idx = order.map((s) => body.indexOf(s));

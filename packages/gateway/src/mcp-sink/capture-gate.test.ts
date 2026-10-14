@@ -186,6 +186,7 @@ describe("submitCapture — ordered refusals", () => {
   });
 
   test("4 a kind outside config ∩ submittable is refused and audited", () => {
+    cap = onConfig({ kinds: ["note"] });
     expect(codeOf(() => submitCapture(deps, MCP, { kind: "decision", payload: {} }))).toBe(
       "ERR_CAPTURE_KIND_NOT_ALLOWED",
     );
@@ -363,7 +364,7 @@ describe("list / get / status", () => {
     submitCapture(deps, MCP, NOTE);
     expect(captureStatus(deps)).toEqual({
       enabled: true,
-      kinds: ["note"],
+      kinds: ["note", "decision", "term", "link"],
       pending: 0,
       maxPending: 100,
       maxPerHour: 30,
@@ -374,5 +375,153 @@ describe("list / get / status", () => {
       undefined,
     );
     expect(captureStatus(deps)).toMatchObject({ enabled: false, disabledReason: "policy" });
+  });
+});
+
+function graphedItems(n: number): string[] {
+  const ids: string[] = [];
+  for (let i = 1; i <= n; i++) {
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: `acme/app#${String(i)}`,
+      title: `PR ${String(i)}`,
+      bodyPreview: "patch",
+      modifiedAt: 1,
+      syncedAt: 1,
+      metadata: { repo: "acme/app" },
+    });
+    const r = db
+      .query("SELECT id FROM item WHERE external_id = ?")
+      .get(`acme/app#${String(i)}`) as {
+      id: string;
+    };
+    ids.push(r.id);
+  }
+  return ids;
+}
+
+describe("submit — proposals", () => {
+  test("a decision is stored proposed: no item, no embedding, audited not_required/proposed", () => {
+    const r = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "Adopt WAL" } });
+    expect(r.state).toBe("proposed");
+    expect(deps.store.get(r.id)?.itemId).toBeNull();
+    const items = db
+      .query("SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus' AND type = 'capture'")
+      .get() as { n: number };
+    expect(items.n).toBe(0);
+    expect(embedded).toEqual([]);
+    const last = auditRows().at(-1);
+    expect(last?.hitl_status).toBe("not_required");
+    expect(JSON.parse(last?.action_json ?? "{}")).toMatchObject({
+      kind: "decision",
+      outcome: "proposed",
+    });
+  });
+
+  test("step 8: the pending cap refuses a proposal (audited) but never a note", () => {
+    cap = onConfig({ maxPending: 1 });
+    submitCapture(deps, MCP, { kind: "term", payload: { term: "WAL", definition: "log" } });
+    expect(
+      codeOf(() =>
+        submitCapture(deps, MCP, { kind: "term", payload: { term: "MVCC", definition: "x" } }),
+      ),
+    ).toBe("ERR_CAPTURE_QUEUE_FULL");
+    expect(JSON.parse(auditRows().at(-1)?.action_json ?? "{}")).toMatchObject({
+      outcome: "ERR_CAPTURE_QUEUE_FULL",
+    });
+    expect(submitCapture(deps, MCP, { kind: "note", payload: { body: "still fine" } }).state).toBe(
+      "live",
+    );
+  });
+
+  test("step 6: a link refuses an unknown item, then an ungraphed one, then a capture item", () => {
+    expect(
+      codeOf(() =>
+        submitCapture(deps, MCP, {
+          kind: "link",
+          payload: { fromItemId: "x:1", toItemId: "y:2", relation: "fixes" },
+        }),
+      ),
+    ).toBe("ERR_CAPTURE_UNKNOWN_ITEM");
+    upsertIndexedItem(db, {
+      service: "filesystem",
+      type: "file",
+      externalId: "a",
+      title: "a",
+      modifiedAt: 1,
+      syncedAt: 1,
+    });
+    upsertIndexedItem(db, {
+      service: "filesystem",
+      type: "file",
+      externalId: "b",
+      title: "b",
+      modifiedAt: 1,
+      syncedAt: 1,
+    });
+    expect(
+      codeOf(() =>
+        submitCapture(deps, MCP, {
+          kind: "link",
+          payload: { fromItemId: "filesystem:a", toItemId: "filesystem:b", relation: "fixes" },
+        }),
+      ),
+    ).toBe("ERR_CAPTURE_LINK_UNRESOLVED");
+    const note = submitCapture(deps, MCP, { kind: "note", payload: { body: "n" } });
+    const [pr] = graphedItems(1);
+    expect(
+      codeOf(() =>
+        submitCapture(deps, MCP, {
+          kind: "link",
+          payload: { fromItemId: `nimbus:${note.id}`, toItemId: pr, relation: "relates_to" },
+        }),
+      ),
+    ).toBe("ERR_CAPTURE_LINK_UNRESOLVED");
+  });
+
+  test("a link between two graphed items is accepted as a proposal", () => {
+    const [a, b] = graphedItems(2);
+    expect(
+      submitCapture(deps, MCP, {
+        kind: "link",
+        payload: { fromItemId: a, toItemId: b, relation: "fixes" },
+      }).state,
+    ).toBe("proposed");
+  });
+
+  test("a validation failure on a proposal kind is audited and rethrown", () => {
+    expect(codeOf(() => submitCapture(deps, MCP, { kind: "decision", payload: {} }))).toBe(
+      "ERR_CAPTURE_INVALID",
+    );
+  });
+
+  test("a link whose ids are 300 characters each lists with a 120-character title", () => {
+    const [a, b] = graphedItems(2);
+    const long = (id: string): string => id; // ids are short; pad via the store directly
+    deps.store.insert({
+      id: "cap_long",
+      kind: "link",
+      state: "proposed",
+      itemId: null,
+      payloadJson: JSON.stringify({
+        fromItemId: `${long(a ?? "")}${"x".repeat(300)}`,
+        toItemId: `${long(b ?? "")}${"y".repeat(300)}`,
+        relation: "fixes",
+      }),
+      payloadBytes: 700,
+      clientLabel: null,
+      sessionId: "c-mcp",
+      createdAt: clock,
+    });
+    const listed = listCaptures(deps, OWNER, { state: "proposed" });
+    expect(listed.captures[0]?.title).toHaveLength(120);
+  });
+
+  test("captureStatus counts proposals as pending; kinds now lists all four", () => {
+    submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    const s = captureStatus(deps);
+    expect(s.pending).toBe(1);
+    expect([...s.kinds].sort()).toEqual(["decision", "link", "note", "term"]);
   });
 });

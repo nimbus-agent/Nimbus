@@ -7,8 +7,8 @@ export function isCaptureKind(v: unknown): v is CaptureKind {
   return typeof v === "string" && (CAPTURE_KINDS as readonly string[]).includes(v);
 }
 
-/** The kinds this gateway version accepts on submit. PR 2 widens this to all four. */
-export const SUBMITTABLE_KINDS: ReadonlySet<CaptureKind> = new Set<CaptureKind>(["note"]);
+/** The kinds this gateway version accepts on submit: all four since PR 2. */
+export const SUBMITTABLE_KINDS: ReadonlySet<CaptureKind> = new Set<CaptureKind>(CAPTURE_KINDS);
 
 export const CAPTURE_STATES = ["live", "proposed", "accepted", "rejected", "revoked"] as const;
 export type CaptureState = (typeof CAPTURE_STATES)[number];
