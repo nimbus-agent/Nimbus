@@ -88,9 +88,12 @@ async function until<T>(probe: () => T | undefined, what: string, ms: number): P
 async function bootGateway(enabled: boolean): Promise<void> {
   writeFileSync(
     join(gw.configDir, "nimbus.toml"),
-    ["[mcp_sink]", `enabled = ${String(enabled)}`, 'kinds = ["note", "decision", "term", "link"]', "max_per_hour = 30"].join(
-      "\n",
-    ),
+    [
+      "[mcp_sink]",
+      `enabled = ${String(enabled)}`,
+      'kinds = ["note", "decision", "term", "link"]',
+      "max_per_hour = 30",
+    ].join("\n"),
   );
   gatewayLog = "";
   gateway = Bun.spawn(["bun", RUNNER], {
