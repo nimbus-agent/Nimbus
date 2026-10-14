@@ -144,6 +144,24 @@ describe("runCapturesWith", () => {
     expect(b.err.join("")).toContain("ERR_CAPTURE_NOT_FOUND");
   });
 
+  test("a refusal message is printed with control and bidi characters stripped", async () => {
+    // Code points, not literals or escapes: the format hook can rewrite escapes into invisibles.
+    const ESC = String.fromCodePoint(0x1b);
+    const RLO = String.fromCodePoint(0x202e);
+    const bad = fake(() => {
+      throw new Error(`ERR_CAPTURE_SUPERSEDED: the term "${ESC}[31mW${RLO}AL"`);
+    });
+    const b = sink();
+    expect(
+      await runCapturesWith(bad.client, { verb: "accept", id: "cap_1", json: false }, b.s),
+    ).toBe(1);
+    const printed = b.err.join("");
+    expect(printed).toContain("ERR_CAPTURE_SUPERSEDED");
+    expect(printed).not.toContain(ESC);
+    expect(printed).not.toContain(RLO);
+    expect(printed).toContain('the term "[31mWAL"');
+  });
+
   test("--json prints raw JSON, and an error as {error}", async () => {
     const { client } = fake(() => ({ captures: [ROW] }));
     const { out, s } = sink();

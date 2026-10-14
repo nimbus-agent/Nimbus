@@ -103,7 +103,8 @@ export async function runCapturesWith(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);
-    else sink.err(`${msg}\n`);
+    // A refusal can quote agent text (a term key, an item id): strip it like every other print.
+    else sink.err(`${stripControl(msg)}\n`);
     return 1;
   }
 }

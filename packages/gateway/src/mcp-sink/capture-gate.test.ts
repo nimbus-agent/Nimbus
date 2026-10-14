@@ -30,6 +30,8 @@ import { CaptureError } from "./capture-types.ts";
 const MCP = { clientId: "c-mcp", kind: "mcp" as const };
 const OWNER = { clientId: "c-cli", kind: "unknown" as const };
 const OPEN = { capabilitiesDisabled: new Set<string>() };
+/** Written as a code point, never a literal or an escape sequence: the format hook can rewrite escapes into invisibles. */
+const ZWSP = String.fromCodePoint(0x200b);
 
 let db: Database;
 let deps: CaptureGateDeps;
@@ -647,6 +649,19 @@ describe("accept", () => {
     expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_SUPERSEDED");
     expect(deps.store.get(id)?.state).toBe("proposed");
     expect(auditRows().filter((a) => a.action_type === "capture.accept")).toHaveLength(0);
+    expect(getTerm(db, "wal")?.definition).toBe("the owner's own");
+  });
+
+  test("a zero-width character cannot disguise a key the owner already authored", () => {
+    seedManualWal();
+    const { id } = submitCapture(deps, MCP, {
+      kind: "term",
+      payload: { term: `W${ZWSP}AL`, definition: "log" },
+    });
+    const stored = deps.store.get(id);
+    expect(stored?.payloadJson).not.toContain(ZWSP);
+    expect(JSON.parse(stored?.payloadJson ?? "{}")).toMatchObject({ term: "WAL", termKey: "wal" });
+    expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_SUPERSEDED");
     expect(getTerm(db, "wal")?.definition).toBe("the owner's own");
   });
 

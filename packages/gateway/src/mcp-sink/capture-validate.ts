@@ -28,10 +28,18 @@ export const PAYLOAD_MAX_BYTES = 65_536;
 // (`nimbus query`, briefs, the desktop) render without knowing it came from an agent. An ESC there
 // would let a client restyle or rewrite the owner's terminal, so it is stripped AT WRITE TIME, not
 // only by `nimbus captures`. The body keeps \t \n \r — it is markdown.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the purpose
-const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
-// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the purpose
-const BODY_CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
+// Also the Trojan Source set (CVE-2021-42574) that `nimbus captures` strips before DISPLAY: bidi
+// overrides/embeddings/isolates, zero-width characters, the BOM and the line/paragraph separators.
+// The owner approves the rendered text, so the stored text must be that same text: a term
+// "W<U+200B>AL" would otherwise normalize to a key that differs from the owner's manual `wal`,
+// pass the accept precondition, and render as a second "WAL". Keep in step with
+// `packages/cli/src/commands/captures-format.ts` UNSAFE_TEXT_RE, and keep these as escapes.
+const CONTROL_RE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the purpose
+  /[\u0000-\u001f\u007f-\u009f\u200B-\u200D\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+const BODY_CONTROL_RE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the purpose
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200B-\u200D\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 
 function invalid(detail: string): never {
   throw new CaptureError("ERR_CAPTURE_INVALID", detail);

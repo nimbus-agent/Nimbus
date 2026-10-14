@@ -266,3 +266,36 @@ test("note still validates through the dispatcher; referencedItemIds reads each 
   const t = validateCapturePayload("term", { term: "t", definition: "d" }, NOW);
   expect(referencedItemIds(t)).toEqual([]);
 });
+
+describe("write-time Trojan Source stripping", () => {
+  // Built from code points: a literal or an escape in source can be rewritten by the format hook.
+  const RLO = String.fromCodePoint(0x202e);
+  const ZWSP = String.fromCodePoint(0x200b);
+  const BOM = String.fromCodePoint(0xfeff);
+  const LSEP = String.fromCodePoint(0x2028);
+  const LRI = String.fromCodePoint(0x2066);
+
+  test("a decision statement with U+202E is stored without it", () => {
+    const v = validateCapturePayload(
+      "decision",
+      { statement: `use ${RLO}gpj.exe`, rationale: `because${ZWSP}${LSEP} so` },
+      NOW,
+    );
+    if (v.kind !== "decision") throw new Error("kind");
+    expect(v.payload.statement).toBe("use gpj.exe");
+    expect(v.payload.rationale).toBe("because so");
+  });
+
+  test("a term's key cannot differ from what the owner sees", () => {
+    const v = validateCapturePayload("term", { term: `W${ZWSP}AL`, definition: "d" }, NOW);
+    if (v.kind !== "term") throw new Error("kind");
+    expect(v.payload.term).toBe("WAL");
+    expect(v.payload.termKey).toBe("wal");
+  });
+
+  test("a note's title and body are stripped too", () => {
+    const p = validateNotePayload({ title: `${BOM}T${LRI}`, body: `b${RLO}ody\nline` });
+    expect(p.title).toBe("T");
+    expect(p.body).toBe("body\nline");
+  });
+});
