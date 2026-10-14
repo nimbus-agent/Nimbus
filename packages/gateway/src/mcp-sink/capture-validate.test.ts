@@ -299,3 +299,35 @@ describe("write-time Trojan Source stripping", () => {
     expect(p.body).toBe("body\nline");
   });
 });
+
+describe("link endpoint ids are structure: refuse, never strip or truncate", () => {
+  const MAX_ID = "x".repeat(512);
+  test("a 512-character id is accepted by validation, unchanged", () => {
+    const v = validateCapturePayload(
+      "link",
+      { fromItemId: MAX_ID, toItemId: "b:2", relation: "fixes" },
+      NOW,
+    );
+    if (v.kind !== "link") throw new Error("kind");
+    expect(v.payload.fromItemId).toBe(MAX_ID);
+  });
+  test.each([
+    ["a 513-character fromItemId", { fromItemId: `${MAX_ID}x`, toItemId: "b:2" }],
+    ["a 513-character toItemId", { fromItemId: "a:1", toItemId: `${MAX_ID}x` }],
+    ["a non-string id", { fromItemId: 7, toItemId: "b:2" }],
+    ["an empty id", { fromItemId: "", toItemId: "b:2" }],
+  ])("refuses %s", (_n, ids) => {
+    expect(code(() => validateCapturePayload("link", { ...ids, relation: "fixes" }, NOW))).toBe(
+      "ERR_CAPTURE_INVALID",
+    );
+  });
+  test("an id is not trimmed or control-stripped into a different id", () => {
+    const v = validateCapturePayload(
+      "link",
+      { fromItemId: " a:1 ", toItemId: "b:2", relation: "fixes" },
+      NOW,
+    );
+    if (v.kind !== "link") throw new Error("kind");
+    expect(v.payload.fromItemId).toBe(" a:1 ");
+  });
+});

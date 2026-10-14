@@ -97,6 +97,7 @@ export const TERM_MAX = 100;
 export const TERM_DEFINITION_MAX = 2_048;
 export const SYNONYM_MAX_LEN = 100;
 export const LINK_NOTE_MAX = 500;
+const ITEM_ID_MAX = 512;
 const DATE_MS_MAX = 8.64e15;
 
 function line(raw: unknown, field: string, max: number, required: boolean): string | null {
@@ -188,10 +189,23 @@ function validateTermPayload(raw: unknown): TermPayload {
   });
 }
 
+/**
+ * An item id is STRUCTURE, not prose: over the cap it refuses (like `relatesTo`/`evidence`), and it
+ * is never stripped or trimmed, which could only turn it into a different id. The existence check
+ * at submit and accept is what bounds it; 512 only stops a pathological string.
+ */
+function itemId(raw: unknown, field: string): string {
+  if (typeof raw !== "string") invalid(`${field} must be a string`);
+  if (raw === "") invalid(`${field} must not be empty`);
+  if (raw.length > ITEM_ID_MAX)
+    invalid(`${field} must be at most ${String(ITEM_ID_MAX)} characters`);
+  return raw;
+}
+
 function validateLinkPayload(raw: unknown): LinkPayload {
   const o = asObject(raw);
-  const from = line(o["fromItemId"], "fromItemId", 512, true) ?? "";
-  const to = line(o["toItemId"], "toItemId", 512, true) ?? "";
+  const from = itemId(o["fromItemId"], "fromItemId");
+  const to = itemId(o["toItemId"], "toItemId");
   if (from === to) invalid("fromItemId and toItemId must differ");
   const rel = o["relation"];
   if (typeof rel !== "string" || !(LINK_RELATIONS as readonly string[]).includes(rel)) {
