@@ -2137,6 +2137,25 @@ describe("D32(d) — agent-row writers are reachable only through capture-native
     expect(checkAgentProvenanceWriters([file(relPath, src)])).toHaveLength(1);
   });
 
+  test("flags a namespace-import call and a re-export; ignores code outside gateway src", () => {
+    expect(
+      checkAgentProvenanceWriters([
+        file("packages/gateway/src/agents/y.ts", "gs.upsertAgentTerm(db, t);"),
+      ]),
+    ).toHaveLength(1);
+    expect(
+      checkAgentProvenanceWriters([
+        file(
+          "packages/gateway/src/agents/z.ts",
+          'export { deleteAgentTerm } from "../glossary/glossary-store.ts";',
+        ),
+      ]),
+    ).toHaveLength(1);
+    expect(
+      checkAgentProvenanceWriters([file("packages/cli/src/x.ts", "gs.upsertAgentTerm(db, t);")]),
+    ).toEqual([]);
+  });
+
   test("ignores a mention in a comment or a string", () => {
     expect(
       checkAgentProvenanceWriters([

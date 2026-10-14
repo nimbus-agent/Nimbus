@@ -1895,8 +1895,11 @@ export function checkCaptureGateImporters(files: readonly FileEntry[]): Violatio
 //     writers are named only by their definitions and `mcp-sink/capture-native.ts`, and
 //     capture-native's write/inverse entry points only by itself and `capture-gate.ts`, so the one
 //     path to an 'agent' row is acceptCapture → writeCaptureNative. Stated bound: a hand-written
-//     `INSERT … 'agent'` elsewhere is invisible to this identifier scan; capability confinement
-//     (only the stores are handed those tables' writers) is the real defense, as with D27(b).
+//     `INSERT … 'agent'` elsewhere, string-keyed access (`gs["upsertAgentTerm"](…)` — the literal is
+//     stripped), a caller in a non-test file outside packages/gateway/src/ (scripts/, test helpers),
+//     and a second caller INSIDE an allow-listed file (exempt whole-file) are all invisible to this
+//     identifier scan; capability confinement (only the stores are handed those tables' writers) is
+//     the real defense, as with D27(b).
 const D32_AGENT_WRITER_RE =
   /\b(?:insertAgentDecision|deleteAgentDecision|upsertAgentTerm|deleteAgentTerm)\b/g;
 const D32_AGENT_WRITER_ALLOWED: readonly string[] = [

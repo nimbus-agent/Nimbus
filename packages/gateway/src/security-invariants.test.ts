@@ -2676,7 +2676,9 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
 
   test("acceptCapture checks capability → owner → proposed → items exist → precondition → one transaction, in that order", async () => {
     const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
-    const body = src.slice(src.indexOf("export function acceptCapture"));
+    const start = src.indexOf("export function acceptCapture");
+    const end = src.indexOf("\nexport function", start + 1);
+    const body = src.slice(start, end);
     const order = [
       "deps.capability(",
       "requireOwner(caller)",
