@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792000965721,
+  "lastUpdate": 1792004358737,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1df10add6e26cba0c97c792eda37d59a4b65e854",
-          "message": "docs(infra): close P3 and P6 on sweep proof; record open P2 edges + a deferred gap (#956)\n\nDocs-only. Closes **P3** and **P6** in `docs/infrastructure-roadmap.md`\non their actual bar — a gate green in the scheduled sweep — and records\nwhat each run surfaced.\n\n## Why two sub-programs in one PR\n\nBoth are the same kind of change to the same file: a status row moving\nto done *because a sweep job came back green*, plus the progress-log\nentry that makes the claim checkable. Splitting them would mean two PRs\nracing on adjacent lines of one document.\n\n## P3 — closed on run 30518344699\n\nThe row read \"gate green locally, awaiting first sweep run\".\n`audit:review-coverage` shipped in #948 and was verified locally, but\nthis file's own operating principle is that **a sub-program is done when\nits gate is green in CI, not when its code merges**. A dispatched\n`org-drift-sweep` ran it on `main` and it passed.\n\n## P6 — closed on run 30530210861\n\n`bypass-attestation` is green in the sweep. Stated plainly because it is\neasy to get wrong: **merging #954 was not the bar.** The gate had to run\nin the scheduled harness.\n\n## Both sweeps were red overall, on the same unrelated cause\n\nRecorded explicitly in each entry, following the precedent the P4b log\nset (\"Do not read that red as P4b\"):\n\n| run | job that failed | related? |\n| --- | --- | --- |\n| 30518344699 | `release-staleness` | no — P2 dependency edges |\n| 30530210861 | `release-staleness` | no — same edges |\n\nA reader finding a red sweep next to a \"✅ done\" row deserves to know\nwhich is which.\n\n## Open P2 remediation, newly recorded\n\nRun 30518344699 surfaced four **new** dependency edges. The\n`client:Nimbus` edge that reddened the 2026-07-28 sweep was fixed at\nsource in #848; these are new drift on top of it, and are exactly what\nthe 2026-07-27 entry predicted would happen \"once grace expires unless\nthey are bumped\":\n\n```text\nsdk:nimbus-client     1.7.0  < npm 1.9.0\nsdk:nimbus-vscode     1.7.0  < npm 1.9.0\nsdk:Nimbus            1.8.1  < npm 1.9.0\nclient:nimbus-vscode  0.12.1 < npm 0.14.0\n```\n\nThis is the gate working, not a gate defect. Note `client:nimbus-vscode`\nis a **`0.x`** edge and so needs a manifest edit rather than a lockfile\nrefresh — a caret on a `0.x` pins the minor, so `^0.12.1` can never\nreach `0.14.0`. That asymmetry is exactly why the gate reads the\nlockfile rather than the declared range. Remediation is separate work\nacross three repos.\n\n## One finding deliberately not fixed, now written down\n\nThe final review of #954 raised it and I chose not to fold it into that\nPR, because it is new scope rather than a defect in the shipped code:\n\n**Nothing verifies that the credential a run is using can actually *see*\n`bypass_actors`.** An empty array is indistinguishable from \"this repo\nhas none\" — which is precisely the App token's proven behaviour, the\nfact the whole two-gate design exists to route around.\n\nIt is harmless today: three of five repos declare a non-empty actor\nlist, so a wrong-token run reds immediately with three `missing declared\nbypass actor` findings. It becomes dangerous the moment `bypass.by_repo`\ngoes all-empty — the direction the program is heading — because a run\nunder the wrong token would then read `[]` everywhere, exit 0, and write\na false-clean attestation the sweep honours for the full 90-day grace\nwindow. A positive capability probe closes it.\n\nRecorded rather than fixed, so it reads as *decided* rather than\n*forgotten*.\n\n## Verification\n\n`lint:markdown`, `audit:doc-refs`, `audit:status-drift`,\n`audit:readme-cli`, lychee — all clean. Rebased onto `2a3187bd`; clean\nfast-forward, zero conflicts.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-30T12:50:47+03:00",
-          "tree_id": "8eab8bcee5c9491ffa7d6f1938553040deea89f3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1df10add6e26cba0c97c792eda37d59a4b65e854"
-        },
-        "date": 1785405720131,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 319.72823399999726,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 326.19556854999684,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 291.3075149500004,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9b7ac3d70983433f870e0740fbb420d36d78e434",
+          "message": "feat(mcp): capture sink proposals — decisions, terms and links over MCP (S3, I28) (#1657)\n\nS3 capture sink, PR 2 of 3: an MCP client can now propose a decision, a\nglossary term or a graph link. A proposal is inert. It appears nowhere\nin briefs, search or the graph until the owner runs `nimbus captures\naccept <id>`, and `nimbus captures reject <id>` drops it. PR 1 (#1653)\nshipped notes, which go live at once.\n\n## What ships\n\n- **MCP tools:** `propose_decision`, `propose_term` and `propose_link`,\nregistered only for the kinds `[mcp_sink] kinds` enables. The success\ntext tells the model the proposal is NOT recorded yet.\n- **Submit:** proposals go through the same I28 gate as notes. Every\npayload is rebuilt from named fields with the caps in the spec. A link's\nendpoints must be graph-linkable at submit time, and a pending cap\nbounds the review queue. A proposal writes no item, no native row and no\nembedding.\n- **Accept:** one transaction writes the native row, a local-only\n`nimbus:capture` item and one audit row. A decision or term row carries\n`'agent'` provenance and a `capture_id` owner. A link is a `captured_*`\nedge between the two items' graph entities, owned through the capture's\nnative ref. A second accept of the same id refuses and writes nothing.\n- **Reject** needs no capability, so the owner can always drain the\nqueue, even under a policy lock.\n- **Revoke** now also works on accepted captures and deletes only what\nthe capture still owns. A term taken over by a newer capture or by the\nowner's `nimbus.toml`, or a link edge another accepted capture names, is\nleft alone. Evidence rows citing the capture item are deleted with it.\n- **CLI:** `nimbus captures accept|reject`, `captures list --limit`, a\nnative-status line in `captures show` that reads owned, superseded or\nabsent, and an \"agent-authored\" tag on capture cards in `nimbus query`.\n- **Schema V68:** `'agent'` provenance and `capture_id` on\n`decision_record` and `glossary_term`, plus five `captured_*` relation\ntypes. The decision rebuild holds and restores `decision_evidence` and\nchecks a row count, so a pre-existing orphan is dropped rather than\nbricking boot.\n- **Disclosure, I31:** accepted decisions and terms render \"captured via\nMCP, accepted by the owner\", anchored so a synthesis rewrite cannot drop\nit.\n- **Static rule D32(d):** the agent-row writer functions may be called\nonly from the stores and `capture-native.ts`. Its stated bounds name the\nshapes a text scan cannot see.\n\n## Behaviour that differs from the spec, on purpose\n\n- Accept audits `not_required` with outcome `accepted`, not `approved`.\nI4 reserves `approved` for rows a consent gate earned, and the owner's\nown CLI command is not one.\n- An accepted term is never projected as a `nimbus:glossary_term` item,\nbecause that type can be embedded remotely when an OpenAI key is set.\nSearch finds it through its local-only capture item. Accepting over a\nprojected LLM term removes the old projection in the same transaction.\n- `decisions --rebuild` and `glossary --rebuild` keep agent rows; revoke\nis how they leave. The glossary passes never demote, overwrite, veto or\nproject an agent row, including when an accept lands while a\nconsolidation call is in flight.\n- A glossary term the local model classified as \"not a domain term\" no\nlonger blocks the owner's accept. Only a term the owner defined in\n`nimbus.toml` wins over a proposal. The spec assumed the owner could\nveto glossary terms; nothing in the code does.\n- Invisible and bidirectional-override characters are stripped when a\ncapture is stored, not only when it is displayed. Otherwise the owner\nwould approve a cleaned rendering of different stored text, and a\nlook-alike term could slip past the owner's own entry.\n- `captured_*` edges are exempt from the graph populator's per-item\nclear, so an accepted link survives the next sync of either item.\n\n## Not shipped\n\nThe act door is PR 3. There is no batch accept or desktop surface.\n`nimbus negotiate` still counts accepted agent decisions in its\nunattributable lane, whose disclosure blames sync; that is a follow-up.\n\n## Review focus\n\n1. A linked item re-syncs after the link was accepted.\n2. A rebuild runs after agent rows were accepted.\n3. An accepted term has no mentions anywhere in the index.\n4. Two terminals accept the same capture.\n5. Evidence is deleted between submit and accept.\n6. V68 on a populated database with foreign keys on.\n\nEach has a test, and the end-to-end test drives propose, absent, accept,\npresent with the disclosure, revoke and gone over a real gateway and MCP\nserver.\n\n## Verification\n\n`bun run preflight:fast` passes, and the whole-repo `bun test\npackages/gateway packages/cli scripts` passed on Windows with 28744\ntests and 0 failures. Linux and macOS are first exercised by CI here, as\nare the coverage floor and Sonar.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* MCP capture proposals now support decisions, glossary terms, and\nlinks. Proposals remain inactive until accepted by an owner; owners can\nalso reject them.\n* The captures CLI supports accepting and rejecting proposals, limiting\nlist results, and viewing the status of accepted records.\n* Accepted captures appear in search and native records, with clear\nagent-authored disclosures in relevant brief and glossary views.\n* **Bug Fixes**\n* Revoking a capture no longer removes native data that has been\nsuperseded or taken over. Accepted agent-authored decisions and glossary\nterms persist through rebuilds.\n* **Documentation**\n* Updated the MCP capture, CLI, security, and schema documentation for\nthese capabilities and their behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-14T18:48:10Z",
+          "tree_id": "b02d0a061ce6ca599672573d037efeac88715ae3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9b7ac3d70983433f870e0740fbb420d36d78e434"
+        },
+        "date": 1792004352735,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 242.50708415000372,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 243.43632819999547,
             "unit": "ms"
           }
         ]
