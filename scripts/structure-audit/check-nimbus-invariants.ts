@@ -1891,6 +1891,52 @@ export function checkCaptureGateImporters(files: readonly FileEntry[]): Violatio
   return out;
 }
 
+// (d) Rows with 'agent' provenance arise ONLY from an owner-accepted capture. The four agent-row
+//     writers are named only by their definitions and `mcp-sink/capture-native.ts`, and
+//     capture-native's write/inverse entry points only by itself and `capture-gate.ts`, so the one
+//     path to an 'agent' row is acceptCapture → writeCaptureNative. Stated bound: a hand-written
+//     `INSERT … 'agent'` elsewhere is invisible to this identifier scan; capability confinement
+//     (only the stores are handed those tables' writers) is the real defense, as with D27(b).
+const D32_AGENT_WRITER_RE =
+  /\b(?:insertAgentDecision|deleteAgentDecision|upsertAgentTerm|deleteAgentTerm)\b/g;
+const D32_AGENT_WRITER_ALLOWED: readonly string[] = [
+  "packages/gateway/src/decisions/decision-store.ts",
+  "packages/gateway/src/glossary/glossary-store.ts",
+  "packages/gateway/src/mcp-sink/capture-native.ts",
+];
+const D32_CAPTURE_NATIVE_RE = /\b(?:writeCaptureNative|revokeCaptureNative)\b/g;
+const D32_CAPTURE_NATIVE_ALLOWED: readonly string[] = [
+  "packages/gateway/src/mcp-sink/capture-native.ts",
+  "packages/gateway/src/mcp-sink/capture-gate.ts",
+];
+
+export function checkAgentProvenanceWriters(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const code = stripStringLiterals(stripComments(f.contents));
+    const original = f.contents.split("\n");
+    const scans: Array<[RegExp, readonly string[]]> = [
+      [D32_AGENT_WRITER_RE, D32_AGENT_WRITER_ALLOWED],
+      [D32_CAPTURE_NATIVE_RE, D32_CAPTURE_NATIVE_ALLOWED],
+    ];
+    for (const [re, allowed] of scans) {
+      if (allowed.includes(f.relPath)) continue;
+      for (const m of code.matchAll(re)) {
+        const line = code.slice(0, m.index).split("\n").length;
+        out.push({
+          rule: "agent-provenance-writers",
+          file: f.relPath,
+          line,
+          snippet: (original[line - 1] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // D29 (a) (I39): the `nimbus/fetch` brokered-fetch METHOD LITERAL — the string a generated tool's
 // stdio message and the broker's dispatch must agree on — is defined ONCE, in
 // `toolgen/toolgen-types.ts`'s `BROKERED_FETCH_METHOD`, and confined there. A producer and a
@@ -2859,7 +2905,13 @@ async function run(): Promise<void> {
         `::error file=${e.file},line=${e.line}::D32(c) capture-gate.ts value-imported outside ipc/capture-rpc.ts — I28 regression: ${e.snippet}`,
       );
     }
-    if (a.length > 0 || b.length > 0 || c.length > 0) exit = 1;
+    const d = checkAgentProvenanceWriters(files);
+    for (const e of d) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D32(d) an agent-row writer reached outside the capture accept path — I28 regression: ${e.snippet}`,
+      );
+    }
+    if (a.length > 0 || b.length > 0 || c.length > 0 || d.length > 0) exit = 1;
   }
   if (mode === "binary-only" || mode === "all") {
     const v = checkBrokeredFetchLiteralConfinement(files);

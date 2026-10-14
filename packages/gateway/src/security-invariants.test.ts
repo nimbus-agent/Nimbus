@@ -2673,6 +2673,73 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(LOCAL_ONLY_PROSE_TYPES.has("nimbus:capture")).toBe(true);
     expect(PROSE_HEAVY_TYPES.has("nimbus:capture")).toBe(false);
   });
+
+  test("acceptCapture checks capability → owner → proposed → items exist → precondition → one transaction, in that order", async () => {
+    const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    const body = src.slice(src.indexOf("export function acceptCapture"));
+    const order = [
+      "deps.capability(",
+      "requireOwner(caller)",
+      'row.state !== "proposed"',
+      "missingItem(",
+      "assertAcceptable(",
+      "deps.db.transaction(",
+    ];
+    const idx = order.map((s) => body.indexOf(s));
+    expect(idx.every((i) => i >= 0)).toBe(true);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+  });
+
+  test("a proposal writes no item and no native row until accepted (absent by construction)", async () => {
+    const { openMigratedMemoryDb } = await import("./index/migrated-db-template.ts");
+    const { DEFAULT_MCP_SINK_CONFIG } = await import("./config/mcp-sink-toml.ts");
+    const { resolveCaptureCapability } = await import("./mcp-sink/capture-capability.ts");
+    const { acceptCapture, submitCapture } = await import("./mcp-sink/capture-gate.ts");
+    const { CaptureAttemptLimiter, CaptureRefusalCounter } = await import(
+      "./mcp-sink/capture-rate-limit.ts"
+    );
+    const { CaptureStore } = await import("./mcp-sink/capture-store.ts");
+    const db = openMigratedMemoryDb();
+    try {
+      const cap = resolveCaptureCapability(
+        { ok: true, config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true } },
+        { capabilitiesDisabled: new Set<string>() },
+      );
+      let seq = 0;
+      const deps = {
+        db,
+        store: new CaptureStore(db),
+        capability: () => cap,
+        limiter: new CaptureAttemptLimiter(),
+        refusals: new CaptureRefusalCounter(),
+        newId: () => `cap_${String(++seq)}`,
+        now: () => 1_000_000,
+        scheduleEmbedding: () => {},
+      };
+      const count = (sql: string): number => (db.query(sql).get() as { n: number }).n;
+      const items = "SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus'";
+      const decisions = "SELECT COUNT(*) AS n FROM decision_record";
+      const { id } = submitCapture(
+        deps,
+        { clientId: "c-mcp", kind: "mcp" },
+        { kind: "decision", payload: { statement: "Adopt WAL" } },
+      );
+      expect(count(items)).toBe(0);
+      expect(count(decisions)).toBe(0);
+      acceptCapture(deps, { clientId: "c-cli", kind: "unknown" }, id);
+      expect(count(items)).toBe(1);
+      expect(count(decisions)).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("capture.accept never records an `approved` row (I4: no consent gate ran)", async () => {
+    const src = await read("packages/gateway/src/mcp-sink/capture-gate.ts");
+    const at = src.indexOf('actionType: "capture.accept"');
+    expect(at).toBeGreaterThan(0);
+    expect(src.slice(at, at + 400)).toMatch(/hitlStatus:\s*"not_required"/);
+  });
 });
 
 describe("I29 — egress-ledger completeness over the executor chokepoint", () => {

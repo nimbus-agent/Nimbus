@@ -6,6 +6,7 @@ import {
   assertScanIsMeaningful,
   checkActuationConfinement,
   checkAgentEmitterImportConfinement,
+  checkAgentProvenanceWriters,
   checkBrokeredFetchLiteralConfinement,
   checkCaptureGateCallers,
   checkCaptureGateImporters,
@@ -2080,6 +2081,70 @@ describe("D32(a) — the capture table is named only by its store and its DDL", 
   test("ignores test files", () => {
     expect(
       checkCaptureTableConfinement([file("packages/gateway/src/x.test.ts", "FROM capture")]),
+    ).toEqual([]);
+  });
+});
+
+describe("D32(d) — agent-row writers are reachable only through capture-native.ts", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+
+  test("allows the definitions, capture-native and the gate", () => {
+    expect(
+      checkAgentProvenanceWriters([
+        file(
+          "packages/gateway/src/decisions/decision-store.ts",
+          "export function insertAgentDecision() {}\nexport function deleteAgentDecision() {}",
+        ),
+        file(
+          "packages/gateway/src/glossary/glossary-store.ts",
+          "export function upsertAgentTerm() {}\nexport function deleteAgentTerm() {}",
+        ),
+        file(
+          "packages/gateway/src/mcp-sink/capture-native.ts",
+          "insertAgentDecision(db, d); upsertAgentTerm(db, t); export function writeCaptureNative() {}",
+        ),
+        file(
+          "packages/gateway/src/mcp-sink/capture-gate.ts",
+          "writeCaptureNative(db, p); revokeCaptureNative(db, r, false);",
+        ),
+        file("packages/gateway/src/x.test.ts", "insertAgentDecision(db, d)"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    [
+      "a writer called from the decisions pass",
+      "packages/gateway/src/decisions/decision-extract.ts",
+      "insertAgentDecision(db, d);",
+    ],
+    [
+      "a writer aliased on import",
+      "packages/gateway/src/agents/x.ts",
+      'import { upsertAgentTerm as up } from "../glossary/glossary-store.ts";',
+    ],
+    [
+      "capture-native called around the gate",
+      "packages/gateway/src/ipc/capture-rpc.ts",
+      "writeCaptureNative(db, p);",
+    ],
+    [
+      "a revoke inverse called elsewhere",
+      "packages/gateway/src/platform/assemble.ts",
+      "revokeCaptureNative(db, r, true);",
+    ],
+  ])("FAILS on %s", (_n, relPath, src) => {
+    expect(checkAgentProvenanceWriters([file(relPath, src)])).toHaveLength(1);
+  });
+
+  test("ignores a mention in a comment or a string", () => {
+    expect(
+      checkAgentProvenanceWriters([
+        file(
+          "packages/gateway/src/x.ts",
+          '// insertAgentDecision is capture-only\nconst s = "upsertAgentTerm";',
+        ),
+      ]),
     ).toEqual([]);
   });
 });
