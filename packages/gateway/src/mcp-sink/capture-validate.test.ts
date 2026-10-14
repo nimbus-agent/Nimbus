@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { CAPTURED_RELATION_TYPES } from "../graph/relationship-graph.ts";
 import { BODY_MAX_PROSE } from "../index/body-caps.ts";
 import {
   CAPTURE_KINDS,
@@ -7,8 +8,14 @@ import {
   CaptureError,
   isCaptureKind,
   isCaptureState,
+  LINK_RELATIONS,
 } from "./capture-types.ts";
-import { sanitizeClientLabel, validateNotePayload } from "./capture-validate.ts";
+import {
+  referencedItemIds,
+  sanitizeClientLabel,
+  validateCapturePayload,
+  validateNotePayload,
+} from "./capture-validate.ts";
 
 function code(fn: () => unknown): string {
   try {
@@ -133,4 +140,129 @@ describe("capture-types guards", () => {
     expect(e.code).toBe("ERR_CAPTURE_STATE");
     expect(e.message).toBe("ERR_CAPTURE_STATE: nope");
   });
+});
+
+const NOW = 1_700_000_000_000;
+
+describe("validateCapturePayload — decision", () => {
+  test("rebuilds from named fields only, truncates prose, defaults decidedAt to now", () => {
+    const v = validateCapturePayload(
+      "decision",
+      {
+        statement: `  ${"s".repeat(600)}\u001b[31m `,
+        rationale: "why\nbecause",
+        alternatives: ["a", "b".repeat(700)],
+        evidence: ["github:pr:1"],
+        junk: "dropped",
+      },
+      NOW,
+    );
+    expect(v.kind).toBe("decision");
+    if (v.kind !== "decision") throw new Error("kind");
+    expect(v.payload.statement.length).toBe(500);
+    expect(v.payload.statement).not.toContain("\u001b");
+    expect(v.payload.rationale).toBe("why\nbecause");
+    expect(v.payload.alternatives[1]?.length).toBe(500);
+    expect(v.payload.decidedAt).toBe(NOW);
+    expect(Object.keys(v.payload).sort()).toEqual([
+      "alternatives",
+      "decidedAt",
+      "evidence",
+      "rationale",
+      "statement",
+    ]);
+  });
+  test.each([
+    ["empty statement", { statement: "   " }],
+    ["non-integer decidedAt", { statement: "s", decidedAt: 1.5 }],
+    ["decidedAt outside Date range", { statement: "s", decidedAt: 9e15 }],
+    [
+      "11 alternatives",
+      { statement: "s", alternatives: Array.from({ length: 11 }, (_, i) => `a${String(i)}`) },
+    ],
+    [
+      "11 evidence ids",
+      { statement: "s", evidence: Array.from({ length: 11 }, (_, i) => `x:${String(i)}`) },
+    ],
+    ["a non-string rationale", { statement: "s", rationale: 3 }],
+    ["a non-array alternatives", { statement: "s", alternatives: "x" }],
+  ])("refuses %s", (_n, raw) => {
+    expect(() => validateCapturePayload("decision", raw, NOW)).toThrow("ERR_CAPTURE_INVALID");
+  });
+  test("an explicit decidedAt is kept; a null rationale stays null", () => {
+    const v = validateCapturePayload("decision", { statement: "s", decidedAt: 123 }, NOW);
+    if (v.kind !== "decision") throw new Error("kind");
+    expect(v.payload.decidedAt).toBe(123);
+    expect(v.payload.rationale).toBeNull();
+  });
+  test("a blank rationale becomes null; duplicate alternatives collapse", () => {
+    const v = validateCapturePayload(
+      "decision",
+      { statement: "s", rationale: "  ", alternatives: ["x", "x"] },
+      NOW,
+    );
+    if (v.kind !== "decision") throw new Error("kind");
+    expect(v.payload.rationale).toBeNull();
+    expect(v.payload.alternatives).toEqual(["x"]);
+  });
+});
+
+describe("validateCapturePayload — term", () => {
+  test("derives termKey with normalizeTerm and truncates the definition", () => {
+    const v = validateCapturePayload(
+      "term",
+      { term: " Write-Ahead Logs ", definition: "d".repeat(3000), synonyms: ["WAL"] },
+      NOW,
+    );
+    if (v.kind !== "term") throw new Error("kind");
+    expect(v.payload.term).toBe("Write-Ahead Logs");
+    expect(v.payload.termKey).toBe("write-ahead log");
+    expect(v.payload.definition.length).toBe(2048);
+    expect(v.payload.synonyms).toEqual(["WAL"]);
+  });
+  test.each([
+    ["a 101-char term", { term: "t".repeat(101), definition: "d" }],
+    ["an empty definition", { term: "t", definition: "  " }],
+    ["a term that normalizes to nothing", { term: "...", definition: "d" }],
+    ["a 101-char synonym", { term: "t", definition: "d", synonyms: ["s".repeat(101)] }],
+    ["a non-string term", { term: 3, definition: "d" }],
+    ["a blank term", { term: "  ", definition: "d" }],
+  ])("refuses %s", (_n, raw) => {
+    expect(() => validateCapturePayload("term", raw, NOW)).toThrow("ERR_CAPTURE_INVALID");
+  });
+});
+
+describe("validateCapturePayload — link", () => {
+  test("keeps the enum relation and truncates the note", () => {
+    const v = validateCapturePayload(
+      "link",
+      { fromItemId: "a:1", toItemId: "b:2", relation: "fixes", note: "n".repeat(900) },
+      NOW,
+    );
+    if (v.kind !== "link") throw new Error("kind");
+    expect(v.payload.relation).toBe("fixes");
+    expect(v.payload.note?.length).toBe(500);
+    expect(referencedItemIds(v)).toEqual(["a:1", "b:2"]);
+  });
+  test.each([
+    ["the same endpoint twice", { fromItemId: "a:1", toItemId: "a:1", relation: "fixes" }],
+    ["an unknown relation", { fromItemId: "a:1", toItemId: "b:2", relation: "owns" }],
+    ["a missing endpoint", { fromItemId: "a:1", relation: "fixes" }],
+  ])("refuses %s", (_n, raw) => {
+    expect(() => validateCapturePayload("link", raw, NOW)).toThrow("ERR_CAPTURE_INVALID");
+  });
+});
+
+test("every link relation has a captured_ relation type, and nothing else does", () => {
+  expect(Object.keys(CAPTURED_RELATION_TYPES).sort()).toEqual([...LINK_RELATIONS].sort());
+  for (const [r, t] of Object.entries(CAPTURED_RELATION_TYPES)) expect(t).toBe(`captured_${r}`);
+});
+
+test("note still validates through the dispatcher; referencedItemIds reads each kind", () => {
+  const n = validateCapturePayload("note", { body: "b", relatesTo: ["x:1"] }, NOW);
+  expect(referencedItemIds(n)).toEqual(["x:1"]);
+  const d = validateCapturePayload("decision", { statement: "s", evidence: ["y:2"] }, NOW);
+  expect(referencedItemIds(d)).toEqual(["y:2"]);
+  const t = validateCapturePayload("term", { term: "t", definition: "d" }, NOW);
+  expect(referencedItemIds(t)).toEqual([]);
 });

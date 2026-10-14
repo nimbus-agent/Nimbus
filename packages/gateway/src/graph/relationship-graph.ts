@@ -247,6 +247,20 @@ export function ensureGraphEntity(
   );
   return id;
 }
+/**
+ * Graph relation types an ACCEPTED capture link writes (spec § 4.4, seeded by V68). Prefixed so they
+ * can never coincide with a populator-written edge; the populator's per-entity clear exempts them
+ * (`CROSS_ITEM_RELATION_TYPES`), so only the capture gate's revoke removes one.
+ */
+export const CAPTURED_RELATION_TYPES: Readonly<
+  Record<"relates_to" | "fixes" | "caused_by" | "supersedes" | "documents", string>
+> = Object.freeze({
+  relates_to: "captured_relates_to",
+  fixes: "captured_fixes",
+  caused_by: "captured_caused_by",
+  supersedes: "captured_supersedes",
+  documents: "captured_documents",
+});
 
 export function upsertGraphRelation(
   db: Database,

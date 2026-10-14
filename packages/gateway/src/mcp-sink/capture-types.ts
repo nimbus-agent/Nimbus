@@ -26,7 +26,9 @@ export type CaptureErrorCode =
   | "ERR_CAPTURE_UNKNOWN_ITEM"
   | "ERR_CAPTURE_QUEUE_FULL"
   | "ERR_CAPTURE_NOT_FOUND"
-  | "ERR_CAPTURE_STATE";
+  | "ERR_CAPTURE_STATE"
+  | "ERR_CAPTURE_SUPERSEDED"
+  | "ERR_CAPTURE_LINK_UNRESOLVED";
 
 export class CaptureError extends Error {
   constructor(
@@ -58,3 +60,40 @@ export interface CaptureRow {
   readonly createdAt: number;
   readonly decidedAt: number | null;
 }
+
+export const LINK_RELATIONS = [
+  "relates_to",
+  "fixes",
+  "caused_by",
+  "supersedes",
+  "documents",
+] as const;
+export type LinkRelation = (typeof LINK_RELATIONS)[number];
+
+export interface DecisionPayload {
+  readonly statement: string;
+  readonly rationale: string | null;
+  readonly alternatives: readonly string[];
+  readonly decidedAt: number;
+  readonly evidence: readonly string[];
+}
+
+export interface TermPayload {
+  readonly term: string;
+  readonly termKey: string;
+  readonly definition: string;
+  readonly synonyms: readonly string[];
+}
+
+export interface LinkPayload {
+  readonly fromItemId: string;
+  readonly toItemId: string;
+  readonly relation: LinkRelation;
+  readonly note: string | null;
+}
+
+export type ValidatedCapture =
+  | { readonly kind: "note"; readonly payload: NotePayload }
+  | { readonly kind: "decision"; readonly payload: DecisionPayload }
+  | { readonly kind: "term"; readonly payload: TermPayload }
+  | { readonly kind: "link"; readonly payload: LinkPayload };
