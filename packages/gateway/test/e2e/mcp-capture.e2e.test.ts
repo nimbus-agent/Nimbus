@@ -88,7 +88,7 @@ async function until<T>(probe: () => T | undefined, what: string, ms: number): P
 async function bootGateway(enabled: boolean): Promise<void> {
   writeFileSync(
     join(gw.configDir, "nimbus.toml"),
-    ["[mcp_sink]", `enabled = ${String(enabled)}`, 'kinds = ["note"]', "max_per_hour = 30"].join(
+    ["[mcp_sink]", `enabled = ${String(enabled)}`, 'kinds = ["note", "decision", "term", "link"]', "max_per_hour = 30"].join(
       "\n",
     ),
   );
@@ -392,6 +392,65 @@ describe("MCP capture sink — end to end", () => {
       }
     } finally {
       ipc.close();
+    }
+  }, 180_000);
+
+  test("propose_decision → absent from `nimbus decisions` → accept → present with the agent disclosure → revoke → gone", async () => {
+    const mcp = new StdioMcp();
+    try {
+      await mcp.initialize();
+      const names = await mcp.toolNames();
+      for (const t of ["propose_decision", "propose_term", "propose_link"])
+        expect(names).toContain(t);
+
+      const marker = `zebradecision${randomUUID().slice(0, 6)}`;
+      const prop = await mcp.callTool("propose_decision", {
+        statement: `Adopt ${marker}`,
+        rationale: "e2e",
+      });
+      expect(prop.isError).toBe(false);
+      expect(prop.text).toContain("NOT recorded yet");
+      const id = /Proposed decision (cap_[A-Za-z0-9_-]+)/.exec(prop.text)?.[1];
+      expect(id).toBeDefined();
+
+      // Absent by construction while proposed.
+      const before = await runCli(["decisions"]);
+      expect(before.code).toBe(0);
+      expect(before.stdout).not.toContain(marker);
+      const searchBefore = await mcp.callTool("searchIndex", { query: marker });
+      expect(searchBefore.text).not.toContain(String(id));
+
+      const accepted = await runCli(["captures", "accept", String(id)]);
+      expect(accepted.code).toBe(0);
+
+      // POSITIVE CONTROL for the absence above: the same query now finds it, with the disclosure.
+      const after = await runCli(["decisions"]);
+      expect(after.stdout).toContain(marker);
+      expect(after.stdout).toContain("captured via MCP, accepted by the owner");
+
+      expect((await runCli(["captures", "revoke", String(id)])).code).toBe(0);
+      const gone = await runCli(["decisions"]);
+      expect(gone.stdout).not.toContain(marker);
+    } finally {
+      await mcp.close();
+    }
+  }, 180_000);
+
+  test("propose_term → reject → listed as rejected, never in the glossary", async () => {
+    const mcp = new StdioMcp();
+    try {
+      await mcp.initialize();
+      const term = `zebraterm${randomUUID().slice(0, 6)}`;
+      const prop = await mcp.callTool("propose_term", { term, definition: "an e2e term" });
+      const id = /Proposed glossary term (cap_[A-Za-z0-9_-]+)/.exec(prop.text)?.[1];
+      expect(id).toBeDefined();
+      expect((await runCli(["captures", "reject", String(id)])).code).toBe(0);
+      const listed = await runCli(["captures", "list", "--state", "rejected", "--json"]);
+      expect(listed.stdout).toContain(String(id));
+      const glossary = await runCli(["glossary"]);
+      expect(glossary.stdout).not.toContain(term);
+    } finally {
+      await mcp.close();
     }
   }, 180_000);
 
