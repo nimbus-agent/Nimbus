@@ -14,6 +14,9 @@ import {
  * Every state change is a guarded `UPDATE … WHERE state = <expected>` with a row-count check, so a
  * lost race refuses instead of double-applying.
  */
+/** How long a rejected capture's row is kept before `pruneRejected` deletes it (spec § 5.2). */
+export const REJECTED_RETENTION_MS = 90 * 86_400_000;
+
 export type NewCaptureRow = Omit<CaptureRow, "nativeRef" | "decidedAt">;
 
 type RawRow = {
@@ -124,6 +127,36 @@ export class CaptureStore {
       [nowMs, id, expected],
     );
     return res.changes === 1;
+  }
+
+  markAccepted(id: string, itemId: string, nativeRef: string, nowMs: number): boolean {
+    return (
+      dbRun(
+        this.db,
+        `UPDATE capture SET state = 'accepted', item_id = ?, native_ref = ?, decided_at = ?
+         WHERE id = ? AND state = 'proposed'`,
+        [itemId, nativeRef, nowMs, id],
+      ).changes === 1
+    );
+  }
+
+  markRejected(id: string, nowMs: number): boolean {
+    return (
+      dbRun(
+        this.db,
+        "UPDATE capture SET state = 'rejected', decided_at = ? WHERE id = ? AND state = 'proposed'",
+        [nowMs, id],
+      ).changes === 1
+    );
+  }
+
+  countAcceptedWithNativeRef(nativeRef: string, excludingId: string): number {
+    const r = this.db
+      .query(
+        "SELECT COUNT(*) AS n FROM capture WHERE state = 'accepted' AND native_ref = ? AND id <> ?",
+      )
+      .get(nativeRef, excludingId) as { n: number };
+    return r.n;
   }
 
   pruneRejected(cutoffMs: number): number {

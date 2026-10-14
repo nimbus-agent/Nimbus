@@ -82,6 +82,36 @@ describe("CaptureStore", () => {
     expect(store.get("cap_a")).toBeDefined();
   });
 
+  test("markAccepted / markRejected only transition a proposed row", () => {
+    store.insert(note("cap_p", 1, { kind: "term", state: "proposed", itemId: null }));
+    expect(store.markAccepted("cap_p", "nimbus:cap_p", "wal", 50)).toBe(true);
+    expect(store.get("cap_p")).toMatchObject({
+      state: "accepted",
+      itemId: "nimbus:cap_p",
+      nativeRef: "wal",
+      decidedAt: 50,
+    });
+    expect(store.markAccepted("cap_p", "nimbus:cap_p", "wal", 51)).toBe(false);
+    expect(store.markRejected("cap_p", 52)).toBe(false);
+    store.insert(note("cap_q", 1, { kind: "term", state: "proposed", itemId: null }));
+    expect(store.markRejected("cap_q", 60)).toBe(true);
+    expect(store.get("cap_q")).toMatchObject({ state: "rejected", decidedAt: 60 });
+    expect(store.markRejected("cap_q", 61)).toBe(false);
+    expect(store.markAccepted("cap_q", "nimbus:cap_q", "x", 62)).toBe(false);
+    expect(store.markAccepted("cap_none", "i", "x", 1)).toBe(false);
+  });
+
+  test("countAcceptedWithNativeRef excludes the given id and other states", () => {
+    for (const id of ["cap_1", "cap_2", "cap_3"]) {
+      store.insert(note(id, 1, { kind: "term", state: "proposed", itemId: null }));
+    }
+    store.markAccepted("cap_1", "nimbus:cap_1", "wal", 1);
+    store.markAccepted("cap_2", "nimbus:cap_2", "wal", 2);
+    expect(store.countAcceptedWithNativeRef("wal", "cap_1")).toBe(1);
+    expect(store.countAcceptedWithNativeRef("wal", "cap_3")).toBe(2);
+    expect(store.countAcceptedWithNativeRef("other", "cap_3")).toBe(0);
+  });
+
   test("a row whose kind or state is unrecognised is rejected on read, not mis-typed", () => {
     db.run("PRAGMA ignore_check_constraints = ON");
     db.run(

@@ -5,9 +5,14 @@ import { deleteItemByPrimaryKey, itemPrimaryKey, upsertIndexedItem } from "../in
 import type { ClientKind } from "../ipc/server/client-kind.ts";
 import type { CaptureCapability } from "./capture-capability.ts";
 import { CAPTURE_ROLE_BY_KIND } from "./capture-client-policy.ts";
-import { resolveLinkEndpoints } from "./capture-native.ts";
+import {
+  assertAcceptable,
+  renderAcceptedItem,
+  resolveLinkEndpoints,
+  writeCaptureNative,
+} from "./capture-native.ts";
 import type { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
-import type { CaptureStore } from "./capture-store.ts";
+import { type CaptureStore, REJECTED_RETENTION_MS } from "./capture-store.ts";
 import {
   CaptureError,
   type CaptureErrorCode,
@@ -28,7 +33,8 @@ import {
  * Invariant I28 — the ONE door by which content from an MCP client enters Nimbus (spec § 5).
  * Submit takes all four kinds: a note goes live at once, a decision/term/link is stored PROPOSED.
  * Submit runs a FIXED order; read it top to bottom in `submitCapture`. Static D32(b) confines the
- * callers of `submitCapture`/`revokeCapture` to `ipc/capture-rpc.ts`.
+ * callers of `submitCapture`/`revokeCapture`/`acceptCapture`/`rejectCapture` to
+ * `ipc/capture-rpc.ts`.
  */
 export const CAPTURE_ITEM_SERVICE = "nimbus";
 export const CAPTURE_ITEM_TYPE = "capture";
@@ -355,6 +361,126 @@ export function revokeCapture(
     throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
   }
   return { id, state: "revoked" };
+}
+
+// ---- accept / reject (spec § 5.2) ---------------------------------------------------------------
+
+/** Re-validate a stored payload: the stored JSON is already rebuilt, so this only re-types it. */
+function storedPayload(row: CaptureRow): ValidatedCapture {
+  if (row.payloadJson === null) {
+    throw new CaptureError("ERR_CAPTURE_STATE", `capture ${row.id} has no payload`);
+  }
+  return validateCapturePayload(row.kind, JSON.parse(row.payloadJson) as unknown, row.createdAt);
+}
+
+export function acceptCapture(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+  idRaw: unknown,
+): { id: string; state: "accepted"; nativeRef: string } {
+  // 1. Capability: switching the sink off FREEZES the queue (reject and revoke still work).
+  const cap = deps.capability();
+  if (!cap.enabled) {
+    throw new CaptureError(
+      "ERR_CAPTURE_DISABLED",
+      `the capture sink is off (${cap.reason}); accepting is frozen, rejecting and revoking still work`,
+    );
+  }
+  // 2. Owner only.
+  requireOwner(caller);
+  // 3. Must be proposed.
+  const id = requireId(idRaw);
+  const row = deps.store.get(id);
+  if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
+  if (row.state !== "proposed") {
+    throw new CaptureError(
+      "ERR_CAPTURE_STATE",
+      `capture ${id} is ${row.state}; only a proposed capture can be accepted`,
+    );
+  }
+  const v = storedPayload(row);
+  // 4. Referenced items still exist (they may have been deleted since submit).
+  const missing = missingItem(deps, referencedItemIds(v));
+  if (missing !== undefined) {
+    throw new CaptureError(
+      "ERR_CAPTURE_UNKNOWN_ITEM",
+      `no indexed item ${missing}; the capture stays proposed`,
+    );
+  }
+  // 5. Kind-specific precondition (owner's veto/config wins; link endpoints still graphed).
+  const link = assertAcceptable(deps.db, v);
+  // 6. ONE transaction: native row, state, capture item, audit. Any failure rolls all of it back.
+  const now = deps.now();
+  const itemId = itemPrimaryKey(CAPTURE_ITEM_SERVICE, id);
+  const text = renderAcceptedItem(v);
+  let nativeRef = "";
+  deps.db.transaction(() => {
+    nativeRef = writeCaptureNative(deps.db, { captureId: id, itemId, v, link, nowMs: now });
+    if (!deps.store.markAccepted(id, itemId, nativeRef, now)) {
+      throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
+    }
+    upsertIndexedItem(deps.db, {
+      service: CAPTURE_ITEM_SERVICE,
+      type: CAPTURE_ITEM_TYPE,
+      externalId: id,
+      title: text.title,
+      body: text.body,
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: {
+        captureKind: row.kind,
+        captureId: id,
+        agentAuthored: true,
+        clientLabel: row.clientLabel,
+        nativeRef,
+      },
+    });
+    appendAuditEntry(deps.db, {
+      actionType: "capture.accept",
+      // I4: no consent gate ran — the owner's own command is the decision. `approved` is
+      // reserved for rows a gate earned (security-invariants.test.ts APPROVED_ROW_IS_EARNED).
+      hitlStatus: "not_required",
+      actionJson: JSON.stringify({ captureId: id, kind: row.kind, nativeRef, outcome: "accepted" }),
+      timestamp: now,
+      sessionId: caller.clientId,
+    });
+  })();
+  deps.scheduleEmbedding?.(itemId);
+  return { id, state: "accepted", nativeRef };
+}
+
+export function rejectCapture(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+  idRaw: unknown,
+): { id: string; state: "rejected" } {
+  // No capability check: the owner can always drain the queue (spec § 8.2).
+  requireOwner(caller);
+  const id = requireId(idRaw);
+  const row = deps.store.get(id);
+  if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
+  if (row.state !== "proposed") {
+    throw new CaptureError(
+      "ERR_CAPTURE_STATE",
+      `capture ${id} is ${row.state}; only a proposed capture can be rejected`,
+    );
+  }
+  const now = deps.now();
+  let won = false;
+  deps.db.transaction(() => {
+    won = deps.store.markRejected(id, now);
+    if (!won) return;
+    appendAuditEntry(deps.db, {
+      actionType: "capture.reject",
+      hitlStatus: "rejected",
+      actionJson: JSON.stringify({ captureId: id, kind: row.kind, outcome: "rejected" }),
+      timestamp: now,
+      sessionId: caller.clientId,
+    });
+  })();
+  if (!won) throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
+  deps.store.pruneRejected(now - REJECTED_RETENTION_MS);
+  return { id, state: "rejected" };
 }
 
 // ---- owner reads ---------------------------------------------------------------------------------

@@ -245,7 +245,7 @@ import { XaiProvider } from "../llm/xai-provider.ts";
 import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
-import { CaptureStore } from "../mcp-sink/capture-store.ts";
+import { CaptureStore, REJECTED_RETENTION_MS } from "../mcp-sink/capture-store.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { assembleOncallPushRuntime, type OncallPushRuntime } from "../oncall-push/push-runtime.ts";
@@ -3440,7 +3440,7 @@ export async function assemblePlatformServices(
     );
   }
   const captureStore = new CaptureStore(db);
-  captureStore.pruneRejected(Date.now() - 90 * 86_400_000);
+  captureStore.pruneRejected(Date.now() - REJECTED_RETENTION_MS);
   const captureGate: CaptureGateDeps = {
     db,
     store: captureStore,
