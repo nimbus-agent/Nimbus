@@ -411,12 +411,20 @@ describe("submit — proposals", () => {
       .get() as { n: number };
     expect(items.n).toBe(0);
     expect(embedded).toEqual([]);
+    const n = (sql: string): number => (db.query(sql).get() as { n: number }).n;
+    expect(n("SELECT COUNT(*) AS n FROM decision_record")).toBe(0);
     const last = auditRows().at(-1);
     expect(last?.hitl_status).toBe("not_required");
     expect(JSON.parse(last?.action_json ?? "{}")).toMatchObject({
       kind: "decision",
       outcome: "proposed",
     });
+  });
+
+  test("a term proposal writes no glossary row", () => {
+    submitCapture(deps, MCP, { kind: "term", payload: { term: "WAL", definition: "log" } });
+    const g = db.query("SELECT COUNT(*) AS n FROM glossary_term").get() as { n: number };
+    expect(g.n).toBe(0);
   });
 
   test("step 8: the pending cap refuses a proposal (audited) but never a note", () => {
@@ -444,6 +452,10 @@ describe("submit — proposals", () => {
         }),
       ),
     ).toBe("ERR_CAPTURE_UNKNOWN_ITEM");
+    expect(JSON.parse(auditRows().at(-1)?.action_json ?? "{}")).toMatchObject({
+      kind: "link",
+      outcome: "ERR_CAPTURE_UNKNOWN_ITEM",
+    });
     upsertIndexedItem(db, {
       service: "filesystem",
       type: "file",
@@ -468,6 +480,12 @@ describe("submit — proposals", () => {
         }),
       ),
     ).toBe("ERR_CAPTURE_LINK_UNRESOLVED");
+    const refused = auditRows().at(-1);
+    expect(refused?.hitl_status).toBe("rejected");
+    expect(JSON.parse(refused?.action_json ?? "{}")).toMatchObject({
+      kind: "link",
+      outcome: "ERR_CAPTURE_LINK_UNRESOLVED",
+    });
     const note = submitCapture(deps, MCP, { kind: "note", payload: { body: "n" } });
     const [pr] = graphedItems(1);
     expect(
@@ -488,25 +506,34 @@ describe("submit — proposals", () => {
         payload: { fromItemId: a, toItemId: b, relation: "fixes" },
       }).state,
     ).toBe("proposed");
+    const r = db
+      .query("SELECT COUNT(*) AS n FROM graph_relation WHERE type LIKE 'captured_%'")
+      .get() as { n: number };
+    expect(r.n).toBe(0);
   });
 
   test("a validation failure on a proposal kind is audited and rethrown", () => {
     expect(codeOf(() => submitCapture(deps, MCP, { kind: "decision", payload: {} }))).toBe(
       "ERR_CAPTURE_INVALID",
     );
+    const last = auditRows().at(-1);
+    expect(last?.hitl_status).toBe("rejected");
+    expect(JSON.parse(last?.action_json ?? "{}")).toMatchObject({
+      kind: "decision",
+      outcome: "ERR_CAPTURE_INVALID",
+    });
   });
 
   test("a link whose ids are 300 characters each lists with a 120-character title", () => {
     const [a, b] = graphedItems(2);
-    const long = (id: string): string => id; // ids are short; pad via the store directly
     deps.store.insert({
       id: "cap_long",
       kind: "link",
       state: "proposed",
       itemId: null,
       payloadJson: JSON.stringify({
-        fromItemId: `${long(a ?? "")}${"x".repeat(300)}`,
-        toItemId: `${long(b ?? "")}${"y".repeat(300)}`,
+        fromItemId: `${a ?? ""}${"x".repeat(300)}`,
+        toItemId: `${b ?? ""}${"y".repeat(300)}`,
         relation: "fixes",
       }),
       payloadBytes: 700,
