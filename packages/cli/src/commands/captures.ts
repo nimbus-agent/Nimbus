@@ -69,6 +69,16 @@ function confirmation(verb: "revoke" | "accept" | "reject", id: string, raw: unk
   return `Revoked ${id}: its item and embeddings are deleted; the record keeps no payload.\n`;
 }
 
+/** A success line needs a real accepted result; anything else is a gateway contract break. */
+function assertAcceptResult(raw: unknown): void {
+  const r = raw as { state?: unknown; nativeRef?: unknown } | null;
+  if (r?.state !== "accepted" || typeof r.nativeRef !== "string" || r.nativeRef.length === 0) {
+    throw new Error(
+      "captures.accept returned a malformed result; the capture was not confirmed accepted",
+    );
+  }
+}
+
 type Sink = { out(s: string): void; err(s: string): void };
 
 export async function runCapturesWith(
@@ -98,6 +108,7 @@ export async function runCapturesWith(
       return 0;
     }
     const raw = await c.call<unknown>(`captures.${a.verb}`, { id: a.id });
+    if (a.verb === "accept") assertAcceptResult(raw);
     sink.out(a.json ? `${JSON.stringify(raw, undefined, 2)}\n` : confirmation(a.verb, a.id, raw));
     return 0;
   } catch (e) {

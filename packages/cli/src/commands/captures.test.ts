@@ -460,11 +460,26 @@ describe("accept / reject / limit / native status", () => {
 });
 
 describe("accept with a malformed result", () => {
-  test.each([[null], [{}], [{ nativeRef: 5 }]])("%j still confirms", async (raw) => {
+  test.each([
+    [null],
+    [{}],
+    [{ nativeRef: 5 }],
+    [{ state: "accepted", nativeRef: "" }],
+    [{ state: "proposed", nativeRef: "capture:x" }],
+  ])("%j is refused with exit 1", async (raw) => {
     const o = sink();
     expect(
       await runCapturesWith(fake(() => raw).client, { verb: "accept", id: "c", json: false }, o.s),
-    ).toBe(0);
-    expect(o.out.join("")).toContain("Accepted c:");
+    ).toBe(1);
+    expect(o.out.join("")).not.toContain("Accepted");
+    expect(o.err.join("")).toContain("malformed");
+  });
+
+  test("--json prints {error} for a malformed result", async () => {
+    const o = sink();
+    expect(
+      await runCapturesWith(fake(() => ({})).client, { verb: "accept", id: "c", json: true }, o.s),
+    ).toBe(1);
+    expect(JSON.parse(o.out.join("")).error).toContain("malformed");
   });
 });
