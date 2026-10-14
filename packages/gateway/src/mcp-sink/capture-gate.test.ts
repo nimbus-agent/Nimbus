@@ -805,10 +805,20 @@ describe("reject", () => {
 
 describe("revoke — accepted captures", () => {
   test("an accepted decision: native row, evidence, item and payload go; native_ref stays", () => {
-    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    const [ev] = graphedItems(1);
+    const { id } = submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s", evidence: [ev] },
+    });
     acceptCapture(deps, OWNER, id);
+    const evidenceRows = (): unknown =>
+      db
+        .query("SELECT COUNT(*) AS n FROM decision_evidence WHERE decision_id = ?")
+        .get(`capture:${id}`);
+    expect(evidenceRows()).toEqual({ n: 1 }); // positive control: the accept wrote it
     expect(revokeCapture(deps, OWNER, id)).toEqual({ id, state: "revoked" });
     expect(db.query("SELECT COUNT(*) AS n FROM decision_record").get()).toEqual({ n: 0 });
+    expect(evidenceRows()).toEqual({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM item WHERE id = ?").get(`nimbus:${id}`)).toEqual({
       n: 0,
     });

@@ -352,7 +352,8 @@ export function readRebuildPreview(
         return;
       }
       const sample = p.findings.entries
-        .filter((e) => e.definitionSource !== "manual")
+        // Manual AND agent rows survive a rebuild, so neither is "re-mined".
+        .filter((e) => e.definitionSource !== "manual" && e.definitionSource !== "agent")
         .map((e) => e.term)
         .slice(0, REBUILD_SAMPLE);
       settleResolve({ counts: p.findings.stats, sample });

@@ -406,6 +406,25 @@ describe("readRebuildPreview", () => {
     expect(result.sample).toEqual(["widget"]);
   });
 
+  // An owner-accepted capture ('agent') also survives a rebuild (only revoke removes it), so
+  // listing it as a term the rebuild would delete and re-mine would be false.
+  test("filters owner-accepted agent entries out of the sample", async () => {
+    const { client, fire } = makeFakeIpcClient();
+    const resultPromise = readRebuildPreview(client);
+    fire("glossary.briefReady", {
+      findings: {
+        stats: { total: 3, pending: 0, manual: 1 },
+        entries: [
+          { term: "CDR", definitionSource: "manual" },
+          { term: "WAL", definitionSource: "agent" },
+          { term: "widget", definitionSource: "snippet" },
+        ],
+      },
+    });
+    const result = await resultPromise;
+    expect(result.sample).toEqual(["widget"]);
+  });
+
   // The regression this guards: `listConsolidated` orders authored terms
   // FIRST, so with >= REBUILD_SAMPLE (10) authored terms, requesting exactly
   // REBUILD_SAMPLE entries and then filtering out manual ones leaves an

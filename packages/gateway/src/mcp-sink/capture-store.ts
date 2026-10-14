@@ -9,11 +9,6 @@ import {
   isCaptureState,
 } from "./capture-types.ts";
 
-/**
- * The ONLY module that names the `capture` table at runtime (static rule D32(a), invariant I28).
- * Every state change is a guarded `UPDATE … WHERE state = <expected>` with a row-count check, so a
- * lost race refuses instead of double-applying.
- */
 /** How long a rejected capture's row is kept before `pruneRejected` deletes it (spec § 5.2). */
 export const REJECTED_RETENTION_MS = 90 * 86_400_000;
 
@@ -52,6 +47,11 @@ function toRow(r: RawRow): CaptureRow {
   };
 }
 
+/**
+ * The ONLY module that names the `capture` table at runtime (static rule D32(a), invariant I28).
+ * Every state change is a guarded `UPDATE … WHERE state = <expected>` with a row-count check, so a
+ * lost race refuses instead of double-applying.
+ */
 export class CaptureStore {
   constructor(private readonly db: Database) {}
 
