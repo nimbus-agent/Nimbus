@@ -2,24 +2,36 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
-import { upsertIndexedItem } from "../index/item-store.ts";
+import {
+  computeTermStats,
+  getTerm,
+  markVetoed,
+  upsertCandidate,
+  upsertManualTerm,
+} from "../glossary/glossary-store.ts";
+import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
+import { deleteItemByPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import { type CaptureCapability, resolveCaptureCapability } from "./capture-capability.ts";
 import {
+  acceptCapture,
   type CaptureGateDeps,
   captureStatus,
   getCapture,
   listCaptures,
+  rejectCapture,
   revokeCapture,
   submitCapture,
 } from "./capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
-import { CaptureStore } from "./capture-store.ts";
+import { CaptureStore, REJECTED_RETENTION_MS } from "./capture-store.ts";
 import { CaptureError } from "./capture-types.ts";
 
 const MCP = { clientId: "c-mcp", kind: "mcp" as const };
 const OWNER = { clientId: "c-cli", kind: "unknown" as const };
 const OPEN = { capabilitiesDisabled: new Set<string>() };
+/** Written as a code point, never a literal or an escape sequence: the format hook can rewrite escapes into invisibles. */
+const ZWSP = String.fromCodePoint(0x200b);
 
 let db: Database;
 let deps: CaptureGateDeps;
@@ -186,6 +198,7 @@ describe("submitCapture — ordered refusals", () => {
   });
 
   test("4 a kind outside config ∩ submittable is refused and audited", () => {
+    cap = onConfig({ kinds: ["note"] });
     expect(codeOf(() => submitCapture(deps, MCP, { kind: "decision", payload: {} }))).toBe(
       "ERR_CAPTURE_KIND_NOT_ALLOWED",
     );
@@ -363,7 +376,7 @@ describe("list / get / status", () => {
     submitCapture(deps, MCP, NOTE);
     expect(captureStatus(deps)).toEqual({
       enabled: true,
-      kinds: ["note"],
+      kinds: ["note", "decision", "term", "link"],
       pending: 0,
       maxPending: 100,
       maxPerHour: 30,
@@ -374,5 +387,506 @@ describe("list / get / status", () => {
       undefined,
     );
     expect(captureStatus(deps)).toMatchObject({ enabled: false, disabledReason: "policy" });
+  });
+});
+
+function graphedItems(n: number): string[] {
+  const ids: string[] = [];
+  for (let i = 1; i <= n; i++) {
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: `acme/app#${String(i)}`,
+      title: `PR ${String(i)}`,
+      bodyPreview: "patch",
+      modifiedAt: 1,
+      syncedAt: 1,
+      metadata: { repo: "acme/app" },
+    });
+    const r = db
+      .query("SELECT id FROM item WHERE external_id = ?")
+      .get(`acme/app#${String(i)}`) as {
+      id: string;
+    };
+    ids.push(r.id);
+  }
+  return ids;
+}
+
+describe("submit — proposals", () => {
+  test("a decision is stored proposed: no item, no embedding, audited not_required/proposed", () => {
+    const r = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "Adopt WAL" } });
+    expect(r.state).toBe("proposed");
+    expect(deps.store.get(r.id)?.itemId).toBeNull();
+    const items = db
+      .query("SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus' AND type = 'capture'")
+      .get() as { n: number };
+    expect(items.n).toBe(0);
+    expect(embedded).toEqual([]);
+    const n = (sql: string): number => (db.query(sql).get() as { n: number }).n;
+    expect(n("SELECT COUNT(*) AS n FROM decision_record")).toBe(0);
+    const last = auditRows().at(-1);
+    expect(last?.hitl_status).toBe("not_required");
+    expect(JSON.parse(last?.action_json ?? "{}")).toMatchObject({
+      kind: "decision",
+      outcome: "proposed",
+    });
+  });
+
+  test("a term proposal writes no glossary row", () => {
+    submitCapture(deps, MCP, { kind: "term", payload: { term: "WAL", definition: "log" } });
+    const g = db.query("SELECT COUNT(*) AS n FROM glossary_term").get() as { n: number };
+    expect(g.n).toBe(0);
+  });
+
+  test("step 8: the pending cap refuses a proposal (audited) but never a note", () => {
+    cap = onConfig({ maxPending: 1 });
+    submitCapture(deps, MCP, { kind: "term", payload: { term: "WAL", definition: "log" } });
+    expect(
+      codeOf(() =>
+        submitCapture(deps, MCP, { kind: "term", payload: { term: "MVCC", definition: "x" } }),
+      ),
+    ).toBe("ERR_CAPTURE_QUEUE_FULL");
+    expect(JSON.parse(auditRows().at(-1)?.action_json ?? "{}")).toMatchObject({
+      outcome: "ERR_CAPTURE_QUEUE_FULL",
+    });
+    expect(submitCapture(deps, MCP, { kind: "note", payload: { body: "still fine" } }).state).toBe(
+      "live",
+    );
+  });
+
+  test("step 6: a link refuses an unknown item, then an ungraphed one, then a capture item", () => {
+    expect(
+      codeOf(() =>
+        submitCapture(deps, MCP, {
+          kind: "link",
+          payload: { fromItemId: "x:1", toItemId: "y:2", relation: "fixes" },
+        }),
+      ),
+    ).toBe("ERR_CAPTURE_UNKNOWN_ITEM");
+    expect(JSON.parse(auditRows().at(-1)?.action_json ?? "{}")).toMatchObject({
+      kind: "link",
+      outcome: "ERR_CAPTURE_UNKNOWN_ITEM",
+    });
+    upsertIndexedItem(db, {
+      service: "filesystem",
+      type: "file",
+      externalId: "a",
+      title: "a",
+      modifiedAt: 1,
+      syncedAt: 1,
+    });
+    upsertIndexedItem(db, {
+      service: "filesystem",
+      type: "file",
+      externalId: "b",
+      title: "b",
+      modifiedAt: 1,
+      syncedAt: 1,
+    });
+    expect(
+      codeOf(() =>
+        submitCapture(deps, MCP, {
+          kind: "link",
+          payload: { fromItemId: "filesystem:a", toItemId: "filesystem:b", relation: "fixes" },
+        }),
+      ),
+    ).toBe("ERR_CAPTURE_LINK_UNRESOLVED");
+    const refused = auditRows().at(-1);
+    expect(refused?.hitl_status).toBe("rejected");
+    expect(JSON.parse(refused?.action_json ?? "{}")).toMatchObject({
+      kind: "link",
+      outcome: "ERR_CAPTURE_LINK_UNRESOLVED",
+    });
+    const note = submitCapture(deps, MCP, { kind: "note", payload: { body: "n" } });
+    const [pr] = graphedItems(1);
+    expect(
+      codeOf(() =>
+        submitCapture(deps, MCP, {
+          kind: "link",
+          payload: { fromItemId: `nimbus:${note.id}`, toItemId: pr, relation: "relates_to" },
+        }),
+      ),
+    ).toBe("ERR_CAPTURE_LINK_UNRESOLVED");
+  });
+
+  test("a link between two graphed items is accepted as a proposal", () => {
+    const [a, b] = graphedItems(2);
+    expect(
+      submitCapture(deps, MCP, {
+        kind: "link",
+        payload: { fromItemId: a, toItemId: b, relation: "fixes" },
+      }).state,
+    ).toBe("proposed");
+    const r = db
+      .query("SELECT COUNT(*) AS n FROM graph_relation WHERE type LIKE 'captured_%'")
+      .get() as { n: number };
+    expect(r.n).toBe(0);
+  });
+
+  test("a validation failure on a proposal kind is audited and rethrown", () => {
+    expect(codeOf(() => submitCapture(deps, MCP, { kind: "decision", payload: {} }))).toBe(
+      "ERR_CAPTURE_INVALID",
+    );
+    const last = auditRows().at(-1);
+    expect(last?.hitl_status).toBe("rejected");
+    expect(JSON.parse(last?.action_json ?? "{}")).toMatchObject({
+      kind: "decision",
+      outcome: "ERR_CAPTURE_INVALID",
+    });
+  });
+
+  test("a link whose ids are 300 characters each lists with a 120-character title", () => {
+    const [a, b] = graphedItems(2);
+    deps.store.insert({
+      id: "cap_long",
+      kind: "link",
+      state: "proposed",
+      itemId: null,
+      payloadJson: JSON.stringify({
+        fromItemId: `${a ?? ""}${"x".repeat(300)}`,
+        toItemId: `${b ?? ""}${"y".repeat(300)}`,
+        relation: "fixes",
+      }),
+      payloadBytes: 700,
+      clientLabel: null,
+      sessionId: "c-mcp",
+      createdAt: clock,
+    });
+    const listed = listCaptures(deps, OWNER, { state: "proposed" });
+    expect(listed.captures[0]?.title).toHaveLength(120);
+  });
+
+  test("captureStatus counts proposals as pending; kinds now lists all four", () => {
+    submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    const s = captureStatus(deps);
+    expect(s.pending).toBe(1);
+    expect([...s.kinds].sort()).toEqual(["decision", "link", "note", "term"]);
+  });
+});
+
+describe("accept", () => {
+  test("decision: native row + capture item + embedding + one not_required audit row, in one transaction", () => {
+    const [ev] = graphedItems(1);
+    const { id } = submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "Adopt WAL", evidence: [ev] },
+    });
+    const r = acceptCapture(deps, OWNER, id);
+    expect(r).toEqual({ id, state: "accepted", nativeRef: `capture:${id}` });
+    const row = deps.store.get(id);
+    expect(row?.itemId).toBe(`nimbus:${id}`);
+    expect(embedded).toEqual([`nimbus:${id}`]);
+    const d = db
+      .query("SELECT extraction_source, capture_id FROM decision_record WHERE id = ?")
+      .get(`capture:${id}`);
+    expect(d).toEqual({ extraction_source: "agent", capture_id: id });
+    const accepts = auditRows().filter((a) => a.action_type === "capture.accept");
+    expect(accepts).toHaveLength(1);
+    expect(accepts[0]?.hitl_status).toBe("not_required");
+    expect(JSON.parse(accepts[0]?.action_json ?? "{}")).toMatchObject({
+      captureId: id,
+      outcome: "accepted",
+    });
+  });
+
+  test("Review Focus 4: a second accept refuses ERR_CAPTURE_STATE and writes nothing more", () => {
+    const { id } = submitCapture(deps, MCP, {
+      kind: "term",
+      payload: { term: "WAL", definition: "log" },
+    });
+    acceptCapture(deps, OWNER, id);
+    expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_STATE");
+    expect(auditRows().filter((a) => a.action_type === "capture.accept")).toHaveLength(1);
+  });
+
+  test("a lost race inside the transaction rolls the native write back", () => {
+    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    class LosingStore extends CaptureStore {
+      override markAccepted(): boolean {
+        return false;
+      }
+    }
+    const losing = { ...deps, store: new LosingStore(db) };
+    expect(codeOf(() => acceptCapture(losing, OWNER, id))).toBe("ERR_CAPTURE_STATE");
+    expect(db.query("SELECT COUNT(*) AS n FROM decision_record").get()).toEqual({ n: 0 });
+    expect(db.query("SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus'").get()).toEqual({
+      n: 0,
+    });
+    expect(deps.store.get(id)?.state).toBe("proposed");
+  });
+
+  test("Review Focus 5: an evidence item deleted since submit refuses; the capture stays proposed", () => {
+    const [ev] = graphedItems(1);
+    const { id } = submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s", evidence: [ev] },
+    });
+    deleteItemByPrimaryKey(db, String(ev));
+    expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_UNKNOWN_ITEM");
+    expect(deps.store.get(id)?.state).toBe("proposed");
+  });
+
+  function seedManualWal(): void {
+    upsertManualTerm(db, {
+      termKey: "wal",
+      displayTerm: "WAL",
+      definition: "the owner's own",
+      synonyms: [],
+      nearMisses: [],
+      stats: computeTermStats(db, "wal"),
+      score: 0,
+      nowMs: 1,
+    });
+  }
+
+  test("term over a manual row refuses ERR_CAPTURE_SUPERSEDED and stays proposed", () => {
+    seedManualWal();
+    const { id } = submitCapture(deps, MCP, {
+      kind: "term",
+      payload: { term: "WAL", definition: "log" },
+    });
+    expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_SUPERSEDED");
+    expect(deps.store.get(id)?.state).toBe("proposed");
+    expect(auditRows().filter((a) => a.action_type === "capture.accept")).toHaveLength(0);
+    expect(getTerm(db, "wal")?.definition).toBe("the owner's own");
+  });
+
+  test("a zero-width character cannot disguise a key the owner already authored", () => {
+    seedManualWal();
+    const { id } = submitCapture(deps, MCP, {
+      kind: "term",
+      payload: { term: `W${ZWSP}AL`, definition: "log" },
+    });
+    const stored = deps.store.get(id);
+    expect(stored?.payloadJson).not.toContain(ZWSP);
+    expect(JSON.parse(stored?.payloadJson ?? "{}")).toMatchObject({ term: "WAL", termKey: "wal" });
+    expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_SUPERSEDED");
+    expect(getTerm(db, "wal")?.definition).toBe("the owner's own");
+  });
+
+  test("term over a MODEL-vetoed row accepts: the owner's accept outranks the classifier", () => {
+    upsertCandidate(db, {
+      key: "wal",
+      surface: "WAL",
+      form: "phrase",
+      stats: computeTermStats(db, "wal"),
+      score: 1,
+      nowMs: 1,
+    });
+    markVetoed(db, "wal", 2);
+    expect(getTerm(db, "wal")?.status).toBe("vetoed"); // positive control
+    const { id } = submitCapture(deps, MCP, {
+      kind: "term",
+      payload: { term: "WAL", definition: "log" },
+    });
+    expect(acceptCapture(deps, OWNER, id).state).toBe("accepted");
+    expect(getTerm(db, "wal")).toMatchObject({
+      status: "consolidated",
+      definitionSource: "agent",
+      definition: "log",
+    });
+    expect(revokeCapture(deps, OWNER, id).state).toBe("revoked");
+    expect(getTerm(db, "wal")).toBeNull();
+  });
+
+  test("link whose endpoint left the graph refuses ERR_CAPTURE_LINK_UNRESOLVED and stays proposed", () => {
+    const [a, b] = graphedItems(2);
+    const { id } = submitCapture(deps, MCP, {
+      kind: "link",
+      payload: { fromItemId: a, toItemId: b, relation: "fixes" },
+    });
+    deleteGraphEntitiesForItemKeys(db, [String(a)]);
+    expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_LINK_UNRESOLVED");
+    expect(deps.store.get(id)?.state).toBe("proposed");
+  });
+
+  test("a link accepts into a captured_* edge", () => {
+    const [a, b] = graphedItems(2);
+    const { id } = submitCapture(deps, MCP, {
+      kind: "link",
+      payload: { fromItemId: a, toItemId: b, relation: "fixes" },
+    });
+    expect(acceptCapture(deps, OWNER, id).state).toBe("accepted");
+    const n = db
+      .query("SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'captured_fixes'")
+      .get() as { n: number };
+    expect(n.n).toBe(1);
+  });
+
+  test("an mcp client cannot accept; a disabled sink freezes accept but not reject", () => {
+    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    expect(codeOf(() => acceptCapture(deps, MCP, id))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
+    cap = resolveCaptureCapability(
+      { ok: true, config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: false } },
+      OPEN,
+    );
+    expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_DISABLED");
+    expect(rejectCapture(deps, OWNER, id).state).toBe("rejected");
+  });
+
+  test("unknown id, bad id and a live note all refuse", () => {
+    expect(codeOf(() => acceptCapture(deps, OWNER, "cap_404"))).toBe("ERR_CAPTURE_NOT_FOUND");
+    expect(codeOf(() => acceptCapture(deps, OWNER, 7))).toBe("ERR_CAPTURE_INVALID");
+    const { id } = submitCapture(deps, MCP, { kind: "note", payload: { body: "b" } });
+    expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_STATE");
+  });
+
+  test("a proposed row with no payload (CHECK forbids it on disk) refuses ERR_CAPTURE_STATE", () => {
+    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    class NoPayloadStore extends CaptureStore {
+      override get(rowId: string) {
+        const r = super.get(rowId);
+        return r === undefined ? r : { ...r, payloadJson: null };
+      }
+    }
+    const broken = { ...deps, store: new NoPayloadStore(db) };
+    expect(codeOf(() => acceptCapture(broken, OWNER, id))).toBe("ERR_CAPTURE_STATE");
+  });
+
+  test("an audit append failure rolls the whole accept back", () => {
+    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    db.run("DROP TABLE audit_log");
+    expect(() => acceptCapture(deps, OWNER, id)).toThrow(/audit_log/);
+    expect(deps.store.get(id)?.state).toBe("proposed");
+    expect(db.query("SELECT COUNT(*) AS n FROM decision_record").get()).toEqual({ n: 0 });
+    expect(db.query("SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus'").get()).toEqual({
+      n: 0,
+    });
+    expect(embedded).toEqual([]);
+  });
+});
+
+describe("reject", () => {
+  test("proposed to rejected with decided_at, one rejected audit row, nothing native", () => {
+    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    clock += 5;
+    expect(rejectCapture(deps, OWNER, id)).toEqual({ id, state: "rejected" });
+    expect(deps.store.get(id)?.decidedAt).toBe(clock);
+    const rej = auditRows().filter((a) => a.action_type === "capture.reject");
+    expect(rej.map((a) => a.hitl_status)).toEqual(["rejected"]);
+    expect(JSON.parse(rej[0]?.action_json ?? "{}")).toMatchObject({ outcome: "rejected" });
+    expect(db.query("SELECT COUNT(*) AS n FROM decision_record").get()).toEqual({ n: 0 });
+  });
+
+  test("reject prunes rejected rows decided more than 90 days ago", () => {
+    const a = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "a" } }).id;
+    rejectCapture(deps, OWNER, a);
+    expect(deps.store.get(a)).toBeDefined();
+    clock += REJECTED_RETENTION_MS + 1;
+    const b = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "b" } }).id;
+    rejectCapture(deps, OWNER, b);
+    expect(deps.store.get(a)).toBeUndefined();
+    expect(deps.store.get(b)?.state).toBe("rejected");
+  });
+
+  test("rejecting a non-proposed capture refuses ERR_CAPTURE_STATE; mcp refuses FORBIDDEN", () => {
+    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    expect(codeOf(() => rejectCapture(deps, MCP, id))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
+    rejectCapture(deps, OWNER, id);
+    expect(codeOf(() => rejectCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_STATE");
+    expect(codeOf(() => rejectCapture(deps, OWNER, "cap_404"))).toBe("ERR_CAPTURE_NOT_FOUND");
+    expect(codeOf(() => rejectCapture(deps, OWNER, 3))).toBe("ERR_CAPTURE_INVALID");
+    expect(auditRows().filter((a) => a.action_type === "capture.reject")).toHaveLength(1);
+  });
+
+  test("a lost race refuses ERR_CAPTURE_STATE and writes no audit row", () => {
+    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    class LosingStore extends CaptureStore {
+      override markRejected(): boolean {
+        return false;
+      }
+    }
+    const losing = { ...deps, store: new LosingStore(db) };
+    expect(codeOf(() => rejectCapture(losing, OWNER, id))).toBe("ERR_CAPTURE_STATE");
+    expect(auditRows().filter((a) => a.action_type === "capture.reject")).toHaveLength(0);
+  });
+});
+
+describe("revoke — accepted captures", () => {
+  test("an accepted decision: native row, evidence, item and payload go; native_ref stays", () => {
+    const [ev] = graphedItems(1);
+    const { id } = submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s", evidence: [ev] },
+    });
+    acceptCapture(deps, OWNER, id);
+    const evidenceRows = (): unknown =>
+      db
+        .query("SELECT COUNT(*) AS n FROM decision_evidence WHERE decision_id = ?")
+        .get(`capture:${id}`);
+    expect(evidenceRows()).toEqual({ n: 1 }); // positive control: the accept wrote it
+    expect(revokeCapture(deps, OWNER, id)).toEqual({ id, state: "revoked" });
+    expect(db.query("SELECT COUNT(*) AS n FROM decision_record").get()).toEqual({ n: 0 });
+    expect(evidenceRows()).toEqual({ n: 0 });
+    expect(db.query("SELECT COUNT(*) AS n FROM item WHERE id = ?").get(`nimbus:${id}`)).toEqual({
+      n: 0,
+    });
+    const row = deps.store.get(id);
+    expect(row?.payloadJson).toBeNull();
+    expect(row?.nativeRef).toBe(`capture:${id}`);
+    expect(JSON.parse(auditRows().at(-1)?.action_json ?? "{}")).toMatchObject({
+      outcome: "revoked",
+      nativeRef: `capture:${id}`,
+    });
+  });
+
+  test("a newer accepted term takes the row over; revoking the older leaves it, and get() says superseded", () => {
+    const a = submitCapture(deps, MCP, {
+      kind: "term",
+      payload: { term: "WAL", definition: "old" },
+    }).id;
+    acceptCapture(deps, OWNER, a);
+    const b = submitCapture(deps, MCP, {
+      kind: "term",
+      payload: { term: "WAL", definition: "new" },
+    }).id;
+    acceptCapture(deps, OWNER, b);
+    expect(getCapture(deps, OWNER, a).nativeStatus).toBe("superseded");
+    expect(getCapture(deps, OWNER, b).nativeStatus).toBe("owned");
+    revokeCapture(deps, OWNER, a);
+    expect(db.query("SELECT definition FROM glossary_term WHERE term_key = 'wal'").get()).toEqual({
+      definition: "new",
+    });
+  });
+
+  test("a link triple named by two accepted captures survives revoking one", () => {
+    const [x, y] = graphedItems(2);
+    const p = { kind: "link", payload: { fromItemId: x, toItemId: y, relation: "fixes" } };
+    const a = submitCapture(deps, MCP, p).id;
+    const b = submitCapture(deps, MCP, p).id;
+    acceptCapture(deps, OWNER, a);
+    acceptCapture(deps, OWNER, b);
+    revokeCapture(deps, OWNER, a);
+    expect(getCapture(deps, OWNER, b).nativeStatus).toBe("owned");
+    revokeCapture(deps, OWNER, b);
+    expect(
+      db.query("SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'captured_fixes'").get(),
+    ).toEqual({ n: 0 });
+  });
+
+  test("revoking a note removes evidence rows citing it; the decision stays", () => {
+    const note = submitCapture(deps, MCP, { kind: "note", payload: { body: "context" } }).id;
+    const dec = submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s", evidence: [`nimbus:${note}`] },
+    }).id;
+    acceptCapture(deps, OWNER, dec);
+    revokeCapture(deps, OWNER, note);
+    expect(db.query("SELECT COUNT(*) AS n FROM decision_evidence").get()).toEqual({ n: 0 });
+    expect(db.query("SELECT COUNT(*) AS n FROM decision_record").get()).toEqual({ n: 1 });
+  });
+
+  test("a proposed or rejected capture cannot be revoked; a revoked one is a no-op success", () => {
+    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    expect(codeOf(() => revokeCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_STATE");
+    acceptCapture(deps, OWNER, id);
+    revokeCapture(deps, OWNER, id);
+    expect(revokeCapture(deps, OWNER, id)).toEqual({ id, state: "revoked" });
+  });
+
+  test("nativeStatus is null for notes and non-accepted rows", () => {
+    const n = submitCapture(deps, MCP, { kind: "note", payload: { body: "b" } }).id;
+    expect(getCapture(deps, OWNER, n).nativeStatus).toBeNull();
   });
 });

@@ -18,6 +18,29 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-14 — S3: the MCP capture sink, PR 2 of 3 — proposals for decisions, terms and links (invariant I28, schema V68).**
+  An editor agent can now PROPOSE a decision, a glossary term or a link between two items through
+  `propose_decision`, `propose_term` and `propose_link`, registered per `[mcp_sink] kinds`. A proposal
+  passes the same `submitCapture()` gate, lands as `proposed` and is INERT: no item, no native row, nothing
+  in search, briefs or the graph, until the owner runs `nimbus captures accept <id>`. Accept writes the
+  native row in one transaction (a `decision_record` or `glossary_term` with the new `'agent'`
+  provenance and a `capture_id` owner column, or a graph edge of one of five new `captured_*` relation
+  types), audits `capture.accept` as `not_required` with outcome `accepted` (the owner's CLI command is
+  not a consent gate, so I4 forbids `approved`), and labels the result agent-authored. `nimbus captures reject`
+  needs no capability, so the queue can be drained under a policy lock; it audits `rejected`. Revoke now
+  works on accepted captures and deletes only what the capture still owns, and `captures show` prints
+  that native status. Two new codes: `ERR_CAPTURE_SUPERSEDED`, `ERR_CAPTURE_LINK_UNRESOLVED`.
+  Decisions and terms render with the I31-anchored disclosure "captured via MCP, accepted by the owner".
+  **An accepted term is never projected** as a `nimbus:glossary_term` item, since that type routes to a
+  remote embedder when an OpenAI key is set; search finds it through the local-only capture item.
+  `decisions --rebuild` and `glossary --rebuild` keep agent rows, every glossary pass leaves them alone,
+  and the graph populator no longer clears `captured_*` edges on re-sync. Also `nimbus captures list --limit`
+  and an "agent-authored" tag on capture cards in `nimbus query`. Schema **V68** rebuilds `decision_record`
+  and `glossary_term`, verified by a row COUNT rather than `foreign_key_check`, so a pre-existing orphan is
+  dropped instead of bricking boot. New static **D32(d)** confines the agent-row writers. **Not shipped:**
+  the act door (PR 3, own spec), batch accept, a desktop UI, and `data.delete` still does not clear
+  `capture` rows. The MCP server still has 21 read-only tools; the write tools are up to four on top.
+
 - **2026-10-12 — S3: the MCP capture sink, PR 1 of 3 — agent-authored notes over MCP (invariant I28).**
   The MCP server was read-only; an editor agent can now write ONE kind of thing into the local
   index, a note, through an opt-in `capture_note` tool (design: `docs/superpowers/specs/2026-10-11-mcp-capture-sink-design.md`).

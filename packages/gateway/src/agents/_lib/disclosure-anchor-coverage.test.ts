@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { Disclosure } from "./brief-disclosures.ts";
 import {
   changelogDisclosures,
+  decisionsAgentDisclosure,
+  glossaryProvenanceDisclosure,
   negotiateOwnershipDisclosures,
   negotiateWindowDisclosure,
   oncallDisclosures,
@@ -71,11 +73,19 @@ function standupTimeBasis(): Disclosure {
   return d;
 }
 
+function agentGlossaryDisclosure(): Disclosure {
+  const d = glossaryProvenanceDisclosure("WAL", "agent");
+  if (d === undefined) throw new Error("glossary agent disclosure missing");
+  return d;
+}
+
 const TWO_SENTENCE_ENTRIES: ReadonlyArray<readonly [string, Disclosure]> = [
   ["negotiate window", negotiateWindowDisclosure(WINDOW_MS, GENERATED_AT)],
   ["negotiate ownership accountability", negotiateOwnershipDisclosures(ownership()).accountability],
   ["changelog time basis", changelogTimeBasis()],
   ["standup time basis", standupTimeBasis()],
+  ["decisions agent provenance", decisionsAgentDisclosure()],
+  ["glossary agent provenance", agentGlossaryDisclosure()],
 ];
 
 describe("every sentence of a disclosure is anchored (F27)", () => {

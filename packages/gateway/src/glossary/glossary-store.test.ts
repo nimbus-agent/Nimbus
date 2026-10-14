@@ -12,10 +12,12 @@ function runMigrations(db: Database): void {
 
 import { upsertIndexedItem } from "../index/item-store.ts";
 import {
+  type AgentTermUpsert,
   applyStats,
   clearGlossary,
   computeTermStats,
   countByStatus,
+  deleteAgentTerm,
   demoteTerm,
   findBySynonym,
   getTerm,
@@ -29,6 +31,8 @@ import {
   selectPendingBatch,
   selectSnippetUpgradeBatch,
   selectStaleForRecheck,
+  termOwnership,
+  upsertAgentTerm,
   upsertCandidate,
   upsertManualTerm,
   writePassState,
@@ -372,6 +376,144 @@ test("listAllKeys and clearGlossary", () => {
   clearGlossary(db);
   expect(listAllKeys(db)).toEqual([]);
   expect(readPassState(db).watermarkMs).toBe(0);
+});
+
+describe("agent terms (capture sink)", () => {
+  const agent = (captureId: string, definition = "agent def"): AgentTermUpsert => ({
+    termKey: "wal",
+    displayTerm: "WAL",
+    definition,
+    synonyms: ["write-ahead log"],
+    captureId,
+    stats: computeTermStats(db, "wal"),
+    score: 0,
+    nowMs: 10,
+  });
+
+  test("upsertAgentTerm inserts a consolidated 'agent' row owned by the capture", () => {
+    expect(upsertAgentTerm(db, agent("cap_1"))).toBe(true);
+    expect(termOwnership(db, "wal")).toEqual({
+      status: "consolidated",
+      definitionSource: "agent",
+      captureId: "cap_1",
+    });
+    expect(getTerm(db, "wal")?.definition).toBe("agent def");
+  });
+
+  test("a mentioned term keeps its evidence window", () => {
+    seedItem({ externalId: "w1", title: "t", body: "the wal is flushed", modifiedAt: 500 });
+    expect(upsertAgentTerm(db, agent("cap_1"))).toBe(true);
+    expect(getTerm(db, "wal")?.firstSeenAt).toBe(500);
+    expect(getTerm(db, "wal")?.docFreq).toBe(1);
+  });
+
+  test("an unmentioned term is stamped with nowMs for first/last seen", () => {
+    expect(upsertAgentTerm(db, agent("cap_1"))).toBe(true);
+    expect(getTerm(db, "wal")?.firstSeenAt).toBe(10);
+    expect(getTerm(db, "wal")?.lastSeenAt).toBe(10);
+  });
+
+  test("takes over an llm/snippet row, and an earlier agent row (ownership moves)", () => {
+    seedCandidate("wal", 1);
+    consolidate("wal", 5, []);
+    expect(upsertAgentTerm(db, agent("cap_1"))).toBe(true);
+    expect(upsertAgentTerm(db, agent("cap_2", "newer"))).toBe(true);
+    expect(termOwnership(db, "wal")?.captureId).toBe("cap_2");
+    expect(getTerm(db, "wal")?.definition).toBe("newer");
+  });
+
+  test("takes over a model-vetoed row: the owner's explicit accept outranks the classifier", () => {
+    seedCandidate("wal", 1);
+    markVetoed(db, "wal", 3);
+    expect(termOwnership(db, "wal")?.status).toBe("vetoed"); // positive control
+    expect(upsertAgentTerm(db, agent("cap_1"))).toBe(true);
+    expect(termOwnership(db, "wal")).toEqual({
+      status: "consolidated",
+      definitionSource: "agent",
+      captureId: "cap_1",
+    });
+  });
+
+  test("never takes over a manual row", () => {
+    seedCandidate("wal", 1);
+    upsertManualTerm(db, {
+      termKey: "wal",
+      displayTerm: "WAL",
+      definition: "mine",
+      synonyms: [],
+      nearMisses: [],
+      stats: computeTermStats(db, "wal"),
+      score: 0,
+      nowMs: 4,
+    });
+    expect(upsertAgentTerm(db, agent("cap_1"))).toBe(false);
+    expect(getTerm(db, "wal")?.definition).toBe("mine");
+  });
+
+  test("termOwnership is null for an unknown key", () => {
+    expect(termOwnership(db, "nope")).toBeNull();
+  });
+
+  test("deleteAgentTerm deletes only while the capture owns the row", () => {
+    upsertAgentTerm(db, agent("cap_1"));
+    upsertAgentTerm(db, agent("cap_2"));
+    expect(deleteAgentTerm(db, "wal", "cap_1")).toBe(false);
+    expect(deleteAgentTerm(db, "wal", "cap_2")).toBe(true);
+    expect(getTerm(db, "wal")).toBeNull();
+  });
+
+  test("a mined sighting refreshes stats but keeps the agent display_term and definition", () => {
+    upsertAgentTerm(db, agent("cap_1"));
+    upsertCandidate(db, {
+      key: "wal",
+      surface: "Wal",
+      form: "acronym",
+      stats: { docFreq: 9, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+      score: 9,
+      nowMs: 11,
+    });
+    const t = getTerm(db, "wal");
+    expect(t?.displayTerm).toBe("WAL");
+    expect(t?.definitionSource).toBe("agent");
+    expect(t?.definition).toBe("agent def");
+    expect(t?.docFreq).toBe(9);
+  });
+
+  test("markConsolidated / markVetoed / demoteTerm leave an agent row untouched", () => {
+    upsertAgentTerm(db, agent("cap_1"));
+    markConsolidated(db, {
+      termKey: "wal",
+      definition: "llm",
+      definitionSource: "llm",
+      synonyms: [],
+      nearMisses: [],
+      nowMs: 20,
+    });
+    markVetoed(db, "wal", 21);
+    demoteTerm(db, "wal", 22);
+    expect(termOwnership(db, "wal")).toEqual({
+      status: "consolidated",
+      definitionSource: "agent",
+      captureId: "cap_1",
+    });
+    expect(getTerm(db, "wal")?.definition).toBe("agent def");
+  });
+
+  test("clearGlossary (--rebuild) keeps agent rows but still resets the watermark", () => {
+    upsertAgentTerm(db, agent("cap_1"));
+    seedCandidate("other", 1);
+    writePassState(db, {
+      watermarkMs: 50,
+      watermarkId: "x",
+      lastPassAt: 1,
+      lastPassNew: 0,
+      scannedItems: 1,
+    });
+    clearGlossary(db);
+    expect(listAllKeys(db)).toEqual(["wal"]);
+    expect(readPassState(db).watermarkMs).toBe(0);
+    expect(db.query("SELECT COUNT(*) AS n FROM glossary_pass_state").get()).toEqual({ n: 0 });
+  });
 });
 
 describe("selectSnippetUpgradeBatch", () => {

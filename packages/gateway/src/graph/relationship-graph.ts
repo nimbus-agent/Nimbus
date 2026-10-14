@@ -248,6 +248,21 @@ export function ensureGraphEntity(
   return id;
 }
 
+/**
+ * Graph relation types an ACCEPTED capture link writes (spec § 4.4, seeded by V68). Prefixed so they
+ * can never coincide with a populator-written edge; the populator's per-entity clear exempts them
+ * (`CROSS_ITEM_RELATION_TYPES`), so only the capture gate's revoke removes one.
+ */
+export const CAPTURED_RELATION_TYPES: Readonly<
+  Record<"relates_to" | "fixes" | "caused_by" | "supersedes" | "documents", string>
+> = Object.freeze({
+  relates_to: "captured_relates_to",
+  fixes: "captured_fixes",
+  caused_by: "captured_caused_by",
+  supersedes: "captured_supersedes",
+  documents: "captured_documents",
+});
+
 export function upsertGraphRelation(
   db: Database,
   fromId: string,
@@ -434,4 +449,44 @@ export function traverseGraph(
     entities,
     relations: relationsOut,
   };
+}
+
+/** The graph entity an indexed item is linked to, or undefined when the populator never graphed it. */
+export function resolveItemGraphEntityId(db: Database, itemId: string): string | undefined {
+  const placeholders = ITEM_LINKED_ENTITY_TYPES.map(() => "?").join(", ");
+  const r = db
+    .query(
+      `SELECT id FROM graph_entity WHERE external_id = ? AND type IN (${placeholders}) ORDER BY type LIMIT 1`,
+    )
+    .get(itemId, ...ITEM_LINKED_ENTITY_TYPES) as { id: string } | null;
+  return r?.id;
+}
+
+export function graphRelationExists(
+  db: Database,
+  fromId: string,
+  toId: string,
+  type: string,
+): boolean {
+  return (
+    db
+      .query("SELECT 1 FROM graph_relation WHERE from_id = ? AND to_id = ? AND type = ?")
+      .get(fromId, toId, type) !== null
+  );
+}
+
+/** Exact delete by the UNIQUE (from_id, to_id, type) key — revoke's inverse of a captured link. */
+export function deleteGraphRelation(
+  db: Database,
+  fromId: string,
+  toId: string,
+  type: string,
+): boolean {
+  return (
+    dbRun(db, "DELETE FROM graph_relation WHERE from_id = ? AND to_id = ? AND type = ?", [
+      fromId,
+      toId,
+      type,
+    ]).changes === 1
+  );
 }

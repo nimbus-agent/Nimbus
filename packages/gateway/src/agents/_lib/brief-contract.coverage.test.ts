@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { contractViolations, requiredPhrases } from "./brief-contract.ts";
-import { oncallDisclosures, standupDisclosures } from "./brief-disclosures.ts";
+import {
+  decisionsAgentDisclosure,
+  oncallDisclosures,
+  standupDisclosures,
+} from "./brief-disclosures.ts";
 import type { SynthInput } from "./brief-kinds.ts";
+import type { DecisionsBrief } from "./decisions-types.ts";
 import type { OncallBrief } from "./oncall-types.ts";
-import { renderOncall, renderStandup } from "./render.ts";
+import { renderDecisions as renderDecisionsFor, renderOncall, renderStandup } from "./render.ts";
 import type { StandupBrief } from "./standup-types.ts";
 
 /**
@@ -183,6 +188,58 @@ describe("requiredPhrases — glossary term mode", () => {
     const required = requiredPhrases(brief);
     expect(required).toHaveLength(1);
     expect(required[0]?.anchors).toEqual(["not derived from indexed sources"]);
+  });
+});
+
+function decisionsBrief(sources: readonly ("llm" | "agent")[]): DecisionsBrief {
+  return {
+    kind: "decisions",
+    agentVersion: 1,
+    generatedAt: NOW,
+    latencyMs: 1,
+    gaps: [],
+    query: { sinceMs: NOW - 30 * DAY, service: null, minConfidence: 0, explain: false },
+    entries: sources.map((extractionSource, n) => ({
+      id: `d${String(n)}`,
+      statement: `Decision ${String(n)}`,
+      rationale: null,
+      alternatives: [],
+      confidence: 0.5,
+      decidedAt: NOW - DAY,
+      hasAdr: true,
+      extractionSource,
+      evidence: [],
+      explain: [],
+      matchedVia: null,
+    })),
+    stats: {
+      total: sources.length,
+      pending: 0,
+      extracted: sources.length,
+      vetoed: 0,
+      lastPassAt: null,
+      truncatedSources: 0,
+    },
+  };
+}
+
+describe("requiredPhrases — decisions", () => {
+  test("one agent entry requires exactly the agent disclosure", () => {
+    expect(requiredPhrases(decisionsBrief(["llm", "agent"]))).toEqual([decisionsAgentDisclosure()]);
+  });
+
+  test("no agent entry requires nothing", () => {
+    expect(requiredPhrases(decisionsBrief(["llm"]))).toEqual([]);
+  });
+
+  test("a rewrite that drops the anchor under ## Decisions is a violation; keeping it is not", () => {
+    const brief = decisionsBrief(["agent"]);
+    const md = renderDecisionsFor(brief);
+    expect(contractViolations(brief, md)).toEqual([]);
+    const rewritten = md.replaceAll("captured via MCP, accepted by the owner", "extracted");
+    expect(contractViolations(brief, rewritten)).toEqual([
+      'section "Decisions" dropped required phrase "captured via MCP, accepted by the owner"',
+    ]);
   });
 });
 

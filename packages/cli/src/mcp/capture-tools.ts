@@ -8,6 +8,8 @@ import { type AdapterDeps, runTool, type ToolResult } from "./tool-runtime.ts";
  * rule: no runtime import cycle). Registered only when the gateway's `capture.status` says the
  * sink is enabled for the kind — see `captureToolsFor`.
  */
+type CaptureToolKind = "note" | "decision" | "term" | "link";
+
 export interface CaptureToolSpec {
   readonly name: string;
   readonly description: string;
@@ -18,7 +20,7 @@ export interface CaptureToolSpec {
     readonly idempotentHint: false;
     readonly openWorldHint: false;
   };
-  readonly kind: "note";
+  readonly kind: CaptureToolKind;
   run(
     deps: AdapterDeps,
     args: Record<string, unknown>,
@@ -41,6 +43,46 @@ function idOf(v: unknown): string {
   return id;
 }
 
+async function submit(
+  c: IpcCallable,
+  kind: CaptureToolKind,
+  payload: Record<string, unknown>,
+  clientLabel: () => string | undefined,
+): Promise<string> {
+  const params: Record<string, unknown> = { kind, payload };
+  const label = clientLabel();
+  if (label !== undefined) {
+    params["clientLabel"] = label;
+  }
+  return idOf(await c.call<unknown>("capture.submit", params));
+}
+
+/** Copy only the keys the caller actually sent, so an omitted optional is absent, not undefined. */
+function pick(args: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of keys) {
+    if (args[k] !== undefined) {
+      out[k] = args[k];
+    }
+  }
+  return out;
+}
+
+function proposed(noun: string, id: string): ToolResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Proposed ${noun} ${id}. It is NOT recorded yet: it appears nowhere until the owner runs \`nimbus captures accept ${id}\`. Do not tell the user it has been recorded.`,
+      },
+    ],
+  };
+}
+
+const PROPOSAL_NOTE =
+  "Stored on the user's machine (nothing leaves it), labelled agent-authored, and INERT until the " +
+  "owner reviews it: it is not searchable and appears in no brief until accepted. ";
+
 export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
   {
     name: "capture_note",
@@ -60,19 +102,12 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
     annotations: WRITE_ANNOTATIONS,
     run: (deps, args, clientLabel) =>
       runTool(deps, async (c: IpcCallable) => {
-        const payload: Record<string, unknown> = { title: args["title"], body: args["body"] };
-        if (args["tags"] !== undefined) {
-          payload["tags"] = args["tags"];
-        }
-        if (args["relatesTo"] !== undefined) {
-          payload["relatesTo"] = args["relatesTo"];
-        }
-        const label = clientLabel();
-        const params: Record<string, unknown> = { kind: "note", payload };
-        if (label !== undefined) {
-          params["clientLabel"] = label;
-        }
-        const id = idOf(await c.call<unknown>("capture.submit", params));
+        const payload: Record<string, unknown> = {
+          title: args["title"],
+          body: args["body"],
+          ...pick(args, ["tags", "relatesTo"]),
+        };
+        const id = await submit(c, "note", payload, clientLabel);
         return {
           content: [
             {
@@ -82,6 +117,83 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
           ],
         };
       }),
+  },
+  {
+    name: "propose_decision",
+    kind: "decision",
+    description:
+      "Propose a decision for the user's LOCAL Nimbus decision log. " +
+      PROPOSAL_NOTE +
+      "evidence takes item ids exactly as the `id` field a read tool returned; decidedAt is an ISO 8601 date.",
+    schema: {
+      statement: z.string(),
+      rationale: z.string().optional(),
+      alternatives: z.array(z.string()).optional(),
+      decidedAt: z.string().optional(),
+      evidence: z.array(z.string()).optional(),
+    },
+    annotations: WRITE_ANNOTATIONS,
+    run: (deps, args, clientLabel) =>
+      runTool(deps, async (c: IpcCallable) => {
+        const payload = pick(args, ["statement", "rationale", "alternatives", "evidence"]);
+        const decidedAt = args["decidedAt"];
+        if (typeof decidedAt === "string") {
+          const ms = Date.parse(decidedAt);
+          if (Number.isNaN(ms)) {
+            throw new Error("decidedAt must be an ISO 8601 date");
+          }
+          payload["decidedAt"] = ms;
+        }
+        return proposed("decision", await submit(c, "decision", payload, clientLabel));
+      }),
+  },
+  {
+    name: "propose_term",
+    kind: "term",
+    description:
+      "Propose a glossary term for the user's LOCAL Nimbus glossary. " +
+      PROPOSAL_NOTE +
+      "A term the owner defined in nimbus.toml cannot be overridden.",
+    schema: {
+      term: z.string(),
+      definition: z.string(),
+      synonyms: z.array(z.string()).optional(),
+    },
+    annotations: WRITE_ANNOTATIONS,
+    run: (deps, args, clientLabel) =>
+      runTool(deps, async (c: IpcCallable) =>
+        proposed(
+          "glossary term",
+          await submit(c, "term", pick(args, ["term", "definition", "synonyms"]), clientLabel),
+        ),
+      ),
+  },
+  {
+    name: "propose_link",
+    kind: "link",
+    description:
+      "Propose a typed link between two indexed items in the user's LOCAL Nimbus relationship graph. " +
+      PROPOSAL_NOTE +
+      "Both ids must be the `id` field a read tool returned, and both items must be in the graph (a note captured over MCP is not).",
+    schema: {
+      fromItemId: z.string(),
+      toItemId: z.string(),
+      relation: z.enum(["relates_to", "fixes", "caused_by", "supersedes", "documents"]),
+      note: z.string().optional(),
+    },
+    annotations: WRITE_ANNOTATIONS,
+    run: (deps, args, clientLabel) =>
+      runTool(deps, async (c: IpcCallable) =>
+        proposed(
+          "link",
+          await submit(
+            c,
+            "link",
+            pick(args, ["fromItemId", "toItemId", "relation", "note"]),
+            clientLabel,
+          ),
+        ),
+      ),
   },
 ];
 

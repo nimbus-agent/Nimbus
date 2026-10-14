@@ -1,9 +1,11 @@
 import {
+  acceptCapture,
   type CaptureCaller,
   type CaptureGateDeps,
   captureStatus,
   getCapture,
   listCaptures,
+  rejectCapture,
   revokeCapture,
   submitCapture,
 } from "../mcp-sink/capture-gate.ts";
@@ -45,6 +47,8 @@ export async function dispatchCaptureRpc(
         "captures.list": (p, c) => listCaptures(c.gate, c.caller, p),
         "captures.get": (p, c) => getCapture(c.gate, c.caller, idParam(p)),
         "captures.revoke": (p, c) => revokeCapture(c.gate, c.caller, idParam(p)),
+        "captures.accept": (p, c) => acceptCapture(c.gate, c.caller, idParam(p)),
+        "captures.reject": (p, c) => rejectCapture(c.gate, c.caller, idParam(p)),
       },
     );
   } catch (e) {

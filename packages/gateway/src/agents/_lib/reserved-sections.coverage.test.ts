@@ -60,7 +60,15 @@ const HOSTILE_GLOSSARY: GlossaryBrief = {
       topSources: [],
     },
   ],
-  stats: { total: 1, pending: 0, vetoed: 0, manual: 0, lastPassAt: null, truncatedSources: 0 },
+  stats: {
+    total: 1,
+    pending: 0,
+    vetoed: 0,
+    manual: 0,
+    agent: 0,
+    lastPassAt: null,
+    truncatedSources: 0,
+  },
 };
 
 describe("the reserved registry is wired to text that actually renders", () => {
@@ -260,7 +268,15 @@ const GLOSSARY: GlossaryBrief = {
   entries: [],
   matchedVia: null,
   suggestions: [],
-  stats: { total: 0, pending: 0, vetoed: 0, manual: 0, lastPassAt: null, truncatedSources: 0 },
+  stats: {
+    total: 0,
+    pending: 0,
+    vetoed: 0,
+    manual: 0,
+    agent: 0,
+    lastPassAt: null,
+    truncatedSources: 0,
+  },
 };
 
 const DECISIONS: DecisionsBrief = {

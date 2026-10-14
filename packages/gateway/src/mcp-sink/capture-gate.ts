@@ -1,12 +1,22 @@
 import type { Database } from "bun:sqlite";
 
 import { appendAuditEntry } from "../db/audit-chain.ts";
+import { deleteEvidenceCitingItem } from "../decisions/decision-store.ts";
 import { deleteItemByPrimaryKey, itemPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import type { ClientKind } from "../ipc/server/client-kind.ts";
 import type { CaptureCapability } from "./capture-capability.ts";
 import { CAPTURE_ROLE_BY_KIND } from "./capture-client-policy.ts";
+import {
+  assertAcceptable,
+  captureNativeStatus,
+  type NativeStatus,
+  renderAcceptedItem,
+  resolveLinkEndpoints,
+  revokeCaptureNative,
+  writeCaptureNative,
+} from "./capture-native.ts";
 import type { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
-import type { CaptureStore } from "./capture-store.ts";
+import { type CaptureStore, REJECTED_RETENTION_MS } from "./capture-store.ts";
 import {
   CaptureError,
   type CaptureErrorCode,
@@ -15,13 +25,20 @@ import {
   type CaptureState,
   isCaptureKind,
   isCaptureState,
+  type ValidatedCapture,
 } from "./capture-types.ts";
-import { sanitizeClientLabel, validateNotePayload } from "./capture-validate.ts";
+import {
+  referencedItemIds,
+  sanitizeClientLabel,
+  validateCapturePayload,
+} from "./capture-validate.ts";
 
 /**
  * Invariant I28 — the ONE door by which content from an MCP client enters Nimbus (spec § 5).
+ * Submit takes all four kinds: a note goes live at once, a decision/term/link is stored PROPOSED.
  * Submit runs a FIXED order; read it top to bottom in `submitCapture`. Static D32(b) confines the
- * callers of `submitCapture`/`revokeCapture` to `ipc/capture-rpc.ts`.
+ * callers of `submitCapture`/`revokeCapture`/`acceptCapture`/`rejectCapture` to
+ * `ipc/capture-rpc.ts`.
  */
 export const CAPTURE_ITEM_SERVICE = "nimbus";
 export const CAPTURE_ITEM_TYPE = "capture";
@@ -61,6 +78,7 @@ export type CaptureDetail = CaptureSummary & {
   readonly payloadBytes: number;
   readonly itemId: string | null;
   readonly nativeRef: string | null;
+  readonly nativeStatus: NativeStatus | null;
 };
 
 export interface CaptureStatus {
@@ -136,6 +154,12 @@ function missingItem(deps: CaptureGateDeps, ids: readonly string[]): string | un
 function titleOf(row: CaptureRow): string {
   if (row.payloadJson === null) return "(revoked)";
   const p = JSON.parse(row.payloadJson) as Record<string, unknown>;
+  if (row.kind === "link") {
+    const rel = typeof p["relation"] === "string" ? p["relation"] : "link";
+    const from = typeof p["fromItemId"] === "string" ? p["fromItemId"] : "";
+    const to = typeof p["toItemId"] === "string" ? p["toItemId"] : "";
+    return `${rel}: ${from} → ${to}`.slice(0, 120);
+  }
   const t = p["title"] ?? p["statement"] ?? p["term"];
   return typeof t === "string" ? t.slice(0, 120) : "";
 }
@@ -194,17 +218,18 @@ export function submitCapture(
       `kind ${kindName} is not enabled`,
     );
   }
-  // 5. Whitelist rebuild.
-  let payload: ReturnType<typeof validateNotePayload>;
+  // 5. Whitelist rebuild, per kind.
+  let v: ValidatedCapture;
   try {
-    payload = validateNotePayload(params["payload"]);
+    v = validateCapturePayload(kindRaw, params["payload"], now);
   } catch (e) {
     if (e instanceof CaptureError)
       refuseAudited(deps, caller, kindRaw, clientLabel, e.code, e.message);
     throw e;
   }
-  // 6. Referenced items exist (a capture item only while live/accepted).
-  const missing = missingItem(deps, payload.relatesTo);
+  // 6. Referenced items exist (a capture item only while live/accepted); a link's endpoints must
+  //    also be graph-linkable NOW, so a proposal that can never be accepted is not queued.
+  const missing = missingItem(deps, referencedItemIds(v));
   if (missing !== undefined) {
     refuseAudited(
       deps,
@@ -214,6 +239,15 @@ export function submitCapture(
       "ERR_CAPTURE_UNKNOWN_ITEM",
       `no indexed item ${missing}`,
     );
+  }
+  if (v.kind === "link") {
+    try {
+      resolveLinkEndpoints(deps.db, v.payload.fromItemId, v.payload.toItemId);
+    } catch (e) {
+      if (e instanceof CaptureError)
+        refuseAudited(deps, caller, kindRaw, clientLabel, e.code, e.message);
+      throw e;
+    }
   }
   // 7. Durable hourly cap — read from the table, survives restarts.
   if (deps.store.countCreatedSince(now - HOUR_MS) >= cap.config.maxPerHour) {
@@ -226,18 +260,31 @@ export function submitCapture(
       "hourly capture cap reached",
     );
   }
-  // 8. Pending cap applies to proposals only; a note is never pending (PR 2 adds the check here).
+  // 8. Pending cap — proposals only; a note is never pending.
+  const proposal = v.kind !== "note";
+  if (proposal && deps.store.countByState("proposed") >= cap.config.maxPending) {
+    refuseAudited(
+      deps,
+      caller,
+      kindRaw,
+      clientLabel,
+      "ERR_CAPTURE_QUEUE_FULL",
+      `the review queue is full (${String(cap.config.maxPending)} proposals await the owner)`,
+    );
+  }
 
-  // 9 + 10. One transaction: capture row, item, audit. An audit failure rolls all of it back.
+  // 9 + 10. One transaction: capture row, item (notes only), audit. An audit failure rolls all of it
+  //    back. A proposal gets no item, no native row and no embedding until accept (spec § 4.3).
   const id = deps.newId();
-  const itemId = itemPrimaryKey(CAPTURE_ITEM_SERVICE, id);
-  const payloadJson = JSON.stringify(payload);
+  const itemId = proposal ? null : itemPrimaryKey(CAPTURE_ITEM_SERVICE, id);
+  const payloadJson = JSON.stringify(v.payload);
   const payloadBytes = Buffer.byteLength(payloadJson, "utf8");
+  const state: CaptureState = proposal ? "proposed" : "live";
   deps.db.transaction(() => {
     deps.store.insert({
       id,
       kind: kindRaw,
-      state: "live",
+      state,
       itemId,
       payloadJson,
       payloadBytes,
@@ -245,23 +292,26 @@ export function submitCapture(
       sessionId: caller.clientId,
       createdAt: now,
     });
-    upsertIndexedItem(deps.db, {
-      service: CAPTURE_ITEM_SERVICE,
-      type: CAPTURE_ITEM_TYPE,
-      externalId: id,
-      title: payload.title,
-      body: payload.body,
-      modifiedAt: now,
-      syncedAt: now,
-      metadata: {
-        captureKind: kindRaw,
-        captureId: id,
-        agentAuthored: true,
-        clientLabel,
-        tags: payload.tags,
-        relatesTo: payload.relatesTo,
-      },
-    });
+    if (v.kind === "note") {
+      const payload = v.payload;
+      upsertIndexedItem(deps.db, {
+        service: CAPTURE_ITEM_SERVICE,
+        type: CAPTURE_ITEM_TYPE,
+        externalId: id,
+        title: payload.title,
+        body: payload.body,
+        modifiedAt: now,
+        syncedAt: now,
+        metadata: {
+          captureKind: kindRaw,
+          captureId: id,
+          agentAuthored: true,
+          clientLabel,
+          tags: payload.tags,
+          relatesTo: payload.relatesTo,
+        },
+      });
+    }
     appendAuditEntry(deps.db, {
       actionType: "capture.submit",
       hitlStatus: "not_required",
@@ -270,14 +320,14 @@ export function submitCapture(
         kind: kindRaw,
         payloadBytes,
         clientLabel,
-        outcome: "captured",
+        outcome: proposal ? "proposed" : "captured",
       }),
       timestamp: now,
       sessionId: caller.clientId,
     });
   })();
-  deps.scheduleEmbedding?.(itemId);
-  return { id, state: "live" };
+  if (itemId !== null) deps.scheduleEmbedding?.(itemId);
+  return { id, state };
 }
 
 // ---- revoke (spec § 5.3) -------------------------------------------------------------------------
@@ -292,22 +342,39 @@ export function revokeCapture(
   const row = deps.store.get(id);
   if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
   if (row.state === "revoked") return { id, state: "revoked" };
-  if (row.state !== "live") {
+  if (row.state !== "live" && row.state !== "accepted") {
     throw new CaptureError(
       "ERR_CAPTURE_STATE",
-      `capture ${id} is ${row.state}; only a live note can be revoked in this version`,
+      `capture ${id} is ${row.state}; only a live note or an accepted capture can be revoked`,
     );
   }
+  const from = row.state;
   const now = deps.now();
   let won = false;
   deps.db.transaction(() => {
-    won = deps.store.markRevoked(id, "live", now);
+    won = deps.store.markRevoked(id, from, now);
     if (!won) return; // lost a race to another revoke: nothing to write
-    if (row.itemId !== null) deleteItemByPrimaryKey(deps.db, row.itemId);
+    if (from === "accepted" && row.nativeRef !== null) {
+      revokeCaptureNative(
+        deps.db,
+        { id, kind: row.kind, nativeRef: row.nativeRef },
+        deps.store.countAcceptedWithNativeRef(row.nativeRef, id) > 0,
+      );
+    }
+    if (row.itemId !== null) {
+      // No evidence row may keep pointing at an item that is about to disappear (spec § 5.3).
+      deleteEvidenceCitingItem(deps.db, row.itemId);
+      deleteItemByPrimaryKey(deps.db, row.itemId);
+    }
     appendAuditEntry(deps.db, {
       actionType: "capture.revoke",
       hitlStatus: "not_required",
-      actionJson: JSON.stringify({ captureId: id, kind: row.kind, outcome: "revoked" }),
+      actionJson: JSON.stringify({
+        captureId: id,
+        kind: row.kind,
+        nativeRef: row.nativeRef,
+        outcome: "revoked",
+      }),
       timestamp: now,
       sessionId: caller.clientId,
     });
@@ -316,6 +383,126 @@ export function revokeCapture(
     throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
   }
   return { id, state: "revoked" };
+}
+
+// ---- accept / reject (spec § 5.2) ---------------------------------------------------------------
+
+/** Re-validate a stored payload: the stored JSON is already rebuilt, so this only re-types it. */
+function storedPayload(row: CaptureRow): ValidatedCapture {
+  if (row.payloadJson === null) {
+    throw new CaptureError("ERR_CAPTURE_STATE", `capture ${row.id} has no payload`);
+  }
+  return validateCapturePayload(row.kind, JSON.parse(row.payloadJson) as unknown, row.createdAt);
+}
+
+export function acceptCapture(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+  idRaw: unknown,
+): { id: string; state: "accepted"; nativeRef: string } {
+  // 1. Capability: switching the sink off FREEZES the queue (reject and revoke still work).
+  const cap = deps.capability();
+  if (!cap.enabled) {
+    throw new CaptureError(
+      "ERR_CAPTURE_DISABLED",
+      `the capture sink is off (${cap.reason}); accepting is frozen, rejecting and revoking still work`,
+    );
+  }
+  // 2. Owner only.
+  requireOwner(caller);
+  // 3. Must be proposed.
+  const id = requireId(idRaw);
+  const row = deps.store.get(id);
+  if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
+  if (row.state !== "proposed") {
+    throw new CaptureError(
+      "ERR_CAPTURE_STATE",
+      `capture ${id} is ${row.state}; only a proposed capture can be accepted`,
+    );
+  }
+  const v = storedPayload(row);
+  // 4. Referenced items still exist (they may have been deleted since submit).
+  const missing = missingItem(deps, referencedItemIds(v));
+  if (missing !== undefined) {
+    throw new CaptureError(
+      "ERR_CAPTURE_UNKNOWN_ITEM",
+      `no indexed item ${missing}; the capture stays proposed`,
+    );
+  }
+  // 5. Kind-specific precondition (the owner's nimbus.toml term wins; link endpoints still graphed).
+  const link = assertAcceptable(deps.db, v);
+  // 6. ONE transaction: native row, state, capture item, audit. Any failure rolls all of it back.
+  const now = deps.now();
+  const itemId = itemPrimaryKey(CAPTURE_ITEM_SERVICE, id);
+  const text = renderAcceptedItem(v);
+  let nativeRef = "";
+  deps.db.transaction(() => {
+    nativeRef = writeCaptureNative(deps.db, { captureId: id, itemId, v, link, nowMs: now });
+    if (!deps.store.markAccepted(id, itemId, nativeRef, now)) {
+      throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
+    }
+    upsertIndexedItem(deps.db, {
+      service: CAPTURE_ITEM_SERVICE,
+      type: CAPTURE_ITEM_TYPE,
+      externalId: id,
+      title: text.title,
+      body: text.body,
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: {
+        captureKind: row.kind,
+        captureId: id,
+        agentAuthored: true,
+        clientLabel: row.clientLabel,
+        nativeRef,
+      },
+    });
+    appendAuditEntry(deps.db, {
+      actionType: "capture.accept",
+      // I4: no consent gate ran — the owner's own command is the decision. `approved` is
+      // reserved for rows a gate earned (security-invariants.test.ts APPROVED_ROW_IS_EARNED).
+      hitlStatus: "not_required",
+      actionJson: JSON.stringify({ captureId: id, kind: row.kind, nativeRef, outcome: "accepted" }),
+      timestamp: now,
+      sessionId: caller.clientId,
+    });
+  })();
+  deps.scheduleEmbedding?.(itemId);
+  return { id, state: "accepted", nativeRef };
+}
+
+export function rejectCapture(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+  idRaw: unknown,
+): { id: string; state: "rejected" } {
+  // No capability check: the owner can always drain the queue (spec § 8.2).
+  requireOwner(caller);
+  const id = requireId(idRaw);
+  const row = deps.store.get(id);
+  if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
+  if (row.state !== "proposed") {
+    throw new CaptureError(
+      "ERR_CAPTURE_STATE",
+      `capture ${id} is ${row.state}; only a proposed capture can be rejected`,
+    );
+  }
+  const now = deps.now();
+  let won = false;
+  deps.db.transaction(() => {
+    won = deps.store.markRejected(id, now);
+    if (!won) return;
+    appendAuditEntry(deps.db, {
+      actionType: "capture.reject",
+      hitlStatus: "rejected",
+      actionJson: JSON.stringify({ captureId: id, kind: row.kind, outcome: "rejected" }),
+      timestamp: now,
+      sessionId: caller.clientId,
+    });
+  })();
+  if (!won) throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
+  deps.store.pruneRejected(now - REJECTED_RETENTION_MS);
+  return { id, state: "rejected" };
 }
 
 // ---- owner reads ---------------------------------------------------------------------------------
@@ -366,6 +553,10 @@ export function getCapture(
     payloadBytes: row.payloadBytes,
     itemId: row.itemId,
     nativeRef: row.nativeRef,
+    nativeStatus:
+      row.state === "accepted" && row.nativeRef !== null
+        ? captureNativeStatus(deps.db, { id: row.id, kind: row.kind, nativeRef: row.nativeRef })
+        : null,
   };
 }
 

@@ -20,7 +20,7 @@ export type GlossarySourceRef = {
 export type GlossaryEntry = {
   term: string;
   definition: string | null;
-  definitionSource: "llm" | "snippet" | "manual" | null;
+  definitionSource: "llm" | "snippet" | "manual" | "agent" | null;
   docFreq: number;
   /**
    * The value the list is ORDERED by (F31b). Rendered, because it was not: the list showed only
@@ -55,6 +55,8 @@ export type GlossaryBrief = {
     vetoed: number;
     /** Subset of `total` — authored in `[glossary.terms]`. */
     manual: number;
+    /** Subset of `total` — captured from an MCP agent; survives a rebuild like `manual`. */
+    agent: number;
     lastPassAt: number | null;
     /**
      * Of the glossary-source item(s) indexed so far, how many were stored

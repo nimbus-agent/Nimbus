@@ -72,9 +72,47 @@ describe("dispatchCaptureRpc", () => {
       kind: "hit",
       value: { id: "cap_1", state: "revoked" },
     });
-    expect(await dispatchCaptureRpc("captures.accept", { id: "cap_1" }, ctx, own)).toEqual({
+    expect(await dispatchCaptureRpc("captures.nonesuch", { id: "cap_1" }, ctx, own)).toEqual({
       kind: "miss",
     });
+  });
+
+  test("captures.accept and captures.reject dispatch and map CaptureError to -32001", async () => {
+    const mcp = { clientId: "m", kind: "mcp" as const };
+    const own = { clientId: "o", kind: "cli" as const };
+    const a = await dispatchCaptureRpc(
+      "capture.submit",
+      { kind: "term", payload: { term: "WAL", definition: "log" } },
+      ctx,
+      mcp,
+    );
+    const b = await dispatchCaptureRpc(
+      "capture.submit",
+      { kind: "decision", payload: { statement: "s" } },
+      ctx,
+      mcp,
+    );
+    if (a.kind !== "hit" || b.kind !== "hit") throw new Error("submit missed");
+    const aId = (a.value as { id: string }).id;
+    const bId = (b.value as { id: string }).id;
+    expect(await dispatchCaptureRpc("captures.accept", { id: aId }, ctx, own)).toEqual({
+      kind: "hit",
+      value: { id: aId, state: "accepted", nativeRef: "wal" },
+    });
+    expect(await dispatchCaptureRpc("captures.reject", { id: bId }, ctx, own)).toEqual({
+      kind: "hit",
+      value: { id: bId, state: "rejected" },
+    });
+    for (const method of ["captures.accept", "captures.reject"]) {
+      try {
+        await dispatchCaptureRpc(method, { id: aId }, ctx, own);
+        throw new Error("expected a refusal");
+      } catch (e) {
+        expect(e).toBeInstanceOf(RpcMethodError);
+        expect((e as RpcMethodError).rpcCode).toBe(-32001);
+        expect((e as RpcMethodError).rpcData).toEqual({ code: "ERR_CAPTURE_STATE" });
+      }
+    }
   });
 
   test("non-object params reach get/revoke as an undefined id and refuse cleanly", async () => {
@@ -130,7 +168,7 @@ describe("routing through tryDispatchPhase4Rpc (the entry server.ts calls)", () 
     const none = serverCtx({}, { o: "cli" });
     expect(await tryDispatchPhase4Rpc(none, "capture.status", {}, "o")).toBe(phase4RpcSkipped);
     const s = serverCtx({ captureRpcCtx: ctx }, { o: "cli" });
-    expect(await tryDispatchPhase4Rpc(s, "captures.accept", {}, "o")).toBe(phase4RpcSkipped);
+    expect(await tryDispatchPhase4Rpc(s, "captures.nonesuch", {}, "o")).toBe(phase4RpcSkipped);
   });
 });
 

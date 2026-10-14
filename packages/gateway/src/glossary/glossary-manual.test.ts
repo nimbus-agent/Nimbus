@@ -7,7 +7,13 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { applyManualTerms } from "./glossary-manual.ts";
 import { glossaryItemExternalId } from "./glossary-project.ts";
-import { getTerm } from "./glossary-store.ts";
+import {
+  computeTermStats,
+  deleteAgentTerm,
+  getTerm,
+  termOwnership,
+  upsertAgentTerm,
+} from "./glossary-store.ts";
 
 let db: Database;
 
@@ -332,4 +338,24 @@ test("a mined row is taken over when an authored entry exactly matches its store
   const t = getTerm(db, "cdr");
   expect(t?.definitionSource).toBe("manual");
   expect(t?.updatedAt).toBe(5000);
+});
+
+test("a config term takes over an agent row and clears its capture ownership", () => {
+  upsertAgentTerm(db, {
+    termKey: "wal",
+    displayTerm: "WAL",
+    definition: "agent def",
+    synonyms: [],
+    captureId: "cap_1",
+    stats: computeTermStats(db, "wal"),
+    score: 0,
+    nowMs: 10,
+  });
+  applyManualTerms(db, cfg([{ termKey: "wal", displayTerm: "WAL", definition: "mine" }]), {
+    nowMs: 20,
+  });
+  expect(getTerm(db, "wal")?.definitionSource).toBe("manual");
+  expect(termOwnership(db, "wal")?.captureId).toBeNull();
+  expect(deleteAgentTerm(db, "wal", "cap_1")).toBe(false);
+  expect(getTerm(db, "wal")?.definition).toBe("mine");
 });

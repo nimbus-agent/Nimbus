@@ -3,7 +3,14 @@ import { describe, expect, test } from "bun:test";
 
 import { deleteItemByPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { isItemLinkedGraphType, traverseGraph } from "./relationship-graph.ts";
+import {
+  deleteGraphRelation,
+  graphRelationExists,
+  isItemLinkedGraphType,
+  resolveItemGraphEntityId,
+  traverseGraph,
+  upsertGraphRelation,
+} from "./relationship-graph.ts";
 
 test("data warehouse/BI item types are graph-participating", () => {
   expect(isItemLinkedGraphType("data_model")).toBe(true);
@@ -108,5 +115,55 @@ describe("relationship graph (v7)", () => {
       c: number;
     };
     expect(personLeft.c).toBe(1);
+  });
+});
+
+describe("item entity resolution and exact edge delete", () => {
+  test("resolveItemGraphEntityId finds a graphed item, not a capture or unknown id", () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    upsertIndexedItem(db, {
+      service: "github",
+      type: "pr",
+      externalId: "acme/app#1",
+      title: "Fix",
+      bodyPreview: "p",
+      modifiedAt: now,
+      syncedAt: now,
+      metadata: { repo: "acme/app" },
+    });
+    const expected = (
+      db.query("SELECT id FROM graph_entity WHERE type = 'pr'").get() as { id: string }
+    ).id;
+    expect(resolveItemGraphEntityId(db, "github:acme/app#1")).toBe(expected);
+    expect(resolveItemGraphEntityId(db, "nimbus:capture:xyz")).toBeUndefined();
+    expect(resolveItemGraphEntityId(db, "nope")).toBeUndefined();
+  });
+
+  test("deleteGraphRelation removes exactly one (from, to, type) edge", () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    for (const n of [1, 2]) {
+      upsertIndexedItem(db, {
+        service: "github",
+        type: "pr",
+        externalId: `acme/app#${n}`,
+        title: "t",
+        bodyPreview: "p",
+        modifiedAt: now,
+        syncedAt: now,
+        metadata: { repo: "acme/app" },
+      });
+    }
+    const a = resolveItemGraphEntityId(db, "github:acme/app#1") as string;
+    const b = resolveItemGraphEntityId(db, "github:acme/app#2") as string;
+    upsertGraphRelation(db, a, b, "captured_fixes", now);
+    upsertGraphRelation(db, a, b, "captured_relates_to", now);
+    expect(deleteGraphRelation(db, a, b, "captured_fixes")).toBe(true);
+    expect(graphRelationExists(db, a, b, "captured_fixes")).toBe(false);
+    expect(graphRelationExists(db, a, b, "captured_relates_to")).toBe(true);
+    expect(deleteGraphRelation(db, a, b, "captured_fixes")).toBe(false);
   });
 });

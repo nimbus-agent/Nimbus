@@ -12,7 +12,15 @@ function runMigrations(db: Database): void {
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { projectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
-import { getTerm, markConsolidated, upsertCandidate, upsertManualTerm } from "./glossary-store.ts";
+import {
+  computeTermStats,
+  getTerm,
+  markConsolidated,
+  termOwnership,
+  upsertAgentTerm,
+  upsertCandidate,
+  upsertManualTerm,
+} from "./glossary-store.ts";
 
 let db: Database;
 
@@ -230,4 +238,31 @@ test("the sweep refreshes a manual row's stats but never demotes it", () => {
   // Stats WERE re-measured — the stale 5 is corrected down to the real 0.
   expect(t?.docFreq).toBe(0);
   expect(t?.statsVerifiedAt).toBe(1_000_000);
+});
+
+test("a stale owner-accepted agent term with zero mentions survives, unprojected", () => {
+  upsertAgentTerm(db, {
+    termKey: "wal",
+    displayTerm: "WAL",
+    definition: "agent def",
+    synonyms: [],
+    captureId: "cap_1",
+    stats: computeTermStats(db, "wal"),
+    score: 0,
+    nowMs: 10,
+  });
+  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 5000, cooldownMs: 100 });
+  expect(out.verified).toBe(1);
+  expect(out.demoted).toEqual([]);
+  expect(termOwnership(db, "wal")).toEqual({
+    status: "consolidated",
+    definitionSource: "agent",
+    captureId: "cap_1",
+  });
+  expect(getTerm(db, "wal")?.definition).toBe("agent def");
+  expect(
+    db
+      .query("SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus' AND type = 'glossary_term'")
+      .get(),
+  ).toEqual({ n: 0 });
 });

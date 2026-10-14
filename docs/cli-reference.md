@@ -1481,7 +1481,7 @@ A first-party GitHub Action wraps the endpoint for use directly in workflows —
 
 ### `nimbus mcp-server`
 
-Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code, Copilot) as an MCP stdio server: 21 read-only tools, plus one opt-in write tool, `capture_note`, when the capture sink is enabled.
+Expose the Nimbus local index to MCP-compatible editor AIs (Cursor, Claude Code, Copilot) as an MCP stdio server: 21 read-only tools, plus up to four opt-in write tools (`capture_note`, `propose_decision`, `propose_term`, `propose_link`), registered per `[mcp_sink] kinds` when the capture sink is enabled.
 
 ```bash
 nimbus mcp-server            # print the MCP config block to paste into your editor (mcp.json)
@@ -1511,7 +1511,7 @@ wait is bounded at 60 s, overridable with `NIMBUS_MCP_TIMEOUT_MS`. `getPeerConte
 Read results carry each item's `id` and an `agentAuthored` flag, so a client can pass an id
 back as `relatesTo` and can tell a captured note from indexed source data.
 
-**Capture (1, write, opt-in):** `capture_note { title, body, tags?, relatesTo? }` saves a note into
+**Capture (up to 4, write, opt-in):** `capture_note { title, body, tags?, relatesTo? }` saves a note into
 the local index (labelled agent-authored, searchable immediately via `searchIndex`, embedded
 locally only). It is registered only when `[mcp_sink] enabled = true` and the org policy has not
 turned `mcp_capture` off. **The decision is made once, when the MCP server process spawns:**
@@ -1520,9 +1520,17 @@ asks again. A Gateway that is down at spawn yields no capture tool, never a gues
 submit goes through a fixed-order gate (invariant `I28`) and may be refused with an
 `ERR_CAPTURE_*` code (disabled, rate limited, invalid, unknown `relatesTo` item).
 
+The three proposal tools are registered only for the kinds in `[mcp_sink] kinds`:
+`propose_decision { statement, rationale?, alternatives?, decidedAt?, evidence? }`,
+`propose_term { term, definition, synonyms? }` and
+`propose_link { fromItemId, toItemId, relation, note? }` (relation is one of `relates_to`,
+`fixes`, `caused_by`, `supersedes`, `documents`). A proposal is INERT: it is queued as
+`proposed` and changes nothing in your index, searches or briefs until you run
+`nimbus captures accept <id>`. The queue is bounded by `max_pending`.
+
 `agents.preflight` is deliberately **not** exposed: it is the `I24` federated action path,
 and triggers sandboxed execution on peers behind the owner's HITL gate. The only write
-surface is `capture_note`; no HITL-gated action is exposed.
+surface is the capture tools above; no HITL-gated action is exposed.
 
 Briefs served over MCP are recorded in the egress ledger (`I29`) — the adapter declares
 `kind: "mcp"` on connect, so `nimbus prove` accounts for them.
@@ -1533,12 +1541,14 @@ Review what MCP clients have written into your index. These are owner commands: 
 `mcp` client kind, so an editor agent cannot list, read or revoke captures.
 
 ```bash
-nimbus captures [list] [--state live|proposed|accepted|rejected|revoked] [--kind note|decision|term|link] [--json]
+nimbus captures [list] [--state live|proposed|accepted|rejected|revoked] [--kind note|decision|term|link] [--limit 1-200] [--json]
 nimbus captures show <id> [--json]
+nimbus captures accept <id> [--json]
+nimbus captures reject <id> [--json]
 nimbus captures revoke <id> [--json]
 ```
 
-`list` shows id, kind, state, title, client label and age. `show` prints one capture in full. `revoke`
+`list` shows id, kind, state, title, client label and age; `--limit` caps the rows (1 to 200). `show` prints one capture in full, and for an accepted capture a native-status line: the decision, term or link it wrote is `owned` by the capture, `superseded` (something else took it over) or gone (`absent`). `accept` turns a `proposed` decision, term or link into a real decision record, glossary term or `captured_*` graph edge, labelled agent-authored; it refuses with `ERR_CAPTURE_SUPERSEDED` or `ERR_CAPTURE_LINK_UNRESOLVED` when the target has changed since the proposal. `reject` discards a proposal: it flips the capture state and appends a `capture.reject` audit row, but creates no native row and no indexed item; it works even when an org policy has switched the sink off. An accepted term is found by `nimbus query` through its capture item, and `nimbus query` tags capture cards "agent-authored". `revoke` also removes an accepted capture's decision, term or link, but only if the capture still owns it; `revoke`
 deletes the note's item and embeddings and clears the record's payload (the row stays, as the
 history of what was captured and when); it is idempotent, so a second revoke reports success and
 writes no second audit row. Titles, bodies and client labels are agent-supplied: control
@@ -1549,7 +1559,7 @@ Config, all under `[mcp_sink]` in `nimbus.toml`, read at Gateway start:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `false` | Master switch. Off, `capture.submit` refuses and no tool is offered. |
-| `kinds` | all four | Allowed capture kinds (`note`, `decision`, `term`, `link`). This release accepts only `note`. |
+| `kinds` | all four | Allowed capture kinds (`note`, `decision`, `term`, `link`). Each enabled kind registers its MCP tool. |
 | `max_per_hour` | `30` | Accepted captures per rolling hour (1..1000). Attempts are limited at 4x this. |
 | `max_pending` | `100` | Pending-proposal queue bound (1..10000). |
 

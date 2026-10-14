@@ -1,11 +1,16 @@
 import { Database } from "bun:sqlite";
-import { beforeEach, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
+  agentDecisionOwned,
+  clearDecisions,
   countByStatus,
+  deleteAgentDecision,
+  deleteEvidenceCitingItem,
   evidenceKey,
+  insertAgentDecision,
   listDecisions,
   markExtracted,
   markVetoed,
@@ -218,4 +223,113 @@ test("pass state round-trips", () => {
 test("pass state defaults to a zero cursor before any pass", () => {
   expect(readPassState(db).watermarkMs).toBe(0);
   expect(readPassState(db).lastPassAt).toBeNull();
+});
+
+describe("agent decisions (capture sink)", () => {
+  const base = {
+    id: "capture:cap_1",
+    captureId: "cap_1",
+    sourceItemId: "nimbus:cap_1",
+    statement: "Adopt WAL",
+    rationale: "fewer writer stalls",
+    alternatives: ["rollback journal"],
+    decidedAt: 5_000,
+    evidence: [
+      {
+        kind: "source" as const,
+        entityId: null,
+        itemId: "slack:m1",
+        label: "thread",
+        url: null,
+        occurredAt: null,
+      },
+    ],
+    nowMs: 6_000,
+  };
+  const list = () => listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+
+  test("insertAgentDecision writes an extracted 'agent' row, confidence 1, with its evidence", () => {
+    insertAgentDecision(db, base);
+    const [r] = list();
+    expect(r?.extractionSource).toBe("agent");
+    expect(r?.status).toBe("extracted");
+    expect(r?.confidence).toBe(1);
+    expect(r?.alternatives).toEqual(["rollback journal"]);
+    expect(r?.evidence.map((e) => e.itemId)).toEqual(["slack:m1"]);
+    const owner = db.query("SELECT capture_id FROM decision_record WHERE id = ?").get(base.id);
+    expect(owner).toEqual({ capture_id: "cap_1" });
+  });
+
+  test("deleteAgentDecision removes only a row this capture owns, with its evidence", () => {
+    insertAgentDecision(db, base);
+    expect(agentDecisionOwned(db, base.id, "cap_other")).toBe(false);
+    expect(deleteAgentDecision(db, base.id, "cap_other")).toBe(false);
+    expect(list()).toHaveLength(1);
+    expect(agentDecisionOwned(db, base.id, "cap_1")).toBe(true);
+    expect(deleteAgentDecision(db, base.id, "cap_1")).toBe(true);
+    expect(list()).toHaveLength(0);
+    const ev = db.query("SELECT COUNT(*) AS n FROM decision_evidence").get() as { n: number };
+    expect(ev.n).toBe(0);
+  });
+
+  test("deleteAgentDecision never deletes a mined row, even one sharing the id shape", () => {
+    candidate("m1", 1);
+    markExtracted(
+      db,
+      "m1",
+      { statement: "s", rationale: null, alternatives: [], extractionSource: "llm" },
+      2,
+    );
+    expect(deleteAgentDecision(db, "m1", "cap_1")).toBe(false);
+    expect(list()).toHaveLength(1);
+  });
+
+  test("deleteEvidenceCitingItem removes every evidence row naming the item, and only those", () => {
+    insertAgentDecision(db, base);
+    insertAgentDecision(db, {
+      ...base,
+      id: "capture:cap_2",
+      captureId: "cap_2",
+      evidence: [
+        {
+          kind: "source",
+          entityId: null,
+          itemId: "slack:m1",
+          label: "a",
+          url: null,
+          occurredAt: null,
+        },
+        {
+          kind: "source",
+          entityId: null,
+          itemId: "slack:m2",
+          label: "b",
+          url: null,
+          occurredAt: null,
+        },
+      ],
+    });
+    expect(deleteEvidenceCitingItem(db, "slack:m1")).toBe(2);
+    const left = db.query("SELECT item_id FROM decision_evidence").all();
+    expect(left).toEqual([{ item_id: "slack:m2" }]);
+  });
+
+  test("clearDecisions (--rebuild) keeps 'agent' rows and their evidence, clears the rest", () => {
+    insertAgentDecision(db, base);
+    candidate("m1", 1);
+    writePassState(db, {
+      watermarkMs: 9,
+      watermarkId: "x",
+      lastPassAt: 9,
+      lastPassNew: 1,
+      scannedItems: 1,
+    });
+    clearDecisions(db);
+    const ids = db.query("SELECT id FROM decision_record").all();
+    expect(ids).toEqual([{ id: base.id }]);
+    const ev = db.query("SELECT COUNT(*) AS n FROM decision_evidence").get() as { n: number };
+    expect(ev.n).toBe(1);
+    const ps = db.query("SELECT COUNT(*) AS n FROM decision_pass_state").get() as { n: number };
+    expect(ps.n).toBe(0);
+  });
 });

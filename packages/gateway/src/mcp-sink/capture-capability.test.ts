@@ -15,7 +15,7 @@ describe("resolveCaptureCapability", () => {
   test("enabled config + open policy → enabled, kinds = config ∩ submittable", () => {
     const c = resolveCaptureCapability(ON, OPEN);
     expect(c.enabled).toBe(true);
-    expect(c.kinds).toEqual(["note"]);
+    expect(c.kinds).toEqual(["note", "decision", "term", "link"]);
   });
 
   test("config off → disabled: config", () => {
@@ -42,11 +42,13 @@ describe("resolveCaptureCapability", () => {
     });
   });
 
-  test("kinds naming only unsubmittable kinds → enabled flag stays true but kinds is empty", () => {
+  // The SUBMITTABLE_KINDS filter is vacuous since PR 2 (it equals CAPTURE_KINDS); this becomes a
+  // filter test again when a kind is added to CAPTURE_KINDS before it is submittable.
+  test("a configured subset resolves to exactly that subset, in configured order", () => {
     const c = resolveCaptureCapability(
-      { ok: true, config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["term"] } },
+      { ok: true, config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["term", "note"] } },
       OPEN,
     );
-    expect(c.kinds).toEqual([]);
+    expect(c.kinds).toEqual(["term", "note"]);
   });
 });

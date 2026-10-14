@@ -1,9 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { contractViolations, requiredPhrases } from "./brief-contract.ts";
-import { changelogDisclosures, windowLabel } from "./brief-disclosures.ts";
+import {
+  AGENT_CAPTURE_ANCHOR,
+  changelogDisclosures,
+  glossaryProvenanceDisclosure,
+  windowLabel,
+} from "./brief-disclosures.ts";
 import type { GlossaryBrief, GlossaryEntry } from "./glossary-types.ts";
 import type { NegotiateBrief } from "./negotiate-types.ts";
-import { renderGlossary, renderNegotiate, renderWhy } from "./render.ts";
+import {
+  renderGlossary,
+  renderGlossaryTermsSection,
+  renderNegotiate,
+  renderWhy,
+} from "./render.ts";
 import type { WhyBrief } from "./why-types.ts";
 
 /**
@@ -103,6 +113,7 @@ function glossaryBrief(entries: GlossaryEntry[]): GlossaryBrief {
       pending: 0,
       vetoed: 0,
       manual: 1,
+      agent: 0,
       lastPassAt: null,
       truncatedSources: 0,
     },
@@ -184,6 +195,33 @@ describe("negotiate interleaved disclosures", () => {
     } as NegotiateBrief;
     expect(requiredPhrases(none)).toHaveLength(4);
     expect(contractViolations(none, renderNegotiate(none))).toEqual([]);
+  });
+});
+
+describe("glossary agent-authored provenance", () => {
+  test("the disclosure anchors the fixed capture fragment and carries it in its line", () => {
+    const d = glossaryProvenanceDisclosure("WAL", "agent");
+    expect(d?.anchors).toEqual([AGENT_CAPTURE_ANCHOR]);
+    expect(d?.line).toContain(AGENT_CAPTURE_ANCHOR);
+  });
+
+  test("term-mode render includes the line and dropping it is a violation", () => {
+    const brief = glossaryBrief([glossaryEntry({ term: "WAL", definitionSource: "agent" })]);
+    const md = renderGlossary(brief);
+    expect(md).toContain(AGENT_CAPTURE_ANCHOR);
+    expect(contractViolations(brief, md)).toEqual([]);
+    expect(contractViolations(brief, withoutLine(md, AGENT_CAPTURE_ANCHOR))).toHaveLength(1);
+  });
+
+  test("list-mode marks agent entries agent-authored and manual ones authored", () => {
+    const out = renderGlossaryTermsSection([
+      glossaryEntry({ term: "WAL", definitionSource: "agent" }),
+      glossaryEntry({ term: "CDR", definitionSource: "manual" }),
+      glossaryEntry({ term: "LLMT", definitionSource: "llm" }),
+    ]);
+    expect(out).toMatch(/\*\*WAL\*\*.* — agent-authored/);
+    expect(out).toMatch(/\*\*CDR\*\*.* — authored/);
+    expect(out).not.toMatch(/\*\*LLMT\*\*.* — (agent-)?authored/);
   });
 });
 

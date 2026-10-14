@@ -8,6 +8,7 @@ import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { resolvePersonForSync } from "../people/linker.ts";
 import { extractCommitShas, extractIssueRefs, type IssueRefs } from "./graph-refs.ts";
 import {
+  CAPTURED_RELATION_TYPES,
   ensureGraphEntity,
   isItemLinkedGraphType,
   upsertGraphEntity,
@@ -161,12 +162,15 @@ function upsertAuthorEntityFor(
  * staleness (a deleted upstream review leaves a stale edge) rather than a
  * clear that would silently destroy unrelated data. See `syncReviewGraph`'s
  * own doc comment for the full rationale.
+ * `captured_*` edges are written and deleted only by the capture gate (I28), so the populator
+ * must never clear them.
  */
 const CROSS_ITEM_RELATION_TYPES: readonly string[] = Object.freeze([
   "resolves",
   "mentions",
   "correlates_with",
   "reviewed",
+  ...Object.values(CAPTURED_RELATION_TYPES),
 ]);
 
 function clearRelationsTouchingEntity(db: Database, entityId: string): void {

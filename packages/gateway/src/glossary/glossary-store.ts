@@ -188,7 +188,7 @@ export function upsertCandidate(
        first_seen_at, last_seen_at, top_sources, updated_at
      ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(term_key) DO UPDATE SET
-       display_term = CASE WHEN definition_source = 'manual'
+       display_term = CASE WHEN definition_source IN ('manual','agent')
                            THEN display_term ELSE excluded.display_term END,
        doc_freq = excluded.doc_freq,
        service_spread = excluded.service_spread, score = excluded.score,
@@ -374,6 +374,7 @@ export function listAllKeys(db: Database): string[] {
   return rows.map((r) => r.term_key);
 }
 
+/** False when nothing changed (no such row, or an owner-accepted agent row the pass must not touch). */
 export function markConsolidated(
   db: Database,
   p: {
@@ -384,33 +385,39 @@ export function markConsolidated(
     nearMisses: string[];
     nowMs: number;
   },
-): void {
-  dbRun(
-    db,
-    `UPDATE glossary_term
+): boolean {
+  return (
+    dbRun(
+      db,
+      `UPDATE glossary_term
      SET status = 'consolidated', definition = ?, definition_source = ?,
          synonyms = ?, near_misses = ?, consolidated_at = ?,
          stats_verified_at = ?, last_attempt_at = ?, updated_at = ?
-     WHERE term_key = ?`,
-    [
-      p.definition,
-      p.definitionSource,
-      JSON.stringify(p.synonyms),
-      JSON.stringify(p.nearMisses),
-      p.nowMs,
-      p.nowMs,
-      p.nowMs,
-      p.nowMs,
-      p.termKey,
-    ],
+     WHERE term_key = ? AND definition_source IS NOT 'agent'`,
+      [
+        p.definition,
+        p.definitionSource,
+        JSON.stringify(p.synonyms),
+        JSON.stringify(p.nearMisses),
+        p.nowMs,
+        p.nowMs,
+        p.nowMs,
+        p.nowMs,
+        p.termKey,
+      ],
+    ).changes === 1
   );
 }
 
-export function markVetoed(db: Database, termKey: string, nowMs: number): void {
-  dbRun(db, "UPDATE glossary_term SET status = 'vetoed', updated_at = ? WHERE term_key = ?", [
-    nowMs,
-    termKey,
-  ]);
+/** False when nothing changed (no such row, or an owner-accepted agent row the pass must not touch). */
+export function markVetoed(db: Database, termKey: string, nowMs: number): boolean {
+  return (
+    dbRun(
+      db,
+      "UPDATE glossary_term SET status = 'vetoed', updated_at = ? WHERE term_key = ? AND definition_source IS NOT 'agent'",
+      [nowMs, termKey],
+    ).changes === 1
+  );
 }
 
 export function demoteTerm(db: Database, termKey: string, nowMs: number): void {
@@ -419,7 +426,7 @@ export function demoteTerm(db: Database, termKey: string, nowMs: number): void {
     `UPDATE glossary_term
      SET status = 'pending', definition = NULL, definition_source = NULL,
          consolidated_at = NULL, updated_at = ?
-     WHERE term_key = ?`,
+     WHERE term_key = ? AND definition_source IS NOT 'agent'`,
     [nowMs, termKey],
   );
 }
@@ -456,6 +463,7 @@ export function countByStatus(db: Database): {
   pending: number;
   vetoed: number;
   manual: number;
+  agent: number;
 } {
   const r = db
     .query(
@@ -463,7 +471,8 @@ export function countByStatus(db: Database): {
          SUM(CASE WHEN status = 'consolidated' THEN 1 ELSE 0 END) AS total,
          SUM(CASE WHEN status = 'pending'      THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN status = 'vetoed'       THEN 1 ELSE 0 END) AS vetoed,
-         SUM(CASE WHEN definition_source = 'manual' THEN 1 ELSE 0 END) AS manual
+         SUM(CASE WHEN definition_source = 'manual' THEN 1 ELSE 0 END) AS manual,
+         SUM(CASE WHEN definition_source = 'agent'  THEN 1 ELSE 0 END) AS agent
        FROM glossary_term`,
     )
     .get() as {
@@ -471,6 +480,7 @@ export function countByStatus(db: Database): {
     pending: number | null;
     vetoed: number | null;
     manual: number | null;
+    agent: number | null;
   } | null;
   // `manual` is a SUBSET of `total`, not a fourth disjoint bucket: `total`
   // counts consolidated rows, which now include authored ones. Mined count is
@@ -480,6 +490,7 @@ export function countByStatus(db: Database): {
     pending: r?.pending ?? 0,
     vetoed: r?.vetoed ?? 0,
     manual: r?.manual ?? 0,
+    agent: r?.agent ?? 0,
   };
 }
 
@@ -549,8 +560,13 @@ export function writePassState(db: Database, s: GlossaryPassState): void {
   );
 }
 
+/**
+ * `--rebuild` truncation. Owner-accepted `'agent'` rows SURVIVE: they cannot be re-derived from the
+ * index (the accepted capture is their only source), so deleting them would silently undo an
+ * acceptance. The pass watermark is still reset, so mined terms are re-discovered.
+ */
 export function clearGlossary(db: Database): void {
-  dbRun(db, "DELETE FROM glossary_term", []);
+  dbRun(db, "DELETE FROM glossary_term WHERE definition_source IS NOT 'agent'", []);
   dbRun(db, "DELETE FROM glossary_pass_state", []);
 }
 
@@ -567,6 +583,9 @@ export function clearGlossary(db: Database): void {
  * `CDRs` in config is explicitly changing the surface form, while a mined
  * sighting must never overwrite it. One rule: the authored form beats a mined
  * one, and the newest authored form beats an older authored one.
+ *
+ * Taking over an agent row clears its ownership (`capture_id = NULL`), so revoking that capture
+ * later cannot delete the owner's manual term.
  *
  * `status = 'consolidated'` is likewise UNCONDITIONAL, so authoring a key
  * that collides with a `vetoed` row takes it over — author intent wins. This
@@ -612,7 +631,8 @@ export function upsertManualTerm(
        near_misses = excluded.near_misses,
        consolidated_at = excluded.consolidated_at,
        stats_verified_at = excluded.stats_verified_at,
-       updated_at = excluded.updated_at`,
+       updated_at = excluded.updated_at,
+       capture_id = NULL`,
     [
       p.termKey,
       p.displayTerm,
@@ -638,4 +658,101 @@ export function listManualKeys(db: Database): string[] {
     .query("SELECT term_key FROM glossary_term WHERE definition_source = 'manual'")
     .all() as Array<{ term_key: string }>;
   return rows.map((r) => r.term_key);
+}
+
+export interface AgentTermUpsert {
+  readonly termKey: string;
+  readonly displayTerm: string;
+  readonly definition: string;
+  readonly synonyms: readonly string[];
+  readonly captureId: string;
+  readonly stats: TermStats;
+  readonly score: number;
+  readonly nowMs: number;
+}
+
+/**
+ * The ONLY writer of a `definition_source = 'agent'` row (static D32(d): callable only from
+ * `mcp-sink/capture-native.ts`). Takes over an llm/snippet/agent row (the newer accepted definition
+ * wins and OWNERSHIP moves, spec 5.2), and a model-`vetoed` row too (status becomes
+ * `consolidated`): a veto is the local model's classification, and the owner's explicit accept
+ * overrides it. Never a manual one; the owner's config wins. The accept precondition refuses a
+ * manual row first; this WHERE is the second door.
+ * Never projected: `nimbus:glossary_term` embeds remotely when a key is set, and agent text must
+ * not (spec criterion 5) - the capture item is what search finds.
+ *
+ * @returns false when a manual row holds the key (nothing written).
+ */
+export function upsertAgentTerm(db: Database, p: AgentTermUpsert): boolean {
+  const seen = p.stats.docFreq > 0;
+  return (
+    dbRun(
+      db,
+      `INSERT INTO glossary_term (
+         term_key, display_term, status, definition, definition_source, doc_freq, service_spread,
+         score, form, first_seen_at, last_seen_at, top_sources, synonyms, near_misses,
+         consolidated_at, stats_verified_at, updated_at, capture_id
+       ) VALUES (?, ?, 'consolidated', ?, 'agent', ?, ?, ?, 'phrase', ?, ?, ?, ?, '[]', ?, ?, ?, ?)
+       ON CONFLICT(term_key) DO UPDATE SET
+         display_term = excluded.display_term, status = 'consolidated',
+         definition = excluded.definition, definition_source = 'agent',
+         doc_freq = excluded.doc_freq, service_spread = excluded.service_spread,
+         score = excluded.score, first_seen_at = excluded.first_seen_at,
+         last_seen_at = excluded.last_seen_at, top_sources = excluded.top_sources,
+         synonyms = excluded.synonyms, consolidated_at = excluded.consolidated_at,
+         stats_verified_at = excluded.stats_verified_at, updated_at = excluded.updated_at,
+         capture_id = excluded.capture_id
+       WHERE glossary_term.definition_source IS NOT 'manual'`,
+      [
+        p.termKey,
+        p.displayTerm,
+        p.definition,
+        p.stats.docFreq,
+        p.stats.serviceSpread,
+        p.score,
+        seen ? p.stats.firstSeenAt : p.nowMs,
+        seen ? p.stats.lastSeenAt : p.nowMs,
+        JSON.stringify(p.stats.topSources),
+        JSON.stringify(p.synonyms),
+        p.nowMs,
+        p.nowMs,
+        p.nowMs,
+        p.captureId,
+      ],
+    ).changes === 1
+  );
+}
+
+/** Deletes the row only while THIS capture still owns it (a later accept or a manual takeover moves ownership). */
+export function deleteAgentTerm(db: Database, termKey: string, captureId: string): boolean {
+  return (
+    dbRun(
+      db,
+      "DELETE FROM glossary_term WHERE term_key = ? AND capture_id = ? AND definition_source = 'agent'",
+      [termKey, captureId],
+    ).changes === 1
+  );
+}
+
+export function termOwnership(
+  db: Database,
+  termKey: string,
+): {
+  status: GlossaryStatus;
+  definitionSource: DefinitionSource | null;
+  captureId: string | null;
+} | null {
+  const r = db
+    .query("SELECT status, definition_source, capture_id FROM glossary_term WHERE term_key = ?")
+    .get(termKey) as {
+    status: string;
+    definition_source: string | null;
+    capture_id: string | null;
+  } | null;
+  if (r === null) return null;
+  return {
+    status: r.status as GlossaryStatus,
+    definitionSource: r.definition_source as DefinitionSource | null,
+    captureId: r.capture_id,
+  };
 }
