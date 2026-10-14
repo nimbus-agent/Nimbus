@@ -1777,13 +1777,13 @@ environment**. See [Model Router](#model-router-local-llm) above for how a route
 
 ## Spine S3 Subsystems — Open Surface
 
-S3 opens the Gateway to other agents and to third-party code. Two slices have shipped: the extension
+S3 opens the Gateway to other agents and to third-party code. Three slices have shipped: the extension
 runtime's install gate (PR 1 of 4, 2026-10-11, recorded in [`CHANGELOG.md`](./CHANGELOG.md)) and the
-MCP capture sink's first slice (below).
+MCP capture sink's first two slices (below).
 
 ### MCP capture sink
 
-**PR 1 of 3 shipped 2026-10-12** (invariant `I28`, static `D32`, schema `V67`). Until then the MCP
+**PR 1 of 3 shipped 2026-10-12** (invariant `I28`, static `D32`, schema `V67`); PR 2 of 3 followed 2026-10-14 (below). Until then the MCP
 server was read-only. An MCP client can now write ONE kind of thing into the local index: a note,
 through the `capture_note` tool. Everything about the design follows from one fact: the writer is
 an untrusted agent, so the human reviews and revokes afterwards instead of approving each write.
@@ -1834,8 +1834,8 @@ and the `nimbus doctor` capture-sink lines drive them. The whole `capture` and `
 namespaces are LAN-forbidden (the LAN check is a denylist, so the namespaces are added to it) and
 absent from the Tauri allowlist; none has an HTTP route.
 
-**MCP side.** `packages/cli/src/mcp/capture-tools.ts` registers `capture_note` only if
-`capture.status` reports the sink enabled for the kind. The decision is made once, when the MCP
+**MCP side.** `packages/cli/src/mcp/capture-tools.ts` registers each capture tool (`capture_note`,
+`propose_decision`, `propose_term`, `propose_link`) only if `capture.status` reports the sink enabled for its kind. The decision is made once, when the MCP
 server process spawns; a gateway that is down at that moment, or a failed `session.declareKind`,
 yields no capture tool rather than a guessed one.
 
@@ -1847,23 +1847,76 @@ yields no capture tool rather than a guessed one.
 | `capture.submit` | `mcp` kind only | the gate above |
 | `captures.list` | owner | filter by state and kind |
 | `captures.get` | owner | one capture in full |
-| `captures.revoke` | owner | delete item and embeddings, clear payload |
+| `captures.revoke` | owner | delete item and embeddings, clear payload; for an accepted capture, also the native row it still owns |
+| `captures.accept` | owner | write a proposal's native row (decision, term or link) |
+| `captures.reject` | owner | discard a proposal; needs no capability |
 
 **Config.** `[mcp_sink]`: `enabled` (false), `kinds` (all four), `max_per_hour` (30, 1..1000),
 `max_pending` (100, 1..10000). Out-of-range values and unknown kinds refuse at load, naming the key
 and value; nothing is clamped.
 
-**Static D32** has three clauses: (a) the `capture` table identifier only in `capture-store.ts` and
+**Static D32** has four clauses (the fourth, (d), arrived with PR 2 and is described below): (a) the `capture` table identifier only in `capture-store.ts` and
 the V67 SQL module; (b) `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture` named only in
 `ipc/capture-rpc.ts` and `capture-gate.ts`; (c) `capture-gate.ts` value-imported (or re-exported, or
 dynamically imported) by no gateway module except `ipc/capture-rpc.ts`.
 
-**Not shipped, and recorded as such.** Proposals for `decision`, `term` and `link` captures
-(counted only after the owner accepts them) are PR 2; the kinds exist in the schema and config but
-the gate accepts only `note`. The act door (an agent asking Nimbus to do something) is PR 3 and has its
-own spec. There is no desktop UI for captures. `data.delete --service nimbus` removes capture items
-but does not clear `capture` rows. The attempt limit is in-memory. A live note is searchable
+**Not shipped, and recorded as such.** The act door (an agent asking Nimbus to do something) is PR 3 and has
+its own spec. There is no desktop UI for captures and no batch accept. `data.delete --service nimbus` removes
+capture items but does not clear `capture` rows. The attempt limit is in-memory. A live note is searchable
 unreviewed, by design.
+
+#### Proposals (PR 2 of 3, 2026-10-14)
+
+Schema `V68`, static `D32(d)`, no new invariant number (it extends `I28`). An MCP client can now PROPOSE a
+decision, a glossary term or a link between two items, through `propose_decision`, `propose_term` and
+`propose_link`. The same `submitCapture()` door admits them in the same fixed order. The differences are the
+payload caps (decision: statement 500, rationale 4,096, 10 alternatives, 10 evidence ids; term: at most 100
+characters, definition 2,048, 10 synonyms; link: relation one of `relates_to|fixes|caused_by|supersedes|documents`,
+note 500) and two extra checks: the pending queue is bounded by `max_pending`, and a link's two item ids must resolve.
+A proposal lands in state `proposed`, creates NO `nimbus:capture` item and writes NO native row: it is inert,
+invisible to search, briefs and the graph, until the owner runs `nimbus captures accept <id>`.
+
+**Accept** (`acceptCapture`, owner only, refuses the `mcp` kind) checks the capability, re-validates, then writes
+the native row in ONE transaction through `mcp-sink/capture-native.ts`'s `writeCaptureNative`: a
+`decision_record` with `extraction_source = 'agent'`, a `glossary_term` with `definition_source = 'agent'`, or a
+graph edge of one of five new `captured_*` relation types. The row carries `capture_id`, the capture that
+currently OWNS it. The same transaction writes the local-embedder-only `nimbus:capture` item, so search finds
+the capture, and audits `capture.accept` as `hitl_status = 'not_required'` with `outcome: "accepted"`: the
+owner's own CLI command is not a consent gate, and I4 admits `approved` only where one decided. Refusals are
+`ERR_CAPTURE_SUPERSEDED` (another source took the term over meanwhile) and `ERR_CAPTURE_LINK_UNRESOLVED` (an
+endpoint item has gone). **Reject** (`rejectCapture`) needs NO capability, so the owner can drain the queue
+under a policy lock; it writes nothing and audits `rejected`. **Revoke** now also works on accepted captures and
+deletes only what the capture still owns (`revokeCaptureNative`): a row a manual edit or a later capture took
+over, or one already gone, is left alone. `nimbus captures show` prints that native status (owned, superseded
+or absent).
+
+**An accepted term is never PROJECTED.** `nimbus:glossary_term` is in `PROSE_HEAVY_TYPES`, so projecting agent
+text would send it to a remote embedder whenever an OpenAI key is set. Search finds the term through its
+local-only capture item instead, and accepting over an llm/snippet row that WAS projected unprojects that item
+in the same transaction. Accepted decisions and terms render with the I31-anchored disclosure "captured via MCP,
+accepted by the owner" (`agents/_lib/brief-disclosures.ts`).
+
+**Rebuilds keep agent rows.** `decisions --rebuild` and `glossary --rebuild` delete every pass-written row but
+keep `'agent'` rows, since no pass can re-derive an owner-accepted one (revoke is how they go). Every glossary
+pass (reconcile demotion, `markConsolidated`/`markVetoed`, the mined `display_term` overwrite) leaves an
+`'agent'` row alone, and `upsertManualTerm` taking over an agent row clears `capture_id`, so revoking the
+capture later cannot delete the owner's manual term. The graph populator's per-entity edge clearing spares
+`captured_*` edges, so they survive re-sync.
+
+**V68** rebuilds `decision_record` and `glossary_term` to widen their provenance CHECKs to admit `'agent'` and
+adds the nullable `capture_id`. `decision_record` is an FK parent, so its evidence rows are held aside and
+restored; the step verifies by COUNT (restored rows equal the held rows whose decision still exists) rather
+than by `PRAGMA foreign_key_check`, so an orphan that pre-dates V68 is dropped instead of failing every boot.
+
+**Static D32(d)** (`agent-provenance-writers`) confines the four agent-row writers (`insertAgentDecision`,
+`deleteAgentDecision`, `upsertAgentTerm`, `deleteAgentTerm`) to their definitions and `capture-native.ts`, and
+`writeCaptureNative`/`revokeCaptureNative` to `capture-native.ts` and `capture-gate.ts`. It confines writer
+FUNCTIONS rather than a SQL `'agent'` literal, because a literal scan cannot tell `SET definition_source =
+'agent'` from a guard such as `NOT IN ('manual','agent')`. Bound: a hand-written SQL write evades it, so
+capability confinement is the real defense.
+
+New IPC methods: `captures.accept` and `captures.reject` (owner; LAN-forbidden by namespace; not on the Tauri
+allowlist; no HTTP route). `captures.list` takes an optional `limit`.
 
 ## OS notifications
 
