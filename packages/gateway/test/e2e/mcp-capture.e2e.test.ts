@@ -93,6 +93,8 @@ async function bootGateway(enabled: boolean): Promise<void> {
       `enabled = ${String(enabled)}`,
       'kinds = ["note", "decision", "term", "link"]',
       "max_per_hour = 30",
+      "[agents]",
+      'synthesis = "off"',
     ].join("\n"),
   );
   gatewayLog = "";
