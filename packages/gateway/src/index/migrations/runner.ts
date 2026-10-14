@@ -11,6 +11,11 @@ import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
+import {
+  CAPTURE_NATIVE_V68_FINISH_SQL,
+  CAPTURE_NATIVE_V68_REBUILD_DECISIONS_SQL,
+  V68_EXPECTED_EVIDENCE_SQL,
+} from "../capture-native-v68-sql.ts";
 import { CAPTURE_V67_SQL } from "../capture-v67-sql.ts";
 import { COMPUTER_USE_V57_SQL } from "../computer-use-v57-sql.ts";
 import { CONNECTOR_CONFIGURED_V56_SQL } from "../connector-configured-v56-sql.ts";
@@ -345,6 +350,33 @@ function backfillResolveKey(db: Database): void {
   }
 }
 
+/**
+ * V67→V68 is hand-written rather than a `simpleStep`: between the decision_record rebuild and the
+ * hold table's drop it must COUNT the restored evidence, and a SQL list cannot throw on a count.
+ */
+function migrateIndexedV67ToV68(db: Database, now: number): void {
+  db.transaction(() => {
+    for (const sql of CAPTURE_NATIVE_V68_REBUILD_DECISIONS_SQL) dbExec(db, sql);
+    const expected = (db.query(V68_EXPECTED_EVIDENCE_SQL).get() as { n: number }).n;
+    const restored = (
+      db.query("SELECT COUNT(*) AS n FROM decision_evidence").get() as { n: number }
+    ).n;
+    if (restored !== expected) {
+      throw new Error(
+        `V68: decision_evidence restore produced ${String(restored)} rows, expected ${String(expected)}`,
+      );
+    }
+    for (const sql of CAPTURE_NATIVE_V68_FINISH_SQL) dbExec(db, sql);
+    dbExec(db, "PRAGMA user_version = 68");
+    recordMigration(
+      db,
+      68,
+      "capture provenance: 'agent' sources + capture_id; captured_* relation types (v68)",
+      now,
+    );
+  })();
+}
+
 function migrateIndexedV51ToV52(db: Database, now: number): void {
   db.transaction(() => {
     for (const sql of RESOLVE_KEY_V52_SQL) {
@@ -594,6 +626,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   ),
   simpleStep(65, 66, "extension tree digest", EXTENSION_TREE_DIGEST_V66_SQL),
   simpleStep(66, 67, "MCP capture sink queue (capture)", CAPTURE_V67_SQL),
+  { fromVersion: 67, toVersion: 68, apply: migrateIndexedV67ToV68 },
 ];
 
 /**
