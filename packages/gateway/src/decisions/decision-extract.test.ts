@@ -5,7 +5,12 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { rebuildDecisions, runDecisionPass } from "./decision-extract.ts";
 import type { DecisionLlm } from "./decision-llm-adapter.ts";
-import { countByStatus, listDecisions, readPassState } from "./decision-store.ts";
+import {
+  countByStatus,
+  insertAgentDecision,
+  listDecisions,
+  readPassState,
+} from "./decision-store.ts";
 
 let db: Database;
 
@@ -186,6 +191,28 @@ test("rebuildDecisions clears vetoes so a candidate is re-evaluated", async () =
   await rebuildDecisions(db, { ...OPTS, nowMs: 30_000, llm });
   expect(countByStatus(db).vetoed).toBe(0);
   expect(countByStatus(db).extracted).toBe(1);
+});
+
+test("rebuildDecisions keeps an owner-accepted agent row through the full rebuild-and-pass", async () => {
+  insertAgentDecision(db, {
+    id: "capture:cap_1",
+    captureId: "cap_1",
+    sourceItemId: "nimbus:cap_1",
+    statement: "Adopt WAL",
+    rationale: null,
+    alternatives: [],
+    decidedAt: 1_000,
+    evidence: [],
+    nowMs: 2_000,
+  });
+  seed("s1", "slack", "message", "t", "We decided to grab lunch.", 5_000);
+  const llm = scriptedLlm({}, '{"is_decision":true,"statement":"Lunch at noon"}');
+  await rebuildDecisions(db, { ...OPTS, nowMs: 30_000, llm });
+  const rows = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const agent = rows.find((r) => r.id === "capture:cap_1");
+  expect(agent?.extractionSource).toBe("agent");
+  expect(agent?.confidence).toBe(1);
+  expect(rows.length).toBeGreaterThan(1);
 });
 
 test("items outside the source allowlist are never scanned", async () => {

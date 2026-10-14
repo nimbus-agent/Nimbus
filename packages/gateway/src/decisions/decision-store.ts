@@ -342,11 +342,94 @@ export function writePassState(db: Database, s: PassState): void {
   );
 }
 
-/** Used only by `--rebuild`. Clears vetoes too — that is the point of a rebuild. */
+/**
+ * Used only by `--rebuild`. Clears vetoes too — that is the point of a rebuild. Owner-accepted
+ * `'agent'` rows (and their evidence) SURVIVE: they are not derivable from the index, so a
+ * rebuild could never re-mine them; revoking the capture is how they leave. The pass-state
+ * watermark is still reset so every historical item is re-scanned.
+ */
 export function clearDecisions(db: Database): void {
   db.transaction(() => {
-    dbRun(db, "DELETE FROM decision_evidence", []);
-    dbRun(db, "DELETE FROM decision_record", []);
+    dbRun(
+      db,
+      `DELETE FROM decision_evidence
+        WHERE decision_id NOT IN (SELECT id FROM decision_record WHERE extraction_source = 'agent')`,
+      [],
+    );
+    dbRun(db, "DELETE FROM decision_record WHERE extraction_source IS NOT 'agent'", []);
     dbRun(db, "DELETE FROM decision_pass_state", []);
   })();
+}
+
+export interface AgentDecisionInsert {
+  readonly id: string; // `capture:<captureId>` — never collides with a mined (hashed) id
+  readonly captureId: string;
+  readonly sourceItemId: string; // the accepted capture's nimbus:capture item
+  readonly statement: string;
+  readonly rationale: string | null;
+  readonly alternatives: readonly string[];
+  readonly decidedAt: number;
+  readonly evidence: readonly DecisionEvidence[];
+  readonly nowMs: number;
+}
+
+/**
+ * The ONLY writer of an `extraction_source = 'agent'` row (static D32(d): callable only from
+ * `mcp-sink/capture-native.ts`). An owner-ACCEPTED capture, so it lands `extracted` at confidence
+ * 1.0; `cue_tier`/`cue_text` are NOT NULL in the schema and carry a fixed, honest marker. The id
+ * `capture:<captureId>` cannot collide with a mined (hashed) id, so a plain INSERT is right: a
+ * collision would be a bug and must throw (rolling the accept back), not overwrite.
+ */
+export function insertAgentDecision(db: Database, d: AgentDecisionInsert): void {
+  db.transaction(() => {
+    dbRun(
+      db,
+      `INSERT INTO decision_record
+         (id, source_item_id, status, statement, rationale, alternatives, extraction_source,
+          cue_tier, cue_text, priority, confidence, decided_at, has_adr, stats_verified_at,
+          attempts, last_attempt_at, updated_at, capture_id)
+       VALUES (?, ?, 'extracted', ?, ?, ?, 'agent', 'explicit', 'agent capture', 0, 1, ?, 0, ?, 0, 0, ?, ?)`,
+      [
+        d.id,
+        d.sourceItemId,
+        d.statement,
+        d.rationale,
+        JSON.stringify([...d.alternatives]),
+        d.decidedAt,
+        d.nowMs,
+        d.nowMs,
+        d.captureId,
+      ],
+    );
+    replaceEvidence(db, d.id, d.evidence);
+  })();
+}
+
+export function agentDecisionOwned(db: Database, id: string, captureId: string): boolean {
+  return (
+    db
+      .query(
+        "SELECT 1 FROM decision_record WHERE id = ? AND capture_id = ? AND extraction_source = 'agent'",
+      )
+      .get(id, captureId) !== null
+  );
+}
+
+/** Revoke's inverse: deletes the row ONLY while this capture still owns it (spec § 5.3). */
+export function deleteAgentDecision(db: Database, id: string, captureId: string): boolean {
+  let deleted = false;
+  db.transaction(() => {
+    if (!agentDecisionOwned(db, id, captureId)) return;
+    // Explicit, not left to the cascade: the cascade needs `foreign_keys = ON` on THIS connection.
+    dbRun(db, "DELETE FROM decision_evidence WHERE decision_id = ?", [id]);
+    deleted =
+      dbRun(db, "DELETE FROM decision_record WHERE id = ? AND capture_id = ?", [id, captureId])
+        .changes === 1;
+  })();
+  return deleted;
+}
+
+/** A revoked capture's item is gone: no evidence row may keep pointing at it (spec § 5.3). */
+export function deleteEvidenceCitingItem(db: Database, itemId: string): number {
+  return dbRun(db, "DELETE FROM decision_evidence WHERE item_id = ?", [itemId]).changes;
 }

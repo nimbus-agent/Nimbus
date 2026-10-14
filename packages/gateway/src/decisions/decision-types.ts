@@ -1,7 +1,7 @@
 export type DecisionStatus = "pending" | "extracted" | "vetoed";
 export type CueTier = "heading" | "explicit" | "weak";
 export type EvidenceKind = "source" | "pr" | "commit" | "migration" | "iac" | "adr";
-export type ExtractionSource = "llm" | "snippet";
+export type ExtractionSource = "llm" | "snippet" | "agent";
 
 export interface DecisionEvidence {
   readonly kind: EvidenceKind;
