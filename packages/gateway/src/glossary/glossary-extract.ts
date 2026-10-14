@@ -355,7 +355,9 @@ function applyVetoedOutcome(
 ): void {
   tally.llmProduced = true;
   unprojectTerm(db, unit.term.termKey);
-  markVetoed(db, unit.term.termKey, nowMs);
+  // False for a row that vanished or became an owner-accepted agent row during the model call:
+  // no veto happened, so none is reported.
+  if (!markVetoed(db, unit.term.termKey, nowMs)) return;
   tally.vetoed += 1;
   if (!unit.isUpgrade) return;
   tally.upgradesVetoed += 1;
@@ -383,8 +385,8 @@ function applyDefinedOutcome(
   // never self-healed, since the sweep only re-verifies rows already
   // `consolidated` and this row genuinely is. `db.transaction` nests safely
   // via savepoints, so this composes with any outer transaction.
-  db.transaction(() => {
-    markConsolidated(db, {
+  const applied = db.transaction((): boolean => {
+    const changed = markConsolidated(db, {
       termKey: unit.term.termKey,
       definition: outcome.definition,
       definitionSource: outcome.source,
@@ -393,8 +395,13 @@ function applyDefinedOutcome(
       nowMs: ctx.nowMs,
     });
     const stored = getTerm(db, unit.term.termKey);
+    // The row exists but the guarded UPDATE did not take: a capture for this key was accepted
+    // during the model call. Agent text is never projected (it can be remote-embedded).
+    if (!changed && stored !== null) return false;
     if (stored !== null) projectTerm(db, stored, ctx.nowMs);
+    return true;
   })();
+  if (!applied) return;
   if (unit.isUpgrade) tally.upgraded += 1;
   else tally.consolidated += 1;
 }

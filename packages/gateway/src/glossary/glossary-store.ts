@@ -374,6 +374,7 @@ export function listAllKeys(db: Database): string[] {
   return rows.map((r) => r.term_key);
 }
 
+/** False when nothing changed (no such row, or an owner-accepted agent row the pass must not touch). */
 export function markConsolidated(
   db: Database,
   p: {
@@ -384,33 +385,38 @@ export function markConsolidated(
     nearMisses: string[];
     nowMs: number;
   },
-): void {
-  dbRun(
-    db,
-    `UPDATE glossary_term
+): boolean {
+  return (
+    dbRun(
+      db,
+      `UPDATE glossary_term
      SET status = 'consolidated', definition = ?, definition_source = ?,
          synonyms = ?, near_misses = ?, consolidated_at = ?,
          stats_verified_at = ?, last_attempt_at = ?, updated_at = ?
      WHERE term_key = ? AND definition_source IS NOT 'agent'`,
-    [
-      p.definition,
-      p.definitionSource,
-      JSON.stringify(p.synonyms),
-      JSON.stringify(p.nearMisses),
-      p.nowMs,
-      p.nowMs,
-      p.nowMs,
-      p.nowMs,
-      p.termKey,
-    ],
+      [
+        p.definition,
+        p.definitionSource,
+        JSON.stringify(p.synonyms),
+        JSON.stringify(p.nearMisses),
+        p.nowMs,
+        p.nowMs,
+        p.nowMs,
+        p.nowMs,
+        p.termKey,
+      ],
+    ).changes === 1
   );
 }
 
-export function markVetoed(db: Database, termKey: string, nowMs: number): void {
-  dbRun(
-    db,
-    "UPDATE glossary_term SET status = 'vetoed', updated_at = ? WHERE term_key = ? AND definition_source IS NOT 'agent'",
-    [nowMs, termKey],
+/** False when nothing changed (no such row, or an owner-accepted agent row the pass must not touch). */
+export function markVetoed(db: Database, termKey: string, nowMs: number): boolean {
+  return (
+    dbRun(
+      db,
+      "UPDATE glossary_term SET status = 'vetoed', updated_at = ? WHERE term_key = ? AND definition_source IS NOT 'agent'",
+      [nowMs, termKey],
+    ).changes === 1
   );
 }
 

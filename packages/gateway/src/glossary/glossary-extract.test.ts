@@ -959,3 +959,48 @@ test("a rebuild keeps an owner-accepted agent term", async () => {
   expect(t?.definitionSource).toBe("agent");
   expect(t?.definition).toBe("agent def");
 });
+
+function acceptAgentTermDuring(response: Record<string, unknown>): ConsolidatorLlm {
+  return {
+    generateJson: async () => {
+      // A capture for the same key is accepted while this term's model call is in flight.
+      upsertAgentTerm(db, {
+        termKey: "cdr",
+        displayTerm: "CDR",
+        definition: "agent def",
+        synonyms: [],
+        captureId: "cap_1",
+        stats: computeTermStats(db, "cdr"),
+        score: 0,
+        nowMs: 5000,
+      });
+      return JSON.stringify(response);
+    },
+  };
+}
+
+test("a capture accepted mid-consolidation is neither overwritten, projected nor counted", async () => {
+  seedTermItems(3, "the CDR pipeline runs nightly");
+  const out = await runGlossaryPass(db, {
+    ...OPTS,
+    llm: acceptAgentTermDuring({ isDomainTerm: true, definition: "mined def" }),
+  });
+
+  expect(out.consolidated).toBe(0);
+  const t = getTerm(db, "cdr");
+  expect(t?.definitionSource).toBe("agent");
+  expect(t?.definition).toBe("agent def");
+  expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all()).toHaveLength(0);
+});
+
+test("a capture accepted mid-veto is not vetoed and no veto is reported", async () => {
+  seedTermItems(3, "the CDR pipeline runs nightly");
+  const out = await runGlossaryPass(db, {
+    ...OPTS,
+    llm: acceptAgentTermDuring({ isDomainTerm: false }),
+  });
+
+  expect(out.vetoed).toBe(0);
+  expect(getTerm(db, "cdr")?.status).toBe("consolidated");
+  expect(getTerm(db, "cdr")?.definitionSource).toBe("agent");
+});

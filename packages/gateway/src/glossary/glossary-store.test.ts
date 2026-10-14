@@ -400,11 +400,17 @@ describe("agent terms (capture sink)", () => {
     expect(getTerm(db, "wal")?.definition).toBe("agent def");
   });
 
-  test("an unmentioned term is stamped with nowMs; a mentioned one keeps its evidence window", () => {
+  test("a mentioned term keeps its evidence window", () => {
     seedItem({ externalId: "w1", title: "t", body: "the wal is flushed", modifiedAt: 500 });
     expect(upsertAgentTerm(db, agent("cap_1"))).toBe(true);
     expect(getTerm(db, "wal")?.firstSeenAt).toBe(500);
     expect(getTerm(db, "wal")?.docFreq).toBe(1);
+  });
+
+  test("an unmentioned term is stamped with nowMs for first/last seen", () => {
+    expect(upsertAgentTerm(db, agent("cap_1"))).toBe(true);
+    expect(getTerm(db, "wal")?.firstSeenAt).toBe(10);
+    expect(getTerm(db, "wal")?.lastSeenAt).toBe(10);
   });
 
   test("takes over an llm/snippet row, and an earlier agent row (ownership moves)", () => {
