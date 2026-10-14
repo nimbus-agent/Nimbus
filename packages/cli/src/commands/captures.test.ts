@@ -4,6 +4,7 @@ import {
   doctorCapturesLines,
   formatCaptureDetail,
   formatCaptureTable,
+  parseDetail,
   stripControl,
 } from "./captures-format.ts";
 import { doctorPrintCaptures } from "./doctor-core.ts";
@@ -49,6 +50,9 @@ describe("parseCapturesArgs", () => {
     [["--state", "live"], { verb: "list", state: "live", json: false }],
     [["show", "cap_1"], { verb: "show", id: "cap_1", json: false }],
     [["revoke", "cap_1"], { verb: "revoke", id: "cap_1", json: false }],
+    [["accept", "cap_1"], { verb: "accept", id: "cap_1", json: false }],
+    [["reject", "cap_1", "--json"], { verb: "reject", id: "cap_1", json: true }],
+    [["list", "--limit", "20"], { verb: "list", limit: 20, json: false }],
   ])("%j", (argv, want) => {
     expect(parseCapturesArgs(argv)).toEqual(want as never);
   });
@@ -58,7 +62,12 @@ describe("parseCapturesArgs", () => {
     [["revoke"]],
     [["show", "--json"]],
     [["show", "a", "b"]],
-    [["accept", "cap_1"]],
+    [["accept"]],
+    [["accept", "a", "b"]],
+    [["list", "--limit", "0"]],
+    [["list", "--limit", "201"]],
+    [["list", "--limit", "x"]],
+    [["list", "--limit", "1.5"]],
     [["list", "--state"]],
     [["list", "--bogus", "x"]],
   ])("usage error: %j", (argv) => {
@@ -323,6 +332,7 @@ describe("stripControl / formatCaptureTable", () => {
       payloadBytes: 10,
       itemId: null,
       nativeRef: null,
+      nativeStatus: null,
     });
     const lines = out.split("\n");
     expect(lines).toContain("title: one");
@@ -347,5 +357,96 @@ describe("stripControl / formatCaptureTable", () => {
     expect(t).toContain("10m ago");
     expect(t).toContain("2h ago");
     expect(t).toContain("2d ago");
+  });
+});
+
+describe("accept / reject / limit / native status", () => {
+  test.each([
+    ["capture:abc", "decision"],
+    ["a|b", "link"],
+    ["term-1", "glossary term"],
+  ])("accept %s prints a %s noun", async (nativeRef, noun) => {
+    const f = fake(() => ({ id: "cap_1", state: "accepted", nativeRef }));
+    const o = sink();
+    expect(await runCapturesWith(f.client, { verb: "accept", id: "cap_1", json: false }, o.s)).toBe(
+      0,
+    );
+    expect(f.calls[0]).toEqual(["captures.accept", { id: "cap_1" }]);
+    expect(o.out.join("")).toBe(
+      `Accepted cap_1: it now counts as a ${noun} (${nativeRef}) and is labelled agent-authored.
+`,
+    );
+  });
+
+  test("reject prints the retention note; --json is raw; refusal exits 1", async () => {
+    const f = fake(() => ({ id: "cap_1", state: "rejected" }));
+    const o = sink();
+    expect(await runCapturesWith(f.client, { verb: "reject", id: "cap_1", json: false }, o.s)).toBe(
+      0,
+    );
+    expect(f.calls[0]).toEqual(["captures.reject", { id: "cap_1" }]);
+    expect(o.out.join("")).toBe(
+      "Rejected cap_1. Nothing was written; the record is kept 90 days, then pruned.\n",
+    );
+    const j = sink();
+    await runCapturesWith(f.client, { verb: "reject", id: "cap_1", json: true }, j.s);
+    expect(JSON.parse(j.out.join(""))).toEqual({ id: "cap_1", state: "rejected" });
+    const aj = sink();
+    await runCapturesWith(
+      fake(() => ({ id: "cap_1", state: "accepted", nativeRef: "capture:x" })).client,
+      { verb: "accept", id: "cap_1", json: true },
+      aj.s,
+    );
+    expect(JSON.parse(aj.out.join("")).state).toBe("accepted");
+    const bad = fake(() => {
+      throw new Error("ERR_CAPTURE_STATE: not proposed");
+    });
+    const b = sink();
+    expect(
+      await runCapturesWith(bad.client, { verb: "accept", id: "cap_1", json: false }, b.s),
+    ).toBe(1);
+    expect(b.err.join("")).toContain("ERR_CAPTURE_STATE");
+  });
+
+  test("list --limit forwards limit", async () => {
+    const f = fake(() => ({ captures: [] }));
+    await runCapturesWith(f.client, { verb: "list", limit: 20, json: false }, sink().s);
+    expect(f.calls[0]).toEqual(["captures.list", { limit: 20 }]);
+  });
+
+  const base = {
+    ...ROW,
+    payload: { a: "b" },
+    payloadBytes: 3,
+    itemId: "nimbus:cap_1",
+    nativeRef: null,
+  };
+  test.each([
+    [
+      "superseded",
+      "Superseded: a later accepted capture or the owner's own entry now owns this; revoking this capture leaves it in place.",
+    ],
+    ["absent", "Native row: gone (removed since it was accepted)."],
+    ["owned", "Native row: present and owned by this capture."],
+  ] as const)("formatCaptureDetail nativeStatus %s", (ns, line) => {
+    expect(formatCaptureDetail({ ...parseDetail({ ...base, nativeStatus: ns }) })).toContain(line);
+  });
+
+  test("null / unknown nativeStatus prints nothing extra", () => {
+    expect(parseDetail({ ...base, nativeStatus: "weird" }).nativeStatus).toBeNull();
+    expect(parseDetail(base).nativeStatus).toBeNull();
+    const t = formatCaptureDetail(parseDetail({ ...base, nativeStatus: null }));
+    expect(t).not.toContain("Native row");
+    expect(t).not.toContain("Superseded");
+  });
+});
+
+describe("accept with a malformed result", () => {
+  test.each([[null], [{}], [{ nativeRef: 5 }]])("%j still confirms", async (raw) => {
+    const o = sink();
+    expect(
+      await runCapturesWith(fake(() => raw).client, { verb: "accept", id: "c", json: false }, o.s),
+    ).toBe(0);
+    expect(o.out.join("")).toContain("Accepted c:");
   });
 });

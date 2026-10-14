@@ -7,29 +7,32 @@ import {
   formatCaptureTable,
   parseDetail,
   parseList,
+  stripControl,
 } from "./captures-format.ts";
 
 export const CAPTURES_USAGE =
-  "usage: nimbus captures [list] [--state live|proposed|accepted|rejected|revoked] [--kind note|decision|term|link] [--json]\n" +
+  "usage: nimbus captures [list] [--state live|proposed|accepted|rejected|revoked] [--kind note|decision|term|link] [--limit 1-200] [--json]\n" +
   "       nimbus captures show <id> [--json]\n" +
-  "       nimbus captures revoke <id> [--json]";
+  "       nimbus captures revoke <id> [--json]\n" +
+  "       nimbus captures accept <id> [--json]\n" +
+  "       nimbus captures reject <id> [--json]";
 
 export type CapturesArgs =
-  | { verb: "list"; state?: string; kind?: string; json: boolean }
-  | { verb: "show" | "revoke"; id: string; json: boolean };
+  | { verb: "list"; state?: string; kind?: string; limit?: number; json: boolean }
+  | { verb: "show" | "revoke" | "accept" | "reject"; id: string; json: boolean };
 
 export function parseCapturesArgs(argv: string[]): CapturesArgs | undefined {
   const json = argv.includes("--json");
   const rest = argv.filter((a) => a !== "--json");
   const verb = rest[0] ?? "list";
-  if (verb === "show" || verb === "revoke") {
+  if (verb === "show" || verb === "revoke" || verb === "accept" || verb === "reject") {
     const id = rest[1];
     if (id === undefined || id.startsWith("--") || rest.length !== 2) return undefined;
     return { verb, id, json };
   }
   if (verb !== "list" && !verb.startsWith("--")) return undefined;
   const flags = verb === "list" ? rest.slice(1) : rest;
-  const out: { verb: "list"; state?: string; kind?: string; json: boolean } = {
+  const out: { verb: "list"; state?: string; kind?: string; limit?: number; json: boolean } = {
     verb: "list",
     json,
   };
@@ -39,9 +42,31 @@ export function parseCapturesArgs(argv: string[]): CapturesArgs | undefined {
     if (v === undefined || v.startsWith("--")) return undefined;
     if (k === "--state") out.state = v;
     else if (k === "--kind") out.kind = v;
-    else return undefined;
+    else if (k === "--limit") {
+      if (!/^\d+$/.test(v)) return undefined;
+      const n = Number(v);
+      if (n < 1 || n > 200) return undefined;
+      out.limit = n;
+    } else return undefined;
   }
   return out;
+}
+
+function kindNoun(nativeRef: string): string {
+  if (nativeRef.startsWith("capture:")) return "decision";
+  return nativeRef.includes("|") ? "link" : "glossary term";
+}
+
+function confirmation(verb: "revoke" | "accept" | "reject", id: string, raw: unknown): string {
+  if (verb === "reject") {
+    return `Rejected ${id}. Nothing was written; the record is kept 90 days, then pruned.\n`;
+  }
+  if (verb === "accept") {
+    const ref = (raw as { nativeRef?: unknown } | null)?.nativeRef;
+    const nativeRef = typeof ref === "string" ? stripControl(ref) : "";
+    return `Accepted ${id}: it now counts as a ${kindNoun(nativeRef)} (${nativeRef}) and is labelled agent-authored.\n`;
+  }
+  return `Revoked ${id}: its item and embeddings are deleted; the record keeps no payload.\n`;
 }
 
 type Sink = { out(s: string): void; err(s: string): void };
@@ -56,6 +81,7 @@ export async function runCapturesWith(
       const params: Record<string, unknown> = {};
       if (a.state !== undefined) params["state"] = a.state;
       if (a.kind !== undefined) params["kind"] = a.kind;
+      if (a.limit !== undefined) params["limit"] = a.limit;
       const raw = await c.call<unknown>("captures.list", params);
       sink.out(
         a.json
@@ -71,12 +97,8 @@ export async function runCapturesWith(
       );
       return 0;
     }
-    const raw = await c.call<unknown>("captures.revoke", { id: a.id });
-    sink.out(
-      a.json
-        ? `${JSON.stringify(raw, undefined, 2)}\n`
-        : `Revoked ${a.id}: its item and embeddings are deleted; the record keeps no payload.\n`,
-    );
+    const raw = await c.call<unknown>(`captures.${a.verb}`, { id: a.id });
+    sink.out(a.json ? `${JSON.stringify(raw, undefined, 2)}\n` : confirmation(a.verb, a.id, raw));
     return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

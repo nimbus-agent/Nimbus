@@ -911,3 +911,30 @@ describe("runQuery — negation success output", () => {
     expect(explain["sql"]).toBe("SELECT i.id FROM item i WHERE ...");
   });
 });
+
+describe("runQuery — agent-authored tag", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("tags a nimbus capture card and not a github one", async () => {
+    setupMock([
+      {
+        rows: [
+          { title: "cap note", service: "nimbus", type: "capture" },
+          { title: "gh thing", service: "github", type: "capture" },
+        ],
+        meta: { count: 2 },
+      },
+    ]);
+    await runQuery(["--sql", "SELECT title, service, type FROM items", "--pretty"]);
+    const lines = out.stdout.split("\n");
+    const cap = lines.findIndex((l) => l.includes("cap note"));
+    const gh = lines.findIndex((l) => l.includes("gh thing"));
+    expect(lines[cap + 1]).toContain("agent-authored");
+    expect(lines[gh + 1]).not.toContain("agent-authored");
+  });
+});

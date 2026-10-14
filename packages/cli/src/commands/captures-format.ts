@@ -15,6 +15,7 @@ export interface CaptureDetailView extends CaptureSummaryView {
   payloadBytes: number;
   itemId: string | null;
   nativeRef: string | null;
+  nativeStatus: "owned" | "superseded" | "absent" | null;
 }
 
 export interface CaptureStatusView {
@@ -79,6 +80,10 @@ export function parseList(v: unknown): CaptureSummaryView[] {
   return caps.map(parseSummary);
 }
 
+function parseNativeStatus(v: unknown): CaptureDetailView["nativeStatus"] {
+  return v === "owned" || v === "superseded" || v === "absent" ? v : null;
+}
+
 export function parseDetail(v: unknown): CaptureDetailView {
   const r = rec(v, "captures.get result");
   const item = r["itemId"];
@@ -89,6 +94,7 @@ export function parseDetail(v: unknown): CaptureDetailView {
     payloadBytes: num(r, "payloadBytes"),
     itemId: typeof item === "string" ? item : null,
     nativeRef: typeof native === "string" ? native : null,
+    nativeStatus: parseNativeStatus(r["nativeStatus"]),
   };
 }
 
@@ -143,6 +149,15 @@ export function formatCaptureDetail(d: CaptureDetailView): string {
   ];
   if (d.decidedAt !== null) lines.push(`Decided: ${new Date(d.decidedAt).toISOString()}`);
   if (d.itemId !== null) lines.push(`Item: ${d.itemId}`);
+  if (d.nativeStatus === "superseded") {
+    lines.push(
+      "Superseded: a later accepted capture or the owner's own entry now owns this; revoking this capture leaves it in place.",
+    );
+  } else if (d.nativeStatus === "absent") {
+    lines.push("Native row: gone (removed since it was accepted).");
+  } else if (d.nativeStatus === "owned") {
+    lines.push("Native row: present and owned by this capture.");
+  }
   lines.push("");
   if (typeof d.payload !== "object" || d.payload === null) {
     lines.push("(payload cleared on revoke)");

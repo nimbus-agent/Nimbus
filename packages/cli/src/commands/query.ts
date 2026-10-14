@@ -336,6 +336,8 @@ function printItemCard(row: Record<string, unknown>, idx: number): void {
   const meta: string[] = [];
   if (typeof row["service"] === "string") meta.push(row["service"]);
   if (typeof typeField === "string") meta.push(typeField);
+  // An MCP capture is agent-authored text in the owner's own index (I28): say so on the card.
+  if (row["service"] === "nimbus" && typeField === "capture") meta.push("agent-authored");
   if (typeof timestampField === "number") meta.push(formatTimestampField(timestampField));
 
   console.log(`${num.padEnd(4)} ${title}`);
