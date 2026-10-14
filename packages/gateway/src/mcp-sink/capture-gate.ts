@@ -1,14 +1,18 @@
 import type { Database } from "bun:sqlite";
 
 import { appendAuditEntry } from "../db/audit-chain.ts";
+import { deleteEvidenceCitingItem } from "../decisions/decision-store.ts";
 import { deleteItemByPrimaryKey, itemPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import type { ClientKind } from "../ipc/server/client-kind.ts";
 import type { CaptureCapability } from "./capture-capability.ts";
 import { CAPTURE_ROLE_BY_KIND } from "./capture-client-policy.ts";
 import {
   assertAcceptable,
+  captureNativeStatus,
+  type NativeStatus,
   renderAcceptedItem,
   resolveLinkEndpoints,
+  revokeCaptureNative,
   writeCaptureNative,
 } from "./capture-native.ts";
 import type { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
@@ -74,6 +78,7 @@ export type CaptureDetail = CaptureSummary & {
   readonly payloadBytes: number;
   readonly itemId: string | null;
   readonly nativeRef: string | null;
+  readonly nativeStatus: NativeStatus | null;
 };
 
 export interface CaptureStatus {
@@ -337,22 +342,39 @@ export function revokeCapture(
   const row = deps.store.get(id);
   if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
   if (row.state === "revoked") return { id, state: "revoked" };
-  if (row.state !== "live") {
+  if (row.state !== "live" && row.state !== "accepted") {
     throw new CaptureError(
       "ERR_CAPTURE_STATE",
-      `capture ${id} is ${row.state}; only a live note can be revoked in this version`,
+      `capture ${id} is ${row.state}; only a live note or an accepted capture can be revoked`,
     );
   }
+  const from = row.state;
   const now = deps.now();
   let won = false;
   deps.db.transaction(() => {
-    won = deps.store.markRevoked(id, "live", now);
+    won = deps.store.markRevoked(id, from, now);
     if (!won) return; // lost a race to another revoke: nothing to write
-    if (row.itemId !== null) deleteItemByPrimaryKey(deps.db, row.itemId);
+    if (from === "accepted" && row.nativeRef !== null) {
+      revokeCaptureNative(
+        deps.db,
+        { id, kind: row.kind, nativeRef: row.nativeRef },
+        deps.store.countAcceptedWithNativeRef(row.nativeRef, id) > 0,
+      );
+    }
+    if (row.itemId !== null) {
+      // No evidence row may keep pointing at an item that is about to disappear (spec § 5.3).
+      deleteEvidenceCitingItem(deps.db, row.itemId);
+      deleteItemByPrimaryKey(deps.db, row.itemId);
+    }
     appendAuditEntry(deps.db, {
       actionType: "capture.revoke",
       hitlStatus: "not_required",
-      actionJson: JSON.stringify({ captureId: id, kind: row.kind, outcome: "revoked" }),
+      actionJson: JSON.stringify({
+        captureId: id,
+        kind: row.kind,
+        nativeRef: row.nativeRef,
+        outcome: "revoked",
+      }),
       timestamp: now,
       sessionId: caller.clientId,
     });
@@ -531,6 +553,10 @@ export function getCapture(
     payloadBytes: row.payloadBytes,
     itemId: row.itemId,
     nativeRef: row.nativeRef,
+    nativeStatus:
+      row.state === "accepted" && row.nativeRef !== null
+        ? captureNativeStatus(deps.db, { id: row.id, kind: row.kind, nativeRef: row.nativeRef })
+        : null,
   };
 }
 

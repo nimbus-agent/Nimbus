@@ -750,3 +750,81 @@ describe("reject", () => {
     expect(auditRows().filter((a) => a.action_type === "capture.reject")).toHaveLength(0);
   });
 });
+
+describe("revoke — accepted captures", () => {
+  test("an accepted decision: native row, evidence, item and payload go; native_ref stays", () => {
+    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    acceptCapture(deps, OWNER, id);
+    expect(revokeCapture(deps, OWNER, id)).toEqual({ id, state: "revoked" });
+    expect(db.query("SELECT COUNT(*) AS n FROM decision_record").get()).toEqual({ n: 0 });
+    expect(db.query("SELECT COUNT(*) AS n FROM item WHERE id = ?").get(`nimbus:${id}`)).toEqual({
+      n: 0,
+    });
+    const row = deps.store.get(id);
+    expect(row?.payloadJson).toBeNull();
+    expect(row?.nativeRef).toBe(`capture:${id}`);
+    expect(JSON.parse(auditRows().at(-1)?.action_json ?? "{}")).toMatchObject({
+      outcome: "revoked",
+      nativeRef: `capture:${id}`,
+    });
+  });
+
+  test("a newer accepted term takes the row over; revoking the older leaves it, and get() says superseded", () => {
+    const a = submitCapture(deps, MCP, {
+      kind: "term",
+      payload: { term: "WAL", definition: "old" },
+    }).id;
+    acceptCapture(deps, OWNER, a);
+    const b = submitCapture(deps, MCP, {
+      kind: "term",
+      payload: { term: "WAL", definition: "new" },
+    }).id;
+    acceptCapture(deps, OWNER, b);
+    expect(getCapture(deps, OWNER, a).nativeStatus).toBe("superseded");
+    expect(getCapture(deps, OWNER, b).nativeStatus).toBe("owned");
+    revokeCapture(deps, OWNER, a);
+    expect(db.query("SELECT definition FROM glossary_term WHERE term_key = 'wal'").get()).toEqual({
+      definition: "new",
+    });
+  });
+
+  test("a link triple named by two accepted captures survives revoking one", () => {
+    const [x, y] = graphedItems(2);
+    const p = { kind: "link", payload: { fromItemId: x, toItemId: y, relation: "fixes" } };
+    const a = submitCapture(deps, MCP, p).id;
+    const b = submitCapture(deps, MCP, p).id;
+    acceptCapture(deps, OWNER, a);
+    acceptCapture(deps, OWNER, b);
+    revokeCapture(deps, OWNER, a);
+    expect(getCapture(deps, OWNER, b).nativeStatus).toBe("owned");
+    revokeCapture(deps, OWNER, b);
+    expect(
+      db.query("SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'captured_fixes'").get(),
+    ).toEqual({ n: 0 });
+  });
+
+  test("revoking a note removes evidence rows citing it; the decision stays", () => {
+    const note = submitCapture(deps, MCP, { kind: "note", payload: { body: "context" } }).id;
+    const dec = submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s", evidence: [`nimbus:${note}`] },
+    }).id;
+    acceptCapture(deps, OWNER, dec);
+    revokeCapture(deps, OWNER, note);
+    expect(db.query("SELECT COUNT(*) AS n FROM decision_evidence").get()).toEqual({ n: 0 });
+    expect(db.query("SELECT COUNT(*) AS n FROM decision_record").get()).toEqual({ n: 1 });
+  });
+
+  test("a proposed or rejected capture cannot be revoked; a revoked one is a no-op success", () => {
+    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    expect(codeOf(() => revokeCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_STATE");
+    acceptCapture(deps, OWNER, id);
+    revokeCapture(deps, OWNER, id);
+    expect(revokeCapture(deps, OWNER, id)).toEqual({ id, state: "revoked" });
+  });
+
+  test("nativeStatus is null for notes and non-accepted rows", () => {
+    const n = submitCapture(deps, MCP, { kind: "note", payload: { body: "b" } }).id;
+    expect(getCapture(deps, OWNER, n).nativeStatus).toBeNull();
+  });
+});
