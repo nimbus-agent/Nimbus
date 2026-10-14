@@ -347,6 +347,11 @@ describe("renderRebuildPreview", () => {
     expect(out).not.toContain("authored term");
   });
 
+  test("a manual, an agent and a mined term report exactly one deletable", () => {
+    const out = renderRebuildPreview({ total: 3, pending: 0, manual: 1, agent: 1 }, ["widget"]);
+    expect(out.startsWith("1 mined terms")).toBe(true);
+  });
+
   test("the rebuild preview does not claim authored terms will be deleted", () => {
     const out = renderRebuildPreview({ total: 10, pending: 4, manual: 3 }, ["CDR", "widget"]);
     // `startsWith`, not `toContain` — "7 mined terms" as a bare substring

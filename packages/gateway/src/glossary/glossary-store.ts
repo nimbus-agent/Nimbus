@@ -463,6 +463,7 @@ export function countByStatus(db: Database): {
   pending: number;
   vetoed: number;
   manual: number;
+  agent: number;
 } {
   const r = db
     .query(
@@ -470,7 +471,8 @@ export function countByStatus(db: Database): {
          SUM(CASE WHEN status = 'consolidated' THEN 1 ELSE 0 END) AS total,
          SUM(CASE WHEN status = 'pending'      THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN status = 'vetoed'       THEN 1 ELSE 0 END) AS vetoed,
-         SUM(CASE WHEN definition_source = 'manual' THEN 1 ELSE 0 END) AS manual
+         SUM(CASE WHEN definition_source = 'manual' THEN 1 ELSE 0 END) AS manual,
+         SUM(CASE WHEN definition_source = 'agent'  THEN 1 ELSE 0 END) AS agent
        FROM glossary_term`,
     )
     .get() as {
@@ -478,6 +480,7 @@ export function countByStatus(db: Database): {
     pending: number | null;
     vetoed: number | null;
     manual: number | null;
+    agent: number | null;
   } | null;
   // `manual` is a SUBSET of `total`, not a fourth disjoint bucket: `total`
   // counts consolidated rows, which now include authored ones. Mined count is
@@ -487,6 +490,7 @@ export function countByStatus(db: Database): {
     pending: r?.pending ?? 0,
     vetoed: r?.vetoed ?? 0,
     manual: r?.manual ?? 0,
+    agent: r?.agent ?? 0,
   };
 }
 

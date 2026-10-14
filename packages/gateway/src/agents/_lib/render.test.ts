@@ -762,7 +762,15 @@ describe("renderGlossary", () => {
       entries: [glossaryEntryFixture({ term: "CDR", definition: "Authored." })],
       matchedVia: null,
       suggestions: [],
-      stats: { total: 1, pending: 0, vetoed: 0, manual: 1, lastPassAt: null, truncatedSources: 0 },
+      stats: {
+        total: 1,
+        pending: 0,
+        vetoed: 0,
+        manual: 1,
+        agent: 0,
+        lastPassAt: null,
+        truncatedSources: 0,
+      },
     };
     const md = renderGlossary(brief);
     expect(md).toContain("nimbus.toml");
@@ -781,7 +789,15 @@ describe("renderGlossary", () => {
       ],
       matchedVia: null,
       suggestions: [],
-      stats: { total: 2, pending: 0, vetoed: 0, manual: 1, lastPassAt: null, truncatedSources: 0 },
+      stats: {
+        total: 2,
+        pending: 0,
+        vetoed: 0,
+        manual: 1,
+        agent: 0,
+        lastPassAt: null,
+        truncatedSources: 0,
+      },
     };
     const md = renderGlossary(brief);
     expect(md).toContain("**CDR** — 0 mention(s), score 0.50 — authored");

@@ -113,6 +113,7 @@ function glossaryBrief(entries: GlossaryEntry[]): GlossaryBrief {
       pending: 0,
       vetoed: 0,
       manual: 1,
+      agent: 0,
       lastPassAt: null,
       truncatedSources: 0,
     },

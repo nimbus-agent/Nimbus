@@ -185,10 +185,11 @@ export function renderPassOutcome(s: GlossaryPassSummaryLike): string[] {
  * they head the sample — so the sample is filtered to mined terms too.
  */
 export function renderRebuildPreview(
-  counts: { total: number; pending: number; manual: number },
+  counts: { total: number; pending: number; manual: number; agent?: number },
   sample: readonly string[],
 ): string {
-  const mined = counts.total - counts.manual;
+  // Authored and agent-captured terms both survive a rebuild; only mined ones are deleted.
+  const mined = counts.total - counts.manual - (counts.agent ?? 0);
   const lines = [
     `${String(mined)} mined terms and ${String(counts.pending)} pending ` +
       "candidates would be deleted.",
@@ -279,7 +280,7 @@ function awaitPass(client: IPCClient, method: string): Promise<GlossaryPassSumma
 }
 
 type GlossaryPreviewLike = {
-  stats: { total: number; pending: number; manual: number };
+  stats: { total: number; pending: number; manual: number; agent?: number };
   entries: Array<{ term: string; definitionSource?: string | null }>;
 };
 
@@ -323,13 +324,16 @@ function isGlossaryPreviewLike(v: unknown): v is GlossaryPreviewLike {
 export function readRebuildPreview(
   client: IPCClient,
   timeoutMs: number = briefTimeoutMs(),
-): Promise<{ counts: { total: number; pending: number; manual: number }; sample: string[] }> {
+): Promise<{
+  counts: { total: number; pending: number; manual: number; agent?: number };
+  sample: string[];
+}> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error(`Agent timed out after ${Math.round(timeoutMs / 1000)} s`));
     }, timeoutMs);
     const settleResolve = (v: {
-      counts: { total: number; pending: number; manual: number };
+      counts: { total: number; pending: number; manual: number; agent?: number };
       sample: string[];
     }): void => {
       clearTimeout(timeout);

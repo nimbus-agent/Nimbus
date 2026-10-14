@@ -697,7 +697,15 @@ const GLOSSARY_FIXTURE: GlossaryBrief = {
   entries: [],
   matchedVia: null,
   suggestions: [],
-  stats: { total: 0, pending: 0, vetoed: 0, manual: 0, lastPassAt: null, truncatedSources: 0 },
+  stats: {
+    total: 0,
+    pending: 0,
+    vetoed: 0,
+    manual: 0,
+    agent: 0,
+    lastPassAt: null,
+    truncatedSources: 0,
+  },
 };
 
 describe("the reserved-section instruction is derived per kind, not global (I31 fix-round)", () => {

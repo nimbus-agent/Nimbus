@@ -150,7 +150,15 @@ function glossaryBrief(over: Partial<GlossaryBrief>): GlossaryBrief {
     entries: [],
     matchedVia: null,
     suggestions: [],
-    stats: { total: 0, pending: 0, vetoed: 0, manual: 0, lastPassAt: null, truncatedSources: 0 },
+    stats: {
+      total: 0,
+      pending: 0,
+      vetoed: 0,
+      manual: 0,
+      agent: 0,
+      lastPassAt: null,
+      truncatedSources: 0,
+    },
     ...over,
   };
 }
