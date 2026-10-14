@@ -423,7 +423,7 @@ describe("MCP capture sink — end to end", () => {
       expect(before.code).toBe(0);
       expect(before.stdout).not.toContain(marker);
       const searchBefore = await mcp.callTool("searchIndex", { query: marker });
-      expect(searchBefore.text).not.toContain(String(id));
+      expect(searchBefore.text).not.toContain(`nimbus:${String(id)}`);
 
       const accepted = await runCli(["captures", "accept", String(id)]);
       expect(accepted.code).toBe(0);
@@ -433,9 +433,15 @@ describe("MCP capture sink — end to end", () => {
       expect(after.stdout).toContain(marker);
       expect(after.stdout).toContain("captured via MCP, accepted by the owner");
 
+      // POSITIVE CONTROL for the searchIndex absence above: once accepted, it IS findable.
+      const searchAfter = await mcp.callTool("searchIndex", { query: marker });
+      expect(searchAfter.text).toContain(`nimbus:${String(id)}`);
+
       expect((await runCli(["captures", "revoke", String(id)])).code).toBe(0);
       const gone = await runCli(["decisions"]);
       expect(gone.stdout).not.toContain(marker);
+      const searchGone = await mcp.callTool("searchIndex", { query: marker });
+      expect(searchGone.text).not.toContain(`nimbus:${String(id)}`);
     } finally {
       await mcp.close();
     }
@@ -447,13 +453,27 @@ describe("MCP capture sink — end to end", () => {
       await mcp.initialize();
       const term = `zebraterm${randomUUID().slice(0, 6)}`;
       const prop = await mcp.callTool("propose_term", { term, definition: "an e2e term" });
+      expect(prop.isError).toBe(false);
       const id = /Proposed glossary term (cap_[A-Za-z0-9_-]+)/.exec(prop.text)?.[1];
       expect(id).toBeDefined();
       expect((await runCli(["captures", "reject", String(id)])).code).toBe(0);
       const listed = await runCli(["captures", "list", "--state", "rejected", "--json"]);
       expect(listed.stdout).toContain(String(id));
+
+      // Positive control: a second term, accepted, DOES appear in the same command.
+      const kept = `zebrakept${randomUUID().slice(0, 6)}`;
+      const prop2 = await mcp.callTool("propose_term", { term: kept, definition: "kept e2e term" });
+      expect(prop2.isError).toBe(false);
+      const id2 = /Proposed glossary term (cap_[A-Za-z0-9_-]+)/.exec(prop2.text)?.[1];
+      expect(id2).toBeDefined();
+      expect((await runCli(["captures", "accept", String(id2)])).code).toBe(0);
+
       const glossary = await runCli(["glossary"]);
+      expect(glossary.code).toBe(0);
+      expect(glossary.stdout).toContain(kept);
       expect(glossary.stdout).not.toContain(term);
+
+      expect((await runCli(["captures", "revoke", String(id2)])).code).toBe(0);
     } finally {
       await mcp.close();
     }
