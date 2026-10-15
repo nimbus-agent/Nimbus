@@ -61,7 +61,7 @@ export function formatHelp(demo: boolean = false): string {
   const indexToolCount = INDEX_TOOL_SPECS.length;
   const agentToolCount = TOOL_SPECS.length - indexToolCount;
   return `nimbus mcp-server — expose the Nimbus local index to editor AIs over MCP
-(read; optional local note capture)
+(read; optional capture and proposal tools)
 
 Usage:
   nimbus mcp-server            Print the MCP server config block to paste into your editor
@@ -70,10 +70,14 @@ Usage:
 Read-only tools (${String(names.length)}):
 ${wrapList(names, HELP_WIDTH)}
 
-Every tool above is read-only. One WRITE tool, capture_note, is added only when
-the Gateway's [mcp_sink] is enabled in nimbus.toml: it stores an agent-authored
-note in the LOCAL index, which you review with \`nimbus captures\`. The Gateway
-must be running (start it with: ${gatewayStartCommand(demo)}).
+Every tool above is read-only. Write tools are added only when the Gateway's
+[mcp_sink] is enabled in nimbus.toml, each only for the kinds you enable:
+capture_note stores an agent-authored note in the LOCAL index, and
+propose_decision, propose_term and propose_link queue proposals that count only
+once you accept them. propose_action queues a connector action that runs only
+after you accept it AND approve the prompt; capture_status reads a capture's
+state. You review all of it with \`nimbus captures\`. The Gateway must be
+running (start it with: ${gatewayStartCommand(demo)}).
 
 On a Gateway too old to support session.declareKind, the ${String(agentToolCount)} agent tools are
 withheld and only the ${String(indexToolCount)} index tools are served: such a Gateway cannot record an
