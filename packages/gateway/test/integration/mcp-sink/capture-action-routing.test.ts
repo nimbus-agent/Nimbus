@@ -3,7 +3,7 @@
  * dispatched through the REAL `createConnectorDispatcher` over a tool map keyed EXACTLY as the mesh
  * lists tools (`<server>_<tool>`), reaches the right tool for a first-party and a user-MCP type.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import { createConnectorDispatcher } from "../../../src/connectors/registry.ts";
 import { appendAuditEntry } from "../../../src/db/audit-chain.ts";
@@ -34,6 +34,16 @@ function meshTools(calls: Array<[string, unknown]>) {
   return Object.fromEntries(keys.map((k) => [k, tool(k)]));
 }
 
+const openDbs: Array<ReturnType<typeof openMigratedMemoryDb>> = [];
+function trackedDb() {
+  const db = openMigratedMemoryDb();
+  openDbs.push(db);
+  return db;
+}
+afterEach(() => {
+  for (const db of openDbs.splice(0)) db.close();
+});
+
 function makeAct(
   dispatcher: ReturnType<typeof createConnectorDispatcher>,
   db: ReturnType<typeof openMigratedMemoryDb>,
@@ -57,7 +67,7 @@ describe("act door routing through the real dispatcher", () => {
     ["google_drive.file.create", "google_drive_gdrive_file_create"],
     ["apple.mail.send", "apple_apple_mail_send"],
   ])("%s resolves to %s with the stored input", async (type, key) => {
-    const db = openMigratedMemoryDb();
+    const db = trackedDb();
     const calls: Array<[string, unknown]> = [];
     const dispatcher = createConnectorDispatcher({
       listTools: () => Promise.resolve(meshTools(calls)),
@@ -65,11 +75,10 @@ describe("act door routing through the real dispatcher", () => {
     const act = makeAct(dispatcher, db);
     expect(await act.execute(type, { text: "hi" }, PROV)).toMatchObject({ status: "ok" });
     expect(calls).toEqual([[key, { text: "hi" }]]);
-    db.close();
   });
 
   test("obsidian.note.append is denied: the real dispatcher cannot route it, and nothing is called", async () => {
-    const db = openMigratedMemoryDb();
+    const db = trackedDb();
     const calls: Array<[string, unknown]> = [];
     const dispatcher = createConnectorDispatcher({
       listTools: () => Promise.resolve(meshTools(calls)),
@@ -79,11 +88,10 @@ describe("act door routing through the real dispatcher", () => {
       /^Tool not found$/,
     );
     expect(calls).toEqual([]);
-    db.close();
   });
 
   test("a user-MCP type resolves only its own server's key", async () => {
-    const db = openMigratedMemoryDb();
+    const db = trackedDb();
     const calls: Array<[string, unknown]> = [];
     const userTools = {
       mcp_echo_echo: {
@@ -100,7 +108,6 @@ describe("act door routing through the real dispatcher", () => {
     const act = makeAct(dispatcher, db);
     await act.execute("mcp_echo.echo", { text: "hi" }, PROV);
     expect(calls).toEqual([["mcp_echo_echo", { text: "hi" }]]);
-    db.close();
   });
 
   test("RED-PROOF premise: dispatching by type alone (the first draft) finds no tool", async () => {
@@ -111,5 +118,25 @@ describe("act door routing through the real dispatcher", () => {
     await expect(
       dispatcher.dispatch({ type: "slack.message.post", payload: { input: {} } }),
     ).rejects.toThrow("Tool not found");
+  });
+
+  test("user-MCP dispatch by type alone is refused - the act door must pass mcpToolId (I42 pairing)", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const userTools = {
+      mcp_echo_echo: {
+        execute: (i: unknown) => {
+          calls.push(["mcp_echo_echo", i]);
+          return Promise.resolve("ok");
+        },
+      },
+    };
+    const dispatcher = createConnectorDispatcher({
+      listTools: () => Promise.resolve({}),
+      listUserMcpTools: (s) => Promise.resolve(s === "mcp_echo" ? userTools : undefined),
+    });
+    await expect(
+      dispatcher.dispatch({ type: "mcp_echo.echo", payload: { input: { text: "hi" } } }),
+    ).rejects.toThrow("ERR_USER_MCP_ACTION_MISMATCH");
+    expect(calls).toEqual([]);
   });
 });
