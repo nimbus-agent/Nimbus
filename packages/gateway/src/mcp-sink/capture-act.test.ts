@@ -151,6 +151,16 @@ describe("acceptAction — ordered refusals", () => {
 });
 
 describe("acceptAction — outcomes", () => {
+  test("a token-shaped segment in outcomeRef is redacted in the audit log, kept on the capture row", async () => {
+    const ref = "https://slack.example/p/1?t=xoxb-1234567890abcdef";
+    await acceptAction(deps, OWNER, row(), act({ status: "ok", result: { url: ref } }));
+    expect(row().outcomeRef).toBe(ref);
+    const outcome = audits().find((r) => r.action_type === "capture.action.outcome");
+    expect(outcome?.action_json).not.toContain("xoxb-1234567890abcdef");
+    expect(JSON.parse(outcome?.action_json ?? "{}")).toMatchObject({
+      outcomeRef: "https://slack.example/p/1?t=[REDACTED]",
+    });
+  });
   test("ok → executed with outcome_ref; accept + outcome audits, both not_required", async () => {
     const a = act({ status: "ok", result: { url: "https://slack.example/p/1", body: "secret" } });
     const out = await acceptAction(deps, OWNER, row(), a);
@@ -289,6 +299,9 @@ describe("pure helpers", () => {
     ["soft hyphen", 0x00ad],
     ["Arabic letter mark", 0x061c],
     ["BOM", 0xfeff],
+    ["TAG LATIN SMALL LETTER I", 0xe0069],
+    ["variation selector 16", 0xfe0f],
+    ["Hangul filler", 0x3164],
   ])("%s inside an input value is shown escaped", (_name, cp) => {
     const ch = String.fromCodePoint(cp);
     const s = formatActionConsent(
@@ -297,7 +310,37 @@ describe("pure helpers", () => {
       { text: `a${ch}b` },
     );
     expect(s).not.toContain(ch);
-    expect(s).toContain(`\\u${cp.toString(16).padStart(4, "0")}`);
+    const hex = cp.toString(16);
+    expect(s).toContain(cp > 0xffff ? `\\u{${hex}}` : `\\u${hex.padStart(4, "0")}`);
+  });
+  test("a hidden TAG-character instruction inside an input value is fully visible", () => {
+    // "ignore" spelled in TAG characters (U+E0000 + ASCII), invisible in most renderers.
+    const hidden = [..."ignore"]
+      .map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0)))
+      .join("");
+    const s = formatActionConsent(
+      { captureId: "c", clientLabel: null, createdAt: 0, expiresAt: 0, summary: "s" },
+      "slack.message.post",
+      { text: `hi${hidden}` },
+    );
+    expect(s).toContain("hi\\u{e0069}\\u{e0067}\\u{e006e}\\u{e006f}\\u{e0072}\\u{e0065}");
+    expect([...s].some((c) => (c.codePointAt(0) ?? 0) >= 0xe0000)).toBe(false);
+  });
+  test('a " in the client label cannot close the quotes and fake provenance', () => {
+    const s = formatActionConsent(
+      {
+        captureId: "c",
+        clientLabel: 'x" at 2099-01-01T00:00:00.000Z, expires 2099-01-02T00:00:00.000Z \\ y',
+        createdAt: 0,
+        expiresAt: 0,
+        summary: "s",
+      },
+      "slack.message.post",
+      { text: "hi" },
+    );
+    expect(s).toContain(
+      'Proposed by MCP client "x\\" at 2099-01-01T00:00:00.000Z, expires 2099-01-02T00:00:00.000Z \\\\ y" at 1970-01-01T00:00:00.000Z',
+    );
   });
   test("ESC and a newline in the client label are escaped, and stay on one prompt line", () => {
     const s = formatActionConsent(

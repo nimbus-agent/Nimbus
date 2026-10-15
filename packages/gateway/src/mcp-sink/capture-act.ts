@@ -1,3 +1,4 @@
+import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { CAPTURE_ROLE_BY_KIND } from "./capture-client-policy.ts";
@@ -38,10 +39,50 @@ const OUTCOME_MAX = 512;
 // hyphen, the Arabic letter mark, the Mongolian vowel separator, ZWSP..RLM (incl. LRM/RLM),
 // U+2028..U+202E (line/para separators + bidi embeddings/overrides), U+2060..U+206F (word joiner,
 // invisible operators, bidi isolates, deprecated format chars), the BOM and the interlinear
-// annotation characters. NOT U+202F (narrow no-break space): it renders as a space.
-const INVISIBLE_RE =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: escaping control characters is the purpose
-  /[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF\uFFF9-\uFFFB]/g;
+// annotation characters. Also the fillers that render as nothing (combining grapheme joiner,
+// Hangul fillers, Khmer inherent vowels, halfwidth Hangul filler), the variation selectors (BMP
+// and supplement), and the astral TAG characters, which can spell a whole hidden instruction.
+// NOT U+202F (narrow no-break space): it renders as a space.
+// Written as NUMBERS, never as regex escapes or literals: a source formatter can rewrite a `\u`
+// escape into the invisible character itself, and an invisible character in this list is
+// exactly what a reviewer cannot see. Each entry is an inclusive [first, last] code point.
+const INVISIBLE_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x0000, 0x0009],
+  [0x000b, 0x001f],
+  [0x007f, 0x009f],
+  [0x00ad, 0x00ad],
+  [0x034f, 0x034f],
+  [0x061c, 0x061c],
+  [0x115f, 0x1160],
+  [0x17b4, 0x17b5],
+  [0x180e, 0x180e],
+  [0x200b, 0x200f],
+  [0x2028, 0x202e],
+  [0x2060, 0x206f],
+  [0x3164, 0x3164],
+  [0xfe00, 0xfe0f],
+  [0xfeff, 0xfeff],
+  [0xffa0, 0xffa0],
+  [0xfff9, 0xfffb],
+  [0xe0000, 0xe007f],
+  [0xe0100, 0xe01ef],
+];
+// One alternative per range (each a single-range class) so no class mixes a base character with a
+// combining one; the `u` flag makes every match a whole code point, astral included. The range ends
+// are inserted as characters at RUNTIME: none of them is `]`, `-`, `^` or a backslash, so each
+// class is literal.
+const INVISIBLE_RE = new RegExp(
+  INVISIBLE_RANGES.map(
+    ([lo, hi]) => `[${String.fromCodePoint(lo)}-${String.fromCodePoint(hi)}]`,
+  ).join("|"),
+  "gu",
+);
+
+/** BMP as `\uXXXX`; astral as `\u{XXXXX}` (a 4-digit form would misrepresent the code point). */
+function escapeCodePoint(c: string): string {
+  const cp = c.codePointAt(0) ?? 0;
+  return cp > 0xffff ? `\\u{${cp.toString(16)}}` : `\\u${cp.toString(16).padStart(4, "0")}`;
+}
 
 function audit(
   deps: Pick<ActGateDeps, "db">,
@@ -54,7 +95,8 @@ function audit(
     actionType,
     // I4: no consent gate ran HERE — the approval is the executor's own `approved` row.
     hitlStatus: "not_required",
-    actionJson: JSON.stringify(body),
+    // `outcomeRef` is a connector-returned URL: it may carry a presigned/token secret (spec § 8.2).
+    actionJson: redactAuditPayload(body),
     timestamp: now,
     sessionId,
   });
@@ -125,10 +167,12 @@ export function formatActionConsent(
   actionType: string,
   input: Readonly<Record<string, unknown>>,
 ): string {
-  const visible = (s: string): string =>
-    s.replace(INVISIBLE_RE, (c) => `\\u${(c.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`);
-  // A one-line field must not start a new prompt line either: LF is escaped here too.
-  const visibleLine = (s: string): string => visible(s).replaceAll("\n", "\\u000a");
+  const visible = (s: string): string => s.replace(INVISIBLE_RE, escapeCodePoint);
+  // A one-line field must not start a new prompt line either: LF is escaped here too. `\` and `"`
+  // are escaped FIRST (before `visible` adds its own backslashes), so a quoted label cannot close
+  // its quotes and fake the provenance text that follows it.
+  const visibleLine = (s: string): string =>
+    visible(s.replaceAll("\\", "\\\\").replaceAll('"', '\\"')).replaceAll("\n", "\\u000a");
   return [
     "Agent-proposed action — requires your approval",
     `Proposed by MCP client "${visibleLine(p.clientLabel ?? "unlabelled")}" at ${new Date(p.createdAt).toISOString()}, expires ${new Date(p.expiresAt).toISOString()}`,
