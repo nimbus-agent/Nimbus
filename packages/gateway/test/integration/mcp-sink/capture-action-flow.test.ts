@@ -166,6 +166,9 @@ describe("act door flow (real executor + real ledger, fake dispatcher)", () => {
     const audit = db
       .query("SELECT action_json FROM audit_log WHERE action_type = 'capture.action.outcome'")
       .all() as Array<{ action_json: string }>;
+    // Non-vacuous: an empty result would make the join "" and the next line pass for nothing.
+    expect(audit.length).toBeGreaterThan(0);
+    expect(audit.map((a) => a.action_json).join("")).toContain("ERR_ACTION_TIMEOUT");
     expect(audit.map((a) => a.action_json).join("")).not.toContain("exceeded");
   });
 
