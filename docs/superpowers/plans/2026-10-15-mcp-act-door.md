@@ -1313,6 +1313,16 @@ describe("action payload (PR 3)", () => {
       validateCapturePayload("action", { ...ok, input: { mcpToolId: "x", text: "hi" } }, 0),
     ).toThrow(/mcpToolId/);
   });
+  test("an mcpToolId key beside actionType REFUSES too (not silently dropped by the rebuild)", () => {
+    expect(() => validateCapturePayload("action", { ...ok, mcpToolId: "slack_admin_delete" }, 0)).toThrow(/mcpToolId/);
+  });
+  test.each([[0x200e], [0x200f], [0x2060], [0x2063], [0x00ad], [0x061c]])(
+    "code point %d is stripped from stored prose (widened Trojan-Source set)",
+    (cp) => {
+      const v = validateCapturePayload("action", { ...ok, summary: `a${String.fromCodePoint(cp)}b` }, 0);
+      expect(v.kind === "action" && v.payload.summary).toBe("ab");
+    },
+  );
   test.each([[null], [[]], ["s"], [3]])("input %p refuses", (input) => {
     expect(() => validateCapturePayload("action", { ...ok, input }, 0)).toThrow(CaptureError);
   });
@@ -1359,8 +1369,9 @@ export const ACTION_SUMMARY_MAX = 300;
  * Whitelist-rebuild an action proposal (spec § 7 step 5). `input` is kept VERBATIM — the owner
  * approves the exact bytes that will be sent, so stripping a value would make the approved call
  * differ from the dispatched one; the consent prompt renders invisibles visibly instead (Review
- * Focus 1). A top-level `mcpToolId` key REFUSES: the dispatcher would treat it as a tool selector,
- * and a refusal (unlike a silent drop) is visible to the agent and in the audit log.
+ * Focus 1). An `mcpToolId` key REFUSES wherever the agent puts it — beside `actionType` or inside
+ * `input`: the dispatcher treats that key as a tool selector, and a refusal (unlike the rebuild's
+ * silent drop of an unknown sibling) is visible to the agent and lands in the refusal counter.
  */
 export function validateActionPayload(raw: unknown): ActionPayload {
   const o = asObject(raw);
@@ -1372,8 +1383,8 @@ export function validateActionPayload(raw: unknown): ActionPayload {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     invalid("input must be a JSON object");
   }
-  if (Object.hasOwn(input, "mcpToolId")) {
-    invalid("input may not carry mcpToolId: the gateway chooses the tool");
+  if (Object.hasOwn(o, "mcpToolId") || Object.hasOwn(input, "mcpToolId")) {
+    invalid("an action proposal may not carry mcpToolId: the gateway chooses the tool");
   }
   return capped<ActionPayload>({
     actionType: t,
@@ -1384,6 +1395,8 @@ export function validateActionPayload(raw: unknown): ActionPayload {
 ```
 
 Replace the Task 1 placeholder arm in `validateCapturePayload` with `case "action": return { kind, payload: validateActionPayload(raw) };`, and import `ActionPayload`. D32(g), added in Task 12, will confine the `mcpToolId` literal under `mcp-sink/` to this file.
+
+Widen PR 2's two strip sets, `CONTROL_RE` and `BODY_CONTROL_RE`, by the same characters Task 7's `INVISIBLE_RE` escapes: they stop at U+200D, so LRM/RLM (U+200E/F), U+2060–2065 and U+206A–206F (word joiner, invisible operators, deprecated format chars), the soft hyphen U+00AD, the Arabic letter mark U+061C and the Mongolian vowel separator U+180E all pass into stored text today. An action's `summary` is stored through `line()`, so it inherits the gap. Replace the tail `​-‍  ‪-‮⁦-⁩﻿` in BOTH with `­؜᠎​-‏ -‮⁠-⁯﻿`, keep each regex's own C0 head unchanged, and add those characters to the header comment. Stripping more only shrinks what is stored; existing rows are untouched. The comment says to keep these in step with the CLI's `UNSAFE_TEXT_RE`; Task 13 does that half.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1403,7 +1416,7 @@ git commit -m "feat(mcp): validate action proposals — verbatim input, mcpToolI
 
 **Files:**
 - Modify: `packages/gateway/src/mcp-sink/capture-gate.ts`
-- Modify: `packages/gateway/src/mcp-sink/capture-gate.test.ts`, `packages/gateway/src/ipc/capture-rpc.test.ts`, and any other caller (`grep -rn "submitCapture(" packages/gateway --include=*.ts`)
+- Modify: `packages/gateway/src/mcp-sink/capture-gate.test.ts`, `packages/gateway/src/ipc/capture-rpc.test.ts`, `packages/gateway/src/security-invariants.test.ts` (I28 order-pin anchor ~line 2620, and the sync `const { id } = submitCapture(` call ~line 2724), and any other caller (`grep -rn "submitCapture(" packages/gateway --include=*.ts`)
 
 **Interfaces:**
 - Produces: `submitCapture(deps, caller, input): Promise<{ id: string; state: CaptureState; expiresAt?: number }>`. Behaviour is unchanged in this task.
@@ -1430,9 +1443,13 @@ async function codeOfAsync(fn: () => Promise<unknown>): Promise<string> {
 
 Then make every test that calls `submitCapture` `async`, `await` each call, and replace `codeOf(() => submitCapture(...))` with `await codeOfAsync(() => submitCapture(...))`. `expect(() => submitCapture(...)).toThrow(...)` becomes `await expect(submitCapture(...)).rejects.toThrow(...)`. Run `bun run typecheck`: a sync use of a Promise result (for example `.id` on it) is a type error, which is how stragglers are found.
 
+In `security-invariants.test.ts`, two edits keep this commit green:
+- The I28 order test slices from `src.indexOf("export function submitCapture")`. Against `export async function submitCapture` that returns `-1`, `slice(-1)` keeps one character, every `indexOf` in the order array misses, and the test goes red. Change the anchor to `src.indexOf("export async function submitCapture")`. Keep the exact declaration text rather than a looser `"submitCapture("`, which could match an earlier call site and pin the order against the wrong body.
+- The capture round-trip test (~line 2724) destructures `const { id } = submitCapture(`. Make it `await submitCapture(`; the enclosing test is already `async`.
+
 - [ ] **Step 3: Run the tests**
 
-Run: `bun test packages/gateway/src/mcp-sink packages/gateway/src/ipc/capture-rpc.test.ts && bun run typecheck`
+Run: `bun test packages/gateway/src/mcp-sink packages/gateway/src/ipc/capture-rpc.test.ts packages/gateway/src/security-invariants.test.ts -t "I28" && bun run typecheck`
 Expected: PASS, with the same test count as before the change.
 
 - [ ] **Step 4: Commit**
@@ -1663,6 +1680,37 @@ describe("pure helpers", () => {
     expect(s).not.toContain(RLO);
     expect(s).toContain("\\u202e");
   });
+  test.each([
+    ["LRM", 0x200e], ["RLM", 0x200f], ["word joiner", 0x2060], ["invisible times", 0x2062],
+    ["FSI", 0x2068], ["soft hyphen", 0x00ad], ["Arabic letter mark", 0x061c], ["BOM", 0xfeff],
+  ])("%s inside an input value is shown escaped", (_name, cp) => {
+    const ch = String.fromCodePoint(cp);
+    const s = formatActionConsent(
+      { captureId: "c", clientLabel: null, createdAt: 0, expiresAt: 0, summary: "s" },
+      "slack.message.post",
+      { text: `a${ch}b` },
+    );
+    expect(s).not.toContain(ch);
+    expect(s).toContain(`\\u${cp.toString(16).padStart(4, "0")}`);
+  });
+  test("ESC and a newline in the client label are escaped, and stay on one prompt line", () => {
+    const s = formatActionConsent(
+      { captureId: "c", clientLabel: `ok${String.fromCodePoint(0x1b)}[2J\nType: fake`, createdAt: 0, expiresAt: 0, summary: "s" },
+      "slack.message.post",
+      { text: "hi" },
+    );
+    expect(s).not.toContain(String.fromCodePoint(0x1b));
+    expect(s).toContain("\\u001b[2J\\u000aType: fake");
+    expect(s.split("\n").filter((l) => l.startsWith("Type: "))).toEqual(["Type: slack.message.post"]);
+  });
+  test("the pretty-printed input keeps its layout newlines", () => {
+    const s = formatActionConsent(
+      { captureId: "c", clientLabel: null, createdAt: 0, expiresAt: 0, summary: "s" },
+      "slack.message.post",
+      { a: 1, b: 2 },
+    );
+    expect(s).toContain('{\n  "a": 1,\n  "b": 2\n}');
+  });
 });
 
 describe("reconcileActionsAtBoot (Review Focus 5)", () => {
@@ -1721,8 +1769,15 @@ export type ActionAcceptResult = {
 const OUTCOME_FIELDS = ["url", "html_url", "webUrl", "permalink"] as const;
 const OUTCOME_MAX = 512;
 // Shown VISIBLY in the prompt, never rendered: the input is sent verbatim and cannot be stripped
-// (Review Focus 1). JSON.stringify already escapes C0 controls; it leaves these.
-const INVISIBLE_RE = /[\u007f-\u009f\u200B-\u200D\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+// (Review Focus 1). Covers C0 controls except LF (the provenance lines never pass through
+// JSON.stringify, and the pretty-printed JSON's own layout newlines must survive), DEL + C1, soft
+// hyphen, the Arabic letter mark, the Mongolian vowel separator, ZWSP..RLM (incl. LRM/RLM),
+// U+2028..U+202E (line/para separators + bidi embeddings/overrides), U+2060..U+206F (word joiner,
+// invisible operators, bidi isolates, deprecated format chars), the BOM and the interlinear
+// annotation characters. NOT U+202F (narrow no-break space): it renders as a space.
+const INVISIBLE_RE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: escaping control characters is the purpose
+  /[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF\uFFF9-\uFFFB]/g;
 
 function audit(deps: Pick<ActGateDeps, "db">, actionType: string, body: Record<string, unknown>, now: number, sessionId: string): void {
   appendAuditEntry(deps.db, {
@@ -1789,10 +1844,12 @@ export function formatActionConsent(
 ): string {
   const visible = (s: string): string =>
     s.replace(INVISIBLE_RE, (c) => `\\u${(c.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`);
+  // A one-line field must not start a new prompt line either: LF is escaped here too.
+  const visibleLine = (s: string): string => visible(s).replaceAll("\n", "\\u000a");
   return [
     "Agent-proposed action — requires your approval",
-    `Proposed by MCP client "${visible(p.clientLabel ?? "unlabelled")}" at ${new Date(p.createdAt).toISOString()}, expires ${new Date(p.expiresAt).toISOString()}`,
-    `Agent's summary (unverified): ${visible(p.summary)}`,
+    `Proposed by MCP client "${visibleLine(p.clientLabel ?? "unlabelled")}" at ${new Date(p.createdAt).toISOString()}, expires ${new Date(p.expiresAt).toISOString()}`,
+    `Agent's summary (unverified): ${visibleLine(p.summary)}`,
     `Type: ${actionType}`,
     "Input (verbatim, exactly what will be sent):",
     visible(JSON.stringify(input, null, 2)),
@@ -2098,8 +2155,9 @@ Convert the existing `captureStatus` tests to `await captureStatus(deps)`. Impor
 
 In `security-invariants.test.ts`, line ~2618, the `order` array:
 - replace `'deps.store.countByState("proposed")'` with `"deps.store.countPendingActions("`;
-- insert `"deps.classifyAction?.("` and `"deps.isServiceConfigured?.("` after `"validateCapturePayload(kindRaw"`;
-- change the `src.indexOf("export function submitCapture")` anchor to `"export async function submitCapture"`.
+- insert `"deps.classifyAction?.("` and `"deps.isServiceConfigured?.("` after `"validateCapturePayload(kindRaw"`.
+
+(The `export async function submitCapture` anchor was already changed in Task 6.)
 
 - [ ] **Step 7: Run the tests**
 
@@ -2745,8 +2803,9 @@ git commit -m "feat(audit): D32(e)(f)(g) — act-door confinement; I28 invariant
 - Produces:
   - `CaptureToolSpec.kind: CaptureToolKind | "status"`, where `CaptureToolKind` gains `"action"`
   - `actionAcceptTtyRefusal(kind: string | undefined, tty: { stdin: boolean; stdout: boolean }): string | undefined`
+  - `runCapturesWith(c, a, sink, tty?: { stdin: boolean; stdout: boolean })` — `tty` defaults to `{ stdin: false, stdout: false }` (fail-closed: an action accept with no TTY info refuses)
   - `parseAcceptResult(raw: unknown): AcceptView`
-  - `CaptureStatusView` += `actionEnabled`, `actionPending`, `actionExpiringWithinHour`
+  - `CaptureStatusView` += `actionEnabled`, `actionPending`, `actionMaxPending`, `actionExpiringWithinHour`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2791,6 +2850,7 @@ If the test file lacks `depsWithStatus`/`depsRecording`, write them next to the 
 
 ```ts
 describe("captures accept — act door", () => {
+  const TTY = { stdin: true, stdout: true };
   test("TTY guard: only for actions; both streams required (Review Focus 4)", () => {
     expect(actionAcceptTtyRefusal("decision", { stdin: false, stdout: false })).toBeUndefined();
     expect(actionAcceptTtyRefusal("action", { stdin: true, stdout: true })).toBeUndefined();
@@ -2808,15 +2868,38 @@ describe("captures accept — act door", () => {
   ])("result %p → exit %d, says %p", async (raw, exit, text) => {
     const out: string[] = [];
     const c = { call: (m: string) => Promise.resolve(m === "captures.accept" ? raw : { kind: "action", payload: { actionType: "slack.message.post" } }) };
-    const code = await runCapturesWith(c as never, { verb: "accept", id: "cap_1", json: false }, { out: (s) => out.push(s), err: (s) => out.push(s) });
+    const code = await runCapturesWith(c as never, { verb: "accept", id: "cap_1", json: false }, { out: (s) => out.push(s), err: (s) => out.push(s) }, TTY);
     expect(code).toBe(exit);
     expect(out.join("")).toContain(text);
   });
   test("failed ERR_ACTION_TOOL_NOT_FOUND does NOT claim it may have reached the service", async () => {
     const out: string[] = [];
-    const c = { call: () => Promise.resolve({ id: "cap_1", state: "failed", errorCode: "ERR_ACTION_TOOL_NOT_FOUND" }) };
-    await runCapturesWith(c as never, { verb: "accept", id: "cap_1", json: false }, { out: (s) => out.push(s), err: (s) => out.push(s) });
+    const c = { call: (m: string) => Promise.resolve(m === "captures.accept" ? { id: "cap_1", state: "failed", errorCode: "ERR_ACTION_TOOL_NOT_FOUND" } : { kind: "action", payload: { actionType: "slack.message.post" } }) };
+    await runCapturesWith(c as never, { verb: "accept", id: "cap_1", json: false }, { out: (s) => out.push(s), err: (s) => out.push(s) }, TTY);
     expect(out.join("")).not.toContain("may or may not");
+  });
+  test.each([
+    ["piped stdin", { stdin: false, stdout: true }],
+    ["redirected stdout", { stdin: true, stdout: false }],
+    ["no tty info (default)", undefined],
+  ])("action accept with %s refuses BEFORE captures.accept is called (Review Focus 4)", async (_n, tty) => {
+    const calls: string[] = [];
+    const err: string[] = [];
+    const c = { call: (m: string) => { calls.push(m); return Promise.resolve({ kind: "action", payload: { actionType: "slack.message.post" } }); } };
+    const code = await runCapturesWith(c as never, { verb: "accept", id: "cap_1", json: false }, { out: () => {}, err: (s) => err.push(s) }, tty);
+    expect(code).toBe(1);
+    expect(calls).toEqual(["captures.get"]);
+    expect(err.join("")).toContain("requires an interactive terminal");
+  });
+  test("a failed captures.get fails the accept closed: no captures.accept call", async () => {
+    const calls: string[] = [];
+    const c = { call: (m: string) => { calls.push(m); return Promise.reject(new Error("Capture not found")); } };
+    expect(await runCapturesWith(c as never, { verb: "accept", id: "cap_1", json: false }, { out: () => {}, err: () => {} }, TTY)).toBe(1);
+    expect(calls).toEqual(["captures.get"]);
+  });
+  test("a native accept with piped stdin still works (the guard is action-only)", async () => {
+    const c = { call: (m: string) => Promise.resolve(m === "captures.accept" ? { id: "cap_1", state: "accepted", nativeRef: "capture:cap_1" } : { kind: "decision", payload: {} }) };
+    expect(await runCapturesWith(c as never, { verb: "accept", id: "cap_1", json: false }, { out: () => {}, err: () => {} })).toBe(0);
   });
   test("native accept is unchanged", async () => {
     const out: string[] = [];
@@ -2831,9 +2914,20 @@ describe("captures accept — act door", () => {
   test("doctor: action pending line", () => {
     const { lines } = doctorCapturesLines({
       enabled: true, kinds: ["action"], pending: 0, maxPending: 100, maxPerHour: 30, refusedSinceStart: {},
-      actionEnabled: true, actionPending: 3, actionExpiringWithinHour: 1,
+      actionEnabled: true, actionPending: 3, actionMaxPending: 10, actionExpiringWithinHour: 1,
     });
     expect(lines).toContain("[info] MCP capture sink: 3 agent-proposed actions awaiting review (1 expire within 1h) — nimbus captures");
+  });
+  test("doctor: action queue full → warning, exit 1 (mirrors the native queue-full line)", () => {
+    const { lines, exit } = doctorCapturesLines({
+      enabled: true, kinds: ["action"], pending: 0, maxPending: 100, maxPerHour: 30, refusedSinceStart: {},
+      actionEnabled: true, actionPending: 10, actionMaxPending: 10, actionExpiringWithinHour: 0,
+    });
+    expect(exit).toBe(1);
+    expect(lines).toContain(
+      "[warn] MCP capture sink: action queue full (10/10): new action proposals are being refused — nimbus captures",
+    );
+    expect(lines.some((l) => l.includes("awaiting review"))).toBe(false);
   });
 });
 ```
@@ -2957,7 +3051,7 @@ Replace `captureToolsFor`'s final filter:
     throw new Error("captures.accept returned a malformed result; the capture was not confirmed accepted");
   }
   ```
-  In `runCapturesWith`'s non-list/show path, for `accept`, also fetch the action type for the wording before the accept: `const detail = await c.call<unknown>("captures.get", { id: a.id })`. Read `payload.actionType` when `kind === "action"`; this is display only, so a failure gives `undefined`. Then call `captures.accept`, parse it, and write:
+  Give `runCapturesWith` a fourth parameter, `tty: { readonly stdin: boolean; readonly stdout: boolean } = { stdin: false, stdout: false }`. In its non-list/show path, for `accept`, call `captures.get` ONCE, before the accept: `const detail = await c.call<unknown>("captures.get", { id: a.id })`. Do NOT catch a failure of this call: the TTY guard depends on the `kind` it returns, so a failure propagates to the function's existing `catch`, which prints it and returns 1, and `captures.accept` is never called. Read `kind` (a string, else `undefined`) and, when `kind === "action"`, `payload.actionType` for the wording. Then `const refusal = actionAcceptTtyRefusal(kind, tty)`; if it is defined, write it plus `\n` to `sink.err` and return 1 before any accept call. Otherwise call `captures.accept`, parse it, and write:
   - `accepted` → today's line, exit 0;
   - `executed` → `[ok] executed ${type} (${stripControl(outcomeRef) || "no outcome reference"})\n`, exit 0;
   - `rejected` → `[rejected] not executed — you declined the approval\n`, exit 1;
@@ -2966,38 +3060,42 @@ Replace `captureToolsFor`'s final filter:
   With `--json`, print the raw result and return the same exit code.
 - `runCapturesCmd`:
   ```ts
-  if (a.verb === "accept") {
-    let kind: string | undefined;
-    try {
-      const d = await withGatewayIpc((c) => c.call<unknown>("captures.get", { id: a.id }), paths);
-      const k = (d as Record<string, unknown> | null)?.["kind"];
-      kind = typeof k === "string" ? k : undefined;
-    } catch {
-      kind = undefined; // the accept call below reports not-found / gateway-down itself
-    }
-    const refusal = actionAcceptTtyRefusal(kind, {
-      stdin: process.stdin.isTTY === true,
-      stdout: process.stdout.isTTY === true,
-    });
-    if (refusal !== undefined) {
-      process.stderr.write(`${refusal}\n`);
-      throw new CliExit(1);
-    }
-  }
   const code = await withGatewayIpc(
-    (c) => runCapturesWith(c, a, { out: (s) => process.stdout.write(s), err: (s) => process.stderr.write(s) }),
+    (c) =>
+      runCapturesWith(
+        c,
+        a,
+        { out: (s) => process.stdout.write(s), err: (s) => process.stderr.write(s) },
+        { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
+      ),
     paths,
     a.verb === "accept" ? { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : {},
   );
   ```
-  `withGatewayIpc` already registers the interactive `{ kind: "prompt" }` consent handler by default; never pass another choice here. Import `BATCH_RPC_TIMEOUT_MS` from `../lib/rpc-timeouts.ts`.
+  One connection, one `captures.get`: the TTY guard lives inside `runCapturesWith`, where it is unit-tested through the injected `tty` rather than through `process.stdin`. `withGatewayIpc` already registers the interactive `{ kind: "prompt" }` consent handler by default; never pass another choice here. Import `BATCH_RPC_TIMEOUT_MS` from `../lib/rpc-timeouts.ts`.
 
 `captures-format.ts`:
 - `CaptureSummaryView` / `CaptureDetailView` += `expiresAt: number | null`; `CaptureDetailView` += `outcomeRef: string | null`, `errorCode: string | null`. Parse them leniently: non-number or non-string → `null`.
 - `formatCaptureTable`: for `kind === "action" && state === "proposed" && expiresAt !== null`, render the STATE cell as `exp ${in(expiresAt, now)}`, where `in` mirrors `ago`. Otherwise show the state as today. PREVIEW is already the gateway's `title` (`actionType: summary`).
 - `formatCaptureDetail`: for an action, print `Expires: <ISO>` (and `Outcome: <ref>` / `Error: <code>` when present). The payload loop already prints `actionType`, `input` (JSON) and `summary`. Change the `summary` key's label to `summary (agent-written, unverified)`. For `input`, print `JSON.stringify(v, null, 2)` line by line through `stripControl`, so the owner sees the full verbatim structure.
-- `CaptureStatusView` += `actionEnabled`, `actionPending`, `actionExpiringWithinHour`. Parse them as `=== true` / numbers, defaulting to `false`/`0` so an older gateway still parses.
-- `doctorCapturesLines`: after the native-pending lines, add `if (s.actionEnabled && s.actionPending > 0) lines.push(\`[info] MCP capture sink: ${String(s.actionPending)} agent-proposed actions awaiting review (${String(s.actionExpiringWithinHour)} expire within 1h) — nimbus captures\`);`. It sits before the `lines.length === 0` `[ok]` fallback.
+- `CaptureStatusView` += `actionEnabled`, `actionPending`, `actionMaxPending`, `actionExpiringWithinHour`. Parse them as `=== true` / numbers, defaulting to `false`/`0` so an older gateway still parses.
+- `doctorCapturesLines`: after the native-pending lines, mirror the native queue-full shape. The gateway's minimum `action_max_pending` is 1, so the `> 0` guard only stops an older gateway's defaulted `0` from reading as "full":
+  ```ts
+  if (s.actionEnabled) {
+    if (s.actionMaxPending > 0 && s.actionPending >= s.actionMaxPending) {
+      lines.push(
+        `[warn] MCP capture sink: action queue full (${String(s.actionPending)}/${String(s.actionMaxPending)}): new action proposals are being refused — nimbus captures`,
+      );
+      exit = 1;
+    } else if (s.actionPending > 0) {
+      lines.push(
+        `[info] MCP capture sink: ${String(s.actionPending)} agent-proposed actions awaiting review (${String(s.actionExpiringWithinHour)} expire within 1h) — nimbus captures`,
+      );
+    }
+  }
+  ```
+  It sits before the `lines.length === 0` `[ok]` fallback.
+- `UNSAFE_TEXT_RE`: widen it the same way Task 5 widened the gateway's `CONTROL_RE`. Replace its tail `​-‍  ‪-‮⁦-⁩﻿` with `­؜᠎​-‏ -‮⁠-⁯﻿` and add the new characters to its comment. Widen `captures.test.ts`'s `HIDDEN_RE` (line 22) to the same set, so its "nothing hidden survives display" assertions cover them, and add an LRM and a word joiner to that test's fixture.
 
 - [ ] **Step 4: Run the tests**
 
@@ -3030,7 +3128,7 @@ git commit -m "feat(cli): propose_action + capture_status MCP tools; captures ac
    ```
    It comes after `mkdirSync(paths.configDir)`. Confirm from `mcp-capture.e2e.test.ts:90` that the gateway reads `<configDir>/nimbus.toml`.
 2. Change the existing `connector.addMcp` call to pass `modelAccess: true`. The existing tests are unaffected: `--model` only widens who may be offered the tools.
-3. Add a second client: `const agent = new TestIpcClient();`. Connect it in a new test right after `addMcp`, then `await agent.call("session.declareKind", { kind: "mcp" })`.
+3. Add a second client: `const agent = new TestIpcClient();`. Connect it in a new test right after `addMcp`, then `await agent.call("session.declareKind", { kind: "mcp" })`. In `afterAll`, call `agent.close()` beside the existing `client.close()`, before `proc?.kill()`: an open named-pipe handle on Windows can hold the event loop and race the `rmSync(tmp)` cleanup. `TestIpcClient.close()` is `this.sock?.destroy()`, so it is already safe on a client whose connect test never ran.
 4. Add these tests after the existing ones and before `connector.remove`:
 
 ```ts
@@ -3147,7 +3245,8 @@ Expected: all green. Fix anything red before continuing; never declare success o
 
 ```bash
 git rev-parse --abbrev-ref HEAD   # must print dev/asaf/s3-act-door
-git rm docs/superpowers/specs/2026-10-15-mcp-act-door-design.md docs/superpowers/specs/2026-10-15-mcp-act-door-review.md docs/superpowers/plans/2026-10-15-mcp-act-door.md
+git rm docs/superpowers/specs/2026-10-15-mcp-act-door-design.md docs/superpowers/specs/2026-10-15-mcp-act-door-review.md docs/superpowers/plans/2026-10-15-mcp-act-door.md docs/superpowers/plans/2026-10-15-mcp-act-door-review.md
+git ls-files docs/superpowers   # must print nothing new from this branch: compare with `git ls-tree -r --name-only main docs/superpowers`
 git add -A docs CLAUDE.md GEMINI.md
 git commit -m "docs: act door — I28, V69, D32(e)-(g), CLI reference; strip spec and plan"
 ```
