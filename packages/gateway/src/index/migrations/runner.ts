@@ -11,6 +11,7 @@ import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
 import { AUDIT_CHAIN_V18_SCHEMA_SQL } from "../audit-chain-v18-sql.ts";
 import { AUDIT_SESSION_V24_SCHEMA_SQL } from "../audit-session-v24-sql.ts";
 import { BODY_STORE_V48_SQL, ITEM_FTS_UPDATE_TRIGGER_SQL } from "../body-store-v48-sql.ts";
+import { CAPTURE_ACTION_V69_COUNT_SQL, CAPTURE_ACTION_V69_SQL } from "../capture-action-v69-sql.ts";
 import {
   CAPTURE_NATIVE_V68_FINISH_SQL,
   CAPTURE_NATIVE_V68_REBUILD_DECISIONS_SQL,
@@ -377,6 +378,27 @@ function migrateIndexedV67ToV68(db: Database, now: number): void {
   })();
 }
 
+/** V68→V69 counts the rows across the rebuild, so a lossy copy aborts rather than ships (spec § 4). */
+function migrateIndexedV68ToV69(db: Database, now: number): void {
+  db.transaction(() => {
+    const before = (db.query(CAPTURE_ACTION_V69_COUNT_SQL).get() as { n: number }).n;
+    for (const sql of CAPTURE_ACTION_V69_SQL) dbExec(db, sql);
+    const after = (db.query(CAPTURE_ACTION_V69_COUNT_SQL).get() as { n: number }).n;
+    if (after !== before) {
+      throw new Error(
+        `V69: capture rebuild copied ${String(after)} rows, expected ${String(before)}`,
+      );
+    }
+    dbExec(db, "PRAGMA user_version = 69");
+    recordMigration(
+      db,
+      69,
+      "MCP act door: capture action kind/states, expires_at/outcome_ref/error_code (v69)",
+      now,
+    );
+  })();
+}
+
 function migrateIndexedV51ToV52(db: Database, now: number): void {
   db.transaction(() => {
     for (const sql of RESOLVE_KEY_V52_SQL) {
@@ -627,6 +649,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(65, 66, "extension tree digest", EXTENSION_TREE_DIGEST_V66_SQL),
   simpleStep(66, 67, "MCP capture sink queue (capture)", CAPTURE_V67_SQL),
   { fromVersion: 67, toVersion: 68, apply: migrateIndexedV67ToV68 },
+  { fromVersion: 68, toVersion: 69, apply: migrateIndexedV68ToV69 },
 ];
 
 /**

@@ -18,6 +18,7 @@ function note(id: string, createdAt: number, over: Partial<NewCaptureRow> = {}):
     clientLabel: "claude-code",
     sessionId: "s1",
     createdAt,
+    expiresAt: null,
     ...over,
   };
 }
@@ -128,5 +129,98 @@ describe("CaptureStore", () => {
       "INSERT INTO capture (id, kind, state, item_id, payload_json, payload_bytes, session_id, created_at) VALUES ('cap_y', 'note', 'bogus', 'nimbus:y', '{}', 2, 's', 1)",
     );
     expect(store.stateOfItem("nimbus:y")).toBeUndefined();
+  });
+});
+
+describe("action queries (PR 3)", () => {
+  function action(id: string, expiresAt: number, state = "proposed"): void {
+    new CaptureStore(db).insert({
+      id,
+      kind: "action",
+      state: state as never,
+      itemId: null,
+      payloadJson: "{}",
+      payloadBytes: 2,
+      clientLabel: null,
+      sessionId: "s",
+      createdAt: 1,
+      expiresAt,
+    });
+  }
+  test("countPendingActions excludes expired-by-clock rows; the boundary counts as expired", () => {
+    action("cap_a", 100);
+    action("cap_b", 200);
+    const s = new CaptureStore(db);
+    expect(s.countPendingActions(99)).toBe(2);
+    expect(s.countPendingActions(100)).toBe(1);
+  });
+  test("countPendingNative excludes actions; countPendingActionsExpiringBy windows", () => {
+    action("cap_a", 100);
+    const s = new CaptureStore(db);
+    s.insert({
+      id: "cap_d",
+      kind: "decision",
+      state: "proposed",
+      itemId: null,
+      payloadJson: "{}",
+      payloadBytes: 2,
+      clientLabel: null,
+      sessionId: "s",
+      createdAt: 1,
+      expiresAt: null,
+    });
+    expect(s.countPendingNative()).toBe(1);
+    expect(s.countPendingActionsExpiringBy(50, 100)).toBe(1);
+    expect(s.countPendingActionsExpiringBy(50, 99)).toBe(0);
+  });
+  test("expireDueActions returns exactly the due ids and transitions them", () => {
+    action("cap_a", 100);
+    action("cap_b", 200);
+    const s = new CaptureStore(db);
+    expect(s.expireDueActions(150)).toEqual(["cap_a"]);
+    expect(s.get("cap_a")?.state).toBe("expired");
+    expect(s.get("cap_a")?.decidedAt).toBe(150);
+    expect(s.get("cap_b")?.state).toBe("proposed");
+    expect(s.expireDueActions(150)).toEqual([]);
+  });
+  test("claimAction wins once, loses on a moved or expired row", () => {
+    action("cap_a", 100);
+    const s = new CaptureStore(db);
+    expect(s.claimAction("cap_a", 100)).toBe(false); // at the boundary: expired
+    expect(s.claimAction("cap_a", 50)).toBe(true);
+    expect(s.get("cap_a")?.state).toBe("executing");
+    expect(s.claimAction("cap_a", 50)).toBe(false);
+  });
+  test("finalizeAction only moves an executing row", () => {
+    action("cap_a", 100);
+    const s = new CaptureStore(db);
+    expect(s.finalizeAction("cap_a", "executed", { outcomeRef: "https://x" }, 60)).toBe(false);
+    s.claimAction("cap_a", 50);
+    expect(s.finalizeAction("cap_a", "executed", { outcomeRef: "https://x" }, 60)).toBe(true);
+    expect(s.get("cap_a")).toMatchObject({
+      state: "executed",
+      outcomeRef: "https://x",
+      decidedAt: 60,
+    });
+  });
+  test("failInterruptedActions turns executing into failed/ERR_ACTION_INTERRUPTED", () => {
+    action("cap_a", 100);
+    const s = new CaptureStore(db);
+    s.claimAction("cap_a", 50);
+    expect(s.failInterruptedActions(70)).toEqual(["cap_a"]);
+    expect(s.get("cap_a")).toMatchObject({ state: "failed", errorCode: "ERR_ACTION_INTERRUPTED" });
+  });
+  test("pruneRejected also prunes expired actions, never executed or failed ones", () => {
+    action("cap_e", 100);
+    action("cap_x", 100);
+    action("cap_f", 100);
+    const s = new CaptureStore(db);
+    s.expireDueActions(150); // all three expire
+    db.run("UPDATE capture SET state='executed', outcome_ref=NULL WHERE id='cap_x'");
+    db.run("UPDATE capture SET state='failed', error_code='ERR_ACTION_DISPATCH' WHERE id='cap_f'");
+    expect(s.pruneRejected(1_000)).toBe(1);
+    expect(s.get("cap_e")).toBeUndefined();
+    expect(s.get("cap_x")?.state).toBe("executed");
+    expect(s.get("cap_f")?.state).toBe("failed");
   });
 });

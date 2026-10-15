@@ -14,7 +14,7 @@ export const REJECTED_RETENTION_MS = 90 * 86_400_000;
 
 export type NewCaptureRow = Omit<
   CaptureRow,
-  "nativeRef" | "decidedAt" | "expiresAt" | "outcomeRef" | "errorCode"
+  "nativeRef" | "decidedAt" | "outcomeRef" | "errorCode"
 >;
 
 type RawRow = {
@@ -29,6 +29,9 @@ type RawRow = {
   native_ref: string | null;
   created_at: number;
   decided_at: number | null;
+  expires_at: number | null;
+  outcome_ref: string | null;
+  error_code: string | null;
 };
 
 function toRow(r: RawRow): CaptureRow {
@@ -47,9 +50,9 @@ function toRow(r: RawRow): CaptureRow {
     nativeRef: r.native_ref,
     createdAt: r.created_at,
     decidedAt: r.decided_at,
-    expiresAt: null,
-    outcomeRef: null,
-    errorCode: null,
+    expiresAt: r.expires_at,
+    outcomeRef: r.outcome_ref,
+    errorCode: r.error_code,
   };
 }
 
@@ -64,8 +67,8 @@ export class CaptureStore {
   insert(row: NewCaptureRow): void {
     dbRun(
       this.db,
-      `INSERT INTO capture (id, kind, state, item_id, payload_json, payload_bytes, client_label, session_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO capture (id, kind, state, item_id, payload_json, payload_bytes, client_label, session_id, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id,
         row.kind,
@@ -76,6 +79,7 @@ export class CaptureStore {
         row.clientLabel,
         row.sessionId,
         row.createdAt,
+        row.expiresAt,
       ],
     );
   }
@@ -165,10 +169,117 @@ export class CaptureStore {
     return r.n;
   }
 
+  /** Unexpired proposed actions. `expires_at = now` is EXPIRED (Review Focus 2). */
+  countPendingActions(nowMs: number): number {
+    return (
+      this.db
+        .query(
+          "SELECT COUNT(*) AS n FROM capture WHERE kind = 'action' AND state = 'proposed' AND expires_at > ?",
+        )
+        .get(nowMs) as { n: number }
+    ).n;
+  }
+
+  countPendingActionsExpiringBy(nowMs: number, byMs: number): number {
+    return (
+      this.db
+        .query(
+          "SELECT COUNT(*) AS n FROM capture WHERE kind = 'action' AND state = 'proposed' AND expires_at > ? AND expires_at <= ?",
+        )
+        .get(nowMs, byMs) as { n: number }
+    ).n;
+  }
+
+  /** Proposed decision/term/link rows — the queue `max_pending` bounds (spec § 7 step 8). */
+  countPendingNative(): number {
+    return (
+      this.db
+        .query("SELECT COUNT(*) AS n FROM capture WHERE kind <> 'action' AND state = 'proposed'")
+        .get() as { n: number }
+    ).n;
+  }
+
+  dueActionIds(nowMs: number): string[] {
+    return (
+      this.db
+        .query(
+          "SELECT id FROM capture WHERE kind = 'action' AND state = 'proposed' AND expires_at <= ? ORDER BY id",
+        )
+        .all(nowMs) as Array<{ id: string }>
+    ).map((r) => r.id);
+  }
+
+  /** Expire every due proposed action. Run INSIDE the caller's transaction (it audits per id). */
+  expireDueActions(nowMs: number): string[] {
+    const ids = this.dueActionIds(nowMs);
+    if (ids.length === 0) return ids;
+    const changed = dbRun(
+      this.db,
+      `UPDATE capture SET state = 'expired', decided_at = ?
+       WHERE kind = 'action' AND state = 'proposed' AND expires_at <= ?`,
+      [nowMs, nowMs],
+    ).changes;
+    if (changed !== ids.length) {
+      throw new Error(
+        `expireDueActions: expired ${String(changed)} rows, expected ${String(ids.length)}`,
+      );
+    }
+    return ids;
+  }
+
+  /** The CAS of spec § 8 step 5: the expiry predicate closes the window across the re-check await. */
+  claimAction(id: string, nowMs: number): boolean {
+    return (
+      dbRun(
+        this.db,
+        `UPDATE capture SET state = 'executing', decided_at = ?
+       WHERE id = ? AND kind = 'action' AND state = 'proposed' AND expires_at > ?`,
+        [nowMs, id, nowMs],
+      ).changes === 1
+    );
+  }
+
+  finalizeAction(
+    id: string,
+    state: "executed" | "failed" | "rejected",
+    f: { readonly outcomeRef?: string; readonly errorCode?: string },
+    nowMs: number,
+  ): boolean {
+    return (
+      dbRun(
+        this.db,
+        `UPDATE capture SET state = ?, outcome_ref = ?, error_code = ?, decided_at = ?
+       WHERE id = ? AND kind = 'action' AND state = 'executing'`,
+        [state, f.outcomeRef ?? null, f.errorCode ?? null, nowMs, id],
+      ).changes === 1
+    );
+  }
+
+  interruptedActionIds(): string[] {
+    return (
+      this.db
+        .query("SELECT id FROM capture WHERE kind = 'action' AND state = 'executing' ORDER BY id")
+        .all() as Array<{ id: string }>
+    ).map((r) => r.id);
+  }
+
+  /** Boot reconcile: `executing` survived a restart → `failed`, never back to `proposed`. */
+  failInterruptedActions(nowMs: number): string[] {
+    const ids = this.interruptedActionIds();
+    if (ids.length === 0) return ids;
+    dbRun(
+      this.db,
+      `UPDATE capture SET state = 'failed', error_code = 'ERR_ACTION_INTERRUPTED', decided_at = ?
+       WHERE kind = 'action' AND state = 'executing'`,
+      [nowMs],
+    );
+    return ids;
+  }
+
   pruneRejected(cutoffMs: number): number {
     return dbRun(
       this.db,
-      "DELETE FROM capture WHERE state = 'rejected' AND COALESCE(decided_at, created_at) < ?",
+      "DELETE FROM capture WHERE state IN ('rejected', 'expired') AND COALESCE(decided_at, created_at) < ?",
       [cutoffMs],
     ).changes;
   }

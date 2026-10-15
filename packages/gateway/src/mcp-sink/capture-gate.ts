@@ -292,6 +292,7 @@ export function submitCapture(
       clientLabel,
       sessionId: caller.clientId,
       createdAt: now,
+      expiresAt: null,
     });
     if (v.kind === "note") {
       const payload = v.payload;

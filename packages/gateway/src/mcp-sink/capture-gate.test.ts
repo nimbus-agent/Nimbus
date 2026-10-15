@@ -552,6 +552,7 @@ describe("submit — proposals", () => {
       clientLabel: null,
       sessionId: "c-mcp",
       createdAt: clock,
+      expiresAt: null,
     });
     const listed = listCaptures(deps, OWNER, { state: "proposed" });
     expect(listed.captures[0]?.title).toHaveLength(120);
