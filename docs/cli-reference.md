@@ -1566,22 +1566,28 @@ deletes the note's item and embeddings and clears the record's payload (the row 
 history of what was captured and when); it is idempotent, so a second revoke reports success and
 writes no second audit row. **Accepting an action.** `nimbus captures accept <id>` on a `kind: action` capture REQUIRES an interactive terminal
 (the executor's HITL prompt needs a human); without one it prints `nimbus captures accept requires an interactive
-terminal (TTY) to approve an agent-proposed action.` and exits 1 without calling the gateway. On a TTY it asks you to
+terminal (TTY) to approve an agent-proposed action.` and exits 1: it calls `captures.get` to learn the capture's kind,
+but never `captures.accept`. A `captures.get` that names no kind is refused the same way without a TTY. The check is
+the CLI's own guard, not the gateway's: a raw local-owner socket client can accept and answer its own consent prompt,
+which is within the local-owner trust model. On a TTY it asks you to
 approve the verbatim input (agent-written strings with invisible characters shown escaped) and then prints one line:
 
 | Outcome | Line | Exit |
 | --- | --- | --- |
 | executed | `[ok] executed <actionType> (<link or "no outcome reference">)` | 0 |
 | you declined | `[rejected] not executed — you declined the approval` | 1 |
-| failed, request may have left | `[failed] ERR_ACTION_TIMEOUT — the action may or may not have reached <service>` (also `ERR_ACTION_DISPATCH`, `ERR_ACTION_INTERRUPTED`) | 1 |
+| failed, request may have left | `[failed] ERR_ACTION_TIMEOUT — the action may or may not have reached <service>` (every failure code except `ERR_ACTION_TOOL_NOT_FOUND`, including `ERR_ACTION_DISPATCH`, `ERR_ACTION_INTERRUPTED` and any code this CLI does not know) | 1 |
 | failed, definitely not sent | `[failed] ERR_ACTION_TOOL_NOT_FOUND` | 1 |
 
 Refusals before the prompt leave the capture `proposed`: `ERR_CAPTURE_DISABLED` (sink or `mcp_action` off),
-`ERR_CAPTURE_EXPIRED` (past its expiry; ask the agent to propose again), `ERR_CAPTURE_STATE` (not `proposed`, or already
-swept to `expired`), `ERR_CAPTURE_ACTION_NOT_PROPOSABLE` (the type was re-classified since the proposal) and
-`ERR_CAPTURE_CONNECTOR_UNCONFIGURED`. The configured check treats a multi-key service as configured once any key is
+`ERR_CAPTURE_STATE` (not `proposed`, or already swept to `expired`), `ERR_CAPTURE_ACTION_NOT_PROPOSABLE` (the type was re-classified since the proposal) and
+`ERR_CAPTURE_CONNECTOR_UNCONFIGURED`. `ERR_CAPTURE_EXPIRED` (past its expiry, not yet swept; ask the agent to propose
+again) is the exception: that refusal sweeps the row to `expired` (with a `capture.action.expire` audit row). The configured check treats a multi-key service as configured once any key is
 set, so an accept can pass it and still end `[failed] ERR_ACTION_DISPATCH`. An action runs at most once and is never
 retried. `reject` works on a proposed action without a TTY or capability; `revoke` refuses an action (`ERR_CAPTURE_STATE`), since an executed action cannot be undone.
+**Retention.** A rejected or expired action row is deleted 90 days after its decision (`REJECTED_RETENTION_MS`, the
+same prune as a rejected proposal). An `executed` or `failed` action row is never pruned and keeps the verbatim `input`
+it was proposed with, and because `revoke` refuses actions there is no owner deletion path for it yet (a follow-up).
 `nimbus captures list` shows an action's remaining time, and `nimbus doctor` reports how many actions await review (and how many expire within an hour) and warns when the action queue is full. `--json` prints the raw gateway result.
 
 Titles, bodies and client labels are agent-supplied: control

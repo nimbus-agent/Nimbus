@@ -21,7 +21,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 - **2026-10-15 — S3: the MCP capture sink, PR 3 of 3 — the act door: agent-proposed connector actions, owner-accepted (invariant I28, schema V69).**
   Closes the capture-sink slice. An editor agent can now PROPOSE a connector action through `propose_action`
   (and read its fate through `capture_status`); nothing is sent when it does. The proposal lands as `proposed`
-  and waits until the owner runs `nimbus captures accept <id>` (TTY required) AND approves the executor's own
+  and waits until the owner runs `nimbus captures accept <id>` (TTY required, by a CLI-side guard rather than the
+  gateway: a raw local-owner socket client can accept and answer its own consent prompt, within the local-owner
+  trust model) AND approves the executor's own
   HITL prompt, which shows the verbatim stored input with its agent provenance, agent-written strings rendered
   with invisible and format characters escaped visibly. `action` must be listed in `[mcp_sink] kinds` (it is not
   in the default), and the new org-policy name `mcp_action` is the NINTH `[policy.capabilities.ai_v2]` lockoff,
@@ -38,7 +40,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   call, not that it is wise; a transport failure is recorded `failed` though the remote may have acted;
   `outcome_ref` is a heuristic; the routing table is proven against the installed connectors package; the
   escaping does not catch homoglyphs; a multi-key connector counts as configured once any key is set, so an accept
-  can pass that check and fail at dispatch; `capture.state` answers for any capture id to any `mcp` client.
+  can pass that check and fail at dispatch; `capture.state` answers for any capture id to any `mcp` client;
+  a rejected or expired action row is pruned after 90 days, but an `executed` or `failed` row is never pruned and
+  keeps the verbatim `input`, and `revoke` refuses actions, so there is no owner deletion path for it yet (a
+  follow-up). Hardened in the final review: an `actionType` outside `[A-Za-z0-9_.-]` is refused at submit, a
+  user-MCP tool segment outside `[A-Za-z0-9_-]{1,64}` classifies `unknown`, the prompt's Type line is escaped, and
+  stored note/decision/term/link text is stripped of the same invisible-character table the prompt escapes
+  (`mcp-sink/invisible-text.ts`), TAG characters and variation selectors included.
   **Deviations from the design spec:** the routing table (`PROPOSABLE_WRITE_TOOLS`) exists because a type does not
   resolve to a first-party tool by itself; a user-MCP action carries the gateway-derived
   `mcpToolId = userMcpToolKeyForActionType(type)` (the spec said none, but by-type dispatch without it is refused

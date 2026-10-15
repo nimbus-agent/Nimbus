@@ -1257,12 +1257,12 @@ Everything in S2 is **default off**. Not one of these capabilities does anything
 install; each needs an explicit `nimbus.toml` opt-in.
 
 The S2 capabilities can additionally be locked off org-wide by signed policy (`I22`,
-`EnforcedPolicy.capabilitiesDisabled`). `[policy.capabilities.ai_v2]` carries eight names
+`EnforcedPolicy.capabilitiesDisabled`). `[policy.capabilities.ai_v2]` carries nine names
 (`AI_V2_CAPABILITIES`): `code_execution`, `computer_use`, `tool_generation`, `multimodal_input`
 and `agent_fleet` each gate one S2 capability; `local_finetuning` is config-forward and gates
 nothing yet; and `user_mcp_model_access` gates no S2 capability but the engine agent being offered
 the tools of user MCP servers registered with `--model` (I42), enforced at that tool source,
-fail-closed, and read per turn (a turn already in flight keeps the tool list it built); and `mcp_capture` gates agent-submitted notes arriving over MCP (I28), read per call. **Cloud model
+fail-closed, and read per turn (a turn already in flight keeps the tool list it built); `mcp_capture` gates agent-submitted notes arriving over MCP (I28), read per call; and `mcp_action` gates the I28 act door (agent-proposed connector actions), read per call. **Cloud model
 routing is the exception and has no lockoff name of its own** — it is governed by the per-vendor
 `[llm.remote.<vendor>] enabled` opt-in and, gateway-wide, by the local `[llm] enforce_air_gap`,
 which refuses every non-local route rather than one named capability. A signed org policy cannot
@@ -1930,7 +1930,9 @@ MCP client --stdio--> nimbus mcp-server (packages/cli/src/mcp/capture-tools.ts)
                         propose_action --IPC capture.submit--> capture-gate.submitCapture()  (I28 submit order)
                         capture_status --IPC capture.state---> capture-gate.captureStateFor()
 
-owner CLI: nimbus captures accept <id>  --IPC captures.accept (TTY required, batch timeout)
+owner CLI: nimbus captures accept <id>  --IPC captures.accept (batch timeout; TTY required by a
+           CLI-side guard, not the gateway: a raw local-owner socket client can accept and answer
+           its own consent prompt, within the local-owner trust model)
    v
 ipc/capture-rpc.ts injects ActDeps.execute(actionType, input, provenance):
      toolId  = the routing table's tool for that type              (connectors/proposable-actions.ts)
@@ -1985,8 +1987,17 @@ characters ESCAPED visibly rather than stripped (the input is sent verbatim and 
 LF, DEL and C1, soft hyphen, the Arabic letter mark, ZWSP through RLM, U+2028 through U+202E, U+2060 through U+206F, the
 BOM, the interlinear annotation characters, the combining grapheme joiner, Hangul fillers, Khmer inherent vowels,
 variation selectors and the TAG characters; `"` and `\` in the one-line client label and summary are escaped so a label
-cannot close its quotes and fake the text after it. Bound: homoglyphs are not caught. `nimbus captures accept` on an
-action requires a TTY (the prompt needs a human) and refuses otherwise.
+cannot close its quotes and fake the text after it. Bound: homoglyphs are not caught. The same table (`mcp-sink/invisible-text.ts`) is STRIPPED at
+write time from stored note, decision, term and link text, and an action type is structure: anything outside
+`[A-Za-z0-9_.-]` is refused at submit, a user-MCP tool segment outside `[A-Za-z0-9_-]{1,64}` classifies `unknown`, and
+the prompt's Type line is escaped as well. `nimbus captures accept` on an action requires a TTY (the prompt needs a
+human) and refuses otherwise, also when `captures.get` names no kind. That is a CLI-side guard, not a gateway one: a
+raw local-owner socket client can accept and answer its own consent prompt, which is within the local-owner trust
+model.
+
+**Retention.** A rejected or expired action row is pruned 90 days after its decision (`REJECTED_RETENTION_MS`). An
+`executed` or `failed` row is never pruned and keeps the verbatim `input`; `revoke` refuses actions, so there is no
+owner deletion path for it yet (a follow-up).
 
 **Audit and ledger.** `capture.action.accept`, `capture.action.outcome` and `capture.action.expire` rows are built
 through `redactAuditPayload` (a connector-returned URL may carry a presigned secret) with `hitl_status =
