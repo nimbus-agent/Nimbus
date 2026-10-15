@@ -76,6 +76,16 @@ function codeOf(fn: () => unknown): string {
   throw new Error("expected CaptureError");
 }
 
+async function codeOfAsync(fn: () => Promise<unknown>): Promise<string> {
+  try {
+    await fn();
+  } catch (e) {
+    if (e instanceof CaptureError) return e.code;
+    throw e;
+  }
+  throw new Error("expected CaptureError");
+}
+
 function auditRows(): Array<{
   action_type: string;
   hitl_status: string;
@@ -101,8 +111,8 @@ const NOTE = {
 };
 
 describe("submitCapture — success", () => {
-  test("writes row + item + one audit row in one go, schedules embedding, returns live", () => {
-    expect(submitCapture(deps, MCP, NOTE)).toEqual({ id: "cap_1", state: "live" });
+  test("writes row + item + one audit row in one go, schedules embedding, returns live", async () => {
+    expect(await submitCapture(deps, MCP, NOTE)).toEqual({ id: "cap_1", state: "live" });
     const row = deps.store.get("cap_1");
     expect(row).toMatchObject({
       kind: "note",
@@ -148,9 +158,9 @@ describe("submitCapture — success", () => {
     });
   });
 
-  test("a 600-character body lands in full (long-body cap, end to end)", () => {
+  test("a 600-character body lands in full (long-body cap, end to end)", async () => {
     const body = "x".repeat(600);
-    submitCapture(deps, MCP, { kind: "note", payload: { title: "Long", body } });
+    await submitCapture(deps, MCP, { kind: "note", payload: { title: "Long", body } });
     const row = db.query("SELECT body FROM item WHERE id = 'nimbus:cap_1'").get() as {
       body: string;
     };
@@ -158,9 +168,9 @@ describe("submitCapture — success", () => {
     expect(row.body).toBe(body);
   });
 
-  test("audit failure rolls the whole write back (fail-closed)", () => {
+  test("audit failure rolls the whole write back (fail-closed)", async () => {
     db.run("DROP TABLE audit_log");
-    expect(() => submitCapture(deps, MCP, NOTE)).toThrow(/audit_log/);
+    await expect(submitCapture(deps, MCP, NOTE)).rejects.toThrow(/audit_log/);
     expect(deps.store.get("cap_1")).toBeUndefined();
     expect(db.query("SELECT 1 FROM item WHERE id = 'nimbus:cap_1'").get()).toBeNull();
     expect(embedded).toEqual([]);
@@ -168,28 +178,34 @@ describe("submitCapture — success", () => {
 });
 
 describe("submitCapture — ordered refusals", () => {
-  test("1 disabled: refuses BEFORE reading the payload; counted, not audited", () => {
+  test("1 disabled: refuses BEFORE reading the payload; counted, not audited", async () => {
     cap = resolveCaptureCapability({ ok: true, config: DEFAULT_MCP_SINK_CONFIG }, OPEN);
     expect(
-      codeOf(() => submitCapture(deps, MCP, { kind: "note", payload: "not even an object" })),
+      await codeOfAsync(() =>
+        submitCapture(deps, MCP, { kind: "note", payload: "not even an object" }),
+      ),
     ).toBe("ERR_CAPTURE_DISABLED");
     expect(auditRows()).toEqual([]);
     expect(deps.refusals.snapshot()).toEqual({ ERR_CAPTURE_DISABLED: 1 });
   });
 
-  test("2 a non-mcp client cannot submit; counted, not audited", () => {
-    expect(codeOf(() => submitCapture(deps, OWNER, NOTE))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
-    expect(codeOf(() => submitCapture(deps, { clientId: "h", kind: "http" }, NOTE))).toBe(
+  test("2 a non-mcp client cannot submit; counted, not audited", async () => {
+    expect(await codeOfAsync(() => submitCapture(deps, OWNER, NOTE))).toBe(
       "ERR_CAPTURE_FORBIDDEN_CLIENT",
     );
+    expect(
+      await codeOfAsync(() => submitCapture(deps, { clientId: "h", kind: "http" }, NOTE)),
+    ).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     expect(auditRows()).toEqual([]);
   });
 
-  test("3 attempt limit (4 × max_per_hour) fires before validation; counted, not audited", () => {
+  test("3 attempt limit (4 × max_per_hour) fires before validation; counted, not audited", async () => {
     cap = onConfig({ maxPerHour: 1 });
     for (let i = 0; i < 4; i++)
-      codeOf(() => submitCapture(deps, MCP, { kind: "note", payload: {} }));
-    expect(codeOf(() => submitCapture(deps, MCP, NOTE))).toBe("ERR_CAPTURE_RATE_LIMITED");
+      await codeOfAsync(() => submitCapture(deps, MCP, { kind: "note", payload: {} }));
+    expect(await codeOfAsync(() => submitCapture(deps, MCP, NOTE))).toBe(
+      "ERR_CAPTURE_RATE_LIMITED",
+    );
     expect(auditRows()).toHaveLength(4);
     expect(
       auditRows().every((r) => JSON.parse(r.action_json).outcome === "ERR_CAPTURE_INVALID"),
@@ -197,27 +213,29 @@ describe("submitCapture — ordered refusals", () => {
     expect(deps.refusals.snapshot()["ERR_CAPTURE_RATE_LIMITED"]).toBe(1);
   });
 
-  test("4 a kind outside config ∩ submittable is refused and audited", () => {
+  test("4 a kind outside config ∩ submittable is refused and audited", async () => {
     cap = onConfig({ kinds: ["note"] });
-    expect(codeOf(() => submitCapture(deps, MCP, { kind: "decision", payload: {} }))).toBe(
+    expect(
+      await codeOfAsync(() => submitCapture(deps, MCP, { kind: "decision", payload: {} })),
+    ).toBe("ERR_CAPTURE_KIND_NOT_ALLOWED");
+    cap = onConfig({ kinds: ["term"] });
+    expect(await codeOfAsync(() => submitCapture(deps, MCP, NOTE))).toBe(
       "ERR_CAPTURE_KIND_NOT_ALLOWED",
     );
-    cap = onConfig({ kinds: ["term"] });
-    expect(codeOf(() => submitCapture(deps, MCP, NOTE))).toBe("ERR_CAPTURE_KIND_NOT_ALLOWED");
     const a = auditRows();
     expect(a).toHaveLength(2);
     expect(a.every((r) => r.hitl_status === "rejected")).toBe(true);
   });
 
-  test("5 invalid payload is refused and audited without the payload", () => {
-    expect(codeOf(() => submitCapture(deps, MCP, { kind: "note", payload: { body: "" } }))).toBe(
-      "ERR_CAPTURE_INVALID",
-    );
+  test("5 invalid payload is refused and audited without the payload", async () => {
+    expect(
+      await codeOfAsync(() => submitCapture(deps, MCP, { kind: "note", payload: { body: "" } })),
+    ).toBe("ERR_CAPTURE_INVALID");
     const j = JSON.parse(auditRows()[0]?.action_json ?? "{}") as Record<string, unknown>;
     expect(j).toEqual({ kind: "note", clientLabel: null, outcome: "ERR_CAPTURE_INVALID" });
   });
 
-  test("6 relatesTo must name existing items; a capture item only while live", () => {
+  test("6 relatesTo must name existing items; a capture item only while live", async () => {
     upsertIndexedItem(db, {
       service: "github",
       type: "pr",
@@ -227,11 +245,15 @@ describe("submitCapture — ordered refusals", () => {
       syncedAt: 1,
     });
     expect(
-      submitCapture(deps, MCP, { kind: "note", payload: { body: "b", relatesTo: ["github:1"] } })
-        .state,
+      (
+        await submitCapture(deps, MCP, {
+          kind: "note",
+          payload: { body: "b", relatesTo: ["github:1"] },
+        })
+      ).state,
     ).toBe("live");
     expect(
-      codeOf(() =>
+      await codeOfAsync(() =>
         submitCapture(deps, MCP, {
           kind: "note",
           payload: { body: "b", relatesTo: ["github:404"] },
@@ -241,7 +263,7 @@ describe("submitCapture — ordered refusals", () => {
     // Review Focus 5: a revoked note's former item id is gone.
     revokeCapture(deps, OWNER, "cap_1");
     expect(
-      codeOf(() =>
+      await codeOfAsync(() =>
         submitCapture(deps, MCP, {
           kind: "note",
           payload: { body: "b", relatesTo: ["nimbus:cap_1"] },
@@ -250,28 +272,30 @@ describe("submitCapture — ordered refusals", () => {
     ).toBe("ERR_CAPTURE_UNKNOWN_ITEM");
   });
 
-  test("7 durable hourly cap reads the TABLE, so a fresh limiter (restart) does not reset it", () => {
+  test("7 durable hourly cap reads the TABLE, so a fresh limiter (restart) does not reset it", async () => {
     cap = onConfig({ maxPerHour: 1 });
-    submitCapture(deps, MCP, NOTE);
+    await submitCapture(deps, MCP, NOTE);
     deps = { ...deps, limiter: new CaptureAttemptLimiter() };
-    expect(codeOf(() => submitCapture(deps, MCP, NOTE))).toBe("ERR_CAPTURE_RATE_LIMITED");
+    expect(await codeOfAsync(() => submitCapture(deps, MCP, NOTE))).toBe(
+      "ERR_CAPTURE_RATE_LIMITED",
+    );
     clock += 3_600_001;
-    expect(submitCapture(deps, MCP, NOTE).state).toBe("live");
+    expect((await submitCapture(deps, MCP, NOTE)).state).toBe("live");
   });
 
-  test("the client label is sanitised before storage", () => {
-    submitCapture(deps, MCP, { ...NOTE, clientLabel: "evil\u001b[2J" });
+  test("the client label is sanitised before storage", async () => {
+    await submitCapture(deps, MCP, { ...NOTE, clientLabel: "evil\u001b[2J" });
     expect(deps.store.get("cap_1")?.clientLabel).toBe("evil[2J");
   });
 
-  test("a non-object input is refused as invalid", () => {
-    expect(codeOf(() => submitCapture(deps, MCP, "x"))).toBe("ERR_CAPTURE_INVALID");
+  test("a non-object input is refused as invalid", async () => {
+    expect(await codeOfAsync(() => submitCapture(deps, MCP, "x"))).toBe("ERR_CAPTURE_INVALID");
   });
 });
 
 describe("revokeCapture", () => {
-  test("owner revokes a live note: item gone, tombstone kept, one audit row", () => {
-    submitCapture(deps, MCP, NOTE);
+  test("owner revokes a live note: item gone, tombstone kept, one audit row", async () => {
+    await submitCapture(deps, MCP, NOTE);
     clock += 5;
     expect(revokeCapture(deps, OWNER, "cap_1")).toEqual({ id: "cap_1", state: "revoked" });
     expect(db.query("SELECT 1 FROM item WHERE id = 'nimbus:cap_1'").get()).toBeNull();
@@ -285,21 +309,21 @@ describe("revokeCapture", () => {
     expect(revokes[0]?.hitl_status).toBe("not_required");
   });
 
-  test("Review Focus 2: revoking twice is a no-op success with no second audit row", () => {
-    submitCapture(deps, MCP, NOTE);
+  test("Review Focus 2: revoking twice is a no-op success with no second audit row", async () => {
+    await submitCapture(deps, MCP, NOTE);
     revokeCapture(deps, OWNER, "cap_1");
     expect(revokeCapture(deps, OWNER, "cap_1")).toEqual({ id: "cap_1", state: "revoked" });
     expect(auditRows().filter((r) => r.action_type === "capture.revoke")).toHaveLength(1);
   });
 
-  test("works while the sink is DISABLED (withdrawing agent text is always possible)", () => {
-    submitCapture(deps, MCP, NOTE);
+  test("works while the sink is DISABLED (withdrawing agent text is always possible)", async () => {
+    await submitCapture(deps, MCP, NOTE);
     cap = resolveCaptureCapability({ ok: true, config: DEFAULT_MCP_SINK_CONFIG }, OPEN);
     expect(revokeCapture(deps, OWNER, "cap_1").state).toBe("revoked");
   });
 
-  test("an mcp client cannot revoke; unknown ids are NOT_FOUND; a bad id is INVALID", () => {
-    submitCapture(deps, MCP, NOTE);
+  test("an mcp client cannot revoke; unknown ids are NOT_FOUND; a bad id is INVALID", async () => {
+    await submitCapture(deps, MCP, NOTE);
     expect(codeOf(() => revokeCapture(deps, MCP, "cap_1"))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     expect(codeOf(() => revokeCapture(deps, OWNER, "cap_404"))).toBe("ERR_CAPTURE_NOT_FOUND");
     expect(codeOf(() => revokeCapture(deps, OWNER, 7))).toBe("ERR_CAPTURE_INVALID");
@@ -321,8 +345,8 @@ describe("revokeCapture", () => {
     return { ...deps, store };
   }
 
-  test("lost race, winner already revoked: success, no capture.revoke audit row from the loser", () => {
-    submitCapture(deps, MCP, NOTE);
+  test("lost race, winner already revoked: success, no capture.revoke audit row from the loser", async () => {
+    await submitCapture(deps, MCP, NOTE);
     expect(revokeCapture(lostRaceDeps("revoked"), OWNER, "cap_1")).toEqual({
       id: "cap_1",
       state: "revoked",
@@ -330,25 +354,25 @@ describe("revokeCapture", () => {
     expect(auditRows().filter((r) => r.action_type === "capture.revoke")).toHaveLength(0);
   });
 
-  test("lost race, row still live afterwards: ERR_CAPTURE_STATE", () => {
-    submitCapture(deps, MCP, NOTE);
+  test("lost race, row still live afterwards: ERR_CAPTURE_STATE", async () => {
+    await submitCapture(deps, MCP, NOTE);
     expect(codeOf(() => revokeCapture(lostRaceDeps("live"), OWNER, "cap_1"))).toBe(
       "ERR_CAPTURE_STATE",
     );
   });
 
-  test("a live note whose item was already deleted (data.delete) still revokes", () => {
-    submitCapture(deps, MCP, NOTE);
+  test("a live note whose item was already deleted (data.delete) still revokes", async () => {
+    await submitCapture(deps, MCP, NOTE);
     db.run("DELETE FROM item WHERE id = 'nimbus:cap_1'");
     expect(revokeCapture(deps, OWNER, "cap_1").state).toBe("revoked");
   });
 });
 
 describe("list / get / status", () => {
-  test("list returns every state, newest first, limit 1..200", () => {
-    submitCapture(deps, MCP, NOTE);
+  test("list returns every state, newest first, limit 1..200", async () => {
+    await submitCapture(deps, MCP, NOTE);
     clock += 1;
-    submitCapture(deps, MCP, { ...NOTE, payload: { title: "Second", body: "b" } });
+    await submitCapture(deps, MCP, { ...NOTE, payload: { title: "Second", body: "b" } });
     const out = listCaptures(deps, OWNER, {});
     expect(out.captures.map((c) => [c.id, c.title])).toEqual([
       ["cap_2", "Second"],
@@ -360,8 +384,8 @@ describe("list / get / status", () => {
     expect(codeOf(() => listCaptures(deps, MCP, {}))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
   });
 
-  test("get returns the parsed payload; revoked returns payload null", () => {
-    submitCapture(deps, MCP, NOTE);
+  test("get returns the parsed payload; revoked returns payload null", async () => {
+    await submitCapture(deps, MCP, NOTE);
     expect(getCapture(deps, OWNER, "cap_1").payload).toEqual({
       title: "Why WAL",
       body: "We chose WAL because…",
@@ -372,8 +396,8 @@ describe("list / get / status", () => {
     expect(getCapture(deps, OWNER, "cap_1").payload).toBeNull();
   });
 
-  test("status reports enabled, kinds, counts and refusal counters; disabled names the reason", () => {
-    submitCapture(deps, MCP, NOTE);
+  test("status reports enabled, kinds, counts and refusal counters; disabled names the reason", async () => {
+    await submitCapture(deps, MCP, NOTE);
     expect(captureStatus(deps)).toEqual({
       enabled: true,
       kinds: ["note", "decision", "term", "link"],
@@ -414,8 +438,11 @@ function graphedItems(n: number): string[] {
 }
 
 describe("submit — proposals", () => {
-  test("a decision is stored proposed: no item, no embedding, audited not_required/proposed", () => {
-    const r = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "Adopt WAL" } });
+  test("a decision is stored proposed: no item, no embedding, audited not_required/proposed", async () => {
+    const r = await submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "Adopt WAL" },
+    });
     expect(r.state).toBe("proposed");
     expect(deps.store.get(r.id)?.itemId).toBeNull();
     const items = db
@@ -433,31 +460,31 @@ describe("submit — proposals", () => {
     });
   });
 
-  test("a term proposal writes no glossary row", () => {
-    submitCapture(deps, MCP, { kind: "term", payload: { term: "WAL", definition: "log" } });
+  test("a term proposal writes no glossary row", async () => {
+    await submitCapture(deps, MCP, { kind: "term", payload: { term: "WAL", definition: "log" } });
     const g = db.query("SELECT COUNT(*) AS n FROM glossary_term").get() as { n: number };
     expect(g.n).toBe(0);
   });
 
-  test("step 8: the pending cap refuses a proposal (audited) but never a note", () => {
+  test("step 8: the pending cap refuses a proposal (audited) but never a note", async () => {
     cap = onConfig({ maxPending: 1 });
-    submitCapture(deps, MCP, { kind: "term", payload: { term: "WAL", definition: "log" } });
+    await submitCapture(deps, MCP, { kind: "term", payload: { term: "WAL", definition: "log" } });
     expect(
-      codeOf(() =>
+      await codeOfAsync(() =>
         submitCapture(deps, MCP, { kind: "term", payload: { term: "MVCC", definition: "x" } }),
       ),
     ).toBe("ERR_CAPTURE_QUEUE_FULL");
     expect(JSON.parse(auditRows().at(-1)?.action_json ?? "{}")).toMatchObject({
       outcome: "ERR_CAPTURE_QUEUE_FULL",
     });
-    expect(submitCapture(deps, MCP, { kind: "note", payload: { body: "still fine" } }).state).toBe(
-      "live",
-    );
+    expect(
+      (await submitCapture(deps, MCP, { kind: "note", payload: { body: "still fine" } })).state,
+    ).toBe("live");
   });
 
-  test("step 6: a link refuses an unknown item, then an ungraphed one, then a capture item", () => {
+  test("step 6: a link refuses an unknown item, then an ungraphed one, then a capture item", async () => {
     expect(
-      codeOf(() =>
+      await codeOfAsync(() =>
         submitCapture(deps, MCP, {
           kind: "link",
           payload: { fromItemId: "x:1", toItemId: "y:2", relation: "fixes" },
@@ -485,7 +512,7 @@ describe("submit — proposals", () => {
       syncedAt: 1,
     });
     expect(
-      codeOf(() =>
+      await codeOfAsync(() =>
         submitCapture(deps, MCP, {
           kind: "link",
           payload: { fromItemId: "filesystem:a", toItemId: "filesystem:b", relation: "fixes" },
@@ -498,10 +525,10 @@ describe("submit — proposals", () => {
       kind: "link",
       outcome: "ERR_CAPTURE_LINK_UNRESOLVED",
     });
-    const note = submitCapture(deps, MCP, { kind: "note", payload: { body: "n" } });
+    const note = await submitCapture(deps, MCP, { kind: "note", payload: { body: "n" } });
     const [pr] = graphedItems(1);
     expect(
-      codeOf(() =>
+      await codeOfAsync(() =>
         submitCapture(deps, MCP, {
           kind: "link",
           payload: { fromItemId: `nimbus:${note.id}`, toItemId: pr, relation: "relates_to" },
@@ -510,13 +537,15 @@ describe("submit — proposals", () => {
     ).toBe("ERR_CAPTURE_LINK_UNRESOLVED");
   });
 
-  test("a link between two graphed items is accepted as a proposal", () => {
+  test("a link between two graphed items is accepted as a proposal", async () => {
     const [a, b] = graphedItems(2);
     expect(
-      submitCapture(deps, MCP, {
-        kind: "link",
-        payload: { fromItemId: a, toItemId: b, relation: "fixes" },
-      }).state,
+      (
+        await submitCapture(deps, MCP, {
+          kind: "link",
+          payload: { fromItemId: a, toItemId: b, relation: "fixes" },
+        })
+      ).state,
     ).toBe("proposed");
     const r = db
       .query("SELECT COUNT(*) AS n FROM graph_relation WHERE type LIKE 'captured_%'")
@@ -524,10 +553,10 @@ describe("submit — proposals", () => {
     expect(r.n).toBe(0);
   });
 
-  test("a validation failure on a proposal kind is audited and rethrown", () => {
-    expect(codeOf(() => submitCapture(deps, MCP, { kind: "decision", payload: {} }))).toBe(
-      "ERR_CAPTURE_INVALID",
-    );
+  test("a validation failure on a proposal kind is audited and rethrown", async () => {
+    expect(
+      await codeOfAsync(() => submitCapture(deps, MCP, { kind: "decision", payload: {} })),
+    ).toBe("ERR_CAPTURE_INVALID");
     const last = auditRows().at(-1);
     expect(last?.hitl_status).toBe("rejected");
     expect(JSON.parse(last?.action_json ?? "{}")).toMatchObject({
@@ -558,8 +587,8 @@ describe("submit — proposals", () => {
     expect(listed.captures[0]?.title).toHaveLength(120);
   });
 
-  test("captureStatus counts proposals as pending; kinds now lists all four", () => {
-    submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+  test("captureStatus counts proposals as pending; kinds now lists all four", async () => {
+    await submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
     const s = captureStatus(deps);
     expect(s.pending).toBe(1);
     expect([...s.kinds].sort()).toEqual(["decision", "link", "note", "term"]);
@@ -567,9 +596,9 @@ describe("submit — proposals", () => {
 });
 
 describe("accept", () => {
-  test("decision: native row + capture item + embedding + one not_required audit row, in one transaction", () => {
+  test("decision: native row + capture item + embedding + one not_required audit row, in one transaction", async () => {
     const [ev] = graphedItems(1);
-    const { id } = submitCapture(deps, MCP, {
+    const { id } = await submitCapture(deps, MCP, {
       kind: "decision",
       payload: { statement: "Adopt WAL", evidence: [ev] },
     });
@@ -591,8 +620,8 @@ describe("accept", () => {
     });
   });
 
-  test("Review Focus 4: a second accept refuses ERR_CAPTURE_STATE and writes nothing more", () => {
-    const { id } = submitCapture(deps, MCP, {
+  test("Review Focus 4: a second accept refuses ERR_CAPTURE_STATE and writes nothing more", async () => {
+    const { id } = await submitCapture(deps, MCP, {
       kind: "term",
       payload: { term: "WAL", definition: "log" },
     });
@@ -601,8 +630,11 @@ describe("accept", () => {
     expect(auditRows().filter((a) => a.action_type === "capture.accept")).toHaveLength(1);
   });
 
-  test("a lost race inside the transaction rolls the native write back", () => {
-    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+  test("a lost race inside the transaction rolls the native write back", async () => {
+    const { id } = await submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s" },
+    });
     class LosingStore extends CaptureStore {
       override markAccepted(): boolean {
         return false;
@@ -617,9 +649,9 @@ describe("accept", () => {
     expect(deps.store.get(id)?.state).toBe("proposed");
   });
 
-  test("Review Focus 5: an evidence item deleted since submit refuses; the capture stays proposed", () => {
+  test("Review Focus 5: an evidence item deleted since submit refuses; the capture stays proposed", async () => {
     const [ev] = graphedItems(1);
-    const { id } = submitCapture(deps, MCP, {
+    const { id } = await submitCapture(deps, MCP, {
       kind: "decision",
       payload: { statement: "s", evidence: [ev] },
     });
@@ -641,9 +673,9 @@ describe("accept", () => {
     });
   }
 
-  test("term over a manual row refuses ERR_CAPTURE_SUPERSEDED and stays proposed", () => {
+  test("term over a manual row refuses ERR_CAPTURE_SUPERSEDED and stays proposed", async () => {
     seedManualWal();
-    const { id } = submitCapture(deps, MCP, {
+    const { id } = await submitCapture(deps, MCP, {
       kind: "term",
       payload: { term: "WAL", definition: "log" },
     });
@@ -653,9 +685,9 @@ describe("accept", () => {
     expect(getTerm(db, "wal")?.definition).toBe("the owner's own");
   });
 
-  test("a zero-width character cannot disguise a key the owner already authored", () => {
+  test("a zero-width character cannot disguise a key the owner already authored", async () => {
     seedManualWal();
-    const { id } = submitCapture(deps, MCP, {
+    const { id } = await submitCapture(deps, MCP, {
       kind: "term",
       payload: { term: `W${ZWSP}AL`, definition: "log" },
     });
@@ -666,7 +698,7 @@ describe("accept", () => {
     expect(getTerm(db, "wal")?.definition).toBe("the owner's own");
   });
 
-  test("term over a MODEL-vetoed row accepts: the owner's accept outranks the classifier", () => {
+  test("term over a MODEL-vetoed row accepts: the owner's accept outranks the classifier", async () => {
     upsertCandidate(db, {
       key: "wal",
       surface: "WAL",
@@ -677,7 +709,7 @@ describe("accept", () => {
     });
     markVetoed(db, "wal", 2);
     expect(getTerm(db, "wal")?.status).toBe("vetoed"); // positive control
-    const { id } = submitCapture(deps, MCP, {
+    const { id } = await submitCapture(deps, MCP, {
       kind: "term",
       payload: { term: "WAL", definition: "log" },
     });
@@ -691,9 +723,9 @@ describe("accept", () => {
     expect(getTerm(db, "wal")).toBeNull();
   });
 
-  test("link whose endpoint left the graph refuses ERR_CAPTURE_LINK_UNRESOLVED and stays proposed", () => {
+  test("link whose endpoint left the graph refuses ERR_CAPTURE_LINK_UNRESOLVED and stays proposed", async () => {
     const [a, b] = graphedItems(2);
-    const { id } = submitCapture(deps, MCP, {
+    const { id } = await submitCapture(deps, MCP, {
       kind: "link",
       payload: { fromItemId: a, toItemId: b, relation: "fixes" },
     });
@@ -702,9 +734,9 @@ describe("accept", () => {
     expect(deps.store.get(id)?.state).toBe("proposed");
   });
 
-  test("a link accepts into a captured_* edge", () => {
+  test("a link accepts into a captured_* edge", async () => {
     const [a, b] = graphedItems(2);
-    const { id } = submitCapture(deps, MCP, {
+    const { id } = await submitCapture(deps, MCP, {
       kind: "link",
       payload: { fromItemId: a, toItemId: b, relation: "fixes" },
     });
@@ -715,8 +747,11 @@ describe("accept", () => {
     expect(n.n).toBe(1);
   });
 
-  test("an mcp client cannot accept; a disabled sink freezes accept but not reject", () => {
-    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+  test("an mcp client cannot accept; a disabled sink freezes accept but not reject", async () => {
+    const { id } = await submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s" },
+    });
     expect(codeOf(() => acceptCapture(deps, MCP, id))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     cap = resolveCaptureCapability(
       { ok: true, config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: false } },
@@ -726,15 +761,18 @@ describe("accept", () => {
     expect(rejectCapture(deps, OWNER, id).state).toBe("rejected");
   });
 
-  test("unknown id, bad id and a live note all refuse", () => {
+  test("unknown id, bad id and a live note all refuse", async () => {
     expect(codeOf(() => acceptCapture(deps, OWNER, "cap_404"))).toBe("ERR_CAPTURE_NOT_FOUND");
     expect(codeOf(() => acceptCapture(deps, OWNER, 7))).toBe("ERR_CAPTURE_INVALID");
-    const { id } = submitCapture(deps, MCP, { kind: "note", payload: { body: "b" } });
+    const { id } = await submitCapture(deps, MCP, { kind: "note", payload: { body: "b" } });
     expect(codeOf(() => acceptCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_STATE");
   });
 
-  test("a proposed row with no payload (CHECK forbids it on disk) refuses ERR_CAPTURE_STATE", () => {
-    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+  test("a proposed row with no payload (CHECK forbids it on disk) refuses ERR_CAPTURE_STATE", async () => {
+    const { id } = await submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s" },
+    });
     class NoPayloadStore extends CaptureStore {
       override get(rowId: string) {
         const r = super.get(rowId);
@@ -745,8 +783,11 @@ describe("accept", () => {
     expect(codeOf(() => acceptCapture(broken, OWNER, id))).toBe("ERR_CAPTURE_STATE");
   });
 
-  test("an audit append failure rolls the whole accept back", () => {
-    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+  test("an audit append failure rolls the whole accept back", async () => {
+    const { id } = await submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s" },
+    });
     db.run("DROP TABLE audit_log");
     expect(() => acceptCapture(deps, OWNER, id)).toThrow(/audit_log/);
     expect(deps.store.get(id)?.state).toBe("proposed");
@@ -759,8 +800,11 @@ describe("accept", () => {
 });
 
 describe("reject", () => {
-  test("proposed to rejected with decided_at, one rejected audit row, nothing native", () => {
-    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+  test("proposed to rejected with decided_at, one rejected audit row, nothing native", async () => {
+    const { id } = await submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s" },
+    });
     clock += 5;
     expect(rejectCapture(deps, OWNER, id)).toEqual({ id, state: "rejected" });
     expect(deps.store.get(id)?.decidedAt).toBe(clock);
@@ -770,19 +814,24 @@ describe("reject", () => {
     expect(db.query("SELECT COUNT(*) AS n FROM decision_record").get()).toEqual({ n: 0 });
   });
 
-  test("reject prunes rejected rows decided more than 90 days ago", () => {
-    const a = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "a" } }).id;
+  test("reject prunes rejected rows decided more than 90 days ago", async () => {
+    const a = (await submitCapture(deps, MCP, { kind: "decision", payload: { statement: "a" } }))
+      .id;
     rejectCapture(deps, OWNER, a);
     expect(deps.store.get(a)).toBeDefined();
     clock += REJECTED_RETENTION_MS + 1;
-    const b = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "b" } }).id;
+    const b = (await submitCapture(deps, MCP, { kind: "decision", payload: { statement: "b" } }))
+      .id;
     rejectCapture(deps, OWNER, b);
     expect(deps.store.get(a)).toBeUndefined();
     expect(deps.store.get(b)?.state).toBe("rejected");
   });
 
-  test("rejecting a non-proposed capture refuses ERR_CAPTURE_STATE; mcp refuses FORBIDDEN", () => {
-    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+  test("rejecting a non-proposed capture refuses ERR_CAPTURE_STATE; mcp refuses FORBIDDEN", async () => {
+    const { id } = await submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s" },
+    });
     expect(codeOf(() => rejectCapture(deps, MCP, id))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
     rejectCapture(deps, OWNER, id);
     expect(codeOf(() => rejectCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_STATE");
@@ -791,8 +840,11 @@ describe("reject", () => {
     expect(auditRows().filter((a) => a.action_type === "capture.reject")).toHaveLength(1);
   });
 
-  test("a lost race refuses ERR_CAPTURE_STATE and writes no audit row", () => {
-    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+  test("a lost race refuses ERR_CAPTURE_STATE and writes no audit row", async () => {
+    const { id } = await submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s" },
+    });
     class LosingStore extends CaptureStore {
       override markRejected(): boolean {
         return false;
@@ -805,9 +857,9 @@ describe("reject", () => {
 });
 
 describe("revoke — accepted captures", () => {
-  test("an accepted decision: native row, evidence, item and payload go; native_ref stays", () => {
+  test("an accepted decision: native row, evidence, item and payload go; native_ref stays", async () => {
     const [ev] = graphedItems(1);
-    const { id } = submitCapture(deps, MCP, {
+    const { id } = await submitCapture(deps, MCP, {
       kind: "decision",
       payload: { statement: "s", evidence: [ev] },
     });
@@ -832,16 +884,20 @@ describe("revoke — accepted captures", () => {
     });
   });
 
-  test("a newer accepted term takes the row over; revoking the older leaves it, and get() says superseded", () => {
-    const a = submitCapture(deps, MCP, {
-      kind: "term",
-      payload: { term: "WAL", definition: "old" },
-    }).id;
+  test("a newer accepted term takes the row over; revoking the older leaves it, and get() says superseded", async () => {
+    const a = (
+      await submitCapture(deps, MCP, {
+        kind: "term",
+        payload: { term: "WAL", definition: "old" },
+      })
+    ).id;
     acceptCapture(deps, OWNER, a);
-    const b = submitCapture(deps, MCP, {
-      kind: "term",
-      payload: { term: "WAL", definition: "new" },
-    }).id;
+    const b = (
+      await submitCapture(deps, MCP, {
+        kind: "term",
+        payload: { term: "WAL", definition: "new" },
+      })
+    ).id;
     acceptCapture(deps, OWNER, b);
     expect(getCapture(deps, OWNER, a).nativeStatus).toBe("superseded");
     expect(getCapture(deps, OWNER, b).nativeStatus).toBe("owned");
@@ -851,11 +907,11 @@ describe("revoke — accepted captures", () => {
     });
   });
 
-  test("a link triple named by two accepted captures survives revoking one", () => {
+  test("a link triple named by two accepted captures survives revoking one", async () => {
     const [x, y] = graphedItems(2);
     const p = { kind: "link", payload: { fromItemId: x, toItemId: y, relation: "fixes" } };
-    const a = submitCapture(deps, MCP, p).id;
-    const b = submitCapture(deps, MCP, p).id;
+    const a = (await submitCapture(deps, MCP, p)).id;
+    const b = (await submitCapture(deps, MCP, p)).id;
     acceptCapture(deps, OWNER, a);
     acceptCapture(deps, OWNER, b);
     revokeCapture(deps, OWNER, a);
@@ -866,28 +922,34 @@ describe("revoke — accepted captures", () => {
     ).toEqual({ n: 0 });
   });
 
-  test("revoking a note removes evidence rows citing it; the decision stays", () => {
-    const note = submitCapture(deps, MCP, { kind: "note", payload: { body: "context" } }).id;
-    const dec = submitCapture(deps, MCP, {
-      kind: "decision",
-      payload: { statement: "s", evidence: [`nimbus:${note}`] },
-    }).id;
+  test("revoking a note removes evidence rows citing it; the decision stays", async () => {
+    const note = (await submitCapture(deps, MCP, { kind: "note", payload: { body: "context" } }))
+      .id;
+    const dec = (
+      await submitCapture(deps, MCP, {
+        kind: "decision",
+        payload: { statement: "s", evidence: [`nimbus:${note}`] },
+      })
+    ).id;
     acceptCapture(deps, OWNER, dec);
     revokeCapture(deps, OWNER, note);
     expect(db.query("SELECT COUNT(*) AS n FROM decision_evidence").get()).toEqual({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM decision_record").get()).toEqual({ n: 1 });
   });
 
-  test("a proposed or rejected capture cannot be revoked; a revoked one is a no-op success", () => {
-    const { id } = submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+  test("a proposed or rejected capture cannot be revoked; a revoked one is a no-op success", async () => {
+    const { id } = await submitCapture(deps, MCP, {
+      kind: "decision",
+      payload: { statement: "s" },
+    });
     expect(codeOf(() => revokeCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_STATE");
     acceptCapture(deps, OWNER, id);
     revokeCapture(deps, OWNER, id);
     expect(revokeCapture(deps, OWNER, id)).toEqual({ id, state: "revoked" });
   });
 
-  test("nativeStatus is null for notes and non-accepted rows", () => {
-    const n = submitCapture(deps, MCP, { kind: "note", payload: { body: "b" } }).id;
+  test("nativeStatus is null for notes and non-accepted rows", async () => {
+    const n = (await submitCapture(deps, MCP, { kind: "note", payload: { body: "b" } })).id;
     expect(getCapture(deps, OWNER, n).nativeStatus).toBeNull();
   });
 });

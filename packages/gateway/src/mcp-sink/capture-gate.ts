@@ -179,11 +179,11 @@ function summarize(row: CaptureRow): CaptureSummary {
 
 // ---- submit (spec § 5.1) -------------------------------------------------------------------------
 
-export function submitCapture(
+export async function submitCapture(
   deps: CaptureGateDeps,
   caller: CaptureCaller,
   input: unknown,
-): { id: string; state: CaptureState } {
+): Promise<{ id: string; state: CaptureState }> {
   // 1. Capability (config + live org policy, fail-closed).
   const cap = deps.capability();
   if (!cap.enabled)
