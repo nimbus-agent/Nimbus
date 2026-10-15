@@ -71,6 +71,11 @@ function fake(impl: (m: string, p: unknown) => unknown) {
   };
 }
 
+/** A fake whose `captures.get` names a native kind, so the action-only TTY guard stays out of it. */
+function nativeFake(impl: (m: string, p: unknown) => unknown) {
+  return fake((m, p) => (m === "captures.get" ? { kind: "decision", payload: {} } : impl(m, p)));
+}
+
 function sink() {
   const out: string[] = [];
   const err: string[] = [];
@@ -454,7 +459,7 @@ describe("accept / reject / limit / native status", () => {
     ["a|b", "link"],
     ["term-1", "glossary term"],
   ])("accept %s prints a %s noun", async (nativeRef, noun) => {
-    const f = fake(() => ({ id: "cap_1", state: "accepted", nativeRef }));
+    const f = nativeFake(() => ({ id: "cap_1", state: "accepted", nativeRef }));
     const o = sink();
     expect(await runCapturesWith(f.client, { verb: "accept", id: "cap_1", json: false }, o.s)).toBe(
       0,
@@ -484,7 +489,7 @@ describe("accept / reject / limit / native status", () => {
     expect(JSON.parse(j.out.join(""))).toEqual({ id: "cap_1", state: "rejected" });
     const aj = sink();
     await runCapturesWith(
-      fake(() => ({ id: "cap_1", state: "accepted", nativeRef: "capture:x" })).client,
+      nativeFake(() => ({ id: "cap_1", state: "accepted", nativeRef: "capture:x" })).client,
       { verb: "accept", id: "cap_1", json: true },
       aj.s,
     );
@@ -542,7 +547,11 @@ describe("accept with a malformed result", () => {
   ])("%j is refused with exit 1", async (raw) => {
     const o = sink();
     expect(
-      await runCapturesWith(fake(() => raw).client, { verb: "accept", id: "c", json: false }, o.s),
+      await runCapturesWith(
+        nativeFake(() => raw).client,
+        { verb: "accept", id: "c", json: false },
+        o.s,
+      ),
     ).toBe(1);
     expect(o.out.join("")).not.toContain("Accepted");
     expect(o.err.join("")).toContain("malformed");
@@ -551,7 +560,11 @@ describe("accept with a malformed result", () => {
   test("--json prints {error} for a malformed result", async () => {
     const o = sink();
     expect(
-      await runCapturesWith(fake(() => ({})).client, { verb: "accept", id: "c", json: true }, o.s),
+      await runCapturesWith(
+        nativeFake(() => ({})).client,
+        { verb: "accept", id: "c", json: true },
+        o.s,
+      ),
     ).toBe(1);
     expect(JSON.parse(o.out.join("")).error).toContain("malformed");
   });
@@ -568,6 +581,90 @@ describe("captures accept — act door", () => {
       "nimbus captures accept requires an interactive terminal (TTY) to approve an agent-proposed action.",
     );
     expect(actionAcceptTtyRefusal("action", { stdin: true, stdout: false })).toBeDefined();
+  });
+
+  test("TTY guard fails CLOSED when captures.get names no kind", () => {
+    expect(actionAcceptTtyRefusal(undefined, { stdin: false, stdout: false })).toContain(
+      "may be an agent-proposed action",
+    );
+    expect(actionAcceptTtyRefusal(undefined, { stdin: true, stdout: false })).toBeDefined();
+    expect(actionAcceptTtyRefusal(undefined, { stdin: true, stdout: true })).toBeUndefined();
+  });
+
+  test.each([
+    ["null", null],
+    ["no kind field", { payload: {} }],
+    ["a non-string kind", { kind: 7 }],
+  ])(
+    "a captures.get with %s refuses a non-TTY accept before captures.accept",
+    async (_n, detail) => {
+      const calls: string[] = [];
+      const err: string[] = [];
+      const c = {
+        call: (m: string) => {
+          calls.push(m);
+          return Promise.resolve(m === "captures.get" ? detail : { state: "executed" });
+        },
+      };
+      const code = await runCapturesWith(
+        c as never,
+        { verb: "accept", id: "cap_1", json: false },
+        { out: () => {}, err: (s) => err.push(s) },
+        { stdin: false, stdout: false },
+      );
+      expect(code).toBe(1);
+      expect(calls).toEqual(["captures.get"]);
+      expect(err.join("")).toContain("requires an interactive terminal");
+    },
+  );
+
+  test("--json TTY refusal prints {error} on stdout and never calls captures.accept", async () => {
+    const calls: string[] = [];
+    const out: string[] = [];
+    const err: string[] = [];
+    const c = {
+      call: (m: string) => {
+        calls.push(m);
+        return Promise.resolve(ACTION);
+      },
+    };
+    const code = await runCapturesWith(
+      c as never,
+      { verb: "accept", id: "cap_1", json: true },
+      { out: (s) => out.push(s), err: (s) => err.push(s) },
+      { stdin: false, stdout: true },
+    );
+    expect(code).toBe(1);
+    expect(calls).toEqual(["captures.get"]);
+    expect(err).toEqual([]);
+    expect(JSON.parse(out.join(""))).toEqual({
+      error:
+        "nimbus captures accept requires an interactive terminal (TTY) to approve an agent-proposed action.",
+    });
+  });
+
+  test.each([
+    ["ERR_ACTION_TIMEOUT"],
+    ["ERR_ACTION_DISPATCH"],
+    ["ERR_ACTION_INTERRUPTED"],
+    ["ERR_SOMETHING_NEW"],
+  ])("failed %s says it may or may not have reached the service", async (errorCode) => {
+    const out: string[] = [];
+    const c = {
+      call: (m: string) =>
+        Promise.resolve(
+          m === "captures.accept" ? { id: "cap_1", state: "failed", errorCode } : ACTION,
+        ),
+    };
+    await runCapturesWith(
+      c as never,
+      { verb: "accept", id: "cap_1", json: false },
+      { out: (s) => out.push(s), err: (s) => out.push(s) },
+      TTY,
+    );
+    expect(out.join("")).toBe(
+      `[failed] ${errorCode} — the action may or may not have reached slack\n`,
+    );
   });
 
   test.each([
@@ -737,7 +834,12 @@ describe("captures accept — act door", () => {
   test("native accept is unchanged", async () => {
     const out: string[] = [];
     const c = {
-      call: () => Promise.resolve({ id: "cap_1", state: "accepted", nativeRef: "capture:cap_1" }),
+      call: (m: string) =>
+        Promise.resolve(
+          m === "captures.get"
+            ? { kind: "decision", payload: {} }
+            : { id: "cap_1", state: "accepted", nativeRef: "capture:cap_1" },
+        ),
     };
     expect(
       await runCapturesWith(

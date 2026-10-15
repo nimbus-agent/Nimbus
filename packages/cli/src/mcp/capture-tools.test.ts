@@ -173,6 +173,12 @@ describe("proposal tools", () => {
     });
   });
 
+  test("capture_status does not claim to be bound to the submitter (the gateway answers by id)", () => {
+    const d = find("capture_status")?.description ?? "";
+    expect(d).not.toMatch(/you submitted/i);
+    expect(d).toContain("ANY capture id to any MCP client that holds it");
+  });
+
   test("propose_decision sends the full payload with decidedAt as ms", async () => {
     const { deps: d, calls } = deps(async () => ({ id: "cap_d1", state: "proposed" }));
     const res = await find("propose_decision")?.run(

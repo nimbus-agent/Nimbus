@@ -246,9 +246,10 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
     name: "capture_status",
     kind: "status",
     description:
-      "Read the state of a capture YOU submitted, by its id (proposed, executed, failed, rejected, " +
-      "expired, accepted, live, revoked). Returns the state and, for an executed action, a short link " +
-      "when the service returned one — never the payload.",
+      "Read the state of a capture by its id (proposed, executed, failed, rejected, expired, " +
+      "accepted, live, revoked). The gateway answers for ANY capture id to any MCP client that holds " +
+      "it — it does not check who submitted it. Returns the state and, for an executed action, a " +
+      "short link when the service returned one — never the payload.",
     schema: { id: z.string() },
     annotations: { ...WRITE_ANNOTATIONS, readOnlyHint: true },
     run: (deps, args) =>

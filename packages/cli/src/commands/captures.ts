@@ -70,10 +70,19 @@ type Tty = { readonly stdin: boolean; readonly stdout: boolean };
 /**
  * An agent-proposed action is approved at the executor's HITL prompt, which needs a human at a
  * terminal on BOTH ends: piped stdin cannot answer it honestly and redirected stdout hides it.
+ * Fails CLOSED: a `captures.get` that names no kind could be an action, so without a TTY it is
+ * refused too; a well-formed native kind needs no prompt and is never refused here. This is a
+ * CLI-side guard, not a gateway one: a raw local-owner socket client is not subject to it.
  */
 export function actionAcceptTtyRefusal(kind: string | undefined, tty: Tty): string | undefined {
-  if (kind !== "action" || (tty.stdin && tty.stdout)) return undefined;
-  return "nimbus captures accept requires an interactive terminal (TTY) to approve an agent-proposed action.";
+  if (tty.stdin && tty.stdout) return undefined;
+  if (kind === "action") {
+    return "nimbus captures accept requires an interactive terminal (TTY) to approve an agent-proposed action.";
+  }
+  if (kind === undefined) {
+    return "nimbus captures accept requires an interactive terminal (TTY): the gateway did not say what kind of capture this is, so it may be an agent-proposed action.";
+  }
+  return undefined;
 }
 
 export type AcceptView =
@@ -82,8 +91,12 @@ export type AcceptView =
   | { state: "rejected" }
   | { state: "failed"; errorCode: string };
 
-/** Failures after which the request may already have reached the service. */
-const AMBIGUOUS = new Set(["ERR_ACTION_TIMEOUT", "ERR_ACTION_DISPATCH", "ERR_ACTION_INTERRUPTED"]);
+/**
+ * Failures KNOWN to have happened before any request reached the service (the tool did not
+ * resolve). Every other failure code, including one this CLI has never heard of, may have reached
+ * it, and says so.
+ */
+const NOT_DISPATCHED = new Set(["ERR_ACTION_TOOL_NOT_FOUND"]);
 
 /** A success line needs a real result; anything else is a gateway contract break. */
 export function parseAcceptResult(raw: unknown): AcceptView {
@@ -133,9 +146,9 @@ function acceptLine(
       const service =
         actionType === undefined ? "the service" : (stripControl(actionType).split(".")[0] ?? "");
       return {
-        line: AMBIGUOUS.has(v.errorCode)
-          ? `[failed] ${code} — the action may or may not have reached ${service || "the service"}\n`
-          : `[failed] ${code}\n`,
+        line: NOT_DISPATCHED.has(v.errorCode)
+          ? `[failed] ${code}\n`
+          : `[failed] ${code} — the action may or may not have reached ${service || "the service"}\n`,
         exit: 1,
       };
     }
