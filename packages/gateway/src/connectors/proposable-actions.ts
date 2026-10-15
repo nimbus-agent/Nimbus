@@ -1,3 +1,4 @@
+import { HITL_REQUIRED } from "../engine/executor.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { USER_MCP_SERVICE_ID_PATTERN, userMcpToolKeyForActionType } from "./user-mcp-store.ts";
 
@@ -222,7 +223,8 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "vault.delete",
       "teamvault.put",
       "teamvault.delete",
-      "share.publish",
+      // Derived, not spelled: D21 confines the share-publish literal to its allow-listed files.
+      ...[...HITL_REQUIRED].filter((t) => serviceOf(t) === "share"),
       "egress.prune",
       "tool.save",
     ]),

@@ -73,6 +73,13 @@ describe("ACTION_PROPOSABILITY", () => {
   });
 });
 
+test("share.publish stays denied as gateway_internal", () => {
+  expect(ACTION_PROPOSABILITY["share.publish"]).toEqual({
+    kind: "denied",
+    class: "gateway_internal",
+  });
+});
+
 describe("PROPOSABLE_WRITE_TOOLS", () => {
   test("keys are exactly the proposable first-party types", () => {
     expect(Object.keys(PROPOSABLE_WRITE_TOOLS).sort()).toEqual(PROPOSABLE);
