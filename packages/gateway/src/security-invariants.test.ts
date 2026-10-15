@@ -2744,6 +2744,48 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(at).toBeGreaterThan(0);
     expect(src.slice(at, at + 400)).toMatch(/hitlStatus:\s*"not_required"/);
   });
+
+  test("act door: acceptAction claims BEFORE execute, and execute is the last step before finalize", async () => {
+    const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-act.ts"));
+    const start = src.indexOf("export async function acceptAction");
+    expect(start).toBeGreaterThan(0);
+    const body = src.slice(start);
+    const order = [
+      "cap.actionEnabled",
+      "CAPTURE_ROLE_BY_KIND[caller.kind]",
+      'row.state !== "proposed"',
+      "deps.now() >= expiresAt",
+      "deps.classifyAction?.(",
+      "deps.isServiceConfigured?.(",
+      "deps.store.claimAction(",
+      "act.execute(",
+      "deps.store.finalizeAction(",
+    ];
+    const idx = order.map((s) => body.indexOf(s));
+    expect(idx.every((i) => i >= 0)).toBe(true);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+  });
+
+  test("act door: the dispatched payload's mcpToolId is the routing table's value; no delegate; policy overlay passed", async () => {
+    const src = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
+    expect(src).toMatch(
+      /const toolId = proposableWriteTool\(actionType\) \?\? userMcpToolKeyForActionType\(actionType\)/,
+    );
+    expect(src).toMatch(/payload: \{ mcpToolId: toolId, input \}/);
+    expect(src).toMatch(
+      /new ToolExecutor\(\s*consent,\s*w\.audit,\s*w\.dispatcher,\s*undefined,\s*w\.egressSink,\s*w\.policyHitl,?\s*\)/,
+    );
+  });
+
+  test("act door: an absent policy accessor disables actions (fail-closed)", async () => {
+    const { resolveCaptureCapability } = await import("./mcp-sink/capture-capability.ts");
+    const { DEFAULT_MCP_SINK_CONFIG } = await import("./config/mcp-sink-toml.ts");
+    const c = resolveCaptureCapability(
+      { ok: true, config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["action"] } },
+      undefined,
+    );
+    expect(c.actionEnabled).toBe(false);
+  });
 });
 
 describe("I29 — egress-ledger completeness over the executor chokepoint", () => {

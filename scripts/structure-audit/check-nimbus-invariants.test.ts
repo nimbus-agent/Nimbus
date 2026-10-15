@@ -4,6 +4,7 @@ import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connecto
 import { CO_OWNED_ENTITY_TYPES } from "../../packages/gateway/src/graph/relationship-graph.ts";
 import {
   assertScanIsMeaningful,
+  checkActDoorConfinement,
   checkActuationConfinement,
   checkAgentEmitterImportConfinement,
   checkAgentProvenanceWriters,
@@ -2165,6 +2166,113 @@ describe("D32(d) — agent-row writers are reachable only through capture-native
         ),
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("D32(e)(f)(g) — the act door", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const ACT = "packages/gateway/src/mcp-sink/capture-act.ts";
+  const GATE = "packages/gateway/src/mcp-sink/capture-gate.ts";
+
+  test("allows the definition and the gate's call", () => {
+    expect(
+      checkActDoorConfinement([
+        file(ACT, "export async function acceptAction(d) {}"),
+        file(GATE, "return acceptAction(deps, caller, row, act);"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(e) FAILS when acceptAction is named anywhere else", () => {
+    const v = checkActDoorConfinement([
+      file("packages/gateway/src/ipc/capture-rpc.ts", "acceptAction(d, c, r, a)"),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("act-door-accept-action");
+  });
+
+  test("(e) importing a DIFFERENT symbol from capture-act.ts is not a violation", () => {
+    expect(
+      checkActDoorConfinement([
+        file(
+          "packages/gateway/src/ipc/capture-rpc.ts",
+          'import { formatActionConsent } from "../mcp-sink/capture-act.ts";',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(e) ignores a mention in a comment or a string", () => {
+    expect(
+      checkActDoorConfinement([
+        file(
+          "packages/gateway/src/x.ts",
+          '// acceptAction is gate-only\nconst s = "acceptAction";',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    'import { ToolExecutor } from "../engine/executor.ts";',
+    'import type { HITL_REQUIRED } from "../engine/executor.ts";',
+    'import { proposableWriteTool } from "../connectors/proposable-actions.ts";',
+    'import type { X } from "../connectors/registry.ts";',
+    'export * from "../connectors/x.ts";',
+    'export type { Y } from "../engine/executor";',
+    'const m = await import("../engine/executor.ts");',
+    'import "../connectors/side-effect.ts";',
+    'import {\n  a,\n  b,\n} from "../connectors/registry.ts";',
+  ])("(f) FAILS: an mcp-sink file %s", (line) => {
+    const v = checkActDoorConfinement([file("packages/gateway/src/mcp-sink/capture-x.ts", line)]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("mcp-sink-no-executor-or-connectors");
+  });
+
+  test("(f) a semicolon-free allowed import does not hide a forbidden one after it", () => {
+    const v = checkActDoorConfinement([
+      file(
+        "packages/gateway/src/mcp-sink/capture-x.ts",
+        'import { serviceOf } from "../engine/service-of.ts"\nimport type { X } from "../connectors/registry.ts"',
+      ),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.line).toBe(2);
+  });
+
+  test("(f) allows engine/service-of.ts, a test file, and files outside mcp-sink/", () => {
+    expect(
+      checkActDoorConfinement([
+        file(ACT, 'import { serviceOf } from "../engine/service-of.ts";'),
+        file(
+          "packages/gateway/src/mcp-sink/capture-act.test.ts",
+          'import { HITL_REQUIRED } from "../engine/executor.ts";',
+        ),
+        file(
+          "packages/gateway/src/ipc/capture-rpc.ts",
+          'import { ToolExecutor } from "../engine/executor.ts";',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(g) the mcpToolId literal is confined to capture-validate.ts under mcp-sink/", () => {
+    expect(
+      checkActDoorConfinement([
+        file(
+          "packages/gateway/src/mcp-sink/capture-validate.ts",
+          'if (Object.hasOwn(input, "mcpToolId")) {}',
+        ),
+        file("packages/gateway/src/ipc/capture-rpc.ts", "payload: { mcpToolId: toolId, input }"),
+      ]),
+    ).toEqual([]);
+    const v = checkActDoorConfinement([file(GATE, 'payload["mcpToolId"] = x;')]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("mcp-sink-mcptoolid-literal");
+  });
+
+  test("(g) a comment mentioning mcpToolId does not trip it", () => {
+    expect(checkActDoorConfinement([file(GATE, "// never set mcpToolId here")])).toEqual([]);
   });
 });
 
