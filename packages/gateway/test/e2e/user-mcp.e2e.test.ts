@@ -306,6 +306,8 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
   let gatewayLog = "";
   let restoreHelper: () => void = () => {};
   const client = new TestIpcClient();
+  /** A second client that declares kind `mcp`: the act door's proposing agent. */
+  const agent = new TestIpcClient();
 
   type LedgerRow = { id: number; destination: string; hitlStatus: string; method: string };
   /** The egress-ledger rows naming `destination`, read over the real `egress.list` IPC method. */
@@ -361,6 +363,12 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
     // 5. Boot the gateway.
     restoreHelper = installDefaultHelper();
     for (const d of [paths.configDir, paths.dataDir]) mkdirSync(d, { recursive: true });
+    // The act door is off twice by default (`[mcp_sink] enabled`, and `action` not in `kinds`).
+    writeFileSync(
+      join(paths.configDir, "nimbus.toml"),
+      '[mcp_sink]\nenabled = true\nkinds = ["note", "action"]\naction_ttl_hours = 1\n',
+      "utf8",
+    );
     proc = Bun.spawn(["bun", RUNNER], {
       stdin: "ignore",
       stdout: "pipe",
@@ -400,6 +408,8 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
   afterAll(async () => {
     client.clearNotificationHandlers();
     client.close();
+    // An open named-pipe handle on Windows can hold the event loop and race the rmSync below.
+    agent.close();
     proc?.kill();
     await proc?.exited.catch(() => {});
     restoreHelper();
@@ -419,9 +429,16 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
       serviceId: "mcp_echo_srv",
       argv: [binary],
       readPaths: [grantedDir],
+      // `--model`: only widens who may be offered the tools; the act door requires it.
+      modelAccess: true,
     });
     expect(out).toMatchObject({ ok: true, serviceId: "mcp_echo_srv" });
   }, 60_000);
+
+  test("a second client connects and declares kind mcp", async () => {
+    await agent.connect(paths.socketPath);
+    await agent.call("session.declareKind", { kind: "mcp" });
+  }, 30_000);
 
   test("connector.userMcpTools lists the scaffold's echo and the added probe", async () => {
     const out = await client.call<{ serviceId: string; tools: Array<{ name: string }> }>(
@@ -520,6 +537,97 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
       approve = true;
     }
   }, 60_000);
+
+  test("act door: propose -> capture.state proposed -> owner accept -> the user MCP got the exact input -> executed", async () => {
+    const sub = await agent.call<{ id: string; state: string; expiresAt: number }>(
+      "capture.submit",
+      {
+        kind: "action",
+        payload: {
+          actionType: "mcp_echo_srv.echo",
+          input: { text: "from-the-agent" },
+          summary: "say hi",
+        },
+        clientLabel: "e2e-agent",
+      },
+    );
+    expect(sub.state).toBe("proposed");
+    expect(await agent.call("capture.state", { id: sub.id })).toMatchObject({
+      kind: "action",
+      state: "proposed",
+    });
+
+    const before = prompts.length;
+    const ledgerBefore = await ledgerRowsFor("mcp_echo_srv");
+    approve = true;
+    const out = await client.call<{ state: string }>("captures.accept", { id: sub.id });
+    expect(out.state).toBe("executed");
+    const shown = prompts.slice(before).join("\n");
+    expect(shown).toContain("Agent-proposed action");
+    expect(shown).toContain('"text": "from-the-agent"');
+    expect(shown).toContain('Proposed by MCP client "e2e-agent"');
+    const added = (await ledgerRowsFor("mcp_echo_srv")).filter(
+      (r) => r.method === "mcp_echo_srv.echo" && !ledgerBefore.some((b) => b.id === r.id),
+    );
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ hitlStatus: "approved" });
+    expect(await agent.call("capture.state", { id: sub.id })).toMatchObject({ state: "executed" });
+    // What the executor actually dispatched: the agent's input verbatim, under the gateway-chosen
+    // `<serviceId>_<tool>` key (the I42 pairing), in the gate's own approved audit row.
+    const audit = await client.call<
+      Array<{ actionType: string; hitlStatus: string; actionJson: string }>
+    >("audit.list", { limit: 20 });
+    const dispatched = audit.find(
+      (r) => r.actionType === "mcp_echo_srv.echo" && r.actionJson.includes("from-the-agent"),
+    );
+    expect(dispatched?.hitlStatus).toBe("approved");
+    expect(JSON.parse(dispatched?.actionJson ?? "{}")).toEqual({
+      action: {
+        type: "mcp_echo_srv.echo",
+        payload: { mcpToolId: "mcp_echo_srv_echo", input: { text: "from-the-agent" } },
+      },
+    });
+  }, 60_000);
+
+  test("act door: the agent cannot accept its own proposal", async () => {
+    const sub = await agent.call<{ id: string }>("capture.submit", {
+      kind: "action",
+      payload: { actionType: "mcp_echo_srv.echo", input: { text: "x" }, summary: "s" },
+    });
+    // Settled with `.then` (as the isError test above does), not `expect(p).rejects`: on Bun
+    // 1.3.14/Windows the `.rejects` form never settled here (3 of 3 runs timed out at 30 s), while
+    // the gateway had already answered with the refusal.
+    const refused = await agent.call("captures.accept", { id: sub.id }).then(
+      (v) => new Error(`resolved: ${JSON.stringify(v)}`),
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(Error);
+    expect((refused as Error).message).not.toContain("resolved:");
+    expect((refused as Error).message).toMatch(/ERR_CAPTURE_FORBIDDEN_CLIENT/);
+    await client.call("captures.reject", { id: sub.id });
+  }, 30_000);
+
+  test("act door: a first-party write whose connector is not configured is refused at submit", async () => {
+    await expect(
+      agent.call("capture.submit", {
+        kind: "action",
+        payload: {
+          actionType: "slack.message.post",
+          input: { channel: "C1", text: "x" },
+          summary: "s",
+        },
+      }),
+    ).rejects.toThrow(/ERR_CAPTURE_CONNECTOR_UNCONFIGURED/);
+  }, 30_000);
+
+  test("act door: a denied type is refused at submit", async () => {
+    await expect(
+      agent.call("capture.submit", {
+        kind: "action",
+        payload: { actionType: "github.pr.merge", input: {}, summary: "s" },
+      }),
+    ).rejects.toThrow(/ERR_CAPTURE_ACTION_NOT_PROPOSABLE/);
+  }, 30_000);
 
   test("connector.remove deletes the sandbox leaf (or logs why it could not)", async () => {
     // The leaf existed: the calls above ran inside it.
