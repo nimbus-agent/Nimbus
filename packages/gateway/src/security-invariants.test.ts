@@ -2624,10 +2624,12 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "deps.limiter.tryAcquire(",
       "cap.kinds.includes(",
       "validateCapturePayload(kindRaw",
+      "deps.classifyAction?.(",
+      "deps.isServiceConfigured?.(",
       "missingItem(",
       "resolveLinkEndpoints(",
       "deps.store.countCreatedSince(",
-      'deps.store.countByState("proposed")',
+      "deps.store.countPendingActions(",
       "deps.db.transaction(",
     ];
     const idx = order.map((s) => body.indexOf(s));

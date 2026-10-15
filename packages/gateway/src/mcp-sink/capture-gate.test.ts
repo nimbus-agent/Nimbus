@@ -16,6 +16,7 @@ import { type CaptureCapability, resolveCaptureCapability } from "./capture-capa
 import {
   acceptCapture,
   type CaptureGateDeps,
+  captureStateFor,
   captureStatus,
   getCapture,
   listCaptures,
@@ -398,19 +399,25 @@ describe("list / get / status", () => {
 
   test("status reports enabled, kinds, counts and refusal counters; disabled names the reason", async () => {
     await submitCapture(deps, MCP, NOTE);
-    expect(captureStatus(deps)).toEqual({
+    expect(await captureStatus(deps)).toEqual({
       enabled: true,
       kinds: ["note", "decision", "term", "link"],
       pending: 0,
       maxPending: 100,
       maxPerHour: 30,
       refusedSinceStart: {},
+      actionEnabled: false,
+      proposableActionTypes: [],
+      actionPending: 0,
+      actionExpiringWithinHour: 0,
+      actionMaxPending: 10,
+      actionTtlHours: 24,
     });
     cap = resolveCaptureCapability(
       { ok: true, config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true } },
       undefined,
     );
-    expect(captureStatus(deps)).toMatchObject({ enabled: false, disabledReason: "policy" });
+    expect(await captureStatus(deps)).toMatchObject({ enabled: false, disabledReason: "policy" });
   });
 });
 
@@ -589,7 +596,7 @@ describe("submit — proposals", () => {
 
   test("captureStatus counts proposals as pending; kinds now lists all four", async () => {
     await submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
-    const s = captureStatus(deps);
+    const s = await captureStatus(deps);
     expect(s.pending).toBe(1);
     expect([...s.kinds].sort()).toEqual(["decision", "link", "note", "term"]);
   });
@@ -713,7 +720,7 @@ describe("accept", () => {
       kind: "term",
       payload: { term: "WAL", definition: "log" },
     });
-    expect(acceptCapture(deps, OWNER, id).state).toBe("accepted");
+    expect(acceptCapture(deps, OWNER, id)).toMatchObject({ state: "accepted" });
     expect(getTerm(db, "wal")).toMatchObject({
       status: "consolidated",
       definitionSource: "agent",
@@ -740,7 +747,7 @@ describe("accept", () => {
       kind: "link",
       payload: { fromItemId: a, toItemId: b, relation: "fixes" },
     });
-    expect(acceptCapture(deps, OWNER, id).state).toBe("accepted");
+    expect(acceptCapture(deps, OWNER, id)).toMatchObject({ state: "accepted" });
     const n = db
       .query("SELECT COUNT(*) AS n FROM graph_relation WHERE type = 'captured_fixes'")
       .get() as { n: number };
@@ -951,5 +958,128 @@ describe("revoke — accepted captures", () => {
   test("nativeStatus is null for notes and non-accepted rows", async () => {
     const n = (await submitCapture(deps, MCP, { kind: "note", payload: { body: "b" } })).id;
     expect(getCapture(deps, OWNER, n).nativeStatus).toBeNull();
+  });
+});
+
+describe("act door — submit (PR 3)", () => {
+  const ACT = {
+    kind: "action",
+    payload: { actionType: "slack.message.post", input: { text: "hi" }, summary: "why" },
+  };
+  let verdict: "proposable" | "denied" | "unknown";
+  let configured: boolean;
+  beforeEach(() => {
+    cap = onConfig({ kinds: ["note", "decision", "action"], actionMaxPending: 2 });
+    verdict = "proposable";
+    configured = true;
+    deps = {
+      ...deps,
+      classifyAction: () =>
+        verdict === "proposable"
+          ? { kind: "proposable" }
+          : verdict === "denied"
+            ? { kind: "denied", class: "vcs" }
+            : { kind: "unknown" },
+      isServiceConfigured: () => Promise.resolve(configured),
+      listProposableActionTypes: () => Promise.resolve(["slack.message.post"]),
+    };
+  });
+  test("stores proposed with expires_at = now + ttl; audited with actionType; no item", async () => {
+    const out = await submitCapture(deps, MCP, ACT);
+    expect(out).toEqual({ id: "cap_1", state: "proposed", expiresAt: clock + 24 * 3_600_000 });
+    expect(deps.store.get("cap_1")?.itemId).toBeNull();
+    expect(JSON.parse(auditRows().at(-1)?.action_json ?? "{}")).toMatchObject({
+      kind: "action",
+      actionType: "slack.message.post",
+    });
+  });
+  test("mcp_action locked: refused DISABLED, unaudited (step 1)", async () => {
+    cap = resolveCaptureCapability(
+      { ok: true, config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["action"] } },
+      { capabilitiesDisabled: new Set(["mcp_action"]) },
+    );
+    expect(await codeOfAsync(() => submitCapture(deps, MCP, ACT))).toBe("ERR_CAPTURE_DISABLED");
+    expect(auditRows()).toEqual([]);
+  });
+  test("5a not proposable / unknown: refused and audited", async () => {
+    verdict = "denied";
+    expect(await codeOfAsync(() => submitCapture(deps, MCP, ACT))).toBe(
+      "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+    );
+    verdict = "unknown";
+    expect(await codeOfAsync(() => submitCapture(deps, MCP, ACT))).toBe(
+      "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+    );
+    expect(auditRows().filter((r) => r.hitl_status === "rejected")).toHaveLength(2);
+  });
+  test("deps absent: refused NOT_PROPOSABLE (fail-closed)", async () => {
+    const { classifyAction: _c, ...rest } = deps;
+    expect(await codeOfAsync(() => submitCapture(rest, MCP, ACT))).toBe(
+      "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+    );
+  });
+  test("5b unconfigured connector: refused and audited", async () => {
+    configured = false;
+    expect(await codeOfAsync(() => submitCapture(deps, MCP, ACT))).toBe(
+      "ERR_CAPTURE_CONNECTOR_UNCONFIGURED",
+    );
+  });
+  test("action and native pending caps are separate", async () => {
+    await submitCapture(deps, MCP, ACT);
+    await submitCapture(deps, MCP, ACT);
+    expect(await codeOfAsync(() => submitCapture(deps, MCP, ACT))).toBe("ERR_CAPTURE_QUEUE_FULL");
+    const d = await submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } });
+    expect(d.state).toBe("proposed");
+  });
+  test("lazy expiry: listing after the TTL shows expired, with one expire audit row", async () => {
+    await submitCapture(deps, MCP, ACT);
+    clock += 24 * 3_600_000;
+    expect(listCaptures(deps, OWNER, {}).captures[0]?.state).toBe("expired");
+    expect(auditRows().filter((r) => r.action_type === "capture.action.expire")).toHaveLength(1);
+  });
+  test("reject works on a proposed action; revoke refuses on any action", async () => {
+    await submitCapture(deps, MCP, ACT);
+    expect(codeOf(() => revokeCapture(deps, OWNER, "cap_1"))).toBe("ERR_CAPTURE_STATE");
+    expect(rejectCapture(deps, OWNER, "cap_1").state).toBe("rejected");
+  });
+  test("a mcp_action lock after submit freezes accept; reject still works (Review Focus 3)", async () => {
+    await submitCapture(deps, MCP, ACT);
+    cap = resolveCaptureCapability(
+      {
+        ok: true,
+        config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["note", "action"] },
+      },
+      { capabilitiesDisabled: new Set(["mcp_action"]) },
+    );
+    const exec = { execute: () => Promise.resolve({ status: "ok" as const, result: {} }) };
+    expect(
+      await codeOfAsync(() => Promise.resolve(acceptCapture(deps, OWNER, "cap_1", exec))),
+    ).toBe("ERR_CAPTURE_DISABLED");
+    expect(deps.store.get("cap_1")?.state).toBe("proposed");
+    expect(rejectCapture(deps, OWNER, "cap_1").state).toBe("rejected");
+  });
+  test("captureStateFor: mcp only, no payload, NOT_FOUND for unknown", async () => {
+    await submitCapture(deps, MCP, ACT);
+    expect(captureStateFor(deps, MCP, "cap_1")).toEqual({
+      kind: "action",
+      state: "proposed",
+      expiresAt: clock + 24 * 3_600_000,
+    });
+    expect(codeOf(() => captureStateFor(deps, OWNER, "cap_1"))).toBe(
+      "ERR_CAPTURE_FORBIDDEN_CLIENT",
+    );
+    expect(codeOf(() => captureStateFor(deps, MCP, "cap_9"))).toBe("ERR_CAPTURE_NOT_FOUND");
+  });
+  test("captureStatus reports the act-door fields", async () => {
+    await submitCapture(deps, MCP, ACT);
+    expect(await captureStatus(deps)).toMatchObject({
+      actionEnabled: true,
+      proposableActionTypes: ["slack.message.post"],
+      actionPending: 1,
+      actionMaxPending: 2,
+      actionTtlHours: 24,
+      actionExpiringWithinHour: 0,
+      pending: 0,
+    });
   });
 });
