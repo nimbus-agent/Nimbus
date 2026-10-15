@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792005852460,
+  "lastUpdate": 1792060056932,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "96bb3a2591f999c2e8ed790ad281cf6ad40dcc9a",
-          "message": "chore(deps): refresh @nimbus-dev/sdk resolution to 1.10.0 (#959)\n\nClears the `sdk:Nimbus` edge in `audit:release-staleness`.\n\n**Lockfile-only.** Every workspace manifest already declares `^1.8.1`,\nwhich 1.10.0 satisfies — the `1.x` case the P2 progress log describes,\nwhere a lockfile refresh is sufficient and no manifest edit is needed.\n\n**Targets 1.10.0, not the 1.9.0 the sweep reported.** 1.10.0 published\nat 09:00Z today and was still inside the gate's 6h grace window, so the\nedge read green while actually sitting two minors behind. Bumping to\n1.9.0 would have gone red again this afternoon.\n\n**On the leftover 1.8.1 in the lockfile:** it remains at path\n`@nimbus-dev/client/@nimbus-dev/sdk` — nested inside a third-party\npackage, which is that package's business, not ours. The gate's reader\nis workspace-scoped and correctly reads the hoisted 1.10.0. This is the\nsame situation the P2 log already records.\n\nI also reverted a side effect: `bun update` adds `@nimbus-dev/sdk` as a\n**root** dependency, but the sdk belongs to the workspace packages, not\nthe root. The committed diff is `bun.lock` only.\n\n## Verification\n\n- `bun run typecheck` — PASS\n- `bunx biome check packages scripts` — PASS\n- `bun test packages/mcp-connectors` — **948 pass, 0 fail** (the\nconnectors import the sdk directly, so this is the suite that would\ncatch a breaking change)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-30T13:34:55+03:00",
-          "tree_id": "5e83ccf26bc448fa291c8ab2b3e510cb1756f96d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/96bb3a2591f999c2e8ed790ad281cf6ad40dcc9a"
-        },
-        "date": 1785408372420,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.2173920500012,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 310.39946009999767,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 266.38711204999817,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "be534a0e6f7eaa3ad83bef222257fa7aab2e7339",
+          "message": "ci: keep Bun's package cache on the workspace drive on Windows (#1659)\n\n## Summary\n\nSpeeds up dependency setup on the Windows CI legs. That step takes\n~193–212 s on each of the two Windows test shards from #1655.\n\n**Likely cause.** On hosted Windows runners the checkout is on `D:`\n(`D:\\a\\Nimbus\\...`), but `~/.bun/install/cache` sits under the user\nprofile on `C:`. Bun builds `node_modules` by hard-linking files out of\nthat cache. A hard link cannot cross volumes, so each install appears to\nfall back to copying about 1.3 GB of small files onto NTFS. It does so\neven when the download cache is an exact hit, which it was on #1655.\nRestoring the cache and installing Bun account for only the first few\nseconds of the step, which leaves roughly 3 minutes for `bun install\n--frozen-lockfile`.\n\n**Changes:**\n- `.github/actions/setup-nimbus-ci/action.yml`:\n- A new \"Locate the Bun package download cache\" step. On Windows it sets\n`BUN_INSTALL_CACHE_DIR=<workspace drive>:\\bun-install-cache`, which is\non the same drive as the checkout but outside it. The `actions/cache`\nstep caches that path.\n- Linux and macOS keep `~/.bun/install/cache` unchanged. The cache\nentry's version hashes the path, so changing it would cold-miss their\ncaches.\n- \"Install and verify dependencies\" now posts the install's duration as\na `::notice title=bun install (<OS>)::N s` annotation. The result can\nthen be read from the check run without downloading the whole job log.\n- `scripts/ci/setup-windows-dev-drive.ps1`: adds a Defender exclusion\nfor the relocated cache directory. `bun.exe` is already excluded as a\nprocess.\n\n## Related Issue\n\nNone. This continues the Windows-leg speed-up work: #1649, #1651, #1654\nand #1655.\n\n## Type of Change\n\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [ ] All existing tests pass (`bun test`). No test or source file\nchanges; CI runs the suite.\n- [ ] New behaviour is covered by tests. Not applicable: this is CI\nconfiguration, and its effect is measured by the new annotation.\n- [x] No `any` types introduced\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no runtime code touched)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] No source files changed\n\n## Testing\n\n- `bun run preflight:fast` passes locally.\n- I checked the path derivation with\n`GITHUB_WORKSPACE='D:\\a\\Nimbus\\Nimbus'`, which gives\n`D:\\bun-install-cache`.\n- The real test is this PR's Windows legs:\n- The first run cold-misses the Windows download cache, because the\ncached path changed.\n- Compare the `bun install (Windows)` notice and the setup step's time\nagainst the ~193–212 s baseline. A fair comparison needs a warm-cache\nrun, either a re-push or the first `main` push after merge.\n\n## Notes for Reviewers\n\n- **Not yet confirmed:** that Bun falls back to copying when a hard link\nfails across volumes. I couldn't confirm it from the job log, because\nthe log host isn't reachable from where I ran this. The change does no\nharm either way, and the new notice will show the actual install time.\n- `release.yml` and the push matrix share this composite action, so\ntheir Windows jobs also get the new location. Each Windows cache entry\nmisses once.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_014HT9yGfRK52JPScsN6EVuP\n\n---\n_Generated by [Claude\nCode](https://claude.ai/code/session_014HT9yGfRK52JPScsN6EVuP)_\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Windows CI now stores Bun package downloads on the workspace drive;\nLinux and macOS continue using the existing cache location.\n* Dependency setup now reports how long installation took in the GitHub\nActions run.\n* Windows Dev Drive configuration now includes the Bun download cache\namong its Defender exclusions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude <noreply@anthropic.com>",
+          "timestamp": "2026-10-15T13:16:07+03:00",
+          "tree_id": "c1c9f3a7f10a8b1b68f5c36df3282c940438fcc8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/be534a0e6f7eaa3ad83bef222257fa7aab2e7339"
+        },
+        "date": 1792060051993,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 238.91833595000026,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 237.43946754998979,
             "unit": "ms"
           }
         ]
