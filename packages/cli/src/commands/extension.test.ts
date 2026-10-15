@@ -12,6 +12,7 @@ const extensionMod = await import("./extension.ts");
 const {
   fetchSandboxPosture,
   formatEnabledLine,
+  formatRunGrantLine,
   formatExtensionInfoHuman,
   formatExtensionListTable,
   hasFlag,
@@ -22,8 +23,10 @@ const {
   runExtensionInstall,
   runExtensionKeygen,
   runExtensionList,
+  runExtensionApprove,
   runExtensionRehash,
   runExtensionRemove,
+  runExtensionRevoke,
   runExtensionSign,
   runExtensionSyncWithCaller,
   runExtensionUpdateWithCaller,
@@ -398,6 +401,100 @@ describe("runExtensionRehash", () => {
     ]);
     await runExtensionRehash(client, ["rehash", "x"], ["x"]);
     expect(out.stdout).toContain("unchanged");
+  });
+});
+
+describe("formatRunGrantLine", () => {
+  const grant = { serviceId: "ext_x", version: "1.0.0", treeDigest: "d", modelAccess: false };
+  test("none, current, model access, and STALE on a version or digest change", () => {
+    expect(formatRunGrantLine({ version: "1.0.0" })).toBe("none");
+    expect(formatRunGrantLine({ version: "1.0.0", runGrant: null })).toBe("none");
+    expect(formatRunGrantLine({ version: "1.0.0", tree_digest: "d", runGrant: grant })).toBe(
+      "ext_x",
+    );
+    expect(
+      formatRunGrantLine({
+        version: "1.0.0",
+        tree_digest: "d",
+        runGrant: { ...grant, modelAccess: true },
+      }),
+    ).toBe("ext_x, model access");
+    expect(formatRunGrantLine({ version: "2.0.0", tree_digest: "d", runGrant: grant })).toContain(
+      "STALE: approved for 1.0.0",
+    );
+    expect(formatRunGrantLine({ version: "1.0.0", tree_digest: null, runGrant: grant })).toContain(
+      "STALE",
+    );
+  });
+});
+
+describe("runExtensionApprove / runExtensionRevoke", () => {
+  const origIsTty = process.stdout.isTTY;
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: origIsTty });
+  });
+
+  test("both throw when the id is missing", async () => {
+    const { client } = createMockIpcClient([]);
+    await expect(runExtensionApprove(client, ["approve"], [])).rejects.toThrow(/extension approve/);
+    await expect(runExtensionRevoke(client, ["revoke"], [])).rejects.toThrow(/extension revoke/);
+  });
+
+  test("both refuse without --yes in non-TTY mode, before any call", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const { client, calls } = createMockIpcClient([]);
+    await expect(runExtensionApprove(client, ["approve", "x"], ["x"])).rejects.toThrow(
+      /Refusing to approve without confirmation/,
+    );
+    await expect(runExtensionRevoke(client, ["revoke", "x"], ["x"])).rejects.toThrow(
+      /Refusing to revoke without confirmation/,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  test("approve --yes --model calls extension.approveRun, answers the prompt, reports the grant", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const handlers = new Map<string, (params: unknown) => void>();
+    const { client, calls } = createMockIpcClient(
+      [{ grant: { extensionId: "x", serviceId: "ext_x", version: "1.0.0", modelAccess: true } }],
+      handlers,
+    );
+    await runExtensionApprove(client, ["approve", "x", "--yes", "--model"], ["x"]);
+    expect(calls[0]).toEqual({
+      method: "extension.approveRun",
+      params: { id: "x", modelAccess: true },
+    });
+    expect(handlers.has("consent.request")).toBe(true);
+    expect(out.stdout).toContain("x@1.0.0: approved to run as ext_x (model access)");
+  });
+
+  test("approve on a TTY without --model asks for no model access", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client, calls } = createMockIpcClient([
+      { grant: { extensionId: "x", serviceId: "ext_x", version: "1.0.0", modelAccess: false } },
+    ]);
+    await runExtensionApprove(client, ["approve", "x"], ["x"]);
+    expect(calls[0]).toEqual({
+      method: "extension.approveRun",
+      params: { id: "x", modelAccess: false },
+    });
+    expect(out.stdout).toContain("approved to run as ext_x");
+    expect(out.stdout).not.toContain("model access");
+  });
+
+  test("revoke --yes reports whether a grant existed", async () => {
+    const { client, calls } = createMockIpcClient([
+      { id: "x", revoked: true },
+      { id: "x", revoked: false },
+    ]);
+    await runExtensionRevoke(client, ["revoke", "x", "--yes"], ["x"]);
+    await runExtensionRevoke(client, ["revoke", "x", "-y"], ["x"]);
+    expect(calls.map((c) => c.method)).toEqual(["extension.revokeRun", "extension.revokeRun"]);
+    expect(out.stdout).toContain("x: run grant revoked");
+    expect(out.stdout).toContain("x: had no run grant");
   });
 });
 

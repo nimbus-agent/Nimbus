@@ -18,6 +18,32 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-15 — S3: extension runtime PR 2 of 4 — run grants (schema V69).**
+  An installed extension can now be APPROVED TO RUN, and the approval can be withdrawn. Nothing
+  spawns from it yet: that is PR 3. `nimbus extension approve <id> [--model] [--yes]` calls the new
+  CLI-only, LAN-forbidden `extension.approveRun`, which asks the local owner through the same
+  gate-only `ToolExecutor` install uses, under the new action type **`extension.run`** (added to the
+  I2 frozen HITL set). The handler refuses before any prompt unless the extension is enabled, its
+  whole tree has been adopted (`tree_digest` set; `nimbus extension rehash` otherwise), its manifest
+  and entry still match their install-time hashes, and the files on disk still match the adopted
+  digest. It does NOT pass the manifest's permissions through: `extensions/run-grant-resolve.ts`
+  derives a stable service id (`ext_` + the manifest id lowercased, runs of other characters
+  collapsed to `_`, at most 62 characters, refused when it equals or extends another grant's id at
+  an underscore boundary, kept across re-approvals), resolves every declared path to its canonical
+  form, refuses relative and missing paths, refuses any path that overlaps Nimbus's data, config or
+  sandbox directory (the list user MCP servers are already checked against), refuses a write path
+  inside or containing the extension's own directory, adds the install directory as a read, and
+  lowercases and dedupes hosts. The owner approves those resolved values, and they are what schema
+  **V69** stores in `extension_run_grant`, together with the approved version and tree digest. The
+  tree is hashed again after approval, so bytes that change during the prompt are not granted. A
+  grant for bytes that later change approves nothing (`nimbus extension info` now prints a `Run
+  grant:` line and marks such a grant `STALE`). `nimbus extension revoke <id> [--yes]`
+  (`extension.revokeRun`) deletes the grant without a prompt, since revoking only narrows access,
+  and `extension.remove` deletes it with the extension. The Bun runtime's own read paths are NOT
+  stored: they change with a Bun upgrade, so the runtime will add them at each spawn. `--model`
+  records model access for when the runtime exists; the `user_mcp_model_access` policy lockoff will
+  cover it. No new invariant, no static rule, no egress class; not on the Tauri allowlist (still 107).
+
 - **2026-10-14 — S3: the MCP capture sink, PR 2 of 3 — proposals for decisions, terms and links (invariant I28, schema V68).**
   An editor agent can now PROPOSE a decision, a glossary term or a link between two items through
   `propose_decision`, `propose_term` and `propose_link`, registered per `[mcp_sink] kinds`. A proposal

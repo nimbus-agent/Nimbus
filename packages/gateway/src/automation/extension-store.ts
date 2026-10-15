@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { deleteExtensionRunGrant } from "./extension-run-grant-store.ts";
 
 export type ExtensionRow = {
   id: string;
@@ -159,6 +160,9 @@ export function deleteExtensionById(db: Database, id: string): string | null {
   if (path === null) {
     return null;
   }
+  // The run grant goes with its extension even on a connection with foreign keys off, where
+  // `ON DELETE CASCADE` would not fire. A reinstall must be approved to run afresh.
+  deleteExtensionRunGrant(db, id);
   dbRun(db, `DELETE FROM extension WHERE id = ?`, [id]);
   return path;
 }

@@ -142,6 +142,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "extension.autoUpdate",
   "extension.downgrade",
   "extension.install",
+  // The owner's standing approval to RUN an installed extension (extension-runtime design § 4.4):
+  // a grant is bound to the approved bytes and resolved permissions. Gate site:
+  // ipc/automation-rpc.ts handleExtensionApproveRun.
+  "extension.run",
   "connector.addMcp",
   "data.export",
   "connector.reindex",

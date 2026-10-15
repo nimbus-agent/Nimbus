@@ -31,6 +31,7 @@ import {
 } from "../embedding-v6-sql.ts";
 import { ENTITY_METADATA_V54_SQL } from "../entity-metadata-v54-sql.ts";
 import { V31_EXTENSION_DEPENDENCY_SQL } from "../extension-dependency-v31-sql.ts";
+import { EXTENSION_RUN_GRANT_V69_SQL } from "../extension-run-grant-v69-sql.ts";
 import {
   EXTENSION_SESSION_V10_MIGRATION_SQL,
   EXTENSION_SESSION_V10_NO_VEC_MIGRATION_SQL,
@@ -627,6 +628,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   simpleStep(65, 66, "extension tree digest", EXTENSION_TREE_DIGEST_V66_SQL),
   simpleStep(66, 67, "MCP capture sink queue (capture)", CAPTURE_V67_SQL),
   { fromVersion: 67, toVersion: 68, apply: migrateIndexedV67ToV68 },
+  simpleStep(68, 69, "extension run grants", EXTENSION_RUN_GRANT_V69_SQL),
 ];
 
 /**

@@ -1,6 +1,12 @@
 import type { Database } from "bun:sqlite";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import {
+  deleteExtensionRunGrant,
+  getExtensionRunGrant,
+  listExtensionRunGrants,
+  upsertExtensionRunGrant,
+} from "../automation/extension-run-grant-store.ts";
 import {
   deleteExtensionById,
   type ExtensionRow,
@@ -43,7 +49,15 @@ import {
   ExtensionInstallNotApprovedError,
   installExtensionFromLocalDirectory,
 } from "../extensions/install-from-local.ts";
+import {
+  parseExtensionManifestJson,
+  resolveExtensionManifestPath,
+} from "../extensions/manifest.ts";
 import type { PublisherKeyFetcher } from "../extensions/registry-client.ts";
+import {
+  ExtensionRunGrantError,
+  resolveExtensionRunGrant,
+} from "../extensions/run-grant-resolve.ts";
 import { syncPublisherKeys } from "../extensions/sync.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
@@ -118,7 +132,19 @@ interface AutomationCtx {
   enforceAirGap?: boolean;
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
+  runGrant?: AutomationRunGrantDeps;
 }
+
+/**
+ * What `extension.approveRun` resolves a grant against. `protectedRoots` are the directories no
+ * extension may be granted (Nimbus's data, config and sandbox roots); without them the handler
+ * refuses rather than resolving against an empty list. `realpath` is injectable for tests.
+ */
+export type AutomationRunGrantDeps = {
+  readonly protectedRoots: readonly string[];
+  readonly realpath?: (p: string) => string;
+  readonly platform: NodeJS.Platform;
+};
 
 type AutomationHandler = (
   rec: Record<string, unknown> | undefined,
@@ -247,6 +273,15 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   },
 
   "extension.rehash": async (rec, ctx) => handleExtensionRehash(rec, ctx),
+
+  "extension.approveRun": async (rec, ctx) => handleExtensionApproveRun(rec, ctx),
+
+  "extension.revokeRun": (rec, ctx) => {
+    const id = requireString(rec, "id");
+    const revoked = deleteExtensionRunGrant(ctx.db, id);
+    emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "revokeRun", ok: true });
+    return { kind: "hit", value: { id, revoked } };
+  },
 
   "extension.sync": async (rec, ctx) => handleExtensionSync(rec, ctx),
 
@@ -456,6 +491,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
         extension: {
           ...row,
           ...resolveExtensionInfoExtras(row, ctx),
+          runGrant: getExtensionRunGrant(ctx.db, row.id),
           disabled_reason: signatureReason,
           signature_disabled: true,
           forwardDeps: fwd,
@@ -472,6 +508,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
       extension: {
         ...row,
         ...resolveExtensionInfoExtras(row, ctx),
+        runGrant: getExtensionRunGrant(ctx.db, row.id),
         forwardDeps: fwd,
         reverseDeps: rev,
       },
@@ -647,6 +684,162 @@ async function handleExtensionRehash(
   return { kind: "hit", value: { id, treeDigest, changed: true } };
 }
 
+/**
+ * Record the owner's standing approval to RUN an installed extension (extension-runtime design
+ * § 4.4), gated as `extension.run` — a member of the I2 frozen set. Nothing spawns from a grant
+ * yet; PR 3's runtime will read it.
+ *
+ * Every refusal below happens BEFORE the owner is asked, so the prompt is only ever raised for a
+ * grant that can be written: the extension must be enabled, its whole tree adopted (`tree_digest`
+ * set), its manifest and entry must still match their install-time hashes, and the tree on disk
+ * must still match the adopted digest. The manifest's declared permissions are resolved — service
+ * id derived, paths canonicalised and checked against Nimbus's own directories — so the owner
+ * approves the values that will be stored, not the manifest's. The tree is hashed again after
+ * approval; bytes that changed during the prompt are never the ones granted.
+ */
+async function handleExtensionApproveRun(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
+  const id = requireString(rec, "id");
+  const modelAccessRaw = rec?.["modelAccess"];
+  if (modelAccessRaw !== undefined && typeof modelAccessRaw !== "boolean") {
+    throw new AutomationRpcError(-32602, "modelAccess must be a boolean");
+  }
+  const modelAccess = modelAccessRaw === true;
+  const ownerGate = ctx.ownerGate;
+  if (ownerGate === undefined) {
+    throw new AutomationRpcError(-32603, "extension.approveRun requires the owner's HITL gate");
+  }
+  const deps = ctx.runGrant;
+  if (deps === undefined) {
+    throw new AutomationRpcError(
+      -32603,
+      "extension.approveRun requires the gateway's protected directories",
+    );
+  }
+  const row = assertRunnableExtension(ctx.db, id);
+  const permissions = readInstalledPermissions(row.install_path);
+  const existing = getExtensionRunGrant(ctx.db, id);
+  let resolved: ReturnType<typeof resolveExtensionRunGrant>;
+  try {
+    resolved = resolveExtensionRunGrant(
+      {
+        extensionId: id,
+        installPath: row.install_path,
+        permissions,
+        ...(existing !== null && { existingServiceId: existing.serviceId }),
+      },
+      {
+        platform: deps.platform,
+        protectedRoots: deps.protectedRoots,
+        otherServiceIds: listExtensionRunGrants(ctx.db)
+          .filter((g) => g.extensionId !== id)
+          .map((g) => g.serviceId),
+        realpath: deps.realpath ?? realpathSync.native,
+      },
+    );
+  } catch (e) {
+    if (e instanceof ExtensionRunGrantError) {
+      throw new AutomationRpcError(-32602, e.message);
+    }
+    throw e;
+  }
+  const treeDigest = row.tree_digest;
+  const approved = await ownerGate({
+    type: "extension.run",
+    payload: {
+      id,
+      version: row.version,
+      treeDigest,
+      serviceId: resolved.serviceId,
+      permissions: resolved.permissions,
+      modelAccess,
+      replaces:
+        existing === null
+          ? null
+          : {
+              version: existing.version,
+              treeDigest: existing.treeDigest,
+              permissions: existing.permissions,
+              modelAccess: existing.modelAccess,
+            },
+    },
+  });
+  if (!approved) {
+    throw new AutomationRpcError(
+      -32603,
+      `ERR_EXTENSION_RUN_NOT_APPROVED: running ${id} was not approved`,
+    );
+  }
+  if (digestOrRefuse(row.install_path) !== treeDigest) {
+    throw new AutomationRpcError(
+      -32603,
+      `ERR_EXTENSION_RUN_CHANGED: ${id}'s files changed while approval was pending; nothing was granted`,
+    );
+  }
+  const grant = {
+    extensionId: id,
+    serviceId: resolved.serviceId,
+    version: row.version,
+    treeDigest,
+    permissions: resolved.permissions,
+    modelAccess,
+    approvedAt: Date.now(),
+  };
+  upsertExtensionRunGrant(ctx.db, grant);
+  emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "approveRun", ok: true });
+  return { kind: "hit", value: { grant } };
+}
+
+/** The pre-prompt checks for `extension.approveRun`; returns the row with its digest known. */
+function assertRunnableExtension(db: Database, id: string): ExtensionRow & { tree_digest: string } {
+  const row = listExtensions(db).find((r) => r.id === id);
+  if (row === undefined) {
+    throw new AutomationRpcError(-32602, "Extension not found");
+  }
+  if (row.enabled !== 1) {
+    throw new AutomationRpcError(
+      -32602,
+      `ERR_EXTENSION_RUN_DISABLED: ${id} is disabled; enable it before approving it to run`,
+    );
+  }
+  const stored = row.tree_digest;
+  if (stored === null) {
+    throw new AutomationRpcError(
+      -32602,
+      `ERR_EXTENSION_RUN_UNHASHED: ${id}'s files have not been adopted; run \`nimbus extension rehash ${id}\` first`,
+    );
+  }
+  if (!verifyOneExtensionStrict(row)) {
+    throw new AutomationRpcError(
+      -32602,
+      `ERR_EXTENSION_RUN_MISMATCH: ${id}'s manifest or entry no longer matches what was installed; reinstall it instead`,
+    );
+  }
+  if (digestOrRefuse(row.install_path) !== stored) {
+    throw new AutomationRpcError(
+      -32602,
+      `ERR_EXTENSION_RUN_MISMATCH: ${id}'s files differ from the adopted tree; run \`nimbus extension rehash ${id}\` to review them`,
+    );
+  }
+  return { ...row, tree_digest: stored };
+}
+
+function readInstalledPermissions(
+  installPath: string,
+): ReturnType<typeof parseExtensionManifestJson>["permissions"] {
+  const manifestPath = resolveExtensionManifestPath(installPath);
+  if (manifestPath === undefined) {
+    throw new AutomationRpcError(-32602, "ERR_EXTENSION_RUN_MISMATCH: manifest missing");
+  }
+  try {
+    return parseExtensionManifestJson(readFileSync(manifestPath, "utf8")).permissions;
+  } catch (e) {
+    throw new AutomationRpcError(-32602, e instanceof Error ? e.message : String(e));
+  }
+}
+
 function digestOrRefuse(installPath: string): string {
   try {
     return computeExtensionTreeDigest(installPath);
@@ -678,6 +871,7 @@ export async function dispatchAutomationRpc(options: {
   enforceAirGap?: boolean;
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
+  runGrant?: AutomationRunGrantDeps;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -692,6 +886,7 @@ export async function dispatchAutomationRpc(options: {
     ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
     ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
     ...(options.ownerGate !== undefined && { ownerGate: options.ownerGate }),
+    ...(options.runGrant !== undefined && { runGrant: options.runGrant }),
   };
   return await handler(asRecord(options.params), ctx);
 }

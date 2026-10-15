@@ -4352,6 +4352,33 @@ nimbus extension rehash com.example.notion --yes
 
 ---
 
+### `nimbus extension approve <id> [--model] [--yes]`
+
+Approve an installed extension to run. **Nothing runs it yet**: this records the approval the extension runtime will require, and the runtime lands in a later release.
+
+The gateway resolves what the grant would allow and asks you to approve exactly that (HITL action type `extension.run`): the extension's id, version and tree digest, the service id its tools will appear under (`ext_` plus the manifest id, lowercased, for example `ext_com_example_notion`), and its permissions. The permissions are not the manifest's as written: every declared path is resolved to its real location, and the approval is refused, without a prompt, when a path is relative or missing, when it overlaps Nimbus's own data, config or sandbox directory, or when a write path is inside the extension's own directory. The extension's install directory is added as a read, and network hosts are lowercased.
+
+It also refuses without asking when the extension is disabled, when its files have never been adopted (run `nimbus extension rehash <id>` first), or when its files no longer match what was adopted or installed. A grant is tied to the exact version and files you approved: after an update, `nimbus extension info` shows the grant as `STALE` and you approve again. Re-approving keeps the same service id.
+
+`--model` also lets the model call the extension's tools, once the runtime exists. Without it, only you can. `--yes` approves on your behalf; without a TTY and without `--yes` the command refuses.
+
+```bash
+nimbus extension approve com.example.notion
+nimbus extension approve com.example.notion --model --yes
+```
+
+---
+
+### `nimbus extension revoke <id> [--yes]`
+
+Withdraw an extension's run grant. It asks for confirmation on a TTY (`--yes` skips it; without a TTY, `--yes` is required) but not through the gateway's HITL gate, since revoking only takes access away. Removing an extension also removes its grant.
+
+```bash
+nimbus extension revoke com.example.notion --yes
+```
+
+---
+
 ### `nimbus extension list [--tree] [--json]`
 
 List installed extensions with their status (`enabled` / `disabled` / `disabled (signature)`).

@@ -317,6 +317,57 @@ describe("I2 — HITL frozen-set membership", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  test("extension.run is gated: approveRun REFUSES without the executor gate and grants nothing on a denial", async () => {
+    // The standing approval to RUN an extension. Same shape as install: the frozen-set membership
+    // is backed by a handler that cannot write a grant without the executor's gate saying yes.
+    expect(HITL_REQUIRED.has("extension.run")).toBe(true);
+    const { dispatchAutomationRpc } = await import("./ipc/automation-rpc.ts");
+    const { getExtensionRunGrant } = await import("./automation/extension-run-grant-store.ts");
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-i2-ext-run-"));
+    try {
+      const src = join(tmp, "src");
+      mkdirSync(join(src, "dist"), { recursive: true });
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "i2.run", version: "1.0.0", entry: "dist/index.js" }),
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+      const db = new Database(":memory:");
+      LocalIndex.ensureSchema(db);
+      await dispatchAutomationRpc({
+        method: "extension.install",
+        params: { sourcePath: src },
+        db,
+        extensionsDir: join(tmp, "extensions"),
+        ownerGate: async () => true,
+      });
+      const base = {
+        method: "extension.approveRun",
+        params: { id: "i2.run" },
+        db,
+        runGrant: { protectedRoots: [join(tmp, "protected")], platform: process.platform },
+      };
+      await expect(dispatchAutomationRpc(base)).rejects.toThrow(/requires the owner's HITL gate/);
+      const types: string[] = [];
+      await expect(
+        dispatchAutomationRpc({
+          ...base,
+          ownerGate: async (a) => {
+            types.push(a.type);
+            return false;
+          },
+        }),
+      ).rejects.toThrow(/ERR_EXTENSION_RUN_NOT_APPROVED/);
+      expect(types).toEqual(["extension.run"]);
+      expect(getExtensionRunGrant(db, "i2.run")).toBeNull();
+      const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers.ts");
+      expect(dispatchers).toMatch(/OWNER_GATED_EXTENSION_METHODS[^;]*"extension\.approveRun"/);
+      db.close();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("I3 — HITL gate consults action.type (not payload.mcpToolId)", () => {

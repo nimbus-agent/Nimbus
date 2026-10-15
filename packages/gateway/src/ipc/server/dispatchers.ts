@@ -1890,6 +1890,7 @@ function buildExtensionGateExecutor(
 const OWNER_GATED_EXTENSION_METHODS: ReadonlySet<string> = new Set([
   "extension.install",
   "extension.rehash",
+  "extension.approveRun",
 ]);
 
 function buildExtensionOwnerGate(
@@ -1933,6 +1934,14 @@ async function dispatchExtensionAutomationRpc(
         : { enforceAirGap: ctx.options.extensionsEnforceAirGap }),
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
       ...(ownerGate === undefined ? {} : { ownerGate }),
+      ...(ctx.options.connectorMesh === undefined
+        ? {}
+        : {
+            runGrant: {
+              protectedRoots: ctx.options.connectorMesh.userMcpProtectedRoots(),
+              platform: process.platform,
+            },
+          }),
     });
     if (out.kind === "hit") {
       return out.value;

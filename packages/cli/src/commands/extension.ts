@@ -54,7 +54,34 @@ type ExtensionListEntry = {
   publisher?: { id: string; key?: string };
   forwardDeps?: Array<{ id: string; range: string }>;
   reverseDeps?: Array<{ extensionId: string; range: string }>;
+  tree_digest?: string | null;
+  runGrant?: RunGrantInfo | null;
 };
+
+type RunGrantInfo = {
+  serviceId: string;
+  version: string;
+  treeDigest: string;
+  modelAccess: boolean;
+};
+
+/**
+ * The `Run grant:` line of `extension info`. A grant is bound to the bytes the owner approved, so
+ * one whose version or tree digest no longer matches the installed extension approves nothing and
+ * says so, rather than reading as if it still applied.
+ */
+export function formatRunGrantLine(e: {
+  version: string;
+  tree_digest?: string | null;
+  runGrant?: RunGrantInfo | null;
+}): string {
+  const g = e.runGrant;
+  if (g === undefined || g === null) return "none";
+  if (g.version !== e.version || g.treeDigest !== e.tree_digest) {
+    return `${g.serviceId} (STALE: approved for ${g.version}; re-run \`nimbus extension approve\`)`;
+  }
+  return g.modelAccess ? `${g.serviceId}, model access` : g.serviceId;
+}
 
 export interface ExtensionListTableRow {
   id: string;
@@ -278,6 +305,7 @@ export async function runExtensionInfo(
   console.log(`Version:   ${e.version}`);
   console.log(`Enabled:   ${formatEnabledLine(e)}`);
   printExtensionInfoPublisher(e);
+  console.log(`Run grant: ${formatRunGrantLine(e)}`);
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");
   // Any reason the gateway attached — pre-T2 or signature (I16) — is printed verbatim. The
@@ -356,6 +384,64 @@ export async function runExtensionRehash(
       ? `${out.id}: adopted tree digest ${out.treeDigest}`
       : `${out.id}: unchanged (tree digest ${out.treeDigest})`,
   );
+}
+
+/**
+ * `nimbus extension approve <id> [--model] [--yes]` — the owner's standing approval to RUN an
+ * installed extension. The gateway resolves the grant (service id, canonical paths, hosts) and asks
+ * under the `extension.run` HITL type before writing anything; `--model` additionally lets the
+ * model call the extension's tools once the runtime exists. Nothing spawns from a grant yet.
+ */
+export async function runExtensionApprove(
+  client: IPCClient,
+  args: string[],
+  rest: string[],
+): Promise<void> {
+  const id = rest[0]?.trim() ?? "";
+  if (id === "") {
+    throw new Error("Usage: nimbus extension approve <id> [--model] [--yes]");
+  }
+  const accept = hasFlag(args, "--yes") || hasFlag(args, "-y");
+  if (!accept && process.stdout.isTTY !== true) {
+    throw new Error(
+      "Refusing to approve without confirmation in non-TTY mode. Pass --yes to proceed.",
+    );
+  }
+  registerConsentFor(client, accept ? { kind: "auto", sourceLabel: "--yes" } : { kind: "prompt" });
+  const out = await client.call<{
+    grant: { extensionId: string; serviceId: string; version: string; modelAccess: boolean };
+  }>("extension.approveRun", { id, modelAccess: hasFlag(args, "--model") });
+  const g = out.grant;
+  console.log(
+    `${g.extensionId}@${g.version}: approved to run as ${g.serviceId}${g.modelAccess ? " (model access)" : ""}`,
+  );
+}
+
+/** `nimbus extension revoke <id> [--yes]` — withdraw an extension's run grant. */
+export async function runExtensionRevoke(
+  client: IPCClient,
+  args: string[],
+  rest: string[],
+): Promise<void> {
+  const id = rest[0]?.trim() ?? "";
+  if (id === "") {
+    throw new Error("Usage: nimbus extension revoke <id> [--yes]");
+  }
+  const accept = hasFlag(args, "--yes") || hasFlag(args, "-y");
+  if (!accept) {
+    if (process.stdout.isTTY !== true) {
+      throw new Error(
+        "Refusing to revoke without confirmation in non-TTY mode. Pass --yes to proceed.",
+      );
+    }
+    const ok = await confirm({ message: `Revoke the run grant for extension "${id}"?` });
+    if (isCancel(ok) || ok !== true) {
+      console.log("Cancelled.");
+      return;
+    }
+  }
+  const out = await client.call<{ id: string; revoked: boolean }>("extension.revokeRun", { id });
+  console.log(out.revoked ? `${out.id}: run grant revoked` : `${out.id}: had no run grant`);
 }
 
 export async function runExtensionEnable(client: IPCClient, rest: string[]): Promise<void> {
@@ -573,7 +659,7 @@ export async function runExtensionSync(client: IPCClient, args: string[]): Promi
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | rehash <id> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | rehash <id> [--yes] | approve <id> [--model] [--yes] | revoke <id> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
 
 async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
   if (sub === "keygen") {
@@ -626,6 +712,12 @@ async function dispatchExtensionVoid(
     case "rehash":
       await runExtensionRehash(client, args, rest);
       return true;
+    case "approve":
+      await runExtensionApprove(client, args, rest);
+      return true;
+    case "revoke":
+      await runExtensionRevoke(client, args, rest);
+      return true;
     case "enable":
       await runExtensionEnable(client, rest);
       return true;
@@ -654,11 +746,13 @@ export async function runExtension(args: string[]): Promise<void> {
     throw new Error(gatewayNotRunningMessage(paths.demo === true));
   }
 
-  // `install` and `rehash` block on the owner's HITL prompt, so it gets the human-bound budget rather than the
-  // 30s default that would time out while the owner is still reading the prompt.
+  // `install`, `rehash` and `approve` block on the owner's HITL prompt, so they get the human-bound
+  // budget rather than the 30s default that would time out while the owner is still reading it.
   const client = createIpcClient(
     state.socketPath,
-    sub === "install" || sub === "rehash" ? INTERACTIVE_RPC_TIMEOUT_MS : undefined,
+    sub === "install" || sub === "rehash" || sub === "approve"
+      ? INTERACTIVE_RPC_TIMEOUT_MS
+      : undefined,
   );
   await client.connect();
   try {
