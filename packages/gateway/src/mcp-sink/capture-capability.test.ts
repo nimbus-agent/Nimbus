@@ -52,3 +52,49 @@ describe("resolveCaptureCapability", () => {
     expect(c.kinds).toEqual(["term", "note"]);
   });
 });
+
+describe("actionEnabled (PR 3)", () => {
+  const base = { ...DEFAULT_MCP_SINK_CONFIG, enabled: true };
+  const open = { capabilitiesDisabled: new Set<string>() };
+  test("off when action is not in kinds", () => {
+    expect(resolveCaptureCapability({ ok: true, config: base }, open).actionEnabled).toBe(false);
+  });
+  test("on when the sink is on and action is listed", () => {
+    const c = resolveCaptureCapability(
+      { ok: true, config: { ...base, kinds: ["note", "action"] } },
+      open,
+    );
+    expect(c.enabled).toBe(true);
+    expect(c.actionEnabled).toBe(true);
+  });
+  test("mcp_action lock-off disables actions only", () => {
+    const c = resolveCaptureCapability(
+      { ok: true, config: { ...base, kinds: ["note", "action"] } },
+      { capabilitiesDisabled: new Set(["mcp_action"]) },
+    );
+    expect(c.enabled).toBe(true);
+    expect(c.actionEnabled).toBe(false);
+  });
+  test("mcp_capture lock-off disables both", () => {
+    const c = resolveCaptureCapability(
+      { ok: true, config: { ...base, kinds: ["action"] } },
+      { capabilitiesDisabled: new Set(["mcp_capture"]) },
+    );
+    expect(c.enabled).toBe(false);
+    expect(c.actionEnabled).toBe(false);
+  });
+  test("absent policy accessor: actionEnabled false (fail-closed)", () => {
+    expect(
+      resolveCaptureCapability({ ok: true, config: { ...base, kinds: ["action"] } }, undefined)
+        .actionEnabled,
+    ).toBe(false);
+  });
+  test("sink off by config: actionEnabled false", () => {
+    expect(
+      resolveCaptureCapability(
+        { ok: true, config: { ...base, enabled: false, kinds: ["action"] } },
+        open,
+      ).actionEnabled,
+    ).toBe(false);
+  });
+});

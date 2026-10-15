@@ -22,7 +22,7 @@ import {
   upsertGraphRelation,
 } from "../graph/relationship-graph.ts";
 import { clampBody } from "../index/body-caps.ts";
-import { CaptureError, type CaptureKind, type ValidatedCapture } from "./capture-types.ts";
+import { CaptureError, type CaptureKind, type NativeValidatedCapture } from "./capture-types.ts";
 
 /**
  * Invariant I28's accept side: the ONLY caller of the agent-row writers (static D32(d)), itself
@@ -72,7 +72,10 @@ function termSuperseded(termKey: string): CaptureError {
  * `vetoed` row is the local model's classification ("not a domain term"), never the owner's: the
  * owner's explicit accept outranks it and takes the row over like any other.
  */
-export function assertAcceptable(db: Database, v: ValidatedCapture): LinkEndpoints | undefined {
+export function assertAcceptable(
+  db: Database,
+  v: NativeValidatedCapture,
+): LinkEndpoints | undefined {
   if (v.kind === "term") {
     if (termOwnership(db, v.payload.termKey)?.definitionSource === "manual") {
       throw termSuperseded(v.payload.termKey);
@@ -83,7 +86,7 @@ export function assertAcceptable(db: Database, v: ValidatedCapture): LinkEndpoin
   return undefined;
 }
 
-export function renderAcceptedItem(v: ValidatedCapture): { title: string; body: string } {
+export function renderAcceptedItem(v: NativeValidatedCapture): { title: string; body: string } {
   switch (v.kind) {
     case "note":
       return { title: v.payload.title, body: v.payload.body };
@@ -122,7 +125,7 @@ export function writeCaptureNative(
   p: {
     captureId: string;
     itemId: string;
-    v: ValidatedCapture;
+    v: NativeValidatedCapture;
     link: LinkEndpoints | undefined;
     nowMs: number;
   },
@@ -213,6 +216,8 @@ export function revokeCaptureNative(
       if (ref !== undefined) deleteGraphRelation(db, ...ref);
       return;
     }
+    case "action":
+      return;
   }
 }
 
@@ -234,5 +239,7 @@ export function captureNativeStatus(
       const ref = parseLinkRef(row.nativeRef);
       return ref !== undefined && graphRelationExists(db, ...ref) ? "owned" : "absent";
     }
+    case "action":
+      return "absent";
   }
 }

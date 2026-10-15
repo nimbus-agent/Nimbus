@@ -26,8 +26,8 @@ import {
 import type {
   DecisionPayload,
   LinkPayload,
+  NativeValidatedCapture,
   TermPayload,
-  ValidatedCapture,
 } from "./capture-types.ts";
 
 let db: Database;
@@ -64,7 +64,7 @@ function addCaptureItem(): string {
   return r.id;
 }
 
-const decision = (over: Partial<DecisionPayload> = {}): ValidatedCapture => ({
+const decision = (over: Partial<DecisionPayload> = {}): NativeValidatedCapture => ({
   kind: "decision",
   payload: {
     statement: "Use WAL",
@@ -75,11 +75,15 @@ const decision = (over: Partial<DecisionPayload> = {}): ValidatedCapture => ({
     ...over,
   },
 });
-const term = (over: Partial<TermPayload> = {}): ValidatedCapture => ({
+const term = (over: Partial<TermPayload> = {}): NativeValidatedCapture => ({
   kind: "term",
   payload: { term: "WAL", termKey: "wal", definition: "write-ahead log", synonyms: [], ...over },
 });
-const link = (from: string, to: string, over: Partial<LinkPayload> = {}): ValidatedCapture => ({
+const link = (
+  from: string,
+  to: string,
+  over: Partial<LinkPayload> = {},
+): NativeValidatedCapture => ({
   kind: "link",
   payload: { fromItemId: from, toItemId: to, relation: "fixes", note: null, ...over },
 });
@@ -294,8 +298,8 @@ describe("note", () => {
   });
 });
 
-function decisionAsNote(): ValidatedCapture {
-  return { kind: "note", payload: { title: "T", body: "B" } } as unknown as ValidatedCapture;
+function decisionAsNote(): NativeValidatedCapture {
+  return { kind: "note", payload: { title: "T", body: "B" } } as unknown as NativeValidatedCapture;
 }
 
 describe("renderAcceptedItem", () => {

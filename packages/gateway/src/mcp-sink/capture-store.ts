@@ -12,7 +12,10 @@ import {
 /** How long a rejected capture's row is kept before `pruneRejected` deletes it (spec § 5.2). */
 export const REJECTED_RETENTION_MS = 90 * 86_400_000;
 
-export type NewCaptureRow = Omit<CaptureRow, "nativeRef" | "decidedAt">;
+export type NewCaptureRow = Omit<
+  CaptureRow,
+  "nativeRef" | "decidedAt" | "expiresAt" | "outcomeRef" | "errorCode"
+>;
 
 type RawRow = {
   id: string;
@@ -44,6 +47,9 @@ function toRow(r: RawRow): CaptureRow {
     nativeRef: r.native_ref,
     createdAt: r.created_at,
     decidedAt: r.decided_at,
+    expiresAt: null,
+    outcomeRef: null,
+    errorCode: null,
   };
 }
 

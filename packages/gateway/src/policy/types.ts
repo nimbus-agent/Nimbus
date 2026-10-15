@@ -62,6 +62,11 @@ export const AI_V2_CAPABILITIES = [
   "user_mcp_model_access",
   /** The MCP capture sink accepting agent-submitted notes (I28). Locked off, `capture.submit` refuses. */
   "mcp_capture",
+  /**
+   * The MCP act door (I28, S3 PR 3): an agent PROPOSING a connector action for the owner to accept.
+   * Locked off, `propose_action` is not offered, submit refuses and accept refuses.
+   */
+  "mcp_action",
 ] as const;
 
 /** Where a persisted policy came from. */

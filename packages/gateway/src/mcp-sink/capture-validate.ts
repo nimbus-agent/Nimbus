@@ -254,6 +254,8 @@ export function validateCapturePayload(
       return { kind, payload: validateTermPayload(raw) };
     case "link":
       return { kind, payload: validateLinkPayload(raw) };
+    case "action":
+      return invalid("action payloads are validated by validateActionPayload");
   }
 }
 
@@ -268,6 +270,8 @@ export function referencedItemIds(v: ValidatedCapture): readonly string[] {
       return [];
     case "link":
       return [v.payload.fromItemId, v.payload.toItemId];
+    case "action":
+      return [];
   }
 }
 

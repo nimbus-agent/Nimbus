@@ -35,6 +35,9 @@ describe("CaptureStore", () => {
       ...note("cap_a", 1000),
       nativeRef: null,
       decidedAt: null,
+      expiresAt: null,
+      outcomeRef: null,
+      errorCode: null,
     });
     expect(store.get("cap_missing")).toBeUndefined();
   });

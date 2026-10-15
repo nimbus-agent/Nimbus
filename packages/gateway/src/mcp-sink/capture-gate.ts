@@ -25,6 +25,7 @@ import {
   type CaptureState,
   isCaptureKind,
   isCaptureState,
+  type NativeValidatedCapture,
   type ValidatedCapture,
 } from "./capture-types.ts";
 import {
@@ -388,11 +389,18 @@ export function revokeCapture(
 // ---- accept / reject (spec § 5.2) ---------------------------------------------------------------
 
 /** Re-validate a stored payload: the stored JSON is already rebuilt, so this only re-types it. */
-function storedPayload(row: CaptureRow): ValidatedCapture {
+function storedPayload(row: CaptureRow): NativeValidatedCapture {
   if (row.payloadJson === null) {
     throw new CaptureError("ERR_CAPTURE_STATE", `capture ${row.id} has no payload`);
   }
-  return validateCapturePayload(row.kind, JSON.parse(row.payloadJson) as unknown, row.createdAt);
+  const v = validateCapturePayload(row.kind, JSON.parse(row.payloadJson) as unknown, row.createdAt);
+  if (v.kind === "action") {
+    throw new CaptureError(
+      "ERR_CAPTURE_STATE",
+      `capture ${row.id} is an action, not a native kind`,
+    );
+  }
+  return v;
 }
 
 export function acceptCapture(

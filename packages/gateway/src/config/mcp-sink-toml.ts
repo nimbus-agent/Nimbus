@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 
-import { CAPTURE_KINDS, type CaptureKind, isCaptureKind } from "../mcp-sink/capture-types.ts";
+import {
+  CAPTURE_KINDS,
+  type CaptureKind,
+  DEFAULT_CAPTURE_KINDS,
+  isCaptureKind,
+} from "../mcp-sink/capture-types.ts";
 import {
   isTableHeader,
   parseBool,
@@ -16,13 +21,19 @@ export type NimbusMcpSinkToml = {
   readonly kinds: readonly CaptureKind[];
   readonly maxPerHour: number;
   readonly maxPending: number;
+  /** How long a proposed action may wait for the owner (spec § 5). */
+  readonly actionTtlHours: number;
+  /** Unexpired proposed actions allowed at once; separate from `maxPending`. */
+  readonly actionMaxPending: number;
 };
 
 export const DEFAULT_MCP_SINK_CONFIG: NimbusMcpSinkToml = Object.freeze({
   enabled: false,
-  kinds: Object.freeze([...CAPTURE_KINDS]),
+  kinds: Object.freeze([...DEFAULT_CAPTURE_KINDS]),
   maxPerHour: 30,
   maxPending: 100,
+  actionTtlHours: 24,
+  actionMaxPending: 10,
 });
 
 export class McpSinkConfigError extends Error {}
@@ -81,6 +92,12 @@ function applyKey(out: Draft, key: string, valRaw: string): void {
       return;
     case "max_pending":
       out.maxPending = boundedInt("max_pending", valRaw, 1, 10_000);
+      return;
+    case "action_ttl_hours":
+      out.actionTtlHours = boundedInt("action_ttl_hours", valRaw, 1, 168);
+      return;
+    case "action_max_pending":
+      out.actionMaxPending = boundedInt("action_max_pending", valRaw, 1, 100);
       return;
     default:
       return;

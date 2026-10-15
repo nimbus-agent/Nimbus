@@ -24,6 +24,8 @@ describe("parseNimbusTomlMcpSink", () => {
       kinds: ["note", "decision", "term", "link"],
       maxPerHour: 30,
       maxPending: 100,
+      actionTtlHours: 24,
+      actionMaxPending: 10,
     });
     expect(Object.isFrozen(c)).toBe(true);
   });
@@ -41,7 +43,14 @@ describe("parseNimbusTomlMcpSink", () => {
         "unknown_key = 1",
       ].join("\n"),
     );
-    expect(c).toEqual({ enabled: true, kinds: ["note"], maxPerHour: 5, maxPending: 7 });
+    expect(c).toEqual({
+      enabled: true,
+      kinds: ["note"],
+      maxPerHour: 5,
+      maxPending: 7,
+      actionTtlHours: 24,
+      actionMaxPending: 10,
+    });
   });
 
   test("a header that merely starts with [mcp_sink is not the section", () => {
@@ -54,7 +63,7 @@ describe("parseNimbusTomlMcpSink", () => {
     ["max_per_hour = 2.5", /max_per_hour/],
     ["max_pending = 0", /max_pending must be an integer 1\.\.10000/],
     ["max_pending = 10001", /max_pending/],
-    ['kinds = ["note", "action"]', /kinds: unknown kind "action"/],
+    ['kinds = ["note", "bogus"]', /kinds: unknown kind "bogus"/],
     ["kinds = []", /kinds must not be empty/],
     ['kinds = "note"', /kinds must be an array/],
     ['enabled = "yes"', /enabled must be true or false/],
@@ -77,5 +86,34 @@ describe("loadNimbusMcpSinkFromPath", () => {
     const r = loadNimbusMcpSinkFromPath(p);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("max_pending");
+  });
+});
+
+describe("[mcp_sink] act door keys (PR 3)", () => {
+  const nl = "\n";
+  const toml = (...lines: string[]) => ["[mcp_sink]", ...lines].join(nl) + nl;
+  test("default kinds do NOT include action; TTL 24, max pending 10", () => {
+    const c = parseNimbusTomlMcpSink(toml("enabled = true"));
+    expect(c.kinds).toEqual(["note", "decision", "term", "link"]);
+    expect(c.actionTtlHours).toBe(24);
+    expect(c.actionMaxPending).toBe(10);
+  });
+  test("action is accepted when listed explicitly", () => {
+    const c = parseNimbusTomlMcpSink(toml('kinds = ["note", "action"]'));
+    expect(c.kinds).toEqual(["note", "action"]);
+  });
+  test.each([
+    ["action_ttl_hours", "0"],
+    ["action_ttl_hours", "169"],
+    ["action_ttl_hours", "x"],
+    ["action_max_pending", "0"],
+    ["action_max_pending", "101"],
+  ])("%s = %s refuses loudly", (key, val) => {
+    expect(() => parseNimbusTomlMcpSink(toml(`${key} = ${val}`))).toThrow(McpSinkConfigError);
+  });
+  test("in-range values are read", () => {
+    const c = parseNimbusTomlMcpSink(toml("action_ttl_hours = 168", "action_max_pending = 1"));
+    expect(c.actionTtlHours).toBe(168);
+    expect(c.actionMaxPending).toBe(1);
   });
 });
