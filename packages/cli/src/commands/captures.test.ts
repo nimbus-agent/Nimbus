@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { parseCapturesArgs, runCapturesWith } from "./captures.ts";
+import {
+  actionAcceptTtyRefusal,
+  parseAcceptResult,
+  parseCapturesArgs,
+  runCapturesWith,
+} from "./captures.ts";
 import {
   doctorCapturesLines,
   formatCaptureDetail,
   formatCaptureTable,
   parseDetail,
+  parseStatus,
   stripControl,
 } from "./captures-format.ts";
 import { doctorPrintCaptures } from "./doctor-core.ts";
@@ -17,9 +23,40 @@ const ROW = {
   clientLabel: "claude-code",
   createdAt: 1_000,
   decidedAt: null,
+  expiresAt: null,
 };
 
-const HIDDEN_RE = /[\u202A-\u202E\u2066-\u2069\u200B-\u200D\uFEFF\u2028\u2029]/;
+// Mirrors captures-format.ts's UNSAFE_TEXT_RANGES minus C0/C1 (asserted separately). Built from
+// numeric code points at runtime: the format hook can rewrite regex escapes into the invisibles.
+const HIDDEN_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x00ad, 0x00ad],
+  [0x034f, 0x034f],
+  [0x061c, 0x061c],
+  [0x115f, 0x1160],
+  [0x17b4, 0x17b5],
+  [0x180e, 0x180e],
+  [0x200b, 0x200f],
+  [0x2028, 0x202e],
+  [0x2060, 0x206f],
+  [0x3164, 0x3164],
+  [0xfe00, 0xfe0f],
+  [0xfeff, 0xfeff],
+  [0xffa0, 0xffa0],
+  [0xfff9, 0xfffb],
+  [0xe0000, 0xe007f],
+  [0xe0100, 0xe01ef],
+];
+const HIDDEN_RE = new RegExp(
+  HIDDEN_RANGES.map(([lo, hi]) => `[${String.fromCodePoint(lo)}-${String.fromCodePoint(hi)}]`).join(
+    "|",
+  ),
+  "u",
+);
+const cp = (n: number): string => String.fromCodePoint(n);
+const LRM = cp(0x200e);
+const WJ = cp(0x2060);
+const TAG_I = cp(0xe0069);
+const VS16 = cp(0xfe0f);
 
 function fake(impl: (m: string, p: unknown) => unknown) {
   const calls: Array<[string, unknown]> = [];
@@ -102,7 +139,13 @@ describe("runCapturesWith", () => {
   });
 
   test("bidi override in a title never reaches the terminal (list and show)", async () => {
-    const evil = { ...ROW, title: "safe\u202Egnp.exe", clientLabel: "a\u2066b\u200Bc" };
+    const evil = {
+      ...ROW,
+      title: `safe${cp(0x202e)}gnp${LRM}.${WJ}exe${TAG_I}${VS16}`,
+      clientLabel: `a${cp(0x2066)}b${cp(0x200b)}c`,
+    };
+    // Self-check: the fixture really carries what HIDDEN_RE matches, so the assertions bite.
+    for (const ch of [cp(0x202e), LRM, WJ, TAG_I, VS16]) expect(ch).toMatch(HIDDEN_RE);
     const l = sink();
     await runCapturesWith(
       fake(() => ({ captures: [evil] })).client,
@@ -114,7 +157,7 @@ describe("runCapturesWith", () => {
     const d = sink();
     const detail = {
       ...evil,
-      payload: { body: "x\u202Ey" },
+      payload: { body: `x${cp(0x202e)}y${LRM}${WJ}${TAG_I}${VS16}` },
       payloadBytes: 3,
       itemId: null,
       nativeRef: null,
@@ -255,6 +298,10 @@ describe("doctor", () => {
     maxPending: 100,
     maxPerHour: 30,
     refusedSinceStart: {},
+    actionEnabled: false,
+    actionPending: 0,
+    actionMaxPending: 0,
+    actionExpiringWithinHour: 0,
   };
 
   test("disabled → nothing printed, exit 0", () => {
@@ -337,6 +384,26 @@ describe("stripControl / formatCaptureTable", () => {
     expect(stripControl("a\u202Eb\u2066c\u200Bd\uFEFFe\u2028f\u2029g")).toBe("abcdefg");
   });
 
+  test.each([
+    ["LRM", 0x200e],
+    ["word joiner", 0x2060],
+    ["soft hyphen", 0x00ad],
+    ["Arabic letter mark", 0x061c],
+    ["combining grapheme joiner", 0x034f],
+    ["Hangul filler", 0x3164],
+    ["variation selector 16", 0xfe0f],
+    ["TAG LATIN SMALL LETTER I", 0xe0069],
+    ["supplementary variation selector", 0xe0100],
+    ["interlinear annotation anchor", 0xfff9],
+  ])("strip removes %s", (_n, code) => {
+    expect(stripControl(`a${cp(code)}b`)).toBe("ab");
+  });
+
+  test("strip keeps ordinary non-ASCII text, astral included", () => {
+    const text = `caf${cp(0xe9)} ${cp(0x2014)} ok ${cp(0x2192)} ${cp(0x1f600)}`;
+    expect(stripControl(text)).toBe(text);
+  });
+
   test("detail keeps line structure of a multi-line value, stripping each line", () => {
     const out = formatCaptureDetail({
       id: "cap_1",
@@ -351,6 +418,9 @@ describe("stripControl / formatCaptureTable", () => {
       itemId: null,
       nativeRef: null,
       nativeStatus: null,
+      expiresAt: null,
+      outcomeRef: null,
+      errorCode: null,
     });
     const lines = out.split("\n");
     expect(lines).toContain("title: one");
@@ -389,7 +459,10 @@ describe("accept / reject / limit / native status", () => {
     expect(await runCapturesWith(f.client, { verb: "accept", id: "cap_1", json: false }, o.s)).toBe(
       0,
     );
-    expect(f.calls[0]).toEqual(["captures.accept", { id: "cap_1" }]);
+    expect(f.calls).toEqual([
+      ["captures.get", { id: "cap_1" }],
+      ["captures.accept", { id: "cap_1" }],
+    ]);
     expect(o.out.join("")).toBe(
       `Accepted cap_1: it now counts as a ${noun} (${nativeRef}) and is labelled agent-authored.
 `,
@@ -481,5 +554,392 @@ describe("accept with a malformed result", () => {
       await runCapturesWith(fake(() => ({})).client, { verb: "accept", id: "c", json: true }, o.s),
     ).toBe(1);
     expect(JSON.parse(o.out.join("")).error).toContain("malformed");
+  });
+});
+
+describe("captures accept — act door", () => {
+  const TTY = { stdin: true, stdout: true };
+  const ACTION = { kind: "action", payload: { actionType: "slack.message.post" } };
+
+  test("TTY guard: only for actions; both streams required (Review Focus 4)", () => {
+    expect(actionAcceptTtyRefusal("decision", { stdin: false, stdout: false })).toBeUndefined();
+    expect(actionAcceptTtyRefusal("action", { stdin: true, stdout: true })).toBeUndefined();
+    expect(actionAcceptTtyRefusal("action", { stdin: false, stdout: true })).toBe(
+      "nimbus captures accept requires an interactive terminal (TTY) to approve an agent-proposed action.",
+    );
+    expect(actionAcceptTtyRefusal("action", { stdin: true, stdout: false })).toBeDefined();
+  });
+
+  test.each([
+    [{ id: "cap_1", state: "executed", outcomeRef: "https://x/1" }, 0, "[ok] executed"],
+    [{ id: "cap_1", state: "executed" }, 0, "no outcome reference"],
+    [{ id: "cap_1", state: "rejected" }, 1, "[rejected] not executed — you declined the approval"],
+    [
+      { id: "cap_1", state: "failed", errorCode: "ERR_ACTION_TIMEOUT" },
+      1,
+      "may or may not have reached",
+    ],
+    [
+      { id: "cap_1", state: "failed", errorCode: "ERR_ACTION_TOOL_NOT_FOUND" },
+      1,
+      "[failed] ERR_ACTION_TOOL_NOT_FOUND",
+    ],
+  ])("result %p → exit %d, says %p", async (raw, exit, text) => {
+    const out: string[] = [];
+    const c = { call: (m: string) => Promise.resolve(m === "captures.accept" ? raw : ACTION) };
+    const code = await runCapturesWith(
+      c as never,
+      { verb: "accept", id: "cap_1", json: false },
+      { out: (s) => out.push(s), err: (s) => out.push(s) },
+      TTY,
+    );
+    expect(code).toBe(exit);
+    expect(out.join("")).toContain(text);
+  });
+
+  test("executed names the action type and the outcome reference", async () => {
+    const out: string[] = [];
+    const c = {
+      call: (m: string) =>
+        Promise.resolve(
+          m === "captures.accept"
+            ? { id: "cap_1", state: "executed", outcomeRef: "https://x/1" }
+            : ACTION,
+        ),
+    };
+    await runCapturesWith(
+      c as never,
+      { verb: "accept", id: "cap_1", json: false },
+      { out: (s) => out.push(s), err: (s) => out.push(s) },
+      TTY,
+    );
+    expect(out.join("")).toBe("[ok] executed slack.message.post (https://x/1)\n");
+  });
+
+  test("an ambiguous failure names the service", async () => {
+    const out: string[] = [];
+    const c = {
+      call: (m: string) =>
+        Promise.resolve(
+          m === "captures.accept"
+            ? { id: "cap_1", state: "failed", errorCode: "ERR_ACTION_DISPATCH" }
+            : ACTION,
+        ),
+    };
+    await runCapturesWith(
+      c as never,
+      { verb: "accept", id: "cap_1", json: false },
+      { out: (s) => out.push(s), err: (s) => out.push(s) },
+      TTY,
+    );
+    expect(out.join("")).toBe(
+      "[failed] ERR_ACTION_DISPATCH — the action may or may not have reached slack\n",
+    );
+  });
+
+  test("failed ERR_ACTION_TOOL_NOT_FOUND does NOT claim it may have reached the service", async () => {
+    const out: string[] = [];
+    const c = {
+      call: (m: string) =>
+        Promise.resolve(
+          m === "captures.accept"
+            ? { id: "cap_1", state: "failed", errorCode: "ERR_ACTION_TOOL_NOT_FOUND" }
+            : ACTION,
+        ),
+    };
+    await runCapturesWith(
+      c as never,
+      { verb: "accept", id: "cap_1", json: false },
+      { out: (s) => out.push(s), err: (s) => out.push(s) },
+      TTY,
+    );
+    expect(out.join("")).not.toContain("may or may not");
+  });
+
+  test("--json prints the raw action result with the same exit code", async () => {
+    const out: string[] = [];
+    const raw = { id: "cap_1", state: "rejected" };
+    const c = { call: (m: string) => Promise.resolve(m === "captures.accept" ? raw : ACTION) };
+    const code = await runCapturesWith(
+      c as never,
+      { verb: "accept", id: "cap_1", json: true },
+      { out: (s) => out.push(s), err: (s) => out.push(s) },
+      TTY,
+    );
+    expect(code).toBe(1);
+    expect(JSON.parse(out.join(""))).toEqual(raw);
+  });
+
+  test.each([
+    ["piped stdin", { stdin: false, stdout: true }],
+    ["redirected stdout", { stdin: true, stdout: false }],
+    ["no tty info (default)", undefined],
+  ])(
+    "action accept with %s refuses BEFORE captures.accept is called (Review Focus 4)",
+    async (_n, tty) => {
+      const calls: string[] = [];
+      const err: string[] = [];
+      const c = {
+        call: (m: string) => {
+          calls.push(m);
+          return Promise.resolve(ACTION);
+        },
+      };
+      const code = await runCapturesWith(
+        c as never,
+        { verb: "accept", id: "cap_1", json: false },
+        { out: () => {}, err: (s) => err.push(s) },
+        tty,
+      );
+      expect(code).toBe(1);
+      expect(calls).toEqual(["captures.get"]);
+      expect(err.join("")).toContain("requires an interactive terminal");
+    },
+  );
+
+  test("a failed captures.get fails the accept closed: no captures.accept call", async () => {
+    const calls: string[] = [];
+    const c = {
+      call: (m: string) => {
+        calls.push(m);
+        return Promise.reject(new Error("Capture not found"));
+      },
+    };
+    expect(
+      await runCapturesWith(
+        c as never,
+        { verb: "accept", id: "cap_1", json: false },
+        { out: () => {}, err: () => {} },
+        TTY,
+      ),
+    ).toBe(1);
+    expect(calls).toEqual(["captures.get"]);
+  });
+
+  test("a native accept with piped stdin still works (the guard is action-only)", async () => {
+    const c = {
+      call: (m: string) =>
+        Promise.resolve(
+          m === "captures.accept"
+            ? { id: "cap_1", state: "accepted", nativeRef: "capture:cap_1" }
+            : { kind: "decision", payload: {} },
+        ),
+    };
+    expect(
+      await runCapturesWith(
+        c as never,
+        { verb: "accept", id: "cap_1", json: false },
+        { out: () => {}, err: () => {} },
+      ),
+    ).toBe(0);
+  });
+
+  test("native accept is unchanged", async () => {
+    const out: string[] = [];
+    const c = {
+      call: () => Promise.resolve({ id: "cap_1", state: "accepted", nativeRef: "capture:cap_1" }),
+    };
+    expect(
+      await runCapturesWith(
+        c as never,
+        { verb: "accept", id: "cap_1", json: false },
+        { out: (s) => out.push(s), err: () => {} },
+      ),
+    ).toBe(0);
+    expect(out.join("")).toContain("now counts as a decision");
+  });
+
+  test("a malformed result still errors", async () => {
+    const c = { call: () => Promise.resolve({ state: "weird" }) };
+    expect(
+      await runCapturesWith(
+        c as never,
+        { verb: "accept", id: "cap_1", json: false },
+        { out: () => {}, err: () => {} },
+      ),
+    ).toBe(1);
+  });
+
+  test("parseAcceptResult: failed without a code and executed with a non-string ref", () => {
+    expect(() => parseAcceptResult({ state: "failed" })).toThrow("malformed");
+    expect(parseAcceptResult({ state: "executed", outcomeRef: 5 })).toEqual({ state: "executed" });
+  });
+
+  test.each([
+    [
+      "already swept to expired",
+      "ERR_CAPTURE_STATE: capture cap_1 is expired; only a proposed action can be accepted",
+    ],
+    [
+      "due but unswept",
+      "ERR_CAPTURE_EXPIRED: capture cap_1 expired; ask the agent to propose it again",
+    ],
+  ])(
+    "an expired action (%s) prints the gateway's refusal naming the state, exit 1",
+    async (_n, msg) => {
+      const err: string[] = [];
+      const c = {
+        call: (m: string) =>
+          m === "captures.accept" ? Promise.reject(new Error(msg)) : Promise.resolve(ACTION),
+      };
+      expect(
+        await runCapturesWith(
+          c as never,
+          { verb: "accept", id: "cap_1", json: false },
+          { out: () => {}, err: (s) => err.push(s) },
+          TTY,
+        ),
+      ).toBe(1);
+      expect(err.join("")).toBe(`${msg}\n`);
+    },
+  );
+
+  test("doctor: action pending line", () => {
+    const { lines } = doctorCapturesLines({
+      enabled: true,
+      kinds: ["action"],
+      pending: 0,
+      maxPending: 100,
+      maxPerHour: 30,
+      refusedSinceStart: {},
+      actionEnabled: true,
+      actionPending: 3,
+      actionMaxPending: 10,
+      actionExpiringWithinHour: 1,
+    });
+    expect(lines).toContain(
+      "[info] MCP capture sink: 3 agent-proposed actions awaiting review (1 expire within 1h) — nimbus captures",
+    );
+  });
+
+  test("doctor: action queue full → warning, exit 1 (mirrors the native queue-full line)", () => {
+    const { lines, exit } = doctorCapturesLines({
+      enabled: true,
+      kinds: ["action"],
+      pending: 0,
+      maxPending: 100,
+      maxPerHour: 30,
+      refusedSinceStart: {},
+      actionEnabled: true,
+      actionPending: 10,
+      actionMaxPending: 10,
+      actionExpiringWithinHour: 0,
+    });
+    expect(exit).toBe(1);
+    expect(lines).toContain(
+      "[warn] MCP capture sink: action queue full (10/10): new action proposals are being refused — nimbus captures",
+    );
+    expect(lines.some((l) => l.includes("awaiting review"))).toBe(false);
+  });
+
+  test("doctor: an older gateway's status (no action fields) parses to act door off, no line", () => {
+    const st = parseStatus({
+      enabled: true,
+      kinds: ["note"],
+      pending: 0,
+      maxPending: 100,
+      maxPerHour: 30,
+    });
+    expect(st).toMatchObject({
+      actionEnabled: false,
+      actionPending: 0,
+      actionMaxPending: 0,
+      actionExpiringWithinHour: 0,
+    });
+    expect(doctorCapturesLines(st).lines).toEqual([
+      "[ok] MCP capture sink: on (kinds: note). Review with `nimbus captures`.",
+    ]);
+  });
+});
+
+describe("action list / show formatting", () => {
+  const ACT = {
+    id: "cap_a",
+    kind: "action",
+    state: "proposed",
+    title: "slack.message.post: tell the team",
+    clientLabel: "agent",
+    createdAt: 0,
+    decidedAt: null,
+  };
+
+  test("a proposed action's STATE cell shows its expiry; other rows are unchanged", () => {
+    const now = 1_000_000;
+    const t = formatCaptureTable(
+      [
+        { ...ACT, expiresAt: now + 3 * 3_600_000 },
+        { ...ACT, state: "executed", expiresAt: now + 60_000 },
+        { ...ROW, expiresAt: null },
+      ],
+      now,
+    );
+    const lines = t.split("\n");
+    expect(lines[1]).toContain("exp 3h");
+    expect(lines[2]).toContain("executed");
+    expect(lines[2]).not.toContain("exp ");
+    expect(lines[3]).toContain("live");
+  });
+
+  test("an expiry already past (not yet swept) reads as exp 0s, never negative", () => {
+    expect(formatCaptureTable([{ ...ACT, expiresAt: 0 }], 10_000)).toContain("exp 0s");
+  });
+
+  test("parseList / parseDetail read the new fields leniently", () => {
+    const d = parseDetail({
+      ...ACT,
+      expiresAt: "soon",
+      outcomeRef: 3,
+      errorCode: null,
+      payload: null,
+      payloadBytes: 0,
+    });
+    expect(d.expiresAt).toBeNull();
+    expect(d.outcomeRef).toBeNull();
+    expect(d.errorCode).toBeNull();
+  });
+
+  test("show of an action prints Expires/Outcome/Error, the full input JSON and a labelled summary", () => {
+    const out = formatCaptureDetail(
+      parseDetail({
+        ...ACT,
+        state: "failed",
+        expiresAt: 86_400_000,
+        outcomeRef: "https://x/1",
+        errorCode: "ERR_ACTION_TIMEOUT",
+        payload: {
+          actionType: "slack.message.post",
+          input: { channel: "C1", text: `hi${cp(0x202e)}there`, nested: { a: [1, 2] } },
+          summary: "tell the team",
+        },
+        payloadBytes: 10,
+      }),
+    );
+    const lines = out.split("\n");
+    expect(lines).toContain("Expires: 1970-01-02T00:00:00.000Z");
+    expect(lines).toContain("Outcome: https://x/1");
+    expect(lines).toContain("Error: ERR_ACTION_TIMEOUT");
+    expect(lines).toContain("actionType: slack.message.post");
+    expect(lines).toContain("summary (agent-written, unverified): tell the team");
+    const i = lines.indexOf("input:");
+    expect(lines.slice(i + 1, i + 10)).toEqual([
+      "  {",
+      '    "channel": "C1",',
+      '    "text": "hithere",',
+      '    "nested": {',
+      '      "a": [',
+      "        1,",
+      "        2",
+      "      ]",
+      "    }",
+    ]);
+    expect(out).not.toMatch(HIDDEN_RE);
+  });
+
+  test("a non-action never prints Expires and keeps the plain summary label", () => {
+    const out = formatCaptureDetail(
+      parseDetail({ ...ROW, expiresAt: 5, payload: { summary: "s" }, payloadBytes: 1 }),
+    );
+    expect(out).not.toContain("Expires:");
+    expect(out).toContain("summary: s");
   });
 });

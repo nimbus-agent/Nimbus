@@ -1,5 +1,6 @@
 import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
+import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import {
@@ -11,7 +12,7 @@ import {
 } from "./captures-format.ts";
 
 export const CAPTURES_USAGE =
-  "usage: nimbus captures [list] [--state live|proposed|accepted|rejected|revoked] [--kind note|decision|term|link] [--limit 1-200] [--json]\n" +
+  "usage: nimbus captures [list] [--state live|proposed|accepted|rejected|revoked|executing|executed|failed|expired] [--kind note|decision|term|link|action] [--limit 1-200] [--json]\n" +
   "       nimbus captures show <id> [--json]\n" +
   "       nimbus captures revoke <id> [--json]\n" +
   "       nimbus captures accept <id> [--json]\n" +
@@ -57,26 +58,125 @@ function kindNoun(nativeRef: string): string {
   return nativeRef.includes("|") ? "link" : "glossary term";
 }
 
-function confirmation(verb: "revoke" | "accept" | "reject", id: string, raw: unknown): string {
+function confirmation(verb: "revoke" | "reject", id: string): string {
   if (verb === "reject") {
     return `Rejected ${id}. Nothing was written; the record is kept 90 days, then pruned.\n`;
-  }
-  if (verb === "accept") {
-    const ref = (raw as { nativeRef?: unknown } | null)?.nativeRef;
-    const nativeRef = typeof ref === "string" ? stripControl(ref) : "";
-    return `Accepted ${id}: it now counts as a ${kindNoun(nativeRef)} (${nativeRef}) and is labelled agent-authored.\n`;
   }
   return `Revoked ${id}: its item and embeddings are deleted; the record keeps no payload.\n`;
 }
 
-/** A success line needs a real accepted result; anything else is a gateway contract break. */
-function assertAcceptResult(raw: unknown): void {
-  const r = raw as { state?: unknown; nativeRef?: unknown } | null;
-  if (r?.state !== "accepted" || typeof r.nativeRef !== "string" || r.nativeRef.length === 0) {
-    throw new Error(
-      "captures.accept returned a malformed result; the capture was not confirmed accepted",
-    );
+type Tty = { readonly stdin: boolean; readonly stdout: boolean };
+
+/**
+ * An agent-proposed action is approved at the executor's HITL prompt, which needs a human at a
+ * terminal on BOTH ends: piped stdin cannot answer it honestly and redirected stdout hides it.
+ */
+export function actionAcceptTtyRefusal(kind: string | undefined, tty: Tty): string | undefined {
+  if (kind !== "action" || (tty.stdin && tty.stdout)) return undefined;
+  return "nimbus captures accept requires an interactive terminal (TTY) to approve an agent-proposed action.";
+}
+
+export type AcceptView =
+  | { state: "accepted"; nativeRef: string }
+  | { state: "executed"; outcomeRef?: string }
+  | { state: "rejected" }
+  | { state: "failed"; errorCode: string };
+
+/** Failures after which the request may already have reached the service. */
+const AMBIGUOUS = new Set(["ERR_ACTION_TIMEOUT", "ERR_ACTION_DISPATCH", "ERR_ACTION_INTERRUPTED"]);
+
+/** A success line needs a real result; anything else is a gateway contract break. */
+export function parseAcceptResult(raw: unknown): AcceptView {
+  const r = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+  const nativeRef = r["nativeRef"];
+  if (r["state"] === "accepted" && typeof nativeRef === "string" && nativeRef !== "") {
+    return { state: "accepted", nativeRef };
   }
+  if (r["state"] === "executed") {
+    const outcomeRef = r["outcomeRef"];
+    return typeof outcomeRef === "string"
+      ? { state: "executed", outcomeRef }
+      : { state: "executed" };
+  }
+  if (r["state"] === "rejected") return { state: "rejected" };
+  const errorCode = r["errorCode"];
+  if (r["state"] === "failed" && typeof errorCode === "string") {
+    return { state: "failed", errorCode };
+  }
+  throw new Error(
+    "captures.accept returned a malformed result; the capture was not confirmed accepted",
+  );
+}
+
+function acceptLine(
+  id: string,
+  v: AcceptView,
+  actionType: string | undefined,
+): { line: string; exit: number } {
+  const type = actionType === undefined ? "the action" : stripControl(actionType);
+  switch (v.state) {
+    case "accepted": {
+      const nativeRef = stripControl(v.nativeRef);
+      return {
+        line: `Accepted ${id}: it now counts as a ${kindNoun(nativeRef)} (${nativeRef}) and is labelled agent-authored.\n`,
+        exit: 0,
+      };
+    }
+    case "executed": {
+      const ref = v.outcomeRef === undefined ? "" : stripControl(v.outcomeRef);
+      return { line: `[ok] executed ${type} (${ref || "no outcome reference"})\n`, exit: 0 };
+    }
+    case "rejected":
+      return { line: "[rejected] not executed — you declined the approval\n", exit: 1 };
+    case "failed": {
+      const code = stripControl(v.errorCode);
+      const service =
+        actionType === undefined ? "the service" : (stripControl(actionType).split(".")[0] ?? "");
+      return {
+        line: AMBIGUOUS.has(v.errorCode)
+          ? `[failed] ${code} — the action may or may not have reached ${service || "the service"}\n`
+          : `[failed] ${code}\n`,
+        exit: 1,
+      };
+    }
+  }
+}
+
+/** `kind` and, for an action, its `payload.actionType` — read from ONE `captures.get`. */
+function acceptTarget(detail: unknown): { kind?: string; actionType?: string } {
+  const r = (typeof detail === "object" && detail !== null ? detail : {}) as Record<
+    string,
+    unknown
+  >;
+  const kind = typeof r["kind"] === "string" ? r["kind"] : undefined;
+  if (kind !== "action") return kind === undefined ? {} : { kind };
+  const payload = r["payload"];
+  const t =
+    typeof payload === "object" && payload !== null
+      ? (payload as Record<string, unknown>)["actionType"]
+      : undefined;
+  return typeof t === "string" ? { kind, actionType: t } : { kind };
+}
+
+async function runAccept(
+  c: Pick<IPCClient, "call">,
+  a: { id: string; json: boolean },
+  sink: Sink,
+  tty: Tty,
+): Promise<number> {
+  // NOT caught: the TTY guard depends on the kind this returns, so a failure fails the accept
+  // closed through the caller's catch and captures.accept is never called.
+  const target = acceptTarget(await c.call<unknown>("captures.get", { id: a.id }));
+  const refusal = actionAcceptTtyRefusal(target.kind, tty);
+  if (refusal !== undefined) {
+    if (a.json) sink.out(`${JSON.stringify({ error: refusal })}\n`);
+    else sink.err(`${refusal}\n`);
+    return 1;
+  }
+  const raw = await c.call<unknown>("captures.accept", { id: a.id });
+  const { line, exit } = acceptLine(a.id, parseAcceptResult(raw), target.actionType);
+  sink.out(a.json ? `${JSON.stringify(raw, undefined, 2)}\n` : line);
+  return exit;
 }
 
 type Sink = { out(s: string): void; err(s: string): void };
@@ -85,6 +185,8 @@ export async function runCapturesWith(
   c: Pick<IPCClient, "call">,
   a: CapturesArgs,
   sink: Sink,
+  // Fail-closed default: a caller that supplies no TTY facts cannot accept an action.
+  tty: Tty = { stdin: false, stdout: false },
 ): Promise<number> {
   try {
     if (a.verb === "list") {
@@ -107,9 +209,9 @@ export async function runCapturesWith(
       );
       return 0;
     }
+    if (a.verb === "accept") return await runAccept(c, a, sink, tty);
     const raw = await c.call<unknown>(`captures.${a.verb}`, { id: a.id });
-    if (a.verb === "accept") assertAcceptResult(raw);
-    sink.out(a.json ? `${JSON.stringify(raw, undefined, 2)}\n` : confirmation(a.verb, a.id, raw));
+    sink.out(a.json ? `${JSON.stringify(raw, undefined, 2)}\n` : confirmation(a.verb, a.id));
     return 0;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -127,13 +229,19 @@ export async function runCapturesCmd(argv: string[]): Promise<void> {
     throw new CliExit(2);
   }
   const paths = getCliPlatformPaths();
+  // One connection, one captures.get: the TTY guard lives inside runCapturesWith. An action
+  // accept blocks on the executor's HITL prompt (withGatewayIpc's default interactive consent
+  // handler), so the call gets the long budget rather than the 30s default.
   const code = await withGatewayIpc(
     (c) =>
-      runCapturesWith(c, a, {
-        out: (s) => process.stdout.write(s),
-        err: (s) => process.stderr.write(s),
-      }),
+      runCapturesWith(
+        c,
+        a,
+        { out: (s) => process.stdout.write(s), err: (s) => process.stderr.write(s) },
+        { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
+      ),
     paths,
+    a.verb === "accept" ? { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : {},
   );
   if (code !== 0) throw new CliExit(code);
 }

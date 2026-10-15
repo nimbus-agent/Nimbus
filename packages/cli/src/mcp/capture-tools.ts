@@ -8,19 +8,20 @@ import { type AdapterDeps, runTool, type ToolResult } from "./tool-runtime.ts";
  * rule: no runtime import cycle). Registered only when the gateway's `capture.status` says the
  * sink is enabled for the kind — see `captureToolsFor`.
  */
-type CaptureToolKind = "note" | "decision" | "term" | "link";
+type CaptureToolKind = "note" | "decision" | "term" | "link" | "action";
 
 export interface CaptureToolSpec {
   readonly name: string;
   readonly description: string;
   readonly schema: Record<string, z.core.$ZodType>;
   readonly annotations: {
-    readonly readOnlyHint: false;
+    readonly readOnlyHint: boolean;
     readonly destructiveHint: false;
     readonly idempotentHint: false;
     readonly openWorldHint: false;
   };
-  readonly kind: CaptureToolKind;
+  /** `status` is not a capture kind: `capture_status` is offered whenever any kind is enabled. */
+  readonly kind: CaptureToolKind | "status";
   run(
     deps: AdapterDeps,
     args: Record<string, unknown>,
@@ -43,18 +44,27 @@ function idOf(v: unknown): string {
   return id;
 }
 
+async function submitRaw(
+  c: IpcCallable,
+  kind: CaptureToolKind,
+  payload: Record<string, unknown>,
+  clientLabel: () => string | undefined,
+): Promise<unknown> {
+  const params: Record<string, unknown> = { kind, payload };
+  const label = clientLabel();
+  if (label !== undefined) {
+    params["clientLabel"] = label;
+  }
+  return c.call<unknown>("capture.submit", params);
+}
+
 async function submit(
   c: IpcCallable,
   kind: CaptureToolKind,
   payload: Record<string, unknown>,
   clientLabel: () => string | undefined,
 ): Promise<string> {
-  const params: Record<string, unknown> = { kind, payload };
-  const label = clientLabel();
-  if (label !== undefined) {
-    params["clientLabel"] = label;
-  }
-  return idOf(await c.call<unknown>("capture.submit", params));
+  return idOf(await submitRaw(c, kind, payload, clientLabel));
 }
 
 /** Copy only the keys the caller actually sent, so an omitted optional is absent, not undefined. */
@@ -195,13 +205,65 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
         ),
       ),
   },
+  {
+    name: "propose_action",
+    kind: "action",
+    // `captureToolsFor` appends this machine's proposable action types to the description.
+    description:
+      "Propose a connector action (post a message, create or update a ticket, send an email, …) for the " +
+      "user to approve. NOTHING is sent when you call this: the proposal waits on the user's machine " +
+      "until the owner runs `nimbus captures accept <id>` and approves the exact input shown. It expires " +
+      "if not accepted in time. Poll its outcome with capture_status. input is the tool's arguments as " +
+      "a JSON object. Proposable action types on this machine: ",
+    schema: {
+      actionType: z.string(),
+      input: z.record(z.string(), z.unknown()),
+      summary: z.string(),
+    },
+    annotations: WRITE_ANNOTATIONS,
+    run: (deps, args, clientLabel) =>
+      runTool(deps, async (c: IpcCallable) => {
+        const raw = await submitRaw(
+          c,
+          "action",
+          pick(args, ["actionType", "input", "summary"]),
+          clientLabel,
+        );
+        const id = idOf(raw);
+        const exp = (raw as Record<string, unknown>)["expiresAt"];
+        const when = typeof exp === "number" ? new Date(exp).toISOString() : "its TTL";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Proposed action ${id} — expires ${when}. It has NOT run: the owner must accept it with \`nimbus captures accept ${id}\` and approve the prompt. Poll capture_status with this id. Do not tell the user it was sent.`,
+            },
+          ],
+        };
+      }),
+  },
+  {
+    name: "capture_status",
+    kind: "status",
+    description:
+      "Read the state of a capture YOU submitted, by its id (proposed, executed, failed, rejected, " +
+      "expired, accepted, live, revoked). Returns the state and, for an executed action, a short link " +
+      "when the service returned one — never the payload.",
+    schema: { id: z.string() },
+    annotations: { ...WRITE_ANNOTATIONS, readOnlyHint: true },
+    run: (deps, args) =>
+      runTool(deps, async (c: IpcCallable) => ({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(await c.call<unknown>("capture.state", { id: args["id"] })),
+          },
+        ],
+      })),
+  },
 ];
 
-function enabledKinds(raw: unknown): readonly string[] {
-  if (typeof raw !== "object" || raw === null) {
-    return [];
-  }
-  const r = raw as Record<string, unknown>;
+function enabledKinds(r: Record<string, unknown>): readonly string[] {
   if (r["enabled"] !== true || !Array.isArray(r["kinds"])) {
     return [];
   }
@@ -224,11 +286,33 @@ export async function captureToolsFor(deps: AdapterDeps): Promise<readonly Captu
   if (deps.agentToolsDisabledReason?.() !== undefined) {
     return [];
   }
-  let kinds: readonly string[];
+  let status: Record<string, unknown>;
   try {
-    kinds = enabledKinds(await client.call<unknown>("capture.status", {}));
+    const raw = await client.call<unknown>("capture.status", {});
+    status = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
   } catch {
     return [];
   }
-  return CAPTURE_TOOL_SPECS.filter((s) => kinds.includes(s.kind));
+  const kinds = enabledKinds(status);
+  if (kinds.length === 0) return [];
+  // The act door has its own switch (policy `mcp_action` included): `"action"` in kinds alone
+  // is not enough, so propose_action follows `actionEnabled`, never the kinds list.
+  const actionOn = status["actionEnabled"] === true;
+  const types = Array.isArray(status["proposableActionTypes"])
+    ? status["proposableActionTypes"].filter((t): t is string => typeof t === "string")
+    : [];
+  return CAPTURE_TOOL_SPECS.flatMap((s): CaptureToolSpec[] => {
+    if (s.kind === "status") return [s];
+    if (s.kind === "action") {
+      return actionOn
+        ? [
+            {
+              ...s,
+              description: `${s.description}${types.length === 0 ? "(none configured)" : types.join(", ")}.`,
+            },
+          ]
+        : [];
+    }
+    return kinds.includes(s.kind) ? [s] : [];
+  });
 }

@@ -79,11 +79,17 @@ describe("runCapturesCmd", () => {
   });
 
   test("accept succeeds through the IPC fixture; bare accept exits 2", async () => {
-    const ipc = useIpc([{ id: "cap_1", state: "accepted", nativeRef: "capture:x" }]);
+    const ipc = useIpc([
+      { kind: "decision", payload: {} },
+      { id: "cap_1", state: "accepted", nativeRef: "capture:x" },
+    ]);
     const s = streams();
     try {
       await runCapturesCmd(["accept", "cap_1"]);
-      expect(ipc.calls).toEqual([{ method: "captures.accept", params: { id: "cap_1" } }]);
+      expect(ipc.calls).toEqual([
+        { method: "captures.get", params: { id: "cap_1" } },
+        { method: "captures.accept", params: { id: "cap_1" } },
+      ]);
       expect(s.out()).toContain("Accepted cap_1");
       const err = await runCapturesCmd(["accept"]).catch((e: unknown) => e);
       expect((err as CliExit).code).toBe(2);
