@@ -1934,7 +1934,7 @@ async function dispatchExtensionAutomationRpc(
         : { enforceAirGap: ctx.options.extensionsEnforceAirGap }),
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
       ...(ownerGate === undefined ? {} : { ownerGate }),
-      ...(ctx.options.connectorMesh === undefined
+      ...(method !== "extension.approveRun" || ctx.options.connectorMesh === undefined
         ? {}
         : {
             runGrant: {
