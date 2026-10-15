@@ -1951,7 +1951,9 @@ export function checkAgentProvenanceWriters(files: readonly FileEntry[]): Violat
 //     stays allowed. The import shape is D32(c)'s: the span between the keyword and `from` may not
 //     cross another `import`/`export` keyword or a completed `from "…"` clause, so in semicolon-free
 //     code an allowed import cannot swallow a forbidden one after it; the last alternative takes both
-//     a dynamic `import("…")` and a side-effect `import "…"`. (g) The `mcpToolId` literal appears under
+//     a dynamic `import("…")` and a side-effect `import "…"`. Separate passes catch `require("…")`
+//     (incl. `import X = require("…")`) and a backtick `import(`…`)`, and the executor specifier
+//     matches with any `.[cm]?[jt]s` extension or none (`../engine/executor.js` included). (g) The `mcpToolId` literal appears under
 //     mcp-sink/ only in capture-validate.ts, where a key of that name is REFUSED — the gateway, never
 //     the agent, chooses the tool (I42 pairing). Comments are stripped; strings are NOT (a key lives
 //     there). Stated bound, as D32(a): a dynamically composed specifier or key evades a text scan, and
@@ -1964,7 +1966,13 @@ const D32E_ALLOWED: readonly string[] = [
 ];
 const D32F_MODULE_RE =
   /\b(?:import|export)\b(?:(?!\bfrom\s*["']|\b(?:import|export)\b)[^;])*?\bfrom\s*["']([^"']+)["']|\bimport\s*\(?\s*["']([^"']+)["']/g;
-const D32F_FORBIDDEN_SPEC_RE = /(?:^|\/)engine\/executor(?:\.ts)?$|(?:^|\/)connectors\//;
+// A separate pass, so an `import … from` span can never swallow one: CommonJS `require("…")`,
+// which also covers TypeScript's `import X = require("…")`.
+const D32F_REQUIRE_RE = /\brequire\s*\(\s*["'`]([^"'`]+)["'`]/g;
+// A separate pass for a backtick dynamic `import(`…`)`, whose specifier may be a template.
+const D32F_TEMPLATE_IMPORT_RE = /\bimport\s*\(\s*`([^`]+)`/g;
+// Any emitted/source extension (`.ts`, `.js`, `.mjs`, `.cts`, …) or none.
+const D32F_FORBIDDEN_SPEC_RE = /(?:^|\/)engine\/executor(?:\.[cm]?[jt]s)?$|(?:^|\/)connectors\//;
 const D32G_LITERAL_RE = /mcpToolId/g;
 const D32G_ALLOWED = "packages/gateway/src/mcp-sink/capture-validate.ts";
 const MCP_SINK_PREFIX = "packages/gateway/src/mcp-sink/";
@@ -1988,9 +1996,11 @@ export function checkActDoorConfinement(files: readonly FileEntry[]): Violation[
       }
     }
     if (!f.relPath.startsWith(MCP_SINK_PREFIX)) continue;
-    for (const m of code.matchAll(D32F_MODULE_RE)) {
-      const spec = m[1] ?? m[2] ?? "";
-      if (D32F_FORBIDDEN_SPEC_RE.test(spec)) push("mcp-sink-no-executor-or-connectors", m.index);
+    for (const re of [D32F_MODULE_RE, D32F_REQUIRE_RE, D32F_TEMPLATE_IMPORT_RE]) {
+      for (const m of code.matchAll(re)) {
+        const spec = m[1] ?? m[2] ?? "";
+        if (D32F_FORBIDDEN_SPEC_RE.test(spec)) push("mcp-sink-no-executor-or-connectors", m.index);
+      }
     }
     if (f.relPath !== D32G_ALLOWED) {
       for (const m of code.matchAll(D32G_LITERAL_RE)) push("mcp-sink-mcptoolid-literal", m.index);

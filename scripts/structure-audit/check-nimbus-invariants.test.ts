@@ -2223,6 +2223,15 @@ describe("D32(e)(f)(g) — the act door", () => {
     'const m = await import("../engine/executor.ts");',
     'import "../connectors/side-effect.ts";',
     'import {\n  a,\n  b,\n} from "../connectors/registry.ts";',
+    'import { HITL_REQUIRED } from "../engine/executor.js";',
+    'import { HITL_REQUIRED } from "../engine/executor.mjs";',
+    'export { X } from "../engine/executor.mts";',
+    'const e = require("../engine/executor.ts");',
+    "const c = require('../connectors/registry.cjs');",
+    'import executor = require("../engine/executor");',
+    "const m = await import(`../engine/executor.ts`);",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a template specifier is the fixture
+    "const m = await import(`../connectors/${name}.ts`);",
   ])("(f) FAILS: an mcp-sink file %s", (line) => {
     const v = checkActDoorConfinement([file("packages/gateway/src/mcp-sink/capture-x.ts", line)]);
     expect(v).toHaveLength(1);
