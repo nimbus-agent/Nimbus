@@ -1,6 +1,7 @@
 import { normalizeTerm } from "../glossary/term-normalize.ts";
 import { BODY_MAX_PROSE, clampBody } from "../index/body-caps.ts";
 import {
+  type ActionPayload,
   CaptureError,
   type CaptureKind,
   type DecisionPayload,
@@ -29,17 +30,19 @@ export const PAYLOAD_MAX_BYTES = 65_536;
 // would let a client restyle or rewrite the owner's terminal, so it is stripped AT WRITE TIME, not
 // only by `nimbus captures`. The body keeps \t \n \r — it is markdown.
 // Also the Trojan Source set (CVE-2021-42574) that `nimbus captures` strips before DISPLAY: bidi
-// overrides/embeddings/isolates, zero-width characters, the BOM and the line/paragraph separators.
+// overrides/embeddings/isolates, zero-width characters, the BOM and the line/paragraph separators,
+// plus LRM/RLM (U+200E/F), U+2060-206F (word joiner, invisible operators, deprecated format
+// characters), the soft hyphen U+00AD, the Arabic letter mark U+061C and U+180E.
 // The owner approves the rendered text, so the stored text must be that same text: a term
 // "W<U+200B>AL" would otherwise normalize to a key that differs from the owner's manual `wal`,
 // pass the accept precondition, and render as a second "WAL". Keep in step with
 // `packages/cli/src/commands/captures-format.ts` UNSAFE_TEXT_RE, and keep these as escapes.
 const CONTROL_RE =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the purpose
-  /[\u0000-\u001f\u007f-\u009f\u200B-\u200D\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+  /[\u0000-\u001f\u007f-\u009f\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]/g;
 const BODY_CONTROL_RE =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the purpose
-  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200B-\u200D\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]/g;
 
 function invalid(detail: string): never {
   throw new CaptureError("ERR_CAPTURE_INVALID", detail);
@@ -239,6 +242,39 @@ function validateLinkPayload(raw: unknown): LinkPayload {
   });
 }
 
+export const ACTION_TYPE_MAX = 128;
+export const ACTION_SUMMARY_MAX = 300;
+
+/**
+ * Whitelist-rebuild an action proposal (spec section 7 step 5). `input` is kept VERBATIM: the owner
+ * approves the exact bytes that will be sent, so stripping a value would make the approved call
+ * differ from the dispatched one; the consent prompt renders invisibles visibly instead. An
+ * `mcpToolId` key REFUSES wherever the agent puts it, beside `actionType` or inside `input`: the
+ * dispatcher treats that key as a tool selector, and a refusal (unlike the rebuild's silent drop of
+ * an unknown sibling) is visible to the agent and lands in the refusal counter.
+ */
+export function validateActionPayload(raw: unknown): ActionPayload {
+  const o = asObject(raw);
+  const t = o["actionType"];
+  if (typeof t !== "string" || t === "" || t.length > ACTION_TYPE_MAX || /\s/.test(t)) {
+    invalid(
+      `actionType must be a non-empty string of at most ${String(ACTION_TYPE_MAX)} characters with no whitespace`,
+    );
+  }
+  const input = o["input"];
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    invalid("input must be a JSON object");
+  }
+  if (Object.hasOwn(o, "mcpToolId") || Object.hasOwn(input, "mcpToolId")) {
+    invalid("an action proposal may not carry mcpToolId: the gateway chooses the tool");
+  }
+  return capped<ActionPayload>({
+    actionType: t,
+    input: input as Record<string, unknown>,
+    summary: line(o["summary"], "summary", ACTION_SUMMARY_MAX, true) ?? "",
+  });
+}
+
 /** Whitelist-rebuild a payload of any kind (spec § 4.2). Prose truncates; structure refuses. */
 export function validateCapturePayload(
   kind: CaptureKind,
@@ -255,7 +291,7 @@ export function validateCapturePayload(
     case "link":
       return { kind, payload: validateLinkPayload(raw) };
     case "action":
-      return invalid("action payloads are validated by validateActionPayload");
+      return { kind, payload: validateActionPayload(raw) };
   }
 }
 

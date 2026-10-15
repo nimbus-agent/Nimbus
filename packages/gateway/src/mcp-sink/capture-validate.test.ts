@@ -354,3 +354,76 @@ describe("link endpoint ids are structure: refuse, never strip or truncate", () 
     expect(v.payload.fromItemId).toBe(" a:1 ");
   });
 });
+
+describe("action payload (PR 3)", () => {
+  const ok = {
+    actionType: "slack.message.post",
+    input: { channel: "C1", text: "hi" },
+    summary: "why",
+  };
+  test("rebuilds exactly {actionType, input, summary}; siblings dropped; input verbatim", () => {
+    const v = validateCapturePayload("action", { ...ok, extra: 1 }, 0);
+    expect(v).toEqual({ kind: "action", payload: ok });
+  });
+  test("an mcpToolId key in input REFUSES (never dropped)", () => {
+    expect(() =>
+      validateCapturePayload("action", { ...ok, input: { mcpToolId: "x", text: "hi" } }, 0),
+    ).toThrow(/mcpToolId/);
+  });
+  test("an mcpToolId key beside actionType REFUSES too", () => {
+    expect(() =>
+      validateCapturePayload("action", { ...ok, mcpToolId: "slack_admin_delete" }, 0),
+    ).toThrow(/mcpToolId/);
+  });
+  test.each([[0x200e], [0x200f], [0x2060], [0x2063], [0x00ad], [0x061c], [0x180e]])(
+    "code point %d is stripped from stored prose (widened Trojan-Source set)",
+    (cp) => {
+      const v = validateCapturePayload(
+        "action",
+        { ...ok, summary: `a${String.fromCodePoint(cp)}b` },
+        0,
+      );
+      expect(v.kind === "action" && v.payload.summary).toBe("ab");
+    },
+  );
+  test("the widened set also strips from note bodies", () => {
+    const p = validateNotePayload({ body: `a${String.fromCodePoint(0x200e)}b` });
+    expect(p.body).toBe("ab");
+  });
+  test.each([[null], [[]], ["s"], [3]])("input %p refuses", (input) => {
+    expect(() => validateCapturePayload("action", { ...ok, input }, 0)).toThrow(CaptureError);
+  });
+  test("actionType must be a non-empty string at most 128 with no whitespace", () => {
+    for (const t of ["", " ", "a".repeat(129), 7, "slack. message"]) {
+      expect(() => validateCapturePayload("action", { ...ok, actionType: t }, 0)).toThrow(
+        CaptureError,
+      );
+    }
+  });
+  test("summary truncates at 300 and is control-stripped; missing summary refuses", () => {
+    const esc = String.fromCodePoint(0x1b);
+    const v = validateCapturePayload(
+      "action",
+      { ...ok, summary: `a${esc}[2J${"x".repeat(400)}` },
+      0,
+    );
+    expect(v.kind === "action" && v.payload.summary.length).toBeLessThanOrEqual(300);
+    expect(v.kind === "action" && v.payload.summary.includes(esc)).toBe(false);
+    expect(() =>
+      validateCapturePayload("action", { actionType: ok.actionType, input: {} }, 0),
+    ).toThrow();
+  });
+  test("the 64 KiB total cap refuses", () => {
+    expect(() =>
+      validateCapturePayload("action", { ...ok, input: { text: "x".repeat(70_000) } }, 0),
+    ).toThrow(/exceeds/);
+  });
+  test("input values are NOT stripped: what is approved is what is sent", () => {
+    const rlo = String.fromCodePoint(0x202e);
+    const v = validateCapturePayload("action", { ...ok, input: { text: `a${rlo}b` } }, 0);
+    expect(v.kind === "action" && v.payload.input["text"]).toBe(`a${rlo}b`);
+  });
+  test("referencedItemIds is empty for an action", () => {
+    expect(referencedItemIds(validateCapturePayload("action", ok, 0))).toEqual([]);
+  });
+});
