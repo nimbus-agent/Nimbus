@@ -39,7 +39,8 @@ export interface CaptureStatusView {
 
 // Agent text is untrusted and printed to a terminal. Strip C0/DEL/C1 controls (escape sequences),
 // plus the characters that make the RENDERED line differ from its bytes (Trojan Source,
-// CVE-2021-42574) — the same set the gateway's consent prompt escapes (mcp-sink/capture-act.ts):
+// CVE-2021-42574) — the same set as the gateway's shared table (mcp-sink/invisible-text.ts),
+// which its consent prompt escapes and its write-time validation strips. Keep the two in step:
 // soft hyphen, combining grapheme joiner, Arabic letter mark, Hangul fillers, Khmer inherent
 // vowels, Mongolian vowel separator, zero-width characters and LRM/RLM, the Unicode
 // line/paragraph separators, bidi embeddings/overrides/isolates, word joiner and invisible

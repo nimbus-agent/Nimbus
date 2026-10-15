@@ -360,6 +360,20 @@ describe("pure helpers", () => {
       "Type: slack.message.post",
     ]);
   });
+  test("a hostile action type passed directly is escaped and stays on one Type line", () => {
+    const esc = String.fromCodePoint(0x1b);
+    const rlo = String.fromCodePoint(0x202e);
+    const s = formatActionConsent(
+      { captureId: "c", clientLabel: null, createdAt: 0, expiresAt: 0, summary: "s" },
+      `mcp_echo.echo${esc}[8m${rlo}\nInput: fake`,
+      { text: "hi" },
+    );
+    expect(s).not.toContain(esc);
+    expect(s).not.toContain(rlo);
+    expect(s.split("\n").filter((l) => l.startsWith("Type: "))).toEqual([
+      "Type: mcp_echo.echo\\u001b[8m\\u202e\\u000aInput: fake",
+    ]);
+  });
   test("the pretty-printed input keeps its layout newlines", () => {
     const s = formatActionConsent(
       { captureId: "c", clientLabel: null, createdAt: 0, expiresAt: 0, summary: "s" },

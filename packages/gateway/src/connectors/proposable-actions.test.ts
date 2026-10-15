@@ -119,6 +119,21 @@ describe("classifyActionType", () => {
     ).toEqual({ kind: "denied", class: "user_mcp_policy" });
     expect(classifyActionType("mcp_echo.", OPEN)).toEqual({ kind: "unknown" });
   });
+  test("user-MCP: a tool segment outside [A-Za-z0-9_-]{1,64} is unknown, even for a --model server", () => {
+    const esc = String.fromCodePoint(0x1b);
+    const rlo = String.fromCodePoint(0x202e);
+    for (const t of [
+      `mcp_echo.echo${esc}[8m${rlo}`,
+      "mcp_echo.a.b",
+      "mcp_echo.a b",
+      "mcp_echo.e/cho",
+      `mcp_echo.${"x".repeat(65)}`,
+    ]) {
+      expect(classifyActionType(t, OPEN)).toEqual({ kind: "unknown" });
+    }
+    expect(classifyActionType(`mcp_echo.${"x".repeat(64)}`, OPEN)).toEqual({ kind: "proposable" });
+    expect(classifyActionType("mcp_echo.do-it_2", OPEN)).toEqual({ kind: "proposable" });
+  });
 });
 
 describe("listProposableActionTypes", () => {

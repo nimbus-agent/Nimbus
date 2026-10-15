@@ -235,9 +235,26 @@ function isUserMcpType(actionType: string): boolean {
   return USER_MCP_SERVICE_ID_PATTERN.test(serviceOf(actionType));
 }
 
+/**
+ * The tool half of a user-MCP action type (after the first `.`): the same alphabet and length the
+ * engine allows a model-facing user-MCP tool name (`engine/user-mcp-agent-tools.ts`
+ * MODEL_TOOL_NAME_PATTERN / USER_MCP_TOOL_NAME_MAX). Anything else names no tool the owner could
+ * have meant and is rendered nowhere: it is UNKNOWN, refused.
+ */
+const USER_MCP_TOOL_SEGMENT_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+function userMcpToolSegmentOk(actionType: string): boolean {
+  return USER_MCP_TOOL_SEGMENT_PATTERN.test(actionType.slice(actionType.indexOf(".") + 1));
+}
+
 export function classifyActionType(actionType: string, ctx: ClassifyContext): ActionClassification {
   if (isUserMcpType(actionType)) {
-    if (userMcpToolKeyForActionType(actionType) === undefined) return { kind: "unknown" };
+    if (
+      userMcpToolKeyForActionType(actionType) === undefined ||
+      !userMcpToolSegmentOk(actionType)
+    ) {
+      return { kind: "unknown" };
+    }
     if (!ctx.userMcpModelAccessAllowed()) return { kind: "denied", class: "user_mcp_policy" };
     if (!ctx.modelAccessServices().has(serviceOf(actionType))) {
       return { kind: "denied", class: "user_mcp_no_model_access" };

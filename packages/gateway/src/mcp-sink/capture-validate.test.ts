@@ -321,6 +321,41 @@ describe("write-time Trojan Source stripping", () => {
     expect(p.title).toBe("T");
     expect(p.body).toBe("body\nline");
   });
+
+  // The shared invisible-text table (same set the consent prompt escapes and the CLI strips).
+  const TAG_I = String.fromCodePoint(0xe0069);
+  const VS16 = String.fromCodePoint(0xfe0f);
+  const HANGUL_FILLER = String.fromCodePoint(0x3164);
+  const TAB = String.fromCodePoint(0x09);
+  const LF = String.fromCodePoint(0x0a);
+  const CR = String.fromCodePoint(0x0d);
+
+  test.each([
+    ["TAG character", TAG_I],
+    ["U+FE0F", VS16],
+    ["U+3164", HANGUL_FILLER],
+  ])("%s is stripped from a note body and a term", (_name, ch) => {
+    const note = validateNotePayload({ title: `t${ch}`, body: `a${ch}b` });
+    expect(note.body).toBe("ab");
+    expect(note.title).toBe("t");
+    const v = validateCapturePayload("term", { term: `W${ch}AL`, definition: `d${ch}` }, NOW);
+    if (v.kind !== "term") throw new Error("kind");
+    expect(v.payload.term).toBe("WAL");
+    expect(v.payload.termKey).toBe("wal");
+    expect(v.payload.definition).toBe("d");
+  });
+
+  test("a whole TAG-character run (a hidden instruction) is removed, astral code points whole", () => {
+    const hidden = [..."ignore"]
+      .map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0)))
+      .join("");
+    expect(validateNotePayload({ body: `ok${hidden}` }).body).toBe("ok");
+  });
+
+  test("a body keeps tab, LF and CR", () => {
+    const p = validateNotePayload({ body: `a${TAB}b${CR}${LF}c${LF}` });
+    expect(p.body).toBe(`a${TAB}b${CR}${LF}c${LF}`);
+  });
 });
 
 describe("link endpoint ids are structure: refuse, never strip or truncate", () => {
@@ -399,6 +434,37 @@ describe("action payload (PR 3)", () => {
         CaptureError,
       );
     }
+  });
+  test.each([
+    ["ESC", 0x1b],
+    ["RLO", 0x202e],
+    ["ZWSP", 0x200b],
+    ["NUL", 0x00],
+    ["TAG", 0xe0041],
+  ])("an actionType carrying %s REFUSES (structure, never stripped)", (_name, cp) => {
+    expect(
+      code(() =>
+        validateCapturePayload(
+          "action",
+          { ...ok, actionType: `mcp_echo.echo${String.fromCodePoint(cp)}` },
+          0,
+        ),
+      ),
+    ).toBe("ERR_CAPTURE_INVALID");
+  });
+  test("an actionType outside [A-Za-z0-9_.-] refuses; one inside is kept verbatim", () => {
+    for (const t of [
+      "slack.message.post;rm",
+      "mcp_echo.e/cho",
+      'a"b',
+      `mcp_echo.${String.fromCodePoint(0xe9)}cho`,
+    ]) {
+      expect(code(() => validateCapturePayload("action", { ...ok, actionType: t }, 0))).toBe(
+        "ERR_CAPTURE_INVALID",
+      );
+    }
+    const v = validateCapturePayload("action", { ...ok, actionType: "mcp_a-b.do_it-2" }, 0);
+    expect(v.kind === "action" && v.payload.actionType).toBe("mcp_a-b.do_it-2");
   });
   test("summary truncates at 300 and is control-stripped; missing summary refuses", () => {
     const esc = String.fromCodePoint(0x1b);

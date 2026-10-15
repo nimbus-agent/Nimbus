@@ -11,6 +11,7 @@ import {
   CaptureError,
   type CaptureRow,
 } from "./capture-types.ts";
+import { FORMAT_INVISIBLE_RANGES, rangesRegExp } from "./invisible-text.ts";
 
 /**
  * Invariant I28's act door (spec 2026-10-15 § 8). The ONE place a proposed connector action leaves
@@ -34,49 +35,10 @@ export type ActionAcceptResult = {
 const OUTCOME_FIELDS = ["url", "html_url", "webUrl", "permalink"] as const;
 const OUTCOME_MAX = 512;
 // Shown VISIBLY in the prompt, never rendered: the input is sent verbatim and cannot be stripped
-// (Review Focus 1). Covers C0 controls except LF (the provenance lines never pass through
-// JSON.stringify, and the pretty-printed JSON's own layout newlines must survive), DEL + C1, soft
-// hyphen, the Arabic letter mark, the Mongolian vowel separator, ZWSP..RLM (incl. LRM/RLM),
-// U+2028..U+202E (line/para separators + bidi embeddings/overrides), U+2060..U+206F (word joiner,
-// invisible operators, bidi isolates, deprecated format chars), the BOM and the interlinear
-// annotation characters. Also the fillers that render as nothing (combining grapheme joiner,
-// Hangul fillers, Khmer inherent vowels, halfwidth Hangul filler), the variation selectors (BMP
-// and supplement), and the astral TAG characters, which can spell a whole hidden instruction.
-// NOT U+202F (narrow no-break space): it renders as a space.
-// Written as NUMBERS, never as regex escapes or literals: a source formatter can rewrite a `\u`
-// escape into the invisible character itself, and an invisible character in this list is
-// exactly what a reviewer cannot see. Each entry is an inclusive [first, last] code point.
-const INVISIBLE_RANGES: ReadonlyArray<readonly [number, number]> = [
-  [0x0000, 0x0009],
-  [0x000b, 0x001f],
-  [0x007f, 0x009f],
-  [0x00ad, 0x00ad],
-  [0x034f, 0x034f],
-  [0x061c, 0x061c],
-  [0x115f, 0x1160],
-  [0x17b4, 0x17b5],
-  [0x180e, 0x180e],
-  [0x200b, 0x200f],
-  [0x2028, 0x202e],
-  [0x2060, 0x206f],
-  [0x3164, 0x3164],
-  [0xfe00, 0xfe0f],
-  [0xfeff, 0xfeff],
-  [0xffa0, 0xffa0],
-  [0xfff9, 0xfffb],
-  [0xe0000, 0xe007f],
-  [0xe0100, 0xe01ef],
-];
-// One alternative per range (each a single-range class) so no class mixes a base character with a
-// combining one; the `u` flag makes every match a whole code point, astral included. The range ends
-// are inserted as characters at RUNTIME: none of them is `]`, `-`, `^` or a backslash, so each
-// class is literal.
-const INVISIBLE_RE = new RegExp(
-  INVISIBLE_RANGES.map(
-    ([lo, hi]) => `[${String.fromCodePoint(lo)}-${String.fromCodePoint(hi)}]`,
-  ).join("|"),
-  "gu",
-);
+// (Review Focus 1). C0 controls except LF (the provenance lines never pass through JSON.stringify,
+// and the pretty-printed JSON's own layout newlines must survive), plus the shared format/invisible
+// table in `invisible-text.ts` — the same set `capture-validate.ts` strips at write time.
+const INVISIBLE_RE = rangesRegExp([[0x0000, 0x0009], [0x000b, 0x001f], ...FORMAT_INVISIBLE_RANGES]);
 
 /** BMP as `\uXXXX`; astral as `\u{XXXXX}` (a 4-digit form would misrepresent the code point). */
 function escapeCodePoint(c: string): string {
@@ -177,7 +139,7 @@ export function formatActionConsent(
     "Agent-proposed action — requires your approval",
     `Proposed by MCP client "${visibleLine(p.clientLabel ?? "unlabelled")}" at ${new Date(p.createdAt).toISOString()}, expires ${new Date(p.expiresAt).toISOString()}`,
     `Agent's summary (unverified): ${visibleLine(p.summary)}`,
-    `Type: ${actionType}`,
+    `Type: ${visibleLine(actionType)}`,
     "Input (verbatim, exactly what will be sent):",
     visible(JSON.stringify(input, null, 2)),
   ].join("\n");

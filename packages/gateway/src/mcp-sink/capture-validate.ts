@@ -12,6 +12,7 @@ import {
   type TermPayload,
   type ValidatedCapture,
 } from "./capture-types.ts";
+import { FORMAT_INVISIBLE_RANGES, rangesRegExp } from "./invisible-text.ts";
 
 export const NOTE_TITLE_MAX = 200;
 export const TAG_MAX_COUNT = 10;
@@ -25,24 +26,26 @@ export const CLIENT_LABEL_MAX = 100;
  */
 export const PAYLOAD_MAX_BYTES = 65_536;
 
-// C0 controls, DEL, C1 controls. Agent text lands in `item.title`/`item.body`, which other surfaces
-// (`nimbus query`, briefs, the desktop) render without knowing it came from an agent. An ESC there
-// would let a client restyle or rewrite the owner's terminal, so it is stripped AT WRITE TIME, not
-// only by `nimbus captures`. The body keeps \t \n \r — it is markdown.
-// Also the Trojan Source set (CVE-2021-42574) that `nimbus captures` strips before DISPLAY: bidi
-// overrides/embeddings/isolates, zero-width characters, the BOM and the line/paragraph separators,
-// plus LRM/RLM (U+200E/F), U+2060-206F (word joiner, invisible operators, deprecated format
-// characters), the soft hyphen U+00AD, the Arabic letter mark U+061C and U+180E.
-// The owner approves the rendered text, so the stored text must be that same text: a term
-// "W<U+200B>AL" would otherwise normalize to a key that differs from the owner's manual `wal`,
-// pass the accept precondition, and render as a second "WAL". Keep in step with
-// `packages/cli/src/commands/captures-format.ts` UNSAFE_TEXT_RE, and keep these as escapes.
-const CONTROL_RE =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the purpose
-  /[\u0000-\u001f\u007f-\u009f\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]/g;
-const BODY_CONTROL_RE =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the purpose
-  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]/g;
+// Agent text lands in `item.title`/`item.body`, which other surfaces (`nimbus query`, briefs, the
+// desktop) render without knowing it came from an agent. An ESC there would let a client restyle or
+// rewrite the owner's terminal, so control characters are stripped AT WRITE TIME, not only by
+// `nimbus captures`; so is the whole format/invisible table in `invisible-text.ts` (Trojan Source,
+// CVE-2021-42574, plus zero-width, filler, variation-selector and TAG characters). The owner
+// approves the rendered text, so the stored text must be that same text: a term "W<U+200B>AL"
+// would otherwise normalize to a key that differs from the owner's manual `wal`, pass the accept
+// precondition, and render as a second "WAL". That shared table is kept in step with
+// `packages/cli/src/commands/captures-format.ts` UNSAFE_TEXT_RANGES. Built at runtime from numeric
+// code points (see `invisible-text.ts` for why never as regex escapes).
+// One-line fields: every C0 control. The body keeps \t \n \r — it is markdown.
+const CONTROL_RE = rangesRegExp([[0x0000, 0x001f], ...FORMAT_INVISIBLE_RANGES]);
+const BODY_CONTROL_RE = rangesRegExp([
+  [0x0000, 0x0008],
+  [0x000b, 0x000c],
+  [0x000e, 0x001f],
+  ...FORMAT_INVISIBLE_RANGES,
+]);
+/** An action type is structure: refused, never stripped, when it carries anything else. */
+const ACTION_TYPE_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
 function invalid(detail: string): never {
   throw new CaptureError("ERR_CAPTURE_INVALID", detail);
@@ -256,10 +259,8 @@ export const ACTION_SUMMARY_MAX = 300;
 export function validateActionPayload(raw: unknown): ActionPayload {
   const o = asObject(raw);
   const t = o["actionType"];
-  if (typeof t !== "string" || t === "" || t.length > ACTION_TYPE_MAX || /\s/.test(t)) {
-    invalid(
-      `actionType must be a non-empty string of at most ${String(ACTION_TYPE_MAX)} characters with no whitespace`,
-    );
+  if (typeof t !== "string" || t.length > ACTION_TYPE_MAX || !ACTION_TYPE_PATTERN.test(t)) {
+    invalid(`actionType must be 1..${String(ACTION_TYPE_MAX)} characters of [A-Za-z0-9_.-]`);
   }
   const input = o["input"];
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
