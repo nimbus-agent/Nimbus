@@ -2176,9 +2176,19 @@ code_execution=true
     expect(assembly.slice(servicesAt, assembly.indexOf("\n  };", servicesAt))).toMatch(
       /\n\s*connectorWriteDeps,\n/,
     );
-    // The destructuring from `buildTeamCredentialContexts`, the ChatOps boot (see (j)) and the
-    // services literal: three.
-    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(3);
+    // The destructuring from `buildTeamCredentialContexts`, the ChatOps boot (see (j)), the
+    // services literal, and — the fourth — the I28 act door's dispatcher inside the
+    // `captureRpcCtx.act` wiring, whose exact shape is pinned just below: four.
+    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(4);
+    const captureAt = assembly.indexOf("ipcOpts.captureRpcCtx = {");
+    expect(captureAt).toBeGreaterThan(-1);
+    const captureCtx = assembly.slice(captureAt, assembly.indexOf("\n  };", captureAt));
+    const actAt = captureCtx.indexOf("act: {");
+    expect(actAt).toBeGreaterThan(-1);
+    expect(captureCtx.slice(actAt)).toMatch(
+      /^act: \{\s*dispatcher: createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(meshDispatcherClient\(connectorMesh\)\),\s*connectorWriteDeps,?\s*\),/,
+    );
+    expect(captureCtx.match(/\bconnectorWriteDeps\b/g)).toHaveLength(1);
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
       /createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(dispatcherClient\),\s*platform\.connectorWriteDeps,?\s*\)/,
@@ -2630,6 +2640,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "resolveLinkEndpoints(",
       "deps.store.countCreatedSince(",
       "deps.store.countPendingActions(",
+      "deps.store.countPendingNative(",
       "deps.db.transaction(",
     ];
     const idx = order.map((s) => body.indexOf(s));
