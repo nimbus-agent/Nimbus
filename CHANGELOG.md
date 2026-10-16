@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.47.0](https://github.com/nimbus-agent/Nimbus/compare/v7.46.0...v7.47.0) (2026-10-16)
+
+
+### Features
+
+* **ui:** read-only desktop Captures page ([#1672](https://github.com/nimbus-agent/Nimbus/issues/1672)) ([69d5e9d](https://github.com/nimbus-agent/Nimbus/commit/69d5e9d9c57883e2f02e8dc7468776988d0bb964))
+
 ## [7.46.0](https://github.com/nimbus-agent/Nimbus/compare/v7.45.0...v7.46.0) (2026-10-16)
 
 
