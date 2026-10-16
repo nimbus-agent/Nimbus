@@ -18,6 +18,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-16 — S3: extension runtime PR 2 of 4 — run grants (schema V70, static D33(b), `extension.run` in I2).**
+  An installed extension can now be approved to RUN, separately from having been approved to be
+  installed. `nimbus extension approve <id>` (TTY only, no `--yes`; `NIMBUS_SCRIPT_CONSENT_SOURCE`
+  cannot answer it) asks under the new `extension.run` action type, now a member of the I2 frozen
+  set, and shows the id, version, publisher fingerprint or `unsigned`, the tree digest, the `ext_`
+  service id, the resolved network, read and write grants, and the read-only paths the runtime adds.
+  An approval records the version, the tree digest, the resolved grants and the service id in the new
+  `extension_run_grant` table (schema **V70**; the service id is computed once and kept across
+  re-approvals). That is the two-approval model: install says the package may sit on disk, run says
+  this code may run with these grants. The gateway refuses before asking when the extension is not
+  found, disabled, unverified (manifest or entry hash mismatch, or the startup signature pass marked
+  it), has no tree digest, or its files no longer match it; when a declared path is relative, missing
+  (including an install path that does not resolve), protected, or a write path that covers the
+  extension's own code; or when the service id is invalid or collides. After the answer it refuses
+  `ERR_EXTENSION_RUN_NOT_APPROVED` or, if the row or files or declared grants changed while the prompt
+  was open, `ERR_EXTENSION_RUN_CHANGED`, and stores nothing. `nimbus extension revoke <id>` withdraws an
+  approval, ungated. `extension list` gains a Run column and `info` a `Run:` line (`disabled`,
+  `no_grant`, `grant_stale`, `ready`). Two new methods, `extension.approveRun` / `extension.revokeRun`,
+  are CLI-only, LAN-forbidden and refused in a demo root; the Tauri allowlist stays at 107. New static
+  rule **D33(b)** confines the `extension_run_grant` identifier to its store and DDL file (the same
+  stated bound as D32(a)). Removing an extension deletes its grant explicitly rather than relying on
+  the table's `ON DELETE CASCADE`, which fires only on a connection with foreign keys enabled.
+  `extension.run` is also classified `denied` in the capture sink's proposability table (140 HITL
+  types: 29 proposable, 111 denied), so an MCP agent cannot propose it.
+  **Does not ship:** nothing spawns an extension, so an approval changes no behaviour yet; there is no
+  `running` state and no `--model` access (`model_access` is always 0). Those are PRs 3 and 4.
+  **Found, not fixed here:** `extension.enable` re-enables an extension the startup signature pass
+  hard-disabled without re-verifying its signature. `approveRun` refuses such a row, so it cannot gain
+  a run grant, but `extension list` shows it enabled.
+
 - **2026-10-16 — Extensions: an auto-updated extension now passes its own next startup check.**
   Closes the "Found, not fixed here" note under extension runtime PR 1. The registry's one hash
   field, `entryHash`, was read two ways: auto-update compared it against the downloaded TARBALL's
