@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_NIMBUS_TOOL_GENERATION_TOML } from "../../../src/config/nimbus-toml.ts";
@@ -47,6 +47,7 @@ import type {
   ToolgenEnvelope,
 } from "../../../src/toolgen/toolgen-types.ts";
 import type { NimbusVault } from "../../../src/vault/nimbus-vault.ts";
+import { rmDirWithRetry } from "../../helpers/rm-dir-with-retry.ts";
 
 /**
  * The end-to-end proof that PR 3's persistence design actually works: a tool is created and saved
@@ -455,7 +456,7 @@ describe("a saved tool spawns and answers in a gateway that never saw its create
     } finally {
       await handleB?.close();
       gwB?.db.close();
-      rmSync(fixture.configDir, { recursive: true, force: true });
+      rmDirWithRetry(fixture.configDir);
     }
   }, 30_000);
 });
@@ -531,8 +532,8 @@ describe("REGRESSION: a changed runtime read path does not break a saved tool", 
     } finally {
       await handleB?.close();
       gwB?.db.close();
-      rmSync(extraDir, { recursive: true, force: true });
-      rmSync(fixture.configDir, { recursive: true, force: true });
+      rmDirWithRetry(extraDir);
+      rmDirWithRetry(fixture.configDir);
     }
   }, 30_000);
 });
@@ -570,7 +571,7 @@ describe("the saved script never carries a network grant", () => {
       expect(envelope?.artifact.manifest.permissions.filesystem.write).toEqual([]);
     } finally {
       gwB?.db.close();
-      rmSync(fixture.configDir, { recursive: true, force: true });
+      rmDirWithRetry(fixture.configDir);
     }
   }, 30_000);
 });
