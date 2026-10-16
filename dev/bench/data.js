@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792165096396,
+  "lastUpdate": 1792171885702,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "bb0069c06b411ede044cacb135dac66f65982483",
-          "message": "feat(glossary): nimbus glossary — implicit-knowledge terminology agent (#981)\n\nAdds `nimbus glossary` — the second member of the implicit-knowledge\ntriad (after `nimbus why`), pulled forward from Phase 7 Wave 5 into the\ncurrent **Spine S1 (Local Brain)** slot.\n\nA tenth built-in read-only agent plus a background extraction pass that\nturns terminology a team already uses — but has never written down —\ninto a queryable glossary, mined entirely from the already-indexed\ngraph. No new connectors, no new infrastructure, no live API call.\n\n```\nnimbus glossary            # terms, frequency-ranked\nnimbus glossary CDR        # the team's consolidated definition\nnimbus glossary --json     # typed findings\n```\n\n## How it works\n\n**Write path** (`packages/gateway/src/glossary/`, 13 modules):\ndeterministic mining over five regex families → statistics recomputed\nfrom the existing FTS index → local-LLM consolidation (capped,\nsequential) → projection into the unified index as\n`nimbus:glossary_term`.\n\n**Read path** (`packages/gateway/src/agents/glossary.ts`): a read-only\nagent resolving exact → synonym → near-miss, emitting\n`glossary.briefReady`.\n\nTwo design decisions carry most of the correctness weight:\n\n- **Mining discovers *which* terms exist; FTS recomputes *all* their\nstatistics from scratch.** Nothing ever increments a counter.\nAccumulated counters drift permanently the first time an item is edited,\nre-synced or deleted, and the drift is invisible because nothing\nrecomputes the truth. A `run-pass-twice-converges` test locks this in.\n- **Two independently committed phases.** Phase A (mine + upsert +\nreconcile + advance watermark) is pure SQL and commits first; phase B\nspends bounded LLM time, committing per term. The watermark advances\n*before* any LLM call — counter-intuitive, but candidates are durable\n`pending` rows by then, so an interrupted pass costs one in-flight call\nrather than a full re-scan.\n\nA pure-SQL reconciliation sweep re-verifies terms round-robin and\ndemotes any whose sources vanished — closing a gap the incremental scan\nstructurally cannot see, since deletion bumps no `modified_at`.\n\n## Surface\n\n- **Schema V45** — `glossary_term` + `glossary_pass_state`\n- **IPC** `agents.glossary`; Tauri `ALLOWED_METHODS` 101 → 102 (**I7**)\n- **CLI** `nimbus glossary [<term>] [--limit N] [--json]`\n- `nimbus:glossary_term` joins `PROSE_HEAVY_TYPES` (22 → 23), so `nimbus\nask \"what does CDR mean here?\"` resolves through ordinary FTS + vector\nsearch with no glossary-specific code in the ask path\n- `[glossary]` config, default-on (it opens no network surface),\ntriggered off the existing `onConnectorSyncSuccess` seam\n\n## Invariants\n\n**No new invariant.** Read-only, no egress, no HITL action type, no HTTP\nroute, no connector. Existing ones verified across the branch: **I14**\n(all writes via `dbRun`), **I9** (bound params only), **I11**\n(`wrapToolOutput` on everything reaching the model), **I7** (allowlist\nentry is read-only and non-RCE), **I29** (never reaches\n`connectors.dispatch`; the e2e asserts zero `egress_ledger` rows).\n\n## What it does *not* do yet\n\nStated plainly because the docs previously claimed otherwise, and those\nclaims were corrected in this branch:\n\n- **The scheduler-triggered pass runs without an LLM**, so unattended\npasses produce snippet-sourced definitions, not LLM-consolidated ones.\nWiring the router is a follow-up — it is constructed after\n`createSchedulerWithMesh` runs.\n- **There is no snippet → LLM upgrade path.** Nothing selects\n`definition_source='snippet'` for re-consolidation.\n- **`--refresh` / `--rebuild` parse and forward but do nothing** — the\nhandler reads only `term` and `limit`.\n- ADRs are mined only from Obsidian-indexed roots; commit messages only\nfrom the subject line.\n\nFull list in the spec's Known Limits, each with the evidence that\nproduced it.\n\n## Review notes\n\nBuilt task-by-task with a per-task review and eight fix rounds, then a\nwhole-branch review. The defects worth knowing about clustered in two\nplaces no test asserts — **cross-module seams and documentation**:\n\n- Consolidation called the LLM with **zero snippets** when a pending\nterm's sources were deleted between discovery and consolidation. A model\nasked to define \"CDR\" with nothing to read returned *\"A Call Detail\nRecord used in telecoms billing\"* — Wikipedia's meaning, stored as the\nteam's, labelled `source: \"llm\"`. Guarded at the source.\n- A demoted term could re-enter the index below the `min_doc_freq`\nfloor.\n- Reconcile refreshed the table but never re-projected, so search kept\nciting sources the user could no longer open.\n- The roadmap ticked ✅ on an acceptance criterion the shipped wiring\ndoes not meet. Corrected rather than claimed.\n\nSpec: `docs/superpowers/specs/2026-07-30-nimbus-glossary-design.md`\nPlan: `docs/superpowers/plans/2026-07-30-nimbus-glossary.md`\n\n## Verification\n\n382 glossary + agent tests, 162 e2e (1 pre-existing skip), 11,802\ngateway tests overall; `audit:invariants`, biome, markdown lint and\n`tsc` all clean; `cargo test` run for real on the allowlist (22 tests,\nincl. exact-size and alphabetization).\n\nTwo failures are environmental and proven so: preflight's biome gate\nreports \"0 files\" inside a git worktree while passing on main (3,053\nfiles), and `updater/wiring.test.ts` fails at this branch's own base\ncommit, before any glossary code existed.\n\n**Please re-check `audit:coverage-floor` on CI-Linux** — local lcov\ndegraded across rebuilds (986 → 199 files) and CI is authoritative here.\n`near-miss.ts` is exempted with justification: seven `??` fallbacks that\n`noUncheckedIndexedAccess` forces us to write and that cannot execute;\nverified three ways.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-07-31T00:11:05Z",
-          "tree_id": "0b80a9fb7417ec16d0e9491fa0219ee19dd1da47",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/bb0069c06b411ede044cacb135dac66f65982483"
-        },
-        "date": 1785457352137,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 326.05326404999687,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 339.0546758500019,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 266.31512870000404,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a2647325c37f99bba373512c5a1b545022e94116",
+          "message": "fix(demo): retry the demo-root delete for real on Windows; size the PAL boot test for CI (#1673)\n\nA follow-up to #1671. That PR fixed most of the Windows red on `main`,\nbut `main`'s own run on the fix commit, 9eb42b12 (run 38923790601), was\nstill red on `CI — TS/Bun (windows-2025) / Unit + Coverage`, for two\nseparate reasons.\n\n## 1. `nimbus demo` re-run: EBUSY, a production bug\n\n`demo-tour.e2e.test.ts` › \"1b. `nimbus demo --no-tour` run AGAIN while\nthe first demo gateway is still up\" failed on both attempts:\n\n```\nEBUSY: resource busy or locked, rm '…\\Nimbus\\data\\demo'\n```\n\nThe later steps 2, 3, 4 and 5b failed as knock-on effects.\n\n`defaultDemoDeps.removeDir` used `rmSync(dir, { recursive: true, force:\ntrue, maxRetries: 5, retryDelay: 100 })`. **Bun ignores\n`maxRetries`/`retryDelay`**: measured in #1663, it fails EBUSY in about\n1 ms with them set. The stopped demo gateway can still hold a handle\nunder the root for a moment, so a re-run exits 1 intermittently. This is\nthe production site that #1663 recorded as found but not fixed.\n\n**Fix:** the CLI now has its own `lib/rm-dir-with-retry.ts`, which\nretries EBUSY/EPERM/ENOTEMPTY up to 20 × 100 ms and rethrows any other\nerror unchanged. It's the same loop as the gateway's test helper, but\nthe CLI cannot import gateway code. Unit tests cover the retry codes,\nrethrowing other errors immediately, giving up after `attempts`, and\nerrors without a code.\n\n## 2. PAL boot test, 30.4 s against a 30 s budget\n\n`returns a full PlatformServices shape for the current OS` was the\noriginal red. #1671 removed its main cost, the 70 per-step pre-migration\nbackups. Its remaining cost is ordinary fsync-bound boot work, measured\nacross environments:\n\n| Environment | Time |\n| --- | --- |\n| Windows dev box | ~1.2 s |\n| macOS PR leg | 1.6 s, down from 16.5 s |\n| Windows PR leg | 18 s, down from 32.8 s |\n| Windows push leg, coverage-instrumented | **30.4 s**, the red run |\n| Pathologically slow Windows runner on release PR #1670 the same\nafternoon | 92.7 s |\n\nIt's a shape test, not a performance guard, so the budget moves to 120\ns. The comment above the test records these measurements, so the next\nreader can see what the number is sized for.\n\n## Verification\n\n- `preflight:fast` passed.\n- The new helper tests, the demo command tests and `platform.test.ts`\npass, 60 tests in all.\n- `demo-tour.e2e.test.ts` passes locally on Windows, 10/10. The EBUSY is\nintermittent, so a local pass does not prove the race is gone; the retry\nloop does.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Demo directory cleanup now retries temporary file-system errors,\nhelping demos complete successfully when files are briefly busy or\nunavailable.\n* **Documentation**\n* Updated the demo changelog with details about cleanup retries and the\nlonger startup time allowed for platform services.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-16T20:19:16+03:00",
+          "tree_id": "d7a042cff828d9d40e54980c3840047525aa21a9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a2647325c37f99bba373512c5a1b545022e94116"
+        },
+        "date": 1792171880311,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 261.48202069999786,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 260.2537434500009,
             "unit": "ms"
           }
         ]
