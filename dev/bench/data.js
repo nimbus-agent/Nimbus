@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792123083329,
+  "lastUpdate": 1792131077342,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "039176c781f6f2617c581d50c8a8921c152f3cfc",
-          "message": "docs(claude): record that release tags are immutable, and how to recover (#962)\n\n## Summary\n\nTwo things, deliberately together:\n\n1. **Documents that release tags are immutable, and how to recover when\na release build fails.** Nothing in the repo said so, which is why\nmoving the `v1.11.0` tag onto its fix looked viable until the push was\nrejected with `GH013`. The new bullet records the ruleset, the real\nrecovery path, and the squash-merge trap below.\n2. **Carries the release trailer that cuts 1.12.0.** #960 was supposed\nto do this and did not — see below.\n\n## Related Issue\n\nRelates to #957\n\n## Why this PR is needed at all\n\n#960 carried the same trailer in its commit message, but squash-merging\nreplaced that message with the PR title and description, so the trailer\nnever reached `main` and **no release PR was created**. The only\nsurviving mentions were backtick-quoted prose, which release-please does\nnot match.\n\nEvery commit since the `v1.11.0` tag is `docs`, `chore` or `test`, so\nrelease-please bumps nothing on its own. Until a trailer lands, the\nfeature stranded by the failed release (#954) stays unpublished and\nusers remain on 1.10.0.\n\nThis time the trailer is the **last line of this description**, which is\nwhat actually becomes the squash commit body.\n\n## ⚠️ When merging\n\nConfirm the squash commit message still ends with the trailer line. If\nit is edited out, this PR only lands the documentation and no release PR\nappears — same benign failure as #960, retry the same way.\n\n## What happens after merge\n\nrelease-please opens `chore: release main` for **1.12.0** → merging that\ntags `v1.12.0` → `release.yml` runs against the deterministic gate (#958\nfixed the flaky test) → publishes with assets → #957 can close.\n\n## Type of Change\n\n- [x] Documentation only\n- [x] CI / tooling — carries the version-forcing trailer\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`) — no code touched; one\n`CLAUDE.md` bullet added\n- [x] New behaviour is covered by tests — n/a, no behaviour change\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md`, a screenshot is attached —\nn/a\n\n`bun run preflight:fast` passes in full. `lint:markdown` initially\nfailed on MD049 (emphasis must use underscores, not asterisks) — fixed.\n\n## Coverage (if engine/ or vault/ was changed)\n\nn/a — neither was modified.\n\n## Testing\n\n`bun run preflight:fast` — PASSED (typecheck, lint, markdown lint, 20\naudits, duplication). No suite run: documentation plus a commit trailer.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nRelease-As: 1.12.0",
-          "timestamp": "2026-07-30T14:03:35+03:00",
-          "tree_id": "9407af315c2f2e2f0a60fd70bf51d3ce97fa95a0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/039176c781f6f2617c581d50c8a8921c152f3cfc"
-        },
-        "date": 1785410114810,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 306.7072001500026,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 309.8373953499984,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 199.70931800000545,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ce21b871aa992b2c806f0d32f658c2de858371d8",
+          "message": "test(toolgen): retry temp-dir cleanup so a Windows EBUSY cannot replace the result (#1663)\n\n## Why\n\n`main`'s Windows `Unit + Coverage` leg has been red on its last two CI\nruns (`be534a0e`, `2714c574`), and the Windows PR leg fails the same way\n(it blocks #1662). Every failure has the same shape. A toolgen\nintegration test's cleanup calls `rmSync` on its temp dir right after\nthe sandboxed tool child exits, and Windows releases the child's handles\non that dir a moment later:\n\n```\nEBUSY: resource busy or locked, rm 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\nimbus-toolgen-e2e-rawfetch-…'\n(fail) toolgen drafting end to end > a body calling raw fetch() is blocked at the OS …\n```\n\nThe test's own assertions pass. The cleanup throw REPLACES the outcome.\n\n## Fix\n\nA test helper, `packages/gateway/test/helpers/rm-dir-with-retry.ts`\n(`rmDirWithRetry`), removes a dir recursively and retries on `EBUSY` /\n`EPERM` / `ENOTEMPTY`: 20 attempts, 100 ms apart. Any other error, or\nthe last failed attempt, is rethrown unchanged. All 10 cleanup calls\nunder `packages/gateway/test/integration/toolgen/` use it. Test-only\nchange: no source, no behaviour.\n\n**The loop has to be ours: Bun's recursive `rmSync` ignores `maxRetries`\n/ `retryDelay`.** This PR's first commit used those options, and they\ndid nothing. CodeRabbit caught it, and I measured it on Windows: with `{\nrecursive: true, force: true, maxRetries: 30, retryDelay: 100 }`,\n`rmSync` still fails `EBUSY` in about 1 ms while another process holds a\nfile under the dir.\n\n## Verified\n\n- `rm-dir-with-retry.test.ts` tests the retry, rethrow and give-up paths\nwith an injected remove. A Windows-only case makes a separate PowerShell\nprocess hold a file open with no share-delete for ~1.5 s. It first\nasserts the premise (a bare `rmSync` with retry options throws), then\nthat `rmDirWithRetry` outlasts the lock and the dir is gone. That case\nruns on this PR's Windows leg.\n- On Windows 11 with a freshly built `nimbus-sandbox-helper.exe`: the\ntoolgen suite plus the helper test pass 19/19. `typecheck:tests` reports\n0 new errors.\n\n## Found, not fixed here\n\nAbout 15 other sites pass `maxRetries` to a recursive `rmSync` and get\nno retry, for the same reason. One is **production code**:\n`packages/cli/src/commands/demo.ts:65`, the `nimbus demo` root cleanup.\nThe rest are test cleanups (`demo-tour`, `demo-root-isolation`, `wow`,\nseveral `demo-rpc` / `oncall-push` tests, two connector integration\ntests, three CLI tests). None is failing today, and the production one\ndeserves its own change, so they are left for a follow-up. The many\n`maxRetries: 0` sites are unaffected: they want fail-fast, which is what\nthey get.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Improved reliability of temporary-directory cleanup across\ntool-generation integration tests by retrying removal when the\nfilesystem is temporarily busy.\n* Added coverage for successful cleanup after transient errors,\nimmediate handling of permission errors, and cleanup when a directory is\nlocked on Windows.\n* Persistent cleanup failures continue to be reported rather than\nsilently ignored.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-16T05:59:15Z",
+          "tree_id": "bb047484b498dc6ec39e42c38a9829ce25302a67",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ce21b871aa992b2c806f0d32f658c2de858371d8"
+        },
+        "date": 1792131072393,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 275.81685689999904,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 281.8176782999988,
             "unit": "ms"
           }
         ]
