@@ -52,6 +52,13 @@ describe("Platform Abstraction Layer", () => {
     expect(typeof createPlatformServices).toBe("function");
   });
 
+  // A SHAPE test that boots the whole platform, not a performance guard — so its budget is sized
+  // for the slowest CI runner, not a dev machine. Measured on one fresh-temp-dir boot after #1671
+  // (which removed the 70 per-step pre-migration backups that had been most of the cost): ~1.2 s on
+  // a Windows dev box, 1.6 s macOS PR leg, 18 s Windows PR leg, 30.4 s Windows push leg (coverage
+  // instrumented, the run that went red at the old 30 s), 92.7 s on a pathologically slow Windows
+  // runner the same afternoon. The remaining cost is ordinary fsync-bound boot work spread across
+  // many steps; a regression in it belongs to a dedicated benchmark, not to this timeout.
   it("returns a full PlatformServices shape for the current OS", async (): Promise<void> => {
     const { createPlatformServices } = await import("./index.ts");
     const services = await createPlatformServices();
@@ -91,7 +98,7 @@ describe("Platform Abstraction Layer", () => {
       services.localIndex?.close();
       await new Promise((r) => setTimeout(r, 100));
     }
-  }, 30000);
+  }, 120_000);
   it("uses the documented IPC path pattern per OS", () => {
     const os = platform();
     let paths: ReturnType<typeof createWindowsPaths>;

@@ -18,6 +18,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-16 — `nimbus demo`: a re-run no longer fails on Windows while the last demo gateway lets go.**
+  `nimbus demo` re-roots by stopping the previous demo gateway and deleting the demo directory. The
+  delete used `rmSync`'s `maxRetries`, which Bun ignores, so when the stopped process still held a
+  handle for a moment the delete failed EBUSY in about 1 ms and the command exited 1 (seen on the
+  Windows CI leg as `nimbus demo --no-tour` run again while the first demo gateway is still up). It
+  now retries EBUSY/EPERM/ENOTEMPTY for up to two seconds before giving up, through a small CLI
+  `rmDirWithRetry`. Separately, the PAL test that boots `createPlatformServices` gets a 120 s budget:
+  after the per-step migration backups were removed its remaining cost is ordinary fsync-bound boot
+  work, measured at 18 s on the Windows PR leg and 30.4 s on the coverage-instrumented push leg,
+  which is a CI-runner property, not a regression this shape test should guard.
+
 - **2026-10-16 — Index: one pre-migration backup per upgrade, and none on a fresh install.**
   The migration runner wrote a full pre-migration backup (`VACUUM INTO` plus gzip of the whole
   index) before EVERY schema step, so an upgrade across N versions copied the index N times, and a
