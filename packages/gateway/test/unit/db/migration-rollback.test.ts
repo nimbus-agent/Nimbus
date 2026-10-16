@@ -53,18 +53,19 @@ describe("runIndexedSchemaMigrations — no backup options", () => {
 });
 
 describe("runIndexedSchemaMigrations — with backup options", () => {
-  test("writes a .db.gz backup file before each migration step", () => {
+  test("writes ONE .db.gz backup before the first pending step of a run, not one per step", () => {
     const tempDir = makeTempDir();
     const dbPath = join(tempDir, "nimbus.db");
     const backupDir = join(tempDir, "backups");
 
     const db = new Database(dbPath);
+    runIndexedSchemaMigrations(db, 1); // an existing (non-fresh) index
     const opts: MigrationBackupOptions = { backupDir, dbPath };
 
     runIndexedSchemaMigrations(db, 12, opts);
 
     const files = readdirSync(backupDir).filter((f) => f.endsWith(".db.gz"));
-    expect(files.length).toBeGreaterThan(0);
+    expect(files).toHaveLength(1);
     expect(files.every((f) => f.startsWith("pre-migration-"))).toBe(true);
     db.close();
   });
@@ -110,8 +111,8 @@ describe("runIndexedSchemaMigrations — unsupported target version", () => {
   });
 });
 
-describe("runIndexedSchemaMigrations — backup files per step", () => {
-  test("writes a non-empty .db.gz for each migration step", () => {
+describe("runIndexedSchemaMigrations — the run's backup", () => {
+  test("writes one non-empty .db.gz for a multi-step run", () => {
     const tempDir = makeTempDir();
     const dbPath = join(tempDir, "nimbus.db");
     const backupDir = join(tempDir, "backups");
@@ -123,7 +124,7 @@ describe("runIndexedSchemaMigrations — backup files per step", () => {
     runIndexedSchemaMigrations(db, 3, opts);
 
     const files = readdirSync(backupDir).filter((f) => f.endsWith(".db.gz"));
-    expect(files.length).toBeGreaterThan(0);
+    expect(files).toHaveLength(1);
     for (const f of files) {
       const size = statSync(join(backupDir, f)).size;
       expect(size).toBeGreaterThan(0);

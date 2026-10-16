@@ -2172,7 +2172,8 @@ Linux backends are covered by unit tests plus a darwin-only test on the macOS CI
     ✗ Unsupported platform → fatal: Gateway exits with error
 
 2.  Open bun:sqlite database → run pending migrations
-    → Before each migration: write compressed pre-migration backup to <dataDir>/backups/
+    → Before the first pending migration: write ONE compressed pre-migration backup to
+      <dataDir>/backups/ (none for a fresh database at version 0: nothing to restore)
     → On migration failure: restore from backup, mark migration 'failed', exit with actionable error
     ✗ DB locked or corrupt → fatal: Gateway exits; user notified via stderr
     ✗ Backup write fails → migration aborted (never proceed without backup)

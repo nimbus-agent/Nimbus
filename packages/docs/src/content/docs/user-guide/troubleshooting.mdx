@@ -127,7 +127,7 @@ Every repair action is written to the `audit_log` table with `action = 'db.repai
 
 ## Snapshots and backups
 
-The Gateway takes automatic pre-migration backups before every schema migration. You can also take and restore manual snapshots:
+The Gateway takes an automatic pre-migration backup before it upgrades the schema: one per upgrade, however many versions it spans, and none on a fresh install, which has nothing to restore. You can also take and restore manual snapshots:
 
 ```bash
 nimbus db snapshot                  # take a manual snapshot now
