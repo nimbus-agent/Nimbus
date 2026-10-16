@@ -316,6 +316,20 @@ describe("annotationLines", () => {
     expect(lines.filter((l) => l.startsWith("::error")).length).toBe(10);
   });
 
+  test("a retry that left no report names no test flaky — nothing shows which tests it passed", () => {
+    // Killed by the cap or crashed: no JUnit, so `final.cases` is undefined. Calling every
+    // attempt-1 failure "Flaky test" would claim the retry passed them; the nightly flaky-tests
+    // report counts exactly those annotations.
+    const lines = annotationLines({
+      label: "L",
+      attempt1: { code: 1, cases: [flaky] },
+      plan: { kind: "targeted", files: ["pkg/x.test.ts"] },
+      final: { code: 124, cases: undefined },
+    });
+    expect(lines.some((l) => l.includes("title=Flaky test"))).toBe(false);
+    expect(lines.some((l) => l.startsWith("::error title=Test run failed::"))).toBe(true);
+  });
+
   test("a final failure with no named test still produces an error", () => {
     const lines = annotationLines({
       label: "L",
