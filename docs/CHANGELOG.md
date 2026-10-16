@@ -18,6 +18,19 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-16 — Index: one pre-migration backup per upgrade, and none on a fresh install.**
+  The migration runner wrote a full pre-migration backup (`VACUUM INTO` plus gzip of the whole
+  index) before EVERY schema step, so an upgrade across N versions copied the index N times, and a
+  fresh install, which runs every step from version 0, wrote 70 backups of an empty database into
+  `<dataDir>/backups/` on first boot (all listed by `nimbus db backups list`). It now writes ONE
+  backup per run, before the first pending step, and reuses its path in every later step's rollback
+  message (the backup predates all of them); a database at version 0 has no schema and gets none.
+  Found through `main`'s red Windows leg: that first-boot work is fsync-bound, about 0.5 s on a dev
+  machine but enough on the Windows CI runner to take the PAL test that boots `createPlatformServices`
+  from about 28 s to 33-36 s against its 30 s budget, red on every push since 2026-10-16 morning
+  (macOS took 16 s, Ubuntu 1.3 s). No schema change, no new invariant. Backups already on disk are
+  untouched; the existing 30-day prune removes them.
+
 - **2026-10-16 — S3 capture sink: `nimbus negotiate` no longer credits agent-caused work to you.**
   Closes the act door's last owed follow-up. An action an MCP agent proposed and you approved runs on
   your credentials, so the issue, message or page it creates is synced back as yours, and the

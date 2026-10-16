@@ -762,6 +762,33 @@ export class MigrationRollbackError extends Error {
   }
 }
 
+/**
+ * The pre-migration backup policy for ONE `runIndexedSchemaMigrations` call: at most one backup,
+ * written lazily before the first step that actually runs, and its path reused for every later
+ * step's rollback message (it predates all of them).
+ *
+ * It used to be one backup PER STEP. Each is a full `VACUUM INTO` plus a gzip, so an upgrade
+ * across N versions copied the whole index N times, and a FRESH install — every step from 0 —
+ * wrote ~70 backups of an empty database into `backups/` on first boot. That first-boot cost is
+ * fsync-bound, which is why it is invisible on a dev machine (~0.5 s) and took the Windows CI
+ * runner's PAL boot test past its 30 s budget.
+ *
+ * A database starting at version 0 is skipped outright: it has no schema, so it holds nothing a
+ * backup could restore.
+ */
+function oneBackupPerRun(
+  db: Database,
+  startVersion: number,
+  backupOptions: MigrationBackupOptions | undefined,
+): (firstToVersion: number) => string | null {
+  if (backupOptions === undefined || startVersion === 0) return () => null;
+  let path: string | null | undefined;
+  return (firstToVersion) => {
+    if (path === undefined) path = writePreMigrationBackup(db, firstToVersion, backupOptions);
+    return path;
+  };
+}
+
 function writePreMigrationBackup(
   db: Database,
   version: number,
@@ -813,17 +840,13 @@ function applyIndexedSchemaStep(
   step: IndexedSchemaStep,
   currentVersion: number,
   targetVersion: number,
-  backupOptions: MigrationBackupOptions | undefined,
+  backupBeforeRun: (firstToVersion: number) => string | null,
   now: number,
 ): number | null {
   if (currentVersion !== step.fromVersion || targetVersion < step.toVersion) {
     return null;
   }
-  let backupPath: string | null = null;
-
-  if (backupOptions !== undefined) {
-    backupPath = writePreMigrationBackup(db, step.toVersion, backupOptions);
-  }
+  const backupPath = backupBeforeRun(step.toVersion);
 
   try {
     step.apply(db, now);
@@ -849,9 +872,10 @@ export function runIndexedSchemaMigrations(
 
   const now = Date.now();
   let anyStepRan = false;
+  const backupBeforeRun = oneBackupPerRun(db, ver, backupOptions);
 
   for (const step of INDEXED_SCHEMA_STEPS) {
-    const nextVer = applyIndexedSchemaStep(db, step, ver, targetVersion, backupOptions, now);
+    const nextVer = applyIndexedSchemaStep(db, step, ver, targetVersion, backupBeforeRun, now);
     if (nextVer !== null) {
       ver = nextVer;
       anyStepRan = true;

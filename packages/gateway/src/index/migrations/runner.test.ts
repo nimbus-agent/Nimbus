@@ -504,12 +504,19 @@ describe("writePreMigrationBackup via backupOptions", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  /** A file DB already at v1 (migrated WITHOUT backups): it has a schema, so it is worth backing up. */
+  function existingDb(dbPath: string): Database {
+    const db = new Database(dbPath);
+    runIndexedSchemaMigrations(db, 1);
+    return db;
+  }
+
   it("creates a .db.gz backup file when backupOptions is supplied with a real file DB", () => {
     // VACUUM INTO requires a file-based DB
     const dbPath = join(tmpDir, "nimbus.db");
     const backupDir = join(tmpDir, "backups");
-    const db = new Database(dbPath);
-    runIndexedSchemaMigrations(db, 1, { backupDir, dbPath });
+    const db = existingDb(dbPath);
+    runIndexedSchemaMigrations(db, 2, { backupDir, dbPath });
     const files = readdirSync(backupDir);
     const gzFiles = files.filter((f) => f.endsWith(".db.gz"));
     expect(gzFiles.length).toBeGreaterThan(0);
@@ -519,17 +526,50 @@ describe("writePreMigrationBackup via backupOptions", () => {
   it("creates backupDir if it does not exist", () => {
     const dbPath = join(tmpDir, "nimbus.db");
     const backupDir = join(tmpDir, "nested", "backup");
-    const db = new Database(dbPath);
-    runIndexedSchemaMigrations(db, 1, { backupDir, dbPath });
+    const db = existingDb(dbPath);
+    runIndexedSchemaMigrations(db, 2, { backupDir, dbPath });
     expect(existsSync(backupDir)).toBe(true);
+    db.close();
+  });
+
+  it("writes ONE backup for a multi-step run, named for the first step it guards", () => {
+    // Was one full VACUUM + gzip PER STEP: an upgrade across N versions copied the index N times.
+    const dbPath = join(tmpDir, "nimbus.db");
+    const backupDir = join(tmpDir, "backups");
+    const db = existingDb(dbPath);
+    runIndexedSchemaMigrations(db, 9, { backupDir, dbPath });
+    expect(readIndexedUserVersion(db)).toBe(9);
+    const files = readdirSync(backupDir).filter((f) => f.endsWith(".db.gz"));
+    expect(files).toHaveLength(1);
+    expect(files[0]).toStartWith("pre-migration-2-");
+    db.close();
+  });
+
+  it("writes NO backup for a fresh database (version 0 has no schema to restore)", () => {
+    // A fresh install used to write ~70 backups of an empty DB on first boot.
+    const dbPath = join(tmpDir, "nimbus.db");
+    const backupDir = join(tmpDir, "backups");
+    const db = new Database(dbPath);
+    runIndexedSchemaMigrations(db, 9, { backupDir, dbPath });
+    expect(readIndexedUserVersion(db)).toBe(9);
+    expect(existsSync(backupDir) ? readdirSync(backupDir) : []).toEqual([]);
+    db.close();
+  });
+
+  it("writes no backup when nothing is pending", () => {
+    const dbPath = join(tmpDir, "nimbus.db");
+    const backupDir = join(tmpDir, "backups");
+    const db = existingDb(dbPath);
+    runIndexedSchemaMigrations(db, 1, { backupDir, dbPath });
+    expect(existsSync(backupDir)).toBe(false);
     db.close();
   });
 
   it("backup file is a valid gzip (non-empty)", () => {
     const dbPath = join(tmpDir, "nimbus.db");
     const backupDir = join(tmpDir, "backups");
-    const db = new Database(dbPath);
-    runIndexedSchemaMigrations(db, 1, { backupDir, dbPath });
+    const db = existingDb(dbPath);
+    runIndexedSchemaMigrations(db, 2, { backupDir, dbPath });
     const files = readdirSync(backupDir).filter((f) => f.endsWith(".db.gz"));
     expect(files.length).toBeGreaterThan(0);
     const backupPath = join(backupDir, files[0] as string);
