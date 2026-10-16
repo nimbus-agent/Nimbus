@@ -35,6 +35,27 @@ export interface Classification {
 const MANIFEST = ".release-please-manifest.json";
 const VERSION = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g;
 
+/**
+ * Which LINES of a release-managed file release-please itself rewrites. Masking version strings
+ * alone is not enough: a dependency range in a managed `package.json` is version-shaped too, and
+ * `"zod": "^4.6.5"` → `"^4.6.6"` would read as a bump and skip the tests (CodeRabbit on #1677).
+ * - a package's `package.json`: its own top-level `"version"` line, and nothing else;
+ * - the manifest: `"<package path>": "<version>"` entries;
+ * - every `extra-files` entry: lines carrying release-please's `x-release-please-version` marker,
+ *   which is exactly the set of lines its generic updater rewrites.
+ */
+const PACKAGE_VERSION_LINE = /^\s*"version":\s*"[^"]*",?\s*$/;
+const MANIFEST_ENTRY_LINE = /^\s*"[^"]*":\s*"[^"]*",?\s*$/;
+const VERSION_MARKER = "x-release-please-version";
+
+function releaseOwnsLine(path: string, line: string): boolean {
+  if (path === MANIFEST) return MANIFEST_ENTRY_LINE.test(line);
+  if (path === "package.json" || path.endsWith("/package.json")) {
+    return PACKAGE_VERSION_LINE.test(line);
+  }
+  return line.includes(VERSION_MARKER);
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -125,6 +146,10 @@ export function classifyDiff(diff: string, managed: ManagedFiles): Classificatio
     if (managed.changelogs.has(f.path)) continue;
     if (!managed.versionFiles.has(f.path)) {
       return { releaseOnly: false, reason: `${f.path} is not a release-managed file` };
+    }
+    const path = f.path;
+    if (![...f.removed, ...f.added].every((line) => releaseOwnsLine(path, line))) {
+      return { releaseOnly: false, reason: `${path} changes a line release-please does not own` };
     }
     if (!isVersionOnlyChange(f.removed, f.added)) {
       return { releaseOnly: false, reason: `${f.path} changes more than a version string` };

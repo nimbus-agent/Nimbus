@@ -152,6 +152,49 @@ index 1..2 100644
     expect(r.reason).toContain("packages/gateway/src/version.ts");
   });
 
+  test("a dependency bump in a managed package.json is not — only its own version line may move", () => {
+    // Masking every semver-shaped token alone would read this as "a version bump".
+    const diff = `diff --git a/package.json b/package.json
+index 1..2 100644
+--- a/package.json
++++ b/package.json
+@@ -20 +20 @@
+-    "zod": "^4.6.5",
++    "zod": "^4.6.6",
+`;
+    const r = classifyDiff(diff, MANAGED);
+    expect(r.releaseOnly).toBe(false);
+    expect(r.reason).toContain("package.json");
+  });
+
+  test("a version change on an extra-file line without release-please's marker is not", () => {
+    const diff = `diff --git a/packages/gateway/src/version.ts b/packages/gateway/src/version.ts
+index 1..2 100644
+--- a/packages/gateway/src/version.ts
++++ b/packages/gateway/src/version.ts
+@@ -9 +9 @@
+-export const MIN_PEER = "7.46.0";
++export const MIN_PEER = "7.47.0";
+`;
+    expect(classifyDiff(diff, MANAGED).releaseOnly).toBe(false);
+  });
+
+  test("the manifest may change only its path → version entries", () => {
+    const entry = `diff --git a/.release-please-manifest.json b/.release-please-manifest.json
+index 1..2 100644
+--- a/.release-please-manifest.json
++++ b/.release-please-manifest.json
+@@ -2 +2 @@
+-  ".": "1.0.0"
++  ".": "1.0.1"
+`;
+    expect(classifyDiff(entry, MANAGED).releaseOnly).toBe(true);
+    const other = entry
+      .replace('-  ".": "1.0.0"', '-  "bootstrap": { "v": "1.0.0" }')
+      .replace('+  ".": "1.0.1"', '+  "bootstrap": { "v": "1.0.1" }');
+    expect(classifyDiff(other, MANAGED).releaseOnly).toBe(false);
+  });
+
   test("a new, deleted, renamed or binary file is not", () => {
     for (const marker of [
       "new file mode 100644",
