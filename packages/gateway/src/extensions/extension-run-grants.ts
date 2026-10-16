@@ -10,12 +10,27 @@ import { ExtensionRunGrantError } from "./run-grant-error.ts";
 /** What resolving a grant needs from the machine. Injected so tests never touch real Nimbus dirs. */
 export type ExtensionRunGrantEnv = {
   readonly platform: NodeJS.Platform;
-  /** `[dataDir, configDir, sandboxDir]` — `LazyConnectorMesh.userMcpProtectedRoots()`. */
+  /** `[dataDir, configDir, sandboxDir, extensionsDir]` — see `extensionRunGrantProtectedRoots`. */
   readonly protectedRoots: readonly string[];
   /** Read-only paths the runtime adds at spawn; SHOWN in the consent prompt, never stored. */
   readonly runtimeReadPaths: readonly string[];
   realpath(p: string): string;
 };
+
+/**
+ * The roots no extension run grant may overlap: user MCP's (`[dataDir, configDir, sandboxDir]`)
+ * plus the configured extensions dir. On macOS/Linux the extensions dir sits under the data dir, so
+ * this adds nothing there; on Windows it is a SIBLING of the data dir
+ * (`%LOCALAPPDATA%\Nimbus\extensions`), and without it extension A could be granted read/write over
+ * extension B's code. The extension's own install path is unaffected: own reads are dropped before
+ * the protected check and own writes are refused as SELF_WRITE first.
+ */
+export function extensionRunGrantProtectedRoots(
+  meshRoots: readonly string[],
+  extensionsDir: string | undefined,
+): readonly string[] {
+  return extensionsDir === undefined ? [...meshRoots] : [...meshRoots, extensionsDir];
+}
 
 /**
  * The declared grants after resolution — what a run grant stores (spec § 11 item 7). The install

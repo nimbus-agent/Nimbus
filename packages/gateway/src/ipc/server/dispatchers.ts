@@ -14,7 +14,10 @@ import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts"
 import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { resolveRuntimeById } from "../../exec/exec-runtimes.ts";
-import type { ExtensionRunGrantEnv } from "../../extensions/extension-run-grants.ts";
+import {
+  type ExtensionRunGrantEnv,
+  extensionRunGrantProtectedRoots,
+} from "../../extensions/extension-run-grants.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
 import { preflightConsent } from "../../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../../federation/preflight-gate.ts";
@@ -1913,8 +1916,9 @@ function buildExtensionOwnerGate(
 }
 
 /**
- * What `extension.approveRun` resolves grants against: the same protected roots user MCP refuses
- * (`[dataDir, configDir, sandboxDir]`) and the Bun runtime's read paths, shown in the prompt. No mesh
+ * What `extension.approveRun` resolves grants against: the protected roots user MCP refuses
+ * (`[dataDir, configDir, sandboxDir]`) plus the configured extensions dir — a sibling of the data
+ * dir on Windows — and the Bun runtime's read paths, shown in the prompt. No mesh
  * means no protected roots to check against, so the method refuses rather than skipping the check.
  */
 function buildExtensionRunGrantEnv(
@@ -1925,7 +1929,10 @@ function buildExtensionRunGrantEnv(
   if (method !== "extension.approveRun" || mesh === undefined) return undefined;
   return {
     platform: process.platform,
-    protectedRoots: mesh.userMcpProtectedRoots(),
+    protectedRoots: extensionRunGrantProtectedRoots(
+      mesh.userMcpProtectedRoots(),
+      ctx.options.extensionsDir,
+    ),
     runtimeReadPaths: resolveRuntimeById("bun").requiredReadPaths(),
     realpath: defaultUserMcpRealpath,
   };

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   type ExtensionRunGrantEnv,
+  extensionRunGrantProtectedRoots,
   resolveExtensionRunGrants,
   serializeRunGrants,
 } from "./extension-run-grants.ts";
@@ -154,6 +155,58 @@ describe("install path and check order", () => {
     expect(() =>
       resolveExtensionRunGrants(perms([], [join(installPath, "dist")]), installPath, env()),
     ).toThrow(/ERR_EXTENSION_GRANT_SELF_WRITE/);
+  });
+});
+
+describe("Windows: the extensions dir is a SIBLING of the data dir", () => {
+  const base = "C:\\Users\\X\\AppData\\Local\\Nimbus";
+  const winData = `${base}\\data`;
+  const winConfig = "C:\\Users\\X\\AppData\\Roaming\\Nimbus";
+  const winSandbox = `${base}\\sandbox`;
+  const winExtensions = `${base}\\extensions`;
+  const ownInstall = `${winExtensions}\\com.example.a`;
+  const otherInstall = `${winExtensions}\\com.example.b`;
+
+  function winEnv(): ExtensionRunGrantEnv {
+    return {
+      platform: "win32",
+      protectedRoots: extensionRunGrantProtectedRoots(
+        [winData, winConfig, winSandbox],
+        winExtensions,
+      ),
+      runtimeReadPaths: [],
+      realpath: (p) => p,
+    };
+  }
+
+  test("the protected roots name the configured extensions dir", () => {
+    expect(
+      extensionRunGrantProtectedRoots([winData, winConfig, winSandbox], winExtensions),
+    ).toEqual([winData, winConfig, winSandbox, winExtensions]);
+    expect(extensionRunGrantProtectedRoots([winData], undefined)).toEqual([winData]);
+  });
+
+  test("a read of ANOTHER extension's install dir is protected", () => {
+    expect(() => resolveExtensionRunGrants(perms([otherInstall]), ownInstall, winEnv())).toThrow(
+      /ERR_EXTENSION_GRANT_PROTECTED/,
+    );
+  });
+
+  test("a write of ANOTHER extension's install dir is protected", () => {
+    expect(() =>
+      resolveExtensionRunGrants(perms([], [otherInstall]), ownInstall, winEnv()),
+    ).toThrow(/ERR_EXTENSION_GRANT_PROTECTED/);
+  });
+
+  test("the extension's OWN install read is still dropped", () => {
+    const g = resolveExtensionRunGrants(perms([ownInstall]), ownInstall, winEnv());
+    expect(g.read).toEqual([]);
+  });
+
+  test("the extension's OWN install write is still SELF_WRITE", () => {
+    expect(() => resolveExtensionRunGrants(perms([], [ownInstall]), ownInstall, winEnv())).toThrow(
+      /ERR_EXTENSION_GRANT_SELF_WRITE/,
+    );
   });
 });
 
