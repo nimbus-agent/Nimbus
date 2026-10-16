@@ -27,7 +27,7 @@ import {
   CaptureAttemptLimiter,
   CaptureRefusalCounter,
 } from "../../../src/mcp-sink/capture-rate-limit.ts";
-import { CaptureStore, REJECTED_RETENTION_MS } from "../../../src/mcp-sink/capture-store.ts";
+import { CaptureStore, FINISHED_RETENTION_MS } from "../../../src/mcp-sink/capture-store.ts";
 
 const MCP = { clientId: "m", kind: "mcp" as const };
 const OWNER = { clientId: "o", kind: "cli" as const };
@@ -214,19 +214,22 @@ describe("act door flow (real executor + real ledger, fake dispatcher)", () => {
     expect(row).toEqual({ state: "failed", error_code: "ERR_ACTION_INTERRUPTED" });
   });
 
-  test("retention: expired and rejected actions are pruned; executed and failed are kept", async () => {
+  test("retention: every finished action state is pruned after 90 days, never before", async () => {
     const ids: Record<string, string> = {};
     for (const s of ["expired", "rejected", "executed", "failed"]) {
       const id = await propose();
       ids[s] = id;
       dbSetState(id, s);
     }
-    const pruned = gate.store.pruneRejected(clock + REJECTED_RETENTION_MS + 1);
-    expect(pruned).toBe(2);
-    expect(gate.store.get(ids["expired"] as string)).toBeUndefined();
-    expect(gate.store.get(ids["rejected"] as string)).toBeUndefined();
-    expect(gate.store.get(ids["executed"] as string)?.state).toBe("executed");
-    expect(gate.store.get(ids["failed"] as string)?.state).toBe("failed");
+    const pending = await propose();
+    // At exactly the cutoff nothing is older than it: every row is kept.
+    expect(gate.store.pruneFinished(clock)).toBe(0);
+    expect(gate.store.pruneFinished(clock + FINISHED_RETENTION_MS + 1)).toBe(4);
+    for (const s of ["expired", "rejected", "executed", "failed"]) {
+      expect(gate.store.get(ids[s] as string)).toBeUndefined();
+    }
+    // A proposal still awaiting review is never pruned, however old.
+    expect(gate.store.get(pending)?.state).toBe("proposed");
   });
 });
 

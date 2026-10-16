@@ -1559,6 +1559,7 @@ nimbus captures show <id> [--json]
 nimbus captures accept <id> [--json]
 nimbus captures reject <id> [--json]
 nimbus captures revoke <id> [--json]
+nimbus captures purge <id> [--json]
 ```
 
 `list` shows id, kind, state, title, client label and age; `--limit` caps the rows (1 to 200). `show` prints one capture in full, and for an accepted capture a native-status line: the decision, term or link it wrote is `owned` by the capture, `superseded` (something else took it over) or gone (`absent`). `accept` turns a `proposed` decision, term or link into a real decision record, glossary term or `captured_*` graph edge, labelled agent-authored; it refuses with `ERR_CAPTURE_SUPERSEDED` or `ERR_CAPTURE_LINK_UNRESOLVED` when the target has changed since the proposal. `reject` discards a proposal: it flips the capture state and appends a `capture.reject` audit row, but creates no native row and no indexed item; it works even when an org policy has switched the sink off. An accepted term is found by `nimbus query` through its capture item, and `nimbus query` tags capture cards "agent-authored". `revoke` also removes an accepted capture's decision, term or link, but only if the capture still owns it; `revoke`
@@ -1585,9 +1586,16 @@ Refusals before the prompt leave the capture `proposed`: `ERR_CAPTURE_DISABLED` 
 again) is the exception: that refusal sweeps the row to `expired` (with a `capture.action.expire` audit row). The configured check treats a multi-key service as configured once any key is
 set, so an accept can pass it and still end `[failed] ERR_ACTION_DISPATCH`. An action runs at most once and is never
 retried. `reject` works on a proposed action without a TTY or capability; `revoke` refuses an action (`ERR_CAPTURE_STATE`), since an executed action cannot be undone.
-**Retention.** A rejected or expired action row is deleted 90 days after its decision (`REJECTED_RETENTION_MS`, the
-same prune as a rejected proposal). An `executed` or `failed` action row is never pruned and keeps the verbatim `input`
-it was proposed with, and because `revoke` refuses actions there is no owner deletion path for it yet (a follow-up).
+**Retention.** Every finished action row (`rejected`, `expired`, `executed` or `failed`) is deleted 90 days after its
+decision (`FINISHED_RETENTION_MS`, the same prune as a rejected proposal); until then it keeps the verbatim `input` it
+was proposed with. A `proposed` or `executing` row is never pruned.
+**Purging an action.** `nimbus captures purge <id>` deletes one finished action row, and the agent's input with it,
+now rather than after 90 days, and prints `Purged <id>: the stored proposal and its input are deleted; the action it
+ran is not undone.` It refuses (`ERR_CAPTURE_STATE`, exit 1) a `proposed` action (reject it first), an `executing` one,
+and every non-action kind (use `revoke`). It needs no TTY and works with the sink switched off. It appends a
+`capture.purge` audit row naming the capture, action type and prior state, never the payload. It cannot remove the
+executor's own redacted audit row for the action, and an agent asking `capture_status` about a purged id is told it
+does not exist.
 `nimbus captures list` shows an action's remaining time, and `nimbus doctor` reports how many actions await review (and how many expire within an hour) and warns when the action queue is full. `--json` prints the raw gateway result.
 
 Titles, bodies and client labels are agent-supplied: control

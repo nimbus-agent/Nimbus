@@ -16,17 +16,24 @@ export const CAPTURES_USAGE =
   "       nimbus captures show <id> [--json]\n" +
   "       nimbus captures revoke <id> [--json]\n" +
   "       nimbus captures accept <id> [--json]\n" +
-  "       nimbus captures reject <id> [--json]";
+  "       nimbus captures reject <id> [--json]\n" +
+  "       nimbus captures purge <id> [--json]";
 
 export type CapturesArgs =
   | { verb: "list"; state?: string; kind?: string; limit?: number; json: boolean }
-  | { verb: "show" | "revoke" | "accept" | "reject"; id: string; json: boolean };
+  | { verb: "show" | "revoke" | "accept" | "reject" | "purge"; id: string; json: boolean };
 
 export function parseCapturesArgs(argv: string[]): CapturesArgs | undefined {
   const json = argv.includes("--json");
   const rest = argv.filter((a) => a !== "--json");
   const verb = rest[0] ?? "list";
-  if (verb === "show" || verb === "revoke" || verb === "accept" || verb === "reject") {
+  if (
+    verb === "show" ||
+    verb === "revoke" ||
+    verb === "accept" ||
+    verb === "reject" ||
+    verb === "purge"
+  ) {
     const id = rest[1];
     if (id === undefined || id.startsWith("--") || rest.length !== 2) return undefined;
     return { verb, id, json };
@@ -58,7 +65,10 @@ function kindNoun(nativeRef: string): string {
   return nativeRef.includes("|") ? "link" : "glossary term";
 }
 
-function confirmation(verb: "revoke" | "reject", id: string): string {
+function confirmation(verb: "revoke" | "reject" | "purge", id: string): string {
+  if (verb === "purge") {
+    return `Purged ${id}: the stored proposal and its input are deleted; the action it ran is not undone.\n`;
+  }
   if (verb === "reject") {
     return `Rejected ${id}. Nothing was written; the record is kept 90 days, then pruned.\n`;
   }

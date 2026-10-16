@@ -2360,7 +2360,7 @@ describe("D32(b) — gate entry points are called only from ipc/capture-rpc.ts",
     ).toEqual([]);
   });
 
-  test.each(["submitCapture", "acceptCapture", "rejectCapture", "revokeCapture"])(
+  test.each(["submitCapture", "acceptCapture", "rejectCapture", "revokeCapture", "purgeCapture"])(
     "FAILS when %s is called anywhere else",
     (fn) => {
       expect(

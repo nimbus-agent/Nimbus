@@ -253,7 +253,7 @@ import { reconcileActionsAtBoot } from "../mcp-sink/capture-act.ts";
 import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
-import { CaptureStore, REJECTED_RETENTION_MS } from "../mcp-sink/capture-store.ts";
+import { CaptureStore, FINISHED_RETENTION_MS } from "../mcp-sink/capture-store.ts";
 import { SessionMemoryStore } from "../memory/session-memory-store.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { assembleOncallPushRuntime, type OncallPushRuntime } from "../oncall-push/push-runtime.ts";
@@ -3455,7 +3455,7 @@ export async function assemblePlatformServices(
   if (actBoot.expired + actBoot.interrupted > 0) {
     syncLogger.info({ event: "mcp_sink.act_reconcile", ...actBoot }, "act door boot reconcile");
   }
-  captureStore.pruneRejected(Date.now() - REJECTED_RETENTION_MS);
+  captureStore.pruneFinished(Date.now() - FINISHED_RETENTION_MS);
   // Both halves read LIVE per call: a `--model` registration and the `user_mcp_model_access`
   // policy capability (I42) can change at runtime, so neither is snapshotted at boot.
   const actClassifyCtx = {

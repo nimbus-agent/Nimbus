@@ -94,6 +94,7 @@ describe("parseCapturesArgs", () => {
     [["revoke", "cap_1"], { verb: "revoke", id: "cap_1", json: false }],
     [["accept", "cap_1"], { verb: "accept", id: "cap_1", json: false }],
     [["reject", "cap_1", "--json"], { verb: "reject", id: "cap_1", json: true }],
+    [["purge", "cap_1"], { verb: "purge", id: "cap_1", json: false }],
     [["list", "--limit", "20"], { verb: "list", limit: 20, json: false }],
   ])("%j", (argv, want) => {
     expect(parseCapturesArgs(argv)).toEqual(want as never);
@@ -106,6 +107,8 @@ describe("parseCapturesArgs", () => {
     [["show", "a", "b"]],
     [["accept"]],
     [["accept", "a", "b"]],
+    [["purge"]],
+    [["purge", "a", "b"]],
     [["list", "--limit", "0"]],
     [["list", "--limit", "201"]],
     [["list", "--limit", "x"]],
@@ -472,6 +475,29 @@ describe("accept / reject / limit / native status", () => {
       `Accepted cap_1: it now counts as a ${noun} (${nativeRef}) and is labelled agent-authored.
 `,
     );
+  });
+
+  test("purge says the action is not undone; --json is raw; refusal exits 1", async () => {
+    const f = fake(() => ({ id: "cap_1", state: "purged" }));
+    const o = sink();
+    expect(await runCapturesWith(f.client, { verb: "purge", id: "cap_1", json: false }, o.s)).toBe(
+      0,
+    );
+    expect(f.calls).toEqual([["captures.purge", { id: "cap_1" }]]);
+    expect(o.out.join("")).toBe(
+      "Purged cap_1: the stored proposal and its input are deleted; the action it ran is not undone.\n",
+    );
+    const j = sink();
+    await runCapturesWith(f.client, { verb: "purge", id: "cap_1", json: true }, j.s);
+    expect(JSON.parse(j.out.join(""))).toEqual({ id: "cap_1", state: "purged" });
+    const bad = fake(() => {
+      throw new Error("capture cap_1 is proposed; reject it with `nimbus captures reject` first");
+    });
+    const e = sink();
+    expect(
+      await runCapturesWith(bad.client, { verb: "purge", id: "cap_1", json: false }, e.s),
+    ).toBe(1);
+    expect(e.err.join("")).toContain("reject it with");
   });
 
   test("reject prints the retention note; --json is raw; refusal exits 1", async () => {
