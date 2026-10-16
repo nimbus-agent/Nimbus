@@ -1,8 +1,8 @@
-import { rmSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { CliExit } from "../lib/cli-exit.ts";
 import { type LocalityReport, printLocalityPanel } from "../lib/locality-panel.ts";
+import { rmDirWithRetry } from "../lib/rm-dir-with-retry.ts";
 import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { defaultTourRunners, runTour, type TourRunners, type TourStep } from "../lib/run-tour.ts";
 import { type StopResult, stopAndWaitForExit } from "../lib/stop-and-wait.ts";
@@ -62,7 +62,9 @@ export async function startDemoGateway(
 export const defaultDemoDeps: DemoDeps = {
   paths: getCliPlatformPaths,
   stop: (p) => stopAndWaitForExit(p),
-  removeDir: (dir) => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+  // NOT rmSync's own maxRetries: Bun ignores it, and the stopped demo gateway can still hold a
+  // handle under the root for a moment on Windows (EBUSY in ~1 ms without a real retry loop).
+  removeDir: (dir) => rmDirWithRetry(dir),
   start: () => startDemoGateway(),
   seed: (p) =>
     withGatewayIpc((c) => c.call<DemoSeedSummary>("demo.seed", {}), p, {
