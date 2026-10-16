@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { EventEmitter } from "node:events";
 
 import type { SandboxPolicy } from "./sandbox-policy.ts";
-import { helperRunner } from "./win32.ts";
+import { type ExecFileLike, helperRunner } from "./win32.ts";
 import { buildRevokeGrantsArgv, buildSweepArgv } from "./win32-argv.ts";
 import { attachGrantRelease, attachGrantReleaseIf, releaseGrantsFor } from "./win32-release.ts";
 
@@ -142,15 +142,35 @@ describe("attachGrantReleaseIf", () => {
 });
 
 describe("helperRunner", () => {
-  // Driven through the running Bun binary rather than the Windows helper, so both arms execute on
-  // every platform: what is under test is the exit-code-to-promise mapping, not the helper.
-  it("resolves when the process exits 0", async () => {
-    await expect(
-      helperRunner(process.execPath)(["-e", "process.exit(0)"]),
-    ).resolves.toBeUndefined();
+  // What is under test is the exit-code-to-promise mapping, not the helper, so it runs through an
+  // injected `execFile`. It used to spawn the running Bun binary (`-e "process.exit(0)"`), and on
+  // the macOS PR leg that spawn, made from inside a `bun test --parallel` worker, never returned:
+  // four times on 2026-10-16 this file's other eleven tests passed, these two never reported, no
+  // per-test timeout fired, and the whole leg sat until its 1500 s cap (~25 min, then a full
+  // retry). The real helper is spawned on Windows by
+  // test/integration/platform/sandbox/win32-ace-release.test.ts.
+  it("resolves when the process exits 0, running the helper hidden with the argv given", async () => {
+    const calls: Array<{ file: string; args: readonly string[]; hidden: boolean }> = [];
+    const execFileImpl: ExecFileLike = (file, args, options, callback) => {
+      calls.push({ file, args, hidden: options.windowsHide });
+      callback(null);
+    };
+    await expect(helperRunner("helper.exe", execFileImpl)(["--revoke-grants", "p"])).resolves.toBe(
+      undefined,
+    );
+    expect(calls).toEqual([{ file: "helper.exe", args: ["--revoke-grants", "p"], hidden: true }]);
   });
 
   it("rejects when the process exits non-zero, so releaseGrantsFor can tell a failure", async () => {
-    await expect(helperRunner(process.execPath)(["-e", "process.exit(3)"])).rejects.toThrow();
+    const execFileImpl: ExecFileLike = (_file, _args, _options, callback) => {
+      callback(Object.assign(new Error("Command failed: helper.exe"), { code: 3 }));
+    };
+    await expect(helperRunner("helper.exe", execFileImpl)([])).rejects.toThrow("Command failed");
+  });
+
+  it("defaults to node's execFile without spawning anything until it is called", () => {
+    // Building the runner must not spawn: production builds one per sandboxed child and calls it
+    // only when that child exits.
+    expect(typeof helperRunner("helper.exe")).toBe("function");
   });
 });
