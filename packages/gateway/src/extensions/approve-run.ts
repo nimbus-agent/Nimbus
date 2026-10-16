@@ -216,6 +216,7 @@ export async function approveExtensionRun(
   if (
     after === undefined ||
     after.enabled !== 1 ||
+    after.install_path !== row.install_path ||
     after.version !== row.version ||
     after.tree_digest !== treeDigest ||
     digestOrNull(after.install_path) !== treeDigest ||

@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  cpSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -172,6 +173,67 @@ describe("approveExtensionRun", () => {
     expect(listRunGrants(db)).toEqual([]);
   });
 
+  // Each of these changes the ROW while the prompt is open and leaves the files alone, so only the
+  // matching arm of the post-approval re-check can refuse it.
+  test.each([
+    ["disabled during the prompt", "UPDATE extension SET enabled = 0 WHERE id = 'com.example.run'"],
+    ["row deleted during the prompt", "DELETE FROM extension WHERE id = 'com.example.run'"],
+    [
+      "version changed during the prompt",
+      "UPDATE extension SET version = '9.9.9' WHERE id = 'com.example.run'",
+    ],
+    [
+      "only the stored digest changed during the prompt",
+      `UPDATE extension SET tree_digest = '${"f".repeat(64)}' WHERE id = 'com.example.run'`,
+    ],
+  ])("%s refuses and stores nothing", async (_name, sql) => {
+    const { db, env } = await setup();
+    await expect(
+      approveExtensionRun("com.example.run", {
+        db,
+        env,
+        gate: async () => {
+          db.run(sql);
+          return true;
+        },
+        now: () => 1,
+      }),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
+    expect(listRunGrants(db)).toEqual([]);
+  });
+
+  test("the install path moving during the prompt refuses, even to an identical copy", async () => {
+    const { db, env, root, installPath } = await setup();
+    const moved = join(root, "moved");
+    cpSync(installPath, moved, { recursive: true });
+    // Premise: the copy hashes the same, so only the install_path arm can refuse this.
+    expect(computeExtensionTreeDigest(moved)).toBe(computeExtensionTreeDigest(installPath));
+    await expect(
+      approveExtensionRun("com.example.run", {
+        db,
+        env,
+        gate: async () => {
+          db.run("UPDATE extension SET install_path = ? WHERE id = 'com.example.run'", [moved]);
+          return true;
+        },
+        now: () => 1,
+      }),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
+    expect(listRunGrants(db)).toEqual([]);
+  });
+
+  test("a rewritten entry file refuses BEFORE prompting, even with the tree re-adopted", async () => {
+    const { db, env, installPath } = await setup();
+    writeFileSync(join(installPath, "dist", "index.js"), "export const evil = 1;\n");
+    // Re-adopt the tree so the tree-digest check passes; only the strict manifest/entry check is left.
+    setExtensionTreeDigest(db, "com.example.run", computeExtensionTreeDigest(installPath));
+    const seen: Asked[] = [];
+    await expect(
+      approveExtensionRun("com.example.run", { db, env, gate: gateThat(true, seen), now: () => 1 }),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_UNVERIFIED/);
+    expect(seen).toEqual([]);
+  });
+
   test("Review Focus 5: after the code changes and is re-adopted, approving again prompts, replaces the grant and keeps the service id", async () => {
     const { db, env, installPath } = await setup();
     await approveExtensionRun("com.example.run", {
@@ -297,7 +359,7 @@ describe("approveExtensionRun", () => {
     expect(redactAuditPayload(payload, 4096)).toContain(fp);
   });
 
-  test("an extension the startup signature pass disabled is refused even after a re-enable", async () => {
+  test("an extension the startup signature pass marked is refused while enabled", async () => {
     const { db, env } = await setup();
     signatureDisabledRegistry.mark("com.example.run", "signature_failed");
     try {
