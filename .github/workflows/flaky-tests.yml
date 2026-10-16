@@ -1,0 +1,54 @@
+name: Flaky tests
+
+# Keeps ONE issue, "Flaky tests on CI" (label `flaky-tests`), listing the tests that failed on a
+# CI leg's first attempt and passed on its retry over the last 7 days, worst first. The macOS and
+# Windows test legs retry a failed suite once; a retry that passes turns the leg green and leaves
+# only a warning annotation on that one job, which nothing else aggregates. When a night finds
+# nothing flaky, the issue is closed with a comment, and the next flaky test opens a new one.
+#
+# The logic, the counting rules and the API budget (about 350 GITHUB_TOKEN requests for a busy
+# week, against 1,000 per hour per repository) live in scripts/ci/flaky-tests-report.ts. Run it
+# without --write-issue for a read-only dry run that prints the issue body.
+
+on:
+  schedule:
+    - cron: "41 5 * * *" # daily, 05:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One at a time, repo-wide. "Find the open issue, then create it" is two calls, so two
+# overlapping runs could both find none and open one each. A queued run waits rather than being
+# cancelled; it reports the newer state anyway.
+concurrency:
+  group: flaky-tests
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Update the flaky-tests issue
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # list the CI workflow runs
+      checks: read # read their check runs and annotations
+      issues: write # edit, open or close the issue, and create its label
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4'
+      # No dependency install: the script imports only Node built-ins and a sibling helper.
+      - name: Scan CI for flaky tests and update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bun scripts/ci/flaky-tests-report.ts --days 7 --write-issue
