@@ -431,7 +431,7 @@ describe("invokeSavedTool against a real gateway B: happy path", () => {
       expect(chainOk(gwB.db)).toBe(true);
     } finally {
       gwB?.db.close();
-      rmSync(fixture.configDir, { recursive: true, force: true });
+      rmSync(fixture.configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }, 30_000);
 });
@@ -494,7 +494,7 @@ describe("invokeSavedTool against a real gateway B: tampered artifact", () => {
       expect(parsed["code"]).toBe("ERR_TOOLGEN_SIGNATURE_INVALID");
     } finally {
       gwB?.db.close();
-      rmSync(fixture.configDir, { recursive: true, force: true });
+      rmSync(fixture.configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }, 30_000);
 });
@@ -563,7 +563,7 @@ describe("create, save and invoke inside ONE gateway process", () => {
       await handle?.close();
       await gw.registry.revokeAll();
       gw.db.close();
-      rmSync(configDir, { recursive: true, force: true });
+      rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }, 30_000);
 });

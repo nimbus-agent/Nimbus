@@ -76,7 +76,7 @@ const dbs: Database[] = [];
 
 afterEach(() => {
   for (const db of dbs.splice(0)) db.close();
-  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function tmpConfigDir(): string {

@@ -54,7 +54,7 @@ beforeAll(() => {
 afterAll(() => {
   server.stop(true);
   try {
-    rmSync(workDir, { recursive: true, force: true });
+    rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   } catch {
     /* best-effort cleanup; a leftover empty temp dir is harmless */
   }

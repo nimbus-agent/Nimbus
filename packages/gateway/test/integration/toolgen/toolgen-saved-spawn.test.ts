@@ -455,7 +455,7 @@ describe("a saved tool spawns and answers in a gateway that never saw its create
     } finally {
       await handleB?.close();
       gwB?.db.close();
-      rmSync(fixture.configDir, { recursive: true, force: true });
+      rmSync(fixture.configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }, 30_000);
 });
@@ -531,8 +531,8 @@ describe("REGRESSION: a changed runtime read path does not break a saved tool", 
     } finally {
       await handleB?.close();
       gwB?.db.close();
-      rmSync(extraDir, { recursive: true, force: true });
-      rmSync(fixture.configDir, { recursive: true, force: true });
+      rmSync(extraDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      rmSync(fixture.configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }, 30_000);
 });
@@ -570,7 +570,7 @@ describe("the saved script never carries a network grant", () => {
       expect(envelope?.artifact.manifest.permissions.filesystem.write).toEqual([]);
     } finally {
       gwB?.db.close();
-      rmSync(fixture.configDir, { recursive: true, force: true });
+      rmSync(fixture.configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }, 30_000);
 });

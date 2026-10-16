@@ -230,7 +230,9 @@ async function buildHarness(dirTag: string): Promise<Harness> {
     }),
     cleanup: async () => {
       await registry.revokeAll();
-      rmSync(configDir, { recursive: true, force: true });
+      // Retried: on Windows a just-exited sandboxed child releases its handles on the temp dir a
+      // moment later, and a single rm then fails EBUSY and REPLACES the test's real outcome.
+      rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       db.close();
     },
   };
