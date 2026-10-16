@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792161027252,
+  "lastUpdate": 1792163660575,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f1343ec42867796b1f18d73eef7390c068898da4",
-          "message": "chore(mcp): enable MCP registry indexing and spec the directory listings (#979)\n\n## Why\n\nNimbus ships an MCP server (`nimbus mcp-server --stdio`, six read-only\ntools) but nothing declared it, so directory reviewers could not verify\nthe claim. The README described MCP only as connector transport — how\nconnectors talk *outward* — which left both the client and server\nsurfaces invisible.\n\n## What\n\n**`glama.json`** declares the maintainer set. That is Glama's ownership\ncheck: the official schema has exactly one required field,\n`maintainers`, listing GitHub usernames permitted to manage the listing.\nNimbus is now listed at\n[glama.ai/mcp/servers/nimbus-agent/Nimbus](https://glama.ai/mcp/servers/nimbus-agent/Nimbus).\n\n**README.** The MCP bullet now states both directions and names `nimbus\nmcp-server --stdio` and `nimbus connector add --mcp`.\n\n**Spec.** `docs/superpowers/specs/` records which listing targets are\nreachable, which are blocked and why, the verified feature-support row\n(client-side Tools only — the mesh calls `listTools()` and nothing\nelse), and the honesty guardrails carried over from\n`launch-messaging.md`. The review that shaped it is kept alongside, with\na disposition table so rejected suggestions are not mistaken for open\nrecommendations.\n\n## No Dockerfile, deliberately\n\nAn earlier revision added a root `Dockerfile` and `.dockerignore`. Both\nwere removed: Glama supplies the build Dockerfile from the server's\nadmin page and states it does not need to be in the repository.\n\nKeeping it would have cost more than it returned. A root `Dockerfile` on\na local-first project reads as \"run Nimbus in Docker\", which does not\nwork — the container has no Gateway, index, or keystore, so\nintrospection succeeds while every tool *call* fails. It would also rot,\nsince the pinned version and digest need bumping at every release.\n\nThe verified content is recorded in the spec, because Glama's admin UI\nis not version-controlled. It was hardened during review before removal\n— `--platform=linux/amd64` (there is no `linux-arm64` CLI asset for a\n`TARGETARCH` switch to select) and a fail-closed per-version SHA-256\ncheck matching the trust model `docs/install.md` already asks users to\nfollow.\n\n## Verification\n\n`preflight:fast` PASSED · `audit:links` 1062 OK / 0 errors ·\n`audit:readme-cli` 32/32 match the registry.\n\nBehaviour proven, not assumed: built the image and ran a real\n`initialize` + `tools/list` against the container, which returned all\nsix tools with **no Gateway present** — introspection works standalone\nbecause `buildMcpServer` registers tools statically and the Gateway is\nonly contacted inside a tool's `run()`. Checked first under Linux with\nno `libsecret`, since the Gateway refuses to start without it there. The\nchecksum guard was red-proved by building with a wrong digest, which\naborts before install.\n\n## Notes\n\nBlocked and recorded, not attempted: the Official MCP Registry's local\nroute is a metaregistry requiring a package on\nnpm/PyPI/NuGet/Cargo/OCI/MCPB, and Nimbus ships via Homebrew, winget,\nand apt. Its remote-server route needs no package but does not apply to\na local stdio server. Both packaging options are written up in the spec.\n\nRelated: https://github.com/punkpeye/awesome-mcp-servers/pull/11216\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-30T18:37:04Z",
-          "tree_id": "8e279c14ab3a56265418d8cbd5f9682af7c470a8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f1343ec42867796b1f18d73eef7390c068898da4"
-        },
-        "date": 1785437223081,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 297.89406594999747,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 298.5946716500075,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 276.98771750000014,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6a7c84c193f5e4f5e45db68cc1d251822e542e1b",
+          "message": "feat(negotiate): stop crediting agent-caused issues, messages and pages to the owner (#1669)\n\nThe third capture-sink follow-up, after #1667 (purge) and #1668 (batch\naccept). It closes the act door's last owed item from #1660: `nimbus\nnegotiate`'s lane for agent-caused actions.\n\n## Problem\n\nAn action an MCP agent proposed and you approved, through `nimbus\ncaptures accept`, runs on your credentials. Whatever it creates is\nsynced back as your own work, so the `negotiate` contribution brief\ncounted it.\n\nThese action types land in a section the brief counts:\n\n| Action type | Section it lands in |\n| --- | --- |\n| `github` / `jira` / `linear` issue create | `## Tickets` → opened |\n| `slack` / `teams` message post | `## Writing` → messages |\n| `confluence` / `notion` page create | `## Writing` → docs |\n\nMail, calendar, Drive and comment actions land in no section the brief\ncounts.\n\n## What ships\n\n- **Exclusion, in your own brief only.** `## Tickets` and `## Writing`\ndrop every indexed item that an executed *create* action's result URL\nresolves to. The match canonicalises `outcome_ref` with\n`canonicalizeUrl` and compares it against `item.resolve_key`, the\nexisting `/v1/items/resolve` key. The item is removed from both the\ncounts and the cited evidence. A line in that section says how many were\nexcluded.\n- **What can't be excluded is disclosed.** A second line counts the\nactions that ran in the window but could not be removed, and says they\nmay still be counted above. Two cases end up there:\n- a create whose URL matched nothing: Teams returns no URL, a Slack\nmessage has no URL when the subdomain is unknown, or the artifact isn't\nsynced yet;\n- every *edit* (`*.update`, `notion.block.append`). An edit is never\nexcluded, because the edited item may be your own work.\n- **Windowing.** The exclusion ignores the window, since an item an\nagent created is never yours. The disclosure is windowed on when the\naction finished.\n- **Other people's briefs are untouched.** A `--person` brief about\nsomeone else is unaffected, because the actions ran as you.\n- **The guard covers both lines.** Both are I31 disclosures, defined\nonce in `brief-disclosures.ts` (`negotiateAgentActionDisclosures`). The\nrenderer and `requiredPhrases` read the same definition, and the guard\nrequires a line only when it was rendered. A rewrite that drops \"may\nstill be counted above\" is rejected, and a test pins that.\n- **Data access.** The brief reads through one new method,\n`CaptureStore.executedActions()`. It returns the action type, result URL\nand finish time, never the agent's input, so D32(a)'s confinement of the\n`capture` table holds. The gate's own copy of the payload parser from\n#1667 now reuses the store's `actionTypeOfPayload`.\n- **Accepted agent decisions need no change.** Their source item is the\ncapture item, which has no author, so the brief already counted them as\nunattributable rather than as yours. I verified this rather than taking\nthe code-mapping pass's claim that they were being credited to you.\n\nNo migration, no IPC change, no new invariant. The brief's JSON gains\n`tickets.agentActions` and `writing.agentActions`, each `{excluded,\nunmatched}`.\n\n## Tests\n\n`negotiate-agent-actions.test.ts` has nine tests. Fixtures are written\nthrough the real writers, `upsertIndexedItem` and `CaptureStore`\ninsert/claim/finalize. They cover:\n- a matched message, with tracking parameters and a fragment in the URL;\n- a matched issue;\n- unmatched creates, plus an edit of a page that resolves (disclosed,\nnot excluded);\n- exclusion ignoring the window while the disclosure respects it;\n- a brief about someone else;\n- action types outside both sections, and failed actions;\n- the rewrite guard requiring both lines only when they are rendered;\n- every type in the lane table being proposable;\n- deduplication when two actions match the same item.\n\nThere is also a store test: `executedActions` returns executed rows\nonly, skips a corrupt payload, and never returns the input.\n\nI red-proved the tests. Disabling the exclusion makes 5 of the 9 fail,\nand dropping the self-only guard makes the other-person test fail.\n\n## Verification\n\n- `preflight:fast` passes.\n- 2,798 tests pass across agents, mcp-sink, the capture RPC,\nsecurity-invariants and structure-audit.\n- The `negotiate` e2e and CLI tests pass.\n\nThis PR edits the same CLAUDE.md / GEMINI.md \"not shipped\" line as\n#1668, so whichever merges second needs a one-line rebase.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Your `negotiate` brief excludes indexed items matched to executed,\nowner-approved agent-created actions from the relevant Tickets and\nWriting counts and cited evidence, and reports how many items were\nexcluded.\n* The brief also reports in-window creations that could not be matched\nand edits, which may still be included in counts. Exclusions can apply\nto matched creations outside the brief’s reporting window.\n  * Briefs about another person are unchanged.\n* **Documentation**\n* Updated the CLI reference, changelog, security invariants, and roadmap\nto reflect the reporting behavior and its limitations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-16T18:01:04+03:00",
+          "tree_id": "0764762323b1b3e41c70f6ba60bb378fc86c6155",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6a7c84c193f5e4f5e45db68cc1d251822e542e1b"
+        },
+        "date": 1792163654776,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 272.0719565499967,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 267.9689254499975,
             "unit": "ms"
           }
         ]
