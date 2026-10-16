@@ -7,6 +7,35 @@ import { rmDirWithRetry } from "./rm-dir-with-retry.ts";
 
 const err = (code: string): Error => Object.assign(new Error(code), { code });
 
+/** Resolves once `stream` has emitted a line equal to `line`; rejects after `ms` or at EOF. */
+async function waitForLine(
+  stream: ReadableStream<Uint8Array>,
+  line: string,
+  ms: number,
+): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  const deadline = Date.now() + ms;
+  try {
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`no "${line}" from the child within ${String(ms)} ms`);
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<"timeout">((r) => setTimeout(() => r("timeout"), remaining)),
+      ]);
+      if (next === "timeout")
+        throw new Error(`no "${line}" from the child within ${String(ms)} ms`);
+      if (next.done) throw new Error(`the child exited before printing "${line}"`);
+      buffered += decoder.decode(next.value, { stream: true });
+      if (buffered.split(/\r?\n/).some((l) => l.trim() === line)) return;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 describe("rmDirWithRetry", () => {
   test("retries a lock error until the remove succeeds", () => {
     let calls = 0;
@@ -53,27 +82,33 @@ describe("rmDirWithRetry", () => {
   });
 
   // The real thing, which is why this helper exists: a DIFFERENT process holds a file open with no
-  // share-delete, so the first remove fails EBUSY; it closes the handle ~1.5 s in. A bare
-  // `rmSync(dir, { recursive: true, force: true, maxRetries, retryDelay })` fails here in ~1 ms.
+  // share-delete, so the first remove fails EBUSY; it closes the handle 1.5 s after it took it. A
+  // bare `rmSync(dir, { recursive: true, force: true, maxRetries, retryDelay })` fails here in ~1 ms.
   test.skipIf(process.platform !== "win32")(
     "outlasts a real Windows lock held by another process",
     async () => {
       const dir = mkdtempSync(join(tmpdir(), "nimbus-rm-retry-"));
       const file = join(dir, "held.txt");
       writeFileSync(file, "x");
-      const child = Bun.spawn([
-        "powershell",
-        "-NoProfile",
-        "-Command",
-        `$s=[IO.File]::Open('${file}','Open','Read','None'); Start-Sleep -Milliseconds 1500; $s.Close()`,
-      ]);
+      const child = Bun.spawn(
+        [
+          "powershell",
+          "-NoProfile",
+          "-Command",
+          `$s=[IO.File]::Open('${file}','Open','Read','None'); [Console]::Out.WriteLine('locked'); [Console]::Out.Flush(); Start-Sleep -Milliseconds 1500; $s.Close()`,
+        ],
+        { stdout: "pipe" },
+      );
       try {
-        Bun.sleepSync(700);
+        // Wait for the child to CONFIRM it holds the lock — a fixed sleep races PowerShell's
+        // start-up, which on a slow runner can outlast it and make the premise below fail.
+        await waitForLine(child.stdout, "locked", 20_000);
         // Premise first, or this would pass vacuously on a runner where the lock never took.
         expect(() =>
           rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }),
         ).toThrow();
-        rmDirWithRetry(dir);
+        // 10 s of retries against a 1.5 s lock: margin for a slow runner, never an unbounded wait.
+        rmDirWithRetry(dir, { attempts: 100 });
         expect(existsSync(dir)).toBe(false);
       } finally {
         await child.exited;
