@@ -1557,6 +1557,7 @@ Review what MCP clients have written into your index. These are owner commands: 
 nimbus captures [list] [--state live|proposed|accepted|rejected|revoked|executing|executed|failed|expired] [--kind note|decision|term|link|action] [--limit 1-200] [--json]
 nimbus captures show <id> [--json]
 nimbus captures accept <id> [--json]
+nimbus captures accept --all [--kind decision|term|link] [--json]
 nimbus captures reject <id> [--json]
 nimbus captures revoke <id> [--json]
 nimbus captures purge <id> [--json]
@@ -1565,7 +1566,16 @@ nimbus captures purge <id> [--json]
 `list` shows id, kind, state, title, client label and age; `--limit` caps the rows (1 to 200). `show` prints one capture in full, and for an accepted capture a native-status line: the decision, term or link it wrote is `owned` by the capture, `superseded` (something else took it over) or gone (`absent`). `accept` turns a `proposed` decision, term or link into a real decision record, glossary term or `captured_*` graph edge, labelled agent-authored; it refuses with `ERR_CAPTURE_SUPERSEDED` or `ERR_CAPTURE_LINK_UNRESOLVED` when the target has changed since the proposal. `reject` discards a proposal: it flips the capture state and appends a `capture.reject` audit row, but creates no native row and no indexed item; it works even when an org policy has switched the sink off. An accepted term is found by `nimbus query` through its capture item, and `nimbus query` tags capture cards "agent-authored". `revoke` also removes an accepted capture's decision, term or link, but only if the capture still owns it; `revoke`
 deletes the note's item and embeddings and clears the record's payload (the row stays, as the
 history of what was captured and when); it is idempotent, so a second revoke reports success and
-writes no second audit row. **Accepting an action.** `nimbus captures accept <id>` on a `kind: action` capture REQUIRES an interactive terminal
+writes no second audit row. **Accepting in a batch.** `nimbus captures accept --all` accepts every `proposed` decision, term and link (or one
+kind, with `--kind`), at most 200 per run, oldest first; it says so when more are waiting. It REQUIRES an interactive
+terminal and has no `--yes`: it lists each proposal (id, kind, client label, title, control characters stripped) and
+asks once, `Accept these N proposal(s)? [y/N]`; any answer but `y`/`yes` accepts nothing and exits 1. Each proposal
+then goes through the gateway's own `captures.accept`, with every per-capture check, and a refusal
+(`ERR_CAPTURE_SUPERSEDED`, `ERR_CAPTURE_LINK_UNRESOLVED`, …) prints `[refused] <id>: …` without stopping the run. It
+ends `Accepted K of N.` and exits 0 only when every one was accepted (an empty queue also exits 0). Actions are never
+batched: `--kind action` is refused, and an action row is dropped even if the gateway returns one. With `--json`,
+stdout carries one `{accepted, total, more, results}` object and the listing and question go to stderr.
+**Accepting an action.** `nimbus captures accept <id>` on a `kind: action` capture REQUIRES an interactive terminal
 (the executor's HITL prompt needs a human); without one it prints `nimbus captures accept requires an interactive
 terminal (TTY) to approve an agent-proposed action.` and exits 1: it calls `captures.get` to learn the capture's kind,
 but never `captures.accept`. A `captures.get` that names no kind is refused the same way without a TTY. The check is

@@ -16,6 +16,14 @@ import {
  */
 export const FINISHED_RETENTION_MS = 90 * 86_400_000;
 
+export type CaptureListOrder = "asc" | "desc";
+
+/** Fixed SQL per order — never composed from a caller's string. */
+const LIST_ORDER_SQL: Readonly<Record<CaptureListOrder, string>> = {
+  asc: "created_at ASC, id ASC",
+  desc: "created_at DESC, id DESC",
+};
+
 export type NewCaptureRow = Omit<
   CaptureRow,
   "nativeRef" | "decidedAt" | "outcomeRef" | "errorCode"
@@ -93,7 +101,13 @@ export class CaptureStore {
     return r === null ? undefined : toRow(r);
   }
 
-  list(filter: { state?: CaptureState; kind?: CaptureKind; limit: number }): CaptureRow[] {
+  /** Newest first by default; `order: "asc"` (oldest first) is what a batch accept drains by. */
+  list(filter: {
+    state?: CaptureState;
+    kind?: CaptureKind;
+    limit: number;
+    order?: CaptureListOrder;
+  }): CaptureRow[] {
     const where: string[] = [];
     const args: (string | number)[] = [];
     if (filter.state !== undefined) {
@@ -107,7 +121,9 @@ export class CaptureStore {
     const clause = where.length === 0 ? "" : `WHERE ${where.join(" AND ")}`;
     args.push(filter.limit);
     const rows = this.db
-      .query(`SELECT * FROM capture ${clause} ORDER BY created_at DESC, id DESC LIMIT ?`)
+      .query(
+        `SELECT * FROM capture ${clause} ORDER BY ${LIST_ORDER_SQL[filter.order ?? "desc"]} LIMIT ?`,
+      )
       .all(...args) as RawRow[];
     return rows.map(toRow);
   }
