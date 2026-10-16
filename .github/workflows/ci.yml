@@ -962,8 +962,8 @@ jobs:
     # `!cancelled()` plus explicit results, so the NIGHTLY run depends on `ci-rust` alone: without
     # it, a failed `filter` (which only exists to pick UI pushes) would skip the nightly silently.
     if: >-
-      !cancelled()
-      && needs.ci-rust.result == 'success'
+      needs.ci-rust.result == 'success'
+      && !cancelled()
       && (github.event_name == 'schedule'
         || (github.event_name == 'push' && github.ref == 'refs/heads/main'
           && needs.filter.result == 'success' && needs.filter.outputs.ui == 'true'))
