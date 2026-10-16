@@ -24,7 +24,8 @@ import { RpcMethodError } from "./server/rpc-error.ts";
 
 /**
  * `capture.*` (MCP-facing) and `captures.*` (owner-facing) — invariant I28. LAN-forbidden by
- * namespace (I5), absent from the Tauri allowlist (I7), no HTTP route. The caller's kind comes
+ * namespace (I5), no HTTP route; only `captures.list`/`captures.get` are on the Tauri allowlist
+ * (I7), for the read-only desktop Captures page. The caller's kind comes
  * from the CONNECTION (`ServerCtx.getClientKind`), never from params.
  */
 export interface CaptureRpcCtx {

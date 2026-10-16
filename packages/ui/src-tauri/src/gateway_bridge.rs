@@ -75,6 +75,8 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "audit.getSummary",
     "audit.list",
     "audit.verify",
+    "captures.get",
+    "captures.list",
     "chatops.status",
     "connector.auth",
     "connector.listStatus",
@@ -630,6 +632,26 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_captures_reads_only() {
+        // S3 capture sink follow-up: the desktop Captures page lists and shows captures. Every
+        // owner verb (accept/reject/revoke/purge) stays CLI-only, and the MCP-client door
+        // (capture.submit/status/state) is never the renderer's (I7, I28).
+        assert!(is_method_allowed("captures.list"));
+        assert!(is_method_allowed("captures.get"));
+        // One assert per name (not an array of string literals), so the source-level twin in
+        // security-invariants.test.ts can grep for an allowlist ENTRY line without matching these.
+        assert!(!is_method_allowed("captures.accept"));
+        assert!(!is_method_allowed("captures.reject"));
+        assert!(!is_method_allowed("captures.revoke"));
+        assert!(!is_method_allowed("captures.purge"));
+        assert!(!is_method_allowed("capture.submit"));
+        assert!(!is_method_allowed("capture.status"));
+        assert!(!is_method_allowed("capture.state"));
+        assert!(!is_no_timeout_method("captures.list"));
+        assert!(!is_no_timeout_method("captures.get"));
+    }
+
+    #[test]
     fn allowlist_connector_auth_not_start_auth() {
         // A one-for-one substitution, 105 → 105: `connector.startAuth` (the S4-F2 deprecated
         // alias, removed from the gateway on 2026-09-10) out, `connector.auth` (the real method,
@@ -668,7 +690,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 107);
+        assert_eq!(ALLOWED_METHODS.len(), 109);
     }
 
     #[test]

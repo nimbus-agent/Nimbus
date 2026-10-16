@@ -1,0 +1,76 @@
+{
+  "list": {
+    "captures": [
+      {
+        "id": "cap_contract_3",
+        "kind": "note",
+        "state": "revoked",
+        "title": "(revoked)",
+        "clientLabel": null,
+        "createdAt": 1790000120000,
+        "decidedAt": 1790000180000,
+        "expiresAt": null
+      },
+      {
+        "id": "cap_contract_2",
+        "kind": "decision",
+        "state": "accepted",
+        "title": "Use WAL",
+        "clientLabel": "claude-desktop",
+        "createdAt": 1790000060000,
+        "decidedAt": 1790000180000,
+        "expiresAt": null
+      },
+      {
+        "id": "cap_contract_1",
+        "kind": "note",
+        "state": "live",
+        "title": "Kept",
+        "clientLabel": "claude-desktop",
+        "createdAt": 1790000000000,
+        "decidedAt": null,
+        "expiresAt": null
+      }
+    ]
+  },
+  "get": {
+    "id": "cap_contract_2",
+    "kind": "decision",
+    "state": "accepted",
+    "title": "Use WAL",
+    "clientLabel": "claude-desktop",
+    "createdAt": 1790000060000,
+    "decidedAt": 1790000180000,
+    "expiresAt": null,
+    "payload": {
+      "statement": "Use WAL",
+      "rationale": null,
+      "alternatives": [],
+      "decidedAt": 1790000060000,
+      "evidence": []
+    },
+    "payloadBytes": 98,
+    "itemId": "nimbus:cap_contract_2",
+    "nativeRef": "capture:cap_contract_2",
+    "nativeStatus": "owned",
+    "outcomeRef": null,
+    "errorCode": null
+  },
+  "getRevoked": {
+    "id": "cap_contract_3",
+    "kind": "note",
+    "state": "revoked",
+    "title": "(revoked)",
+    "clientLabel": null,
+    "createdAt": 1790000120000,
+    "decidedAt": 1790000180000,
+    "expiresAt": null,
+    "payload": null,
+    "payloadBytes": 58,
+    "itemId": null,
+    "nativeRef": null,
+    "nativeStatus": null,
+    "outcomeRef": null,
+    "errorCode": null
+  }
+}

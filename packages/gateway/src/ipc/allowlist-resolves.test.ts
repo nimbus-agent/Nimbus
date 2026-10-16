@@ -89,6 +89,9 @@ beforeAll(async () => {
     tribalRpcCtx: { status: t, list: t } as never,
     shareRpcCtx: { list: t, get: t, inbox: t, pubkey: t, verify: t } as never,
     egressRpcCtx: { list: t, head: t, verify: t, proveWindow: t } as never,
+    // `captures.list` reaches `now()` (the action-expiry sweep) and `captures.get` reaches the store;
+    // either stub throwing proves the capture arm resolved the name.
+    captureRpcCtx: { gate: { now: t, store: { get: t, list: t } } } as never,
     oncallPushRpcCtx: {
       runtime: {
         config: { enabled: true },

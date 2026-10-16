@@ -1865,8 +1865,11 @@ deletes the item and its embeddings, clears the payload, and records `capture.re
 `hitl_status = 'not_required'` (I4 forbids an `approved` row a gate did not earn). It is idempotent:
 a racing second revoke succeeds and writes no second audit row. `nimbus captures list|show|revoke`
 and the `nimbus doctor` capture-sink lines drive them. The whole `capture` and `captures`
-namespaces are LAN-forbidden (the LAN check is a denylist, so the namespaces are added to it) and
-absent from the Tauri allowlist; none has an HTTP route.
+namespaces are LAN-forbidden (the LAN check is a denylist, so the namespaces are added to it), and
+none has an HTTP route. Only `captures.list` and `captures.get` are on the Tauri allowlist (since
+2026-10-16, 107 → 109), for the read-only desktop Captures page; every other `captures.*` verb and
+the whole `capture.*` namespace stay off it. The page's `ui` connection is an owner kind, so it is
+served like the CLI.
 
 **MCP side.** `packages/cli/src/mcp/capture-tools.ts` registers each capture tool (`capture_note`,
 `propose_decision`, `propose_term`, `propose_link`) only if `capture.status` reports the sink enabled for its kind. The decision is made once, when the MCP
@@ -1879,8 +1882,8 @@ yields no capture tool rather than a guessed one.
 | --- | --- | --- |
 | `capture.status` | any local client | enabled flag, allowed kinds, pending count, limits, refusal counters since start |
 | `capture.submit` | `mcp` kind only | the gate above |
-| `captures.list` | owner | filter by state and kind; newest first, or oldest first with `order: "asc"` |
-| `captures.get` | owner | one capture in full |
+| `captures.list` | owner; renderer-exposed | filter by state and kind; newest first, or oldest first with `order: "asc"` |
+| `captures.get` | owner; renderer-exposed | one capture in full |
 | `captures.revoke` | owner | delete item and embeddings, clear payload; for an accepted capture, also the native row it still owns |
 | `captures.accept` | owner | write a proposal's native row (decision, term or link) |
 | `captures.reject` | owner | discard a proposal; needs no capability |
@@ -1896,7 +1899,7 @@ the V67 SQL module; (b) `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeC
 `ipc/capture-rpc.ts` and `capture-gate.ts`; (c) `capture-gate.ts` value-imported (or re-exported, or
 dynamically imported) by no gateway module except `ipc/capture-rpc.ts`.
 
-**Not shipped, and recorded as such.** There is no desktop UI for captures. Batch accept (`nimbus captures accept --all`, 2026-10-16) is a CLI loop over `captures.list` and `captures.accept` with no gateway method of its own; it takes decisions, terms and links only, never an action. `data.delete --service nimbus` removes
+**Not shipped, and recorded as such.** The desktop has a Captures page (2026-10-16) but it is read-only: it lists and shows captures, and accepting, rejecting, revoking and purging happen only in a terminal. Opening it runs the same action-expiry sweep `captures.list` always runs, so an overdue proposed action can turn `expired` (with its `capture.action.expire` audit row) just as it does under `nimbus captures list`. Batch accept (`nimbus captures accept --all`, 2026-10-16) is a CLI loop over `captures.list` and `captures.accept` with no gateway method of its own; it takes decisions, terms and links only, never an action. `data.delete --service nimbus` removes
 capture items but does not clear `capture` rows. The attempt limit is in-memory. A live note is searchable
 unreviewed, by design.
 

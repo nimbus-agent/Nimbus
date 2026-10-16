@@ -33,10 +33,11 @@ function renderSidebar(newestCreatedAt: number | null) {
 }
 
 describe("Sidebar", () => {
-  it("renders all seven top-level nav entries", () => {
+  it("renders all eight top-level nav entries", () => {
     renderSidebar(null);
     expect(screen.getByRole("link", { name: /Dashboard/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /On-call/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Captures/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /HITL/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Marketplace/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Watchers/i })).toBeInTheDocument();
