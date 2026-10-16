@@ -17,9 +17,7 @@ afterEach(() => {
   for (const c of cleanups.splice(0).reverse()) c();
 });
 
-async function installed(
-  permissions?: (root: string) => Record<string, unknown>,
-): Promise<{
+async function installed(permissions?: (root: string) => Record<string, unknown>): Promise<{
   db: Database;
   installPath: string;
   env: ExtensionRunGrantEnv;
