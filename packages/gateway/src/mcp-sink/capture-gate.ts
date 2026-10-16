@@ -18,7 +18,11 @@ import {
   writeCaptureNative,
 } from "./capture-native.ts";
 import type { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
-import { type CaptureStore, FINISHED_RETENTION_MS } from "./capture-store.ts";
+import {
+  type CaptureListOrder,
+  type CaptureStore,
+  FINISHED_RETENTION_MS,
+} from "./capture-store.ts";
 import {
   type ActDeps,
   type ActionPayload,
@@ -691,11 +695,14 @@ export function listCaptures(
   const p = paramsRaw === undefined ? {} : asRecord(paramsRaw);
   const state = p["state"];
   const kind = p["kind"];
+  const order = p["order"];
   const limit = p["limit"] ?? LIST_LIMIT_DEFAULT;
   if (state !== undefined && !isCaptureState(state))
     throw new CaptureError("ERR_CAPTURE_INVALID", "unknown state");
   if (kind !== undefined && !isCaptureKind(kind))
     throw new CaptureError("ERR_CAPTURE_INVALID", "unknown kind");
+  if (order !== undefined && order !== "asc" && order !== "desc")
+    throw new CaptureError("ERR_CAPTURE_INVALID", "order must be asc or desc");
   if (
     typeof limit !== "number" ||
     !Number.isInteger(limit) ||
@@ -707,9 +714,15 @@ export function listCaptures(
       `limit must be an integer 1..${String(LIST_LIMIT_MAX)}`,
     );
   }
-  const filter: { state?: CaptureState; kind?: CaptureKind; limit: number } = { limit };
+  const filter: {
+    state?: CaptureState;
+    kind?: CaptureKind;
+    limit: number;
+    order?: CaptureListOrder;
+  } = { limit };
   if (state !== undefined) filter.state = state;
   if (kind !== undefined) filter.kind = kind;
+  if (order !== undefined) filter.order = order;
   return { captures: deps.store.list(filter).map(summarize) };
 }
 

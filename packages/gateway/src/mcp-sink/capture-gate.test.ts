@@ -384,6 +384,17 @@ describe("list / get / status", () => {
     expect(codeOf(() => listCaptures(deps, OWNER, { limit: 0 }))).toBe("ERR_CAPTURE_INVALID");
     expect(codeOf(() => listCaptures(deps, OWNER, { state: "bogus" }))).toBe("ERR_CAPTURE_INVALID");
     expect(codeOf(() => listCaptures(deps, MCP, {}))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
+    expect(listCaptures(deps, OWNER, { order: "asc" }).captures.map((c) => c.id)).toEqual([
+      "cap_1",
+      "cap_2",
+    ]);
+    expect(listCaptures(deps, OWNER, { order: "desc" }).captures.map((c) => c.id)).toEqual([
+      "cap_2",
+      "cap_1",
+    ]);
+    for (const order of ["ASC", "random", 1, "created_at; DROP TABLE capture"]) {
+      expect(codeOf(() => listCaptures(deps, OWNER, { order }))).toBe("ERR_CAPTURE_INVALID");
+    }
   });
 
   test("get returns the parsed payload; revoked returns payload null", async () => {

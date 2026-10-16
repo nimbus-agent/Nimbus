@@ -243,6 +243,8 @@ async function listNativeProposals(
     const raw = await c.call<unknown>("captures.list", {
       state: "proposed",
       kind,
+      // Oldest first BEFORE the limit: with more waiting than one run takes, the oldest go first.
+      order: "asc",
       limit: ACCEPT_ALL_MAX,
     });
     // Re-filtered here, not trusted: an action row must never reach the accept loop.

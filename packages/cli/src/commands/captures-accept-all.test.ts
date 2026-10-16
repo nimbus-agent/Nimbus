@@ -35,7 +35,12 @@ function gateway(rows: Row[], acceptImpl: (id: string) => unknown = () => undefi
         calls.push([m, p]);
         const params = (p ?? {}) as Record<string, unknown>;
         if (m === "captures.list") {
-          const got = rows.filter((r) => r.kind === params["kind"]).map(summary);
+          const got = rows
+            .filter((r) => r.kind === params["kind"])
+            .sort((x, y) =>
+              params["order"] === "asc" ? x.createdAt - y.createdAt : y.createdAt - x.createdAt,
+            )
+            .map(summary);
           return { captures: got.slice(0, Number(params["limit"] ?? 50)) } as T;
         }
         if (m === "captures.accept") {
@@ -246,6 +251,28 @@ describe("runCapturesWith — accept --all", () => {
     expect(ids).toHaveLength(ACCEPT_ALL_MAX);
     expect(ids[0]).toBe("cap_000");
     expect(o.out.join("")).toContain("More proposals are waiting than one run accepts (200)");
+  });
+
+  test("more than ACCEPT_ALL_MAX of ONE kind: the gateway is asked oldest first, so the oldest go", async () => {
+    const rows: Row[] = [];
+    for (let i = 0; i < ACCEPT_ALL_MAX + 5; i++) {
+      rows.push({
+        id: `cap_${String(i).padStart(3, "0")}`,
+        kind: "term",
+        title: "t",
+        createdAt: i,
+      });
+    }
+    const g = gateway(rows);
+    const a: CapturesArgs = { verb: "acceptAll", kind: "term", json: false };
+    expect(await runCapturesWith(g.client, a, sink().s, TTY, answering("y").ask)).toBe(0);
+    expect(g.calls[0]).toEqual([
+      "captures.list",
+      { state: "proposed", kind: "term", order: "asc", limit: ACCEPT_ALL_MAX },
+    ]);
+    const ids = accepts(g.calls);
+    expect(ids[0]).toBe("cap_000");
+    expect(ids.at(-1)).toBe(`cap_${String(ACCEPT_ALL_MAX - 1).padStart(3, "0")}`);
   });
 
   test("agent text is control-stripped in the listing", async () => {

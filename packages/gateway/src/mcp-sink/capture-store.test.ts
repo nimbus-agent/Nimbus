@@ -51,6 +51,19 @@ describe("CaptureStore", () => {
     expect(store.list({ kind: "note", limit: 1 }).map((r) => r.id)).toEqual(["cap_b"]);
   });
 
+  test("order asc lists oldest first and applies the limit AFTER ordering", () => {
+    store.insert(note("cap_a", 1000));
+    store.insert(note("cap_b", 2000));
+    store.insert(note("cap_c", 3000));
+    expect(store.list({ limit: 10, order: "asc" }).map((r) => r.id)).toEqual([
+      "cap_a",
+      "cap_b",
+      "cap_c",
+    ]);
+    expect(store.list({ limit: 2, order: "asc" }).map((r) => r.id)).toEqual(["cap_a", "cap_b"]);
+    expect(store.list({ limit: 2, order: "desc" }).map((r) => r.id)).toEqual(["cap_c", "cap_b"]);
+  });
+
   test("counts by state and by creation window", () => {
     store.insert(note("cap_a", 1000));
     store.insert(note("cap_b", 5000));
