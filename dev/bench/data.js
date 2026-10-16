@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792186816026,
+  "lastUpdate": 1792191160079,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "11739d9e3dfda5b3eb42cb26647d99be4bdbb77b",
-          "message": "chore: release main (#988)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.14.0</summary>\n\n##\n[1.14.0](https://github.com/nimbus-agent/Nimbus/compare/v1.13.1...v1.14.0)\n(2026-07-31)\n\n\n### Features\n\n* **glossary:** consolidate through a local-only LLM, upgrade snippet\ndefinitions, and wire --refresh/--rebuild\n([#987](https://github.com/nimbus-agent/Nimbus/issues/987))\n([9d8def2](https://github.com/nimbus-agent/Nimbus/commit/9d8def2ea3fe048044dbb908e4fc877f6ca784e5))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-31T08:34:28Z",
-          "tree_id": "a421c32d0542765274c8c0cba6ab95ba578c248b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/11739d9e3dfda5b3eb42cb26647d99be4bdbb77b"
-        },
-        "date": 1785487550902,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 330.10474424999774,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 321.63358645000045,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 239.94985249999917,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "897db1200ac0a1ac8cdb67e6a7f2849d94276e66",
+          "message": "ci: let a version-bump-only release PR skip the test jobs, and run desktop E2E only when the desktop app changed (plus nightly) (#1677)\n\n## Summary\n\nThis is the third CI-speed PR, after #1676 and #1675. It makes two\nchanges to CI load.\n\n### 1. A release PR that is only a version bump skips the test jobs\n\nrelease-please rewrites its release PR after every merge, and every\nrewrite ran the full PR gate. In the 30 days to 2026-10-16:\n\n- **Volume:** 137 of 446 PR runs (31%) were the release PR. 49 of them\nwere cancelled by the next rewrite.\n- **Value:** every one of them re-tested code `main`'s push run had just\ntested on three OSes.\n- **Not one red was caused by the release diff.** All 8 failures were\nflaky tests in code `main` had already tested: 6 on the macOS/Windows\nlegs, plus two Ubuntu ones (a demo-tour sidecar test and the Chromium\n`isSubmitControl` timeout). I checked each run.\n- **The safety net already exists.** The tag's own Release workflow runs\nthe full Ubuntu suite again before it builds or publishes anything.\n\nThe run linked in the discussion that started this work (38949021174)\nwas one of those: a release PR, red on a Windows timeout.\n\n**What qualifies.** The new `scripts/ci/release-only-diff.ts` decides\nwhether a release PR's diff:\n- touches only release-please's own files, derived from\n`.release-please-config.json`: the manifest, each package's\n`package.json`, its `extra-files`, and its changelog;\n- and changes nothing in them but version strings, plus whatever\nrelease-please writes into the changelog.\n\nEverything else means a full run: any other file; a new, deleted,\nrenamed, binary or quoted-path file; any line whose change is more than\na version string; an empty diff; an unreadable config; any error.\n\n**What runs instead.** `filter` reports `code-changed=false`, so the\ntest jobs skip, which counts as passing exactly as for a docs-only PR.\nThe structure audit (including `audit:release-please`) and the\nrelease-safety job (parse check and changelog completeness) still run.\nRelease safety now also typechecks every release PR, since\n`packages/gateway/src/version.ts` is the bump's one source change and\nthe `Static` job no longer runs.\n\n**Who can take this path:**\n- Only release-please's own PR: the bot's login\n(`nimbus-release-bot[bot]`), AND a same-repository branch, AND\nrelease-please's branch prefix. A fork that names its branch\n`release-please--branches--main` does not qualify.\n- The detector runs **as it is on the base commit** and reads the base's\nconfig, so the PR being judged can neither edit the judge nor widen what\ncounts as release-managed. That is also why it imports nothing relative.\n- An error leaves the output unset, which means a full run.\n`continue-on-error` is that fail-safe, not a bypass.\n\nChecked against history: all 15 most recent `chore: release main`\ncommits classify as release-only, and a normal feature commit such as\n#1671 does not.\n\n### 2. The 3-OS desktop E2E runs when the desktop app changed, plus\nnightly\n\nEvery push to `main` ran three Tauri builds plus Playwright (6–15 min\neach, Windows ~15), whether or not the commit touched `packages/ui/`.\nThat held macOS and Windows runner slots that the PR legs queue for.\nNow:\n\n- **On push:** runs only when `filter` says the push changed\n`packages/ui/` (Rust included).\n- **Nightly:** `ci.yml` gains `schedule: 17 3 * * *`, which runs the\ndesktop E2E and the `ci-rust` it `needs:`. Every other job is gated on\n`push` or `pull_request` and does not run on a schedule.\n- **No queueing between the two:** the concurrency group now includes\nthe event name, so the nightly run never queues behind the push run of\nthe same commit.\n\n## Related Issue\n\nNone. This is items 10 and 11 of the CI-speed plan.\n\n## Type of Change\n\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test scripts/ci\nscripts/preflight.test.ts`: 174 pass)\n- [x] New behaviour is covered by tests (`release-only-diff.test.ts`, 14\ntests)\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (only CI files change)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] `scripts/ci/release-only-diff.ts` has its own tests. The fixture\nis the real v7.47.0 release diff (#1674); the cases are code smuggled\ninto `version.ts`, a non-managed file, each unsafe diff marker, a quoted\npath, and an empty diff. `scripts/` is outside the coverage floor.\n\n## Testing\n\n- `bun run preflight:fast` passed.\n- The detector was run against real history: the release commits\nclassify true, and a feature commit classifies false with its reason.\n- This PR is not a release PR, so its own run takes the normal path. The\nfirst release PR after merge is where the fast path shows. Expect\n`filter`'s log to say `release-only-diff: true` and the test jobs to\nskip.\n\n## Notes for Reviewers\n\n- **Conflict with #1676.** That PR edits the comment inside the\n`e2e-desktop` job that this PR's header and `if:` sit beside. Whichever\nlands second gets a trivial rebase; I will do it.\n- **What changes for the maintainer:**\n  - A release PR goes green in a few minutes instead of 20–30.\n- A nightly CI run appears on `main` at 03:17 UTC. A red one means the\ndesktop E2E broke on `main` that day.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **CI**\n* Added a nightly run at 03:17 UTC, including Rust checks and desktop\nend-to-end tests.\n* Desktop end-to-end tests now run after pushes to `main` that change\nthe UI package, as well as nightly.\n* Docs-only and verified release-only pull requests skip test jobs while\nreporting as passing; release pull requests still receive a type-check\nresult.\n* **Documentation**\n* Updated contribution and CI guidance to describe the nightly schedule\nand test-job conditions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-16T22:40:02Z",
+          "tree_id": "538ef9e60d4e9774daeaedc973da6e7f8f3a0fb1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/897db1200ac0a1ac8cdb67e6a7f2849d94276e66"
+        },
+        "date": 1792191154434,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 267.09022279999937,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 264.8145979499968,
             "unit": "ms"
           }
         ]
