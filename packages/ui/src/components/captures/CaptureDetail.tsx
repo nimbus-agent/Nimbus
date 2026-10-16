@@ -17,16 +17,23 @@ function when(ms: number | null): string {
 export function CaptureDetail({ id }: { readonly id: string }): ReactNode {
   const { data, error } = useIpcQuery<unknown>("captures.get", 60_000, { id });
   const c = asCaptureDetail(data);
-  if (error !== null && c === null) {
+  // `id` here came from the URL, not the gateway: it is never shown, and never put in a command a
+  // reader would copy into a shell. Only a gateway-returned capture's own id reaches `Commands`.
+  const failure = error === null ? null : `Could not load this capture: ${showInvisible(error)}.`;
+  if (failure !== null && c === null) {
     return (
       <p role="alert" className="text-sm">
-        {`Could not load capture ${id}: ${error}. From a terminal: nimbus captures show ${id}`}
+        {`${failure} From a terminal: nimbus captures list`}
       </p>
     );
   }
   if (c?.id !== id) return <p className="text-sm text-[var(--color-fg-muted)]">Loading…</p>;
   return (
     <article aria-label="Capture" className="space-y-3 text-sm">
+      {/* useIpcQuery keeps the last good detail after a failed refresh: say it may be stale. */}
+      {failure !== null && (
+        <p role="alert" className="text-xs">{`${failure} Showing the last version that loaded.`}</p>
+      )}
       <h2 className="font-medium">{c.title === "" ? c.id : showInvisible(c.title)}</h2>
       <Fields c={c} />
       <Commands c={c} />

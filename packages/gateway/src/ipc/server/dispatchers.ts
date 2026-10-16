@@ -1475,8 +1475,9 @@ export async function tryDispatchNotificationsRpc(
 }
 
 /**
- * `capture.*` / `captures.*` (MCP capture sink, I28). LAN-forbidden (I5), absent from the Tauri
- * allowlist (I7). The caller's kind is the CONNECTION's, never a param.
+ * `capture.*` / `captures.*` (MCP capture sink, I28). LAN-forbidden (I5); only `captures.list` and
+ * `captures.get` are on the Tauri allowlist (I7), for the read-only desktop Captures page. The
+ * caller's kind is the CONNECTION's, never a param.
  */
 export async function tryDispatchCaptureRpc(
   ctx: ServerCtx,

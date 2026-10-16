@@ -6,6 +6,7 @@ import { PageHeader } from "../components/chrome/PageHeader";
 import { asCaptureList } from "../hooks/useCaptures";
 import { useIpcQuery } from "../hooks/useIpcQuery";
 import type { CaptureKind, CaptureState, CaptureList as List } from "../ipc/types";
+import { showInvisible } from "../lib/escape-invisible";
 
 const KINDS: readonly CaptureKind[] = ["note", "decision", "term", "link", "action"];
 const STATES: readonly CaptureState[] = [
@@ -99,23 +100,38 @@ function Body(props: {
   readonly error: string | null;
   readonly selectedId: string | null;
 }): ReactNode {
-  if (props.error !== null && props.list === null) {
+  // A gateway refusal can quote agent text, so the error goes through showInvisible too.
+  const failure =
+    props.error === null ? null : `Could not load captures: ${showInvisible(props.error)}.`;
+  if (failure !== null && props.list === null) {
     return (
       <p role="alert" className="text-sm">
-        {`Could not load captures: ${props.error}. From a terminal: nimbus captures list`}
+        {`${failure} From a terminal: nimbus captures list`}
       </p>
     );
   }
   if (props.list === null) return <p className="text-sm text-[var(--color-fg-muted)]">Loading…</p>;
-  if (props.list.captures.length === 0) return <p className="text-sm">{EMPTY}</p>;
   return (
-    <div className="grid grid-cols-[minmax(220px,1fr)_2fr] gap-4">
-      <CaptureList
-        captures={props.list.captures}
-        selectedId={props.selectedId}
-        nowMs={Date.now()}
-      />
-      {props.selectedId !== null && <CaptureDetail key={props.selectedId} id={props.selectedId} />}
+    <div className="space-y-2">
+      {/* useIpcQuery keeps the last good list after a failed refresh: say the view may be stale. */}
+      {failure !== null && (
+        <p role="alert" className="text-xs">{`${failure} Showing the last list that loaded.`}</p>
+      )}
+      <div className="grid grid-cols-[minmax(220px,1fr)_2fr] gap-4">
+        {props.list.captures.length === 0 ? (
+          <p className="text-sm">{EMPTY}</p>
+        ) : (
+          <CaptureList
+            captures={props.list.captures}
+            selectedId={props.selectedId}
+            nowMs={Date.now()}
+          />
+        )}
+        {/* A URL-selected capture stays visible when the current filters list nothing. */}
+        {props.selectedId !== null && (
+          <CaptureDetail key={props.selectedId} id={props.selectedId} />
+        )}
+      </div>
     </div>
   );
 }

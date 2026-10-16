@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   listCalls: [] as Record<string, unknown>[],
   methods: [] as string[],
   details: new Map<string, unknown>(),
+  detailError: null as string | null,
   refetch: vi.fn(),
 }));
 
@@ -25,7 +26,7 @@ vi.mock("../../src/hooks/useIpcQuery", () => ({
     }
     if (method === "captures.get") {
       const data = h.details.get(String(params?.["id"])) ?? null;
-      return { data, error: null, isLoading: false, refetch: vi.fn() };
+      return { data, error: h.detailError, isLoading: false, refetch: vi.fn() };
     }
     throw new Error(`Captures page called an unexpected method: ${method}`);
   },
@@ -86,6 +87,7 @@ beforeEach(() => {
     [fixture.get.id, fixture.get],
     [fixture.getRevoked.id, fixture.getRevoked],
   ]);
+  h.detailError = null;
   h.refetch = vi.fn();
 });
 
@@ -244,5 +246,55 @@ describe("Captures page", () => {
       expect(b.getAttribute("aria-label") ?? "").not.toMatch(/accept|reject|revoke|purge/i);
     }
     expect(screen.queryByRole("button", { name: /accept|reject|revoke|purge/i })).toBeNull();
+  });
+});
+
+describe("Captures page — review fixes", () => {
+  it("a URL-supplied id that fails to load is never echoed, nor put in a command", () => {
+    const hostile = `x; rm -rf ~ #${String.fromCodePoint(0x202e)}`;
+    h.detailError = "Capture not found";
+    ui(`/captures?id=${encodeURIComponent(hostile)}`);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("Could not load this capture: Capture not found.");
+    expect(alert.textContent).toContain("From a terminal: nimbus captures list");
+    expect(document.body.textContent).not.toContain("rm -rf");
+    expect(commands()).toBeNull();
+  });
+
+  it("a failed list refresh is announced while the last good list stays visible", () => {
+    h.listError = "gateway restarting";
+    ui("/captures");
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Could not load captures: gateway restarting. Showing the last list that loaded.",
+    );
+    expect(screen.getByRole("list", { name: "Captures" })).toBeTruthy();
+  });
+
+  it("a failed detail refresh is announced while the last good detail stays visible", () => {
+    h.detailError = "timeout";
+    ui(`/captures?id=${encodeURIComponent(fixture.get.id)}`);
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Could not load this capture: timeout. Showing the last version that loaded.",
+    );
+    expect(screen.getByRole("article", { name: "Capture" })).toBeTruthy();
+  });
+
+  it("a URL-selected capture stays visible when the filtered list is empty", () => {
+    h.listData = { captures: [] };
+    ui(`/captures?id=${encodeURIComponent(fixture.get.id)}`);
+    expect(screen.getByText(/No captures\./)).toBeTruthy();
+    expect(screen.getByRole("article", { name: "Capture" })).toBeTruthy();
+    expect(h.methods).toContain("captures.get");
+  });
+
+  it("an error string is shown with invisible characters escaped", () => {
+    // Written as a code point: a raw U+202E in this file is exactly what a reviewer cannot see.
+    const rlo = String.fromCodePoint(0x202e);
+    h.listData = null;
+    h.listError = `bad ${rlo} term`;
+    ui("/captures");
+    const text = screen.getByRole("alert").textContent ?? "";
+    expect(text).toContain(String.raw`\u{202E}`);
+    expect(text).not.toContain(rlo);
   });
 });
