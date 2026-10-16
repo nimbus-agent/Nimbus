@@ -2777,6 +2777,19 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect([...idx].sort((a, b) => a - b)).toEqual(idx);
   });
 
+  test("act door: acceptCapture routes an action row to an acceptAction CALL, after the owner check", async () => {
+    const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    const start = src.indexOf("export function acceptCapture(");
+    expect(start).toBeGreaterThan(0);
+    const body = src.slice(start);
+    const call = body.search(
+      /if \(row\.kind === "action"\) return acceptAction\(deps, caller, row, act\);/,
+    );
+    expect(call).toBeGreaterThan(0);
+    expect(body.indexOf("requireOwner(caller)")).toBeGreaterThan(0);
+    expect(body.indexOf("requireOwner(caller)")).toBeLessThan(call);
+  });
+
   test("act door: the dispatched payload's mcpToolId is the routing table's value; no delegate; policy overlay passed", async () => {
     const src = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
     expect(src).toMatch(
