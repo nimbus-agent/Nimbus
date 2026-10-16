@@ -78,11 +78,16 @@ export function resolveExtensionRunGrants(
   installPath: string,
   env: ExtensionRunGrantEnv,
 ): ResolvedRunGrants {
-  let install = installPath;
+  let install: string;
   try {
     install = env.realpath(installPath);
   } catch {
-    // Compare by spelling; approve-run has already verified the package is on disk.
+    // Fail closed: the self-write and own-read checks compare CANONICAL paths, so comparing against
+    // the raw spelling could let a self-write through. A real install path always realpaths.
+    throw new ExtensionRunGrantError(
+      "ERR_EXTENSION_GRANT_PATH_MISSING",
+      `install path does not exist: "${installPath}"`,
+    );
   }
   const read: string[] = [];
   for (const p of declared.filesystem.read) {

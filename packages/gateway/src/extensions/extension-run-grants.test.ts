@@ -142,6 +142,21 @@ describe("resolveExtensionRunGrants", () => {
   });
 });
 
+describe("install path and check order", () => {
+  test("an install path that does not exist is refused", () => {
+    expect(() =>
+      resolveExtensionRunGrants(perms([outside]), join(root, "no-such-install"), env()),
+    ).toThrow(/ERR_EXTENSION_GRANT_PATH_MISSING/);
+  });
+
+  test("a write inside the install path AND under the data dir reports SELF_WRITE", () => {
+    mkdirSync(join(installPath, "dist"));
+    expect(() =>
+      resolveExtensionRunGrants(perms([], [join(installPath, "dist")]), installPath, env()),
+    ).toThrow(/ERR_EXTENSION_GRANT_SELF_WRITE/);
+  });
+});
+
 describe("serializeRunGrants", () => {
   test("is stable for equal grants", () => {
     const a = serializeRunGrants({ network: ["h"], read: ["/r"], write: [] });
