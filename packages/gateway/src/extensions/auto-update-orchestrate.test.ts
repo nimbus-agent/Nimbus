@@ -301,6 +301,30 @@ describe("createPerformDowngrade", () => {
     }
   });
 
+  it("refuses a missing _prev/<to> as downgrade_unavailable without touching the row", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-down-"));
+    try {
+      const extRoot = join(root, "extensions", "com.example.a");
+      await mkdir(join(extRoot, "active"), { recursive: true });
+      await writeFile(join(extRoot, "active", "marker.txt"), "vNew");
+      const stopExtensionClient = mock(async () => {});
+      const dbUpdateExtensionRow = mock(async () => {});
+      const perform = createPerformDowngrade({
+        extensionsRoot: join(root, "extensions"),
+        stopExtensionClient,
+        dbUpdateExtensionRow,
+      });
+      await expect(
+        perform(mkAvailable({ fromVersion: "1.1.0", toVersion: "1.0.0" })),
+      ).rejects.toThrow(/downgrade_unavailable/);
+      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("vNew");
+      expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
+      expect(stopExtensionClient).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses a _prev package that differs from the registry's claims, before the swap", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-down-"));
     try {

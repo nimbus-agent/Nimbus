@@ -39,6 +39,7 @@ export const ACTION_TYPE_DOWNGRADE = "extension.downgrade" as const;
 export type AutoUpdateFailPhase =
   | "sha256_mismatch"
   | "package_hash_mismatch"
+  | "package_hash_unreadable"
   | "signature_failed"
   | "swap_failed"
   | "download_failed"

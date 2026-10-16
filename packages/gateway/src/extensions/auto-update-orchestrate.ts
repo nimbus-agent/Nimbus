@@ -101,10 +101,12 @@ export function createPerformDowngrade(deps: PerformDowngradeDeps) {
   return async function performDowngrade(update: AvailableUpdate): Promise<void> {
     const extRoot = join(deps.extensionsRoot, update.id);
     const targetPrev = join(extRoot, "_prev", update.toVersion);
-    // A missing `_prev/<to>` is `applyDowngradeSwap`'s `downgrade_unavailable` to report.
-    const measured = existsSync(targetPrev)
-      ? assertPackageMatchesClaims(targetPrev, update)
-      : { manifestHash: update.manifestHash, entryHash: update.entryHash };
+    // Refused here rather than left to `applyDowngradeSwap`, so there is never an unmeasured
+    // package whose hashes the row could be given.
+    if (!existsSync(targetPrev)) {
+      throw new Error("downgrade_unavailable");
+    }
+    const measured = assertPackageMatchesClaims(targetPrev, update);
     await applyDowngradeSwap({
       extRoot,
       fromVersion: update.fromVersion,
