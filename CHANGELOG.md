@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.45.0](https://github.com/nimbus-agent/Nimbus/compare/v7.44.0...v7.45.0) (2026-10-16)
+
+
+### Features
+
+* **mcp:** act door — agent-proposed connector actions, owner-accepted (S3, I28) ([#1660](https://github.com/nimbus-agent/Nimbus/issues/1660)) ([2714c57](https://github.com/nimbus-agent/Nimbus/commit/2714c574b79287a230fe97ad8d83eaa7853743be))
+
+
+### Bug Fixes
+
+* **extensions:** read the registry's entryHash as the entry file's hash everywhere ([#1662](https://github.com/nimbus-agent/Nimbus/issues/1662)) ([42102e0](https://github.com/nimbus-agent/Nimbus/commit/42102e06040d5810b002bf57621e91782e2b40d4))
+
 ## [7.44.0](https://github.com/nimbus-agent/Nimbus/compare/v7.43.0...v7.44.0) (2026-10-14)
 
 
