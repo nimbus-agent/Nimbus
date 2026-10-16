@@ -18,6 +18,8 @@ const DEMO_REFUSED_METHODS: ReadonlySet<string> = new Set([
   "vault.delete",
   "data.import",
   "extension.install",
+  "extension.approveRun",
+  "extension.revokeRun",
 ]);
 
 /** The refusal for `method` on a demo-rooted gateway, or `undefined` when it may proceed. */

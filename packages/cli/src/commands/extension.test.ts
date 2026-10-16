@@ -12,10 +12,12 @@ const extensionMod = await import("./extension.ts");
 const {
   fetchSandboxPosture,
   formatEnabledLine,
+  formatRunLine,
   formatExtensionInfoHuman,
   formatExtensionListTable,
   hasFlag,
   runExtension,
+  runExtensionApprove,
   runExtensionDisable,
   runExtensionEnable,
   runExtensionInfo,
@@ -24,6 +26,7 @@ const {
   runExtensionList,
   runExtensionRehash,
   runExtensionRemove,
+  runExtensionRevoke,
   runExtensionSign,
   runExtensionSyncWithCaller,
   runExtensionUpdateWithCaller,
@@ -2188,5 +2191,147 @@ describe("runExtensionSign", () => {
     const updated = JSON.parse(rfs(manifestPath, "utf8")) as Record<string, unknown>;
     expect(updated["signature"]).not.toBe("old-signature");
     expect(typeof updated["signature"]).toBe("string");
+  });
+});
+
+describe("runExtensionApprove", () => {
+  const origOut = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  const origIn = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const restore = (
+    s: NodeJS.ReadStream | NodeJS.WriteStream,
+    d: PropertyDescriptor | undefined,
+  ): void => {
+    if (d === undefined) delete (s as { isTTY?: boolean }).isTTY;
+    else Object.defineProperty(s, "isTTY", d);
+  };
+  const setTty = (v: boolean): void => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: v });
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: v });
+  };
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    restore(process.stdout, origOut);
+    restore(process.stdin, origIn);
+  });
+
+  test("throws when the id is missing", async () => {
+    setTty(true);
+    const { client } = createMockIpcClient([]);
+    await expect(runExtensionApprove(client, ["approve"], [])).rejects.toThrow(
+      /extension approve <id>/,
+    );
+  });
+
+  test("refuses in non-TTY mode before any call — there is no --yes", async () => {
+    setTty(false);
+    const { client, calls } = createMockIpcClient([]);
+    await expect(runExtensionApprove(client, ["approve", "x"], ["x"])).rejects.toThrow(
+      /must be answered at a terminal/,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  test("refuses --yes outright", async () => {
+    setTty(true);
+    const { client, calls } = createMockIpcClient([]);
+    await expect(runExtensionApprove(client, ["approve", "x", "--yes"], ["x"])).rejects.toThrow(
+      /no --yes/,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  test("calls extension.approveRun, answers the prompt itself, and says nothing runs yet", async () => {
+    setTty(true);
+    const handlers = new Map<string, (params: unknown) => void>();
+    const { client, calls } = createMockIpcClient(
+      [{ id: "x", serviceId: "ext_x", treeDigest: "ab".repeat(32), changed: true }],
+      handlers,
+    );
+    await runExtensionApprove(client, ["approve", "x"], ["x"]);
+    expect(calls[0]).toEqual({ method: "extension.approveRun", params: { id: "x" } });
+    expect(handlers.has("consent.request")).toBe(true);
+    expect(out.stdout).toContain("approved to run as ext_x");
+    expect(out.stdout).toContain("Nothing runs it yet");
+  });
+
+  test("NIMBUS_SCRIPT_CONSENT_SOURCE cannot answer it", async () => {
+    // `registerConsentFor({ kind: "prompt" })` would read this path at registration and throw
+    // "script consent source not found". The prompt handler ignores it, so the call goes through.
+    setTty(true);
+    const prev = process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+    process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"] = join(tmpdir(), "nimbus-no-such-consent.jsonl");
+    try {
+      const { client, calls } = createMockIpcClient([
+        { id: "x", serviceId: "ext_x", treeDigest: "ab".repeat(32), changed: true },
+      ]);
+      await runExtensionApprove(client, ["approve", "x"], ["x"]);
+      expect(calls[0]?.method).toBe("extension.approveRun");
+    } finally {
+      if (prev === undefined) delete process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+      else process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"] = prev;
+    }
+  });
+
+  test("an unchanged approval says so", async () => {
+    setTty(true);
+    const { client } = createMockIpcClient([
+      { id: "x", serviceId: "ext_x", treeDigest: "ab".repeat(32), changed: false },
+    ]);
+    await runExtensionApprove(client, ["approve", "x"], ["x"]);
+    expect(out.stdout).toContain("already approved");
+  });
+});
+
+describe("runExtensionRevoke", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+
+  test("throws when the id is missing", async () => {
+    const { client } = createMockIpcClient([]);
+    await expect(runExtensionRevoke(client, [])).rejects.toThrow(/extension revoke <id>/);
+  });
+
+  test("calls extension.revokeRun and reports both outcomes", async () => {
+    const { client, calls } = createMockIpcClient([
+      { id: "x", revoked: true },
+      { id: "x", revoked: false },
+    ]);
+    await runExtensionRevoke(client, ["x"]);
+    await runExtensionRevoke(client, ["x"]);
+    expect(calls[0]).toEqual({ method: "extension.revokeRun", params: { id: "x" } });
+    expect(out.stdout).toContain("run approval revoked");
+    expect(out.stdout).toContain("had no run approval");
+  });
+});
+
+describe("run state in human output", () => {
+  test("the Run column appears only when rows carry a runState", () => {
+    const withRun = formatExtensionListTable(
+      [{ id: "ext-a", version: "1.0.0", enabled: 1, runState: "grant_stale" }],
+      { isTty: false, noColor: true },
+    );
+    expect(withRun).toMatch(/ID\s+Version\s+Publisher\s+Status\s+Run/);
+    expect(withRun).toContain("grant_stale");
+    const without = formatExtensionListTable([{ id: "ext-a", version: "1.0.0", enabled: 1 }], {
+      isTty: false,
+      noColor: true,
+    });
+    expect(without).not.toMatch(/\bRun\b/);
+  });
+
+  test("formatRunLine", () => {
+    expect(formatRunLine({})).toBeNull();
+    expect(formatRunLine({ runState: "no_grant", runGrant: null })).toBe("no_grant");
+    expect(
+      formatRunLine({
+        runState: "ready",
+        runGrant: { serviceId: "ext_a", approvedAt: 0, modelAccess: false },
+      }),
+    ).toBe(
+      "ready (ext_a, approved 1970-01-01T00:00:00.000Z; not executed until the extension runtime ships)",
+    );
   });
 });

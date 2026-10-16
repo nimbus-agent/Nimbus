@@ -90,6 +90,8 @@ const FORBIDDEN_OVER_LAN = new Set([
   "extension.enable",
   "extension.disable",
   "extension.remove",
+  "extension.approveRun", // approves running third-party code unattended — CLI-only, like install
+  "extension.revokeRun", // CLI-only alongside approveRun
   "extension.rehash", // adopts on-disk bytes as trusted — gated like an install, CLI-only
   "index.reembed", // T6 PR 3 — write-class index method (writes embedding_chunk + vec_items_*)
   "index.reembedCancel", // T6 PR 3 — paired cancel for the long-running reembed job

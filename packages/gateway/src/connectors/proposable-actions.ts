@@ -219,6 +219,7 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "extension.autoUpdate",
       "extension.downgrade",
       "extension.install",
+      "extension.run",
       "vault.set",
       "vault.delete",
       "teamvault.put",

@@ -13,6 +13,11 @@ import { asRecord } from "../../connectors/unknown-record.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
 import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
+import { resolveRuntimeById } from "../../exec/exec-runtimes.ts";
+import {
+  type ExtensionRunGrantEnv,
+  extensionRunGrantProtectedRoots,
+} from "../../extensions/extension-run-grants.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
 import { preflightConsent } from "../../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../../federation/preflight-gate.ts";
@@ -44,6 +49,7 @@ import { dispatchChatopsRpc } from "../chatops-rpc.ts";
 import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
+import { defaultUserMcpRealpath } from "../connector-rpc-handlers/config.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DecisionsRpcError, dispatchDecisionsRpc } from "../decisions-rpc.ts";
 import { DemoRpcError, dispatchDemoRpc } from "../demo-rpc.ts";
@@ -1894,6 +1900,7 @@ function buildExtensionGateExecutor(
 const OWNER_GATED_EXTENSION_METHODS: ReadonlySet<string> = new Set([
   "extension.install",
   "extension.rehash",
+  "extension.approveRun",
 ]);
 
 function buildExtensionOwnerGate(
@@ -1908,6 +1915,29 @@ function buildExtensionOwnerGate(
   return async (action) => (await toolExecutor.gate(action)) === "proceed";
 }
 
+/**
+ * What `extension.approveRun` resolves grants against: the protected roots user MCP refuses
+ * (`[dataDir, configDir, sandboxDir]`) plus the configured extensions dir — a sibling of the data
+ * dir on Windows — and the Bun runtime's read paths, shown in the prompt. No mesh
+ * means no protected roots to check against, so the method refuses rather than skipping the check.
+ */
+function buildExtensionRunGrantEnv(
+  ctx: ServerCtx,
+  method: string,
+): ExtensionRunGrantEnv | undefined {
+  const mesh = ctx.options.connectorMesh;
+  if (method !== "extension.approveRun" || mesh === undefined) return undefined;
+  return {
+    platform: process.platform,
+    protectedRoots: extensionRunGrantProtectedRoots(
+      mesh.userMcpProtectedRoots(),
+      ctx.options.extensionsDir,
+    ),
+    runtimeReadPaths: resolveRuntimeById("bun").requiredReadPaths(),
+    realpath: defaultUserMcpRealpath,
+  };
+}
+
 async function dispatchExtensionAutomationRpc(
   ctx: ServerCtx,
   clientId: string,
@@ -1920,6 +1950,7 @@ async function dispatchExtensionAutomationRpc(
   try {
     const autoUpdateDeps = buildAutoUpdateDeps(ctx, clientId, method);
     const ownerGate = buildExtensionOwnerGate(ctx, clientId, method);
+    const runGrantEnv = buildExtensionRunGrantEnv(ctx, method);
     const out = await dispatchAutomationRpc({
       method,
       params,
@@ -1937,6 +1968,7 @@ async function dispatchExtensionAutomationRpc(
         : { enforceAirGap: ctx.options.extensionsEnforceAirGap }),
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
       ...(ownerGate === undefined ? {} : { ownerGate }),
+      ...(runGrantEnv === undefined ? {} : { runGrantEnv }),
     });
     if (out.kind === "hit") {
       return out.value;

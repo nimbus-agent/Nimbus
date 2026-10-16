@@ -28,6 +28,8 @@ import {
   checkPushClientKindConfinement,
   checkRemoteVlmConfinement,
   checkRunConfinedConfinement,
+  checkRunGrantTableConfinement,
+  checkRunGrantWriters,
   checkSavedToolAccessorConfinement,
   checkShareConsentBrokerConfinement,
   checkSharePublishConfinement,
@@ -3094,5 +3096,121 @@ describe("D31-listener-registry-registration — a listen site registers with th
         /\bBun\.(?:serve|listen)\b|\bcreateServer\s*\(/.test(f.contents),
     );
     expect(listenSites.length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe("D33(b) — extension_run_grant is named only by its store and its DDL", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+
+  test("allows the store and the V70 SQL module", () => {
+    expect(
+      checkRunGrantTableConfinement([
+        file(
+          "packages/gateway/src/extensions/run-grant-store.ts",
+          "SELECT * FROM extension_run_grant",
+        ),
+        file(
+          "packages/gateway/src/index/extension-run-grant-v70-sql.ts",
+          "CREATE TABLE IF NOT EXISTS extension_run_grant (",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["a read", "SELECT 1 FROM extension_run_grant"],
+    ["a write", "INSERT INTO extension_run_grant (extension_id) VALUES (?)"],
+    ["an upsert-or-replace", "INSERT OR REPLACE INTO extension_run_grant (x) VALUES (1)"],
+    ["a delete", "DELETE FROM extension_run_grant WHERE extension_id = ?"],
+    ["a quoted name", 'SELECT 1 FROM "extension_run_grant"'],
+    ["a schema-qualified name", "UPDATE main.extension_run_grant SET version = ?"],
+  ])("FAILS on %s from anywhere else", (_n, sql) => {
+    expect(
+      checkRunGrantTableConfinement([file("packages/gateway/src/ipc/automation-rpc.ts", sql)]),
+    ).toHaveLength(1);
+  });
+
+  test("does not match a look-alike identifier, a comment, or a test file", () => {
+    expect(
+      checkRunGrantTableConfinement([
+        file(
+          "packages/gateway/src/x.ts",
+          "FROM extension_run_grant_v2; // FROM extension_run_grant",
+        ),
+        file("packages/gateway/src/y.test.ts", "FROM extension_run_grant"),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("D33(c) — only the store and the approve/revoke path create or delete a run grant", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+
+  test("allows the store, approve-run.ts, and (delete only) extension-store.ts", () => {
+    expect(
+      checkRunGrantWriters([
+        file(
+          "packages/gateway/src/extensions/run-grant-store.ts",
+          "export function upsertRunGrant() {}\nexport function deleteRunGrant() {}",
+        ),
+        file(
+          "packages/gateway/src/extensions/approve-run.ts",
+          'import { deleteRunGrant, upsertRunGrant } from "./run-grant-store.ts";\nupsertRunGrant(db, row);\ndeleteRunGrant(db, id);',
+        ),
+        file(
+          "packages/gateway/src/automation/extension-store.ts",
+          'import { deleteRunGrant } from "../extensions/run-grant-store.ts";\ndeleteRunGrant(db, id);',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("FAILS on an upsert call from anywhere else", () => {
+    const v = checkRunGrantWriters([
+      file("packages/gateway/src/ipc/automation-rpc.ts", "upsertRunGrant(db, row);"),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("run-grant-writers");
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("FAILS on an upsert from extension-store.ts, which may only delete", () => {
+    expect(
+      checkRunGrantWriters([
+        file("packages/gateway/src/automation/extension-store.ts", "upsertRunGrant(db, row);"),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("FAILS on a delete call from anywhere else", () => {
+    expect(
+      checkRunGrantWriters([
+        file("packages/gateway/src/ipc/automation-rpc.ts", "deleteRunGrant(db, id);"),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("FAILS on an aliased import", () => {
+    const v = checkRunGrantWriters([
+      file(
+        "packages/gateway/src/ipc/automation-rpc.ts",
+        'import { upsertRunGrant as grant } from "../extensions/run-grant-store.ts";\ngrant(db, row);',
+      ),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("does not match a comment, a look-alike identifier, a test file, or a non-gateway file", () => {
+    expect(
+      checkRunGrantWriters([
+        file(
+          "packages/gateway/src/x.ts",
+          "// upsertRunGrant(db, row)\n/* deleteRunGrant */\nconst upsertRunGrants = 1;",
+        ),
+        file("packages/gateway/src/y.test.ts", "upsertRunGrant(db, row); deleteRunGrant(db, id);"),
+        file("scripts/z.ts", "upsertRunGrant(db, row);"),
+      ]),
+    ).toEqual([]);
   });
 });

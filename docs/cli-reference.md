@@ -4378,6 +4378,8 @@ nimbus extension install https://example.com/nimbus-ext.tar.gz
 
 Install also records a digest of **every** file in the installed package (`tree_digest`), not only the manifest and entry file. Nothing acts on it yet; it is what the extension runtime will check before it runs anything.
 
+An approval (`nimbus extension approve`) records what may run once the runtime ships; it starts nothing today.
+
 ---
 
 ### `nimbus extension rehash <id> [--yes]`
@@ -4393,9 +4395,49 @@ nimbus extension rehash com.example.notion --yes
 
 ---
 
+### `nimbus extension approve <id>`
+
+Approve an installed extension to **run**, with the exact bytes and grants you are shown. This is a second approval, separate from the install one: install says "keep this package on disk", approve says "this code may run with these grants". It is asked through the gateway's HITL gate under action type `extension.run`.
+
+It is **TTY only and has no `--yes`**: a person must answer at a terminal, and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer it. The prompt shows the extension id and version, the publisher key fingerprint (or `unsigned`), the tree digest, the `ext_` service id the extension would run under, the resolved network hosts and read/write paths, and the read-only paths the runtime adds on its own.
+
+```bash
+nimbus extension approve com.example.notion
+```
+
+The gateway refuses **without asking** when any of these hold:
+
+- `Extension not found` (JSON-RPC `-32602`; the wire carries this bare message, not an `ERR_` code) — no such extension.
+- `ERR_EXTENSION_RUN_DISABLED` — the extension is disabled.
+- `ERR_EXTENSION_RUN_UNVERIFIED` — the manifest or entry file no longer matches its install-time hash, or the startup signature check disabled it.
+- `ERR_EXTENSION_RUN_NO_DIGEST` — no tree digest is recorded (run `nimbus extension rehash` first).
+- `ERR_EXTENSION_RUN_TREE_CHANGED` — the files on disk no longer match the recorded tree digest.
+- `ERR_EXTENSION_GRANT_PATH_RELATIVE` / `ERR_EXTENSION_GRANT_PATH_MISSING` — a declared read/write path is relative, or does not exist (an install path that does not resolve counts as missing).
+- `ERR_EXTENSION_GRANT_PROTECTED` — a declared path resolves, after symlinks, into a Nimbus-protected location such as the data directory.
+- `ERR_EXTENSION_GRANT_SELF_WRITE` — a declared write path covers the extension's own install path, which would let it rewrite its own code.
+- `ERR_EXTENSION_SERVICE_ID_INVALID` / `ERR_EXTENSION_SERVICE_ID_COLLISION` — the manifest id cannot be turned into a valid `ext_` service id, or another extension already holds it.
+
+After you answer, two further refusals can occur: `ERR_EXTENSION_RUN_NOT_APPROVED` (you declined, or the prompt timed out) and `ERR_EXTENSION_RUN_CHANGED` (the row was disabled, removed, re-versioned, rehashed or re-pathed, the files changed, the declared grants no longer resolve identically, or another extension was granted a colliding service id while the prompt was open). Either refusal writes no new grant, but it does not remove an approval you gave earlier: a previously stored grant stays in place until you run `nimbus extension revoke <id>`.
+
+Approving again after an update (new version or digest) prompts again and replaces the grant, keeping the original service id.
+
+---
+
+### `nimbus extension revoke <id>`
+
+Withdraw a run approval. It is not gated, since it only narrows what may happen, and it is idempotent: revoking an extension with no approval reports that and exits normally. An unknown id is refused with `Extension not found` (JSON-RPC `-32602`).
+
+```bash
+nimbus extension revoke com.example.notion
+```
+
+---
+
 ### `nimbus extension list [--tree] [--json]`
 
 List installed extensions with their status (`enabled` / `disabled` / `disabled (signature)`).
+
+`list` also shows a **Run** column and `info` a `Run:` line, and `--json` output carries `runState` and `runGrant`. `runState` is one of `disabled`, `no_grant`, `grant_stale` (an approval exists but the version or tree digest has since moved) or `ready`. `ready` means the approval matches the version and tree digest recorded on the extension's row; `list` and `info` compare those records and do not re-hash the files on disk. It does not mean the extension is running.
 
 `disabled (signature)` means the Gateway hard-disabled the extension at startup because its Ed25519 manifest signature did not verify (I16) — it is **not** the same as an extension you disabled yourself. Such a row is bold red on a TTY and carries an annotation line naming the machine-readable reason:
 

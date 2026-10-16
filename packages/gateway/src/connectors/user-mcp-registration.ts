@@ -3,7 +3,11 @@
  * approve, so the approval prompt shows final values (absolute command, canonical
  * paths, normalised hosts). No OS calls except through the injected `env`.
  */
-import path from "node:path";
+
+import type path from "node:path";
+
+import { findProtectedOverlap, pathApiFor } from "../util/path-overlap.ts";
+import { findServiceIdPrefixCollision } from "../util/service-id-prefix.ts";
 
 export type UserMcpRegistrationInput = {
   readonly serviceId: string;
@@ -52,37 +56,18 @@ const LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
 // IPv6 literals are NOT accepted in this slice (stated bound).
 const HOST_RE = new RegExp(String.raw`^${LABEL}(?:\.${LABEL})*(?::(\d{1,5}))?$`);
 
-function pathApi(platform: NodeJS.Platform): typeof path.posix {
-  return platform === "win32" ? path.win32 : path.posix;
-}
-
-function isSameOrInside(
-  api: typeof path.posix,
-  platform: NodeJS.Platform,
-  a: string,
-  b: string,
-): boolean {
-  // Is `a` the same as, or inside, `b`?
-  const norm = (p: string): string => (platform === "win32" ? api.normalize(p).toLowerCase() : p);
-  const rel = api.relative(norm(b), norm(a));
-  if (rel === "") return true;
-  if (api.isAbsolute(rel)) return false; // different drive on win32
-  return rel !== ".." && !rel.startsWith(`..${api.sep}`);
-}
-
 function checkIdCollision(serviceId: string, existing: readonly string[]): void {
-  for (const id of existing) {
-    if (id === serviceId || id.startsWith(`${serviceId}_`) || serviceId.startsWith(`${id}_`)) {
-      throw new UserMcpRegistrationError(
-        "ERR_USER_MCP_ID_COLLISION",
-        `Service id "${serviceId}" collides with registered service id "${id}" (one is a prefix of the other at an underscore boundary).`,
-      );
-    }
+  const id = findServiceIdPrefixCollision(serviceId, existing);
+  if (id !== undefined) {
+    throw new UserMcpRegistrationError(
+      "ERR_USER_MCP_ID_COLLISION",
+      `Service id "${serviceId}" collides with registered service id "${id}" (one is a prefix of the other at an underscore boundary).`,
+    );
   }
 }
 
 function resolveCommand(argv0: string, env: UserMcpRegistrationEnv): string {
-  const api = pathApi(env.platform);
+  const api = pathApiFor(env.platform);
   const notFound = (): UserMcpRegistrationError =>
     new UserMcpRegistrationError(
       "ERR_USER_MCP_COMMAND_NOT_FOUND",
@@ -111,30 +96,15 @@ function resolveCommand(argv0: string, env: UserMcpRegistrationEnv): string {
   }
 }
 
-function assertNotProtected(
-  candidate: string,
-  label: string,
-  env: UserMcpRegistrationEnv,
-  api: typeof path.posix,
-): void {
-  for (const root of env.protectedRoots) {
-    let canonicalRoot = root;
-    try {
-      canonicalRoot = env.realpath(root);
-    } catch {
-      // Root may not exist yet; fall back to the configured spelling.
-    }
-    for (const r of new Set([root, canonicalRoot])) {
-      if (
-        isSameOrInside(api, env.platform, candidate, r) ||
-        isSameOrInside(api, env.platform, r, candidate)
-      ) {
-        throw new UserMcpRegistrationError(
-          "ERR_USER_MCP_READ_PATH_PROTECTED",
-          `${label} "${candidate}" overlaps the protected Nimbus directory "${root}".`,
-        );
-      }
-    }
+function assertNotProtected(candidate: string, label: string, env: UserMcpRegistrationEnv): void {
+  const root = findProtectedOverlap(candidate, env.protectedRoots, env.platform, (p) =>
+    env.realpath(p),
+  );
+  if (root !== undefined) {
+    throw new UserMcpRegistrationError(
+      "ERR_USER_MCP_READ_PATH_PROTECTED",
+      `${label} "${candidate}" overlaps the protected Nimbus directory "${root}".`,
+    );
   }
 }
 
@@ -154,7 +124,7 @@ function resolveReadPath(p: string, env: UserMcpRegistrationEnv, api: typeof pat
       `Read path does not exist: "${p}".`,
     );
   }
-  assertNotProtected(canonical, "Read path", env, api);
+  assertNotProtected(canonical, "Read path", env);
   return canonical;
 }
 
@@ -199,13 +169,13 @@ export function resolveUserMcpRegistration(
     );
   }
   checkIdCollision(input.serviceId, env.registeredServiceIds);
-  const api = pathApi(env.platform);
+  const api = pathApiFor(env.platform);
   const command = resolveCommand(argv0, env);
 
   const readPaths = input.readPaths.map((p) => resolveReadPath(p, env, api));
   if (env.platform !== "win32") {
     const commandDir = api.dirname(command);
-    assertNotProtected(commandDir, "Command directory", env, api);
+    assertNotProtected(commandDir, "Command directory", env);
     readPaths.push(commandDir);
   }
   const netHosts = input.netHosts.map(normaliseNetHost);

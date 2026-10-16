@@ -49,12 +49,16 @@ describe("demoRefusal", () => {
     expect(demoRefusal("connector.someFutureWrite")).toBeInstanceOf(RpcMethodError);
   });
 
-  test.each(["vault.set", "vault.delete", "data.import", "extension.install"])(
-    "%s is refused",
-    (m) => {
-      expect(demoRefusal(m)?.rpcCode).toBe(-32000);
-    },
-  );
+  test.each([
+    "vault.set",
+    "vault.delete",
+    "data.import",
+    "extension.install",
+    "extension.approveRun",
+    "extension.revokeRun",
+  ])("%s is refused", (m) => {
+    expect(demoRefusal(m)?.rpcCode).toBe(-32000);
+  });
 
   test.each([
     "gateway.ping",
