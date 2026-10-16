@@ -37,7 +37,8 @@ The runner in `packages/gateway/src/index/migrations/runner.ts`:
 
 - Applies each `INDEXED_SCHEMA_STEPS` entry in order via `applyIndexedSchemaStep`.
 - Wraps each step in **a single transaction**.
-- Writes a **pre-migration backup** via `applyIndexedSchemaStep` before each step runs.
+- Builds a **fresh** database (`user_version` 0 and nothing but the `_schema_migrations` ledger) with `PRAGMA synchronous = OFF`, then restores the connection's own level and checkpoints a WAL file before returning; an upgrade keeps full durability. See `isFreshIndexDatabase` / `withRelaxedSyncForFreshBuild` in `packages/gateway/src/index/migrations/runner.ts`.
+- Writes ONE **pre-migration backup** per run, lazily, before the first step that actually runs (`oneBackupPerRun`); every later step's rollback message names that same backup. A fresh database at version 0 gets none — there is nothing to restore.
 - Records each step in `_schema_migrations` on success via `recordMigration`.
 - On a thrown step: the transaction is rolled back and a `MigrationRollbackError` is thrown (with the pre-migration backup path in its message when one was written). No ledger entry is recorded for a failed migration — only successful migrations are recorded. The caller must handle the exception.
 
@@ -45,7 +46,7 @@ The runner in `packages/gateway/src/index/migrations/runner.ts`:
 
 ## Pre-migration Backup Rule
 
-The backup is written by `applyIndexedSchemaStep` automatically before every step. **Never skip it.** If the backup write fails, the migration is **aborted** — this is intentional.
+The backup is written automatically, ONCE per run, before the first pending step (`oneBackupPerRun`, called through `applyIndexedSchemaStep`; since #1671 — it used to be one per step, so a fresh install wrote 70 backups of an empty database). A fresh database at version 0 gets none. **Never skip it on an upgrade.** If the backup write fails, the migration is **aborted** — this is intentional.
 
 The backup lives at:
 

@@ -18,6 +18,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-17 — Index: a fresh database is built without a flush per migration step.**
+  A brand-new index runs every schema step from version 0, each in its own transaction, so under
+  SQLite's default `synchronous = FULL` first boot paid ~70 forced disk flushes for a database that
+  holds nothing. The runner now builds a FRESH database (`user_version` 0 and nothing but the
+  `_schema_migrations` ledger — `isFreshIndexDatabase`) with `synchronous = OFF`, then restores the
+  connection's own level and checkpoints a WAL file before returning (`withRelaxedSyncForFreshBuild`).
+  An upgrade of an existing index keeps a flush per step, and a chain run inside the caller's own
+  transaction is left alone (SQLite refuses the change there). Safe because the window covers only a
+  database with no user data: an application crash cannot corrupt it at `OFF`, and an OS crash or
+  power loss inside the window can at worst corrupt that empty file. Measured on a Windows dev
+  machine, a fresh on-disk build drops from ~190 to ~67 ms on a rollback journal and from ~75 to
+  ~42 ms in WAL mode; on the Windows CI runners, where every gateway boot (every e2e test) and every
+  test that migrates a fresh on-disk index pays it, the same chain took several seconds per database
+  and 18-30 s under contention. No schema change, no new invariant.
+
 - **2026-10-16 — S3 capture sink: a read-only desktop Captures page.**
   The desktop gains a Captures page (sidebar, after On-call): a list of what MCP clients captured or
   proposed, filterable by kind and state, and a detail pane with timestamps, the native-row status,
