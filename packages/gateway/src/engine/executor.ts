@@ -142,6 +142,9 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "extension.autoUpdate",
   "extension.downgrade",
   "extension.install",
+  // Extension runtime § 4.4: approving an installed extension to RUN, unattended, with resolved
+  // grants. A separate consent from install. Gate site: extensions/approve-run.ts.
+  "extension.run",
   "connector.addMcp",
   "data.export",
   "connector.reindex",

@@ -59,7 +59,14 @@ export interface SyncCompletedPayload {
 
 export interface ExtensionStateChangedPayload {
   readonly extensionId: string;
-  readonly action: "install" | "enable" | "disable" | "remove" | "update";
+  readonly action:
+    | "install"
+    | "enable"
+    | "disable"
+    | "remove"
+    | "update"
+    | "approveRun"
+    | "revokeRun";
   readonly ok: boolean;
   readonly version?: string;
   readonly error?: string;

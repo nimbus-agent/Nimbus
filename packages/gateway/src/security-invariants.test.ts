@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -314,6 +314,55 @@ describe("I2 — HITL frozen-set membership", () => {
       expect(dispatchers).toMatch(/OWNER_GATED_EXTENSION_METHODS[^;]*"extension\.install"/);
       db.close();
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("extension.run is not merely listed: approveRun REFUSES without the executor gate and grants nothing on a denial", async () => {
+    const { HITL_REQUIRED } = await import("./engine/executor.ts");
+    expect(HITL_REQUIRED.has("extension.run")).toBe(true);
+    const { dispatchAutomationRpc } = await import("./ipc/automation-rpc.ts");
+    const { listRunGrants } = await import("./extensions/run-grant-store.ts");
+    const tmp = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-i2-ext-run-")));
+    const db = new Database(":memory:");
+    try {
+      LocalIndex.ensureSchema(db);
+      const src = join(tmp, "src");
+      mkdirSync(join(src, "dist"), { recursive: true });
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "i2.run", version: "1.0.0", entry: "dist/index.js" }),
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+      await dispatchAutomationRpc({
+        method: "extension.install",
+        params: { sourcePath: src },
+        db,
+        extensionsDir: join(tmp, "extensions"),
+        ownerGate: async () => true,
+      });
+      const runGrantEnv = {
+        platform: process.platform,
+        protectedRoots: [join(tmp, "data")],
+        runtimeReadPaths: [],
+        realpath: (p: string) => realpathSync.native(p),
+      };
+      const base = { method: "extension.approveRun", params: { id: "i2.run" }, db, runGrantEnv };
+      await expect(dispatchAutomationRpc(base)).rejects.toThrow(/requires the owner's HITL gate/);
+      const asked: string[] = [];
+      await expect(
+        dispatchAutomationRpc({
+          ...base,
+          ownerGate: async (a) => {
+            asked.push(a.type);
+            return false;
+          },
+        }),
+      ).rejects.toThrow(/ERR_EXTENSION_RUN_NOT_APPROVED/);
+      expect(asked).toEqual(["extension.run"]);
+      expect(listRunGrants(db)).toEqual([]);
+    } finally {
+      db.close();
       rmSync(tmp, { recursive: true, force: true });
     }
   });

@@ -30,8 +30,10 @@ import {
   listWorkflows,
   upsertWorkflowByName,
 } from "../automation/workflow-store.ts";
+import { approveExtensionRun, revokeExtensionRun } from "../extensions/approve-run.ts";
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
 import { clearDeps, forwardDeps, reverseDeps } from "../extensions/dependency-store.ts";
+import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
 import {
   PRE_T2_DISABLE_REASON,
   preT2DisabledIds,
@@ -44,6 +46,13 @@ import {
   installExtensionFromLocalDirectory,
 } from "../extensions/install-from-local.ts";
 import type { PublisherKeyFetcher } from "../extensions/registry-client.ts";
+import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
+import {
+  type ExtensionRunGrantRow,
+  getRunGrant,
+  listRunGrants,
+} from "../extensions/run-grant-store.ts";
+import { extensionRunFields } from "../extensions/run-state.ts";
 import { syncPublisherKeys } from "../extensions/sync.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
@@ -118,6 +127,7 @@ interface AutomationCtx {
   enforceAirGap?: boolean;
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
+  runGrantEnv?: ExtensionRunGrantEnv;
 }
 
 type AutomationHandler = (
@@ -248,6 +258,10 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
 
   "extension.rehash": async (rec, ctx) => handleExtensionRehash(rec, ctx),
 
+  "extension.approveRun": async (rec, ctx) => handleExtensionApproveRun(rec, ctx),
+
+  "extension.revokeRun": async (rec, ctx) => handleExtensionRevokeRun(rec, ctx),
+
   "extension.sync": async (rec, ctx) => handleExtensionSync(rec, ctx),
 
   "extension.checkForUpdates": async (rec, ctx) =>
@@ -377,11 +391,12 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   }),
 };
 
-type ExtensionListItem = ExtensionRow & {
-  disabled_reason?: typeof PRE_T2_DISABLE_REASON | SignatureDisableReason;
-  needs_reinstall?: boolean;
-  signature_disabled?: boolean;
-};
+type ExtensionListItem = ExtensionRow &
+  ReturnType<typeof extensionRunFields> & {
+    disabled_reason?: typeof PRE_T2_DISABLE_REASON | SignatureDisableReason;
+    needs_reinstall?: boolean;
+    signature_disabled?: boolean;
+  };
 
 /**
  * Attach the reason an extension is disabled, where the gateway knows one.
@@ -395,24 +410,29 @@ type ExtensionListItem = ExtensionRow & {
  * and the signature pass only iterates rows that are still `enabled = 1` — but pre-T2 is checked first
  * regardless rather than relying on that ordering.
  */
-function decorateExtensionList(rows: readonly ExtensionRow[]): ExtensionListItem[] {
+function decorateExtensionList(
+  rows: readonly ExtensionRow[],
+  grants: ReadonlyMap<string, ExtensionRunGrantRow>,
+): ExtensionListItem[] {
   const preT2 = new Set(preT2DisabledIds());
   const signature = new Map(signatureDisabledRegistry.list().map((e) => [e.id, e.reason]));
   return rows.map((r) => {
+    const run = extensionRunFields(r, grants.get(r.id) ?? null);
     if (preT2.has(r.id)) {
-      return { ...r, disabled_reason: PRE_T2_DISABLE_REASON, needs_reinstall: true };
+      return { ...r, ...run, disabled_reason: PRE_T2_DISABLE_REASON, needs_reinstall: true };
     }
     const reason = signature.get(r.id);
     if (reason !== undefined) {
-      return { ...r, disabled_reason: reason, signature_disabled: true };
+      return { ...r, ...run, disabled_reason: reason, signature_disabled: true };
     }
-    return { ...r };
+    return { ...r, ...run };
   });
 }
 
 function handleExtensionList(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
   const filter = rec !== undefined && typeof rec["filter"] === "string" ? rec["filter"] : "";
-  const all = decorateExtensionList(listExtensions(ctx.db));
+  const grants = new Map(listRunGrants(ctx.db).map((g) => [g.extension_id, g]));
+  const all = decorateExtensionList(listExtensions(ctx.db), grants);
   const filtered =
     filter === "needs-reinstall" || filter === "needs_reinstall"
       ? all.filter((e) => e.needs_reinstall === true)
@@ -428,6 +448,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
   }
   const fwd = forwardDeps(ctx.db, row.id);
   const rev = reverseDeps(ctx.db, row.id);
+  const run = extensionRunFields(row, getRunGrant(ctx.db, row.id));
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {
     return {
@@ -435,6 +456,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
       value: {
         extension: {
           ...row,
+          ...run,
           disabled_reason: PRE_T2_DISABLE_REASON,
           needs_reinstall: true,
           forwardDeps: fwd,
@@ -455,6 +477,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
       value: {
         extension: {
           ...row,
+          ...run,
           ...resolveExtensionInfoExtras(row, ctx),
           disabled_reason: signatureReason,
           signature_disabled: true,
@@ -471,6 +494,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
     value: {
       extension: {
         ...row,
+        ...run,
         ...resolveExtensionInfoExtras(row, ctx),
         forwardDeps: fwd,
         reverseDeps: rev,
@@ -647,6 +671,88 @@ async function handleExtensionRehash(
   return { kind: "hit", value: { id, treeDigest, changed: true } };
 }
 
+/** A refusal that happened AFTER the owner was involved is an internal-class error, like rehash's. */
+const RUN_GRANT_POST_CONSENT: ReadonlySet<string> = new Set([
+  "ERR_EXTENSION_RUN_NOT_APPROVED",
+  "ERR_EXTENSION_RUN_CHANGED",
+]);
+
+function runGrantRpcError(e: unknown): unknown {
+  if (!(e instanceof ExtensionRunGrantError)) return e;
+  if (e.code === "ERR_EXTENSION_NOT_FOUND") {
+    return new AutomationRpcError(-32602, "Extension not found");
+  }
+  return new AutomationRpcError(RUN_GRANT_POST_CONSENT.has(e.code) ? -32603 : -32602, e.message);
+}
+
+/**
+ * Approve an installed extension to RUN (extension-runtime § 4.4): a second, separate approval from
+ * install, asked under `extension.run`. Nothing spawns it yet — the runtime is PR 3.
+ */
+async function handleExtensionApproveRun(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
+  const id = requireString(rec, "id");
+  const ownerGate = ctx.ownerGate;
+  if (ownerGate === undefined) {
+    throw new AutomationRpcError(-32603, "extension.approveRun requires the owner's HITL gate");
+  }
+  const env = ctx.runGrantEnv;
+  if (env === undefined) {
+    throw new AutomationRpcError(
+      -32603,
+      "Gateway is not configured to resolve extension run grants",
+    );
+  }
+  try {
+    const out = await approveExtensionRun(id, { db: ctx.db, env, gate: ownerGate, now: Date.now });
+    // `list`/`info` now carry runState, so a connected client must hear that it moved — as it
+    // already does for install/enable/disable/remove/update. An unchanged re-approval moved nothing.
+    if (out.changed) {
+      emitGatewayEvent("extension.stateChanged", {
+        extensionId: id,
+        action: "approveRun",
+        ok: true,
+      });
+    }
+    return { kind: "hit", value: out };
+  } catch (e) {
+    emitGatewayEvent("extension.stateChanged", {
+      extensionId: id,
+      action: "approveRun",
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    throw runGrantRpcError(e);
+  }
+}
+
+async function handleExtensionRevokeRun(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
+  const id = requireString(rec, "id");
+  const mesh = ctx.mesh;
+  try {
+    const out = await revokeExtensionRun(
+      ctx.db,
+      id,
+      mesh === undefined ? undefined : (x) => mesh.stopExtensionClient(x),
+    );
+    if (out.revoked) {
+      emitGatewayEvent("extension.stateChanged", {
+        extensionId: id,
+        action: "revokeRun",
+        ok: true,
+      });
+    }
+    return { kind: "hit", value: out };
+  } catch (e) {
+    throw runGrantRpcError(e);
+  }
+}
+
 function digestOrRefuse(installPath: string): string {
   try {
     return computeExtensionTreeDigest(installPath);
@@ -678,6 +784,7 @@ export async function dispatchAutomationRpc(options: {
   enforceAirGap?: boolean;
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
+  runGrantEnv?: ExtensionRunGrantEnv;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -692,6 +799,7 @@ export async function dispatchAutomationRpc(options: {
     ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
     ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
     ...(options.ownerGate !== undefined && { ownerGate: options.ownerGate }),
+    ...(options.runGrantEnv !== undefined && { runGrantEnv: options.runGrantEnv }),
   };
   return await handler(asRecord(options.params), ctx);
 }
