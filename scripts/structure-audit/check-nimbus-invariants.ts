@@ -1805,6 +1805,7 @@ const D32_CAPTURE_TABLE_RE = new RegExp(
 const D32_CAPTURE_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/mcp-sink/capture-store.ts",
   "packages/gateway/src/index/capture-v67-sql.ts",
+  "packages/gateway/src/index/capture-action-v69-sql.ts",
 ];
 
 export function checkCaptureTableConfinement(files: readonly FileEntry[]): Violation[] {
@@ -1935,6 +1936,74 @@ export function checkAgentProvenanceWriters(files: readonly FileEntry[]): Violat
           snippet: (original[line - 1] ?? "").trim(),
         });
       }
+    }
+  }
+  return out;
+}
+
+// (e)(f)(g) The act door (spec 2026-10-15 § 12.2). (e) `acceptAction` is named only by its definition
+//     (mcp-sink/capture-act.ts) and its one caller (mcp-sink/capture-gate.ts's acceptCapture); other
+//     exports of capture-act.ts (e.g. `formatActionConsent`, imported by ipc/capture-rpc.ts) are not
+//     covered. (f) No non-test `mcp-sink/` file imports, re-exports or dynamically imports
+//     `engine/executor.ts` or anything under `connectors/` — TYPE imports included: execution,
+//     classification and configured-ness reach the sink only as injected functions, built in
+//     ipc/capture-rpc.ts and platform/assemble.ts. `engine/service-of.ts` is a pure string helper and
+//     stays allowed. The import shape is D32(c)'s: the span between the keyword and `from` may not
+//     cross another `import`/`export` keyword or a completed `from "…"` clause, so in semicolon-free
+//     code an allowed import cannot swallow a forbidden one after it; the last alternative takes both
+//     a dynamic `import("…")` and a side-effect `import "…"`. Separate passes catch `require("…")`
+//     (incl. `import X = require("…")`) and a backtick `import(`…`)`, and the executor specifier
+//     matches with any `.[cm]?[jt]s` extension or none (`../engine/executor.js` included). (g) The `mcpToolId` literal appears under
+//     mcp-sink/ only in capture-validate.ts, where a key of that name is REFUSED — the gateway, never
+//     the agent, chooses the tool (I42 pairing). Comments are stripped; strings are NOT (a key lives
+//     there). Stated bound, as D32(a): a dynamically composed specifier or key evades a text scan, and
+//     (e) exempts whole files, so a second caller inside capture-gate.ts is invisible; capability
+//     confinement (the sink is never handed a dispatcher) is the real defence.
+const D32E_ACCEPT_ACTION_RE = /\bacceptAction\b/g;
+const D32E_ALLOWED: readonly string[] = [
+  "packages/gateway/src/mcp-sink/capture-act.ts",
+  "packages/gateway/src/mcp-sink/capture-gate.ts",
+];
+const D32F_MODULE_RE =
+  /\b(?:import|export)\b(?:(?!\bfrom\s*["']|\b(?:import|export)\b)[^;])*?\bfrom\s*["']([^"']+)["']|\bimport\s*\(?\s*["']([^"']+)["']/g;
+// A separate pass, so an `import … from` span can never swallow one: CommonJS `require("…")`,
+// which also covers TypeScript's `import X = require("…")`.
+const D32F_REQUIRE_RE = /\brequire\s*\(\s*["'`]([^"'`]+)["'`]/g;
+// A separate pass for a backtick dynamic `import(`…`)`, whose specifier may be a template.
+const D32F_TEMPLATE_IMPORT_RE = /\bimport\s*\(\s*`([^`]+)`/g;
+// Any emitted/source extension (`.ts`, `.js`, `.mjs`, `.cts`, …) or none.
+const D32F_FORBIDDEN_SPEC_RE = /(?:^|\/)engine\/executor(?:\.[cm]?[jt]s)?$|(?:^|\/)connectors\//;
+const D32G_LITERAL_RE = /mcpToolId/g;
+const D32G_ALLOWED = "packages/gateway/src/mcp-sink/capture-validate.ts";
+const MCP_SINK_PREFIX = "packages/gateway/src/mcp-sink/";
+
+export function checkActDoorConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    // stripComments and stripStringLiterals both preserve length, so a match offset in either maps
+    // to the same line of the original source.
+    const code = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    const push = (rule: string, index: number): void => {
+      const line = code.slice(0, index).split("\n").length;
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    };
+    if (!D32E_ALLOWED.includes(f.relPath)) {
+      for (const m of stripStringLiterals(code).matchAll(D32E_ACCEPT_ACTION_RE)) {
+        push("act-door-accept-action", m.index);
+      }
+    }
+    if (!f.relPath.startsWith(MCP_SINK_PREFIX)) continue;
+    for (const re of [D32F_MODULE_RE, D32F_REQUIRE_RE, D32F_TEMPLATE_IMPORT_RE]) {
+      for (const m of code.matchAll(re)) {
+        const spec = m[1] ?? m[2] ?? "";
+        if (D32F_FORBIDDEN_SPEC_RE.test(spec)) push("mcp-sink-no-executor-or-connectors", m.index);
+      }
+    }
+    if (f.relPath !== D32G_ALLOWED) {
+      for (const m of code.matchAll(D32G_LITERAL_RE)) push("mcp-sink-mcptoolid-literal", m.index);
     }
   }
   return out;
@@ -2599,6 +2668,10 @@ export const RULE_ANCHORS: readonly string[] = [
   // call of its own and so would prove nothing about whether the rule can see one. Same shape as
   // the D23/D28/D29/D30 anchors above.
   "packages/gateway/src/ipc/http-server.ts",
+  // D32(e)(f)(g) — anchored on capture-gate.ts, which (f) and (g) SCAN (it sits under mcp-sink/ and is
+  // not capture-validate.ts) and (e) reads then permits. Without it, both rules would report clean
+  // while scanning nothing the moment iterateSourceFiles() stopped loading mcp-sink/.
+  "packages/gateway/src/mcp-sink/capture-gate.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -2914,7 +2987,20 @@ async function run(): Promise<void> {
         `::error file=${e.file},line=${e.line}::D32(d) an agent-row writer reached outside the capture accept path — I28 regression: ${e.snippet}`,
       );
     }
-    if (a.length > 0 || b.length > 0 || c.length > 0 || d.length > 0) exit = 1;
+    const e = checkActDoorConfinement(files);
+    const D32_ACT_DOOR_LETTER: Readonly<Record<string, string>> = {
+      "act-door-accept-action": "e) acceptAction named outside capture-act.ts/capture-gate.ts",
+      "mcp-sink-no-executor-or-connectors":
+        "f) an mcp-sink/ file imports engine/executor.ts or connectors/",
+      "mcp-sink-mcptoolid-literal":
+        "g) the mcpToolId literal under mcp-sink/ outside capture-validate.ts",
+    };
+    for (const v of e) {
+      console.error(
+        `::error file=${v.file},line=${v.line}::D32(${D32_ACT_DOOR_LETTER[v.rule] ?? v.rule} — act door confinement, I28 regression: ${v.snippet}`,
+      );
+    }
+    if (a.length > 0 || b.length > 0 || c.length > 0 || d.length > 0 || e.length > 0) exit = 1;
   }
   if (mode === "binary-only" || mode === "all") {
     const v = checkBrokeredFetchLiteralConfinement(files);

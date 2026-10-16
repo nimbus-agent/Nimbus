@@ -34,7 +34,10 @@ const ENABLED = {
 describe("captureToolsFor", () => {
   test("enabled + note kind → capture_note registered", async () => {
     const { deps: d } = deps(async () => ENABLED);
-    expect((await captureToolsFor(d)).map((s) => s.name)).toEqual(["capture_note"]);
+    expect((await captureToolsFor(d)).map((s) => s.name)).toEqual([
+      "capture_note",
+      "capture_status",
+    ]);
   });
 
   test.each([
@@ -140,16 +143,21 @@ describe("proposal tools", () => {
       "propose_decision",
       "propose_term",
       "propose_link",
+      "capture_status",
     ]);
   });
 
   test("kinds note+term → exactly capture_note and propose_term", async () => {
     const { deps: d } = deps(async () => ({ ...ALL, kinds: ["note", "term"] }));
-    expect((await captureToolsFor(d)).map((s) => s.name)).toEqual(["capture_note", "propose_term"]);
+    expect((await captureToolsFor(d)).map((s) => s.name)).toEqual([
+      "capture_note",
+      "propose_term",
+      "capture_status",
+    ]);
   });
 
-  test("every spec has all four annotations false", () => {
-    for (const s of CAPTURE_TOOL_SPECS) {
+  test("every write spec has all four annotations false; capture_status is read-only", () => {
+    for (const s of CAPTURE_TOOL_SPECS.filter((x) => x.kind !== "status")) {
       expect(s.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: false,
@@ -157,6 +165,18 @@ describe("proposal tools", () => {
         openWorldHint: false,
       });
     }
+    expect(find("capture_status")?.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    });
+  });
+
+  test("capture_status does not claim to be bound to the submitter (the gateway answers by id)", () => {
+    const d = find("capture_status")?.description ?? "";
+    expect(d).not.toMatch(/you submitted/i);
+    expect(d).toContain("ANY capture id to any MCP client that holds it");
   });
 
   test("propose_decision sends the full payload with decidedAt as ms", async () => {
@@ -268,5 +288,114 @@ describe("proposal tools", () => {
       () => undefined,
     );
     expect(res?.isError).toBe(true);
+  });
+});
+
+function depsWithStatus(status: Record<string, unknown>): AdapterDeps {
+  return deps(async (m) => (m === "capture.status" ? status : undefined)).deps;
+}
+
+function depsRecording(
+  calls: Array<[string, unknown]>,
+  answers: Record<string, unknown>,
+): AdapterDeps {
+  const client: IpcCallable = {
+    call: async <T>(m: string, p?: unknown) => {
+      calls.push([m, p]);
+      return answers[m] as T;
+    },
+    disconnect: async () => {},
+  };
+  return { getClient: async () => client };
+}
+
+describe("act door tools", () => {
+  test("propose_action is absent unless actionEnabled; capture_status present with any kind", async () => {
+    const off = await captureToolsFor(
+      depsWithStatus({ enabled: true, kinds: ["note"], actionEnabled: false }),
+    );
+    expect(off.map((t) => t.name)).toEqual(["capture_note", "capture_status"]);
+    const on = await captureToolsFor(
+      depsWithStatus({
+        enabled: true,
+        kinds: ["note", "action"],
+        actionEnabled: true,
+        proposableActionTypes: ["jira.issue.create", "slack.message.post"],
+      }),
+    );
+    expect(on.map((t) => t.name)).toEqual(["capture_note", "propose_action", "capture_status"]);
+    expect(on.find((t) => t.name === "propose_action")?.description).toContain(
+      "jira.issue.create, slack.message.post",
+    );
+  });
+
+  test("action in kinds but actionEnabled false (e.g. policy mcp_action) → no propose_action", async () => {
+    const t = await captureToolsFor(
+      depsWithStatus({ enabled: true, kinds: ["action"], actionEnabled: false }),
+    );
+    expect(t.map((x) => x.name)).toEqual(["capture_status"]);
+  });
+
+  test("actionEnabled with no proposable types says so", async () => {
+    const t = await captureToolsFor(
+      depsWithStatus({
+        enabled: true,
+        kinds: ["action"],
+        actionEnabled: true,
+        proposableActionTypes: [7],
+      }),
+    );
+    expect(t.find((x) => x.name === "propose_action")?.description).toEndWith("(none configured).");
+  });
+
+  test("sink off: no tools at all", async () => {
+    expect(await captureToolsFor(depsWithStatus({ enabled: false, kinds: [] }))).toEqual([]);
+  });
+
+  test("propose_action submits {actionType, input, summary} and says it has NOT run", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const d = depsRecording(calls, {
+      "capture.submit": { id: "cap_1", state: "proposed", expiresAt: 0 },
+    });
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
+    const out = await spec?.run(
+      d,
+      { actionType: "slack.message.post", input: { text: "hi" }, summary: "why" },
+      () => "agent",
+    );
+    expect(calls[0]).toEqual([
+      "capture.submit",
+      {
+        kind: "action",
+        payload: { actionType: "slack.message.post", input: { text: "hi" }, summary: "why" },
+        clientLabel: "agent",
+      },
+    ]);
+    expect(out?.content[0]?.text).toContain("has NOT run");
+    expect(out?.content[0]?.text).toContain("1970-01-01T00:00:00.000Z");
+  });
+
+  test("propose_action without an expiresAt names the TTL rather than inventing a time", async () => {
+    const d = depsRecording([], { "capture.submit": { id: "cap_2", state: "proposed" } });
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "propose_action");
+    const out = await spec?.run(
+      d,
+      { actionType: "slack.message.post", input: {}, summary: "s" },
+      () => undefined,
+    );
+    expect(out?.content[0]?.text).toContain("expires its TTL");
+  });
+
+  test("capture_status returns the state JSON", async () => {
+    const d = depsRecording([], {
+      "capture.state": { kind: "action", state: "executed", outcomeRef: "https://x" },
+    });
+    const spec = CAPTURE_TOOL_SPECS.find((s) => s.name === "capture_status");
+    const out = await spec?.run(d, { id: "cap_1" }, () => undefined);
+    expect(JSON.parse(out?.content[0]?.text ?? "{}")).toEqual({
+      kind: "action",
+      state: "executed",
+      outcomeRef: "https://x",
+    });
   });
 });

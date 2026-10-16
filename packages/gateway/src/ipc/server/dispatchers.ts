@@ -1481,10 +1481,14 @@ export async function tryDispatchCaptureRpc(
   if (!method.startsWith("capture.") && !method.startsWith("captures.")) return phase4RpcSkipped;
   const rpc = ctx.options.captureRpcCtx;
   if (rpc === undefined) return phase4RpcSkipped;
-  const out = await dispatchCaptureRpc(method, params, rpc, {
-    clientId,
-    kind: ctx.getClientKind(clientId),
-  });
+  // The consent coordinator lets an action accept prompt THIS (the accepting) session (I28 act door).
+  const out = await dispatchCaptureRpc(
+    method,
+    params,
+    rpc,
+    { clientId, kind: ctx.getClientKind(clientId) },
+    ctx.consentImpl,
+  );
   return out.kind === "hit" ? out.value : phase4RpcSkipped;
 }
 

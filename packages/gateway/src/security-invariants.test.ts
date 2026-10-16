@@ -2176,9 +2176,19 @@ code_execution=true
     expect(assembly.slice(servicesAt, assembly.indexOf("\n  };", servicesAt))).toMatch(
       /\n\s*connectorWriteDeps,\n/,
     );
-    // The destructuring from `buildTeamCredentialContexts`, the ChatOps boot (see (j)) and the
-    // services literal: three.
-    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(3);
+    // The destructuring from `buildTeamCredentialContexts`, the ChatOps boot (see (j)), the
+    // services literal, and — the fourth — the I28 act door's dispatcher inside the
+    // `captureRpcCtx.act` wiring, whose exact shape is pinned just below: four.
+    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(4);
+    const captureAt = assembly.indexOf("ipcOpts.captureRpcCtx = {");
+    expect(captureAt).toBeGreaterThan(-1);
+    const captureCtx = assembly.slice(captureAt, assembly.indexOf("\n  };", captureAt));
+    const actAt = captureCtx.indexOf("act: {");
+    expect(actAt).toBeGreaterThan(-1);
+    expect(captureCtx.slice(actAt)).toMatch(
+      /^act: \{\s*dispatcher: createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(meshDispatcherClient\(connectorMesh\)\),\s*connectorWriteDeps,?\s*\),/,
+    );
+    expect(captureCtx.match(/\bconnectorWriteDeps\b/g)).toHaveLength(1);
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
       /createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(dispatcherClient\),\s*platform\.connectorWriteDeps,?\s*\)/,
@@ -2617,17 +2627,20 @@ describe("I27 — outbound share gated by share.publish HITL action", () => {
 describe("I28 — MCP content enters only through the capture gate, in a fixed order", () => {
   test("submitCapture checks capability → client kind → attempt limit → kind → validate → items → link endpoints → durable cap → pending cap, in that order", async () => {
     const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
-    const body = src.slice(src.indexOf("export function submitCapture"));
+    const body = src.slice(src.indexOf("export async function submitCapture"));
     const order = [
       "deps.capability()",
       "CAPTURE_ROLE_BY_KIND[caller.kind]",
       "deps.limiter.tryAcquire(",
       "cap.kinds.includes(",
       "validateCapturePayload(kindRaw",
+      "deps.classifyAction?.(",
+      "deps.isServiceConfigured?.(",
       "missingItem(",
       "resolveLinkEndpoints(",
       "deps.store.countCreatedSince(",
-      'deps.store.countByState("proposed")',
+      "deps.store.countPendingActions(",
+      "deps.store.countPendingNative(",
       "deps.db.transaction(",
     ];
     const idx = order.map((s) => body.indexOf(s));
@@ -2721,7 +2734,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       const count = (sql: string): number => (db.query(sql).get() as { n: number }).n;
       const items = "SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus'";
       const decisions = "SELECT COUNT(*) AS n FROM decision_record";
-      const { id } = submitCapture(
+      const { id } = await submitCapture(
         deps,
         { clientId: "c-mcp", kind: "mcp" },
         { kind: "decision", payload: { statement: "Adopt WAL" } },
@@ -2741,6 +2754,61 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     const at = src.indexOf('actionType: "capture.accept"');
     expect(at).toBeGreaterThan(0);
     expect(src.slice(at, at + 400)).toMatch(/hitlStatus:\s*"not_required"/);
+  });
+
+  test("act door: acceptAction claims BEFORE execute, and execute is the last step before finalize", async () => {
+    const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-act.ts"));
+    const start = src.indexOf("export async function acceptAction");
+    expect(start).toBeGreaterThan(0);
+    const body = src.slice(start);
+    const order = [
+      "cap.actionEnabled",
+      "CAPTURE_ROLE_BY_KIND[caller.kind]",
+      'row.state !== "proposed"',
+      "deps.now() >= expiresAt",
+      "deps.classifyAction?.(",
+      "deps.isServiceConfigured?.(",
+      "deps.store.claimAction(",
+      "act.execute(",
+      "deps.store.finalizeAction(",
+    ];
+    const idx = order.map((s) => body.indexOf(s));
+    expect(idx.every((i) => i >= 0)).toBe(true);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+  });
+
+  test("act door: acceptCapture routes an action row to an acceptAction CALL, after the owner check", async () => {
+    const src = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    const start = src.indexOf("export function acceptCapture(");
+    expect(start).toBeGreaterThan(0);
+    const body = src.slice(start);
+    const call = body.search(
+      /if \(row\.kind === "action"\) return acceptAction\(deps, caller, row, act\);/,
+    );
+    expect(call).toBeGreaterThan(0);
+    expect(body.indexOf("requireOwner(caller)")).toBeGreaterThan(0);
+    expect(body.indexOf("requireOwner(caller)")).toBeLessThan(call);
+  });
+
+  test("act door: the dispatched payload's mcpToolId is the routing table's value; no delegate; policy overlay passed", async () => {
+    const src = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
+    expect(src).toMatch(
+      /const toolId = proposableWriteTool\(actionType\) \?\? userMcpToolKeyForActionType\(actionType\)/,
+    );
+    expect(src).toMatch(/payload: \{ mcpToolId: toolId, input \}/);
+    expect(src).toMatch(
+      /new ToolExecutor\(\s*consent,\s*w\.audit,\s*w\.dispatcher,\s*undefined,\s*w\.egressSink,\s*w\.policyHitl,?\s*\)/,
+    );
+  });
+
+  test("act door: an absent policy accessor disables actions (fail-closed)", async () => {
+    const { resolveCaptureCapability } = await import("./mcp-sink/capture-capability.ts");
+    const { DEFAULT_MCP_SINK_CONFIG } = await import("./config/mcp-sink-toml.ts");
+    const c = resolveCaptureCapability(
+      { ok: true, config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["action"] } },
+      undefined,
+    );
+    expect(c.actionEnabled).toBe(false);
   });
 });
 

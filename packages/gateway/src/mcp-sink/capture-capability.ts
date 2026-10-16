@@ -10,6 +10,9 @@ import { type CaptureKind, SUBMITTABLE_KINDS } from "./capture-types.ts";
 export const MCP_CAPTURE_CAPABILITY =
   "mcp_capture" as const satisfies (typeof AI_V2_CAPABILITIES)[number];
 
+export const MCP_ACTION_CAPABILITY =
+  "mcp_action" as const satisfies (typeof AI_V2_CAPABILITIES)[number];
+
 export type CaptureDisabledReason = "config" | "config_error" | "policy";
 
 export type CaptureCapability =
@@ -17,12 +20,14 @@ export type CaptureCapability =
       readonly enabled: true;
       readonly config: NimbusMcpSinkToml;
       readonly kinds: readonly CaptureKind[];
+      readonly actionEnabled: boolean;
     }
   | {
       readonly enabled: false;
       readonly reason: CaptureDisabledReason;
       readonly config: NimbusMcpSinkToml;
       readonly kinds: readonly CaptureKind[];
+      readonly actionEnabled: boolean;
     };
 
 /**
@@ -34,13 +39,22 @@ export function resolveCaptureCapability(
   enforced: Pick<EnforcedPolicy, "capabilitiesDisabled"> | undefined,
 ): CaptureCapability {
   if (!load.ok) {
-    return { enabled: false, reason: "config_error", config: DEFAULT_MCP_SINK_CONFIG, kinds: [] };
+    return {
+      enabled: false,
+      reason: "config_error",
+      config: DEFAULT_MCP_SINK_CONFIG,
+      kinds: [],
+      actionEnabled: false,
+    };
   }
   const config = load.config;
   const kinds = config.kinds.filter((k) => SUBMITTABLE_KINDS.has(k));
-  if (!config.enabled) return { enabled: false, reason: "config", config, kinds };
+  if (!config.enabled)
+    return { enabled: false, reason: "config", config, kinds, actionEnabled: false };
   if (enforced === undefined || enforced.capabilitiesDisabled.has(MCP_CAPTURE_CAPABILITY)) {
-    return { enabled: false, reason: "policy", config, kinds };
+    return { enabled: false, reason: "policy", config, kinds, actionEnabled: false };
   }
-  return { enabled: true, config, kinds };
+  const actionEnabled =
+    kinds.includes("action") && !enforced.capabilitiesDisabled.has(MCP_ACTION_CAPABILITY);
+  return { enabled: true, config, kinds, actionEnabled };
 }

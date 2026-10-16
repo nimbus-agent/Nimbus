@@ -18,6 +18,47 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-15 — S3: the MCP capture sink, PR 3 of 3 — the act door: agent-proposed connector actions, owner-accepted (invariant I28, schema V69).**
+  Closes the capture-sink slice. An editor agent can now PROPOSE a connector action through `propose_action`
+  (and read its fate through `capture_status`); nothing is sent when it does. The proposal lands as `proposed`
+  and waits until the owner runs `nimbus captures accept <id>` (TTY required, by a CLI-side guard rather than the
+  gateway: a raw local-owner socket client can accept and answer its own consent prompt, within the local-owner
+  trust model) AND approves the executor's own
+  HITL prompt, which shows the verbatim stored input with its agent provenance, agent-written strings rendered
+  with invisible and format characters escaped visibly. `action` must be listed in `[mcp_sink] kinds` (it is not
+  in the default), and the new org-policy name `mcp_action` is the NINTH `[policy.capabilities.ai_v2]` lockoff,
+  fail-closed. Schema **V69** rebuilds `capture` for the `action` kind, the `executing`/`executed`/`failed`/`expired`
+  states and `expires_at`/`outcome_ref`/`error_code`; new config `action_ttl_hours` (24) and `action_max_pending`
+  (10). The accept path (`capture-act.ts` `acceptAction`) re-classifies the type and re-checks the connector,
+  claims the row atomically, dispatches through a `ToolExecutor` on the ACCEPTING session's consent channel with
+  no delegate (so I2, I29, I22 and I42 apply unchanged) and records one terminal outcome, never retried; a crash
+  mid-dispatch is marked `failed` (`ERR_ACTION_INTERRUPTED`) at boot, never replayed. 29 first-party action types are
+  proposable and 110 of the 139 HITL types are denied (files, VCS, pipelines, cloud, IaC, Kubernetes, deployments,
+  incidents, data platform, the tribal KB, the confined ChatOps posts, gateway-internal types); user-MCP tools are
+  proposable only for `--model` servers. New static **D32(e)–(g)** confine `acceptAction`, ban the executor and
+  `connectors/` from `mcp-sink/`, and confine the `mcpToolId` literal. **Bounds:** approval proves the owner saw the
+  call, not that it is wise; a transport failure is recorded `failed` though the remote may have acted;
+  `outcome_ref` is a heuristic; the routing table is proven against the installed connectors package; the
+  escaping does not catch homoglyphs; a multi-key connector counts as configured once any key is set, so an accept
+  can pass that check and fail at dispatch; `capture.state` answers for any capture id to any `mcp` client;
+  a rejected or expired action row is pruned after 90 days, but an `executed` or `failed` row is never pruned and
+  keeps the verbatim `input`, and `revoke` refuses actions, so there is no owner deletion path for it yet (a
+  follow-up). Hardened in the final review: an `actionType` outside `[A-Za-z0-9_.-]` is refused at submit, a
+  user-MCP tool segment outside `[A-Za-z0-9_-]{1,64}` classifies `unknown`, the prompt's Type line is escaped, and
+  stored note/decision/term/link text is stripped of the same invisible-character table the prompt escapes
+  (`mcp-sink/invisible-text.ts`), TAG characters and variation selectors included.
+  **Deviations from the design spec:** the routing table (`PROPOSABLE_WRITE_TOOLS`) exists because a type does not
+  resolve to a first-party tool by itself; a user-MCP action carries the gateway-derived
+  `mcpToolId = userMcpToolKeyForActionType(type)` (the spec said none, but by-type dispatch without it is refused
+  `ERR_USER_MCP_ACTION_MISMATCH`, the I42 pairing); `obsidian.note.append` is denied as `unroutable` because
+  `obsidian` is absent from the connector catalog (a known gap, not a policy decision: adding it is the follow-up);
+  the migration test lives at `packages/gateway/src/index/migrations/runner-v69.test.ts`; `expireDueActions` is a
+  SELECT then a guarded UPDATE (D12), not `UPDATE … RETURNING`; `proposableActionTypes` lists user-MCP servers as
+  `mcp_<id>.*` patterns; the E2E extends `test/e2e/user-mcp.e2e.test.ts`; `CaptureStatus` gains
+  `actionExpiringWithinHour`; `capture.action.*` audit payloads go through `redactAuditPayload`. Also fixed: the
+  `nimbus mcp-server --help` text still said "One WRITE tool" since PR 2. **Not shipped:** batch accept, any desktop
+  UI, and `nimbus negotiate`'s unattributable lane for agent-caused actions (an owed follow-up).
+
 - **2026-10-14 — S3: the MCP capture sink, PR 2 of 3 — proposals for decisions, terms and links (invariant I28, schema V68).**
   An editor agent can now PROPOSE a decision, a glossary term or a link between two items through
   `propose_decision`, `propose_term` and `propose_link`, registered per `[mcp_sink] kinds`. A proposal

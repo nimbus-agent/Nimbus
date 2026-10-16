@@ -119,6 +119,12 @@ export interface WriteToolRegistration {
    */
   readonly origin: string;
   readonly tags: readonly RegistrationTag[];
+  /**
+   * `[open, close]` offsets of the registering call's parentheses in `stripComments(text)` of
+   * `file` — the comment-free text the scanner reads. NOT offsets into the raw `text`:
+   * `stripComments` removes comments outright, so it is not length-preserving.
+   */
+  readonly span: readonly [number, number];
 }
 
 export interface ScanViolation {
@@ -1495,7 +1501,8 @@ class Analysis {
     const s = f.p.blank;
     const spans: Array<readonly [number, number]> = [];
     const visit = (call: CallSite, kind: RegistrarKind): void => {
-      spans.push([call.open, matchForward(s, call.open)]);
+      const span = [call.open, matchForward(s, call.open)] as const;
+      spans.push(span);
       const args = splitGroup(s, call.open);
       const first = args[0];
       if (first === undefined) {
@@ -1512,7 +1519,7 @@ class Analysis {
         if (kind !== "root") tags.push(kind);
         const line = lineAt(f.p, call.at);
         for (const { value, origin } of r.ids) {
-          this.registrations.push({ id: value, file: f.p.rel, line, origin, tags });
+          this.registrations.push({ id: value, file: f.p.rel, line, origin, tags, span });
         }
       }
     };

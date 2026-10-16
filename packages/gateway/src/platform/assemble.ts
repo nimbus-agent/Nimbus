@@ -133,7 +133,14 @@ import {
   parseOpenapiToml,
 } from "../connectors/openapi-indexer-config.ts";
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
-import { listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
+import { classifyActionType, listProposableActionTypes } from "../connectors/proposable-actions.ts";
+import { isUserMcpModelAccessEnabled } from "../connectors/user-mcp-model-capability.ts";
+import {
+  getUserMcpConnector,
+  listModelAccessibleUserMcpIds,
+  listUserMcpConnectors,
+  USER_MCP_SERVICE_ID_PATTERN,
+} from "../connectors/user-mcp-store.ts";
 import { resolveTeamListOpenSession } from "../connectors/warehouse-sync-transport.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
@@ -242,6 +249,7 @@ import { makeRouteId, parseRouteRef } from "../llm/route-id.ts";
 import type { LlmProvider } from "../llm/types.ts";
 import { vendorApiKeyName } from "../llm/vendor-vault-keys.ts";
 import { XaiProvider } from "../llm/xai-provider.ts";
+import { reconcileActionsAtBoot } from "../mcp-sink/capture-act.ts";
 import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
@@ -284,6 +292,7 @@ import {
 import { ensureShareKeypair } from "../share/share-keypair.ts";
 import type { ShareRecord } from "../share/share-store.ts";
 import { getShareRecord } from "../share/share-store.ts";
+import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import {
   deriveFetchHostMap,
   type FetchableService,
@@ -3440,7 +3449,23 @@ export async function assemblePlatformServices(
     );
   }
   const captureStore = new CaptureStore(db);
+  // I28 act door: expire due proposals and fail any action a restart interrupted mid-consent,
+  // BEFORE the IPC server accepts a connection (spec § 9). Then retention, as before.
+  const actBoot = reconcileActionsAtBoot({ db, store: captureStore }, Date.now());
+  if (actBoot.expired + actBoot.interrupted > 0) {
+    syncLogger.info({ event: "mcp_sink.act_reconcile", ...actBoot }, "act door boot reconcile");
+  }
   captureStore.pruneRejected(Date.now() - REJECTED_RETENTION_MS);
+  // Both halves read LIVE per call: a `--model` registration and the `user_mcp_model_access`
+  // policy capability (I42) can change at runtime, so neither is snapshotted at boot.
+  const actClassifyCtx = {
+    modelAccessServices: (): ReadonlySet<string> => new Set(listModelAccessibleUserMcpIds(db)),
+    userMcpModelAccessAllowed: (): boolean => isUserMcpModelAccessEnabled(policyGate.enforced()),
+  };
+  const isServiceConfigured = async (service: string): Promise<boolean> =>
+    USER_MCP_SERVICE_ID_PATTERN.test(service)
+      ? getUserMcpConnector(db, service) !== null
+      : isConnectorConfigured(vault, service);
   const captureGate: CaptureGateDeps = {
     db,
     store: captureStore,
@@ -3449,6 +3474,10 @@ export async function assemblePlatformServices(
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_${randomUUID()}`,
     now: () => Date.now(),
+    classifyAction: (t) => classifyActionType(t, actClassifyCtx),
+    isServiceConfigured,
+    listProposableActionTypes: () =>
+      listProposableActionTypes({ ...actClassifyCtx, isServiceConfigured }),
     ...(scheduleItemEmbedding === undefined
       ? {}
       : { scheduleEmbedding: (id: string) => scheduleItemEmbedding(id) }),
@@ -4096,7 +4125,21 @@ export async function assemblePlatformServices(
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
   // MCP capture sink (I28): capture.* / captures.* (LAN-forbidden by namespace, not Tauri, no HTTP).
-  ipcOpts.captureRpcCtx = { gate: captureGate };
+  // I28 act door: the SAME dispatcher composition runAsk (gateway-main.ts) and ChatOps use, the real
+  // egress sink (I29) and the process's policy overlay (I22). Default off twice ([mcp_sink] kinds +
+  // mcp_action); wiring it unconditionally enables nothing.
+  ipcOpts.captureRpcCtx = {
+    gate: captureGate,
+    act: {
+      dispatcher: createConnectorWriteDispatcher(
+        createConnectorDispatcher(meshDispatcherClient(connectorMesh)),
+        connectorWriteDeps,
+      ),
+      egressSink: makeEgressSink(db),
+      audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+      policyHitl,
+    },
+  };
 
   // I39 (S2 runtime tool generation): the sandboxed, owner-approved, session-ephemeral tool
   // registration surface. DEFAULT OFF -- `enabled` is read from `[tool_generation]`, and
