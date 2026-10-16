@@ -270,6 +270,7 @@ describe("a non-domain error propagates unchanged — never remapped to an RPC c
       manifestHash: "m".repeat(64),
       signatureB64: "",
       entryHash: "e".repeat(64),
+      tarballSha256: "f".repeat(64),
       tarballUrl: "https://registry.invalid/ext.demo-1.1.0.tgz",
       permissionDiff: {
         network: { added: [], removed: [] },

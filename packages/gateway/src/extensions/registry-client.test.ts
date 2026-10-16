@@ -168,6 +168,7 @@ describe("createRegistryClient — fetchManifest", () => {
       manifest,
       manifestHash: "d".repeat(64),
       entryHash: "e".repeat(64),
+      tarballSha256: "f".repeat(64),
       tarballUrl: "https://r/x-1.1.0.tar.gz",
       tarballSizeBytes: 4242,
     };
@@ -178,6 +179,23 @@ describe("createRegistryClient — fetchManifest", () => {
     expect(res.manifest.version).toBe("1.1.0");
     expect(res.tarballUrl).toBe("https://r/x-1.1.0.tar.gz");
     expect(res.tarballSizeBytes).toBe(4242);
+    expect(res.entryHash).toBe("e".repeat(64));
+    expect(res.tarballSha256).toBe("f".repeat(64));
+  });
+
+  it("rejects a payload without tarballSha256 (entryHash names the entry file, not the tarball)", async () => {
+    const body = {
+      manifest: { id: "com.example.a", version: "1.1.0" },
+      manifestHash: "d".repeat(64),
+      entryHash: "e".repeat(64),
+      tarballUrl: "https://r/x-1.1.0.tar.gz",
+    };
+    const fetchFn = (async () =>
+      new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+    const client = createRegistryClient({ baseUrl: "https://r", fetchFn });
+    await expect(
+      client.fetchManifest("com.example.a", "1.1.0", new AbortController().signal),
+    ).rejects.toThrow(/registry manifest schema invalid/);
   });
 
   it("rejects malformed payload (manifestHash wrong length)", async () => {

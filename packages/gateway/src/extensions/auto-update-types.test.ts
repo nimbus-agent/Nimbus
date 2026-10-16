@@ -37,6 +37,7 @@ describe("auto-update-types", () => {
       manifestHash: "0".repeat(64),
       signatureB64: "AA==",
       entryHash: "0".repeat(64),
+      tarballSha256: "f".repeat(64),
       tarballUrl: "https://registry.example/ext.tar.gz",
       permissionDiff: {
         network: { added: [], removed: [] },

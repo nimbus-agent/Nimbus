@@ -221,6 +221,9 @@ function isStringSemverLess(a: string, b: string): boolean {
 
 function extractPhase(message: string): string {
   if (message.includes("sha256_mismatch")) return "sha256_mismatch";
+  if (message.includes("package_hash_mismatch")) return "package_hash_mismatch";
+  // An unreadable package is not a readable one with a wrong hash, so it gets its own phase.
+  if (message.includes("package_hash_unreadable")) return "package_hash_unreadable";
   if (message.includes("signature_failed")) return "signature_failed";
   if (message.includes("swap_failed")) return "swap_failed";
   if (message.includes("download")) return "download_failed";

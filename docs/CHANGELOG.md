@@ -18,6 +18,28 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-16 — Extensions: an auto-updated extension now passes its own next startup check.**
+  Closes the "Found, not fixed here" note under extension runtime PR 1. The registry's one hash
+  field, `entryHash`, was read two ways: auto-update compared it against the downloaded TARBALL's
+  SHA-256 and then stored it as the row's `entry_hash`, while dependency install and startup
+  verification compare it against the ENTRY FILE's SHA-256. No registry could satisfy both, and the
+  real effect was that an auto-updated extension's stored `entry_hash` could never match its entry
+  file, so the next startup verification disabled it. The integration test hid this by fabricating
+  `entryHash` as the tarball hash and never running startup verification after the upgrade. Now
+  `entryHash` means the entry file everywhere, and a new REQUIRED `tarballSha256` field
+  (`registry-client.ts`, 64-hex like the others) carries download integrity. After extraction, the
+  upgrade measures the extracted manifest and entry file (`extensions/package-hashes.ts`) and
+  refuses (`package_hash_mismatch`, a new failure phase) BEFORE the swap if either differs from the
+  registry's claim. The downgrade measures `_prev/<to>` the same way before swapping. Both write the
+  MEASURED hashes to the row, never the registry's word. The round-trip and e2e tests now assert
+  `verifyOneExtensionStrict` on the updated row, which fails against the old code. No registry is
+  live, so the wire-format change breaks no one. No migration, no invariant, no egress class.
+  **Found, not fixed here:** auto-update swaps `<extensionsDir>/<id>/active`, but
+  `nimbus extension install` writes the package to `<extensionsDir>/<id>` directly, and no code
+  creates an `active/` directory. Every auto-update test builds `active/` by hand, so an extension
+  installed through the real install path cannot be auto-updated (the swap's first rename fails
+  and the update reports `swap_failed`).
+
 - **2026-10-15 — S3: the MCP capture sink, PR 3 of 3 — the act door: agent-proposed connector actions, owner-accepted (invariant I28, schema V69).**
   Closes the capture-sink slice. An editor agent can now PROPOSE a connector action through `propose_action`
   (and read its fate through `capture_status`); nothing is sent when it does. The proposal lands as `proposed`

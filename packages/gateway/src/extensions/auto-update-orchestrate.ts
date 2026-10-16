@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -9,6 +10,7 @@ import {
   MAX_TARBALL_BYTES,
 } from "./auto-update-apply.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
+import { assertPackageMatchesClaims } from "./package-hashes.ts";
 
 export interface PerformUpgradeDeps {
   extensionsRoot: string;
@@ -45,11 +47,21 @@ export function createPerformUpgrade(deps: PerformUpgradeDeps) {
     });
 
     const actualHash = await deps.sha256OfTarball(bytes);
-    if (actualHash.toLowerCase() !== update.entryHash.toLowerCase()) {
+    if (actualHash.toLowerCase() !== update.tarballSha256.toLowerCase()) {
       throw new Error("sha256_mismatch");
     }
 
     await deps.extractTarball(bytes, pendingDir);
+
+    // `entryHash` names the entry FILE, which is what the row stores and startup verification
+    // re-measures — so measure the extracted package and refuse before anything is swapped in.
+    let measured: ReturnType<typeof assertPackageMatchesClaims>;
+    try {
+      measured = assertPackageMatchesClaims(pendingDir, update);
+    } catch (e) {
+      await rm(pendingDir, { recursive: true, force: true });
+      throw e;
+    }
 
     const extRoot = join(deps.extensionsRoot, update.id);
     try {
@@ -67,8 +79,8 @@ export function createPerformUpgrade(deps: PerformUpgradeDeps) {
     await deps.dbUpdateExtensionRow(
       update.id,
       update.toVersion,
-      update.manifestHash,
-      update.entryHash,
+      measured.manifestHash,
+      measured.entryHash,
     );
     await deps.stopExtensionClient(update.id);
   };
@@ -88,6 +100,13 @@ export interface PerformDowngradeDeps {
 export function createPerformDowngrade(deps: PerformDowngradeDeps) {
   return async function performDowngrade(update: AvailableUpdate): Promise<void> {
     const extRoot = join(deps.extensionsRoot, update.id);
+    const targetPrev = join(extRoot, "_prev", update.toVersion);
+    // Refused here rather than left to `applyDowngradeSwap`, so there is never an unmeasured
+    // package whose hashes the row could be given.
+    if (!existsSync(targetPrev)) {
+      throw new Error("downgrade_unavailable");
+    }
+    const measured = assertPackageMatchesClaims(targetPrev, update);
     await applyDowngradeSwap({
       extRoot,
       fromVersion: update.fromVersion,
@@ -96,8 +115,8 @@ export function createPerformDowngrade(deps: PerformDowngradeDeps) {
     await deps.dbUpdateExtensionRow(
       update.id,
       update.toVersion,
-      update.manifestHash,
-      update.entryHash,
+      measured.manifestHash,
+      measured.entryHash,
     );
     await deps.stopExtensionClient(update.id);
   };

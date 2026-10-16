@@ -1,10 +1,24 @@
 import { describe, expect, it, mock } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createPerformDowngrade, createPerformUpgrade } from "./auto-update-orchestrate.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
+
+const sha = (s: string): string =>
+  createHash("sha256").update(Buffer.from(s, "utf8")).digest("hex");
+
+const MANIFEST_V11 = JSON.stringify({ id: "com.example.a", version: "1.1.0" });
+const MANIFEST_V10 = JSON.stringify({ id: "com.example.a", version: "1.0.0" });
+
+/** Writes a minimal real package (manifest + default entry) so the measured hashes are known. */
+async function writePackage(dir: string, manifestText: string, entryText: string): Promise<void> {
+  await mkdir(join(dir, "dist"), { recursive: true });
+  await writeFile(join(dir, "nimbus.extension.json"), manifestText);
+  await writeFile(join(dir, "dist", "index.js"), entryText);
+}
 
 function mkAvailable(overrides: Partial<AvailableUpdate> = {}): AvailableUpdate {
   return {
@@ -15,9 +29,10 @@ function mkAvailable(overrides: Partial<AvailableUpdate> = {}): AvailableUpdate 
     channel: "stable",
     changelog: "",
     publisherStatus: "verified",
-    manifestHash: "d".repeat(64),
+    manifestHash: sha(MANIFEST_V11),
     signatureB64: `${"B".repeat(86)}==`,
-    entryHash: "e".repeat(64),
+    entryHash: sha("entry-v1.1"),
+    tarballSha256: "f".repeat(64),
     tarballUrl: "https://r/x.tar.gz",
     permissionDiff: {
       network: { added: [], removed: [] },
@@ -49,7 +64,7 @@ describe("createPerformUpgrade", () => {
         async (_id: string, _version: string, _manifestHash: string, _entryHash: string) => {},
       );
       const extractTarball = mock(async (_bytes: Uint8Array, destDir: string) => {
-        await mkdir(destDir, { recursive: true });
+        await writePackage(destDir, MANIFEST_V11, "entry-v1.1");
         await writeFile(join(destDir, "marker.txt"), "new");
       });
 
@@ -65,7 +80,7 @@ describe("createPerformUpgrade", () => {
         signal: new AbortController().signal,
         sha256OfTarball: async (b) => {
           expect(b).toEqual(tarballBytes);
-          return "e".repeat(64);
+          return "f".repeat(64);
         },
         extractTarball,
         stopExtensionClient,
@@ -76,7 +91,76 @@ describe("createPerformUpgrade", () => {
 
       expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("new");
       expect(stopExtensionClient).toHaveBeenCalledWith("com.example.a");
-      expect(dbUpdateExtensionRow).toHaveBeenCalled();
+      // The row gets the ENTRY FILE's hash — what startup verification re-measures — never the
+      // tarball's.
+      expect(dbUpdateExtensionRow).toHaveBeenCalledWith(
+        "com.example.a",
+        "1.1.0",
+        sha(MANIFEST_V11),
+        sha("entry-v1.1"),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("checks the TARBALL against tarballSha256, not entryHash", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
+    try {
+      await mkdir(join(root, "extensions", "com.example.a", "active"), { recursive: true });
+      const extractTarball = mock(async () => {});
+      const perform = createPerformUpgrade({
+        extensionsRoot: join(root, "extensions"),
+        dataDir: join(root, "data"),
+        fetcher: (async () =>
+          new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch,
+        maxBytes: 1024,
+        signal: new AbortController().signal,
+        // Equal to entryHash: the old check accepted this tarball; the fixed one must not.
+        sha256OfTarball: async () => sha("entry-v1.1"),
+        extractTarball,
+        stopExtensionClient: async () => {},
+        dbUpdateExtensionRow: async () => {},
+      });
+      await expect(perform(mkAvailable())).rejects.toThrow(/sha256_mismatch/);
+      expect(extractTarball).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a tarball whose extracted entry differs from entryHash, before the swap", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
+    let pendingDir: string | undefined;
+    try {
+      const extRoot = join(root, "extensions", "com.example.a");
+      await mkdir(join(extRoot, "active"), { recursive: true });
+      await writeFile(join(extRoot, "active", "marker.txt"), "old");
+      const stopExtensionClient = mock(async () => {});
+      const dbUpdateExtensionRow = mock(async () => {});
+      const perform = createPerformUpgrade({
+        extensionsRoot: join(root, "extensions"),
+        dataDir: join(root, "data"),
+        fetcher: (async () =>
+          new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch,
+        maxBytes: 1024,
+        signal: new AbortController().signal,
+        sha256OfTarball: async () => "f".repeat(64),
+        extractTarball: async (_bytes, destDir) => {
+          pendingDir = destDir;
+          await writePackage(destDir, MANIFEST_V11, "tampered-entry");
+        },
+        stopExtensionClient,
+        dbUpdateExtensionRow,
+      });
+
+      await expect(perform(mkAvailable())).rejects.toThrow(/package_hash_mismatch: entry/);
+      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("old");
+      expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
+      expect(stopExtensionClient).not.toHaveBeenCalled();
+      expect(pendingDir).toBeDefined();
+      const { stat: fsStat } = await import("node:fs/promises");
+      await expect(fsStat(pendingDir ?? "")).rejects.toThrow();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -138,7 +222,7 @@ describe("createPerformUpgrade", () => {
       // extractTarball creates the pendingDir so applyUpgradeSwap can reach the rename.
       const extractTarball = mock(async (_bytes: Uint8Array, destDir: string) => {
         pendingDir = destDir;
-        await mkdir(destDir, { recursive: true });
+        await writePackage(destDir, MANIFEST_V11, "entry-v1.1");
       });
 
       const perform = createPerformUpgrade({
@@ -151,8 +235,8 @@ describe("createPerformUpgrade", () => {
           })) as unknown as typeof fetch,
         maxBytes: 1024,
         signal: new AbortController().signal,
-        // Return exactly update.entryHash so the hash check passes.
-        sha256OfTarball: async () => "e".repeat(64),
+        // Return exactly update.tarballSha256 so the tarball check passes.
+        sha256OfTarball: async () => "f".repeat(64),
         extractTarball,
         stopExtensionClient,
         dbUpdateExtensionRow,
@@ -184,7 +268,7 @@ describe("createPerformDowngrade", () => {
       const extRoot = join(root, "extensions", "com.example.a");
       await mkdir(join(extRoot, "active"), { recursive: true });
       await writeFile(join(extRoot, "active", "marker.txt"), "vNew");
-      await mkdir(join(extRoot, "_prev", "1.0.0"), { recursive: true });
+      await writePackage(join(extRoot, "_prev", "1.0.0"), MANIFEST_V10, "entry-v1.0");
       await writeFile(join(extRoot, "_prev", "1.0.0", "marker.txt"), "vOld");
 
       const stopExtensionClient = mock(async () => {});
@@ -195,11 +279,81 @@ describe("createPerformDowngrade", () => {
         dbUpdateExtensionRow,
       });
 
-      await perform(mkAvailable({ fromVersion: "1.1.0", toVersion: "1.0.0" }));
+      await perform(
+        mkAvailable({
+          fromVersion: "1.1.0",
+          toVersion: "1.0.0",
+          manifestHash: sha(MANIFEST_V10),
+          entryHash: sha("entry-v1.0"),
+        }),
+      );
 
       expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("vOld");
       expect(stopExtensionClient).toHaveBeenCalledWith("com.example.a");
-      expect(dbUpdateExtensionRow).toHaveBeenCalled();
+      expect(dbUpdateExtensionRow).toHaveBeenCalledWith(
+        "com.example.a",
+        "1.0.0",
+        sha(MANIFEST_V10),
+        sha("entry-v1.0"),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a missing _prev/<to> as downgrade_unavailable without touching the row", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-down-"));
+    try {
+      const extRoot = join(root, "extensions", "com.example.a");
+      await mkdir(join(extRoot, "active"), { recursive: true });
+      await writeFile(join(extRoot, "active", "marker.txt"), "vNew");
+      const stopExtensionClient = mock(async () => {});
+      const dbUpdateExtensionRow = mock(async () => {});
+      const perform = createPerformDowngrade({
+        extensionsRoot: join(root, "extensions"),
+        stopExtensionClient,
+        dbUpdateExtensionRow,
+      });
+      await expect(
+        perform(mkAvailable({ fromVersion: "1.1.0", toVersion: "1.0.0" })),
+      ).rejects.toThrow(/downgrade_unavailable/);
+      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("vNew");
+      expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
+      expect(stopExtensionClient).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a _prev package that differs from the registry's claims, before the swap", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-down-"));
+    try {
+      const extRoot = join(root, "extensions", "com.example.a");
+      await mkdir(join(extRoot, "active"), { recursive: true });
+      await writeFile(join(extRoot, "active", "marker.txt"), "vNew");
+      await writePackage(join(extRoot, "_prev", "1.0.0"), MANIFEST_V10, "edited-on-disk");
+
+      const stopExtensionClient = mock(async () => {});
+      const dbUpdateExtensionRow = mock(async () => {});
+      const perform = createPerformDowngrade({
+        extensionsRoot: join(root, "extensions"),
+        stopExtensionClient,
+        dbUpdateExtensionRow,
+      });
+
+      await expect(
+        perform(
+          mkAvailable({
+            fromVersion: "1.1.0",
+            toVersion: "1.0.0",
+            manifestHash: sha(MANIFEST_V10),
+            entryHash: sha("entry-v1.0"),
+          }),
+        ),
+      ).rejects.toThrow(/package_hash_mismatch: entry/);
+      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("vNew");
+      expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
+      expect(stopExtensionClient).not.toHaveBeenCalled();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

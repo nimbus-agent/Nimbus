@@ -15,6 +15,7 @@ function mk(id: string, toVersion: string, detectedAt = 1_000_000): AvailableUpd
     manifestHash: "0".repeat(64),
     signatureB64: "AA==",
     entryHash: "0".repeat(64),
+    tarballSha256: "f".repeat(64),
     tarballUrl: "https://r/x",
     permissionDiff: {
       network: { added: [], removed: [] },

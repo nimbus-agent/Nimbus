@@ -407,6 +407,7 @@ describe("extension.update — the stateChanged event mirrors the outcome", () =
       manifestHash: "abcdef0123456789abcdef0123456789",
       signatureB64: "",
       entryHash: "",
+      tarballSha256: "f".repeat(64),
       tarballUrl: "https://registry.invalid/x.tgz",
       permissionDiff: {
         network: { added: [], removed: [] },

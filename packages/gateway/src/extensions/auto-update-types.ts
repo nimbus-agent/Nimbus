@@ -21,7 +21,10 @@ export interface AvailableUpdate {
   publisherStatus: "verified" | "unverified";
   manifestHash: string;
   signatureB64: string;
+  /** SHA-256 of the entry FILE (what the row stores and startup verification re-measures). */
   entryHash: string;
+  /** SHA-256 of the downloaded tarball — download integrity only, never stored on the row. */
+  tarballSha256: string;
   tarballUrl: string;
   tarballSizeBytes?: number;
   permissionDiff: PermissionDiff;
@@ -35,6 +38,8 @@ export const ACTION_TYPE_DOWNGRADE = "extension.downgrade" as const;
 
 export type AutoUpdateFailPhase =
   | "sha256_mismatch"
+  | "package_hash_mismatch"
+  | "package_hash_unreadable"
   | "signature_failed"
   | "swap_failed"
   | "download_failed"

@@ -17,6 +17,7 @@ function mkCache(): AutoUpdateCache {
     manifestHash: "d".repeat(64),
     signatureB64: "AA==",
     entryHash: "e".repeat(64),
+    tarballSha256: "f".repeat(64),
     tarballUrl: "https://r/a.tar.gz",
     permissionDiff: {
       network: { added: ["b.com"], removed: [] },
@@ -338,6 +339,8 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
   // lines 222-229 extractPhase: one row per branch, keyed off a keyword in the Error message —
   // plus the fall-through row whose message matches no known keyword.
   it.each([
+    ["package_hash_mismatch: entry", "package_hash_mismatch"],
+    ["package_hash_unreadable: manifest missing", "package_hash_unreadable"],
     ["signature_failed verification", "signature_failed"],
     ["swap_failed on disk", "swap_failed"],
     ["download timeout exceeded", "download_failed"],
