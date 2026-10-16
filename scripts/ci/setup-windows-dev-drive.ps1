@@ -12,7 +12,8 @@
 #      `os.tmpdir()` fixtures land there. The workspace and node_modules stay where they are:
 #      relocating the checkout would also move the local composite action and every relative path
 #      the later steps assume.
-#   2. Adds Defender exclusions for the workspace, the Bun cache, the Dev Drive and bun.exe.
+#   2. Adds Defender exclusions for the workspace, the Bun install + its package cache, the Dev
+#      Drive and bun.exe.
 #
 # FAIL-SOFT BY DESIGN. This is a performance change, not a correctness one: if any half fails, it
 # emits a ::warning:: annotation and the job carries on exactly as it did before this script
@@ -73,7 +74,11 @@ try {
 
 # ── 2. Defender exclusions ────────────────────────────────────────────────────────────────────
 try {
-  $paths = @($env:GITHUB_WORKSPACE, (Join-Path $env:USERPROFILE '.bun'))
+  # The Bun package download cache sits on the workspace's drive (`<drive>:\bun-install-cache`,
+  # set by .github/actions/setup-nimbus-ci so node_modules can hard-link out of it); bun.exe itself
+  # is still installed under the profile's `.bun`.
+  $bunCache = (Split-Path -Qualifier $env:GITHUB_WORKSPACE) + '\bun-install-cache'
+  $paths = @($env:GITHUB_WORKSPACE, (Join-Path $env:USERPROFILE '.bun'), $bunCache)
   if ($null -ne $devDriveRoot) { $paths += $devDriveRoot }
   Add-MpPreference -ExclusionPath $paths
   Add-MpPreference -ExclusionProcess 'bun.exe'
