@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
@@ -23,6 +23,7 @@ import { removeSavedTool, savedToolDir } from "../../../src/toolgen/toolgen-save
 import { removeToolScript } from "../../../src/toolgen/toolgen-script-store.ts";
 import type { GeneratedToolArtifact, ToolgenEnvelope } from "../../../src/toolgen/toolgen-types.ts";
 import type { NimbusVault } from "../../../src/vault/nimbus-vault.ts";
+import { rmDirWithRetry } from "../../helpers/rm-dir-with-retry.ts";
 
 /**
  * `nimbus tool revoke` is the WITHDRAWAL PATH for this codebase's first standing approval (I40).
@@ -76,8 +77,7 @@ const dbs: Database[] = [];
 
 afterEach(() => {
   for (const db of dbs.splice(0)) db.close();
-  for (const dir of tmpDirs.splice(0))
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  for (const dir of tmpDirs.splice(0)) rmDirWithRetry(dir);
 });
 
 function tmpConfigDir(): string {

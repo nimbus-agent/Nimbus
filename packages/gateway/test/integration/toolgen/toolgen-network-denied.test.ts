@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { resolveRuntimeById } from "../../../src/exec/exec-runtimes.ts";
@@ -8,6 +8,7 @@ import { createSandboxRunner } from "../../../src/platform/sandbox/sandbox-runne
 import { buildToolSpawnSpec } from "../../../src/toolgen/toolgen-client.ts";
 import { buildGeneratedManifest } from "../../../src/toolgen/toolgen-stub.ts";
 import type { ToolgenEnvelope } from "../../../src/toolgen/toolgen-types.ts";
+import { rmDirWithRetry } from "../../helpers/rm-dir-with-retry.ts";
 
 /**
  * The load-bearing test of the whole runtime-tool-generation feature: proof that a raw `fetch()`
@@ -54,7 +55,7 @@ beforeAll(() => {
 afterAll(() => {
   server.stop(true);
   try {
-    rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmDirWithRetry(workDir);
   } catch {
     /* best-effort cleanup; a leftover empty temp dir is harmless */
   }

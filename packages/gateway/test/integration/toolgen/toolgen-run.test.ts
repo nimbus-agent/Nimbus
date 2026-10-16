@@ -32,7 +32,7 @@
 import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_NIMBUS_TOOL_GENERATION_TOML } from "../../../src/config/nimbus-toml.ts";
@@ -85,6 +85,7 @@ import {
   type ToolgenEnvelope,
 } from "../../../src/toolgen/toolgen-types.ts";
 import type { NimbusVault } from "../../../src/vault/nimbus-vault.ts";
+import { rmDirWithRetry } from "../../helpers/rm-dir-with-retry.ts";
 
 // Same override, same reason as `toolgen-saved-spawn.test.ts`: the sandbox runner probes at
 // construction, under `bun test`, before this repo's own `src-native` build is on PATH.
@@ -431,7 +432,7 @@ describe("invokeSavedTool against a real gateway B: happy path", () => {
       expect(chainOk(gwB.db)).toBe(true);
     } finally {
       gwB?.db.close();
-      rmSync(fixture.configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      rmDirWithRetry(fixture.configDir);
     }
   }, 30_000);
 });
@@ -494,7 +495,7 @@ describe("invokeSavedTool against a real gateway B: tampered artifact", () => {
       expect(parsed["code"]).toBe("ERR_TOOLGEN_SIGNATURE_INVALID");
     } finally {
       gwB?.db.close();
-      rmSync(fixture.configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      rmDirWithRetry(fixture.configDir);
     }
   }, 30_000);
 });
@@ -563,7 +564,7 @@ describe("create, save and invoke inside ONE gateway process", () => {
       await handle?.close();
       await gw.registry.revokeAll();
       gw.db.close();
-      rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      rmDirWithRetry(configDir);
     }
   }, 30_000);
 });

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_NIMBUS_TOOL_GENERATION_TOML } from "../../../src/config/nimbus-toml.ts";
@@ -29,6 +29,7 @@ import type {
   ToolgenEnvelope,
   ToolInputSchema,
 } from "../../../src/toolgen/toolgen-types.ts";
+import { rmDirWithRetry } from "../../helpers/rm-dir-with-retry.ts";
 
 /**
  * The end-to-end proof that Task 11's WIRING PATTERN is sound: this drives the real
@@ -230,9 +231,7 @@ async function buildHarness(dirTag: string): Promise<Harness> {
     }),
     cleanup: async () => {
       await registry.revokeAll();
-      // Retried: on Windows a just-exited sandboxed child releases its handles on the temp dir a
-      // moment later, and a single rm then fails EBUSY and REPLACES the test's real outcome.
-      rmSync(configDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      rmDirWithRetry(configDir);
       db.close();
     },
   };
