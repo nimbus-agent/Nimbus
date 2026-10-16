@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792138897031,
+  "lastUpdate": 1792158475519,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "fa4aca2602a79cd64349c3e003ca01708f042976",
-          "message": "fix(db): finalize prepared statements so close() releases the database file (#970)\n\nCloses #969, closes #968, closes #967.\n\n## #969 — root cause: an unfinalized `db.prepare()` statement, in\nproduction code\n\nThe reported symptom was `rmSync` failing `EBUSY` 30/30 in the\n`db/snapshot.test.ts` `afterEach`, with the error swallowed. The issue\nasked for the retained handle to be found before changing the deletion\nstrategy. It was, and it is not in the test.\n\nIsolating handle-by-handle on Windows:\n\n```\nA plain-file dir rm            : ok\nB db+schema+close, dir rm      : EBUSY     <- no snapshot involved at all\nC db+snapshot+close, dir rm    : EBUSY\nD   rm file nimbus.db          : EBUSY     <- the retained handle\nD   rm file snapshots/*.db.gz  : ok        <- takeSnapshot is exonerated\nE close(true) error            : Error: database is locked\n```\n\nThe gzip stream and the WAL/SHM sidecars were all ruled out — the pinned\nfile is `nimbus.db` itself, and `db.close(true)` reports `database is\nlocked`, meaning the plain `close()` was silently a **no-op**. Narrowing\nwhich sqlite call retains it:\n\n```\ndb.run / db.exec / db.query(...).run()      : close=clean              rm=ok\ndb.prepare(...).run() no finalize           : close=database is locked rm=EBUSY\ndb.prepare(...).run() + finalize            : close=clean              rm=ok\n```\n\n`bun:sqlite` auto-releases the `db.query()` statement cache on close,\nbut a bare `db.prepare()` handle must be finalized explicitly. The leak\nwas `backfillAuditChain` in **`index/migrations/runner.ts`** —\nproduction code, on the V17 to V18 migration, which every fresh database\nruns. So `LocalIndex.ensureSchema` left one live statement behind on\nevery open.\n\nThis is what the issue suspected mattered: production also closes\ndatabases and deletes files (snapshot pruning, restore, repair). Two of\nthe five `prepare()` sites (`perf-fixture`, `bench-query-latency`)\nalready used a `try/finally { finalize() }`; three had drifted from that\nconvention and are fixed:\n\n- `index/migrations/runner.ts` — `backfillAuditChain` (the root cause)\n- `embedding/pipeline.ts` — `insertVec` / `insertChunk`\n- `ipc/engine-get-session-transcript.ts` — the transcript read\n- `connectors/connector-sync-test-helpers.ts` — switched to `db.query()`\n(cache-managed)\n\nA source-scanning guard in `test/unit/db/statement-finalization.test.ts`\nkeeps the class from returning. It strips comments before counting —\nprose mentioning `db.prepare()` otherwise inflates the count and fires\non clean code. Verified green, then red (exactly 1 offender when a\n`finalize()` is removed), then green.\n\nThe misleading `afterEach` comment is gone. Cleanup is no longer wrapped\nin a `catch`: a failure there now means a handle is being retained\nagain, and should be loud.\n\n**Measured:** 252 leaked directories holding **170.9 MB** had\naccumulated in `%TEMP%` on one machine. After the fix, a clean run of\nthat suite leaks **0**.\n\n## #968 — the dominant cost was `beforeEach`, and it is now ~16x cheaper\n\nConfirming the measurement in the issue: per-test database creation, not\ncleanup, is the cost. The fix migrates **once** into a template database\nand copies the file per test.\n\n```\nfresh migrations per test : 231.82 ms/test\ntemplate + copyFileSync   :   6.11 ms/test   (16.6x, incl. one-time 235 ms build)\n```\n\nThe copy is verified identical, not assumed: same `user_version` (44),\nsame 69 tables, same seed rows, same `journal_mode`. `ensureSchema`\nstill runs on each copy — on an already-current `user_version` it skips\nevery migration and only applies the connection-level pragmas, which do\nnot persist in the file.\n\nSuite wall clock: **5.6 s to 1.68 s** locally; the `test/unit/db` gate\nas CI runs it is **3.0 s** for 84 tests. That removes the headroom\nproblem behind the 30 s hook timeout rather than raising the budget.\n\n**Not claimed:** the 44 s hook on the Windows runner is still\nunreproduced, and which hook timed out is still unknown — bun does not\nreport it. This attacks the measured dominant cost; it is not proof of\nthe runner-specific stall.\n\n## Also found: a second, unrelated leak in `lazy-mesh/mesh.test.ts`\n\nWhile verifying, `mesh.test.ts` leaked 40 directories per run on\n**every** platform — a different cause (`makePaths()` never imported\n`rmSync`; there was no cleanup at all). Fixed: 40 to 0.\n\nA broader sweep found the leak class is wider than these issues — one\nfull `packages/gateway` run still leaves ~536 directories / ~72 MB from\nother suites that never clean up. That is out of scope here and filed\nseparately.\n\n## #967 — updater wiring test was not hermetic\n\nReproduced exactly as reported (this machine has\n`NIMBUS_DISTRIBUTION_CHANNEL=msi` set):\n\n```\n(fail) configured Updater returns CheckNowResult instead of ERR_UPDATER_NOT_CONFIGURED\nexpect(received).toBeDefined()  Received: undefined\n```\n\nNothing was wrong with the product code. Both call sites in\n`wiring.test.ts` now pin `_channelOverride: null` — the seam the factory\nalready supports, and the same thing `factory.test.ts` already does in\nits `baseArgs`, with a comment explaining why. `wiring.test.ts` had\nsimply drifted from that convention.\n\nAlso closing the class, as the issue suggested: the `[test] preload` now\nblanks **behaviour-affecting** `NIMBUS_*` markers, not only credentials.\n`NIMBUS_DISTRIBUTION_CHANNEL` carries no secret, but it silently changed\na test outcome, and CI never saw it because CI never sets it.\n\nVerified safe rather than assumed: `resolveDistributionChannel` guards\nwith `if (raw && KNOWN_CHANNELS.has(raw))`, so the blanked empty string\nis exactly equivalent to unset. The marker list is enumerated rather\nthan suffix-matched — `_CHANNEL` is too generic to blank wholesale, and\n`NIMBUS_SLACK_CHANNEL` must survive. `cli/src/commands/update.test.ts`\nalready sets and restores this var itself and is unaffected; only shell\ninheritance is removed.\n\n## SonarCloud — both open MAINTAINABILITY issues (S2699, BLOCKER)\n\nBoth were tests with no assertion, fixed in code rather than excluded:\n\n- `sync/rate-limiter.test.ts:146` — asserts the acquire resolves,\n**and** that `burstSize + 1` is refused. The second assertion is the one\nthat actually pins the fallback to `DEFAULT_QUOTAS.slack`; acquiring\n`burstSize` alone would pass under any quota with a larger bucket.\n- `ipc/server/dispatchers-happy-paths.test.ts:86` — was swallowing the\nrejection, so it passed even if the access guard had started returning\nthe `skipped` sentinel, which is the whole behaviour it exists to pin.\nNow asserts `not.toBe(diagnosticsRpcSkipped)`, matching its siblings.\n\n## Coverage\n\nTargeted at branches confirmed reachable by reading the lcov, not\nguessed. Measuring corrected me twice — the `snapshot.ts` gap I first\nassumed was a prune `catch` arm turned out to be a **default-parameter**\nbranch, and two behaviour tests I wrote added no coverage at all (kept\nanyway; they pin real best-effort behaviour).\n\n`packages/gateway/src/db` branch coverage **90.83% to 92.35%** (297 to\n302 of 327):\n\n- `db/audit-chain.ts` 90.0% to **100%** — `federationJson` was never\npassed to `computeAuditRowHash` in any test, so neither arm of its guard\nwas exercised. Worth having: a federated audit row whose provenance did\nnot change the hash could be rewritten after the fact without breaking\nthe chain.\n- `db/tool-call-log-retention.ts` 90.0% to **100%** — the `?? Date.now`\ndefault arm; every existing case injected a clock.\n- `db/snapshot.ts` 85.2% to 88.9% — the `runNow = false` default\nparameter.\n- `db/query-guard.ts` 79.2% to 83.3% — the default-timeout arm; the two\ntests that omitted `options` rejected in the guard before it was ever\nread.\n\nDeliberately not chased: `vacuum-gzip.ts:46-47` is reachable only where\n`renameSync` refuses to overwrite (Windows), so it cannot lift the\nLinux-authoritative gate; the remaining `repair.ts` /\n`latency-ring-buffer.ts` gaps are `?? 0` and TS-unreachable defensive\narms.\n\n## Verification\n\n- `typecheck` PASS (128 s, all workspaces)\n- `biome check --error-on-warnings packages scripts` PASS, 3038 files\n- all 20 remaining `preflight:fast` static gates PASS individually,\nincluding `audit:any --check`, `audit:invariants`,\n`audit:cross-platform`, `audit:boundaries`\n- `bun test packages/gateway` PASS — **11652 pass / 0 fail** (899 files)\n- `bun test scripts` PASS — 1094 pass / 0 fail\n- `security-invariants.test.ts` PASS — 93 pass\n\n`bun run preflight:fast` aborts at its `lint` gate inside\n`.claude/worktrees/`: biome resolves 0 files there and exits 1. That is\na known worktree artifact, not a finding; `bunx biome check packages\nscripts` is clean, and every gate after it was run individually.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Improved database resource cleanup to prevent locked files and\nlingering connections.\n- Increased reliability of embedding, audit history, session transcript,\nand snapshot operations.\n- Snapshot cleanup now handles undeletable entries gracefully and\nreports accurate results.\n  - Test execution is less affected by ambient environment settings.\n\n- **Tests**\n- Expanded coverage for audit integrity, query timeouts, retention\npolicies, rate limits, snapshots, and updater behavior.\n  - Added safeguards to detect resource leaks and prevent regressions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-07-30T13:56:12Z",
-          "tree_id": "30732b9fe25a9be3c6e7cda58404bc3e606bb39b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/fa4aca2602a79cd64349c3e003ca01708f042976"
-        },
-        "date": 1785420494642,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 337.94573654999914,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 339.3153372000059,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 261.51664510000376,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e35e3460b6499c33f4c46736a0358fee39f56f14",
+          "message": "feat(captures): purge a finished action's stored input; prune executed/failed after 90 days (#1667)\n\nCloses the act door's \"no owner deletion path\" follow-up from #1660.\nThis is the first of the four capture-sink follow-ups.\n\n## Problem\n\nAn `executed` or `failed` action capture kept the agent's verbatim\n`input` with no time limit. Retention pruned only `rejected` and\n`expired` rows, and `revoke` refuses every action. Revoke cannot simply\nbe reused: V69 ties a NULL `payload_json` to `state = 'revoked'`, and an\naction has no `revoked` state.\n\n## What ships\n\n- **`nimbus captures purge <id> [--json]`**, backed by the new owner\nmethod `captures.purge` and gate function `purgeCapture`.\n- Deletes ONE finished action row: `executed`, `failed`, `rejected` or\n`expired`.\n- The delete is guarded on the state just read, and it runs in one\ntransaction with a `capture.purge` audit row (`not_required`). That row\nrecords the capture id, action type and prior state, and never the\npayload.\n- A purge that loses a race writes nothing and reports\n`ERR_CAPTURE_STATE`.\n- Refuses a `proposed` action (reject it first), an `executing` one, and\nevery non-action kind (`revoke` is their path).\n- Owner-only. No TTY needed, and it works with the sink switched off,\nthe same as `reject`.\n- LAN-forbidden by namespace and not on the Tauri allowlist. Routing is\nby prefix, so `dispatchers.ts` is unchanged.\n- **Retention.** `executed` and `failed` rows are now pruned 90 days\nafter their decision, like `rejected` and `expired` rows.\n`pruneRejected` / `REJECTED_RETENTION_MS` are renamed `pruneFinished` /\n`FINISHED_RETENTION_MS`. `proposed` and `executing` rows are never\npruned, and a test pins that.\n- **Static D32(b)** now confines `purgeCapture` along with the four\nexisting gate entry points.\n- No migration, no new invariant, no egress class.\n\n## Bounds\n\nThese are stated in the docs:\n- Purge does not undo the action.\n- The executor's own audit row for the action stays, since the audit\nchain is append-only. That row went through `redactAuditPayload`.\n- An agent calling `capture_status` on a purged id gets\n`ERR_CAPTURE_NOT_FOUND`.\n\n## Behaviour change\n\nTwo tests pinned the old \"executed and failed are kept\" retention. They\nnow pin the new behaviour, with a boundary case at exactly the cutoff.\n\n## Tests\n\n- **Gate:** every finished state purges; proposed and executing are\nrefused and left untouched; non-action kinds are refused; MCP callers\nare refused; purge works with the sink off; a lost race writes no audit\nrow; the audit row carries no payload; a second purge returns NOT_FOUND.\n- **Store:** `deleteFinishedAction` checks the state guard, and\n`pruneFinished` covers the widened set of states.\n- **RPC:** the error mapping, and LAN denial.\n- **CLI:** argument parsing, the output line, `--json` and refusals.\n\n## Verification\n\n- `preflight:fast` passed.\n- 5,568 affected tests pass: CLI commands, mcp-sink, the capture RPC,\nsecurity-invariants, structure-audit, mcp-sink integration and\nipc/server.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus captures purge <id>` to remove a finished action’s\nstored input. Purging does not undo the action, and proposed,\nin-progress, and non-action captures cannot be purged.\n* **Changes**\n* Finished action captures—including executed and failed actions—are now\nautomatically removed after 90 days. Proposed and in-progress actions\nare retained.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-16T13:36:44Z",
+          "tree_id": "f71cbcbef5961f48a96ee3f19bf67f333b3624b2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e35e3460b6499c33f4c46736a0358fee39f56f14"
+        },
+        "date": 1792158470396,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 271.0854280000058,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 278.93068250000067,
             "unit": "ms"
           }
         ]
