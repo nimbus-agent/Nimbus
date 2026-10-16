@@ -92,7 +92,7 @@ runs:
     # Outside the workspace on purpose: inside it, `git clean` in checkout and every repo-wide
     # glob would see the cache. Linux and macOS keep `~/.bun/install/cache` byte-for-byte, because
     # the cache entry's version hashes this path and changing it would cold-miss their caches.
-    # `scripts/ci/setup-windows-dev-drive.ps1` adds a Defender exclusion for the same directory.
+    # `scripts/ci/setup-windows-temp.ps1` adds a Defender exclusion for the same directory.
     - name: Locate the Bun package download cache
       id: bun-cache-dir
       shell: bash

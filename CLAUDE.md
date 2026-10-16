@@ -195,11 +195,13 @@ e2e alike (a directory argument recurses, and `bunfig.toml` excludes nothing). B
 file gets a fresh global and module registry, so a `mock.module` in one file can no longer leak
 into another on these legs. The Linux `Unit + Coverage` leg still runs each package serially in
 one process, so cross-file mock leakage remains possible there. Only the remaining flags differ:
-the push leg adds coverage instrumentation and the PR legs a wall-clock wrapper, which is why the
-parity test compares positional paths only. The Windows PR leg runs those paths as `--shard=1/2`
-and `--shard=2/2`, balanced by per-file timings that each push run on `main` caches
-(`--update-timings`); parity holds over the UNION of the shards, and the parity test checks that
-every OS's shard set is exactly `1/N … N/N`. **`--parallel` is part of the shape: drop it from one
+the push leg records per-file timings (`--update-timings`) and the PR legs read them, which is why
+the parity test compares positional paths only. Both run uninstrumented (macOS/Windows coverage
+was never read, and instrumenting the push leg skewed the timings) and through
+`scripts/ci/test-with-retry.ts`, whose ONE retry re-runs only the files that failed when the JUnit
+accounts for every failure, and the whole command otherwise. The Windows PR leg runs those paths as
+`--shard=1/2` and `--shard=2/2`, split by those timings; parity holds over the UNION of the shards,
+and the parity test checks that every OS's shard set is exactly `1/N … N/N`. **`--parallel` is part of the shape: drop it from one
 leg and not the other and the two stop running the same thing.**
 That equality is load-bearing and was only established on 2026-08-23. Before it, the PR
 leg ran `bun test packages/<pkg>/src` per package while the push leg ran everything in one process,

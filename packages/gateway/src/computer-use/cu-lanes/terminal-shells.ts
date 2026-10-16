@@ -22,8 +22,8 @@ export class CuShellError extends Error {
  * `chromiumCandidates(platform, env)` out as a PURE function: the interesting branch here is
  * "present / absent", and on any given runner exactly one arm is reachable — `/bin/sh` always
  * exists on POSIX and never on Windows. Left un-injected, half of this file's branches could only
- * ever be covered by the OTHER platform's CI leg, which is precisely the blind spot
- * `audit:coverage-gate-pal` exists to flag.
+ * ever be covered by the OTHER platform's CI leg — and the coverage floor is measured on Linux
+ * alone, so those branches would count as uncovered forever.
  */
 export type PathExists = (path: string) => boolean;
 

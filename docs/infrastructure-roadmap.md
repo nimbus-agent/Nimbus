@@ -657,6 +657,15 @@ moves to P6).
   because the first revision validated the `pal:` fields without ever reading
   the `if:` lines that consume them — which is precisely how the broken
   job-level `matrix.gate.pal` condition shipped green.
+- **Superseded 2026-10-17: both coverage-gate jobs and `audit:coverage-gate-pal`
+  are gone.** Every gate in them ran `bun test <subset> --coverage
+  --coverage-threshold-lines=N`, and Bun has no such flag, so they re-ran tests
+  the suite had already run and enforced nothing; the floors are enforced by
+  `audit:coverage-scopes` over the merged lcov in `unit-coverage`. They cost 12
+  jobs per PR and ~30 per push (the PR chain's tail by ~2 min). Their only
+  unique work moved: cppcheck, the CAP_NET_ADMIN helper build and its sandbox
+  tests now run in the Linux `integration` job, and the Windows helper's
+  `--check-caps` probe in the Windows `unit-coverage` job.
 - **Deferred:** guarding E2E against a TypeScript failure on `main`. Measured
   2 of the last 40 `main` commits arrived without a PR, both `ci(cla)` workflow
   commits touching no TypeScript. No standalone fast typecheck job exists to

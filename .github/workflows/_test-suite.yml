@@ -4,10 +4,12 @@ name: Test Suite
 # Runs all TS/Bun checks and tests for a single OS runner.
 #
 # Structure: split into parallel jobs so the PR critical path is the max
-# of the longest job, not the sum. The old monolithic `test` job ran for
-# ~9.5 min on ubuntu PRs; with this split the critical path is the
-# `unit-coverage` job (~5 min on ubuntu) plus the `coverage-gates-*` matrices
-# (~1 min), and the other jobs run alongside.
+# of the longest job, not the sum; on ubuntu PRs that is `unit-coverage`, and
+# the other jobs run alongside it. The per-area `Coverage — <area>` jobs that
+# used to follow it were removed 2026-10-17: they re-ran test subsets with a
+# `--coverage-threshold-lines` flag Bun does not have, so they enforced
+# nothing; the floors are enforced by `audit:coverage-scopes` over the merged
+# lcov in `unit-coverage`.
 on:
   workflow_call:
     inputs:
@@ -164,12 +166,15 @@ jobs:
 
   # ── Unit tests + UI + coverage + Sonar ─────────────────────────────────────
   # The longest single job. Produces the merged coverage/lcov.info that the
-  # coverage-gates-* matrices and the per-file coverage floor consume.
+  # per-file coverage floor and the per-area coverage scopes consume.
   unit-coverage:
     name: Unit + Coverage — ${{ inputs.runner }}
     if: inputs.run-tests
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 60
+    # The macOS/Windows test step caps each of its two attempts at 1500 s, so its worst case is
+    # 2 × 1500 s + setup (≤ ~8 min on windows-2025) + the UI coverage and uploads after it
+    # (~3 min): about 61 min, over the 60 this used to be. Raise the cap and this together.
+    timeout-minutes: 70
     permissions:
       contents: read
       id-token: write
@@ -193,6 +198,15 @@ jobs:
           # spuriously. Only this job's checkout needs the full history; the
           # other jobs use the default shallow clone.
           fetch-depth: 0
+
+      # The same temp-disk setup as the PR Windows shards (`ci.yml`), and for the same reason —
+      # but here it is also what makes the per-file timings this job records (`--update-timings`
+      # below) match the conditions the PR shards are split under. Before dependency setup, so
+      # `bun install` and every later step inherit TEMP/TMP. Fail-soft.
+      - name: Windows — TEMP on the local disk + Defender exclusions
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci/setup-windows-temp.ps1
 
       - name: Setup Bun and install dependencies
         uses: ./.github/actions/setup-nimbus-ci
@@ -229,10 +243,17 @@ jobs:
         shell: bash
         run: sudo bash scripts/linux/install-sandbox-deps.sh
 
+      # `--check-caps` proves the freshly built helper can create an AppContainer profile on this
+      # runner. It used to run only in the Windows leg of the `Coverage — Sandbox` job, which was
+      # deleted with the other coverage-gate jobs (they re-ran tests the suite below already runs).
       - name: Build sandbox helper (Windows, sandbox spawn test)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: bun run build:sandbox-helper:win32
+        run: |
+          bun run build:sandbox-helper:win32
+          $h = "packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe"
+          $out = & $h --check-caps
+          if ($LASTEXITCODE -ne 0 -or $out.Trim() -ne "OK") { throw "check-caps failed: $out" }
 
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS'
@@ -329,47 +350,27 @@ jobs:
         env:
           CI: "true"
 
-      - name: Unit tests (with coverage) — macOS/Windows (retry once)
+      - name: Unit tests — macOS/Windows (one targeted retry)
         if: runner.os != 'Linux'
         shell: bash
-        # Retry-once tolerates the cold-runner timeout outliers in
-        # `packages/gateway/src/perf/` and `packages/gateway/src/platform/` on
-        # Windows/macOS that come in under budget on a warm second attempt.
-        # Critically, attempt 2's exit code MUST propagate — without that, two
-        # consecutive genuine failures look identical to two transient flakes
-        # and the job exits 0 (silent flake hiding). Mirrors the same shape
-        # used by `pr-quality-cross-platform` in `ci.yml`.
-        run: |
-          set +e
-          for attempt in 1 2; do
-            # Redirect-then-cat, NOT a pipe: a pipeline would make `$?` the exit code of the
-            # last command and silently mask every failure. Same shape as `ci.yml`'s
-            # cross-platform retry, and for the same reason — a silent retry costs a full
-            # suite run and leaves nothing in the summary to investigate.
-            bun test packages/gateway packages/cli scripts --timeout 60000 --parallel --timings="${RUNNER_TEMP}/test-timings.json" --update-timings --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" --reporter=junit --reporter-outfile=junit-reports/junit-unit.xml > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
-            code=$?
-            cat "${RUNNER_TEMP}/attempt-${attempt}.log"
-            if [ "$code" -eq 0 ]; then
-              if [ "$attempt" -eq 2 ]; then
-                echo "::warning title=Retry masked a failure::The unit suite FAILED on attempt 1 and passed on attempt 2 (${{ inputs.runner }}). Green, but two full suite runs were paid for — see the annotations naming the failing test(s)."
-              fi
-              exit 0
-            fi
-            if [ "$attempt" -eq 2 ]; then
-              echo "Both attempts failed with exit code $code"
-              exit "$code"
-            fi
-            echo "Attempt $attempt failed (exit $code), retrying in 5 s..."
-            failed=$(grep -E '^\(fail\)' "${RUNNER_TEMP}/attempt-${attempt}.log" | head -20 || true)
-            if [ -n "$failed" ]; then
-              while IFS= read -r line; do
-                echo "::warning title=Flaky test::${line}"
-              done <<< "$failed"
-            else
-              echo "::warning title=Attempt 1 failed with no (fail) line::exit ${code} — a timeout, crash or hang rather than an assertion. See the attempt-1 output above."
-            fi
-            sleep 5
-          done
+        # The SAME command as the PR cross-platform legs in `ci.yml` (minus `--shard`), through
+        # the same retry script — so a retry here re-runs only the files that failed, and attempt
+        # 2's exit code is the step's. `cross-platform-parity.test.ts` holds the two path lists
+        # and the `--parallel` flag equal.
+        #
+        # UNINSTRUMENTED on purpose. This step used to load the Istanbul preloads, but nothing
+        # ever merged or uploaded the coverage they wrote on macOS/Windows (the floor and the
+        # scopes are Linux-authoritative, below), so they only slowed the run: 22–27 min per
+        # attempt on windows-2025, enough that two attempts met the job ceiling, against
+        # 10–14 min uninstrumented. Worse, the per-file timings recorded here
+        # (`--update-timings`) are what `ci.yml` splits the Windows PR shards by, and
+        # instrumentation inflated CPU-bound unit files ~3× but disk-bound ones not at all: the
+        # split put ~78% of the real work in shard 2/2 (930 s vs 3,218 s of per-file time in run
+        # 38949021174). Timings from an uninstrumented run are the PR shards' own conditions.
+        #
+        # `--final-junit` writes the report of record for the JUnit check below: attempt 1's, or
+        # attempt 1's with the retried files replaced by the retry's results.
+        run: bun scripts/ci/test-with-retry.ts --label="${{ inputs.runner }} (push)" --cap-seconds=1500 --report-dir="${RUNNER_TEMP}" --final-junit=junit-reports/junit-unit.xml -- bun test packages/gateway packages/cli scripts --timeout=60000 --parallel --timings="${RUNNER_TEMP}/test-timings.json" --update-timings
         env:
           CI: "true"
 
@@ -651,7 +652,7 @@ jobs:
       # Fix round 1 (Task 6, Finding A): this job runs packages/gateway/test/integration/, which
       # includes sandbox-wrapper-spawn.test.ts — a real end-to-end spawn through the
       # `__nimbus-sandbox` role. Without bwrap the suite is not READY and silently skipped rather
-      # than exercising anything; only the separate `coverage-gates-pal` Sandbox gate installed
+      # than exercising anything; only the (since removed) `Coverage — Sandbox` job installed
       # this before. A skip and a pass look identical in a CI summary, which is exactly how the
       # original Windows spawn defect survived a green three-OS matrix.
       - name: Linux — bubblewrap (sandbox spawn integration test)
@@ -687,6 +688,23 @@ jobs:
 
       - name: Integration tests
         run: bun test packages/gateway/test/integration/ packages/cli/test/integration/ --timeout 60000 --reporter=junit --reporter-outfile=junit-reports/junit-integration.xml
+        env:
+          CI: "true"
+
+      # The Linux sandbox helper itself: built, statically analysed, given CAP_NET_ADMIN, and
+      # exercised by the sandbox unit tests against the real binary. This ran in the Linux leg of
+      # the `Coverage — Sandbox` job until the per-area coverage jobs were removed. AFTER the
+      # integration tests on purpose — they have always run with no helper built, and building it
+      # first would change which sandbox path they take — and `!cancelled()` so a red integration
+      # step does not hide this one.
+      - name: Linux — sandbox helper (build, cppcheck, setcap, its tests against the real binary)
+        if: runner.os == 'Linux' && !cancelled()
+        shell: bash
+        run: |
+          bun run build:sandbox-helper
+          cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem packages/gateway/src-native/sandbox-helper/main.c
+          sudo setcap cap_net_admin+ep packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
+          bun test packages/gateway/src/platform/sandbox --timeout 60000
         env:
           CI: "true"
 
@@ -970,285 +988,3 @@ jobs:
           bun run package:installers:linux -- --version 0.0.0-ci --skip-appimage
           test -f dist/installers/nimbus-headless_0.0.0-ci_amd64.deb
           test -f dist/installers/nimbus-headless-linux-amd64-v0.0.0-ci.tar.gz
-
-  # Run coverage gates in parallel to reduce critical path.
-  # These re-run specific tests to enforce thresholds.
-  #
-  # SPLIT INTO TWO JOBS DELIBERATELY — do not merge them back together.
-  #
-  # Threshold gates run on Linux only, EXCEPT the gates whose covered code
-  # branches on host platform (`pal: true`), which run on all three OSes. A push
-  # run was ~105 jobs against a pool granting ~15 concurrent, and 72 of those
-  # were one 24-entry coverage matrix expanded once per OS; the split cuts that
-  # to 42 (9 PAL × 3 OS + 15 Linux-only × 1).
-  #
-  # The obvious single-job spelling was tried first and is WRONG:
-  #
-  #     if: inputs.run-tests && (inputs.runner == 'ubuntu-24.04' || matrix.gate.pal)
-  #
-  # `matrix` is NOT in the context set available to a job-level `if:` — GitHub
-  # grants `jobs.<job_id>.if` only `github`, `needs`, `vars` and `inputs`,
-  # because the job condition is evaluated BEFORE the matrix expands. That
-  # spelling therefore evaluates falsy (or errors) on Windows and macOS and
-  # silently skips ALL coverage gates there, including the very `pal: true`
-  # gates whose preservation is the entire safety argument for running the rest
-  # on Linux only. Every other `matrix.`-referencing `if:` in this repo is
-  # step-level (8-space), where `matrix` IS available. Hence: one job per class,
-  # each gated only on `inputs`, which a job-level `if:` does support.
-  #
-  # The `fromJSON(...)` single-job alternative is NOT acceptable either: it
-  # drops the leg from the matrix entirely, and a leg that never expands never
-  # creates its check context. A SKIPPED leg does create one. This repo depends
-  # on that — see the trap documented on `pr-quality-ts` in
-  # `.github/workflows/ci.yml`, where an un-created child context sat
-  # "Expected — Waiting for status to be reported" forever and blocked merges.
-  #
-  # Both jobs MUST keep the identical `name:` template below. `name:` DOES
-  # accept `matrix`, and the expanded check-context names
-  # (`Coverage — Vault (ubuntu-24.04)` …) are what branch protection references;
-  # changing them breaks the required contexts.
-  #
-  # Every entry keeps its `pal:` field even though no `if:` reads it any more.
-  # It is the machine-readable classification `audit:coverage-gate-pal`
-  # (`scripts/structure-audit/check-coverage-gate-pal.ts`) enforces: that gate
-  # fails when a Linux-only gate's code gains platform branching, when an entry
-  # sits in the wrong job, when a new entry carries no explicit `pal`, and when
-  # either `if:` below drifts from the condition it is supposed to carry.
-  #
-  # `inputs.run-tests` is gated explicitly on both jobs (rather than relied upon
-  # through the `needs: unit-coverage` skip chain) to match how every sibling job
-  # in this file gates on it directly (`static`, `unit-coverage`, `integration`,
-  # `e2e-gateway`, `e2e-cli`, `packaging`).
-
-  # PAL gates (9) — covered code branches on host platform, so these run on
-  # every OS the workflow is called with.
-  coverage-gates-pal:
-    name: Coverage — ${{ matrix.gate.name }} (${{ inputs.runner }})
-    if: inputs.run-tests
-    needs: unit-coverage
-    runs-on: ${{ inputs.runner }}
-    # These two coverage-gate jobs were the only jobs in this file with no
-    # `timeout-minutes`, so they inherited GitHub's 360-minute default. On
-    # 2026-08-19 the Sandbox leg wedged in its apt step on two concurrent runs
-    # and would have burned six hours of runner time each; every sibling job
-    # here caps at 30, and the whole leg runs in 1-4 minutes.
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        gate:
-          - name: Vault
-            script: "test:coverage:vault"
-            pal: true
-          - name: Embedding
-            script: "test:coverage:embedding"
-            pal: true
-          - name: Extensions
-            script: "test:coverage:extensions"
-            pal: true
-          - name: Telemetry
-            script: "test:coverage:telemetry"
-            pal: true
-          - name: DB layer
-            script: "test:coverage:db"
-            pal: true
-          - name: Doctor
-            script: "test:coverage:doctor"
-            pal: true
-          - name: Updater
-            script: "test:coverage:updater"
-            pal: true
-          - name: Perf
-            script: "test:coverage:perf"
-            pal: true
-          - name: Sandbox
-            script: "test:coverage:sandbox"
-            pal: true
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Bun and install dependencies
-        uses: ./.github/actions/setup-nimbus-ci
-
-      - name: Linux — libsecret + D-Bus (vault tests)
-        if: runner.os == 'Linux' && matrix.gate.name == 'Vault'
-        shell: bash
-        run: sudo bash scripts/linux/install-vault-deps.sh
-
-      - name: Linux — bubblewrap + libcap-dev + strace + cppcheck (sandbox tests)
-        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
-        shell: bash
-        run: sudo bash scripts/linux/install-sandbox-deps.sh
-
-      - name: Build sandbox helper (Linux only, sandbox gate)
-        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
-        shell: bash
-        run: bun run build:sandbox-helper
-
-      - name: Static-analyse sandbox helper with cppcheck (Linux only, sandbox gate)
-        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
-        shell: bash
-        run: cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem packages/gateway/src-native/sandbox-helper/main.c
-
-      - name: Setcap on sandbox helper (Linux only, sandbox gate)
-        if: runner.os == 'Linux' && matrix.gate.name == 'Sandbox'
-        shell: bash
-        run: sudo setcap cap_net_admin+ep packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
-
-      - name: Build sandbox helper (Windows only, sandbox gate)
-        if: runner.os == 'Windows' && matrix.gate.name == 'Sandbox'
-        shell: pwsh
-        run: bun run build:sandbox-helper:win32
-
-      - name: Probe sandbox helper (Windows only, sandbox gate)
-        if: runner.os == 'Windows' && matrix.gate.name == 'Sandbox'
-        shell: pwsh
-        run: |
-          $h = "packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe"
-          $out = & $h --check-caps
-          if ($LASTEXITCODE -ne 0 -or $out.Trim() -ne "OK") { throw "check-caps failed: $out" }
-
-      - name: Run coverage gate
-        shell: bash
-        run: |
-          if [[ "${{ matrix.gate.name }}" == "Vault" && "${{ runner.os }}" == "Linux" ]]; then
-            bash scripts/ci/run-with-optional-dbus.sh bun run ${{ matrix.gate.script }}
-          else
-            bun run ${{ matrix.gate.script }}
-          fi
-        env:
-          CI: "true"
-
-      - name: Upload coverage to Codecov
-        # See note on the unit-test Codecov step: this upload is supplementary,
-        # not the gate. `continue-on-error` tolerates intermittent OIDC pre-step
-        # failures on Windows-2025 without masking real coverage-threshold
-        # regressions, which are enforced earlier by the `Run coverage gate`
-        # step's `bun run` exit code.
-        continue-on-error: true
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          # No `token:` — same reason as the upload step above (Nimbus#782).
-          use_oidc: true
-          flags: ${{ matrix.gate.name }}
-
-  # Linux-only gates (15) — no file in their coverage denominator branches on
-  # host platform, which `audit:coverage-gate-pal` re-checks on every run. The
-  # `ubuntu-24.04` literal below must match the runner label `ci.yml` actually
-  # calls this workflow with; the same audit asserts that too, so bumping the
-  # runner in one place cannot silently drop these 15 gates.
-  coverage-gates-linux:
-    name: Coverage — ${{ matrix.gate.name }} (${{ inputs.runner }})
-    if: inputs.run-tests && inputs.runner == 'ubuntu-24.04'
-    needs: unit-coverage
-    runs-on: ${{ inputs.runner }}
-    # 30, same as `coverage-gates-pal` and every sibling job in this file — see
-    # the note there. Batching makes each leg serial, so the headroom over the
-    # ~3-5 minutes three batches take is smaller here, but still 6x.
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      id-token: write
-    # BATCHED, not one-gate-per-job. These 15 gates each ran 0.6-1.3 min but
-    # QUEUED 11-20 min behind a saturated concurrent-job cap, and ~0.5 min of
-    # every leg was runner start + checkout + `bun install` — the matrix spent
-    # far more wall time on setup and queueing than on the thresholds it
-    # enforces. Three batches pay that setup 3x instead of 15x and hand 12 job
-    # slots back to the account-wide pool that every other PR is waiting on.
-    #
-    # The trade is honest: this branch of the DAG gets SLOWER in isolation
-    # (~1 min of parallel legs becomes ~3-5 min of serial ones). It wins because
-    # queueing, not execution, is the dominant term — and it stops being the
-    # right call if that ever ceases to be true.
-    #
-    # Every entry still carries an explicit `pal: false`: `audit:coverage-gate-pal`
-    # rule 4 requires the field on every entry, and rule 5 requires every entry in
-    # THIS job to be false. That audit parses only `- name:` and `pal:`, so the
-    # `scripts:` (plural) key below is invisible to it.
-    #
-    # Batches group by subsystem so a red check names a coherent area, and the
-    # run step below executes every script in a batch even after one fails —
-    # preserving the failure locality the 15-way `fail-fast: false` matrix gave.
-    strategy:
-      fail-fast: false
-      matrix:
-        gate:
-          - name: Engine & agents
-            flag: engine-agents
-            scripts: "test:coverage:engine test:coverage:agents test:coverage:workflow test:coverage:preflight"
-            pal: false
-          - name: Runtime services
-            flag: runtime-services
-            scripts: "test:coverage:sync test:coverage:rate-limiter test:coverage:watcher test:coverage:health test:coverage:metrics"
-            pal: false
-          - name: Interfaces & data
-            flag: interfaces-data
-            scripts: "test:coverage:people test:coverage:config test:coverage:tui test:coverage:deployment test:coverage:lan"
-            pal: false
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Bun and install dependencies
-        uses: ./.github/actions/setup-nimbus-ci
-
-      # The Vault and Sandbox prep steps that used to sit here were dead: this
-      # job's matrix has never contained a `Vault` or `Sandbox` entry (both are
-      # `pal: true` and live in `coverage-gates-pal`), so every one of their
-      # `matrix.gate.name == '…'` conditions was permanently false. The live
-      # copies remain in `coverage-gates-pal`, which is where those gates run.
-
-      - name: Run coverage gates
-        shell: bash
-        run: |
-          # Run every gate in the batch even after one fails, so a red check
-          # reports ALL failing gates rather than only the first — the failure
-          # locality the old 15-way `fail-fast: false` matrix gave, preserved.
-          failed=()
-          for script in ${{ matrix.gate.scripts }}; do
-            echo "::group::${script}"
-            if bun run "${script}"; then
-              echo "::endgroup::"
-            else
-              echo "::endgroup::"
-              echo "::error::coverage gate failed: ${script}"
-              failed+=("${script}")
-            fi
-          done
-          if [[ ${#failed[@]} -gt 0 ]]; then
-            echo "Failing coverage gates in this batch: ${failed[*]}"
-            exit 1
-          fi
-        env:
-          CI: "true"
-
-      - name: Upload coverage to Codecov
-        # See note on the unit-test Codecov step: this upload is supplementary,
-        # not the gate. `continue-on-error` tolerates intermittent OIDC pre-step
-        # failures on Windows-2025 without masking real coverage-threshold
-        # regressions, which are enforced earlier by the `Run coverage gate`
-        # step's `bun run` exit code.
-        continue-on-error: true
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          # No `token:` — same reason as the upload step above (Nimbus#782).
-          use_oidc: true
-          flags: ${{ matrix.gate.flag }}
