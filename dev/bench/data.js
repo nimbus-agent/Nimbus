@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792131077342,
+  "lastUpdate": 1792132578665,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7247d657e050738c39aa21e1de01e713c1cef8d8",
-          "message": "docs(claude): record that squash discards commit messages (#965)\n\n## Summary\n\nDocuments that squash merging discards commit messages in this repo —\nthe PR title and description *are* the commit.\n\nThis is the root cause of the failed first attempt at cutting 1.12.0.\n#960 carried the version trailer in its commit message, which is the one\nplace guaranteed never to reach `main`, so release-please saw nothing\nand cut no release PR. #962 fixed the symptom by putting the trailer in\nthe PR description; this fixes the reason nobody knew to do that.\n\nTwo practical consequences, both now written down:\n\n- **The PR title is load-bearing.** It becomes the squash subject, which\nis what release-please parses for the version bump. A wrong type there\ncuts a wrong release — or none.\n- **The PR description is the permanent commit body.** Reasoning belongs\nthere, not in a local commit message. So does any git trailer that has\nto survive.\n\nAnd the same fact in reverse, which is a live hazard now that trailers\nare a documented tool: a bare trailer line left in *any* PR description\nforces a release nobody asked for. The bullet says so explicitly — this\ndescription deliberately keeps every mention of it quoted and inline for\nexactly that reason.\n\n## Related Issue\n\nRelates to #957 — the last of the follow-ups from that incident.\n\n## Verification\n\nNot asserted from the settings alone. Confirmed both ways:\n\n- `gh api repos/nimbus-agent/Nimbus` → `allow_squash_merge: true`,\n`allow_merge_commit: false`, `allow_rebase_merge: false`,\n`squash_merge_commit_title: PR_TITLE`, `squash_merge_commit_message:\nPR_BODY`.\n- `git log -1 --format='%b' 1d75dcea` → the body of #958's squash commit\nis that PR's *description*, markdown headings and all, not the message\nthat was authored on the branch.\n\n## Type of Change\n\n- [x] Documentation only\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`) — no code touched; one\n`CLAUDE.md` bullet added\n- [x] New behaviour is covered by tests — n/a, no behaviour change\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md`, a screenshot is attached —\nn/a\n\n`bun run preflight:fast` passes in full, including `lint:markdown`.\n\n## Coverage (if engine/ or vault/ was changed)\n\nn/a — neither was modified.\n\n## Testing\n\n`bun run preflight:fast` — PASSED (typecheck, lint, markdown lint, 20\naudits, duplication). No suite run: documentation only.\n\n## Notes for Reviewers\n\nI considered recommending a change to the merge configuration instead\nand decided against it. The current setup is coherent: the PR title\nreliably drives versioning (proven across 1.6.0–1.11.0), and `PR_BODY`\nas the commit body means this repo's PR reasoning becomes the permanent\ngit record — switching to `COMMIT_MESSAGES` would discard that and\nproduce noisy concatenations on multi-commit PRs. Re-enabling merge\ncommits for the one forced-version edge case would weaken a deliberate\nlinear-history invariant. The gap was documentation, not configuration.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-07-30T14:09:33+03:00",
-          "tree_id": "353e6f4089f4917e100fb8162cbff39c9a679da4",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7247d657e050738c39aa21e1de01e713c1cef8d8"
-        },
-        "date": 1785410612324,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 238.20242535000105,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 240.40558505001246,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 281.8176782999988,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "42102e06040d5810b002bf57621e91782e2b40d4",
+          "message": "fix(extensions): read the registry's entryHash as the entry file's hash everywhere (#1662)\n\n## What was wrong\n\nThe registry's one hash field, `entryHash`, was read two ways:\n\n| Site | Read `entryHash` as |\n|---|---|\n| `auto-update-orchestrate.ts` (upgrade), then stored as the row's\n`entry_hash` | SHA-256 of the downloaded **tarball** |\n| `install-from-local.ts` (dependency install) | SHA-256 of the **entry\nfile** |\n| `verify-extensions.ts` (startup check of the row's `entry_hash`) |\nSHA-256 of the **entry file** |\n\nNo registry could satisfy both readings. The real effect: an\nauto-updated extension's stored `entry_hash` never matched its entry\nfile, so the next startup verification disabled it. The integration test\nhid this. It fabricated `entryHash` as the tarball hash and never ran\nstartup verification after the upgrade. Upgrade and downgrade also wrote\nthe registry's claimed hashes into the row without measuring the files\non disk.\n\n## Fix\n\n- `entryHash` now means the entry file everywhere. A new **required**\n`tarballSha256` field, validated as 64-hex in `registry-client.ts`,\ncarries download integrity.\n- New `extensions/package-hashes.ts` measures a package the same way\nstartup verification does: the manifest file, plus the declared or\ndefault entry, which must stay inside the package directory.\n- **Upgrade:** the tarball is checked against `tarballSha256`. After\nextraction, the package is measured against the registry's claims and\nrefused with `package_hash_mismatch`, a new failure phase, **before the\nswap**. The pending directory is cleaned up.\n- **Downgrade:** `_prev/<to>` is measured against the claims before the\nswap.\n- Both write the **measured** hashes to the row.\n\nNo registry is live, so the wire-format change breaks no one, and nobody\nhas to change anything (no `!`). No migration, no invariant, no egress\nclass.\n\n## Tests\n\n- `package-hashes.test.ts`: default and declared entry, missing\nmanifest, missing entry, an entry that escapes the package, and manifest\nand entry mismatches.\n- `auto-update-orchestrate.test.ts`: the tarball check uses\n`tarballSha256` and refuses a tarball whose hash equals `entryHash`. A\ntampered extracted entry is refused before the swap, with `active/`\nuntouched and pending cleaned up. A mismatched `_prev` is refused. Happy\npaths assert the row receives the measured hashes.\n- `auto-update-roundtrip.test.ts`: upgrade and downgrade now assert\n`verifyOneExtensionStrict(row) === true`. **Red-proved:** with the old\norchestrate code and the old fixture, the upgrade case fails (`Expected:\ntrue, Received: false`).\n- `registry-client.test.ts`: a payload without `tarballSha256` is\nrefused.\n- Other fixtures gain the new field. `bun run preflight:fast` passes.\nThe affected suites pass locally: 1,082 tests across `src/extensions`,\n`src/ipc/server`, the integration test and the e2e test.\n\n## Found, not fixed here\n\nAuto-update swaps `<extensionsDir>/<id>/active`, but `nimbus extension\ninstall` writes to `<extensionsDir>/<id>` directly, and no code creates\n`active/`. Every auto-update test builds `active/` by hand. So an\nextension installed through the real path cannot be auto-updated: the\nswap's first rename fails with `swap_failed`. This is recorded in the\nCHANGELOG entry and left for its own change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Extension upgrades and downgrades now verify downloaded archives and\nthe package’s manifest and entry file before applying changes. Packages\nthat fail verification are rejected without replacing the active\nextension.\n* Stored package hashes now reflect measured files, improving\nverification after updates.\n* Update errors distinguish package hash mismatches and unreadable\npackage files.\n* **Known Issues**\n* Automatic updates may fail for extensions installed through the\nstandard installation path.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-16T06:25:17Z",
+          "tree_id": "36423329c6c0ee3f06b914e472b90231ccc25114",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/42102e06040d5810b002bf57621e91782e2b40d4"
+        },
+        "date": 1792132573220,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 264.06428240000133,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 266.39048484999364,
             "unit": "ms"
           }
         ]
