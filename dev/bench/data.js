@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792171885702,
+  "lastUpdate": 1792172475648,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8c886a37fe4dd580618b7587750631d21c22a135",
-          "message": "chore: release main (#983)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.13.0</summary>\n\n##\n[1.13.0](https://github.com/nimbus-agent/Nimbus/compare/v1.12.1...v1.13.0)\n(2026-07-31)\n\n\n### Features\n\n* **glossary:** nimbus glossary — implicit-knowledge terminology agent\n([#981](https://github.com/nimbus-agent/Nimbus/issues/981))\n([bb0069c](https://github.com/nimbus-agent/Nimbus/commit/bb0069c06b411ede044cacb135dac66f65982483))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-31T04:29:39+03:00",
-          "tree_id": "8b16f334cf36a746a6b5968e54e48b04f6eaa190",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8c886a37fe4dd580618b7587750631d21c22a135"
-        },
-        "date": 1785462109843,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 328.6254600999961,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.115194350007,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 260.2537434500009,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8fd6e07cf07ac6d6440c2af50adcb277699b1468",
+          "message": "chore: release main (#1670)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.46.0</summary>\n\n##\n[7.46.0](https://github.com/nimbus-agent/Nimbus/compare/v7.45.0...v7.46.0)\n(2026-10-16)\n\n\n### Features\n\n* **captures:** batch accept proposed decisions, terms and links\n([#1668](https://github.com/nimbus-agent/Nimbus/issues/1668))\n([64ab982](https://github.com/nimbus-agent/Nimbus/commit/64ab98286e87b20500bf322bacd04c8cc136e005))\n* **captures:** purge a finished action's stored input; prune\nexecuted/failed after 90 days\n([#1667](https://github.com/nimbus-agent/Nimbus/issues/1667))\n([e35e346](https://github.com/nimbus-agent/Nimbus/commit/e35e3460b6499c33f4c46736a0358fee39f56f14))\n* **extensions:** run grants - approve an installed extension to run (S3\nextension runtime PR 2)\n([#1665](https://github.com/nimbus-agent/Nimbus/issues/1665))\n([37e2044](https://github.com/nimbus-agent/Nimbus/commit/37e2044edca30255e1b148f85cc5c0e3fc72e04e))\n* **negotiate:** stop crediting agent-caused issues, messages and pages\nto the owner\n([#1669](https://github.com/nimbus-agent/Nimbus/issues/1669))\n([6a7c84c](https://github.com/nimbus-agent/Nimbus/commit/6a7c84c193f5e4f5e45db68cc1d251822e542e1b))\n\n\n### Bug Fixes\n\n* **index:** one pre-migration backup per upgrade, none on a fresh\ninstall ([#1671](https://github.com/nimbus-agent/Nimbus/issues/1671))\n([9eb42b1](https://github.com/nimbus-agent/Nimbus/commit/9eb42b12b4ce7e15b011b2af29126d999faf8c46))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-16T20:19:57+03:00",
+          "tree_id": "f6d9bc07366a03f73959d49e2803c11d69fcdbec",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8fd6e07cf07ac6d6440c2af50adcb277699b1468"
+        },
+        "date": 1792172468489,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 193.36081535000122,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 191.3621311499992,
             "unit": "ms"
           }
         ]
