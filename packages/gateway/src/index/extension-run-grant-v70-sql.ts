@@ -2,8 +2,9 @@
  * V70 — what the local owner approved an installed extension to RUN with (extension-runtime design
  * § 4.4, amended § 11). One row per extension; the row binds to bytes (`tree_digest`, `version`) and
  * to resolved grants (`permissions_json`), never to a name. `service_id` is computed once and
- * stored, never recomputed. The cascade fires only on a connection with `foreign_keys = ON`, which
- * the gateway's is not — `deleteExtensionById` deletes the grant explicitly. Only this file and
+ * stored, never recomputed. The cascade fires only on a connection with `foreign_keys = ON`
+ * (LocalIndex sets it; another connection may not), so `deleteExtensionById` deletes the grant
+ * explicitly rather than relying on it. Only this file and
  * `extensions/run-grant-store.ts` name the table (static rule D33(b)).
  */
 export const EXTENSION_RUN_GRANT_V70_SQL = [

@@ -75,7 +75,7 @@ describe("run-grant-store", () => {
     expect(() => upsertRunGrant(d, grant())).toThrow(/v70/);
   });
 
-  test("removing the extension removes its grant (FKs are OFF on the gateway connection)", () => {
+  test("removing the extension removes its grant explicitly, without the FK cascade", () => {
     const d = db();
     insertExtensionRow(d, {
       id: "com.example.a",
@@ -88,6 +88,7 @@ describe("run-grant-store", () => {
       last_verified_at: 1,
     });
     upsertRunGrant(d, grant());
+    d.run("PRAGMA foreign_keys = OFF"); // so only the explicit delete can remove the grant
     expect(deleteExtensionById(d, "com.example.a")).toBe("/x");
     expect(getRunGrant(d, "com.example.a")).toBeNull();
   });

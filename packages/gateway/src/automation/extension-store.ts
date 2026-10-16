@@ -160,7 +160,8 @@ export function deleteExtensionById(db: Database, id: string): string | null {
   if (path === null) {
     return null;
   }
-  // Explicit, not left to the FK cascade: the gateway's connection never sets foreign_keys = ON.
+  // Deleted explicitly rather than left to the FK cascade: the cascade fires only on a connection
+  // with foreign_keys = ON (LocalIndex sets it; a caller holding a different connection may not).
   deleteRunGrant(db, id);
   dbRun(db, `DELETE FROM extension WHERE id = ?`, [id]);
   return path;
