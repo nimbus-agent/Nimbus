@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792060056932,
+  "lastUpdate": 1792123083329,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ad447c3bfd3afdedd8a891d675d5344d6636d29b",
-          "message": "docs(changelog): record v1.11.0 as never published, superseded by 1.12.0 (#960)\n\n## Summary\n\nAbandons `v1.11.0` in place and ships its content as **1.12.0**.\n\n`v1.11.0` was tagged but **never published**: its release build failed\nthe *Unit + Coverage* gate on a flaky test, which skipped every build\nand publish job. There is no GitHub Release, installer, or updater\nmanifest for it — the git tag is the only trace. Users are still on\n1.10.0, and the one feature tagged as 1.11.0 (#954, ruleset bypass-actor\ngating) has never shipped.\n\nMoving the tag onto the fix is **not possible, by design**: the\n*Protected release tags* ruleset enforces `deletion`,\n`non_fast_forward`, and `update` on `refs/tags/v*` with **no bypass\nactors**. A retag was attempted and correctly refused (`GH013: Cannot\ndelete this tag`). That ruleset is doing exactly its job, so the tag\nstays and the version is abandoned instead.\n\nThis PR does two things:\n\n1. **Marks 1.11.0 as never published** in `CHANGELOG.md`, so the entry\nstops implying a release anyone can install and points at its successor.\nWithout this, `CHANGELOG.md` lists a feature under a version that does\nnot exist as an artifact.\n2. **Forces the next version** via a `Release-As: 1.12.0` footer.\nrelease-please would otherwise cut nothing at all — every commit since\nthe `v1.11.0` tag is `docs:` or `test:`, so no bump is triggered and the\nstranded feature would sit unpublished until some unrelated feature\nhappened to land.\n\n### Why 1.12.0 and not 1.11.1\n\nThe delta against the last **published** release (1.10.0) is one `feat`.\nA patch number would describe a feature release as a patch, relative to\na version nobody can install. 1.12.0 is the semver-honest successor and\nleaves 1.11.0 as a visible, documented gap.\n\n### ⚠️ Merging this PR — the footer must survive the squash\n\nrelease-please reads `Release-As:` from commit messages in the release\nrange. **If the squash commit message drops the `Release-As: 1.12.0`\nline, no release PR will be created** and this PR accomplishes only the\nchangelog note. GitHub's squash default includes the commit body, so the\nfooter normally survives — but please confirm it is present in the\nsquash message before confirming the merge.\n\nFailure mode is benign and recoverable: no release PR appears. Fixes, in\norder of preference — land another commit carrying the footer, or set\n`\"release-as\": \"1.12.0\"` on the `.` package in\n`.release-please-config.json` (remembering to remove it after the\nrelease, or every subsequent release pins to 1.12.0).\n\n### What happens after merge\n\n1. release-please opens a `chore: release main` PR for **1.12.0**.\n2. Merging that tags `v1.12.0`, which triggers `release.yml`.\n3. That build runs the **deterministic** gate — #958 fixed the flaky\ntest — so the failure that killed 1.11.0 should not recur.\n4. `v1.12.0` publishes with its assets, and #957 can be closed.\n\n## Related Issue\n\nRelates to #957\n\nNot `Closes` — merging this does not itself publish anything. #957\nshould close when `v1.12.0` publishes with assets.\n\n## Type of Change\n\n- [x] Documentation only\n- [x] CI / tooling — carries the `Release-As:` footer that drives the\nversion bump\n- [ ] Bug fix (non-breaking change that fixes an issue)\n- [ ] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [ ] Test improvement\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`) — no code touched; one\n`CHANGELOG.md` line block changed\n- [x] New behaviour is covered by tests — n/a, no behaviour change\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md`, a screenshot is attached —\nn/a, not touched\n\n`bun run preflight:fast` passes in full, including\n`audit:release-please`.\n\n## Coverage (if engine/ or vault/ was changed)\n\nn/a — neither was modified.\n\n## Testing\n\n- `bun run audit:release-please` — OK (manifest/config consistency\nunaffected).\n- `bun run preflight:fast` — PASSED (typecheck, lint, 20 audits,\nduplication).\n- No test suite run: this changes one prose block in `CHANGELOG.md` and\na commit footer.\n\n## Notes for Reviewers\n\n**The v1.11.0 tag is deliberately left pointing at `31177cd`.** It is\nimmutable and unpublished. Anyone can still `git checkout v1.11.0`;\nnobody can install it.\n\n**Nothing in the repo documents that release tags are immutable**, which\nis why moving the tag looked like a viable recovery at first. A line\nunder *Development Workflow* in `CLAUDE.md` would make the constraint\ndiscoverable before someone attempts a retag during an incident — happy\nto add it in a follow-up if wanted.\n\n**Separately, an unrelated pre-existing failure**, noted while verifying\n#958 and worth its own issue:\n`packages/gateway/test/integration/updater/wiring.test.ts:78` fails on\nWindows. The test passes `_platformOverride: \"linux-x86_64\"` precisely\nto be platform-independent, yet `createUpdaterFromConfig` still returns\n`undefined` there, which reads like a platform-equality gap rather than\na test bug. It passes on Ubuntu, so CI is green on it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-30T10:49:04Z",
-          "tree_id": "ea4f61658f2576b9c688a118ce519093f9cf43db",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ad447c3bfd3afdedd8a891d675d5344d6636d29b"
-        },
-        "date": 1785409213686,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 308.1170535499943,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 307.2441254000056,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 237.43946754998979,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2714c574b79287a230fe97ad8d83eaa7853743be",
+          "message": "feat(mcp): act door — agent-proposed connector actions, owner-accepted (S3, I28) (#1660)\n\nS3 capture sink, PR 3 of 3: the **act door**. An MCP agent may now\n**propose** a connector action, such as posting a Slack message, opening\na Jira issue or sending an email. Nothing is sent when it proposes. The\naction runs only after the local owner runs `nimbus captures accept\n<id>` in a terminal **and** approves the ordinary executor HITL prompt.\nIt is off by default in two places: `[mcp_sink] kinds` must list\n`action`, and a signed org policy can lock it off with\n`[policy.capabilities.ai_v2] mcp_action = false`, the ninth `ai_v2`\nname.\n\n## What ships\n\n- **Proposing.** New MCP tools `propose_action` and `capture_status`.\n- A proposal is a `capture` row of kind `action` (schema **V69**) with a\nTTL: `[mcp_sink] action_ttl_hours`, default 24, range 1..168.\n- Pending proposals are capped by `action_max_pending`, default 10,\nrange 1..100. An out-of-range value is refused, not clamped.\n- **What may be proposed.** A gateway-owned table,\n`connectors/proposable-actions.ts`, covers every one of the 139\n`HITL_REQUIRED` types: **29 are proposable and 110 are denied**, each\ndenial with a reason class.\n- Registered user MCP servers that were added with `--model` are\nproposable as `mcp_<id>.*`.\n- A routing sync test checks every proposable row against the installed\n`@nimbus-dev/connectors` package.\n- **Accepting.** `acceptAction` runs a fixed sequence of checks:\n  1. capability, owner, state and expiry;\n  2. the type is re-classified;\n  3. the connector's configured state is re-checked;\n  4. an atomic claim;\n5. a per-accept `ToolExecutor` is built with the **accepting session's**\nconsent channel, **no delegate**, the real egress sink and the policy\noverlay.\n\nThe tool id always comes from the gateway's table, or is the\ngateway-derived user-MCP key, and never from the agent. Every action\nends in exactly one terminal state\n(`executed`/`failed`/`rejected`/`expired`) and is never retried. At\nboot, any action still `executing` is marked `failed` with\n`ERR_ACTION_INTERRUPTED`.\n- **Consent prompt.** It shows who proposed the action, when it expires,\nthe agent's summary (unverified) and the verbatim input. Every\nagent-written string is escaped so hidden characters show: C0/C1\ncontrols, bidi and zero-width characters, Hangul fillers, variation\nselectors and TAG characters, plus `\"` and `\\` in the one-line fields.\nThe action type is restricted to `[A-Za-z0-9_.-]`.\n- **CLI.**\n- `nimbus captures accept` on an action needs both stdin and stdout to\nbe a TTY. This guard is in the CLI; it does not fail open on an unknown\nkind.\n- Result lines and exit codes for executed, rejected and failed actions.\nFailed codes that might have reached the service say so.\n  - `list`/`show` show expiry, outcome and error.\n- `nimbus doctor` adds lines for pending actions and a full action\nqueue.\n- **Static rules D32(e)–(g):**\n  - (e) `acceptAction` is confined to its own definition and the gate.\n- (f) `mcp-sink/` imports neither `engine/executor.ts` nor anything\nunder `connectors/`. This covers `.js` specifiers, `require` and\ntemplate `import()`.\n  - (g) The `mcpToolId` literal appears only in `capture-validate.ts`.\n- I28's docs entry is extended, with its test rows. The stored-text\nstrip sets (`CONTROL_RE`/`BODY_CONTROL_RE`) and the CLI display strip\nnow share one code-point table with the consent prompt.\n\n## Deviations from the design\n\n- **Correction: a user-MCP action carries `mcpToolId =\n<serviceId>_<tool>`.** The design said it would set none. Without it the\ndispatcher's I42 pairing refuses the call with\n`ERR_USER_MCP_ACTION_MISMATCH`, and a test pins that. The key is still\nderived from the type by the gateway.\n- **`obsidian.note.append` is denied (`unroutable`), not proposable.**\n`obsidian` is spawned in the lazy mesh but is missing from the connector\ncatalog, so its bare tool id cannot route. Fixing that is a follow-up.\n- Smaller deviations:\n- `expireDueActions` does a SELECT and then a guarded UPDATE (D12), not\n`UPDATE … RETURNING`.\n- `capture.status` lists user-MCP servers as `mcp_<id>.*` patterns and\nadds `actionExpiringWithinHour`.\n  - The migration test is `index/migrations/runner-v69.test.ts`.\n  - The E2E extends `test/e2e/user-mcp.e2e.test.ts`.\n\n## Known limits\n\n- `capture.state` answers for any capture id to any `mcp` client that\nholds the id; it is not tied to the submitter. Ids are random.\n- The TTY requirement is enforced in the CLI. A raw local owner socket\nclient can accept and answer its own consent prompt, which is within the\nlocal-owner trust model.\n- The \"configured\" check reuses `isConnectorConfigured`. A multi-key\nconnector with only one key set passes it, and the action then fails at\ndispatch with `ERR_ACTION_DISPATCH`.\n- `executed` and `failed` action rows keep their verbatim input and are\nnever pruned. Rejected and expired rows are pruned after 90 days.\n`revoke` refuses actions, so there is no owner deletion path yet.\n- Homoglyphs are not detected.\n- Owed follow-up: `nimbus negotiate`'s unattributable lane counts\nagent-proposed decisions that the owner accepted.\n\n## Verification\n\n- Every task got its own spec and quality review, and the branch got a\nfinal whole-branch review. That review found an action-type consent\nspoof, which is now fixed, plus seven other items, all fixed and\nre-reviewed.\n- `bun run preflight`: see the CI checks.\n- The E2E ran against a real sandboxed user MCP on Windows. It proposes\nan action, the owner accepts, the server receives the exact input, and\nexactly one approved egress row is written.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* MCP agents can submit connector-action proposals and check their\nstatus. Actions execute only after owner acceptance and the executor’s\nseparate approval.\n* The captures CLI displays action states, expiry, outcomes, and queue\nstatus, and requires an interactive terminal to accept actions.\n* Action proposals can be enabled and configured with separate pending\nlimits and expiry settings.\n* **Security**\n* Actions are checked against capability controls and eligibility\nrequirements, and their outcomes are audited. Accepted actions cannot be\nrevoked.\n* **Documentation**\n* Updated setup, CLI, architecture, security, and changelog\ndocumentation for action proposals.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-16T03:48:29Z",
+          "tree_id": "eb08b362d001fa353b661bd7b6529229bc8bfebb",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2714c574b79287a230fe97ad8d83eaa7853743be"
+        },
+        "date": 1792123078238,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 200.35988415000318,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 199.70931800000545,
             "unit": "ms"
           }
         ]
