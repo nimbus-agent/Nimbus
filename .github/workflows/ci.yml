@@ -959,9 +959,14 @@ jobs:
   # holding macOS/Windows runner slots the PR legs queue for. The nightly run catches anything
   # outside `packages/ui/` that breaks it, within a day.
   e2e-desktop:
+    # `!cancelled()` plus explicit results, so the NIGHTLY run depends on `ci-rust` alone: without
+    # it, a failed `filter` (which only exists to pick UI pushes) would skip the nightly silently.
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.filter.outputs.ui == 'true')
-      || github.event_name == 'schedule'
+      !cancelled()
+      && needs.ci-rust.result == 'success'
+      && (github.event_name == 'schedule'
+        || (github.event_name == 'push' && github.ref == 'refs/heads/main'
+          && needs.filter.result == 'success' && needs.filter.outputs.ui == 'true'))
     # `ci-ts` is the whole _test-suite.yml (once 30 jobs incl. 24 coverage
     # shards; the shards are gone, the push matrix is still the slowest thing in
     # the run), and `needs:` on a reusable-workflow caller waits for ALL of it —
