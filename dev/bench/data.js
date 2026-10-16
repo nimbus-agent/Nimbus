@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792176227903,
+  "lastUpdate": 1792185721241,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b1fcaf72ed0c0fc70bdc515083f5d22f6607ed3f",
-          "message": "chore: release main (#986)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.13.1</summary>\n\n##\n[1.13.1](https://github.com/nimbus-agent/Nimbus/compare/v1.13.0...v1.13.1)\n(2026-07-31)\n\n\n### Bug Fixes\n\n* **gateway:** remove the data-export staging directory\n([#985](https://github.com/nimbus-agent/Nimbus/issues/985))\n([606788c](https://github.com/nimbus-agent/Nimbus/commit/606788c3c9b440a254d402f53f2aaba2f4d361f4))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-31T10:44:30+03:00",
-          "tree_id": "181143b6fcd8c372f4f2ba6dabe0b7b73a311adb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b1fcaf72ed0c0fc70bdc515083f5d22f6607ed3f"
-        },
-        "date": 1785484979419,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 314.20769875000224,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.0637479499925,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 169.24093759999997,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9a0330f69b267e2ee9d57e5383a0517b8d5eb3e4",
+          "message": "perf(index): build a fresh database without a flush per migration step (#1675)\n\n## Summary\n\nA brand-new index runs every schema step from version 0, each in its own\ntransaction. Under SQLite's default `synchronous = FULL`, that means a\nforced disk flush per step: about 70 flushes on first boot, for a\ndatabase that holds nothing. This PR builds a **fresh** database with\n`synchronous = OFF`, then restores the connection's own level and\ncheckpoints the WAL before returning. An upgrade of an existing index is\nunchanged and keeps a flush per step.\n\nThis is part of the CI-speed work: on the Windows CI runners, every\ngateway boot (so every e2e test) and every test that migrates a fresh\non-disk index pays this chain. It took several seconds per database\nthere, and 18–30 s per test under the contention of a `--parallel`\nshard, so tests hit their timeouts. Real users pay it once, on first\nstart, and it gets faster for them too.\n\n- **`isFreshIndexDatabase(db)`** returns true only when BOTH hold:\n- `user_version` is 0, the same test `oneBackupPerRun` uses to skip a\nfresh install's backup since #1671;\n- `sqlite_master` holds nothing but the `_schema_migrations` ledger the\nrunner itself creates. SQLite's reserved `sqlite_*` objects do not\ncount.\n\nA version-0 file holding any other table or view keeps full durability.\n- **`withRelaxedSyncForFreshBuild(db, fresh, fn)`**:\n- reads the level, sets OFF, and puts the EXACT level back in a\n`finally`, so a caller that chose NORMAL gets NORMAL back and a failed\nstep restores it too;\n- checkpoints a WAL database (`TRUNCATE`) after a successful build, so\ndurability is re-established before return;\n- never relaxes inside the caller's own open transaction. SQLite refuses\nthe change there, and the chain then rides that transaction's single\ncommit anyway.\n- **`runIndexedSchemaMigrations`** runs its existing step loop through\nthe helper. Nothing else in the runner changed.\n\n**Why it is safe:** the window covers only a database with no user data.\nAt `synchronous = OFF` an application crash cannot corrupt the file. An\nOS crash or power loss inside the window can, and at worst it corrupts\nthat empty database.\n\n## Related Issue\n\nNone. This is item 2 of the CI-speed plan; item 1 is the Windows-leg PR.\n\n## Type of Change\n\n- [x] Bug fix (non-breaking change that fixes an issue)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (see Testing)\n- [x] New behaviour is covered by tests (23 in\n`runner.fresh-build.test.ts`)\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] `runner.ts` gains two exported helpers. Every branch is covered\nexcept one: the fallback when SQLite reports a non-integer level, in\nwhich case the helper simply does not relax.\n\n## Testing\n\n**Test method.** Two TEMP triggers on `_schema_migrations` make the real\nstep chain observable without touching the runner: one reads the level\nevery step commits under, the other raises inside a chosen step. TEMP\nobjects are not in `sqlite_master`, so the database still counts as\nfresh.\n\n**What the 23 tests pin:**\n- every step 1–70 of a fresh build commits at OFF;\n- an upgrade from 60 to 70 commits every step at the caller's level, and\na version-0 file holding a table stays at FULL;\n- a step failing at 5 throws `MigrationRollbackError(5)`, restores the\nlevel and leaves `user_version` at 4;\n- after a fresh WAL build the `-wal` file is 0 bytes and the level is\nrestored;\n- `:memory:` builds, and a chain run inside the caller's `BEGIN` still\nworks.\n\n**Mutation check.** Nine deliberate regressions, applied one at a time,\nwere each caught:\n- restore hard-coded to FULL\n- restore outside `finally`\n- no checkpoint\n- no open-transaction check\n- freshness ignoring other objects\n- freshness ignoring `user_version`\n- `sqlite_*` names counted\n- the runner using `ver === 0`\n- the runner never relaxing\n\n**Other runs (Windows):**\n- `bun test packages/gateway/src/index`: 700 pass, 0 fail.\n- `packages/gateway/test/integration/index` and\n`test/unit/db/migration-rollback.test.ts`: all pass.\n- The 8 files that assert on WAL, `synchronous` or a gateway boot, run\non Bun 1.4.3 with `--parallel`: 127 pass, 0 fail. They are\n`platform.test.ts`, `assemble.test.ts`, `tool-run.e2e.test.ts`,\n`http-server.test.ts`, `http-egress-routes.test.ts`,\n`locality-report.test.ts`, `writable-pragmas.test.ts` and\n`disk-full-propagation.test.ts`.\n- `bun run preflight:fast`: passed.\n\n**Measured on a Windows dev machine** (median of 5, migrating to V70):\n\n| | before | after |\n|---|---|---|\n| rollback journal | ~190 ms | ~67 ms |\n| WAL, migrate + close | ~78 ms | ~42 ms |\n\nThe CI-runner effect shows on this PR's own Windows legs.\n\n## Notes for Reviewers\n\n- **Docs:** `docs/CHANGELOG.md`, the startup sequence in\n`docs/architecture.md`, and the migrations skill. The skill also had two\nstale lines still describing one backup per step; it has been one per\nrun since #1671, and none on a fresh install.\n- **Rollback-journal mode does nothing extra after the build.** Such a\nfile becomes durable at its next syncing commit. Production opens the\nindex in WAL mode first (`applyWritablePragmas` before `ensureSchema`),\nso the gateway always takes the checkpoint path.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Improvements**\n* Fresh database setup completes migrations with less synchronization\noverhead, then restores the original setting and checkpoints the\nwrite-ahead log. Existing database upgrades retain their durability\nbehavior.\n* Pre-migration backups are now created once before the first pending\nmigration step, rather than before each step. Fresh databases with no\nprior schema are not backed up; backup failures still stop the\nmigration.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-17T00:14:11+03:00",
+          "tree_id": "c8befa4c9db19b4b95d918c1934725f8d98dcb59",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9a0330f69b267e2ee9d57e5383a0517b8d5eb3e4"
+        },
+        "date": 1792185717217,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 173.35444245000053,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 179.33638149999823,
             "unit": "ms"
           }
         ]
