@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792134124043,
+  "lastUpdate": 1792138897031,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "da390f7b3b8da6b06fdd1163342390093015e881",
-          "message": "ci: retry bun audit transport failures and fail closed on a blind bypass-actor read (#971)\n\nCloses #966, closes #961, closes #854.\n\nThree independent CI/audit hardening items, each one that lets a green\nresult mean less than it appears to.\n\n## #966 — a registry 503 could block merges and releases\n\n`bun audit` exits non-zero for two unrelated reasons: a HIGH/CRITICAL\nadvisory (which must block) and an unreachable audit service (which says\nnothing about our dependencies). The step conflated them, so a 503\nblocked the 1.12.0 release with no vulnerability involved.\n\nRather than blanket-retrying, the two cases are **separated**:\n\n- a **transport failure** — matched on Bun's `audit request failed\n(status NNN)` — is retried up to 3 times with 10s/20s backoff;\n- **anything else fails immediately on attempt 1**, with no retry and no\ndelay, because a real advisory fails identically on every attempt and\nre-running it only delays the feedback.\n\nIf all three attempts hit transport failures the step still **fails**.\nThat is deliberate — `continue-on-error` here would also swallow genuine\nHIGH/CRITICAL findings, which the issue explicitly warned against.\n\nVerified against a stubbed `bun` covering all four paths, since this\nsits on the release path and a mistake here is invisible until it\nmatters:\n\n```\nPASS  clean            : exit=0 attempts=1   (no retries on success)\nPASS  transport_then_ok: exit=0 attempts=3   (absorbs two 503s, then passes)\nPASS  transport_always : exit=1 attempts=3   (fails closed, does not go green)\nPASS  real_finding     : exit=1 attempts=1   (fails FAST — no retry, no delay)\n```\n\nThe retry-loop shape follows the existing convention in `_perf.yml` /\n`_test-suite.yml` / `ci.yml`.\n\n## #961 — `audit:bypass-actors` could not tell \"clean\" from \"blind\"\n\nThe gate reads an absent-or-empty `bypass_actors` as `[]`, and `[]`\ndiffs cleanly against a declared `[]`. So \"this repo has no bypass\nactors\" and \"my token cannot see them\" were the same observation — and\nthe second is the *proven* behaviour of the App installation token,\nwhich is the entire reason this gate is separate from\n`audit:ruleset-drift`.\n\nAs the issue notes, the current config is only **accidentally**\nload-bearing: three repos declare a non-empty list, so a blind\ncredential reds with three `missing declared bypass actor` findings. The\nmoment `bypass.by_repo` goes all-`[]` — the program's stated direction —\na blind read yields a green diff, a complete read, `decideAttestWrite`\npermits the write, and a false-clean attestation is honoured for the\nfull **90-day** grace window.\n\nImplemented exactly as the issue specified, as pure functions plus one\nthin impure probe:\n\n1. **Positive control** (`assessBypassReadCapability`) — if at least one\nrepo whose declared intent is non-empty actually reads back non-empty,\nthe credential can see the field: `verified`. If *every*\ndeclared-non-empty repo reads empty, that is far more likely a blind\ncredential than a simultaneous org-wide removal: `blind`, fail closed.\nOne surviving witness is enough, so a genuine single removal is not\nmisreported.\n2. **Fallback** (`no-positive-control`) — with nothing declared\nnon-empty there is no control in the data, so the credential must vouch\nfor itself: `parseOAuthScopes` reads `X-OAuth-Scopes` from `gh api -i\nuser` and requires `admin:org`. Same technique that root-caused the App\n`403` in the P2 progress log.\n\nTwo details that matter for fail-closed-ness:\n\n- A missing `X-OAuth-Scopes` header (App installation token,\nfine-grained PAT) is reported as **unknown**, not as \"no scopes\" and\ncertainly not as \"fine\" — it fails closed.\n- An **unreachable** repo is absence of evidence, not evidence of\nblindness: only repos actually queried this run are considered, so a\nread failure elsewhere cannot manufacture a `blind` verdict.\n\nThe findings feed `result.ok`, which `decideAttestWrite` already\nconsumes — so a blind read now cannot write an attestation at all, which\nis the specific failure scenario in the issue.\n\nThe network probe only runs in the `no-positive-control` branch, and the\nwhole check is skipped when `queried === 0` so an unauthenticated\ncontributor's soft skip does not become a hard red.\n\nVerified live, not just in unit tests: `bun run audit:bypass-actors`\nagainst the real org still exits 0 (`OK (5 repos)`) — the positive\ncontrol is satisfied by today's config, so **no behaviour change now**.\nThe `no-positive-control` fallback was exercised end-to-end by\ntemporarily blanking `by_repo`, confirming the real `gh api -i user`\nprobe reads this machine's `admin:org` scope and adds no spurious\nfinding. Deliberately **not** in scope, per the issue: the credential\nmodel is unchanged.\n\n## #854 — `org/CLA_BOT_APP_ID` was an unreferenced leftover\n\nThe secret-health report flagged it as `undocumented — add it or delete\nit`. Investigated rather than just documented:\n\n- Created **2026-07-24T09:30Z**, then superseded hours later by\n`CLA_BOT_CLIENT_ID` (**12:39Z**) when the mint step used `client-id`\ninstead of the deprecated `app-id` input.\n- `cla.yml` reads only `CLA_BOT_CLIENT_ID` + `CLA_BOT_PRIVATE_KEY`.\nNothing in the repo references `CLA_BOT_APP_ID`.\n\nExactly the shape of `RELEASE_BOT_APP_ID`, retired the same way on\n2026-07-22. So it is registered `state: \"forbidden\"` (present now means\nsomeone reintroduced the deprecated input) and the org secret has been\n**deleted** — confirmed, only `CLA_BOT_CLIENT_ID` and\n`CLA_BOT_PRIVATE_KEY` remain. `audit:secret-inventory` and\n`audit:consumed-by` both pass, and the registry count assertions were\nupdated (38 to 39 entries, ORG 6 to 7).\n\n## Verification\n\n- `typecheck` PASS (all workspaces)\n- `biome check --error-on-warnings packages scripts .github` PASS, 3040\nfiles\n- 13 static gates PASS individually, including `audit:workflow-lint`\n(actionlint over the changed `security.yml`), `audit:any --check`,\n`audit:invariants`, `audit:consumed-by`, `audit:secret-inventory`\n- `bun test scripts` PASS — 1104 pass / 0 fail (92 files), including 18\nnew tests for the capability probe\n- `bun run audit:bypass-actors` PASS live against the org — exit 0, `OK\n(5 repos)`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-07-30T13:41:59Z",
-          "tree_id": "9b8e4a0953af3eeaa3415aaf1f4b5ea3716aef8c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/da390f7b3b8da6b06fdd1163342390093015e881"
-        },
-        "date": 1785419588089,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 311.8373783499974,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.9473614999959,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 170.66922029999623,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "37e2044edca30255e1b148f85cc5c0e3fc72e04e",
+          "message": "feat(extensions): run grants - approve an installed extension to run (S3 extension runtime PR 2) (#1665)\n\n## Summary\n\nExtension runtime PR 2 of 4 (S3). The local owner can now **approve an\ninstalled extension to run**, with a specific, resolved set of grants,\nand **revoke** that approval. **Nothing spawns an extension yet**: the\nruntime is PR 3, and `docs/cli-reference.md` still says \"Installed\nextensions are not executed\".\n\nInstall and run are two separate consents. Install approves \"put these\nbytes on my disk\". Run approves \"execute them, with these grants,\nunattended\". A run grant binds to bytes and grants, never to a name:\n\n- **Schema V70 `extension_run_grant`.** One row per extension: a stable\n`ext_<slug>` service id (computed once, never recomputed), the version,\nthe tree digest, the resolved grants, `model_access` (always 0 here) and\nthe approval time.\n- **New HITL action type `extension.run`** in the I2 frozen set.\n`approveExtensionRun` refuses BEFORE prompting anything the owner could\nnot sensibly approve:\n  - an unknown or disabled extension;\n  - one the startup signature pass marked;\n  - manifest or entry bytes that no longer match the install;\n  - no tree digest, or files changed since install;\n  - a relative or missing path, or an unresolvable install path;\n- any overlap with a protected Nimbus directory (data, config, sandbox\nand, new here, the extensions dir, which on Windows is a sibling of the\ndata dir);\n  - any write overlapping the extension's own code;\n  - a service-id collision.\n- **What the prompt shows.** It asks under `extension.run` over the\nresolved values: the publisher `fingerprint` (not `keyFingerprint`,\nwhich both redactors would blank), the tree digest, the service id,\nnetwork/read/write, and the read-only paths the runtime will add.\n- **The re-check after approval.** The row must still exist, be enabled,\nand have the same version, install path and stored digest. The live tree\ndigest must match. The grants re-resolved from the manifest must\nserialize identically, because a declared path outside the install tree\ncan be retargeted while the prompt is open. The service id must still be\nfree. Any change refuses `ERR_EXTENSION_RUN_CHANGED` and stores nothing.\n- **IPC `extension.approveRun` / `extension.revokeRun`.** Both are\nCLI-only, LAN-forbidden and refused on a demo gateway (I41), and neither\nis on the Tauri allowlist, which stays at 107. The dispatcher supplies\nboth the owner gate and the grant env. With no connector mesh, approve\nrefuses instead of skipping the protected-root check.\n- **CLI.** `nimbus extension approve <id>` needs a TTY and has **no\n`--yes`**. It registers the interactive prompt handler directly, so\n`NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer it. `nimbus extension\nrevoke <id>` withdraws an approval. `extension list` shows a `Run`\ncolumn and `info` a `Run:` line, with `runState` one of `disabled`,\n`no_grant`, `grant_stale` or `ready`.\n- **Static rules.** D33(b) confines the `extension_run_grant` table to\nits store and its DDL, and shares D32(a)'s regex builder. D33(c)\nconfines who may call `upsertRunGrant` and `deleteRunGrant`, aliased\nimports included.\n- `extension.run` is DENIED on the MCP act door, so an agent can never\npropose it: 140 HITL types, 111 denied.\n- `deleteExtensionById` deletes the grant explicitly instead of relying\non the `ON DELETE CASCADE`, which fires only on a connection with\nforeign keys enabled.\n\nNot breaking: no existing user has to change anything. Installed\nextensions did not run before and still do not, so there is no `!`.\n\n## Not in this PR\n\n- The runtime itself: the `__nimbus-extension` self-role, the\n`mesh:ext:` slot, the I16 re-verification before every spawn, invariant\nI43 and D33(a). That is PR 3, which should key the extension's mesh\nclient by its `ext_` service id; `revokeRun` stops it by manifest id\ntoday, which is a no-op.\n- `--model` / model access and the `running` state. That is PR 4.\n\n## Found, not fixed here\n\n- `extension.enable` re-enables an extension the startup signature pass\nhard-disabled, without re-verifying its signature. `approveRun` refuses\nsuch a row, so it cannot gain a run grant, but `list` shows it enabled.\n- User MCP registration has the same Windows gap this PR closes for\nextensions: its protected roots do not include the extensions dir, which\non Windows sits outside the data dir.\n- D33(c) strips string literals before matching, so a string-keyed\nmember call such as `store[\"upsertRunGrant\"]` also evades the text scan.\nCapability confinement is the real defense, but the rule's stated bound\nshould say so.\n\n## Testing\n\n- **Windows, local:** gateway suites 7879 pass and 0 fail after the\nfinal fixes; CLI package 4223 pass and 0 fail; static-audit tests 315\npass; the real-tree audit is clean; `typecheck` and `typecheck:tests` (0\nnew) pass; `bun run preflight:fast` passed on the final branch.\n- **Linux, the CI Docker image (`verify:docker --changed`):** 1391 pass,\n0 fail. That includes the two POSIX-only symlink tests: a declared\nsymlink into the data dir is refused by its target, and a path\nretargeted into the data dir while the prompt is open is refused.\n- **Real gateway socket E2E:** both methods answer -32602 \"Extension not\nfound\" for an uninstalled id. That proves they are routed with both the\nowner gate and the grant env. Red-proved: removing\n`extension.approveRun` from the owner-gated set turns it -32603.\n- **Red-proved post-approval arms:** each check was deleted in turn (row\ngone, disabled, install path, version, stored digest, manifest/entry),\nand only its own test failed.\n\n## Rulings made during implementation\n\n- **Fail closed on the install path.** It fails closed when `realpath`\nof the install path throws, instead of falling back to the path's\nspelling.\n- **Spec correction on the FK cascade.** The spec claimed the gateway\nconnection has foreign keys off. It has them on\n(`index/local-index.ts`). The explicit delete stays, and the comments\nnow give the true reason.\n- **Prompt-window gaps closed beyond the plan.** Added the install-path\ncompare, the post-approval service-id recheck, and hashing of the exact\nmanifest bytes used.\n- **Tests restore `isTTY` by descriptor.** The plan's restore leaked a\nproperty and broke 8 tests in other files.\n- **D33(c) added, docs left unweakened.** Grant creation is now enforced\nas confined, rather than narrowing the docs to match the old rule.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-16T08:09:39Z",
+          "tree_id": "6edc80e9c179c02a01709abb9fd8eac2b2762b84",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/37e2044edca30255e1b148f85cc5c0e3fc72e04e"
+        },
+        "date": 1792138891982,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 263.5213901000017,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 261.51664510000376,
             "unit": "ms"
           }
         ]
