@@ -87,9 +87,12 @@ Bun 1.3.14:
 The percentages in the list below are therefore the floors `audit:coverage-scopes` enforces, not
 something the adjacent command checks — with one exception: `test:coverage:health` has no scope in
 `SCOPE_GATES` (there are 23 scopes), so its 85% is enforced by nothing beyond the per-file
-`audit:coverage-floor` ratchet. The commands remain useful for running a scope's tests, and
-their CI jobs still do real work the main suite does not (the Sandbox job builds the sandbox helper
-and runs `cppcheck --error-exitcode=1` on its C source; the Vault job installs libsecret + D-Bus).
+`audit:coverage-floor` ratchet. The commands remain useful for running a scope's tests locally;
+CI no longer runs them. Their per-area `Coverage — <area>` jobs were removed on 2026-10-17 (12 per
+PR, ~30 per push, re-running tests the suite had already run), and the only work they did that the
+suite does not moved with them: the CAP_NET_ADMIN sandbox helper build, its `cppcheck
+--error-exitcode=1` and its sandbox tests now run in the Linux `integration` job, and the Windows
+helper's `--check-caps` probe in the Windows `unit-coverage` job.
 
 ```bash
 # Engine + agents

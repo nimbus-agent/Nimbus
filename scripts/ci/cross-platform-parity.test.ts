@@ -24,9 +24,11 @@ import { REPO_ROOT } from "../structure-audit/lib.ts";
  * own. This is the mechanism.
  *
  * Deliberately narrow: it compares the POSITIONAL path arguments only. Flags legitimately
- * differ — the push leg adds Istanbul coverage preloads and a JUnit reporter that the PR leg has
- * no use for, and the PR leg wraps its attempt in `run-with-timeout.ts`. What must not drift is
- * WHICH TESTS RUN.
+ * differ — the PR legs shard (`--shard`) and read the per-file timings, the push leg writes them
+ * (`--update-timings`). What must not drift is WHICH TESTS RUN, in which process shape.
+ *
+ * Both run through `scripts/ci/test-with-retry.ts`, which owns the reporter flags and the retry;
+ * the `bun test …` after its `--` is the command compared here.
  */
 
 const CI_YML = join(REPO_ROOT, ".github", "workflows", "ci.yml");
@@ -88,18 +90,19 @@ const pushLines = matchingLines(
   (l) => l.includes(" bun test ") && l.includes("junit-reports/junit-unit.xml"),
 );
 
+/**
+ * The PR legs' command line in ci.yml: the retry script handing it a `bun test` to run. Keyed on
+ * the script, which is unique to this step — keying on the step NAME would break the moment the
+ * step is renamed, and keying on `packages/…` would match any future `bun test` added to the
+ * file. It deliberately ignores the script's own options (the cap SECONDS among them): a routine
+ * cap change once failed this test for a reason unrelated to parity, back when the predicate
+ * hard-coded `900`. The length assertion below catches a predicate relaxed until it matches
+ * nothing.
+ */
+const isPrLine = (l: string): boolean => /test-with-retry\.ts .* -- bun test /.test(l);
+
 describe("PR cross-platform legs run the same tests as the push matrix", () => {
-  // Identified by the wall-clock wrapper, which is unique to this step in ci.yml. Keying on
-  // the step NAME would break the moment the step is renamed; keying on `packages/…` would
-  // match any future `bun test` added to the file.
-  //
-  // The cap SECONDS are matched as a number, not as the literal `900` this used to hard-code.
-  // That literal made a routine cap change (900 -> 1080, when a healthy run crossed the
-  // previous comment's own ~700 s tripwire) fail this test for a reason unrelated to parity,
-  // and worse, a careless "fix" is to relax the predicate until it matches nothing again --
-  // which the length assertion below is here to catch, but only if the predicate still
-  // identifies the step at all. The cap's VALUE is not this file's subject; the test PATHS are.
-  const prLines = matchingLines(CI_YML, (l) => /run-with-timeout\.ts \d+ bun test/.test(l));
+  const prLines = matchingLines(CI_YML, isPrLine);
 
   test("each command is found exactly once", () => {
     // A zero match would make the parity assertion below vacuously true — the classic shape of
@@ -155,6 +158,18 @@ describe("PR cross-platform legs run the same tests as the push matrix", () => {
     // Positive, not just equal: equality alone would also pass if both dropped it.
     expect(hasParallel(prLines[0] ?? "")).toBe(true);
   });
+
+  test("the push leg runs uninstrumented, through the same retry script", () => {
+    // The per-file timings the push leg records (`--update-timings`) are what the Windows PR
+    // shards split by. Istanbul inflated CPU-bound unit files ~3x and disk-bound ones not at all,
+    // which put ~78% of the real work in shard 2/2 (run 38949021174) — so a coverage preload here
+    // is a sharding defect, not a speed preference. Nothing reads macOS/Windows coverage anyway.
+    const push = pushLines[0] ?? "";
+    expect(push).not.toContain("istanbul-register");
+    expect(push).not.toContain("report-coverage");
+    expect(push).toContain("--update-timings");
+    expect(push).toMatch(/test-with-retry\.ts .* -- bun test /);
+  });
 });
 
 describe("the PR legs' shards add up to the whole suite", () => {
@@ -163,7 +178,7 @@ describe("the PR legs' shards add up to the whole suite", () => {
   // because each job's COMMAND names the whole repo; the files it drops are dropped silently by
   // `--shard`. Parity with the push leg holds only over the union of the shards, so that union is
   // what this checks.
-  const prLine = matchingLines(CI_YML, (l) => /run-with-timeout\.ts \d+ bun test/.test(l))[0] ?? "";
+  const prLine = matchingLines(CI_YML, isPrLine)[0] ?? "";
 
   type Leg = { readonly os?: unknown; readonly shard?: unknown };
   type Step = {

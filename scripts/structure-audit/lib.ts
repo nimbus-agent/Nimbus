@@ -199,10 +199,10 @@ function stepDefault(src: string, state: StripState): void {
  * regex literal cannot span one, so a wrong call can never swallow more than the rest of its own
  * line. Verified over the tree: `gateway/src` went from 12 derailing files to 0.
  *
- * REMAINING LIMITATION — nested template substitutions. One file still derails the scanner,
- * `scripts/structure-audit/check-coverage-gate-pal.ts`, on the escaped-backtick-inside-a-nested-
- * `${}` shape around its line 344. That is a template-frame issue, unrelated to regex literals,
- * and no audit reads that file as input.
+ * REMAINING LIMITATION — nested template substitutions. An escaped backtick inside a nested
+ * `${}` derails the scanner — a template-frame issue, unrelated to regex literals. The one file
+ * in the tree that had that shape (`check-coverage-gate-pal.ts`, deleted 2026-10-17 with the
+ * coverage-gate jobs it audited) was never an audit input.
  *
  * If you need comment-stripping for a NEW guard, consider whether a line-based skip suffices —
  * `check-connector-consent.ts` uses one (it left this repository with the connectors and lives in

@@ -184,7 +184,7 @@ jobs:
     permissions:
       contents: read
       checks: write
-      # Required by _test-suite.yml (Codecov use_oidc: true on coverage-gates).
+      # Required by _test-suite.yml (Codecov use_oidc: true on the unit-coverage upload).
       id-token: write
 
   # Rust/Tauri checks — ubuntu only, runs in parallel with pr-quality-ts
@@ -345,12 +345,14 @@ jobs:
 
       # Must precede dependency setup so `bun install` already runs under the Defender
       # exclusions, and the TEMP/TMP it exports reach every later step (the test run's
-      # `os.tmpdir()` fixtures above all). Fail-soft: a failure warns and leaves the leg exactly
-      # as it was. Rationale and measurements: the header of the script.
-      - name: Windows — Dev Drive for TEMP + Defender exclusions
+      # `os.tmpdir()` fixtures above all). TEMP goes to a plain directory on the runner's local
+      # D: drive: an SQLite commit there costs 1.4 ms against 16-20 ms on C:, where the Dev Drive
+      # that used to hold TEMP lived. Fail-soft: a failure warns and leaves the leg exactly as it
+      # was. Rationale and measurements: the header of the script.
+      - name: Windows — TEMP on the local disk + Defender exclusions
         if: runner.os == 'Windows' && needs.filter.outputs.code-changed == 'true'
         shell: pwsh
-        run: ./scripts/ci/setup-windows-dev-drive.ps1
+        run: ./scripts/ci/setup-windows-temp.ps1
 
       - name: Setup Bun and install dependencies
         if: needs.filter.outputs.code-changed == 'true'
@@ -445,128 +447,31 @@ jobs:
         shell: bash
         run: if [ -f ci-test-timings.json ]; then mv ci-test-timings.json "${RUNNER_TEMP}/"; fi
 
-      - name: Unit + integration tests (retry once on slow runners)
+      - name: Unit + integration tests (one targeted retry on slow runners)
         if: needs.filter.outputs.code-changed == 'true'
         shell: bash
-        # `--timeout 60000` matches every other Bun test invocation in the repo
-        # (`_test-suite.yml` runs these SAME gateway/cli suites at 60 s on the
-        # push 3-OS matrix + the Ubuntu PR gate, and passes). This step was the
-        # ONLY invocation left on Bun's per-test default: the root `bunfig.toml`
-        # sets `[test] timeout = 30000`, but Bun does NOT honor it for
-        # `bun test <path>` runs, so the effective default here was 5000 ms.
+        # `scripts/ci/test-with-retry.ts` runs the suite and retries ONCE. The retry re-runs only
+        # the files that failed when the JUnit report accounts for every failure Bun counted, and
+        # the whole command otherwise (a file that failed to load, an error between tests, an
+        # attempt killed by the cap). A whole-shard retry cost ~13 min on windows-2025 2/2 to
+        # recover one starved test, and 2/2 needed one in 14 of 41 runs (2026-10-10 → 10-16).
+        # Attempt 2's exit code is the step's, so a real regression still fails it. The script
+        # also fences the test output off from workflow-command processing and writes its own
+        # annotations: GitHub keeps only 10 warnings and 10 errors per step, and the suite's own
+        # output used to spend them before the retry warnings were printed. Rationale and the Bun
+        # behaviour it relies on: the script header.
         #
-        # The flake is systemic runner slowness, not two specific tests: on a
-        # loaded Windows runner the full combined suite (~3,800 tests / ~420
-        # files) starves random I/O-heavy tests — sqlite-vec dlopen, multi-step
-        # schema migrations, on-disk fixtures, latency sampling — past 5 s, and
-        # a DIFFERENT test trips each run. Per-test `}, 30000)` overrides were
-        # whack-a-mole (e.g. only the first of ~11 heavy embedding tests had
-        # one); the job-level timeout is the durable fix. These tests run in
-        # <300 ms on Linux/macOS — confirmed not logic bugs.
+        # `--timeout=60000` matches every other `bun test` invocation in the repo. Bun does NOT
+        # honour `bunfig.toml`'s `[test] timeout` for `bun test <path>`, so without the flag the
+        # per-test default here is 5000 ms, which was the systemic Windows timeout of #541.
         #
-        # Retry-once still tolerates a cold-start outlier and, unlike the
-        # `_test-suite.yml` retry, PROPAGATES attempt 2's exit code so a real
-        # regression fails the job. The job-level `timeout-minutes` bounds a
-        # true hang; assertion failures fail in <1 s regardless of `--timeout`,
-        # so this does not mask logic bugs.
-        #
-        # Each attempt is additionally wrapped in a wall-clock timeout (1500 s — see below)
-        # (`scripts/run-with-timeout.ts` — portable because GNU `timeout` is not on
-        # the macOS runner). `--timeout 60000` is PER-TEST and does not fire on a
-        # hung-at-exit `bun test` (a lingering timer keeps the process alive after
-        # all tests finish); without a whole-run cap such a hang spins until the
-        # job's `timeout-minutes` ceiling and surfaces as "The operation was
-        # canceled.". The wrapper kills the hang (exit 124) so retry-once actually
-        # runs — recovering a transient hang in minutes instead of burning the full
-        # ceiling.
-        #
-        # The cap is 1500 s (25 min). It was 1080 s from 2026-08-28, 900 s from 2026-08-14
-        # and 600 s before that; each value expired the same way, and each comment's
-        # tripwire fired before the number was changed. The 1080 s tripwire — "re-check if
-        # a healthy run exceeds ~850 s" — fired by 2026-09-29. Healthy windows-2025 test
-        # steps over that PR batch: 795 · 845 · 1019 · 1036 · 1044 · 1047 · 1063 · 1069 ·
-        # 1079 s, i.e. the cap had become the median. Four legs that day (#1575 ×2, #1580,
-        # #1581) were killed at 1080 s with ZERO failing tests, one of them having got
-        # further through the suite than a run that passed — slowness, not a hang. macOS on
-        # the same runs: 334–520 s, far inside any of these caps.
-        #
-        # 1500 s puts the worst healthy run (1079 s) at 72 %; with the ~28 % variance
-        # measured below, its top of swing is ~1381 s — inside the cap rather than sitting
-        # on it. Re-check if a healthy run exceeds ~1200 s.
-        #
-        # History — the measurement behind the 1080 s cap (windows-2025, capped step only,
-        # SUCCESSFUL runs):
-        #   519 s · 538 s · 560 s · 637 s · 669 s · 698 s · 709 s
-        # The runner's variance is ~28 % on identical work (404 s then 516 s on
-        # consecutive runs of the same commit set), so a worst healthy run of 709 s
-        # implies ~907 s at the top of the swing — ABOVE the 900 s cap. That is not a
-        # prediction: #1359 hit it, twice, dying at 16,958 and 18,679 of 19,520 tests on
-        # the two attempts. Different death points rule out a deterministic hang and
-        # confirm plain slowness, and `exit 124` is a wall-clock kill with ZERO failing
-        # tests, so it reads like a mystery failure to whoever triages it.
-        #
-        # The cap cannot be raised alone — see the `timeout-minutes` note above for the
-        # `setup + 2 × cap <= ceiling` constraint the 900 s raise missed.
-        #
-        # This is the FOURTH raise, and the note on the third said a fourth "is not a plan".
-        # It still isn't: it buys time against a cap that had become a coin-flip on every
-        # PR. The durable fix remains making the Windows suite faster — the e2e tree alone
-        # spends 15–22 s per gateway boot there — without breaking the parity with the
-        # push leg that this job exists to keep. `--parallel` (above) is that fix's first
-        # step; re-measure before touching this cap again.
-        # A SILENT retry is the expensive kind. Attempt 1 costs a full suite run — on
-        # windows-2025 that was 882 s in run 32452626344, where ONE test
-        # (`briefs/brief-e2e.test.ts`'s leak check) timed out and the retry passed, so the job
-        # went green having burned ~11 extra minutes with nothing in the summary to investigate.
-        # Attempt 1's output is therefore captured to a file, echoed to the log unchanged, and
-        # its `(fail)` lines surfaced as annotations plus a job-summary block.
-        #
-        # Redirect-then-cat, NOT a pipe into `tee`: a pipeline makes `$?` the exit code of the
-        # LAST command, which would silently turn every failure into a success here. The
-        # redirect leaves `$?` as the test run's own code, which is what both branches below
-        # depend on.
-        run: |
-          set +e
-          for attempt in 1 2; do
-            bun scripts/run-with-timeout.ts 1500 bun test packages/gateway packages/cli scripts --timeout 60000 --parallel --shard=${{ matrix.shard }} --timings="${RUNNER_TEMP}/ci-test-timings.json" --reporter=junit --reporter-outfile="${RUNNER_TEMP}/junit-attempt-${attempt}.xml" > "${RUNNER_TEMP}/attempt-${attempt}.log" 2>&1
-            code=$?
-            cat "${RUNNER_TEMP}/attempt-${attempt}.log"
-            if [ "$code" -eq 0 ]; then
-              if [ "$attempt" -eq 2 ]; then
-                echo "::warning title=Retry masked a failure::${{ matrix.label }} FAILED on attempt 1 and passed on attempt 2. The job is green but paid for two full suite runs — see the annotations naming the failing test(s)."
-              fi
-              exit 0
-            fi
-            if [ "$attempt" -eq 2 ]; then
-              echo "Both attempts failed with exit code $code"
-              exit "$code"
-            fi
-            echo "Attempt $attempt failed (exit $code), retrying in 5 s..."
-            # `|| true` so a no-match grep (a timeout/crash with no `(fail)` line) does not end
-            # the step under a future `set -e`, and does not skip the retry.
-            failed=$(grep -E '^\(fail\)' "${RUNNER_TEMP}/attempt-${attempt}.log" | head -20 || true)
-            if [ -n "$failed" ]; then
-              while IFS= read -r line; do
-                echo "::warning title=Flaky test::${line}"
-              done <<< "$failed"
-            else
-              echo "::warning title=Attempt 1 failed with no (fail) line::exit ${code} — a timeout, crash or hang rather than an assertion. See the attempt-1 output above."
-            fi
-            {
-              echo "### ⚠ ${{ matrix.label }} needed a retry"
-              echo ""
-              echo "Attempt 1 exited \`${code}\`; attempt 2 follows. A retry costs a full suite run."
-              echo ""
-              if [ -n "$failed" ]; then
-                echo '```text'
-                echo "$failed"
-                echo '```'
-              else
-                echo "No \`(fail)\` line — attempt 1 timed out, crashed or hung."
-              fi
-            } >> "$GITHUB_STEP_SUMMARY"
-            sleep 5
-          done
+        # `--cap-seconds=1500` caps each ATTEMPT's wall clock. `--timeout` is per test and does not
+        # fire on a `bun test` hung at exit; the cap turns that into exit 124 and a retry instead of
+        # a cancellation at the job ceiling. It has been 600 s, 900 s (2026-08-14), 1080 s
+        # (2026-08-28) and 1500 s (2026-09-30); each value expired once healthy runs grew into it.
+        # Healthy single-attempt steps 2026-10-10 → 10-16: windows 1/2 3.7 min and 2/2 8.7 min
+        # median (p90 10.5), macOS 4.2 min. Raising it moves `timeout-minutes` above with it.
+        run: bun scripts/ci/test-with-retry.ts --label="${{ matrix.label }}" --cap-seconds=1500 --report-dir="${RUNNER_TEMP}" -- bun test packages/gateway packages/cli scripts --timeout=60000 --parallel --shard=${{ matrix.shard }} --timings="${RUNNER_TEMP}/ci-test-timings.json"
         env:
           CI: "true"
 
@@ -986,9 +891,10 @@ jobs:
   # E2E Desktop (Playwright + Tauri WebDriver) — push to main only, full OS matrix
   e2e-desktop:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    # `ci-ts` is the whole _test-suite.yml (30 jobs incl. 24 coverage shards),
-    # and `needs:` on a reusable-workflow caller waits for ALL of it — measured
-    # at 33.4min median DAG wait. E2E consumes no artifact from it: it does its
+    # `ci-ts` is the whole _test-suite.yml (once 30 jobs incl. 24 coverage
+    # shards; the shards are gone, the push matrix is still the slowest thing in
+    # the run), and `needs:` on a reusable-workflow caller waits for ALL of it —
+    # measured at 33.4min median DAG wait. E2E consumes no artifact from it: it does its
     # own checkout, install and Tauri setup. `ci-rust` (1.17-1.72min) is the
     # prerequisite that carries meaning: a broken Tauri build makes E2E
     # unrunnable.

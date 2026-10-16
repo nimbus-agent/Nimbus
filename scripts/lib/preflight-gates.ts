@@ -143,11 +143,6 @@ const FAST: readonly Gate[] = [
     cmd: ["bun", "run", "audit:workflow-lint"],
     tier: "fast",
   },
-  {
-    name: "audit:coverage-gate-pal",
-    cmd: ["bun", "run", "audit:coverage-gate-pal"],
-    tier: "fast",
-  },
   { name: "audit:consumed-by", cmd: ["bun", "run", "audit:consumed-by"], tier: "fast" },
   { name: "audit:secret-inventory", cmd: ["bun", "run", "audit:secret-inventory"], tier: "fast" },
   { name: "audit:exclusion-parity", cmd: ["bun", "run", "audit:exclusion-parity"], tier: "fast" },
