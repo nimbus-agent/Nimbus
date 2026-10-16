@@ -363,7 +363,7 @@ Circular dependencies are forbidden. The linter will catch cross-package source 
 1. Open an issue or discussion first for anything non-trivial
 2. Fill in the pull request template completely — incomplete PRs will be returned
 3. Sign the CLA if this is your first PR (see [below](#contributor-license-agreement-cla)); the `cla` check stays red until you do
-4. All required CI checks must be green before merge. To run optional desktop E2E (Tauri + Playwright) on a PR, add the `ci:e2e-desktop` label (that retriggers CI so the E2E job can run).
+4. All required CI checks must be green before merge. To run optional desktop E2E (Tauri + Playwright) on a PR, add the `ci:e2e-desktop` label (that retriggers CI so the E2E job can run). After merge, the 3-OS desktop E2E runs on `main` when the push changed `packages/ui/`, and nightly either way.
 5. The maintainer reviews and merges. Pull requests are **squash-merged** — the only merge method enabled — so the PR title becomes the commit subject on `main`: write it in the Conventional Commits format above.
 
 **CI on your first pull request waits for a maintainer.** GitHub does not run workflows on a pull request from a first-time contributor's fork until a maintainer approves the run, and that approval is needed again for each push until your first PR merges. If your PR shows checks as "waiting for approval", that is on us, not you — it counts toward the 72-hour first response below, and a nudge is welcome.

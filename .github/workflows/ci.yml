@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, develop]
     types: [opened, synchronize, reopened, labeled]
+  # Nightly: the desktop E2E matrix (and the Rust checks it needs) on `main`. A push runs that
+  # matrix only when it changed `packages/ui/`; this catches anything else that breaks it within a
+  # day. Every other job is gated on `push` or `pull_request` and does not run on a schedule.
+  schedule:
+    - cron: "17 3 * * *"
 
 concurrency:
   # PRs share a per-ref group, so a superseded run is cancelled (cheap — the
@@ -19,7 +24,9 @@ concurrency:
   # each other while queued and lost their validation entirely — 33 of 60 push
   # runs cancelled with ZERO jobs, so the commits that actually shipped were
   # never tested. A per-SHA group means every merge commit validates on its own.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  # The event name is part of it so the nightly schedule, which runs on `main`'s head, never
+  # queues behind (or evicts) the push run of that same commit.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || format('{0}-{1}', github.event_name, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -44,7 +51,15 @@ jobs:
       # cross-platform PR jobs so docs-only PRs still get a structure audit
       # (which checks doc-ref drift — the relevant gate for docs PRs) without
       # paying for a full 3-runner test cycle.
-      code-changed: ${{ steps.changes.outputs.code-changed }}
+      #
+      # Also false for a release PR that is a version bump and nothing else (`release-only`
+      # below): structure audit and release safety still run on it, and release safety
+      # typechecks it.
+      code-changed: ${{ steps.release-only.outputs.release-only != 'true' && steps.changes.outputs.code-changed || 'false' }}
+      # "true" only for release-please's own PR whose diff touches release-please's files and
+      # changes nothing in them but version strings and its changelog entry — decided by
+      # `scripts/ci/release-only-diff.ts` AS IT IS ON THE BASE COMMIT. See the steps below.
+      release-only: ${{ steps.release-only.outputs.release-only == 'true' }}
       embedding-native: ${{ steps.changes.outputs.embedding-native }}
       # "true" when this run uploaded ONE Windows timings snapshot for both Windows shards of
       # `pr-quality-cross-platform` to read. See the snapshot steps below.
@@ -156,6 +171,48 @@ jobs:
         env:
           UPLOADED: ${{ steps.upload-windows-timings.outcome == 'success' }}
         run: echo "present=${UPLOADED}" >> "$GITHUB_OUTPUT"
+
+      # ── Release PR fast path ────────────────────────────────────────────────────────────────
+      #
+      # release-please rewrites its release PR after every merge, and every rewrite ran the whole
+      # gate: 137 of 446 PR runs in the 30 days to 2026-10-16. None of the 8 that went red was
+      # caused by the release diff — all were flaky tests in code `main` had already tested on
+      # three OSes — and the tag's own Release workflow runs the full Ubuntu suite again before it
+      # builds anything. So a release PR whose diff is a version bump and nothing else skips the
+      # test jobs (`code-changed` above).
+      #
+      # Only release-please's own PR can take this path: the bot's login AND a same-repository
+      # branch AND release-please's branch prefix, so a fork that names its branch to match does
+      # not qualify. And the decision is made by the detector AS IT IS ON THE BASE COMMIT, reading
+      # the base's release-please config, so the PR being judged can neither edit the judge nor
+      # widen what counts as release-managed. Any error leaves `release-only` unset, which means a
+      # full run (`continue-on-error` below is that fail-safe, not a way past it).
+      - name: Setup Bun (release PRs only)
+        if: >-
+          github.event_name == 'pull_request'
+          && github.event.pull_request.user.login == 'nimbus-release-bot[bot]'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+        continue-on-error: true
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4'
+
+      - name: Is this release PR a version bump and nothing else?
+        id: release-only
+        if: >-
+          github.event_name == 'pull_request'
+          && github.event.pull_request.user.login == 'nimbus-release-bot[bot]'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+        continue-on-error: true
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          git show "${BASE_SHA}:scripts/ci/release-only-diff.ts" > "${RUNNER_TEMP}/release-only-diff.ts"
+          bun "${RUNNER_TEMP}/release-only-diff.ts" "${BASE_SHA}" "${HEAD_SHA}" >> "$GITHUB_OUTPUT"
 
   # ── PR: fast feedback (three jobs run in parallel) ─────────────────────────
 
@@ -680,6 +737,13 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bun scripts/release/release-pr-completeness.ts
+      - name: If this is the release PR, it must typecheck
+        # A release PR that is only a version bump skips the test jobs (`filter`'s
+        # `release-only`), and with them the `Static` typecheck. Its one source change is
+        # `packages/gateway/src/version.ts`, so it is checked here instead — cheaply, on every
+        # release PR whether or not it took the fast path.
+        if: startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+        run: bun run typecheck:no-docs
 
   # ── The single required PR gate ────────────────────────────────────────────
   #
@@ -785,9 +849,10 @@ jobs:
       checks: write
       id-token: write
 
-  # Rust/Tauri checks — all 3 OSes, runs in parallel with ci-ts
+  # Rust/Tauri checks — all 3 OSes, runs in parallel with ci-ts. Also nightly, because the
+  # nightly desktop E2E below `needs:` it.
   ci-rust:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'schedule'
     strategy:
       fail-fast: false
       matrix:
@@ -888,9 +953,15 @@ jobs:
           fail-on-error: false
           fail-on-empty: false
 
-  # E2E Desktop (Playwright + Tauri WebDriver) — push to main only, full OS matrix
+  # E2E Desktop (Playwright + Tauri WebDriver) — full OS matrix, on a push to main that changed
+  # `packages/ui/` (Rust included), and nightly. It used to run on EVERY push: three Tauri builds
+  # plus Playwright, 6-15 min each (Windows ~15), on commits that never touched the desktop app,
+  # holding macOS/Windows runner slots the PR legs queue for. The nightly run catches anything
+  # outside `packages/ui/` that breaks it, within a day.
   e2e-desktop:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.filter.outputs.ui == 'true')
+      || github.event_name == 'schedule'
     # `ci-ts` is the whole _test-suite.yml (once 30 jobs incl. 24 coverage
     # shards; the shards are gone, the push matrix is still the slowest thing in
     # the run), and `needs:` on a reusable-workflow caller waits for ALL of it —
@@ -905,7 +976,7 @@ jobs:
     # See the P4b progress log in docs/infrastructure-roadmap.md ("A
     # TS-failing, Rust-passing `main` commit burns E2E runners") for the
     # numbers and the revisit trigger.
-    needs: [ci-rust]
+    needs: [filter, ci-rust]
     strategy:
       fail-fast: false
       matrix:
