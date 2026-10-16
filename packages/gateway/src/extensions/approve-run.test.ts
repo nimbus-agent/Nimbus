@@ -21,7 +21,12 @@ import {
 } from "../automation/extension-store.ts";
 import { redactPayloadForConsentDisplay } from "../engine/executor.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { approveExtensionRun, buildRunConsentPayload, revokeExtensionRun } from "./approve-run.ts";
+import {
+  approveExtensionRun,
+  buildRunConsentPayload,
+  readVerifiedManifest,
+  revokeExtensionRun,
+} from "./approve-run.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
 import {
@@ -405,6 +410,70 @@ describe("approveExtensionRun", () => {
       expect(listRunGrants(db)).toEqual([]);
     },
   );
+});
+
+describe("state that changes while the prompt is open", () => {
+  test("a colliding service id granted to another extension during the prompt refuses CHANGED and stores nothing for ours", async () => {
+    const { db, env } = await setup({ id: "a.b" });
+    await expect(
+      approveExtensionRun("a.b", {
+        db,
+        env,
+        gate: async () => {
+          // A concurrent approval of `a.b.c` lands while ours is open; `ext_a_b_c` prefix-collides.
+          insertExtensionRow(db, {
+            id: "a.b.c",
+            version: "1",
+            install_path: "/other",
+            manifest_hash: "m",
+            entry_hash: "e",
+            enabled: 1,
+            installed_at: 1,
+            last_verified_at: 1,
+          });
+          upsertRunGrant(db, {
+            extension_id: "a.b.c",
+            service_id: "ext_a_b_c",
+            version: "1",
+            tree_digest: "d",
+            permissions_json: "{}",
+            model_access: 0,
+            approved_at: 1,
+          });
+          return true;
+        },
+        now: () => 1,
+      }),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
+    expect(getRunGrant(db, "a.b")).toBeNull();
+    expect(listRunGrants(db).map((g) => g.extension_id)).toEqual(["a.b.c"]);
+  });
+});
+
+describe("readVerifiedManifest", () => {
+  // `verifyOneExtensionStrict` already refuses a manifest whose bytes differ from the row's
+  // `manifest_hash`, and it runs first — so through `approveExtensionRun` this check is unreachable
+  // except in the window between the two reads. It is proven here, directly.
+  test("refuses a manifest whose bytes differ from the row's manifest_hash", async () => {
+    const { db } = await setup();
+    const row = listExtensions(db).find((r) => r.id === "com.example.run");
+    if (row === undefined) throw new Error("premise: the extension row exists");
+    expect(readVerifiedManifest(row).id).toBe("com.example.run");
+    expect(() => readVerifiedManifest({ ...row, manifest_hash: "0".repeat(64) })).toThrow(
+      /ERR_EXTENSION_RUN_UNVERIFIED/,
+    );
+  });
+
+  test("refuses when the manifest is rewritten after install", async () => {
+    const { db, installPath } = await setup();
+    const row = listExtensions(db).find((r) => r.id === "com.example.run");
+    if (row === undefined) throw new Error("premise: the extension row exists");
+    writeFileSync(
+      join(installPath, "nimbus.extension.json"),
+      JSON.stringify({ id: "com.example.run", version: "1.0.0", entry: "dist/index.js", x: 1 }),
+    );
+    expect(() => readVerifiedManifest(row)).toThrow(/ERR_EXTENSION_RUN_UNVERIFIED/);
+  });
 });
 
 describe("revokeExtensionRun", () => {

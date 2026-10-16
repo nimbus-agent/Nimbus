@@ -32,8 +32,8 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   it), has no tree digest, or its files no longer match it; when a declared path is relative, missing
   (including an install path that does not resolve), protected, or a write path that covers the
   extension's own code; or when the service id is invalid or collides. After the answer it refuses
-  `ERR_EXTENSION_RUN_NOT_APPROVED` or, if the row or files or declared grants changed while the prompt
-  was open, `ERR_EXTENSION_RUN_CHANGED`, and stores nothing. `nimbus extension revoke <id>` withdraws an
+  `ERR_EXTENSION_RUN_NOT_APPROVED` or, if the row or files or declared grants changed, or another
+  extension was granted a colliding service id, while the prompt was open, `ERR_EXTENSION_RUN_CHANGED`, and stores nothing. `nimbus extension revoke <id>` withdraws an
   approval, ungated. `extension list` gains a Run column and `info` a `Run:` line (`disabled`,
   `no_grant`, `grant_stale`, `ready`). Two new methods, `extension.approveRun` / `extension.revokeRun`,
   are CLI-only, LAN-forbidden and refused in a demo root; the Tauri allowlist stays at 107. New static

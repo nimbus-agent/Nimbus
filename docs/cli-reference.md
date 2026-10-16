@@ -4407,7 +4407,7 @@ nimbus extension approve com.example.notion
 
 The gateway refuses **without asking** when any of these hold:
 
-- `ERR_EXTENSION_NOT_FOUND` — no such extension.
+- `Extension not found` (JSON-RPC `-32602`; the wire carries this bare message, not an `ERR_` code) — no such extension.
 - `ERR_EXTENSION_RUN_DISABLED` — the extension is disabled.
 - `ERR_EXTENSION_RUN_UNVERIFIED` — the manifest or entry file no longer matches its install-time hash, or the startup signature check disabled it.
 - `ERR_EXTENSION_RUN_NO_DIGEST` — no tree digest is recorded (run `nimbus extension rehash` first).
@@ -4417,7 +4417,7 @@ The gateway refuses **without asking** when any of these hold:
 - `ERR_EXTENSION_GRANT_SELF_WRITE` — a declared write path covers the extension's own install path, which would let it rewrite its own code.
 - `ERR_EXTENSION_SERVICE_ID_INVALID` / `ERR_EXTENSION_SERVICE_ID_COLLISION` — the manifest id cannot be turned into a valid `ext_` service id, or another extension already holds it.
 
-After you answer, two further refusals can occur: `ERR_EXTENSION_RUN_NOT_APPROVED` (you declined, or the prompt timed out) and `ERR_EXTENSION_RUN_CHANGED` (the row was disabled, removed, re-versioned, rehashed or re-pathed, the files changed, or the declared grants no longer resolve identically while the prompt was open). Nothing is stored in either case.
+After you answer, two further refusals can occur: `ERR_EXTENSION_RUN_NOT_APPROVED` (you declined, or the prompt timed out) and `ERR_EXTENSION_RUN_CHANGED` (the row was disabled, removed, re-versioned, rehashed or re-pathed, the files changed, the declared grants no longer resolve identically, or another extension was granted a colliding service id while the prompt was open). Nothing is stored in either case.
 
 Approving again after an update (new version or digest) prompts again and replaces the grant, keeping the original service id.
 
@@ -4425,7 +4425,7 @@ Approving again after an update (new version or digest) prompts again and replac
 
 ### `nimbus extension revoke <id>`
 
-Withdraw a run approval. It is not gated, since it only narrows what may happen, and it is idempotent: revoking an extension with no approval reports that and exits normally.
+Withdraw a run approval. It is not gated, since it only narrows what may happen, and it is idempotent: revoking an extension with no approval reports that and exits normally. An unknown id is refused with `Extension not found` (JSON-RPC `-32602`).
 
 ```bash
 nimbus extension revoke com.example.notion

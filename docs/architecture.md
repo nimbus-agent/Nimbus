@@ -1794,7 +1794,8 @@ it, a tree digest is recorded and the files on disk still produce it, every decl
 absolute, exists and resolves (after symlinks) outside the protected Nimbus locations, no declared
 write path covers the extension's own install path, and a valid, unclaimed `ext_<slug>` service id can
 be derived from the manifest id. Only then does it show the owner the resolved grants and ask. After the
-answer it re-reads the row, re-hashes the files and re-resolves the grants, and refuses
+answer it re-reads the row, re-hashes the files, re-resolves the grants and (for a first grant)
+re-checks the service id against the grants stored meanwhile, and refuses
 (`ERR_EXTENSION_RUN_CHANGED`) if any of that moved while the prompt was open, so the bytes and grants
 the owner saw are the ones stored. The stored row (`extension_run_grant`, V70) binds `version`,
 `tree_digest` and the resolved `permissions_json` to the extension; the service id is computed once and

@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { type ExtensionRow, listExtensions } from "../automation/extension-store.ts";
+import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import {
   type ExtensionRunGrantEnv,
   type ResolvedRunGrants,
@@ -102,12 +104,35 @@ function assertRunnable(row: ExtensionRow): string {
   return live;
 }
 
-function readManifest(row: ExtensionRow): ExtensionManifest {
+/**
+ * Reads the manifest ONCE, hashes those exact bytes against the row's `manifest_hash`, and parses
+ * the same bytes. `assertRunnable`'s strict verification read the file separately, so without this
+ * a manifest swapped between the two reads would have its permissions granted unverified. Exported
+ * for its test: through `approveExtensionRun` the strict check refuses a mismatch first, so this arm
+ * is reachable only in that window.
+ */
+export function readVerifiedManifest(row: ExtensionRow): ExtensionManifest {
   const p = resolveExtensionManifestPath(row.install_path);
   if (p === undefined) {
     throw new ExtensionRunGrantError("ERR_EXTENSION_RUN_UNVERIFIED", `${row.id} has no manifest`);
   }
-  return parseExtensionManifestJson(readFileSync(p, "utf8"));
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(p);
+  } catch {
+    throw new ExtensionRunGrantError(
+      "ERR_EXTENSION_RUN_UNVERIFIED",
+      `${row.id}'s manifest could not be read`,
+    );
+  }
+  const hex = createHash("sha256").update(bytes).digest("hex");
+  if (!sha256HexEqualConstantTime(hex, row.manifest_hash)) {
+    throw new ExtensionRunGrantError(
+      "ERR_EXTENSION_RUN_UNVERIFIED",
+      `${row.id}'s manifest no longer matches what was installed; reinstall it`,
+    );
+  }
+  return parseExtensionManifestJson(bytes.toString("utf8"));
 }
 
 /**
@@ -179,7 +204,7 @@ export async function approveExtensionRun(
 ): Promise<ApproveExtensionRunResult> {
   const row = requireRow(deps.db, extensionId);
   const treeDigest = assertRunnable(row);
-  const manifest = readManifest(row);
+  const manifest = readVerifiedManifest(row);
   const grants = resolveExtensionRunGrants(manifest.permissions, row.install_path, deps.env);
   const existing = getRunGrant(deps.db, row.id);
   // Never recomputed once stored, so a slug-rule change cannot move an existing extension's tools.
@@ -229,6 +254,23 @@ export async function approveExtensionRun(
       "ERR_EXTENSION_RUN_CHANGED",
       `${row.id} changed while approval was pending; nothing was granted`,
     );
+  }
+  if (existing === null) {
+    // The pre-consent collision check saw the grants as they were BEFORE the prompt. A concurrent
+    // approval (say of `a.b.c` beside our `a.b`) can store a prefix-colliding id while ours is open,
+    // so the check runs again against the grants as they are now.
+    const others = listRunGrants(deps.db)
+      .filter((g) => g.extension_id !== row.id)
+      .map((g) => g.service_id);
+    try {
+      assertExtensionServiceIdFree(serviceId, others);
+    } catch (e) {
+      if (!(e instanceof ExtensionRunGrantError)) throw e;
+      throw new ExtensionRunGrantError(
+        "ERR_EXTENSION_RUN_CHANGED",
+        `${row.id}'s service id "${serviceId}" collided with another extension's grant while approval was pending; nothing was granted`,
+      );
+    }
   }
   upsertRunGrant(deps.db, {
     extension_id: row.id,

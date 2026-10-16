@@ -17,7 +17,9 @@ afterEach(() => {
   for (const c of cleanups.splice(0).reverse()) c();
 });
 
-async function installed(): Promise<{
+async function installed(
+  permissions?: (root: string) => Record<string, unknown>,
+): Promise<{
   db: Database;
   installPath: string;
   env: ExtensionRunGrantEnv;
@@ -31,7 +33,12 @@ async function installed(): Promise<{
   mkdirSync(join(src, "dist"), { recursive: true });
   writeFileSync(
     join(src, "nimbus.extension.json"),
-    JSON.stringify({ id: "rpc.run", version: "1.0.0", entry: "dist/index.js" }),
+    JSON.stringify({
+      id: "rpc.run",
+      version: "1.0.0",
+      entry: "dist/index.js",
+      ...(permissions === undefined ? {} : { permissions: permissions(root) }),
+    }),
   );
   writeFileSync(join(src, "dist", "index.js"), "export {};\n");
   const extensionsDir = join(root, "data", "extensions");
@@ -110,6 +117,26 @@ describe("extension.approveRun / extension.revokeRun over the automation dispatc
     }).catch((e: unknown) => e);
     expect((denied as { rpcCode?: number }).rpcCode).toBe(-32603);
     expect((denied as Error).message).toMatch(/ERR_EXTENSION_RUN_NOT_APPROVED/);
+
+    const p = await installed((root) => ({
+      network: [],
+      filesystem: { read: [join(root, "data")], write: [] },
+    }));
+    let asked = 0;
+    const unsatisfiable = await dispatchAutomationRpc({
+      method: "extension.approveRun",
+      params: { id: "rpc.run" },
+      db: p.db,
+      runGrantEnv: p.env,
+      ownerGate: async () => {
+        asked += 1;
+        return true;
+      },
+    }).catch((e: unknown) => e);
+    expect((unsatisfiable as { rpcCode?: number }).rpcCode).toBe(-32602);
+    expect((unsatisfiable as Error).message).toMatch(/ERR_EXTENSION_GRANT_PROTECTED/);
+    expect(asked).toBe(0);
+    expect(getRunGrant(p.db, "rpc.run")).toBeNull();
   });
 
   test("list and info move no_grant → ready → grant_stale → no_grant", async () => {
