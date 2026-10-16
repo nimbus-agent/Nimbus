@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -21,6 +22,7 @@ import {
 } from "../../../src/extensions/auto-update-rpc.ts";
 import { writePublisherKey } from "../../../src/extensions/publisher-keys.ts";
 import { computeExtensionTreeDigest } from "../../../src/extensions/tree-digest.ts";
+import { verifyOneExtensionStrict } from "../../../src/extensions/verify-extensions.ts";
 import {
   encodeBase64,
   generateEd25519Keypair,
@@ -68,6 +70,7 @@ async function startFakeRegistry(): Promise<FakeRegistry> {
             manifest: entry.manifest,
             manifestHash: entry.manifestHash,
             entryHash: entry.entryHash,
+            tarballSha256: createHash("sha256").update(entry.tarballBytes).digest("hex"),
             tarballUrl: `${baseUrlForTarball}/v1/tarball/${encodeURIComponent(
               decodeURIComponent(m[1] ?? ""),
             )}.tar.gz`,
@@ -137,10 +140,7 @@ async function buildSignedTarball(opts: {
     writeFileSync(join(stageRoot, "dist", "index.js"), entryText, "utf8");
 
     const manifestBytes = Buffer.from(manifestText, "utf8");
-    const sha256Hex = (b: Buffer): string => {
-      const { createHash } = require("node:crypto");
-      return createHash("sha256").update(b).digest("hex");
-    };
+    const sha256Hex = (b: Buffer): string => createHash("sha256").update(b).digest("hex");
 
     const tarPath = join(stageRoot, "out.tar.gz");
     await tar.c({ cwd: stageRoot, file: tarPath, gzip: true }, ["nimbus.extension.json", "dist"]);
@@ -149,7 +149,8 @@ async function buildSignedTarball(opts: {
     return {
       manifest,
       manifestHash: sha256Hex(manifestBytes),
-      entryHash: sha256Hex(Buffer.from(tarballBytes)),
+      // The ENTRY FILE's hash, as a real registry must publish it — not the tarball's.
+      entryHash: sha256Hex(Buffer.from(entryText, "utf8")),
       tarballBytes,
     };
   } finally {
@@ -196,7 +197,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       writeFileSync(join(extRoot, "active", "dist", "index.js"), v1EntryText, "utf8");
 
       const { insertExtensionRow } = await import("../../../src/automation/extension-store.ts");
-      const { createHash } = require("node:crypto");
       insertExtensionRow(db, {
         id: extensionId,
         version: "1.0.0",
@@ -262,6 +262,11 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       // The swap replaced the bytes, so the digest is the NEW tree's, recomputed — not the
       // install-time one, and not cleared.
       expect(row?.tree_digest).toBe(computeExtensionTreeDigest(row?.install_path ?? ""));
+      // The row's hashes must survive the next startup verification. Before the registry's
+      // `entryHash` was read as the entry file's hash everywhere, auto-update stored the
+      // TARBALL's hash here and this returned false.
+      expect(row).toBeDefined();
+      if (row !== undefined) expect(verifyOneExtensionStrict(row)).toBe(true);
     } finally {
       db.close();
       rmSync(extensionsDir, { recursive: true, force: true });
@@ -299,7 +304,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       );
 
       const { insertExtensionRow } = await import("../../../src/automation/extension-store.ts");
-      const { createHash } = require("node:crypto");
       insertExtensionRow(db, {
         id: extensionId,
         version: "1.1.0",
@@ -333,9 +337,14 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         channel: "stable",
         changelog: "",
         publisherStatus: "verified",
-        manifestHash: "d".repeat(64),
+        manifestHash: createHash("sha256")
+          .update(readFileSync(join(extRoot, "_prev", "1.0.0", "nimbus.extension.json")))
+          .digest("hex"),
         signatureB64: "AA==",
-        entryHash: "e".repeat(64),
+        entryHash: createHash("sha256")
+          .update(readFileSync(join(extRoot, "_prev", "1.0.0", "dist", "index.js")))
+          .digest("hex"),
+        tarballSha256: "f".repeat(64),
         tarballUrl: "https://r/x",
         permissionDiff: {
           network: { added: [], removed: [] },
@@ -362,6 +371,8 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.0.0");
       expect(row?.tree_digest).toBe(computeExtensionTreeDigest(row?.install_path ?? ""));
+      expect(row).toBeDefined();
+      if (row !== undefined) expect(verifyOneExtensionStrict(row)).toBe(true);
     } finally {
       db.close();
       rmSync(extensionsDir, { recursive: true, force: true });
@@ -397,6 +408,7 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         manifestHash: "d".repeat(64),
         signatureB64: "AA==",
         entryHash: "e".repeat(64),
+        tarballSha256: "f".repeat(64),
         tarballUrl: "https://r/x",
         permissionDiff: {
           network: { added: [], removed: [] },
@@ -451,7 +463,6 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       writeFileSync(join(extRoot, "_prev", "1.0.0", "nimbus.extension.json"), manifestText);
       writeFileSync(join(extRoot, "_prev", "1.0.0", "dist", "index.js"), "// prev");
 
-      const { createHash } = require("node:crypto");
       const manifestBytes = Buffer.from(manifestText, "utf8");
       const entryBytes = Buffer.from("// prev", "utf8");
       const manifestHash = createHash("sha256").update(manifestBytes).digest("hex");

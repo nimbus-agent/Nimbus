@@ -17,6 +17,7 @@ function mkCache(): AutoUpdateCache {
     manifestHash: "d".repeat(64),
     signatureB64: "AA==",
     entryHash: "e".repeat(64),
+    tarballSha256: "f".repeat(64),
     tarballUrl: "https://r/a.tar.gz",
     permissionDiff: {
       network: { added: ["b.com"], removed: [] },

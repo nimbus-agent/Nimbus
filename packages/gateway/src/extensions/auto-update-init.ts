@@ -173,6 +173,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
       return {
         manifestHash: r.manifestHash,
         entryHash: r.entryHash,
+        tarballSha256: r.tarballSha256,
         tarballUrl: r.tarballUrl,
         manifestRaw: r.manifestRaw,
         ...(r.tarballSizeBytes === undefined ? {} : { tarballSizeBytes: r.tarballSizeBytes }),

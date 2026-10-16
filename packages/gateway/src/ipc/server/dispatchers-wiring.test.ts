@@ -638,6 +638,7 @@ describe("watcher/workflow/extension — forwarded extension deps", () => {
       manifestHash: "abcdef0123456789".repeat(4),
       signatureB64: "",
       entryHash: "e".repeat(64),
+      tarballSha256: "f".repeat(64),
       tarballUrl: "https://registry.invalid/ext.auto-1.1.0.tgz",
       permissionDiff: {
         network: { added: [], removed: [] },

@@ -290,6 +290,7 @@ describe("copy failures are reported as such and leave nothing installed", () =>
         manifestRaw: { id, version },
         manifestHash: "0".repeat(64),
         entryHash: "0".repeat(64),
+        tarballSha256: "f".repeat(64),
         tarballUrl: "https://registry.invalid/dep.tgz",
       }),
     };
@@ -358,6 +359,7 @@ describe("a source manifest changed while dependencies were being resolved", () 
           manifestRaw: { id, version },
           manifestHash: "0".repeat(64),
           entryHash: "0".repeat(64),
+          tarballSha256: "f".repeat(64),
           tarballUrl: "https://registry.invalid/unused.tgz",
         };
       },

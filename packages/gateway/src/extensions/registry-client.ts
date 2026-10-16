@@ -104,7 +104,10 @@ export interface FetchManifestResponse {
   manifest: ExtensionManifest;
   manifestRaw: Record<string, unknown>;
   manifestHash: string;
+  /** SHA-256 of the entry FILE inside the tarball. */
   entryHash: string;
+  /** SHA-256 of the tarball itself. */
+  tarballSha256: string;
   tarballUrl: string;
   tarballSizeBytes?: number;
 }
@@ -178,6 +181,7 @@ export function createRegistryClient(opts: RegistryClientOpts): RegistryClient {
       }
       const manifestHash = body["manifestHash"];
       const entryHash = body["entryHash"];
+      const tarballSha256 = body["tarballSha256"];
       const tarballUrl = body["tarballUrl"];
       const manifestRaw = body["manifest"];
       const tarballSizeRaw = body["tarballSizeBytes"];
@@ -186,6 +190,8 @@ export function createRegistryClient(opts: RegistryClientOpts): RegistryClient {
         !HEX64.test(manifestHash) ||
         typeof entryHash !== "string" ||
         !HEX64.test(entryHash) ||
+        typeof tarballSha256 !== "string" ||
+        !HEX64.test(tarballSha256) ||
         typeof tarballUrl !== "string" ||
         typeof manifestRaw !== "object" ||
         manifestRaw === null
@@ -199,6 +205,7 @@ export function createRegistryClient(opts: RegistryClientOpts): RegistryClient {
         manifestRaw: manifestRaw as Record<string, unknown>,
         manifestHash,
         entryHash,
+        tarballSha256,
         tarballUrl,
         ...(tarballSizeBytes === undefined ? {} : { tarballSizeBytes }),
       };

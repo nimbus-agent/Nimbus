@@ -72,6 +72,7 @@ function registryManifest(
     manifestRaw: {},
     manifestHash: "h".repeat(64),
     entryHash: "e".repeat(64),
+    tarballSha256: "f".repeat(64),
     tarballUrl: `https://registry.invalid/${id}-${version}.tgz`,
   };
 }

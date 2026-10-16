@@ -751,6 +751,7 @@ function makeMockRegistry(opts: {
         manifestRaw: { id, version },
         manifestHash: "0".repeat(64),
         entryHash: "0".repeat(64),
+        tarballSha256: "f".repeat(64),
         tarballUrl: "https://mock.example/tarball.tgz",
       };
       return { ...base, ...opts.manifestResponse };
@@ -874,6 +875,7 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
             manifestRaw: { id, version },
             manifestHash: "0".repeat(64),
             entryHash: "0".repeat(64),
+            tarballSha256: "f".repeat(64),
             tarballUrl: "https://mock.example/tarball.tgz",
           };
         }
@@ -1003,6 +1005,7 @@ describe("installDepFromRegistry — dependency install via registry (Tier C-2)"
         manifestRaw: { id, version },
         manifestHash: "0".repeat(64),
         entryHash: depTarball.entryHash,
+        tarballSha256: "f".repeat(64),
         tarballUrl: "https://mock.example/tarball.tgz",
       }),
     };
@@ -2006,6 +2009,7 @@ describe("buildLocalSolverFetcher — fetchManifest pinned-path edge cases (Tier
           manifestRaw: { id, version },
           manifestHash: "0".repeat(64),
           entryHash: "0".repeat(64),
+          tarballSha256: "f".repeat(64),
           tarballUrl: "https://mock.example/tarball.tgz",
         }),
       };
@@ -2093,6 +2097,7 @@ describe("buildLocalSolverFetcher — fetchManifest pinned-path edge cases (Tier
         manifestRaw: { id, version, dependsOn: { "trans.dep.x": "^1.0.0" } },
         manifestHash: "0".repeat(64),
         entryHash: directDepTarball.entryHash,
+        tarballSha256: "f".repeat(64),
         tarballUrl: "https://mock.example/tarball.tgz",
       }),
     };
@@ -2157,6 +2162,7 @@ describe("fetchDepManifestResponse and downloadDepTarball — non-Error catch ar
             manifestRaw: { id, version },
             manifestHash: "0".repeat(64),
             entryHash: "0".repeat(64),
+            tarballSha256: "f".repeat(64),
             tarballUrl: "https://mock.example/tarball.tgz",
           };
         }

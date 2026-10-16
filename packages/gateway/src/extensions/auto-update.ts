@@ -47,6 +47,7 @@ export interface FetchManifestResult {
   manifestRaw: Record<string, unknown>;
   manifestHash: string;
   entryHash: string;
+  tarballSha256: string;
   tarballUrl: string;
   tarballSizeBytes?: number;
 }
@@ -299,6 +300,7 @@ export class ExtensionAutoUpdater {
       manifestHash: manifestResult.manifestHash,
       signatureB64: newManifest.signature,
       entryHash: manifestResult.entryHash,
+      tarballSha256: manifestResult.tarballSha256,
       tarballUrl: manifestResult.tarballUrl,
       ...(manifestResult.tarballSizeBytes === undefined
         ? {}

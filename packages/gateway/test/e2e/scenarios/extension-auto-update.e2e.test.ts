@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +58,7 @@ async function startRegistry(): Promise<{
             manifest: e.manifest,
             manifestHash: e.manifestHash,
             entryHash: e.entryHash,
+            tarballSha256: createHash("sha256").update(e.tarballBytes).digest("hex"),
             tarballUrl: `${base}/v1/tarball/${encodeURIComponent(
               decodeURIComponent(m[1] ?? ""),
             )}.tar.gz`,
@@ -119,11 +121,10 @@ async function buildTarball(opts: {
     const tarPath = join(stage, "out.tar.gz");
     await tar.c({ cwd: stage, file: tarPath, gzip: true }, ["nimbus.extension.json", "dist"]);
     const tarballBytes = new Uint8Array(readFileSync(tarPath));
-    const { createHash } = require("node:crypto");
     return {
       manifest,
       manifestHash: createHash("sha256").update(Buffer.from(manifestText, "utf8")).digest("hex"),
-      entryHash: createHash("sha256").update(Buffer.from(tarballBytes)).digest("hex"),
+      entryHash: createHash("sha256").update(Buffer.from(entryText, "utf8")).digest("hex"),
       tarballBytes,
     };
   } finally {
@@ -168,7 +169,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       writeFileSync(join(extRoot, "active", "nimbus.extension.json"), v1ManifestText, "utf8");
       writeFileSync(join(extRoot, "active", "dist", "index.js"), v1EntryText, "utf8");
 
-      const { createHash } = require("node:crypto");
       insertExtensionRow(db, {
         id: extensionId,
         version: "1.0.0",
@@ -287,7 +287,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
         `export default { version: "1.0.0" };`,
       );
 
-      const { createHash } = require("node:crypto");
       insertExtensionRow(db, {
         id: extensionId,
         version: "1.1.0",
@@ -320,9 +319,15 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
         channel: "stable",
         changelog: "",
         publisherStatus: "verified",
-        manifestHash: "d".repeat(64),
+        // The downgrade now measures `_prev/1.0.0` against these claims before swapping.
+        manifestHash: createHash("sha256")
+          .update(readFileSync(join(extRoot, "_prev", "1.0.0", "nimbus.extension.json")))
+          .digest("hex"),
         signatureB64: "AA==",
-        entryHash: "e".repeat(64),
+        entryHash: createHash("sha256")
+          .update(readFileSync(join(extRoot, "_prev", "1.0.0", "dist", "index.js")))
+          .digest("hex"),
+        tarballSha256: "f".repeat(64),
         tarballUrl: "https://r/x",
         permissionDiff: {
           network: { added: [], removed: [] },
@@ -377,6 +382,7 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
         manifestHash: "d".repeat(64),
         signatureB64: "AA==",
         entryHash: "e".repeat(64),
+        tarballSha256: "f".repeat(64),
         tarballUrl: "https://r/x",
         permissionDiff: {
           network: { added: [], removed: [] },

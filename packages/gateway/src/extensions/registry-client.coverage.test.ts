@@ -273,6 +273,7 @@ describe("createRegistryClient — fetchManifest shapes", () => {
               manifest: VALID_MANIFEST,
               manifestHash: "d".repeat(64),
               entryHash: "e".repeat(64),
+              tarballSha256: "f".repeat(64),
               tarballUrl: "https://r/a-1.1.0.tar.gz",
               tarballSizeBytes: "4242",
             }),

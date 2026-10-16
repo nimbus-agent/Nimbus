@@ -406,6 +406,7 @@ describe("auto-update-init: fetchManifest mapping branches via fake registry", (
       manifestRaw: manifest,
       manifestHash: "a".repeat(64),
       entryHash: "b".repeat(64),
+      tarballSha256: "f".repeat(64),
       tarballUrl: "http://127.0.0.1:19997/tarball.tgz",
     };
     if (opts.tarballSizeBytes !== undefined) {
