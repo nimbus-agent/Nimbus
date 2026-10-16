@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
+import { deleteRunGrant } from "../extensions/run-grant-store.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 
 export type ExtensionRow = {
@@ -159,6 +160,8 @@ export function deleteExtensionById(db: Database, id: string): string | null {
   if (path === null) {
     return null;
   }
+  // Explicit, not left to the FK cascade: the gateway's connection never sets foreign_keys = ON.
+  deleteRunGrant(db, id);
   dbRun(db, `DELETE FROM extension WHERE id = ?`, [id]);
   return path;
 }
