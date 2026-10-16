@@ -70,8 +70,14 @@ export function agentActionExclusions(db: Database, cutoffMs: number): AgentActi
     byKey.finalize();
   }
   return {
-    tickets: { itemIds: [...ids.tickets].sort(), unmatched: unmatched.tickets },
-    writing: { itemIds: [...ids.writing].sort(), unmatched: unmatched.writing },
+    tickets: {
+      itemIds: [...ids.tickets].sort((x, y) => x.localeCompare(y)),
+      unmatched: unmatched.tickets,
+    },
+    writing: {
+      itemIds: [...ids.writing].sort((x, y) => x.localeCompare(y)),
+      unmatched: unmatched.writing,
+    },
   };
 }
 
