@@ -2,6 +2,21 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.46.0](https://github.com/nimbus-agent/Nimbus/compare/v7.45.0...v7.46.0) (2026-10-16)
+
+
+### Features
+
+* **captures:** batch accept proposed decisions, terms and links ([#1668](https://github.com/nimbus-agent/Nimbus/issues/1668)) ([64ab982](https://github.com/nimbus-agent/Nimbus/commit/64ab98286e87b20500bf322bacd04c8cc136e005))
+* **captures:** purge a finished action's stored input; prune executed/failed after 90 days ([#1667](https://github.com/nimbus-agent/Nimbus/issues/1667)) ([e35e346](https://github.com/nimbus-agent/Nimbus/commit/e35e3460b6499c33f4c46736a0358fee39f56f14))
+* **extensions:** run grants - approve an installed extension to run (S3 extension runtime PR 2) ([#1665](https://github.com/nimbus-agent/Nimbus/issues/1665)) ([37e2044](https://github.com/nimbus-agent/Nimbus/commit/37e2044edca30255e1b148f85cc5c0e3fc72e04e))
+* **negotiate:** stop crediting agent-caused issues, messages and pages to the owner ([#1669](https://github.com/nimbus-agent/Nimbus/issues/1669)) ([6a7c84c](https://github.com/nimbus-agent/Nimbus/commit/6a7c84c193f5e4f5e45db68cc1d251822e542e1b))
+
+
+### Bug Fixes
+
+* **index:** one pre-migration backup per upgrade, none on a fresh install ([#1671](https://github.com/nimbus-agent/Nimbus/issues/1671)) ([9eb42b1](https://github.com/nimbus-agent/Nimbus/commit/9eb42b12b4ce7e15b011b2af29126d999faf8c46))
+
 ## [7.45.0](https://github.com/nimbus-agent/Nimbus/compare/v7.44.0...v7.45.0) (2026-10-16)
 
 
