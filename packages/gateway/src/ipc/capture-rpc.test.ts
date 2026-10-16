@@ -86,7 +86,7 @@ describe("dispatchCaptureRpc", () => {
     });
   });
 
-  test("captures.accept and captures.reject dispatch and map CaptureError to -32001", async () => {
+  test("captures.accept, captures.reject and captures.purge dispatch and map CaptureError to -32001", async () => {
     const mcp = { clientId: "m", kind: "mcp" as const };
     const own = { clientId: "o", kind: "cli" as const };
     const a = await dispatchCaptureRpc(
@@ -112,7 +112,8 @@ describe("dispatchCaptureRpc", () => {
       kind: "hit",
       value: { id: bId, state: "rejected" },
     });
-    for (const method of ["captures.accept", "captures.reject"]) {
+    // A decision is not an action: purge refuses it through the same error mapping.
+    for (const method of ["captures.accept", "captures.reject", "captures.purge"]) {
       try {
         await dispatchCaptureRpc(method, { id: aId }, ctx, own);
         throw new Error("expected a refusal");
@@ -189,6 +190,7 @@ describe("LAN", () => {
     "captures.get",
     "captures.revoke",
     "captures.accept",
+    "captures.purge",
   ])("%s is not callable over LAN (namespace denial covers future methods)", (method) => {
     expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: true })).toThrow(
       LanError,

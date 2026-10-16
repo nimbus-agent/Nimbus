@@ -75,13 +75,13 @@ describe("CaptureStore", () => {
     expect(store.markRevoked("cap_a", "live", 9001)).toBe(false);
   });
 
-  test("pruneRejected deletes by decided_at, never other states", () => {
+  test("pruneFinished deletes by decided_at, never other states", () => {
     store.insert(note("cap_a", 1000));
     db.run(
       "INSERT INTO capture (id, kind, state, payload_json, payload_bytes, session_id, created_at, decided_at) VALUES ('cap_r', 'term', 'rejected', '{}', 2, 's', 1, 5000)",
     );
-    expect(store.pruneRejected(4000)).toBe(0);
-    expect(store.pruneRejected(6000)).toBe(1);
+    expect(store.pruneFinished(4000)).toBe(0);
+    expect(store.pruneFinished(6000)).toBe(1);
     expect(store.get("cap_r")).toBeUndefined();
     expect(store.get("cap_a")).toBeDefined();
   });
@@ -210,7 +210,7 @@ describe("action queries (PR 3)", () => {
     expect(s.failInterruptedActions(70)).toEqual(["cap_a"]);
     expect(s.get("cap_a")).toMatchObject({ state: "failed", errorCode: "ERR_ACTION_INTERRUPTED" });
   });
-  test("pruneRejected also prunes expired actions, never executed or failed ones", () => {
+  test("pruneFinished also prunes expired, executed and failed actions by decided_at", () => {
     action("cap_e", 100);
     action("cap_x", 100);
     action("cap_f", 100);
@@ -218,9 +218,33 @@ describe("action queries (PR 3)", () => {
     s.expireDueActions(150); // all three expire
     db.run("UPDATE capture SET state='executed', outcome_ref=NULL WHERE id='cap_x'");
     db.run("UPDATE capture SET state='failed', error_code='ERR_ACTION_DISPATCH' WHERE id='cap_f'");
-    expect(s.pruneRejected(1_000)).toBe(1);
-    expect(s.get("cap_e")).toBeUndefined();
-    expect(s.get("cap_x")?.state).toBe("executed");
-    expect(s.get("cap_f")?.state).toBe("failed");
+    expect(s.pruneFinished(150)).toBe(0); // decided AT the cutoff: not older than it
+    expect(s.pruneFinished(1_000)).toBe(3);
+    for (const id of ["cap_e", "cap_x", "cap_f"]) expect(s.get(id)).toBeUndefined();
+  });
+  test("pruneFinished never touches a proposed or executing action", () => {
+    action("cap_p", 100);
+    action("cap_x", 100);
+    const s = new CaptureStore(db);
+    s.claimAction("cap_x", 50);
+    expect(s.pruneFinished(10_000)).toBe(0);
+    expect(s.get("cap_p")?.state).toBe("proposed");
+    expect(s.get("cap_x")?.state).toBe("executing");
+  });
+  test("deleteFinishedAction deletes only a finished action in the expected state", () => {
+    action("cap_x", 100);
+    action("cap_p", 100);
+    const s = new CaptureStore(db);
+    s.claimAction("cap_x", 50);
+    // executing is not finished: refused even when it is the expected state
+    expect(s.deleteFinishedAction("cap_x", "executing")).toBe(false);
+    expect(s.finalizeAction("cap_x", "executed", {}, 60)).toBe(true);
+    // a stale expectation (the row moved on) deletes nothing
+    expect(s.deleteFinishedAction("cap_x", "failed")).toBe(false);
+    expect(s.deleteFinishedAction("cap_x", "executed")).toBe(true);
+    expect(s.get("cap_x")).toBeUndefined();
+    expect(s.deleteFinishedAction("cap_x", "executed")).toBe(false);
+    expect(s.deleteFinishedAction("cap_p", "proposed")).toBe(false);
+    expect(s.get("cap_p")?.state).toBe("proposed");
   });
 });

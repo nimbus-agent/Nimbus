@@ -20,12 +20,13 @@ import {
   captureStatus,
   getCapture,
   listCaptures,
+  purgeCapture,
   rejectCapture,
   revokeCapture,
   submitCapture,
 } from "./capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
-import { CaptureStore, REJECTED_RETENTION_MS } from "./capture-store.ts";
+import { CaptureStore, FINISHED_RETENTION_MS } from "./capture-store.ts";
 import { CaptureError } from "./capture-types.ts";
 
 const MCP = { clientId: "c-mcp", kind: "mcp" as const };
@@ -826,7 +827,7 @@ describe("reject", () => {
       .id;
     rejectCapture(deps, OWNER, a);
     expect(deps.store.get(a)).toBeDefined();
-    clock += REJECTED_RETENTION_MS + 1;
+    clock += FINISHED_RETENTION_MS + 1;
     const b = (await submitCapture(deps, MCP, { kind: "decision", payload: { statement: "b" } }))
       .id;
     rejectCapture(deps, OWNER, b);
@@ -1041,6 +1042,93 @@ describe("act door — submit (PR 3)", () => {
     await submitCapture(deps, MCP, ACT);
     expect(codeOf(() => revokeCapture(deps, OWNER, "cap_1"))).toBe("ERR_CAPTURE_STATE");
     expect(rejectCapture(deps, OWNER, "cap_1").state).toBe("rejected");
+  });
+  test("purge deletes a finished action and audits it without the payload", async () => {
+    await submitCapture(deps, MCP, ACT);
+    expect(deps.store.claimAction("cap_1", clock)).toBe(true);
+    expect(deps.store.finalizeAction("cap_1", "executed", { outcomeRef: "https://x" }, clock)).toBe(
+      true,
+    );
+    clock += 7;
+    expect(purgeCapture(deps, OWNER, "cap_1")).toEqual({ id: "cap_1", state: "purged" });
+    expect(deps.store.get("cap_1")).toBeUndefined();
+    const purges = auditRows().filter((r) => r.action_type === "capture.purge");
+    expect(purges).toHaveLength(1);
+    expect(purges[0]?.hitl_status).toBe("not_required");
+    expect(purges[0]?.session_id).toBe(OWNER.clientId);
+    expect(JSON.parse(purges[0]?.action_json ?? "{}")).toEqual({
+      captureId: "cap_1",
+      kind: "action",
+      actionType: "slack.message.post",
+      priorState: "executed",
+      outcome: "purged",
+    });
+    // Neither the agent's input nor its summary reaches the purge row.
+    expect(purges[0]?.action_json).not.toContain("hi");
+    expect(purges[0]?.action_json).not.toContain("why");
+    // A second purge finds nothing and writes nothing.
+    expect(codeOf(() => purgeCapture(deps, OWNER, "cap_1"))).toBe("ERR_CAPTURE_NOT_FOUND");
+    expect(auditRows().filter((r) => r.action_type === "capture.purge")).toHaveLength(1);
+  });
+  test("purge accepts every finished action state: failed, rejected, expired", async () => {
+    await submitCapture(deps, MCP, ACT); // cap_1 → failed
+    deps.store.claimAction("cap_1", clock);
+    deps.store.finalizeAction("cap_1", "failed", { errorCode: "ERR_ACTION_DISPATCH" }, clock);
+    await submitCapture(deps, MCP, ACT); // cap_2 → rejected
+    rejectCapture(deps, OWNER, "cap_2");
+    cap = onConfig({ kinds: ["note", "decision", "action"], actionMaxPending: 3 });
+    await submitCapture(deps, MCP, ACT); // cap_3 → expired
+    clock += 24 * 3_600_000;
+    listCaptures(deps, OWNER, {});
+    expect(deps.store.get("cap_3")?.state).toBe("expired");
+    for (const id of ["cap_1", "cap_2", "cap_3"]) {
+      expect(purgeCapture(deps, OWNER, id).state).toBe("purged");
+      expect(deps.store.get(id)).toBeUndefined();
+    }
+    const prior = auditRows()
+      .filter((r) => r.action_type === "capture.purge")
+      .map((r) => (JSON.parse(r.action_json) as { priorState: string }).priorState);
+    expect(prior).toEqual(["failed", "rejected", "expired"]);
+  });
+  test("purge refuses a proposed or executing action and leaves it untouched", async () => {
+    await submitCapture(deps, MCP, ACT);
+    expect(codeOf(() => purgeCapture(deps, OWNER, "cap_1"))).toBe("ERR_CAPTURE_STATE");
+    expect(deps.store.get("cap_1")?.state).toBe("proposed");
+    deps.store.claimAction("cap_1", clock);
+    expect(codeOf(() => purgeCapture(deps, OWNER, "cap_1"))).toBe("ERR_CAPTURE_STATE");
+    expect(deps.store.get("cap_1")?.state).toBe("executing");
+    expect(auditRows().filter((r) => r.action_type === "capture.purge")).toEqual([]);
+  });
+  test("purge refuses every non-action kind (revoke is their path)", async () => {
+    const n = (await submitCapture(deps, MCP, { kind: "note", payload: { body: "b" } })).id;
+    const d = (await submitCapture(deps, MCP, { kind: "decision", payload: { statement: "s" } }))
+      .id;
+    rejectCapture(deps, OWNER, d);
+    for (const id of [n, d]) {
+      expect(codeOf(() => purgeCapture(deps, OWNER, id))).toBe("ERR_CAPTURE_STATE");
+      expect(deps.store.get(id)).toBeDefined();
+    }
+  });
+  test("purge is owner-only and works with the sink switched off", async () => {
+    await submitCapture(deps, MCP, ACT);
+    rejectCapture(deps, OWNER, "cap_1");
+    expect(codeOf(() => purgeCapture(deps, MCP, "cap_1"))).toBe("ERR_CAPTURE_FORBIDDEN_CLIENT");
+    expect(deps.store.get("cap_1")?.state).toBe("rejected");
+    cap = resolveCaptureCapability({ ok: true, config: DEFAULT_MCP_SINK_CONFIG }, OPEN);
+    expect(cap.enabled).toBe(false);
+    expect(purgeCapture(deps, OWNER, "cap_1").state).toBe("purged");
+  });
+  test("purge that loses a race writes no audit row and reports the race", async () => {
+    await submitCapture(deps, MCP, ACT);
+    rejectCapture(deps, OWNER, "cap_1");
+    const real = deps.store;
+    const racing = Object.create(real) as CaptureStore;
+    racing.deleteFinishedAction = () => false;
+    expect(codeOf(() => purgeCapture({ ...deps, store: racing }, OWNER, "cap_1"))).toBe(
+      "ERR_CAPTURE_STATE",
+    );
+    expect(auditRows().filter((r) => r.action_type === "capture.purge")).toEqual([]);
+    expect(real.get("cap_1")?.state).toBe("rejected");
   });
   test("a mcp_action lock after submit freezes accept; reject still works (Review Focus 3)", async () => {
     await submitCapture(deps, MCP, ACT);

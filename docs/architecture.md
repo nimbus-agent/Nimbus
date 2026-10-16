@@ -1884,6 +1884,7 @@ yields no capture tool rather than a guessed one.
 | `captures.revoke` | owner | delete item and embeddings, clear payload; for an accepted capture, also the native row it still owns |
 | `captures.accept` | owner | write a proposal's native row (decision, term or link) |
 | `captures.reject` | owner | discard a proposal; needs no capability |
+| `captures.purge` | owner | delete a finished action row (`executed`/`failed`/`rejected`/`expired`) and its stored input; needs no capability; the action is not undone |
 | `capture.state` | `mcp` kind only | kind, state, `expiresAt`, `outcomeRef`, `errorCode` for ONE capture id (PR 3) |
 
 **Config.** `[mcp_sink]`: `enabled` (false), `kinds` (all four), `max_per_hour` (30, 1..1000),
@@ -2029,9 +2030,14 @@ human) and refuses otherwise, also when `captures.get` names no kind. That is a 
 raw local-owner socket client can accept and answer its own consent prompt, which is within the local-owner trust
 model.
 
-**Retention.** A rejected or expired action row is pruned 90 days after its decision (`REJECTED_RETENTION_MS`). An
-`executed` or `failed` row is never pruned and keeps the verbatim `input`; `revoke` refuses actions, so there is no
-owner deletion path for it yet (a follow-up).
+**Retention.** Every finished action row (`rejected`, `expired`, `executed` or `failed`) is pruned 90 days after its
+decision (`FINISHED_RETENTION_MS`), at boot and on each reject, together with rejected proposals; a `proposed` or
+`executing` row never is. `revoke` still refuses actions (V69 ties a NULL payload to the `revoked` state, which an
+action does not have), so the owner's earlier deletion path is `captures.purge` (2026-10-16): it deletes ONE finished
+action row in a transaction guarded on the state it read, with a `capture.purge` audit row (`not_required`) carrying
+the capture id, action type and prior state, never the payload. Stated bounds: purge does not undo the action, and the
+executor's own audit row for it, built through `redactAuditPayload`, stays, since the audit chain is append-only; an
+agent's `capture_status` on a purged id answers `ERR_CAPTURE_NOT_FOUND`.
 
 **Audit and ledger.** `capture.action.accept`, `capture.action.outcome` and `capture.action.expire` rows are built
 through `redactAuditPayload` (a connector-returned URL may carry a presigned secret) with `hitl_status =

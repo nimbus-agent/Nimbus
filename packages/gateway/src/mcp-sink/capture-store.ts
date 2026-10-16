@@ -9,8 +9,12 @@ import {
   isCaptureState,
 } from "./capture-types.ts";
 
-/** How long a rejected capture's row is kept before `pruneRejected` deletes it (spec § 5.2). */
-export const REJECTED_RETENTION_MS = 90 * 86_400_000;
+/**
+ * How long a FINISHED capture row — a rejected proposal, or an action that was rejected, expired,
+ * executed or failed — is kept after its decision before `pruneFinished` deletes it (spec § 5.2).
+ * A live note, an accepted capture and a revoked row are never pruned.
+ */
+export const FINISHED_RETENTION_MS = 90 * 86_400_000;
 
 export type NewCaptureRow = Omit<
   CaptureRow,
@@ -276,11 +280,27 @@ export class CaptureStore {
     return ids;
   }
 
-  pruneRejected(cutoffMs: number): number {
+  pruneFinished(cutoffMs: number): number {
     return dbRun(
       this.db,
-      "DELETE FROM capture WHERE state IN ('rejected', 'expired') AND COALESCE(decided_at, created_at) < ?",
+      `DELETE FROM capture WHERE state IN ('rejected', 'expired', 'executed', 'failed')
+       AND COALESCE(decided_at, created_at) < ?`,
       [cutoffMs],
     ).changes;
+  }
+
+  /**
+   * The owner's purge of one FINISHED action row (`captures.purge`): guarded on the state the
+   * caller just read, so a row that moved on since is left alone and the caller reports the race.
+   */
+  deleteFinishedAction(id: string, expected: CaptureState): boolean {
+    return (
+      dbRun(
+        this.db,
+        `DELETE FROM capture WHERE id = ? AND kind = 'action' AND state = ?
+         AND state IN ('executed', 'failed', 'rejected', 'expired')`,
+        [id, expected],
+      ).changes === 1
+    );
   }
 }

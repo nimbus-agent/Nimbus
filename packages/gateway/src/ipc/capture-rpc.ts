@@ -12,6 +12,7 @@ import {
   captureStatus,
   getCapture,
   listCaptures,
+  purgeCapture,
   rejectCapture,
   revokeCapture,
   submitCapture,
@@ -143,6 +144,7 @@ export async function dispatchCaptureRpc(
               : undefined,
           ),
         "captures.reject": (p, c) => rejectCapture(c.gate, c.caller, idParam(p)),
+        "captures.purge": (p, c) => purgeCapture(c.gate, c.caller, idParam(p)),
       },
     );
   } catch (e) {

@@ -18,7 +18,7 @@ import {
   writeCaptureNative,
 } from "./capture-native.ts";
 import type { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
-import { type CaptureStore, REJECTED_RETENTION_MS } from "./capture-store.ts";
+import { type CaptureStore, FINISHED_RETENTION_MS } from "./capture-store.ts";
 import {
   type ActDeps,
   type ActionPayload,
@@ -43,7 +43,7 @@ import {
  * Invariant I28 — the ONE door by which content from an MCP client enters Nimbus (spec § 5).
  * Submit takes all four kinds: a note goes live at once, a decision/term/link is stored PROPOSED.
  * Submit runs a FIXED order; read it top to bottom in `submitCapture`. Static D32(b) confines the
- * callers of `submitCapture`/`revokeCapture`/`acceptCapture`/`rejectCapture` to
+ * callers of `submitCapture`/`revokeCapture`/`acceptCapture`/`rejectCapture`/`purgeCapture` to
  * `ipc/capture-rpc.ts`.
  */
 export const CAPTURE_ITEM_SERVICE = "nimbus";
@@ -472,6 +472,83 @@ export function revokeCapture(
   return { id, state: "revoked" };
 }
 
+// ---- purge (an action row's owner deletion path) -------------------------------------------------
+
+/** Action states with no further transition: the only ones `purgeCapture` deletes. */
+const PURGEABLE_ACTION_STATES: ReadonlySet<CaptureState> = new Set([
+  "executed",
+  "failed",
+  "rejected",
+  "expired",
+]);
+
+/**
+ * Delete a FINISHED action capture's row, and with it the agent's verbatim input. Revoke cannot do
+ * this: an action has no `revoked` state and V69 ties a NULL payload to that state. What it does
+ * NOT do, by construction: undo the action (it already ran, or never will), or remove the executor's
+ * own redacted audit row for it — the audit chain is append-only. No capability check, like reject:
+ * the owner can always delete what is stored about them.
+ */
+export function purgeCapture(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+  idRaw: unknown,
+): { id: string; state: "purged" } {
+  requireOwner(caller);
+  const id = requireId(idRaw);
+  const row = deps.store.get(id);
+  if (row === undefined) throw new CaptureError("ERR_CAPTURE_NOT_FOUND", `no capture ${id}`);
+  if (row.kind !== "action") {
+    throw new CaptureError(
+      "ERR_CAPTURE_STATE",
+      `capture ${id} is a ${row.kind}; only an action is purged — use \`nimbus captures revoke\``,
+    );
+  }
+  if (!PURGEABLE_ACTION_STATES.has(row.state)) {
+    throw new CaptureError(
+      "ERR_CAPTURE_STATE",
+      row.state === "proposed"
+        ? `capture ${id} is proposed; reject it with \`nimbus captures reject\` first`
+        : `capture ${id} is ${row.state}; only a finished action can be purged`,
+    );
+  }
+  const now = deps.now();
+  let won = false;
+  deps.db.transaction(() => {
+    won = deps.store.deleteFinishedAction(id, row.state);
+    if (!won) return;
+    appendAuditEntry(deps.db, {
+      actionType: "capture.purge",
+      hitlStatus: "not_required",
+      // Never the payload: removing it is the point.
+      actionJson: JSON.stringify({
+        captureId: id,
+        kind: row.kind,
+        actionType: actionTypeOf(row),
+        priorState: row.state,
+        outcome: "purged",
+      }),
+      timestamp: now,
+      sessionId: caller.clientId,
+    });
+  })();
+  if (!won) throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
+  return { id, state: "purged" };
+}
+
+/** The stored action type, or null when the payload does not parse as one (never thrown). */
+function actionTypeOf(row: CaptureRow): string | null {
+  if (row.payloadJson === null) return null;
+  try {
+    const p = JSON.parse(row.payloadJson) as unknown;
+    const t =
+      typeof p === "object" && p !== null ? (p as Record<string, unknown>)["actionType"] : null;
+    return typeof t === "string" ? t : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---- accept / reject (spec § 5.2) ---------------------------------------------------------------
 
 /** Re-validate a stored payload: the stored JSON is already rebuilt, so this only re-types it. */
@@ -598,7 +675,7 @@ export function rejectCapture(
     });
   })();
   if (!won) throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
-  deps.store.pruneRejected(now - REJECTED_RETENTION_MS);
+  deps.store.pruneFinished(now - FINISHED_RETENTION_MS);
   return { id, state: "rejected" };
 }
 

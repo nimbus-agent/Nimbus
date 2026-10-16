@@ -1915,10 +1915,11 @@ export function checkRunGrantWriters(files: readonly FileEntry[]): Violation[] {
   return out;
 }
 
-// (b) The four gate entry points are CALLED only from ipc/capture-rpc.ts and DEFINED only in
+// (b) The five gate entry points are CALLED only from ipc/capture-rpc.ts and DEFINED only in
 //     capture-gate.ts. Any other mention — a call or an import (aliased or not) — is a violation, so
 //     a second door cannot be opened by importing the function under another name.
-const D32_GATE_FN_RE = /\b(?:submitCapture|acceptCapture|rejectCapture|revokeCapture)\b/g;
+const D32_GATE_FN_RE =
+  /\b(?:submitCapture|acceptCapture|rejectCapture|revokeCapture|purgeCapture)\b/g;
 const D32_GATE_ALLOWED: readonly string[] = [
   "packages/gateway/src/ipc/capture-rpc.ts",
   "packages/gateway/src/mcp-sink/capture-gate.ts",

@@ -18,6 +18,23 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-16 — S3 capture sink: the owner can delete a finished action's stored input (`nimbus captures purge`).**
+  Closes the act door's "no owner deletion path" follow-up. An `executed` or `failed` action row kept
+  the agent's verbatim `input` with no time limit: retention pruned only rejected and expired rows,
+  and `revoke` refuses actions, because V69 ties a NULL payload to the `revoked` state an action does
+  not have. `nimbus captures purge <id>` (new owner method `captures.purge`, LAN-forbidden by
+  namespace, not on the Tauri allowlist) deletes ONE finished action row, `executed`, `failed`,
+  `rejected` or `expired`, in a transaction guarded on the state it read, and appends a
+  `capture.purge` audit row (`not_required`) naming the capture, its action type and prior state,
+  never the payload. It refuses a `proposed` action (reject it first), an `executing` one and every
+  non-action kind (`revoke` is their path), needs no TTY, and works with the sink switched off.
+  Retention widens too: `executed` and `failed` rows are now pruned 90 days after their decision like
+  rejected and expired ones (`pruneRejected`/`REJECTED_RETENTION_MS` renamed `pruneFinished`/
+  `FINISHED_RETENTION_MS`). Static D32(b) now confines `purgeCapture` as well. No migration, no new
+  invariant, no egress class. **Bounds:** purge does not undo the action; the executor's own
+  redacted audit row for it stays, since the audit chain is append-only; an agent's `capture_status`
+  on a purged id answers `ERR_CAPTURE_NOT_FOUND`.
+
 - **2026-10-16 — S3: extension runtime PR 2 of 4 — run grants (schema V70, static D33(b)/(c), `extension.run` in I2).**
   An installed extension can now be approved to RUN, separately from having been approved to be
   installed. `nimbus extension approve <id>` (TTY only, no `--yes`; `NIMBUS_SCRIPT_CONSENT_SOURCE`
