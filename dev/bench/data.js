@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792158475519,
+  "lastUpdate": 1792161027252,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3830b74709d694619d44ed0dfe3735ff6507ebfd",
-          "message": "chore: release main (#977)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.12.1</summary>\n\n##\n[1.12.1](https://github.com/nimbus-agent/Nimbus/compare/v1.12.0...v1.12.1)\n(2026-07-30)\n\n\n### Bug Fixes\n\n* **db:** finalize prepared statements so close() releases the database\nfile ([#970](https://github.com/nimbus-agent/Nimbus/issues/970))\n([fa4aca2](https://github.com/nimbus-agent/Nimbus/commit/fa4aca2602a79cd64349c3e003ca01708f042976))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-30T14:11:05Z",
-          "tree_id": "bf812adfadd2790f47a545c4b2d7db2001e975a4",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/3830b74709d694619d44ed0dfe3735ff6507ebfd"
-        },
-        "date": 1785421349726,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.79400460000363,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.88760050000127,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 278.93068250000067,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "64ab98286e87b20500bf322bacd04c8cc136e005",
+          "message": "feat(captures): batch accept proposed decisions, terms and links (#1668)\n\nThis is the second capture-sink follow-up, after #1667 (purge). It\ncloses the \"batch accept\" item that the act door, #1660, left unshipped.\n\n## What ships\n\n`nimbus captures accept --all [--kind decision|term|link] [--json]`\n\n- **Scope.** It accepts every `proposed` decision, term and link, or a\nsingle kind with `--kind`. It handles at most 200 per run, the\n`captures.list` cap, oldest first, and it says so when more are waiting.\n- **One confirmation, terminal only, no `--yes`.** It lists each\nproposal (id, kind, client label, title, with control characters\nstripped), then asks `Accept these N proposal(s)? [y/N]`. Any answer\nother than `y`/`yes` accepts nothing and exits 1. A single native accept\nneeds no TTY; accepting many agent-written claims at once is meant to\nstay a deliberate human act.\n- **A CLI loop, with one small gateway change** (below). It runs over\nthe existing `captures.list` and `captures.accept`, so every proposal\nstill goes through the gateway's own checks: still proposed, referenced\nitems still exist, superseded, link unresolved.\n- **Errors.** A refusal prints `[refused] <id>: …` for that id and the\nrun continues. It exits 0 only if every proposal was accepted; an empty\nqueue also exits 0.\n- **Actions are never batched.** `--kind action` is refused before any\ngateway call. Action rows are also filtered out on the client in case\nthe gateway returns one, so each action still gets its own TTY guard and\nthe executor's HITL prompt.\n- **`--json`.** stdout carries one `{accepted, total, more, results}`\nobject; the listing and the prompt go to stderr.\n- **Fail-closed defaults.** `runCapturesWith` with no TTY information,\nor no `ask` function, accepts nothing.\n\nThe one gateway change: `captures.list` gains an optional `order: \"asc\"`\n(validated, constant SQL, default unchanged), so that when more than 200\nof one kind wait, the run takes the 200 OLDEST, not the 200 newest (a\nCodeRabbit finding). No new IPC method, no migration, no invariant. The\ndocs are updated in `cli-reference`, `architecture`, `roadmap`, the\nCHANGELOG, `help`, and CLAUDE.md / GEMINI.md, where the \"not shipped\"\nline drops batch accept.\n\n## Tests\n\nA new file, `captures-accept-all.test.ts`, with 22 tests:\n- argument parsing, including usage errors;\n- oldest-first order, with one prompt and one list call per native kind;\n- every non-yes answer;\n- both TTY halves being missing;\n- the fail-closed defaults;\n- `--kind action`;\n- an action row the gateway returns anyway; this test was confirmed to\nfail with the client-side filter removed;\n- a mixed run, which continues and exits 1;\n- a malformed accept result;\n- the empty queue;\n- more than 200 waiting;\n- control-character stripping;\n- the shape of the `--json` output.\n\n`preflight:fast` passed. All 3,443 tests under\n`packages/cli/src/commands` and `packages/cli/src/mcp` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus captures accept --all` to accept up to 200 proposed\ndecisions, terms, and links, oldest first, with an optional kind filter.\n* Batch acceptance requires an interactive confirmation. The command\nreports individual failures and continues processing; actions are not\neligible for batch acceptance.\n* **Documentation**\n* Updated CLI help and reference materials to explain batch acceptance,\nincluding its confirmation and output behavior. Also updated the\nchangelog and architecture and roadmap documentation to reflect\navailability and limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-16T14:15:47Z",
+          "tree_id": "64e4f8eabc97165f06ada98e2f8bbc6a01c4a838",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/64ab98286e87b20500bf322bacd04c8cc136e005"
+        },
+        "date": 1792161021348,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 276.166944450005,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 276.98771750000014,
             "unit": "ms"
           }
         ]
