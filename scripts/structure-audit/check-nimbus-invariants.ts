@@ -1866,6 +1866,55 @@ export function checkRunGrantTableConfinement(files: readonly FileEntry[]): Viol
   );
 }
 
+// (c) D33(b) confines the TABLE; this confines who may CREATE or DELETE a grant through the store.
+//     `upsertRunGrant` is named only by its definition and `extensions/approve-run.ts` (which calls
+//     it after the owner's `extension.run` approval); `deleteRunGrant` additionally by
+//     `automation/extension-store.ts` (uninstall drops the grant with the row). Any other mention — a
+//     call or an import, aliased or not — is a violation, so a second door cannot be opened by
+//     importing the function under another name. Comments and string literals are stripped first;
+//     test files and anything outside packages/gateway/src/ are not scanned. Stated bound: a
+//     dynamically composed call (`store["upsert" + "RunGrant"]`, a namespace import called through a
+//     computed key) evades a text scan, and a second call INSIDE an allow-listed file is exempt
+//     whole-file; capability confinement is the real defense, as with D32(d).
+const D33_UPSERT_RE = /\bupsertRunGrant\b/g;
+const D33_UPSERT_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/run-grant-store.ts",
+  "packages/gateway/src/extensions/approve-run.ts",
+];
+const D33_DELETE_RE = /\bdeleteRunGrant\b/g;
+const D33_DELETE_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/run-grant-store.ts",
+  "packages/gateway/src/extensions/approve-run.ts",
+  "packages/gateway/src/automation/extension-store.ts",
+];
+
+export function checkRunGrantWriters(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const code = stripStringLiterals(stripComments(f.contents));
+    const original = f.contents.split("\n");
+    const scans: Array<[RegExp, readonly string[]]> = [
+      [D33_UPSERT_RE, D33_UPSERT_ALLOWED],
+      [D33_DELETE_RE, D33_DELETE_ALLOWED],
+    ];
+    for (const [re, allowed] of scans) {
+      if (allowed.includes(f.relPath)) continue;
+      for (const m of code.matchAll(re)) {
+        const line = code.slice(0, m.index).split("\n").length;
+        out.push({
+          rule: "run-grant-writers",
+          file: f.relPath,
+          line,
+          snippet: (original[line - 1] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // (b) The four gate entry points are CALLED only from ipc/capture-rpc.ts and DEFINED only in
 //     capture-gate.ts. Any other mention — a call or an import (aliased or not) — is a violation, so
 //     a second door cannot be opened by importing the function under another name.
@@ -2709,7 +2758,7 @@ export const RULE_ANCHORS: readonly string[] = [
   // not capture-validate.ts) and (e) reads then permits. Without it, both rules would report clean
   // while scanning nothing the moment iterateSourceFiles() stopped loading mcp-sink/.
   "packages/gateway/src/mcp-sink/capture-gate.ts",
-  "packages/gateway/src/extensions/approve-run.ts", // D33(b) — scanned; the run-grant store's main caller
+  "packages/gateway/src/extensions/approve-run.ts", // D33(b)(c) — scanned; the run-grant store's main caller
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -3005,6 +3054,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D33(b) extension_run_grant reached outside extensions/run-grant-store.ts — a run grant could be created without the owner's extension.run approval: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkRunGrantWriters(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D33(c) a run-grant writer (upsertRunGrant/deleteRunGrant) named outside the store and the approve/revoke path — a run grant could be created or removed without the owner's extension.run approval: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

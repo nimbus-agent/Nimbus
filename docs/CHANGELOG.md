@@ -18,7 +18,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-16 — S3: extension runtime PR 2 of 4 — run grants (schema V70, static D33(b), `extension.run` in I2).**
+- **2026-10-16 — S3: extension runtime PR 2 of 4 — run grants (schema V70, static D33(b)/(c), `extension.run` in I2).**
   An installed extension can now be approved to RUN, separately from having been approved to be
   installed. `nimbus extension approve <id>` (TTY only, no `--yes`; `NIMBUS_SCRIPT_CONSENT_SOURCE`
   cannot answer it) asks under the new `extension.run` action type, now a member of the I2 frozen
@@ -38,7 +38,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `no_grant`, `grant_stale`, `ready`). Two new methods, `extension.approveRun` / `extension.revokeRun`,
   are CLI-only, LAN-forbidden and refused in a demo root; the Tauri allowlist stays at 107. New static
   rule **D33(b)** confines the `extension_run_grant` identifier to its store and DDL file (the same
-  stated bound as D32(a)). Removing an extension deletes its grant explicitly rather than relying on
+  stated bound as D32(a)), and **D33(c)** confines who may create or delete a grant: `upsertRunGrant`
+  is named only by the store and `extensions/approve-run.ts`, `deleteRunGrant` additionally by
+  `automation/extension-store.ts`, aliased imports included (stated bound: a dynamically composed call
+  evades a text scan). Removing an extension deletes its grant explicitly rather than relying on
   the table's `ON DELETE CASCADE`, which fires only on a connection with foreign keys enabled.
   `extension.run` is also classified `denied` in the capture sink's proposability table (140 HITL
   types: 29 proposable, 111 denied), so an MCP agent cannot propose it.

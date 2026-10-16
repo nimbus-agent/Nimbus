@@ -1805,7 +1805,11 @@ for `extension list` / `info`.
 the grant explicitly rather than relying on the `ON DELETE CASCADE` (it fires only on a connection with
 foreign keys enabled). Static rule **D33(b)** confines the `extension_run_grant` identifier to that store
 and its DDL file (`index/extension-run-grant-v70-sql.ts`); its bound is the one D32(a) states, that a
-dynamically composed identifier evades a text scan and capability confinement is the real defense. The
+dynamically composed identifier evades a text scan and capability confinement is the real defense.
+**D33(c)** confines who may create or delete a grant: `upsertRunGrant` is named only by the store and
+`extensions/approve-run.ts`, `deleteRunGrant` additionally by `automation/extension-store.ts` (an aliased
+import is caught; comments and test files are not scanned), with the same stated bound that a dynamically
+composed call evades a text scan. The
 IPC methods `extension.approveRun` / `extension.revokeRun` are CLI-only, LAN-forbidden, refused in a demo
 root and absent from the Tauri allowlist. **Nothing spawns an extension yet**; the runtime, the
 `running` state and model access (`--model`) are later PRs, and `model_access` is always 0.

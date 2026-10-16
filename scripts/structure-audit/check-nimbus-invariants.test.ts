@@ -29,6 +29,7 @@ import {
   checkRemoteVlmConfinement,
   checkRunConfinedConfinement,
   checkRunGrantTableConfinement,
+  checkRunGrantWriters,
   checkSavedToolAccessorConfinement,
   checkShareConsentBrokerConfinement,
   checkSharePublishConfinement,
@@ -3137,6 +3138,78 @@ describe("D33(b) — extension_run_grant is named only by its store and its DDL"
           "FROM extension_run_grant_v2; // FROM extension_run_grant",
         ),
         file("packages/gateway/src/y.test.ts", "FROM extension_run_grant"),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("D33(c) — only the store and the approve/revoke path create or delete a run grant", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+
+  test("allows the store, approve-run.ts, and (delete only) extension-store.ts", () => {
+    expect(
+      checkRunGrantWriters([
+        file(
+          "packages/gateway/src/extensions/run-grant-store.ts",
+          "export function upsertRunGrant() {}\nexport function deleteRunGrant() {}",
+        ),
+        file(
+          "packages/gateway/src/extensions/approve-run.ts",
+          'import { deleteRunGrant, upsertRunGrant } from "./run-grant-store.ts";\nupsertRunGrant(db, row);\ndeleteRunGrant(db, id);',
+        ),
+        file(
+          "packages/gateway/src/automation/extension-store.ts",
+          'import { deleteRunGrant } from "../extensions/run-grant-store.ts";\ndeleteRunGrant(db, id);',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("FAILS on an upsert call from anywhere else", () => {
+    const v = checkRunGrantWriters([
+      file("packages/gateway/src/ipc/automation-rpc.ts", "upsertRunGrant(db, row);"),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("run-grant-writers");
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("FAILS on an upsert from extension-store.ts, which may only delete", () => {
+    expect(
+      checkRunGrantWriters([
+        file("packages/gateway/src/automation/extension-store.ts", "upsertRunGrant(db, row);"),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("FAILS on a delete call from anywhere else", () => {
+    expect(
+      checkRunGrantWriters([
+        file("packages/gateway/src/ipc/automation-rpc.ts", "deleteRunGrant(db, id);"),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("FAILS on an aliased import", () => {
+    const v = checkRunGrantWriters([
+      file(
+        "packages/gateway/src/ipc/automation-rpc.ts",
+        'import { upsertRunGrant as grant } from "../extensions/run-grant-store.ts";\ngrant(db, row);',
+      ),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("does not match a comment, a look-alike identifier, a test file, or a non-gateway file", () => {
+    expect(
+      checkRunGrantWriters([
+        file(
+          "packages/gateway/src/x.ts",
+          "// upsertRunGrant(db, row)\n/* deleteRunGrant */\nconst upsertRunGrants = 1;",
+        ),
+        file("packages/gateway/src/y.test.ts", "upsertRunGrant(db, row); deleteRunGrant(db, id);"),
+        file("scripts/z.ts", "upsertRunGrant(db, row);"),
       ]),
     ).toEqual([]);
   });

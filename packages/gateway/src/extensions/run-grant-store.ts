@@ -5,7 +5,9 @@ import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 
 /**
  * The ONLY code that names `extension_run_grant` (static rule D33(b)). A grant records exactly what
- * the owner approved through the `extension.run` HITL gate — nothing else may create one.
+ * the owner approved through the `extension.run` HITL gate — nothing else may create one: static
+ * rule D33(c) confines `upsertRunGrant` to this file and `approve-run.ts`, and `deleteRunGrant` to
+ * those two and `automation/extension-store.ts`.
  */
 export const RUN_GRANT_SCHEMA_VERSION = 70;
 
