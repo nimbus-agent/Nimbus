@@ -103,35 +103,48 @@ function Body(props: {
   // A gateway refusal can quote agent text, so the error goes through showInvisible too.
   const failure =
     props.error === null ? null : `Could not load captures: ${showInvisible(props.error)}.`;
-  if (failure !== null && props.list === null) {
-    return (
+  // The list pane and the detail pane are INDEPENDENT requests: a failed, loading or empty list
+  // never suppresses a URL-selected capture, whose own `captures.get` may still succeed.
+  return (
+    <div className="grid grid-cols-[minmax(220px,1fr)_2fr] gap-4">
+      <ListPane list={props.list} failure={failure} selectedId={props.selectedId} />
+      {props.selectedId !== null && <CaptureDetail key={props.selectedId} id={props.selectedId} />}
+    </div>
+  );
+}
+
+function ListPane(props: {
+  readonly list: List | null;
+  readonly failure: string | null;
+  readonly selectedId: string | null;
+}): ReactNode {
+  if (props.list === null) {
+    return props.failure === null ? (
+      <p className="text-sm text-[var(--color-fg-muted)]">Loading…</p>
+    ) : (
       <p role="alert" className="text-sm">
-        {`${failure} From a terminal: nimbus captures list`}
+        {`${props.failure} From a terminal: nimbus captures list`}
       </p>
     );
   }
-  if (props.list === null) return <p className="text-sm text-[var(--color-fg-muted)]">Loading…</p>;
   return (
     <div className="space-y-2">
       {/* useIpcQuery keeps the last good list after a failed refresh: say the view may be stale. */}
-      {failure !== null && (
-        <p role="alert" className="text-xs">{`${failure} Showing the last list that loaded.`}</p>
+      {props.failure !== null && (
+        <p
+          role="alert"
+          className="text-xs"
+        >{`${props.failure} Showing the last list that loaded.`}</p>
       )}
-      <div className="grid grid-cols-[minmax(220px,1fr)_2fr] gap-4">
-        {props.list.captures.length === 0 ? (
-          <p className="text-sm">{EMPTY}</p>
-        ) : (
-          <CaptureList
-            captures={props.list.captures}
-            selectedId={props.selectedId}
-            nowMs={Date.now()}
-          />
-        )}
-        {/* A URL-selected capture stays visible when the current filters list nothing. */}
-        {props.selectedId !== null && (
-          <CaptureDetail key={props.selectedId} id={props.selectedId} />
-        )}
-      </div>
+      {props.list.captures.length === 0 ? (
+        <p className="text-sm">{EMPTY}</p>
+      ) : (
+        <CaptureList
+          captures={props.list.captures}
+          selectedId={props.selectedId}
+          nowMs={Date.now()}
+        />
+      )}
     </div>
   );
 }

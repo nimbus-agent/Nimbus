@@ -287,6 +287,15 @@ describe("Captures page — review fixes", () => {
     expect(h.methods).toContain("captures.get");
   });
 
+  it("a URL-selected capture still loads when the list itself fails with no data", () => {
+    h.listData = null;
+    h.listError = "list unavailable";
+    ui(`/captures?id=${encodeURIComponent(fixture.get.id)}`);
+    expect(screen.getByRole("alert").textContent).toContain("Could not load captures");
+    expect(screen.getByRole("article", { name: "Capture" })).toBeTruthy();
+    expect(h.methods).toContain("captures.get");
+  });
+
   it("an error string is shown with invisible characters escaped", () => {
     // Written as a code point: a raw U+202E in this file is exactly what a reviewer cannot see.
     const rlo = String.fromCodePoint(0x202e);
