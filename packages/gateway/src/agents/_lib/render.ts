@@ -5,6 +5,7 @@ import {
   changelogDisclosures,
   decisionsAgentDisclosure,
   glossaryProvenanceDisclosure,
+  negotiateAgentActionDisclosures,
   negotiateDecisionsDisclosure,
   negotiateIncidentsDisclosure,
   negotiateNotComputedSection,
@@ -875,6 +876,7 @@ function renderNegotiateTickets(t: NegotiateTickets | null): string {
     "## Tickets",
     "",
     `- ${String(t.opened)} opened, ${String(t.closedByAuthoredPr)} closed by an authored PR`,
+    ...negotiateAgentActionDisclosures("Tickets", t.agentActions).map((d) => d.line),
   ];
   // Cites the OPENED issues only — see `NegotiateTickets.evidence` for why the
   // closed-by-authored-PR hop is deliberately not cited here.
@@ -971,6 +973,7 @@ function renderNegotiateWriting(w: NegotiateWriting | null): string {
     "## Writing",
     "",
     `- ${String(w.docs)} doc(s), ${String(w.notes)} note(s), ${String(w.messages)} message(s) authored`,
+    ...negotiateAgentActionDisclosures("Writing", w.agentActions).map((d) => d.line),
   ];
   lines.push(...renderNegotiateEvidence(w.evidence));
   return lines.join("\n");

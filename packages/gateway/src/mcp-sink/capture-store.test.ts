@@ -216,6 +216,27 @@ describe("action queries (PR 3)", () => {
       decidedAt: 60,
     });
   });
+  test("executedActions: executed rows only, type + result URL + finish time, never the input", () => {
+    action("cap_x", 100);
+    action("cap_f", 100);
+    action("cap_p", 100);
+    action("cap_bad", 100);
+    const s = new CaptureStore(db);
+    db.run(
+      `UPDATE capture SET payload_json = '{"actionType":"slack.message.post","input":{"text":"secret"}}'
+        WHERE id IN ('cap_x', 'cap_f', 'cap_p')`,
+    );
+    db.run("UPDATE capture SET payload_json = 'not json' WHERE id = 'cap_bad'");
+    for (const id of ["cap_x", "cap_f", "cap_bad"]) s.claimAction(id, 50);
+    s.finalizeAction("cap_x", "executed", { outcomeRef: "https://x" }, 60);
+    s.finalizeAction("cap_f", "failed", { errorCode: "ERR_ACTION_DISPATCH" }, 61);
+    s.finalizeAction("cap_bad", "executed", {}, 62);
+    // The corrupt payload is skipped, not thrown; failed and proposed rows never appear.
+    expect(s.executedActions()).toEqual([
+      { actionType: "slack.message.post", outcomeRef: "https://x", decidedAt: 60 },
+    ]);
+    expect(JSON.stringify(s.executedActions())).not.toContain("secret");
+  });
   test("failInterruptedActions turns executing into failed/ERR_ACTION_INTERRUPTED", () => {
     action("cap_a", 100);
     const s = new CaptureStore(db);

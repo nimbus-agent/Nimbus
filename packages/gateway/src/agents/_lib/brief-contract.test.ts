@@ -105,7 +105,12 @@ describe("contractViolations", () => {
     // disclaimer onto a lane that DID run, which is the "null is not 0" rule backwards.
     const brief = {
       ...allNullLaneBrief(),
-      tickets: { opened: 0, closed: 0 },
+      tickets: {
+        opened: 0,
+        closedByAuthoredPr: 0,
+        evidence: { refs: [], total: 0 },
+        agentActions: { excluded: 0, unmatched: 0 },
+      },
     } as unknown as NegotiateBrief;
     // Six remaining null lanes, plus the unconditional window clause.
     expect(requiredPhrases(brief)).toHaveLength(7);

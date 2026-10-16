@@ -24,6 +24,26 @@ const LIST_ORDER_SQL: Readonly<Record<CaptureListOrder, string>> = {
   desc: "created_at DESC, id DESC",
 };
 
+/** What `executedActions` exposes of an executed action: no input, no summary. */
+export type ExecutedActionRef = {
+  readonly actionType: string;
+  readonly outcomeRef: string | null;
+  readonly decidedAt: number;
+};
+
+/** A stored action payload's `actionType`, or null when it does not parse as one (never throws). */
+export function actionTypeOfPayload(payloadJson: string | null): string | null {
+  if (payloadJson === null) return null;
+  try {
+    const p = JSON.parse(payloadJson) as unknown;
+    const t =
+      typeof p === "object" && p !== null ? (p as Record<string, unknown>)["actionType"] : null;
+    return typeof t === "string" ? t : null;
+  } catch {
+    return null;
+  }
+}
+
 export type NewCaptureRow = Omit<
   CaptureRow,
   "nativeRef" | "decidedAt" | "outcomeRef" | "errorCode"
@@ -294,6 +314,32 @@ export class CaptureStore {
       [nowMs],
     );
     return ids;
+  }
+
+  /**
+   * Every retained EXECUTED action's type, result URL and finish time — never its input. Read by
+   * `nimbus negotiate`, which must not credit an artifact an MCP agent caused to the owner whose
+   * credentials it ran on. A payload that does not parse is skipped, not thrown: one bad row must
+   * not take a brief down (and `json_extract` would RAISE in SQL, which is why this parses in TS).
+   */
+  executedActions(): ExecutedActionRef[] {
+    const rows = this.db
+      .query(
+        `SELECT payload_json, outcome_ref, decided_at FROM capture
+          WHERE kind = 'action' AND state = 'executed' ORDER BY decided_at, id`,
+      )
+      .all() as Array<{
+      payload_json: string | null;
+      outcome_ref: string | null;
+      decided_at: number | null;
+    }>;
+    const out: ExecutedActionRef[] = [];
+    for (const r of rows) {
+      const actionType = actionTypeOfPayload(r.payload_json);
+      if (actionType === null || r.decided_at === null) continue;
+      out.push({ actionType, outcomeRef: r.outcome_ref, decidedAt: r.decided_at });
+    }
+    return out;
   }
 
   pruneFinished(cutoffMs: number): number {

@@ -477,6 +477,7 @@ describe("renderNegotiate", () => {
         tickets: {
           opened: 3,
           closedByAuthoredPr: 0,
+          agentActions: { excluded: 0, unmatched: 0 },
           evidence: {
             refs: [
               { title: "Broken link", url: "not a url" },

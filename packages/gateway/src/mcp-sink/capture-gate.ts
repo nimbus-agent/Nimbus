@@ -19,6 +19,7 @@ import {
 } from "./capture-native.ts";
 import type { CaptureAttemptLimiter, CaptureRefusalCounter } from "./capture-rate-limit.ts";
 import {
+  actionTypeOfPayload,
   type CaptureListOrder,
   type CaptureStore,
   FINISHED_RETENTION_MS,
@@ -528,7 +529,7 @@ export function purgeCapture(
       actionJson: JSON.stringify({
         captureId: id,
         kind: row.kind,
-        actionType: actionTypeOf(row),
+        actionType: actionTypeOfPayload(row.payloadJson),
         priorState: row.state,
         outcome: "purged",
       }),
@@ -538,19 +539,6 @@ export function purgeCapture(
   })();
   if (!won) throw new CaptureError("ERR_CAPTURE_STATE", `capture ${id} changed state concurrently`);
   return { id, state: "purged" };
-}
-
-/** The stored action type, or null when the payload does not parse as one (never thrown). */
-function actionTypeOf(row: CaptureRow): string | null {
-  if (row.payloadJson === null) return null;
-  try {
-    const p = JSON.parse(row.payloadJson) as unknown;
-    const t =
-      typeof p === "object" && p !== null ? (p as Record<string, unknown>)["actionType"] : null;
-    return typeof t === "string" ? t : null;
-  } catch {
-    return null;
-  }
 }
 
 // ---- accept / reject (spec § 5.2) ---------------------------------------------------------------

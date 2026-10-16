@@ -11,6 +11,13 @@ import {
   detectMissingRelationToEntityType,
   remediationForEntityType,
 } from "./_lib/gap-notes.ts";
+import {
+  type AgentActionExclusions,
+  type AgentActionLane,
+  agentActionExclusions,
+  agentActionsSummary,
+  NO_AGENT_ACTIONS,
+} from "./_lib/negotiate-agent-actions.ts";
 import type {
   NegotiateAuthoredPrs,
   NegotiateBrief,
@@ -493,24 +500,44 @@ function laneReviewedPrs(db: Database, personId: string, sinceMs: number): Negot
 }
 
 /**
+ * The agent-caused exclusion clause: `<column>` is not one of the ids bound as ONE JSON-array
+ * parameter (`json_each`), so the id list never becomes SQL text and an empty list is a no-op.
+ * `column` is always a fixed identifier from this file, never caller data.
+ */
+function notExcluded(column: "id" | "i.id"): string {
+  return `${column} NOT IN (SELECT value FROM json_each(?))`;
+}
+
+/**
  * `opened`: `person --opened--> issue` (graph_relation), joined back to `item` for the
  * window cutoff. `closedByAuthoredPr`: `person --authored--> pr --resolves--> issue`,
  * `DISTINCT`-counted on the issue side so one PR resolving multiple issues (or, in
  * principle, multiple authored PRs resolving the same issue) does not double-count.
  * Windowed on the PR's `modified_at`, matching `laneAuthoredPrs`.
  */
-function laneTickets(db: Database, personId: string, sinceMs: number): NegotiateTickets {
+function laneTickets(
+  db: Database,
+  personId: string,
+  sinceMs: number,
+  agent: AgentActionExclusions[AgentActionLane] = NO_AGENT_ACTIONS.tickets,
+): NegotiateTickets {
   const cutoff = Date.now() - sinceMs;
-  const opened = db
-    .query(
-      `SELECT COUNT(*) AS n
-         FROM graph_relation r
-         JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
-         JOIN graph_entity ie ON ie.id = r.to_id   AND ie.type = 'issue'
-         JOIN item i          ON i.id = ie.external_id
-        WHERE r.type = 'opened' AND pe.external_id = ? AND i.modified_at >= ?`,
-    )
-    .get(personId, cutoff) as { n: number };
+  const countOpened = (excluded: readonly string[]): number =>
+    (
+      db
+        .query(
+          `SELECT COUNT(*) AS n
+             FROM graph_relation r
+             JOIN graph_entity pe ON pe.id = r.from_id AND pe.type = 'person'
+             JOIN graph_entity ie ON ie.id = r.to_id   AND ie.type = 'issue'
+             JOIN item i          ON i.id = ie.external_id
+            WHERE r.type = 'opened' AND pe.external_id = ? AND i.modified_at >= ?
+              AND ${notExcluded("i.id")}`,
+        )
+        .get(personId, cutoff, JSON.stringify(excluded)) as { n: number }
+    ).n;
+  const opened = { n: countOpened(agent.itemIds) };
+  const openedInFull = agent.itemIds.length === 0 ? opened.n : countOpened([]);
 
   const closed = db
     .query(
@@ -532,14 +559,16 @@ function laneTickets(db: Database, personId: string, sinceMs: number): Negotiate
        JOIN graph_entity ie ON ie.id = r.to_id   AND ie.type = 'issue'
        JOIN item i          ON i.id = ie.external_id
       WHERE r.type = 'opened' AND pe.external_id = ? AND i.modified_at >= ?
+        AND ${notExcluded("i.id")}
       ORDER BY i.modified_at DESC, i.id ASC
       LIMIT ?`,
-    [personId, cutoff, NEGOTIATE_EVIDENCE_LIMIT],
+    [personId, cutoff, JSON.stringify(agent.itemIds), NEGOTIATE_EVIDENCE_LIMIT],
   );
   return {
     opened: opened.n,
     closedByAuthoredPr: closed.n,
     evidence: { refs, total: opened.n },
+    agentActions: agentActionsSummary(openedInFull, opened.n, agent.unmatched),
   };
 }
 
@@ -811,14 +840,16 @@ function countAuthoredByType(
   personId: string,
   cutoff: number,
   types: readonly string[],
+  excluded: readonly string[],
 ): number {
   const placeholders = types.map(() => "?").join(", ");
   const row = db
     .query(
       `SELECT COUNT(*) AS n FROM item
-        WHERE author_id = ? AND modified_at >= ? AND type IN (${placeholders})`,
+        WHERE author_id = ? AND modified_at >= ? AND type IN (${placeholders})
+          AND ${notExcluded("id")}`,
     )
-    .get(personId, cutoff, ...types) as { n: number };
+    .get(personId, cutoff, ...types, JSON.stringify(excluded)) as { n: number };
   return row.n;
 }
 
@@ -830,6 +861,7 @@ function countAuthoredExcludingServices(
   cutoff: number,
   types: readonly string[],
   excludedServices: readonly string[],
+  excluded: readonly string[],
 ): number {
   const typePlaceholders = types.map(() => "?").join(", ");
   const servicePlaceholders = excludedServices.map(() => "?").join(", ");
@@ -838,9 +870,12 @@ function countAuthoredExcludingServices(
       `SELECT COUNT(*) AS n FROM item
         WHERE author_id = ? AND modified_at >= ?
           AND type IN (${typePlaceholders})
-          AND service NOT IN (${servicePlaceholders})`,
+          AND service NOT IN (${servicePlaceholders})
+          AND ${notExcluded("id")}`,
     )
-    .get(personId, cutoff, ...types, ...excludedServices) as { n: number };
+    .get(personId, cutoff, ...types, ...excludedServices, JSON.stringify(excluded)) as {
+    n: number;
+  };
   return row.n;
 }
 
@@ -857,6 +892,7 @@ function countAuthoredForServices(
   cutoff: number,
   types: readonly string[],
   services: readonly string[],
+  excluded: readonly string[],
 ): number {
   if (services.length === 0) return 0;
   const typePlaceholders = types.map(() => "?").join(", ");
@@ -866,9 +902,10 @@ function countAuthoredForServices(
       `SELECT COUNT(*) AS n FROM item
         WHERE author_id = ? AND modified_at >= ?
           AND type IN (${typePlaceholders})
-          AND service IN (${servicePlaceholders})`,
+          AND service IN (${servicePlaceholders})
+          AND ${notExcluded("id")}`,
     )
-    .get(personId, cutoff, ...types, ...services) as { n: number };
+    .get(personId, cutoff, ...types, ...services, JSON.stringify(excluded)) as { n: number };
   return row.n;
 }
 
@@ -887,6 +924,7 @@ function countAuthoredServiceGated(
   cutoff: number,
   types: readonly string[],
   personalSources: readonly string[],
+  excluded: readonly string[],
 ): number {
   const alwaysOn = countAuthoredExcludingServices(
     db,
@@ -894,6 +932,7 @@ function countAuthoredServiceGated(
     cutoff,
     types,
     PERSONAL_CAPABLE_SERVICES,
+    excluded,
   );
   const gated = countAuthoredForServices(
     db,
@@ -901,6 +940,7 @@ function countAuthoredServiceGated(
     cutoff,
     types,
     splitPersonalSources(personalSources).recognised,
+    excluded,
   );
   return alwaysOn + gated;
 }
@@ -955,6 +995,7 @@ function laneWritingEvidence(
   personId: string,
   cutoff: number,
   personalSources: readonly string[],
+  excluded: readonly string[],
 ): NegotiateEvidenceRef[] {
   const gatedTypes: readonly string[] = [...DOC_TYPES, ...NOTE_TYPES];
   const { recognised } = splitPersonalSources(personalSources);
@@ -970,6 +1011,7 @@ function laneWritingEvidence(
             AND (service NOT IN (${ph(PERSONAL_CAPABLE_SERVICES.length)}) OR ${recognisedClause}))
           OR type IN (${ph(MESSAGE_TYPES.length)})
         )
+        AND ${notExcluded("id")}
       ORDER BY modified_at DESC, id ASC
       LIMIT ?`,
     [
@@ -979,6 +1021,7 @@ function laneWritingEvidence(
       ...PERSONAL_CAPABLE_SERVICES,
       ...recognised,
       ...MESSAGE_TYPES,
+      JSON.stringify(excluded),
       NEGOTIATE_EVIDENCE_LIMIT,
     ],
   );
@@ -991,19 +1034,27 @@ function laneWriting(
   personId: string,
   sinceMs: number,
   personalSources: readonly string[],
+  agent: AgentActionExclusions[AgentActionLane] = NO_AGENT_ACTIONS.writing,
 ): NegotiateWriting {
   const cutoff = Date.now() - sinceMs;
-  const docs = countAuthoredServiceGated(db, personId, cutoff, DOC_TYPES, personalSources);
-  const notes = countAuthoredServiceGated(db, personId, cutoff, NOTE_TYPES, personalSources);
-  const messages = countAuthoredByType(db, personId, cutoff, MESSAGE_TYPES);
+  const count = (excluded: readonly string[]) => ({
+    docs: countAuthoredServiceGated(db, personId, cutoff, DOC_TYPES, personalSources, excluded),
+    notes: countAuthoredServiceGated(db, personId, cutoff, NOTE_TYPES, personalSources, excluded),
+    messages: countAuthoredByType(db, personId, cutoff, MESSAGE_TYPES, excluded),
+  });
+  const { docs, notes, messages } = count(agent.itemIds);
+  const total = docs + notes + messages;
+  const full = agent.itemIds.length === 0 ? null : count([]);
+  const totalInFull = full === null ? total : full.docs + full.notes + full.messages;
   return {
     docs,
     notes,
     messages,
     evidence: {
-      refs: laneWritingEvidence(db, personId, cutoff, personalSources),
-      total: docs + notes + messages,
+      refs: laneWritingEvidence(db, personId, cutoff, personalSources, agent.itemIds),
+      total,
     },
+    agentActions: agentActionsSummary(totalInFull, total, agent.unmatched),
   };
 }
 
@@ -1250,14 +1301,19 @@ export async function runNegotiate(
     // would be a no-op in the common case.
     pushConnectorOrEdgeGap(ctx.db, "sentry", detectMissingErrorIssuePersonEdges, gaps);
     // Same order as `tasks.push` below — the pairing is positional (`SubTaskResult.taskIndex`).
+    // Agent-caused artifacts (I28's act door) ran on the LOCAL owner's credentials, so they can
+    // only inflate the owner's own brief; for anyone else there is nothing to exclude.
+    const agent = subject.isOther
+      ? NO_AGENT_ACTIONS
+      : agentActionExclusions(ctx.db, Date.now() - sinceMs);
     laneNames.push(...NEGOTIATE_LANE_FIELDS);
     tasks.push(
       subAgent(() => laneAuthoredPrs(ctx.db, personId, sinceMs)),
       subAgent(() => laneReviewedPrs(ctx.db, personId, sinceMs)),
-      subAgent(() => laneTickets(ctx.db, personId, sinceMs)),
+      subAgent(() => laneTickets(ctx.db, personId, sinceMs, agent.tickets)),
       subAgent(() => laneOwnership(ctx.db, personId)),
       subAgent(() => laneDecisions(ctx.db, personId, sinceMs)),
-      subAgent(() => laneWriting(ctx.db, personId, sinceMs, ctx.personalSources)),
+      subAgent(() => laneWriting(ctx.db, personId, sinceMs, ctx.personalSources, agent.writing)),
       subAgent(() => laneIncidents(ctx.db, personId, sinceMs)),
     );
   }
