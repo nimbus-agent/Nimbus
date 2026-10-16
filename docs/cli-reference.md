@@ -4417,7 +4417,7 @@ The gateway refuses **without asking** when any of these hold:
 - `ERR_EXTENSION_GRANT_SELF_WRITE` — a declared write path covers the extension's own install path, which would let it rewrite its own code.
 - `ERR_EXTENSION_SERVICE_ID_INVALID` / `ERR_EXTENSION_SERVICE_ID_COLLISION` — the manifest id cannot be turned into a valid `ext_` service id, or another extension already holds it.
 
-After you answer, two further refusals can occur: `ERR_EXTENSION_RUN_NOT_APPROVED` (you declined, or the prompt timed out) and `ERR_EXTENSION_RUN_CHANGED` (the row was disabled, removed, re-versioned, rehashed or re-pathed, the files changed, the declared grants no longer resolve identically, or another extension was granted a colliding service id while the prompt was open). Nothing is stored in either case.
+After you answer, two further refusals can occur: `ERR_EXTENSION_RUN_NOT_APPROVED` (you declined, or the prompt timed out) and `ERR_EXTENSION_RUN_CHANGED` (the row was disabled, removed, re-versioned, rehashed or re-pathed, the files changed, the declared grants no longer resolve identically, or another extension was granted a colliding service id while the prompt was open). Either refusal writes no new grant, but it does not remove an approval you gave earlier: a previously stored grant stays in place until you run `nimbus extension revoke <id>`.
 
 Approving again after an update (new version or digest) prompts again and replaces the grant, keeping the original service id.
 
@@ -4437,7 +4437,7 @@ nimbus extension revoke com.example.notion
 
 List installed extensions with their status (`enabled` / `disabled` / `disabled (signature)`).
 
-`list` also shows a **Run** column and `info` a `Run:` line, and `--json` output carries `runState` and `runGrant`. `runState` is one of `disabled`, `no_grant`, `grant_stale` (an approval exists but the version or tree digest has since moved) or `ready`. `ready` means an approval matches the current files; it does not mean the extension is running.
+`list` also shows a **Run** column and `info` a `Run:` line, and `--json` output carries `runState` and `runGrant`. `runState` is one of `disabled`, `no_grant`, `grant_stale` (an approval exists but the version or tree digest has since moved) or `ready`. `ready` means the approval matches the version and tree digest recorded on the extension's row; `list` and `info` compare those records and do not re-hash the files on disk. It does not mean the extension is running.
 
 `disabled (signature)` means the Gateway hard-disabled the extension at startup because its Ed25519 manifest signature did not verify (I16) — it is **not** the same as an extension you disabled yourself. Such a row is bold red on a TTY and carries an annotation line naming the machine-readable reason:
 
