@@ -95,9 +95,11 @@ describe("rmDirWithRetry", () => {
           "powershell",
           "-NoProfile",
           "-Command",
-          `$s=[IO.File]::Open('${file}','Open','Read','None'); [Console]::Out.WriteLine('locked'); [Console]::Out.Flush(); Start-Sleep -Milliseconds 1500; $s.Close()`,
+          // The path arrives through the environment, never spliced into the script, so a profile
+          // name containing a quote (O'Connor) cannot break the command.
+          "$s=[IO.File]::Open($env:NIMBUS_HELD_FILE,'Open','Read','None'); [Console]::Out.WriteLine('locked'); [Console]::Out.Flush(); Start-Sleep -Milliseconds 1500; $s.Close()",
         ],
-        { stdout: "pipe" },
+        { stdout: "pipe", env: { ...process.env, NIMBUS_HELD_FILE: file } },
       );
       try {
         // Wait for the child to CONFIRM it holds the lock — a fixed sleep races PowerShell's
