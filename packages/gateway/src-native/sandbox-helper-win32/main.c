@@ -68,22 +68,35 @@ static HRESULT profile_sid(const wchar_t *name, PSID *out) {
 static int mode_check_caps(void) {
     PSID sid = NULL;
     BOOL created = FALSE;
-    /* nimbus-ext- prefix (not nimbus-probe): the orphan reaper (Task 7) matches only that
-     * prefix, so a probe profile whose deletion below ever failed is still collectible —
-     * it reads as extension id "probe", which is never live. */
-    HRESULT hr = profile_sid_ex(L"nimbus-ext-probe", &sid, &created);
+    /* A name UNIQUE to this invocation (pid + boot-relative tick). It used to be the one fixed
+     * name "nimbus-ext-probe", so two probes running at once — the gateway's and a CLI's, or the
+     * parallel test workers of one CI run, each constructing a runner — could interleave: one
+     * deleted the profile while the other was still deriving its SID, and the loser reported
+     * "cannot create an AppContainer profile" (hr=0x800703fa, ERROR_KEY_DELETED) on a machine
+     * where creation works, which the gateway reads as a sandbox it cannot confine.
+     *
+     * nimbus-ext- prefix (not nimbus-probe): the orphan reaper (Task 7) matches only that prefix,
+     * so a probe profile whose deletion below ever failed is still collectible — it reads as
+     * extension id "probe-<pid>-<tick>", which is never live. */
+    wchar_t name[64];
+    if (swprintf(name, 64, L"nimbus-ext-probe-%lu-%llx", (unsigned long)GetCurrentProcessId(),
+                 (unsigned long long)GetTickCount64()) < 0) {
+        err(L"cannot format the probe profile name");
+        return 1;
+    }
+    HRESULT hr = profile_sid_ex(name, &sid, &created);
     if (FAILED(hr)) {
         err(L"cannot create an AppContainer profile: hr=0x%08lx", (unsigned long)hr);
         return 1;
     }
     FreeSid(sid);
     /* The probe profile is transient state; do not leave it behind — but delete it ONLY if this
-     * invocation created it. `SandboxPolicy.id` is an unconstrained string, so an extension
-     * literally named "probe" owns this exact profile name (profileNameFor -> nimbus-ext-probe),
-     * and an unconditional delete here would tear down live state a probe has no business
-     * touching. If it already existed, leave it: the reaper collects it when "probe" is not
-     * installed, and must not when it is. */
-    if (created) DeleteAppContainerProfile(L"nimbus-ext-probe");
+     * invocation created it. `SandboxPolicy.id` is an unconstrained string, so an extension could
+     * own this exact profile name, and an unconditional delete would tear down live state a probe
+     * has no business touching. With a per-invocation name that needs an extension id equal to
+     * "probe-<this pid>-<this tick>", but the guard costs nothing. If it already existed, leave
+     * it: the reaper collects it when no such extension is installed, and must not when it is. */
+    if (created) DeleteAppContainerProfile(name);
     wprintf(L"OK\n");
     return 0;
 }

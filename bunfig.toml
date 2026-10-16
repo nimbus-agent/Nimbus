@@ -18,7 +18,9 @@ coverage = false
 # snapshots process.env once at first import. Blanks the developer's real credentials so no
 # test can inherit them and reach a live provider. See the file header and issue #812, where
 # a test suite made a real OAuth round-trip to Google with the developer's own client secret.
-preload = ["./scripts/test-preload/hermetic-credentials.ts"]
+# The second keeps a test gateway from reaping AppContainer profiles it does not own (Windows) —
+# other tests' in a parallel run, and the developer's real gateway's. See its header.
+preload = ["./scripts/test-preload/hermetic-credentials.ts", "./scripts/test-preload/no-host-reap.ts"]
 
 [test.coverageThreshold]
 lines = 80

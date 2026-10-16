@@ -94,6 +94,16 @@ export function parseSweepOutput(stdout: string): Array<{ path: string; removed:
  * below, before `reapWith` enumerates or deletes anything. If it throws — an unreadable or
  * mid-migration `extension` table — the whole reap is skipped: nothing is enumerated, nothing is
  * deleted. The failure mode is reaping NOTHING, never reaping everything.
+ *
+ * `NIMBUS_SKIP_APPCONTAINER_REAP=1` skips it outright. AppContainer profiles are per USER, not per
+ * gateway, so this reap deletes every `nimbus-ext-*` profile THIS gateway's index does not know —
+ * including the live profiles of any other gateway the same user is running. A demo gateway never
+ * reaps for that reason (I41 clause 4, `demo-boot.ts`). Test gateways are the other case: under
+ * `bun test --parallel` several boot at once on one Windows runner, each deleting the profiles of
+ * the others' in-flight tool spawns and confinement probes, and on a developer's machine they
+ * would delete the real gateway's. The test preload (`scripts/test-preload/no-host-reap.ts`) sets
+ * it for every test process and the gateways those spawn. It only ever removes cleanup — a skipped
+ * reap leaves orphans for the next real boot — never confinement.
  */
 export async function reapAppContainersAtBoot(deps: {
   db: Database;
@@ -104,8 +114,14 @@ export async function reapAppContainersAtBoot(deps: {
    * Supplied by the caller so this PAL module does not import the exec runtime registry.
    */
   sweepPaths?: readonly string[];
+  /** Where `NIMBUS_SKIP_APPCONTAINER_REAP` is read from; `process.env` unless a test injects one. */
+  env?: Readonly<Record<string, string | undefined>>;
 }): Promise<readonly string[]> {
   if (process.platform !== "win32") return [];
+  if ((deps.env ?? process.env)["NIMBUS_SKIP_APPCONTAINER_REAP"] === "1") {
+    deps.logger.info("sandbox: AppContainer boot reap skipped (NIMBUS_SKIP_APPCONTAINER_REAP=1)");
+    return [];
+  }
   const path = helperPath();
   try {
     const reaped = await reapWith({
