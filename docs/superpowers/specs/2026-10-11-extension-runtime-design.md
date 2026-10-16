@@ -465,3 +465,21 @@ PR 2 surface decisions:
   sandbox-manifest ASSEMBLY (`ext.<serviceId>` id plus install path plus runtime read paths, handed
   to `wrapServerSpec`) moves to PR 3, next to its only consumer, so its shape is written against
   `wrapServerSpec`'s real input type rather than guessed.
+
+Plan review (2026-10-16) — decisions recorded here so they are not re-litigated:
+
+- **Consent payload field is `fingerprint`**, never `keyFingerprint`: both the consent display and
+  the audit row redact any field whose name contains "key". Same name the install prompt uses.
+- **The grants are re-resolved after approval**, not only the tree digest: a declared path outside
+  the install tree (or a symlink on it) can be retargeted while the prompt is open.
+- **A signature-failed extension is refused** even if `extension.enable` flipped it back on
+  (`signatureDisabledRegistry`). The full I16 re-verification stays PR 3's, at spawn.
+- **`extension.approveRun` / `revokeRun` emit `extension.stateChanged`** (`approveRun` /
+  `revokeRun` actions), since `list`/`info` now carry `runState`.
+- **`nimbus extension approve` registers the prompt handler directly**, so
+  `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer it.
+- **Deferred, out of scope:** `extension.enable` re-enables an extension the startup signature pass
+  hard-disabled without re-verifying it. Pre-existing, affects install-time state beyond run grants,
+  and PR 2 now refuses such a row for a grant. Recorded in the CHANGELOG "Found, not fixed" line.
+- **Not added to the demo gate:** `extension.rehash`. A demo gateway refuses `extension.install`, so
+  it holds no extensions for rehash to act on; § 4.8 names only `approveRun` / `revokeRun`.

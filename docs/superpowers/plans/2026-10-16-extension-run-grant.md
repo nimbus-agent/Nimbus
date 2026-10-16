@@ -1147,7 +1147,11 @@ export function checkRunGrantTableConfinement(files: readonly FileEntry[]): Viol
 }
 ```
 
-`DELETE FROM extension_run_grant` is covered by the `FROM` alternative. Wire it into `main`, next to the D32(a) block, inside the same `if (mode === "binary-only" || mode === "all")` shape:
+`DELETE FROM extension_run_grant` is covered by the `FROM` alternative.
+
+D33(b)'s `RULE_ANCHORS` entry is added in Task 4 Step 3a, because the file it anchors on (`approve-run.ts`) does not exist until then and `verifyRuleAnchors()` fails on a missing anchor.
+
+Wire it into `main`, next to the D32(a) block, inside the same `if (mode === "binary-only" || mode === "all")` shape:
 
 ```ts
   if (mode === "binary-only" || mode === "all") {
@@ -1180,12 +1184,14 @@ git commit -F <msg-file>   # "feat(extensions): V70 extension_run_grant table, i
 **Files:**
 - Create: `packages/gateway/src/extensions/approve-run.ts`, `packages/gateway/src/extensions/approve-run.test.ts`
 - Create: `packages/gateway/src/extensions/run-state.ts`, `packages/gateway/src/extensions/run-state.test.ts`
+- Modify: `scripts/structure-audit/check-nimbus-invariants.ts` (`RULE_ANCHORS`, Step 3a)
 
 **Interfaces:**
 - Consumes: Task 2 (`resolveExtensionRunGrants`, `serializeRunGrants`, `deriveExtensionServiceId`, `assertExtensionServiceIdFree`, `ExtensionRunGrantError`, `ExtensionRunGrantEnv`, `ResolvedRunGrants`), Task 3 (`getRunGrant`, `listRunGrants`, `upsertRunGrant`, `deleteRunGrant`, `ExtensionRunGrantRow`), existing `listExtensions` / `ExtensionRow` (`automation/extension-store.ts`), `verifyOneExtensionStrict` (`extensions/verify-extensions.ts`), `computeExtensionTreeDigest` (`extensions/tree-digest.ts`), `parseExtensionManifestJson` + `resolveExtensionManifestPath` (`extensions/manifest.ts`), `publisherKeyFingerprint` (`extensions/install-from-local.ts`).
 - Produces:
   - `EXTENSION_RUN_ACTION_TYPE = "extension.run"`
   - `type ExtensionRunGate = (action: { type: string; payload: Record<string, unknown> }) => Promise<boolean>`
+  - `buildRunConsentPayload(row: ExtensionRow, manifest: ExtensionManifest, serviceId: string, treeDigest: string, grants: ResolvedRunGrants, env: ExtensionRunGrantEnv): Record<string, unknown>` — publisher field named `fingerprint`, never `keyFingerprint`
   - `approveExtensionRun(extensionId: string, deps: { db: Database; env: ExtensionRunGrantEnv; gate: ExtensionRunGate; now: () => number }): Promise<ApproveExtensionRunResult>` where `ApproveExtensionRunResult = { id: string; serviceId: string; version: string; treeDigest: string; grants: ResolvedRunGrants; changed: boolean }`
   - `revokeExtensionRun(db: Database, extensionId: string, stop?: (id: string) => Promise<void>): Promise<{ id: string; revoked: boolean }>`
   - `type ExtensionRunState = "disabled" | "no_grant" | "grant_stale" | "ready"`
@@ -1256,15 +1262,26 @@ describe("extensionRunFields", () => {
 ```ts
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { listExtensions, setExtensionTreeDigest } from "../automation/extension-store.ts";
+import { redactPayloadForConsentDisplay } from "../engine/executor.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { approveExtensionRun, revokeExtensionRun } from "./approve-run.ts";
+import { approveExtensionRun, buildRunConsentPayload, revokeExtensionRun } from "./approve-run.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
-import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
+import { signatureDisabledRegistry } from "./hard-disable.ts";
+import { installExtensionFromLocalDirectory, publisherKeyFingerprint } from "./install-from-local.ts";
 import { getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 
@@ -1475,6 +1492,79 @@ describe("approveExtensionRun", () => {
     ).rejects.toThrow(/ERR_EXTENSION_SERVICE_ID_COLLISION/);
     expect(seen).toEqual([]);
   });
+
+  test("the publisher fingerprint survives consent-display AND audit redaction", () => {
+    const key = Buffer.alloc(32, 7).toString("base64");
+    const payload = buildRunConsentPayload(
+      {
+        id: "p",
+        version: "1.0.0",
+        install_path: "/x",
+        manifest_hash: "m",
+        entry_hash: "e",
+        enabled: 1,
+        installed_at: 1,
+        last_verified_at: 1,
+        tree_digest: "d",
+      },
+      {
+        id: "p",
+        version: "1.0.0",
+        updateChannel: "stable",
+        permissions: { network: [], filesystem: { read: [], write: [] } },
+        publisher: { id: "pub", key },
+      },
+      "ext_p",
+      "d",
+      { network: [], read: [], write: [] },
+      { platform: "linux", protectedRoots: [], runtimeReadPaths: [], realpath: (p) => p },
+    );
+    const fp = publisherKeyFingerprint(key);
+    expect(fp).toMatch(/^[0-9a-f]{32}$/);
+    // Both redactors drop any field whose NAME contains "key"; `keyFingerprint` would vanish here.
+    expect(JSON.stringify(redactPayloadForConsentDisplay(payload))).toContain(fp);
+    expect(redactAuditPayload(payload, 4096)).toContain(fp);
+  });
+
+  test("an extension the startup signature pass disabled is refused even after a re-enable", async () => {
+    const { db, env } = await setup();
+    signatureDisabledRegistry.mark("com.example.run", "signature_failed");
+    try {
+      const seen: Asked[] = [];
+      await expect(
+        approveExtensionRun("com.example.run", { db, env, gate: gateThat(true, seen), now: () => 1 }),
+      ).rejects.toThrow(/ERR_EXTENSION_RUN_UNVERIFIED.*signature_failed/);
+      expect(seen).toEqual([]);
+    } finally {
+      signatureDisabledRegistry.reset();
+    }
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "a declared path retargeted into the data dir while the prompt is open refuses",
+    async () => {
+      const { db, env, root } = await setup({
+        manifest: (r) => {
+          symlinkSync(join(r, "outside"), join(r, "link"));
+          return { permissions: { network: [], filesystem: { read: [join(r, "link")], write: [] } } };
+        },
+      });
+      await expect(
+        approveExtensionRun("com.example.run", {
+          db,
+          env,
+          now: () => 1,
+          gate: async () => {
+            // The install tree is untouched, so the tree digest alone would not notice this.
+            unlinkSync(join(root, "link"));
+            symlinkSync(join(root, "data"), join(root, "link"));
+            return true;
+          },
+        }),
+      ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
+      expect(listRunGrants(db)).toEqual([]);
+    },
+  );
 });
 
 describe("revokeExtensionRun", () => {
@@ -1590,6 +1680,7 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
+import { signatureDisabledRegistry } from "./hard-disable.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
@@ -1641,6 +1732,16 @@ function assertRunnable(row: ExtensionRow): string {
   if (row.enabled !== 1) {
     throw new ExtensionRunGrantError("ERR_EXTENSION_RUN_DISABLED", `${row.id} is disabled`);
   }
+  // `extension.enable` flips `enabled` back without re-verifying the I16 signature, so a row the
+  // startup pass hard-disabled can be enabled=1 again with its signature still failed. Refuse it.
+  // The full I16 re-verification is the spawn path's (PR 3, `readVerifiedExtensionForSpawn`).
+  const signatureReason = signatureDisabledRegistry.reasonFor(row.id);
+  if (signatureReason !== undefined) {
+    throw new ExtensionRunGrantError(
+      "ERR_EXTENSION_RUN_UNVERIFIED",
+      `${row.id} failed publisher signature verification at startup (${signatureReason}); see \`nimbus extension info ${row.id}\``,
+    );
+  }
   if (!verifyOneExtensionStrict(row)) {
     throw new ExtensionRunGrantError(
       "ERR_EXTENSION_RUN_UNVERIFIED",
@@ -1671,7 +1772,15 @@ function readManifest(row: ExtensionRow): ExtensionManifest {
   return parseExtensionManifestJson(readFileSync(p, "utf8"));
 }
 
-function consentPayload(
+/**
+ * What the owner sees under `extension.run`. Exported for its redaction test.
+ *
+ * The publisher field is `fingerprint`, NOT `keyFingerprint`: the consent display and the audit row
+ * both redact any field whose NAME contains "key" (`executor.ts` `SENSITIVE_PAYLOAD_KEY`), which
+ * would hide the one value that tells two publishers with the same id apart. Same name and shape as
+ * the install prompt's (`install-from-local.ts`), which hit this first.
+ */
+export function buildRunConsentPayload(
   row: ExtensionRow,
   manifest: ExtensionManifest,
   serviceId: string,
@@ -1679,6 +1788,13 @@ function consentPayload(
   grants: ResolvedRunGrants,
   env: ExtensionRunGrantEnv,
 ): Record<string, unknown> {
+  let installPath = row.install_path;
+  try {
+    // Canonical, like every resolved grant beside it, so the prompt shows one path form.
+    installPath = env.realpath(row.install_path);
+  } catch {
+    // Keep the stored spelling; assertRunnable already proved the package is on disk.
+  }
   return {
     id: row.id,
     version: row.version,
@@ -1688,16 +1804,29 @@ function consentPayload(
         ? "unsigned"
         : {
             id: manifest.publisher.id,
-            keyFingerprint: publisherKeyFingerprint(manifest.publisher.key),
+            fingerprint: publisherKeyFingerprint(manifest.publisher.key),
           },
     treeDigest,
     network: [...grants.network],
     read: [...grants.read],
     write: [...grants.write],
     // Added by the runtime at every spawn, read-only. Shown, never stored (spec § 11 item 7).
-    runtimeRead: [row.install_path, ...env.runtimeReadPaths],
+    runtimeRead: [installPath, ...env.runtimeReadPaths],
     modelAccess: false,
   };
+}
+
+/** Re-resolved grants, serialized; `null` when they no longer resolve at all. */
+function reresolvedGrants(
+  manifest: ExtensionManifest,
+  installPath: string,
+  env: ExtensionRunGrantEnv,
+): string | null {
+  try {
+    return serializeRunGrants(resolveExtensionRunGrants(manifest.permissions, installPath, env));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1736,7 +1865,7 @@ export async function approveExtensionRun(
 
   const approved = await deps.gate({
     type: EXTENSION_RUN_ACTION_TYPE,
-    payload: consentPayload(row, manifest, serviceId, treeDigest, grants, deps.env),
+    payload: buildRunConsentPayload(row, manifest, serviceId, treeDigest, grants, deps.env),
   });
   if (!approved) {
     throw new ExtensionRunGrantError(
@@ -1751,7 +1880,11 @@ export async function approveExtensionRun(
     after.enabled !== 1 ||
     after.version !== row.version ||
     after.tree_digest !== treeDigest ||
-    digestOrNull(after.install_path) !== treeDigest
+    digestOrNull(after.install_path) !== treeDigest ||
+    // The digest covers only the install tree. A declared path OUTSIDE it (or a symlink along it)
+    // can be retargeted — into the data dir, say — while the prompt is open, so the grants are
+    // resolved again and must still be exactly what the owner saw.
+    reresolvedGrants(manifest, after.install_path, deps.env) !== permissionsJson
   ) {
     throw new ExtensionRunGrantError(
       "ERR_EXTENSION_RUN_CHANGED",
@@ -1794,15 +1927,23 @@ export async function revokeExtensionRun(
 
 Check that `ExtensionManifest` is exported from `manifest.ts` (it is a `export type` there) and `publisherKeyFingerprint` from `install-from-local.ts` (it is). If importing `install-from-local.ts` pulls a cycle, move `publisherKeyFingerprint` into a small `extensions/publisher-fingerprint.ts` and re-import it from both — a wrapper, not a re-export, if any importer must keep the old path.
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 3a: Anchor D33(b)**
 
-Run: `cd packages/gateway && bun test src/extensions/run-state.test.ts src/extensions/approve-run.test.ts`
-Expected: PASS.
+In `scripts/structure-audit/check-nimbus-invariants.ts`, add to `RULE_ANCHORS`, so `verifyRuleAnchors()` fails if `iterateSourceFiles()` ever stops reaching `extensions/`. Anchor on a file the rule SCANS, never an allow-listed one (allow-listed files are skipped, so an anchor there proves nothing — the comment at the existing `graph-entity-flat-coowned` anchor makes the same point):
+
+```ts
+  "packages/gateway/src/extensions/approve-run.ts", // D33(b) — scanned; the run-grant store's main caller
+```
+
+- [ ] **Step 4: Run the tests and the static audit**
+
+Run: `cd packages/gateway && bun test src/extensions/run-state.test.ts src/extensions/approve-run.test.ts && cd ../.. && bun scripts/structure-audit/check-nimbus-invariants.ts`
+Expected: PASS, and the audit reports no missing anchor and no D33(b) violation.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/gateway/src/extensions/approve-run.ts packages/gateway/src/extensions/approve-run.test.ts packages/gateway/src/extensions/run-state.ts packages/gateway/src/extensions/run-state.test.ts
+git add packages/gateway/src/extensions/approve-run.ts packages/gateway/src/extensions/approve-run.test.ts packages/gateway/src/extensions/run-state.ts packages/gateway/src/extensions/run-state.test.ts scripts/structure-audit/check-nimbus-invariants.ts
 git commit -F <msg-file>   # "feat(extensions): approve and revoke an extension run grant"
 ```
 
@@ -1815,6 +1956,8 @@ git commit -F <msg-file>   # "feat(extensions): approve and revoke an extension 
 - Modify: `packages/gateway/src/ipc/server/dispatchers.ts` (`OWNER_GATED_EXTENSION_METHODS`, `dispatchExtensionAutomationRpc`)
 - Modify: `packages/gateway/src/engine/executor.ts` (`HITL_REQUIRED_BACKING`)
 - Modify: `packages/gateway/src/ipc/lan-rpc.ts` (`FORBIDDEN_OVER_LAN`)
+- Modify: `packages/gateway/src/ipc/server/demo-gate.ts` (`DEMO_REFUSED_METHODS`) and `packages/gateway/src/ipc/server/demo-gate.test.ts` — spec § 4.8: a demo-rooted gateway (I41) refuses both
+- Modify: `packages/gateway/src/ipc/gateway-events.ts` (`ExtensionStateChangedPayload.action` gains `"approveRun" | "revokeRun"`)
 - Modify: `packages/gateway/src/security-invariants.test.ts` (I2 block)
 - Create: `packages/gateway/src/ipc/automation-rpc.run-grant.test.ts`
 
@@ -1839,6 +1982,7 @@ import { getRunGrant } from "../extensions/run-grant-store.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { dispatchAutomationRpc } from "./automation-rpc.ts";
+import { setGatewayEventBroadcast } from "./gateway-events.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -1975,6 +2119,36 @@ describe("extension.approveRun / extension.revokeRun over the automation dispatc
     expect(revoked.value.revoked).toBe(true);
     expect(stopped).toEqual(["rpc.run"]);
     expect((await listed(db))[0]).toMatchObject({ runState: "no_grant", runGrant: null });
+  });
+
+  test("approve and revoke announce extension.stateChanged; an unchanged re-approval does not", async () => {
+    const { db, env } = await installed();
+    const seen: Array<{ extensionId: string; action: string; ok: boolean }> = [];
+    setGatewayEventBroadcast((method, params) => {
+      const p = params as { kind?: string; payload?: { extensionId: string; action: string; ok: boolean } };
+      if (method === "gateway.event" && p.kind === "extension.stateChanged" && p.payload) {
+        seen.push(p.payload);
+      }
+    });
+    try {
+      const approve = () =>
+        dispatchAutomationRpc({
+          method: "extension.approveRun",
+          params: { id: "rpc.run" },
+          db,
+          runGrantEnv: env,
+          ownerGate: async () => true,
+        });
+      await approve();
+      await approve();
+      await dispatchAutomationRpc({ method: "extension.revokeRun", params: { id: "rpc.run" }, db });
+      expect(seen.map((s) => `${s.action}:${String(s.ok)}`)).toEqual([
+        "approveRun:true",
+        "revokeRun:true",
+      ]);
+    } finally {
+      setGatewayEventBroadcast(undefined);
+    }
   });
 
   test("extension.remove removes the grant", async () => {
@@ -2115,8 +2289,19 @@ async function handleExtensionApproveRun(
   }
   try {
     const out = await approveExtensionRun(id, { db: ctx.db, env, gate: ownerGate, now: Date.now });
+    // `list`/`info` now carry runState, so a connected client must hear that it moved — as it
+    // already does for install/enable/disable/remove/update. An unchanged re-approval moved nothing.
+    if (out.changed) {
+      emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "approveRun", ok: true });
+    }
     return { kind: "hit", value: out };
   } catch (e) {
+    emitGatewayEvent("extension.stateChanged", {
+      extensionId: id,
+      action: "approveRun",
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    });
     throw runGrantRpcError(e);
   }
 }
@@ -2133,6 +2318,9 @@ async function handleExtensionRevokeRun(
       id,
       mesh === undefined ? undefined : (x) => mesh.stopExtensionClient(x),
     );
+    if (out.revoked) {
+      emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "revokeRun", ok: true });
+    }
     return { kind: "hit", value: out };
   } catch (e) {
     throw runGrantRpcError(e);
@@ -2246,6 +2434,17 @@ In `packages/gateway/src/ipc/lan-rpc.ts`, after `"extension.rehash", …` in `FO
   "extension.revokeRun", // CLI-only alongside approveRun
 ```
 
+In `packages/gateway/src/ipc/server/demo-gate.ts`, add both to `DEMO_REFUSED_METHODS` (spec § 4.8 — a demo-rooted gateway is inert and must not mutate run grants), after `"extension.install"`:
+
+```ts
+  "extension.approveRun",
+  "extension.revokeRun",
+```
+
+and extend the existing `test.each(["vault.set", "vault.delete", "data.import", "extension.install"])` in `packages/gateway/src/ipc/server/demo-gate.test.ts` with `"extension.approveRun"` and `"extension.revokeRun"`.
+
+In `packages/gateway/src/ipc/gateway-events.ts`, widen `ExtensionStateChangedPayload.action` to `"install" | "enable" | "disable" | "remove" | "update" | "approveRun" | "revokeRun"`. `nimbus tail` renders `action` as a plain string (`packages/cli/src/commands/tail.ts`), so it needs no change.
+
 - [ ] **Step 5: Run the tests and every suite these files feed**
 
 Run: `cd packages/gateway && bun test src/ipc src/engine src/extensions src/automation src/security-invariants.test.ts`
@@ -2254,7 +2453,7 @@ Expected: PASS. If `executor-flagship.test.ts` or a dispatcher-wiring test pins 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/gateway/src/ipc/automation-rpc.ts packages/gateway/src/ipc/automation-rpc.run-grant.test.ts packages/gateway/src/ipc/server/dispatchers.ts packages/gateway/src/engine/executor.ts packages/gateway/src/ipc/lan-rpc.ts packages/gateway/src/security-invariants.test.ts
+git add packages/gateway/src/ipc/automation-rpc.ts packages/gateway/src/ipc/automation-rpc.run-grant.test.ts packages/gateway/src/ipc/server/dispatchers.ts packages/gateway/src/engine/executor.ts packages/gateway/src/ipc/lan-rpc.ts packages/gateway/src/ipc/server/demo-gate.ts packages/gateway/src/ipc/server/demo-gate.test.ts packages/gateway/src/ipc/gateway-events.ts packages/gateway/src/security-invariants.test.ts
 # plus any count/enumeration test you updated in step 5
 git commit -F <msg-file>   # "feat(extensions): extension.approveRun / revokeRun behind the extension.run HITL gate"
 ```
@@ -2360,7 +2559,7 @@ git commit -F <msg-file>   # "test(extensions): prove run-grant routing over a r
 
 **Interfaces:**
 - Consumes: IPC `extension.approveRun` / `extension.revokeRun` (Task 5).
-- Produces: `runExtensionApprove(client: IPCClient, args: string[], rest: string[]): Promise<void>`, `runExtensionRevoke(client: IPCClient, rest: string[]): Promise<void>`.
+- Produces: `runExtensionApprove(client: IPCClient, args: string[], rest: string[]): Promise<void>`, `runExtensionRevoke(client: IPCClient, rest: string[]): Promise<void>`, `formatRunLine(e): string | null`; `formatExtensionListTable` gains an optional trailing `Run` column.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2420,6 +2619,24 @@ describe("runExtensionApprove", () => {
     expect(handlers.has("consent.request")).toBe(true);
     expect(out.stdout).toContain("approved to run as ext_x");
     expect(out.stdout).toContain("Nothing runs it yet");
+  });
+
+  test("NIMBUS_SCRIPT_CONSENT_SOURCE cannot answer it", async () => {
+    // `registerConsentFor({ kind: "prompt" })` would read this path at registration and throw
+    // "script consent source not found". The prompt handler ignores it, so the call goes through.
+    setTty(true);
+    const prev = process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+    process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"] = join(tmpdir(), "nimbus-no-such-consent.jsonl");
+    try {
+      const { client, calls } = createMockIpcClient([
+        { id: "x", serviceId: "ext_x", treeDigest: "ab".repeat(32), changed: true },
+      ]);
+      await runExtensionApprove(client, ["approve", "x"], ["x"]);
+      expect(calls[0]?.method).toBe("extension.approveRun");
+    } finally {
+      if (prev === undefined) delete process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+      else process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"] = prev;
+    }
   });
 
   test("an unchanged approval says so", async () => {
@@ -2494,7 +2711,10 @@ export async function runExtensionApprove(
       "Refusing to approve running an extension in non-TTY mode: the approval must be answered at a terminal.",
     );
   }
-  registerConsentFor(client, { kind: "prompt" });
+  // The prompt handler DIRECTLY, not `registerConsentFor({ kind: "prompt" })`: that one answers
+  // from `NIMBUS_SCRIPT_CONSENT_SOURCE` when it is set, which would let an environment variable
+  // approve running third-party code at a terminal — exactly what having no --yes rules out.
+  registerConsentPromptHandler(client);
   const out = await client.call<{
     id: string;
     serviceId: string;
@@ -2519,6 +2739,75 @@ export async function runExtensionRevoke(client: IPCClient, rest: string[]): Pro
     out.revoked ? `${out.id}: run approval revoked` : `${out.id}: had no run approval`,
   );
 }
+```
+
+Extend the existing `../lib/interactive-ipc-handlers.ts` import with `registerConsentPromptHandler`.
+
+**Human-readable `list` / `info`.** Without this, `runState` only appears under `--json`, and the docs in Task 8 would claim more than the terminal shows.
+
+1. Add to the `ExtensionListEntry` type:
+   ```ts
+     runState?: string;
+     runGrant?: { serviceId: string; approvedAt: number; modelAccess: boolean } | null;
+   ```
+2. Add `runState?: string;` to `ExtensionListTableRow`, and in `runExtensionList`'s row mapping:
+   ```ts
+       if (r.runState !== undefined) base.runState = r.runState;
+   ```
+3. In `formatExtensionListTable`, add a trailing `Run` column ONLY when some row carries a `runState` (an older gateway sends none, and every existing table test passes rows without one, so their exact column layout — including the "Status is the last column" assertion — is unchanged):
+   ```ts
+     const showRun = rows.some((r) => r.runState !== undefined);
+     const headers = showRun
+       ? ["ID", "Version", "Publisher", "Status", "Run"]
+       : ["ID", "Version", "Publisher", "Status"];
+   ```
+   and in the row mapping return `showRun ? [...cells, r.runState ?? "-"] : cells`, where `cells` is today's four-element array. The colour rules key on columns 2 and 3, which do not move.
+4. Add an exported pure formatter and print it in `runExtensionInfo` right after the `Enabled:` line:
+   ```ts
+   /** `nimbus extension info`'s run line. Nothing runs an approved extension until the runtime ships. */
+   export function formatRunLine(e: Pick<ExtensionListEntry, "runState" | "runGrant">): string | null {
+     if (e.runState === undefined) return null;
+     if (e.runGrant === undefined || e.runGrant === null) return e.runState;
+     const at = new Date(e.runGrant.approvedAt).toISOString();
+     return `${e.runState} (${e.runGrant.serviceId}, approved ${at}; not executed until the extension runtime ships)`;
+   }
+   ```
+   ```ts
+     const runLine = formatRunLine(e);
+     if (runLine !== null) console.log(`Run:       ${runLine}`);
+   ```
+
+Tests for these, in `extension.test.ts` (import `formatRunLine` alongside `formatExtensionListTable`):
+
+```ts
+describe("run state in human output", () => {
+  test("the Run column appears only when rows carry a runState", () => {
+    const withRun = formatExtensionListTable(
+      [{ id: "ext-a", version: "1.0.0", enabled: 1, runState: "grant_stale" }],
+      { isTty: false, noColor: true },
+    );
+    expect(withRun).toMatch(/ID\s+Version\s+Publisher\s+Status\s+Run/);
+    expect(withRun).toContain("grant_stale");
+    const without = formatExtensionListTable([{ id: "ext-a", version: "1.0.0", enabled: 1 }], {
+      isTty: false,
+      noColor: true,
+    });
+    expect(without).not.toMatch(/\bRun\b/);
+  });
+
+  test("formatRunLine", () => {
+    expect(formatRunLine({})).toBeNull();
+    expect(formatRunLine({ runState: "no_grant", runGrant: null })).toBe("no_grant");
+    expect(
+      formatRunLine({
+        runState: "ready",
+        runGrant: { serviceId: "ext_a", approvedAt: 0, modelAccess: false },
+      }),
+    ).toBe(
+      "ready (ext_a, approved 1970-01-01T00:00:00.000Z; not executed until the extension runtime ships)",
+    );
+  });
+});
 ```
 
 In `dispatchExtensionVoid`, after the `"rehash"` case:
@@ -2557,22 +2846,25 @@ git commit -F <msg-file>   # "feat(cli): nimbus extension approve / revoke"
 ### Task 8: Docs, then the full gate
 
 **Files:**
-- Modify: `docs/cli-reference.md`, `docs/schema-reference.md`, `docs/architecture.md`, `docs/CHANGELOG.md`, `docs/roadmap.md`, `docs/SECURITY-INVARIANTS.md`, `CLAUDE.md`, `GEMINI.md`
+- Modify: `docs/cli-reference.md`, `docs/schema-reference.md`, `docs/architecture.md`, `docs/CHANGELOG.md`, `docs/roadmap.md`, `docs/SECURITY-INVARIANTS.md`, `CLAUDE.md`, `GEMINI.md`, `.claude/commands/nimbus-commands.md`, `.claude/commands/nimbus-file-map.md`, `package.json` (`test:coverage:extensions`)
 
 - [ ] **Step 1: Write the docs**
 
 1. `docs/cli-reference.md` — under `nimbus extension`, add `approve <id>` (TTY only, no `--yes`, asks under `extension.run`, shows id, version, publisher fingerprint or `unsigned`, tree digest, service id, resolved network/read/write, and the read-only paths the runtime adds; refusals `ERR_EXTENSION_GRANT_PROTECTED` / `_SELF_WRITE` / `_PATH_RELATIVE` / `_PATH_MISSING`, `ERR_EXTENSION_SERVICE_ID_*`, `ERR_EXTENSION_RUN_*` with one line each) and `revoke <id>`, and say that `extension list` / `info` now show `runState` and `runGrant`. Keep — do NOT remove — the sentence "Installed extensions are not executed": it is still true, and PR 3 removes it. Add right after it: "An approval (`nimbus extension approve`) records what may run once the runtime ships; it starts nothing today."
 2. `docs/schema-reference.md` — add a **V70** entry beside V66's, describing `extension_run_grant` column by column and noting the cascade does not fire on the gateway's connection.
 3. `docs/architecture.md` — in the extension section, add the run-grant model (spec § 4.4 as amended by § 11) in a short paragraph; name `extensions/approve-run.ts` and `extensions/run-grant-store.ts`; state D33(b).
-4. `docs/CHANGELOG.md` — a new top entry dated the day you finish, "S3: extension runtime PR 2 of 4 — run grants". Cover: what an approval records; the two-approval model; the refusals before consent; what does NOT ship (nothing spawns, `--model`, `"running"`); schema V70; static D33(b); `extension.run` in I2; the two CLI-only, LAN-forbidden methods; Tauri allowlist unchanged at 107; and the cascade correction from spec § 11 item 6.
+4. `docs/CHANGELOG.md` — a new top entry dated the day you finish, "S3: extension runtime PR 2 of 4 — run grants". Cover: what an approval records; the two-approval model; the refusals before consent; what does NOT ship (nothing spawns, `--model`, `"running"`); schema V70; static D33(b); `extension.run` in I2; the two CLI-only, LAN-forbidden methods; Tauri allowlist unchanged at 107; the cascade correction from spec § 11 item 6; and a **Found, not fixed here** line: `extension.enable` re-enables an extension the startup signature pass hard-disabled without re-verifying its signature (`approveRun` refuses such a row, so it cannot gain a run grant, but `list` shows it enabled).
 5. `docs/roadmap.md` — the S3 active-slot line and the S3 spine cell: "extension runtime (PR 1 of 4 shipped 2026-10-11)" becomes "(PRs 1–2 of 4 shipped: install gate + tree digest 2026-10-11, run grants <date>)".
 6. `docs/SECURITY-INVARIANTS.md` — wherever the I2 frozen set's extension members are listed, add `extension.run`; in the static-rule catalogue add D33(b) with its stated bound.
 7. `CLAUDE.md` and `GEMINI.md` (mirror each other) — `schema V68` in the status paragraph becomes `schema V70`; in the **Static complement** paragraph add D33(b) next to D32 ("D33(b), tied to the extension runtime: `extension_run_grant` is named only by its store and its DDL"); in the S3 status sentence, extension runtime PR 2 of 4.
 
+8. **The static-rule ceiling moves D32 → D33.** `scripts/structure-audit/check-status-drift.ts` derives the ceiling as the highest `D<N>` in `check-nimbus-invariants.ts`, and every `D10–D<N>` range in its `CEILING_RANGE_SURFACES` must end at it, so Task 3 turns `bun run audit:status-drift` red until these are swept. Today's three hits: `docs/SECURITY-INVARIANTS.md` (the "Current ceiling" line), `.claude/commands/nimbus-commands.md` (the `audit:invariants` line, whose prose list also gains "extension run-grant table") and `.claude/commands/nimbus-file-map.md`. Re-derive with the grep below rather than trusting this list.
+9. **`package.json` `test:coverage:extensions`** is an explicit file list, not a glob. Append the five new test files (`extension-service-id.test.ts`, `extension-run-grants.test.ts`, `run-grant-store.test.ts`, `approve-run.test.ts`, `run-state.test.ts`, each under `packages/gateway/src/extensions/`). This is a developer convenience, not a gate: the enforced per-area floor is `audit:coverage-scopes`, whose Extensions scope already matches `extensions/` by glob (`scripts/coverage-floor/check-scopes.ts`).
+
 - [ ] **Step 2: Grep for every restatement**
 
-Run: `git grep -n "V69\b\|schema V68\|PR 1 of 4\|Installed extensions are not executed" -- docs CLAUDE.md GEMINI.md .claude/commands`
-Expected: every hit is either updated or deliberately left (the "not executed" sentence stays). Fix any "latest schema" claim that still says V69.
+Run: `git grep -n "V69\b\|schema V68\|PR 1 of 4\|Installed extensions are not executed\|D10–D32\|D10-D32\|D32\b" -- docs CLAUDE.md GEMINI.md .claude .github .coderabbit.yaml`
+Expected: every hit is either updated or deliberately left (the "not executed" sentence stays; a `D32` that names the capture-sink RULE rather than a ceiling stays). Fix any "latest schema" claim that still says V69 and any `D10–D32` range.
 
 - [ ] **Step 3: Run the gates**
 
@@ -2589,7 +2881,7 @@ Specs and plans never land on `main`:
 ```bash
 git rm -r --cached docs/superpowers
 rm -rf docs/superpowers
-git add docs CLAUDE.md GEMINI.md
+git add docs CLAUDE.md GEMINI.md .claude/commands package.json
 git commit -F <msg-file>   # "docs: extension runtime PR 2 — run grants (V70, D33(b), extension.run)"
 ```
 
