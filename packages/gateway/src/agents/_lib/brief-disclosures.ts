@@ -1,5 +1,6 @@
 import type { GlossaryEntry } from "./glossary-types.ts";
 import type {
+  NegotiateAgentActions,
   NegotiateDecisions,
   NegotiateIncidents,
   NegotiateOwnership,
@@ -223,6 +224,42 @@ export function negotiateIncidentsDisclosure(i: NegotiateIncidents): Disclosure 
       "resolver and are not counted above — not necessarily inactivity",
     anchors: ["no indexed assignee or resolver"],
   };
+}
+
+/**
+ * Agent-caused artifacts in a `## Tickets` or `## Writing` section (I28's act door: an MCP agent
+ * proposed the action, the owner approved it, and it ran on the owner's credentials, so a sync
+ * indexes the result as the owner's own work). Two INDEPENDENT entries, each suppressed at zero
+ * like the incidents clause: the first says what was removed from the count above it, the second
+ * says what could not be removed and may still be in it — the half a rewrite must not drop, since
+ * without it "excluded" reads as complete. Second person only: the lane is non-zero only for the
+ * local owner's own brief (`NegotiateAgentActions`).
+ */
+export function negotiateAgentActionDisclosures(
+  heading: "Tickets" | "Writing",
+  a: NegotiateAgentActions,
+): Disclosure[] {
+  const out: Disclosure[] = [];
+  if (a.excluded > 0) {
+    out.push({
+      scope: section(heading),
+      line:
+        `- ${String(a.excluded)} item(s) were created by actions an MCP agent proposed and you ` +
+        "approved, and are not counted above",
+      anchors: ["created by actions an MCP agent proposed"],
+    });
+  }
+  if (a.unmatched > 0) {
+    out.push({
+      scope: section(heading),
+      line:
+        `- ${String(a.unmatched)} more action(s) an MCP agent proposed and you approved ran in ` +
+        "this window but could not be matched to an indexed item, or edited an existing one; " +
+        "they may still be counted above",
+      anchors: ["could not be matched to an indexed item", "may still be counted above"],
+    });
+  }
+  return out;
 }
 
 /**

@@ -16,6 +16,8 @@ import {
 } from "./render.ts";
 import type { WhyBrief } from "./why-types.ts";
 
+const NO_AGENT = { excluded: 0, unmatched: 0 } as const;
+
 /**
  * Drop every LINE containing `fragment`, and THROW if nothing was dropped.
  *
@@ -66,7 +68,7 @@ function populatedNegotiateBrief(): NegotiateBrief {
     },
     reviewedPrs: { count: 2, approved: 1, changesRequested: 0, otherOrUnknown: 1, evidence },
     incidents: { resolved: 1, assigned: 0, unattributable: 3, errorIssuesAssigned: 0, evidence },
-    tickets: { opened: 1, closedByAuthoredPr: 0, evidence },
+    tickets: { opened: 1, closedByAuthoredPr: 0, evidence, agentActions: NO_AGENT },
     ownership: {
       services: ["checkout"],
       directories: [],
@@ -75,7 +77,7 @@ function populatedNegotiateBrief(): NegotiateBrief {
       unmappedIdentitiesInIndex: 0,
     },
     decisions: { authored: 2, unattributable: 1, evidence },
-    writing: { docs: 1, notes: 0, messages: 0, evidence },
+    writing: { docs: 1, notes: 0, messages: 0, evidence, agentActions: NO_AGENT },
   };
 }
 

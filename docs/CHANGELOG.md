@@ -18,6 +18,23 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-16 — S3 capture sink: `nimbus negotiate` no longer credits agent-caused work to you.**
+  Closes the act door's last owed follow-up. An action an MCP agent proposed and you approved runs on
+  your credentials, so the issue, message or page it creates is synced back as yours, and the
+  contribution brief counted it. In your own brief, `## Tickets` (issues opened) and `## Writing`
+  (docs, notes, messages) now exclude every indexed item an executed CREATE action's result URL
+  resolves to (`canonicalizeUrl(outcome_ref)` against `item.resolve_key`), from the counts and the
+  cited evidence alike, and say how many. The match is best-effort, so what cannot be excluded is
+  disclosed instead: in-window creates whose URL matched nothing (Teams returns none; Slack has none
+  without a known subdomain; not yet synced) and every EDIT action, which is never excluded because
+  the edited item may be your own work, appear on a second line saying they may still be counted.
+  Exclusion is not windowed (an item an agent created is never yours); the disclosure is. A brief
+  about someone else is untouched. Both lines are I31 disclosures built once in
+  `brief-disclosures.ts` and required by the rewrite guard only when rendered. The brief reads
+  executed actions through one new `CaptureStore.executedActions()` (type, result URL, finish time;
+  never the input), so D32(a)'s table confinement holds. Accepted agent DECISIONS needed no change:
+  their source item is the capture item, which has no author, so they were already counted as
+  unattributable rather than credited. No migration, no IPC change, no new invariant.
 - **2026-10-16 — S3 capture sink: batch accept (`nimbus captures accept --all`).**
   Closes the "batch accept" item the capture sink left unshipped. `nimbus captures accept --all
   [--kind decision|term|link] [--json]` accepts every `proposed` decision, term and link (at most 200

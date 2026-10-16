@@ -3,6 +3,7 @@ import {
   changelogDisclosures,
   decisionsAgentDisclosure,
   glossaryProvenanceDisclosure,
+  negotiateAgentActionDisclosures,
   negotiateDecisionsDisclosure,
   negotiateIncidentsDisclosure,
   negotiateNotComputedDisclosure,
@@ -53,6 +54,14 @@ function negotiateRequiredPhrases(brief: Extract<SynthInput, { kind: "negotiate"
   }
   if (brief.decisions !== null) {
     out.push(negotiateDecisionsDisclosure(brief.decisions, brief.subject));
+  }
+  // Same builder and the same `null` gate as `renderNegotiateTickets`/`renderNegotiateWriting`,
+  // so the guard requires exactly the agent-action lines the renderer emitted.
+  if (brief.tickets !== null) {
+    out.push(...negotiateAgentActionDisclosures("Tickets", brief.tickets.agentActions));
+  }
+  if (brief.writing !== null) {
+    out.push(...negotiateAgentActionDisclosures("Writing", brief.writing.agentActions));
   }
   return out;
 }

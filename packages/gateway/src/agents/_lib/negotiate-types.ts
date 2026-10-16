@@ -129,6 +129,25 @@ export type NegotiateWriting = {
   readonly messages: number;
   /** Documents, notes and messages behind the counts above, newest first. */
   readonly evidence: NegotiateEvidence;
+  /** Agent-caused messages and pages: excluded from the counts above, or disclosed. */
+  readonly agentActions: NegotiateAgentActions;
+};
+
+/**
+ * Artifacts an MCP agent PROPOSED and the owner APPROVED (the capture sink's act door, I28). They
+ * run on the owner's credentials, so a sync indexes them as the owner's own work; a contribution
+ * brief must not credit them. Always zero for a brief about anyone but the local owner.
+ *
+ * `excluded`: indexed items an executed CREATE action's result URL resolves to, removed from this
+ * lane's counts and evidence. `unmatched`: in-window executed actions of this lane's types that
+ * could NOT be removed — a create whose result URL matched no indexed item (no URL returned, a
+ * URL shape the sync does not store, not yet synced), or an EDIT of an existing item, which can
+ * pull an item into the window but is never excluded (the item may be the subject's own work).
+ * Those may still be counted above, so the number is a lower bound on agent influence.
+ */
+export type NegotiateAgentActions = {
+  readonly excluded: number;
+  readonly unmatched: number;
 };
 
 /**
@@ -184,6 +203,8 @@ export type NegotiateReviewedPrs = {
 export type NegotiateTickets = {
   readonly opened: number;
   readonly closedByAuthoredPr: number;
+  /** Agent-caused issues: excluded from `opened` and its evidence, or disclosed. */
+  readonly agentActions: NegotiateAgentActions;
   /**
    * The issues behind `opened`, newest first. `closedByAuthoredPr` is a DISTINCT count over
    * a two-hop traversal and is deliberately not cited here: its refs would be issues the
