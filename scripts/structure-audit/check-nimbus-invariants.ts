@@ -2709,6 +2709,7 @@ export const RULE_ANCHORS: readonly string[] = [
   // not capture-validate.ts) and (e) reads then permits. Without it, both rules would report clean
   // while scanning nothing the moment iterateSourceFiles() stopped loading mcp-sink/.
   "packages/gateway/src/mcp-sink/capture-gate.ts",
+  "packages/gateway/src/extensions/approve-run.ts", // D33(b) — scanned; the run-grant store's main caller
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
