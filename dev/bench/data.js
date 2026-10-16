@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792175090512,
+  "lastUpdate": 1792176227903,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "606788c3c9b440a254d402f53f2aaba2f4d361f4",
-          "message": "fix(gateway): remove the data-export staging directory (#985)\n\n`runDataExport` creates a staging tree under the OS temp directory and\n**never removes it**.\n\nEvery export therefore leaves behind a second copy of everything it just\nexported:\n\n| File | |\n|---|---|\n| `audit-chain.json` | **plaintext** |\n| `vault-manifest.json.enc` | encrypted |\n| `watchers.json`, `workflows.json`, `extensions.json`, `profiles.json`\n| |\n| `manifest.json` | |\n\nNothing ever cleans it up, so the copies accumulate indefinitely —\nunbounded disk growth, and exported data persisting outside the bundle\nthe user asked for. `mkdtemp` gives the directory 0700, so this is not a\npermissions exposure; it is data living longer and in more places than\nintended.\n\n## The fix\n\nThe body is wrapped in `try`/`finally` with `rmSync(stage, { recursive:\ntrue, force: true })`.\n\n`finally` rather than \"after `packBundle`\" is the point: a failure\npart-way through is *exactly* when a half-written copy of vault and\naudit data should not be the thing left on disk.\n\n## Tests that were verified to fail without it\n\nTwo cases — a successful export and one that fails mid-way (output\nnested under a file, so `mkdirSync` fails with `ENOTDIR` after the\nstaging tree is already populated).\n\nBoth were run with the cleanup line disabled to confirm they catch the\nleak, rather than assuming:\n\n```\ncleanup disabled:  (fail) is removed after a successful export\n                   (fail) is removed even when the export fails part-way through\n                   8 pass, 2 fail\nrestored:          10 pass, 0 fail\n```\n\nThey compare the set of `nimbus-export-stage-*` directories before and\nafter, so they assert on this export's leftovers rather than on a global\ncount that other tests could disturb.\n\n## Gates\n\n`bun run typecheck` exit 0 (whole workspace) · `biome check` on both\nchanged files exit 0 · `bun test src/commands/` 27 pass / 0 fail.\n\n## How it was found, and what is still outstanding\n\nWhile investigating temp-directory accumulation: one full run of this\nrepo's test suite left ~6,080 directories in `%TEMP%`. Most are test\nfixtures that never clean up (`nimbus-ext-test` ~384, `nimbus-mesh`\n~320, `nimbus-snapshot-test` ~280, and others across 213 files using\n`mkdtemp`).\n\n`nimbus-export-stage` was ~293 of those — and unlike the rest it traced\nback to **production code**, which is why it is fixed here on its own.\nThe test-fixture leaks are real but cosmetic by comparison, and fixing\n213 call sites belongs in its own change;\n`packages/gateway/test/fixtures/extension.ts` is the single biggest and\nwould be the place to start.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Temporary files created during data exports are now automatically\ncleaned up after successful exports.\n* Temporary files are also removed when an export fails, helping prevent\nleftover data and disk usage.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-07-31T10:24:51+03:00",
-          "tree_id": "e1b5fb97f6d52be16b2121f0a88dd7f01ca8c41d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/606788c3c9b440a254d402f53f2aaba2f4d361f4"
-        },
-        "date": 1785483381168,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 309.85745075000085,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.1242445499964,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 152.85764989999623,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "39c70ad3f7d337ccd451962658daa12d10fa2bb9",
+          "message": "chore: release main (#1674)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.46.0</summary>\n\n##\n[7.46.0](https://github.com/nimbus-agent/Nimbus/compare/v7.45.0...v7.46.0)\n(2026-10-16)\n\n\n### Features\n\n* **captures:** batch accept proposed decisions, terms and links\n([#1668](https://github.com/nimbus-agent/Nimbus/issues/1668))\n([64ab982](https://github.com/nimbus-agent/Nimbus/commit/64ab98286e87b20500bf322bacd04c8cc136e005))\n* **captures:** purge a finished action's stored input; prune\nexecuted/failed after 90 days\n([#1667](https://github.com/nimbus-agent/Nimbus/issues/1667))\n([e35e346](https://github.com/nimbus-agent/Nimbus/commit/e35e3460b6499c33f4c46736a0358fee39f56f14))\n* **extensions:** run grants - approve an installed extension to run (S3\nextension runtime PR 2)\n([#1665](https://github.com/nimbus-agent/Nimbus/issues/1665))\n([37e2044](https://github.com/nimbus-agent/Nimbus/commit/37e2044edca30255e1b148f85cc5c0e3fc72e04e))\n* **negotiate:** stop crediting agent-caused issues, messages and pages\nto the owner\n([#1669](https://github.com/nimbus-agent/Nimbus/issues/1669))\n([6a7c84c](https://github.com/nimbus-agent/Nimbus/commit/6a7c84c193f5e4f5e45db68cc1d251822e542e1b))\n\n\n### Bug Fixes\n\n* **demo:** retry the demo-root delete for real on Windows; size the PAL\nboot test for CI\n([#1673](https://github.com/nimbus-agent/Nimbus/issues/1673))\n([a264732](https://github.com/nimbus-agent/Nimbus/commit/a2647325c37f99bba373512c5a1b545022e94116))\n* **index:** one pre-migration backup per upgrade, none on a fresh\ninstall ([#1671](https://github.com/nimbus-agent/Nimbus/issues/1671))\n([9eb42b1](https://github.com/nimbus-agent/Nimbus/commit/9eb42b12b4ce7e15b011b2af29126d999faf8c46))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-16T18:36:57Z",
+          "tree_id": "1e55c7c64a2967c35d64a3f5847ca0826c8b83de",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/39c70ad3f7d337ccd451962658daa12d10fa2bb9"
+        },
+        "date": 1792176220908,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 165.49361635000494,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 169.24093759999997,
             "unit": "ms"
           }
         ]
