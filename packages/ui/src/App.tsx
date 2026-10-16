@@ -7,6 +7,7 @@ import {
   RouterProvider,
 } from "react-router";
 import { RootLayout } from "./layouts/RootLayout";
+import { Captures } from "./pages/Captures";
 import { Dashboard } from "./pages/Dashboard";
 import { HitlPopup } from "./pages/HitlPopup";
 import { Marketplace } from "./pages/Marketplace";
@@ -44,6 +45,7 @@ const router = createBrowserRouter(
     >
       <Route index element={<Dashboard />} />
       <Route path="oncall" element={<Oncall />} />
+      <Route path="captures" element={<Captures />} />
       <Route path="onboarding" element={<Onboarding />}>
         <Route index element={<Navigate to="welcome" replace />} />
         <Route path="welcome" element={<Welcome />} />

@@ -18,6 +18,22 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-16 — S3 capture sink: a read-only desktop Captures page.**
+  The desktop gains a Captures page (sidebar, after On-call): a list of what MCP clients captured or
+  proposed, filterable by kind and state, and a detail pane with timestamps, the native-row status,
+  the result URL (shown as text, never a link, since an agent influences it), the error code and the
+  payload as pretty JSON under a heading that says it is agent-authored. Two methods joined the Tauri
+  allowlist, `captures.list` and `captures.get`, taking it from 107 to 109; both are reads, asserted
+  by name in `allowlist_captures_reads_only` and its source-level twin in
+  `security-invariants.test.ts`. Nothing on the page writes: accepting, rejecting, revoking and
+  purging stay in a terminal, and the page prints the relevant `nimbus captures …` command for a
+  capture's state instead of offering a button. Every agent-written string is escaped by React and,
+  in addition, has its invisible, bidirectional and control characters shown as `\u{XXXX}`, using the
+  gateway's own invisible-text table plus the C0 controls except tab and line feed. One bound, stated
+  rather than hidden: `captures.list` runs the existing action-expiry sweep, so opening the page can
+  mark an overdue proposed action `expired`, with a `capture.action.expire` audit row, exactly as
+  `nimbus captures list` does. A contract test drives the real `captures.list`/`captures.get` over
+  a migrated in-memory database and pins the desktop's fixture to the wire shape.
 - **2026-10-16 — `nimbus demo`: a re-run no longer fails on Windows while the last demo gateway lets go.**
   `nimbus demo` re-roots by stopping the previous demo gateway and deleting the demo directory. The
   delete used `rmSync`'s `maxRetries`, which Bun ignores, so when the stopped process still held a

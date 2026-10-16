@@ -6,6 +6,7 @@ import { NavItem } from "./NavItem";
 const ENTRIES: ReadonlyArray<{ to: string; icon: string; label: string }> = [
   { to: "/", icon: "▦", label: "Dashboard" },
   { to: "/oncall", icon: "☎", label: "On-call" },
+  { to: "/captures", icon: "✎", label: "Captures" },
   { to: "/hitl", icon: "⚠", label: "HITL" },
   { to: "/marketplace", icon: "⚙", label: "Marketplace" },
   { to: "/watchers", icon: "👁", label: "Watchers" },

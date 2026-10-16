@@ -507,3 +507,43 @@ export interface PushedBriefList {
 export interface PushedBriefGet {
   readonly brief: PushedBriefDetail | null;
 }
+
+/** Wire shapes of `captures.list` / `captures.get` (gateway `mcp-sink/capture-gate.ts`). */
+export type CaptureKind = "note" | "decision" | "term" | "link" | "action";
+
+export type CaptureState =
+  | "live"
+  | "proposed"
+  | "accepted"
+  | "rejected"
+  | "revoked"
+  | "executing"
+  | "executed"
+  | "failed"
+  | "expired";
+
+export interface CaptureSummary {
+  readonly id: string;
+  readonly kind: CaptureKind;
+  readonly state: CaptureState;
+  readonly title: string;
+  readonly clientLabel: string | null;
+  readonly createdAt: number;
+  readonly decidedAt: number | null;
+  readonly expiresAt: number | null;
+}
+
+export interface CaptureDetail extends CaptureSummary {
+  /** Agent-authored; `null` once a capture is revoked or a finished action's input is purged. */
+  readonly payload: unknown;
+  readonly payloadBytes: number;
+  readonly itemId: string | null;
+  readonly nativeRef: string | null;
+  readonly nativeStatus: "owned" | "superseded" | "absent" | null;
+  readonly outcomeRef: string | null;
+  readonly errorCode: string | null;
+}
+
+export interface CaptureList {
+  readonly captures: readonly CaptureSummary[];
+}

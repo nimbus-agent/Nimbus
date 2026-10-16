@@ -1290,9 +1290,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 107", async () => {
+  test("allowlist_exact_size assertion is 109", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*107\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*109\s*\)/);
   });
 
   // By NAME, as for every brief/verb pair: a one-for-one swap of pushedGet for pushedRetry keeps
@@ -1305,6 +1305,19 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).toContain('assert!(is_method_allowed("oncall.pushedList"));');
     expect(rust).toContain('assert!(is_method_allowed("oncall.pushedGet"));');
     expect(rust).toContain('assert!(!is_method_allowed("oncall.pushedRetry"));');
+  });
+
+  // By NAME again: the desktop Captures page reads; accepting, rejecting, revoking and purging
+  // stay in a terminal, and the MCP-client door (capture.*) is never the renderer's (I28).
+  test("captures: the two reads are renderer-callable, no owner verb is", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    expect(rust).toMatch(/^\s*"captures\.get",\s*$/m);
+    expect(rust).toMatch(/^\s*"captures\.list",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"captures\.(?:accept|reject|revoke|purge)",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"capture\.[A-Za-z]+",\s*$/m);
+    expect(rust).toContain('assert!(is_method_allowed("captures.list"));');
+    expect(rust).toContain('assert!(is_method_allowed("captures.get"));');
+    expect(rust).toContain('assert!(!is_method_allowed("captures.accept"));');
   });
 
   test("connector.list stays absent; connector.listStatus is the served one", async () => {
@@ -2716,11 +2729,14 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect(c.enabled).toBe(false);
   });
 
-  test("both namespaces are LAN-forbidden and absent from the Tauri allowlist", async () => {
+  test("both namespaces are LAN-forbidden; only the two owner reads reach the Tauri allowlist", async () => {
     const lan = await read("packages/gateway/src/ipc/lan-rpc.ts");
     expect(lan).toMatch(/"capture",\s*"captures"/);
     const tauri = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(tauri).not.toMatch(/"captures?\./);
+    // Every `"capture(s).x",` ENTRY line in the Rust file: the read-only desktop Captures page
+    // (2026-10-16) reaches captures.list/get; no owner verb and no MCP-client method ever does.
+    const entries = [...tauri.matchAll(/^\s*"(captures?\.[A-Za-z]+)",\s*$/gm)].map((m) => m[1]);
+    expect(entries).toEqual(["captures.get", "captures.list"]);
   });
 
   test("capture items are never extraction input", async () => {
