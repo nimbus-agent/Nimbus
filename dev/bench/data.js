@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792163660575,
+  "lastUpdate": 1792165096396,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ee248fb149d12791d779db7e18e2854e9a69acb9",
-          "message": "docs(outreach): correct the listing spec against what shipped (#980)\n\nFollow-up to #979. Three corrections, each from something that turned\nout differently in practice.\n\n**The official client list is gone.** The spec listed\n`modelcontextprotocol/docs` → `clients.mdx` as a Tier 1 target. That\npage has been retired: `modelcontextprotocol.io/clients` redirects to\nthe homepage, the repo is archived (last push 2025-04-08), and no\n`clients.mdx` exists anywhere in the org. The Registry replaced it and\nis servers-only, so there is no official client list to join. Marked\ndead with the evidence, so the next reader does not spend an afternoon\non an archived repo.\n\n**Glama takes a build spec, not a Dockerfile.** Despite the\n`/admin/dockerfile` URL, the page wants a JSON array of shell commands\nplus a JSON `cmd` array; pasting a Dockerfile fails with an invalid-JSON\nerror. The recorded artifact is replaced with the real one, along with\nwhat Glama generates around it — a `debian:trixie-slim` base with\nNode/`uv`/`mcp-proxy` preinstalled, a `git clone` of this repo at a\npinned commit, and a rewritten `CMD [\"mcp-proxy\", \"--\", \"nimbus\",\n\"mcp-server\", \"--stdio\"]`.\n\nThat wrapper was worth verifying rather than assuming: a stdio server\ncan work standalone and still misbehave behind a proxy. Replicated it\nlocally and drove a full MCP handshake over HTTP through\n`mcp-proxy@6.4.3` — all six tools returned.\n\nAlso recorded: the platform cannot be pinned from a build spec, so an\narm64 builder would fail at start with an exec-format error rather than\nat build. That is a support question, not something the steps can fix.\n\n**Tracking refreshed.** Glama listed and claimed, `awesome-mcp-clients`\nand `awesome-mcp-servers` PRs open, PulseMCP emailed.\n\n`preflight:fast` PASSED · `audit:links` 0 errors.\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-30T19:16:17Z",
-          "tree_id": "63fe30f0d6549cc4c2d961f11924f96719c0074b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ee248fb149d12791d779db7e18e2854e9a69acb9"
-        },
-        "date": 1785439691268,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 328.72880710000135,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 325.3172897500073,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 267.9689254499975,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9eb42b12b4ce7e15b011b2af29126d999faf8c46",
+          "message": "fix(index): one pre-migration backup per upgrade, none on a fresh install (#1671)\n\nFixes the red Windows leg on `main`, and the product bug behind it.\n\n## What was red\n\nEvery push to `main` since 42102e06 failed `CI — TS/Bun (windows-2025) /\nUnit + Coverage` on one test, `Platform Abstraction Layer > returns a\nfull PlatformServices shape for the current OS`. It hit its 30 s timeout\non both attempts, at 32.8 s and 36.4 s on 64ab9828. It had been creeping\ntoward the limit for days: 27.7 s and 28.4 s on the last green run, 30.1\ns and 31.0 s on #1660. On the same run it took 16.5 s on macOS and 1.3 s\non Ubuntu. Locally, on Windows, it takes about 1.2 s.\n\n## Root cause, from a CPU profile of the boot\n\nOf a 1.3 s local `createPlatformServices()`, about 500 ms is\n`writePreMigrationBackup` → `vacuumAndGzip`. The runner wrote a full\npre-migration backup, a `VACUUM INTO` of the whole index plus a gzip,\n**before every indexed step**.\n\nA fresh database runs every step from version 0, so first boot wrote\n**70 backups of an empty database**. I counted 70 files in `backups/`\nafter one fresh migration run. That work is fsync-bound, and per\nCLAUDE.md the CI runners are 13–18× slower at temp-dir SQLite work, so\nthe cost pushed the test past its budget there and nowhere else.\n\nIt is also a real user-facing bug:\n- Every new install starts with 70 junk `.gz` files, which `nimbus db\nbackups list` shows.\n- Every upgrade across N versions copies the whole index N times.\n\n## Fix (`runner.ts`)\n\n- **One backup per run.** `oneBackupPerRun` writes a single backup\nlazily, before the first step that actually runs. Every later step's\n`MigrationRollbackError` reuses that path, which is accurate because the\nbackup predates all of them.\n- **No backup when the run starts at version 0.** Such a database has no\nschema, so there is nothing to restore.\n\nThe 30-day prune, the rollback error and the \"no pending step, no\nbackup\" behaviour are unchanged. Backups already on disk are untouched,\nand the existing prune removes them.\n\n## Tests\n\nThe tests that pinned the old behaviour now pin the new one:\n- `migration-rollback.test.ts`'s \"before each migration step\" test now\nasserts exactly one backup.\n- Three backup tests in `runner.test.ts` started from a fresh database\nand expected a file. They now start from an existing database.\n\nNew tests:\n- a multi-step run writes exactly one backup, named for its first step;\n- a fresh database writes none;\n- nothing pending writes none.\n\nRestoring the old per-step code makes both of the first two new tests\nfail.\n\n`preflight:fast` passed, and 1,843 tests pass across index, db,\nembedding, diagnostics, migrations integration, the `db` CLI and\nplatform.\n\n**What CI must confirm:** the Windows leg's PAL test time on this PR.\nLocally the fresh migration falls from 740 ms to about 200 ms.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Database upgrades now create one automatic backup before the first\npending migration, even when an upgrade spans multiple versions.\nRollback messages reference that same backup.\n* **Bug Fixes**\n* Fresh installs and runs with no pending migrations no longer create\nunnecessary backups.\n* **Documentation**\n* Updated migration and troubleshooting guidance to describe the backup\nbehavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-16T18:25:13+03:00",
+          "tree_id": "52a3aefe75d1db0d823ce13240bcee257ea65f55",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9eb42b12b4ce7e15b011b2af29126d999faf8c46"
+        },
+        "date": 1792165091106,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 267.91756740000017,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 266.31512870000404,
             "unit": "ms"
           }
         ]
