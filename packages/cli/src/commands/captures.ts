@@ -1,9 +1,12 @@
+import { createInterface } from "node:readline/promises";
+
 import type { IPCClient } from "../ipc-client/index.ts";
 import { CliExit } from "../lib/cli-exit.ts";
 import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import {
+  type CaptureSummaryView,
   formatCaptureDetail,
   formatCaptureTable,
   parseDetail,
@@ -16,17 +19,36 @@ export const CAPTURES_USAGE =
   "       nimbus captures show <id> [--json]\n" +
   "       nimbus captures revoke <id> [--json]\n" +
   "       nimbus captures accept <id> [--json]\n" +
+  "       nimbus captures accept --all [--kind decision|term|link] [--json]\n" +
   "       nimbus captures reject <id> [--json]\n" +
   "       nimbus captures purge <id> [--json]";
 
 export type CapturesArgs =
   | { verb: "list"; state?: string; kind?: string; limit?: number; json: boolean }
-  | { verb: "show" | "revoke" | "accept" | "reject" | "purge"; id: string; json: boolean };
+  | { verb: "show" | "revoke" | "accept" | "reject" | "purge"; id: string; json: boolean }
+  | { verb: "acceptAll"; kind?: NativeKind | "action"; json: boolean };
+
+/** The kinds a batch accept may take. An action is never batched: each needs its own approval. */
+const NATIVE_KINDS = ["decision", "term", "link"] as const;
+type NativeKind = (typeof NATIVE_KINDS)[number];
+
+function isNativeKind(k: string): k is NativeKind {
+  return (NATIVE_KINDS as readonly string[]).includes(k);
+}
+
+/** `accept --all [--kind <native kind>]`; `--kind action` parses so the run can say why it refuses. */
+function parseAcceptAll(flags: string[], json: boolean): CapturesArgs | undefined {
+  if (flags.length === 0) return { verb: "acceptAll", json };
+  if (flags.length !== 2 || flags[0] !== "--kind") return undefined;
+  const kind = flags[1] ?? "";
+  return kind === "action" || isNativeKind(kind) ? { verb: "acceptAll", kind, json } : undefined;
+}
 
 export function parseCapturesArgs(argv: string[]): CapturesArgs | undefined {
   const json = argv.includes("--json");
   const rest = argv.filter((a) => a !== "--json");
   const verb = rest[0] ?? "list";
+  if (verb === "accept" && rest[1] === "--all") return parseAcceptAll(rest.slice(2), json);
   if (
     verb === "show" ||
     verb === "revoke" ||
@@ -204,12 +226,136 @@ async function runAccept(
 
 type Sink = { out(s: string): void; err(s: string): void };
 
+/** One question, one answer: the batch accept's single confirmation. */
+export type Ask = (question: string) => Promise<string>;
+
+/** `captures.list`'s own cap: one run accepts at most this many. */
+export const ACCEPT_ALL_MAX = 200;
+
+/** The proposed native captures a batch will take, oldest first, and whether more are waiting. */
+async function listNativeProposals(
+  c: Pick<IPCClient, "call">,
+  kinds: readonly NativeKind[],
+): Promise<{ rows: CaptureSummaryView[]; more: boolean }> {
+  let rows: CaptureSummaryView[] = [];
+  let more = false;
+  for (const kind of kinds) {
+    const raw = await c.call<unknown>("captures.list", {
+      state: "proposed",
+      kind,
+      limit: ACCEPT_ALL_MAX,
+    });
+    // Re-filtered here, not trusted: an action row must never reach the accept loop.
+    const got = parseList(raw).filter((r) => r.state === "proposed" && r.kind === kind);
+    if (got.length >= ACCEPT_ALL_MAX) more = true;
+    rows.push(...got);
+  }
+  rows.sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id));
+  if (rows.length > ACCEPT_ALL_MAX) {
+    more = true;
+    rows = rows.slice(0, ACCEPT_ALL_MAX);
+  }
+  return { rows, more };
+}
+
+type BatchResult =
+  | { id: string; state: "accepted"; nativeRef: string }
+  | { id: string; error: string };
+
+async function acceptOne(c: Pick<IPCClient, "call">, id: string): Promise<BatchResult> {
+  try {
+    const v = parseAcceptResult(await c.call<unknown>("captures.accept", { id }));
+    if (v.state !== "accepted") return { id, error: `unexpected result state ${v.state}` };
+    return { id, state: "accepted", nativeRef: v.nativeRef };
+  } catch (e) {
+    return { id, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * `nimbus captures accept --all`: every proposed decision, term and link, after ONE confirmation
+ * at a terminal (no `--yes`: accepting many agent-written claims at once stays a human act). An
+ * action is never batched — each keeps its own TTY guard and the executor's HITL prompt. Each
+ * accept is the gateway's own, with every per-capture check; one refusal does not stop the run.
+ */
+async function runAcceptAll(
+  c: Pick<IPCClient, "call">,
+  a: { kind?: NativeKind | "action"; json: boolean },
+  sink: Sink,
+  tty: Tty,
+  ask: Ask,
+): Promise<number> {
+  const refuse = (msg: string): number => {
+    if (a.json) sink.out(`${JSON.stringify({ error: msg })}\n`);
+    else sink.err(`${msg}\n`);
+    return 1;
+  };
+  if (a.kind === "action") {
+    return refuse(
+      "agent-proposed actions are never accepted in a batch; accept each one with `nimbus captures accept <id>`",
+    );
+  }
+  if (!(tty.stdin && tty.stdout)) {
+    return refuse(
+      "nimbus captures accept --all requires an interactive terminal (TTY): it asks once before accepting agent-authored proposals.",
+    );
+  }
+  const { rows, more } = await listNativeProposals(
+    c,
+    a.kind === undefined ? NATIVE_KINDS : [a.kind],
+  );
+  // With --json, stdout carries only the JSON result: the listing and prompt go to stderr.
+  const say = (s: string): void => (a.json ? sink.err(s) : sink.out(s));
+  if (rows.length === 0) {
+    if (a.json)
+      sink.out(`${JSON.stringify({ accepted: 0, total: 0, more: false, results: [] })}\n`);
+    else say("No proposed decisions, terms or links to accept.\n");
+    return 0;
+  }
+  say(`${String(rows.length)} agent-authored proposal(s), oldest first:\n`);
+  for (const r of rows) {
+    say(
+      `  ${r.id}  ${r.kind}  ${stripControl(r.clientLabel ?? "-")}  ${stripControl(r.title).slice(0, 60)}\n`,
+    );
+  }
+  if (more) {
+    say(
+      `More proposals are waiting than one run accepts (${String(ACCEPT_ALL_MAX)}); run it again afterwards.\n`,
+    );
+  }
+  const answer = (
+    await ask(`Accept these ${String(rows.length)} proposal(s)? [y/N] `)
+  ).toLowerCase();
+  if (answer !== "y" && answer !== "yes") {
+    return refuse("Accepted nothing.");
+  }
+  const results: BatchResult[] = [];
+  for (const r of rows) {
+    const res = await acceptOne(c, r.id);
+    results.push(res);
+    if ("error" in res) say(`[refused] ${r.id}: ${stripControl(res.error)}\n`);
+    else
+      say(
+        `accepted ${r.id}: ${kindNoun(stripControl(res.nativeRef))} (${stripControl(res.nativeRef)})\n`,
+      );
+  }
+  const accepted = results.filter((r) => !("error" in r)).length;
+  if (a.json) {
+    sink.out(`${JSON.stringify({ accepted, total: rows.length, more, results }, undefined, 2)}\n`);
+  } else {
+    say(`Accepted ${String(accepted)} of ${String(rows.length)}.\n`);
+  }
+  return accepted === rows.length ? 0 : 1;
+}
+
 export async function runCapturesWith(
   c: Pick<IPCClient, "call">,
   a: CapturesArgs,
   sink: Sink,
   // Fail-closed default: a caller that supplies no TTY facts cannot accept an action.
   tty: Tty = { stdin: false, stdout: false },
+  // Fail-closed default: a caller that supplies no way to ask declines every batch.
+  ask: Ask = () => Promise.resolve(""),
 ): Promise<number> {
   try {
     if (a.verb === "list") {
@@ -233,6 +379,7 @@ export async function runCapturesWith(
       return 0;
     }
     if (a.verb === "accept") return await runAccept(c, a, sink, tty);
+    if (a.verb === "acceptAll") return await runAcceptAll(c, a, sink, tty, ask);
     const raw = await c.call<unknown>(`captures.${a.verb}`, { id: a.id });
     sink.out(a.json ? `${JSON.stringify(raw, undefined, 2)}\n` : confirmation(a.verb, a.id));
     return 0;
@@ -242,6 +389,19 @@ export async function runCapturesWith(
     // A refusal can quote agent text (a term key, an item id): strip it like every other print.
     else sink.err(`${stripControl(msg)}\n`);
     return 1;
+  }
+}
+
+/** The batch confirmation; under --json the question goes to stderr so stdout stays JSON. */
+async function askOnTerminal(question: string, json: boolean): Promise<string> {
+  const rl = createInterface({
+    input: process.stdin,
+    output: json ? process.stderr : process.stdout,
+  });
+  try {
+    return (await rl.question(question)).trim();
+  } finally {
+    rl.close();
   }
 }
 
@@ -262,6 +422,7 @@ export async function runCapturesCmd(argv: string[]): Promise<void> {
         a,
         { out: (s) => process.stdout.write(s), err: (s) => process.stderr.write(s) },
         { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
+        (q) => askOnTerminal(q, a.json),
       ),
     paths,
     a.verb === "accept" ? { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS } : {},

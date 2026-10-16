@@ -1896,7 +1896,7 @@ the V67 SQL module; (b) `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeC
 `ipc/capture-rpc.ts` and `capture-gate.ts`; (c) `capture-gate.ts` value-imported (or re-exported, or
 dynamically imported) by no gateway module except `ipc/capture-rpc.ts`.
 
-**Not shipped, and recorded as such.** There is no desktop UI for captures and no batch accept. `data.delete --service nimbus` removes
+**Not shipped, and recorded as such.** There is no desktop UI for captures. Batch accept (`nimbus captures accept --all`, 2026-10-16) is a CLI loop over `captures.list` and `captures.accept` with no gateway method of its own; it takes decisions, terms and links only, never an action. `data.delete --service nimbus` removes
 capture items but does not clear `capture` rows. The attempt limit is in-memory. A live note is searchable
 unreviewed, by design.
 

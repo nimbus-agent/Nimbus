@@ -140,7 +140,8 @@ CONFIG & DIAGNOSTICS
   nimbus notifications status|test [--json]   OS notification (toast) backend status; send one
                               fixed-text test toast ([notifications] enabled/content in nimbus.toml)
   nimbus captures [list|show|accept|reject|revoke|purge <id>] [--json]   Review what MCP clients
-                              captured or proposed ([mcp_sink] in nimbus.toml); purge deletes a
+                              captured or proposed ([mcp_sink] in nimbus.toml); accept --all takes
+                              every proposed decision/term/link after one prompt; purge deletes a
                               finished action's stored input
 
 Environment (optional):

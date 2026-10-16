@@ -18,6 +18,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-16 — S3 capture sink: batch accept (`nimbus captures accept --all`).**
+  Closes the "batch accept" item the capture sink left unshipped. `nimbus captures accept --all
+  [--kind decision|term|link] [--json]` accepts every `proposed` decision, term and link (at most 200
+  per run, oldest first, and it says when more are waiting) after ONE confirmation that lists each
+  proposal. It requires an interactive terminal and has no `--yes`: accepting many agent-written
+  claims at once stays a deliberate human act, even though a single native accept needs no TTY. It is
+  a CLI loop over the existing `captures.list` and `captures.accept`, so every proposal still passes
+  the gateway's own per-capture checks; a refusal is reported for that id and the run goes on, exiting
+  1 unless every proposal was accepted. Actions are never batched: `--kind action` is refused, and an
+  action row is dropped client-side even if the gateway returns one, so each keeps its own TTY guard
+  and the executor's HITL prompt. No gateway change, no new IPC method, no migration, no invariant.
+
 - **2026-10-16 — S3 capture sink: the owner can delete a finished action's stored input (`nimbus captures purge`).**
   Closes the act door's "no owner deletion path" follow-up. An `executed` or `failed` action row kept
   the agent's verbatim `input` with no time limit: retention pruned only rejected and expired rows,
