@@ -432,10 +432,12 @@ override the sections above wherever they disagree.
 
 Three corrections found while planning PR 2:
 
-6. **The FK cascade does not fire.** The gateway's main connection never sets
-   `PRAGMA foreign_keys = ON`, so § 4.4's "`extension.remove` cascades the grant through the FK" is
-   false. `deleteExtensionById` deletes the grant explicitly (through the grant store); the DDL
-   keeps `ON DELETE CASCADE` for connections that do enable FKs.
+6. **The FK cascade is not relied on.** (Corrected during Task 3: an earlier version of this item
+   said the gateway's connection never enables foreign keys; `index/local-index.ts` does set
+   `PRAGMA foreign_keys = ON`, so on the gateway's own connection the cascade DOES fire.)
+   `deleteExtensionById` still deletes the grant explicitly, through the grant store, because the
+   cascade only fires on a connection that enabled foreign keys and a caller holding a different
+   connection may not have. The DDL keeps `ON DELETE CASCADE`.
 7. **`permissions_json` stores the DECLARED grants as resolved, not the full runtime manifest.**
    § 4.4 compares "the live runtime manifest" to the stored one at spawn, but the runtime manifest
    includes the Bun runtime's read paths, which are machine-derived (`process.execPath`) and change
