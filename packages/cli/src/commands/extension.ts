@@ -11,7 +11,10 @@ import {
 } from "../lib/extension-signing.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
-import { registerConsentFor } from "../lib/interactive-ipc-handlers.ts";
+import {
+  registerConsentFor,
+  registerConsentPromptHandler,
+} from "../lib/interactive-ipc-handlers.ts";
 import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import {
@@ -54,6 +57,8 @@ type ExtensionListEntry = {
   publisher?: { id: string; key?: string };
   forwardDeps?: Array<{ id: string; range: string }>;
   reverseDeps?: Array<{ extensionId: string; range: string }>;
+  runState?: string;
+  runGrant?: { serviceId: string; approvedAt: number; modelAccess: boolean } | null;
 };
 
 export interface ExtensionListTableRow {
@@ -68,6 +73,7 @@ export interface ExtensionListTableRow {
    * unsigned extension, and a different fact entirely.
    */
   signatureDisabled?: boolean;
+  runState?: string;
 }
 
 /** One definition, read by the renderer and by the colour rule below. */
@@ -77,7 +83,10 @@ export function formatExtensionListTable(
   rows: readonly ExtensionListTableRow[],
   opts: { isTty: boolean; noColor: boolean },
 ): string {
-  const headers = ["ID", "Version", "Publisher", "Status"];
+  const showRun = rows.some((r) => r.runState !== undefined);
+  const headers = showRun
+    ? ["ID", "Version", "Publisher", "Status", "Run"]
+    : ["ID", "Version", "Publisher", "Status"];
   const data = rows.map((r) => {
     const isEnabled = typeof r.enabled === "number" ? r.enabled === 1 : r.enabled;
     let status: string;
@@ -86,7 +95,13 @@ export function formatExtensionListTable(
     } else {
       status = r.signatureDisabled === true ? SIGNATURE_DISABLED_STATUS : "disabled";
     }
-    return [r.id, r.version, r.publisher === undefined ? "(unverified)" : r.publisher.id, status];
+    const cells = [
+      r.id,
+      r.version,
+      r.publisher === undefined ? "(unverified)" : r.publisher.id,
+      status,
+    ];
+    return showRun ? [...cells, r.runState ?? "-"] : cells;
   });
   const widths = headers.map((h, i) =>
     Math.max(h.length, ...data.map((row) => (row[i] ?? "").length)),
@@ -110,6 +125,14 @@ export function formatExtensionListTable(
     lines.push(row.map((c, i) => renderCell(c, widths[i] ?? 0, i)).join("  "));
   }
   return `${lines.join("\n")}\n`;
+}
+
+/** `nimbus extension info`'s run line. Nothing runs an approved extension until the runtime ships. */
+export function formatRunLine(e: Pick<ExtensionListEntry, "runState" | "runGrant">): string | null {
+  if (e.runState === undefined) return null;
+  if (e.runGrant === undefined || e.runGrant === null) return e.runState;
+  const at = new Date(e.runGrant.approvedAt).toISOString();
+  return `${e.runState} (${e.runGrant.serviceId}, approved ${at}; not executed until the extension runtime ships)`;
 }
 
 export async function runExtensionList(client: IPCClient, args: string[]): Promise<void> {
@@ -156,6 +179,7 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
     const base: ExtensionListTableRow = { id: r.id, version: r.version, enabled };
     if (r.publisher !== undefined) base.publisher = r.publisher;
     if (r.signature_disabled === true) base.signatureDisabled = true;
+    if (r.runState !== undefined) base.runState = r.runState;
     return base;
   });
   const table = formatExtensionListTable(tableRows, { isTty, noColor });
@@ -277,6 +301,8 @@ export async function runExtensionInfo(
   console.log(`Extension: ${e.id}`);
   console.log(`Version:   ${e.version}`);
   console.log(`Enabled:   ${formatEnabledLine(e)}`);
+  const runLine = formatRunLine(e);
+  if (runLine !== null) console.log(`Run:       ${runLine}`);
   printExtensionInfoPublisher(e);
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");
@@ -356,6 +382,59 @@ export async function runExtensionRehash(
       ? `${out.id}: adopted tree digest ${out.treeDigest}`
       : `${out.id}: unchanged (tree digest ${out.treeDigest})`,
   );
+}
+
+/**
+ * `nimbus extension approve <id>` — approve an installed extension to RUN with the grants the
+ * gateway resolves from its manifest. The gateway asks under `extension.run`. A terminal is
+ * required and there is no `--yes`: this consents to running third-party code unattended, which is
+ * not something to approve from a script. Nothing runs an approved extension until the extension
+ * runtime ships.
+ */
+export async function runExtensionApprove(
+  client: IPCClient,
+  args: string[],
+  rest: string[],
+): Promise<void> {
+  const id = rest[0]?.trim() ?? "";
+  if (id === "") {
+    throw new Error("Usage: nimbus extension approve <id>");
+  }
+  if (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
+    throw new Error(
+      "nimbus extension approve has no --yes: approving an extension to run must be answered by a person at a terminal.",
+    );
+  }
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+    throw new Error(
+      "Refusing to approve running an extension in non-TTY mode: the approval must be answered at a terminal.",
+    );
+  }
+  // The prompt handler DIRECTLY, not `registerConsentFor({ kind: "prompt" })`: that one answers
+  // from `NIMBUS_SCRIPT_CONSENT_SOURCE` when it is set, which would let an environment variable
+  // approve running third-party code at a terminal — exactly what having no --yes rules out.
+  registerConsentPromptHandler(client);
+  const out = await client.call<{
+    id: string;
+    serviceId: string;
+    treeDigest: string;
+    changed: boolean;
+  }>("extension.approveRun", { id });
+  console.log(
+    out.changed
+      ? `${out.id}: approved to run as ${out.serviceId} (tree digest ${out.treeDigest}). Nothing runs it yet: the extension runtime ships in a later release.`
+      : `${out.id}: already approved for this code and these grants (${out.serviceId}).`,
+  );
+}
+
+/** `nimbus extension revoke <id>` — withdraw a run approval. Not gated: it only narrows. */
+export async function runExtensionRevoke(client: IPCClient, rest: string[]): Promise<void> {
+  const id = rest[0]?.trim() ?? "";
+  if (id === "") {
+    throw new Error("Usage: nimbus extension revoke <id>");
+  }
+  const out = await client.call<{ id: string; revoked: boolean }>("extension.revokeRun", { id });
+  console.log(out.revoked ? `${out.id}: run approval revoked` : `${out.id}: had no run approval`);
 }
 
 export async function runExtensionEnable(client: IPCClient, rest: string[]): Promise<void> {
@@ -573,7 +652,7 @@ export async function runExtensionSync(client: IPCClient, args: string[]): Promi
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | rehash <id> [--yes] | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | rehash <id> [--yes] | approve <id> | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
 
 async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
   if (sub === "keygen") {
@@ -626,6 +705,12 @@ async function dispatchExtensionVoid(
     case "rehash":
       await runExtensionRehash(client, args, rest);
       return true;
+    case "approve":
+      await runExtensionApprove(client, args, rest);
+      return true;
+    case "revoke":
+      await runExtensionRevoke(client, rest);
+      return true;
     case "enable":
       await runExtensionEnable(client, rest);
       return true;
@@ -654,11 +739,13 @@ export async function runExtension(args: string[]): Promise<void> {
     throw new Error(gatewayNotRunningMessage(paths.demo === true));
   }
 
-  // `install` and `rehash` block on the owner's HITL prompt, so it gets the human-bound budget rather than the
+  // `install`, `rehash` and `approve` block on the owner's HITL prompt, so it gets the human-bound budget rather than the
   // 30s default that would time out while the owner is still reading the prompt.
   const client = createIpcClient(
     state.socketPath,
-    sub === "install" || sub === "rehash" ? INTERACTIVE_RPC_TIMEOUT_MS : undefined,
+    sub === "install" || sub === "rehash" || sub === "approve"
+      ? INTERACTIVE_RPC_TIMEOUT_MS
+      : undefined,
   );
   await client.connect();
   try {
