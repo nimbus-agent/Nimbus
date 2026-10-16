@@ -37,6 +37,7 @@ The runner in `packages/gateway/src/index/migrations/runner.ts`:
 
 - Applies each `INDEXED_SCHEMA_STEPS` entry in order via `applyIndexedSchemaStep`.
 - Wraps each step in **a single transaction**.
+- Builds a **fresh** database (`user_version` 0 and nothing but the `_schema_migrations` ledger) with `PRAGMA synchronous = OFF`, then restores the connection's own level and checkpoints a WAL file before returning; an upgrade keeps full durability. See `isFreshIndexDatabase` / `withRelaxedSyncForFreshBuild` in `packages/gateway/src/index/migrations/runner.ts`.
 - Writes a **pre-migration backup** via `applyIndexedSchemaStep` before each step runs.
 - Records each step in `_schema_migrations` on success via `recordMigration`.
 - On a thrown step: the transaction is rolled back and a `MigrationRollbackError` is thrown (with the pre-migration backup path in its message when one was written). No ledger entry is recorded for a failed migration — only successful migrations are recorded. The caller must handle the exception.

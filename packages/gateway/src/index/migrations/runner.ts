@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CONNECTOR_REMOVE_INTENT_V15_SQL } from "../../connectors/remove-intent.ts";
 import { computeAuditRowHash } from "../../db/audit-chain.ts";
 import { vacuumAndGzip } from "../../db/vacuum-gzip.ts";
+import { readJournalMode } from "../../db/writable-pragmas.ts";
 import { dbExec, dbRun, dbStmtRun } from "../../db/write.ts";
 import { canonicalizeUrl } from "../../util/url-canonical.ts";
 import { API_ENDPOINT_V25_SCHEMA_SQL } from "../api-endpoint-v25-sql.ts";
@@ -789,6 +790,82 @@ function oneBackupPerRun(
   };
 }
 
+/**
+ * Whether `db` is a brand-new index: the only kind `withRelaxedSyncForFreshBuild` may build
+ * without a flush per commit. Both halves are required.
+ *
+ * - `user_version` is 0, the same test `oneBackupPerRun` uses to skip a fresh install's backup.
+ *   Anything past 0 is an UPGRADE of an index that may hold user data, and is never relaxed.
+ * - The schema holds nothing but the `_schema_migrations` ledger, which
+ *   `runIndexedSchemaMigrations` creates before it asks. A version-0 file can still hold data (a
+ *   table some other writer made), and such a file keeps full durability. SQLite's reserved
+ *   `sqlite_*` objects (`sqlite_stat1`, autoindexes) are bookkeeping and do not count; the `\_`
+ *   escape stops `_` matching any character. TEMP objects are not in `sqlite_master` at all.
+ */
+export function isFreshIndexDatabase(db: Database): boolean {
+  if (readIndexedUserVersion(db) !== 0) return false;
+  const other = db
+    .query(
+      `SELECT 1 FROM sqlite_master
+       WHERE NOT (type = 'table' AND name = '_schema_migrations')
+         AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+       LIMIT 1`,
+    )
+    .get();
+  return other === null;
+}
+
+/**
+ * Runs `fn` (a migration chain) with `PRAGMA synchronous = OFF` when `fresh`, then puts back the
+ * level the connection arrived with, in a `finally`, so a failed step restores it too and its
+ * `MigrationRollbackError` propagates unchanged. After a successful build a WAL database is also
+ * checkpointed (`TRUNCATE`) with that level back in force. When not `fresh`, `fn` just runs.
+ *
+ * WHY. A fresh database runs every step from version 0, each in its own transaction, so under
+ * SQLite's default `synchronous = FULL` it pays one forced disk flush per step: ~70 of them, for a
+ * database that holds nothing. Measured on a dev machine (medians of 5), a fresh on-disk build
+ * drops from ~190 to ~67 ms on a rollback journal and from ~75 to ~42 ms in WAL mode, the closing
+ * checkpoint included. The Windows CI runners take several seconds per database, 18–30 s under
+ * contention, and every gateway boot (so every e2e test) and every test that migrates a fresh
+ * on-disk index pays it. A real user pays it once.
+ *
+ * WHY IT IS SAFE. `fresh` comes from `isFreshIndexDatabase`, so the window covers only a database
+ * with no user data. With `synchronous = OFF` an application crash cannot corrupt the file (every
+ * write has already been handed to the OS); only an OS crash or power loss inside the window can,
+ * and at worst it corrupts that EMPTY database. Durability is re-established before return: the
+ * WAL checkpoint, at a syncing level, syncs the log and then the database file; a rollback-journal
+ * database needs nothing extra, because its next commit at a syncing level fsyncs the whole file,
+ * these pages included. A failed build is not checkpointed, so nothing can replace its error; its
+ * partial schema is just as data-free. The restore writes back the exact number SQLite reported
+ * (every value it reports round-trips through the setter), never a hard-coded FULL: a caller that
+ * chose NORMAL gets NORMAL back.
+ *
+ * NOT RELAXED inside the caller's own open transaction. SQLite refuses to change the level there
+ * ("Safety level may not be changed inside a transaction"), and the chain then rides that
+ * transaction's single commit anyway, so there is no per-step flush to save. A migration inside a
+ * caller's `BEGIN` worked before this helper existed and must keep working.
+ */
+export function withRelaxedSyncForFreshBuild<T>(db: Database, fresh: boolean, fn: () => T): T {
+  const previous = fresh && !db.inTransaction ? readSynchronousLevel(db) : null;
+  if (previous === null) return fn();
+  dbRun(db, "PRAGMA synchronous = OFF");
+  let result: T;
+  try {
+    result = fn();
+  } finally {
+    dbRun(db, `PRAGMA synchronous = ${String(previous)}`);
+  }
+  if (readJournalMode(db) === "wal") dbRun(db, "PRAGMA wal_checkpoint(TRUNCATE)");
+  return result;
+}
+
+/** The connection's `PRAGMA synchronous` level, or null when SQLite reports something else. */
+function readSynchronousLevel(db: Database): number | null {
+  const row = db.query("PRAGMA synchronous").get() as { synchronous?: unknown } | null;
+  const level = row?.synchronous;
+  return typeof level === "number" && Number.isInteger(level) && level >= 0 ? level : null;
+}
+
 function writePreMigrationBackup(
   db: Database,
   version: number,
@@ -874,13 +951,15 @@ export function runIndexedSchemaMigrations(
   let anyStepRan = false;
   const backupBeforeRun = oneBackupPerRun(db, ver, backupOptions);
 
-  for (const step of INDEXED_SCHEMA_STEPS) {
-    const nextVer = applyIndexedSchemaStep(db, step, ver, targetVersion, backupBeforeRun, now);
-    if (nextVer !== null) {
-      ver = nextVer;
-      anyStepRan = true;
+  withRelaxedSyncForFreshBuild(db, isFreshIndexDatabase(db), () => {
+    for (const step of INDEXED_SCHEMA_STEPS) {
+      const nextVer = applyIndexedSchemaStep(db, step, ver, targetVersion, backupBeforeRun, now);
+      if (nextVer !== null) {
+        ver = nextVer;
+        anyStepRan = true;
+      }
     }
-  }
+  });
 
   if (ver !== targetVersion) {
     throw new Error(
