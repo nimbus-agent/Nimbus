@@ -98,10 +98,16 @@ describe("reapAppContainersAtBoot", () => {
     return helper;
   }
 
+  let origSkipReap: string | undefined;
+
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "nimbus-sandbox-reap-test-"));
     origPlatform = Object.getOwnPropertyDescriptor(process, "platform");
     origHelperPath = process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+    // The test preload sets this for every test process so no test gateway reaps other tests'
+    // profiles. THIS suite is about the reap itself, so it runs with the opt-out cleared.
+    origSkipReap = process.env["NIMBUS_SKIP_APPCONTAINER_REAP"];
+    delete process.env["NIMBUS_SKIP_APPCONTAINER_REAP"];
     infos = [];
     warns = [];
   });
@@ -110,8 +116,52 @@ describe("reapAppContainersAtBoot", () => {
     if (origPlatform !== undefined) Object.defineProperty(process, "platform", origPlatform);
     if (origHelperPath === undefined) delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
     else process.env["NIMBUS_SANDBOX_HELPER_PATH"] = origHelperPath;
+    if (origSkipReap === undefined) delete process.env["NIMBUS_SKIP_APPCONTAINER_REAP"];
+    else process.env["NIMBUS_SKIP_APPCONTAINER_REAP"] = origSkipReap;
     rmSync(tmp, { recursive: true, force: true });
   });
+
+  it("NIMBUS_SKIP_APPCONTAINER_REAP=1 skips the reap: nothing listed, nothing deleted, one log line", async () => {
+    pretendWindows();
+    // A helper that would happily list and delete an orphan, and records every call it gets.
+    const calls = join(tmp, "calls");
+    installFakeHelper(
+      `echo "$@" >> '${calls}'\nif [ "$1" = "--list-profiles" ]; then echo nimbus-ext-gone; fi\nexit 0\n`,
+    );
+    let queried = false;
+    const db = {
+      query: () => {
+        queried = true;
+        return { all: () => [] };
+      },
+    } as never;
+    const reaped = await reapAppContainersAtBoot({
+      db,
+      logger: logger(),
+      env: { NIMBUS_SKIP_APPCONTAINER_REAP: "1" },
+    });
+    expect(reaped).toEqual([]);
+    expect(queried).toBe(false);
+    expect(existsSync(calls)).toBe(false);
+    expect(infos).toEqual([
+      "sandbox: AppContainer boot reap skipped (NIMBUS_SKIP_APPCONTAINER_REAP=1)",
+    ]);
+  });
+
+  // POSIX-only like the other fake-helper cases below: the stand-in helper is a shell script.
+  it.skipIf(process.platform === "win32")(
+    "any other value of NIMBUS_SKIP_APPCONTAINER_REAP still reaps",
+    async () => {
+      pretendWindows();
+      installFakeHelper(`if [ "$1" = "--list-profiles" ]; then echo nimbus-ext-gone; fi\nexit 0\n`);
+      const reaped = await reapAppContainersAtBoot({
+        db: emptyDb(),
+        logger: logger(),
+        env: { NIMBUS_SKIP_APPCONTAINER_REAP: "true" },
+      });
+      expect(reaped).toEqual(["nimbus-ext-gone"]);
+    },
+  );
 
   it("is inert off Windows — never even reads the extension table", async () => {
     Object.defineProperty(process, "platform", { value: "linux", configurable: true });

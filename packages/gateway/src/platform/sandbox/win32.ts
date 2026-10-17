@@ -42,11 +42,23 @@ function probeHelper(path: string): HelperState {
   }
 }
 
+/**
+ * The slice of node's `execFile` that `helperRunner` uses. Injectable so the exit-code-to-promise
+ * mapping is testable without spawning a process — spawning one from inside a `bun test --parallel`
+ * worker is what hung the macOS CI leg (see `win32-release.test.ts`).
+ */
+export type ExecFileLike = (
+  file: string,
+  args: readonly string[],
+  options: { windowsHide: boolean },
+  callback: (error: Error | null) => void,
+) => unknown;
+
 /** Run the helper asynchronously, hidden, rejecting on a non-zero exit. */
-export function helperRunner(path: string): HelperRun {
+export function helperRunner(path: string, execFileImpl: ExecFileLike = execFile): HelperRun {
   return (argv) =>
     new Promise<void>((resolve, reject) => {
-      execFile(path, argv, { windowsHide: true }, (err) =>
+      execFileImpl(path, argv, { windowsHide: true }, (err) =>
         err === null ? resolve() : reject(err),
       );
     });

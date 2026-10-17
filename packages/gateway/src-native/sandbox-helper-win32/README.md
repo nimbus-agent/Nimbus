@@ -10,10 +10,11 @@ profile creation **works** on this machine, not that a capability is **held**.
 
 ## Modes
 
-- `nimbus-sandbox-helper.exe --check-caps` — create (or derive) a throwaway
-  `nimbus-ext-probe` AppContainer profile, delete it again, print `OK` and exit 0
-  on success. Otherwise print a reason to stderr and exit 1. Used by the Gateway
-  startup probe.
+- `nimbus-sandbox-helper.exe --check-caps` — create a throwaway
+  `nimbus-ext-probe-<pid>-<tick>` AppContainer profile (unique per invocation, so
+  concurrent probes cannot delete each other's), delete it again, print `OK` and
+  exit 0 on success. Otherwise print a reason to stderr and exit 1. Used by the
+  Gateway startup probe.
 
 - `nimbus-sandbox-helper.exe --list-profiles` — print every `nimbus-`-prefixed
   AppContainer moniker registered under the current user's mappings key, one per
