@@ -282,10 +282,22 @@ jobs:
         # native `--coverage` emits no BRDA branch records (Bun #7100). Two
         # [test] preloads do it instead — istanbul-register.ts babel-transforms
         # first-party src on load (filling globalThis.__coverage__) and
-        # report-coverage.ts flushes a per-process shard to coverage/.nyc-tmp/.
+        # report-coverage.ts flushes a shard per global to coverage/.nyc-tmp/.
         # We still run `bun test` from inside each package (so Bun resolves the
         # right package.json), then merge-coverage.ts unions all shards into a
         # single repo-root coverage/lcov.info with repo-root-relative SF paths.
+        #
+        # `--parallel --no-isolate`: files run across worker processes, and each worker keeps ONE
+        # global and module registry for every file it runs. That is the critical-path job of every
+        # PR, and it ran serially: ~9.2 min of its ~14. Measured on ubuntu-24.04 (2026-10-16,
+        # runs 38965201727 / 38967055289), the same instrumented packages took 14.8 min with plain
+        # `--parallel` — which implies `--isolate`, so Istanbul re-instrumented every source module
+        # once per TEST FILE — and 4.7 min with `--no-isolate`, where it does so once per worker.
+        # `audit:coverage-floor` and `audit:coverage-scopes` (23 scopes) passed on that lcov.
+        # It also keeps this leg's process shape: files in one worker see each other's leftovers,
+        # as they did in the old one-process run, so cross-file `mock.module` leakage is still
+        # possible here (the macOS/Windows legs are the isolated ones). Dropping the e2e trees as
+        # well would save another ~40 s but fails the per-file floor: they carry coverage.
         run: |
           set -eo pipefail
           rm -rf coverage
@@ -311,6 +323,8 @@ jobs:
               bash "${GITHUB_WORKSPACE}/scripts/ci/run-with-optional-dbus.sh" \
                 bun test \
                 --timeout 60000 \
+                --parallel \
+                --no-isolate \
                 --preload "${GITHUB_WORKSPACE}/scripts/coverage/istanbul-register.ts" \
                 --preload "${GITHUB_WORKSPACE}/scripts/coverage/report-coverage.ts" \
                 --reporter=junit \
@@ -344,7 +358,10 @@ jobs:
           # the structure-audit/regen-slo helpers covered there don't appear
           # in any per-subsystem coverage gate, so omitting them from
           # `coverage/lcov.info` matches the prior project-wide behaviour.
+          # `--parallel`, isolated: uninstrumented, so nothing to amortize, and it is the shape the
+          # macOS/Windows legs already run these same files in.
           bun test scripts \
+            --parallel \
             --reporter=junit \
             --reporter-outfile=junit-reports/junit-unit-scripts.xml
         env:

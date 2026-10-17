@@ -198,8 +198,10 @@ and run the later steps locally too.
 e2e alike (a directory argument recurses, and `bunfig.toml` excludes nothing). Both legs pass
 `--parallel` (Bun 1.4), which runs files across worker processes and implies `--isolate`: every
 file gets a fresh global and module registry, so a `mock.module` in one file can no longer leak
-into another on these legs. The Linux `Unit + Coverage` leg still runs each package serially in
-one process, so cross-file mock leakage remains possible there. Only the remaining flags differ:
+into another on these legs. The Linux `Unit + Coverage` leg runs each package with `--parallel
+--no-isolate` (Istanbul instruments each module once per worker, not once per file: 4.7 min
+against 14.8 isolated and ~9 serial), and a worker keeps one global for every file it runs, so
+cross-file mock leakage remains possible there. Only the remaining flags differ:
 the push leg records per-file timings (`--update-timings`) and the PR legs read them, which is why
 the parity test compares positional paths only. Both run uninstrumented (macOS/Windows coverage
 was never read, and instrumenting the push leg skewed the timings) and through
