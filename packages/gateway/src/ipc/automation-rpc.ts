@@ -30,10 +30,12 @@ import {
   listWorkflows,
   upsertWorkflowByName,
 } from "../automation/workflow-store.ts";
+import { deleteConnectorHealthRow } from "../connectors/health.ts";
 import { approveExtensionRun, revokeExtensionRun } from "../extensions/approve-run.ts";
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
 import { clearDeps, forwardDeps, reverseDeps } from "../extensions/dependency-store.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
+import { deriveExtensionServiceId } from "../extensions/extension-service-id.ts";
 import {
   PRE_T2_DISABLE_REASON,
   preT2DisabledIds,
@@ -109,7 +111,7 @@ export interface AutomationRpcExtensionMeshHandle {
   stopExtensionClient(extensionId: string): Promise<void>;
   /** Whether the mesh holds a live client for the extension — `list`/`info`'s `running` state. */
   isExtensionRunning(extensionId: string): boolean;
-  /** Deletes the `ext.<serviceId>` sandbox leaf. Best-effort, never throws. */
+  /** Deletes the extension's stage root (and its old `ext.<serviceId>` leaf). Best-effort, never throws. */
   removeExtensionSandbox(serviceId: string): Promise<void>;
 }
 
@@ -345,20 +347,24 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
         }
       }
 
-      // Read BEFORE the delete takes the grant with it: the sandbox leaf is named by its service id.
-      const grant = getRunGrant(ctx.db, id);
+      // Read BEFORE the delete takes the grant with it: the stage root is named by its service id.
+      // With no grant (revoked earlier, or never approved) it is derived, since a revoke or an
+      // earlier spawn may still have left a stage behind.
+      const serviceId = extensionServiceIdForCleanup(getRunGrant(ctx.db, id)?.service_id, id);
       const installPath = deleteExtensionById(ctx.db, id);
       if (installPath === null) {
         throw new AutomationRpcError(-32602, "Extension not found");
       }
       clearDeps(ctx.db, id);
       // The row and grant are gone first, so no new spawn can verify; then the live child is stopped
-      // and its sandbox leaf removed, and only THEN the install dir — never delete code a running
+      // and its stage root removed, and only THEN the install dir — never delete code a running
       // child still has open.
       if (ctx.mesh !== undefined) {
         await stopExtensionBestEffort(ctx.mesh, id);
-        if (grant !== null) await ctx.mesh.removeExtensionSandbox(grant.service_id);
+        if (serviceId !== undefined) await ctx.mesh.removeExtensionSandbox(serviceId);
       }
+      // The `ext_` health row a refused or failed spawn recorded goes with the extension.
+      if (serviceId !== undefined) deleteConnectorHealthRow(ctx.db, serviceId);
       try {
         rmSync(installPath, { recursive: true, force: true });
       } catch {
@@ -408,6 +414,23 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     }),
   }),
 };
+
+/**
+ * The service id whose stage root `extension.remove` deletes: the grant's stored id, else the one
+ * `approveRun` would derive. `undefined` only for a manifest id that yields no valid service id —
+ * which could never have been approved, so it never had a stage.
+ */
+function extensionServiceIdForCleanup(
+  granted: string | undefined,
+  extensionId: string,
+): string | undefined {
+  if (granted !== undefined) return granted;
+  try {
+    return deriveExtensionServiceId(extensionId);
+  } catch {
+    return undefined;
+  }
+}
 
 /** Stops an extension's live client; a stop failure is swallowed — the row decision already stands. */
 async function stopExtensionBestEffort(
@@ -776,12 +799,19 @@ async function handleExtensionRevokeRun(
 ): Promise<Hit> {
   const id = requireString(rec, "id");
   const mesh = ctx.mesh;
+  // Read before the revoke deletes the grant: the stage root is named by its service id.
+  const serviceId = getRunGrant(ctx.db, id)?.service_id;
   try {
     const out = await revokeExtensionRun(
       ctx.db,
       id,
       mesh === undefined ? undefined : (x) => mesh.stopExtensionClient(x),
     );
+    // After the stop, the stages go too: a later re-approval starts from nothing a previous run
+    // left, and a revoked extension leaves no copy of its code in the sandbox root.
+    if (out.revoked && mesh !== undefined && serviceId !== undefined) {
+      await mesh.removeExtensionSandbox(serviceId);
+    }
     if (out.revoked) {
       emitGatewayEvent("extension.stateChanged", {
         extensionId: id,

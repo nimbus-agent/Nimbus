@@ -14,7 +14,10 @@
 // a separately imported sibling, so editing it changes the tree digest without touching the entry.
 //
 // The `echo` tool reports its own `process.pid`, so "the child is gone" is checked against the OS,
-// not against the gateway's own bookkeeping. No network: the manifest declares none.
+// not against the gateway's own bookkeeping. It also reports its working directory, a variable a
+// planted `.env` would set, and a global a planted `bunfig.toml` preload would set, so "nothing
+// written beside a previous stage reaches the next spawn" (I43) is checked inside the real child.
+// No network: the manifest declares none.
 //
 // Embeddings are skipped (NIMBUS_SKIP_EMBEDDING_RUNTIME=1); nothing here needs the index.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -34,7 +37,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
-import { sandboxCwdFor } from "../../src/platform/sandbox/sandbox-cwd.ts";
+import { extensionStageRootFor, sandboxCwdFor } from "../../src/platform/sandbox/sandbox-cwd.ts";
 import { createSandboxRunner } from "../../src/platform/sandbox/sandbox-runner.ts";
 
 // --- TestIpcClient + until copied verbatim from user-mcp.e2e.test.ts ---
@@ -259,7 +262,19 @@ const CHUNK_JS = 'export const CHUNK_MARKER = "chunk-v1";\n';
 /** The scaffold's echo handler, and the same handler also reporting the server's own pid. */
 const SCAFFOLD_ECHO = 'async ({ text }) => ({ content: [{ type: "text", text }] }),';
 const PID_ECHO =
-  'async ({ text }) => ({ content: [{ type: "text", text }, { type: "text", text: "PID " + process.pid }, { type: "text", text: "ENTRY " + import.meta.path }] }),';
+  'async ({ text }) => ({ content: [{ type: "text", text }, { type: "text", text: "PID " + process.pid }, { type: "text", text: "ENTRY " + import.meta.path }, { type: "text", text: "CWD " + process.cwd() }, { type: "text", text: "ENV " + String(process.env.NIMBUS_PLANTED_ENV) }, { type: "text", text: "PRELOAD " + String(globalThis.__nimbusPlantedPreload) }] }),';
+
+/** Plants what Bun would honour in a working directory: a bunfig preload and a `.env`. */
+function plantBunAutoloads(dir: string): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "bunfig.toml"), 'preload = ["./planted-preload.ts"]\n', "utf8");
+  writeFileSync(
+    join(dir, "planted-preload.ts"),
+    "(globalThis as Record<string, unknown>).__nimbusPlantedPreload = 'RAN';\n",
+    "utf8",
+  );
+  writeFileSync(join(dir, ".env"), "NIMBUS_PLANTED_ENV=LOADED\n", "utf8");
+}
 
 type CallOutcome = { status: "ok"; result: unknown } | { status: "rejected"; reason: string };
 
@@ -353,8 +368,10 @@ describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", 
     tempDir: join(tmp, "tmp"),
     sandboxDir: join(tmp, "sandbox"),
   };
-  // Computed the way the runtime computes it: the sandbox policy id is `ext.<serviceId>`.
+  // Computed the way the runtime computes it. The old per-policy leaf (`ext.<serviceId>`) is no
+  // longer used; every spawn runs in a fresh `<uuid>` stage under the stage root.
   const leaf = sandboxCwdFor(paths.sandboxDir, `ext.${SERVICE_ID}`);
+  const stageRoot = extensionStageRootFor(paths.sandboxDir, SERVICE_ID);
   let installedChunk = "";
   let proc: ReturnType<typeof Bun.spawn> | undefined;
   let gatewayLog = "";
@@ -550,6 +567,22 @@ describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", 
     expect(await runState()).toBe("ready");
   }, 60_000);
 
+  test("planted bunfig/.env: the positive control shows Bun honours them in the directory they sit in", async () => {
+    // Where a previous run (the old leaf) or a same-user process (the stage root) could write.
+    plantBunAutoloads(leaf);
+    plantBunAutoloads(stageRoot);
+    // Without this, "not honoured" below would also pass if the plants were simply malformed.
+    const control = await run(
+      [
+        process.execPath,
+        "-e",
+        "console.log(String(globalThis.__nimbusPlantedPreload) + ' ' + String(process.env.NIMBUS_PLANTED_ENV))",
+      ],
+      stageRoot,
+    );
+    expect(control.stdout.trim()).toBe("RAN LOADED");
+  }, 60_000);
+
   test("connector.userMcpTools spawns it and lists its tools; it is now running", async () => {
     const names = await listTools();
     expect(names).toContain("echo");
@@ -589,15 +622,27 @@ describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", 
     expect(texts[0]).toContain("ALLOWED-CONTENT");
   }, 60_000);
 
-  test("the code runs from a run-<uuid> stage in its own leaf, never from the install tree", async () => {
+  test("the code runs from a fresh <uuid> stage that is also its cwd, never from the install tree", async () => {
     const texts = await executedCall("echo", { text: "where" });
     const entry = texts.find((t) => t.startsWith("ENTRY "))?.slice("ENTRY ".length) ?? "";
-    // Bun realpaths `import.meta.path`; `leaf` comes from an unresolved `tmpdir()` (macOS
+    const cwd = texts.find((t) => t.startsWith("CWD "))?.slice("CWD ".length) ?? "";
+    // Bun realpaths `import.meta.path`; `stageRoot` comes from an unresolved `tmpdir()` (macOS
     // `/var` -> `/private/var`), so both sides are resolved before they are compared.
-    const rel = relative(realpathOrSelf(leaf), realpathOrSelf(entry));
+    const rel = relative(realpathOrSelf(stageRoot), realpathOrSelf(entry));
     const parts = rel.split(sep);
-    expect(parts[0] ?? "").toMatch(/^run-[0-9a-f-]{36}$/);
+    expect(parts[0] ?? "").toMatch(/^[0-9a-f-]{36}$/);
     expect(parts.slice(1)).toEqual(["dist", "index.js"]);
+    expect(realpathOrSelf(cwd)).toBe(join(realpathOrSelf(stageRoot), parts[0] ?? ""));
+  }, 60_000);
+
+  test("the planted bunfig preload and .env did NOT take effect in the confined child", async () => {
+    const texts = await executedCall("echo", { text: "autoloads" });
+    expect(texts).toContain("PRELOAD undefined");
+    expect(texts).toContain("ENV undefined");
+    // The stage root's plants were swept before the stage was made; the old leaf is not on the
+    // child's path at all.
+    expect(existsSync(join(stageRoot, "bunfig.toml"))).toBe(false);
+    expect(existsSync(join(stageRoot, ".env"))).toBe(false);
   }, 60_000);
 
   test("the install tree is NOT granted: its manifest is denied in the sandbox", async () => {
@@ -640,16 +685,17 @@ describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", 
     expect(message).toContain("ERR_EXTENSION_RUN_TREE_CHANGED");
   }, 60_000);
 
-  test("revokeRun withdraws it: the service id is no longer registered", async () => {
+  test("revokeRun withdraws it: the service id is no longer registered and its stages are gone", async () => {
     await client.call("extension.revokeRun", { id: EXTENSION_ID });
     const message = await failureOf(
       client.call("connector.userMcpTools", { serviceId: SERVICE_ID }),
     );
     expect(message).toContain("ERR_USER_MCP_NOT_REGISTERED");
     expect(await runState()).toBe("no_grant");
+    expect(await eventually(() => !existsSync(stageRoot))).toBe(true);
   }, 60_000);
 
-  test("remove of a re-approved, running extension ends the child and deletes its leaf", async () => {
+  test("remove of a re-approved, running extension ends the child and deletes its stages and old leaf", async () => {
     // Put the approved bytes back, so the re-approval is over the code that was installed.
     writeFileSync(installedChunk, CHUNK_JS, "utf8");
     const out = await client.call<{ serviceId: string }>("extension.approveRun", {
@@ -660,12 +706,17 @@ describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", 
     expect(await runState()).toBe("running");
     const pid = await echoPid();
     expect(pidAlive(pid)).toBe(true);
+    expect(existsSync(stageRoot)).toBe(true);
+    // Revoke deleted the old leaf with the stages; plant it again, as an upgrade from an earlier
+    // build would have left it, so remove is seen to delete it too.
+    plantBunAutoloads(leaf);
     expect(existsSync(leaf)).toBe(true);
 
     expect(await client.call<{ ok: boolean }>("extension.remove", { id: EXTENSION_ID })).toEqual({
       ok: true,
     });
     expect(await eventually(() => !pidAlive(pid))).toBe(true);
+    expect(await eventually(() => !existsSync(stageRoot))).toBe(true);
     expect(await eventually(() => !existsSync(leaf))).toBe(true);
     expect(await runState()).toBeUndefined();
   }, 60_000);

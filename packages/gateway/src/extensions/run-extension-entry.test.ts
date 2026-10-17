@@ -1,52 +1,97 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
-const MODULE = resolve(import.meta.dir, "run-extension-entry.ts");
+import { type RunExtensionEntryDeps, runExtensionEntry } from "./run-extension-entry.ts";
 
-async function runChild(callExpr: string): Promise<{ code: number | null; stderr: string }> {
-  const proc = Bun.spawn({
-    cmd: [
-      process.execPath,
-      "-e",
-      `const { runExtensionEntry } = await import(${JSON.stringify(MODULE)}); await runExtensionEntry(${callExpr});`,
-    ],
-    stdout: "ignore",
-    stderr: "pipe",
-    windowsHide: true,
-  });
-  const stderr = await new Response(proc.stderr).text();
-  const code = await proc.exited;
-  return { code, stderr };
+/**
+ * In-process: the role's process effects are injected, so no child is spawned (a macOS
+ * `bun test --parallel` bug hangs on child processes in unit tests). The real self-role is
+ * exercised end to end by `test/e2e/extension-runtime.e2e.test.ts` (dev-tree inline form) and by
+ * the compiled-binary probe recorded in docs/sandbox.md.
+ */
+function recorder(importModule: (href: string) => Promise<unknown> = async () => ({})) {
+  const exits: number[] = [];
+  const stderr: string[] = [];
+  const imported: string[] = [];
+  const deps: RunExtensionEntryDeps = {
+    exit: (code) => {
+      exits.push(code);
+    },
+    importModule: async (href) => {
+      imported.push(href);
+      return importModule(href);
+    },
+    writeStderr: (text) => {
+      stderr.push(text);
+    },
+  };
+  return { deps, exits, stderr, imported };
 }
 
 describe("runExtensionEntry", () => {
-  test("imports an absolute entry file", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-ext-entry-"));
-    try {
-      const marker = join(dir, "marker.txt");
-      const entry = join(dir, "entry.js");
-      writeFileSync(
-        entry,
-        `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "ran");`,
-      );
-      const { code } = await runChild(JSON.stringify(entry));
-      expect(code).toBe(0);
-      expect(existsSync(marker)).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+  const abs = join(tmpdir(), "nimbus-ext-entry-test", "entry.js");
+
+  test("a missing path exits 2 without importing anything", async () => {
+    for (const missing of [undefined, ""]) {
+      const r = recorder();
+      await runExtensionEntry(missing, r.deps);
+      expect(r.exits).toEqual([2]);
+      expect(r.imported).toEqual([]);
+      expect(r.stderr.join("")).toContain("needs an absolute entry path");
     }
   });
 
-  test("exits 2 on a missing path", async () => {
-    const { code, stderr } = await runChild("undefined");
-    expect(code).toBe(2);
-    expect(stderr).toContain("nimbus-gateway:");
+  test("a relative path exits 2 without importing it", async () => {
+    const r = recorder();
+    await runExtensionEntry("./relative.js", r.deps);
+    expect(r.exits).toEqual([2]);
+    expect(r.imported).toEqual([]);
   });
 
-  test("exits 2 on a relative path without importing it", async () => {
-    const { code } = await runChild(JSON.stringify("./relative.js"));
-    expect(code).toBe(2);
+  test("an absolute path is imported by its file URL and does not exit", async () => {
+    const r = recorder();
+    await runExtensionEntry(abs, r.deps);
+    expect(r.imported).toEqual([pathToFileURL(abs).href]);
+    expect(r.exits).toEqual([]);
+    expect(r.stderr).toEqual([]);
+  });
+
+  test("a throwing entry exits 2 with its message AND its stack on stderr", async () => {
+    const boom = new Error("entry blew up");
+    const r = recorder(async () => {
+      throw boom;
+    });
+    await runExtensionEntry(abs, r.deps);
+    expect(r.exits).toEqual([2]);
+    const out = r.stderr.join("");
+    expect(out).toContain("nimbus-gateway: entry blew up");
+    expect(out).toContain(boom.stack ?? "<no stack>");
+  });
+
+  test("a non-Error rejection exits 2 with its string form and no stack", async () => {
+    const r = recorder(async () => {
+      throw "plain string";
+    });
+    await runExtensionEntry(abs, r.deps);
+    expect(r.exits).toEqual([2]);
+    expect(r.stderr).toEqual(["nimbus-gateway: plain string\n"]);
+  });
+
+  test("the default deps really import the entry, in process", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-ext-entry-"));
+    try {
+      const entry = join(dir, "entry.js");
+      writeFileSync(
+        entry,
+        "globalThis.__nimbusExtEntryRan = (globalThis.__nimbusExtEntryRan ?? 0) + 1;\n",
+      );
+      await runExtensionEntry(entry);
+      expect((globalThis as { __nimbusExtEntryRan?: number }).__nimbusExtEntryRan).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

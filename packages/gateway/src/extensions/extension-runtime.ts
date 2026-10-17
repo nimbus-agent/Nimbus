@@ -1,14 +1,14 @@
 import { listExtensions } from "../automation/extension-store.ts";
 import type { ExtensionSlotSource } from "../connectors/lazy-mesh/extension-slot-source.ts";
 import type { ServerSpec } from "../connectors/lazy-mesh/slot.ts";
-import { wrapServerSpec } from "../connectors/lazy-mesh/wrap-server-spec.ts";
+import { wrapServerSpecInCwd } from "../connectors/lazy-mesh/wrap-server-spec.ts";
 import {
   DEFAULT_RUNTIME_LAYOUT,
   isCompiledBinary,
   type RuntimeLayout,
   selfSpawn,
 } from "../platform/runtime-layout.ts";
-import { sandboxCwdFor } from "../platform/sandbox/sandbox-cwd.ts";
+import { extensionStageRootFor } from "../platform/sandbox/sandbox-cwd.ts";
 import {
   type ExtensionStageDeps,
   type StagedExtensionForSpawn,
@@ -28,8 +28,8 @@ import {
  * The ONE place an extension's spawn is built (invariant I43 / static rule D33(a)). The sandbox
  * manifest is assembled fresh from the VERIFIED grants plus the runtime read paths, added here at
  * every spawn and never stored in the grant. The install path is NOT granted: the code runs from a
- * verified per-spawn copy inside the extension's own sandbox leaf, which the sandbox already grants
- * as the working directory (`extension-stage.ts`).
+ * verified per-spawn copy, a fresh gateway-owned directory that the sandbox grants as the
+ * working directory (`extension-stage.ts`).
  */
 export function buildExtensionRuntimeManifest(
   v: VerifiedExtensionForSpawn,
@@ -56,6 +56,8 @@ export function buildExtensionRuntimeManifest(
  * on every module it opens. This does exactly what `run-extension-entry.ts` does, with no file of
  * its own to load. FULLY STATIC: the entry travels as the one argument after the code
  * (`bun -e <code> <entry>` hands the child `process.argv = [bun, <entry>]`), never interpolated.
+ * It carries no backslash (an escape in `-e` code reached the Windows child mangled), which is why
+ * the message and the stack are two `console.error` calls rather than one joined string.
  * A compiled binary does not honour `-e`, and runs the real self-role instead. That compiled
  * path is REASONED from a compiled probe (a `bun build --compile` binary importing a file from a
  * directory the AppContainer grants write), not exercised end to end: the e2e runs a dev tree.
@@ -72,22 +74,40 @@ const DEV_EXTENSION_ROLE_INLINE = [
   "  await import(pathToFileURL(entry).href);",
   "} catch (err) {",
   '  console.error("nimbus-gateway: " + (err instanceof Error ? err.message : String(err)));',
+  "  if (err instanceof Error && err.stack !== undefined) console.error(err.stack);",
   "  process.exit(2);",
   "}",
 ].join("\n");
 
+/**
+ * Bun flags for the dev-tree form, ahead of `-e`. Neither is the boundary — the fresh per-spawn
+ * stage is (`extension-stage.ts`) — they are hardening: `--no-env-file` stops a `.env` in the
+ * working directory being loaded into the child's environment, and `--no-install` stops a missing
+ * bare import from auto-installing code from a registry.
+ */
+const DEV_EXTENSION_BUN_FLAGS = ["--no-env-file", "--no-install"] as const;
+
+/**
+ * The child runs with the STAGE as its working directory (`wrapServerSpecInCwd`), never the
+ * per-policy leaf `wrapServerSpec` would derive: a leaf persists across spawns, a stage is created
+ * for this spawn alone. The sandbox manifest id stays `ext.<serviceId>`, which is what keys the
+ * Windows AppContainer profile.
+ */
 export function buildExtensionSpawnSpec(
   v: StagedExtensionForSpawn,
-  deps: { runtimeReadPaths: readonly string[]; sandboxDir: string; layout?: RuntimeLayout },
+  deps: { runtimeReadPaths: readonly string[]; layout?: RuntimeLayout },
 ): ServerSpec {
   const layout = deps.layout ?? DEFAULT_RUNTIME_LAYOUT;
   const { command, args } = isCompiledBinary(layout)
     ? selfSpawn("extension", [v.entryPath], layout)
-    : { command: layout.execPath, args: ["-e", DEV_EXTENSION_ROLE_INLINE, v.entryPath] };
-  return wrapServerSpec(
+    : {
+        command: layout.execPath,
+        args: [...DEV_EXTENSION_BUN_FLAGS, "-e", DEV_EXTENSION_ROLE_INLINE, v.entryPath],
+      };
+  return wrapServerSpecInCwd(
     { command, args, env: extensionProcessEnv({}) },
     buildExtensionRuntimeManifest(v, deps.runtimeReadPaths),
-    deps.sandboxDir,
+    v.stagePath,
   );
 }
 
@@ -104,6 +124,15 @@ export type ExtensionSlotSourceDeps = VerifiedExtensionDeps & {
 export function createExtensionSlotSource(deps: ExtensionSlotSourceDeps): ExtensionSlotSource {
   const verify = deps.verify ?? readVerifiedExtensionForSpawn;
   return {
+    isAllowed(serviceId) {
+      return deps.isConnectorAllowed(serviceId);
+    },
+    disabledExtensionIdFor(serviceId) {
+      const grant = listRunGrants(deps.db).find((g) => g.service_id === serviceId);
+      if (grant === undefined) return undefined;
+      const row = listExtensions(deps.db).find((r) => r.id === grant.extension_id);
+      return row !== undefined && row.enabled !== 1 ? row.id : undefined;
+    },
     listServiceIds() {
       const enabled = new Set(
         listExtensions(deps.db)
@@ -136,21 +165,18 @@ export function createExtensionSlotSource(deps: ExtensionSlotSourceDeps): Extens
           `${grant.extension_id}'s service id changed; approve it again`,
         );
       }
-      // The code runs from a verified copy in the extension's own sandbox leaf, the same leaf
-      // `wrapServerSpec` makes its working directory. The copy is re-digested against the digest
-      // the verifier just took, and a mismatch refuses RUN_TREE_CHANGED with no stage left behind.
+      // The code runs from a verified copy in a fresh, gateway-owned stage that is also the
+      // child's working directory. The copy is re-digested against the digest the verifier just
+      // took, and a mismatch refuses RUN_TREE_CHANGED with no stage left behind.
       const staged = stageVerifiedExtension(
         verified,
-        sandboxCwdFor(deps.sandboxDir, `ext.${verified.serviceId}`),
+        extensionStageRootFor(deps.sandboxDir, verified.serviceId),
         deps.stage,
       );
       return {
         extensionId: staged.extensionId,
         serviceId: staged.serviceId,
-        spec: buildExtensionSpawnSpec(staged, {
-          runtimeReadPaths: deps.runtimeReadPaths(),
-          sandboxDir: deps.sandboxDir,
-        }),
+        spec: buildExtensionSpawnSpec(staged, { runtimeReadPaths: deps.runtimeReadPaths() }),
       };
     },
   };

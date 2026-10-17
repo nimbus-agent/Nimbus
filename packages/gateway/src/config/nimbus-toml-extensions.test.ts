@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  DEFAULT_NIMBUS_EXTENSIONS_RUNTIME,
   DEFAULT_NIMBUS_EXTENSIONS_TOML,
   loadNimbusExtensionsRuntimeFromConfigDir,
   parseNimbusExtensionsRuntime,
@@ -56,28 +57,64 @@ describe("parseNimbusExtensionsToml — [extensions].update_check_interval_hours
   });
 });
 
-describe("parseNimbusExtensionsToml — [extensions].runtime (extension runtime PR 3)", () => {
+describe("parseNimbusExtensionsRuntime — [extensions].runtime (extension runtime PR 3)", () => {
   test("absent ⇒ true (the runtime is on by default)", () => {
-    expect(parseNimbusExtensionsToml("").runtime).toBe(true);
+    expect(parseNimbusExtensionsRuntime("")).toBe(true);
     expect(
-      parseNimbusExtensionsToml(`[extensions]\nupdate_check_interval_hours = 2\n`).runtime,
+      parseNimbusExtensionsRuntime(`[extensions]
+update_check_interval_hours = 2
+`),
     ).toBe(true);
-    expect(DEFAULT_NIMBUS_EXTENSIONS_TOML.runtime).toBe(true);
+    expect(DEFAULT_NIMBUS_EXTENSIONS_RUNTIME).toBe(true);
   });
 
   test("runtime = false ⇒ false, runtime = true ⇒ true", () => {
-    expect(parseNimbusExtensionsToml(`[extensions]\nruntime = false\n`).runtime).toBe(false);
-    expect(parseNimbusExtensionsToml(`[extensions]\nruntime = true\n`).runtime).toBe(true);
+    expect(
+      parseNimbusExtensionsRuntime(`[extensions]
+runtime = false
+`),
+    ).toBe(false);
+    expect(
+      parseNimbusExtensionsRuntime(`[extensions]
+runtime = true
+`),
+    ).toBe(true);
   });
 
   test("a typo (runtime = flase) keeps the default and does not throw", () => {
-    expect(() => parseNimbusExtensionsToml(`[extensions]\nruntime = flase\n`)).not.toThrow();
-    expect(parseNimbusExtensionsToml(`[extensions]\nruntime = flase\n`).runtime).toBe(true);
-    expect(parseNimbusExtensionsToml(`[extensions]\nruntime = "false"\n`).runtime).toBe(true);
+    expect(() =>
+      parseNimbusExtensionsRuntime(`[extensions]
+runtime = flase
+`),
+    ).not.toThrow();
+    expect(
+      parseNimbusExtensionsRuntime(`[extensions]
+runtime = flase
+`),
+    ).toBe(true);
+    expect(
+      parseNimbusExtensionsRuntime(`[extensions]
+runtime = "false"
+`),
+    ).toBe(true);
   });
 
   test("runtime outside [extensions] is ignored", () => {
-    expect(parseNimbusExtensionsToml(`[automation]\nruntime = false\n`).runtime).toBe(true);
+    expect(
+      parseNimbusExtensionsRuntime(`[automation]
+runtime = false
+`),
+    ).toBe(true);
+  });
+
+  test("the whole-section parser no longer carries a runtime field", () => {
+    expect(
+      Object.keys(
+        parseNimbusExtensionsToml(`[extensions]
+runtime = false
+`),
+      ),
+    ).toEqual(["updateCheckIntervalHours"]);
   });
 });
 

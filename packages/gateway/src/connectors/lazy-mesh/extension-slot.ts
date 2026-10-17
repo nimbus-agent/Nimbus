@@ -7,6 +7,7 @@ import { getConnectorHealth, transitionHealth } from "../health.ts";
 import type { ExtensionSlotSource } from "./extension-slot-source.ts";
 import { extensionMeshKey } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
+import type { LazyMeshToolMap } from "./tool-map.ts";
 
 /** Builds the MCP client for one extension slot. Production: `new MCPClient(...)`; tests: a fake. */
 export type CreateExtensionClient = (id: string, servers: Record<string, ServerSpec>) => MCPClient;
@@ -21,6 +22,8 @@ export interface ExtensionSlotHost {
   clearLazyIdle(key: string): void;
   bumpToolsEpoch(): void;
   scheduleLazyDisconnect(key: string): void;
+  /** Clears and disconnects the slot's client (the mesh's own stop path). */
+  stopLazyClient(key: string): Promise<void>;
 }
 
 export interface ExtensionSlotsOptions {
@@ -71,15 +74,31 @@ export class ExtensionSlots {
 
   /**
    * Ensures a live client for `serviceId`. Resolves `false` when the id is not (or, after the
-   * preparation, no longer) listed. Rejects with the source's `ExtensionRunGrantError` on a refusal,
-   * after recording it as the service's `persistent_error`.
+   * preparation, no longer) listed and its extension is not merely disabled. Rejects with an
+   * `ExtensionRunGrantError` on a refusal (recorded as the service's `persistent_error` when it came
+   * from the preparation or the org policy), on an approved-but-disabled extension
+   * (`ERR_EXTENSION_RUN_DISABLED`), and on a spawn that lost a race with a stop
+   * (`ERR_EXTENSION_RUN_STOPPED`) — each of which would otherwise read as "not registered".
    */
   async ensureRunning(serviceId: string): Promise<boolean> {
     const source = this.options.source;
-    if (source === undefined || !source.listServiceIds().includes(serviceId)) return false;
+    if (source === undefined) return false;
+    if (!source.listServiceIds().includes(serviceId)) return this.notListed(source, serviceId);
     await this.options.spawnGate;
     const key = extensionMeshKey(serviceId);
     if (this.host.getLazyClient(key) !== undefined) {
+      // A live client is reused, but the org policy is re-read on every listing: a tightened
+      // connector allowlist stops the running child rather than waiting for its idle-out.
+      if (!source.isAllowed(serviceId)) {
+        await this.host.stopLazyClient(key);
+        throw this.recordRefusal(
+          serviceId,
+          new ExtensionRunGrantError(
+            "ERR_EXTENSION_RUN_POLICY",
+            `organization policy does not allow ${serviceId}; its running child was stopped`,
+          ),
+        );
+      }
       this.host.clearLazyIdle(key);
       this.host.scheduleLazyDisconnect(key);
       return true;
@@ -92,6 +111,62 @@ export class ExtensionSlots {
       this.pendingSpawns.set(serviceId, pending);
     }
     return pending;
+  }
+
+  /**
+   * The tools of `serviceId`'s child, spawning it first if needed. `undefined` when not listed.
+   * Uses `listToolsWithErrors` because `listTools` swallows a per-server connect failure into an
+   * empty map: a child that failed to start (a sandbox refusal, a crash at import) would list
+   * nothing while `runState` read `running`. Such a failure is recorded, its client is stopped,
+   * and the listing rejects `ERR_EXTENSION_RUN_START_FAILED`.
+   */
+  async listTools(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+    if (!(await this.ensureRunning(serviceId))) return undefined;
+    const key = extensionMeshKey(serviceId);
+    const client = this.host.getLazyClient(key);
+    if (client === undefined) throw stoppedWhileStarting(serviceId);
+    const { tools, errors } = await client.listToolsWithErrors();
+    const failure = Object.values(errors)[0];
+    if (failure !== undefined) {
+      await this.host.stopLazyClient(key);
+      throw this.recordRefusal(
+        serviceId,
+        new ExtensionRunGrantError(
+          "ERR_EXTENSION_RUN_START_FAILED",
+          `${serviceId} did not start: ${failure}`,
+        ),
+      );
+    }
+    return tools as LazyMeshToolMap;
+  }
+
+  /** Records `err` as the service's `persistent_error` (when a health DB is wired) and returns it. */
+  private recordRefusal(serviceId: string, err: ExtensionRunGrantError): ExtensionRunGrantError {
+    if (this.options.healthDb !== undefined) {
+      transitionHealth(this.options.healthDb, serviceId, {
+        type: "persistent_error",
+        error: err.code,
+      });
+    }
+    return err;
+  }
+
+  /** An unlisted id: refused as disabled when its extension is approved but disabled, else `false`. */
+  private notListed(source: ExtensionSlotSource, serviceId: string): false {
+    const disabled = source.disabledExtensionIdFor(serviceId);
+    if (disabled !== undefined) {
+      throw new ExtensionRunGrantError(
+        "ERR_EXTENSION_RUN_DISABLED",
+        `${disabled} is approved to run but disabled; enable it with \`nimbus extension enable ${disabled}\``,
+      );
+    }
+    return false;
+  }
+
+  /** A spawn that will not create a client: withdrawn (see {@link notListed}) or stopped. */
+  private abandoned(source: ExtensionSlotSource, serviceId: string): false {
+    if (!source.listServiceIds().includes(serviceId)) return this.notListed(source, serviceId);
+    throw stoppedWhileStarting(serviceId);
   }
 
   /** The service id a running extension's slot is keyed by, if it is running. */
@@ -165,25 +240,22 @@ export class ExtensionSlots {
     // (withdrawal, mesh shutdown, a stop of the extension this service id last ran as), so such a
     // stop does not stage a copy only to discard it.
     await this.previousChildGone(serviceId);
-    if (this.stoppedDuringWait(source, serviceId, startedAt)) return false;
+    if (this.stoppedDuringWait(source, serviceId, startedAt)) {
+      return this.abandoned(source, serviceId);
+    }
     let prepared: Awaited<ReturnType<ExtensionSlotSource["prepareSpawn"]>>;
     try {
       prepared = await source.prepareSpawn(serviceId);
     } catch (err) {
-      if (err instanceof ExtensionRunGrantError && this.options.healthDb !== undefined) {
-        transitionHealth(this.options.healthDb, serviceId, {
-          type: "persistent_error",
-          error: err.code,
-        });
-      }
+      if (err instanceof ExtensionRunGrantError) throw this.recordRefusal(serviceId, err);
       throw err;
     }
     // A disable or revoke that landed while the preparation was in flight has nothing to stop yet
     // (no client, no running record), so the listing is re-read here and a withdrawn id spawns nothing.
-    if (!source.listServiceIds().includes(serviceId)) return false;
+    if (!source.listServiceIds().includes(serviceId)) return this.notListed(source, serviceId);
     // A stop that did NOT withdraw the id (auto-update swaps the tree and stops with the id still
     // listed) or a mesh shutdown that landed mid-preparation wins too: the next listing re-prepares.
-    if (this.stoppedSince(prepared.extensionId, startedAt)) return false;
+    if (this.stoppedSince(prepared.extensionId, startedAt)) throw stoppedWhileStarting(serviceId);
     const key = extensionMeshKey(serviceId);
     const serverKey = serviceId.replaceAll(/[^a-zA-Z0-9_-]/g, "_");
     const client = this.options.createClient(`nimbus-extension-${serviceId}-${randomUUID()}`, {
@@ -208,4 +280,11 @@ export class ExtensionSlots {
       transitionHealth(db, serviceId, { type: "sync_success" });
     }
   }
+}
+
+function stoppedWhileStarting(serviceId: string): ExtensionRunGrantError {
+  return new ExtensionRunGrantError(
+    "ERR_EXTENSION_RUN_STOPPED",
+    `${serviceId} was stopped while it was starting; retry`,
+  );
 }

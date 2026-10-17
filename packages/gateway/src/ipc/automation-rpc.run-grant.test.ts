@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { listExtensions, setExtensionTreeDigest } from "../automation/extension-store.ts";
+import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
 import { getRunGrant } from "../extensions/run-grant-store.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
@@ -181,7 +182,7 @@ describe("extension.approveRun / extension.revokeRun over the automation dispatc
     setExtensionTreeDigest(db, "rpc.run", computeExtensionTreeDigest(installPath));
     expect((await listed(db))[0]?.runState).toBe("grant_stale");
 
-    const stopped: string[] = [];
+    const events: string[] = [];
     const revoked = (await dispatchAutomationRpc({
       method: "extension.revokeRun",
       params: { id: "rpc.run" },
@@ -189,12 +190,34 @@ describe("extension.approveRun / extension.revokeRun over the automation dispatc
       mesh: {
         ...idleMesh(),
         stopExtensionClient: async (id: string) => {
-          stopped.push(id);
+          events.push(`stop:${id}`);
+        },
+        removeExtensionSandbox: async (serviceId: string) => {
+          events.push(`sandbox:${serviceId}`);
         },
       },
     })) as { value: { revoked: boolean } };
     expect(revoked.value.revoked).toBe(true);
-    expect(stopped).toEqual(["rpc.run"]);
+    // The child is stopped FIRST, then its stages are deleted (a revoke leaves no copy behind).
+    expect(events).toEqual(["stop:rpc.run", "sandbox:ext_rpc_run"]);
+
+    // A second revoke (nothing granted) deletes nothing.
+    events.length = 0;
+    await dispatchAutomationRpc({
+      method: "extension.revokeRun",
+      params: { id: "rpc.run" },
+      db,
+      mesh: {
+        ...idleMesh(),
+        stopExtensionClient: async (id: string) => {
+          events.push(`stop:${id}`);
+        },
+        removeExtensionSandbox: async (serviceId: string) => {
+          events.push(`sandbox:${serviceId}`);
+        },
+      },
+    });
+    expect(events).toEqual([]);
     expect((await listed(db))[0]).toMatchObject({ runState: "no_grant", runGrant: null });
   });
 
@@ -335,7 +358,7 @@ describe("the extension runtime over the automation dispatcher (PR 3)", () => {
     expect(existsSync(installPath)).toBe(false);
   });
 
-  test("extension.remove with no grant stops the client but removes no sandbox leaf", async () => {
+  test("extension.remove with no grant (revoked earlier) still removes the DERIVED service id's stages", async () => {
     const { db } = await installed();
     const events: string[] = [];
     await dispatchAutomationRpc({
@@ -352,7 +375,28 @@ describe("the extension runtime over the automation dispatcher (PR 3)", () => {
         },
       },
     });
-    expect(events).toEqual(["stop:rpc.run"]);
+    expect(events).toEqual(["stop:rpc.run", "sandbox:ext_rpc_run"]);
+  });
+
+  test("extension.remove deletes the ext_ health row a refused spawn recorded", async () => {
+    const { db, env } = await installed();
+    await approve(db, env);
+    transitionHealth(db, "ext_rpc_run", {
+      type: "persistent_error",
+      error: "ERR_EXTENSION_RUN_TREE_CHANGED",
+    });
+    expect(getConnectorHealth(db, "ext_rpc_run").state).toBe("error");
+    await dispatchAutomationRpc({
+      method: "extension.remove",
+      params: { id: "rpc.run" },
+      db,
+      mesh: idleMesh(),
+    });
+    const row = db
+      .query("SELECT COUNT(*) AS c FROM sync_state WHERE connector_id = ?")
+      .get("ext_rpc_run") as { c: number };
+    expect(row.c).toBe(0);
+    expect(getConnectorHealth(db, "ext_rpc_run").state).toBe("not_configured");
   });
 
   test("extension.remove still completes when the stop hook throws", async () => {

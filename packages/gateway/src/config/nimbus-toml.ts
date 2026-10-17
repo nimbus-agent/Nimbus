@@ -1305,18 +1305,18 @@ export function loadNimbusAutomationFromConfigDir(configDir: string): NimbusAuto
 
 export type NimbusExtensionsToml = {
   updateCheckIntervalHours: number;
-  /**
-   * The extension runtime kill switch (extension runtime PR 3). `false` refuses every
-   * `extension approve` and spawns no approved extension. A malformed value (`runtime = flase`)
-   * keeps the default rather than throwing or flipping it.
-   */
-  runtime: boolean;
 };
 
 export const DEFAULT_NIMBUS_EXTENSIONS_TOML: NimbusExtensionsToml = {
   updateCheckIntervalHours: 24,
-  runtime: true,
 };
+
+/**
+ * The `[extensions] runtime` kill switch's default (extension runtime PR 3): on. `false` refuses
+ * every `extension approve` and spawns no approved extension. It is NOT a field of
+ * {@link NimbusExtensionsToml}: {@link parseNimbusExtensionsRuntime} is its only parser.
+ */
+export const DEFAULT_NIMBUS_EXTENSIONS_RUNTIME = true;
 
 function parseUpdateCheckIntervalHours(valRaw: string): number {
   const n = Number(valRaw);
@@ -1336,9 +1336,6 @@ function parseNimbusTomlExtensionsSection(source: string): Partial<NimbusExtensi
   forEachSectionEntry(source, "[extensions]", (key, valRaw) => {
     if (key === "update_check_interval_hours") {
       out.updateCheckIntervalHours = parseUpdateCheckIntervalHours(valRaw);
-    } else if (key === "runtime") {
-      const b = parseBool(valRaw);
-      if (b !== undefined) out.runtime = b;
     }
   });
   return out;
@@ -1348,10 +1345,11 @@ function parseNimbusTomlExtensionsSection(source: string): Partial<NimbusExtensi
  * `[extensions] runtime` read ON ITS OWN. The whole-section loader falls back to every default when
  * `update_check_interval_hours` is invalid (it throws, and `loadTomlSection` swallows that), which
  * would turn a `runtime = false` beside a bad interval back into `true`. The kill switch must not
- * depend on an unrelated key parsing.
+ * depend on an unrelated key parsing. A malformed value (`runtime = flase`) keeps the default rather
+ * than throwing or flipping it. The ONLY parser of the key.
  */
 export function parseNimbusExtensionsRuntime(raw: string): boolean {
-  let runtime = DEFAULT_NIMBUS_EXTENSIONS_TOML.runtime;
+  let runtime = DEFAULT_NIMBUS_EXTENSIONS_RUNTIME;
   forEachSectionEntry(raw, "[extensions]", (key, valRaw) => {
     if (key !== "runtime") return;
     const b = parseBool(valRaw);
@@ -1363,7 +1361,7 @@ export function parseNimbusExtensionsRuntime(raw: string): boolean {
 export function loadNimbusExtensionsRuntimeFromConfigDir(configDir: string): boolean {
   return loadTomlSection(
     join(configDir, "nimbus.toml"),
-    DEFAULT_NIMBUS_EXTENSIONS_TOML.runtime,
+    DEFAULT_NIMBUS_EXTENSIONS_RUNTIME,
     parseNimbusExtensionsRuntime,
   );
 }

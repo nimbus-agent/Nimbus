@@ -8,7 +8,7 @@ import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { EXTENSION_SERVICE_ID_PATTERN } from "../../extensions/extension-service-id.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
-import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
+import { extensionStageRootFor, sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
@@ -170,6 +170,7 @@ export class LazyConnectorMesh {
         clearLazyIdle: (k) => this.clearLazyIdle(k),
         bumpToolsEpoch: () => this.bumpToolsEpoch(),
         scheduleLazyDisconnect: (k) => this.scheduleLazyDisconnect(k),
+        stopLazyClient: (k) => this.stopLazyClient(k),
       },
       {
         source: options?.extensionSlots,
@@ -360,7 +361,7 @@ export class LazyConnectorMesh {
   }
 
   /**
-   * Stops an extension's slot and deletes its sandbox leaf (`ext.<serviceId>`). Same best-effort,
+   * Stops an extension's slot and deletes its stage root and its old sandbox leaf. Same best-effort,
    * never-throws, three-attempt contract as {@link removeUserMcpSandbox}.
    */
   async removeExtensionSandbox(serviceId: string): Promise<void> {
@@ -369,10 +370,19 @@ export class LazyConnectorMesh {
     } catch (err) {
       this.logger?.warn({ serviceId, err }, "extension client not stopped before sandbox removal");
     }
-    const leaf = sandboxCwdFor(this.paths.sandboxDir, `ext.${serviceId}`);
-    const lastErr = await this.deleteSandboxLeaf(leaf);
-    if (lastErr !== undefined) {
-      this.logger?.warn({ serviceId, err: lastErr }, "extension sandbox directory not removed");
+    // Both: the stage root every spawn now runs in, and the `ext.<serviceId>` per-policy leaf that
+    // earlier builds of this branch staged into (harmless when absent).
+    for (const dir of [
+      extensionStageRootFor(this.paths.sandboxDir, serviceId),
+      sandboxCwdFor(this.paths.sandboxDir, `ext.${serviceId}`),
+    ]) {
+      const lastErr = await this.deleteSandboxLeaf(dir);
+      if (lastErr !== undefined) {
+        this.logger?.warn(
+          { serviceId, dir, err: lastErr },
+          "extension sandbox directory not removed",
+        );
+      }
     }
   }
 
@@ -382,10 +392,7 @@ export class LazyConnectorMesh {
    * and spawns through `prepareSpawn`; a refusal rejects with its `ExtensionRunGrantError`.
    */
   async listExtensionTools(serviceId: string): Promise<LazyMeshToolMap | undefined> {
-    if (!(await this.extensionSlots.ensureRunning(serviceId))) {
-      return undefined;
-    }
-    return listLazyMeshClientTools(this.getLazyClient(extensionMeshKey(serviceId)));
+    return this.extensionSlots.listTools(serviceId);
   }
 
   /** {@link listExtensionTools}, drain-refcount wrapped like {@link listUserMcpToolsForDispatcher}. */

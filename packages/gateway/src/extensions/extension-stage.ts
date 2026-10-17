@@ -7,15 +7,16 @@ import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import type { VerifiedExtensionForSpawn } from "./verified-extension.ts";
 
-/** The prefix of every per-spawn stage directory inside an extension's sandbox leaf. */
-export const EXTENSION_STAGE_PREFIX = "run-";
-
 /**
- * A verified extension whose code has been copied into a per-spawn stage and re-digested. The
- * spawn runs `entryPath`, which lies inside `stagePath`; the install tree is not granted at all.
+ * A verified extension whose code has been copied into a fresh per-spawn stage and re-digested.
+ * The spawn runs `entryPath`, which lies inside `stagePath`, with `stagePath` as its working
+ * directory; the install tree is not granted at all.
  */
 export interface StagedExtensionForSpawn extends VerifiedExtensionForSpawn {
-  /** `<leaf>/run-<uuid>`, a fresh directory whose tree digest equals `treeDigest`. */
+  /**
+   * `<sandboxDir>/ext-stage/<serviceId>/<uuid>`: a directory created for THIS spawn, whose tree
+   * digest equals `treeDigest`, and the child's working directory.
+   */
   readonly stagePath: string;
 }
 
@@ -51,21 +52,25 @@ function removeBestEffort(path: string): void {
   try {
     rmSync(path, { recursive: true, force: true });
   } catch {
-    // Left for the next spawn's sweep, or for `extension remove`, which deletes the whole leaf.
+    // Left for the next spawn's sweep, or for `extension remove` / `revoke`, which delete the
+    // extension's whole stage root.
   }
 }
 
-/** Best effort: delete every earlier `run-*` stage in the leaf before a new one is created. */
-function sweepOldStages(leaf: string): void {
+/**
+ * Best effort: delete EVERYTHING already in the extension's stage root before a new stage is made —
+ * earlier stages, and anything else that appeared there (the root is gateway-owned, so nothing in
+ * it is kept). A still-exiting Windows child may hold a file in its own old stage; that stage is
+ * left for the next sweep, and is a sibling of the new stage, never on its path.
+ */
+function sweepStageRoot(stageRoot: string): void {
   let names: string[];
   try {
-    names = readdirSync(leaf);
+    names = readdirSync(stageRoot);
   } catch {
     return;
   }
-  for (const name of names) {
-    if (name.startsWith(EXTENSION_STAGE_PREFIX)) removeBestEffort(join(leaf, name));
-  }
+  for (const name of names) removeBestEffort(join(stageRoot, name));
 }
 
 function refuseTreeChanged(v: VerifiedExtensionForSpawn, why: string): never {
@@ -76,27 +81,33 @@ function refuseTreeChanged(v: VerifiedExtensionForSpawn, why: string): never {
 }
 
 /**
- * Stage a VERIFIED extension for one spawn: copy its install tree into `<leaf>/run-<uuid>`,
- * re-digest the COPY and require it to equal the digest the verifier just computed, then point the
- * entry into the copy.
+ * Stage a VERIFIED extension for one spawn: copy its install tree into a fresh
+ * `<stageRoot>/<uuid>`, re-digest the COPY and require it to equal the digest the verifier just
+ * computed, then point the entry into the copy. The stage is also the child's working directory.
  *
  * Why a copy at all: on Windows, Bun's module loader opens every module file it loads asking for
  * FILE_WRITE_ATTRIBUTES, which a read-only AppContainer grant does not carry, so an extension
  * cannot `import()` its own code from a read-only install tree (measured; `docs/sandbox.md`). The
- * leaf is already the extension's own writable working directory on every platform, so running
- * from a copy there needs no new right, and the install tree drops out of the grant entirely. One
- * code path on all three platforms.
+ * sandbox grants a spawn's working directory read-write on every platform, so a copy that IS the
+ * working directory needs no new right, and the install tree drops out of the grant entirely.
+ *
+ * Why a FRESH directory per spawn, outside every per-policy leaf: Bun honours `bunfig.toml`
+ * (`preload`), `.env` and `node_modules` found in the working directory, none of which the digest
+ * covers. A long-lived cwd would let a previous run of the extension, or any same-user process,
+ * plant code that runs before the approved entry and survives a revoke and re-approval. A fresh
+ * stage holds only digested files, and its ancestors (`<stageRoot>`, `ext-stage`, the sandbox
+ * root) are gateway-owned and granted to no spawn. One code path on all three platforms.
  */
 export function stageVerifiedExtension(
   v: VerifiedExtensionForSpawn,
-  leaf: string,
+  stageRoot: string,
   deps: ExtensionStageDeps = {},
 ): StagedExtensionForSpawn {
   const copyTree = deps.copyTree ?? copyRegularTree;
   const digest = deps.treeDigest ?? computeExtensionTreeDigest;
-  mkdirSync(leaf, { recursive: true });
-  sweepOldStages(leaf);
-  const stagePath = join(leaf, `${EXTENSION_STAGE_PREFIX}${randomUUID()}`);
+  mkdirSync(stageRoot, { recursive: true });
+  sweepStageRoot(stageRoot);
+  const stagePath = join(stageRoot, randomUUID());
   let staged: string | null;
   try {
     copyTree(v.installPath, stagePath);

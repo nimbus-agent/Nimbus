@@ -1,6 +1,14 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -6058,10 +6066,14 @@ describe("I43 — an installed extension's code runs only through the verified s
     throw new Error("prepareSpawn resolved; expected a refusal");
   }
 
-  test("behavioural: the happy path yields a sandboxed ext.<serviceId> spec running a verified copy in its leaf", async () => {
+  test("behavioural: the happy path yields a sandboxed ext.<serviceId> spec running a verified copy in a fresh stage", async () => {
     const { getRunGrant } = await import("./extensions/run-grant-store.ts");
-    const { SANDBOX_POLICY_ENV } = await import("./platform/sandbox/sandbox-policy.ts");
-    const { sandboxCwdFor } = await import("./platform/sandbox/sandbox-cwd.ts");
+    const { SANDBOX_POLICY_ENV, SANDBOX_CWD_ENV } = await import(
+      "./platform/sandbox/sandbox-policy.ts"
+    );
+    const { extensionStageRootFor, sandboxCwdFor } = await import(
+      "./platform/sandbox/sandbox-cwd.ts"
+    );
     const { computeExtensionTreeDigest } = await import("./extensions/tree-digest.ts");
     const f = await installAndMaybeApprove();
     const serviceId = getRunGrant(f.db, f.id)?.service_id ?? "";
@@ -6074,14 +6086,18 @@ describe("I43 — an installed extension's code runs only through the verified s
     };
     expect(policy.id).toBe(`ext.${serviceId}`);
     expect(policy.permissions.network).toEqual(["api.example.com"]);
-    // The entry is inside a fresh run-<uuid> stage in the ext.<serviceId> leaf, whose tree digest
-    // equals the approved one; the install tree is not granted at all.
-    const leaf = sandboxCwdFor(f.sandboxDir, `ext.${serviceId}`);
+    // The entry is inside a fresh <uuid> stage under ext-stage/<serviceId>, whose tree digest
+    // equals the approved one, and that stage is the child's working directory. The long-lived
+    // per-policy leaf is not used (or created); the install tree is not granted at all.
+    const stageRoot = extensionStageRootFor(f.sandboxDir, serviceId);
     const entry = prepared.spec.args.at(-1) ?? "";
-    const stageName = readdirSync(leaf).find((n) => n.startsWith("run-")) ?? "";
-    expect(stageName).toMatch(/^run-[0-9a-f-]{36}$/);
-    expect(entry).toBe(join(leaf, stageName, "dist", "index.js"));
-    expect(computeExtensionTreeDigest(join(leaf, stageName))).toBe(
+    const stageName = readdirSync(stageRoot)[0] ?? "";
+    expect(readdirSync(stageRoot)).toEqual([stageName]);
+    expect(stageName).toMatch(/^[0-9a-f-]{36}$/);
+    expect(entry).toBe(join(stageRoot, stageName, "dist", "index.js"));
+    expect(prepared.spec.env[SANDBOX_CWD_ENV]).toBe(join(stageRoot, stageName));
+    expect(existsSync(sandboxCwdFor(f.sandboxDir, `ext.${serviceId}`))).toBe(false);
+    expect(computeExtensionTreeDigest(join(stageRoot, stageName))).toBe(
       getRunGrant(f.db, f.id)?.tree_digest ?? "",
     );
     expect(policy.permissions.filesystem.read.filter((p) => p.startsWith(f.installPath))).toEqual(
@@ -6089,10 +6105,55 @@ describe("I43 — an installed extension's code runs only through the verified s
     );
   });
 
+  test("behavioural: bunfig.toml / .env / node_modules planted in the old leaf or the stage root never reach the spawn's cwd", async () => {
+    // Bun honours `<cwd>/bunfig.toml` (a `preload` runs before the entry), `<cwd>/.env` and
+    // `node_modules` found walking up from the importing file; none is digested. Planted where a
+    // previous run (old leaf) or a same-user process (stage root) could write, they must not be in
+    // the directory the child starts in, nor on its upward module path.
+    const { getRunGrant } = await import("./extensions/run-grant-store.ts");
+    const { SANDBOX_CWD_ENV } = await import("./platform/sandbox/sandbox-policy.ts");
+    const { extensionStageRootFor, sandboxCwdFor } = await import(
+      "./platform/sandbox/sandbox-cwd.ts"
+    );
+    const f = await installAndMaybeApprove();
+    const serviceId = getRunGrant(f.db, f.id)?.service_id ?? "";
+    const leaf = sandboxCwdFor(f.sandboxDir, `ext.${serviceId}`);
+    const stageRoot = extensionStageRootFor(f.sandboxDir, serviceId);
+    const plant = (dir: string): void => {
+      mkdirSync(join(dir, "node_modules", "evil-pkg"), { recursive: true });
+      writeFileSync(join(dir, "bunfig.toml"), 'preload = ["./preload.ts"]\n');
+      writeFileSync(join(dir, "preload.ts"), 'require("node:fs").writeFileSync("MARKER", "x");\n');
+      writeFileSync(join(dir, ".env"), "NIMBUS_PLANTED=1\n");
+      writeFileSync(join(dir, "node_modules", "evil-pkg", "index.js"), "module.exports = 1;\n");
+    };
+    plant(leaf);
+    plant(stageRoot);
+    // An earlier stage, too, carrying the same plants.
+    plant(join(stageRoot, "00000000-0000-4000-8000-000000000000"));
+    const prepared = await f.source.prepareSpawn(serviceId);
+    const cwd = prepared.spec.env[SANDBOX_CWD_ENV] ?? "";
+    // The cwd is a fresh stage directly under the stage root…
+    expect(join(cwd, "..")).toBe(stageRoot);
+    // …holding exactly the digested install tree, nothing else.
+    const listTree = (root: string, rel = ""): string[] =>
+      readdirSync(join(root, rel), { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory()
+          ? listTree(root, join(rel, e.name))
+          : [join(rel, e.name).replaceAll("\\", "/")],
+      );
+    expect(listTree(cwd).sort()).toEqual(listTree(f.installPath).sort());
+    // The stage root's planted files and the earlier stage were swept: the only thing on the
+    // child's upward path below the sandbox root is its own stage.
+    expect(readdirSync(stageRoot)).toEqual([cwd.slice(stageRoot.length + 1)]);
+    // The old leaf is not the cwd and is not on its path at all.
+    expect(cwd.startsWith(leaf)).toBe(false);
+    expect(prepared.spec.args.some((a) => a.startsWith(leaf))).toBe(false);
+  });
+
   test("behavioural: a staged copy that differs from the verified tree refuses, leaving no stage", async () => {
     const { getRunGrant } = await import("./extensions/run-grant-store.ts");
     const { copyRegularTree } = await import("./extensions/extension-stage.ts");
-    const { sandboxCwdFor } = await import("./platform/sandbox/sandbox-cwd.ts");
+    const { extensionStageRootFor } = await import("./platform/sandbox/sandbox-cwd.ts");
     const f = await installAndMaybeApprove({
       stage: {
         copyTree: (from, to) => {
@@ -6105,8 +6166,7 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(await refusalCode(f.source.prepareSpawn(serviceId))).toBe(
       "ERR_EXTENSION_RUN_TREE_CHANGED",
     );
-    const leaf = sandboxCwdFor(f.sandboxDir, `ext.${serviceId}`);
-    expect(readdirSync(leaf).filter((n) => n.startsWith("run-"))).toEqual([]);
+    expect(readdirSync(extensionStageRootFor(f.sandboxDir, serviceId))).toEqual([]);
   });
 
   test("behavioural: no run grant refuses", async () => {
@@ -6189,8 +6249,12 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(checkAt).toBeGreaterThan(digestAt);
     expect(stageBody.indexOf("return {", checkAt)).toBeGreaterThan(checkAt);
     expect(stage).toMatch(/const digest = deps\.treeDigest \?\? computeExtensionTreeDigest;/);
-    // The spec is wrapped (I15) and the sandbox manifest id is `ext.<serviceId>`.
-    expect(src).toMatch(/return wrapServerSpec\(/);
+    // The spec is wrapped (I15) with the STAGE as the exact working directory — never the
+    // long-lived per-policy leaf `wrapServerSpec` derives — and the manifest id is `ext.<serviceId>`.
+    expect(src).toMatch(/return wrapServerSpecInCwd\(/);
+    expect(src).not.toMatch(/\bwrapServerSpec\(/);
+    expect(src).toMatch(/v\.stagePath,\s*\);/);
+    expect(prep).toMatch(/extensionStageRootFor\(deps\.sandboxDir, verified\.serviceId\)/);
     expect(src).toMatch(/id: `ext\.\$\{v\.serviceId\}`,/);
     // Production never injects a verifier: the one construction site passes no `verify`.
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));

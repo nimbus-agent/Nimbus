@@ -277,4 +277,44 @@ describe("connector tools / call: extension ids", () => {
     expect(process.exitCode).toBe(2);
     process.exitCode = 0;
   });
+
+  test("every ERR_EXTENSION_ refusal exits 2, not only RUN_*", async () => {
+    for (const code of [
+      "ERR_EXTENSION_ENTRY_OUTSIDE",
+      "ERR_EXTENSION_GRANT_PROTECTED",
+      "ERR_EXTENSION_GRANT_PATH_MISSING",
+      "ERR_EXTENSION_RUN_START_FAILED",
+    ]) {
+      process.exitCode = 0;
+      await runConnectorTools(
+        ["ext_foo"],
+        makeDeps(
+          () => {
+            throw new Error(`${code}: refused`);
+          },
+          [],
+          [],
+          [],
+        ),
+      );
+      expect(process.exitCode).toBe(2);
+    }
+    process.exitCode = 0;
+  });
+
+  test("a non-refusal gateway failure still exits 1", async () => {
+    await runConnectorTools(
+      ["ext_foo"],
+      makeDeps(
+        () => {
+          throw new Error("socket closed");
+        },
+        [],
+        [],
+        [],
+      ),
+    );
+    expect(process.exitCode).toBe(1);
+    process.exitCode = 0;
+  });
 });

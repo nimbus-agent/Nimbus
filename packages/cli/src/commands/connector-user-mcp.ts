@@ -21,7 +21,9 @@ const CALL_USAGE = "Usage: nimbus connector call <mcp_id|ext_id> <tool> [--input
 const REFUSAL_CODES = [
   "ERR_USER_MCP_UNKNOWN_TOOL",
   "ERR_USER_MCP_NOT_REGISTERED",
-  "ERR_EXTENSION_RUN_",
+  // Every extension refusal: run-grant (RUN_*), grant-path (GRANT_*), entry, and a child that
+  // failed to start (RUN_START_FAILED) — each means the call did not run.
+  "ERR_EXTENSION_",
 ] as const;
 
 function defaultDeps(): UserMcpDeps {

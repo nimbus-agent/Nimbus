@@ -1868,12 +1868,15 @@ export function checkRunGrantTableConfinement(files: readonly FileEntry[]): Viol
 
 // (a) The `__nimbus-extension` self-role sentinel is named only by `platform/runtime-layout.ts` (which
 //     defines it); `selfSpawn("extension", …)` is called only from `extensions/extension-runtime.ts`,
-//     the spawner that resolves the entry inside the install tree and spawns it through the sandbox.
-//     `index.ts` dispatches via `ROLE_SENTINELS.extension`, never the literal. Scans comment-stripped
-//     source but NOT string-stripped (the sentinel IS a string literal, as with D29(a)); test files and
-//     anything outside packages/gateway/src/ are not scanned. Stated bound: a dynamically composed
-//     role string or `selfSpawn(role)` with a variable evades a text scan; capability confinement
-//     (only the runtime is handed an extension entry path) is the real defense.
+//     the spawner that runs the entry from a verified, re-digested per-spawn stage
+//     (`<sandboxDir>/ext-stage/<serviceId>/<uuid>`, also the child's working directory) through the
+//     sandbox. `index.ts` dispatches via `ROLE_SENTINELS.extension`, never the literal. Scans
+//     comment-stripped source but NOT string-stripped (the sentinel IS a string literal, as with
+//     D29(a)); test files and anything outside packages/gateway/src/ are not scanned. Stated bound: a
+//     dynamically composed role string or `selfSpawn(role)` with a variable evades a text scan. That
+//     gap is covered by I43's tests rather than by this rule: the spec builders and the stager are
+//     each named only by `extension-runtime.ts` (and the stager's own module), and the spec is built
+//     once, inside `prepareSpawn`, after the verifier and the stage digest check.
 const D33_EXT_SENTINEL_RE = /__nimbus-extension/g;
 const D33_EXT_SENTINEL_ALLOWED: readonly string[] = [
   "packages/gateway/src/platform/runtime-layout.ts",
