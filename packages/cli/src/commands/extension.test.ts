@@ -74,6 +74,9 @@ describe("takeFlagValue", () => {
 describe("stripFlags", () => {
   test("removes --yes / -y / --json", () => {
     expect(stripFlags(["a", "--yes", "b", "-y", "c", "--json"])).toEqual(["a", "b", "c"]);
+    // `approve --model <id>` must not send "--model" as the id.
+    expect(stripFlags(["--model", "a.b"])).toEqual(["a.b"]);
+    expect(stripFlags(["a.b", "--model"])).toEqual(["a.b"]);
   });
   test("removes --filter + value pair", () => {
     expect(stripFlags(["info", "--filter", "needs-reinstall", "id"])).toEqual(["info", "id"]);
@@ -2250,7 +2253,10 @@ describe("runExtensionApprove", () => {
       handlers,
     );
     await runExtensionApprove(client, ["approve", "x"], ["x"]);
-    expect(calls[0]).toEqual({ method: "extension.approveRun", params: { id: "x" } });
+    expect(calls[0]).toEqual({
+      method: "extension.approveRun",
+      params: { id: "x", modelAccess: false },
+    });
     expect(handlers.has("consent.request")).toBe(true);
     expect(out.stdout).toContain("approved to run as ext_x");
     expect(out.stdout).not.toContain("Nothing runs it yet");
@@ -2282,6 +2288,55 @@ describe("runExtensionApprove", () => {
     ]);
     await runExtensionApprove(client, ["approve", "x"], ["x"]);
     expect(out.stdout).toContain("already approved");
+  });
+
+  test("--model, before or after the id, asks for model access and the output says it is on", async () => {
+    setTty(true);
+    for (const args of [
+      ["approve", "--model", "a.b"],
+      ["approve", "a.b", "--model"],
+    ]) {
+      out.reset();
+      const { client, calls } = createMockIpcClient([
+        {
+          id: "a.b",
+          serviceId: "ext_a_b",
+          treeDigest: "ab".repeat(32),
+          changed: true,
+          modelAccess: true,
+        },
+      ]);
+      await runExtensionApprove(client, args, stripFlags(args.slice(1)));
+      expect(calls[0]).toEqual({
+        method: "extension.approveRun",
+        params: { id: "a.b", modelAccess: true },
+      });
+      expect(out.stdout).toContain("model access: on");
+    }
+  });
+
+  test("an unchanged approval without --model says model access is off", async () => {
+    setTty(true);
+    const { client } = createMockIpcClient([
+      {
+        id: "x",
+        serviceId: "ext_x",
+        treeDigest: "ab".repeat(32),
+        changed: false,
+        modelAccess: false,
+      },
+    ]);
+    await runExtensionApprove(client, ["approve", "x"], ["x"]);
+    expect(out.stdout).toContain("already approved");
+    expect(out.stdout).toContain("model access: off");
+  });
+
+  test("a missing id names the --model flag in the usage", async () => {
+    setTty(true);
+    const { client } = createMockIpcClient([]);
+    await expect(runExtensionApprove(client, ["approve"], [])).rejects.toThrow(
+      "Usage: nimbus extension approve <id> [--model]",
+    );
   });
 });
 
@@ -2331,12 +2386,18 @@ describe("run state in human output", () => {
         runState: "ready",
         runGrant: { serviceId: "ext_a", approvedAt: 0, modelAccess: false },
       }),
-    ).toBe("ready (ext_a, approved 1970-01-01T00:00:00.000Z)");
+    ).toBe("ready (ext_a, approved 1970-01-01T00:00:00.000Z, model: no)");
+    expect(
+      formatRunLine({
+        runState: "ready",
+        runGrant: { serviceId: "ext_a", approvedAt: 0, modelAccess: true },
+      }),
+    ).toBe("ready (ext_a, approved 1970-01-01T00:00:00.000Z, model: yes)");
     const running = formatRunLine({
       runState: "running",
       runGrant: { serviceId: "ext_a", approvedAt: 0, modelAccess: false },
     });
-    expect(running).toBe("running (ext_a, approved 1970-01-01T00:00:00.000Z)");
+    expect(running).toBe("running (ext_a, approved 1970-01-01T00:00:00.000Z, model: no)");
     expect(running).not.toContain("not executed");
   });
 });
