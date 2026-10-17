@@ -291,7 +291,11 @@ describe("the macOS/Windows push legs still run the integration and e2e trees", 
   // jobs runs must sit inside a path the push leg's unit command names.
   type Job = { readonly if?: unknown; readonly steps?: readonly { readonly run?: unknown }[] };
   const suite = loadYaml(readFileSync(TEST_SUITE_YML, "utf8")) as {
-    on?: { workflow_call?: { inputs?: Record<string, { type?: unknown; default?: unknown }> } };
+    on?: {
+      workflow_call?: {
+        inputs?: Record<string, { description?: unknown; type?: unknown; default?: unknown }>;
+      };
+    };
     jobs?: Record<string, Job>;
   };
   const ci = loadYaml(readFileSync(CI_YML, "utf8")) as {
