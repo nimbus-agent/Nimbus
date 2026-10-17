@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792211383688,
+  "lastUpdate": 1792216056016,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "abf8b7be0e5c0e7215579049859f2dadd30fdde6",
-          "message": "chore: release main (#992)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.14.2</summary>\n\n##\n[1.14.2](https://github.com/nimbus-agent/Nimbus/compare/v1.14.1...v1.14.2)\n(2026-07-31)\n\n\n### Bug Fixes\n\n* **extensions:** accept entrypoint as a fallback for entry\n([#991](https://github.com/nimbus-agent/Nimbus/issues/991))\n([d796cfb](https://github.com/nimbus-agent/Nimbus/commit/d796cfbf44934c6c4019ee956b943beb6418f9d1))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-31T11:33:28Z",
-          "tree_id": "c5f9d89d25ab28be60cb096b5aa6cf130bd16302",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/abf8b7be0e5c0e7215579049859f2dadd30fdde6"
-        },
-        "date": 1785498143719,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 244.1988926500031,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 246.98000219999886,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 165.44237585000192,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d1dfd2ca27d7acef45e0a05961a2156c508dc136",
+          "message": "ci: stop PR comments from cancelling the CLA check of a new commit (#1683)\n\n## Summary\n\n#1679 sat BLOCKED for almost seven hours with every check it showed\ngreen. Its head commit had no `cla` result, and `cla` is one of the ten\nrequired checks: the CLA run for that commit was cancelled before it\nstarted.\n\nEvery comment on a PR starts the CLA workflow, and the job's `if:` skips\nall but the sign and `recheck` comments. But a run joins the\nworkflow-level concurrency group, `cla-<PR number>`, when it is created,\nbefore that `if:` is read, and GitHub cancels a group's pending run\nwhenever a newer one joins. On #1679:\n\n- 21:22:58 UTC: the CLA job for the previous push was created. It waited\n5½ minutes for a runner during that evening's burst on the Free plan,\nthen ran for 7 seconds.\n- 21:26:38: the run for the new head commit was queued behind it,\npending.\n- 21:28:21: a reply on the PR started a comment run, which evicted the\npending run. The comment run's job was then skipped, so nothing ever\nreported on the head commit.\n\nRe-running the cancelled run unblocked #1679. This PR fixes the cause: a\nrun the job's `if:` will skip now gets a group of its own,\n`cla-skipped-<run id>`, so it can neither wait behind a real run nor\nevict one. Runs that do work still share the per-PR group as before:\nevery `pull_request_target` run, and sign or `recheck` comments on a PR.\n\nThe group repeats the job's condition. The new\n`scripts/ci/cla-concurrency.test.ts` fails if the two copies stop\naccepting the same comments.\n\nIt is rare: 1 of 344 `pull_request_target` runs in the last 30 days. The\nTeam plan shortens the queue wait that opened the window, but does not\nclose it.\n\n## Related Issue\n\nNone. Found while checking why #1679 stayed blocked.\n\n## Type of Change\n\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes, Biome format + lint\n- [x] All existing tests pass: `bun test scripts/ci` plus the CLA and\nactions-allowlist audits, 314 pass\n- [x] New behaviour is covered by tests: `cla-concurrency.test.ts`, 3\ntests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction: only CI files change\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage\n\n- [x] Only a workflow and a test change; `scripts/` is outside the\ncoverage floor.\n\n## Testing\n\n- `bun test scripts/ci/cla-concurrency.test.ts`: 3 pass. Red-proved\ntwice: with the old group restored, all 3 fail; with an extra phrase\nadded to the group's list only, the phrase test fails.\n- Parsed with js-yaml, the folded `group:` is a single line.\n- `bun run preflight:fast` passed, including `audit:workflow-lint` and\n`audit:action-sha-pins`.\n\n## Notes for Reviewers\n\n- **This PR cannot prove itself.** `pull_request_target` and\n`issue_comment` runs use the workflow from `main`, so this PR's own CLA\ncheck still runs under the old group. The fix applies to PRs pushed\nafter it merges.\n- **Why not job-level concurrency**, which would not need the condition\ntwice: GitHub's docs do not say whether a job skipped by its `if:` still\njoins a job-level group. A group of its own is correct whatever the\nanswer is.\n- The six other repos that `audit:cla-coverage` covers carry the same\n`cla.yml` and the same flaw. This changes only this repo's copy.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated the CLA check workflow so runs that do not meet its execution\nconditions no longer replace pending qualifying runs. This keeps\nrelevant CLA checks from being displaced by unrelated workflow runs.\n* Added automated checks to verify that workflow grouping and execution\nconditions stay aligned.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-17T08:36:34+03:00",
+          "tree_id": "0e68bbb9173424979099c2efdf588a7452b35882",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d1dfd2ca27d7acef45e0a05961a2156c508dc136"
+        },
+        "date": 1792216050301,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 275.77294649999783,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 266.97384790000285,
             "unit": "ms"
           }
         ]
