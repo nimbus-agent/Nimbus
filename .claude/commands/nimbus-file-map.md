@@ -55,6 +55,21 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | _(standalone repo)_ `nimbus-sdk/src/testing/sandbox-contract.ts` | `runSandboxContractTests(manifestPath)` — [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk), published as `@nimbus-dev/sdk` — SDK API for connector authors |
 | `docs/sandbox.md` | Operator-facing reference; `#platform-asymmetry` + `#windows-platform-status` |
 
+## Extensions — Runtime (invariant `I43`, S3 extension runtime PRs 1–4)
+
+| File | Purpose |
+|---|---|
+| `packages/gateway/src/extensions/approve-run.ts` | `extension.run` HITL action type; the approve/revoke path that writes a run grant (D33(c) writer) |
+| `packages/gateway/src/extensions/run-grant-store.ts` | V70 `extension_run_grant` — the ONLY reader/writer of the table (D33(b)); `upsertRunGrant` / `deleteRunGrant` / `getRunGrant` |
+| `packages/gateway/src/extensions/run-state.ts` | `extensionRunState` — `disabled` / `no_grant` / `grant_stale` / `ready` / `running` for `extension list`/`info` |
+| `packages/gateway/src/extensions/extension-runtime.ts` | `prepareSpawn` — the I43 chokepoint; builds the runtime manifest + spawn spec for the lazy `mesh:ext:<serviceId>` slot |
+| `packages/gateway/src/extensions/verified-extension.ts` | `readVerifiedExtensionForSpawn` — re-digests the live tree against the grant before every spawn |
+| `packages/gateway/src/extensions/extension-stage.ts` | `stageVerifiedExtension` — the verified per-spawn COPY the extension runs from (its cwd) |
+| `packages/gateway/src/extensions/tree-digest.ts` | `computeExtensionTreeDigest` — the install-gate tree digest (PR 1) |
+| `packages/gateway/src/extensions/extension-run-grants.ts` / `run-grant-env.ts` | Resolve granted network/read/write paths; `isExtensionRuntimeEnabled` (`[extensions] runtime`) |
+| `packages/gateway/src/extensions/extension-service-id.ts` | `deriveExtensionServiceId` — `ext_` + lowercased id, non-alphanumerics → `_` (disjoint from `mcp_`) |
+| `packages/gateway/src/extensions/run-extension-entry.ts` | The child-side entry role that starts the extension's MCP stdio server |
+
 ## Extensions — Dependency Resolution
 
 | File | Purpose |

@@ -182,7 +182,7 @@ bun run audit:dead-code                 # knip unused exports / orphan files (D7
 bun run audit:duplication               # jscpd token duplication (D6)
 bun run audit:exclusion-parity               # sonar.coverage.exclusions <-> local registry drift check
 bun run audit:any                       # D8 any-count print
-bun run audit:invariants                # static invariant complement D10–D33 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table, fleet and push ClientKinds, extension run-grant table + grant writers, toolgen brokered-fetch literal/generated-manifest/vault-key-prefix confinement, full-SQLite init before any bun:sqlite Database construction, listener-registry registration, and D25's hidden connector spawns) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
+bun run audit:invariants                # static invariant complement D10–D33 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table, fleet and push ClientKinds, extension self-role sentinel + run-grant table + grant writers (D33(a)–(c)), toolgen brokered-fetch literal/generated-manifest/vault-key-prefix confinement, full-SQLite init before any bun:sqlite Database construction, listener-registry registration, and D25's hidden connector spawns) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
 bun run audit:openapi-drift             # OpenAPI ↔ HTTP_ROUTES drift (Phase 5 T4 PR 1)
 
 bun scripts/structure-audit/count-any-usage.ts --check     # D8 CI gate (fails on regression OR reduction without --update)
@@ -442,6 +442,24 @@ nimbus extension downgrade <id> --to <version> [--json]
 
 # nimbus.toml knob:
 #   [extensions].update_check_interval_hours = 24    # integer in [1, 168]; default 24
+```
+
+### S3 extension runtime (PRs 1–4, 2026-10-11 → 2026-10-17; invariant I43)
+
+```bash
+nimbus extension approve <id> [--model]   # TTY only, no --yes; HITL `extension.run`; writes V70 extension_run_grant
+# --model also offers its tools to the engine agent as ext_<sid>__<tool> (local owner only, each call
+# behind the I42 prompt; shared org lockoff `user_mcp_model_access`). Every approval states the WHOLE
+# grant: re-approving without --model turns model access off.
+nimbus extension revoke <id>              # withdraw the grant; stops the extension if running
+nimbus extension rehash <id> [--yes]      # adopt the on-disk tree digest as trusted (HITL, like install)
+nimbus extension list|info <id>           # runState: disabled | no_grant | grant_stale | ready | running
+nimbus connector tools ext_<sid> [--json]  # sid = the service id approve printed (com.example.x → ext_com_example_x); starts it on first use
+nimbus connector call ext_<sid> <tool> [--input <json>]  # every call behind the I42 prompt; exit 0/1/2 = ran/failed/refused
+# IPC: extension.approveRun / extension.revokeRun — CLI-only, FORBIDDEN_OVER_LAN, not on the Tauri allowlist.
+# nimbus.toml knob:
+#   [extensions] runtime = true   # default; false runs no extension and approve refuses
+#                                 # ERR_EXTENSION_RUNTIME_DISABLED (read once at gateway boot)
 ```
 
 ### Phase 6 Slices 1+2+5 — Team federation

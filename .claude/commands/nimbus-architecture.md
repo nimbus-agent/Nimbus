@@ -55,7 +55,7 @@ nimbus/
 | `db/` | SQLite write chokepoint (`write.ts`, I14), audit chain, verify/repair/snapshot, health, latency ring buffer — the schema and its migrations live in `index/` |
 | `connectors/` | Connector registry, lazy mesh, health model, health history |
 | `sync/` | Delta sync scheduler, connectivity probe, rate limiter |
-| `extensions/` | Extension Registry, manifest validator, sandbox |
+| `extensions/` | Extension Registry, manifest validator, install gate + tree digest, run grants and the sandboxed runtime (I43, `extension-runtime.ts`) |
 | `telemetry/` | Opt-in aggregate telemetry collector |
 | `config/` | TOML config loader, profiles, env-var overrides |
 | `ipc/` | JSON-RPC 2.0 server, HTTP API, Prometheus endpoint, LAN server |

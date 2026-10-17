@@ -128,9 +128,12 @@ so the failure names itself.
 
 ### A green cross-platform leg may have retried
 
-Both retry wrappers (`ci.yml`, `_test-suite.yml`) re-run the whole suite once and emit a
-`::warning title=Retry masked a failure::` annotation naming the failing test. A job that is green
-but mysteriously slow probably paid for two full suite runs. **Read the annotations on a green
+Both retry wrappers (`ci.yml`, `_test-suite.yml`) run `scripts/ci/test-with-retry.ts`, which
+retries ONCE — only the failed files when the JUnit accounts for every failure, the whole command
+otherwise — and emits a `::warning title=Retry masked a failure::` annotation naming the failing
+test. A job that is green but mysteriously slow probably paid for a retry (a whole-command one if
+a failure could not be attributed). An attempt silent for 5 minutes is killed as hung
+(`--silence-seconds=300`). **Read the annotations on a green
 job**, not just the conclusion.
 
 ---
