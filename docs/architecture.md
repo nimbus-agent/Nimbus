@@ -1812,16 +1812,27 @@ dynamically composed identifier evades a text scan and capability confinement is
 import is caught; comments and test files are not scanned), with the same stated bound that a dynamically
 composed call evades a text scan. The
 IPC methods `extension.approveRun` / `extension.revokeRun` are CLI-only, LAN-forbidden, refused in a demo
-root and absent from the Tauri allowlist. `model_access` is still always 0 (`--model` for extensions is PR 4).
+root and absent from the Tauri allowlist. `model_access` is set by `nimbus extension approve <id> --model` (PR 4); every approval states the whole grant, so approving without the flag clears it.
 
 ### Extension runtime
 
 **PR 3 of 4 shipped 2026-10-17** (invariant `I43`, static `D33(a)`; I42 widened to `ext_`; no migration). An approved extension runs as a
 sandboxed MCP stdio server in a LAZY `mesh:ext:<serviceId>` slot of the lazy mesh: nothing starts at
 boot, the first `connector.userMcpTools` / `connector.userMcpCall` on an `ext_` id starts it, and the
-boot integrity pass (`verify-extensions.ts`, I16) must have run first. The owner is the only caller.
-Extension tools are not offered to the model and are not proposable on the I28 act door; every call
-is held to the I42 HITL prompt.
+boot integrity pass (`verify-extensions.ts`, I16) must have run first. Every call is held to the I42
+HITL prompt, and extension tools are not proposable on the I28 act door.
+
+**Model access (PR 4 of 4, 2026-10-17).** An extension approved with `--model` is offered to the
+engine agent through the user-MCP model path unchanged: `gateway-main.ts`'s `userMcp` source is
+`listPolicyGatedModelAccessibleOwnerCodeServerIds` (user MCP `--model` ids, then
+`listModelAccessibleExtensionGrants` — enabled, approved for the version and tree digest now
+installed — minus signature-disabled extensions), evaluated behind one read of the shared
+`user_mcp_model_access` lock-off, and each id's tools are listed through the mesh's
+`listOwnerCodeServerTools`, whose `ext_` arm spawns through the verified path above. An extension
+that fails verification is skipped with a warning, not offered. The stale filter exists so a merely
+installed, out-of-date extension is not re-staged and refused on every turn. Rejected: a separate
+`extension_model_access` capability (the owner chose one shared switch; a separate name would only
+narrow and can be added later).
 
 **Verify, then copy, then run.** Before every spawn `readVerifiedExtensionForSpawn` re-verifies the
 extension row, the run grant, the manifest and entry hashes, the tree digest, I16 for publisher

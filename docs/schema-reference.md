@@ -1087,7 +1087,7 @@ CREATE INDEX IF NOT EXISTS idx_capture_item_id ON capture(item_id) WHERE item_id
 --   version           the extension version that was approved
 --   tree_digest       the V66 tree digest that was approved
 --   permissions_json  the RESOLVED (canonical-path) network/read/write grants shown to the owner
---   model_access      0 or 1; always 0 in this release (`--model` for extensions is a later PR)
+--   model_access      0 or 1; 1 when approved with `nimbus extension approve <id> --model`
 --   approved_at       epoch ms
 -- `deleteExtensionById` deletes the grant explicitly rather than relying on the ON DELETE CASCADE,
 -- which fires only on a connection with foreign keys enabled (LocalIndex enables them; another
