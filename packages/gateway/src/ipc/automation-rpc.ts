@@ -753,6 +753,11 @@ async function handleExtensionApproveRun(
   ctx: AutomationCtx,
 ): Promise<Hit> {
   const id = requireString(rec, "id");
+  // Validated before the `try`: inside it a malformed parameter would announce a failed approval.
+  const rawModelAccess = rec?.["modelAccess"];
+  if (rawModelAccess !== undefined && typeof rawModelAccess !== "boolean") {
+    throw new AutomationRpcError(-32602, "Invalid params: 'modelAccess' must be a boolean");
+  }
   const ownerGate = ctx.ownerGate;
   if (ownerGate === undefined) {
     throw new AutomationRpcError(-32603, "extension.approveRun requires the owner's HITL gate");
@@ -771,6 +776,7 @@ async function handleExtensionApproveRun(
       gate: ownerGate,
       runtimeEnabled: ctx.runtimeEnabled ?? true,
       now: Date.now,
+      modelAccess: rawModelAccess === true,
     });
     // `list`/`info` now carry runState, so a connected client must hear that it moved — as it
     // already does for install/enable/disable/remove/update. An unchanged re-approval moved nothing.

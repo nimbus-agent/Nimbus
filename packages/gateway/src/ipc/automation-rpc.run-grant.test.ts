@@ -254,6 +254,44 @@ describe("extension.approveRun / extension.revokeRun over the automation dispatc
     }
   });
 
+  test("a non-boolean modelAccess is -32602 and announces nothing", async () => {
+    const { db, env } = await installed();
+    const events: string[] = [];
+    setGatewayEventBroadcast((method) => {
+      events.push(method);
+    });
+    try {
+      for (const modelAccess of ["yes", 1, null]) {
+        const err = await dispatchAutomationRpc({
+          method: "extension.approveRun",
+          params: { id: "rpc.run", modelAccess },
+          db,
+          runGrantEnv: env,
+          ownerGate: async () => true,
+        }).catch((e: unknown) => e);
+        expect((err as { rpcCode?: number }).rpcCode, String(modelAccess)).toBe(-32602);
+        expect((err as Error).message).toBe("Invalid params: 'modelAccess' must be a boolean");
+      }
+      expect(events).toEqual([]);
+      expect(getRunGrant(db, "rpc.run")).toBeNull();
+    } finally {
+      setGatewayEventBroadcast(undefined);
+    }
+  });
+
+  test("modelAccess: true reaches the grant and the result", async () => {
+    const { db, env } = await installed();
+    const out = (await dispatchAutomationRpc({
+      method: "extension.approveRun",
+      params: { id: "rpc.run", modelAccess: true },
+      db,
+      runGrantEnv: env,
+      ownerGate: async () => true,
+    })) as { value: { modelAccess: boolean } };
+    expect(out.value.modelAccess).toBe(true);
+    expect(getRunGrant(db, "rpc.run")?.model_access).toBe(1);
+  });
+
   test("extension.remove removes the grant", async () => {
     const { db, env } = await installed();
     await dispatchAutomationRpc({
