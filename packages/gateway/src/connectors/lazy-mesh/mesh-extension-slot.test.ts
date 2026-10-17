@@ -65,10 +65,18 @@ interface FakeClient {
   listTools(): Promise<FakeTools>;
   disconnect(): Promise<void>;
   disconnectCalls: number;
+  listToolsCalls: number;
 }
 
 /** A fake source plus a recording client factory. */
-function harness(opts: { listed?: () => readonly string[]; prepare?: () => Promise<void> } = {}) {
+function harness(
+  opts: {
+    listed?: () => readonly string[];
+    prepare?: () => Promise<void>;
+    /** Called per preparation (1-based); a returned error is thrown as the refusal. */
+    refuse?: (call: number) => Error | undefined;
+  } = {},
+) {
   let prepareCalls = 0;
   const clients: FakeClient[] = [];
   let listed: readonly string[] = [SERVICE_ID];
@@ -76,6 +84,8 @@ function harness(opts: { listed?: () => readonly string[]; prepare?: () => Promi
     listServiceIds: () => (opts.listed === undefined ? listed : opts.listed()),
     async prepareSpawn(serviceId: string): Promise<PreparedExtensionSpawn> {
       prepareCalls += 1;
+      const refusal = opts.refuse?.(prepareCalls);
+      if (refusal !== undefined) throw refusal;
       await (opts.prepare?.() ?? Promise.resolve());
       return {
         extensionId: EXTENSION_ID,
@@ -89,15 +99,18 @@ function harness(opts: { listed?: () => readonly string[]; prepare?: () => Promi
     const client: FakeClient = {
       id,
       servers,
-      listTools: (): Promise<FakeTools> =>
-        Promise.resolve({
+      listTools(): Promise<FakeTools> {
+        client.listToolsCalls += 1;
+        return Promise.resolve({
           [`${serverKey}_echo`]: { execute: (): Promise<unknown> => Promise.resolve("echo") },
-        }),
+        });
+      },
       disconnect(): Promise<void> {
         client.disconnectCalls += 1;
         return Promise.resolve();
       },
       disconnectCalls: 0,
+      listToolsCalls: 0,
     };
     clients.push(client);
     return client as unknown as MCPClient;
@@ -283,7 +296,7 @@ describe("mesh:ext: slot", () => {
     await client.disconnect();
   });
 
-  test("a stop while prepareSpawn is in flight (grant gone) creates no client", async () => {
+  test("withdrawal re-check: an id unlisted while prepareSpawn is in flight creates no client", async () => {
     const { promise: held, resolve: release } = Promise.withResolvers<void>();
     const h = harness({ prepare: () => held });
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
@@ -300,7 +313,109 @@ describe("mesh:ext: slot", () => {
     expect(mesh.isExtensionRunning(EXTENSION_ID)).toBe(false);
   });
 
-  test("listToolsForDispatcher's merged map holds no ext_ key while an ext slot is live", async () => {
+  test("a stop with NO withdrawal during an in-flight spawn creates no client; the next list re-prepares", async () => {
+    const { promise: held, resolve: release } = Promise.withResolvers<void>();
+    const h = harness({ prepare: () => held });
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      extensionSlots: h.source,
+      createExtensionClient: h.createExtensionClient,
+    });
+    const pending = mesh.listExtensionTools(SERVICE_ID);
+    await Bun.sleep(0);
+    expect(h.prepareCalls).toBe(1);
+    // Auto-update's shape: the tree is swapped and the client stopped, the id still listed.
+    await mesh.stopExtensionClient(EXTENSION_ID);
+    release();
+    expect(await pending).toBeUndefined();
+    expect(h.clients).toHaveLength(0);
+    expect(mesh.isExtensionRunning(EXTENSION_ID)).toBe(false);
+    expect(slots(mesh).get(extensionMeshKey(SERVICE_ID))?.client).toBeUndefined();
+
+    expect(Object.keys((await mesh.listExtensionTools(SERVICE_ID)) ?? {})).toEqual([
+      "ext_foo_echo",
+    ]);
+    expect(h.prepareCalls).toBe(2);
+    expect(h.clients).toHaveLength(1);
+    expect(mesh.isExtensionRunning(EXTENSION_ID)).toBe(true);
+  });
+
+  test("disconnect() during an in-flight spawn creates no client", async () => {
+    const { promise: held, resolve: release } = Promise.withResolvers<void>();
+    const h = harness({ prepare: () => held });
+    const m = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      extensionSlots: h.source,
+      createExtensionClient: h.createExtensionClient,
+    });
+    mesh = m;
+    const pending = m.listExtensionTools(SERVICE_ID);
+    await Bun.sleep(0);
+    expect(h.prepareCalls).toBe(1);
+    await m.disconnect();
+    release();
+    expect(await pending).toBeUndefined();
+    expect(h.clients).toHaveLength(0);
+    expect(slots(m).has(extensionMeshKey(SERVICE_ID))).toBe(false);
+  });
+
+  test("a stop of ANOTHER extension does not abort this one's in-flight spawn", async () => {
+    const { promise: held, resolve: release } = Promise.withResolvers<void>();
+    const h = harness({ prepare: () => held });
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      extensionSlots: h.source,
+      createExtensionClient: h.createExtensionClient,
+    });
+    const pending = mesh.listExtensionTools(SERVICE_ID);
+    await Bun.sleep(0);
+    await mesh.stopExtensionClient("some-other-ext");
+    release();
+    expect(Object.keys((await pending) ?? {})).toEqual(["ext_foo_echo"]);
+    expect(mesh.isExtensionRunning(EXTENSION_ID)).toBe(true);
+  });
+
+  test("a refused prepareSpawn followed by a successful retry: error, then healthy", async () => {
+    const healthDb = new Database(":memory:");
+    openDbs.push(healthDb);
+    LocalIndex.ensureSchema(healthDb);
+    const h = harness({
+      refuse: (call) =>
+        call === 1
+          ? new ExtensionRunGrantError("ERR_EXTENSION_RUN_TREE_CHANGED", "tree digest changed")
+          : undefined,
+    });
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      healthDb,
+      extensionSlots: h.source,
+      createExtensionClient: h.createExtensionClient,
+    });
+    await expect(mesh.listExtensionTools(SERVICE_ID)).rejects.toBeInstanceOf(
+      ExtensionRunGrantError,
+    );
+    expect(getConnectorHealth(healthDb, SERVICE_ID).state).toBe("error");
+
+    expect(Object.keys((await mesh.listExtensionTools(SERVICE_ID)) ?? {})).toEqual([
+      "ext_foo_echo",
+    ]);
+    expect(h.prepareCalls).toBe(2);
+    const snap = getConnectorHealth(healthDb, SERVICE_ID);
+    expect(snap.state).toBe("healthy");
+    expect(snap.lastError).toBeUndefined();
+  });
+
+  test("a first successful spawn of a never-observed id writes no health row", async () => {
+    const healthDb = new Database(":memory:");
+    openDbs.push(healthDb);
+    LocalIndex.ensureSchema(healthDb);
+    const h = harness();
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      healthDb,
+      extensionSlots: h.source,
+      createExtensionClient: h.createExtensionClient,
+    });
+    await mesh.listExtensionTools(SERVICE_ID);
+    expect(getConnectorHealth(healthDb, SERVICE_ID).state).toBe("not_configured");
+  });
+
+  test("listToolsForDispatcher never lists a live ext slot and its merged map holds no ext_ key", async () => {
     const h = harness();
     mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
       extensionSlots: h.source,
@@ -312,7 +427,9 @@ describe("mesh:ext: slot", () => {
       listTools: (): Promise<FakeTools> => Promise.resolve({}),
       disconnect: (): Promise<void> => Promise.resolve(),
     };
+    const callsBefore = h.clients[0]?.listToolsCalls ?? -1;
     const merged = await mesh.listToolsForDispatcher();
+    expect(h.clients[0]?.listToolsCalls).toBe(callsBefore);
     expect(Object.keys(merged).filter((k) => k.startsWith("ext_"))).toEqual([]);
     expect(slots(mesh).get(extensionMeshKey(SERVICE_ID))?.client).toBeDefined();
   });

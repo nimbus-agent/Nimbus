@@ -336,6 +336,8 @@ export class LazyConnectorMesh {
    * row, so a stop after the grant is deleted still stops the child.
    */
   public async stopExtensionClient(extensionId: string): Promise<void> {
+    // First, synchronously: a preparation already in flight for this extension must not connect.
+    this.extensionSlots.markStopped(extensionId);
     await this.stopUserMcpClient(extensionId);
     await this.stopLazyClient(extensionId);
     const serviceId = this.extensionSlots.serviceIdFor(extensionId);
@@ -469,7 +471,8 @@ export class LazyConnectorMesh {
   }
 
   // `mesh:user:` slots only, here and in `collectUserMcpToolMap`: extension (`mesh:ext:`) tools are
-  // not offered to the model until a later PR, so they never enter the merged dispatcher map.
+  // not offered to the model until a later PR, so they never enter the merged dispatcher map, and
+  // `buildSlotForToolMap` never lists an extension slot either.
   private async ensureUserMcpConnectorsRunning(): Promise<void> {
     const rows = this.listUserMcpConnectors();
     const active = new Set(rows.map((r) => r.service_id));
@@ -659,8 +662,12 @@ export class LazyConnectorMesh {
    * listing fails is skipped, as before.
    */
   private async buildSlotForToolMap(): Promise<Map<string, LazyDrainTracker>> {
-    const liveSlots = Array.from(this.lazySlots.values()).flatMap((slot) =>
-      slot.client === undefined ? [] : [{ client: slot.client, drain: slot.drain }],
+    // `mesh:ext:` slots are skipped: their tools are never in the merged map, and a first-party
+    // dispatch must not contact an extension's process.
+    const liveSlots = Array.from(this.lazySlots.entries()).flatMap(([key, slot]) =>
+      slot.client === undefined || key.startsWith(EXT_MESH_PREFIX)
+        ? []
+        : [{ client: slot.client, drain: slot.drain }],
     );
     const listings = await Promise.all(
       liveSlots.map(async ({ client, drain }) => {
@@ -795,6 +802,8 @@ export class LazyConnectorMesh {
     // never rejects; run one at a time, a single slot draining in-flight calls (up to ten minutes)
     // delayed the teardown of every slot after it. The key set is snapshotted up front — gateway
     // shutdown, the one production caller, stops the sync scheduler and IPC server before this.
+    // An extension preparation still in flight is not in that snapshot, so it is told not to connect.
+    this.extensionSlots.markAllStopped();
     await Promise.all(Array.from(this.lazySlots.keys(), (key) => this.stopLazyClient(key)));
     try {
       await this.filesystem.disconnect();

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { MCPClient } from "@mastra/mcp";
 
 import { ExtensionRunGrantError } from "../../extensions/run-grant-error.ts";
-import { transitionHealth } from "../health.ts";
+import { getConnectorHealth, transitionHealth } from "../health.ts";
 import type { ExtensionSlotSource } from "./extension-slot-source.ts";
 import { extensionMeshKey } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
@@ -40,6 +40,15 @@ export interface ExtensionSlotsOptions {
 export class ExtensionSlots {
   private readonly serviceIdByExtensionId = new Map<string, string>();
   private readonly pendingSpawns = new Map<string, Promise<boolean>>();
+  /**
+   * Stop generations. A stop knows only the extension id and an in-flight preparation learns it
+   * only when `prepareSpawn` resolves, so each stop stamps the extension id with a fresh value of
+   * one monotonic counter (`stopAll` stamps every id at once); a preparation captures the counter
+   * before it starts and creates no client if its extension was stamped later.
+   */
+  private generation = 0;
+  private readonly stoppedAt = new Map<string, number>();
+  private allStoppedAt = 0;
 
   constructor(
     private readonly host: ExtensionSlotHost,
@@ -83,6 +92,22 @@ export class ExtensionSlots {
     );
   }
 
+  /** Marks `extensionId` stopped: a preparation already in flight for it creates no client. */
+  markStopped(extensionId: string): void {
+    this.generation += 1;
+    this.stoppedAt.set(extensionId, this.generation);
+  }
+
+  /** Marks every extension stopped (mesh shutdown). */
+  markAllStopped(): void {
+    this.generation += 1;
+    this.allStoppedAt = this.generation;
+  }
+
+  private stoppedSince(extensionId: string, startedAt: number): boolean {
+    return this.allStoppedAt > startedAt || (this.stoppedAt.get(extensionId) ?? 0) > startedAt;
+  }
+
   /** Called by the mesh whenever an extension slot's client is cleared. */
   forgetService(serviceId: string): void {
     for (const [extensionId, sid] of this.serviceIdByExtensionId) {
@@ -91,6 +116,7 @@ export class ExtensionSlots {
   }
 
   private async connectSlot(source: ExtensionSlotSource, serviceId: string): Promise<boolean> {
+    const startedAt = this.generation;
     let prepared: Awaited<ReturnType<ExtensionSlotSource["prepareSpawn"]>>;
     try {
       prepared = await source.prepareSpawn(serviceId);
@@ -106,6 +132,9 @@ export class ExtensionSlots {
     // A disable or revoke that landed while the preparation was in flight has nothing to stop yet
     // (no client, no running record), so the listing is re-read here and a withdrawn id spawns nothing.
     if (!source.listServiceIds().includes(serviceId)) return false;
+    // A stop that did NOT withdraw the id (auto-update swaps the tree and stops with the id still
+    // listed) or a mesh shutdown that landed mid-preparation wins too: the next listing re-prepares.
+    if (this.stoppedSince(prepared.extensionId, startedAt)) return false;
     const key = extensionMeshKey(serviceId);
     const serverKey = serviceId.replaceAll(/[^a-zA-Z0-9_-]/g, "_");
     const client = this.options.createClient(`nimbus-extension-${serviceId}-${randomUUID()}`, {
@@ -115,6 +144,18 @@ export class ExtensionSlots {
     this.serviceIdByExtensionId.set(prepared.extensionId, serviceId);
     this.host.bumpToolsEpoch();
     this.host.scheduleLazyDisconnect(key);
+    this.recordRecovered(serviceId);
     return true;
+  }
+
+  /** A spawn after a recorded refusal clears it, with the event a successful sync records. */
+  private recordRecovered(serviceId: string): void {
+    const db = this.options.healthDb;
+    if (db === undefined) return;
+    const state = getConnectorHealth(db, serviceId).state;
+    // `not_configured` is what a never-observed id reads: there is nothing to recover from.
+    if (state !== "healthy" && state !== "not_configured") {
+      transitionHealth(db, serviceId, { type: "sync_success" });
+    }
   }
 }
