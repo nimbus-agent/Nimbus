@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792219538716,
+  "lastUpdate": 1792246286736,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "982b4d2a2605338a539077db56d9d02c38ccbd01",
-          "message": "fix(cli): stop share argument errors crashing, and retire seven false coverage exclusions (#1004)\n\nRetires **seven** coverage-floor exclusions that were protecting nothing\nor resting on a false rationale, makes `share.ts` genuinely testable,\nand fixes a user-facing crash that fell out of the refactor.\n\nAn audit plus an adversarial re-check — both working from a real\nCI-Linux lcov generated in Docker — found only ~5 of 61 exclusions worth\nattacking. This is that shortlist, not a sweep.\n\n## The false rationales\n\n- **`platform/sandbox/win32.ts`** was excluded as *\"win32 job-object\nsandbox, unreachable on Linux CI\"*. It has **no OS-dependent code and no\nFFI import**. Its two pure functions were already tested — the whole\n`describe` just sat behind `describe.skipIf(process.platform !==\n\"win32\")`, so on the Linux-authoritative runner it read 0%. Removing the\nskip took it to **100/100**. It sits in the **I15** blast radius.\n- **`cli/commands/share.ts`** claimed its residual was *\"the\nrunShare/runVerifyShare IPC wrappers, same class as\npolicy.ts/chatops.ts\"*. Provably false: `policy.ts`, `chatops.ts`,\n`admin.ts` and `tribal.ts` each export an `XIpc` interface and take an\ninjected client. `share.ts` had **no seam at all**, which is the entire\nreason it sat at 28%.\n- **The `^types\\.ts$` regex** asserted every match was zero-executable\n*\"with a guardian header forbidding runtime logic\"*. False for\n`identity/types.ts` (six runtime declarations including\n`parseTokenResponse`, an **I18**-adjacent OIDC token parser) and\n`sync/types.ts`.\n- **Four dead-weight entries** already cleared both floors, so the\nexclusion only cost regression protection: `platform/linux.ts`,\n`chatops-tool-runner-e2e-sink.ts` (**I23**), `sandbox/orphan-reap.ts`,\nand all 43 generated `*-vNN-sql.ts`.\n\n## share.ts: the seam, and a real bug\n\n`share.ts` now follows the four-file precedent exactly — exported\n`ShareIpc`, a `ShareCommand` union, a pure `parseShareArgs(argv)` that\nthrows the usage text, and a `runShareCommand(client, cmd)` dispatcher.\n**28.06% → 93.15% line, 28.30% → 93.40% branch.**\n\nThat surfaced a genuine crash: argument errors escaped\n`parseShareCreateArgs` as an **unhandled rejection** because `runShare`\nnever wrapped the parse. So `nimbus share create s-1 --out` (and\nlikewise `--to-peer`, `--expires`, `--redact` with a missing or\nflag-shaped value) crashed instead of reporting the error. It now prints\nthe message and exits 1, like every other usage error.\n\n## Margins, deliberately widened\n\nFour newly-gated files initially sat within 2 points of the floor, where\none flipped branch reds CI. 16 further tests fixed that — each\n**red-proved by mutating the exact production line it targets**, then\nreverted:\n\n| File | branch before | after |\n|---|---|---|\n| `perf/pr-comment-formatter.ts` | 80.70% | **96.49%** |\n| `perf/worker-bench.ts` | 81.82% | **100%** |\n| `perf/process-spawn-bench.ts` | 84.21% | **92.11%** |\n| `platform/linux.ts` | 85.00% | **90%** |\n\n## The perf/ prefix, honestly\n\nNarrowing `packages/gateway/src/perf/` to the two patterns Sonar\nactually carries exposed **21** modules, not the 7 first estimated.\nSeven clear the floor and rejoin the gate; the other 14 needed explicit\nentries. Net: exclusions went **61 → 69**. That is growth — but it\nreplaces one blanket broader than Sonar's own with 14 individually\nvisible, justifiable entries.\n\n## Verification\n\nCI-Linux-authoritative, regenerated in Docker (`oven/bun:latest`): **990\nsource files, 29,279 branch records** — well clear of the ~199\nbroken-tooling signature, with the branch-data canary satisfied.\n\nEvery retired file re-measured on Linux clears both floors with margin\n(worst: `identity/types.ts` at 6.3 points clear).\n`coverage-baseline.json` **`\"files\"` is still empty** — checked\nexplicitly, because `reseed-docker.sh` runs `update-baseline` *before*\nthe gate and can otherwise absorb a failure as accepted debt.\n\n`audit:exclusion-parity` ok (40 Sonar patterns covered) ·\n`audit:coverage-floor` ok (0 baselined, 1113 scanned) · biome 3086 files\n· full workspace typecheck · `audit:invariants` · `audit:any` at\nbaseline · `audit:cross-platform` — all exit 0.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Improved reliability of share creation and verification commands,\nincluding clearer validation, file/URL handling, signature checks,\nreplay reports, and tampered-share errors.\n  - Improved telemetry opt-out behavior when the service is not running.\n- Improved diagnostics for unsupported platform security states and\nsandbox failures.\n- Improved performance reporting and benchmark handling for edge cases\nsuch as timeouts, missing values, and negative changes.\n\n- **Tests**\n- Expanded coverage across CLI workflows, telemetry, platform\nsafeguards, performance tools, and coverage rules.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-01T10:01:36Z",
-          "tree_id": "fba57e6a4e543055cd557ec832c1bb1fdd239396",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/982b4d2a2605338a539077db56d9d02c38ccbd01"
-        },
-        "date": 1785579176031,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.76451169999854,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.08362885000827,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 157.7750392499991,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d54fba65b7673fce82e45c585c02388a36b75bcc",
+          "message": "feat(extensions): approved extensions run, sandboxed, under invariant I43 (S3 extension runtime PR 3) (#1689)\n\nS3 extension runtime, PR 3 of 4. With this PR, an installed extension\nthat the owner has approved actually runs. Before it, `nimbus extension\napprove` recorded a grant that nothing ever used.\n\n## What ships\n\n- **A sandboxed MCP stdio server per approved extension.** Each one runs\nin a lazy `mesh:ext:<serviceId>` slot. It starts on first use, never at\nboot, and only after the boot integrity pass.\n- **Owner invocation** through `nimbus connector tools ext_<id>` and\n`nimbus connector call ext_<id> <tool>`. Every call goes through the\nHITL prompt. Invariant **I42** is widened to cover `ext_` ids: the\nexecutor gate, delegate refusal, dispatcher key/type pairing and share\nreplay all apply. Extension tools are **not** offered to the model and\n**cannot** be proposed on the I28 act door; model access is PR 4.\n- **Re-verification before every spawn**\n(`readVerifiedExtensionForSpawn`). It checks the row, the grant, the\nmanifest and entry hashes, the whole-tree digest, I16 for publisher\nmanifests, that the entry is inside the tree, and the re-resolved\ngrants. Any mismatch refuses with a typed `ERR_EXTENSION_*` code and\nmarks the slot's health.\n- **Each spawn runs from a verified copy.** The verified tree is copied\ninto a fresh, gateway-owned stage at\n`<sandboxDir>/ext-stage/<serviceId>/<uuid>`. The copy is re-digested,\nand the child runs there with that stage as its cwd. The install\ndirectory is not granted to the extension at all.\n- **Why the copy is needed.** On Windows, Bun's module loader opens\nevery module asking for `FILE_WRITE_ATTRIBUTES`, which a read-only\nAppContainer grant does not include. This was bisected one access right\nat a time. The owner chose copy-before-start over granting\nwrite-attributes or refusing Windows.\n- **A fresh cwd on every spawn.** Nothing a previous run, or any\nsame-user process, writes into a cwd survives into the next spawn: no\n`bunfig.toml` preload, no `.env`, no `node_modules`. The dev `-e` form\nalso passes `--no-env-file --no-install`.\n- **Lifecycle fixes:**\n- The stop hook was re-pointed. It used to stop keys no slot used, so\ndisable, revoke and a failed startup verification never stopped\nanything.\n- `extension.remove` now stops a running extension; it previously called\nno stop hook at all. It then deletes the stage dirs and the extension's\nhealth row.\n  - A re-spawn waits for the previous child's disconnect to settle.\n  - A generation stamp makes a stop beat an in-flight spawn.\n- **Org policy** is checked at spawn and again on every reuse of a live\nclient (`ERR_EXTENSION_RUN_POLICY`). The mesh's catalog filter ignores\nnon-catalog ids, so under an org connector allowlist an extension runs\nonly if its `ext_` id is listed.\n- **Start failures are reported.** A child that fails to start is now a\ntyped error (`ERR_EXTENSION_RUN_START_FAILED`) rather than an empty tool\nlist.\n- **`runState: running`** shows in `nimbus extension list` and `info`.\n- **`[extensions] runtime`** (default `true`) is a kill switch, read at\ngateway start. A demo gateway runs no extension.\n- **New invariant I43:** extension code executes only through the\nverified spawn path. **Static rule D33(a)** confines the\n`__nimbus-extension` role. The I43 tests pin the order verify → stage\nplus digest → build, and confine the spawn-spec builders and the stager\nto the runtime file.\n\n## Stated bounds (also in `docs/SECURITY-INVARIANTS.md` I43)\n\n- **Check-then-spawn.** A same-user filesystem writer can still race the\nwindow between the copy's digest and `import()`. The window is narrower\nin time, not in who can write.\n- **The DB-write attacker** can rewrite the digest and the grant\nconsistently.\n- **A running client** is re-verified only at its next spawn.\n- **The extension's own traffic** to its granted hosts is not ledgered.\n- **The compiled `nimbus-gateway.exe __nimbus-extension` path** is\nreasoned from a compiled probe, not exercised end to end. The dev-tree\n`bun -e` path is exercised by the e2e.\n\n## Verification\n\n- **Windows, real AppContainer helper:**\n`test/e2e/extension-runtime.e2e.test.ts` passes 16, skips 1. It covers:\n  - install → approve → list → running\n  - a call with consent on and with consent off\n- the confined probe: the granted dir is readable; a sentinel and the\ninstall manifest are DENIED, each against a positive control\n  - one egress row per call\n- an edited sibling file → disable → enable →\n`ERR_EXTENSION_RUN_TREE_CHANGED`\n  - the process is gone after disable and after remove\n  - revoke\n  - a planted `bunfig.toml` preload and `.env` are not honoured\n  \n  `user-mcp.e2e` passes 14, skips 1.\n- **`bun run preflight`:** every gate is green except `test:ci`, which\nshows 29,504 pass, 118 skip and 5 fail. All 5 failures are `install.ps1`\n/ `verify-release.ps1` tests that cannot find `pwsh` from Bun on the dev\nmachine. This branch does not touch those scripts.\n- **Not verified locally:** the macOS and Linux runs of the new e2e\n(Docker was unavailable), so the PR legs are their first run. The\nper-file coverage floor is also unmeasured: it didn't run after\n`test:ci` failed, and Bun gave no branch data locally. Line coverage on\nthe new files measured 92–100%.\n- **Bun versions:** the dev machine ran Bun 1.3.14 and CI runs 1.4.\nThree behaviours were checked only on 1.3.14, and each fails loudly\nrather than passing vacuously: `--no-env-file`/`--no-install` before\n`-e`, the bunfig/`.env` positive control, and junction-safe `rmSync`.\n\n## Found, not fixed (follow-up tickets)\n\n- **The release build autoloads config from its working directory.** It\nis a plain `bun build --compile`, so the compiled gateway honours a\n`bunfig.toml` preload and `.env` there. First-party `__nimbus-connector`\nroles run from a persistent, connector-writable leaf. Recommendation:\nadd `--no-compile-autoload-bunfig --no-compile-autoload-dotenv` to the\nrelease and test builds.\n- **A toolgen tool can rewrite its own script**, because its cwd is\nread-write. Toolgen's `bun -e` spawn is also likely broken in a compiled\nbinary, which does not honour `-e`.\n- **Windows argv mangles backslashes inside `-e` code.** This PR avoids\nthe problem rather than root-causing it. An entry path that contains\nspaces is untested.\n- **The Windows boot reap treats `ext.*` and `user.*` AppContainer\nprofiles as orphans.**\n- **There is no cap on the wait for a previous child's disconnect.**\n- **Carried from PR 2:** `extension.enable` re-enables a\nsignature-failed row without re-verifying it, and the auto-update\n`active/` swap mismatch.\n\nNot a breaking change. Existing installs have no run grant, so nothing\nruns until the owner runs `nimbus extension approve`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Approved extensions can start on first use as sandboxed MCP services.\nOwners can list and call their tools through connector commands; tools\nare invoked manually, not offered to the model.\n* Each start rechecks the extension and its approval, then runs it from\na fresh verified copy. Extension status distinguishes running from\nready.\n* The extension runtime can be disabled through configuration. Disabling\nor removing an extension stops it and cleans up staged files.\n* Extension actions require owner approval and are excluded from\ndelegated approval and share replay.\n\n* **Bug Fixes**\n* Extension calls now report refusal errors with the appropriate CLI\nexit code. Sandbox launches now start in the requested working\ndirectory.\n\n* **Documentation**\n* Updated security and usage guidance to reflect the latest invariants\nand extension runtime behavior.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-17T17:05:00+03:00",
+          "tree_id": "6d81108302216dfe02e93372aff55a8aff30ff05",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d54fba65b7673fce82e45c585c02388a36b75bcc"
+        },
+        "date": 1792246282665,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 181.62858450000203,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 169.51058449999692,
             "unit": "ms"
           }
         ]
