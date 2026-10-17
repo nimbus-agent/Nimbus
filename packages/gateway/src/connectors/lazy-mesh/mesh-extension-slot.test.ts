@@ -286,6 +286,51 @@ describe("mesh:ext: slot", () => {
     expect(h.prepareCalls).toBe(2);
   });
 
+  test("a stop landing DURING the wait for the previous child stages nothing: no prepareSpawn", async () => {
+    const { promise: late, resolve: release } = Promise.withResolvers<void>();
+    const h = harness({ disconnect: (i) => (i === 0 ? late : Promise.resolve()) });
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      extensionSlots: h.source,
+      createExtensionClient: h.createExtensionClient,
+    });
+    await mesh.listExtensionTools(SERVICE_ID);
+    const firstStop = mesh.stopExtensionClient(EXTENSION_ID);
+    await Bun.sleep(0);
+    const listing = mesh.listExtensionTools(SERVICE_ID);
+    await Bun.sleep(0);
+    // Auto-update's shape again, now while the listing is waiting: the id stays listed.
+    const secondStop = mesh.stopExtensionClient(EXTENSION_ID);
+    release();
+    await Promise.all([firstStop, secondStop]);
+    expect(await listing).toBeUndefined();
+    expect(h.prepareCalls).toBe(1);
+    expect(h.clients).toHaveLength(1);
+    // The next listing re-prepares normally.
+    expect(Object.keys((await mesh.listExtensionTools(SERVICE_ID)) ?? {})).toEqual([
+      "ext_foo_echo",
+    ]);
+    expect(h.prepareCalls).toBe(2);
+  });
+
+  test("a withdrawal landing DURING the wait for the previous child stages nothing", async () => {
+    const { promise: late, resolve: release } = Promise.withResolvers<void>();
+    const h = harness({ disconnect: (i) => (i === 0 ? late : Promise.resolve()) });
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      extensionSlots: h.source,
+      createExtensionClient: h.createExtensionClient,
+    });
+    await mesh.listExtensionTools(SERVICE_ID);
+    const stopped = mesh.stopExtensionClient(EXTENSION_ID);
+    await Bun.sleep(0);
+    const listing = mesh.listExtensionTools(SERVICE_ID);
+    await Bun.sleep(0);
+    h.setListed([]);
+    release();
+    await stopped;
+    expect(await listing).toBeUndefined();
+    expect(h.prepareCalls).toBe(1);
+  });
+
   test("a refused prepareSpawn rejects with its code, records persistent_error, leaves no slot", async () => {
     const healthDb = new Database(":memory:");
     openDbs.push(healthDb);

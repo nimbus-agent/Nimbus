@@ -56,6 +56,13 @@ export class ExtensionSlots {
    * un-awaited idle teardown.
    */
   private readonly stopping = new Map<string, Promise<void>>();
+  /**
+   * The extension id each service id last ran as. Unlike `serviceIdByExtensionId` it survives a
+   * disconnect, so a spawn that waited for the previous child can tell — before `prepareSpawn` —
+   * whether that extension was stopped during the wait. A stale entry only makes the early check
+   * miss; the post-preparation check still decides.
+   */
+  private readonly lastExtensionIdByServiceId = new Map<string, string>();
 
   constructor(
     private readonly host: ExtensionSlotHost,
@@ -132,6 +139,17 @@ export class ExtensionSlots {
     }
   }
 
+  private stoppedDuringWait(
+    source: ExtensionSlotSource,
+    serviceId: string,
+    startedAt: number,
+  ): boolean {
+    if (!source.listServiceIds().includes(serviceId)) return true;
+    if (this.allStoppedAt > startedAt) return true;
+    const known = this.lastExtensionIdByServiceId.get(serviceId);
+    return known !== undefined && this.stoppedSince(known, startedAt);
+  }
+
   /** Called by the mesh whenever an extension slot's client is cleared. */
   forgetService(serviceId: string): void {
     for (const [extensionId, sid] of this.serviceIdByExtensionId) {
@@ -141,10 +159,13 @@ export class ExtensionSlots {
 
   private async connectSlot(source: ExtensionSlotSource, serviceId: string): Promise<boolean> {
     const startedAt = this.generation;
-    // The previous child of this extension must have exited before this spawn verifies and stages
-    // its code (I43). Captured `startedAt` stays BEFORE the wait, so a stop landing during it still
-    // wins.
+    // The previous child of this extension must have been disconnected and signalled before this
+    // spawn verifies and stages its code (I43). Captured `startedAt` stays BEFORE the wait, so a stop
+    // landing during it still wins — checked here as far as it is knowable before the preparation
+    // (withdrawal, mesh shutdown, a stop of the extension this service id last ran as), so such a
+    // stop does not stage a copy only to discard it.
     await this.previousChildGone(serviceId);
+    if (this.stoppedDuringWait(source, serviceId, startedAt)) return false;
     let prepared: Awaited<ReturnType<ExtensionSlotSource["prepareSpawn"]>>;
     try {
       prepared = await source.prepareSpawn(serviceId);
@@ -170,6 +191,7 @@ export class ExtensionSlots {
     });
     this.host.setLazyClient(key, client);
     this.serviceIdByExtensionId.set(prepared.extensionId, serviceId);
+    this.lastExtensionIdByServiceId.set(serviceId, prepared.extensionId);
     this.host.bumpToolsEpoch();
     this.host.scheduleLazyDisconnect(key);
     this.recordRecovered(serviceId);

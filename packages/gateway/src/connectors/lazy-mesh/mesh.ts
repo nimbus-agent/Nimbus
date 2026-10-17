@@ -246,7 +246,7 @@ export class LazyConnectorMesh {
       );
       // From the moment the client is cleared, a listing would start a new spawn. For an extension
       // that spawn must wait until THIS child's disconnect has finished (I43): the next run stages a
-      // fresh copy in the same leaf, so the previous child must be gone before it is made. This
+      // fresh copy in the same leaf, so the previous child must be disconnected and signalled before it is made. This
       // covers the un-awaited idle teardown too. Other slot kinds are unaffected.
       if (key.startsWith(EXT_MESH_PREFIX)) {
         this.extensionSlots.trackStopping(key.slice(EXT_MESH_PREFIX.length), disconnected);
