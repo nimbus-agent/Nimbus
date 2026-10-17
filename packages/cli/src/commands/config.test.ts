@@ -772,17 +772,27 @@ describe("runConfigEdit — per-platform editor fallback and the real default sp
     expect(rec.calls.map((c) => c.cmd)).toEqual(["vi"]);
   });
 
-  it("with no spawnFn, really launches $EDITOR on the file and reports its exit code", async () => {
-    // The editor is this test's own Bun binary, and the "file to edit" a script that exits 3 — so a
-    // rejection naming code 3 can only come from a real child that ran it. `linux` means no shell,
-    // so neither path needs quoting on any host, Windows included.
-    const script = join(tmp, "exits-3.js");
-    writeFileSync(script, "process.exit(3);\n", "utf8");
-    process.env["EDITOR"] = process.execPath;
-    await expect(runConfigEdit(script, undefined, "linux")).rejects.toThrow(
-      `${process.execPath} exited with code 3`,
-    );
-  });
+  // Not on macOS. There, a `node:child_process` child spawned inside a `bun test --parallel` worker
+  // can exit without Bun ever seeing it (oven-sh/bun#41024, open), and the worker then hangs past
+  // every per-test timeout. This test did exactly that on three macOS PR legs on 2026-10-16/17
+  // (runs 38969407327, 38969543608, 39002089029), each idle at it for 19–22 min until the cap; the
+  // test before it was the last one recorded each time. It passes `platform: "linux"`, so Linux
+  // and Windows run the same branch of `runConfigEdit`; macOS would only exercise Bun's child
+  // handling. Re-enable it once that issue is fixed in the Bun version CI pins.
+  it.skipIf(process.platform === "darwin")(
+    "with no spawnFn, really launches $EDITOR on the file and reports its exit code",
+    async () => {
+      // The editor is this test's own Bun binary, and the "file to edit" a script that exits 3 —
+      // so a rejection naming code 3 can only come from a real child that ran it. `linux` means no
+      // shell, so neither path needs quoting on any host, Windows included.
+      const script = join(tmp, "exits-3.js");
+      writeFileSync(script, "process.exit(3);\n", "utf8");
+      process.env["EDITOR"] = process.execPath;
+      await expect(runConfigEdit(script, undefined, "linux")).rejects.toThrow(
+        `${process.execPath} exited with code 3`,
+      );
+    },
+  );
 
   it("with no spawnFn, an editor that cannot be started rejects with the spawn error", async () => {
     process.env["EDITOR"] = join(tmp, "no-such-editor");
