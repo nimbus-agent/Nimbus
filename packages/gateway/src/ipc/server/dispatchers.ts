@@ -13,11 +13,8 @@ import { asRecord } from "../../connectors/unknown-record.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
 import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
-import { resolveRuntimeById } from "../../exec/exec-runtimes.ts";
-import {
-  type ExtensionRunGrantEnv,
-  extensionRunGrantProtectedRoots,
-} from "../../extensions/extension-run-grants.ts";
+import type { ExtensionRunGrantEnv } from "../../extensions/extension-run-grants.ts";
+import { buildExtensionRunGrantEnv } from "../../extensions/run-grant-env.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
 import { preflightConsent } from "../../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../../federation/preflight-gate.ts";
@@ -49,7 +46,6 @@ import { dispatchChatopsRpc } from "../chatops-rpc.ts";
 import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
-import { defaultUserMcpRealpath } from "../connector-rpc-handlers/config.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
 import { DecisionsRpcError, dispatchDecisionsRpc } from "../decisions-rpc.ts";
 import { DemoRpcError, dispatchDemoRpc } from "../demo-rpc.ts";
@@ -1922,21 +1918,12 @@ function buildExtensionOwnerGate(
  * dir on Windows — and the Bun runtime's read paths, shown in the prompt. No mesh
  * means no protected roots to check against, so the method refuses rather than skipping the check.
  */
-function buildExtensionRunGrantEnv(
-  ctx: ServerCtx,
-  method: string,
-): ExtensionRunGrantEnv | undefined {
+function extensionRunGrantEnvFor(ctx: ServerCtx, method: string): ExtensionRunGrantEnv | undefined {
   const mesh = ctx.options.connectorMesh;
   if (method !== "extension.approveRun" || mesh === undefined) return undefined;
-  return {
-    platform: process.platform,
-    protectedRoots: extensionRunGrantProtectedRoots(
-      mesh.userMcpProtectedRoots(),
-      ctx.options.extensionsDir,
-    ),
-    runtimeReadPaths: resolveRuntimeById("bun").requiredReadPaths(),
-    realpath: defaultUserMcpRealpath,
-  };
+  // The SAME builder the runtime's pre-spawn verifier is given in `platform/assemble.ts`, so the
+  // grant approved here is resolved identically before every spawn.
+  return buildExtensionRunGrantEnv(mesh.userMcpProtectedRoots(), ctx.options.extensionsDir);
 }
 
 async function dispatchExtensionAutomationRpc(
@@ -1951,7 +1938,7 @@ async function dispatchExtensionAutomationRpc(
   try {
     const autoUpdateDeps = buildAutoUpdateDeps(ctx, clientId, method);
     const ownerGate = buildExtensionOwnerGate(ctx, clientId, method);
-    const runGrantEnv = buildExtensionRunGrantEnv(ctx, method);
+    const runGrantEnv = extensionRunGrantEnvFor(ctx, method);
     const out = await dispatchAutomationRpc({
       method,
       params,
@@ -1970,6 +1957,9 @@ async function dispatchExtensionAutomationRpc(
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
       ...(ownerGate === undefined ? {} : { ownerGate }),
       ...(runGrantEnv === undefined ? {} : { runGrantEnv }),
+      ...(ctx.options.extensionsRuntimeEnabled === undefined
+        ? {}
+        : { extensionsRuntimeEnabled: ctx.options.extensionsRuntimeEnabled }),
     });
     if (out.kind === "hit") {
       return out.value;

@@ -5523,6 +5523,27 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     );
   });
 
+  test("clause 6: a demo-rooted gateway runs no extension — the runtime predicate is false even with [extensions] runtime = true (negative control: real is true)", async () => {
+    const { isExtensionRuntimeEnabled } = await import("./extensions/run-grant-env.ts");
+    const real = createLinuxPaths();
+    process.env["NIMBUS_DEMO"] = "1";
+    const demo = createLinuxPaths();
+    expect(isExtensionRuntimeEnabled({ runtime: true }, real)).toBe(true);
+    expect(isExtensionRuntimeEnabled({ runtime: true }, demo)).toBe(false);
+  });
+
+  test("clause 6 wiring: assemble.ts builds the ONE extension slot source only behind the runtime predicate, and hands the IPC server the same answer", async () => {
+    const src = await read("packages/gateway/src/platform/assemble.ts");
+    // Count first: a guarded construction proves nothing if a second, unguarded one sits elsewhere.
+    expect(src.match(/createExtensionSlotSource\(/g)?.length).toBe(1);
+    expect(src).toMatch(/extensionRuntimeEnabled\s*\?\s*createExtensionSlotSource\(/);
+    expect(src.match(/isExtensionRuntimeEnabled\(/g)?.length).toBe(1);
+    expect(src).toMatch(
+      /const extensionRuntimeEnabled = isExtensionRuntimeEnabled\(\s*\{ runtime: loadNimbusExtensionsRuntimeFromConfigDir\(paths\.configDir\) \},\s*paths,\s*\);/,
+    );
+    expect(src).toMatch(/extensionsRuntimeEnabled: extensionRuntimeEnabled,/);
+  });
+
   test("clause 5/6 wiring: assemble.ts hands the IPC server `demo: paths.demo === true` in the options literal, never reassigned, before the ONE createIpcServer call", async () => {
     // `ctx.options.demo` is what BOTH the `demo.seed` claim (clause 5) and the `dispatchMethod`
     // write gate (clause 6) read; the sub-dispatcher tests above prove they honour it, and this is

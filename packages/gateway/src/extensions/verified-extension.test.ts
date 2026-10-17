@@ -115,7 +115,13 @@ async function setup(
         }),
   });
   if (opts.approve !== false) {
-    await approveExtensionRun(id, { db, env, gate: async () => true, now: () => 1 });
+    await approveExtensionRun(id, {
+      db,
+      env,
+      gate: async () => true,
+      runtimeEnabled: true,
+      now: () => 1,
+    });
   }
   return { db, root, installPath: join(extensionsDir, id), env, vault, id };
 }

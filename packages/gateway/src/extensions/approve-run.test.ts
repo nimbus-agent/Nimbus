@@ -92,6 +92,22 @@ const gateThat = (answer: boolean, seen: Asked[]) => async (a: Asked) => {
 };
 
 describe("approveExtensionRun", () => {
+  test("[extensions] runtime = false refuses ERR_EXTENSION_RUNTIME_DISABLED before the gate", async () => {
+    const { db, env } = await setup();
+    const seen: Asked[] = [];
+    await expect(
+      approveExtensionRun("com.example.run", {
+        db,
+        env,
+        gate: gateThat(true, seen),
+        runtimeEnabled: false,
+        now: () => 1,
+      }),
+    ).rejects.toThrow(/ERR_EXTENSION_RUNTIME_DISABLED/);
+    expect(seen).toHaveLength(0);
+    expect(listRunGrants(db)).toEqual([]);
+  });
+
   test("asks once as extension.run over the resolved grants, then stores exactly that", async () => {
     const s = await setup({
       id: "com.example.perm",
@@ -108,6 +124,7 @@ describe("approveExtensionRun", () => {
       db: s.db,
       env: s.env,
       gate: gateThat(true, seen),
+      runtimeEnabled: true,
       now: () => 42,
     });
     expect(seen.map((a) => a.type)).toEqual(["extension.run"]);
@@ -137,7 +154,13 @@ describe("approveExtensionRun", () => {
   test("a denial stores nothing", async () => {
     const { db, env } = await setup();
     await expect(
-      approveExtensionRun("com.example.run", { db, env, gate: gateThat(false, []), now: () => 1 }),
+      approveExtensionRun("com.example.run", {
+        db,
+        env,
+        gate: gateThat(false, []),
+        runtimeEnabled: true,
+        now: () => 1,
+      }),
     ).rejects.toThrow(/ERR_EXTENSION_RUN_NOT_APPROVED/);
     expect(listRunGrants(db)).toEqual([]);
   });
@@ -148,6 +171,7 @@ describe("approveExtensionRun", () => {
       db,
       env,
       gate: gateThat(true, []),
+      runtimeEnabled: true,
       now: () => 1,
     });
     const seen: Asked[] = [];
@@ -155,6 +179,7 @@ describe("approveExtensionRun", () => {
       db,
       env,
       gate: gateThat(true, seen),
+      runtimeEnabled: true,
       now: () => 2,
     });
     expect(out.changed).toBe(false);
@@ -172,6 +197,7 @@ describe("approveExtensionRun", () => {
           writeFileSync(join(installPath, "dist", "late.js"), "export const x = 1;\n");
           return true;
         },
+        runtimeEnabled: true,
         now: () => 1,
       }),
     ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
@@ -201,6 +227,7 @@ describe("approveExtensionRun", () => {
           db.run(sql);
           return true;
         },
+        runtimeEnabled: true,
         now: () => 1,
       }),
     ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
@@ -221,6 +248,7 @@ describe("approveExtensionRun", () => {
           db.run("UPDATE extension SET install_path = ? WHERE id = 'com.example.run'", [moved]);
           return true;
         },
+        runtimeEnabled: true,
         now: () => 1,
       }),
     ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
@@ -234,7 +262,13 @@ describe("approveExtensionRun", () => {
     setExtensionTreeDigest(db, "com.example.run", computeExtensionTreeDigest(installPath));
     const seen: Asked[] = [];
     await expect(
-      approveExtensionRun("com.example.run", { db, env, gate: gateThat(true, seen), now: () => 1 }),
+      approveExtensionRun("com.example.run", {
+        db,
+        env,
+        gate: gateThat(true, seen),
+        runtimeEnabled: true,
+        now: () => 1,
+      }),
     ).rejects.toThrow(/ERR_EXTENSION_RUN_UNVERIFIED/);
     expect(seen).toEqual([]);
   });
@@ -245,6 +279,7 @@ describe("approveExtensionRun", () => {
       db,
       env,
       gate: gateThat(true, []),
+      runtimeEnabled: true,
       now: () => 1,
     });
     writeFileSync(join(installPath, "dist", "chunk.js"), "export const v = 2;\n");
@@ -254,6 +289,7 @@ describe("approveExtensionRun", () => {
       db,
       env,
       gate: gateThat(true, seen),
+      runtimeEnabled: true,
       now: () => 2,
     });
     expect(seen).toHaveLength(1);
@@ -270,7 +306,13 @@ describe("approveExtensionRun", () => {
     writeFileSync(join(installPath, "dist", "chunk.js"), "export const v = 2;\n");
     const seen: Asked[] = [];
     await expect(
-      approveExtensionRun("com.example.run", { db, env, gate: gateThat(true, seen), now: () => 1 }),
+      approveExtensionRun("com.example.run", {
+        db,
+        env,
+        gate: gateThat(true, seen),
+        runtimeEnabled: true,
+        now: () => 1,
+      }),
     ).rejects.toThrow(/ERR_EXTENSION_RUN_TREE_CHANGED/);
     expect(seen).toEqual([]);
   });
@@ -283,7 +325,13 @@ describe("approveExtensionRun", () => {
     });
     const seen: Asked[] = [];
     await expect(
-      approveExtensionRun("com.example.run", { db, env, gate: gateThat(true, seen), now: () => 1 }),
+      approveExtensionRun("com.example.run", {
+        db,
+        env,
+        gate: gateThat(true, seen),
+        runtimeEnabled: true,
+        now: () => 1,
+      }),
     ).rejects.toThrow(/ERR_EXTENSION_GRANT_PROTECTED/);
     expect(seen).toEqual([]);
   });
@@ -292,7 +340,13 @@ describe("approveExtensionRun", () => {
     const { db, env } = await setup();
     const seen: Asked[] = [];
     const run = (id: string) =>
-      approveExtensionRun(id, { db, env, gate: gateThat(true, seen), now: () => 1 });
+      approveExtensionRun(id, {
+        db,
+        env,
+        gate: gateThat(true, seen),
+        runtimeEnabled: true,
+        now: () => 1,
+      });
     await expect(run("nope")).rejects.toThrow(/ERR_EXTENSION_NOT_FOUND/);
     db.run("UPDATE extension SET tree_digest = NULL WHERE id = 'com.example.run'");
     await expect(run("com.example.run")).rejects.toThrow(/ERR_EXTENSION_RUN_NO_DIGEST/);
@@ -326,7 +380,13 @@ describe("approveExtensionRun", () => {
     });
     const seen: Asked[] = [];
     await expect(
-      approveExtensionRun("a.b", { db, env, gate: gateThat(true, seen), now: () => 1 }),
+      approveExtensionRun("a.b", {
+        db,
+        env,
+        gate: gateThat(true, seen),
+        runtimeEnabled: true,
+        now: () => 1,
+      }),
     ).rejects.toThrow(/ERR_EXTENSION_SERVICE_ID_COLLISION/);
     expect(seen).toEqual([]);
   });
@@ -374,6 +434,7 @@ describe("approveExtensionRun", () => {
           db,
           env,
           gate: gateThat(true, seen),
+          runtimeEnabled: true,
           now: () => 1,
         }),
       ).rejects.toThrow(/ERR_EXTENSION_RUN_UNVERIFIED.*signature_failed/);
@@ -398,6 +459,7 @@ describe("approveExtensionRun", () => {
         approveExtensionRun("com.example.run", {
           db,
           env,
+          runtimeEnabled: true,
           now: () => 1,
           gate: async () => {
             // The install tree is untouched, so the tree digest alone would not notice this.
@@ -442,6 +504,7 @@ describe("state that changes while the prompt is open", () => {
           });
           return true;
         },
+        runtimeEnabled: true,
         now: () => 1,
       }),
     ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
@@ -483,6 +546,7 @@ describe("revokeExtensionRun", () => {
       db,
       env,
       gate: gateThat(true, []),
+      runtimeEnabled: true,
       now: () => 1,
     });
     const stopped: string[] = [];
@@ -512,6 +576,7 @@ describe("revokeExtensionRun", () => {
       db,
       env,
       gate: gateThat(true, []),
+      runtimeEnabled: true,
       now: () => 1,
     });
     const out = await revokeExtensionRun(db, "com.example.run", async () => {

@@ -10,6 +10,7 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
 import { createAutoUpdateRuntime } from "./auto-update-init.ts";
 import { writePublisherKey } from "./publisher-keys.ts";
+import { upsertRunGrant } from "./run-grant-store.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 
 // ---------------------------------------------------------------------------
@@ -641,5 +642,37 @@ describe("auto-update-init: fetchManifest mapping branches via fake registry", (
     expect(cached).toHaveLength(1);
     const entry = cached[0];
     expect(entry?.tarballSizeBytes).toBeUndefined();
+  });
+});
+
+describe("auto-update-init: hasRunGrant (extension runtime PR 3)", () => {
+  let tmpRoot: string;
+  afterEach(() => {
+    try {
+      if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  });
+
+  it("answers from the run-grant store", async () => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-grant-"));
+    const db = freshDb();
+    await stageExtension({ db, dir: join(tmpRoot, "ext"), id: "com.example.g" });
+    const { deps } = createAutoUpdateRuntime(
+      baseOpts(db, join(tmpRoot, "extensions"), join(tmpRoot, "data")),
+    );
+    expect(await deps.hasRunGrant?.("com.example.g")).toBe(false);
+    upsertRunGrant(db, {
+      extension_id: "com.example.g",
+      service_id: "ext_com_example_g",
+      version: "1.0.0",
+      tree_digest: "c".repeat(64),
+      permissions_json: "{}",
+      model_access: 0,
+      approved_at: 1,
+    });
+    expect(await deps.hasRunGrant?.("com.example.g")).toBe(true);
+    db.close();
   });
 });

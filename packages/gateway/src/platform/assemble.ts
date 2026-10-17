@@ -72,6 +72,7 @@ import {
   loadNimbusDecisionsFromConfigDir,
   loadNimbusEmbeddingFromPath,
   loadNimbusExtensionsFromConfigDir,
+  loadNimbusExtensionsRuntimeFromConfigDir,
   loadNimbusFederationFromConfigDir,
   loadNimbusGlossaryFromConfigDir,
   loadNimbusIdentityFromConfigDir,
@@ -125,7 +126,11 @@ import { getAllConnectorHealth } from "../connectors/health.ts";
 import { createConnectorDispatcher, meshDispatcherClient } from "../connectors/index.ts";
 import { jenkinsFetchOneUrlIsSupported } from "../connectors/jenkins-sync.ts";
 import { jiraConfiguredBaseUrl, jiraFetchOneUrlIsSupported } from "../connectors/jira-sync.ts";
-import { createLazyConnectorMesh, type LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
+import {
+  createLazyConnectorMesh,
+  type LazyConnectorMesh,
+  userMcpProtectedRootsFor,
+} from "../connectors/lazy-mesh/index.ts";
 import { createObsidianSyncable } from "../connectors/obsidian-sync.ts";
 import {
   DEFAULT_OPENAPI_CONFIG,
@@ -182,6 +187,11 @@ import type { ConnectorDispatcher } from "../engine/types.ts";
 import { execConsent } from "../exec/exec-consent-broker.ts";
 import { resolveRuntimeById } from "../exec/exec-runtimes.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
+import { createExtensionSlotSource } from "../extensions/extension-runtime.ts";
+import {
+  buildExtensionRunGrantEnv,
+  isExtensionRuntimeEnabled,
+} from "../extensions/run-grant-env.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
@@ -659,6 +669,13 @@ interface SchedulerWithMeshOpts {
   decisionLlm?: DecisionLlm;
   /** Settles when the boot-time Windows data-directory revoke is done; gates the filesystem MCP’s first spawn. */
   filesystemSpawnGate?: Promise<void>;
+  /**
+   * `isExtensionRuntimeEnabled` (`[extensions] runtime` AND not demo-rooted, I41). When false the
+   * mesh gets no extension slot source at all, so no approved extension can spawn.
+   */
+  extensionRuntimeEnabled: boolean;
+  /** Settles once the boot-time extension verification pass has finished (or thrown). */
+  extensionSpawnGate: Promise<void>;
 }
 
 async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
@@ -682,6 +699,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     glossaryLlm,
     decisionLlm,
     filesystemSpawnGate,
+    extensionRuntimeEnabled,
+    extensionSpawnGate,
   } = opts;
   // I41 clause (6), spec § 11.2: a demo gateway's scheduler exists (IPC and the post-sync
   // refreshers are built alongside it) but can never run a job.
@@ -911,6 +930,19 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
       registeredRoots,
     );
   }
+  // The ONE extension slot source (extension runtime PR 3). Its grant env comes from the SAME
+  // builder `extension.approveRun` uses, over the mesh's protected roots computed from the paths
+  // alone — so it can be built before the mesh it is handed to, without a setter or a lazy wrapper.
+  const extensionSlots = extensionRuntimeEnabled
+    ? createExtensionSlotSource({
+        db,
+        vault,
+        env: buildExtensionRunGrantEnv(userMcpProtectedRootsFor(paths), paths.extensionsDir),
+        sandboxDir: paths.sandboxDir,
+        runtimeReadPaths: () => resolveRuntimeById("bun").requiredReadPaths(),
+        isConnectorAllowed,
+      })
+    : undefined;
   const connectorMesh = await createLazyConnectorMesh(paths, vault, {
     listUserMcpConnectors: () => listUserMcpConnectors(db),
     healthDb: db,
@@ -921,6 +953,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     obsidianVaultPaths: tomlRoots.map((r) => r.path),
     isConnectorAllowed,
     ...(filesystemSpawnGate === undefined ? {} : { filesystemSpawnGate }),
+    ...(extensionSlots === undefined ? {} : { extensionSlots, extensionSpawnGate }),
   });
   const pagerdutyCfg = loadNimbusPagerdutyFromConfigDir(paths.configDir);
   const workdayCfg = loadNimbusWorkdayFromConfigDir(paths.configDir);
@@ -3577,6 +3610,17 @@ export async function assemblePlatformServices(
   });
   const fleetScheduler = fleetRuntime.scheduler;
 
+  // Extension runtime PR 3: the kill switch (read on its own, so a bad sibling key cannot re-enable
+  // it) AND not demo-rooted. One answer, handed to both the mesh and the IPC server.
+  const extensionRuntimeEnabled = isExtensionRuntimeEnabled(
+    { runtime: loadNimbusExtensionsRuntimeFromConfigDir(paths.configDir) },
+    paths,
+  );
+  // No extension spawns before the boot-time verification pass below has hard-disabled what fails
+  // it. Resolved in a `finally`, so a throwing pass cannot wedge every extension forever — the
+  // per-spawn verifier still refuses anything that fails.
+  const extensionSpawnGate = Promise.withResolvers<void>();
+
   const {
     syncScheduler,
     connectorMesh,
@@ -3597,6 +3641,8 @@ export async function assemblePlatformServices(
     glossaryLlm: createGlossaryLlm(llmRegistry.llmRouter),
     decisionLlm: createDecisionLlm(llmRegistry.llmRouter),
     ...(dataDirRevoke === undefined ? {} : { filesystemSpawnGate: dataDirRevoke }),
+    extensionRuntimeEnabled,
+    extensionSpawnGate: extensionSpawnGate.promise,
   });
   // One `stop` per refresher that actually started. Three of the four are
   // optional (their passes are config-gated), and the repeated
@@ -3610,7 +3656,11 @@ export async function assemblePlatformServices(
     premortemRefresher,
   ]);
 
-  await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
+  try {
+    await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
+  } finally {
+    extensionSpawnGate.resolve();
+  }
 
   const { runtime: autoUpdateRuntime, disabled: autoUpdateDisabled } = maybeStartAutoUpdateRuntime({
     db,
@@ -3637,6 +3687,7 @@ export async function assemblePlatformServices(
     configDir: paths.configDir,
     demo: paths.demo === true,
     extensionsDir: paths.extensionsDir,
+    extensionsRuntimeEnabled: extensionRuntimeEnabled,
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,
     connectorMesh,

@@ -22,11 +22,25 @@ export interface AutoUpdateRpcDeps {
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
   getInstalledVersion: (id: string) => Promise<string | null>;
   hasPrevVersion: (id: string, version: string) => Promise<boolean>;
+  /**
+   * Whether the extension holds a run grant. A grant names one version + tree digest, so an update
+   * leaves it stale and the prompt says so (`runGrantNote`). Absent ⇒ no note.
+   */
+  hasRunGrant?: (id: string) => Promise<boolean>;
 }
 
 const mutex = new Map<string, Promise<void>>();
 
-function buildUpdateAction(cached: AvailableUpdate, isDowngrade: boolean): PlannedAction {
+/** The consent note an update shows when it will leave the extension's run grant stale. */
+export function runGrantNoteFor(id: string): string {
+  return `Running the new version will need a new \`nimbus extension approve ${id}\`.`;
+}
+
+function buildUpdateAction(
+  cached: AvailableUpdate,
+  isDowngrade: boolean,
+  hasRunGrant: boolean,
+): PlannedAction {
   return {
     type: isDowngrade ? ACTION_TYPE_DOWNGRADE : ACTION_TYPE_AUTO_UPDATE,
     payload: {
@@ -53,6 +67,7 @@ function buildUpdateAction(cached: AvailableUpdate, isDowngrade: boolean): Plann
       },
       manifestHash: cached.manifestHash,
       signatureB64: cached.signatureB64,
+      ...(hasRunGrant && { runGrantNote: runGrantNoteFor(cached.id) }),
     },
   };
 }
@@ -165,7 +180,8 @@ async function handleExtensionUpdate(
   }
   const { cached, isDowngrade } = target;
 
-  const gateResult = await deps.gate(buildUpdateAction(cached, isDowngrade));
+  const hasRunGrant = (await deps.hasRunGrant?.(cached.id)) === true;
+  const gateResult = await deps.gate(buildUpdateAction(cached, isDowngrade, hasRunGrant));
   if (gateResult !== "proceed") {
     return { applied: false, reason: "user_rejected" };
   }

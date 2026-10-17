@@ -127,12 +127,12 @@ export function formatExtensionListTable(
   return `${lines.join("\n")}\n`;
 }
 
-/** `nimbus extension info`'s run line. Nothing runs an approved extension until the runtime ships. */
+/** `nimbus extension info`'s run line: the run state, and the grant behind it when there is one. */
 export function formatRunLine(e: Pick<ExtensionListEntry, "runState" | "runGrant">): string | null {
   if (e.runState === undefined) return null;
   if (e.runGrant === undefined || e.runGrant === null) return e.runState;
   const at = new Date(e.runGrant.approvedAt).toISOString();
-  return `${e.runState} (${e.runGrant.serviceId}, approved ${at}; not executed until the extension runtime ships)`;
+  return `${e.runState} (${e.runGrant.serviceId}, approved ${at})`;
 }
 
 export async function runExtensionList(client: IPCClient, args: string[]): Promise<void> {
@@ -388,8 +388,8 @@ export async function runExtensionRehash(
  * `nimbus extension approve <id>` — approve an installed extension to RUN with the grants the
  * gateway resolves from its manifest. The gateway asks under `extension.run`. A terminal is
  * required and there is no `--yes`: this consents to running third-party code unattended, which is
- * not something to approve from a script. Nothing runs an approved extension until the extension
- * runtime ships.
+ * not something to approve from a script. The gateway spawns an approved extension on first use,
+ * re-verifying it first.
  */
 export async function runExtensionApprove(
   client: IPCClient,
@@ -422,7 +422,7 @@ export async function runExtensionApprove(
   }>("extension.approveRun", { id });
   console.log(
     out.changed
-      ? `${out.id}: approved to run as ${out.serviceId} (tree digest ${out.treeDigest}). Nothing runs it yet: the extension runtime ships in a later release.`
+      ? `${out.id}: approved to run as ${out.serviceId} (tree digest ${out.treeDigest}). It starts on first use: \`nimbus connector tools ${out.serviceId}\`.`
       : `${out.id}: already approved for this code and these grants (${out.serviceId}).`,
   );
 }

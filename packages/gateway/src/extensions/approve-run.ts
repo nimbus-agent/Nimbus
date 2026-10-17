@@ -36,6 +36,8 @@ export interface ApproveExtensionRunDeps {
   readonly db: Database;
   readonly env: ExtensionRunGrantEnv;
   readonly gate: ExtensionRunGate;
+  /** `[extensions] runtime` (and not demo-rooted). `false` refuses before anything is resolved. */
+  readonly runtimeEnabled: boolean;
   readonly now: () => number;
 }
 
@@ -202,6 +204,14 @@ export async function approveExtensionRun(
   extensionId: string,
   deps: ApproveExtensionRunDeps,
 ): Promise<ApproveExtensionRunResult> {
+  if (!deps.runtimeEnabled) {
+    // Before the row lookup and the gate: with the runtime off an approval could never be used, so
+    // the owner is never asked to grant something that will not run.
+    throw new ExtensionRunGrantError(
+      "ERR_EXTENSION_RUNTIME_DISABLED",
+      "the extension runtime is off on this gateway (`[extensions] runtime = false`, or a demo gateway); nothing was granted",
+    );
+  }
   const row = requireRow(deps.db, extensionId);
   const treeDigest = assertRunnable(row);
   const manifest = readVerifiedManifest(row);
@@ -299,7 +309,7 @@ export async function revokeExtensionRun(
     try {
       await stop(extensionId);
     } catch {
-      // The grant is gone; the runtime (PR 3) re-checks it before every spawn.
+      // The grant is gone; the runtime re-checks it before every spawn.
     }
   }
   return { id: extensionId, revoked };

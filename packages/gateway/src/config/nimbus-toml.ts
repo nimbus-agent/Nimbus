@@ -1305,10 +1305,17 @@ export function loadNimbusAutomationFromConfigDir(configDir: string): NimbusAuto
 
 export type NimbusExtensionsToml = {
   updateCheckIntervalHours: number;
+  /**
+   * The extension runtime kill switch (extension runtime PR 3). `false` refuses every
+   * `extension approve` and spawns no approved extension. A malformed value (`runtime = flase`)
+   * keeps the default rather than throwing or flipping it.
+   */
+  runtime: boolean;
 };
 
 export const DEFAULT_NIMBUS_EXTENSIONS_TOML: NimbusExtensionsToml = {
   updateCheckIntervalHours: 24,
+  runtime: true,
 };
 
 function parseUpdateCheckIntervalHours(valRaw: string): number {
@@ -1329,9 +1336,36 @@ function parseNimbusTomlExtensionsSection(source: string): Partial<NimbusExtensi
   forEachSectionEntry(source, "[extensions]", (key, valRaw) => {
     if (key === "update_check_interval_hours") {
       out.updateCheckIntervalHours = parseUpdateCheckIntervalHours(valRaw);
+    } else if (key === "runtime") {
+      const b = parseBool(valRaw);
+      if (b !== undefined) out.runtime = b;
     }
   });
   return out;
+}
+
+/**
+ * `[extensions] runtime` read ON ITS OWN. The whole-section loader falls back to every default when
+ * `update_check_interval_hours` is invalid (it throws, and `loadTomlSection` swallows that), which
+ * would turn a `runtime = false` beside a bad interval back into `true`. The kill switch must not
+ * depend on an unrelated key parsing.
+ */
+export function parseNimbusExtensionsRuntime(raw: string): boolean {
+  let runtime = DEFAULT_NIMBUS_EXTENSIONS_TOML.runtime;
+  forEachSectionEntry(raw, "[extensions]", (key, valRaw) => {
+    if (key !== "runtime") return;
+    const b = parseBool(valRaw);
+    if (b !== undefined) runtime = b;
+  });
+  return runtime;
+}
+
+export function loadNimbusExtensionsRuntimeFromConfigDir(configDir: string): boolean {
+  return loadTomlSection(
+    join(configDir, "nimbus.toml"),
+    DEFAULT_NIMBUS_EXTENSIONS_TOML.runtime,
+    parseNimbusExtensionsRuntime,
+  );
 }
 
 export function parseNimbusExtensionsToml(
