@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792254236140,
+  "lastUpdate": 1792263797522,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "99f5ef8572afae6ecb36e6229ef77f3cc8036249",
-          "message": "docs(roadmap): record the contextual-surfaces direction (#1008)\n\nRecords a direction change. **No build order changes** — the slot stays\nS1 (Local Brain), no phase was added, renumbered or re-sequenced.\n\n## The thesis\n\n**One gateway, N contextual surfaces.** The agents are the product; a\nsurface is only how you reach them without leaving where you already\nare. Every surface talks to the same Gateway over the same contract and\nruns the same built-in agents — no surface owns an agent, and no agent\nis reimplemented per surface. What differs is *context*: the surface\nalready knows what you're looking at, so the query you'd otherwise have\ntyped arrives pre-scoped.\n\nToday the terminal is the only first-class surface and the editor and\nbrowser are treated as accessories. That's a historical accident of\nbuild order, not a design decision.\n\n## Why it went in Client surfaces, not Phase 19\n\nPhase 19 is called \"Ambient Surfaces\", which looks like the obvious\nhome. It isn't. Phase 19 scopes itself to **non-screen** surfaces —\nwearables, voice-first, HMDs, physical actuation — and calls itself\n*\"the highest-risk phase in the roadmap\"* on hardware and\nplatform-sandbox grounds. A browser panel over an already-shipped IPC\ncontract is neither non-screen nor hardware-risk, and filing it there\nwould have meant rewriting Phase 19's goal.\n\nThe Spine's `Client surfaces` block already declares itself the owner of\n*\"where capability reaches a human\"* and states *\"this table owns the\norder they are built in\"*. That's the document's own designated home.\nPhase 19 gains a short boundary note recording that \"ambient\" is doing\ndifferent work in each place.\n\n## Credible, but not free\n\nThe entry says both parts. Eleven agents already ship (`catchup`,\n`conflicts`, `expert`, `ghost`, `glossary`, `huddle`, `impact`,\n`janitor`, `preflight`, `why`, `why-peek`), `agents.*` is already\ndispatched, and Bitbucket and Jenkins already index `pr` and `ci_run`\nitems with `canonicalUrl`.\n\nBut **two gateway surfaces don't exist yet**: a browser-reachable\nagent-invocation route (the HTTP API has no agents route), and a\nresolve-by-URL read — `canonical_url` is a **column, not an index**, so\na lookup would table-scan today. An earlier draft framed this as pure\nwiring; the code doesn't support that, and the entry now says so.\n\n## Honest state\n\nThe clipper has ~0 users, the category is occupied (Obsidian Web Clipper\nat 900k users already ships local Ollama; Karakeep has 28k stars under\nthe same licence), and **#1005** and **#1006** gate its current job —\nwith #1006 resolving first, since fixing #1005 via the embedding path\nwould *start* the egress #1006 describes.\n\n## CLAUDE.md / GEMINI.md\n\nUpdated per the roadmap's own amendment rule. One bullet changes in\neach, identically — the mirror still differs only in the H1 title and\nthe companion-file pointer.\n\nVerified: markdownlint clean (run from outside the worktree —\nin-worktree it silently lints zero files and false-greens),\n`audit:doc-refs` 646 refs all resolve, `audit:status-drift` OK.",
-          "timestamp": "2026-08-01T13:37:40+03:00",
-          "tree_id": "949406cba597107e69cd6d95d87c422a8aa6ea94",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/99f5ef8572afae6ecb36e6229ef77f3cc8036249"
-        },
-        "date": 1785581339303,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 307.04329924999803,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 307.3909680499968,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 257.9344592500041,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "075ebb2c7af0c974b6074d91ac663b192963aeef",
+          "message": "feat(extensions): offer --model extensions to the engine agent (runtime PR 4 of 4) (#1692)\n\nExtension runtime PR 4 of 4, closing the slice: an approved extension's\ntools can now be offered to the model.\n\n## What changes\n\n- `nimbus extension approve <id> --model` offers the extension's tools\nto the engine agent in `nimbus ask` and the desktop app, on the SAME\npath as a `--model` user MCP server under I42: local owner only, named\n`ext_<id>__<tool>`, described as an owner-approved extension, and every\ncall goes through the turn's executor and its HITL prompt.\n- Org policy: the existing `[policy.capabilities.ai_v2]\nuser_mcp_model_access = false` now empties BOTH sources, user MCP\nservers and extensions. This was an owner decision: one shared switch,\nno new capability name. It is read live per turn and fails closed when\nthe policy accessor is absent.\n- Only enabled extensions whose grant still matches the installed\nversion and tree digest are offered, minus any the startup signature\ncheck disabled. An extension that fails spawn-time verification is\nskipped with a warning, never offered.\n- Every approval states the whole grant: approving again without\n`--model` prompts and turns model access off. `extension.approveRun`\ntakes an optional boolean `modelAccess`; any other value is `-32602`,\nvalidated before any event fires. `ApproveExtensionRunResult` carries\n`modelAccess`.\n- CLI: `approve <id> [--model]`, with the flag accepted before or after\nthe id. The output says `model access: on|off`, and `extension info`\nshows `model: yes|no`.\n- `nimbus doctor` warns about installed extensions with no run approval\nor one for older code, and names those that need `--model` again to keep\nmodel access. It stays silent when the runtime is off; `extension.list`\nnow reports `runtimeEnabled`.\n- Docs close-out: README, architecture, cli-reference,\nSECURITY-INVARIANTS for I42 and I43, roadmap with the Phase 9.5 row\nticked, ecosystem-roadmap, schema-reference, CHANGELOG, CLAUDE.md and\nGEMINI.md.\n\nNo migration, since the `model_access` column has existed since V70. No\nnew invariant, static rule, IPC method or egress class. Extension\nactions remain unproposable on the I28 act door.\n\n## How it was verified\n\n- TDD per task; `security-invariants.test.ts` I42 pins the new wiring:\nthe policy predicate runs before both reads, `gateway-main.ts` never\nreads grants directly, and listing goes through\n`listOwnerCodeServerTools`. The signed-policy test proves the lock-off\nempties the extension half too.\n- E2E: `--model` round-trips over a real gateway subprocess on Windows.\n- `bun run preflight:fast`: 68/68 gates. Istanbul coverage on every\nchanged source file is at or above 85% lines and 80% branches.\n`typecheck:tests` reports 0 new errors.\n- The full local suite on Windows has 16 failures, all reproduced\nidentically on a clean `origin/main`: five PowerShell-script tests need\n`pwsh` on the shell PATH, and the rest are Ink \"Yoga before\ninitialization\" load errors under `--parallel`.\n- Whole-branch review on a fresh model: no Critical findings, one\nImportant finding about the doctor hint, now fixed with a test, plus two\ndoc mismatches, also fixed.\n\n## Not in this PR\n\n- No test drives a real `--model` extension through the gateway's tool\nsource into an offered tool; the composition is held by the I42 pins\nplus unit tests on each end.\n- A model-access extension that the spawn path refuses, for example one\nmissing from an org connector allowlist, is retried and warned about on\nevery turn.\n- The compiled-binary spawn path is still unproven, as stated in PR 3.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Extension tools can now be offered to the model after approval with\n`nimbus extension approve <id> --model`. Each tool call still requires\nowner approval.\n* Extension approval details show whether model access is on or off.\nReapproving without `--model` turns model access off.\n* **Bug Fixes**\n* `nimbus doctor` now warns when installed extensions lack current run\napproval or have stale approval.\n* Model access respects the existing policy lock and excludes extensions\nthat fail verification.\n* **Documentation**\n* Updated security guidance, CLI reference, and extension documentation\nto reflect model access and approval requirements.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-17T21:57:17+03:00",
+          "tree_id": "9410f24bb5410dc73dd38fb15c5e72b4465b77fb",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/075ebb2c7af0c974b6074d91ac663b192963aeef"
+        },
+        "date": 1792263793507,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 156.8342456000013,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 158.02846070000268,
             "unit": "ms"
           }
         ]
