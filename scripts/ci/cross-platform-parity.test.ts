@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { load as loadYaml } from "js-yaml";
@@ -291,6 +291,7 @@ describe("the macOS/Windows push legs still run the integration and e2e trees", 
   // jobs runs must sit inside a path the push leg's unit command names.
   type Job = { readonly if?: unknown; readonly steps?: readonly { readonly run?: unknown }[] };
   const suite = loadYaml(readFileSync(TEST_SUITE_YML, "utf8")) as {
+    on?: { workflow_call?: { inputs?: Record<string, { type?: unknown; default?: unknown }> } };
     jobs?: Record<string, Job>;
   };
   const ci = loadYaml(readFileSync(CI_YML, "utf8")) as {
@@ -320,7 +321,22 @@ describe("the macOS/Windows push legs still run the integration and e2e trees", 
     expect(String(ci.jobs?.["ci-ts"]?.with?.["run-integration-and-e2e"])).toMatch(
       /^\$\{\{ matrix\.os == 'ubuntu-24\.04' \}\}$/,
     );
-    // The PR caller keeps the default: on Ubuntu these jobs are PR gates.
+    // Every other caller — ci.yml's PR gate and release.yml's suite — leaves the input unset, so
+    // they run the jobs only while the declared default is `true`: GitHub reads an unset boolean
+    // input with no default as false, and those jobs would then skip with every check green.
+    expect(suite.on?.workflow_call?.inputs?.["run-integration-and-e2e"]).toEqual({
+      description: expect.any(String),
+      type: "boolean",
+      default: true,
+    });
+    const setters = readdirSync(join(REPO_ROOT, ".github", "workflows"))
+      .filter((f) => f.endsWith(".yml") && f !== "_test-suite.yml")
+      .filter((f) =>
+        readFileSync(join(REPO_ROOT, ".github", "workflows", f), "utf8").includes(
+          "run-integration-and-e2e:",
+        ),
+      );
+    expect(setters).toEqual(["ci.yml"]);
     expect(ci.jobs?.["pr-quality-ts"]?.with ?? {}).not.toHaveProperty("run-integration-and-e2e");
   });
 
@@ -340,11 +356,20 @@ describe("the macOS/Windows push legs still run the integration and e2e trees", 
 
   test("the unit command filters out no file and no test", () => {
     // A path or name filter would let the containment check above pass while the files never ran.
+    // Every flag in Bun 1.4.3's `bun test --help` that runs less, plus `--grep`, which that help
+    // omits but 1.4.3 honours as a test-name filter. Matched as `--flag`, `--flag value` (the flag
+    // is its own token) and `--flag=value`.
+    const FILTERS = [
+      "-t",
+      "--test-name-pattern",
+      "--grep",
+      "--path-ignore-patterns",
+      "--changed",
+      "--only",
+      "--shard",
+    ];
     const tokens = pushLine.slice(pushLine.indexOf(" bun test ")).split(/\s+/);
-    const filters = tokens.filter(
-      (t) =>
-        t === "-t" || t.startsWith("--path-ignore-patterns") || t.startsWith("--test-name-pattern"),
-    );
+    const filters = tokens.filter((t) => FILTERS.some((f) => t === f || t.startsWith(`${f}=`)));
     expect(filters).toEqual([]);
   });
 });
