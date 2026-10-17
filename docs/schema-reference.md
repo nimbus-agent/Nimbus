@@ -1092,7 +1092,7 @@ CREATE INDEX IF NOT EXISTS idx_capture_item_id ON capture(item_id) WHERE item_id
 -- `deleteExtensionById` deletes the grant explicitly rather than relying on the ON DELETE CASCADE,
 -- which fires only on a connection with foreign keys enabled (LocalIndex enables them; another
 -- connection may not). Only extensions/run-grant-store.ts and the DDL file name the table (static
--- D33(b)). Nothing spawns an extension yet; the row records an approval, not a running process.
+-- D33(b)). The row records an approval; PR 3 (2026-10-17) spawns an approved extension on first use, re-verifying this row before every spawn.
 CREATE TABLE IF NOT EXISTS extension_run_grant (
     extension_id     TEXT PRIMARY KEY REFERENCES extension(id) ON DELETE CASCADE,
     service_id       TEXT NOT NULL UNIQUE,

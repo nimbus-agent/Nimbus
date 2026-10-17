@@ -214,6 +214,13 @@ in a released binary, where their code is bundled into
 spawns `bun <entry> __nimbus-connector <id>`, a file entry point, and so
 fails this way on Windows where a packaged install does not.
 
+**Extension spawns.** An approved extension (`nimbus extension approve`) spawns under the policy id
+`ext.<serviceId>`, so its working-directory leaf is derived from that id (see below). The policy grants
+exactly what the owner approved and nothing else: the declared network hosts, the declared read and
+write paths, read access to the runtime's own required paths, and read-write on the per-spawn
+`run-<uuid>` stage the verified copy lives in. The install directory and the Nimbus data and config
+directories are not granted. Removing an extension, or any stop, deletes its leaf.
+
 ## Per-policy working directories {#per-policy-cwd}
 
 Every sandboxed spawn runs in its own working directory, `<sandboxDir>/<leaf>`, where the leaf is the policy id lower-cased with every character outside `a-z0-9_-` replaced by `_` (`platform/sandbox/sandbox-cwd.ts`). Before this, every connector ran in the Nimbus data directory with read and write on it, which is where the index database lives. `PlatformPaths.sandboxDir` is a cache location outside both the data and config directories in the default layout:

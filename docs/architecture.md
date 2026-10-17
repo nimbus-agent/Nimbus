@@ -1812,8 +1812,38 @@ dynamically composed identifier evades a text scan and capability confinement is
 import is caught; comments and test files are not scanned), with the same stated bound that a dynamically
 composed call evades a text scan. The
 IPC methods `extension.approveRun` / `extension.revokeRun` are CLI-only, LAN-forbidden, refused in a demo
-root and absent from the Tauri allowlist. **Nothing spawns an extension yet**; the runtime, the
-`running` state and model access (`--model`) are later PRs, and `model_access` is always 0.
+root and absent from the Tauri allowlist. `model_access` is still always 0 (`--model` for extensions is PR 4).
+
+### Extension runtime
+
+**PR 3 of 4 shipped 2026-10-17** (invariant `I43`, static `D33(a)`; I42 widened to `ext_`; no migration). An approved extension runs as a
+sandboxed MCP stdio server in a LAZY `mesh:ext:<serviceId>` slot of the lazy mesh: nothing starts at
+boot, the first `connector.userMcpTools` / `connector.userMcpCall` on an `ext_` id starts it, and the
+boot integrity pass (`verify-extensions.ts`, I16) must have run first. The owner is the only caller.
+Extension tools are not offered to the model and are not proposable on the I28 act door; every call
+is held to the I42 HITL prompt.
+
+**Verify, then copy, then run.** Before every spawn `readVerifiedExtensionForSpawn` re-verifies the
+extension row, the run grant, the manifest and entry hashes, the tree digest, I16 for publisher
+manifests, entry containment and the re-resolved grants. The verified tree is then COPIED into a fresh
+per-spawn stage `<sandbox leaf>/run-<uuid>` (`extensions/extension-stage.ts`), the copy is
+re-digested, and the extension runs from the copy. The install directory is not granted to the
+extension at all, so a running extension cannot rewrite its own installed code. The copy exists
+because of Windows: Bun's module loader opens each module requesting `FILE_WRITE_ATTRIBUTES`,
+which a read-only AppContainer grant lacks (see [`sandbox.md`](./sandbox.md)). The service spawns as
+`ext.<serviceId>`.
+
+A dev tree runs the role inline via `bun -e`; a compiled build runs
+`nimbus-gateway.exe __nimbus-extension <entry>`. The compiled path is reasoned from a probe, not
+exercised end to end. A re-spawn waits for the previous child's disconnect to settle. `[extensions]
+runtime` (default `true`) is a kill switch; off, nothing runs and `approveRun` refuses
+`ERR_EXTENSION_RUNTIME_DISABLED`. A demo gateway runs none. `extension.remove` stops a running
+extension and deletes its sandbox leaf (it called no stop hook before this PR); disable and revoke
+stop it through a re-pointed stop hook. The auto-update consent payload carries a `runGrantNote` when a
+grant exists, and the run consent payload's `runsFrom` field says the code runs from a verified
+per-spawn copy.
+
+**Not verified:** macOS and Linux were not run locally; the end-to-end test runs on those CI legs.
 
 ### MCP capture sink
 

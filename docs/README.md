@@ -187,7 +187,7 @@ Nimbus maintains a local SQLite metadata index. Searching across 50,000 indexed 
 
 - **Credentials** are stored in your OS-native keystore (Windows DPAPI, macOS Keychain, Linux Secret Service). There is no code path that writes them to disk, logs, or IPC responses.
 - **The HITL consent gate** is implemented in the executor, not the prompt. A model that generates a plan to skip confirmation produces a plan that simply does not execute.
-- **Connectors** run in sandboxed child processes. They receive only credentials for their declared service and cannot enumerate Vault keys or access other connectors. (Third-party extensions can be installed and are signature-verified, but **are not executed yet** — see [Extensible](#extensible).)
+- **Connectors** run in sandboxed child processes. They receive only credentials for their declared service and cannot enumerate Vault keys or access other connectors. (Third-party extensions can be installed and are signature-verified, and an extension you approve runs sandboxed on first use, but it is not offered to the agent yet — see [Extensible](#extensible).)
 - **Prompt injection** is mitigated by injecting file content and API responses as typed `<tool_output>` data blocks, never as instructions.
 - **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the forty-three invariants — `I1`–`I43` — has a production wiring site *and* an enforcement test.
 
@@ -197,7 +197,7 @@ Windows, macOS, and Linux are equally supported. Every PR runs a full gate on Ub
 
 ### Extensible
 
-Extensions are **not executable yet.** `nimbus extension install` copies a package, hashes it, verifies a publisher's Ed25519 signature and records it, and `nimbus extension list` shows it — but nothing ever spawns an installed extension, so installing one gives the agent no new capability today. The ~90 first-party connectors are what actually run. The execution path is tracked in [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark). A local Extension Marketplace is code-complete in the Tauri desktop app, which has not been released; it is planned as the separate `desktop-v0.1.0` tag in Phase 13.
+Installing an extension does not run it. `nimbus extension install` copies a package, hashes it, verifies a publisher's Ed25519 signature and records it; `nimbus extension approve` then lets it run, sandboxed, on first use, and you call its tools yourself with `nimbus connector call ext_<id>`. The agent is not offered extension tools yet (`--model` access is a later PR), so an extension gives `nimbus ask` no new capability today. The ~90 first-party connectors are what the agent actually uses. A local Extension Marketplace is code-complete in the Tauri desktop app, which has not been released; it is planned as the separate `desktop-v0.1.0` tag in Phase 13.
 
 ---
 
@@ -734,7 +734,7 @@ nimbus extension install @community/nimbus-notion
 nimbus extension list
 ```
 
-> **Installed extensions do not run yet.** Install verifies and records the package, and `list` shows it, but no code path spawns an installed extension — it adds no tools to the agent. See [Extensible](#extensible).
+> **Installing an extension does not run it, and the agent cannot use one yet.** Approve it with `nimbus extension approve` and call its tools with `nimbus connector call ext_<id>`. See [Extensible](#extensible).
 
 The complete command reference — every subcommand, flag, exit code, and the full `nimbus.toml` schema — is [`cli-reference.md`](./cli-reference.md).
 

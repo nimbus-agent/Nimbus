@@ -2993,18 +2993,22 @@ Only `false` carries meaning, matching `nimbus exec`'s lockoff. It is enforced w
 
 ### `nimbus connector tools <mcp_id> [--json]`
 
-List the tools a registered user MCP server exposes. Backed by the CLI-only, LAN-forbidden `connector.userMcpTools` method, which is not on the Tauri allowlist.
+List the tools a registered user MCP server or an approved extension (`ext_<id>`) exposes. Listing an extension starts it if it is not running: before every spawn the gateway re-verifies the install row, the grant, the manifest and entry hashes, the tree digest, the publisher signature (I16), entry containment and the re-resolved grants, copies the verified tree into a fresh per-spawn stage and re-digests the copy (invariant I43). Backed by the CLI-only, LAN-forbidden `connector.userMcpTools` method, which is not on the Tauri allowlist.
 
 ---
 
 ### `nimbus connector call <mcp_id> <tool> [--input <json>] [--json]`
 
-Call one tool on a user MCP server. **Every call needs the local owner's approval** (invariant I42) — there is no standing approval, and a delegate can never approve one. The call is audited and ledgered in the egress ledger. Exit codes: `0` the tool ran and reported success; `1` the call failed — the tool reported an error in-band (an MCP `isError: true` result, whose text is printed on stderr) or the gateway/transport failed; `2` refused (declined, denied, an unknown tool, or an unregistered server — nothing ran). Backed by the CLI-only, LAN-forbidden `connector.userMcpCall` method.
+Call one tool on a user MCP server, or on an approved extension (`ext_<id>`, the service id `nimbus extension approve` showed you). **Every call needs the local owner's approval** (invariant I42) — there is no standing approval, and a delegate can never approve one. The call is audited and ledgered in the egress ledger. Exit codes: `0` the tool ran and reported success; `1` the call failed — the tool reported an error in-band (an MCP `isError: true` result, whose text is printed on stderr) or the gateway/transport failed; `2` refused (declined, denied, an unknown tool, or an unregistered server — nothing ran). Backed by the CLI-only, LAN-forbidden `connector.userMcpCall` method.
 
 ```bash
 nimbus connector tools mcp_my_server
 nimbus connector call mcp_my_server echo --input '{"text":"hi"}'
+nimbus connector tools ext_com_example_notion
+nimbus connector call ext_com_example_notion search --input '{"q":"x"}'
 ```
+
+A call to an extension tool is held to the same I42 prompt as any user MCP tool (a delegate never approves one). Extension tools are not offered to the model and cannot be proposed through the MCP capture sink's act door.
 
 ---
 
@@ -4385,7 +4389,7 @@ To re-enable: `nimbus config set telemetry.enabled true`
 
 Install a third-party extension. Accepts a local path, URL, or npm package name. The manifest SHA-256 is verified before installation.
 
-> **Installed extensions are not executed.** Install copies the package, hashes it, verifies a publisher's Ed25519 signature (I16), records it and enables it — and that is all. No code path spawns an installed extension today, so it adds no tools to `nimbus ask` or any agent; `list` / `info` describe a package on disk, not a running process. To run your own MCP server now, use `nimbus connector add --mcp` instead. The execution path is tracked in [`ecosystem-roadmap.md` § Track 0](./ecosystem-roadmap.md#track-0--shipped-but-dark).
+> **Install does not run anything; an approval does.** Install copies the package, hashes it, verifies a publisher's Ed25519 signature (I16), records it and enables it. An extension runs only after a separate `nimbus extension approve` (below), and then only as a sandboxed MCP server that you invoke yourself with `nimbus connector tools|call ext_<id>`. It adds no tools to `nimbus ask` or any agent: model access (`--model`) is not shipped yet. To run your own MCP server without the extension machinery, use `nimbus connector add --mcp`.
 
 ```bash
 nimbus extension install @community/nimbus-notion
@@ -4395,9 +4399,11 @@ nimbus extension install https://example.com/nimbus-ext.tar.gz
 
 **Approval is the gateway's, not the CLI's.** Before anything is copied, fetched or recorded, the gateway resolves the install plan and asks you to approve it through its HITL gate (action type `extension.install`): the extension's id and version, the source path, the publisher id and a fingerprint of its key as the manifest *claims* them, the declared permissions, and every package the install adds, dependencies included. The publisher signature is still verified after approval, and a failure there rolls the whole install back. On a TTY the prompt is interactive; `--yes` approves it on your behalf and echoes what it approved to stderr; without a TTY and without `--yes` the command refuses. A declined or timed-out approval installs nothing.
 
-Install also records a digest of **every** file in the installed package (`tree_digest`), not only the manifest and entry file. Nothing acts on it yet; it is what the extension runtime will check before it runs anything.
+Install also records a digest of **every** file in the installed package (`tree_digest`), not only the manifest and entry file. The extension runtime re-checks it before every spawn.
 
-An approval (`nimbus extension approve`) records what may run once the runtime ships; it starts nothing today.
+An approval (`nimbus extension approve`) records what may run. The extension starts on first use, not at approval time and not at gateway boot.
+
+The runtime is controlled by `[extensions] runtime` in `nimbus.toml` (default `true`). Set it to `false` to run no extension at all: nothing spawns, and `nimbus extension approve` refuses with `ERR_EXTENSION_RUNTIME_DISABLED`. A demo-rooted gateway (`--demo`) runs none either. `[extensions] update_check_interval_hours` (default 24, range 1..168) is unrelated and controls the auto-update poll.
 
 ---
 
@@ -4456,7 +4462,7 @@ nimbus extension revoke com.example.notion
 
 List installed extensions with their status (`enabled` / `disabled` / `disabled (signature)`).
 
-`list` also shows a **Run** column and `info` a `Run:` line, and `--json` output carries `runState` and `runGrant`. `runState` is one of `disabled`, `no_grant`, `grant_stale` (an approval exists but the version or tree digest has since moved) or `ready`. `ready` means the approval matches the version and tree digest recorded on the extension's row; `list` and `info` compare those records and do not re-hash the files on disk. It does not mean the extension is running.
+`list` also shows a **Run** column and `info` a `Run:` line, and `--json` output carries `runState` and `runGrant`. `runState` is one of `disabled`, `no_grant`, `grant_stale` (an approval exists but the version or tree digest has since moved), `ready` or `running`. `ready` means the approval matches the version and tree digest recorded on the extension's row; `list` and `info` compare those records and do not re-hash the files on disk. `running` means the gateway currently holds a live child for the extension. Disabling, revoking or removing an extension stops a running child.
 
 `disabled (signature)` means the Gateway hard-disabled the extension at startup because its Ed25519 manifest signature did not verify (I16) — it is **not** the same as an extension you disabled yourself. Such a row is bold red on a TTY and carries an annotation line naming the machine-readable reason:
 
