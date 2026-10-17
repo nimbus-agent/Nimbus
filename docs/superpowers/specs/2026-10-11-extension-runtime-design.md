@@ -432,6 +432,8 @@ override the sections above wherever they disagree.
 
 Three corrections found while planning PR 2:
 
+<!-- markdownlint-disable MD029 -->
+
 6. **The FK cascade is not relied on.** (Corrected during Task 3: an earlier version of this item
    said the gateway's connection never enables foreign keys; `index/local-index.ts` does set
    `PRAGMA foreign_keys = ON`, so on the gateway's own connection the cascade DOES fire.)
@@ -451,6 +453,8 @@ Three corrections found while planning PR 2:
    protected data dir, so the protected-root check would otherwise refuse a harmless manifest.
    A declared WRITE that overlaps the install path in either direction (inside it, or a parent of
    it) is `ERR_EXTENSION_GRANT_SELF_WRITE`.
+
+<!-- markdownlint-enable MD029 -->
 
 PR 2 surface decisions:
 

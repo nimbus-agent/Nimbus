@@ -37,12 +37,14 @@
 ### Task 1: Widen I42 to owner-approved code servers (`mcp_` ∪ `ext_`)
 
 **Files:**
+
 - Create: `connectors/owner-code-server.ts`, `connectors/owner-code-server.test.ts`
 - Modify: `engine/executor.ts:239` (`isUserMcpActionType` → body uses the new predicate; keep the exported name so call sites at :272/:364/:397 are unchanged), `connectors/registry.ts:101-112,180-186`, `share/read-tool-registry.ts:65`, `ipc/share-rpc.ts:168`
 - Test: `security-invariants.test.ts` (I42 block, ~:5574), `connectors/proposable-actions.test.ts`
 - Docs: I42 row in `CLAUDE.md`, `GEMINI.md`, `docs/SECURITY-INVARIANTS.md` § I42 (triple rule — same commit)
 
 **Interfaces:**
+
 - Produces (in `connectors/owner-code-server.ts`):
   - `isOwnerCodeServerServiceId(id: string): boolean` — `USER_MCP_SERVICE_ID_PATTERN.test(id) || EXTENSION_SERVICE_ID_PATTERN.test(id)`
   - `isOwnerCodeServerToolKey(key: string): boolean` — `startsWith("mcp_") || startsWith("ext_")`
@@ -61,11 +63,13 @@
 ### Task 2: The `__nimbus-extension` self-role + static D33(a)
 
 **Files:**
+
 - Modify: `platform/runtime-layout.ts:11` (add `extension: "__nimbus-extension"`), `index.ts` (new branch after the connector branch), `platform/runtime-layout.test.ts`, `entry-graph.test.ts`
 - Create: `extensions/run-extension-entry.ts`, `extensions/run-extension-entry.test.ts`
 - Modify: `scripts/structure-audit/check-nimbus-invariants.ts` (D33 section ~:1848, runner ~:3053, scan list ~:2762 if new files must be listed), `scripts/structure-audit/check-nimbus-invariants.test.ts` (after D33(c) ~:3146)
 
 **Interfaces:**
+
 - Produces: `runExtensionEntry(entryPath: string | undefined): Promise<void>` — exits 2 (via the same `failRole` shape `index.ts` uses for the connector role) on a missing/relative path; otherwise `await import(pathToFileURL(entryPath).href)`. Imports only `node:url` / `node:path`.
 - Produces: `export function checkExtensionRoleConfinement(files: readonly FileEntry[]): Violation[]` (rule `"extension-role-confined"`).
 
@@ -79,12 +83,15 @@
 ### Task 3: `readVerifiedExtensionForSpawn` — the pre-spawn re-verification
 
 **Files:**
+
 - Create: `extensions/verified-extension.ts`, `extensions/verified-extension.test.ts`
 - Modify: `extensions/run-grant-error.ts` (add the three new codes from Global Constraints)
 
 **Interfaces:**
+
 - Consumes: `getRunGrant`, `listExtensions`, `verifyOneExtensionStrict`, `readVerifiedManifest` (approve-run.ts:114), `computeExtensionTreeDigest`, `verifyManifestSignature`, `readPublisherKey` (`extensions/publisher-keys.ts`), `signatureDisabledRegistry`, `resolveExtensionRunGrants` + `serializeRunGrants`, `ExtensionRunGrantEnv`.
 - Produces:
+
   ```ts
   export interface VerifiedExtensionForSpawn {
     readonly extensionId: string;
@@ -103,6 +110,7 @@
   ```
 
 The order is the invariant; each step throws `ExtensionRunGrantError`:
+
 1. row exists (`NOT_FOUND`) and `enabled === 1` (`RUN_DISABLED`);
 2. grant exists (`RUN_NOT_APPROVED`);
 3. `signatureDisabledRegistry.reasonFor(id)` undefined, and `verifyOneExtensionStrict(row)` true (`RUN_UNVERIFIED`);
@@ -121,11 +129,14 @@ The order is the invariant; each step throws `ExtensionRunGrantError`:
 ### Task 4: `extensions/extension-runtime.ts` — the spawn spec and the slot source
 
 **Files:**
+
 - Create: `extensions/extension-runtime.ts`, `extensions/extension-runtime.test.ts`
 - Create: `connectors/lazy-mesh/extension-slot-source.ts` (interface only, so the mesh does not import the runtime)
 
 **Interfaces:**
+
 - Produces (in `connectors/lazy-mesh/extension-slot-source.ts`):
+
   ```ts
   export interface PreparedExtensionSpawn { readonly extensionId: string; readonly serviceId: string; readonly spec: ServerSpec }
   export interface ExtensionSlotSource {
@@ -135,6 +146,7 @@ The order is the invariant; each step throws `ExtensionRunGrantError`:
     prepareSpawn(serviceId: string): Promise<PreparedExtensionSpawn>;
   }
   ```
+
 - Produces (in `extensions/extension-runtime.ts`):
   - `buildExtensionRuntimeManifest(v: VerifiedExtensionForSpawn, runtimeReadPaths: readonly string[]): ExtensionManifest` — `{ id: "ext." + serviceId, version, permissions: { network: grants.network, filesystem: { read: [...grants.read, installPath, ...runtimeReadPaths], write: grants.write } }, updateChannel: "stable" }`
   - `buildExtensionSpawnSpec(v, deps: { runtimeReadPaths: readonly string[]; sandboxDir: string }): ServerSpec` — `wrapServerSpec({ ...selfSpawn("extension", [v.entryPath]), env: extensionProcessEnv({}) }, buildExtensionRuntimeManifest(...), sandboxDir)`
@@ -149,10 +161,12 @@ The order is the invariant; each step throws `ExtensionRunGrantError`:
 ### Task 5: The `mesh:ext:` slot and the re-pointed stop hook
 
 **Files:**
+
 - Modify: `connectors/lazy-mesh/keys.ts:42-46` (add `EXT_MESH_PREFIX = "mesh:ext:"`, `extensionMeshKey(serviceId)`), `connectors/lazy-mesh/mesh.ts` (constructor option, new methods, `stopExtensionClient` :289), `connectors/registry.ts:62-72` (`meshDispatcherClient`)
 - Create: `connectors/lazy-mesh/mesh-extension-slot.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ExtensionSlotSource` (Task 4), `transitionHealth` (`connectors/health.ts`).
 - Produces on `LazyConnectorMesh`:
   - constructor option `extensionSlots?: ExtensionSlotSource` and `extensionSpawnGate?: Promise<void>` (also add both to `createLazyConnectorMesh`'s options type)
@@ -174,9 +188,11 @@ The order is the invariant; each step throws `ExtensionRunGrantError`:
 ### Task 6: Owner invocation over IPC and the CLI
 
 **Files:**
+
 - Modify: `ipc/connector-rpc-handlers/user-mcp.ts:56-110`, `ipc/connector-rpc-handlers/user-mcp.test.ts` (or the existing test file for these handlers), `packages/cli/src/commands/connector-user-mcp.ts:17-18` (usage strings), its test
 
 **Interfaces:**
+
 - Consumes: `normalizeOwnerCodeServerServiceId` (Task 1), `mesh.listOwnerCodeServerTools` (Task 5).
 - Error mapping: an `ExtensionRunGrantError` from listing becomes `ConnectorRpcError(-32602, err.message)` (the message already starts with the code); an unknown/unapproved `ext_` id stays `ERR_USER_MCP_NOT_REGISTERED` (message names both `nimbus connector add --mcp` and `nimbus extension approve`).
 
@@ -189,6 +205,7 @@ The order is the invariant; each step throws `ExtensionRunGrantError`:
 ### Task 7: Wiring, kill switch, lifecycle and run state
 
 **Files:**
+
 - Modify: `config/nimbus-toml.ts:1306-1350` (`NimbusExtensionsToml.runtime: boolean`, default `true`, `parseBool`), `config/nimbus-toml-extensions.test.ts`
 - Modify: `platform/assemble.ts` (~:914 mesh construction, ~:3613 after `verifyExtensionsBestEffort`), `ipc/server/dispatchers.ts:1925` (`buildExtensionRunGrantEnv` — reuse it for the slot source's `env` so approve and spawn resolve identically)
 - Modify: `extensions/approve-run.ts` (refuse `ERR_EXTENSION_RUNTIME_DISABLED` when the runtime is off — inject `runtimeEnabled: boolean` via `ApproveExtensionRunDeps`), `ipc/automation-rpc.ts` (`extension.remove` :322; list/info runState), `extensions/run-state.ts`, `extensions/auto-update-rpc.ts:29-57`
@@ -196,6 +213,7 @@ The order is the invariant; each step throws `ExtensionRunGrantError`:
 - Tests: alongside each
 
 **Decisions:**
+
 - assemble: build `createExtensionSlotSource(...)` only when `extensionsCfg.runtime && paths.demo !== true`; pass it plus `extensionSpawnGate` (a deferred resolved right after `await verifyExtensionsBestEffort(...)`, and also resolved if that call throws, so a failed verify cannot wedge every extension forever — the per-spawn verify still refuses) into the mesh.
 - `ExtensionRunState` gains `"running"`; order: `disabled`, `no_grant`, `grant_stale`, then `running` if `mesh.isExtensionRunning(id)`, else `ready`. `extensionRunFields(row, grant, running: boolean)`.
 - `extension.remove`: read the grant first; `await mesh.stopExtensionClient(id)`; delete as today; then `await mesh.removeExtensionSandbox(grant.service_id)` when a grant existed.
@@ -210,6 +228,7 @@ The order is the invariant; each step throws `ExtensionRunGrantError`:
 ### Task 8: Invariant I43 (wiring + docs + test, one commit)
 
 **Files:**
+
 - Modify: `security-invariants.test.ts` (new `describe("I43 — …")` after I42), `docs/SECURITY-INVARIANTS.md` (new `## I43` before "How a new invariant is added", same paragraph labels as I42: Statement / Why / Bounds, stated / Static rule / Wiring / Test), `CLAUDE.md` + `GEMINI.md` (I43 bullet after I42; I29 bullet gains "an approved extension's own `--net`-equivalent traffic is likewise not ledgered"; static-complement paragraph names D33(a); status line "Invariants I1–I43")
 - Modify every `I1–I42` ceiling surface to `I1–I43`: `CLAUDE.md`, `GEMINI.md`, `docs/architecture.md`, `docs/README.md`, `docs/SECURITY-INVARIANTS.md`, `.github/SECURITY.md`, `.coderabbit.yaml` (`I1-I43`), `.claude/commands/nimbus-file-map.md`, `.claude/commands/nimbus-tool-output-envelope.md`, `.claude/commands/nimbus-tauri-allowlist.md`. Re-grep `I1–I42` and `I1-I42` repo-wide after editing; `CHANGELOG.md` history stays.
 
@@ -225,6 +244,7 @@ The order is the invariant; each step throws `ExtensionRunGrantError`:
 ### Task 9: End-to-end through a real gateway and a real sandbox
 
 **Files:**
+
 - Create: `packages/gateway/test/e2e/extension-runtime.e2e.test.ts`
 - Reuse patterns from: `test/e2e/user-mcp.e2e.test.ts` (fixture build, `sandboxAvailable`, `installDefaultHelper`, CI-precondition test, `consent.request` responder, `gateway-runner.ts` boot) and `test/e2e/extension-run-grant.e2e.test.ts`.
 
