@@ -6,6 +6,8 @@ import {
   type Deps,
   type FailingCase,
   failingCases,
+  killReason,
+  type Limits,
   main,
   mergeJunit,
   parseBunSummary,
@@ -351,17 +353,47 @@ describe("annotationLines", () => {
   });
 });
 
+describe("killReason", () => {
+  const limits: Limits = { capSeconds: 1500, silenceSeconds: 300 };
+
+  test("nothing to kill while the attempt is inside both limits", () => {
+    expect(killReason(1_499_000, 299_000, limits)).toBeUndefined();
+  });
+
+  test("silence kills long before the cap — the hung-worker case", () => {
+    // config.test.ts on macOS: output stopped ~6.6 min in and the cap fired at 25. With a
+    // 300 s silence limit the attempt ends at ~11.6 min instead.
+    expect(killReason(6.6 * 60_000 + 300_000, 300_000, limits)).toBe("silence");
+  });
+
+  test("the cap still applies to an attempt that keeps printing", () => {
+    expect(killReason(1_500_000, 1_000, limits)).toBe("cap");
+  });
+
+  test("an attempt over the cap and silent reports the cap", () => {
+    expect(killReason(1_500_000, 400_000, limits)).toBe("cap");
+  });
+
+  test("without a silence limit, silence alone never kills", () => {
+    expect(killReason(60_000, 3_600_000, { capSeconds: 1500, silenceSeconds: undefined })).toBe(
+      undefined,
+    );
+  });
+});
+
 describe("main", () => {
   type Attempt = { code: number; output: string; junit?: string };
 
   function harness(attempts: Attempt[]) {
     const ran: string[][] = [];
+    const limitsSeen: Limits[] = [];
     const files = new Map<string, string>();
     const emitted: string[] = [];
     const summary: string[] = [];
     const deps: Deps = {
-      run: async (argv) => {
+      run: async (argv, limits) => {
         ran.push([...argv]);
+        limitsSeen.push(limits);
         const a = attempts[ran.length - 1];
         if (a === undefined) throw new Error("unexpected attempt");
         const out = argv.find((x) => x.startsWith("--reporter-outfile="))?.split("=")[1];
@@ -382,7 +414,7 @@ describe("main", () => {
         emitted.push(line);
       },
     };
-    return { deps, ran, files, emitted, summary };
+    return { deps, ran, limitsSeen, files, emitted, summary };
   }
 
   const CMD = [
@@ -486,6 +518,31 @@ describe("main", () => {
       ),
     ).toBe(0);
     expect(failingCases(h.files.get("/out/junit-unit.xml") ?? "")).toEqual([]);
+  });
+
+  test("hands both limits to every attempt, and no silence limit when none was given", async () => {
+    const h = harness([
+      { code: 124, output: "" },
+      { code: 0, output: " 1 pass\n 0 fail\nRan 1 test across 1 file. [1s]\n" },
+    ]);
+    const withSilence = [...CMD.slice(0, 2), "--silence-seconds=300", ...CMD.slice(2)];
+    expect(await main(withSilence, h.deps)).toBe(0);
+    expect(h.limitsSeen).toEqual([
+      { capSeconds: 1500, silenceSeconds: 300 },
+      { capSeconds: 1500, silenceSeconds: 300 },
+    ]);
+
+    const plain = harness([{ code: 0, output: "" }]);
+    await main(CMD, plain.deps);
+    expect(plain.limitsSeen).toEqual([{ capSeconds: 1500, silenceSeconds: undefined }]);
+  });
+
+  test("refuses a silence limit it cannot use instead of running without one", async () => {
+    for (const bad of ["--silence-seconds=0", "--silence-seconds=-5", "--silence-seconds=soon"]) {
+      const h = harness([]);
+      expect(await main([...CMD.slice(0, 2), bad, ...CMD.slice(2)], h.deps)).toBe(2);
+      expect(h.ran).toHaveLength(0);
+    }
   });
 
   test("refuses a command that is not `bun test`, or that sets its own reporter", async () => {
