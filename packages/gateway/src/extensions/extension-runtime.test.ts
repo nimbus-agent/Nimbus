@@ -23,7 +23,6 @@ import {
   buildExtensionRuntimeManifest,
   buildExtensionSpawnSpec,
   createExtensionSlotSource,
-  DEV_EXTENSION_ROLE_INLINE_FOR_TEST,
 } from "./extension-runtime.ts";
 import {
   copyRegularTree,
@@ -149,7 +148,10 @@ describe("buildExtensionSpawnSpec", () => {
   test("dev tree: the inline role runs the STAGED entry, loading no gateway source", () => {
     const { s, sandboxDir } = staged();
     const spec = buildExtensionSpawnSpec(s, { runtimeReadPaths, sandboxDir, layout: DEV_LAYOUT });
-    expect(spec.args.slice(-3)).toEqual(["-e", DEV_EXTENSION_ROLE_INLINE_FOR_TEST, s.entryPath]);
+    const [flag, code, entry] = spec.args.slice(-3);
+    expect(flag).toBe("-e");
+    expect(code).toBe(devInlineRole());
+    expect(entry).toBe(s.entryPath);
     // The sandbox wrapper itself still runs from the gateway entry (unconfined); the confined
     // command after it is the bare interpreter, not the gateway entry.
     expect(spec.args.indexOf(DEV_LAYOUT.gatewayEntry)).toBe(0);
@@ -158,30 +160,38 @@ describe("buildExtensionSpawnSpec", () => {
   });
 });
 
+/** The inline role exactly as the dev-tree spec carries it (it is not exported). */
+function devInlineRole(): string {
+  const { v, sandboxDir, leaf } = realInstall();
+  const spec = buildExtensionSpawnSpec(stageVerifiedExtension(v, leaf), {
+    runtimeReadPaths,
+    sandboxDir,
+    layout: DEV_LAYOUT,
+  });
+  return spec.args.at(-2) ?? "";
+}
+
 describe("the dev-tree inline role", () => {
   test("carries no backslash (a backslash escape in -e code reached the Windows child mangled)", () => {
-    expect(DEV_EXTENSION_ROLE_INLINE_FOR_TEST).not.toContain("\\");
+    const code = devInlineRole();
+    expect(code).toContain("await import(pathToFileURL(entry).href);");
+    expect(code).not.toContain("\\");
   });
 
   test("imports an absolute entry, and refuses a relative one with exit 2", async () => {
+    const inline = devInlineRole();
     const { v } = realInstall();
     writeFileSync(v.entryPath, 'console.log("ENTRY-RAN");\n');
-    const ok = Bun.spawn(
-      [process.execPath, "-e", DEV_EXTENSION_ROLE_INLINE_FOR_TEST, v.entryPath],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
+    const ok = Bun.spawn([process.execPath, "-e", inline, v.entryPath], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     expect(await new Response(ok.stdout).text()).toContain("ENTRY-RAN");
     expect(await ok.exited).toBe(0);
-    const bad = Bun.spawn(
-      [process.execPath, "-e", DEV_EXTENSION_ROLE_INLINE_FOR_TEST, "dist/x.js"],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
+    const bad = Bun.spawn([process.execPath, "-e", inline, "dist/x.js"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     expect(await new Response(bad.stderr).text()).toContain("needs an absolute entry path");
     expect(await bad.exited).toBe(2);
   });

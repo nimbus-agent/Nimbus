@@ -205,7 +205,10 @@ re-digests the copy, and runs it from there (invariant I43,
 `extensions/extension-stage.ts`), so the install tree itself is not granted
 to the extension at all. In a dev tree, the extension role runs inline
 (`bun -e`) rather than as `bun <gateway>/src/index.ts`, since the gateway's
-own source is not granted either. First-party connectors are unaffected
+own source is not granted either. The dev-tree shape is exercised end to end on
+Windows by `packages/gateway/test/e2e/extension-runtime.e2e.test.ts`; the compiled self-role
+shape is reasoned from a compiled probe (a `bun build --compile` binary loads a
+module once the file carries that right), not exercised end to end. First-party connectors are unaffected
 in a released binary, where their code is bundled into
 `nimbus-gateway.exe` and nothing is loaded from disk; a **dev tree**
 spawns `bun <entry> __nimbus-connector <id>`, a file entry point, and so

@@ -56,7 +56,9 @@ export function buildExtensionRuntimeManifest(
  * on every module it opens. This does exactly what `run-extension-entry.ts` does, with no file of
  * its own to load. FULLY STATIC: the entry travels as the one argument after the code
  * (`bun -e <code> <entry>` hands the child `process.argv = [bun, <entry>]`), never interpolated.
- * A compiled binary does not honour `-e`, and runs the real self-role instead.
+ * A compiled binary does not honour `-e`, and runs the real self-role instead. That compiled
+ * path is REASONED from a compiled probe (a `bun build --compile` binary importing a file from a
+ * directory the AppContainer grants write), not exercised end to end: the e2e runs a dev tree.
  */
 const DEV_EXTENSION_ROLE_INLINE = [
   'const { isAbsolute } = await import("node:path");',
@@ -73,9 +75,6 @@ const DEV_EXTENSION_ROLE_INLINE = [
   "  process.exit(2);",
   "}",
 ].join("\n");
-
-/** Exposed only so a test can run the inline role against a real file. */
-export const DEV_EXTENSION_ROLE_INLINE_FOR_TEST = DEV_EXTENSION_ROLE_INLINE;
 
 export function buildExtensionSpawnSpec(
   v: StagedExtensionForSpawn,

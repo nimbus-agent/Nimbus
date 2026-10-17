@@ -133,7 +133,13 @@ describe("approveExtensionRun", () => {
     expect(p["publisher"]).toBe("unsigned");
     expect(p["network"]).toEqual(["api.example.com"]);
     expect(p["read"]).toEqual([outside]);
-    expect(p["runtimeRead"]).toEqual([s.installPath, ...s.env.runtimeReadPaths]);
+    expect(p["runtimeRead"]).toEqual([...s.env.runtimeReadPaths]);
+    expect(p["runtimeRead"]).not.toContain(s.installPath);
+    expect(p["runsFrom"]).toBe(
+      `a verified per-spawn copy of ${s.installPath}, in the extension's own writable working directory`,
+    );
+    // No field name the consent redactor would hide (any name containing "key").
+    expect(Object.keys(p).filter((k) => /key/i.test(k))).toEqual([]);
     expect(p["modelAccess"]).toBe(false);
     expect(out).toMatchObject({ serviceId: "ext_com_example_perm", changed: true });
     expect(getRunGrant(s.db, "com.example.perm")).toEqual({

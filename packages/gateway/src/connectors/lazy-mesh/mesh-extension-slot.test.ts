@@ -75,6 +75,8 @@ function harness(
     prepare?: () => Promise<void>;
     /** Called per preparation (1-based); a returned error is thrown as the refusal. */
     refuse?: (call: number) => Error | undefined;
+    /** Per client (0-based); the promise its disconnect() returns. Default: resolved. */
+    disconnect?: (index: number) => Promise<void>;
   } = {},
 ) {
   let prepareCalls = 0;
@@ -107,7 +109,7 @@ function harness(
       },
       disconnect(): Promise<void> {
         client.disconnectCalls += 1;
-        return Promise.resolve();
+        return opts.disconnect?.(clients.indexOf(client)) ?? Promise.resolve();
       },
       disconnectCalls: 0,
       listToolsCalls: 0,
@@ -229,6 +231,59 @@ describe("mesh:ext: slot", () => {
     }
     expect(mesh.isExtensionRunning(EXTENSION_ID)).toBe(false);
     expect(h.clients[0]?.disconnectCalls).toBe(1);
+  });
+
+  test("a listing during the previous child's late disconnect (explicit stop) does not prepare until it resolves", async () => {
+    let release: () => void = () => {};
+    const late = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({ disconnect: (i) => (i === 0 ? late : Promise.resolve()) });
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      extensionSlots: h.source,
+      createExtensionClient: h.createExtensionClient,
+    });
+    await mesh.listExtensionTools(SERVICE_ID);
+    expect(h.prepareCalls).toBe(1);
+    // Auto-update's shape: stop with the id still listed. The stop is NOT awaited, so the listing
+    // below races the old child's disconnect.
+    const stopped = mesh.stopExtensionClient(EXTENSION_ID);
+    await Bun.sleep(0);
+    expect(h.clients[0]?.disconnectCalls).toBe(1);
+    const listing = mesh.listExtensionTools(SERVICE_ID);
+    await Bun.sleep(20);
+    expect(h.prepareCalls).toBe(1);
+    expect(h.clients).toHaveLength(1);
+    release();
+    await stopped;
+    expect(Object.keys((await listing) ?? {})).toEqual(["ext_foo_echo"]);
+    expect(h.prepareCalls).toBe(2);
+    expect(h.clients).toHaveLength(2);
+  });
+
+  test("a listing during an IDLE teardown's late disconnect does not prepare until it resolves", async () => {
+    let release: () => void = () => {};
+    const late = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({ disconnect: (i) => (i === 0 ? late : Promise.resolve()) });
+    mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+      inactivityMs: 5,
+      extensionSlots: h.source,
+      createExtensionClient: h.createExtensionClient,
+    });
+    await mesh.listExtensionTools(SERVICE_ID);
+    const deadline = Date.now() + 5_000;
+    while ((h.clients[0]?.disconnectCalls ?? 0) === 0 && Date.now() < deadline) {
+      await Bun.sleep(5);
+    }
+    expect(h.clients[0]?.disconnectCalls).toBe(1);
+    const listing = mesh.listExtensionTools(SERVICE_ID);
+    await Bun.sleep(20);
+    expect(h.prepareCalls).toBe(1);
+    release();
+    expect(Object.keys((await listing) ?? {})).toEqual(["ext_foo_echo"]);
+    expect(h.prepareCalls).toBe(2);
   });
 
   test("a refused prepareSpawn rejects with its code, records persistent_error, leaves no slot", async () => {

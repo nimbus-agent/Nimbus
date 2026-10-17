@@ -49,6 +49,13 @@ export class ExtensionSlots {
   private generation = 0;
   private readonly stoppedAt = new Map<string, number>();
   private allStoppedAt = 0;
+  /**
+   * Per service id: the disconnect of a previous child that is still finishing. A new spawn of the
+   * same extension awaits it BEFORE `prepareSpawn` (and so before the run stages a fresh copy in
+   * the extension's leaf), whichever path began the stop — an explicit stop, auto-update, or the
+   * un-awaited idle teardown.
+   */
+  private readonly stopping = new Map<string, Promise<void>>();
 
   constructor(
     private readonly host: ExtensionSlotHost,
@@ -108,6 +115,23 @@ export class ExtensionSlots {
     return this.allStoppedAt > startedAt || (this.stoppedAt.get(extensionId) ?? 0) > startedAt;
   }
 
+  /** Called by the mesh when it starts disconnecting `serviceId`'s child; `done` never rejects. */
+  trackStopping(serviceId: string, done: Promise<void>): void {
+    const prior = this.stopping.get(serviceId);
+    const all = prior === undefined ? done : Promise.all([prior, done]).then(() => undefined);
+    this.stopping.set(serviceId, all);
+    void all.then(() => {
+      if (this.stopping.get(serviceId) === all) this.stopping.delete(serviceId);
+    });
+  }
+
+  /** Resolves once no previous child of `serviceId` is still disconnecting. */
+  private async previousChildGone(serviceId: string): Promise<void> {
+    for (let p = this.stopping.get(serviceId); p !== undefined; p = this.stopping.get(serviceId)) {
+      await p;
+    }
+  }
+
   /** Called by the mesh whenever an extension slot's client is cleared. */
   forgetService(serviceId: string): void {
     for (const [extensionId, sid] of this.serviceIdByExtensionId) {
@@ -117,6 +141,10 @@ export class ExtensionSlots {
 
   private async connectSlot(source: ExtensionSlotSource, serviceId: string): Promise<boolean> {
     const startedAt = this.generation;
+    // The previous child of this extension must have exited before this spawn verifies and stages
+    // its code (I43). Captured `startedAt` stays BEFORE the wait, so a stop landing during it still
+    // wins.
+    await this.previousChildGone(serviceId);
     let prepared: Awaited<ReturnType<ExtensionSlotSource["prepareSpawn"]>>;
     try {
       prepared = await source.prepareSpawn(serviceId);

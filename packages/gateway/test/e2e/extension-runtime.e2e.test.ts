@@ -32,7 +32,7 @@ import {
 } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 import { sandboxCwdFor } from "../../src/platform/sandbox/sandbox-cwd.ts";
 import { createSandboxRunner } from "../../src/platform/sandbox/sandbox-runner.ts";
@@ -259,7 +259,7 @@ const CHUNK_JS = 'export const CHUNK_MARKER = "chunk-v1";\n';
 /** The scaffold's echo handler, and the same handler also reporting the server's own pid. */
 const SCAFFOLD_ECHO = 'async ({ text }) => ({ content: [{ type: "text", text }] }),';
 const PID_ECHO =
-  'async ({ text }) => ({ content: [{ type: "text", text }, { type: "text", text: "PID " + process.pid }] }),';
+  'async ({ text }) => ({ content: [{ type: "text", text }, { type: "text", text: "PID " + process.pid }, { type: "text", text: "ENTRY " + import.meta.path }] }),';
 
 type CallOutcome = { status: "ok"; result: unknown } | { status: "rejected"; reason: string };
 
@@ -578,6 +578,24 @@ describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", 
     const texts = await executedCall("probe", { path: allowed });
     expect(texts[0]?.startsWith("READ")).toBe(true);
     expect(texts[0]).toContain("ALLOWED-CONTENT");
+  }, 60_000);
+
+  test("the code runs from a run-<uuid> stage in its own leaf, never from the install tree", async () => {
+    const texts = await executedCall("echo", { text: "where" });
+    const entry = texts.find((t) => t.startsWith("ENTRY "))?.slice("ENTRY ".length) ?? "";
+    const rel = relative(leaf, entry);
+    const parts = rel.split(sep);
+    expect(parts[0] ?? "").toMatch(/^run-[0-9a-f-]{36}$/);
+    expect(parts.slice(1)).toEqual(["dist", "index.js"]);
+  }, 60_000);
+
+  test("the install tree is NOT granted: its manifest is denied in the sandbox", async () => {
+    const installedManifest = join(paths.extensionsDir, EXTENSION_ID, "nimbus.extension.json");
+    // Positive control: it exists and the test process can read it.
+    expect(readFileSync(installedManifest, "utf8")).toContain(EXTENSION_ID);
+    const texts = await executedCall("probe", { path: installedManifest });
+    expect(texts[0]?.startsWith("DENIED")).toBe(true);
+    expect(texts[0]).toMatch(/EACCES|EPERM|ENOENT/);
   }, 60_000);
 
   test("the extension is CONFINED: a read outside its grants is denied", async () => {
