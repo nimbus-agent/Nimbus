@@ -249,3 +249,32 @@ describe("connector add --mcp — the owner decides", () => {
     expect(process.exitCode).toBe(0);
   });
 });
+
+describe("connector tools / call: extension ids", () => {
+  test("usage names <mcp_id|ext_id>", async () => {
+    const err: string[] = [];
+    await runConnectorTools(
+      [],
+      makeDeps(() => ({}), [], [], err),
+    );
+    expect(err[0]).toContain("<mcp_id|ext_id>");
+    process.exitCode = 0;
+  });
+
+  test("an ERR_EXTENSION_RUN_* refusal exits 2", async () => {
+    const err: string[] = [];
+    await runConnectorTools(
+      ["ext_foo"],
+      makeDeps(
+        () => {
+          throw new Error("ERR_EXTENSION_RUN_TREE_CHANGED: tree changed");
+        },
+        [],
+        [],
+        err,
+      ),
+    );
+    expect(process.exitCode).toBe(2);
+    process.exitCode = 0;
+  });
+});

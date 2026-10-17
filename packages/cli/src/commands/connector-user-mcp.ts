@@ -14,11 +14,15 @@ export interface UserMcpDeps {
   error(line: string): void;
 }
 
-const TOOLS_USAGE = "Usage: nimbus connector tools <mcp_id> [--json]";
-const CALL_USAGE = "Usage: nimbus connector call <mcp_id> <tool> [--input <json>] [--json]";
+const TOOLS_USAGE = "Usage: nimbus connector tools <mcp_id|ext_id> [--json]";
+const CALL_USAGE = "Usage: nimbus connector call <mcp_id|ext_id> <tool> [--input <json>] [--json]";
 
 /** Gateway refusals that mean "nothing ran because of what you asked", not a failure. */
-const REFUSAL_CODES = ["ERR_USER_MCP_UNKNOWN_TOOL", "ERR_USER_MCP_NOT_REGISTERED"] as const;
+const REFUSAL_CODES = [
+  "ERR_USER_MCP_UNKNOWN_TOOL",
+  "ERR_USER_MCP_NOT_REGISTERED",
+  "ERR_EXTENSION_RUN_",
+] as const;
 
 function defaultDeps(): UserMcpDeps {
   return {
