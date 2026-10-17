@@ -12,8 +12,21 @@ on:
 permissions:
   contents: read
 
+# One group per PR, so two runs never post comments or write signatures for the same PR at once.
+# Only a run whose job will execute may join it. Every comment on a PR (a bot's review, a reply)
+# starts this workflow too, and the job's `if:` skips it, but a run joins its group when it is
+# created, before that `if:` is read, and GitHub cancels a group's pending run whenever a newer one
+# joins. On #1679 a reply evicted the queued run for a new head commit, so that commit never got
+# its required `cla` check and the PR stayed BLOCKED with every visible check green. A run the
+# `if:` will skip gets a group of its own. The condition repeats the job's `if:`, and
+# `scripts/ci/cla-concurrency.test.ts` fails if the two drift apart.
 concurrency:
-  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: >-
+    ${{ (github.event_name == 'pull_request_target'
+    || (github.event.issue.pull_request
+    && contains(fromJSON('["I have read the CLA Document and I hereby sign the CLA","recheck"]'), github.event.comment.body)))
+    && format('cla-{0}', github.event.pull_request.number || github.event.issue.number)
+    || format('cla-skipped-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
