@@ -375,9 +375,14 @@ export function annotationLines(o: Outcome): string[] {
       }.`,
     ),
   );
-  const stillFailing = new Set((o.final.cases ?? []).map(caseKey));
-  for (const c of o.attempt1.cases ?? []) {
-    if (!stillFailing.has(caseKey(c))) warnings.push(caseCommand("warning", "Flaky test", c));
+  // A test is flaky only if the retry's report shows it passed. A retry that left no report (killed
+  // by the cap, crashed) shows nothing, and naming its attempt-1 failures "Flaky test" would claim
+  // otherwise — the nightly flaky-tests report counts exactly these annotations.
+  if (o.final.cases !== undefined) {
+    const stillFailing = new Set(o.final.cases.map(caseKey));
+    for (const c of o.attempt1.cases ?? []) {
+      if (!stillFailing.has(caseKey(c))) warnings.push(caseCommand("warning", "Flaky test", c));
+    }
   }
   if (!passed) {
     const finalCases = o.final.cases ?? [];

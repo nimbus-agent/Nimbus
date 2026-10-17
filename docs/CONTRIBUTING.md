@@ -128,6 +128,8 @@ The same rule applies to production helpers that accept a `platform` argument an
 
 The `pr-quality-cross-platform` job (`.github/workflows/ci.yml`) runs the same whole-repo test paths on macOS and Windows at PR time as the push matrix — `packages/gateway packages/cli scripts` with `--parallel`, so unit, integration and e2e alike, each file isolated in its own worker — and this class of regression is therefore caught before merge rather than on `main`. Only the flags differ (the PR legs shard, and read the per-file timings the push leg writes). Both run through `scripts/ci/test-with-retry.ts`, which retries once and re-runs only the failed files when it can attribute every failure; coverage and packaging stay Ubuntu-only.
 
+Those macOS and Windows legs retry a failed suite once, so a test that fails and then passes leaves the leg green with only a warning annotation behind. The nightly [`flaky-tests.yml`](../.github/workflows/flaky-tests.yml) workflow gathers those annotations into one `Flaky tests on CI` issue (label `flaky-tests`), worst first: fix what it lists rather than leaning on the retry. `bun scripts/ci/flaky-tests-report.ts --days 3` prints the same report locally and writes nothing.
+
 ### Using the `nimbus-*` skill set (Claude Code / compatible AI assistants)
 
 The repository ships a set of `nimbus-*` skills under `.claude/commands/` that codify how to do common contributor tasks correctly. The ones most contributors reach for:
