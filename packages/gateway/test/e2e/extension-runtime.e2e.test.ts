@@ -322,6 +322,15 @@ async function failureOf(p: Promise<unknown>): Promise<string> {
   return message;
 }
 
+/** `realpathSync`, or the path unchanged when it cannot be resolved (missing, or empty). */
+function realpathOrSelf(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
 describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", () => {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-extrt-e2e-"));
   const scaffoldRoot = join(tmp, "scaffold");
@@ -583,7 +592,9 @@ describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", 
   test("the code runs from a run-<uuid> stage in its own leaf, never from the install tree", async () => {
     const texts = await executedCall("echo", { text: "where" });
     const entry = texts.find((t) => t.startsWith("ENTRY "))?.slice("ENTRY ".length) ?? "";
-    const rel = relative(leaf, entry);
+    // Bun realpaths `import.meta.path`; `leaf` comes from an unresolved `tmpdir()` (macOS
+    // `/var` -> `/private/var`), so both sides are resolved before they are compared.
+    const rel = relative(realpathOrSelf(leaf), realpathOrSelf(entry));
     const parts = rel.split(sep);
     expect(parts[0] ?? "").toMatch(/^run-[0-9a-f-]{36}$/);
     expect(parts.slice(1)).toEqual(["dist", "index.js"]);
