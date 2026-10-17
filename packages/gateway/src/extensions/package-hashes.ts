@@ -3,7 +3,11 @@ import { readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
-import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
+import {
+  extensionEntryRelPath,
+  parseExtensionManifestJson,
+  resolveExtensionManifestPath,
+} from "./manifest.ts";
 
 /**
  * The two hashes an `extension` row stores: SHA-256 of the manifest FILE and of the ENTRY FILE.
@@ -29,8 +33,7 @@ export function computeExtensionPackageHashes(dir: string): ExtensionPackageHash
   try {
     const manifestBytes = readFileSync(manifestPath);
     const manifest = parseExtensionManifestJson(manifestBytes.toString("utf8"));
-    const entryRel =
-      manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
+    const entryRel = extensionEntryRelPath(manifest);
     const absRoot = resolve(dir);
     const absEntry = resolve(join(dir, entryRel));
     const rel = relative(absRoot, absEntry);

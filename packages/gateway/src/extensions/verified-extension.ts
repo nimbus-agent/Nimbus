@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { type ExtensionRow, listExtensions } from "../automation/extension-store.ts";
-import { isSameOrInside } from "../util/path-overlap.ts";
+import { isSameOrInside, pathApiFor } from "../util/path-overlap.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { readVerifiedManifest } from "./approve-run.ts";
@@ -14,13 +14,18 @@ import {
   resolveExtensionRunGrants,
   serializeRunGrants,
 } from "./extension-run-grants.ts";
+import { EXTENSION_SERVICE_ID_PATTERN } from "./extension-service-id.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
-import { type ExtensionManifest, resolveExtensionManifestPath } from "./manifest.ts";
+import {
+  type ExtensionManifest,
+  extensionEntryRelPath,
+  resolveExtensionManifestPath,
+} from "./manifest.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { type ExtensionRunGrantRow, getRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
-import { extensionEntryRelPath, verifyOneExtensionStrict } from "./verify-extensions.ts";
+import { verifyOneExtensionStrict } from "./verify-extensions.ts";
 import { type SignedManifestShape, verifyManifestSignature } from "./verify-signature.ts";
 
 /** Everything a spawn needs, each value re-derived from disk and the Vault on THIS call. */
@@ -63,6 +68,14 @@ function requireRowAndGrant(
     refuse(
       "ERR_EXTENSION_RUN_NOT_APPROVED",
       `${row.id} has no run approval; run \`nimbus extension approve ${row.id}\``,
+    );
+  }
+  // The spawn derives its mesh key, sandbox manifest id and profile from this value; a stored id
+  // outside the pattern was never written by the approval path, so refuse rather than use it.
+  if (!EXTENSION_SERVICE_ID_PATTERN.test(grant.service_id)) {
+    refuse(
+      "ERR_EXTENSION_RUN_CHANGED",
+      `${row.id}'s run grant carries a malformed service id; approve it again`,
     );
   }
   return { row, grant };
@@ -154,7 +167,13 @@ function readRawManifestForSignature(row: ExtensionRow): SignedManifestShape {
   if (!sha256HexEqualConstantTime(hex, row.manifest_hash)) {
     refuse("ERR_EXTENSION_RUN_UNVERIFIED", `${row.id}'s manifest changed during verification`);
   }
-  const parsed: unknown = JSON.parse(bytes.toString("utf8"));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8"));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    refuse("ERR_EXTENSION_RUN_UNVERIFIED", `${row.id}'s manifest is not valid JSON: ${msg}`);
+  }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     refuse("ERR_EXTENSION_RUN_UNVERIFIED", `${row.id}'s manifest is not an object`);
   }
@@ -180,7 +199,16 @@ async function assertPublisherSignature(
       `${row.id} names publisher "${manifest.publisher.id}" but carries no signature`,
     );
   }
-  const key = await readPublisherKey(vault, manifest.publisher.id);
+  let key: Uint8Array | undefined;
+  try {
+    key = await readPublisherKey(vault, manifest.publisher.id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    refuse(
+      "ERR_EXTENSION_RUN_UNVERIFIED",
+      `${row.id}'s publisher key for "${manifest.publisher.id}" could not be read from the Vault: ${msg}`,
+    );
+  }
   if (key === undefined) {
     refuse(
       "ERR_EXTENSION_RUN_UNVERIFIED",
@@ -210,9 +238,15 @@ function resolveEntryInside(
   } catch {
     refuse("ERR_EXTENSION_RUN_TREE_CHANGED", `${row.id}'s install path no longer exists`);
   }
+  const entryRel = extensionEntryRelPath(manifest);
+  // An absolute entry (POSIX `/x.js`, a drive letter, a UNC path) names a file by itself; refuse it
+  // before any join, exactly as install does, rather than rely on `join` happening to re-root it.
+  if (pathApiFor(env.platform).isAbsolute(entryRel)) {
+    refuse("ERR_EXTENSION_ENTRY_OUTSIDE", `${row.id}'s entry "${entryRel}" is an absolute path`);
+  }
   let entryPath: string;
   try {
-    entryPath = env.realpath(join(installPath, extensionEntryRelPath(manifest)));
+    entryPath = env.realpath(join(installPath, entryRel));
   } catch {
     refuse("ERR_EXTENSION_ENTRY_OUTSIDE", `${row.id}'s entry does not resolve to a file`);
   }

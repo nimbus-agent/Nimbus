@@ -1,9 +1,18 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   insertExtensionRow,
@@ -131,6 +140,7 @@ function manualInstall(
   mkdirSync(join(installPath, "dist"), { recursive: true });
   writeFileSync(join(installPath, "nimbus.extension.json"), JSON.stringify(manifest));
   const entryFile = opts.entryFile(installPath, root);
+  mkdirSync(dirname(entryFile), { recursive: true });
   writeFileSync(entryFile, "export {};\n");
   const manifestBytes = readFileSync(join(installPath, "nimbus.extension.json"));
   const treeDigest = computeExtensionTreeDigest(installPath);
@@ -330,6 +340,86 @@ describe("readVerifiedExtensionForSpawn", () => {
       { entryFile: (ip) => join(ip, "..", "outside.js") },
     );
     await expectCode(readVerifiedExtensionForSpawn(f.id, deps(f)), "ERR_EXTENSION_ENTRY_OUTSIDE");
+  });
+
+  test("7b: a POSIX-absolute entry refuses ENTRY_OUTSIDE before any join", async () => {
+    // `join` re-roots "/x.js" under the install path, so steps 1–6 pass over a real file there; the
+    // refusal must come from the explicit absolute check, not from containment.
+    const f = manualInstall(
+      { id: "com.example.abs", version: "1.0.0", entry: "/x.js" },
+      { entryFile: (ip) => join(ip, "x.js") },
+    );
+    await expectCode(readVerifiedExtensionForSpawn(f.id, deps(f)), "ERR_EXTENSION_ENTRY_OUTSIDE");
+  });
+
+  test("7c: a UNC entry refuses ENTRY_OUTSIDE (win32 path rules, injected)", async () => {
+    const entry = String.raw`\\server\share\x.js`;
+    const f = manualInstall(
+      { id: "com.example.unc", version: "1.0.0", entry },
+      { entryFile: (ip) => join(ip, entry) },
+    );
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, { ...deps(f), env: { ...f.env, platform: "win32" } }),
+      "ERR_EXTENSION_ENTRY_OUTSIDE",
+    );
+  });
+
+  // A drive-letter name cannot exist as a FILE on a Windows host (the colon), so this is a
+  // POSIX-host test of the win32 path rules; on Windows the same manifest cannot pass step 3.
+  test.skipIf(process.platform === "win32")(
+    "7d: a drive-letter entry refuses ENTRY_OUTSIDE (win32 path rules, injected)",
+    async () => {
+      const entry = String.raw`C:\x.js`;
+      const f = manualInstall(
+        { id: "com.example.drive", version: "1.0.0", entry },
+        { entryFile: (ip) => join(ip, entry) },
+      );
+      await expectCode(
+        readVerifiedExtensionForSpawn(f.id, { ...deps(f), env: { ...f.env, platform: "win32" } }),
+        "ERR_EXTENSION_ENTRY_OUTSIDE",
+      );
+    },
+  );
+
+  test("7e: an entry through a symlinked directory refuses RUN_TREE_CHANGED at step 5", async () => {
+    const f = manualInstall(
+      { id: "com.example.symdir", version: "1.0.0", entry: "dist/index.js" },
+      { entryFile: (ip) => join(ip, "dist", "index.js") },
+    );
+    // Same bytes, so the manifest + entry hashes (step 3) still pass; only the tree walk sees the link.
+    const elsewhere = join(f.root, "outside", "dist");
+    cpSync(join(f.installPath, "dist"), elsewhere, { recursive: true });
+    rmSync(join(f.installPath, "dist"), { recursive: true, force: true });
+    symlinkSync(elsewhere, join(f.installPath, "dist"), "junction");
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, deps(f)),
+      "ERR_EXTENSION_RUN_TREE_CHANGED",
+    );
+  });
+
+  test("2b: a grant whose service id breaks the pattern refuses RUN_CHANGED", async () => {
+    const f = await setup();
+    const g = getRunGrant(f.db, f.id);
+    if (g === null) throw new Error("no grant");
+    upsertRunGrant(f.db, { ...g, service_id: "ext_../evil" });
+    await expectCode(readVerifiedExtensionForSpawn(f.id, deps(f)), "ERR_EXTENSION_RUN_CHANGED");
+  });
+
+  test("6d: a Vault read failure refuses RUN_UNVERIFIED with the cause in the message", async () => {
+    const f = await setup({ signed: true });
+    const vault = new MockVault();
+    vault.get = async () => {
+      throw new Error("keychain locked");
+    };
+    let caught: unknown;
+    try {
+      await readVerifiedExtensionForSpawn(f.id, { ...deps(f), vault });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ExtensionRunGrantError);
+    expect((caught as ExtensionRunGrantError).code).toBe("ERR_EXTENSION_RUN_UNVERIFIED");
+    expect((caught as Error).message).toContain("keychain locked");
   });
 
   test("8a: a declared read path deleted after approval refuses GRANT_PATH_MISSING", async () => {

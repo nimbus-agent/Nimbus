@@ -24,6 +24,7 @@ import {
   signatureDisabledRegistry,
 } from "./hard-disable.ts";
 import {
+  extensionEntryRelPath,
   parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
@@ -35,20 +36,6 @@ import {
   type SignatureDisableReason,
   verifyManifestSignature,
 } from "./verify-signature.ts";
-
-/** The entry an extension runs when its manifest names none. */
-export const DEFAULT_EXTENSION_ENTRY = "dist/index.js";
-
-/**
- * The manifest's entry, relative to the install path, with an absent or empty `entry` falling back
- * to {@link DEFAULT_EXTENSION_ENTRY}. The ONE spelling of that rule shared by startup verification,
- * strict verification and the pre-spawn accessor, so the file hashed is the file spawned.
- */
-export function extensionEntryRelPath(manifest: { readonly entry?: string }): string {
-  return manifest.entry !== undefined && manifest.entry !== ""
-    ? manifest.entry
-    : DEFAULT_EXTENSION_ENTRY;
-}
 
 function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");

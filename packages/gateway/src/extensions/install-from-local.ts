@@ -45,6 +45,7 @@ import { recordInstall } from "./dependency-store.ts";
 import type { ResolvedNode } from "./dependency-types.ts";
 import {
   type ExtensionManifest,
+  extensionEntryRelPath,
   parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
@@ -177,10 +178,7 @@ async function completeExtensionInstallAfterCopy(options: {
     await verifyAndRecordSignature(options, destManifest, destManifestText);
   }
 
-  const entryRelRaw =
-    destManifest.entry !== undefined && destManifest.entry !== ""
-      ? destManifest.entry
-      : "dist/index.js";
+  const entryRelRaw = extensionEntryRelPath(destManifest);
   if (entryRelRaw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(entryRelRaw)) {
     throw new Error("extension entry must be a relative path");
   }
@@ -808,8 +806,7 @@ function buildRootInstallResult(
   }
   const rootManifestHex = sha256HexOfBytes(readFileSync(rootManifestPath));
 
-  const rootEntryRel =
-    manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
+  const rootEntryRel = extensionEntryRelPath(manifest);
   const rootEntryPath = join(rootDest, rootEntryRel);
   const rootEntryHex = existsSync(rootEntryPath)
     ? sha256HexOfBytes(readFileSync(rootEntryPath))
