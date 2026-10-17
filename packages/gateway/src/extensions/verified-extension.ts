@@ -39,6 +39,11 @@ export interface VerifiedExtensionForSpawn {
   readonly entryPath: string;
   /** freshly re-resolved, equal to the stored grant */
   readonly grants: ResolvedRunGrants;
+  /**
+   * The live tree digest step 5 computed on THIS call (equal to the row digest and the approved
+   * digest). The runtime re-digests its per-spawn copy against it.
+   */
+  readonly treeDigest: string;
 }
 
 export interface VerifiedExtensionDeps {
@@ -313,5 +318,6 @@ export async function readVerifiedExtensionForSpawn(
     installPath,
     entryPath,
     grants,
+    treeDigest: rowDigest,
   };
 }
