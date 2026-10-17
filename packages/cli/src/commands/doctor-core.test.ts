@@ -13,6 +13,7 @@ import {
   type DoctorGatewayState,
   doctorPrintConfigValidation,
   doctorPrintEmbeddingFromSnapshot,
+  doctorPrintExtensions,
   doctorPrintHealthFromSnapshot,
   doctorPrintIndexConfidence,
   doctorPrintIndexFromSnapshot,
@@ -884,5 +885,49 @@ describe("doctorPrintOncallPush", () => {
   it("empty object (older gateway) -> 0, silent", () => {
     expect(doctorPrintOncallPush({})).toBe(0);
     expect(log).toHaveLength(0);
+  });
+});
+
+describe("doctorPrintExtensions", () => {
+  /** Answers by METHOD name: `createMockIpcClient` throws a code-less Error once its queue empties. */
+  function byMethod(answer: (method: string) => unknown): Pick<IPCClient, "call"> {
+    return {
+      call: async <T>(method: string): Promise<T> => answer(method) as T,
+    };
+  }
+
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("Method not found on extension.list is quiet", async () => {
+    const client = byMethod(() => {
+      throw Object.assign(new Error("nope"), { code: -32601 });
+    });
+    expect(await doctorPrintExtensions(client)).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("any other failure warns and exits 1", async () => {
+    const client = byMethod(() => {
+      throw new Error("down");
+    });
+    expect(await doctorPrintExtensions(client)).toBe(1);
+    expect(out.stdout).toContain("[warn] Extensions: status check failed (down).");
+  });
+
+  it("a malformed response warns and exits 1", async () => {
+    expect(await doctorPrintExtensions(byMethod(() => "garbage"))).toBe(1);
+    expect(out.stdout).toContain("[warn] Extensions: malformed extension.list response");
+  });
+
+  it("an unapproved extension prints the formatter line and exits 1", async () => {
+    const client = byMethod((method) =>
+      method === "extension.list"
+        ? { runtimeEnabled: true, extensions: [{ id: "a", runState: "no_grant" }] }
+        : undefined,
+    );
+    expect(await doctorPrintExtensions(client)).toBe(1);
+    expect(out.stdout).toContain("[warn] Extensions: 1 installed extension(s) not approved");
   });
 });

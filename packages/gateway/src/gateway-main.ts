@@ -8,7 +8,7 @@ import {
   type McpToolListingClient,
   meshDispatcherClient,
 } from "./connectors/index.ts";
-import { listPolicyGatedModelAccessibleUserMcpIds } from "./connectors/user-mcp-model-capability.ts";
+import { listPolicyGatedModelAccessibleOwnerCodeServerIds } from "./connectors/user-mcp-model-capability.ts";
 import { makeEgressSink } from "./egress/egress-ledger.ts";
 import type { EmbeddingReadiness } from "./embedding/embedding-readiness.ts";
 import { createNimbusEngineAgent } from "./engine/agent.ts";
@@ -177,23 +177,27 @@ export async function main(): Promise<void> {
           ...(platform.sessionMemoryStore === undefined
             ? {}
             : { sessionMemoryStore: platform.sessionMemoryStore }),
-          // The FIRST production-supplied agent tool family that runs owner-registered code: user
-          // MCP servers registered with `--model`. Offered only on a turn whose request context
-          // carries the user-MCP executor (the local owner); every call runs through that
-          // executor's I42 owner prompt, and every result through `wrapToolForLlm` (I11).
+          // The production-supplied agent tool family that runs owner code: user MCP servers
+          // registered with `--model`, and extensions approved with `--model` (enabled, approved
+          // for the code now installed, not signature-disabled). Offered only on a turn whose
+          // request context carries the user-MCP executor (the local owner); every call runs
+          // through that executor's I42 owner prompt, and every result through `wrapToolForLlm`
+          // (I11).
           // `deps.toolgen` and `deps.computerUse` stay UNWIRED here: the model still cannot invoke
           // a generated tool or a computer-use lane.
           // The org-policy lock-off (`[policy.capabilities.ai_v2] user_mcp_model_access = false`)
-          // is enforced HERE, at the source: locked off — or no policy accessor (fail-closed) —
-          // no `--model` server is listed, so the model is offered nothing on any path. Read per
+          // is enforced HERE, at the source, for both halves: locked off — or no policy accessor
+          // (fail-closed) — nothing is listed, so the model is offered nothing on any path. Read per
           // call, so a policy applied after boot takes effect on the next turn.
           userMcp: {
             listModelAccessibleIds: () =>
-              listPolicyGatedModelAccessibleUserMcpIds(
+              listPolicyGatedModelAccessibleOwnerCodeServerIds(
                 platform.localIndex.getDatabase(),
                 platform.enforcedPolicy?.(),
               ),
-            listTools: (serviceId) => platform.connectorMesh.listUserMcpTools(serviceId),
+            // `ext_*` lists through the extension slot (spawn re-verifies), anything else as a
+            // user MCP server.
+            listTools: (serviceId) => platform.connectorMesh.listOwnerCodeServerTools(serviceId),
             warn: (bindings, msg) => userMcpLogger.warn(bindings, msg),
           },
         });

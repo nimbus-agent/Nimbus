@@ -193,6 +193,60 @@ describe("approveExtensionRun", () => {
     expect(getRunGrant(db, "com.example.run")?.approved_at).toBe(1);
   });
 
+  const approveWith = (
+    s: { db: Database; env: ExtensionRunGrantEnv },
+    seen: Asked[],
+    modelAccess?: boolean,
+  ) =>
+    approveExtensionRun("com.example.run", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 1,
+      ...(modelAccess === undefined ? {} : { modelAccess }),
+    });
+
+  test("--model writes model_access = 1 and the prompt shows modelAccess: true", async () => {
+    const s = await setup();
+    const seen: Asked[] = [];
+    const out = await approveWith(s, seen, true);
+    expect(seen[0]?.payload["modelAccess"]).toBe(true);
+    expect(out.modelAccess).toBe(true);
+    expect(getRunGrant(s.db, "com.example.run")?.model_access).toBe(1);
+  });
+
+  test("no flag writes model_access = 0", async () => {
+    const s = await setup();
+    const out = await approveWith(s, []);
+    expect(out.modelAccess).toBe(false);
+    expect(getRunGrant(s.db, "com.example.run")?.model_access).toBe(0);
+  });
+
+  test("a change only in model access prompts and writes (not short-circuited)", async () => {
+    const s = await setup();
+    const seen: Asked[] = [];
+    await approveWith(s, seen);
+    const on = await approveWith(s, seen, true);
+    expect(seen).toHaveLength(2);
+    expect(on.changed).toBe(true);
+    expect(getRunGrant(s.db, "com.example.run")?.model_access).toBe(1);
+    const off = await approveWith(s, seen);
+    expect(seen).toHaveLength(3);
+    expect(off.changed).toBe(true);
+    expect(getRunGrant(s.db, "com.example.run")?.model_access).toBe(0);
+  });
+
+  test("an identical re-approval including model access short-circuits", async () => {
+    const s = await setup();
+    const seen: Asked[] = [];
+    await approveWith(s, seen, true);
+    const again = await approveWith(s, seen, true);
+    expect(seen).toHaveLength(1);
+    expect(again.changed).toBe(false);
+    expect(again.modelAccess).toBe(true);
+  });
+
   test("Review Focus 4: files changing during the prompt refuse and store nothing", async () => {
     const { db, env, installPath } = await setup();
     await expect(
@@ -422,6 +476,7 @@ describe("approveExtensionRun", () => {
       "d",
       { network: [], read: [], write: [] },
       { platform: "linux", protectedRoots: [], runtimeReadPaths: [], realpath: (p) => p },
+      false,
     );
     const fp = publisherKeyFingerprint(key);
     expect(fp).toMatch(/^[0-9a-f]{32}$/);

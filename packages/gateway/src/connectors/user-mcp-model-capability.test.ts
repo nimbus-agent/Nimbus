@@ -1,10 +1,14 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
+import { insertExtensionRow, setExtensionTreeDigest } from "../automation/extension-store.ts";
+import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
+import { upsertRunGrant } from "../extensions/run-grant-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { AI_V2_CAPABILITIES } from "../policy/types.ts";
 import {
   isUserMcpModelAccessEnabled,
+  listPolicyGatedModelAccessibleOwnerCodeServerIds,
   listPolicyGatedModelAccessibleUserMcpIds,
   USER_MCP_MODEL_ACCESS_CAPABILITY,
 } from "./user-mcp-model-capability.ts";
@@ -73,5 +77,76 @@ describe("listPolicyGatedModelAccessibleUserMcpIds (the model's tool source)", (
     const db = dbWithModelServer();
     expect(listPolicyGatedModelAccessibleUserMcpIds(db, undefined)).toEqual([]);
     db.close();
+  });
+});
+
+describe("listPolicyGatedModelAccessibleOwnerCodeServerIds (user MCP + extensions)", () => {
+  /** `mcp_notes` (--model) plus a current, enabled extension `a` approved with --model. */
+  function dbWithBoth(): Database {
+    const db = dbWithModelServer();
+    insertExtensionRow(db, {
+      id: "a",
+      version: "1.0.0",
+      install_path: "/x/a",
+      manifest_hash: "m",
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    setExtensionTreeDigest(db, "a", "d".repeat(64));
+    upsertRunGrant(db, {
+      extension_id: "a",
+      service_id: "ext_a",
+      version: "1.0.0",
+      tree_digest: "d".repeat(64),
+      permissions_json: '{"network":[],"read":[],"write":[]}',
+      model_access: 1,
+      approved_at: 1,
+    });
+    return db;
+  }
+
+  test("allowed: user MCP ids first, then extension ids", () => {
+    const db = dbWithBoth();
+    expect(listPolicyGatedModelAccessibleOwnerCodeServerIds(db, allowed, () => false)).toEqual([
+      "mcp_notes",
+      "ext_a",
+    ]);
+    db.close();
+  });
+
+  test("the lock-off empties BOTH sources", () => {
+    const db = dbWithBoth();
+    expect(listPolicyGatedModelAccessibleOwnerCodeServerIds(db, lockedOff, () => false)).toEqual(
+      [],
+    );
+    db.close();
+  });
+
+  test("FAIL-CLOSED: an absent policy accessor empties both sources", () => {
+    const db = dbWithBoth();
+    expect(listPolicyGatedModelAccessibleOwnerCodeServerIds(db, undefined, () => false)).toEqual(
+      [],
+    );
+    db.close();
+  });
+
+  test("a signature-disabled extension is dropped; the user MCP server stays", () => {
+    const db = dbWithBoth();
+    expect(
+      listPolicyGatedModelAccessibleOwnerCodeServerIds(db, allowed, (id) => id === "a"),
+    ).toEqual(["mcp_notes"]);
+    db.close();
+  });
+
+  test("by default it consults the startup signature registry", () => {
+    const db = dbWithBoth();
+    signatureDisabledRegistry.mark("a", "signature_failed");
+    try {
+      expect(listPolicyGatedModelAccessibleOwnerCodeServerIds(db, allowed)).toEqual(["mcp_notes"]);
+    } finally {
+      signatureDisabledRegistry.reset();
+      db.close();
+    }
   });
 });

@@ -2031,6 +2031,40 @@ code_execution=true
     const lock = gateWith(lockToml, signPolicy(lockToml, encodeBase64(kp.privkey)), pub);
     expect(lock.enforced().capabilitiesDisabled.has("user_mcp_model_access")).toBe(true);
     expect(listPolicyGatedModelAccessibleUserMcpIds(index, lock.enforced())).toEqual([]);
+    // The same signed lock-off empties the extension half of the engine agent's source too (one
+    // shared switch). Non-vacuity again: the extension IS listed under the allowing policy.
+    const { listPolicyGatedModelAccessibleOwnerCodeServerIds } = await import(
+      "./connectors/user-mcp-model-capability.ts"
+    );
+    const { insertExtensionRow, setExtensionTreeDigest } = await import(
+      "./automation/extension-store.ts"
+    );
+    const { upsertRunGrant } = await import("./extensions/run-grant-store.ts");
+    insertExtensionRow(index, {
+      id: "com.example.notes",
+      version: "1.0.0",
+      install_path: "/x",
+      manifest_hash: "m",
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    setExtensionTreeDigest(index, "com.example.notes", "d".repeat(64));
+    upsertRunGrant(index, {
+      extension_id: "com.example.notes",
+      service_id: "ext_com_example_notes",
+      version: "1.0.0",
+      tree_digest: "d".repeat(64),
+      permissions_json: '{"network":[],"read":[],"write":[]}',
+      model_access: 1,
+      approved_at: 1,
+    });
+    expect(
+      listPolicyGatedModelAccessibleOwnerCodeServerIds(index, allow.enforced(), () => false),
+    ).toEqual(["mcp_notes", "ext_com_example_notes"]);
+    expect(
+      listPolicyGatedModelAccessibleOwnerCodeServerIds(index, lock.enforced(), () => false),
+    ).toEqual([]);
     index.close();
   });
 
@@ -5811,10 +5845,18 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     // `listModelAccessibleUserMcpIds` would ignore a `user_mcp_model_access = false` org policy.
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
-      /listModelAccessibleIds:\s*\(\)\s*=>\s*listPolicyGatedModelAccessibleUserMcpIds\(\s*platform\.localIndex\.getDatabase\(\),\s*platform\.enforcedPolicy\?\.\(\),?\s*\)/,
+      /listModelAccessibleIds:\s*\(\)\s*=>\s*listPolicyGatedModelAccessibleOwnerCodeServerIds\(\s*platform\.localIndex\.getDatabase\(\),\s*platform\.enforcedPolicy\?\.\(\),?\s*\)/,
+    );
+    // Both owner-code sources list through the mesh's one router (ext_ -> extension slot).
+    expect(main).toMatch(
+      /listTools:\s*\(serviceId\)\s*=>\s*platform\.connectorMesh\.listOwnerCodeServerTools\(serviceId\)/,
     );
     expect(main).not.toMatch(/listUserMcpConnectors/);
     expect(main).not.toMatch(/\blistModelAccessibleUserMcpIds\b/);
+    // Nor may it read the extension grants itself and skip the lock-off.
+    expect(main).not.toMatch(
+      /\blistModelAccessibleExtensionGrants\b|\blistRunGrants\b|\bgetRunGrant\b/,
+    );
     // The gated lister consults the predicate BEFORE it reads the table.
     const gated = stripComments(
       await read("packages/gateway/src/connectors/user-mcp-model-capability.ts"),
@@ -5826,6 +5868,16 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     expect(body.indexOf("isUserMcpModelAccessEnabled(")).toBeLessThan(
       body.indexOf("listModelAccessibleUserMcpIds("),
     );
+    // The engine agent's combined source: the predicate precedes BOTH reads.
+    const ownerAt = gated.indexOf(
+      "export function listPolicyGatedModelAccessibleOwnerCodeServerIds(",
+    );
+    expect(ownerAt).toBeGreaterThan(-1);
+    const owner = gated.slice(ownerAt);
+    const gateAt = owner.indexOf("isUserMcpModelAccessEnabled(");
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(owner.indexOf("listModelAccessibleUserMcpIds(")).toBeGreaterThan(gateAt);
+    expect(owner.indexOf("listModelAccessibleExtensionGrants(")).toBeGreaterThan(gateAt);
   });
 
   test("the org-policy lock-off is fail-closed and read LAZILY from the live policy gate", async () => {

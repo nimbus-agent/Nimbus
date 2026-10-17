@@ -54,9 +54,10 @@ export const AI_V2_CAPABILITIES = [
   "local_finetuning",
   "agent_fleet",
   /**
-   * The engine agent being OFFERED the tools of user MCP servers registered with `--model` (I42).
-   * Locked off, no `--model` server is listed to the model on any path (enforced at the tool
-   * source, `connectors/user-mcp-model-capability.ts`). The owner's own `nimbus connector call` /
+   * The engine agent being OFFERED the tools of owner code (I42): user MCP servers registered with
+   * `--model` AND extensions approved with `nimbus extension approve <id> --model` — one shared
+   * switch. Locked off, neither is listed to the model on any path (enforced at the tool source,
+   * `connectors/user-mcp-model-capability.ts`). The owner's own `nimbus connector call` /
    * `connector tools` are owner-initiated, not model access, and are not affected.
    */
   "user_mcp_model_access",

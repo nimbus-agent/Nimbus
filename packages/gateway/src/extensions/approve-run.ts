@@ -39,6 +39,12 @@ export interface ApproveExtensionRunDeps {
   /** `[extensions] runtime` (and not demo-rooted). `false` refuses before anything is resolved. */
   readonly runtimeEnabled: boolean;
   readonly now: () => number;
+  /**
+   * `nimbus extension approve --model`: offer this extension's tools to the engine agent (I42).
+   * Absent means false. Every approval states the whole grant, so approving without it turns model
+   * access off.
+   */
+  readonly modelAccess?: boolean;
 }
 
 export interface ApproveExtensionRunResult {
@@ -47,6 +53,7 @@ export interface ApproveExtensionRunResult {
   readonly version: string;
   readonly treeDigest: string;
   readonly grants: ResolvedRunGrants;
+  readonly modelAccess: boolean;
   readonly changed: boolean;
 }
 
@@ -152,6 +159,7 @@ export function buildRunConsentPayload(
   treeDigest: string,
   grants: ResolvedRunGrants,
   env: ExtensionRunGrantEnv,
+  modelAccess: boolean,
 ): Record<string, unknown> {
   let installPath = row.install_path;
   try {
@@ -181,7 +189,7 @@ export function buildRunConsentPayload(
     // Where the code actually runs from (I43, `extension-stage.ts`): a copy re-digested against the
     // approved digest at every spawn, inside the working directory the sandbox lets it write.
     runsFrom: `a verified per-spawn copy of ${installPath}, in the extension's own writable working directory`,
-    modelAccess: false,
+    modelAccess,
   };
 }
 
@@ -230,19 +238,29 @@ export async function approveExtensionRun(
     );
   }
   const permissionsJson = serializeRunGrants(grants);
-  const base = { id: row.id, serviceId, version: row.version, treeDigest, grants };
+  const modelAccess = deps.modelAccess === true;
+  const base = { id: row.id, serviceId, version: row.version, treeDigest, grants, modelAccess };
   if (
     existing !== null &&
     existing.version === row.version &&
     existing.tree_digest === treeDigest &&
-    existing.permissions_json === permissionsJson
+    existing.permissions_json === permissionsJson &&
+    existing.model_access === (modelAccess ? 1 : 0)
   ) {
     return { ...base, changed: false };
   }
 
   const approved = await deps.gate({
     type: EXTENSION_RUN_ACTION_TYPE,
-    payload: buildRunConsentPayload(row, manifest, serviceId, treeDigest, grants, deps.env),
+    payload: buildRunConsentPayload(
+      row,
+      manifest,
+      serviceId,
+      treeDigest,
+      grants,
+      deps.env,
+      modelAccess,
+    ),
   });
   if (!approved) {
     throw new ExtensionRunGrantError(
@@ -292,7 +310,7 @@ export async function approveExtensionRun(
     version: row.version,
     tree_digest: treeDigest,
     permissions_json: permissionsJson,
-    model_access: 0,
+    model_access: modelAccess ? 1 : 0,
     approved_at: deps.now(),
   });
   return { ...base, changed: true };
