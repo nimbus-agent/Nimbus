@@ -676,7 +676,7 @@ mod tests {
     #[test]
     fn allowlist_extension_enable_but_never_approve_run() {
         // I43: an installed extension's code runs only under a run grant, and only the CLI can
-        // create one (`extension.approveRun`, TTY-only, behind the `extension.run` HITL approval).
+        // create one (`extension.approveRun`, behind the `extension.run` HITL approval).
         // `extension.enable` stays renderer-callable because it only resumes code the owner already
         // approved — the next spawn still re-verifies the tree, the grant and the signature.
         assert!(is_method_allowed("extension.enable"));

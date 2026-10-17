@@ -6141,6 +6141,36 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(assemble.indexOf("createExtensionSlotSource(", callAt + 1)).toBe(-1);
   });
 
+  test("the spec builders are named only by extension-runtime.ts, and the spec is built once, inside prepareSpawn", async () => {
+    // Both builders are exported (unit tests use them) and take a plain interface, so a second
+    // production caller could build a launchable spec without the verifier. D33(a) cannot see that:
+    // the sentinel and `selfSpawn("extension"` stay inside the builder. Any mention elsewhere — a
+    // call, an import, an aliased import — fails here.
+    const files = await readDirFiles("packages/gateway/src");
+    const builderRe = /\b(?:buildExtensionSpawnSpec|buildExtensionRuntimeManifest)\b/;
+    const outside = files
+      .filter((f) => f.rel !== "extensions/extension-runtime.ts")
+      .filter((f) => builderRe.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(outside).toEqual([]);
+    const src = stripComments(await read("packages/gateway/src/extensions/extension-runtime.ts"));
+    // Call sites, not definitions.
+    const callsOf = (name: string): number[] =>
+      [...src.matchAll(new RegExp(`(?<!function )\\b${name}\\(`, "g"))].map((m) => m.index);
+    const specCalls = callsOf("buildExtensionSpawnSpec");
+    expect(specCalls).toHaveLength(1);
+    const prepAt = src.indexOf("async prepareSpawn(");
+    expect(prepAt).toBeGreaterThan(-1);
+    expect(specCalls[0]).toBeGreaterThan(prepAt);
+    expect(specCalls[0]).toBeGreaterThan(src.indexOf("await verify(", prepAt));
+    // The manifest builder is called once, from inside the spec builder.
+    const manifestCalls = callsOf("buildExtensionRuntimeManifest");
+    expect(manifestCalls).toHaveLength(1);
+    const specDefAt = src.indexOf("export function buildExtensionSpawnSpec(");
+    expect(manifestCalls[0]).toBeGreaterThan(specDefAt);
+    expect(manifestCalls[0]).toBeLessThan(src.indexOf("export type ExtensionSlotSourceDeps"));
+  });
+
   test("the run grant is created only behind the executor-gated extension.run approval (I2 frozen set)", () => {
     expect(HITL_REQUIRED.has("extension.run")).toBe(true);
   });
