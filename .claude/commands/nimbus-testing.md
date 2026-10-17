@@ -130,8 +130,10 @@ so the failure names itself.
 
 Both retry wrappers (`ci.yml`, `_test-suite.yml`) run `scripts/ci/test-with-retry.ts`, which
 retries ONCE — only the failed files when the JUnit accounts for every failure, the whole command
-otherwise — and emits a `::warning title=Retry masked a failure::` annotation naming the failing
-test. A job that is green but mysteriously slow probably paid for a retry (a whole-command one if
+otherwise — and emits a `::warning title=Retry masked a failure::` SUMMARY annotation (attempt-1
+failure count and the retry plan; it names no test). The per-test annotations are `Flaky test`
+warnings, emitted only for an attempt-1 failure the retry's JUnit report shows passing, and none
+when the retry left no report. A job that is green but mysteriously slow probably paid for a retry (a whole-command one if
 a failure could not be attributed). An attempt silent for 5 minutes is killed as hung
 (`--silence-seconds=300`). **Read the annotations on a green
 job**, not just the conclusion.

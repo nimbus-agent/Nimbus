@@ -448,14 +448,15 @@ nimbus extension downgrade <id> --to <version> [--json]
 
 ```bash
 nimbus extension approve <id> [--model]   # TTY only, no --yes; HITL `extension.run`; writes V70 extension_run_grant
-# --model also offers its tools to the engine agent as ext_<sid>__<tool> (local owner only, each call
+# --model also offers its tools to the engine agent as <serviceId>__<tool> (local owner only, each call
 # behind the I42 prompt; shared org lockoff `user_mcp_model_access`). Every approval states the WHOLE
 # grant: re-approving without --model turns model access off.
 nimbus extension revoke <id>              # withdraw the grant; stops the extension if running
 nimbus extension rehash <id> [--yes]      # adopt the on-disk tree digest as trusted (HITL, like install)
-nimbus extension list|info <id>           # runState: disabled | no_grant | grant_stale | ready | running
-nimbus connector tools ext_<sid> [--json]  # sid = the service id approve printed (com.example.x → ext_com_example_x); starts it on first use
-nimbus connector call ext_<sid> <tool> [--input <json>]  # every call behind the I42 prompt; exit 0/1/2 = ran/failed/refused
+nimbus extension list [--json]            # every extension, with its runState
+nimbus extension info <id>                # one extension; runState: disabled | no_grant | grant_stale | ready | running
+nimbus connector tools <serviceId> [--json]  # the full service id approve printed, e.g. ext_com_example_x; starts it on first use
+nimbus connector call <serviceId> <tool> [--input <json>]  # every call behind the I42 prompt; exit 0/1/2 = ran/failed/refused
 # IPC: extension.approveRun / extension.revokeRun — CLI-only, FORBIDDEN_OVER_LAN, not on the Tauri allowlist.
 # nimbus.toml knob:
 #   [extensions] runtime = true   # default; false runs no extension and approve refuses

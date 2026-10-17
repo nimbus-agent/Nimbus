@@ -98,7 +98,7 @@ Install and run are **different consents**. Install records what arrived; a run 
 | 1 | Install gated in the executor (HITL `extension.install`); whole-tree digest (V66, `tree_digest`); `nimbus extension rehash` (gated like install; refuses on a manifest/entry hash mismatch) | `extensions/install-from-local.ts`, `extensions/tree-digest.ts` (`computeExtensionTreeDigest`), `index/extension-tree-digest-v66-sql.ts` |
 | 2 | Run grants: `nimbus extension approve <id>` (TTY only, **no `--yes`**) under HITL `extension.run` (I2 frozen set) records version, tree digest, resolved network/read/write grants and an `ext_` service id; `revoke` withdraws (ungated — it only narrows) | `extensions/approve-run.ts` (`approveExtensionRun`, `revokeExtensionRun`), `extensions/run-grant-store.ts`, `index/extension-run-grant-v70-sql.ts`, `extensions/extension-run-grants.ts` |
 | 3 | The runtime, invariant I43: verify → stage → build → spawn, on first use (not at approval, not at boot) | `extensions/extension-runtime.ts` (`prepareSpawn`), `extensions/verified-extension.ts`, `extensions/extension-stage.ts`, `extensions/run-extension-entry.ts`, `connectors/lazy-mesh/{extension-slot,extension-slot-source}.ts` |
-| 4 | `approve --model`: the extension's tools join the I42 model path as `ext_<id>__<tool>` | `run-grant-store.ts`'s `listModelAccessibleExtensionGrants`, mesh `listOwnerCodeServerTools` |
+| 4 | `approve --model`: the extension's tools join the I42 model path as `<serviceId>__<tool>` (e.g. `ext_com_example_x__search`) | `run-grant-store.ts`'s `listModelAccessibleExtensionGrants`, mesh `listOwnerCodeServerTools` |
 
 **The spawn path (I43), in order — keep it ordered:**
 

@@ -266,7 +266,7 @@ No production code constructs a `VoiceService` (`ctx.options.voiceService` is se
 | `extension.revokeRun` | request | Withdraw the run grant (stops it if running). CLI-only, LAN-forbidden |
 | `extension.stateChanged` | notification | Rides the `gateway.event` envelope (`nimbus tail --filter extension`) |
 
-An approved extension runs as a lazy, sandboxed MCP stdio server (`mesh:ext:<serviceId>`, service id `ext_` + the lowercased id with every non-alphanumeric as `_`, `extensions/extension-service-id.ts`), started on first use from a verified per-spawn copy — never at boot. The owner calls its tools through `connector.userMcpTools` / `connector.userMcpCall` (`nimbus connector tools|call ext_<sid>`, the `ext_` service id `approve` prints), each call behind the I42 prompt. `[extensions] runtime = false` (read once at boot) runs none. Invariant I43; `extensions/extension-runtime.ts`.
+An approved extension runs as a lazy, sandboxed MCP stdio server (`mesh:ext:<serviceId>`, service id `ext_` + the lowercased id with every non-alphanumeric as `_`, `extensions/extension-service-id.ts`), started on first use from a verified per-spawn copy — never at boot. The owner calls its tools through `connector.userMcpTools` / `connector.userMcpCall` (`nimbus connector tools|call <serviceId>`, passing the full `ext_…` service id `approve` prints), each call behind the I42 prompt. `[extensions] runtime = false` (read once at boot) runs none. Invariant I43; `extensions/extension-runtime.ts`.
 
 ---
 
