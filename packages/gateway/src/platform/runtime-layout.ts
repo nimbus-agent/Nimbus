@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 export const ROLE_SENTINELS = {
   sandbox: "__nimbus-sandbox",
   connector: "__nimbus-connector",
+  extension: "__nimbus-extension",
 } as const;
 
 export type SelfRole = keyof typeof ROLE_SENTINELS;
