@@ -20,9 +20,17 @@
 // said a retry had masked a failure were mostly lost. The annotations are now this script's own,
 // built from the JUnit, at most 10 of each kind, the most important first.
 //
+// An attempt is killed at `--cap-seconds` of wall clock, and, with `--silence-seconds`, once it has
+// printed nothing for that long. Under `--parallel`, Bun prints a file's results when the file
+// finishes, so a long silence means no worker finished anything. A HUNG worker is not stopped by
+// Bun's per-test `--timeout`: on macOS a `node:child_process` child spawned inside a `--parallel`
+// worker can exit without Bun ever noticing (oven-sh/bun#41024), and the attempt then idled until
+// the cap — three macOS PR legs on 2026-10-16/17 sat 19–22 minutes on one file each. Either kill
+// exits 124 and gets a full re-run.
+//
 // Usage:
 //   bun scripts/ci/test-with-retry.ts --label=<l> --cap-seconds=<n> --report-dir=<dir>
-//     [--final-junit=<path>] -- bun test <paths…> <flags…>
+//     [--silence-seconds=<n>] [--final-junit=<path>] -- bun test <paths…> <flags…>
 //
 // Writes `<dir>/junit-attempt-<N>.xml` and `<dir>/attempt-<N>.log` per attempt, appends a block to
 // `$GITHUB_STEP_SUMMARY` when a retry ran, and exits with the final attempt's code (2 on misuse).
@@ -70,10 +78,16 @@ export interface Outcome {
   readonly final: AttemptResult | undefined;
 }
 
+/** When a running attempt is killed: the wall-clock cap, and optionally a silence limit. */
+export interface Limits {
+  readonly capSeconds: number;
+  readonly silenceSeconds: number | undefined;
+}
+
 export interface Deps {
   readonly run: (
     argv: readonly string[],
-    capSeconds: number,
+    limits: Limits,
     logPath: string,
   ) => Promise<{ code: number; output: string }>;
   readonly readText: (path: string) => Promise<string | undefined>;
@@ -88,6 +102,24 @@ const EXIT_TIMEOUT = 124;
 const EXIT_USAGE = 2;
 const KILL_GRACE_MS = 10_000;
 const DRAIN_GRACE_MS = 10_000;
+const WATCH_INTERVAL_MS = 1_000;
+
+/**
+ * Why a running attempt must be killed now, if it must: `cap` once it has run `capSeconds`,
+ * `silence` once it has printed nothing for `silenceSeconds`. The cap is checked first, so an
+ * attempt that is both over the cap and silent reports the cap.
+ */
+export function killReason(
+  elapsedMs: number,
+  silentMs: number,
+  limits: Limits,
+): "cap" | "silence" | undefined {
+  if (elapsedMs >= limits.capSeconds * 1000) return "cap";
+  if (limits.silenceSeconds !== undefined && silentMs >= limits.silenceSeconds * 1000) {
+    return "silence";
+  }
+  return undefined;
+}
 
 // ── JUnit ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -428,9 +460,8 @@ export function summaryMarkdown(o: Outcome): string {
 
 // ── Running it ────────────────────────────────────────────────────────────────────────────────
 
-interface Options {
+interface Options extends Limits {
   readonly label: string;
-  readonly capSeconds: number;
   readonly reportDir: string;
   readonly finalJunit: string | undefined;
 }
@@ -438,12 +469,20 @@ interface Options {
 function parseOptions(args: readonly string[]): Options | undefined {
   const get = (name: string): string | undefined =>
     args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+  const positive = (raw: string | undefined): number | undefined => {
+    const n = Number(raw);
+    return raw !== undefined && Number.isFinite(n) && n > 0 ? n : undefined;
+  };
   const label = get("label");
-  const capSeconds = Number(get("cap-seconds"));
+  const capSeconds = positive(get("cap-seconds"));
+  const silenceRaw = get("silence-seconds");
+  const silenceSeconds = positive(silenceRaw);
   const reportDir = get("report-dir")?.replace(/[\\/]+$/, "");
   if (label === undefined || reportDir === undefined || reportDir === "") return undefined;
-  if (!Number.isFinite(capSeconds) || capSeconds <= 0) return undefined;
-  return { label, capSeconds, reportDir, finalJunit: get("final-junit") };
+  if (capSeconds === undefined) return undefined;
+  // Given but unusable is a mistake to report, not a watchdog to silently drop.
+  if (silenceRaw !== undefined && silenceSeconds === undefined) return undefined;
+  return { label, capSeconds, silenceSeconds, reportDir, finalJunit: get("final-junit") };
 }
 
 interface Attempt extends AttemptResult {
@@ -465,7 +504,7 @@ async function runAttempt(
   deps.emit(`::stop-commands::${token}`);
   const { code, output } = await deps.run(
     [...cmd, "--reporter=junit", `--reporter-outfile=${outfile}`],
-    opts.capSeconds,
+    { capSeconds: opts.capSeconds, silenceSeconds: opts.silenceSeconds },
     `${opts.reportDir}/attempt-${String(n)}.log`,
   );
   deps.emit(`::${token}::`);
@@ -495,7 +534,7 @@ export async function main(argv: readonly string[], deps: Deps = realDeps()): Pr
     !cmd.some((a) => a.startsWith("--reporter"));
   if (!usable) {
     console.error(
-      "usage: test-with-retry.ts --label=<l> --cap-seconds=<n> --report-dir=<dir> [--final-junit=<path>] -- bun test <paths…> <flags…> (no --reporter flags: this script owns them)",
+      "usage: test-with-retry.ts --label=<l> --cap-seconds=<n> --report-dir=<dir> [--silence-seconds=<n>] [--final-junit=<path>] -- bun test <paths…> <flags…> (no --reporter flags: this script owns them)",
     );
     return EXIT_USAGE;
   }
@@ -529,17 +568,19 @@ export async function main(argv: readonly string[], deps: Deps = realDeps()): Pr
 }
 
 /**
- * Spawns the command, streams its output to ours, and kills it at the wall-clock cap (exit 124,
- * like coreutils `timeout`, which the macOS runner lacks). After the child exits, its pipes get a
- * short grace to drain and are then abandoned: a killed `bun test` can leave a worker holding them
- * open, and waiting on that would turn a timeout back into a hang.
+ * Spawns the command, streams its output to ours, and kills it when `killReason` says so (exit
+ * 124, like coreutils `timeout`, which the macOS runner lacks). After the child exits, its pipes
+ * get a short grace to drain and are then abandoned: a killed `bun test` can leave a worker holding
+ * them open, and waiting on that would turn a timeout back into a hang.
  */
-async function spawnWithCap(
+async function spawnWithLimits(
   argv: readonly string[],
-  capSeconds: number,
+  limits: Limits,
   logPath: string,
 ): Promise<{ code: number; output: string }> {
   const child = Bun.spawn([...argv], { stdin: "inherit", stdout: "pipe", stderr: "pipe" });
+  const startedAt = Date.now();
+  let lastOutputAt = startedAt;
   const chunks: string[] = [];
   // Structural: Bun's global reader type and node:stream/web's differ, and only cancel() is needed.
   const readers: { cancel: () => Promise<void> }[] = [];
@@ -550,28 +591,34 @@ async function spawnWithCap(
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
+      lastOutputAt = Date.now();
       process.stdout.write(value);
       chunks.push(decoder.decode(value, { stream: true }));
     }
   };
   const pumps = Promise.all([pump(child.stdout), pump(child.stderr)]).catch(() => undefined);
-  let timedOut = false;
-  const killTimer = setTimeout(() => {
-    timedOut = true;
+  let killedFor: "cap" | "silence" | undefined;
+  const watch = setInterval(() => {
+    const now = Date.now();
+    killedFor ??= killReason(now - startedAt, now - lastOutputAt, limits);
+    if (killedFor === undefined) return;
+    clearInterval(watch);
     child.kill("SIGTERM");
     setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS).unref();
-  }, capSeconds * 1000);
+  }, WATCH_INTERVAL_MS);
   const exitCode = await child.exited;
-  clearTimeout(killTimer);
+  clearInterval(watch);
   await Promise.race([pumps, Bun.sleep(DRAIN_GRACE_MS)]);
   for (const r of readers) r.cancel().catch(() => undefined);
   const output = chunks.join("");
   await mkdir(dirname(logPath), { recursive: true }).catch(() => undefined);
   await writeFile(logPath, output).catch(() => undefined);
-  if (timedOut) {
-    console.log(
-      `\n[test-with-retry] exceeded ${String(capSeconds)}s — killed (exit ${String(EXIT_TIMEOUT)})`,
-    );
+  if (killedFor !== undefined) {
+    const why =
+      killedFor === "cap"
+        ? `exceeded ${String(limits.capSeconds)}s`
+        : `printed nothing for ${String(limits.silenceSeconds)}s`;
+    console.log(`\n[test-with-retry] ${why} — killed (exit ${String(EXIT_TIMEOUT)})`);
     return { code: EXIT_TIMEOUT, output };
   }
   return { code: exitCode, output };
@@ -579,7 +626,7 @@ async function spawnWithCap(
 
 function realDeps(): Deps {
   return {
-    run: spawnWithCap,
+    run: spawnWithLimits,
     readText: async (path) => {
       try {
         return await readFile(path, "utf8");

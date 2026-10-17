@@ -190,6 +190,33 @@ function paramsOf(fake: FakeBrowser, method: string): Record<string, unknown> {
   return frame["params"] as Record<string, unknown>;
 }
 
+/** How many frames for `method` the fake has received. */
+function countSent(fake: FakeBrowser, method: string): number {
+  return sentMethods(fake).filter((m) => m === method).length;
+}
+
+/**
+ * Resolves once `ready()` holds, re-checking every 5 ms, and fails after `timeoutMs`. Every wait in
+ * this file that precedes an assertion that something HAPPENED goes through this. They were fixed
+ * sleeps sized for a fast machine, and on a loaded macOS runner the egress test's row landed inside
+ * its 60 ms while `Fetch.continueRequest` had not yet reached the fake (2026-10-17, run
+ * 39007501201). A fixed sleep remains only before an assertion that something did NOT happen,
+ * where a slow runner can make the test pass too easily but never fail it.
+ */
+async function until(
+  ready: () => boolean | Promise<boolean>,
+  what: string,
+  timeoutMs = 4_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await ready())) {
+    if (Date.now() > deadline) {
+      throw new Error(`gave up after ${String(timeoutMs)} ms waiting for ${what}`);
+    }
+    await Bun.sleep(5);
+  }
+}
+
 /**
  * Await a rejection and return its message, instead of `await expect(p).rejects.toThrow(...)`.
  *
@@ -387,7 +414,7 @@ describe("openBrowserLane — the browser egress class (I29)", () => {
         request: { url: "https://example.com/login?token=SECRET" },
       },
     });
-    await Bun.sleep(60);
+    await until(() => countSent(fake, "Fetch.continueRequest") > 0, "Fetch.continueRequest");
     const rows = egressRows(db);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.destination).toBe("https://example.com");
@@ -409,7 +436,7 @@ describe("openBrowserLane — the browser egress class (I29)", () => {
         request: { url: "https://evil.example/collect" },
       },
     });
-    await Bun.sleep(60);
+    await until(() => countSent(fake, "Fetch.failRequest") > 0, "Fetch.failRequest");
     const rows = egressRows(db);
     expect(rows[0]?.result_status).toBe("blocked");
     expect(rows[0]?.destination).toBe("https://evil.example");
@@ -430,7 +457,7 @@ describe("openBrowserLane — the browser egress class (I29)", () => {
         request: { url: "https://elsewhere.example/x" },
       },
     });
-    await Bun.sleep(60);
+    await until(() => egressRows(db).length > 0, "an egress row");
     expect(egressRows(db)[0]?.payload_summary.startsWith("XHR:")).toBe(true);
   });
 
@@ -449,7 +476,14 @@ describe("openBrowserLane — the browser egress class (I29)", () => {
         params: { requestId: id, resourceType: type, request: { url: "https://example.com/a" } },
       });
     }
-    await Bun.sleep(80);
+    // Wait for all three to be ANSWERED: `every` over the rows passed vacuously while none had
+    // landed yet, which made a fixed sleep here unable to fail even when the guard was broken.
+    await until(
+      () => countSent(fake, "Fetch.continueRequest") + countSent(fake, "Fetch.failRequest") === 3,
+      "an answer to all three requests",
+    );
+    expect(countSent(fake, "Fetch.failRequest")).toBe(0);
+    expect(egressRows(db).length).toBeGreaterThan(0);
     expect(egressRows(db).every((r) => r.result_status === "authorized")).toBe(true);
   });
 
@@ -466,7 +500,10 @@ describe("openBrowserLane — the browser egress class (I29)", () => {
         },
       });
     }
-    await Bun.sleep(80);
+    await until(
+      () => countSent(fake, "Fetch.continueRequest") === 3,
+      "three Fetch.continueRequest frames",
+    );
     expect(egressRows(db)).toHaveLength(1);
     // Every request is still answered, even though only the first was rowed.
     expect(sentMethods(fake).filter((m) => m === "Fetch.continueRequest")).toHaveLength(3);
@@ -487,7 +524,10 @@ describe("openBrowserLane — the browser egress class (I29)", () => {
         request: { url: "https://example.com/" },
       },
     });
-    await Bun.sleep(80);
+    await until(
+      () => countSent(fake, "Fetch.failRequest") > 0 && !lane.isAlive(),
+      "the failed request and the lane's teardown",
+    );
     expect(sentMethods(fake)).toContain("Fetch.failRequest");
     expect(sentMethods(fake)).not.toContain("Fetch.continueRequest");
     // No later request can proceed unrecorded either.
@@ -564,7 +604,7 @@ describe("openBrowserLane — the BrowserLane surface", () => {
       sessionId: "cdp-session-1",
       params: { frame: { url: "https://example.com/a" } },
     });
-    await Bun.sleep(40);
+    await until(() => lane.currentOrigin() === "https://example.com", "the main-frame origin");
     expect(lane.currentOrigin()).toBe("https://example.com");
 
     // A SUB-frame navigation must not move the page's origin — otherwise an embedded iframe could
@@ -701,7 +741,7 @@ describe("openBrowserLane — isAlive drives terminated_target_lost", () => {
   test("a DROPPED transport makes the lane not-alive", async () => {
     const { lane, fake } = await openAgainstFake();
     fake.drop();
-    await Bun.sleep(60);
+    await until(() => !lane.isAlive(), "the lane to notice the dropped transport");
     expect(lane.isAlive()).toBe(false);
   });
 
@@ -861,7 +901,7 @@ describe("openBrowserLane — malformed protocol payloads fail safe", () => {
       sessionId: "cdp-session-1",
       params: { requestId: "r1", resourceType: 42, request: { url: 99 } },
     });
-    await Bun.sleep(60);
+    await until(() => countSent(fake, "Fetch.failRequest") > 0, "Fetch.failRequest");
     const rows = egressRows(db);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.result_status).toBe("blocked");
@@ -1083,7 +1123,11 @@ withChrome("openBrowserLane — against a REAL Chromium (I35 re-verify item 1)",
           "</form><p id='out'></p><p id='sub'></p>",
       );
       await lane.type("#u", "alice");
-      await Bun.sleep(200);
+      await until(
+        async () => (await lane.readText()).includes("alice"),
+        "the typed text to be mirrored",
+        10_000,
+      );
       // Asserted over readText, not domSnapshot: the snapshot serialises the `onsubmit` ATTRIBUTE,
       // whose source text contains the sentinel whether or not the handler ever ran.
       const text = await lane.readText();

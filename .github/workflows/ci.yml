@@ -528,7 +528,15 @@ jobs:
         # (2026-08-28) and 1500 s (2026-09-30); each value expired once healthy runs grew into it.
         # Healthy single-attempt steps 2026-10-10 → 10-16: windows 1/2 3.7 min and 2/2 8.7 min
         # median (p90 10.5), macOS 4.2 min. Raising it moves `timeout-minutes` above with it.
-        run: bun scripts/ci/test-with-retry.ts --label="${{ matrix.label }}" --cap-seconds=1500 --report-dir="${RUNNER_TEMP}" -- bun test packages/gateway packages/cli scripts --timeout=60000 --parallel --shard=${{ matrix.shard }} --timings="${RUNNER_TEMP}/ci-test-timings.json"
+        #
+        # `--silence-seconds=300` ends an attempt that has printed nothing for 5 minutes. Under
+        # `--parallel` Bun prints each file when it finishes, so that long a silence means no worker
+        # is finishing anything: a hung one. Three macOS legs on 2026-10-16/17 hung on one file
+        # (oven-sh/bun#41024, a child's exit never seen) and each sat idle 19–22 min until the cap.
+        # The slowest healthy file in run 39002089029 took 23 s on macOS and 36 s on Windows, and a
+        # file whose tests time out one after another goes quiet 60 s per test — 5 minutes allows
+        # for five of those in a row.
+        run: bun scripts/ci/test-with-retry.ts --label="${{ matrix.label }}" --cap-seconds=1500 --silence-seconds=300 --report-dir="${RUNNER_TEMP}" -- bun test packages/gateway packages/cli scripts --timeout=60000 --parallel --shard=${{ matrix.shard }} --timings="${RUNNER_TEMP}/ci-test-timings.json"
         env:
           CI: "true"
 
@@ -840,6 +848,14 @@ jobs:
     with:
       runner: ${{ matrix.os }}
       run-packaging: ${{ matrix.os == 'ubuntu-24.04' }}
+      # On macOS and Windows the separate Integration / E2E Gateway / E2E CLI jobs re-ran, one
+      # process at a time, files the unit job's whole-repo run already collects. In the 124 push
+      # runs from 2026-09-17 to 2026-10-17 they failed 6 times, all on Windows, each time with that
+      # run's Windows unit job green on the same files; and macOS allows 5 concurrent jobs on every
+      # plan below Enterprise, so these were 3 of a push's 6 macOS jobs, queueing every PR's macOS
+      # leg behind them in a burst. `cross-platform-parity.test.ts` fails if the unit command stops
+      # covering their trees. Ubuntu keeps them: they are PR gates there.
+      run-integration-and-e2e: ${{ matrix.os == 'ubuntu-24.04' }}
     secrets:
       # Optional; the reusable workflow silently skips the SonarQube step
       # when this is unset.

@@ -29,6 +29,14 @@ on:
           release callers leave it true.
         type: boolean
         default: true
+      run-integration-and-e2e:
+        description: >-
+          Also run the integration and e2e trees as jobs of their own (serial, one process).
+          `unit-coverage` collects every one of those files too, so ci.yml turns this off on
+          the macOS/Windows push legs, whose unit run is the whole repo; Ubuntu keeps the jobs,
+          which are PR gates there.
+        type: boolean
+        default: true
     secrets:
       SONAR_TOKEN:
         description: |
@@ -360,10 +368,22 @@ jobs:
           # `coverage/lcov.info` matches the prior project-wide behaviour.
           # `--parallel`, isolated: uninstrumented, so nothing to amortize, and it is the shape the
           # macOS/Windows legs already run these same files in.
+          #
+          # Fenced off from workflow-command processing. Several of these tests drive a gate whose
+          # output IS workflow commands (the demo-tour judge, the credential-health report, the
+          # native-deps and connector-skew audits), and unfenced each fixture line became a real
+          # annotation: 22 per run, mostly red "failure" ones on a green job, and they spent the
+          # step's 10-error quota. A failing test here is still annotated, by the JUnit report step
+          # below, and the macOS/Windows legs run these same files with their own annotations.
+          fence="$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+          echo "::stop-commands::${fence}"
+          scripts_rc=0
           bun test scripts \
             --parallel \
             --reporter=junit \
-            --reporter-outfile=junit-reports/junit-unit-scripts.xml
+            --reporter-outfile=junit-reports/junit-unit-scripts.xml || scripts_rc=$?
+          echo "::${fence}::"
+          exit "${scripts_rc}"
         env:
           CI: "true"
 
@@ -386,8 +406,10 @@ jobs:
         # 38949021174). Timings from an uninstrumented run are the PR shards' own conditions.
         #
         # `--final-junit` writes the report of record for the JUnit check below: attempt 1's, or
-        # attempt 1's with the retried files replaced by the retry's results.
-        run: bun scripts/ci/test-with-retry.ts --label="${{ inputs.runner }} (push)" --cap-seconds=1500 --report-dir="${RUNNER_TEMP}" --final-junit=junit-reports/junit-unit.xml -- bun test packages/gateway packages/cli scripts --timeout=60000 --parallel --timings="${RUNNER_TEMP}/test-timings.json" --update-timings
+        # attempt 1's with the retried files replaced by the retry's results. `--silence-seconds`
+        # ends a hung attempt after 5 quiet minutes rather than at the cap; why 300: `ci.yml`'s
+        # cross-platform step, which runs the same command.
+        run: bun scripts/ci/test-with-retry.ts --label="${{ inputs.runner }} (push)" --cap-seconds=1500 --silence-seconds=300 --report-dir="${RUNNER_TEMP}" --final-junit=junit-reports/junit-unit.xml -- bun test packages/gateway packages/cli scripts --timeout=60000 --parallel --timings="${RUNNER_TEMP}/test-timings.json" --update-timings
         env:
           CI: "true"
 
@@ -641,7 +663,7 @@ jobs:
   # ── Integration tests ──────────────────────────────────────────────────────
   integration:
     name: Integration — ${{ inputs.runner }}
-    if: inputs.run-tests
+    if: inputs.run-tests && inputs.run-integration-and-e2e
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:
@@ -771,7 +793,7 @@ jobs:
   # ── E2E Gateway tests ──────────────────────────────────────────────────────
   e2e-gateway:
     name: E2E Gateway — ${{ inputs.runner }}
-    if: inputs.run-tests
+    if: inputs.run-tests && inputs.run-integration-and-e2e
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:
@@ -885,7 +907,7 @@ jobs:
   # ── E2E CLI tests ──────────────────────────────────────────────────────────
   e2e-cli:
     name: E2E CLI — ${{ inputs.runner }}
-    if: inputs.run-tests
+    if: inputs.run-tests && inputs.run-integration-and-e2e
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:

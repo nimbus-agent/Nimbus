@@ -22,18 +22,6 @@
       "execMedian": 0.83,
       "execSpread": 0.05
     },
-    "Nimbus :: CI :: CI — TS/Bun (macos-15) / E2E CLI — macos-15": {
-      "execMedian": 1.43,
-      "execSpread": 0.13
-    },
-    "Nimbus :: CI :: CI — TS/Bun (macos-15) / E2E Gateway — macos-15": {
-      "execMedian": 1.27,
-      "execSpread": 0.23
-    },
-    "Nimbus :: CI :: CI — TS/Bun (macos-15) / Integration — macos-15": {
-      "execMedian": 1.3,
-      "execSpread": 0.42
-    },
     "Nimbus :: CI :: CI — TS/Bun (macos-15) / Static — macos-15": {
       "execMedian": 4.3,
       "execSpread": 0.98
@@ -65,18 +53,6 @@
     "Nimbus :: CI :: CI — TS/Bun (ubuntu-24.04) / Unit + Coverage — ubuntu-24.04": {
       "execMedian": 12.22,
       "execSpread": 0.22
-    },
-    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / E2E CLI — windows-2025": {
-      "execMedian": 2.52,
-      "execSpread": 0.13
-    },
-    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / E2E Gateway — windows-2025": {
-      "execMedian": 2.25,
-      "execSpread": 0.22
-    },
-    "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Integration — windows-2025": {
-      "execMedian": 2.95,
-      "execSpread": 0.48
     },
     "Nimbus :: CI :: CI — TS/Bun (windows-2025) / Static — windows-2025": {
       "execMedian": 6.73,
