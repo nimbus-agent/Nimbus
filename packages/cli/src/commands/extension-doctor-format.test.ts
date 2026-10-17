@@ -46,6 +46,22 @@ describe("doctorExtensionsLines", () => {
     });
   });
 
+  test("a stale grant that had model access says to re-approve WITH --model", () => {
+    // Every approval states the whole grant: following a bare `approve <id>` hint after an update
+    // would silently turn model access off.
+    const r = doctorExtensionsLines({
+      runtimeEnabled: true,
+      extensions: [
+        { id: "a", runState: "no_grant", runGrant: null },
+        { id: "b", runState: "grant_stale", runGrant: { modelAccess: true } },
+        { id: "c", runState: "grant_stale", runGrant: { modelAccess: false } },
+      ],
+    });
+    expect(r.lines).toEqual([
+      "[warn] Extensions: 3 installed extension(s) not approved to run, or approved for an older version (a, b, c) — nimbus extension approve <id>; add --model to keep model access for: b",
+    ]);
+  });
+
   test("more than five are capped with a count of the rest", () => {
     const ids = ["a", "b", "c", "d", "e", "f", "g"];
     const r = doctorExtensionsLines({
