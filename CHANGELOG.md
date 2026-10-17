@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [9.2.0](https://github.com/nimbus-agent/Nimbus/compare/v9.1.0...v9.2.0) (2026-10-17)
+
+
+### Features
+
+* **extensions:** offer --model extensions to the engine agent (runtime PR 4 of 4) ([#1692](https://github.com/nimbus-agent/Nimbus/issues/1692)) ([075ebb2](https://github.com/nimbus-agent/Nimbus/commit/075ebb2c7af0c974b6074d91ac663b192963aeef))
+
 ## [9.1.0](https://github.com/nimbus-agent/Nimbus/compare/v9.0.0...v9.1.0) (2026-10-17)
 
 
