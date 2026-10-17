@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792210944071,
+  "lastUpdate": 1792211383688,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d796cfbf44934c6c4019ee956b943beb6418f9d1",
-          "message": "fix(extensions): accept entrypoint as a fallback for entry (#991)\n\n`parseExtensionManifestForRegistry` reads `o[\"entry\"]` with no fallback.\n**All 94 connectors in `packages/mcp-connectors/` declare\n`\"entrypoint\"`**, as does `packages/cli/src/commands/scaffold.ts`.\nNothing normalises between the two names.\n\nConsumers then default to `\"dist/index.js\"`\n(`install-from-local.ts:725`, `verify-extensions.ts:177`) while every\nconnector builds `dist/server.js`. So installing one records an **empty\nentry hash**, and verification later fails with `\"entry file missing\"`.\n\n## Who this actually affects\n\nThe 94 are unaffected in practice — they are workspace packages that\nnever traverse `install-from-local`. The reason this matters is\n`create-nimbus-connector`, which *generates* connectors intended to be\ninstalled as extensions. Every one of them would hit this.\n\nThere is also a wry detail worth recording: `nimbus scaffold extension`\nemits the same ignored `entrypoint` key, but pairs it with\n`dist/index.js` — which happens to equal the default. **It works by\ncoincidence, not by correctness.**\n\n## The change\n\nOne expression. `entry` still wins where both keys are present;\nbehaviour is unchanged when `entry` is present and when neither is.\n\n## Scope, confirmed by a surprise\n\nThe **71 tests pinning the `dist/index.js` default live outside\n`manifest.test.ts`** — in `install-from-local.test.ts`,\n`verify-extensions.test.ts` and `hard-disable.test.ts`. `manifest.ts`\nnever applied that default itself; it is applied downstream by the\nconsumers.\n\nThat confirms the fix is correctly scoped to the parser alone and does\nnot need to touch those defaults, which continue to apply whenever\nneither key is present.\n\n## Verification\n\nThree tests written first — fallback, entry-wins-when-both-present,\nneither-present-stays-undefined — and the fallback test was confirmed to\nfail for the right reason (`Received: undefined`) before the fix.\n\n```\nbun test packages/gateway/src/extensions/     373 pass, 4 skip, 0 fail\ninstall-from-local + verify-extensions + hard-disable   109 pass, 0 fail\nbun run typecheck (full monorepo)             exit 0\nbiome check (both changed files)              clean\n```\n\nNo repo audit covers this parser — all `audit:*` scripts and\n`scripts/structure-audit/*` were checked; the only manifest-related one\n(`check-nimbus-invariants.ts`) targets an unrelated\n`connector-secrets-manifest.ts`.",
-          "timestamp": "2026-07-31T14:20:44+03:00",
-          "tree_id": "c43d9e4ad3ea38a67617d35cc5e780ef5263d96d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d796cfbf44934c6c4019ee956b943beb6418f9d1"
-        },
-        "date": 1785497533529,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 304.60163664999965,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.9295752999991,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 254.03677480000079,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "200cd105e92867c861dfa6da9eea6164c6aae297",
+          "message": "chore: release main (#1678)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>7.47.1</summary>\n\n##\n[7.47.1](https://github.com/nimbus-agent/Nimbus/compare/v7.47.0...v7.47.1)\n(2026-10-17)\n\n\n### Performance Improvements\n\n* **index:** build a fresh database without a flush per migration step\n([#1675](https://github.com/nimbus-agent/Nimbus/issues/1675))\n([9a0330f](https://github.com/nimbus-agent/Nimbus/commit/9a0330f69b267e2ee9d57e5383a0517b8d5eb3e4))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-17T07:13:10+03:00",
+          "tree_id": "70df65a6fbaa602ce1fe998784d1f4c7da09850b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/200cd105e92867c861dfa6da9eea6164c6aae297"
+        },
+        "date": 1792211378783,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 165.88983384999992,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 165.44237585000192,
             "unit": "ms"
           }
         ]
