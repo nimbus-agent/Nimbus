@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792219167061,
+  "lastUpdate": 1792219538716,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "bed4f385c7130da4fc23499a39073e8b5772cf4e",
-          "message": "refactor(glossary): clear all 44 open SonarCloud findings (#1001)\n\nClears all **44 open SonarCloud findings** (3 CRITICAL, 41 MINOR) in\ncode. No exclusions, no `NOSONAR`, no deleted or weakened tests.\n\n## The three CRITICAL cognitive-complexity findings\n\n`agents/_lib/render.ts:273` (complexity 39 vs 15 allowed),\n`glossary/glossary-extract.ts:246` and\n`config/nimbus-toml-glossary-terms.ts:70` were decomposed into named\nprivate helpers, following the pattern established in 37298086. The\noriginal explanatory comments were carried verbatim into the extracted\nfunctions so no design rationale was lost.\n\n## The 41 MINOR findings\n\nMechanical, behaviour-identical rewrites: `toHaveLength`/`toBeNull`\nmatchers over generic assertions (31 of them), variadic `push`,\n`String.raw`, `replaceAll`, `.at(-1)`, one merged duplicate import, and\na `GlossaryMatchedVia` type alias.\n\n## Behaviour preservation was proven, not assumed\n\nAn independent verifier ran a **13,824-case differential** on\n`renderGlossary` — extracting main's implementation and comparing output\nacross every combination of mode, matchedVia, definitionSource, entry\ncount, synonyms, near-misses, top-sources, null definitions, missing\nquery, suggestions and gaps. **Zero mismatches.** `collectBlocks` was\ndifferentially tested the same way.\n\n## Reviewer's eye\n\n`consolidatePhase`'s return type changed from an inline 8-field object\nliteral to `ConsolidationTally & { aborted: boolean }`. The resolved\nshape is identical and both return sites spread the tally, but it is the\nlargest single change here. The 217 glossary tests cover the\nabort/resume, backoff and progress-event paths that read every counter.\n\n## Verification\n\n`biome check packages scripts` 0 · gateway + cli `tsc --noEmit` 0 ·\n**955 scoped tests across 67 files** pass · every fast preflight gate\nrun individually, all 0.\n\nNote: SonarCloud is only authoritative after a re-scan, which happens on\nthis PR. The local gates do not prove the board reaches zero — the scan\ndoes.\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-01T07:33:26Z",
-          "tree_id": "883bb5090c81dede507ca0ebe8cf18ee63355afc",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/bed4f385c7130da4fc23499a39073e8b5772cf4e"
-        },
-        "date": 1785570288762,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.386841000001,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.6647055500049,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 201.71937189999807,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ac8a60064f64ef3942db29357d2c6c057984c52f",
+          "message": "test: fix three flakes the retry was hiding, and stop test fixtures becoming annotations (#1687)\n\n## Summary\n\nThe flaky-test report over the last 7 days lists 25 tests that failed\nonce and passed on the retry. Most of them predate the fixes that landed\ntoday: #1676 moved Windows TEMP to the fast disk, #1680 fixed the\nsandbox-profile races, and #1685 dealt with the macOS child-exit hang.\nSince #1676 merged, four kinds still fail. This PR fixes three, and\nstops the Linux job from turning test fixtures into annotations.\n\n**1. `browser.test.ts` — a fixed sleep raced the fake browser.** The\negress test emits a paused request, sleeps 60 ms, then asserts. On a\nloaded macOS runner the ledger row landed inside the 60 ms but\n`Fetch.continueRequest` had not yet reached the fake: run 39007501201,\nline 398. Of the file's 18 fixed sleeps, 10 came before an assertion\nthat something HAPPENED, and those now wait for that condition through a\nsmall `until()` helper. The 8 before an assertion that something did NOT\nhappen stay, since a slow runner can make them pass too easily but never\nfail them. One test was strengthened on the way: \"every row is\nauthorized\" passed vacuously while no row had landed, so it now waits\nuntil all three requests are answered and checks that none was failed.\n\n**2. `QueryInput.test.tsx` — the same pattern in the TUI.** \"Up cycles\nto oldest entry and stops\" pressed Up, waited 10 ms, and read the frame;\non Windows the frame still said `three` when `two` was expected (run\n38969407327). The 8 waits before a positive assertion now use the file's\nown `waitFor`, which its other history tests already used.\n\n**3. `win32.coverage.test.ts` — the macOS child-exit bug again.** A case\nthat waits on the stand-in helper's `exit` sat out its 60 s timeout on\nmacOS (run 38969543608). This is the Bun bug from #1685:\noven-sh/bun#41024, where a `node:child_process` child inside a\n`--parallel` worker exits without Bun noticing. Both cases now run on\nLinux only. Its symlinked paths make Linux canonicalise both spellings\ntoo, so Linux still checks everything the cases claim.\n\n**4. No more fake annotations on the green Linux job.** `bun test\nscripts` runs tests of gates whose output IS workflow commands: the\ndemo-tour judge, the credential-health report, and the native-deps and\nconnector-skew audits. Unfenced, each fixture line became a real\nannotation, 22 per run and mostly red \"failure\" ones, spending the\nstep's 10-error quota. That one command is now fenced with\n`::stop-commands::`, the way `test-with-retry.ts` fences the\nmacOS/Windows legs. A failing test is still annotated: the JUnit report\nstep runs `if: always()` over every report, this one included, and the\nmacOS/Windows legs run the same files.\n\n**Not fixed here, on purpose:**\n\n- `exec-sandbox.test.ts` \"BLOCKS loopback\" timed out twice on macOS. It\nis the same Bun bug, but it proves the macOS sandbox blocks loopback, so\nit has to keep running there. Bun's own timeout ends it at 60 s, and the\ntargeted retry re-runs only that file.\n- The older flakes: `install.ps1` ×6, real Chromium on Windows ×4,\ntoolgen ×5 and the rest have not recurred since #1676 and #1680. The\nnightly flaky-tests issue will show any that come back.\n\n## Related Issue\n\nNone. From the flaky-tests report, `bun scripts/ci/flaky-tests-report.ts\n--days 7`.\n\n## Type of Change\n\n- [x] Tests / CI\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes, Biome format + lint\n- [x] All existing tests pass: the three files, 76 pass and 2 skip on\nWindows; `bun test scripts/ci scripts/preflight.test.ts`, 282 pass\n- [x] New behaviour is covered by tests: test-only change; the `until()`\nfailure mode is checked below\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction: no product code changes\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage\n\n- [x] No source files change. The coverage floor is computed on Linux,\nwhere the two win32 cases still run.\n\n## Testing\n\n- The three files on Windows: 76 pass, 2 skip. The skips are the win32\ncases, which never ran on Windows. The real-Chromium tests ran against\nthe local browser.\n- `until()` fails fast and says why: pointed at a frame that is never\nsent, the test failed in 4 s with `gave up after 4000 ms waiting for\nFetch.neverSent`.\n- `bun run preflight:fast` passed; `audit:workflow-lint` parsed the\nedited step.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Improved the reliability of automated checks by waiting for observable\nresults instead of relying on fixed delays.\n* Restricted platform-specific coverage checks to Linux, where they are\nsupported.\n* **Chores**\n* Updated test workflow output handling to prevent test output from\nbeing interpreted as workflow commands while preserving failure status.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-17T06:32:06Z",
+          "tree_id": "cceea4352f36bc185c41860850a8c9b7aab0d7cf",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ac8a60064f64ef3942db29357d2c6c057984c52f"
+        },
+        "date": 1792219534149,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 152.30327250000065,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 157.7750392499991,
             "unit": "ms"
           }
         ]
