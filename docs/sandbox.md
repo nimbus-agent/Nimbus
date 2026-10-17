@@ -199,13 +199,14 @@ cwd lives.
 
 **What this means in practice.** Code a confined Bun child must load has
 to sit somewhere the sandbox already grants write. Installed extensions do
-exactly that: each spawn copies the verified install tree into a fresh
-`run-<uuid>` directory inside the extension's own working-directory leaf,
-re-digests the copy, and runs it from there (invariant I43,
-`extensions/extension-stage.ts`), so the install tree itself is not granted
-to the extension at all. In a dev tree, the extension role runs inline
-(`bun -e`) rather than as `bun <gateway>/src/index.ts`, since the gateway's
-own source is not granted either. The dev-tree shape is exercised end to end on
+exactly that: each spawn copies the verified install tree into a fresh,
+gateway-owned directory `<sandboxDir>/ext-stage/<serviceId>/<uuid>`,
+re-digests the copy, and runs it with that directory as the child's working
+directory (invariant I43, `extensions/extension-stage.ts`), so the install
+tree itself is not granted to the extension at all. In a dev tree, the
+extension role runs inline (`bun --no-env-file --no-install -e`) rather than
+as `bun <gateway>/src/index.ts`, since the gateway's own source is not
+granted either. The dev-tree shape is exercised end to end on
 Windows by `packages/gateway/test/e2e/extension-runtime.e2e.test.ts`; the compiled self-role
 shape is reasoned from a compiled probe (a `bun build --compile` binary loads a
 module once the file carries that right), not exercised end to end. First-party connectors are unaffected
@@ -215,11 +216,34 @@ spawns `bun <entry> __nimbus-connector <id>`, a file entry point, and so
 fails this way on Windows where a packaged install does not.
 
 **Extension spawns.** An approved extension (`nimbus extension approve`) spawns under the policy id
-`ext.<serviceId>`, so its working-directory leaf is derived from that id (see below). The policy grants
-exactly what the owner approved and nothing else: the declared network hosts, the declared read and
-write paths, read access to the runtime's own required paths, and read-write on the per-spawn
-`run-<uuid>` stage the verified copy lives in. The install directory and the Nimbus data and config
-directories are not granted. Removing an extension, or any stop, deletes its leaf.
+`ext.<serviceId>`, which keys its Windows AppContainer profile, but NOT in a per-policy leaf: its
+working directory is the fresh per-spawn stage `<sandboxDir>/ext-stage/<serviceId>/<uuid>` that holds
+the verified copy. The policy grants exactly what the owner approved and nothing else: the declared
+network hosts, the declared read and write paths, read access to the runtime's own required paths,
+and read-write on that stage, as the working directory. The install directory, the Nimbus data and
+config directories, and the stage's ancestors are not granted.
+
+Why a fresh stage rather than a long-lived leaf: Bun honours `bunfig.toml` (a `preload` runs before
+the entry), `.env` and `node_modules` it finds in the working directory and above the entry, and none
+of them is covered by the tree digest. In a working directory that persists across spawns, a
+previous run of the extension, or any same-user process, could plant code that runs before the
+approved entry and survives a revoke and re-approval. Each spawn instead sweeps everything already in
+`ext-stage/<serviceId>` and starts in a new directory holding only digested files, so nothing written
+to a previous cwd reaches the next spawn; the extension's declared write grants are its only
+persistence. Its ancestors (`ext-stage/<serviceId>`, `ext-stage`, the sandbox root) are granted to
+no spawn on any OS: the Windows helper grants the cwd and the declared paths with no ancestor ACE,
+`bwrap` binds only the cwd and the declared paths, and the macOS profile grants the cwd's ancestors
+only as non-recursive `literal` directory reads. A declared grant overlapping the sandbox root is
+refused `ERR_EXTENSION_GRANT_PROTECTED` at approval and again before every spawn. Remaining bounds: a
+same-user filesystem writer can still race the window between the copy's digest and the child's
+`import()`; and the release binary is built with a plain `bun build --compile`, which leaves Bun's
+compiled-executable autoload of `<cwd>/bunfig.toml` and `<cwd>/.env` on (measured on Bun 1.3) — for
+an extension that cwd is the fresh stage, so it can read only the extension's own approved files.
+
+`nimbus extension revoke` deletes the extension's stage root after stopping it, and
+`nimbus extension remove` deletes it (with or without a grant) together with the old per-policy
+`ext.<serviceId>` leaf that an earlier shape of the runtime staged into. A stop alone (disable, an
+idle timeout) leaves the last stage until the next spawn sweeps it.
 
 ## Per-policy working directories {#per-policy-cwd}
 

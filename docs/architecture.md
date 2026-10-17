@@ -1826,20 +1826,34 @@ is held to the I42 HITL prompt.
 **Verify, then copy, then run.** Before every spawn `readVerifiedExtensionForSpawn` re-verifies the
 extension row, the run grant, the manifest and entry hashes, the tree digest, I16 for publisher
 manifests, entry containment and the re-resolved grants. The verified tree is then COPIED into a fresh
-per-spawn stage `<sandbox leaf>/run-<uuid>` (`extensions/extension-stage.ts`), the copy is
-re-digested, and the extension runs from the copy. The install directory is not granted to the
-extension at all, so a running extension cannot rewrite its own installed code. The copy exists
-because of Windows: Bun's module loader opens each module requesting `FILE_WRITE_ATTRIBUTES`,
-which a read-only AppContainer grant lacks (see [`sandbox.md`](./sandbox.md)). The service spawns as
-`ext.<serviceId>`.
+per-spawn stage `<sandboxDir>/ext-stage/<serviceId>/<uuid>` (`extensions/extension-stage.ts`), the
+copy is re-digested, and the extension runs from the copy with the stage as its exact working
+directory (`wrapServerSpecInCwd`). The install directory is not granted to the extension at all, so a
+running extension cannot rewrite its own installed code. The copy exists because of Windows: Bun's
+module loader opens each module requesting `FILE_WRITE_ATTRIBUTES`, which a read-only AppContainer
+grant lacks (see [`sandbox.md`](./sandbox.md)). The stage is FRESH per spawn, and gateway-owned,
+because Bun honours an undigested `bunfig.toml` preload, `.env` and `node_modules` in its working
+directory: nothing written to a previous cwd reaches the next spawn, the stage's ancestors are granted
+to no spawn, and an extension's declared write grants are its only persistence. The service spawns as
+`ext.<serviceId>` (the policy id that keys the Windows AppContainer profile), and no per-policy leaf
+is created for it.
 
-A dev tree runs the role inline via `bun -e`; a compiled build runs
+**Org policy.** Under a signed org policy with a connector allowlist, the slot source refuses
+`ERR_EXTENSION_RUN_POLICY` unless the `ext_` id is listed — the mesh's own policy filter attributes
+tool keys to catalog connector ids only — before every spawn and again on every listing that reuses
+a live client, which a tightened allowlist stops. A child that fails to start is caught through
+Mastra's `listToolsWithErrors` (plain `listTools` swallows a per-server connect failure into an empty
+map) and refused `ERR_EXTENSION_RUN_START_FAILED`, with its client stopped.
+
+A dev tree runs the role inline via `bun --no-env-file --no-install -e`; a compiled build runs
 `nimbus-gateway.exe __nimbus-extension <entry>`. The compiled path is reasoned from a probe, not
-exercised end to end. A re-spawn waits for the previous child's disconnect to settle. `[extensions]
+exercised end to end, and the release build leaves Bun's compiled-executable `bunfig.toml`/`.env`
+autoload on (it reads only the stage's digested files). A re-spawn waits for the previous child's disconnect to settle. `[extensions]
 runtime` (default `true`) is a kill switch; off, nothing runs and `approveRun` refuses
-`ERR_EXTENSION_RUNTIME_DISABLED`. A demo gateway runs none. `extension.remove` stops a running
-extension and deletes its sandbox leaf (it called no stop hook before this PR); disable and revoke
-stop it through a re-pointed stop hook. The auto-update consent payload carries a `runGrantNote` when a
+`ERR_EXTENSION_RUNTIME_DISABLED`. A demo gateway runs none. The switch is read once at gateway start.
+`extension.remove` stops a running extension and deletes its stage root and its `ext_` health row
+(it called no stop hook before this PR); disable and revoke stop it through a re-pointed stop hook,
+and revoke deletes the stage root after the stop. The auto-update consent payload carries a `runGrantNote` when a
 grant exists, and the run consent payload's `runsFrom` field says the code runs from a verified
 per-spawn copy.
 
