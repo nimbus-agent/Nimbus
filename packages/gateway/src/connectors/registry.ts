@@ -60,17 +60,17 @@ type DispatcherToolMap = Record<
 
 /**
  * The dispatcher client every production mesh dispatcher uses: the whole merged map for a
- * first-party action, the action's OWN server for a user-MCP one.
+ * first-party action, the action's OWN server for an owner code server (user MCP or extension).
  */
 export function meshDispatcherClient(mesh: {
   listToolsForDispatcher(): Promise<DispatcherToolMap>;
   getToolsEpoch(): number;
-  listUserMcpToolsForDispatcher(serviceId: string): Promise<DispatcherToolMap | undefined>;
+  listOwnerCodeServerToolsForDispatcher(serviceId: string): Promise<DispatcherToolMap | undefined>;
 }): McpToolListingClient {
   return {
     listTools: () => mesh.listToolsForDispatcher(),
     getToolsEpoch: () => mesh.getToolsEpoch(),
-    listUserMcpTools: (serviceId) => mesh.listUserMcpToolsForDispatcher(serviceId),
+    listUserMcpTools: (serviceId) => mesh.listOwnerCodeServerToolsForDispatcher(serviceId),
   };
 }
 
