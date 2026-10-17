@@ -206,7 +206,9 @@ the push leg records per-file timings (`--update-timings`) and the PR legs read 
 the parity test compares positional paths only. Both run uninstrumented (macOS/Windows coverage
 was never read, and instrumenting the push leg skewed the timings) and through
 `scripts/ci/test-with-retry.ts`, whose ONE retry re-runs only the files that failed when the JUnit
-accounts for every failure, and the whole command otherwise. The Windows PR leg runs those paths as
+accounts for every failure, and the whole command otherwise. An attempt that prints nothing for 5
+minutes counts as hung and is killed (`--silence-seconds`); before that, a hung macOS worker idled
+to the 25-minute cap. The Windows PR leg runs those paths as
 `--shard=1/2` and `--shard=2/2`, split by those timings; parity holds over the UNION of the shards,
 and the parity test checks that every OS's shard set is exactly `1/N … N/N`. **`--parallel` is part of the shape: drop it from one
 leg and not the other and the two stop running the same thing.**
