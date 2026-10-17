@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [7.47.1](https://github.com/nimbus-agent/Nimbus/compare/v7.47.0...v7.47.1) (2026-10-17)
+
+
+### Performance Improvements
+
+* **index:** build a fresh database without a flush per migration step ([#1675](https://github.com/nimbus-agent/Nimbus/issues/1675)) ([9a0330f](https://github.com/nimbus-agent/Nimbus/commit/9a0330f69b267e2ee9d57e5383a0517b8d5eb3e4))
+
 ## [7.47.0](https://github.com/nimbus-agent/Nimbus/compare/v7.46.0...v7.47.0) (2026-10-16)
 
 
