@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792191160079,
+  "lastUpdate": 1792210086237,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c571fe18122cdaa81c6fa41fc2d37a20a65145a0",
-          "message": "fix(glossary): stop --refresh hanging when the gateway dies mid-pass (#989)\n\nCloses the known limit recorded in #987: `nimbus glossary --refresh`\ncould hang forever if the gateway died mid-pass.\n\n## The gap\n\nSpecific to results delivered by **notification**. `IPCClient.call()` is\nbounded by the client's `requestTimeoutMs`, but the call that *starts* a\npass resolves immediately with a job id — the result arrives later as\n`glossary.passDone`. A gateway dying in between left nothing to detect\nit: no pending call for the transport to reject, and no notification\never coming. The CLI waited forever.\n\nFixed upstream first:\n[`nimbus-client#48`](https://github.com/nimbus-agent/nimbus-client/pull/48)\nadded `IPCClient.onClose` / `offClose`, released as `@nimbus-dev/client`\n0.15.0. This bumps `^0.14.0` → `^0.15.0` and uses it.\n\n## There is still deliberately no timeout\n\nA pass legitimately runs up to `max_new_terms_per_pass ×\nconsolidate_timeout_ms` — 12.5 minutes at defaults — so a clock cannot\ndistinguish \"still working\" from \"gone\". Imposing one would either cut\noff legitimate long passes or be so generous it never fires. The\ntransport closing is the signal instead.\n\nA mid-pass death now fails with `gateway connection closed during the\npass: …` and exit code **2** (agent error), consistent with every other\npass failure. Note this is distinct from exit **1**, which the\n`--rebuild` preview path uses for gateway-*not-running* — that split was\nitself a fix in #987 and is still pinned by tests on both sides.\n\n## Handler teardown\n\nEvery notification handler is now paired with its removal on settle. The\nclient documents this as a rule, and it is not theoretical here:\n`runAgentBriefCli` reuses the *same* client for the brief that runs\nimmediately afterwards, so a leaked handler was a live cross-phase\nlistener rather than merely untidy.\n\n## Tests\n\nTwo new cases, each red-proved by a mutation failing a different test:\n\n| Mutation | Test that fails | Time |\n|---|---|---|\n| Drop `client.onClose(onClose)` | \"a gateway death mid-pass rejects\ninstead of hanging forever\" | 252 ms |\n| Teardown stops removing handlers | \"removes every handler once the\npass settles\" | 0.9 ms |\n\nThe hang test **races a 250 ms deadline** rather than awaiting bare.\nWithout the `onClose` wiring an unraced `await` expresses the regression\nas a suite *timeout* — a slow, generic failure that this repo's own\nhistory shows is easily mistaken for flake. The race turns it into a\nfast assertion that names itself: `awaitPass never settled after the\ntransport closed — it hung`.\n\nThe DI fake gained `onClose`/`offClose`/`offNotification` and now stores\nhandlers in **Sets**, mirroring the real client. A fake keyed\none-handler-per-method would silently drop a second registration and\nhide the very leak the new `liveHandlers()` assertion exists to catch.\n\n## Verification\n\n`packages/cli/src` 1950 pass / 0 fail · e2e 36 pass · `tsc` 0 · biome 0\n· markdownlint 0 · `audit:doc-refs` 0.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-07-31T09:10:31Z",
-          "tree_id": "8d00301276ba54ef86e5339ba8bf1e62efdb6e3f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c571fe18122cdaa81c6fa41fc2d37a20a65145a0"
-        },
-        "date": 1785489731611,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 306.44547750000095,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.10334585000527,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 264.8145979499968,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9d72efd626a1ad888f7b7b6d3532ca913ed18d10",
+          "message": "ci: keep one \"Flaky tests on CI\" issue listing the tests a retry masked (#1681)\n\n## Summary\n\nThe macOS and Windows test legs retry a failed suite once. A retry that\npasses turns the leg green, and the only record left is a warning\nannotation on that one job. Nothing aggregates those warnings, so a test\ncan flake for weeks without anyone fixing it. This PR adds a nightly\nworkflow that keeps ONE issue listing those tests, worst first, so they\nget fixed instead of retried.\n\n- **`.github/workflows/flaky-tests.yml`** runs daily at 05:41 UTC and on\n`workflow_dispatch`.\n- It runs `bun scripts/ci/flaky-tests-report.ts --days 7 --write-issue`.\n- Permissions are `contents: read` at workflow level; the job adds\n`actions: read`, `checks: read` and `issues: write`.\n- A repo-wide concurrency group, so two runs cannot both open the issue.\n  - SHA pins identical to `ci.yml`, and no dependency install.\n- Only `schedule` and `dispatch` trigger it, so `issues: write` never\nruns PR code.\n- **`scripts/ci/flaky-tests-report.ts`** reads the `CI` runs of the last\nN days, skipping cancelled ones.\n- **Call budget:** one check-runs call per run, with `filter=all` so\nlegs from re-run attempts count, then annotations only for macOS/Windows\ntest legs that have any. A busy week is ~340 `GITHUB_TOKEN` requests,\nagainst 1,000/h.\n- **What counts as flaky:** a `Flaky test` annotation, which since #1676\nmeans \"failed attempt 1, passed the retry\". The older shell-loop format\n(`(fail) name [Nms]`) is also read, but only on legs that concluded\n`success`, because that loop printed those lines before the retry and\nthey alone only mean \"failed once\".\n- **The issue:** a row per test with leg-run count, PR/push split, legs,\nfirst and last seen, and three example job links. It is edited in place\nwhile rows exist, closed with a comment when a night finds none, and\nreopened by the next flaky test.\n- **Annotation text is untrusted:** PR code can print workflow commands.\nEvery test name, path and label is rendered inside an escaped code span,\nwhich blocks mentions, links and table breakage.\n\n**Also: a fix to #1676's `test-with-retry.ts`, found while building\nthis.** If the retry left no JUnit report (killed by the cap, or\ncrashed), every attempt-1 failure was annotated `Flaky test`, claiming\nthe retry passed it. It now names a test flaky only when the retry's\nreport exists and shows it passing. There is a new test for it.\n\n## Related Issue\n\nNone. This is item 6 (last) of the CI-speed plan.\n\n## Type of Change\n\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test scripts/ci`: 247 pass)\n- [x] New behaviour is covered by tests (`flaky-tests-report.test.ts`:\n60; `test-with-retry.test.ts`: +1)\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (only CI files change)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] Both scripts have their own tests; `scripts/` is outside the\ncoverage floor. The report was also mutation-checked: 8 deliberate\nregressions were each caught. Examples: legacy lines counted on red\nlegs, inconclusive retries counted, cancelled runs kept, no 5xx retry,\nno body-length guard.\n\n## Testing\n\n**Real dry run against this repository** (`bun\nscripts/ci/flaky-tests-report.ts --days 7`, read-only):\n- 336 requests in 41 s, covering 100 runs and 251 legs.\n- It found **21 flaky tests**. The 3-day window was led by `install.ps1\ninstalls from a served release` (5 leg runs, all `windows-2025, 2/2`),\nthe real-Chromium `isSubmitControl` test, and a macOS\n`reapAppContainersAtBoot` case.\n- The File column is empty in today's data because every run so far\npredates #1676's annotations, which carry it.\n\nOther checks, all passing: `audit:workflow-lint` (26 workflows),\n`audit:action-sha-pins`, `audit:workflow-run-triggers`,\n`audit:doc-refs`, and `bun run preflight:fast` (35 gates).\n\n## Notes for Reviewers\n\n- **The first run** happens at 05:41 UTC after merge, or on demand from\nthe Actions tab. It opens the issue and creates the `flaky-tests` label.\n- **If the call budget ever gets tight,** batching the annotation reads\nthrough GraphQL `nodes(ids:)` would replace ~230 of the ~340 requests\nwith ~5.\n- **Docs:** one paragraph each in `docs/CONTRIBUTING.md` and the\n`nimbus-preflight` skill.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-17T07:00:35+03:00",
+          "tree_id": "c654c26688642a1afaa7fc1e6fc44f0791f7bc16",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9d72efd626a1ad888f7b7b6d3532ca913ed18d10"
+        },
+        "date": 1792210082556,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 164.52420424999656,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 162.21208855000333,
             "unit": "ms"
           }
         ]
