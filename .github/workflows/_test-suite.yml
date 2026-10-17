@@ -368,10 +368,22 @@ jobs:
           # `coverage/lcov.info` matches the prior project-wide behaviour.
           # `--parallel`, isolated: uninstrumented, so nothing to amortize, and it is the shape the
           # macOS/Windows legs already run these same files in.
+          #
+          # Fenced off from workflow-command processing. Several of these tests drive a gate whose
+          # output IS workflow commands (the demo-tour judge, the credential-health report, the
+          # native-deps and connector-skew audits), and unfenced each fixture line became a real
+          # annotation: 22 per run, mostly red "failure" ones on a green job, and they spent the
+          # step's 10-error quota. A failing test here is still annotated, by the JUnit report step
+          # below, and the macOS/Windows legs run these same files with their own annotations.
+          fence="$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+          echo "::stop-commands::${fence}"
+          scripts_rc=0
           bun test scripts \
             --parallel \
             --reporter=junit \
-            --reporter-outfile=junit-reports/junit-unit-scripts.xml
+            --reporter-outfile=junit-reports/junit-unit-scripts.xml || scripts_rc=$?
+          echo "::${fence}::"
+          exit "${scripts_rc}"
         env:
           CI: "true"
 

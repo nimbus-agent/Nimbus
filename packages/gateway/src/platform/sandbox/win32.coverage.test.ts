@@ -5,8 +5,9 @@
  * SAME canonicalised paths the grant used.
  *
  * Same reasoning as `win32.test.ts`: nothing here needs Windows, only an executable stand-in at
- * `NIMBUS_SANDBOX_HELPER_PATH`, so the case is skipped on WINDOWS (where a POSIX shell script is
- * not executable) and runs on the Linux and macOS legs. The real helper is never involved. The
+ * `NIMBUS_SANDBOX_HELPER_PATH`, so the cases are skipped on WINDOWS (where a POSIX shell script is
+ * not executable) and, since 2026-10-17, on macOS too (`RUNS_HERE` says why); they run on the
+ * Linux legs. The real helper is never involved. The
  * stand-in logs each invocation to a file whose path is baked into the script, because the release
  * runs inherit the GATEWAY's environment, not the child's.
  *
@@ -103,8 +104,18 @@ function dirBehindLink(target: string, name: string): string {
   return link;
 }
 
+/**
+ * Linux only. Not on Windows, where the POSIX stand-in is not executable. Not on macOS either:
+ * there, a child spawned through `node:child_process` inside a `bun test --parallel` worker can
+ * exit without Bun ever seeing it (oven-sh/bun#41024, open), and a case that waits on the child's
+ * `exit` then sits out its 60 s timeout — this file did, on a macOS PR leg on 2026-10-16 (run
+ * 38969543608). The symlinked paths make Linux canonicalise both spellings too, so Linux alone
+ * still checks everything these cases claim.
+ */
+const RUNS_HERE = process.platform === "linux";
+
 describe("createWin32SandboxRunner — grants are released when the child exits", () => {
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(!RUNS_HERE)(
     "grants and then revokes the SAME canonical spellings, cwd first and once each, then deletes the profile",
     async () => {
       const log = join(tmp, "calls.log");
@@ -152,7 +163,7 @@ describe("createWin32SandboxRunner — grants are released when the child exits"
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(!RUNS_HERE)(
     "a revoke the helper FAILS still goes on to delete the profile, and nothing escapes as a rejection",
     async () => {
       const unhandled: unknown[] = [];

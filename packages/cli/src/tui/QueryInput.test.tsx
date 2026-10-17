@@ -70,7 +70,7 @@ describe("QueryInput — basic", () => {
     );
     stdin.write("hello");
     stdin.write("\r");
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => submitted !== null || null);
     expect(submitted).toBe("hello");
     unmount();
   });
@@ -121,9 +121,8 @@ describe("QueryInput — HITL mode", () => {
       />,
     );
     stdin.write("a");
-    await new Promise((r) => setTimeout(r, 10));
     stdin.write("r");
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => (received.includes("a") && received.includes("r")) || null);
     expect(received).toContain("a");
     expect(received).toContain("r");
     unmount();
@@ -178,7 +177,7 @@ describe("QueryInput — Ctrl+C dispatch", () => {
       />,
     );
     stdin.write("\x03");
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => fired || null);
     expect(fired).toBe(true);
     unmount();
   });
@@ -203,15 +202,20 @@ describe("QueryInput — history cycling", () => {
       />,
     );
     await new Promise((r) => setTimeout(r, 250));
+    // Each step waits for its frame: a fixed 10 ms let the next Up land before Ink had rendered
+    // the last one, and the frame still read "three" when "two" was expected (Windows, 2026-10-16,
+    // run 38969407327).
     stdin.write("\x1B[A");
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => (lastFrame() ?? "").includes("three") || null);
     expect(lastFrame() ?? "").toContain("three");
     stdin.write("\x1B[A");
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => (lastFrame() ?? "").includes("two") || null);
     expect(lastFrame() ?? "").toContain("two");
     stdin.write("\x1B[A");
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => (lastFrame() ?? "").includes("one") || null);
     expect(lastFrame() ?? "").toContain("one");
+    // One Up too many must leave it on the oldest entry. The frame already reads "one", so this
+    // wait cannot see the step; the submit below can: a cycle past the oldest submits something else.
     stdin.write("\x1B[A");
     await new Promise((r) => setTimeout(r, 10));
     expect(lastFrame() ?? "").toContain("one");
@@ -551,7 +555,7 @@ describe("QueryInput — newline variants and control chars", () => {
     expect(submitted).toBeNull();
     // write something printable to confirm normal flow still works
     stdin.write("ok");
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => (lastFrame() ?? "").includes("ok") || null);
     expect(lastFrame() ?? "").toContain("ok");
     unmount();
   });
@@ -570,7 +574,7 @@ describe("QueryInput — escape sequences and CSI skip", () => {
       />,
     );
     stdin.write("hi");
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => (lastFrame() ?? "").includes("hi") || null);
     // send a right-arrow CSI sequence — falls through to skipCsi
     stdin.write("\x1B[C");
     await new Promise((r) => setTimeout(r, 20));
@@ -633,9 +637,8 @@ describe("QueryInput — HITL mode key filtering", () => {
     expect(received).toHaveLength(0);
     // valid HITL key 'd' and 'q' are still forwarded
     stdin.write("d");
-    await new Promise((r) => setTimeout(r, 10));
     stdin.write("q");
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => (received.includes("d") && received.includes("q")) || null);
     expect(received).toContain("d");
     expect(received).toContain("q");
     unmount();
