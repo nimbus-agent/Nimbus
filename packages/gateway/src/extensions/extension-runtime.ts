@@ -143,7 +143,7 @@ export function createExtensionSlotSource(deps: ExtensionSlotSourceDeps): Extens
       return listRunGrants(deps.db)
         .filter((g) => enabled.has(g.extension_id))
         .map((g) => g.service_id)
-        .sort();
+        .sort((a, b) => a.localeCompare(b));
     },
     async prepareSpawn(serviceId) {
       const grant = listRunGrants(deps.db).find((g) => g.service_id === serviceId);
