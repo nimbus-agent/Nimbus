@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { EXTENSION_SERVICE_ID_PATTERN } from "./extension-service-id.ts";
 
 /**
  * The ONLY code that names `extension_run_grant` (static rule D33(b)). A grant records exactly what
@@ -41,6 +42,32 @@ export function listRunGrants(db: Database): ExtensionRunGrantRow[] {
   return db
     .query(`SELECT ${COLS} FROM extension_run_grant ORDER BY extension_id`)
     .all() as ExtensionRunGrantRow[];
+}
+
+/**
+ * The model's extension source (I42): grants approved with `--model` whose extension is enabled
+ * and whose version and tree digest still match the row (a stale grant would only fail to spawn
+ * on every turn). Not verification — the spawn path re-verifies; this only narrows.
+ */
+export function listModelAccessibleExtensionGrants(
+  db: Database,
+): { serviceId: string; extensionId: string }[] {
+  if (!hasTable(db)) return [];
+  const rows = db
+    .query(
+      `SELECT g.service_id AS service_id, g.extension_id AS extension_id
+         FROM extension_run_grant g
+         JOIN extension e ON e.id = g.extension_id
+        WHERE g.model_access = 1
+          AND e.enabled = 1
+          AND e.version = g.version
+          AND e.tree_digest = g.tree_digest
+        ORDER BY g.service_id`,
+    )
+    .all() as { service_id: string; extension_id: string }[];
+  return rows
+    .filter((r) => EXTENSION_SERVICE_ID_PATTERN.test(r.service_id))
+    .map((r) => ({ serviceId: r.service_id, extensionId: r.extension_id }));
 }
 
 /** Creates or replaces the extension's grant. Throws below V70 rather than dropping a grant. */

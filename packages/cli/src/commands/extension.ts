@@ -37,7 +37,7 @@ export function stripFlags(args: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === "--yes" || a === "-y" || a === "--json") continue;
+    if (a === "--yes" || a === "-y" || a === "--json" || a === "--model") continue;
     if (a === "--filter" || a === "--publisher-key") {
       i += 1;
       continue;
@@ -132,7 +132,8 @@ export function formatRunLine(e: Pick<ExtensionListEntry, "runState" | "runGrant
   if (e.runState === undefined) return null;
   if (e.runGrant === undefined || e.runGrant === null) return e.runState;
   const at = new Date(e.runGrant.approvedAt).toISOString();
-  return `${e.runState} (${e.runGrant.serviceId}, approved ${at})`;
+  const model = e.runGrant.modelAccess ? "yes" : "no";
+  return `${e.runState} (${e.runGrant.serviceId}, approved ${at}, model: ${model})`;
 }
 
 export async function runExtensionList(client: IPCClient, args: string[]): Promise<void> {
@@ -385,7 +386,7 @@ export async function runExtensionRehash(
 }
 
 /**
- * `nimbus extension approve <id>` — approve an installed extension to RUN with the grants the
+ * `nimbus extension approve <id> [--model]` — approve an installed extension to RUN with the grants the
  * gateway resolves from its manifest. The gateway asks under `extension.run`. A terminal is
  * required and there is no `--yes`: this consents to running third-party code unattended, which is
  * not something to approve from a script. The gateway spawns an approved extension on first use,
@@ -398,7 +399,7 @@ export async function runExtensionApprove(
 ): Promise<void> {
   const id = rest[0]?.trim() ?? "";
   if (id === "") {
-    throw new Error("Usage: nimbus extension approve <id>");
+    throw new Error("Usage: nimbus extension approve <id> [--model]");
   }
   if (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
     throw new Error(
@@ -414,16 +415,20 @@ export async function runExtensionApprove(
   // from `NIMBUS_SCRIPT_CONSENT_SOURCE` when it is set, which would let an environment variable
   // approve running third-party code at a terminal — exactly what having no --yes rules out.
   registerConsentPromptHandler(client);
+  // Every approval states the whole grant: without --model, model access is turned off.
+  const modelAccess = hasFlag(args, "--model");
   const out = await client.call<{
     id: string;
     serviceId: string;
     treeDigest: string;
     changed: boolean;
-  }>("extension.approveRun", { id });
+    modelAccess?: boolean;
+  }>("extension.approveRun", { id, modelAccess });
+  const model = `model access: ${out.modelAccess === true ? "on" : "off"}`;
   console.log(
     out.changed
-      ? `${out.id}: approved to run as ${out.serviceId} (tree digest ${out.treeDigest}). It starts on first use: \`nimbus connector tools ${out.serviceId}\`.`
-      : `${out.id}: already approved for this code and these grants (${out.serviceId}).`,
+      ? `${out.id}: approved to run as ${out.serviceId} (tree digest ${out.treeDigest}; ${model}). It starts on first use: \`nimbus connector tools ${out.serviceId}\`.`
+      : `${out.id}: already approved for this code and these grants (${out.serviceId}; ${model}).`,
   );
 }
 
@@ -652,7 +657,7 @@ export async function runExtensionSync(client: IPCClient, args: string[]): Promi
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | rehash <id> [--yes] | approve <id> | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
 
 async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
   if (sub === "keygen") {

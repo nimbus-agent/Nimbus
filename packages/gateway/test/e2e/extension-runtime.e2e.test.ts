@@ -593,6 +593,28 @@ describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", 
     expect(await runState()).toBe("ready");
   }, 60_000);
 
+  test("--model round-trips over the real gateway, and approving without it turns it off again", async () => {
+    type Approved = { serviceId: string; modelAccess: boolean };
+    type Info = { extension: { runGrant: { modelAccess: boolean } | null } };
+    const on = await client.call<Approved>("extension.approveRun", {
+      id: EXTENSION_ID,
+      modelAccess: true,
+    });
+    expect(on.modelAccess).toBe(true);
+    const infoOn = await client.call<Info>("extension.info", { id: EXTENSION_ID });
+    expect(infoOn.extension.runGrant?.modelAccess).toBe(true);
+
+    const off = await client.call<Approved>("extension.approveRun", { id: EXTENSION_ID });
+    expect(off.modelAccess).toBe(false);
+    const infoOff = await client.call<Info>("extension.info", { id: EXTENSION_ID });
+    expect(infoOff.extension.runGrant?.modelAccess).toBe(false);
+    // Everything else about the grant is what it was: still ready, same service id.
+    expect(off.serviceId).toBe(SERVICE_ID);
+    expect(await runState()).toBe("ready");
+    const listing = await client.call<{ runtimeEnabled: boolean }>("extension.list", {});
+    expect(listing.runtimeEnabled).toBe(true);
+  }, 60_000);
+
   test("planted bunfig/.env: the positive control shows Bun honours them in the directory they sit in", async () => {
     // Where a previous run (the old leaf) or a same-user process (the stage root) could write.
     plantBunAutoloads(leaf);

@@ -1,13 +1,19 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { deleteExtensionById, insertExtensionRow } from "../automation/extension-store.ts";
+import {
+  deleteExtensionById,
+  insertExtensionRow,
+  setExtensionEnabled,
+  setExtensionTreeDigest,
+} from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import {
   deleteRunGrant,
   type ExtensionRunGrantRow,
   getRunGrant,
+  listModelAccessibleExtensionGrants,
   listRunGrants,
   upsertRunGrant,
 } from "./run-grant-store.ts";
@@ -91,5 +97,90 @@ describe("run-grant-store", () => {
     d.run("PRAGMA foreign_keys = OFF"); // so only the explicit delete can remove the grant
     expect(deleteExtensionById(d, "com.example.a")).toBe("/x");
     expect(getRunGrant(d, "com.example.a")).toBeNull();
+  });
+});
+
+describe("listModelAccessibleExtensionGrants (the model's extension source)", () => {
+  const DIGEST = "a".repeat(64);
+
+  /** An installed, enabled extension whose row digest is DIGEST, plus a grant over it. */
+  function modelGrant(
+    d: Database,
+    id: string,
+    over: Partial<ExtensionRunGrantRow> = {},
+    row: { enabled?: boolean; digest?: string | null } = {},
+  ): void {
+    insertExtensionRow(d, {
+      id,
+      version: "1.0.0",
+      install_path: `/x/${id}`,
+      manifest_hash: "m",
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    if (row.digest !== null) setExtensionTreeDigest(d, id, row.digest ?? DIGEST);
+    if (row.enabled === false) setExtensionEnabled(d, id, false);
+    upsertRunGrant(
+      d,
+      grant({
+        extension_id: id,
+        service_id: `ext_${id.replaceAll(".", "_")}`,
+        tree_digest: DIGEST,
+        model_access: 1,
+        ...over,
+      }),
+    );
+  }
+
+  test("lists an enabled, current grant with model access", () => {
+    const d = db();
+    modelGrant(d, "a");
+    expect(listModelAccessibleExtensionGrants(d)).toEqual([
+      { serviceId: "ext_a", extensionId: "a" },
+    ]);
+  });
+
+  test("excludes a grant without model access", () => {
+    const d = db();
+    modelGrant(d, "a", { model_access: 0 });
+    expect(listModelAccessibleExtensionGrants(d)).toEqual([]);
+  });
+
+  test("excludes a disabled extension", () => {
+    const d = db();
+    modelGrant(d, "a", {}, { enabled: false });
+    expect(listModelAccessibleExtensionGrants(d)).toEqual([]);
+  });
+
+  test("excludes a stale grant: another version, another digest, or no row digest", () => {
+    const d = db();
+    modelGrant(d, "v", { version: "0.9.0" });
+    modelGrant(d, "t", {}, { digest: "b".repeat(64) });
+    modelGrant(d, "n", {}, { digest: null });
+    expect(listModelAccessibleExtensionGrants(d)).toEqual([]);
+  });
+
+  test("excludes a stored service id that is not an ext_ id", () => {
+    const d = db();
+    modelGrant(d, "a", { service_id: "mcp_a" });
+    expect(listModelAccessibleExtensionGrants(d)).toEqual([]);
+  });
+
+  test("ordered by service id", () => {
+    const d = db();
+    modelGrant(d, "b");
+    modelGrant(d, "a");
+    expect(listModelAccessibleExtensionGrants(d).map((g) => g.serviceId)).toEqual([
+      "ext_a",
+      "ext_b",
+    ]);
+  });
+
+  test("below V70 it is empty", () => {
+    const d = new Database(":memory:");
+    open.push(d);
+    runIndexedSchemaMigrations(d, 69);
+    expect(listModelAccessibleExtensionGrants(d)).toEqual([]);
   });
 });

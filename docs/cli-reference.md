@@ -2980,7 +2980,7 @@ nimbus connector add --mcp mcp_api --net api.example.com:443 -- /opt/api-mcp/ser
 
 The gateway resolves and validates the registration **before** the approval prompt: the command is resolved to a canonical absolute path and stored that way — an absolute path is used as given (a `.exe` is tried on Windows when it has no extension), a path with a separator is made absolute against the CLI’s working directory, and a **bare command name is looked up on the GATEWAY’s `PATH`** (`Bun.which` in the gateway process), which can differ from your shell’s `PATH` when the gateway was started from another environment (a service, a login item, a different terminal) — pass an absolute path if in doubt; the prompt shows the resolved path either way. `--read` paths are canonicalised, and a grant that overlaps the Nimbus data, config or sandbox directory, in either direction, is refused. On Linux and macOS the binary's own directory is granted read automatically; on Windows it is not. An id that extends another registered id by `_` (`mcp_a` and `mcp_a_b`) is refused. The prompt shows the command, args, `readPaths`, `netHosts` and `modelAccess`. The server then runs in its own sandbox working directory (see [`docs/sandbox.md`](./sandbox.md)). On Windows a `--read` on a directory you cannot change the ACL of (for example under `C:\Program Files`) is not caught here: it fails at spawn time and shows as the connector's health error.
 
-**Org lockoff for `--model`.** A signed `nimbus.policy.toml` can stop the model from being offered any user MCP server's tools, fleet-wide:
+**Org lockoff for `--model`.** A signed `nimbus.policy.toml` can stop the model from being offered any user MCP server's or extension's tools, fleet-wide (one shared switch covers both `connector add --mcp --model` and `extension approve --model`):
 
 ```toml
 [policy.capabilities.ai_v2]
@@ -3008,7 +3008,7 @@ nimbus connector tools ext_com_example_notion
 nimbus connector call ext_com_example_notion search --input '{"q":"x"}'
 ```
 
-A call to an extension tool is held to the same I42 prompt as any user MCP tool (a delegate never approves one). Extension tools are not offered to the model and cannot be proposed through the MCP capture sink's act door.
+A call to an extension tool is held to the same I42 prompt as any user MCP tool (a delegate never approves one). Extension tools are offered to the model only when the extension was approved with `nimbus extension approve <id> --model`, and they cannot be proposed through the MCP capture sink's act door.
 
 ---
 
@@ -3979,6 +3979,7 @@ nimbus doctor
 - Index total item count (warns if zero — suggests connecting a service)
 - On-call push: when `[oncall.push] enabled = true`, warns if your identity is unresolved (no incident could ever be selected); otherwise reports it enabled
 - Notifications: `[ok]` with the backend and `content` mode when OS notifications work; `[info]` when they are off by your choice (`[notifications] enabled = false`, `NIMBUS_NOTIFICATIONS=off`, a demo gateway) or the availability probe has not finished; `[warn]` with the reason when they should work and do not (an invalid `[notifications]` section, an unavailable backend, a platform with none). Silent against a gateway too old to serve `notifications.status`. See [`nimbus notifications`](#nimbus-notifications)
+- Extensions: `[warn]` naming installed extensions that have no run approval or an approval for older code (`nimbus extension approve <id>`); silent when there are none, when the gateway reports the extension runtime off, or on a gateway that predates run approvals. A gateway from before this release does not report whether the runtime is on, so with `[extensions] runtime = false` it can still warn. An extension that had model access is named again with `add --model to keep model access`
 - Per-connector health table
 - Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why. On macOS a passing line also names the full SQLite library it loaded through (`using full SQLite at <path>`), since that can be the bundled copy, `NIMBUS_SQLITE_PATH` or a Homebrew install
 
@@ -4389,7 +4390,7 @@ To re-enable: `nimbus config set telemetry.enabled true`
 
 Install a third-party extension. Accepts a local path, URL, or npm package name. The manifest SHA-256 is verified before installation.
 
-> **Install does not run anything; an approval does.** Install copies the package, hashes it, verifies a publisher's Ed25519 signature (I16), records it and enables it. An extension runs only after a separate `nimbus extension approve` (below), and then only as a sandboxed MCP server that you invoke yourself with `nimbus connector tools|call ext_<id>`. It adds no tools to `nimbus ask` or any agent: model access (`--model`) is not shipped yet. To run your own MCP server without the extension machinery, use `nimbus connector add --mcp`.
+> **Install does not run anything; an approval does.** Install copies the package, hashes it, verifies a publisher's Ed25519 signature (I16), records it and enables it. An extension runs only after a separate `nimbus extension approve` (below), and then only as a sandboxed MCP server that you invoke yourself with `nimbus connector tools|call ext_<id>`. It adds tools to `nimbus ask` only if you approve it with `--model`. To run your own MCP server without the extension machinery, use `nimbus connector add --mcp`.
 
 ```bash
 nimbus extension install @community/nimbus-notion
@@ -4422,7 +4423,7 @@ nimbus extension rehash com.example.notion --yes
 
 ---
 
-### `nimbus extension approve <id>`
+### `nimbus extension approve <id> [--model]`
 
 Approve an installed extension to **run**, with the exact bytes and grants you are shown. This is a second approval, separate from the install one: install says "keep this package on disk", approve says "this code may run with these grants". It is asked through the gateway's HITL gate under action type `extension.run`.
 
@@ -4447,6 +4448,12 @@ The gateway refuses **without asking** when any of these hold:
 After you answer, two further refusals can occur: `ERR_EXTENSION_RUN_NOT_APPROVED` (you declined, or the prompt timed out) and `ERR_EXTENSION_RUN_CHANGED` (the row was disabled, removed, re-versioned, rehashed or re-pathed, the files changed, the declared grants no longer resolve identically, or another extension was granted a colliding service id while the prompt was open). Either refusal writes no new grant, but it does not remove an approval you gave earlier: a previously stored grant stays in place until you run `nimbus extension revoke <id>`.
 
 Approving again after an update (new version or digest) prompts again and replaces the grant, keeping the original service id.
+
+**`--model`** also offers the extension's tools to the model in `nimbus ask` (and the desktop app), named `ext_<id>__<tool>`, for you as the local owner only — each call still raises the I42 approval prompt. Every approval states the whole grant: running `nimbus extension approve <id>` again without `--model` prompts and turns model access off — including the re-approval an update needs, so pass `--model` again then to keep it (`nimbus doctor` names those extensions). The prompt and the output both show the setting (`model access: on|off`), and `nimbus extension info` shows `model: yes|no`. An extension whose files changed since the approval, or that failed its signature check, is not offered. A signed org policy with `user_mcp_model_access = false` stops it being offered (the grant itself is kept and takes effect again if the policy is lifted).
+
+```bash
+nimbus extension approve com.example.notion --model
+```
 
 ---
 

@@ -6,6 +6,7 @@ import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { doctorCapturesLines, parseStatus } from "./captures-format.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
+import { doctorExtensionsLines } from "./extension-doctor-format.ts";
 import { doctorNotificationsLine, parseNotificationsStatus } from "./notifications-format.ts";
 
 const LINUX_SECRET_TOOL_HINT =
@@ -807,6 +808,32 @@ export async function doctorPrintCaptures(client: Pick<IPCClient, "call">): Prom
   }
 }
 
+/**
+ * Installed extensions without a current run approval: one `[warn]` (exit 1) naming them, silent
+ * when there are none or the extension runtime is off. Quiet on an older gateway (-32601); any other
+ * failure is a `[warn]`.
+ */
+export async function doctorPrintExtensions(client: Pick<IPCClient, "call">): Promise<number> {
+  let raw: unknown;
+  try {
+    raw = await client.call<unknown>("extension.list", {});
+  } catch (e) {
+    if (isMethodNotFound(e)) return 0;
+    console.log(
+      `[warn] Extensions: status check failed (${e instanceof Error ? e.message : String(e)}).`,
+    );
+    return 1;
+  }
+  try {
+    const { lines, exit } = doctorExtensionsLines(raw);
+    for (const l of lines) console.log(l);
+    return exit;
+  } catch (e) {
+    console.log(`[warn] Extensions: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+}
+
 /** JSON-RPC -32601: the gateway does not serve the method (an older binary). */
 function isMethodNotFound(e: unknown): boolean {
   return typeof e === "object" && e !== null && "code" in e && e.code === -32601;
@@ -855,6 +882,7 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   exit = Math.max(exit, doctorPrintOncallPush(push, newest));
   exit = Math.max(exit, await doctorPrintNotifications(client));
   exit = Math.max(exit, await doctorPrintCaptures(client));
+  exit = Math.max(exit, await doctorPrintExtensions(client));
   // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the
   // whole gateway run, which outranks any one connector being unreachable.
   exit = Math.max(exit, doctorPrintEmbeddingFromSnapshot(snap));

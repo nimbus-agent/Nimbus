@@ -18,6 +18,20 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-17 — S3: extension runtime PR 4 of 4 — model access, closing the slice (I42 widened to a second source; no migration, no new invariant).**
+  `nimbus extension approve <id> --model` offers an approved extension's tools to the engine agent
+  in `nimbus ask` on the same path as a `--model` user MCP server: local owner only, named
+  `ext_<id>__<tool>` and described as an owner-approved extension, every call through the turn's
+  executor and its I42 prompt. Only enabled extensions approved for the code now installed and not
+  disabled by the startup signature check are offered; one that fails spawn-time verification is
+  skipped with a warning. The org-policy lock-off is the existing `user_mcp_model_access`, now
+  covering both sources (owner decision: one shared switch). Every approval states the whole grant,
+  so approving again without `--model` prompts and turns it off; `extension.approveRun` takes an
+  optional boolean `modelAccess` (anything else is `-32602`), and `extension info` shows
+  `model: yes|no`. `nimbus doctor` warns about installed extensions with no run approval or one for
+  older code, and stays silent when the runtime is off (`extension.list` now reports
+  `runtimeEnabled`). Extension actions stay unproposable on the I28 act door.
+
 - **2026-10-17 — S3: extension runtime PR 3 of 4 — approved extensions run (invariant I43, static D33(a), I42 widened).**
   An extension with a run grant now runs, sandboxed, as an MCP stdio server in a lazy
   `mesh:ext:<serviceId>` slot: it starts on first use, never at boot, and only after the boot
