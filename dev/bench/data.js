@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792216675767,
+  "lastUpdate": 1792217261324,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7e224fab4e33ad4c9937e17f90291ac12ab1cf4f",
-          "message": "chore: release main (#994)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.15.0</summary>\n\n##\n[1.15.0](https://github.com/nimbus-agent/Nimbus/compare/v1.14.2...v1.15.0)\n(2026-08-01)\n\n\n### Features\n\n* **glossary:** author and correct terms in nimbus.toml\n([#993](https://github.com/nimbus-agent/Nimbus/issues/993))\n([b25c0f1](https://github.com/nimbus-agent/Nimbus/commit/b25c0f1a119700b7f2d50294c6165dc09eb89ce2))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-01T05:00:22Z",
-          "tree_id": "bb62502e8f2b7952a64c5189ae88af729504f125",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7e224fab4e33ad4c9937e17f90291ac12ab1cf4f"
-        },
-        "date": 1785561110340,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.8942339000005,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 317.3064365499919,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 254.3345890999968,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "10a79e3b67689b0908eaccd784d5822388304937",
+          "message": "ci: drop the macOS and Windows push jobs that re-ran the integration and e2e trees (#1684)\n\n## Summary\n\nOn macOS and Windows, a push to `main` ran the integration and e2e trees\ntwice. They ran once inside the unit job, whose command is the whole\nrepo: `bun test packages/gateway packages/cli scripts --parallel`. They\nran again as three jobs of their own, `Integration`, `E2E Gateway` and\n`E2E CLI`, one process at a time. This PR drops the second copy on those\ntwo OSes. Ubuntu keeps the three jobs: they are PR gates there, and the\nLinux integration job also builds and exercises the real sandbox helper.\n\nWhy now:\n\n- **On macOS the queue is the bottleneck in a burst, and the Team plan\ndoes not change that.** GitHub allows 5 concurrent macOS jobs on every\nplan below Enterprise. A push ran 6 macOS jobs, and 3 of them were\nthese. At 04:21 UTC today, right after three merges, 5 macOS jobs were\nrunning and 6 more were queued, two PR runs' macOS legs among them,\nwhile only 20 jobs were running in total.\n- **They caught nothing the unit job missed.** In 124 push runs from\n2026-09-17 to 2026-10-17 they failed 6 times, all on Windows. Each time,\nthat run's Windows unit job was green on the same files. The failures\nwere `toolgen-draft-e2e` twice at the same line, `demo-flag.e2e` killed\nby a timeout signal with exit 143, and three exits with no failing test\nreported. On macOS they never failed. Each failure turned `main` red,\nbecause these jobs have no retry. The unit job retries a failed file\nonce, and since #1681 those retries are listed in the nightly\nflaky-tests issue.\n\nAfter this, a push runs 3 macOS jobs: Unit + Coverage, Static, and\nRust/Tauri.\n\n**What keeps it safe:** a new block in\n`scripts/ci/cross-platform-parity.test.ts` reads the three jobs' `bun\ntest` paths. It fails unless every one sits inside a path the\nmacOS/Windows unit command names. It fails if that command gains any of\nBun's filter flags: `-t`, `--grep`, `--changed`, `--only`, `--shard` or\n`--path-ignore-patterns`. It also checks that only the push matrix turns\nthe jobs off, only on macOS and Windows, and that the input defaults to\n`true`, which the PR gate and `release.yml` rely on. Red-proved by\nturning the jobs off on every OS, narrowing the unit command to\n`packages/gateway/src`, adding each kind of filter flag, flipping the\ndefault, and setting the input in `release.yml`.\n\n**What is given up:** a serial, one-process run of those trees on macOS\nand Windows. The unit job runs each file in its own worker, so\ncross-file interference that shows up only on those OSes would no longer\nsurface after a merge. Linux still runs those trees serially.\n\nAlso: the six job names come out of\n`docs/structure-audit/ci-latency-baseline.json`, as the removed coverage\njobs did in #1676. The CI-gating paragraph in CLAUDE.md and GEMINI.md\nnow says where those trees run.\n\n## Related Issue\n\nNone. This is the second lever from the CI-speed work. The Team plan\nraised the total job limit, but not the macOS one.\n\n## Type of Change\n\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes, Biome format + lint\n- [x] All existing tests pass: `bun test scripts/ci scripts/ci-latency\nscripts/preflight.test.ts scripts/structure-audit`, 1419 pass\n- [x] New behaviour is covered by tests: 3 new tests in\n`cross-platform-parity.test.ts`\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction: only CI files and docs change\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\nPlatform equality is unchanged. Every test file still runs on all three\nOSes on every push, and the PR legs are untouched.\n\n## Coverage\n\n- [x] No source files change. The baseline edit removes only the six\ndropped jobs.\n\n## Testing\n\n- `bun test scripts/ci/cross-platform-parity.test.ts`: 14 pass, 3 of\nthem new.\n- The three red-proofs above each fail the new test aimed at them. The\nnarrowed command also fails four existing parity tests, as it should.\n- `bun run preflight:fast` passed.\n\n## Notes for Reviewers\n\n- **The first push after merge is the check.** Its macOS and Windows\nlegs should show Unit + Coverage and Static, plus Rust/Tauri, and no\nIntegration or E2E job.\n- **Static stays on all three OSes.** It never failed on macOS or\nWindows in those 124 runs either, but nothing else runs its per-OS `bun\nrun build` and audits on a push.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-17T05:58:20Z",
+          "tree_id": "985d8d9b869144c77a79db227f271fee17eca6e8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/10a79e3b67689b0908eaccd784d5822388304937"
+        },
+        "date": 1792217256168,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 238.45456865000142,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 237.12613539999728,
             "unit": "ms"
           }
         ]
