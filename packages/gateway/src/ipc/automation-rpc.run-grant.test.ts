@@ -254,6 +254,22 @@ describe("extension.approveRun / extension.revokeRun over the automation dispatc
     }
   });
 
+  test("extension.list reports runtimeEnabled (default true)", async () => {
+    const { db } = await installed();
+    const read = async (extensionsRuntimeEnabled?: boolean) =>
+      (
+        (await dispatchAutomationRpc({
+          method: "extension.list",
+          params: {},
+          db,
+          ...(extensionsRuntimeEnabled === undefined ? {} : { extensionsRuntimeEnabled }),
+        })) as { value: { runtimeEnabled: boolean } }
+      ).value.runtimeEnabled;
+    expect(await read(false)).toBe(false);
+    expect(await read(true)).toBe(true);
+    expect(await read()).toBe(true);
+  });
+
   test("a non-boolean modelAccess is -32602 and announces nothing", async () => {
     const { db, env } = await installed();
     const events: string[] = [];

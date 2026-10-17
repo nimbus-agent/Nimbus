@@ -496,7 +496,11 @@ function handleExtensionList(rec: Record<string, unknown> | undefined, ctx: Auto
     filter === "needs-reinstall" || filter === "needs_reinstall"
       ? all.filter((e) => e.needs_reinstall === true)
       : all;
-  return { kind: "hit", value: { extensions: filtered } };
+  // `nimbus doctor` stays quiet about unapproved extensions when approving one would be refused.
+  return {
+    kind: "hit",
+    value: { extensions: filtered, runtimeEnabled: ctx.runtimeEnabled ?? true },
+  };
 }
 
 function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
