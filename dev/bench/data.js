@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792210086237,
+  "lastUpdate": 1792210944071,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "44b7783b298f3896aa77dab27d26dcb9df0dd712",
-          "message": "chore: release main (#990)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.14.1</summary>\n\n##\n[1.14.1](https://github.com/nimbus-agent/Nimbus/compare/v1.14.0...v1.14.1)\n(2026-07-31)\n\n\n### Bug Fixes\n\n* **glossary:** stop --refresh hanging when the gateway dies mid-pass\n([#989](https://github.com/nimbus-agent/Nimbus/issues/989))\n([c571fe1](https://github.com/nimbus-agent/Nimbus/commit/c571fe18122cdaa81c6fa41fc2d37a20a65145a0))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-07-31T13:44:58+03:00",
-          "tree_id": "e579963c5bce069d67ebfc4cca8e6aff2042ed88",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/44b7783b298f3896aa77dab27d26dcb9df0dd712"
-        },
-        "date": 1785495416506,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.4113242500007,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 321.6403497499938,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 162.21208855000333,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6dd1f89728486ffcfc51dc0b45b93336ed03aabd",
+          "message": "ci: run the Linux coverage suite with --parallel --no-isolate (#1679)\n\n## Summary\n\nThe Ubuntu `Unit + Coverage` job is the PR critical path. In the 80 PR\nruns measured 2026-10-10 → 10-16 it finished last in 43%, and its median\nwas 14 min. ~9.2 min of that is one step, which runs every package's\ntests **serially** with Istanbul instrumentation. This PR runs that step\nwith `--parallel --no-isolate`.\n\n**Why `--no-isolate` and not plain `--parallel`:** plain `--parallel`\nimplies `--isolate`, a fresh module registry per test file, so Istanbul\nre-instruments every source module once per test file. Two throwaway\nbenchmark runs on ubuntu-24.04 measured the same instrumented packages,\nsame tests:\n\n| shape | time | `audit:coverage-floor` | `audit:coverage-scopes` |\n|---|---|---|---|\n| serial (today; ~9.2 min in real CI runs, cold) | 5.7 min, on a runner\nthe previous step had warmed | — | — |\n| `--parallel` (isolated) | **14.8 min** | — | — |\n| **`--parallel --no-isolate`** | **4.7 min, cold** (22,756 + 4,334\ntests, all pass) | **ok** | **ok (23 scopes)** |\n| `--parallel --no-isolate`, e2e excluded | 4.0 min | **FAILED** (1\nfile) | ok |\n\nRuns 38965201727 and 38967055289; their lcovs are artifacts there.\n\n**What changes:**\n- `--parallel --no-isolate` on each package's instrumented `bun test`.\nEach worker keeps one global for every file it runs, so Istanbul\ninstruments each module once per worker. It also keeps this leg's\nprocess shape: files in one worker see each other's leftovers, as they\ndid in the one-process run, so cross-file `mock.module` leakage stays\ncatchable here. The macOS/Windows legs are the isolated ones.\n- `--parallel` on the uninstrumented `bun test scripts`, the shape the\nmacOS/Windows legs already run those files in.\n- **The e2e trees stay in the instrumented run.** Excluding them saves\n~40 s but fails the per-file coverage floor: they carry coverage.\n- **Docs:** `CLAUDE.md` and `GEMINI.md` (kept identical) said this leg\n\"runs each package serially in one process\".\n\n## Related Issue\n\nNone. This is item 3 of the CI-speed plan (#1676, #1675, #1677 are the\nothers).\n\n## Type of Change\n\n- [x] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (the benchmark run above ran the whole\ninstrumented suite in this shape: all pass)\n- [x] New behaviour is covered by tests (CI-only flag change; the\nbenchmark is the evidence)\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (only CI files change)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] No source files changed. The coverage floor and scopes passed on\nthe `--no-isolate` lcov in the benchmark, and this PR's own run gates on\nthem again.\n\n## Testing\n\n- `bun run preflight:fast` passed; `bun test scripts/ci\nscripts/preflight.test.ts` passed.\n- This PR's own `Unit + Coverage` job is the real measurement: its test\nstep should drop from ~9 min to ~5.\n\n## Notes for Reviewers\n\n- **Conflict with #1676.** It edits the same CLAUDE.md/GEMINI.md\nparagraph a sentence later. Whichever lands second gets a trivial\nrebase; I will do it.\n- **Not done, deliberately:** running the UI vitest coverage\nconcurrently with this step. That would save under a minute and adds CPU\ncontention on the same 4 cores.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-17T07:12:46+03:00",
+          "tree_id": "64680619d3768f300574625adbaba9904f2162c4",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6dd1f89728486ffcfc51dc0b45b93336ed03aabd"
+        },
+        "date": 1792210938424,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 256.15151059999624,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 254.03677480000079,
             "unit": "ms"
           }
         ]
