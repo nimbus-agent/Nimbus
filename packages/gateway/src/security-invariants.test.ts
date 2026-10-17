@@ -5643,13 +5643,13 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       expect(isReadOnlyToolId(id)).toBe(false);
     }
     const reg = await read("packages/gateway/src/share/read-tool-registry.ts");
-    expect(reg).toMatch(/if \(isUserMcpToolKey\(toolId\)\) return false;/);
+    expect(reg).toMatch(/if \(isOwnerCodeServerToolKey\(toolId\)\) return false;/);
     // Second layer: the replay runner treats a user-MCP key as absent before it looks the tool up.
     const rpc = await read("packages/gateway/src/ipc/share-rpc.ts");
     const fnAt = rpc.indexOf("async function runReplayTool(");
     expect(fnAt).toBeGreaterThan(-1);
     const body = rpc.slice(fnAt, rpc.indexOf("\n}\n", fnAt));
-    const guardAt = body.indexOf("if (isUserMcpToolKey(toolId))");
+    const guardAt = body.indexOf("if (isOwnerCodeServerToolKey(toolId))");
     expect(guardAt).toBeGreaterThan(-1);
     expect(guardAt).toBeLessThan(body.indexOf("tools[toolId]"));
   });
@@ -5813,6 +5813,109 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     // a policy applied after boot takes effect on the next turn rather than the next restart.
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
     expect(assemble).toMatch(/enforcedPolicy:\s*\(\)\s*=>\s*policyGate\.enforced\(\)/);
+  });
+
+  test("ext_ (approved extension) actions get the same floor: behavioural deny, no prompt bypass", async () => {
+    const { HITL_REQUIRED, NO_POLICY_OVERLAY, ToolExecutor, isUserMcpActionType } = await import(
+      "./engine/executor.ts"
+    );
+    const type = "ext_x.y";
+    expect(isUserMcpActionType(type)).toBe(true);
+    expect(HITL_REQUIRED.has(type)).toBe(false);
+    let prompts = 0;
+    let dispatches = 0;
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => {
+          prompts += 1;
+          return false;
+        },
+      },
+      { recordAudit: () => {} },
+      {
+        dispatch: async () => {
+          dispatches += 1;
+          return {};
+        },
+      },
+      undefined,
+      NULL_EGRESS_SINK,
+      NO_POLICY_OVERLAY,
+    );
+    const res = await exec.execute({ type, payload: {} });
+    expect(res.status).toBe("rejected");
+    expect(prompts).toBe(1);
+    expect(dispatches).toBe(0);
+  });
+
+  test("a delegate never approves an ext_ call: the delegate is not consulted and the owner is prompted (I20)", async () => {
+    const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
+    let prompts = 0;
+    let remote = 0;
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => {
+          prompts += 1;
+          return false;
+        },
+      },
+      { recordAudit: () => {} },
+      { dispatch: async () => ({}) },
+      {
+        store: {
+          activeDelegateFor: () => true,
+          activeDelegateePeer: () => "peer-1",
+        },
+        isOperatorValid: () => true,
+        requestRemote: async () => {
+          remote += 1;
+          return { kind: "answered", peerId: "peer-1", approved: true };
+        },
+      },
+      NULL_EGRESS_SINK,
+      NO_POLICY_OVERLAY,
+    );
+    const res = await exec.execute({ type: "ext_x.y", payload: {} });
+    expect(res.status).toBe("rejected");
+    expect(remote).toBe(0);
+    expect(prompts).toBe(1);
+  });
+
+  test("share replay never runs an ext_ tool", async () => {
+    const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
+    for (const id of ["ext_x_y", "ext_notes_search", "ext_x_get", "ext_x__list"]) {
+      expect(isReadOnlyToolId(id)).toBe(false);
+    }
+    // runReplayTool is module-private; pin the guard is the widened predicate, ahead of the lookup.
+    const rpc = await read("packages/gateway/src/ipc/share-rpc.ts");
+    const fnAt = rpc.indexOf("async function runReplayTool(");
+    const body = rpc.slice(fnAt, rpc.indexOf("\n}\n", fnAt));
+    const guardAt = body.indexOf("if (isOwnerCodeServerToolKey(toolId))");
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(body.indexOf("tools[toolId]"));
+  });
+
+  test("the dispatcher pairs ext_ keys with ext_ action types in both directions", async () => {
+    const { createConnectorDispatcher } = await import("./connectors/registry.ts");
+    const ran: string[] = [];
+    const mk = (key: string) => ({
+      execute: async () => {
+        ran.push(key);
+        return {};
+      },
+    });
+    const d = createConnectorDispatcher({
+      listTools: async () => ({ ext_x_echo: mk("ext_x_echo"), mcp_x_echo: mk("mcp_x_echo") }),
+    });
+    await expect(
+      d.dispatch({ type: "github.pr_list", payload: { mcpToolId: "ext_x_echo" } }),
+    ).rejects.toThrow(/ERR_USER_MCP_ACTION_MISMATCH/);
+    await expect(
+      d.dispatch({ type: "ext_x.echo", payload: { mcpToolId: "mcp_x_echo" } }),
+    ).rejects.toThrow(/ERR_USER_MCP_ACTION_MISMATCH/);
+    expect(ran).toEqual([]);
+    await d.dispatch({ type: "ext_x.echo", payload: { mcpToolId: "ext_x_echo" } });
+    expect(ran).toEqual(["ext_x_echo"]);
   });
 
   test("share replay refuses an OFFERED user-MCP tool name (<mcp_id>__<tool>) whatever its verb", async () => {

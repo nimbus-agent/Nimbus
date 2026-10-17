@@ -1,5 +1,5 @@
 import { isConnectorCodeExecutionToolId } from "../connectors/connector-code-execution-tool-ids.ts";
-import { isUserMcpToolKey } from "../connectors/user-mcp-store.ts";
+import { isOwnerCodeServerToolKey } from "../connectors/owner-code-server.ts";
 
 /**
  * Positive read-only tool allowlist for recipe replay (Phase 6 Slice 8c, spec §8.1).
@@ -62,7 +62,7 @@ export function isReadOnlyToolId(toolId: string): boolean {
   // A code-execution tool id is never replayable, whatever read verb its name happens to end in.
   if (isConnectorCodeExecutionToolId(toolId)) return false;
   // I42: a user-MCP tool is never replayable — every call to one needs the local owner.
-  if (isUserMcpToolKey(toolId)) return false;
+  if (isOwnerCodeServerToolKey(toolId)) return false;
   const idx = toolId.lastIndexOf("_");
   if (idx <= 0 || idx === toolId.length - 1) return false; // no prefix, or trailing "_"
   return READ_VERBS.has(toolId.slice(idx + 1));
