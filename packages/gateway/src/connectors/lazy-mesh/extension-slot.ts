@@ -252,10 +252,18 @@ export class ExtensionSlots {
     }
     // A disable or revoke that landed while the preparation was in flight has nothing to stop yet
     // (no client, no running record), so the listing is re-read here and a withdrawn id spawns nothing.
-    if (!source.listServiceIds().includes(serviceId)) return this.notListed(source, serviceId);
+    // Either abandonment discards the stage the preparation made: a remove or revoke may already
+    // have deleted the stage root before this copy landed in it.
+    if (!source.listServiceIds().includes(serviceId)) {
+      prepared.discard();
+      return this.notListed(source, serviceId);
+    }
     // A stop that did NOT withdraw the id (auto-update swaps the tree and stops with the id still
     // listed) or a mesh shutdown that landed mid-preparation wins too: the next listing re-prepares.
-    if (this.stoppedSince(prepared.extensionId, startedAt)) throw stoppedWhileStarting(serviceId);
+    if (this.stoppedSince(prepared.extensionId, startedAt)) {
+      prepared.discard();
+      throw stoppedWhileStarting(serviceId);
+    }
     const key = extensionMeshKey(serviceId);
     const serverKey = serviceId.replaceAll(/[^a-zA-Z0-9_-]/g, "_");
     const client = this.options.createClient(`nimbus-extension-${serviceId}-${randomUUID()}`, {

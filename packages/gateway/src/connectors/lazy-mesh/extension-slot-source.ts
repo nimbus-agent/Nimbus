@@ -7,6 +7,12 @@ export interface PreparedExtensionSpawn {
   readonly extensionId: string;
   readonly serviceId: string;
   readonly spec: ServerSpec;
+  /**
+   * Deletes the staged copy this preparation made. Called when the spawn is abandoned after the
+   * preparation resolved (withdrawn or stopped meanwhile): no later spawn sweeps the stage of an
+   * extension that was removed or revoked, so without it a copy of that code outlives it (I43).
+   */
+  discard(): void;
 }
 
 /**

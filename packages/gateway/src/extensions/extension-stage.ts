@@ -48,7 +48,7 @@ export function copyRegularTree(from: string, to: string): void {
 }
 
 /** One removal attempt; a failure is swallowed (a still-exiting Windows child may hold a file). */
-function removeBestEffort(path: string): void {
+export function removeBestEffort(path: string): void {
   try {
     rmSync(path, { recursive: true, force: true });
   } catch {

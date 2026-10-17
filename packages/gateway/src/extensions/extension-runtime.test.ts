@@ -398,4 +398,14 @@ describe("createExtensionSlotSource", () => {
     };
     expect(policy.permissions.filesystem.read).not.toContain(v.installPath);
   });
+
+  test("discard deletes the stage this preparation made, and only that one", async () => {
+    const { v, sandboxDir, stageRoot } = realInstall("ext_a");
+    const src = mk(seed(), true, (async () => v) as never, sandboxDir);
+    const p = await src.prepareSpawn("ext_a");
+    expect(stages(stageRoot)).toHaveLength(1);
+    p.discard();
+    expect(stages(stageRoot)).toEqual([]);
+    expect(existsSync(stageRoot)).toBe(true);
+  });
 });

@@ -1881,7 +1881,7 @@ const D33_EXT_SENTINEL_RE = /__nimbus-extension/g;
 const D33_EXT_SENTINEL_ALLOWED: readonly string[] = [
   "packages/gateway/src/platform/runtime-layout.ts",
 ];
-const D33_EXT_SELFSPAWN_RE = /\bselfSpawn\(\s*["'`]extension["'`]/g;
+const D33_EXT_SELFSPAWN_RE = /\bselfSpawn\s*\(\s*["'`]extension["'`]/g;
 const D33_EXT_SELFSPAWN_ALLOWED: readonly string[] = [
   "packages/gateway/src/extensions/extension-runtime.ts",
 ];

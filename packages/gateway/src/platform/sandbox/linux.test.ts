@@ -58,6 +58,12 @@ describe("buildBwrapArgv", () => {
     expect(argv[bindIdx + 1]).toBe(CWD);
     expect(argv[bindIdx + 2]).toBe(CWD);
   });
+  it("starts the child IN the cwd, not wherever bwrap falls back to", () => {
+    const argv = buildBwrapArgv(basePolicy(), { mode: "no-net", cwd: CWD });
+    const idx = argv.indexOf("--chdir");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(argv[idx + 1]).toBe(CWD);
+  });
   it("ro-binds filesystem.read entries", () => {
     const argv = buildBwrapArgv(basePolicy({ filesystem: { read: ["/home/u/docs"], write: [] } }), {
       mode: "no-net",

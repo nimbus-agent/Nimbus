@@ -11,6 +11,7 @@ import {
 import { extensionStageRootFor } from "../platform/sandbox/sandbox-cwd.ts";
 import {
   type ExtensionStageDeps,
+  removeBestEffort,
   type StagedExtensionForSpawn,
   stageVerifiedExtension,
 } from "./extension-stage.ts";
@@ -177,6 +178,7 @@ export function createExtensionSlotSource(deps: ExtensionSlotSourceDeps): Extens
         extensionId: staged.extensionId,
         serviceId: staged.serviceId,
         spec: buildExtensionSpawnSpec(staged, { runtimeReadPaths: deps.runtimeReadPaths() }),
+        discard: () => removeBestEffort(staged.stagePath),
       };
     },
   };

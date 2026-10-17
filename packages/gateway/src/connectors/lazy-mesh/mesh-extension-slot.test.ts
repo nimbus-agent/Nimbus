@@ -83,6 +83,7 @@ function harness(
   } = {},
 ) {
   let prepareCalls = 0;
+  let discards = 0;
   const clients: FakeClient[] = [];
   let listed: readonly string[] = [SERVICE_ID];
   let allowed = true;
@@ -100,6 +101,9 @@ function harness(
         extensionId: EXTENSION_ID,
         serviceId,
         spec: { command: "echo-server", args: [], env: {} },
+        discard: () => {
+          discards += 1;
+        },
       };
     },
   };
@@ -140,6 +144,9 @@ function harness(
     clients,
     get prepareCalls(): number {
       return prepareCalls;
+    },
+    get discards(): number {
+      return discards;
     },
     setListed(ids: readonly string[]): void {
       listed = ids;
@@ -450,6 +457,7 @@ describe("mesh:ext: slot", () => {
     release();
     expect(await pending).toBeUndefined();
     expect(h.clients).toHaveLength(0);
+    expect(h.discards).toBe(1);
     expect(mesh.isExtensionRunning(EXTENSION_ID)).toBe(false);
   });
 
@@ -468,6 +476,7 @@ describe("mesh:ext: slot", () => {
     release();
     expect(await codeOf(pending)).toBe("ERR_EXTENSION_RUN_STOPPED");
     expect(h.clients).toHaveLength(0);
+    expect(h.discards).toBe(1);
     expect(mesh.isExtensionRunning(EXTENSION_ID)).toBe(false);
     expect(slots(mesh).get(extensionMeshKey(SERVICE_ID))?.client).toBeUndefined();
 

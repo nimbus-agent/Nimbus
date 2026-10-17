@@ -3250,6 +3250,8 @@ describe("D33(a) — the __nimbus-extension role is named only by the layout and
     ["single quotes", "selfSpawn('extension', [p])"],
     ["a template literal", "selfSpawn(`extension`, [p])"],
     ["inner whitespace", 'selfSpawn( "extension", [p])'],
+    ["whitespace before the paren", 'selfSpawn ("extension", [p])'],
+    ["a comment before the paren", 'selfSpawn /* note */ ("extension", [p])'],
   ])("FAILS on selfSpawn with %s outside extension-runtime.ts", (_n, src) => {
     expect(
       checkExtensionRoleConfinement([file("packages/gateway/src/index.ts", src)]),

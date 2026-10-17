@@ -27,6 +27,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -430,7 +431,32 @@ describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", 
     const pidLine = texts.find((t) => t.startsWith("PID "));
     const pid = Number(pidLine?.slice(4));
     expect(Number.isInteger(pid) && pid > 0).toBe(true);
-    return pid;
+    return hostPidOf(pid);
+  }
+
+  // bwrap runs the child under `--unshare-pid`, so the pid it reports is its pid in that
+  // namespace (typically 2), which on the host is some other process or none at all. Map it back
+  // through `NSpid` (host pid first, innermost last), keeping only a process whose command line
+  // names this test's stage root: `--parallel` runs other files' sandboxed children beside it.
+  function hostPidOf(reported: number): number {
+    if (process.platform !== "linux") return reported;
+    const matches: number[] = [];
+    for (const entry of readdirSync("/proc")) {
+      if (!/^\d+$/.test(entry)) continue;
+      try {
+        const nsLine = readFileSync(`/proc/${entry}/status`, "utf8")
+          .split("\n")
+          .find((l) => l.startsWith("NSpid:"));
+        const ids = nsLine?.slice("NSpid:".length).trim().split(/\s+/).map(Number) ?? [];
+        if (ids.length < 2 || ids.at(-1) !== reported) continue;
+        if (!readFileSync(`/proc/${entry}/cmdline`, "utf8").includes(stageRoot)) continue;
+        matches.push(Number(entry));
+      } catch {
+        // The process exited between readdir and read.
+      }
+    }
+    expect(matches).toHaveLength(1);
+    return matches[0] ?? reported;
   }
 
   beforeAll(async () => {
