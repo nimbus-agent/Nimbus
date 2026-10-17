@@ -848,6 +848,14 @@ jobs:
     with:
       runner: ${{ matrix.os }}
       run-packaging: ${{ matrix.os == 'ubuntu-24.04' }}
+      # On macOS and Windows the separate Integration / E2E Gateway / E2E CLI jobs re-ran, one
+      # process at a time, files the unit job's whole-repo run already collects. In the 124 push
+      # runs from 2026-09-17 to 2026-10-17 they failed 6 times, all on Windows, each time with that
+      # run's Windows unit job green on the same files; and macOS allows 5 concurrent jobs on every
+      # plan below Enterprise, so these were 3 of a push's 6 macOS jobs, queueing every PR's macOS
+      # leg behind them in a burst. `cross-platform-parity.test.ts` fails if the unit command stops
+      # covering their trees. Ubuntu keeps them: they are PR gates there.
+      run-integration-and-e2e: ${{ matrix.os == 'ubuntu-24.04' }}
     secrets:
       # Optional; the reusable workflow silently skips the SonarQube step
       # when this is unset.

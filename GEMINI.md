@@ -140,9 +140,12 @@ not here. Where the Gateway also carries per-connector sync/indexing logic, a fe
 ### CI gating
 
 PRs run the Ubuntu `pr-quality` set **and** `pr-quality-cross-platform` — one macOS leg and one
-Windows leg, the Windows one split into two `--shard` jobs. Pushes run the full 3-OS matrix; its
-desktop E2E legs run only when the push changed `packages/ui/`, and nightly (`schedule` in
-`ci.yml`). Two exceptions skip the test jobs, both reported as passing: a docs-only PR, and
+Windows leg, the Windows one split into two `--shard` jobs. Pushes run the full 3-OS matrix. On
+macOS and Windows its integration and e2e trees run inside the whole-repo unit job only, not again
+as jobs of their own (`scripts/ci/cross-platform-parity.test.ts` holds the unit command to
+covering them), and its desktop E2E legs run only when the push changed `packages/ui/`, and
+nightly (`schedule` in `ci.yml`). Two exceptions skip the test jobs, both reported as passing: a
+docs-only PR, and
 release-please's own PR when its diff is a version bump and nothing else
 (`scripts/ci/release-only-diff.ts`, run as it is on the base commit) — the tag's Release
 workflow runs the full Ubuntu suite again before it builds anything.

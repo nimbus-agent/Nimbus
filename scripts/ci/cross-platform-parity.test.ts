@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { load as loadYaml } from "js-yaml";
@@ -280,5 +280,100 @@ describe("the local entry points run the same tests as the push matrix", () => {
     expect(paths).toBeDefined();
     expect(push).toBeDefined();
     expect(paths).toEqual(push as readonly string[]);
+  });
+});
+
+describe("the macOS/Windows push legs still run the integration and e2e trees", () => {
+  // On those legs ci.yml turns off the separate Integration / E2E Gateway / E2E CLI jobs, because
+  // the unit job's whole-repo command collects every file they ran. That is safe only while it
+  // still does: a unit command narrowed to `packages/gateway/src`, or told to skip files, would
+  // leave those trees running on Ubuntu alone, with every check green. So every path one of those
+  // jobs runs must sit inside a path the push leg's unit command names.
+  type Job = { readonly if?: unknown; readonly steps?: readonly { readonly run?: unknown }[] };
+  const suite = loadYaml(readFileSync(TEST_SUITE_YML, "utf8")) as {
+    on?: {
+      workflow_call?: {
+        inputs?: Record<string, { description?: unknown; type?: unknown; default?: unknown }>;
+      };
+    };
+    jobs?: Record<string, Job>;
+  };
+  const ci = loadYaml(readFileSync(CI_YML, "utf8")) as {
+    jobs?: Record<string, { readonly with?: Record<string, unknown> }>;
+  };
+  const SEPARATE_JOBS = ["integration", "e2e-gateway", "e2e-cli"] as const;
+  const pushLine = pushLines[0] ?? "";
+  const unitPaths = bunTestPaths(pushLine) ?? [];
+
+  /** Every path a job hands `bun test`, over every `bun test` line of every `run:` it has. */
+  function jobTestPaths(job: Job | undefined): readonly string[] {
+    const paths: string[] = [];
+    for (const step of job?.steps ?? []) {
+      if (typeof step.run !== "string") continue;
+      for (const line of step.run.split(/\r?\n/)) paths.push(...(bunTestPaths(line) ?? []));
+    }
+    return paths;
+  }
+
+  test("only the push matrix turns the jobs off, and only off Ubuntu", () => {
+    for (const name of SEPARATE_JOBS) {
+      expect({ name, if: suite.jobs?.[name]?.if }).toEqual({
+        name,
+        if: "inputs.run-tests && inputs.run-integration-and-e2e",
+      });
+    }
+    expect(String(ci.jobs?.["ci-ts"]?.with?.["run-integration-and-e2e"])).toMatch(
+      /^\$\{\{ matrix\.os == 'ubuntu-24\.04' \}\}$/,
+    );
+    // Every other caller — ci.yml's PR gate and release.yml's suite — leaves the input unset, so
+    // they run the jobs only while the declared default is `true`: GitHub reads an unset boolean
+    // input with no default as false, and those jobs would then skip with every check green.
+    expect(suite.on?.workflow_call?.inputs?.["run-integration-and-e2e"]).toEqual({
+      description: expect.any(String),
+      type: "boolean",
+      default: true,
+    });
+    const setters = readdirSync(join(REPO_ROOT, ".github", "workflows"))
+      .filter((f) => f.endsWith(".yml") && f !== "_test-suite.yml")
+      .filter((f) =>
+        readFileSync(join(REPO_ROOT, ".github", "workflows", f), "utf8").includes(
+          "run-integration-and-e2e:",
+        ),
+      );
+    expect(setters).toEqual(["ci.yml"]);
+    expect(ci.jobs?.["pr-quality-ts"]?.with ?? {}).not.toHaveProperty("run-integration-and-e2e");
+  });
+
+  test("every path those jobs run sits inside a path the unit command names", () => {
+    expect(unitPaths.length).toBeGreaterThan(0);
+    for (const name of SEPARATE_JOBS) {
+      const paths = jobTestPaths(suite.jobs?.[name]);
+      // Presence first: a job whose `bun test` line this stopped finding would pass the loop.
+      expect({ name, found: paths.length > 0 }).toEqual({ name, found: true });
+      for (const raw of paths) {
+        const path = raw.replace(/\/+$/, "");
+        const covered = unitPaths.some((u) => path === u || path.startsWith(`${u}/`));
+        expect({ name, path, covered }).toEqual({ name, path, covered: true });
+      }
+    }
+  });
+
+  test("the unit command filters out no file and no test", () => {
+    // A path or name filter would let the containment check above pass while the files never ran.
+    // Every flag in Bun 1.4.3's `bun test --help` that runs less, plus `--grep`, which that help
+    // omits but 1.4.3 honours as a test-name filter. Matched as `--flag`, `--flag value` (the flag
+    // is its own token) and `--flag=value`.
+    const FILTERS = [
+      "-t",
+      "--test-name-pattern",
+      "--grep",
+      "--path-ignore-patterns",
+      "--changed",
+      "--only",
+      "--shard",
+    ];
+    const tokens = pushLine.slice(pushLine.indexOf(" bun test ")).split(/\s+/);
+    const filters = tokens.filter((t) => FILTERS.some((f) => t === f || t.startsWith(`${f}=`)));
+    expect(filters).toEqual([]);
   });
 });

@@ -29,6 +29,14 @@ on:
           release callers leave it true.
         type: boolean
         default: true
+      run-integration-and-e2e:
+        description: >-
+          Also run the integration and e2e trees as jobs of their own (serial, one process).
+          `unit-coverage` collects every one of those files too, so ci.yml turns this off on
+          the macOS/Windows push legs, whose unit run is the whole repo; Ubuntu keeps the jobs,
+          which are PR gates there.
+        type: boolean
+        default: true
     secrets:
       SONAR_TOKEN:
         description: |
@@ -643,7 +651,7 @@ jobs:
   # ── Integration tests ──────────────────────────────────────────────────────
   integration:
     name: Integration — ${{ inputs.runner }}
-    if: inputs.run-tests
+    if: inputs.run-tests && inputs.run-integration-and-e2e
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:
@@ -773,7 +781,7 @@ jobs:
   # ── E2E Gateway tests ──────────────────────────────────────────────────────
   e2e-gateway:
     name: E2E Gateway — ${{ inputs.runner }}
-    if: inputs.run-tests
+    if: inputs.run-tests && inputs.run-integration-and-e2e
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:
@@ -887,7 +895,7 @@ jobs:
   # ── E2E CLI tests ──────────────────────────────────────────────────────────
   e2e-cli:
     name: E2E CLI — ${{ inputs.runner }}
-    if: inputs.run-tests
+    if: inputs.run-tests && inputs.run-integration-and-e2e
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:
