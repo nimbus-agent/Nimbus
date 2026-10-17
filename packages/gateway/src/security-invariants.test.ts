@@ -5945,3 +5945,257 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     expect(isReadOnlyToolId("mcp_notes__search")).toBe(false);
   });
 });
+
+describe("I43 — an installed extension's code runs only through the verified spawn path", () => {
+  // A real install through the installer and a real approval through `approveExtensionRun`, so the
+  // row and the grant are exactly what production writes; then the REAL slot source (no injected
+  // verifier) is asked to prepare a spawn. Nothing here spawns a process.
+  const roots: string[] = [];
+  const dbs: Database[] = [];
+  afterEach(async () => {
+    for (const db of dbs.splice(0)) db.close();
+    for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
+    const { signatureDisabledRegistry } = await import("./extensions/hard-disable.ts");
+    signatureDisabledRegistry.reset();
+  });
+
+  async function installAndMaybeApprove(opts: { signed?: boolean; approve?: boolean } = {}) {
+    const { installExtensionFromLocalDirectory } = await import(
+      "./extensions/install-from-local.ts"
+    );
+    const { approveExtensionRun } = await import("./extensions/approve-run.ts");
+    const { signManifest } = await import("./extensions/verify-signature.ts");
+    const { MockVault } = await import("./vault/mock.ts");
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-i43-")));
+    roots.push(root);
+    const db = new Database(":memory:");
+    dbs.push(db);
+    LocalIndex.ensureSchema(db);
+    mkdirSync(join(root, "data"), { recursive: true });
+    mkdirSync(join(root, "outside"), { recursive: true });
+    const env = {
+      platform: process.platform,
+      protectedRoots: [join(root, "data"), join(root, "config")],
+      runtimeReadPaths: [join(root, "bun-bin")],
+      realpath: (p: string) => realpathSync.native(p),
+    };
+    const vault = new MockVault();
+    const id = "com.example.i43";
+    const src = join(root, "src");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    const manifest: Record<string, unknown> = {
+      id,
+      version: "1.0.0",
+      entry: "dist/index.js",
+      permissions: {
+        network: ["api.example.com"],
+        filesystem: { read: [join(root, "outside")], write: [] },
+      },
+    };
+    let publisherKeyPath: string | undefined;
+    if (opts.signed === true) {
+      const kp = generateEd25519Keypair();
+      manifest["publisher"] = { id: "i43-pub", key: encodeBase64(kp.pubkey) };
+      manifest["signature"] = await signManifest(manifest, kp.privkey);
+      publisherKeyPath = join(root, "pub.key");
+      writeFileSync(publisherKeyPath, `${encodeBase64(kp.pubkey)}\n`);
+    }
+    writeFileSync(join(src, "nimbus.extension.json"), JSON.stringify(manifest));
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    writeFileSync(join(src, "dist", "chunk.js"), "export const x = 1;\n");
+    const extensionsDir = join(root, "data", "extensions");
+    await installExtensionFromLocalDirectory({
+      db,
+      extensionsDir,
+      sourcePath: src,
+      approve: async () => true,
+      ...(publisherKeyPath === undefined
+        ? {}
+        : {
+            vault,
+            fetcher: { fetch: async () => ({ kind: "not_found" as const }) },
+            enforceAirGap: false,
+            publisherKeyPath,
+          }),
+    });
+    if (opts.approve !== false) {
+      await approveExtensionRun(id, {
+        db,
+        env,
+        gate: async () => true,
+        runtimeEnabled: true,
+        now: () => 1,
+      });
+    }
+    const { createExtensionSlotSource } = await import("./extensions/extension-runtime.ts");
+    const source = createExtensionSlotSource({
+      db,
+      vault,
+      env,
+      sandboxDir: join(root, "sandbox"),
+      runtimeReadPaths: () => [join(root, "bun-bin")],
+      isConnectorAllowed: () => true,
+    });
+    return { db, vault, id, source, installPath: join(extensionsDir, id) };
+  }
+
+  async function refusalCode(p: Promise<unknown>): Promise<string> {
+    const { ExtensionRunGrantError } = await import("./extensions/run-grant-error.ts");
+    try {
+      await p;
+    } catch (e) {
+      expect(e).toBeInstanceOf(ExtensionRunGrantError);
+      return (e as InstanceType<typeof ExtensionRunGrantError>).code;
+    }
+    throw new Error("prepareSpawn resolved; expected a refusal");
+  }
+
+  test("behavioural: the happy path yields a sandboxed ext.<serviceId> spec running the self-role", async () => {
+    const { getRunGrant } = await import("./extensions/run-grant-store.ts");
+    const { SANDBOX_POLICY_ENV } = await import("./platform/sandbox/sandbox-policy.ts");
+    const f = await installAndMaybeApprove();
+    const serviceId = getRunGrant(f.db, f.id)?.service_id ?? "";
+    expect(serviceId).toMatch(/^ext_[a-z0-9_]+$/);
+    const prepared = await f.source.prepareSpawn(serviceId);
+    expect(prepared.serviceId).toBe(serviceId);
+    const policy = JSON.parse(prepared.spec.env[SANDBOX_POLICY_ENV] ?? "null") as {
+      id: string;
+      permissions: { network: string[] };
+    };
+    expect(policy.id).toBe(`ext.${serviceId}`);
+    expect(policy.permissions.network).toEqual(["api.example.com"]);
+    expect(prepared.spec.args).toContain("__nimbus-extension");
+  });
+
+  test("behavioural: no run grant refuses", async () => {
+    const { deriveExtensionServiceId } = await import("./extensions/extension-service-id.ts");
+    const f = await installAndMaybeApprove({ approve: false });
+    expect(await refusalCode(f.source.prepareSpawn(deriveExtensionServiceId(f.id)))).toBe(
+      "ERR_EXTENSION_RUN_NOT_APPROVED",
+    );
+  });
+
+  test("behavioural: a tree changed after approval (stale digest) refuses", async () => {
+    const { getRunGrant } = await import("./extensions/run-grant-store.ts");
+    const f = await installAndMaybeApprove();
+    writeFileSync(join(f.installPath, "dist", "chunk.js"), "evil();\n");
+    const serviceId = getRunGrant(f.db, f.id)?.service_id ?? "";
+    expect(await refusalCode(f.source.prepareSpawn(serviceId))).toBe(
+      "ERR_EXTENSION_RUN_TREE_CHANGED",
+    );
+  });
+
+  test("behavioural: permissions that no longer equal the stored grant refuse", async () => {
+    const { getRunGrant, upsertRunGrant } = await import("./extensions/run-grant-store.ts");
+    const { serializeRunGrants } = await import("./extensions/extension-run-grants.ts");
+    const f = await installAndMaybeApprove();
+    const g = getRunGrant(f.db, f.id);
+    if (g === null) throw new Error("no grant");
+    upsertRunGrant(f.db, {
+      ...g,
+      permissions_json: serializeRunGrants({ network: ["x.example.com"], read: [], write: [] }),
+    });
+    expect(await refusalCode(f.source.prepareSpawn(g.service_id))).toBe(
+      "ERR_EXTENSION_RUN_CHANGED",
+    );
+  });
+
+  test("behavioural: a publisher manifest that fails I16 at spawn (key gone from the Vault) refuses", async () => {
+    const { getRunGrant } = await import("./extensions/run-grant-store.ts");
+    const { evictPublisherKey } = await import("./extensions/publisher-keys.ts");
+    const f = await installAndMaybeApprove({ signed: true });
+    const serviceId = getRunGrant(f.db, f.id)?.service_id ?? "";
+    // Precondition: the signed extension prepares while its key is cached.
+    await f.source.prepareSpawn(serviceId);
+    await evictPublisherKey(f.vault, "i43-pub");
+    expect(await refusalCode(f.source.prepareSpawn(serviceId))).toBe(
+      "ERR_EXTENSION_RUN_UNVERIFIED",
+    );
+  });
+
+  test("source pin: prepareSpawn verifies through readVerifiedExtensionForSpawn BEFORE it builds the spec", async () => {
+    const src = stripComments(await read("packages/gateway/src/extensions/extension-runtime.ts"));
+    const fnAt = src.indexOf("export function createExtensionSlotSource(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const body = src.slice(fnAt);
+    // The verifier defaults to the real one; the `verify` seam is a test injection only.
+    expect(body).toMatch(/const verify = deps\.verify \?\? readVerifiedExtensionForSpawn;/);
+    const prepAt = body.indexOf("async prepareSpawn(");
+    expect(prepAt).toBeGreaterThan(-1);
+    const prep = body.slice(prepAt);
+    const verifyAt = prep.indexOf("await verify(");
+    const buildAt = prep.indexOf("buildExtensionSpawnSpec(");
+    expect(verifyAt).toBeGreaterThan(-1);
+    expect(buildAt).toBeGreaterThan(verifyAt);
+    // The spec is built from the VERIFIED value, never from the raw grant row.
+    expect(prep).toMatch(/buildExtensionSpawnSpec\(verified,/);
+    // The spec is wrapped (I15) and the sandbox manifest id is `ext.<serviceId>`.
+    expect(src).toMatch(/return wrapServerSpec\(/);
+    expect(src).toMatch(/id: `ext\.\$\{v\.serviceId\}`,/);
+    // Production never injects a verifier: the one construction site passes no `verify`.
+    const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    const callAt = assemble.indexOf("createExtensionSlotSource({");
+    expect(callAt).toBeGreaterThan(-1);
+    const call = assemble.slice(callAt, assemble.indexOf("})", callAt));
+    expect(call).not.toMatch(/\bverify\b/);
+    expect(assemble.indexOf("createExtensionSlotSource(", callAt + 1)).toBe(-1);
+  });
+
+  test("the run grant is created only behind the executor-gated extension.run approval (I2 frozen set)", () => {
+    expect(HITL_REQUIRED.has("extension.run")).toBe(true);
+  });
+
+  test("stopping an extension stops its mesh:ext: slot, keyed by extensionMeshKey", async () => {
+    const src = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
+    const fnAt = src.indexOf("public async stopExtensionClient(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const body = src.slice(fnAt, src.indexOf("\n  }\n", fnAt));
+    expect(body).toContain("this.stopLazyClient(extensionMeshKey(");
+  });
+
+  test("D33(a): the real tree names the self-role only where allowed, and the checker does reject a stray one", async () => {
+    const { checkExtensionRoleConfinement } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(files.length).toBeGreaterThan(100);
+    expect(checkExtensionRoleConfinement(files)).toEqual([]);
+    // Non-vacuous: the same checker flags a planted sentinel and a planted selfSpawn.
+    const planted = checkExtensionRoleConfinement([
+      { relPath: "packages/gateway/src/x/y.ts", contents: 'const r = "__nimbus-extension";\n' },
+      { relPath: "packages/gateway/src/x/z.ts", contents: 'selfSpawn("extension", [p]);\n' },
+    ]);
+    expect(planted.map((v) => v.file)).toEqual([
+      "packages/gateway/src/x/y.ts",
+      "packages/gateway/src/x/z.ts",
+    ]);
+  });
+
+  test("assemble: no extension spawns until the boot verification pass ends; the gate resolves in its finally", async () => {
+    const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    expect(src).toMatch(
+      /try\s*\{\s*await verifyExtensionsBestEffort\([^;]*\);\s*\}\s*finally\s*\{\s*extensionSpawnGate\.resolve\(\);\s*\}/,
+    );
+    // Resolved nowhere else, and the mesh is handed the gate's promise.
+    expect(src.match(/extensionSpawnGate\.resolve\(/g) ?? []).toHaveLength(1);
+    expect(src).toContain("extensionSpawnGate: extensionSpawnGate.promise,");
+  });
+
+  test("assemble: createSchedulerWithMesh receives the runtime switch computed by isExtensionRuntimeEnabled", async () => {
+    const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    const computeAt = src.indexOf("const extensionRuntimeEnabled = isExtensionRuntimeEnabled(");
+    expect(computeAt).toBeGreaterThan(-1);
+    const callAt = src.indexOf("await createSchedulerWithMesh({");
+    expect(callAt).toBeGreaterThan(computeAt);
+    const call = src.slice(callAt, src.indexOf("});", callAt));
+    expect(call).toMatch(/\n\s*extensionRuntimeEnabled(?:: extensionRuntimeEnabled)?,\s*\n/);
+    expect(call).not.toMatch(/extensionRuntimeEnabled:\s*(?:true|!|\()/);
+    // And inside, the slot source exists only when that switch is on.
+    expect(src).toMatch(
+      /const extensionSlots = extensionRuntimeEnabled\s*\?\s*createExtensionSlotSource\(/,
+    );
+  });
+});
