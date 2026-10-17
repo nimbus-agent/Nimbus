@@ -1,10 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
-import {
-  insertExtensionRow,
-  setExtensionTreeDigest,
-} from "../automation/extension-store.ts";
+import { insertExtensionRow, setExtensionTreeDigest } from "../automation/extension-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
 import { upsertRunGrant } from "../extensions/run-grant-store.ts";
 import { LocalIndex } from "../index/local-index.ts";

@@ -576,8 +576,9 @@ describe("owner-approved extensions (ext_) on the same model path", () => {
     );
     expect(await call(tools, "ext_notes__echo", { text: "hi" })).toBe("r");
     expect(ex.actions).toHaveLength(1);
-    expect(ex.actions[0]?.type).toBe("ext_notes.echo");
-    expect((ex.actions[0]?.payload as { mcpToolId?: string }).mcpToolId).toBe("ext_notes_echo");
+    const action = ex.actions[0];
+    expect(action?.type).toBe("ext_notes.echo");
+    expect(action?.payload?.["mcpToolId"]).toBe("ext_notes_echo");
     expect(echo.executeCalls).toBe(0);
   });
 
