@@ -174,7 +174,11 @@ function manualInstall(
   return { db, root, installPath, env, vault: new MockVault(), id };
 }
 
-async function expectCode(p: Promise<unknown>, code: ExtensionRunGrantErrorCode): Promise<void> {
+async function expectCode(
+  p: Promise<unknown>,
+  code: ExtensionRunGrantErrorCode,
+  message?: RegExp,
+): Promise<void> {
   let caught: unknown;
   try {
     await p;
@@ -183,6 +187,7 @@ async function expectCode(p: Promise<unknown>, code: ExtensionRunGrantErrorCode)
   }
   expect(caught).toBeInstanceOf(ExtensionRunGrantError);
   expect((caught as ExtensionRunGrantError).code).toBe(code);
+  if (message !== undefined) expect((caught as ExtensionRunGrantError).message).toMatch(message);
 }
 
 const deps = (f: Fixture) => ({ db: f.db, vault: f.vault, env: f.env });
@@ -358,31 +363,41 @@ describe("readVerifiedExtensionForSpawn", () => {
     await expectCode(readVerifiedExtensionForSpawn(f.id, deps(f)), "ERR_EXTENSION_ENTRY_OUTSIDE");
   });
 
+  // 7c/7d write the entry file where steps 3–6 look for it, so step 7 is the step that refuses.
+  // The manifest parser rewrites every backslash in `entry` to `/` (`manifest.ts` `parseEntry`) and
+  // step 3 joins THAT with the host's path rules. Writing the file under the raw backslash spelling
+  // names a different file on POSIX, where a backslash is an ordinary filename character, so step 3
+  // refused ERR_EXTENSION_RUN_UNVERIFIED there before step 7 ever ran. The message is asserted too,
+  // pinning the refusal to step 7's absolute-path check rather than its later containment check.
+  const asParsed = (entry: string): string => entry.replaceAll("\\", "/");
+
   test("7c: a UNC entry refuses ENTRY_OUTSIDE (win32 path rules, injected)", async () => {
     const entry = String.raw`\\server\share\x.js`;
     const f = manualInstall(
       { id: "com.example.unc", version: "1.0.0", entry },
-      { entryFile: (ip) => join(ip, entry) },
+      { entryFile: (ip) => join(ip, asParsed(entry)) },
     );
     await expectCode(
       readVerifiedExtensionForSpawn(f.id, { ...deps(f), env: { ...f.env, platform: "win32" } }),
       "ERR_EXTENSION_ENTRY_OUTSIDE",
+      /is an absolute path/,
     );
   });
 
-  // A drive-letter name cannot exist as a FILE on a Windows host (the colon), so this is a
-  // POSIX-host test of the win32 path rules; on Windows the same manifest cannot pass step 3.
+  // `C:/x.js` joined under the install path needs a directory named `C:`, which a Windows host
+  // cannot create, so this is a POSIX-host test of the win32 path rules.
   test.skipIf(process.platform === "win32")(
     "7d: a drive-letter entry refuses ENTRY_OUTSIDE (win32 path rules, injected)",
     async () => {
       const entry = String.raw`C:\x.js`;
       const f = manualInstall(
         { id: "com.example.drive", version: "1.0.0", entry },
-        { entryFile: (ip) => join(ip, entry) },
+        { entryFile: (ip) => join(ip, asParsed(entry)) },
       );
       await expectCode(
         readVerifiedExtensionForSpawn(f.id, { ...deps(f), env: { ...f.env, platform: "win32" } }),
         "ERR_EXTENSION_ENTRY_OUTSIDE",
+        /is an absolute path/,
       );
     },
   );
