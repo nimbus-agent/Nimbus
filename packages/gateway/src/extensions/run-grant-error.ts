@@ -11,7 +11,10 @@ export type ExtensionRunGrantErrorCode =
   | "ERR_EXTENSION_RUN_NO_DIGEST"
   | "ERR_EXTENSION_RUN_TREE_CHANGED"
   | "ERR_EXTENSION_RUN_NOT_APPROVED"
-  | "ERR_EXTENSION_RUN_CHANGED";
+  | "ERR_EXTENSION_RUN_CHANGED"
+  | "ERR_EXTENSION_RUN_POLICY"
+  | "ERR_EXTENSION_RUNTIME_DISABLED"
+  | "ERR_EXTENSION_ENTRY_OUTSIDE";
 
 /** A refusal on the way to an extension run grant. The code leads the message, so a CLI shows it. */
 export class ExtensionRunGrantError extends Error {

@@ -36,6 +36,20 @@ import {
   verifyManifestSignature,
 } from "./verify-signature.ts";
 
+/** The entry an extension runs when its manifest names none. */
+export const DEFAULT_EXTENSION_ENTRY = "dist/index.js";
+
+/**
+ * The manifest's entry, relative to the install path, with an absent or empty `entry` falling back
+ * to {@link DEFAULT_EXTENSION_ENTRY}. The ONE spelling of that rule shared by startup verification,
+ * strict verification and the pre-spawn accessor, so the file hashed is the file spawned.
+ */
+export function extensionEntryRelPath(manifest: { readonly entry?: string }): string {
+  return manifest.entry !== undefined && manifest.entry !== ""
+    ? manifest.entry
+    : DEFAULT_EXTENSION_ENTRY;
+}
+
 function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
 }
@@ -173,8 +187,7 @@ async function runHashVerification(
       "extensions: manifest id/version differs from registry",
     );
   }
-  const entryRel =
-    manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
+  const entryRel = extensionEntryRelPath(manifest);
   const entryPath = join(row.install_path, entryRel);
   if (!existsSync(entryPath)) {
     logger.warn({ extensionId: row.id, entryPath }, "extensions: entry file missing");
@@ -226,8 +239,7 @@ export function verifyOneExtensionStrict(row: ExtensionRow): boolean {
   }
   if (!sha256HexEqualConstantTime(sha256HexOfBytes(manifestBytes), row.manifest_hash)) return false;
   const manifest = parseExtensionManifestJson(manifestBytes.toString("utf8"));
-  const entryRel =
-    manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
+  const entryRel = extensionEntryRelPath(manifest);
   const entryPath = join(row.install_path, entryRel);
   if (!existsSync(entryPath)) return false;
   let entryBytes: Buffer;
