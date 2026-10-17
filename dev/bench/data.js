@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792263797522,
+  "lastUpdate": 1792266174019,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "101ae33283a0d78840b408988422974a45377ee5",
-          "message": "docs: correct three CI and item-type claims that survived the accuracy sweep (#1009)\n\nFollow-up to #1000. Three review findings raised on that PR were\nverified against the code, hold up, and are corrected here. A fourth was\ndeclined with a technical reason.\n\n## The three\n\n**`oven/bun:latest` → `oven/bun:1.3`** (CLAUDE.md, GEMINI.md). The\nsentence contradicted itself: it stated CI runs Bun 1.3 and then told\nthe reader to reproduce CI-Linux failures on `latest`. The setup action\ndefaults `bun-version: \"1.3\"`; `latest` survives only in\n`org-drift-sweep.yml`. Applied identically to both mirrors.\n\n**CI trigger claims** (`docs/architecture.md`). `pr-quality-rust` was\ndescribed as running \"when Rust files change\". It's gated on a **path**\nfilter — `^packages/ui/src-tauri/` — so a `.rs` file elsewhere doesn't\ntrigger it, and line 87 implied the leg was unconditional. The PR\ndesktop E2E claim was wrong the same way: it needs the `ci:e2e-desktop`\nlabel **and** a `^packages/ui/` change. The \"/SDK\" half was dead\nentirely, since sdk and client are consumed from npm now.\n\n**`--type pipeline_run`** (`docs/cli-reference.md`). `pipeline_run` has\n**zero `items.type` writers** — every occurrence is a `graph_entity`\ntype — so that documented flag value matches nothing. Replaced with the\ntypes actually emitted (`ci_run`, `web_clip` and the rest), with the\ndistinction noted so it doesn't get re-added.\n\n## The one declined\n\nCodeRabbit asked for the Status line to be trimmed to phase-level,\nmoving dated delivery detail to the CHANGELOG. Declined on two grounds:\n\n1. **It would red the branch.** The prescribed trim deletes `Invariants\nthrough I30 (I28 reserved); schema V46`, which\n`scripts/structure-audit/check-status-drift.ts` regex-requires on both\nsurfaces (`/invariants?\\s+through\\s+I(\\d+)/i`, `/\\bschema\\s+V(\\d+)/i`).\n`audit:status-drift` is in the preflight gate manifest.\n2. **The premise fails.** The claimed ambiguity about the Phase 6\ncompletion date doesn't survive the SSoT — `docs/roadmap.md:900` states\n\"Phase 6 closed 2026-06-18\" verbatim, and `:742` documents Slice 9 as\nthe independent deferred-from-Phase-5 backlog running to 2026-07-19.\n\nThe underlying preference (dated narrative belongs in the CHANGELOG) is\nreal and documented for *new* additions; retroactively stripping the\nhistorical enumeration is a maintainer scope call, not a correctness\nfix.\n\n## Verification\n\n`audit:status-drift` exit 0 · `audit:doc-refs` 646 refs all resolve ·\nmarkdownlint clean (run from outside the worktree — in-worktree it\nsilently lints zero files) · mirror verified: CLAUDE.md and GEMINI.md\ndiffer only in the H1 title and companion-file pointer.\n\nNoted but out of scope: `.claude/agents/nimbus-ci-doctor.md:30` and\n`nimbus-coverage-floor.md:21` still say `oven/bun:latest`, and\n`docs/architecture.md:654` lists `pipeline_run` in the\n`pipeline.list`/`pipeline.get` tool contract.",
-          "timestamp": "2026-08-01T13:37:54+03:00",
-          "tree_id": "dee8eb6625f371dc9bba0074f0916b58a9d9c7c0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/101ae33283a0d78840b408988422974a45377ee5"
-        },
-        "date": 1785582033346,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.47517355000093,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 321.24157645000486,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 158.02846070000268,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4245abfec2630c4a0f2c7a0040bdb69b31b2ba5e",
+          "message": "chore: release main (#1693)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>9.2.0</summary>\n\n##\n[9.2.0](https://github.com/nimbus-agent/Nimbus/compare/v9.1.0...v9.2.0)\n(2026-10-17)\n\n\n### Features\n\n* **extensions:** offer --model extensions to the engine agent (runtime\nPR 4 of 4) ([#1692](https://github.com/nimbus-agent/Nimbus/issues/1692))\n([075ebb2](https://github.com/nimbus-agent/Nimbus/commit/075ebb2c7af0c974b6074d91ac663b192963aeef))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-17T22:32:39+03:00",
+          "tree_id": "0b8740eb39490ad90dd61e839f139cd1749b3ef0",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4245abfec2630c4a0f2c7a0040bdb69b31b2ba5e"
+        },
+        "date": 1792266168323,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 257.9723266500003,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 253.64567704999718,
             "unit": "ms"
           }
         ]
