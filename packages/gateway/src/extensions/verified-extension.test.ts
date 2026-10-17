@@ -345,6 +345,41 @@ describe("readVerifiedExtensionForSpawn", () => {
     await expectCode(readVerifiedExtensionForSpawn(f.id, deps(f)), "ERR_EXTENSION_RUN_UNVERIFIED");
   });
 
+  // Step 6 re-reads the manifest bytes rather than trusting step 4's read. The tree digest (step 5)
+  // runs between the two, so it is where these tests change the manifest after step 4 passed.
+  const digestThen = (change: () => void) => (root: string) => {
+    const digest = computeExtensionTreeDigest(root);
+    change();
+    return digest;
+  };
+
+  test("6d: a manifest deleted after step 4 refuses RUN_UNVERIFIED at the signature re-read", async () => {
+    const f = await setup({ signed: true });
+    const manifestPath = join(f.installPath, "nimbus.extension.json");
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, {
+        ...deps(f),
+        treeDigest: digestThen(() => rmSync(manifestPath)),
+      }),
+      "ERR_EXTENSION_RUN_UNVERIFIED",
+      /could not be read/,
+    );
+  });
+
+  test("6e: a manifest rewritten after step 4 refuses RUN_UNVERIFIED at the signature re-read", async () => {
+    const f = await setup({ signed: true });
+    const manifestPath = join(f.installPath, "nimbus.extension.json");
+    const rewritten = readFileSync(manifestPath, "utf8").replace('"1.0.0"', '"1.0.0" ');
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, {
+        ...deps(f),
+        treeDigest: digestThen(() => writeFileSync(manifestPath, rewritten)),
+      }),
+      "ERR_EXTENSION_RUN_UNVERIFIED",
+      /changed during verification/,
+    );
+  });
+
   test("7: an entry outside the install tree refuses ENTRY_OUTSIDE", async () => {
     const f = manualInstall(
       { id: "com.example.escape", version: "1.0.0", entry: "../outside.js" },

@@ -94,4 +94,27 @@ describe("runExtensionEntry", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("the default deps refuse through the real process.exit and stderr", async () => {
+    const realExit = process.exit;
+    const realWrite = process.stderr.write;
+    const exits: (number | string | null | undefined)[] = [];
+    const written: string[] = [];
+    // Stubbed, never called for real: a real exit would end the test runner.
+    process.exit = ((code) => {
+      exits.push(code);
+    }) as typeof process.exit;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await runExtensionEntry("./relative.js");
+    } finally {
+      process.exit = realExit;
+      process.stderr.write = realWrite;
+    }
+    expect(exits).toEqual([2]);
+    expect(written.join("")).toContain("needs an absolute entry path");
+  });
 });
