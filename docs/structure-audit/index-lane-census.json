@@ -12,7 +12,7 @@
     "totalAbsence": 10,
     "partialCoverage": 28,
     "ambiguousReadCount": 10,
-    "parameterizedReads": 19,
+    "parameterizedReads": 20,
     "nonItemReads": 7,
     "unscopedReads": 10,
     "annotationErrors": 0
@@ -1010,70 +1010,56 @@
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 227
+      "line": 231
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 233
+      "line": 237
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 277
+      "line": 281
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "number",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 279
+      "line": 283
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 280
+      "line": 284
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "issue",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 301
+      "line": 305
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "obsidian_note",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 500
+      "line": 504
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "commit",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 579
-    },
-    {
-      "table": "graph_entity",
-      "kind": "metadata-key",
-      "value": "occurredAt",
-      "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 730
-    },
-    {
-      "table": "graph_entity",
-      "kind": "metadata-key",
-      "value": "affectedService",
-      "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 733
+      "line": 583
     },
     {
       "table": "graph_entity",
@@ -1083,46 +1069,60 @@
       "line": 734
     },
     {
+      "table": "graph_entity",
+      "kind": "metadata-key",
+      "value": "affectedService",
+      "file": "packages/gateway/src/graph/graph-populator.ts",
+      "line": 737
+    },
+    {
+      "table": "graph_entity",
+      "kind": "metadata-key",
+      "value": "occurredAt",
+      "file": "packages/gateway/src/graph/graph-populator.ts",
+      "line": 738
+    },
+    {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 338
+      "line": 342
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "pr_number",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 376
+      "line": 380
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_wikilink_ids",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 493
+      "line": 497
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "resolved_by_email",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 827
+      "line": 831
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "assignedTo",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 924
+      "line": 928
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "project",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 943
+      "line": 947
     },
     {
       "table": "graph_entity",
@@ -1556,175 +1556,126 @@
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 107
+      "line": 114
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 211
+      "line": 218
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "authored",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 213
+      "line": 220
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "opened",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 213
+      "line": 220
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "reviewed",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 213
+      "line": 220
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 248
+      "line": 255
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "authored",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 250
+      "line": 257
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "opened",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 250
+      "line": 257
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "reviewed",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 250
+      "line": 257
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 402
+      "line": 409
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 403
+      "line": 410
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "authored",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 405
+      "line": 412
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 416
+      "line": 423
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "pr",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 417
+      "line": 424
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "authored",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 419
+      "line": 426
     },
     {
       "table": "item",
       "kind": "type",
       "value": "review",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 460
+      "line": 467
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "state",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 457
+      "line": 464
     },
     {
       "table": "item",
       "kind": "type",
       "value": "review",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 479
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "person",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 508
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "issue",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 509
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "opened",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 511
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "person",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 519
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "pr",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 520
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "resolves",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 522
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "authored",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 523
+      "line": 486
     },
     {
       "table": "graph_entity",
@@ -1752,117 +1703,124 @@
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 592
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "owns",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 594
+      "line": 546
     },
     {
       "table": "graph_entity",
       "kind": "type",
-      "value": "service",
+      "value": "pr",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 596
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "directory",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 596
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "person",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 631
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "person",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 655
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "person",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 723
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "incident",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 724
-    },
-    {
-      "table": "item",
-      "kind": "type",
-      "value": "incident",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 736
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "incident",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 742
-    },
-    {
-      "table": "graph_relation",
-      "kind": "type",
-      "value": "assigned",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 741
+      "line": 547
     },
     {
       "table": "graph_relation",
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 741
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "person",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 757
-    },
-    {
-      "table": "graph_entity",
-      "kind": "type",
-      "value": "error_issue",
-      "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 758
+      "line": 549
     },
     {
       "table": "graph_relation",
       "kind": "type",
-      "value": "assigned",
+      "value": "authored",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 760
+      "line": 550
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "person",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 769
+      "line": 558
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "issue",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 559
+    },
+    {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "opened",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 561
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "person",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 621
+    },
+    {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "owns",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 623
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "service",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 625
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "directory",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 625
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "person",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 660
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "person",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 684
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "person",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 752
     },
     {
       "table": "graph_entity",
       "kind": "type",
       "value": "incident",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 753
+    },
+    {
+      "table": "item",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 765
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 771
+    },
+    {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "assigned",
       "file": "packages/gateway/src/agents/negotiate.ts",
       "line": 770
     },
@@ -1871,35 +1829,77 @@
       "kind": "type",
       "value": "resolves",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 772
+      "line": 770
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "person",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 786
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "error_issue",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 787
+    },
+    {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "assigned",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 789
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "person",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 798
+    },
+    {
+      "table": "graph_entity",
+      "kind": "type",
+      "value": "incident",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 799
+    },
+    {
+      "table": "graph_relation",
+      "kind": "type",
+      "value": "resolves",
+      "file": "packages/gateway/src/agents/negotiate.ts",
+      "line": 801
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "merged",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 379
+      "line": 386
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "additions",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 382
+      "line": 389
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "deletions",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 388
+      "line": 395
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "changed_files",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 390
+      "line": 397
     },
     {
       "table": "item",
@@ -4908,7 +4908,7 @@
       "kind": "metadata-key",
       "value": "additions",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 382,
+      "line": 389,
       "matchState": "partial",
       "partialCoverage": [
         "github"
@@ -4919,7 +4919,7 @@
       "kind": "metadata-key",
       "value": "deletions",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 388,
+      "line": 395,
       "matchState": "partial",
       "partialCoverage": [
         "github"
@@ -4930,7 +4930,7 @@
       "kind": "metadata-key",
       "value": "changed_files",
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 390,
+      "line": 397,
       "matchState": "partial",
       "partialCoverage": [
         "github"
@@ -5035,7 +5035,11 @@
     },
     {
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 732
+      "line": 736
+    },
+    {
+      "file": "packages/gateway/src/graph/relationship-graph.ts",
+      "line": 473
     },
     {
       "file": "packages/gateway/src/engine/index-count-question.ts",
@@ -5063,7 +5067,7 @@
     },
     {
       "file": "packages/gateway/src/agents/negotiate.ts",
-      "line": 726
+      "line": 755
     },
     {
       "file": "packages/gateway/src/agents/ownership.ts",
@@ -5148,14 +5152,14 @@
       "kind": "metadata-key",
       "value": "number",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 279
+      "line": 283
     },
     {
       "table": "item",
       "kind": "metadata-key",
       "value": "repo",
       "file": "packages/gateway/src/graph/graph-populator.ts",
-      "line": 280
+      "line": 284
     },
     {
       "table": "item",

@@ -52,12 +52,16 @@ function fakeMesh(registered: Record<string, Record<string, unknown>>): {
   listed: string[];
 } {
   const listed: string[] = [];
+  const listUserMcpTools = async (serviceId: string): Promise<LazyMeshToolMap | undefined> => {
+    listed.push(serviceId);
+    const tools = registered[serviceId];
+    return tools === undefined ? undefined : (tools as LazyMeshToolMap);
+  };
+  // `connector.userMcpTools`/`userMcpCall` list through `listOwnerCodeServerTools` since the
+  // extension runtime (it routes `ext_` ids to the extension slot); no `ext_` id is registered here.
   const mesh = {
-    async listUserMcpTools(serviceId: string): Promise<LazyMeshToolMap | undefined> {
-      listed.push(serviceId);
-      const tools = registered[serviceId];
-      return tools === undefined ? undefined : (tools as LazyMeshToolMap);
-    },
+    listUserMcpTools,
+    listOwnerCodeServerTools: listUserMcpTools,
   } as unknown as LazyConnectorMesh;
   return { mesh, listed };
 }

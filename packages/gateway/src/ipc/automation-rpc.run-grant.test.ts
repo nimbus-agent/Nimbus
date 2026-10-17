@@ -1,15 +1,16 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { setExtensionTreeDigest } from "../automation/extension-store.ts";
+import { listExtensions, setExtensionTreeDigest } from "../automation/extension-store.ts";
+import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
 import { getRunGrant } from "../extensions/run-grant-store.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { dispatchAutomationRpc } from "./automation-rpc.ts";
+import { type AutomationRpcExtensionMeshHandle, dispatchAutomationRpc } from "./automation-rpc.ts";
 import { setGatewayEventBroadcast } from "./gateway-events.ts";
 
 const cleanups: Array<() => void> = [];
@@ -57,6 +58,24 @@ async function installed(permissions?: (root: string) => Record<string, unknown>
       realpath: (p) => realpathSync.native(p),
     },
   };
+}
+
+function idleMesh(): AutomationRpcExtensionMeshHandle {
+  return {
+    stopExtensionClient: async () => {},
+    isExtensionRunning: () => false,
+    removeExtensionSandbox: async () => {},
+  };
+}
+
+async function approve(db: Database, env: ExtensionRunGrantEnv): Promise<void> {
+  await dispatchAutomationRpc({
+    method: "extension.approveRun",
+    params: { id: "rpc.run" },
+    db,
+    runGrantEnv: env,
+    ownerGate: async () => true,
+  });
 }
 
 type ListItem = { id: string; runState: string; runGrant: { serviceId: string } | null };
@@ -163,19 +182,42 @@ describe("extension.approveRun / extension.revokeRun over the automation dispatc
     setExtensionTreeDigest(db, "rpc.run", computeExtensionTreeDigest(installPath));
     expect((await listed(db))[0]?.runState).toBe("grant_stale");
 
-    const stopped: string[] = [];
+    const events: string[] = [];
     const revoked = (await dispatchAutomationRpc({
       method: "extension.revokeRun",
       params: { id: "rpc.run" },
       db,
       mesh: {
+        ...idleMesh(),
         stopExtensionClient: async (id: string) => {
-          stopped.push(id);
+          events.push(`stop:${id}`);
+        },
+        removeExtensionSandbox: async (serviceId: string) => {
+          events.push(`sandbox:${serviceId}`);
         },
       },
     })) as { value: { revoked: boolean } };
     expect(revoked.value.revoked).toBe(true);
-    expect(stopped).toEqual(["rpc.run"]);
+    // The child is stopped FIRST, then its stages are deleted (a revoke leaves no copy behind).
+    expect(events).toEqual(["stop:rpc.run", "sandbox:ext_rpc_run"]);
+
+    // A second revoke (nothing granted) deletes nothing.
+    events.length = 0;
+    await dispatchAutomationRpc({
+      method: "extension.revokeRun",
+      params: { id: "rpc.run" },
+      db,
+      mesh: {
+        ...idleMesh(),
+        stopExtensionClient: async (id: string) => {
+          events.push(`stop:${id}`);
+        },
+        removeExtensionSandbox: async (serviceId: string) => {
+          events.push(`sandbox:${serviceId}`);
+        },
+      },
+    });
+    expect(events).toEqual([]);
     expect((await listed(db))[0]).toMatchObject({ runState: "no_grant", runGrant: null });
   });
 
@@ -223,5 +265,176 @@ describe("extension.approveRun / extension.revokeRun over the automation dispatc
     });
     await dispatchAutomationRpc({ method: "extension.remove", params: { id: "rpc.run" }, db });
     expect(getRunGrant(db, "rpc.run")).toBeNull();
+  });
+});
+
+describe("the extension runtime over the automation dispatcher (PR 3)", () => {
+  test("[extensions] runtime off: approveRun refuses ERR_EXTENSION_RUNTIME_DISABLED without asking", async () => {
+    const { db, env } = await installed();
+    let asked = 0;
+    const err = await dispatchAutomationRpc({
+      method: "extension.approveRun",
+      params: { id: "rpc.run" },
+      db,
+      runGrantEnv: env,
+      extensionsRuntimeEnabled: false,
+      ownerGate: async () => {
+        asked += 1;
+        return true;
+      },
+    }).catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/ERR_EXTENSION_RUNTIME_DISABLED/);
+    expect((err as { rpcCode?: number }).rpcCode).toBe(-32602);
+    expect(asked).toBe(0);
+    expect(getRunGrant(db, "rpc.run")).toBeNull();
+  });
+
+  test("list and info report running when the mesh holds a live client, ready when not", async () => {
+    const { db, env } = await installed();
+    await approve(db, env);
+    const running = { ...idleMesh(), isExtensionRunning: (id: string) => id === "rpc.run" };
+    const list = (await dispatchAutomationRpc({
+      method: "extension.list",
+      params: {},
+      db,
+      mesh: running,
+    })) as { value: { extensions: ListItem[] } };
+    expect(list.value.extensions[0]?.runState).toBe("running");
+    const info = (await dispatchAutomationRpc({
+      method: "extension.info",
+      params: { id: "rpc.run" },
+      db,
+      mesh: running,
+    })) as { value: { extension: { runState: string } } };
+    expect(info.value.extension.runState).toBe("running");
+    const idle = (await dispatchAutomationRpc({
+      method: "extension.list",
+      params: {},
+      db,
+      mesh: idleMesh(),
+    })) as { value: { extensions: ListItem[] } };
+    expect(idle.value.extensions[0]?.runState).toBe("ready");
+  });
+
+  test("a disabled extension the mesh still maps reports disabled, not running", async () => {
+    const { db, env } = await installed();
+    await approve(db, env);
+    await dispatchAutomationRpc({ method: "extension.disable", params: { id: "rpc.run" }, db });
+    const list = (await dispatchAutomationRpc({
+      method: "extension.list",
+      params: {},
+      db,
+      mesh: { ...idleMesh(), isExtensionRunning: () => true },
+    })) as { value: { extensions: ListItem[] } };
+    expect(list.value.extensions[0]?.runState).toBe("disabled");
+  });
+
+  test("extension.remove: withdraws the row, THEN stops the client and removes its sandbox leaf, THEN deletes the install dir", async () => {
+    const { db, env, installPath } = await installed();
+    await approve(db, env);
+    const events: string[] = [];
+    const state = () =>
+      `row=${String(listExtensions(db).some((r) => r.id === "rpc.run"))},grant=${String(
+        getRunGrant(db, "rpc.run") !== null,
+      )},dir=${String(existsSync(installPath))}`;
+    await dispatchAutomationRpc({
+      method: "extension.remove",
+      params: { id: "rpc.run" },
+      db,
+      mesh: {
+        stopExtensionClient: async (id) => {
+          events.push(`stop:${id}:${state()}`);
+        },
+        isExtensionRunning: () => true,
+        removeExtensionSandbox: async (serviceId) => {
+          events.push(`sandbox:${serviceId}:${state()}`);
+        },
+      },
+    });
+    expect(events).toEqual([
+      "stop:rpc.run:row=false,grant=false,dir=true",
+      "sandbox:ext_rpc_run:row=false,grant=false,dir=true",
+    ]);
+    expect(existsSync(installPath)).toBe(false);
+  });
+
+  test("extension.remove with no grant (revoked earlier) still removes the DERIVED service id's stages", async () => {
+    const { db } = await installed();
+    const events: string[] = [];
+    await dispatchAutomationRpc({
+      method: "extension.remove",
+      params: { id: "rpc.run" },
+      db,
+      mesh: {
+        stopExtensionClient: async (id) => {
+          events.push(`stop:${id}`);
+        },
+        isExtensionRunning: () => false,
+        removeExtensionSandbox: async (serviceId) => {
+          events.push(`sandbox:${serviceId}`);
+        },
+      },
+    });
+    expect(events).toEqual(["stop:rpc.run", "sandbox:ext_rpc_run"]);
+  });
+
+  test("extension.remove deletes the ext_ health row a refused spawn recorded", async () => {
+    const { db, env } = await installed();
+    await approve(db, env);
+    transitionHealth(db, "ext_rpc_run", {
+      type: "persistent_error",
+      error: "ERR_EXTENSION_RUN_TREE_CHANGED",
+    });
+    expect(getConnectorHealth(db, "ext_rpc_run").state).toBe("error");
+    await dispatchAutomationRpc({
+      method: "extension.remove",
+      params: { id: "rpc.run" },
+      db,
+      mesh: idleMesh(),
+    });
+    const row = db
+      .query("SELECT COUNT(*) AS c FROM sync_state WHERE connector_id = ?")
+      .get("ext_rpc_run") as { c: number };
+    expect(row.c).toBe(0);
+    expect(getConnectorHealth(db, "ext_rpc_run").state).toBe("not_configured");
+  });
+
+  test("extension.remove still completes when the stop hook throws", async () => {
+    const { db, env, installPath } = await installed();
+    await approve(db, env);
+    const out = (await dispatchAutomationRpc({
+      method: "extension.remove",
+      params: { id: "rpc.run" },
+      db,
+      mesh: {
+        ...idleMesh(),
+        stopExtensionClient: async () => {
+          throw new Error("stop failed");
+        },
+      },
+    })) as { value: { ok: boolean } };
+    expect(out.value.ok).toBe(true);
+    expect(existsSync(installPath)).toBe(false);
+  });
+
+  test("extension.disable stops the client only after the row reads disabled, and awaits it", async () => {
+    const { db } = await installed();
+    let stoppedWhileEnabled: boolean | undefined;
+    let settled = false;
+    await dispatchAutomationRpc({
+      method: "extension.disable",
+      params: { id: "rpc.run" },
+      db,
+      mesh: {
+        ...idleMesh(),
+        stopExtensionClient: async () => {
+          stoppedWhileEnabled = listExtensions(db).find((r) => r.id === "rpc.run")?.enabled === 1;
+          await Promise.resolve();
+          settled = true;
+        },
+      },
+    });
+    expect(stoppedWhileEnabled).toBe(false);
+    expect(settled).toBe(true);
   });
 });

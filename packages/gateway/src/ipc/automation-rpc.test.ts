@@ -904,6 +904,8 @@ describe("extension.enable / disable / remove", () => {
       async stopExtensionClient(id: string): Promise<void> {
         stopped.push(id);
       },
+      isExtensionRunning: () => false,
+      async removeExtensionSandbox(): Promise<void> {},
     };
     const out = await dispatchAutomationRpc({
       method: "extension.disable",
@@ -922,6 +924,8 @@ describe("extension.enable / disable / remove", () => {
       async stopExtensionClient(): Promise<void> {
         invoked++;
       },
+      isExtensionRunning: () => false,
+      async removeExtensionSandbox(): Promise<void> {},
     };
     const out = await dispatchAutomationRpc({
       method: "extension.disable",

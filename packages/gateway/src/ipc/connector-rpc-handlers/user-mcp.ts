@@ -12,9 +12,10 @@
 import { z } from "zod";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
 import type { LazyMeshToolMap } from "../../connectors/lazy-mesh/tool-map.ts";
-import { normalizeUserMcpServiceId } from "../../connectors/user-mcp-store.ts";
+import { normalizeOwnerCodeServerServiceId } from "../../connectors/owner-code-server.ts";
 import type { ToolExecutor } from "../../engine/executor.ts";
 import type { ActionResult } from "../../engine/types.ts";
+import { ExtensionRunGrantError } from "../../extensions/run-grant-error.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 
 export interface UserMcpToolListing {
@@ -52,18 +53,32 @@ function requireMesh(mesh: LazyConnectorMesh | undefined, method: string): LazyC
   return mesh;
 }
 
-/** Resolves the id and lists ITS slot only; refuses an id with no `user_mcp_connector` row. */
+/**
+ * Resolves the id and lists ITS slot only; refuses an id that is neither a registered user MCP
+ * server nor an approved extension. A pre-spawn extension refusal keeps its code and never
+ * reaches the executor.
+ */
 async function listRegisteredTools(
   mesh: LazyConnectorMesh,
   rec: Record<string, unknown> | undefined,
 ): Promise<{ serviceId: string; tools: LazyMeshToolMap }> {
   const raw = typeof rec?.["serviceId"] === "string" ? rec["serviceId"] : "";
-  const serviceId = normalizeUserMcpServiceId(raw);
-  const tools = serviceId === null ? undefined : await mesh.listUserMcpTools(serviceId);
+  const serviceId = normalizeOwnerCodeServerServiceId(raw);
+  let tools: LazyMeshToolMap | undefined;
+  if (serviceId !== null) {
+    try {
+      tools = await mesh.listOwnerCodeServerTools(serviceId);
+    } catch (e) {
+      if (e instanceof ExtensionRunGrantError) {
+        throw new ConnectorRpcError(-32602, e.message);
+      }
+      throw e;
+    }
+  }
   if (serviceId === null || tools === undefined) {
     throw new ConnectorRpcError(
       -32602,
-      `ERR_USER_MCP_NOT_REGISTERED: no user MCP server is registered as ${JSON.stringify(raw)}`,
+      `ERR_USER_MCP_NOT_REGISTERED: no user MCP server or approved extension is registered as ${JSON.stringify(raw)} (register a server with nimbus connector add --mcp, or approve an extension with nimbus extension approve <id>)`,
     );
   }
   return { serviceId, tools };

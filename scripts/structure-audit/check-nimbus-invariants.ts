@@ -1850,7 +1850,7 @@ export function checkCaptureTableConfinement(files: readonly FileEntry[]): Viola
 //     owner's `extension.run` approval, so no other code may write one or read around it. Same
 //     shape and same stated bound as D32(a): a dynamically composed identifier evades a text scan,
 //     and capability confinement (only the store holds queries against the table) is the real
-//     defense. D33(a), the self-role sentinel, lands with the runtime (extension-runtime PR 3).
+//     defense.
 const D33_RUN_GRANT_TABLE_RE = sqlTableReferenceRe("extension_run_grant");
 const D33_RUN_GRANT_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/extensions/run-grant-store.ts",
@@ -1864,6 +1864,53 @@ export function checkRunGrantTableConfinement(files: readonly FileEntry[]): Viol
     D33_RUN_GRANT_TABLE_ALLOWED,
     "run-grant-table-confined",
   );
+}
+
+// (a) The `__nimbus-extension` self-role sentinel is named only by `platform/runtime-layout.ts` (which
+//     defines it); `selfSpawn("extension", …)` is called only from `extensions/extension-runtime.ts`,
+//     the spawner that runs the entry from a verified, re-digested per-spawn stage
+//     (`<sandboxDir>/ext-stage/<serviceId>/<uuid>`, also the child's working directory) through the
+//     sandbox. `index.ts` dispatches via `ROLE_SENTINELS.extension`, never the literal. Scans
+//     comment-stripped source but NOT string-stripped (the sentinel IS a string literal, as with
+//     D29(a)); test files and anything outside packages/gateway/src/ are not scanned. Stated bound: a
+//     dynamically composed role string or `selfSpawn(role)` with a variable evades a text scan. That
+//     gap is covered by I43's tests rather than by this rule: the spec builders and the stager are
+//     each named only by `extension-runtime.ts` (and the stager's own module), and the spec is built
+//     once, inside `prepareSpawn`, after the verifier and the stage digest check.
+const D33_EXT_SENTINEL_RE = /__nimbus-extension/g;
+const D33_EXT_SENTINEL_ALLOWED: readonly string[] = [
+  "packages/gateway/src/platform/runtime-layout.ts",
+];
+const D33_EXT_SELFSPAWN_RE = /\bselfSpawn\s*\(\s*["'`]extension["'`]/g;
+const D33_EXT_SELFSPAWN_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/extension-runtime.ts",
+];
+
+export function checkExtensionRoleConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const code = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    const scans: Array<[RegExp, readonly string[]]> = [
+      [D33_EXT_SENTINEL_RE, D33_EXT_SENTINEL_ALLOWED],
+      [D33_EXT_SELFSPAWN_RE, D33_EXT_SELFSPAWN_ALLOWED],
+    ];
+    for (const [re, allowed] of scans) {
+      if (allowed.includes(f.relPath)) continue;
+      for (const m of code.matchAll(re)) {
+        const line = code.slice(0, m.index).split("\n").length;
+        out.push({
+          rule: "extension-role-confined",
+          file: f.relPath,
+          line,
+          snippet: (original[line - 1] ?? "").trim(),
+        });
+      }
+    }
+  }
+  return out;
 }
 
 // (c) D33(b) confines the TABLE; this confines who may CREATE or DELETE a grant through the store.
@@ -3046,6 +3093,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D27(b) media_grant reached outside media-grant-store.ts — a caller can synthesise a grant or read around the active-row filter; I37 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkExtensionRoleConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D33(a) the __nimbus-extension role (or selfSpawn("extension")) named outside platform/runtime-layout.ts and extensions/extension-runtime.ts — an extension entry could be spawned without the sandbox and the run grant: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

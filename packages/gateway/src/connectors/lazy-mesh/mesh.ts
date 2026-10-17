@@ -5,9 +5,10 @@ import { MCPClient } from "@mastra/mcp";
 import { writeToolCallLog } from "../../db/tool-call-log.ts";
 import { getAgentRequestSessionId } from "../../engine/agent-request-context.ts";
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
+import { EXTENSION_SERVICE_ID_PATTERN } from "../../extensions/extension-service-id.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
-import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
+import { extensionStageRootFor, sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
@@ -40,8 +41,20 @@ import {
 } from "./connector-spawns.ts";
 import { ensureCredentialConnectorsRunning } from "./credential-orchestration.ts";
 import { LazyDrainTracker } from "./drain.ts";
+import {
+  type CreateExtensionClient,
+  defaultCreateExtensionClient,
+  ExtensionSlots,
+} from "./extension-slot.ts";
+import type { ExtensionSlotSource } from "./extension-slot-source.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
-import { LAZY_MESH, USER_MESH_PREFIX, userMcpMeshKey } from "./keys.ts";
+import {
+  EXT_MESH_PREFIX,
+  extensionMeshKey,
+  LAZY_MESH,
+  USER_MESH_PREFIX,
+  userMcpMeshKey,
+} from "./keys.ts";
 import type { LazyMcpSlot, MeshLogger, MeshSpawnContext } from "./slot.ts";
 import {
   type LazyMeshToolMap,
@@ -67,6 +80,7 @@ export class LazyConnectorMesh {
   private readonly removeSandboxDir: (dir: string) => void;
   private readonly sandboxDirExists: (dir: string) => boolean;
   private readonly filesystemSpawnGate: Promise<void> | undefined;
+  private readonly extensionSlots: ExtensionSlots;
 
   constructor(
     paths: PlatformPaths,
@@ -90,6 +104,12 @@ export class LazyConnectorMesh {
        * this. Never rejects in production (`revokeLegacyDataDirGrantsAtBoot`).
        */
       filesystemSpawnGate?: Promise<void>;
+      /** Enabled, approved extensions; each runs in its own lazy `mesh:ext:<serviceId>` slot. */
+      extensionSlots?: ExtensionSlotSource;
+      /** Awaited before an extension is prepared, exactly as `filesystemSpawnGate` is for a spawn. */
+      extensionSpawnGate?: Promise<void>;
+      /** Test seam: builds an extension slot's client. Production: `new MCPClient(...)`. */
+      createExtensionClient?: CreateExtensionClient;
     },
   ) {
     // Only stored here; `collectBuiltInToolMaps` and `listUserMcpTools` await it (undefined means
@@ -143,6 +163,22 @@ export class LazyConnectorMesh {
       bumpToolsEpoch: () => this.bumpToolsEpoch(),
       scheduleLazyDisconnect: (k) => this.scheduleLazyDisconnect(k),
     };
+    this.extensionSlots = new ExtensionSlots(
+      {
+        getLazyClient: (k) => this.getLazyClient(k),
+        setLazyClient: (k, c) => this.setLazyClient(k, c),
+        clearLazyIdle: (k) => this.clearLazyIdle(k),
+        bumpToolsEpoch: () => this.bumpToolsEpoch(),
+        scheduleLazyDisconnect: (k) => this.scheduleLazyDisconnect(k),
+        stopLazyClient: (k) => this.stopLazyClient(k),
+      },
+      {
+        source: options?.extensionSlots,
+        spawnGate: options?.extensionSpawnGate,
+        healthDb: this.healthDb,
+        createClient: options?.createExtensionClient ?? defaultCreateExtensionClient,
+      },
+    );
   }
 
   getToolsEpoch(): number {
@@ -191,6 +227,7 @@ export class LazyConnectorMesh {
     this.clearLazyIdle(key);
     const slot = this.lazySlots.get(key);
     if (slot === undefined) {
+      this.forgetExtensionSlot(key);
       return;
     }
     if (slot.drain.count > 0) {
@@ -201,16 +238,32 @@ export class LazyConnectorMesh {
     }
     const c = slot.client;
     slot.client = undefined;
+    let disconnected: Promise<void> | undefined;
+    if (c !== undefined) {
+      this.bumpToolsEpoch();
+      disconnected = c.disconnect().then(
+        () => undefined,
+        () => undefined,
+      );
+      // From the moment the client is cleared, a listing would start a new spawn. For an extension
+      // that spawn must wait until THIS child's disconnect has finished (I43): the next run stages a
+      // fresh copy in the same leaf, so the previous child must be disconnected and signalled before it is made. This
+      // covers the un-awaited idle teardown too. Other slot kinds are unaffected.
+      if (key.startsWith(EXT_MESH_PREFIX)) {
+        this.extensionSlots.trackStopping(key.slice(EXT_MESH_PREFIX.length), disconnected);
+      }
+    }
+    this.forgetExtensionSlot(key);
     if (slot.idleTimer === undefined) {
       this.lazySlots.delete(key);
     }
-    if (c !== undefined) {
-      this.bumpToolsEpoch();
-      try {
-        await c.disconnect();
-      } catch {
-        /* ignore */
-      }
+    if (disconnected !== undefined) await disconnected;
+  }
+
+  /** Drops the running record of the extension whose slot `key` names (no-op for any other key). */
+  private forgetExtensionSlot(key: string): void {
+    if (key.startsWith(EXT_MESH_PREFIX)) {
+      this.extensionSlots.forgetService(key.slice(EXT_MESH_PREFIX.length));
     }
   }
 
@@ -220,7 +273,7 @@ export class LazyConnectorMesh {
 
   /** Directories no user MCP may be granted a read of: Nimbus's own data, config and sandbox root. */
   userMcpProtectedRoots(): readonly string[] {
-    return [this.paths.dataDir, this.paths.configDir, this.paths.sandboxDir];
+    return userMcpProtectedRootsFor(this.paths);
   }
 
   /**
@@ -286,9 +339,82 @@ export class LazyConnectorMesh {
     return lastErr;
   }
 
+  /**
+   * Stops an extension's client (disable, revoke, a failed startup verify). Keyed by the manifest
+   * id the callers hold; the slot is found through the running record, which outlives the grant
+   * row, so a stop after the grant is deleted still stops the child.
+   */
   public async stopExtensionClient(extensionId: string): Promise<void> {
+    // First, synchronously: a preparation already in flight for this extension must not connect.
+    this.extensionSlots.markStopped(extensionId);
     await this.stopUserMcpClient(extensionId);
     await this.stopLazyClient(extensionId);
+    const serviceId = this.extensionSlots.serviceIdFor(extensionId);
+    if (serviceId !== undefined) {
+      await this.stopLazyClient(extensionMeshKey(serviceId));
+    }
+  }
+
+  /** True while the extension has a live client in its `mesh:ext:` slot. */
+  isExtensionRunning(extensionId: string): boolean {
+    return this.extensionSlots.isRunning(extensionId);
+  }
+
+  /**
+   * Stops an extension's slot and deletes its stage root and its old sandbox leaf. Same best-effort,
+   * never-throws, three-attempt contract as {@link removeUserMcpSandbox}.
+   */
+  async removeExtensionSandbox(serviceId: string): Promise<void> {
+    try {
+      await this.stopLazyClient(extensionMeshKey(serviceId));
+    } catch (err) {
+      this.logger?.warn({ serviceId, err }, "extension client not stopped before sandbox removal");
+    }
+    // Both: the stage root every spawn now runs in, and the `ext.<serviceId>` per-policy leaf that
+    // earlier builds of this branch staged into (harmless when absent).
+    for (const dir of [
+      extensionStageRootFor(this.paths.sandboxDir, serviceId),
+      sandboxCwdFor(this.paths.sandboxDir, `ext.${serviceId}`),
+    ]) {
+      const lastErr = await this.deleteSandboxLeaf(dir);
+      if (lastErr !== undefined) {
+        this.logger?.warn(
+          { serviceId, dir, err: lastErr },
+          "extension sandbox directory not removed",
+        );
+      }
+    }
+  }
+
+  /**
+   * The tools of ONE approved extension — its own slot only. `undefined` when no source is wired
+   * or it does not list the id. A first listing (or the first after a stop / idle-out) re-verifies
+   * and spawns through `prepareSpawn`; a refusal rejects with its `ExtensionRunGrantError`.
+   */
+  async listExtensionTools(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+    return this.extensionSlots.listTools(serviceId);
+  }
+
+  /** {@link listExtensionTools}, drain-refcount wrapped like {@link listUserMcpToolsForDispatcher}. */
+  async listExtensionToolsForDispatcher(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+    return this.wrapSlotToolsWithDrain(
+      extensionMeshKey(serviceId),
+      await this.listExtensionTools(serviceId),
+    );
+  }
+
+  /** One owner code server's tools: an extension (`ext_*`) or a user MCP server (anything else). */
+  listOwnerCodeServerTools(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+    return EXTENSION_SERVICE_ID_PATTERN.test(serviceId)
+      ? this.listExtensionTools(serviceId)
+      : this.listUserMcpTools(serviceId);
+  }
+
+  /** {@link listOwnerCodeServerTools} for the connector dispatcher (drain-refcount wrapped). */
+  listOwnerCodeServerToolsForDispatcher(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+    return EXTENSION_SERVICE_ID_PATTERN.test(serviceId)
+      ? this.listExtensionToolsForDispatcher(serviceId)
+      : this.listUserMcpToolsForDispatcher(serviceId);
   }
 
   /**
@@ -334,11 +460,21 @@ export class LazyConnectorMesh {
    * spawns only its own server, never every connector the merged listing would start.
    */
   async listUserMcpToolsForDispatcher(serviceId: string): Promise<LazyMeshToolMap | undefined> {
-    const tools = await this.listUserMcpTools(serviceId);
+    return this.wrapSlotToolsWithDrain(
+      userMcpMeshKey(serviceId),
+      await this.listUserMcpTools(serviceId),
+    );
+  }
+
+  /** Wraps one slot's tool listing in that slot's drain refcount, so a stop waits for its calls. */
+  private wrapSlotToolsWithDrain(
+    key: string,
+    tools: LazyMeshToolMap | undefined,
+  ): LazyMeshToolMap | undefined {
     if (tools === undefined) {
       return undefined;
     }
-    const drain = this.lazySlots.get(userMcpMeshKey(serviceId))?.drain;
+    const drain = this.lazySlots.get(key)?.drain;
     const wrapped: LazyMeshToolMap = { ...tools };
     if (drain !== undefined) {
       this.wrapMergedToolsWithRefcount(
@@ -349,6 +485,9 @@ export class LazyConnectorMesh {
     return wrapped;
   }
 
+  // `mesh:user:` slots only, here and in `collectUserMcpToolMap`: extension (`mesh:ext:`) tools are
+  // not offered to the model until a later PR, so they never enter the merged dispatcher map, and
+  // `buildSlotForToolMap` never lists an extension slot either.
   private async ensureUserMcpConnectorsRunning(): Promise<void> {
     const rows = this.listUserMcpConnectors();
     const active = new Set(rows.map((r) => r.service_id));
@@ -538,8 +677,12 @@ export class LazyConnectorMesh {
    * listing fails is skipped, as before.
    */
   private async buildSlotForToolMap(): Promise<Map<string, LazyDrainTracker>> {
-    const liveSlots = Array.from(this.lazySlots.values()).flatMap((slot) =>
-      slot.client === undefined ? [] : [{ client: slot.client, drain: slot.drain }],
+    // `mesh:ext:` slots are skipped: their tools are never in the merged map, and a first-party
+    // dispatch must not contact an extension's process.
+    const liveSlots = Array.from(this.lazySlots.entries()).flatMap(([key, slot]) =>
+      slot.client === undefined || key.startsWith(EXT_MESH_PREFIX)
+        ? []
+        : [{ client: slot.client, drain: slot.drain }],
     );
     const listings = await Promise.all(
       liveSlots.map(async ({ client, drain }) => {
@@ -674,6 +817,8 @@ export class LazyConnectorMesh {
     // never rejects; run one at a time, a single slot draining in-flight calls (up to ten minutes)
     // delayed the teardown of every slot after it. The key set is snapshotted up front — gateway
     // shutdown, the one production caller, stops the sync scheduler and IPC server before this.
+    // An extension preparation still in flight is not in that snapshot, so it is told not to connect.
+    this.extensionSlots.markAllStopped();
     await Promise.all(Array.from(this.lazySlots.keys(), (key) => this.stopLazyClient(key)));
     try {
       await this.filesystem.disconnect();
@@ -681,6 +826,17 @@ export class LazyConnectorMesh {
       /* ignore */
     }
   }
+}
+
+/**
+ * Nimbus's own data, config and sandbox root — the set no user MCP (and, plus the extensions dir, no
+ * extension run grant) may overlap. A function of the paths alone, so `platform/assemble.ts` can
+ * build the extension runtime's grant env BEFORE the mesh it hands that runtime to exists.
+ */
+export function userMcpProtectedRootsFor(
+  paths: Pick<PlatformPaths, "dataDir" | "configDir" | "sandboxDir">,
+): readonly string[] {
+  return [paths.dataDir, paths.configDir, paths.sandboxDir];
 }
 
 /**
@@ -701,6 +857,8 @@ export function createLazyConnectorMesh(
     isConnectorAllowed?: (serviceId: string) => boolean;
     removeSandboxDir?: (dir: string) => void;
     filesystemSpawnGate?: Promise<void>;
+    extensionSlots?: ExtensionSlotSource;
+    extensionSpawnGate?: Promise<void>;
   },
 ): Promise<LazyConnectorMesh> {
   return Promise.try(() => new LazyConnectorMesh(paths, vault, options));

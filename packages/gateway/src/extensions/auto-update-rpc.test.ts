@@ -427,3 +427,34 @@ describe("dispatchAutoUpdateRpc extension.checkForUpdates force=false", () => {
     expect(pollCalled).toBe(false);
   });
 });
+
+describe("dispatchAutoUpdateRpc extension.update — runGrantNote (extension runtime PR 3)", () => {
+  async function askedPayload(hasRunGrant?: (id: string) => Promise<boolean>) {
+    const deps = baseDeps();
+    const asked: Array<Record<string, unknown>> = [];
+    deps.gate = async (a) => {
+      asked.push(a.payload);
+      return { status: "rejected" };
+    };
+    if (hasRunGrant !== undefined) deps.hasRunGrant = hasRunGrant;
+    await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    );
+    expect(asked).toHaveLength(1);
+    return asked[0] ?? {};
+  }
+
+  it("carries the re-approve note when the extension holds a run grant", async () => {
+    const p = await askedPayload(async (id) => id === "com.example.a");
+    expect(p["runGrantNote"]).toBe(
+      "Running the new version will need a new `nimbus extension approve com.example.a`.",
+    );
+  });
+
+  it("omits the note when there is no run grant, or no way to ask", async () => {
+    expect("runGrantNote" in (await askedPayload(async () => false))).toBe(false);
+    expect("runGrantNote" in (await askedPayload())).toBe(false);
+  });
+});

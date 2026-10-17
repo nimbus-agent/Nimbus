@@ -70,6 +70,11 @@ export function buildBwrapArgv(policy: SandboxPolicy, opts: BuildArgvOpts): stri
     "--bind",
     opts.cwd,
     opts.cwd,
+    // Without it bwrap tries the PARENT's cwd, which is not bound inside, and falls back to
+    // `$HOME` — so the child ran outside the directory it was given, unlike darwin and win32,
+    // which both spawn into `opts.cwd`. The cwd is bound above at its own path, so this resolves.
+    "--chdir",
+    opts.cwd,
   ];
   if (existsSync("/lib64")) {
     argv.push("--ro-bind", "/lib64", "/lib64");

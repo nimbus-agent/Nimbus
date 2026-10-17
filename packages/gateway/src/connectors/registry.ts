@@ -6,7 +6,10 @@ import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "./lazy-mesh/index.ts";
 import { mcpClientToolKey, resolveServerTool } from "./lazy-mesh/tool-map.ts";
-import { isUserMcpToolKey, userMcpToolKeyForActionType } from "./user-mcp-store.ts";
+import {
+  isOwnerCodeServerToolKey,
+  ownerCodeServerToolKeyForActionType,
+} from "./owner-code-server.ts";
 
 const registryLog = pino({
   name: "connector-registry",
@@ -57,17 +60,17 @@ type DispatcherToolMap = Record<
 
 /**
  * The dispatcher client every production mesh dispatcher uses: the whole merged map for a
- * first-party action, the action's OWN server for a user-MCP one.
+ * first-party action, the action's OWN server for an owner code server (user MCP or extension).
  */
 export function meshDispatcherClient(mesh: {
   listToolsForDispatcher(): Promise<DispatcherToolMap>;
   getToolsEpoch(): number;
-  listUserMcpToolsForDispatcher(serviceId: string): Promise<DispatcherToolMap | undefined>;
+  listOwnerCodeServerToolsForDispatcher(serviceId: string): Promise<DispatcherToolMap | undefined>;
 }): McpToolListingClient {
   return {
     listTools: () => mesh.listToolsForDispatcher(),
     getToolsEpoch: () => mesh.getToolsEpoch(),
-    listUserMcpTools: (serviceId) => mesh.listUserMcpToolsForDispatcher(serviceId),
+    listUserMcpTools: (serviceId) => mesh.listOwnerCodeServerToolsForDispatcher(serviceId),
   };
 }
 
@@ -99,7 +102,7 @@ export function createConnectorDispatcher(
    * mismatch refusal the whole-mesh listing gave. The post-resolution check below still runs.
    */
   async function toolsFor(action: PlannedAction, toolId: string): Promise<DispatcherToolMap> {
-    const expected = userMcpToolKeyForActionType(action.type);
+    const expected = ownerCodeServerToolKeyForActionType(action.type);
     const listOne = client.listUserMcpTools;
     if (expected === undefined || listOne === undefined) {
       return tools();
@@ -178,8 +181,8 @@ export function createConnectorDispatcher(
  * by `_` (or is extended by one), so `mcp_a` and `mcp_a_b` are never both registered.
  */
 function assertUserMcpKeyMatchesActionType(actionType: string, resolvedKey: string): void {
-  const expected = userMcpToolKeyForActionType(actionType);
-  if (expected === undefined && !isUserMcpToolKey(resolvedKey)) return;
+  const expected = ownerCodeServerToolKeyForActionType(actionType);
+  if (expected === undefined && !isOwnerCodeServerToolKey(resolvedKey)) return;
   if (expected === resolvedKey) return;
   throw new Error(
     `ERR_USER_MCP_ACTION_MISMATCH: action type ${JSON.stringify(actionType)} may not dispatch tool ${JSON.stringify(resolvedKey)}`,

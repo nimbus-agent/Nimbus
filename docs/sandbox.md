@@ -169,46 +169,81 @@ race, since the pre-existing boot reap may delete another live
 gateway's per-run profile; and a shared install directory is assumed
 not to carry another Windows user's live Nimbus SIDs.
 
-#### Known limitation: `bun <script>` under a profile-nested cwd
+#### Known limitation: Bun needs FILE_WRITE_ATTRIBUTES on every module it loads
 
-Measured on this branch, not theoretical: **a `bun <script>` child
-cannot start when its working directory is nested inside the user
-profile** (e.g. `%LOCALAPPDATA%\Nimbus\extensions\<ext>\workdir`, the
-real production shape). It fails with:
+Measured on Windows against a real `nimbus-sandbox-helper.exe`, in a dev
+tree and in a `bun build --compile` binary alike: **Bun's module loader
+opens every module source file it loads asking for
+`FILE_WRITE_ATTRIBUTES`**, in addition to read. The helper's read grant
+is `FILE_GENERIC_READ | FILE_GENERIC_EXECUTE`, which does not carry that
+right, so a confined child cannot `import()` or `require()` a file it is
+only granted READ on. It fails with
+
+    error: EPERM reading "<the module file>"
+
+even though `readFileSync` of the very same file succeeds. A file entry
+point (`bun <script>`) hits the same denial, and Bun reports it as
 
     error loading current directory
     error: An internal error occurred (CouldntReadCurrentDirectory)
 
-The cause is Bun's own startup, not the sandbox — but what exactly Bun
-does at startup is not fully pinned down: what was measured is that
-Bun fails this way under a profile-nested cwd, and that a `package.json`
-placed directly at the leaf does not stop the failure (so "Bun walks
-upward looking for `package.json`/`bunfig.toml` and reaches `C:\Users`,
-whose DACL a non-elevated token cannot rewrite" was an earlier
-explanation for this, tried and disproved by that leaf-`package.json`
-experiment — see the "Consequence, measured rather than assumed" note
-in the helper's own README). A plain Win32 binary (e.g. `powershell.exe`)
-spawned through the identical helper invocation, at the identical path,
-with the identical grants, runs fine — which is what pins the failure
-on Bun's own startup rather than on AppContainer or Windows itself. The
-helper does not grant ancestor directories anything to work around
-this: an earlier revision did, and removed it — see the "used to be a
-third category" note in the helper's own README for why (a modified
-DACL on a directory the helper does not own is itself an unwanted side
-effect, independent of a separate hang one such walk produced on a
-production-shaped tree).
+which is why this section used to blame a profile-nested working
+directory. That explanation is wrong. A bisect over a fresh temp tree
+(read grant on the tree, an extra right added to `ALL APPLICATION
+PACKAGES` one at a time) loads the module when `FILE_WRITE_ATTRIBUTES` is
+added, on the files alone, and still fails with `FILE_WRITE_DATA`,
+`FILE_APPEND_DATA` or `FILE_WRITE_EA` instead. The working directory
+matters only because the helper grants the cwd read, execute AND write:
+a module inside the cwd loads, and one outside it does not, wherever the
+cwd lives.
 
-**What this means in practice.** The shipped product spawns the
-**compiled** `nimbus-gateway.exe __nimbus-connector <id>` — no script
-path, so Bun's own startup walk never runs, and the failure above does
-not occur. A **dev tree** spawns `bun <entry> __nimbus-connector <id>`
-instead, which does hit the walk, so a Windows contributor running
-from source with a profile-nested cwd will see this error where a
-packaged install would not. If you hit
-`CouldntReadCurrentDirectory` while developing on Windows, that is
-this limitation, not a regression — relocate the sandboxed cwd out
-from under the user profile, or run against a built `nimbus-gateway.exe`
-instead of `bun run`.
+**What this means in practice.** Code a confined Bun child must load has
+to sit somewhere the sandbox already grants write. Installed extensions do
+exactly that: each spawn copies the verified install tree into a fresh,
+gateway-owned directory `<sandboxDir>/ext-stage/<serviceId>/<uuid>`,
+re-digests the copy, and runs it with that directory as the child's working
+directory (invariant I43, `extensions/extension-stage.ts`), so the install
+tree itself is not granted to the extension at all. In a dev tree, the
+extension role runs inline (`bun --no-env-file --no-install -e`) rather than
+as `bun <gateway>/src/index.ts`, since the gateway's own source is not
+granted either. The dev-tree shape is exercised end to end on
+Windows by `packages/gateway/test/e2e/extension-runtime.e2e.test.ts`; the compiled self-role
+shape is reasoned from a compiled probe (a `bun build --compile` binary loads a
+module once the file carries that right), not exercised end to end. First-party connectors are unaffected
+in a released binary, where their code is bundled into
+`nimbus-gateway.exe` and nothing is loaded from disk; a **dev tree**
+spawns `bun <entry> __nimbus-connector <id>`, a file entry point, and so
+fails this way on Windows where a packaged install does not.
+
+**Extension spawns.** An approved extension (`nimbus extension approve`) spawns under the policy id
+`ext.<serviceId>`, which keys its Windows AppContainer profile, but NOT in a per-policy leaf: its
+working directory is the fresh per-spawn stage `<sandboxDir>/ext-stage/<serviceId>/<uuid>` that holds
+the verified copy. The policy grants exactly what the owner approved and nothing else: the declared
+network hosts, the declared read and write paths, read access to the runtime's own required paths,
+and read-write on that stage, as the working directory. The install directory, the Nimbus data and
+config directories, and the stage's ancestors are not granted.
+
+Why a fresh stage rather than a long-lived leaf: Bun honours `bunfig.toml` (a `preload` runs before
+the entry), `.env` and `node_modules` it finds in the working directory and above the entry, and none
+of them is covered by the tree digest. In a working directory that persists across spawns, a
+previous run of the extension, or any same-user process, could plant code that runs before the
+approved entry and survives a revoke and re-approval. Each spawn instead sweeps everything already in
+`ext-stage/<serviceId>` and starts in a new directory holding only digested files, so nothing written
+to a previous cwd reaches the next spawn; the extension's declared write grants are its only
+persistence. Its ancestors (`ext-stage/<serviceId>`, `ext-stage`, the sandbox root) are granted to
+no spawn on any OS: the Windows helper grants the cwd and the declared paths with no ancestor ACE,
+`bwrap` binds only the cwd and the declared paths, and the macOS profile grants the cwd's ancestors
+only as non-recursive `literal` directory reads. A declared grant overlapping the sandbox root is
+refused `ERR_EXTENSION_GRANT_PROTECTED` at approval and again before every spawn. Remaining bounds: a
+same-user filesystem writer can still race the window between the copy's digest and the child's
+`import()`; and the release binary is built with a plain `bun build --compile`, which leaves Bun's
+compiled-executable autoload of `<cwd>/bunfig.toml` and `<cwd>/.env` on (measured on Bun 1.3) — for
+an extension that cwd is the fresh stage, so it can read only the extension's own approved files.
+
+`nimbus extension revoke` deletes the extension's stage root after stopping it, and
+`nimbus extension remove` deletes it (with or without a grant) together with the old per-policy
+`ext.<serviceId>` leaf that an earlier shape of the runtime staged into. A stop alone (disable, an
+idle timeout) leaves the last stage until the next spawn sweeps it.
 
 ## Per-policy working directories {#per-policy-cwd}
 

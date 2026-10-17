@@ -30,10 +30,12 @@ import {
   listWorkflows,
   upsertWorkflowByName,
 } from "../automation/workflow-store.ts";
+import { deleteConnectorHealthRow } from "../connectors/health.ts";
 import { approveExtensionRun, revokeExtensionRun } from "../extensions/approve-run.ts";
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
 import { clearDeps, forwardDeps, reverseDeps } from "../extensions/dependency-store.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
+import { deriveExtensionServiceId } from "../extensions/extension-service-id.ts";
 import {
   PRE_T2_DISABLE_REASON,
   preT2DisabledIds,
@@ -105,7 +107,12 @@ function handleValidateCondition(rec: Record<string, unknown> | undefined, db: D
 }
 
 export interface AutomationRpcExtensionMeshHandle {
+  /** Stops the extension's live client; keyed on the extension id, so it works after the grant is gone. */
   stopExtensionClient(extensionId: string): Promise<void>;
+  /** Whether the mesh holds a live client for the extension — `list`/`info`'s `running` state. */
+  isExtensionRunning(extensionId: string): boolean;
+  /** Deletes the extension's stage root (and its old `ext.<serviceId>` leaf). Best-effort, never throws. */
+  removeExtensionSandbox(serviceId: string): Promise<void>;
 }
 
 /**
@@ -128,6 +135,8 @@ interface AutomationCtx {
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
+  /** `[extensions] runtime` and not demo-rooted; absent means the default, `true`. */
+  runtimeEnabled?: boolean;
 }
 
 type AutomationHandler = (
@@ -309,17 +318,19 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     return { kind: "hit", value: { ok } };
   },
 
-  "extension.disable": (rec, ctx) => {
+  "extension.disable": async (rec, ctx) => {
     const id = requireString(rec, "id");
     const ok = setExtensionEnabled(ctx.db, id, false);
     if (ok && ctx.mesh !== undefined) {
-      void ctx.mesh.stopExtensionClient(id);
+      // After the row reads disabled, so a concurrent spawn's verifier already refuses, and awaited
+      // so the reply means the child is gone. A stop failure never fails the disable.
+      await stopExtensionBestEffort(ctx.mesh, id);
     }
     emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "disable", ok });
     return { kind: "hit", value: { ok } };
   },
 
-  "extension.remove": (rec, ctx) => {
+  "extension.remove": async (rec, ctx) => {
     const id = requireString(rec, "id");
     const force = rec?.["force"] === true;
 
@@ -336,11 +347,24 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
         }
       }
 
+      // Read BEFORE the delete takes the grant with it: the stage root is named by its service id.
+      // With no grant (revoked earlier, or never approved) it is derived, since a revoke or an
+      // earlier spawn may still have left a stage behind.
+      const serviceId = extensionServiceIdForCleanup(getRunGrant(ctx.db, id)?.service_id, id);
       const installPath = deleteExtensionById(ctx.db, id);
       if (installPath === null) {
         throw new AutomationRpcError(-32602, "Extension not found");
       }
       clearDeps(ctx.db, id);
+      // The row and grant are gone first, so no new spawn can verify; then the live child is stopped
+      // and its stage root removed, and only THEN the install dir — never delete code a running
+      // child still has open.
+      if (ctx.mesh !== undefined) {
+        await stopExtensionBestEffort(ctx.mesh, id);
+        if (serviceId !== undefined) await ctx.mesh.removeExtensionSandbox(serviceId);
+      }
+      // The `ext_` health row a refused or failed spawn recorded goes with the extension.
+      if (serviceId !== undefined) deleteConnectorHealthRow(ctx.db, serviceId);
       try {
         rmSync(installPath, { recursive: true, force: true });
       } catch {
@@ -391,6 +415,36 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   }),
 };
 
+/**
+ * The service id whose stage root `extension.remove` deletes: the grant's stored id, else the one
+ * `approveRun` would derive. `undefined` only for a manifest id that yields no valid service id —
+ * which could never have been approved, so it never had a stage.
+ */
+function extensionServiceIdForCleanup(
+  granted: string | undefined,
+  extensionId: string,
+): string | undefined {
+  if (granted !== undefined) return granted;
+  try {
+    return deriveExtensionServiceId(extensionId);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Stops an extension's live client; a stop failure is swallowed — the row decision already stands. */
+async function stopExtensionBestEffort(
+  mesh: AutomationRpcExtensionMeshHandle,
+  id: string,
+): Promise<void> {
+  try {
+    await mesh.stopExtensionClient(id);
+  } catch {
+    // The spawn path re-verifies the row and grant before every spawn, so a missed stop cannot
+    // outlive the next spawn attempt; failing the lifecycle call would only strand the row.
+  }
+}
+
 type ExtensionListItem = ExtensionRow &
   ReturnType<typeof extensionRunFields> & {
     disabled_reason?: typeof PRE_T2_DISABLE_REASON | SignatureDisableReason;
@@ -413,11 +467,12 @@ type ExtensionListItem = ExtensionRow &
 function decorateExtensionList(
   rows: readonly ExtensionRow[],
   grants: ReadonlyMap<string, ExtensionRunGrantRow>,
+  isRunning: (id: string) => boolean,
 ): ExtensionListItem[] {
   const preT2 = new Set(preT2DisabledIds());
   const signature = new Map(signatureDisabledRegistry.list().map((e) => [e.id, e.reason]));
   return rows.map((r) => {
-    const run = extensionRunFields(r, grants.get(r.id) ?? null);
+    const run = extensionRunFields(r, grants.get(r.id) ?? null, isRunning(r.id));
     if (preT2.has(r.id)) {
       return { ...r, ...run, disabled_reason: PRE_T2_DISABLE_REASON, needs_reinstall: true };
     }
@@ -429,10 +484,14 @@ function decorateExtensionList(
   });
 }
 
+function isRunningIn(ctx: AutomationCtx, id: string): boolean {
+  return ctx.mesh?.isExtensionRunning(id) ?? false;
+}
+
 function handleExtensionList(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
   const filter = rec !== undefined && typeof rec["filter"] === "string" ? rec["filter"] : "";
   const grants = new Map(listRunGrants(ctx.db).map((g) => [g.extension_id, g]));
-  const all = decorateExtensionList(listExtensions(ctx.db), grants);
+  const all = decorateExtensionList(listExtensions(ctx.db), grants, (id) => isRunningIn(ctx, id));
   const filtered =
     filter === "needs-reinstall" || filter === "needs_reinstall"
       ? all.filter((e) => e.needs_reinstall === true)
@@ -448,7 +507,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
   }
   const fwd = forwardDeps(ctx.db, row.id);
   const rev = reverseDeps(ctx.db, row.id);
-  const run = extensionRunFields(row, getRunGrant(ctx.db, row.id));
+  const run = extensionRunFields(row, getRunGrant(ctx.db, row.id), isRunningIn(ctx, row.id));
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {
     return {
@@ -687,7 +746,7 @@ function runGrantRpcError(e: unknown): unknown {
 
 /**
  * Approve an installed extension to RUN (extension-runtime § 4.4): a second, separate approval from
- * install, asked under `extension.run`. Nothing spawns it yet — the runtime is PR 3.
+ * install, asked under `extension.run`. The lazy mesh spawns it on first use, re-verifying first.
  */
 async function handleExtensionApproveRun(
   rec: Record<string, unknown> | undefined,
@@ -706,7 +765,13 @@ async function handleExtensionApproveRun(
     );
   }
   try {
-    const out = await approveExtensionRun(id, { db: ctx.db, env, gate: ownerGate, now: Date.now });
+    const out = await approveExtensionRun(id, {
+      db: ctx.db,
+      env,
+      gate: ownerGate,
+      runtimeEnabled: ctx.runtimeEnabled ?? true,
+      now: Date.now,
+    });
     // `list`/`info` now carry runState, so a connected client must hear that it moved — as it
     // already does for install/enable/disable/remove/update. An unchanged re-approval moved nothing.
     if (out.changed) {
@@ -734,12 +799,19 @@ async function handleExtensionRevokeRun(
 ): Promise<Hit> {
   const id = requireString(rec, "id");
   const mesh = ctx.mesh;
+  // Read before the revoke deletes the grant: the stage root is named by its service id.
+  const serviceId = getRunGrant(ctx.db, id)?.service_id;
   try {
     const out = await revokeExtensionRun(
       ctx.db,
       id,
       mesh === undefined ? undefined : (x) => mesh.stopExtensionClient(x),
     );
+    // After the stop, the stages go too: a later re-approval starts from nothing a previous run
+    // left, and a revoked extension leaves no copy of its code in the sandbox root.
+    if (out.revoked && mesh !== undefined && serviceId !== undefined) {
+      await mesh.removeExtensionSandbox(serviceId);
+    }
     if (out.revoked) {
       emitGatewayEvent("extension.stateChanged", {
         extensionId: id,
@@ -785,6 +857,7 @@ export async function dispatchAutomationRpc(options: {
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
+  extensionsRuntimeEnabled?: boolean;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -800,6 +873,9 @@ export async function dispatchAutomationRpc(options: {
     ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
     ...(options.ownerGate !== undefined && { ownerGate: options.ownerGate }),
     ...(options.runGrantEnv !== undefined && { runGrantEnv: options.runGrantEnv }),
+    ...(options.extensionsRuntimeEnabled !== undefined && {
+      runtimeEnabled: options.extensionsRuntimeEnabled,
+    }),
   };
   return await handler(asRecord(options.params), ctx);
 }

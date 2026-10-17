@@ -18,6 +18,65 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-17 — S3: extension runtime PR 3 of 4 — approved extensions run (invariant I43, static D33(a), I42 widened).**
+  An extension with a run grant now runs, sandboxed, as an MCP stdio server in a lazy
+  `mesh:ext:<serviceId>` slot: it starts on first use, never at boot, and only after the boot
+  integrity pass. The owner invokes it with `nimbus connector tools ext_<id>` and
+  `nimbus connector call ext_<id> <tool> [--input <json>]` (the existing `connector.userMcpTools` /
+  `connector.userMcpCall` methods), and every call goes through the I42 HITL prompt, which is widened
+  from `mcp_*` to `ext_` ids. Extension tools are NOT offered to the model and are NOT proposable on
+  the I28 act door; model access is PR 4. Before every spawn `readVerifiedExtensionForSpawn`
+  re-verifies the row, the grant, the manifest and entry hashes, the tree digest, I16 for publisher
+  manifests, entry containment and the re-resolved grants. The verified tree is then COPIED into a
+  fresh, gateway-owned per-spawn stage `<sandboxDir>/ext-stage/<serviceId>/<uuid>`, the copy is
+  re-digested, and the extension runs from the copy with the stage as its working directory
+  (invariant **I43**); the install directory is not granted to the extension at all. The copy is
+  needed on Windows because Bun's module loader opens each module requesting
+  `FILE_WRITE_ATTRIBUTES`, which a read-only AppContainer grant lacks (`docs/sandbox.md`). The stage
+  is fresh per spawn, and outside every per-policy leaf, because Bun honours an undigested
+  `bunfig.toml` preload, `.env` and `node_modules` in its working directory: nothing written to a
+  previous cwd reaches the next spawn, so an extension's declared write grants are its only
+  persistence. A dev tree runs the role inline via `bun --no-env-file --no-install -e`; a compiled
+  build runs `nimbus-gateway.exe __nimbus-extension <entry>`. Under a signed org policy with a
+  connector allowlist, an extension is refused `ERR_EXTENSION_RUN_POLICY` unless its `ext_` service
+  id is listed: the mesh's catalog filter ignores non-catalog ids, so the slot source checks the
+  allowlist itself, before every spawn and on every listing that reuses a live client (a tightened
+  allowlist stops the running child). A child that fails to start refuses
+  `ERR_EXTENSION_RUN_START_FAILED` (recorded as the service's health error) rather than listing no
+  tools while reading `running`; an approved-but-disabled extension refuses
+  `ERR_EXTENSION_RUN_DISABLED` and a start that lost a race with a stop `ERR_EXTENSION_RUN_STOPPED`,
+  instead of "not registered". `nimbus connector tools|call` exit 2 on every `ERR_EXTENSION_`
+  refusal. A re-spawn waits for the previous child's
+  disconnect to settle. Static rule **D33(a)** is the new confinement rule for this path. `runState`
+  gains `running`, shown by `nimbus extension list|info`. A new config key `[extensions] runtime`
+  (default `true`) is a kill switch: off, no extension runs and `approveRun` refuses
+  `ERR_EXTENSION_RUNTIME_DISABLED`; a demo gateway runs none. The run consent payload gains
+  `runsFrom` (the code runs from a verified per-spawn copy) and the auto-update consent payload a
+  `runGrantNote` when a grant exists. No migration.
+  **Fixed along the way:** `extension.remove` never stopped a running extension (it called no stop
+  hook) and now does, and deletes the extension's stages (with or without a grant) and its `ext_`
+  health row; disable and revoke stop it too, via a re-pointed stop hook, and revoke deletes its
+  stages after the stop.
+  **Bounds:** I43 defends the install tree and the verified bytes, not what an approved extension does
+  inside its own grants. A same-user filesystem writer can still race the window between the copy's
+  digest and the import. Auto-update stops, then swaps: a spawn that verified and staged between the
+  two runs the old version from its own copy until it idles out. The release binary is built with a
+  plain `bun build --compile`, whose compiled-executable autoload of `<cwd>/bunfig.toml` and `.env`
+  is on (measured on Bun 1.3); for an extension that cwd is the fresh stage, so it reads only the
+  extension's own digested files. **Not verified:** macOS and Linux were not run locally (Docker was
+  unavailable); the end-to-end test runs on those CI legs. The compiled-binary role is reasoned from a
+  probe, not exercised end to end, and an entry path containing spaces is untested on Windows.
+  **Not yet (PR 4):** `--model` access, the org-policy lockoff, and a `nimbus doctor` line.
+  **Found, not fixed here:** `extension.enable` re-enables an extension the startup signature pass
+  hard-disabled without re-verifying its signature (carried from PR 2; `approveRun` refuses such a
+  row, but `extension list` shows it enabled). Auto-update swaps `<extensionsDir>/<id>/active`, but
+  `nimbus extension install` writes the package to `<extensionsDir>/<id>` directly and nothing
+  creates `active/`, so an extension installed through the real path cannot be auto-updated
+  (carried from PR 2). A runtime-generated (toolgen) tool can rewrite its own script, because its
+  working directory is read-write. Toolgen's `bun -e` spawn likely does not work in a compiled
+  binary, since a compiled Bun ignores `-e`. Windows argv mangles backslashes inside `-e` code
+  (avoided in the extension role, not root-caused).
+
 - **2026-10-17 — Index: a fresh database is built without a flush per migration step.**
   A brand-new index runs every schema step from version 0, each in its own transaction, so under
   SQLite's default `synchronous = FULL` first boot paid ~70 forced disk flushes for a database that

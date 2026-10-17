@@ -39,8 +39,9 @@ export function wrapServerSpec(
 
 /**
  * `wrapServerSpec` with an EXACT working directory instead of a per-policy leaf. Only for a spawn
- * whose cwd is already a directory of its own — a generated tool runs in its script's directory.
- * Never pass `paths.dataDir` or `paths.configDir` here.
+ * whose cwd is already a directory of its own — a generated tool runs in its script's directory,
+ * an approved extension in its fresh per-spawn stage (I43). Never pass `paths.dataDir` or
+ * `paths.configDir` here.
  */
 export function wrapServerSpecInCwd(
   spec: ServerSpec,

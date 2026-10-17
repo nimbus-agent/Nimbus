@@ -249,3 +249,72 @@ describe("connector add --mcp — the owner decides", () => {
     expect(process.exitCode).toBe(0);
   });
 });
+
+describe("connector tools / call: extension ids", () => {
+  test("usage names <mcp_id|ext_id>", async () => {
+    const err: string[] = [];
+    await runConnectorTools(
+      [],
+      makeDeps(() => ({}), [], [], err),
+    );
+    expect(err[0]).toContain("<mcp_id|ext_id>");
+    process.exitCode = 0;
+  });
+
+  test("an ERR_EXTENSION_RUN_* refusal exits 2", async () => {
+    const err: string[] = [];
+    await runConnectorTools(
+      ["ext_foo"],
+      makeDeps(
+        () => {
+          throw new Error("ERR_EXTENSION_RUN_TREE_CHANGED: tree changed");
+        },
+        [],
+        [],
+        err,
+      ),
+    );
+    expect(process.exitCode).toBe(2);
+    process.exitCode = 0;
+  });
+
+  test("every ERR_EXTENSION_ refusal exits 2, not only RUN_*", async () => {
+    for (const code of [
+      "ERR_EXTENSION_ENTRY_OUTSIDE",
+      "ERR_EXTENSION_GRANT_PROTECTED",
+      "ERR_EXTENSION_GRANT_PATH_MISSING",
+      "ERR_EXTENSION_RUN_START_FAILED",
+    ]) {
+      process.exitCode = 0;
+      await runConnectorTools(
+        ["ext_foo"],
+        makeDeps(
+          () => {
+            throw new Error(`${code}: refused`);
+          },
+          [],
+          [],
+          [],
+        ),
+      );
+      expect(process.exitCode).toBe(2);
+    }
+    process.exitCode = 0;
+  });
+
+  test("a non-refusal gateway failure still exits 1", async () => {
+    await runConnectorTools(
+      ["ext_foo"],
+      makeDeps(
+        () => {
+          throw new Error("socket closed");
+        },
+        [],
+        [],
+        [],
+      ),
+    );
+    expect(process.exitCode).toBe(1);
+    process.exitCode = 0;
+  });
+});

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
-import { USER_MCP_SERVICE_ID_PATTERN } from "../connectors/user-mcp-store.ts";
+import { isOwnerCodeServerServiceId } from "../connectors/owner-code-server.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
@@ -232,12 +232,13 @@ export const HITL_REQUIRED = Object.freeze({
 }) as unknown as ReadonlySet<string>;
 
 /**
- * I42: a user-registered MCP server runs arbitrary owner-approved code, and its tools are not
+ * I42: an owner-approved code server (a user-registered MCP server `mcp_*`, or an approved
+ * extension `ext_*`) runs arbitrary owner-approved code, and its tools are not
  * enumerable ahead of time, so EVERY call to one needs the local owner's approval — derived from
  * the action TYPE alone (I3), never configurable, joined by OR so it only ever tightens.
  */
 export function isUserMcpActionType(actionType: string): boolean {
-  return USER_MCP_SERVICE_ID_PATTERN.test(serviceOf(actionType));
+  return isOwnerCodeServerServiceId(serviceOf(actionType));
 }
 
 const SENSITIVE_PAYLOAD_KEY = /(token|key|secret|password|credential|bearer|auth)/i;

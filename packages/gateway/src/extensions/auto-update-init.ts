@@ -24,6 +24,7 @@ import type { AvailableUpdate } from "./auto-update-types.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
 import { createRegistryClient, type RegistryClient } from "./registry-client.ts";
+import { getRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { verifyManifestSignature } from "./verify-signature.ts";
 
@@ -46,6 +47,8 @@ export interface AutoUpdateRuntimeBag {
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
   getInstalledVersion: (id: string) => Promise<string | null>;
   hasPrevVersion: (id: string, version: string) => Promise<boolean>;
+  /** Optional for test bags; the production bag (below) always answers from the run-grant store. */
+  hasRunGrant?: (id: string) => Promise<boolean>;
 }
 
 export interface AutoUpdateRuntime {
@@ -246,6 +249,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
         const prevPath = join(dirname(row.install_path), "_prev", version);
         return existsSync(prevPath);
       }),
+    hasRunGrant: (id) => Promise.try(() => getRunGrant(opts.db, id) !== null),
   };
 
   return { daemon, deps, abortController };

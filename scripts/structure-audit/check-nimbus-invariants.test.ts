@@ -19,6 +19,7 @@ import {
   checkEgressChokepointConfinement,
   checkEmbeddingAppenderConfinement,
   checkEmbeddingConstructorConfinement,
+  checkExtensionRoleConfinement,
   checkFlatUpsertGraphEntityCoOwnedTypes,
   checkFleetClientKindConfinement,
   checkForwardShareConfinement,
@@ -3210,6 +3211,59 @@ describe("D33(c) — only the store and the approve/revoke path create or delete
         ),
         file("packages/gateway/src/y.test.ts", "upsertRunGrant(db, row); deleteRunGrant(db, id);"),
         file("scripts/z.ts", "upsertRunGrant(db, row);"),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("D33(a) — the __nimbus-extension role is named only by the layout and the runtime", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const LAYOUT = "packages/gateway/src/platform/runtime-layout.ts";
+  const RUNTIME = "packages/gateway/src/extensions/extension-runtime.ts";
+
+  test("allows the literal in runtime-layout.ts and selfSpawn(extension) in extension-runtime.ts", () => {
+    expect(
+      checkExtensionRoleConfinement([
+        file(LAYOUT, 'export const R = { extension: "__nimbus-extension" };'),
+        file(RUNTIME, 'selfSpawn("extension", [p]);'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("FAILS on the literal in any other gateway file", () => {
+    const v = checkExtensionRoleConfinement([
+      file("packages/gateway/src/index.ts", 'if (s === "__nimbus-extension") {}'),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("extension-role-confined");
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("FAILS on the literal in extension-runtime.ts (only the layout may name it)", () => {
+    expect(
+      checkExtensionRoleConfinement([file(RUNTIME, 'const s = "__nimbus-extension";')]),
+    ).toHaveLength(1);
+  });
+
+  test.each([
+    ["double quotes", 'selfSpawn("extension", [p])'],
+    ["single quotes", "selfSpawn('extension', [p])"],
+    ["a template literal", "selfSpawn(`extension`, [p])"],
+    ["inner whitespace", 'selfSpawn( "extension", [p])'],
+    ["whitespace before the paren", 'selfSpawn ("extension", [p])'],
+    ["a comment before the paren", 'selfSpawn /* note */ ("extension", [p])'],
+  ])("FAILS on selfSpawn with %s outside extension-runtime.ts", (_n, src) => {
+    expect(
+      checkExtensionRoleConfinement([file("packages/gateway/src/index.ts", src)]),
+    ).toHaveLength(1);
+  });
+
+  test("does not match a comment, a test file, a non-gateway file, or another role", () => {
+    expect(
+      checkExtensionRoleConfinement([
+        file("packages/gateway/src/x.ts", '// __nimbus-extension\nselfSpawn("sandbox", [p]);'),
+        file("packages/gateway/src/y.test.ts", 'selfSpawn("extension", []); "__nimbus-extension"'),
+        file("scripts/z.ts", '"__nimbus-extension"'),
       ]),
     ).toEqual([]);
   });

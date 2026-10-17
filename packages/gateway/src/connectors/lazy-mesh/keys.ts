@@ -44,3 +44,10 @@ export const USER_MESH_PREFIX = "mesh:user:";
 export function userMcpMeshKey(serviceId: string): string {
   return `${USER_MESH_PREFIX}${serviceId}`;
 }
+
+/** An approved extension's slot. Keyed by its stored grant service id (`ext_*`), never recomputed. */
+export const EXT_MESH_PREFIX = "mesh:ext:";
+
+export function extensionMeshKey(serviceId: string): string {
+  return `${EXT_MESH_PREFIX}${serviceId}`;
+}

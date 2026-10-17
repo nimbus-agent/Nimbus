@@ -2,7 +2,7 @@
 
 This is a short path from zero to a locally installed Nimbus extension. For the full contract, see `docs/architecture.md` (Extension Registry) and `packages/gateway/src/extensions/manifest.ts`.
 
-> **Installed extensions are not executed yet.** Install hashes, Ed25519-verifies, records and enables an extension, and `nimbus extension list` shows it — but no code path spawns an installed extension's entry, so it adds no tools to the agent today. The steps below are what install and verification do; the spawn behaviour described in step 2 is the design, not current behaviour. To run your own MCP server now, use `nimbus scaffold mcp` and `nimbus connector add --mcp`. Tracked in [`ecosystem-roadmap.md` § Track 0](../ecosystem-roadmap.md#track-0--shipped-but-dark).
+> **Installing does not run an extension; approving it does.** Install hashes, Ed25519-verifies, records and enables an extension. Since extension runtime PR 3 (2026-10-17), the owner can then approve it to run (`nimbus extension approve <id>`), and it runs as a sandboxed MCP stdio server on first use, from a verified per-spawn copy of its install tree that is also its working directory (invariant I43). Its tools are invoked by the owner with `nimbus connector tools|call ext_<id>`, each call behind an approval prompt; they are **not** offered to the agent's model yet (that is PR 4). Tracked in [`ecosystem-roadmap.md` § Track 0](../ecosystem-roadmap.md#track-0--shipped-but-dark).
 
 ## 1. Create `nimbus.extension.json`
 
@@ -17,7 +17,7 @@ The Gateway hashes this file and the entry file at install time; any on-disk cha
 
 ## 2. Build the entry
 
-The entry must exist at the path declared in `entry`. Use your normal TypeScript → JavaScript build; by design the Gateway will spawn the entry as a Bun child process with service-scoped env only (no Vault API across the boundary) — **not yet implemented**: today nothing spawns it (see the note at the top).
+The entry must exist at the path declared in `entry`. Use your normal TypeScript → JavaScript build; the Gateway spawns the entry as a sandboxed Bun child process with service-scoped env only (no Vault API across the boundary), once the owner has approved it to run (see the note at the top). The entry should start an MCP stdio server. Its working directory is a fresh copy of your package made for that one run, so do not keep state there: write only to the paths your manifest declares under `permissions.filesystem.write`, which are its only persistence.
 
 ## 3. Install from a directory or tarball
 

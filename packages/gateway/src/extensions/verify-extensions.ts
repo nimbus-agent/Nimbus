@@ -24,6 +24,7 @@ import {
   signatureDisabledRegistry,
 } from "./hard-disable.ts";
 import {
+  extensionEntryRelPath,
   parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
@@ -173,8 +174,7 @@ async function runHashVerification(
       "extensions: manifest id/version differs from registry",
     );
   }
-  const entryRel =
-    manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
+  const entryRel = extensionEntryRelPath(manifest);
   const entryPath = join(row.install_path, entryRel);
   if (!existsSync(entryPath)) {
     logger.warn({ extensionId: row.id, entryPath }, "extensions: entry file missing");
@@ -226,8 +226,7 @@ export function verifyOneExtensionStrict(row: ExtensionRow): boolean {
   }
   if (!sha256HexEqualConstantTime(sha256HexOfBytes(manifestBytes), row.manifest_hash)) return false;
   const manifest = parseExtensionManifestJson(manifestBytes.toString("utf8"));
-  const entryRel =
-    manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : "dist/index.js";
+  const entryRel = extensionEntryRelPath(manifest);
   const entryPath = join(row.install_path, entryRel);
   if (!existsSync(entryPath)) return false;
   let entryBytes: Buffer;

@@ -77,8 +77,20 @@ describe("selfSpawn", () => {
     expect(selfSpawn("sandbox", undefined, COMPILED_POSIX).args).toEqual(["__nimbus-sandbox"]);
   });
 
-  test("the two sentinels are distinct and namespaced", () => {
-    expect(ROLE_SENTINELS.sandbox).not.toBe(ROLE_SENTINELS.connector);
+  test("the extension role: compiled and dev argv shapes", () => {
+    expect(selfSpawn("extension", ["/x/e.js"], COMPILED_POSIX)).toEqual({
+      command: "/opt/nimbus/nimbus-gateway",
+      args: ["__nimbus-extension", "/x/e.js"],
+    });
+    expect(selfSpawn("extension", ["/x/e.js"], DEV)).toEqual({
+      command: "/usr/local/bin/bun",
+      args: ["/repo/packages/gateway/src/index.ts", "__nimbus-extension", "/x/e.js"],
+    });
+  });
+
+  test("the three sentinels are distinct and namespaced", () => {
+    const all = Object.values(ROLE_SENTINELS);
+    expect(new Set(all).size).toBe(3);
     for (const s of Object.values(ROLE_SENTINELS)) {
       expect(s.startsWith("__nimbus-")).toBe(true);
     }

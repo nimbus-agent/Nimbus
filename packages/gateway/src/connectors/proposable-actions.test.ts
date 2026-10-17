@@ -159,3 +159,13 @@ describe("listProposableActionTypes", () => {
     expect(out).toEqual([]);
   });
 });
+
+describe("extension service ids are not proposable on the act door", () => {
+  test("ext_ falls through to unknown even when listed as model-accessible", () => {
+    const ctx = {
+      modelAccessServices: () => new Set(["ext_foo"]),
+      userMcpModelAccessAllowed: () => true,
+    };
+    expect(classifyActionType("ext_foo.echo", ctx)).toEqual({ kind: "unknown" });
+  });
+});

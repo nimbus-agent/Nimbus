@@ -552,3 +552,13 @@ function buildSnapshot(
   }
   return snap;
 }
+
+/**
+ * Deletes a removed service's `sync_state` row — the health row `transitionHealth` inserts — the
+ * same single row `LocalIndex.removeConnectorIndexData` deletes when a connector or user MCP server
+ * is removed. Used when an approved extension is REMOVED, so its `ext_` id stops appearing in
+ * `connector.listStatus` / `nimbus connector list`. History rows are kept, as they are there.
+ */
+export function deleteConnectorHealthRow(db: Database, connectorId: string): void {
+  dbRun(db, "DELETE FROM sync_state WHERE connector_id = ?", [connectorId]);
+}

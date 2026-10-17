@@ -36,6 +36,8 @@ export interface ApproveExtensionRunDeps {
   readonly db: Database;
   readonly env: ExtensionRunGrantEnv;
   readonly gate: ExtensionRunGate;
+  /** `[extensions] runtime` (and not demo-rooted). `false` refuses before anything is resolved. */
+  readonly runtimeEnabled: boolean;
   readonly now: () => number;
 }
 
@@ -173,8 +175,12 @@ export function buildRunConsentPayload(
     network: [...grants.network],
     read: [...grants.read],
     write: [...grants.write],
-    // Added by the runtime at every spawn, read-only. Shown, never stored (spec § 11 item 7).
-    runtimeRead: [installPath, ...env.runtimeReadPaths],
+    // The runtime's own read paths, added at every spawn, read-only. Shown, never stored (spec § 11
+    // item 7). The install path is NOT among them: the extension is never granted its install tree.
+    runtimeRead: [...env.runtimeReadPaths],
+    // Where the code actually runs from (I43, `extension-stage.ts`): a copy re-digested against the
+    // approved digest at every spawn, inside the working directory the sandbox lets it write.
+    runsFrom: `a verified per-spawn copy of ${installPath}, in the extension's own writable working directory`,
     modelAccess: false,
   };
 }
@@ -202,6 +208,14 @@ export async function approveExtensionRun(
   extensionId: string,
   deps: ApproveExtensionRunDeps,
 ): Promise<ApproveExtensionRunResult> {
+  if (!deps.runtimeEnabled) {
+    // Before the row lookup and the gate: with the runtime off an approval could never be used, so
+    // the owner is never asked to grant something that will not run.
+    throw new ExtensionRunGrantError(
+      "ERR_EXTENSION_RUNTIME_DISABLED",
+      "the extension runtime is off on this gateway (`[extensions] runtime = false`, or a demo gateway); nothing was granted",
+    );
+  }
   const row = requireRow(deps.db, extensionId);
   const treeDigest = assertRunnable(row);
   const manifest = readVerifiedManifest(row);
@@ -299,7 +313,7 @@ export async function revokeExtensionRun(
     try {
       await stop(extensionId);
     } catch {
-      // The grant is gone; the runtime (PR 3) re-checks it before every spawn.
+      // The grant is gone; the runtime re-checks it before every spawn.
     }
   }
   return { id: extensionId, revoked };

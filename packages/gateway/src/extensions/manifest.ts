@@ -27,6 +27,21 @@ export function resolveExtensionManifestPath(dir: string): string | undefined {
   return undefined;
 }
 
+/** The entry an extension runs when its manifest names none. */
+export const DEFAULT_EXTENSION_ENTRY = "dist/index.js";
+
+/**
+ * The manifest's entry, relative to the install path, with an absent or empty `entry` falling back
+ * to {@link DEFAULT_EXTENSION_ENTRY}. The ONE spelling of that rule — install, package hashing, startup and
+ * strict verification and the pre-spawn accessor all read it — so the file hashed is the file
+ * spawned. Lives here, in the manifest leaf module, so every consumer can import it without a cycle.
+ */
+export function extensionEntryRelPath(manifest: { readonly entry?: string }): string {
+  return manifest.entry !== undefined && manifest.entry !== ""
+    ? manifest.entry
+    : DEFAULT_EXTENSION_ENTRY;
+}
+
 export type ExtensionManifest = {
   id: string;
   version: string;

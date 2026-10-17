@@ -386,7 +386,7 @@ describe("meshDispatcherClient", () => {
         return {};
       },
       getToolsEpoch: () => 7,
-      async listUserMcpToolsForDispatcher(serviceId: string) {
+      async listOwnerCodeServerToolsForDispatcher(serviceId: string) {
         seen.push(`one:${serviceId}`);
         return undefined;
       },

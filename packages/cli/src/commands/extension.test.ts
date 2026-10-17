@@ -2242,7 +2242,7 @@ describe("runExtensionApprove", () => {
     expect(calls).toHaveLength(0);
   });
 
-  test("calls extension.approveRun, answers the prompt itself, and says nothing runs yet", async () => {
+  test("calls extension.approveRun, answers the prompt itself, and says how it starts", async () => {
     setTty(true);
     const handlers = new Map<string, (params: unknown) => void>();
     const { client, calls } = createMockIpcClient(
@@ -2253,7 +2253,8 @@ describe("runExtensionApprove", () => {
     expect(calls[0]).toEqual({ method: "extension.approveRun", params: { id: "x" } });
     expect(handlers.has("consent.request")).toBe(true);
     expect(out.stdout).toContain("approved to run as ext_x");
-    expect(out.stdout).toContain("Nothing runs it yet");
+    expect(out.stdout).not.toContain("Nothing runs it yet");
+    expect(out.stdout).toContain("nimbus connector tools ext_x");
   });
 
   test("NIMBUS_SCRIPT_CONSENT_SOURCE cannot answer it", async () => {
@@ -2330,8 +2331,12 @@ describe("run state in human output", () => {
         runState: "ready",
         runGrant: { serviceId: "ext_a", approvedAt: 0, modelAccess: false },
       }),
-    ).toBe(
-      "ready (ext_a, approved 1970-01-01T00:00:00.000Z; not executed until the extension runtime ships)",
-    );
+    ).toBe("ready (ext_a, approved 1970-01-01T00:00:00.000Z)");
+    const running = formatRunLine({
+      runState: "running",
+      runGrant: { serviceId: "ext_a", approvedAt: 0, modelAccess: false },
+    });
+    expect(running).toBe("running (ext_a, approved 1970-01-01T00:00:00.000Z)");
+    expect(running).not.toContain("not executed");
   });
 });

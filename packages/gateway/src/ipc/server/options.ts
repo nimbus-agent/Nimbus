@@ -103,6 +103,12 @@ export type CreateIpcServerOptions = {
   sandboxRunner?: SandboxRunner;
   extensionsPublisherKeyFetcher?: PublisherKeyFetcher;
   extensionsEnforceAirGap?: boolean;
+  /**
+   * `isExtensionRuntimeEnabled` as `platform/assemble.ts` resolved it (`[extensions] runtime` and
+   * not demo-rooted). `false` makes `extension.approveRun` refuse `ERR_EXTENSION_RUNTIME_DISABLED`
+   * before the prompt. Absent means the default (`true`); assemble always sets it.
+   */
+  extensionsRuntimeEnabled?: boolean;
   extensionsAutoUpdate?: AutoUpdateRuntimeBag;
   extensionsAutoUpdateDiag?: {
     cachedUpdatesCount: () => number;

@@ -6,7 +6,12 @@ import {
   FIRST_PARTY_MANIFESTS,
   manifestForFirstParty,
 } from "../../connectors/lazy-mesh/first-party-manifests.ts";
-import { sandboxCwdFor, sandboxLeafName } from "./sandbox-cwd.ts";
+import {
+  EXTENSION_STAGE_DIR_NAME,
+  extensionStageRootFor,
+  sandboxCwdFor,
+  sandboxLeafName,
+} from "./sandbox-cwd.ts";
 
 describe("sandboxLeafName", () => {
   test("maps dots and other punctuation to underscores, lowercased", () => {
@@ -31,6 +36,8 @@ describe("sandboxLeafName", () => {
       if (prior !== undefined) expect(`${prior} vs ${id}`).toBe("distinct leaves");
       leafOwner.set(leaf, id);
       expect(leaf.startsWith("user_")).toBe(false);
+      // No spawn's per-policy cwd can be the extension stage directory (I43).
+      expect(leaf).not.toBe(EXTENSION_STAGE_DIR_NAME);
     }
   });
 });
@@ -38,5 +45,17 @@ describe("sandboxLeafName", () => {
 describe("sandboxCwdFor", () => {
   test("joins the root and the leaf", () => {
     expect(sandboxCwdFor(join("r", "sb"), "user.mcp_x")).toBe(join("r", "sb", "user_mcp_x"));
+  });
+});
+
+describe("extensionStageRootFor", () => {
+  test("is <root>/ext-stage/<service id leaf>, never a per-policy leaf", () => {
+    expect(extensionStageRootFor(join("r", "sb"), "ext_foo")).toBe(
+      join("r", "sb", "ext-stage", "ext_foo"),
+    );
+    // The prefixed policy ids the runtime hands `sandboxCwdFor` never name the stage directory.
+    for (const id of ["ext.ext_foo", "user.mcp_x", "toolgen-probe"]) {
+      expect(sandboxLeafName(id)).not.toBe(EXTENSION_STAGE_DIR_NAME);
+    }
   });
 });
