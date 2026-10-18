@@ -27,8 +27,10 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   capped extraction pipeline (`extensions/package-extract.ts`: refuses links, specials, absolute, `..`,
   backslash and drive-letter entries; 200 MiB unpacked and 5000-entry caps) and the tree digest is
   computed before the swap and written in the same row update; crash recovery promotes the
-  semver-newest previous version, records measured hashes and the tree digest, and takes its own
-  `recoveryExtensionsDir` input; `nimbus extension update` and `downgrade` now show the owner's prompt
+  semver-newest previous version, records its measured hashes, leaves the tree digest NULL and the
+  extension DISABLED until the owner approves the files with `nimbus extension rehash` (recovery
+  never blesses bytes that anything able to write the versions area could have planted), and takes
+  its own `recoveryExtensionsDir` input; `nimbus extension update` and `downgrade` now show the owner's prompt
   and use the interactive timeout instead of timing out at 30 s; the orphan sweep keeps namespaced
   extension directories (latent: the sweep is not run in production). The false claim that the
   orchestrator re-verifies the publisher signature was removed from `SECURITY-INVARIANTS.md`; the

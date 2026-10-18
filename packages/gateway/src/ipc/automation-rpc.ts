@@ -39,6 +39,9 @@ import {
   PRE_T2_DISABLE_REASON,
   preT2DisabledIds,
   preT2DisableMessage,
+  RECOVERED_PENDING_REHASH_REASON,
+  recoveredPendingRehashMessage,
+  recoveredPendingRehashRegistry,
   signatureDisabledRegistry,
   signatureDisableMessage,
 } from "../extensions/hard-disable.ts";
@@ -448,7 +451,10 @@ async function stopExtensionBestEffort(
 
 type ExtensionListItem = ExtensionRow &
   ReturnType<typeof extensionRunFields> & {
-    disabled_reason?: typeof PRE_T2_DISABLE_REASON | SignatureDisableReason;
+    disabled_reason?:
+      | typeof PRE_T2_DISABLE_REASON
+      | typeof RECOVERED_PENDING_REHASH_REASON
+      | SignatureDisableReason;
     needs_reinstall?: boolean;
     signature_disabled?: boolean;
   };
@@ -480,6 +486,9 @@ function decorateExtensionList(
     const reason = signature.get(r.id);
     if (reason !== undefined) {
       return { ...r, ...run, disabled_reason: reason, signature_disabled: true };
+    }
+    if (recoveredPendingRehashRegistry.has(r.id)) {
+      return { ...r, ...run, disabled_reason: RECOVERED_PENDING_REHASH_REASON };
     }
     return { ...r, ...run };
   });
@@ -549,6 +558,23 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
           reverseDeps: rev,
         },
         message: signatureDisableMessage(row.id, row.version, signatureReason),
+      },
+    };
+  }
+
+  if (recoveredPendingRehashRegistry.has(row.id)) {
+    return {
+      kind: "hit",
+      value: {
+        extension: {
+          ...row,
+          ...run,
+          ...resolveExtensionInfoExtras(row, ctx),
+          disabled_reason: RECOVERED_PENDING_REHASH_REASON,
+          forwardDeps: fwd,
+          reverseDeps: rev,
+        },
+        message: recoveredPendingRehashMessage(row.id, row.version),
       },
     };
   }
@@ -726,6 +752,12 @@ async function handleExtensionRehash(
     );
   }
   setExtensionTreeDigest(ctx.db, id, treeDigest);
+  // A crash-recovered extension was left disabled so that adopting its files is the owner's act;
+  // this approval is that act.
+  if (recoveredPendingRehashRegistry.has(id)) {
+    setExtensionEnabled(ctx.db, id, true);
+    recoveredPendingRehashRegistry.unmark(id);
+  }
   return { kind: "hit", value: { id, treeDigest, changed: true } };
 }
 

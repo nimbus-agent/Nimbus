@@ -21,6 +21,7 @@ import type { ResolvedDep } from "./dependency-types.ts";
 import {
   hardDisablePreT2Extensions,
   preT2DisabledRegistry,
+  recoveredPendingRehashRegistry,
   signatureDisabledRegistry,
 } from "./hard-disable.ts";
 import {
@@ -32,7 +33,6 @@ import {
 import { missingDependencyRegistry } from "./missing-dependency-registry.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
-import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import {
   errorToHardDisableReason,
   type SignatureDisableReason,
@@ -62,18 +62,14 @@ function tryPromotePrevVersion(
     // A slash id nests the install path, and its parent may not exist after a crash.
     mkdirSync(dirname(activePath), { recursive: true });
     renameSync(prevVersionDir(extensionsDir, row.id, target), activePath);
-    // The promoted bytes are what is on disk now; the row's old hashes describe the version that
-    // was lost, so record what the promoted tree actually measures.
+    // The row is made to DESCRIBE the bytes now on disk (version, measured hashes), but they are
+    // not blessed: the tree digest stays NULL and the extension stays disabled until the owner
+    // adopts them with `extension rehash`. Anything able to write the versions area could have
+    // planted that tree, so recovery must not make it look healthy.
     const measured = computeExtensionPackageHashes(activePath);
-    updateExtensionRowVersion(
-      db,
-      row.id,
-      target,
-      measured.manifestHash,
-      measured.entryHash,
-      now,
-      computeExtensionTreeDigest(activePath),
-    );
+    updateExtensionRowVersion(db, row.id, target, measured.manifestHash, measured.entryHash, now);
+    setExtensionEnabled(db, row.id, false);
+    recoveredPendingRehashRegistry.mark(row.id);
     try {
       appendAuditEntry(db, {
         actionType: "extension.autoUpdate.crash_recovered",
@@ -82,6 +78,7 @@ function tryPromotePrevVersion(
           id: row.id,
           promoted_from: target,
           recovered_active: activePath,
+          requires_rehash: true,
         }),
         timestamp: now,
       });
@@ -93,7 +90,7 @@ function tryPromotePrevVersion(
     }
     logger.warn(
       { extensionId: row.id, promotedFrom: target },
-      "extensions: auto-update crash-recovered — promoted _prev to active",
+      "extensions: auto-update crash-recovered — promoted previous version, left disabled pending `extension rehash`",
     );
     return true;
   } catch (e) {

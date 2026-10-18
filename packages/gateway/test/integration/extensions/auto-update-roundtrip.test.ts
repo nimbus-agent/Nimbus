@@ -516,8 +516,9 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       expect(existsSync(extRoot)).toBe(true);
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.0.0");
-      // Recovery records the PROMOTED tree's measured hashes and digest, not the lost version's.
-      expect(row?.tree_digest).toBe(computeExtensionTreeDigest(extRoot));
+      // Promoted but not blessed: no digest, disabled until the owner runs `extension rehash`.
+      expect(row?.tree_digest).toBeNull();
+      expect(row?.enabled).toBe(0);
       const auditRow = db
         .query(`SELECT action_type FROM audit_log WHERE action_type = ? ORDER BY id DESC LIMIT 1`)
         .get("extension.autoUpdate.crash_recovered") as { action_type: string } | undefined;

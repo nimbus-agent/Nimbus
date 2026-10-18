@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
+import { dbRun } from "../db/write.ts";
 import { AutoUpdateCache } from "../extensions/auto-update-cache.ts";
 import {
   _resetAutoUpdateMutexForTests,
@@ -14,6 +15,7 @@ import {
   PRE_T2_DISABLE_REASON,
   preT2DisabledRegistry,
   preT2DisableMessage,
+  recoveredPendingRehashRegistry,
 } from "../extensions/hard-disable.ts";
 import { publisherKeyFingerprint } from "../extensions/install-from-local.ts";
 import { readPublisherKey, writePublisherKey } from "../extensions/publisher-keys.ts";
@@ -790,6 +792,31 @@ describe("extension.rehash — adopting on-disk bytes is gated like an install",
     expect(types).toEqual(["extension.install"]);
     expect(digestOf(db)).toBe(computeExtensionTreeDigest(installPath));
     expect(digestOf(db)).not.toBe(before);
+  });
+
+  test("approving a rehash re-enables a crash-recovered extension with the measured digest", async () => {
+    const { db, installPath } = await installed();
+    // The state crash recovery leaves: files promoted, digest NULL, extension disabled.
+    dbRun(db, "UPDATE extension SET tree_digest = NULL, enabled = 0 WHERE id = ?", [
+      "test.ext.rehash",
+    ]);
+    recoveredPendingRehashRegistry.mark("test.ext.rehash");
+    try {
+      const denied = await rejectionOf(rehash(db, async () => false));
+      expect((denied as AutomationRpcError).message).toStartWith(
+        "ERR_EXTENSION_REHASH_NOT_APPROVED",
+      );
+      expect(listExtensions(db)[0]?.enabled).toBe(0);
+
+      await rehash(db, async () => true);
+
+      const row = listExtensions(db).find((r) => r.id === "test.ext.rehash");
+      expect(row?.tree_digest).toBe(computeExtensionTreeDigest(installPath));
+      expect(row?.enabled).toBe(1);
+      expect(recoveredPendingRehashRegistry.has("test.ext.rehash")).toBe(false);
+    } finally {
+      recoveredPendingRehashRegistry.reset();
+    }
   });
 
   test("a DENIED rehash leaves the stored digest untouched", async () => {

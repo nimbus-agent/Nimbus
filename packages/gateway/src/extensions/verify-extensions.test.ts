@@ -15,17 +15,22 @@ import { dbRun } from "../db/write.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import { forwardDeps } from "./dependency-store.ts";
-import { signatureDisabledRegistry } from "./hard-disable.ts";
+import {
+  recoveredPendingRehashMessage,
+  recoveredPendingRehashRegistry,
+  signatureDisabledRegistry,
+} from "./hard-disable.ts";
 import {
   _resetMissingDependencyRegistry,
   missingDependencyRegistry,
 } from "./missing-dependency-registry.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { writePublisherKey } from "./publisher-keys.ts";
-import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { verifyExtensionsBestEffort, verifyOneExtensionStrict } from "./verify-extensions.ts";
 import { generateEd25519Keypair } from "./verify-signature.ts";
 import { prevVersionDir, prevVersionsDir, removeExtensionVersionStore } from "./version-store.ts";
+
+afterEach(() => recoveredPendingRehashRegistry.reset());
 
 function memoryLogger(): { logger: Logger; warns: unknown[]; errors: unknown[] } {
   const warns: unknown[] = [];
@@ -326,11 +331,14 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
       expect(readFileSync(join(installPath, "nimbus.extension.json"), "utf8")).toBe(manifestText);
       const row = listExtensions(db).find((r) => r.id === id);
       expect(row?.version).toBe("1.10.0");
-      expect(row?.enabled).toBe(1);
+      // Promoted, described, but NOT blessed: disabled, no digest, pending an owner rehash.
+      expect(row?.enabled).toBe(0);
+      expect(row?.tree_digest).toBeNull();
+      expect(recoveredPendingRehashRegistry.has(id)).toBe(true);
+      expect(recoveredPendingRehashMessage(id, "1.10.0")).toContain("extension rehash");
       const measured = computeExtensionPackageHashes(installPath);
       expect(row?.manifest_hash).toBe(measured.manifestHash);
       expect(row?.entry_hash).toBe(measured.entryHash);
-      expect(row?.tree_digest).toBe(computeExtensionTreeDigest(installPath));
 
       const auditRow = db
         .query(
@@ -343,7 +351,9 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
       const parsed = JSON.parse(auditRow!.action_json) as {
         id: string;
         promoted_from: string;
+        requires_rehash: boolean;
       };
+      expect(parsed.requires_rehash).toBe(true);
       expect(parsed.id).toBe(id);
       expect(parsed.promoted_from).toBe("1.10.0");
     } finally {
@@ -586,7 +596,9 @@ describe("verifyExtensionsBestEffort — crash recovery extensions dir", () => {
 
       const row = listExtensions(db).find((r) => r.id === id);
       expect(row?.version).toBe("1.0.0");
-      expect(row?.enabled).toBe(1);
+      expect(row?.enabled).toBe(0);
+      expect(row?.tree_digest).toBeNull();
+      expect(recoveredPendingRehashRegistry.has(id)).toBe(true);
       expect(existsSync(join(installPath, "nimbus.extension.json"))).toBe(true);
     } finally {
       db.close();

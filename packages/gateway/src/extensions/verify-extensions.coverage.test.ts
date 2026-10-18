@@ -15,7 +15,11 @@ import { setupFreshExtensionDb } from "../../test/fixtures/extension.ts";
 import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { dbExec, dbRun } from "../db/write.ts";
 import { forwardDeps } from "./dependency-store.ts";
-import { preT2DisabledRegistry, signatureDisabledRegistry } from "./hard-disable.ts";
+import {
+  preT2DisabledRegistry,
+  recoveredPendingRehashRegistry,
+  signatureDisabledRegistry,
+} from "./hard-disable.ts";
 import {
   _resetMissingDependencyRegistry,
   missingDependencyRegistry,
@@ -64,6 +68,7 @@ function resetRegistries(): void {
 beforeEach(resetRegistries);
 
 afterEach(() => {
+  recoveredPendingRehashRegistry.reset();
   resetRegistries();
   for (const { db, extensionsDir } of fixtures.splice(0)) {
     db.close();
@@ -175,7 +180,7 @@ describe("crash recovery when its bookkeeping fails", () => {
     await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
 
     expect(existsSync(join(active, "nimbus.extension.json"))).toBe(true);
-    expect(rowOf(db, id)).toMatchObject({ enabled: 1, version: "1.0.0" });
+    expect(rowOf(db, id)).toMatchObject({ enabled: 0, version: "1.0.0" });
     const failed = warns.filter((w) => w.msg === "extensions: crash-recovery audit append failed");
     expect(failed).toHaveLength(1);
     expect(failed[0]?.o["extensionId"]).toBe(id);
