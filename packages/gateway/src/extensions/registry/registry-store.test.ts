@@ -45,7 +45,7 @@ describe("registry store", () => {
       expect(listRegistries(db)).toEqual([]);
       insertRegistry(db, base);
       expect(getRegistry(db, "main")).toEqual({ ...base, lastFetchedAt: null });
-      recordRegistryFetch(db, "main", 4, "2026-10-19T00:00:00Z", 200);
+      recordRegistryFetch(db, "main", base.rootKey, 4, "2026-10-19T00:00:00Z", 200);
       expect(listRegistries(db)).toEqual([
         {
           ...base,

@@ -25,6 +25,7 @@ describe("recordRegistryEgress", () => {
         method: "registry.package",
         extensionId: "acme/deploy",
         version: "1.0.0",
+        host: "reg.example",
         now: 123,
       });
       const rows = db.query("SELECT * FROM egress_ledger").all() as LedgerRow[];
@@ -41,6 +42,7 @@ describe("recordRegistryEgress", () => {
         method: "registry.package",
         extensionId: "acme/deploy",
         version: "1.0.0",
+        host: "reg.example",
       });
     } finally {
       db.close();

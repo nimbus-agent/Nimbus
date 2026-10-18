@@ -85,18 +85,25 @@ export function insertRegistry(db: Database, row: Omit<RegistryRow, "lastFetched
   ]);
 }
 
+/**
+ * Advances the anti-rollback floor. Conditional on the row still carrying the pinned key and a
+ * floor no higher than `sequence`, so an overlapping fetch holding a stale snapshot cannot lower
+ * it. Returns whether the row changed.
+ */
 export function recordRegistryFetch(
   db: Database,
   name: string,
+  rootKey: string,
   sequence: number,
   generatedAt: string,
   now: number,
-): void {
-  dbRun(
+): boolean {
+  const r = dbRun(
     db,
-    "UPDATE extension_registry SET last_sequence = ?, last_generated_at = ?, last_fetched_at = ? WHERE name = ?",
-    [sequence, generatedAt, now, name],
+    "UPDATE extension_registry SET last_sequence = ?, last_generated_at = ?, last_fetched_at = ? WHERE name = ? AND root_key = ? AND last_sequence <= ?",
+    [sequence, generatedAt, now, name, rootKey, sequence],
   );
+  return r.changes > 0;
 }
 
 /** Deletes the registry row only; installed extensions keep their source columns (provenance). */

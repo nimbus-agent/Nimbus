@@ -1455,6 +1455,9 @@ export function checkEmbeddingAppenderConfinement(files: readonly FileEntry[]): 
 // rules close the two ways to bypass it: (1) `recordRegistryEgress` named anywhere else is a
 // second, unreviewed fetch path (or a forged row); (2) a bare `fetch(` call anywhere else under
 // `extensions/` is a network request the registry ledger and its transport checks never saw.
+// Stated bound: only the literal global `fetch(` is matched. An injected fetcher (`opts.fetcher(`,
+// `deps.fetchFn(`) or an alias of `fetch` evades it, so capability confinement -- only
+// `registry-fetch.ts` is ever handed the real `fetch` -- is the primary defense.
 const D22_REGISTRY_APPENDER_RE = /\brecordRegistryEgress\b/;
 const D22_REGISTRY_APPENDER_ALLOWED: readonly string[] = [
   "packages/gateway/src/egress/registry-egress.ts",

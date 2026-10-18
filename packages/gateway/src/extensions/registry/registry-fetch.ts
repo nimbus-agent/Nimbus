@@ -10,7 +10,7 @@ import {
   verifyRegistryIndexSelf,
 } from "./index-format.ts";
 import { RegistryError } from "./registry-errors.ts";
-import { type RegistryRow, recordRegistryFetch } from "./registry-store.ts";
+import { getRegistry, type RegistryRow, recordRegistryFetch } from "./registry-store.ts";
 import { resolveRegistryLocation, resolveRegistryResource } from "./registry-transport.ts";
 
 export interface RegistryFetchDeps {
@@ -91,13 +91,17 @@ function readLocal(path: string, root: string, maxBytes: number): Uint8Array {
     throw new RegistryError("ERR_REGISTRY_NOT_FOUND", "registry file not found");
   }
   if (size > maxBytes) throw tooLarge(maxBytes);
-  return new Uint8Array(readFileSync(path));
+  const bytes = new Uint8Array(readFileSync(path));
+  // The stat-time check can be outrun by a growing file; the bytes actually read are the authority.
+  if (bytes.byteLength > maxBytes) throw tooLarge(maxBytes);
+  return bytes;
 }
 
 async function fetchRemote(
   deps: RegistryFetchDeps,
+  regName: string,
+  meta: RegistryFetchMeta,
   startUrl: string,
-  maxBytes: number,
   signal: AbortSignal | undefined,
 ): Promise<Uint8Array> {
   const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
@@ -105,6 +109,16 @@ async function fetchRemote(
   let url = startUrl;
   try {
     for (let hop = 0; ; hop++) {
+      // One ledger row per outbound REQUEST, each redirect hop included; a failed append aborts
+      // this hop before it is made.
+      recordRegistryEgress(deps.db, {
+        registryName: regName,
+        method: meta.method,
+        extensionId: meta.extensionId,
+        version: meta.version,
+        host: new URL(url).host,
+        now: deps.now(),
+      });
       const res = await deps.fetchFn(url, { redirect: "manual", signal: combined });
       if (REDIRECT_STATUSES.has(res.status)) {
         await res.body?.cancel();
@@ -138,7 +152,7 @@ async function fetchRemote(
         await res.body?.cancel();
         throw unreachable(`registry answered HTTP ${res.status}`);
       }
-      return await readCapped(res, maxBytes);
+      return await readCapped(res, meta.maxBytes);
     }
   } catch (e) {
     if (e instanceof RegistryError) throw e;
@@ -167,14 +181,7 @@ export async function fetchRegistryBytes(
   if (deps.enforceAirGap()) {
     throw new RegistryError("ERR_REGISTRY_AIR_GAP", "air-gap mode refuses remote registry fetches");
   }
-  recordRegistryEgress(deps.db, {
-    registryName: reg.name,
-    method: meta.method,
-    extensionId: meta.extensionId,
-    version: meta.version,
-    now: deps.now(),
-  });
-  return fetchRemote(deps, res.url, meta.maxBytes, signal);
+  return fetchRemote(deps, reg.name, meta, res.url, signal);
 }
 
 async function fetchIndex(
@@ -206,7 +213,29 @@ export async function fetchVerifiedIndex(
       `index sequence ${index.sequence} is older than the last seen ${reg.lastSequence}`,
     );
   }
-  recordRegistryFetch(deps.db, reg.name, index.sequence, index.generatedAt, deps.now());
+  // Conditional write: the row may have moved (or gone) while this fetch was in flight.
+  if (
+    !recordRegistryFetch(
+      deps.db,
+      reg.name,
+      reg.rootKey,
+      index.sequence,
+      index.generatedAt,
+      deps.now(),
+    )
+  ) {
+    const cur = getRegistry(deps.db, reg.name);
+    if (cur === undefined || cur.rootKey !== reg.rootKey) {
+      throw new RegistryError(
+        "ERR_REGISTRY_ROOT_KEY_CHANGED",
+        "registry was removed or re-pinned during the fetch",
+      );
+    }
+    throw new RegistryError(
+      "ERR_REGISTRY_ROLLBACK",
+      `index sequence ${index.sequence} is older than the last seen ${cur.lastSequence}`,
+    );
+  }
   return index;
 }
 

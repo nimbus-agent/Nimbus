@@ -218,6 +218,43 @@ describe("fetchRegistryBytes: remote", () => {
     ).rejects.toThrow("ERR_REGISTRY_UNREACHABLE");
   });
 
+  test("a redirect hop appends its own row naming the hop's host", async () => {
+    const second = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
+    try {
+      const url = serve(
+        () =>
+          new Response(null, {
+            status: 302,
+            headers: { location: `http://127.0.0.1:${second.port}/x` },
+          }),
+      );
+      await fetchRegistryBytes(deps(), { name: "main", url }, "index.json", META);
+      const rows = db.query("SELECT payload_summary FROM egress_ledger ORDER BY id").all() as {
+        payload_summary: string;
+      }[];
+      expect(rows).toHaveLength(2);
+      expect(JSON.parse(rows[0]?.payload_summary ?? "{}").host).toBe(`127.0.0.1:${server?.port}`);
+      expect(JSON.parse(rows[1]?.payload_summary ?? "{}").host).toBe(`127.0.0.1:${second.port}`);
+    } finally {
+      second.stop(true);
+    }
+  });
+
+  test("an append failure on hop 2 means hop 2's request never happens", async () => {
+    const calls: string[] = [];
+    const d = deps({
+      fetchFn: (u) => {
+        calls.push(u);
+        db.run("DROP TABLE egress_ledger");
+        return Promise.resolve(new Response(null, { status: 302, headers: { location: "/next" } }));
+      },
+    });
+    await expect(
+      fetchRegistryBytes(d, { name: "main", url: "https://reg.example/" }, "index.json", META),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(1);
+  });
+
   test("404 is NOT_FOUND, other non-2xx and network errors are UNREACHABLE", async () => {
     const mk = (status: number) =>
       deps({ fetchFn: () => Promise.resolve(new Response("x", { status })) });
@@ -272,6 +309,20 @@ describe("fetchVerifiedIndex / fetchUnpinnedIndex", () => {
     await expect(fetchVerifiedIndex(deps(), reg)).rejects.toThrow("ERR_REGISTRY_ROLLBACK");
     expect(getRegistry(db, "main")?.lastSequence).toBe(5);
     expect(getRegistry(db, "main")?.lastFetchedAt).toBeNull();
+  });
+
+  test("a stale fetch cannot lower a floor that advanced while it was in flight", async () => {
+    const url = serve(() => new Response(JSON.stringify(signedIndex(6))));
+    const reg = pinned(url, 5);
+    const d = deps({
+      fetchFn: async (u, init) => {
+        const res = await fetch(u, init);
+        db.run("UPDATE extension_registry SET last_sequence = 9 WHERE name = 'main'");
+        return res;
+      },
+    });
+    await expect(fetchVerifiedIndex(d, reg)).rejects.toThrow("ERR_REGISTRY_ROLLBACK");
+    expect(getRegistry(db, "main")?.lastSequence).toBe(9);
   });
 
   test("equal sequence accepted and recorded", async () => {
