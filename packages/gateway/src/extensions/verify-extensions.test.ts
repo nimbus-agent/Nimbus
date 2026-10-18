@@ -508,6 +508,46 @@ describe("verifyExtensionsBestEffort — orphan-active sweep (Task 12)", () => {
       db.close();
     }
   });
+
+  test("keeps acme/ when acme/foo is installed and removes an unowned dir", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      const strayDir = join(extensionsDir, "stray");
+      mkdirSync(strayDir, { recursive: true });
+
+      const realId = "acme/foo";
+      const realDir = join(extensionsDir, "acme", "foo");
+      mkdirSync(join(realDir, "dist"), { recursive: true });
+      const mfBytes = Buffer.from(
+        JSON.stringify({ id: realId, version: "1.0.0", permissions: {} }),
+        "utf8",
+      );
+      const entryText = "export default {};";
+      writeFileSync(join(realDir, "nimbus.extension.json"), mfBytes);
+      writeFileSync(join(realDir, "dist", "index.js"), entryText);
+      const now = Date.now();
+      insertExtensionRow(db, {
+        id: realId,
+        version: "1.0.0",
+        install_path: realDir,
+        manifest_hash: createHash("sha256").update(mfBytes).digest("hex"),
+        entry_hash: createHash("sha256").update(entryText).digest("hex"),
+        enabled: 1,
+        installed_at: now,
+        last_verified_at: now,
+      });
+
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, extensionsDir);
+
+      expect(existsSync(strayDir)).toBe(false);
+      expect(existsSync(join(extensionsDir, "acme"))).toBe(true);
+      expect(existsSync(realDir)).toBe(true);
+    } finally {
+      dbRun(db, "DELETE FROM extension WHERE 1=1");
+      db.close();
+    }
+  });
 });
 
 describe("verifyExtensionsBestEffort — crash recovery extensions dir", () => {

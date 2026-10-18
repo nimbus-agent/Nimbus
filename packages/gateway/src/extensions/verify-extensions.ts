@@ -384,13 +384,16 @@ function sweepOrphanActiveDirsBestEffort(
   } catch {
     return removed;
   }
+  // A namespaced id (`acme/foo`) lives at `<root>/acme/foo`, so the top-level
+  // directory is its first segment: keep every directory some row lives under.
+  const liveTopLevel = new Set<string>();
+  for (const r of db.query("SELECT id FROM extension").all() as { id: string }[]) {
+    liveTopLevel.add(r.id.replaceAll("\\", "/").split("/")[0] ?? r.id);
+  }
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const id = entry.name;
-    const row = db.query("SELECT id FROM extension WHERE id = ?").get(id) as {
-      id: string;
-    } | null;
-    if (row !== null) continue;
+    if (liveTopLevel.has(id)) continue;
     try {
       rmSync(join(extensionsRoot, id), { recursive: true, force: true });
       removed.push(id);
