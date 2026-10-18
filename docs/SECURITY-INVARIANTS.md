@@ -333,7 +333,7 @@ The comment block at `connectors/lazy-mesh/wrap-server-spec.ts:1–25` documents
 
 ## I16 — Verified-publisher signature
 
-**Statement:** **I16 — Verified-publisher signature.** Every installed extension whose `nimbus.extension.json` declares a `publisher` field carries an Ed25519 signature over the canonicalized manifest (with the `signature` field stripped). The signature is verified at TWO sites — install time AND every Gateway startup — before the extension is allowed to spawn. Extensions without a `publisher` field are treated as pre-T2 unsigned and surface as `(unverified)` in CLI output; the signature pass is a no-op for them.
+**Statement:** **I16 — Verified-publisher signature.** Every installed extension whose `nimbus.extension.json` declares a `publisher` field carries an Ed25519 signature over the canonicalized manifest (with the `signature` field stripped). The signature is verified at TWO I16 sites — install time AND every Gateway startup — and a third, separate pre-spawn verification (I43's `readVerifiedExtensionForSpawn`) re-checks it immediately before every run; the extension is not allowed to spawn without it. Extensions without a `publisher` field are treated as pre-T2 unsigned and surface as `(unverified)` in CLI output; the signature pass is a no-op for them.
 
 **Wired at:**
 

@@ -196,6 +196,34 @@ describe("applyUpgradeSwap", () => {
     }
   });
 
+  it("clears a stale holding/ left by a crash before moving prev entries aside", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-auto-upgrade-"));
+    try {
+      const { extensionsDir, installPath } = await makeExt(root, "1.0.0", "0.9.0");
+      const staleHold = join(holdingDir(extensionsDir, ID), "0.9.0");
+      await mkdir(staleHold, { recursive: true });
+      await writeFile(join(staleHold, "leftover.txt"), "stale");
+      const pending = await makePending(extensionsDir, "1.1.0");
+
+      await applyUpgradeSwap({
+        installPath,
+        extensionsDir,
+        id: ID,
+        pendingExtractedDir: pending,
+        fromVersion: "1.0.0",
+        toVersion: "1.1.0",
+      });
+
+      expect(await readdir(prevVersionsDir(extensionsDir, ID))).toEqual(["1.0.0"]);
+      expect(
+        await readFile(join(prevVersionDir(extensionsDir, ID, "1.0.0"), "marker.txt"), "utf8"),
+      ).toBe("active=1.0.0");
+      expect(await gone(holdingDir(extensionsDir, ID))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("failed rename leaves the original install untouched", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-auto-upgrade-"));
     try {
