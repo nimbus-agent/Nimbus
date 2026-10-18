@@ -36,7 +36,12 @@ function runBunTest(args: readonly string[], wrapDbus: boolean): void {
 }
 
 /** The test paths `test:ci`'s whole-repo unit run hands to `bun test`. */
-const UNIT_TEST_PATHS: readonly string[] = ["packages/gateway", "packages/cli", "scripts"];
+const UNIT_TEST_PATHS: readonly string[] = [
+  "packages/gateway",
+  "packages/cli",
+  "packages/registry-format",
+  "scripts",
+];
 
 /**
  * The command `test:ci`'s whole-repo unit run spawns, as-is or behind the Linux D-Bus wrapper.

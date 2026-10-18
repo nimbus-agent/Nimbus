@@ -65,7 +65,7 @@ run_pkg () {
 # exactly what happened to the former `packages/mcp-launcher` while it lived
 # here. That package has since moved to nimbus-agent/nimbus-mcp and carries its
 # own Sonar project; it is deliberately absent from both switches now.
-for pkg in packages/gateway packages/cli; do
+for pkg in packages/gateway packages/cli packages/registry-format; do
   run_pkg "${pkg}"
 done
 
