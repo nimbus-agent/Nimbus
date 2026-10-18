@@ -353,15 +353,23 @@ first PR before the registry work (my call on ordering):
    `dirname(install_path)/_prev`, which disagrees with where the swap puts it. **Fix: keep the flat
    `install_path`** (no migration of installed extensions, and nested namespaced ids stay simple)
    and move `_prev/<id>/<version>`, the holding buffer and `_pending` into one versions area OUTSIDE
-   every extension's install tree and outside what the orphan sweep walks; update
+   every extension's install tree and outside what the orphan sweep walks — a SIBLING of
+   `extensionsDir` (`<dirname(extensionsDir)>/extension-versions/`), so every swap is a same-volume
+   `rename` on all three OSes (on Windows `extensionsDir` sits under `LOCALAPPDATA`, not
+   `dataDir`), keyed by an opaque slug of the id (first 16 hex of SHA-256), which is safe for `/`
+   and for Windows' case-insensitive filesystem; update
    `applyUpgradeSwap`, `applyDowngradeSwap`, `hasPrevVersion`, `resolveExtensionInfoExtras` and
-   `tryPromotePrevVersion` together. No installed extension can be in the old `active/` shape, since
+   `tryPromotePrevVersion` together. `tryPromotePrevVersion` also sorts by semver instead of
+   lexically and records the promoted tree's MEASURED hashes instead of reusing the old row's. No installed extension can be in the old `active/` shape, since
    no update ever succeeded.
 2. **The startup orphan sweep deletes namespaced extensions.** `sweepOrphanActiveDirsBestEffort`
    matches each top-level directory name against `extension.id`; for `acme/foo` the directory is
-   `acme`, matches nothing, and is `rmSync`'d at every boot. **Fix:** treat a top-level directory as
-   live when it is any installed id's first path segment, and skip the versions area. Data loss
-   today for anyone with a namespaced id, so it goes first.
+   `acme`, matches nothing, and would be `rmSync`'d. **Latent, not live:** `assemble.ts` calls
+   `verifyExtensionsBestEffort` without `extensionsRoot`, so the sweep never runs in production
+   today (corrected after plan research; review 1.2 and this section first called it live data
+   loss). **Fix anyway**, because wiring the sweep later would turn it into data loss: treat a
+   top-level directory as live when it is any installed id's first path segment. Wiring the sweep
+   into production is NOT part of this project.
 3. **`_pending` with a namespaced id** joins `<id>-<version>` under `_pending` but only creates
    `_pending` itself. **Fix:** a slugged directory name (same slug as the versions area).
 4. **One extraction pipeline.** Install uses system `tar` plus `assertNoEntryEscapes` and
