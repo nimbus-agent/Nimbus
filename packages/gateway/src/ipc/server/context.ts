@@ -20,6 +20,7 @@ export const connectorRpcSkipped: unique symbol = Symbol("connectorRpcSkipped");
 export const peopleRpcSkipped: unique symbol = Symbol("peopleRpcSkipped");
 export const sessionRpcSkipped: unique symbol = Symbol("sessionRpcSkipped");
 export const automationRpcSkipped: unique symbol = Symbol("automationRpcSkipped");
+export const registryRpcSkipped: unique symbol = Symbol("registryRpcSkipped");
 export const phase4RpcSkipped: unique symbol = Symbol("phase4RpcSkipped");
 export const diagnosticsRpcSkipped: unique symbol = Symbol("diagnosticsRpcSkipped");
 export const metricsRpcSkipped: unique symbol = Symbol("metricsRpcSkipped");

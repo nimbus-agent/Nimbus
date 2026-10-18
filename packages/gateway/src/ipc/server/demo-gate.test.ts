@@ -56,6 +56,10 @@ describe("demoRefusal", () => {
     "extension.install",
     "extension.approveRun",
     "extension.revokeRun",
+    "registry.add",
+    "registry.list",
+    "registry.refresh",
+    "registry.remove",
   ])("%s is refused", (m) => {
     expect(demoRefusal(m)?.rpcCode).toBe(-32000);
   });

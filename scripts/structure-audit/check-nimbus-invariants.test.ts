@@ -27,6 +27,7 @@ import {
   checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
   checkPushClientKindConfinement,
+  checkRegistryAppenderConfinement,
   checkRemoteVlmConfinement,
   checkRunConfinedConfinement,
   checkRunGrantTableConfinement,
@@ -982,6 +983,67 @@ describe("D22(d) — agent emitter import confinement", () => {
         },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("D22(h) \u2014 the registry appender and fetch are confined", () => {
+  const file = (relPath: string, contents: string) => [{ relPath, contents }];
+
+  test("the allowed files pass", () => {
+    expect(
+      checkRegistryAppenderConfinement([
+        ...file(
+          "packages/gateway/src/egress/registry-egress.ts",
+          "export function recordRegistryEgress() {}\n",
+        ),
+        ...file(
+          "packages/gateway/src/extensions/registry/registry-fetch.ts",
+          "recordRegistryEgress(db, a);\nawait fetch(u);\n",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("a recordRegistryEgress call in another gateway file fails", () => {
+    const v = checkRegistryAppenderConfinement(
+      file("packages/gateway/src/agents/rogue.ts", "recordRegistryEgress(db, a);\n"),
+    );
+    expect(v.map((x) => x.rule)).toEqual(["registry-appender-confined"]);
+  });
+
+  test("a fetch( in extensions/install-from-local.ts fails", () => {
+    const v = checkRegistryAppenderConfinement(
+      file(
+        "packages/gateway/src/extensions/install-from-local.ts",
+        "const r = await fetch(url);\n",
+      ),
+    );
+    expect(v.map((x) => x.rule)).toEqual(["registry-fetch-confined"]);
+  });
+
+  test("a commented-out call, a test file and fetchFn( do not trip it", () => {
+    expect(
+      checkRegistryAppenderConfinement([
+        ...file(
+          "packages/gateway/src/extensions/a.ts",
+          "// fetch(url)\nawait deps.fetchFn(url);\n",
+        ),
+        ...file(
+          "packages/gateway/src/extensions/a.test.ts",
+          "fetch(url);\nrecordRegistryEgress();\n",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("the temporary allow-list still passes the legacy fetcher files", () => {
+    for (const f of ["publisher-keys", "registry-client", "sync"]) {
+      expect(
+        checkRegistryAppenderConfinement(
+          file(`packages/gateway/src/extensions/${f}.ts`, "await opts.fetcher.fetch(id);\n"),
+        ),
+      ).toEqual([]);
+    }
   });
 });
 

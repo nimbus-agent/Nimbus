@@ -374,6 +374,61 @@ describe("I2 — HITL frozen-set membership", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  test("registry.add is not merely listed: the add handler REFUSES without the executor gate and pins nothing on a denial", async () => {
+    // Adding a registry pins a trust root. The gate is the executor's (the server dispatcher builds a
+    // gate-only ToolExecutor per call); this pins both halves at the handler.
+    expect(HITL_REQUIRED.has("registry.add")).toBe(true);
+    const { dispatchRegistryRpc } = await import("./ipc/registry-rpc.ts");
+    const { listRegistries } = await import("./extensions/registry/registry-store.ts");
+    const nacl = (await import("tweetnacl")).default;
+    const { registryIndexSigningBytes } = await import("./extensions/registry/index-format.ts");
+    const { encodeBase64 } = await import("./util/base64.ts");
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-i2-registry-add-"));
+    const db = new Database(":memory:");
+    try {
+      LocalIndex.ensureSchema(db);
+      const kp = nacl.sign.keyPair.fromSeed(Uint8Array.from({ length: 32 }, (_, i) => i + 7));
+      const base = {
+        format: 1 as const,
+        rootKey: encodeBase64(kp.publicKey),
+        sequence: 1,
+        generatedAt: "2026-10-18T00:00:00Z",
+        extensions: {},
+      };
+      const signature = encodeBase64(
+        nacl.sign.detached(registryIndexSigningBytes(base), kp.secretKey),
+      );
+      writeFileSync(join(tmp, "index.json"), JSON.stringify({ ...base, signature }));
+      const fetch = {
+        fetchFn: () => Promise.reject(new Error("no network")),
+        enforceAirGap: () => false,
+        now: () => 1,
+        production: false,
+      };
+      const req = { method: "registry.add", params: { name: "i2", url: tmp }, db, fetch };
+      await expect(dispatchRegistryRpc(req)).rejects.toThrow(/requires the owner's HITL gate/);
+      const asked: string[] = [];
+      await expect(
+        dispatchRegistryRpc({
+          ...req,
+          ownerGate: async (a) => {
+            asked.push(a.type);
+            return false;
+          },
+        }),
+      ).rejects.toThrow(/ERR_REGISTRY_ADD_NOT_APPROVED/);
+      expect(asked).toEqual(["registry.add"]);
+      expect(listRegistries(db)).toEqual([]);
+      const dispatchers = await read("packages/gateway/src/ipc/server/dispatchers.ts");
+      expect(dispatchers).toMatch(
+        /method === "registry\.add"[\s\S]{0,200}buildExtensionGateExecutor/,
+      );
+    } finally {
+      db.close();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("I3 — HITL gate consults action.type (not payload.mcpToolId)", () => {
@@ -3263,6 +3318,9 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // `recordToolEgress` its production caller — `toolgen/toolgen-broker.ts`'s brokered-fetch
     // handler, wired onto the spawned tool's stdio protocol by `toolgen-client.ts`'s
     // `spawnGeneratedTool`. Per this file's own rule, never ahead of that landing (I39).
+    // `registry` is the NINTH non-`none` class, `per-call`, RAISED in the same commit that gave
+    // `recordRegistryEgress` its production caller, `extensions/registry/registry-fetch.ts`, the
+    // one function that fetches registry bytes (static D22(h)).
     // `peer`/`session` stay `none` until THEIR appenders land — raising an
     // entry without a landed appender behind it is a review moment, not a test to re-bank. (An
     // earlier version of this comment pointed to an `EgressCompleteness.tier` #1057 note in
@@ -3277,6 +3335,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       "http",
       "mcp",
       "model",
+      "registry",
       "sync",
       "task",
       "tool",
@@ -5960,6 +6019,46 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     expect(res.status).toBe("rejected");
     expect(remote).toBe(0);
     expect(prompts).toBe(1);
+  });
+
+  test("I20: a delegate never approves registry.add or extension.*: the delegate is not consulted and the owner is prompted", async () => {
+    const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
+    for (const type of [
+      "registry.add",
+      "extension.install",
+      "extension.run",
+      "extension.autoUpdate",
+    ]) {
+      let prompts = 0;
+      let remote = 0;
+      const exec = new ToolExecutor(
+        {
+          requestApproval: async () => {
+            prompts += 1;
+            return false;
+          },
+        },
+        { recordAudit: () => {} },
+        { dispatch: async () => ({}) },
+        {
+          store: {
+            activeDelegateFor: () => true,
+            activeDelegateePeer: () => "peer-1",
+          },
+          isOperatorValid: () => true,
+          requestRemote: async () => {
+            remote += 1;
+            return { kind: "answered", peerId: "peer-1", approved: true };
+          },
+        },
+        NULL_EGRESS_SINK,
+        NO_POLICY_OVERLAY,
+      );
+      const res = await exec.execute({ type, payload: {} });
+      expect(res.status, type).toBe("rejected");
+      expect(remote, type).toBe(0);
+      expect(prompts, type).toBe(1);
+    }
   });
 
   test("share replay never runs an ext_ tool", async () => {

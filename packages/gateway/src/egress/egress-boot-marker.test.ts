@@ -21,6 +21,7 @@ const RICH_COVERAGE: CoverageVector = {
   sync: "per-run",
   model: "per-call",
   peer: "per-call",
+  registry: "per-call",
   tool: "per-call",
 };
 
@@ -39,7 +40,7 @@ describe("boot marker", () => {
     expect(rows[0]?.sourceType).toBe("boot");
     expect(rows[0]?.method).toBe("egress.boot");
     expect(rows[0]?.sourceId).toBe(
-      "browser=per-run;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call;tool=per-call",
+      "browser=per-run;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;registry=per-call;session=none;sync=per-run;task=per-call;tool=per-call",
     );
     // The marker participates in the chain like any other row.
     expect(verifyEgressChain(db).ok).toBe(true);
@@ -64,6 +65,7 @@ describe("boot marker", () => {
       sync: "per-run", // both per-run
       model: "per-call", // both non-none
       peer: "none",
+      registry: "per-call",
       tool: "per-call", // both non-none
     });
   });
@@ -154,7 +156,7 @@ describe("boot marker", () => {
       timestamp: 500,
       sourceType: "task",
       sourceId:
-        "browser=per-call;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=per-call;session=per-call;sync=per-call;task=per-call;tool=per-call",
+        "browser=per-call;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=per-call;registry=per-call;session=per-call;sync=per-call;task=per-call;tool=per-call",
       destination: "local",
       method: "egress.boot",
       payloadSummary: "{}",
