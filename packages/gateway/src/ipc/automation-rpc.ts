@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { existsSync, readdirSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { rmSync } from "node:fs";
 import {
   deleteExtensionById,
   type ExtensionRow,
@@ -40,6 +39,9 @@ import {
   PRE_T2_DISABLE_REASON,
   preT2DisabledIds,
   preT2DisableMessage,
+  RECOVERED_PENDING_REHASH_REASON,
+  recoveredPendingRehashMessage,
+  recoveredPendingRehashRegistry,
   signatureDisabledRegistry,
   signatureDisableMessage,
 } from "../extensions/hard-disable.ts";
@@ -59,6 +61,7 @@ import { syncPublisherKeys } from "../extensions/sync.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
+import { newestPrevVersion, removeExtensionVersionStore } from "../extensions/version-store.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
 import { emitGatewayEvent } from "./gateway-events.ts";
@@ -367,6 +370,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       if (serviceId !== undefined) deleteConnectorHealthRow(ctx.db, serviceId);
       try {
         rmSync(installPath, { recursive: true, force: true });
+        if (ctx.extensionsDir !== undefined) removeExtensionVersionStore(ctx.extensionsDir, id);
       } catch {
         /* row already removed; best-effort filesystem cleanup */
       }
@@ -447,7 +451,10 @@ async function stopExtensionBestEffort(
 
 type ExtensionListItem = ExtensionRow &
   ReturnType<typeof extensionRunFields> & {
-    disabled_reason?: typeof PRE_T2_DISABLE_REASON | SignatureDisableReason;
+    disabled_reason?:
+      | typeof PRE_T2_DISABLE_REASON
+      | typeof RECOVERED_PENDING_REHASH_REASON
+      | SignatureDisableReason;
     needs_reinstall?: boolean;
     signature_disabled?: boolean;
   };
@@ -479,6 +486,9 @@ function decorateExtensionList(
     const reason = signature.get(r.id);
     if (reason !== undefined) {
       return { ...r, ...run, disabled_reason: reason, signature_disabled: true };
+    }
+    if (recoveredPendingRehashRegistry.has(r.id)) {
+      return { ...r, ...run, disabled_reason: RECOVERED_PENDING_REHASH_REASON };
     }
     return { ...r, ...run };
   });
@@ -552,6 +562,23 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
     };
   }
 
+  if (recoveredPendingRehashRegistry.has(row.id)) {
+    return {
+      kind: "hit",
+      value: {
+        extension: {
+          ...row,
+          ...run,
+          ...resolveExtensionInfoExtras(row, ctx),
+          disabled_reason: RECOVERED_PENDING_REHASH_REASON,
+          forwardDeps: fwd,
+          reverseDeps: rev,
+        },
+        message: recoveredPendingRehashMessage(row.id, row.version),
+      },
+    };
+  }
+
   return {
     kind: "hit",
     value: {
@@ -568,7 +595,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
 
 /**
  * The two fields `extension.info` resolves from outside the DB row: the newest directory under
- * `_prev/`, and this run's cached auto-update check.
+ * `prev/`, and this run's cached auto-update check.
  *
  * Extracted so the signature-disabled branch above shares them. It was written as an early return
  * placed ABOVE the inline probe, which meant attaching a reason silently dropped both fields from
@@ -582,17 +609,11 @@ function resolveExtensionInfoExtras(
 ): { prevVersion: string | null; cachedUpdate: unknown } {
   let prevVersion: string | null = null;
   try {
-    const extRoot = dirname(row.install_path);
-    const prevDir = join(extRoot, "_prev");
-    if (existsSync(prevDir)) {
-      const entries = readdirSync(prevDir).sort();
-      const last = entries[entries.length - 1];
-      if (last !== undefined) {
-        prevVersion = last;
-      }
+    if (ctx.extensionsDir !== undefined) {
+      prevVersion = newestPrevVersion(ctx.extensionsDir, row.id) ?? null;
     }
   } catch {
-    // Best-effort — info still surfaces the row even if _prev/ probe failed.
+    // Best-effort — info still surfaces the row even if the prev/ probe failed.
   }
   return { prevVersion, cachedUpdate: ctx.autoUpdate?.cache.get(row.id) ?? null };
 }
@@ -731,6 +752,12 @@ async function handleExtensionRehash(
     );
   }
   setExtensionTreeDigest(ctx.db, id, treeDigest);
+  // A crash-recovered extension was left disabled so that adopting its files is the owner's act;
+  // this approval is that act.
+  if (recoveredPendingRehashRegistry.has(id)) {
+    setExtensionEnabled(ctx.db, id, true);
+    recoveredPendingRehashRegistry.unmark(id);
+  }
   return { kind: "hit", value: { id, treeDigest, changed: true } };
 }
 

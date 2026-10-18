@@ -24,10 +24,8 @@ import { listExtensions } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { registerGlobalFetchRestore, requestUrlString } from "../testing/bun-test-support.ts";
 import { MockVault } from "../vault/mock.ts";
-import {
-  installExtensionFromLocalDirectory,
-  resolveSystemTarCommand,
-} from "./install-from-local.ts";
+import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
+import { resolveSystemTarCommand } from "./package-extract.ts";
 import type { FetchManifestResponse, RegistryClient } from "./registry-client.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 

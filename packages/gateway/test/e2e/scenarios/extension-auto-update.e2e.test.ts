@@ -18,6 +18,10 @@ import {
   generateEd25519Keypair,
   signManifest,
 } from "../../../src/extensions/verify-signature.ts";
+import {
+  prevVersionDir,
+  removeExtensionVersionStore,
+} from "../../../src/extensions/version-store.ts";
 import { MockVault } from "../../../src/vault/mock.ts";
 import { setupFreshExtensionDb } from "../../fixtures/extension.ts";
 
@@ -165,14 +169,14 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       const v1Sig = await signManifest(v1, privkey);
       const v1ManifestText = JSON.stringify({ ...v1, signature: v1Sig });
       const v1EntryText = `export default { version: "1.0.0" };`;
-      mkdirSync(join(extRoot, "active", "dist"), { recursive: true });
-      writeFileSync(join(extRoot, "active", "nimbus.extension.json"), v1ManifestText, "utf8");
-      writeFileSync(join(extRoot, "active", "dist", "index.js"), v1EntryText, "utf8");
+      mkdirSync(join(extRoot, "dist"), { recursive: true });
+      writeFileSync(join(extRoot, "nimbus.extension.json"), v1ManifestText, "utf8");
+      writeFileSync(join(extRoot, "dist", "index.js"), v1EntryText, "utf8");
 
       insertExtensionRow(db, {
         id: extensionId,
         version: "1.0.0",
-        install_path: join(extRoot, "active"),
+        install_path: extRoot,
         manifest_hash: createHash("sha256")
           .update(Buffer.from(v1ManifestText, "utf8"))
           .digest("hex"),
@@ -226,10 +230,10 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       expect(typeof apply.jobId).toBe("string");
 
       const activeManifest = JSON.parse(
-        readFileSync(join(extRoot, "active", "nimbus.extension.json"), "utf8"),
+        readFileSync(join(extRoot, "nimbus.extension.json"), "utf8"),
       ) as { version: string };
       expect(activeManifest.version).toBe("1.1.0");
-      expect(existsSync(join(extRoot, "_prev", "1.0.0"))).toBe(true);
+      expect(existsSync(prevVersionDir(extensionsDir, extensionId, "1.0.0"))).toBe(true);
 
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.1.0");
@@ -254,6 +258,7 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       expect(seen.has("extension.autoUpdate.applied")).toBe(true);
     } finally {
       db.close();
+      removeExtensionVersionStore(extensionsDir, "ext-pub-1");
       rmSync(extensionsDir, { recursive: true, force: true });
     }
   });
@@ -268,34 +273,33 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       const extensionId = "ext-pub-1";
       const extRoot = join(extensionsDir, extensionId);
 
-      mkdirSync(join(extRoot, "active", "dist"), { recursive: true });
+      mkdirSync(join(extRoot, "dist"), { recursive: true });
       writeFileSync(
-        join(extRoot, "active", "nimbus.extension.json"),
+        join(extRoot, "nimbus.extension.json"),
         JSON.stringify({ id: extensionId, version: "1.1.0" }),
       );
+      writeFileSync(join(extRoot, "dist", "index.js"), `export default { version: "1.1.0" };`);
+      mkdirSync(join(prevVersionDir(extensionsDir, extensionId, "1.0.0"), "dist"), {
+        recursive: true,
+      });
       writeFileSync(
-        join(extRoot, "active", "dist", "index.js"),
-        `export default { version: "1.1.0" };`,
-      );
-      mkdirSync(join(extRoot, "_prev", "1.0.0", "dist"), { recursive: true });
-      writeFileSync(
-        join(extRoot, "_prev", "1.0.0", "nimbus.extension.json"),
+        join(prevVersionDir(extensionsDir, extensionId, "1.0.0"), "nimbus.extension.json"),
         JSON.stringify({ id: extensionId, version: "1.0.0" }),
       );
       writeFileSync(
-        join(extRoot, "_prev", "1.0.0", "dist", "index.js"),
+        join(prevVersionDir(extensionsDir, extensionId, "1.0.0"), "dist", "index.js"),
         `export default { version: "1.0.0" };`,
       );
 
       insertExtensionRow(db, {
         id: extensionId,
         version: "1.1.0",
-        install_path: join(extRoot, "active"),
+        install_path: extRoot,
         manifest_hash: createHash("sha256")
-          .update(readFileSync(join(extRoot, "active", "nimbus.extension.json")))
+          .update(readFileSync(join(extRoot, "nimbus.extension.json")))
           .digest("hex"),
         entry_hash: createHash("sha256")
-          .update(readFileSync(join(extRoot, "active", "dist", "index.js")))
+          .update(readFileSync(join(extRoot, "dist", "index.js")))
           .digest("hex"),
         enabled: 1,
         installed_at: Date.now(),
@@ -321,11 +325,19 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
         publisherStatus: "verified",
         // The downgrade now measures `_prev/1.0.0` against these claims before swapping.
         manifestHash: createHash("sha256")
-          .update(readFileSync(join(extRoot, "_prev", "1.0.0", "nimbus.extension.json")))
+          .update(
+            readFileSync(
+              join(prevVersionDir(extensionsDir, extensionId, "1.0.0"), "nimbus.extension.json"),
+            ),
+          )
           .digest("hex"),
         signatureB64: "AA==",
         entryHash: createHash("sha256")
-          .update(readFileSync(join(extRoot, "_prev", "1.0.0", "dist", "index.js")))
+          .update(
+            readFileSync(
+              join(prevVersionDir(extensionsDir, extensionId, "1.0.0"), "dist", "index.js"),
+            ),
+          )
           .digest("hex"),
         tarballSha256: "f".repeat(64),
         tarballUrl: "https://r/x",
@@ -346,12 +358,13 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       expect(apply.applied).toBe(true);
 
       const activeManifest = JSON.parse(
-        readFileSync(join(extRoot, "active", "nimbus.extension.json"), "utf8"),
+        readFileSync(join(extRoot, "nimbus.extension.json"), "utf8"),
       ) as { version: string };
       expect(activeManifest.version).toBe("1.0.0");
-      expect(existsSync(join(extRoot, "_prev", "1.1.0"))).toBe(true);
+      expect(existsSync(prevVersionDir(extensionsDir, extensionId, "1.1.0"))).toBe(true);
     } finally {
       db.close();
+      removeExtensionVersionStore(extensionsDir, "ext-pub-1");
       rmSync(extensionsDir, { recursive: true, force: true });
     }
   });
@@ -403,6 +416,7 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       expect(apply.hint).toMatch(/nimbus extension sync/);
     } finally {
       db.close();
+      removeExtensionVersionStore(extensionsDir, "ext-orphan");
       rmSync(extensionsDir, { recursive: true, force: true });
     }
   });

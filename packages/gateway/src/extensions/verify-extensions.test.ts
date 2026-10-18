@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import pino, { type Logger } from "pino";
 
 import {
@@ -15,14 +15,22 @@ import { dbRun } from "../db/write.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import { forwardDeps } from "./dependency-store.ts";
-import { signatureDisabledRegistry } from "./hard-disable.ts";
+import {
+  recoveredPendingRehashMessage,
+  recoveredPendingRehashRegistry,
+  signatureDisabledRegistry,
+} from "./hard-disable.ts";
 import {
   _resetMissingDependencyRegistry,
   missingDependencyRegistry,
 } from "./missing-dependency-registry.ts";
+import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { writePublisherKey } from "./publisher-keys.ts";
 import { verifyExtensionsBestEffort, verifyOneExtensionStrict } from "./verify-extensions.ts";
 import { generateEd25519Keypair } from "./verify-signature.ts";
+import { prevVersionDir, prevVersionsDir, removeExtensionVersionStore } from "./version-store.ts";
+
+afterEach(() => recoveredPendingRehashRegistry.reset());
 
 function memoryLogger(): { logger: Logger; warns: unknown[]; errors: unknown[] } {
   const warns: unknown[] = [];
@@ -288,45 +296,49 @@ describe("verifyExtensionsBestEffort — signed extensions (I16)", () => {
 });
 
 describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
-  test("promotes _prev/<v>/ to active/ when active/ is missing", async () => {
+  test("crash recovery promotes the semver-newest prev and records its measured hashes", async () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     const { logger } = memoryLogger();
+    const id = "com.example.crash-recover";
     try {
-      const id = "com.example.crash-recover";
-      const extRoot = join(extensionsDir, id);
-      const prevDir = join(extRoot, "_prev", "1.0.0");
-      mkdirSync(prevDir, { recursive: true });
-      const manifestText = JSON.stringify({ id, version: "1.0.0" });
-      writeFileSync(join(prevDir, "nimbus.extension.json"), manifestText, "utf8");
-      mkdirSync(join(prevDir, "dist"), { recursive: true });
-      writeFileSync(join(prevDir, "dist", "index.js"), "// prev entry", "utf8");
-
-      const manifestHex = createHash("sha256")
-        .update(readFileSync(join(prevDir, "nimbus.extension.json")))
-        .digest("hex");
-      const entryHex = createHash("sha256")
-        .update(readFileSync(join(prevDir, "dist", "index.js")))
-        .digest("hex");
+      const installPath = join(extensionsDir, id);
+      const manifestText = JSON.stringify({ id, version: "1.10.0" });
+      // 1.9.0 sorts after 1.10.0 lexically; the semver-newest must win.
+      for (const v of ["1.9.0", "1.10.0"]) {
+        const prevDir = prevVersionDir(extensionsDir, id, v);
+        mkdirSync(join(prevDir, "dist"), { recursive: true });
+        writeFileSync(
+          join(prevDir, "nimbus.extension.json"),
+          v === "1.10.0" ? manifestText : JSON.stringify({ id, version: v }),
+          "utf8",
+        );
+        writeFileSync(join(prevDir, "dist", "index.js"), `// entry ${v}`, "utf8");
+      }
 
       insertExtensionRow(db, {
         id,
-        version: "1.1.0", // pretend we were rolling 1.0.0 → 1.1.0 when we crashed
-        install_path: join(extRoot, "active"),
-        manifest_hash: manifestHex,
-        entry_hash: entryHex,
+        version: "1.11.0", // pretend we were rolling 1.10.0 -> 1.11.0 when we crashed
+        install_path: installPath,
+        manifest_hash: "a".repeat(64), // the lost version's hashes: must NOT be kept
+        entry_hash: "b".repeat(64),
         enabled: 1,
         installed_at: Date.now(),
         last_verified_at: Date.now(),
       });
 
-      await verifyExtensionsBestEffort(db, logger);
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
 
-      expect(readFileSync(join(extRoot, "active", "nimbus.extension.json"), "utf8")).toBe(
-        manifestText,
-      );
+      expect(readFileSync(join(installPath, "nimbus.extension.json"), "utf8")).toBe(manifestText);
       const row = listExtensions(db).find((r) => r.id === id);
-      expect(row?.version).toBe("1.0.0");
-      expect(row?.enabled).toBe(1);
+      expect(row?.version).toBe("1.10.0");
+      // Promoted, described, but NOT blessed: disabled, no digest, pending an owner rehash.
+      expect(row?.enabled).toBe(0);
+      expect(row?.tree_digest).toBeNull();
+      expect(recoveredPendingRehashRegistry.has(id)).toBe(true);
+      expect(recoveredPendingRehashMessage(id, "1.10.0")).toContain("extension rehash");
+      const measured = computeExtensionPackageHashes(installPath);
+      expect(row?.manifest_hash).toBe(measured.manifestHash);
+      expect(row?.entry_hash).toBe(measured.entryHash);
 
       const auditRow = db
         .query(
@@ -339,26 +351,28 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
       const parsed = JSON.parse(auditRow!.action_json) as {
         id: string;
         promoted_from: string;
+        requires_rehash: boolean;
       };
+      expect(parsed.requires_rehash).toBe(true);
       expect(parsed.id).toBe(id);
-      expect(parsed.promoted_from).toBe("1.0.0");
+      expect(parsed.promoted_from).toBe("1.10.0");
     } finally {
+      removeExtensionVersionStore(extensionsDir, id);
       dbRun(db, "DELETE FROM extension WHERE 1=1");
       db.close();
     }
   });
 
-  test("hard-disables when neither active/ nor _prev/* exists", async () => {
+  test("hard-disables when neither the install dir nor any prev version exists", async () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     const { logger } = memoryLogger();
     try {
       const id = "com.example.crash-fail";
       const extRoot = join(extensionsDir, id);
-      mkdirSync(extRoot, { recursive: true });
       insertExtensionRow(db, {
         id,
         version: "1.0.0",
-        install_path: join(extRoot, "active"),
+        install_path: extRoot,
         manifest_hash: "0".repeat(64),
         entry_hash: "0".repeat(64),
         enabled: 1,
@@ -501,6 +515,142 @@ describe("verifyExtensionsBestEffort — orphan-active sweep (Task 12)", () => {
       expect(existsSync(realDir)).toBe(true);
     } finally {
       dbRun(db, "DELETE FROM extension WHERE 1=1");
+      db.close();
+    }
+  });
+
+  test("keeps acme/ when acme/foo is installed and removes an unowned dir", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      const strayDir = join(extensionsDir, "stray");
+      mkdirSync(strayDir, { recursive: true });
+
+      const realId = "acme/foo";
+      const realDir = join(extensionsDir, "acme", "foo");
+      mkdirSync(join(realDir, "dist"), { recursive: true });
+      const mfBytes = Buffer.from(
+        JSON.stringify({ id: realId, version: "1.0.0", permissions: {} }),
+        "utf8",
+      );
+      const entryText = "export default {};";
+      writeFileSync(join(realDir, "nimbus.extension.json"), mfBytes);
+      writeFileSync(join(realDir, "dist", "index.js"), entryText);
+      const now = Date.now();
+      insertExtensionRow(db, {
+        id: realId,
+        version: "1.0.0",
+        install_path: realDir,
+        manifest_hash: createHash("sha256").update(mfBytes).digest("hex"),
+        entry_hash: createHash("sha256").update(entryText).digest("hex"),
+        enabled: 1,
+        installed_at: now,
+        last_verified_at: now,
+      });
+
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, extensionsDir);
+
+      expect(existsSync(strayDir)).toBe(false);
+      expect(existsSync(join(extensionsDir, "acme"))).toBe(true);
+      expect(existsSync(realDir)).toBe(true);
+    } finally {
+      dbRun(db, "DELETE FROM extension WHERE 1=1");
+      db.close();
+    }
+  });
+});
+
+describe("verifyExtensionsBestEffort — crash recovery extensions dir", () => {
+  function stagePrev(extensionsDir: string, id: string): string {
+    const prevDir = prevVersionDir(extensionsDir, id, "1.0.0");
+    mkdirSync(join(prevDir, "dist"), { recursive: true });
+    writeFileSync(join(prevDir, "nimbus.extension.json"), JSON.stringify({ id, version: "1.0.0" }));
+    writeFileSync(join(prevDir, "dist", "index.js"), "// prev");
+    return prevDir;
+  }
+
+  test("a slash id promotes from <dirname(ext)>/extension-versions/<slug>/prev", async () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-slash-rec-"));
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const { logger } = memoryLogger();
+    const id = "acme/foo";
+    try {
+      const extensionsDir = join(root, "extensions");
+      mkdirSync(extensionsDir, { recursive: true });
+      const installPath = join(extensionsDir, id);
+      const prevDir = stagePrev(extensionsDir, id);
+      expect(prevDir.startsWith(join(root, "extension-versions"))).toBe(true);
+      insertExtensionRow(db, {
+        id,
+        version: "1.1.0",
+        install_path: installPath,
+        manifest_hash: "0".repeat(64),
+        entry_hash: "0".repeat(64),
+        enabled: 1,
+        installed_at: Date.now(),
+        last_verified_at: Date.now(),
+      });
+
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
+
+      const row = listExtensions(db).find((r) => r.id === id);
+      expect(row?.version).toBe("1.0.0");
+      expect(row?.enabled).toBe(0);
+      expect(row?.tree_digest).toBeNull();
+      expect(recoveredPendingRehashRegistry.has(id)).toBe(true);
+      expect(existsSync(join(installPath, "nimbus.extension.json"))).toBe(true);
+    } finally {
+      db.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("without the extensions dir, recovery is skipped with a log line and the row is disabled", async () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-slash-norec-"));
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const { logger, warns } = memoryLogger();
+    const id = "acme/foo";
+    try {
+      const extensionsDir = join(root, "extensions");
+      mkdirSync(extensionsDir, { recursive: true });
+      stagePrev(extensionsDir, id);
+      insertExtensionRow(db, {
+        id,
+        version: "1.1.0",
+        install_path: join(extensionsDir, id),
+        manifest_hash: "0".repeat(64),
+        entry_hash: "0".repeat(64),
+        enabled: 1,
+        installed_at: Date.now(),
+        last_verified_at: Date.now(),
+      });
+
+      await verifyExtensionsBestEffort(db, logger);
+
+      expect(listExtensions(db).find((r) => r.id === id)?.enabled).toBe(0);
+      expect(JSON.stringify(warns)).toContain("crash recovery skipped");
+    } finally {
+      db.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("giving only the recovery dir does not run the orphan sweep", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      const orphanDir = join(extensionsDir, "com.orphan");
+      mkdirSync(orphanDir, { recursive: true });
+      writeFileSync(join(orphanDir, "nimbus.extension.json"), "{}", "utf8");
+      stageMinimalExtension(db, extensionsDir, "com.real", "1.0.0");
+
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
+
+      expect(existsSync(orphanDir)).toBe(true);
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
       db.close();
     }
   });
@@ -949,12 +1099,12 @@ describe("verifyExtensionsBestEffort — tryPromotePrevVersion branches", () => 
     const { logger } = memoryLogger();
     const id = "com.example.prev-empty";
     const extRoot = join(extensionsDir, id);
-    // Create an empty _prev dir (no version subdirs)
-    mkdirSync(join(extRoot, "_prev"), { recursive: true });
+    // Create an empty prev dir (no version subdirs)
+    mkdirSync(prevVersionsDir(extensionsDir, id), { recursive: true });
     insertExtensionRow(db, {
       id,
       version: "1.0.0",
-      install_path: join(extRoot, "active"),
+      install_path: extRoot,
       manifest_hash: "0".repeat(64),
       entry_hash: "0".repeat(64),
       enabled: 1,
@@ -966,6 +1116,7 @@ describe("verifyExtensionsBestEffort — tryPromotePrevVersion branches", () => 
       const row = listExtensions(db).find((r) => r.id === id);
       expect(row?.enabled).toBe(0);
     } finally {
+      removeExtensionVersionStore(extensionsDir, id);
       try {
         dbRun(db, "DELETE FROM extension WHERE 1=1");
         db.close();
@@ -981,13 +1132,13 @@ describe("verifyExtensionsBestEffort — tryPromotePrevVersion branches", () => 
     const { logger } = memoryLogger();
     const id = "com.example.prev-file";
     const extRoot = join(extensionsDir, id);
-    mkdirSync(extRoot, { recursive: true });
-    // Write a FILE named _prev so readdirSync(_prev) throws ENOTDIR
-    writeFileSync(join(extRoot, "_prev"), "not-a-dir", "utf8");
+    // Write a FILE named prev so readdirSync(prev) throws ENOTDIR
+    mkdirSync(dirname(prevVersionsDir(extensionsDir, id)), { recursive: true });
+    writeFileSync(prevVersionsDir(extensionsDir, id), "not-a-dir", "utf8");
     insertExtensionRow(db, {
       id,
       version: "1.0.0",
-      install_path: join(extRoot, "active"),
+      install_path: extRoot,
       manifest_hash: "0".repeat(64),
       entry_hash: "0".repeat(64),
       enabled: 1,
@@ -999,6 +1150,7 @@ describe("verifyExtensionsBestEffort — tryPromotePrevVersion branches", () => 
       const row = listExtensions(db).find((r) => r.id === id);
       expect(row?.enabled).toBe(0);
     } finally {
+      removeExtensionVersionStore(extensionsDir, id);
       try {
         dbRun(db, "DELETE FROM extension WHERE 1=1");
         db.close();

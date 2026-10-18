@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
@@ -14,6 +14,7 @@ import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
 import { writePublisherKey } from "../extensions/publisher-keys.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { generateEd25519Keypair } from "../extensions/verify-signature.ts";
+import { newestPrevVersion, prevVersionDir } from "../extensions/version-store.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -951,6 +952,33 @@ describe("extension.enable / disable / remove", () => {
       expect(db.query("SELECT id FROM extension WHERE id = ?").get("com.example.a")).toBeNull();
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("extension.remove deletes the extension's version store", async () => {
+    const db = seededDb();
+    const root = mkdtempSync(join(tmpdir(), "nimbus-ext-rm-vs-"));
+    try {
+      const extensionsDir = join(root, "extensions");
+      const installPath = join(extensionsDir, "com.example.a");
+      mkdirSync(installPath, { recursive: true });
+      seedExtensionRow(db, "com.example.a", installPath);
+      mkdirSync(prevVersionDir(extensionsDir, "com.example.a", "1.0.0"), { recursive: true });
+      expect(newestPrevVersion(extensionsDir, "com.example.a")).toBe("1.0.0");
+
+      const out = await dispatchAutomationRpc({
+        method: "extension.remove",
+        params: { id: "com.example.a" },
+        db,
+        extensionsDir,
+      });
+      expect((out as { value: { ok: boolean } }).value.ok).toBe(true);
+
+      // A later fresh install of the same id finds no prev/.
+      expect(newestPrevVersion(extensionsDir, "com.example.a")).toBeUndefined();
+      expect(existsSync(installPath)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

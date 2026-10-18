@@ -12,6 +12,7 @@ import { createAutoUpdateRuntime } from "./auto-update-init.ts";
 import { writePublisherKey } from "./publisher-keys.ts";
 import { upsertRunGrant } from "./run-grant-store.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
+import { prevVersionDir } from "./version-store.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -321,7 +322,7 @@ describe("auto-update-init: getInstalledVersion and hasPrevVersion", () => {
     expect(result).toBe(false);
   });
 
-  it("hasPrevVersion returns false when row exists but _prev/<version> dir does NOT exist", async () => {
+  it("hasPrevVersion returns false when row exists but prev/<version> dir does NOT exist", async () => {
     tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-prevno-"));
     const db = freshDb();
     const extDir = join(tmpRoot, "ext-prevno");
@@ -331,20 +332,19 @@ describe("auto-update-init: getInstalledVersion and hasPrevVersion", () => {
       baseOpts(db, join(tmpRoot, "extensions"), join(tmpRoot, "data")),
     );
 
-    // _prev/1.0.0 does NOT exist on disk.
+    // prev/1.0.0 does NOT exist on disk.
     const result = await deps.hasPrevVersion("ext.prevno", "1.0.0");
     expect(result).toBe(false);
   });
 
-  it("hasPrevVersion returns true when row exists AND _prev/<version> dir exists (line 209: existsSync true)", async () => {
+  it("hasPrevVersion returns true when row exists AND prev/<version> dir exists (line 209: existsSync true)", async () => {
     tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-prevyes-"));
     const db = freshDb();
     const extDir = join(tmpRoot, "ext-prevyes");
     await stageExtension({ db, dir: extDir, id: "ext.prevyes", version: "1.0.0" });
 
-    // Manually create the _prev/<version> directory next to the install dir.
-    // install_path = extDir; dirname(extDir) = tmpRoot; prevPath = join(tmpRoot, "_prev", "1.0.0")
-    const prevDir = join(tmpRoot, "_prev", "1.0.0");
+    // Manually create the prev/<version> directory in the versions area.
+    const prevDir = prevVersionDir(join(tmpRoot, "extensions"), "ext.prevyes", "1.0.0");
     mkdirSync(prevDir, { recursive: true });
 
     expect(existsSync(prevDir)).toBe(true);

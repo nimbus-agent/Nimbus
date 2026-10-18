@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
@@ -17,6 +17,7 @@ import {
 } from "../lib/interactive-ipc-handlers.ts";
 import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { runExtensionInfoRemote, runExtensionSearch } from "./extension-registry-cmds.ts";
 import {
   formatNetworkIsolationLine,
   type SandboxPlatformCapabilities,
@@ -37,8 +38,17 @@ export function stripFlags(args: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === "--yes" || a === "-y" || a === "--json" || a === "--model") continue;
-    if (a === "--filter" || a === "--publisher-key") {
+    if (a === "--yes" || a === "-y" || a === "--json" || a === "--model" || a === "--remote") {
+      continue;
+    }
+    if (
+      a === "--filter" ||
+      a === "--publisher-key" ||
+      a === "--registry" ||
+      a === "--version" ||
+      a === "--channel" ||
+      a === "--to"
+    ) {
       i += 1;
       continue;
     }
@@ -59,6 +69,7 @@ type ExtensionListEntry = {
   reverseDeps?: Array<{ extensionId: string; range: string }>;
   runState?: string;
   runGrant?: { serviceId: string; approvedAt: number; modelAccess: boolean } | null;
+  source_registry?: string | null;
 };
 
 export interface ExtensionListTableRow {
@@ -74,6 +85,8 @@ export interface ExtensionListTableRow {
    */
   signatureDisabled?: boolean;
   runState?: string;
+  /** The registry the extension was installed from; absent for a local-path install. */
+  sourceRegistry?: string;
 }
 
 /** One definition, read by the renderer and by the colour rule below. */
@@ -84,9 +97,10 @@ export function formatExtensionListTable(
   opts: { isTty: boolean; noColor: boolean },
 ): string {
   const showRun = rows.some((r) => r.runState !== undefined);
-  const headers = showRun
-    ? ["ID", "Version", "Publisher", "Status", "Run"]
-    : ["ID", "Version", "Publisher", "Status"];
+  const showSource = rows.some((r) => r.sourceRegistry !== undefined);
+  const headers = ["ID", "Version", "Publisher", "Status"];
+  if (showRun) headers.push("Run");
+  if (showSource) headers.push("Source");
   const data = rows.map((r) => {
     const isEnabled = typeof r.enabled === "number" ? r.enabled === 1 : r.enabled;
     let status: string;
@@ -101,7 +115,9 @@ export function formatExtensionListTable(
       r.publisher === undefined ? "(unverified)" : r.publisher.id,
       status,
     ];
-    return showRun ? [...cells, r.runState ?? "-"] : cells;
+    if (showRun) cells.push(r.runState ?? "-");
+    if (showSource) cells.push(r.sourceRegistry === undefined ? "-" : `from ${r.sourceRegistry}`);
+    return cells;
   });
   const widths = headers.map((h, i) =>
     Math.max(h.length, ...data.map((row) => (row[i] ?? "").length)),
@@ -181,6 +197,7 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
     if (r.publisher !== undefined) base.publisher = r.publisher;
     if (r.signature_disabled === true) base.signatureDisabled = true;
     if (r.runState !== undefined) base.runState = r.runState;
+    if (typeof r.source_registry === "string") base.sourceRegistry = r.source_registry;
     return base;
   });
   const table = formatExtensionListTable(tableRows, { isTty, noColor });
@@ -283,6 +300,16 @@ export async function runExtensionInfo(
   if (id === "") {
     throw new Error("Usage: nimbus extension info <id> [--json]");
   }
+  const registry = takeFlagValue(args, "--registry");
+  if (registry !== undefined || hasFlag(args, "--remote")) {
+    const code = await runExtensionInfoRemote(id, registry, hasFlag(args, "--json"), {
+      client,
+      stdout: (s) => process.stdout.write(s),
+      stderr: (s) => process.stderr.write(s),
+    });
+    if (code !== 0) process.exit(code);
+    return;
+  }
   const out = await client.call<{
     extension: ExtensionListEntry;
     message?: string;
@@ -319,6 +346,67 @@ export async function runExtensionInfo(
   }
 }
 
+/** An argument that can only be a filesystem path, never an extension id. */
+function looksLikePath(arg: string): boolean {
+  return (
+    arg.includes("\\") ||
+    /^[A-Za-z]:/.test(arg) ||
+    arg.startsWith(".") ||
+    arg.startsWith("~") ||
+    arg.startsWith("/")
+  );
+}
+
+const INSTALL_USAGE =
+  "Usage: nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes]";
+
+/** `nimbus extension install <id>`: resolve, verify and install from a registry (never `--yes`). */
+async function runExtensionInstallFromRegistry(
+  client: IPCClient,
+  args: string[],
+  id: string,
+): Promise<void> {
+  if (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
+    throw new Error(
+      "--yes is not accepted for a registry install: it is always confirmed by the owner's approval prompt (answered interactively, or by NIMBUS_SCRIPT_CONSENT_SOURCE for scripted use)",
+    );
+  }
+  if (hasFlag(args, "--publisher-key")) {
+    throw new Error("--publisher-key applies to a local install only; the registry names the key");
+  }
+  const channel = takeFlagValue(args, "--channel");
+  if (channel !== undefined && channel !== "stable" && channel !== "beta") {
+    throw new Error("--channel must be stable or beta");
+  }
+  registerConsentFor(client, { kind: "prompt" });
+  const params: Record<string, unknown> = { id };
+  for (const [flag, key] of [
+    ["--registry", "registry"],
+    ["--version", "version"],
+    ["--channel", "channel"],
+  ] as const) {
+    const v = takeFlagValue(args, flag);
+    if (v !== undefined) params[key] = v;
+  }
+  const out = await client.call<{
+    id: string;
+    version: string;
+    sourceRegistry: string;
+    rootFingerprint?: string;
+    publisher?: { id: string; fingerprint: string };
+    installPath: string;
+  }>("registry.install", params);
+  const who =
+    out.publisher === undefined
+      ? ""
+      : `, publisher ${out.publisher.id} (${out.publisher.fingerprint})`;
+  const root = out.rootFingerprint === undefined ? "" : ` (root ${out.rootFingerprint})`;
+  console.log(
+    `installed ${out.id}@${out.version} from registry ${out.sourceRegistry}${root}${who}`,
+  );
+  console.log(JSON.stringify(out, undefined, 2));
+}
+
 export async function runExtensionInstall(
   client: IPCClient,
   args: string[],
@@ -326,7 +414,19 @@ export async function runExtensionInstall(
 ): Promise<void> {
   const sourceRaw = rest[0]?.trim() ?? "";
   if (sourceRaw === "") {
-    throw new Error("Usage: nimbus extension install <path> [--yes]");
+    throw new Error(INSTALL_USAGE);
+  }
+  if (!existsSync(resolve(process.cwd(), sourceRaw))) {
+    if (looksLikePath(sourceRaw)) {
+      throw new Error(`no such file or directory: ${sourceRaw}`);
+    }
+    await runExtensionInstallFromRegistry(client, args, sourceRaw);
+    return;
+  }
+  for (const flag of ["--registry", "--version", "--channel"]) {
+    if (hasFlag(args, flag)) {
+      throw new Error(`${flag} applies to a registry install; ${sourceRaw} is an existing path`);
+    }
   }
   const accept = hasFlag(args, "--yes") || hasFlag(args, "-y");
   if (!accept && process.stdout.isTTY !== true) {
@@ -657,7 +757,7 @@ export async function runExtensionSync(client: IPCClient, args: string[]): Promi
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
 
 async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
   if (sub === "keygen") {
@@ -679,6 +779,12 @@ async function dispatchExtensionWithCode(
   args: string[],
 ): Promise<boolean> {
   const handlers: Record<string, () => Promise<number>> = {
+    search: async () =>
+      runExtensionSearch(stripFlags(args.slice(1)).join(" "), hasFlag(args, "--json"), {
+        client,
+        stdout: (s) => process.stdout.write(s),
+        stderr: (s) => process.stderr.write(s),
+      }),
     sync: () => runExtensionSync(client, args),
     update: () => runExtensionUpdate(client, args),
     downgrade: () => runExtensionDowngrade(client, args),
@@ -730,6 +836,37 @@ async function dispatchExtensionVoid(
   }
 }
 
+/**
+ * `install`, `rehash`, `approve`, `update` and `downgrade` block on the owner's HITL prompt, so
+ * they get the human-bound budget rather than the 30s default that would time out while the owner
+ * is still reading the prompt. `update --check` only reads, so it keeps the default.
+ */
+/**
+ * ONE apply/read-only decision for `update` (`rest` excludes the `update` token): it applies only
+ * with an id and without `--check`. No id lists updates and `--check` never applies.
+ */
+export function extensionUpdateApplies(rest: string[]): boolean {
+  const id = stripFlags(rest).find((a) => !a.startsWith("--"));
+  return id !== undefined && !hasFlag(rest, "--check");
+}
+
+export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number | undefined {
+  if (sub === "install" || sub === "rehash" || sub === "approve" || sub === "downgrade") {
+    return INTERACTIVE_RPC_TIMEOUT_MS;
+  }
+  // Registry lookups fetch and verify every index; the 30s default is the fetch timeout itself.
+  if (
+    sub === "search" ||
+    (sub === "info" && (hasFlag(rest, "--remote") || hasFlag(rest, "--registry")))
+  ) {
+    return INTERACTIVE_RPC_TIMEOUT_MS;
+  }
+  if (sub === "update" && extensionUpdateApplies(rest)) {
+    return INTERACTIVE_RPC_TIMEOUT_MS;
+  }
+  return undefined;
+}
+
 export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
   const rest = stripFlags(args.slice(1));
@@ -744,14 +881,7 @@ export async function runExtension(args: string[]): Promise<void> {
     throw new Error(gatewayNotRunningMessage(paths.demo === true));
   }
 
-  // `install`, `rehash` and `approve` block on the owner's HITL prompt, so it gets the human-bound budget rather than the
-  // 30s default that would time out while the owner is still reading the prompt.
-  const client = createIpcClient(
-    state.socketPath,
-    sub === "install" || sub === "rehash" || sub === "approve"
-      ? INTERACTIVE_RPC_TIMEOUT_MS
-      : undefined,
-  );
+  const client = createIpcClient(state.socketPath, rpcTimeoutForExtensionSub(sub, args.slice(1)));
   await client.connect();
   try {
     if (await dispatchExtensionVoid(sub, client, args, rest)) {
@@ -803,10 +933,12 @@ async function listExtensionUpdates(
   opts: RunExtensionUpdateOpts,
   isJson: boolean,
   isCheck: boolean,
+  onlyId?: string,
 ): Promise<number> {
-  const list = (await opts.caller("extension.checkForUpdates", {
+  const all = (await opts.caller("extension.checkForUpdates", {
     ...(isCheck ? { force: true } : {}),
   })) as AvailableUpdateCli[];
+  const list = onlyId === undefined ? all : all.filter((u) => u.id === onlyId);
   if (isJson) {
     opts.writeStdout(`${JSON.stringify(list, undefined, 2)}\n`);
     return 0;
@@ -856,17 +988,24 @@ async function applyExtensionUpdate(
 export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts): Promise<number> {
   const args = opts.args;
   const isJson = hasFlag(args, "--json");
-  const isCheck = hasFlag(args, "--check");
+  const applies = extensionUpdateApplies(args);
+  const isCheck = !applies;
   const toVersion = takeFlagValue(args, "--to");
   const id = stripFlags(args).find((a) => !a.startsWith("--"));
 
-  if (id === undefined) {
-    return listExtensionUpdates(opts, isJson, isCheck);
+  if (id === undefined || !applies) {
+    // No id, or `--check`, is strictly read-only: it never reaches `extension.update`.
+    return listExtensionUpdates(opts, isJson, isCheck, id);
   }
   return applyExtensionUpdate(opts, id, toVersion, isJson);
 }
 
 export async function runExtensionUpdate(client: IPCClient, args: string[]): Promise<number> {
+  // The gateway raises the owner's HITL prompt (`extension.update`) over this connection; `--check`
+  // only reads, so it never prompts and registers nothing.
+  if (extensionUpdateApplies(args.slice(1))) {
+    registerConsentFor(client, { kind: "prompt" });
+  }
   return runExtensionUpdateWithCaller({
     args: args.slice(1), // drop the "update" subcommand token
     caller: async (method, params) => client.call<unknown>(method, params),
@@ -903,7 +1042,7 @@ export async function runExtensionDowngradeWithCaller(
   }
   if (toVersion === undefined) {
     opts.writeStderr(
-      `downgrade requires --to <version> (the cached _prev/<v>/ tag to roll back to)\n`,
+      `downgrade requires --to <version> (a previous version kept under extension-versions/<slug>/prev/<version>/)\n`,
     );
     return 1;
   }
@@ -926,6 +1065,7 @@ export async function runExtensionDowngradeWithCaller(
 }
 
 export async function runExtensionDowngrade(client: IPCClient, args: string[]): Promise<number> {
+  registerConsentFor(client, { kind: "prompt" });
   return runExtensionDowngradeWithCaller({
     args: args.slice(1),
     caller: async (method, params) => client.call<unknown>(method, params),

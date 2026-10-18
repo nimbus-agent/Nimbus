@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   cpSync,
@@ -17,24 +16,6 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
-/**
- * `platform`/`env` default to the live process and exist so the Windows branch can be exercised on
- * any host — every production caller passes neither.
- */
-export function resolveSystemTarCommand(
-  platform: NodeJS.Platform = process.platform,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): string {
-  if (platform !== "win32") {
-    return "tar";
-  }
-  const root = env["SystemRoot"] ?? env["windir"];
-  if (root !== undefined && root !== "") {
-    return join(root, "System32", "tar.exe");
-  }
-  return join("C:", "Windows", "System32", "tar.exe");
-}
-
 import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { dbRun } from "../db/write.ts";
@@ -50,6 +31,7 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
+import { extractPackage } from "./package-extract.ts";
 import { resolvePublisherKey, writePublisherKey } from "./publisher-keys.ts";
 import type {
   FetchManifestResponse,
@@ -101,12 +83,18 @@ async function verifyAndRecordSignature(
     fetcher?: PublisherKeyFetcher;
     enforceAirGap?: boolean;
     publisherKeyPath?: string;
+    publisherKey?: Uint8Array;
   },
   destManifest: ExtensionManifest,
   destManifestText: string,
 ): Promise<void> {
   if (destManifest.publisher === undefined) return;
-  if (options.vault === undefined || options.fetcher === undefined) {
+  // The vault is always required; the fetcher only when no key was supplied explicitly.
+  const fetcher = options.fetcher;
+  if (
+    options.vault === undefined ||
+    (options.publisherKey === undefined && fetcher === undefined)
+  ) {
     throw new Error(
       "signed-extension install requires vault and publisher key fetcher to be wired",
     );
@@ -115,13 +103,24 @@ async function verifyAndRecordSignature(
   const rawManifestObj = JSON.parse(destManifestText) as Record<string, unknown>;
   const vault = options.vault;
   try {
-    const resolvedPubkey = await resolvePublisherKey({
-      publisherId,
-      explicitKeyPath: options.publisherKeyPath,
-      vault,
-      fetcher: options.fetcher,
-      enforceAirGap: options.enforceAirGap ?? false,
-    });
+    // A key passed explicitly (a registry install: the signed index named it) replaces the
+    // path/Vault/fetcher resolution entirely, but must still be the key the manifest declares.
+    let resolvedPubkey: Uint8Array;
+    if (options.publisherKey === undefined) {
+      resolvedPubkey = await resolvePublisherKey({
+        publisherId,
+        explicitKeyPath: options.publisherKeyPath,
+        vault,
+        fetcher: fetcher as PublisherKeyFetcher,
+        enforceAirGap: options.enforceAirGap ?? false,
+      });
+    } else {
+      resolvedPubkey = options.publisherKey;
+      const declared = Buffer.from(destManifest.publisher.key, "base64");
+      if (!Buffer.from(resolvedPubkey).equals(declared)) {
+        throw new Error("manifest publisher key differs from the key supplied for this install");
+      }
+    }
     await verifyManifestSignature(rawManifestObj, resolvedPubkey);
     await writePublisherKey(vault, publisherId, resolvedPubkey);
     appendAuditEntry(options.db, {
@@ -158,6 +157,7 @@ async function completeExtensionInstallAfterCopy(options: {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   publisherKeyPath?: string;
+  publisherKey?: Uint8Array;
 }): Promise<SingleInstallResult> {
   const destManifestPath = resolveExtensionManifestPath(options.dest);
   if (destManifestPath === undefined) {
@@ -237,56 +237,6 @@ function scanForSymlinks(root: string): void {
   }
 }
 
-function checkExtractedEntry(absRoot: string, dir: string, ent: Dirent, stack: string[]): void {
-  const full = join(dir, ent.name);
-  const rel = relative(absRoot, resolve(full));
-  if (rel.startsWith("..") || rel === "..") {
-    throw new Error(`archive entry escapes install root: ${full}`);
-  }
-  const st = lstatSync(full);
-  if (st.isSymbolicLink()) {
-    throw new Error(`archive contains symlink: ${full}`);
-  }
-  if (st.isDirectory()) stack.push(full);
-}
-
-function assertNoEntryEscapes(destDir: string): void {
-  const absRoot = resolve(destDir);
-  const stack: string[] = [absRoot];
-  while (stack.length > 0) {
-    const dir = stack.pop();
-    if (dir === undefined) continue;
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const ent of entries) {
-      checkExtractedEntry(absRoot, dir, ent, stack);
-    }
-  }
-}
-
-export function extractTarGzToDirectory(archivePath: string, destDir: string): void {
-  const cmd = resolveSystemTarCommand();
-  const args = ["-x", "-z"];
-  if (process.platform === "linux") {
-    args.push("--no-overwrite-dir", "--no-same-owner", "--no-same-permissions");
-  }
-  args.push(`--file=${resolve(archivePath)}`, `--directory=${resolve(destDir)}`);
-  const r = spawnSync(cmd, args, {
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  if (r.status !== 0) {
-    const output = `${r.stderr ?? ""}${r.stdout ?? ""}`.trim();
-    const detail = output || `exit ${String(r.status)}`;
-    throw new Error(`failed to extract archive: ${detail}`);
-  }
-  assertNoEntryEscapes(destDir);
-}
-
 async function installExtensionFromArchive(options: {
   db: Database;
   extensionsDir: string;
@@ -295,12 +245,14 @@ async function installExtensionFromArchive(options: {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   publisherKeyPath?: string;
+  publisherKey?: Uint8Array;
+  sourceRegistry?: string;
+  rootFingerprint?: string;
   approve?: ExtensionInstallApprover;
 }): Promise<InstallExtensionFromLocalResult> {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-tgz-"));
   try {
-    extractTarGzToDirectory(options.archivePath, tmp);
-    const root = findExtensionSourceRootInTree(tmp);
+    const { sourceRoot: root } = await extractPackage(options.archivePath, tmp);
     return await installExtensionFromLocalDirectory({
       db: options.db,
       extensionsDir: options.extensionsDir,
@@ -311,6 +263,9 @@ async function installExtensionFromArchive(options: {
       ...(options.publisherKeyPath !== undefined && {
         publisherKeyPath: options.publisherKeyPath,
       }),
+      ...(options.publisherKey !== undefined && { publisherKey: options.publisherKey }),
+      ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
+      ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
       ...(options.approve !== undefined && { approve: options.approve }),
       displaySourcePath: options.archivePath,
     });
@@ -321,23 +276,6 @@ async function installExtensionFromArchive(options: {
       /* best-effort */
     }
   }
-}
-
-function findExtensionSourceRootInTree(extractedRoot: string): string {
-  if (resolveExtensionManifestPath(extractedRoot) !== undefined) {
-    return extractedRoot;
-  }
-  for (const ent of readdirSync(extractedRoot, { withFileTypes: true })) {
-    if (ent.isDirectory()) {
-      const sub = join(extractedRoot, ent.name);
-      if (resolveExtensionManifestPath(sub) !== undefined) {
-        return sub;
-      }
-    }
-  }
-  throw new Error(
-    "archive does not contain nimbus.extension.json (at root or one subdirectory deep)",
-  );
 }
 
 function assertEntryInsideInstall(installRoot: string, entryRel: string): string {
@@ -383,6 +321,12 @@ export type ExtensionInstallApprovalRequest = {
   readonly permissions: ExtensionManifest["permissions"];
   /** Packages this install adds, root first, then each newly installed dependency. */
   readonly installs: ReadonlyArray<{ readonly id: string; readonly version: string }>;
+  /**
+   * Set only for a registry install: the registry's name and its pinned root-key fingerprint.
+   * Named `rootFingerprint`, never `*Key`, for the same redaction reason as `publisher.fingerprint`.
+   */
+  readonly sourceRegistry?: string;
+  readonly rootFingerprint?: string;
 };
 
 /** Resolves `true` only when the local owner approved; anything else installs nothing. */
@@ -453,20 +397,18 @@ async function downloadDepTarball(
   }
 }
 
-function extractAndValidateDepSource(
+async function extractAndValidateDepSource(
   tmp: string,
   tarballBytes: Uint8Array,
   depId: string,
   depVersion: string,
-): { sourceRoot: string; extractedManifest: ExtensionManifest } {
+): Promise<{ sourceRoot: string; extractedManifest: ExtensionManifest }> {
   const tarPath = join(tmp, "dep.tar.gz");
   writeFileSync(tarPath, tarballBytes);
 
   const extractDir = join(tmp, "extracted");
   mkdirSync(extractDir, { recursive: true });
-  extractTarGzToDirectory(tarPath, extractDir);
-
-  const sourceRoot = findExtensionSourceRootInTree(extractDir);
+  const { sourceRoot } = await extractPackage(tarPath, extractDir);
 
   const srcManifestPath = resolveExtensionManifestPath(sourceRoot);
   if (srcManifestPath === undefined) {
@@ -503,7 +445,7 @@ async function installDepFromRegistry(opts: {
 
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-dep-"));
   try {
-    const { sourceRoot, extractedManifest } = extractAndValidateDepSource(
+    const { sourceRoot, extractedManifest } = await extractAndValidateDepSource(
       tmp,
       tarballBytes,
       opts.depId,
@@ -622,6 +564,7 @@ async function installRootNode(
     fetcher?: PublisherKeyFetcher;
     enforceAirGap?: boolean;
     publisherKeyPath?: string;
+    publisherKey?: Uint8Array;
   },
   sourceResolved: string,
   manifest: ExtensionManifest,
@@ -653,6 +596,7 @@ async function installRootNode(
     ...(options.publisherKeyPath !== undefined && {
       publisherKeyPath: options.publisherKeyPath,
     }),
+    ...(options.publisherKey !== undefined && { publisherKey: options.publisherKey }),
   });
 }
 
@@ -663,6 +607,7 @@ type InstallPlanNodesOptions = {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   publisherKeyPath?: string;
+  publisherKey?: Uint8Array;
   registryClient?: RegistryClient;
 };
 
@@ -744,6 +689,7 @@ function buildInstallApprovalRequest(
   manifest: ExtensionManifest,
   plan: { nodes: readonly ResolvedNode[] },
   sourcePath: string,
+  source?: { sourceRegistry?: string; rootFingerprint?: string },
 ): ExtensionInstallApprovalRequest {
   const others = plan.nodes
     .filter((n) => n.newlyInstalled && n.id !== manifest.id)
@@ -761,6 +707,8 @@ function buildInstallApprovalRequest(
           },
     permissions: manifest.permissions,
     installs: [{ id: manifest.id, version: manifest.version }, ...others],
+    ...(source?.sourceRegistry !== undefined && { sourceRegistry: source.sourceRegistry }),
+    ...(source?.rootFingerprint !== undefined && { rootFingerprint: source.rootFingerprint }),
   };
 }
 
@@ -831,6 +779,11 @@ export async function installExtensionFromLocalDirectory(options: {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   publisherKeyPath?: string;
+  /** The publisher's Ed25519 key, supplied by a caller that already established it (a registry install). */
+  publisherKey?: Uint8Array;
+  /** Shown to the owner in the install prompt; set only by a registry install. */
+  sourceRegistry?: string;
+  rootFingerprint?: string;
   registryClient?: RegistryClient;
   abortSignal?: AbortSignal;
   /**
@@ -863,6 +816,9 @@ export async function installExtensionFromLocalDirectory(options: {
       ...(options.publisherKeyPath !== undefined && {
         publisherKeyPath: options.publisherKeyPath,
       }),
+      ...(options.publisherKey !== undefined && { publisherKey: options.publisherKey }),
+      ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
+      ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
       ...(options.registryClient !== undefined && { registryClient: options.registryClient }),
       ...(options.abortSignal !== undefined && { abortSignal: options.abortSignal }),
       ...(options.approve !== undefined && { approve: options.approve }),
@@ -900,7 +856,10 @@ export async function installExtensionFromLocalDirectory(options: {
 
   if (options.approve !== undefined) {
     const approved = await options.approve(
-      buildInstallApprovalRequest(manifest, plan, options.displaySourcePath ?? sourceResolved),
+      buildInstallApprovalRequest(manifest, plan, options.displaySourcePath ?? sourceResolved, {
+        ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
+        ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
+      }),
     );
     if (!approved) {
       throw new ExtensionInstallNotApprovedError(manifest.id);

@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Logger } from "pino";
 import semver from "semver";
@@ -21,6 +21,7 @@ import type { ResolvedDep } from "./dependency-types.ts";
 import {
   hardDisablePreT2Extensions,
   preT2DisabledRegistry,
+  recoveredPendingRehashRegistry,
   signatureDisabledRegistry,
 } from "./hard-disable.ts";
 import {
@@ -30,12 +31,14 @@ import {
   resolveExtensionManifestPath,
 } from "./manifest.ts";
 import { missingDependencyRegistry } from "./missing-dependency-registry.ts";
+import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
 import {
   errorToHardDisableReason,
   type SignatureDisableReason,
   verifyManifestSignature,
 } from "./verify-signature.ts";
+import { newestPrevVersion, prevVersionDir } from "./version-store.ts";
 
 function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
@@ -51,20 +54,25 @@ function tryPromotePrevVersion(
   row: ExtensionRow,
   now: number,
   activePath: string,
+  extensionsDir: string,
 ): boolean {
-  const prevDir = join(dirname(activePath), "_prev");
-  if (!existsSync(prevDir)) return false;
-  let candidates: string[] = [];
-  try {
-    candidates = readdirSync(prevDir).sort();
-  } catch {
-    candidates = [];
-  }
-  const target = candidates.at(-1);
+  const target = newestPrevVersion(extensionsDir, row.id);
   if (target === undefined) return false;
   try {
-    renameSync(join(prevDir, target), activePath);
-    updateExtensionRowVersion(db, row.id, target, row.manifest_hash, row.entry_hash, now);
+    // A slash id nests the install path, and its parent may not exist after a crash.
+    mkdirSync(dirname(activePath), { recursive: true });
+    renameSync(prevVersionDir(extensionsDir, row.id, target), activePath);
+    // The row is made to DESCRIBE the bytes now on disk (version, measured hashes), but they are
+    // not blessed: the tree digest stays NULL and the extension stays disabled until the owner
+    // adopts them with `extension rehash`. Anything able to write the versions area could have
+    // planted that tree, so recovery must not make it look healthy.
+    const measured = computeExtensionPackageHashes(activePath);
+    // One transaction: an interruption must not leave a recovered row enabled with a NULL digest.
+    db.transaction(() => {
+      updateExtensionRowVersion(db, row.id, target, measured.manifestHash, measured.entryHash, now);
+      setExtensionEnabled(db, row.id, false);
+    })();
+    recoveredPendingRehashRegistry.mark(row.id);
     try {
       appendAuditEntry(db, {
         actionType: "extension.autoUpdate.crash_recovered",
@@ -73,6 +81,7 @@ function tryPromotePrevVersion(
           id: row.id,
           promoted_from: target,
           recovered_active: activePath,
+          requires_rehash: true,
         }),
         timestamp: now,
       });
@@ -84,7 +93,7 @@ function tryPromotePrevVersion(
     }
     logger.warn(
       { extensionId: row.id, promotedFrom: target },
-      "extensions: auto-update crash-recovered — promoted _prev to active",
+      "extensions: auto-update crash-recovered — promoted previous version, left disabled pending `extension rehash`",
     );
     return true;
   } catch (e) {
@@ -101,11 +110,19 @@ function maybeRecoverMissingActive(
   logger: Logger,
   row: ExtensionRow,
   now: number,
+  extensionsDir: string | undefined,
 ): boolean {
   const activePath = row.install_path;
   if (existsSync(activePath)) return true;
 
-  if (tryPromotePrevVersion(db, logger, row, now, activePath)) {
+  // The versions area is a sibling of the extensions dir, and an id containing `/` nests the
+  // install path deeper, so the dir cannot be derived from the row: without it, never guess.
+  if (extensionsDir === undefined) {
+    logger.warn(
+      { extensionId: row.id },
+      "extensions: crash recovery skipped — extensions dir not provided",
+    );
+  } else if (tryPromotePrevVersion(db, logger, row, now, activePath, extensionsDir)) {
     return true;
   }
 
@@ -200,13 +217,17 @@ async function verifyOneExtension(
   row: ExtensionRow,
   now: number,
   mesh?: ExtensionMeshHandle,
+  recoveryExtensionsDir?: string,
 ): Promise<void> {
-  const recovered = maybeRecoverMissingActive(db, logger, row, now);
+  const recovered = maybeRecoverMissingActive(db, logger, row, now, recoveryExtensionsDir);
   if (!recovered) return;
+  // A promotion rewrote the row (version and measured hashes); verify against that, not the
+  // snapshot taken before it.
+  const current = listExtensions(db).find((r) => r.id === row.id) ?? row;
 
-  const manifestPath = resolveExtensionManifestPath(row.install_path);
+  const manifestPath = resolveExtensionManifestPath(current.install_path);
   try {
-    const reachedEnd = await runHashVerification(db, logger, row, now, mesh, manifestPath);
+    const reachedEnd = await runHashVerification(db, logger, current, now, mesh, manifestPath);
     if (!reachedEnd) return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -363,13 +384,16 @@ function sweepOrphanActiveDirsBestEffort(
   } catch {
     return removed;
   }
+  // A namespaced id (`acme/foo`) lives at `<root>/acme/foo`, so the top-level
+  // directory is its first segment: keep every directory some row lives under.
+  const liveTopLevel = new Set<string>();
+  for (const r of db.query("SELECT id FROM extension").all() as { id: string }[]) {
+    liveTopLevel.add(r.id.replaceAll("\\", "/").split("/")[0] ?? r.id);
+  }
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const id = entry.name;
-    const row = db.query("SELECT id FROM extension WHERE id = ?").get(id) as {
-      id: string;
-    } | null;
-    if (row !== null) continue;
+    if (liveTopLevel.has(id)) continue;
     try {
       rmSync(join(extensionsRoot, id), { recursive: true, force: true });
       removed.push(id);
@@ -472,6 +496,8 @@ export async function verifyExtensionsBestEffort(
   mesh?: ExtensionMeshHandle,
   signatureOpts?: VerifyExtensionsSignatureOpts,
   extensionsRoot?: string,
+  /** Where crash recovery finds the versions area; separate from `extensionsRoot`, which gates the orphan sweep. */
+  recoveryExtensionsDir?: string,
 ): Promise<void> {
   if (readIndexedUserVersion(db) < 10) {
     return;
@@ -488,7 +514,7 @@ export async function verifyExtensionsBestEffort(
   }
   const now = Date.now();
   for (const row of rows) {
-    await verifyOneExtension(db, logger, row, now, mesh); // NOSONAR S9382: I16 startup verify - each row may rename dirs, write the DB and audit chain, and stop its client; rows go one at a time in registry order
+    await verifyOneExtension(db, logger, row, now, mesh, recoveryExtensionsDir); // NOSONAR S9382: I16 startup verify - each row may rename dirs, write the DB and audit chain, and stop its client; rows go one at a time in registry order
   }
 
   if (signatureOpts !== undefined) {

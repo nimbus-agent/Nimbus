@@ -19,6 +19,42 @@ export function preT2DisableMessage(id: string, version: string): string {
   );
 }
 
+/**
+ * Crash recovery promotes a previous version's files but does not bless them: the extension stays
+ * disabled, with no tree digest, until the owner adopts the bytes with `extension rehash`. In-memory
+ * like its siblings, so after a restart the row reads as a plain disabled one.
+ */
+export const RECOVERED_PENDING_REHASH_REASON = "recovered_pending_rehash" as const;
+
+export function recoveredPendingRehashMessage(id: string, version: string): string {
+  return (
+    `Extension ${id} was recovered to v${version} from a previous version after an interrupted update, ` +
+    `and is disabled until you approve those files: nimbus extension rehash ${id}`
+  );
+}
+
+class RecoveredPendingRehashRegistry {
+  private readonly ids = new Set<string>();
+
+  reset(): void {
+    this.ids.clear();
+  }
+
+  mark(id: string): void {
+    this.ids.add(id);
+  }
+
+  unmark(id: string): void {
+    this.ids.delete(id);
+  }
+
+  has(id: string): boolean {
+    return this.ids.has(id);
+  }
+}
+
+export const recoveredPendingRehashRegistry = new RecoveredPendingRehashRegistry();
+
 class PreT2DisabledRegistry {
   private readonly ids = new Set<string>();
 

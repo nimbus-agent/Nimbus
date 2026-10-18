@@ -396,6 +396,7 @@ import {
 } from "./notifications/notifications-runtime.ts";
 import type { PlatformPaths } from "./paths.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
+import { isProductionRuntime } from "./runtime-layout.ts";
 import { sandboxCwdFor } from "./sandbox/sandbox-cwd.ts";
 import { createSandboxRunner } from "./sandbox/sandbox-runner.ts";
 import { reapAppContainersAtBoot, revokeLegacyDataDirGrantsAtBoot } from "./sandbox/win32-reap.ts";
@@ -3657,7 +3658,14 @@ export async function assemblePlatformServices(
   ]);
 
   try {
-    await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
+    await verifyExtensionsBestEffort(
+      db,
+      syncLogger,
+      connectorMesh,
+      { vault },
+      undefined,
+      paths.extensionsDir,
+    );
   } finally {
     extensionSpawnGate.resolve();
   }
@@ -3688,6 +3696,15 @@ export async function assemblePlatformServices(
     demo: paths.demo === true,
     extensionsDir: paths.extensionsDir,
     extensionsRuntimeEnabled: extensionRuntimeEnabled,
+    // Extension registries: ONE air-gap switch (the LLM router's `enforce_air_gap`), read per call from
+    // the router's boot-resolved config; it does not track a later config or policy change.
+    registryFetch: {
+      fetchFn: (url, init) => fetch(url, init),
+      enforceAirGap: () => llmRegistry.llmRouter.enforcesAirGap(),
+      now: Date.now,
+      // The compiled release binary counts as production even with NODE_ENV unset (it always is).
+      production: isProductionRuntime(),
+    },
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,
     connectorMesh,

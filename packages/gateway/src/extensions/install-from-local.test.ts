@@ -22,10 +22,9 @@ import {
   assertSafeExtensionId,
   ExtensionInstallNotApprovedError,
   extensionInstallDirectory,
-  extractTarGzToDirectory,
   installExtensionFromLocalDirectory,
-  resolveSystemTarCommand,
 } from "./install-from-local.ts";
+import { extractTarGzToDirectory, resolveSystemTarCommand } from "./package-extract.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
 import type { FetchManifestResponse, RegistryClient } from "./registry-client.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
@@ -2589,5 +2588,51 @@ describe("installExtensionFromLocalDirectory — tree digest + approval hook", (
     const ungated = sampleSource("nimbus-install-ungated-");
     await installExtensionFromLocalDirectory({ ...ungated, sourcePath: ungated.src });
     expect(hitlOf(ungated.db)).toBe("not_required");
+  });
+});
+
+describe("installExtensionFromLocalDirectory — explicit publisherKey (registry installs)", () => {
+  test("install-from-local with publisherKey and no fetcher verifies and installs", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-explicit-key-",
+      "src",
+    );
+    const vault = new MockVault();
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await writeSignedSource({ sourceDir: src, id: "test-ext-explicit", privkey, pubkey });
+    const result = await installExtensionFromLocalDirectory({
+      db,
+      extensionsDir,
+      sourcePath: src,
+      vault,
+      publisherKey: pubkey,
+    });
+    expect(result.id).toBe("test-ext-explicit");
+    expect(getAuditRows(db, "extension.signature_verified")).toHaveLength(1);
+    expect(await readPublisherKey(vault, "test-pub")).toBeDefined();
+  });
+
+  test("an explicit key that is not the manifest's declared key is refused", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-explicit-key-bad-",
+      "src",
+    );
+    const signer = generateEd25519Keypair();
+    await writeSignedSource({
+      sourceDir: src,
+      id: "test-ext-explicit-bad",
+      privkey: signer.privkey,
+      pubkey: signer.pubkey,
+    });
+    await expect(
+      installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        vault: new MockVault(),
+        publisherKey: generateEd25519Keypair().pubkey,
+      }),
+    ).rejects.toThrow("differs from the key supplied");
+    expect(listExtensions(db)).toHaveLength(0);
   });
 });

@@ -68,6 +68,16 @@
 #        public key fingerprint is not a secret regardless of which side of
 #        that rule's entropy threshold it happens to land on.
 #
+#   9. packages/gateway/src/extensions/registry/__fixtures__/,
+#      packages/gateway/src/extensions/registry/index-format.test.ts,
+#      packages/cli/src/lib/registry-index.test.ts
+#      — signed-registry test fixtures carry Ed25519 PUBLIC keys (base64: the
+#        registry `rootKey` and publisher keys) derived from a fixed test seed
+#        (bytes 0x01..0x20). A public key is published by design and a signature
+#        verifier needs it verbatim; `generic-api-key` flags the high-entropy
+#        base64 anyway. No private seed is committed. Narrow paths, same
+#        rationale as entry 1.
+#
 # Why path-based instead of fingerprint pins in `.gitleaksignore`:
 # fingerprints are `<commit-sha>:<path>:<rule>:<line>`. Squash-merges rewrite
 # the SHA, rebases shift line numbers, and the pin then misses the (now
@@ -87,6 +97,9 @@ paths = [
   '''docs/superpowers/plans/.*\.md''',
   '''\.claude/agents/.*\.md''',
   '''scripts/install/windows/signature-verdict\.test\.ts''',
+  '''packages/gateway/src/extensions/registry/__fixtures__/''',
+  '''packages/gateway/src/extensions/registry/index-format\.test\.ts''',
+  '''packages/cli/src/lib/registry-index\.test\.ts''',
 ]
 
 # 7. One HISTORICAL literal, suppressed by VALUE rather than by path.

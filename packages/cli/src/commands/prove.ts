@@ -107,6 +107,9 @@ export const COVERAGE_CLASS_LABELS: Readonly<Record<string, string>> = {
   peer: "federated peer sends",
   // Latent — always "none" on this binary; no appender exists yet. Gateway housekeeping egress:
   // telemetry, the auto-updater, JWKS refresh.
+  // Every REMOTE fetch of an extension registry index, manifest or package. A registry on a local
+  // path makes no request and appends nothing.
+  registry: "extension registry fetches",
   session: "gateway housekeeping egress (telemetry, updater, JWKS)",
   // Every outbound request a runtime-generated tool made — which is ALL of them, because the tool
   // process has no network at all (spec § 4.3) and `toolgen-broker.ts` is its only route out. So

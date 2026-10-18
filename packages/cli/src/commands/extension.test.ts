@@ -6,6 +6,7 @@ import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
+import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import type { AvailableUpdateCli, SyncResult, UpdateApplyResultCli } from "./extension.ts";
 
 const extensionMod = await import("./extension.ts");
@@ -31,6 +32,9 @@ const {
   runExtensionSyncWithCaller,
   runExtensionUpdateWithCaller,
   runExtensionDowngradeWithCaller,
+  runExtensionDowngrade,
+  runExtensionUpdate,
+  rpcTimeoutForExtensionSub,
   stripFlags,
   takeFlagValue,
 } = extensionMod;
@@ -83,6 +87,15 @@ describe("stripFlags", () => {
   });
   test("removes --publisher-key + value pair", () => {
     expect(stripFlags(["install", "/p", "--publisher-key", "/tmp/k"])).toEqual(["install", "/p"]);
+  });
+  test("stripFlags keeps the id when --registry and --version precede it", () => {
+    expect(stripFlags(["info", "--registry", "main", "--version", "1.0.0", "acme.tool"])).toEqual([
+      "info",
+      "acme.tool",
+    ]);
+    expect(
+      stripFlags(["install", "--channel", "beta", "--to", "2.0.0", "--remote", "a.b"]),
+    ).toEqual(["install", "a.b"]);
   });
   test("preserves non-flag positional args", () => {
     expect(stripFlags(["install", "/some/path"])).toEqual(["install", "/some/path"]);
@@ -287,7 +300,7 @@ describe("runExtensionInstall", () => {
       value: false,
     });
     const { client } = createMockIpcClient([]);
-    await expect(runExtensionInstall(client, ["install", "./ext"], ["./ext"])).rejects.toThrow(
+    await expect(runExtensionInstall(client, ["install", "."], ["."])).rejects.toThrow(
       /Refusing to install without confirmation/,
     );
   });
@@ -299,7 +312,7 @@ describe("runExtensionInstall", () => {
     });
     const installed = { id: "new.ext", version: "1.0.0", installPath: "/somewhere" };
     const { client, calls } = createMockIpcClient([installed]);
-    await runExtensionInstall(client, ["install", "./ext", "--yes"], ["./ext"]);
+    await runExtensionInstall(client, ["install", ".", "--yes"], ["."]);
     expect(calls[0]?.method).toBe("extension.install");
     expect(out.stdout).toContain("new.ext");
     expect(out.stdout).toContain("/somewhere");
@@ -311,9 +324,9 @@ describe("runExtensionInstall", () => {
       value: false,
     });
     const { client } = createMockIpcClient([new Error("install denied")]);
-    await expect(
-      runExtensionInstall(client, ["install", "./ext", "--yes"], ["./ext"]),
-    ).rejects.toThrow(/install denied/);
+    await expect(runExtensionInstall(client, ["install", ".", "--yes"], ["."])).rejects.toThrow(
+      /install denied/,
+    );
   });
 
   test("-y short flag is honoured", async () => {
@@ -322,7 +335,7 @@ describe("runExtensionInstall", () => {
       value: false,
     });
     const { client, calls } = createMockIpcClient([{ id: "x", version: "1", installPath: "/p" }]);
-    await runExtensionInstall(client, ["install", "./ext", "-y"], ["./ext"]);
+    await runExtensionInstall(client, ["install", ".", "-y"], ["."]);
     expect(calls).toHaveLength(1);
   });
 
@@ -336,7 +349,7 @@ describe("runExtensionInstall", () => {
       [{ id: "ext", version: "1", installPath: "/p" }],
       handlers,
     );
-    await runExtensionInstall(client, ["install", "./ext"], ["./ext"]);
+    await runExtensionInstall(client, ["install", "."], ["."]);
     expect(calls.map((c) => c.method)).toEqual(["extension.install"]);
     expect(handlers.has("consent.request")).toBe(true);
   });
@@ -351,13 +364,95 @@ describe("runExtensionInstall", () => {
       [{ id: "ext", version: "1", installPath: "/p" }, {}],
       handlers,
     );
-    await runExtensionInstall(client, ["install", "./ext", "--yes"], ["./ext"]);
+    await runExtensionInstall(client, ["install", ".", "--yes"], ["."]);
     emit("consent.request", { requestId: "r-1", prompt: "Type: extension.install" });
     await Bun.sleep(0);
     expect(calls[1]).toEqual({
       method: "consent.respond",
       params: { requestId: "r-1", approved: true },
     });
+  });
+});
+
+describe("runExtensionInstall — path versus registry id", () => {
+  const origIsTty = process.stdout.isTTY;
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: origIsTty });
+  });
+
+  test("install arg that looks like a path but does not exist reports a missing path", async () => {
+    const { client, calls } = createMockIpcClient([]);
+    for (const arg of ["./nope-ext", "../nope-ext", "~/nope-ext", "/nope/ext", "C:nope", "a\\b"]) {
+      await expect(runExtensionInstall(client, ["install", arg], [arg])).rejects.toThrow(
+        `no such file or directory: ${arg}`,
+      );
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  test("--registry with an existing path is refused", async () => {
+    const { client, calls } = createMockIpcClient([]);
+    await expect(
+      runExtensionInstall(client, ["install", ".", "--registry", "main"], ["."]),
+    ).rejects.toThrow(/--registry applies to a registry install/);
+    await expect(
+      runExtensionInstall(client, ["install", ".", "--version", "1.0.0"], ["."]),
+    ).rejects.toThrow(/--version applies to a registry install/);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("an id goes to registry.install with its flags, answered by the interactive prompt", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const handlers = new Map<string, (params: unknown) => void>();
+    const { client, calls } = createMockIpcClient(
+      [
+        {
+          id: "acme.tool",
+          version: "1.0.0",
+          sourceRegistry: "main",
+          rootFingerprint: "r".repeat(32),
+          publisher: { id: "acme", fingerprint: "p".repeat(32) },
+          installPath: "/p",
+        },
+      ],
+      handlers,
+    );
+    await runExtensionInstall(
+      client,
+      ["install", "acme.tool", "--registry", "main", "--version", "1.0.0", "--channel", "beta"],
+      ["acme.tool"],
+    );
+    expect(calls).toEqual([
+      {
+        method: "registry.install",
+        params: { id: "acme.tool", registry: "main", version: "1.0.0", channel: "beta" },
+      },
+    ]);
+    expect(handlers.has("consent.request")).toBe(true);
+    expect(out.stdout).toContain(
+      `installed acme.tool@1.0.0 from registry main (root ${"r".repeat(32)}), publisher acme (${"p".repeat(32)})`,
+    );
+  });
+
+  test("a registry install without a TTY still goes to the gateway prompt", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const { client, calls } = createMockIpcClient([
+      { id: "acme.tool", version: "1.0.0", sourceRegistry: "main", installPath: "/p" },
+    ]);
+    await runExtensionInstall(client, ["install", "acme.tool"], ["acme.tool"]);
+    expect(calls.map((c) => c.method)).toEqual(["registry.install"]);
+  });
+
+  test("--yes is refused for a registry install, before any call", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client, calls } = createMockIpcClient([]);
+    await expect(
+      runExtensionInstall(client, ["install", "acme.tool", "--yes"], ["acme.tool"]),
+    ).rejects.toThrow(/--yes is not accepted for a registry install/);
+    expect(calls).toHaveLength(0);
   });
 });
 
@@ -744,7 +839,7 @@ describe("runExtension top-level dispatcher", () => {
     });
     const origIsTty = process.stdout.isTTY;
     try {
-      await runExtension(["install", "/some/path", "--yes"]);
+      await runExtension(["install", ".", "--yes"]);
       expect(ipcCalls.some((c) => c.method === "extension.install")).toBe(true);
     } finally {
       Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: origIsTty });
@@ -846,8 +941,8 @@ describe("runExtensionInstall --publisher-key (T2 PR 2)", () => {
     ]);
     await runExtensionInstall(
       client,
-      ["install", "/path/to/ext", "--publisher-key", "/tmp/pub.key", "--yes"],
-      ["/path/to/ext"],
+      ["install", ".", "--publisher-key", "/tmp/pub.key", "--yes"],
+      ["."],
     );
     expect(calls[0]?.method).toBe("extension.install");
     expect(calls[0]?.params).toMatchObject({ publisherKeyPath: "/tmp/pub.key" });
@@ -861,7 +956,7 @@ describe("runExtensionInstall --publisher-key (T2 PR 2)", () => {
     const { client, calls } = createMockIpcClient([
       { id: "ext-a", version: "1.0.0", installPath: "/p" },
     ]);
-    await runExtensionInstall(client, ["install", "/path/to/ext", "--yes"], ["/path/to/ext"]);
+    await runExtensionInstall(client, ["install", ".", "--yes"], ["."]);
     expect(calls[0]?.method).toBe("extension.install");
     const params = calls[0]?.params as Record<string, unknown>;
     expect(params["publisherKeyPath"]).toBeUndefined();
@@ -2399,5 +2494,66 @@ describe("run state in human output", () => {
     });
     expect(running).toBe("running (ext_a, approved 1970-01-01T00:00:00.000Z, model: no)");
     expect(running).not.toContain("not executed");
+  });
+});
+
+describe("extension update/downgrade owner prompt", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+  });
+
+  test("update registers a consent prompt handler and uses the interactive timeout", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    const mock = createMockIpcClient(
+      [[{ id: "ext-a", toVersion: "2.0.0" }], { applied: true }],
+      handlers,
+    );
+    await runExtensionUpdate(mock.client, ["update", "ext-a", "--to", "2.0.0"]);
+    expect(handlers.has("consent.request")).toBe(true);
+    expect(mock.calls.map((c) => c.method)).toContain("extension.update");
+    expect(rpcTimeoutForExtensionSub("update", ["ext-a"])).toBe(INTERACTIVE_RPC_TIMEOUT_MS);
+  });
+
+  test("update --check registers nothing and keeps the default timeout", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    const mock = createMockIpcClient([[]], handlers);
+    await runExtensionUpdate(mock.client, ["update", "--check"]);
+    expect(handlers.size).toBe(0);
+    expect(rpcTimeoutForExtensionSub("update", ["--check"])).toBeUndefined();
+  });
+
+  test("update with no id registers no handler, keeps the default timeout, lists only", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    const mock = createMockIpcClient([[]], handlers);
+    await runExtensionUpdate(mock.client, ["update"]);
+    expect(handlers.size).toBe(0);
+    expect(mock.calls.map((c) => c.method)).toEqual(["extension.checkForUpdates"]);
+    expect(rpcTimeoutForExtensionSub("update", [])).toBeUndefined();
+  });
+
+  test("update <id> --check never calls extension.update and registers no handler", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    const mock = createMockIpcClient([[{ id: "ext-a", toVersion: "2.0.0" }]], handlers);
+    await runExtensionUpdate(mock.client, ["update", "ext-a", "--check"]);
+    expect(handlers.size).toBe(0);
+    expect(mock.calls.map((c) => c.method)).toEqual(["extension.checkForUpdates"]);
+    expect(rpcTimeoutForExtensionSub("update", ["ext-a", "--check"])).toBeUndefined();
+  });
+
+  test("downgrade registers a consent prompt handler and uses the interactive timeout", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    const mock = createMockIpcClient([{ applied: true }], handlers);
+    await runExtensionDowngrade(mock.client, ["downgrade", "ext-a", "--to", "1.0.0"]);
+    expect(handlers.has("consent.request")).toBe(true);
+    expect(mock.calls[0]?.method).toBe("extension.update");
+    expect(rpcTimeoutForExtensionSub("downgrade", ["ext-a"])).toBe(INTERACTIVE_RPC_TIMEOUT_MS);
+  });
+
+  test("read-only subcommands keep the default timeout", () => {
+    expect(rpcTimeoutForExtensionSub("list", [])).toBeUndefined();
   });
 });

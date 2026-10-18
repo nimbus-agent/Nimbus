@@ -46,6 +46,20 @@ export function isCompiledBinary(layout: RuntimeLayout = DEFAULT_RUNTIME_LAYOUT)
 }
 
 /**
+ * True for a production runtime: the compiled release binary, or `NODE_ENV=production`. The
+ * released binary is a plain `bun build --compile` with no NODE_ENV, so the environment alone
+ * would call what ships "not production". Read by the registry transport's `http:` refusal.
+ */
+export function isProductionRuntime(
+  opts: { layout?: RuntimeLayout; env?: Readonly<Record<string, string | undefined>> } = {},
+): boolean {
+  const env = opts.env ?? process.env;
+  return (
+    isCompiledBinary(opts.layout ?? DEFAULT_RUNTIME_LAYOUT) || env["NODE_ENV"] === "production"
+  );
+}
+
+/**
  * Build the `command` + `args` that re-execute THIS program in one of its non-gateway roles.
  *
  * The child sees the same `process.argv.slice(2)` in both runtime shapes: compiled, bun injects its

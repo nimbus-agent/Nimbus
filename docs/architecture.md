@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Runtime:** Bun v1.2+ / TypeScript 7.x (strict)
-**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants I1–I43; schema V70.
+**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants I1–I43; schema V71.
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
 >
@@ -904,30 +904,23 @@ Per-host network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Pla
 
 ```json
 {
-  "$schema": "https://nimbus-agent.dev/schemas/extension/v1.json",
   "id": "com.example.notion",
-  "displayName": "Notion",
   "version": "1.0.0",
-  "description": "Index and search your Notion workspace from Nimbus.",
-  "author": "Example Corp <hello@example.com>",
-  "homepage": "https://github.com/example/nimbus-notion",
-  "icon": "assets/icon.png",
-  "entrypoint": "dist/server.js",
-  "runtime": "bun",
-  "permissions": ["read", "write"],
-  "hitlRequired": ["write"],
-  "oauth": {
-    "provider": "notion",
-    "scopes": ["read_content", "update_content"],
-    "authUrl": "https://api.notion.com/v1/oauth/authorize",
-    "tokenUrl": "https://api.notion.com/v1/oauth/token",
-    "pkce": true
+  "name": "Notion",
+  "entry": "dist/server.js",
+  "permissions": {
+    "network": ["api.notion.com"],
+    "filesystem": { "read": [], "write": [] }
   },
-  "syncInterval": 300,
-  "tags": ["productivity", "notes"],
-  "minNimbusVersion": "0.3.0"
+  "publisher": { "id": "example", "key": "<base64 Ed25519 public key>" },
+  "signature": "<base64 Ed25519 signature>",
+  "updateChannel": "stable",
+  "changelog": "Initial release.",
+  "dependsOn": { "com.example.base": "^1.0.0" }
 }
 ```
+
+Source of truth: `packages/gateway/src/extensions/manifest.ts`. Optional fields: `name`, `entry` (default `dist/index.js`), `publisher`, `signature`, `changelog`, `dependsOn`. The manifest file is `nimbus.extension.json` (legacy `nimbus-extension.json` is still read).
 
 ### User MCP Servers and Scaffold
 
@@ -952,11 +945,13 @@ Detected bumps live in an **in-memory cache** (`AutoUpdateCache`) keyed by exten
 Apply flow uses two HITL action types (I2):
 
 - **`extension.autoUpdate`** — forward bump, fires the consent prompt with the version pair + changelog + permission diff
-- **`extension.downgrade`** — backward revert, applied via the cached `_prev/<v>/` directory
+- **`extension.downgrade`** — backward revert, applied via the cached `prev/<version>/` directory
 
-The on-disk layout is two-version: `<extensionsRoot>/<id>/active/` holds the live code, `<extensionsRoot>/<id>/_prev/<v>/` holds the previous version after a successful upgrade. Applying an upgrade is an atomic `fs.rename` swap with revert-on-failure (older `_prev` entries move aside to a holding directory and restore on swap failure). Downgrade is a three-step swap through `_swap-buffer`.
+The install path stays flat at `<extensionsDir>/<id>` (the same directory `extension install` writes). Previous versions, the pending download and the swap holding area live in a sibling versions area, `<dirname(extensionsDir)>/extension-versions/<slug>/`, where `<slug>` is the first 16 hex characters of the SHA-256 of the extension id (so a namespaced id needs no nested directories): `prev/<version>/` holds the previous version after a successful upgrade, `pending/<version>/` the download being applied, `holding/` older `prev` entries moved aside during a swap (paths from `extensions/version-store.ts`). Applying an upgrade is a `fs.rename` swap with revert-on-failure. Downgrade is a three-step swap through `swap-buffer/`. `extension remove` deletes the versions area with the install.
 
-**Crash recovery.** If the Gateway is killed mid-swap and `active/` is missing on next start, `verifyExtensionsBestEffort` promotes the alphabetically-greatest `_prev/<v>/` back to `active/` and audits `extension.autoUpdate.crash_recovered`. If no `_prev/` is available, the extension is hard-disabled with reason `auto_update_install_path_missing`.
+Install and update share one extraction pipeline (`extensions/package-extract.ts`): a header pre-scan refuses links, special entries, absolute, `..` and drive-letter paths and enforces a 200 MiB unpacked / 5000-entry cap, then the archive is extracted and the tree digest computed BEFORE the swap; the digest is written in the same row update as the new version and hashes. The orchestrator also checks the download's SHA-256 and the claimed manifest and entry hashes before swapping; the publisher signature is re-verified at the next startup pass and before every spawn (I43).
+
+**Crash recovery.** If the Gateway is killed mid-swap and the install path is missing on next start, `verifyExtensionsBestEffort` promotes the semver-newest `prev/<version>/` back to the install path (using its own `recoveryExtensionsDir` input), records the measured hashes (so the row describes the bytes on disk), leaves the tree digest NULL and the extension disabled pending `nimbus extension rehash`, and audits `extension.autoUpdate.crash_recovered` with `requires_rehash: true`. If no `prev/` version is available, the extension is hard-disabled with reason `auto_update_install_path_missing`. Rehash re-enables a recovered extension only in the gateway process that did the recovery, because the recovered-pending-rehash marker is held in memory (`extensions/hard-disable.ts`); after a restart the row reads as a plain disabled one, and the owner runs `nimbus extension rehash` and then `nimbus extension enable`.
 
 **IPC surface.** Two CLI/UI-only methods:
 
@@ -971,7 +966,22 @@ Both are in `FORBIDDEN_OVER_LAN` (I5) and in Tauri `ALLOWED_METHODS` (I7 — the
 
 ### Extension Marketplace — Tauri UI
 
-The Tauri desktop application ships an Extension Marketplace panel. It is not a cloud service. The registry index is a JSON file fetched from `https://registry.nimbus-agent.dev/index.json` and cached locally. All installation, validation, and loading is performed by the local Gateway.
+The Tauri desktop application ships an Extension Marketplace panel. It is not a cloud service: a registry is a static folder or website, and all installation, validation, and loading is performed by the local Gateway. The registry client (adding registries, search, install, updates) lands in the next PR; what exists today is the signed registry format and the offline tooling that builds one.
+
+**Registry layout.**
+
+```text
+<registry>/
+  index.json                                       signed by the registry root key
+  extensions/<id>/<version>/manifest.json          publisher-signed manifest (I16)
+  extensions/<id>/<version>/package.tgz            deterministic package
+```
+
+**`index.json`** (format 1, `packages/gateway/src/extensions/registry/index-format.ts`): `format` (`1`), `rootKey` (base64 Ed25519 public key), `sequence` (strictly increasing integer, the rollback guard), `generatedAt`, `extensions` (extension id to `{ publisher: { id, key }, versions }`) and `signature`. Each key of `versions` is a strict SemVer string and maps to `{ channel (stable|beta), name, manifest, manifestSha256, package, packageSha256, packageSizeBytes, entryHash, publishedAt }`; `manifest` and `package` are paths relative to the registry root. Unknown keys are tolerated (and signed) so a later additive field does not break older clients; `format` is the breaking-change switch. The parser caps the document at 8 MiB and tolerates a BOM and CRLF.
+
+**Two signatures, two trust roots.** The publisher signs each extension manifest (Ed25519, verified as in I16), which vouches for the extension's code and grants. The registry root key signs the whole index over its canonical JSON (the document without `signature`), which vouches for the catalogue: which versions exist, their hashes and sizes. Neither substitutes for the other. The index signature is verified by `index-format.ts` itself, not by the SDK manifest verifier, because the index envelope has no `publisher.key`.
+
+**Deterministic packages.** `nimbus registry maintain add` packs an extension directory with entries sorted by UTF-16 code unit and `/` separators, files only (symlinks and special files refused), mtime fixed at epoch 0, uid/gid/names dropped (`portable`), every mode normalised to 0644 and the gzip level pinned, so the same tree yields the same bytes on every platform. A golden vector shared by the gateway verifier and the CLI signer pins the signing format. `nimbus registry maintain init|add|remove` is offline, keeps the root key in a mode 0600 file, refuses duplicate versions, a changed publisher key for an existing id, unsigned manifests and oversize packages, and writes `index.json` through an atomic rename. A committed fixture registry under `packages/gateway/src/extensions/registry/__fixtures__/maintained-registry/` is verified by a gateway test.
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -1870,6 +1880,52 @@ per-spawn copy.
 
 **Not verified:** macOS and Linux were not run locally; the end-to-end test runs on those CI legs.
 
+### Extension registry client
+
+**PR 3 of 4 shipped 2026-10-18** (Phase 9.5 project 1; schema V71; I29 `registry` class, static D22(h); HITL type
+`registry.add`; I20 widened; no new invariant, the update daemon and I44 are PR 4). The registry FORMAT is described under
+[Extension Marketplace](#extension-marketplace--tauri-ui); this section is the client.
+
+**Registries table.** `extension_registry` (V71, `extensions/registry/registry-store.ts`) holds one row per registry the owner
+added: a name, a URL or local path, the pinned root key and `last_sequence`, the highest index `sequence` ever accepted, which is
+the rollback anchor. `extension` gains nullable `source_registry`, `source_root_fingerprint` and `source_channel`, written at install
+and shown by `nimbus extension list|info`. The table lives in the index, not in `nimbus.toml` (see Rejected).
+
+**Trust model.** Two roots, as in the format: the registry root key vouches for the catalogue, the publisher key vouches for the code.
+The root key is pinned by the owner at `nimbus registry add` (TTY only, no `--yes`, the `registry.add` HITL prompt shows the key's
+fingerprint, an optional `--fingerprint=` is checked against it); `registry.add` is owner-gated and never delegable (I20). Every fetch
+is then fetch-and-verify against that pinned key: the index signature, a strictly higher `sequence` than `last_sequence` (the write
+that advances it is conditional, so two racing refreshes cannot move it backwards), and per-file SHA-256s from the signed index. The
+publisher key is taken from the signed index, never fetched separately.
+
+**Transports** (`registry-transport.ts`, `registry-fetch.ts`): https; loopback http outside production; and `file:` or absolute paths
+(UNC, device and file-host forms refused). Redirects are followed by hand, at most 3, each hop re-checked against the same rules;
+index, manifest and package have size caps, rechecked after a local read. Every REMOTE request appends one I29 `registry` row first,
+each redirect hop included; a local registry appends nothing; `enforce_air_gap` refuses a remote registry.
+
+**Multi-registry rules.** A bare extension id present in more than one registry is REFUSED, never resolved by priority; the owner names
+one with `--registry`. `extension install <arg>` decides path versus id: an argument that exists as a path installs from disk (and then refuses `--registry`/`--version`/`--channel`); one that does not exist and can only be a path (a separator, drive letter, leading `.`, `~` or `/`) is an error; anything else is looked up as an id in the registries. `--channel beta` opts in to
+pre-releases; `--version` pins one.
+
+**Install verification order** (`install-from-registry.ts`, all BEFORE the prompt): verified index, then manifest and package
+SHA-256 against the index, then the publisher key from the index, then the I16 manifest signature, then refusal on a Vault
+publisher-key conflict, then the entry hash. Only then does the reused `extension.install` prompt run, now naming the source registry
+and root fingerprint; `--yes` is refused for registry installs. The recorded source feeds nothing yet: the update daemon does NOT use
+registries (PR 4).
+
+**IPC.** `registry.add|list|refresh|remove|search|info|install`, all CLI-only; the whole `registry` namespace is LAN-forbidden
+(the denylist, so this is an explicit entry), refused on a demo root, and absent from the Tauri allowlist.
+
+**Rejected alternatives.**
+
+- *TOFU fetch of the publisher key from `/publishers/{id}.key`.* A first-use fetch trusts whatever the host answers with, and a
+  compromised host can swap the key and the package together. The key travels inside the signed index instead, so it is vouched for by
+  the root key the owner pinned.
+- *Priority-ordered registries.* Resolving a bare id by list order lets an earlier registry silently shadow a later one, so adding a
+  registry could change what an existing id installs. Ambiguity is an error; the owner chooses.
+- *Registries in `nimbus.toml`.* A trust root is state the owner approved through a HITL prompt, with a rollback anchor that must
+  update atomically with a fetch; a hand-edited config file has neither the approval nor the transaction.
+
 ### MCP capture sink
 
 **Complete, three PRs:** PR 1 (2026-10-12; invariant `I28`, static `D32(a)–(c)`, schema `V67`) — notes; PR 2 (2026-10-14, `V68`, `D32(d)`) — proposed decisions, terms and links; PR 3 (2026-10-15, `V69`, `D32(e)–(g)`) — proposed connector actions; each has its own subsection below. Before PR 1 the MCP
@@ -2067,7 +2123,7 @@ servers registered `--model` and only while `user_mcp_model_access` allows it) c
 dispatch without it is refused `ERR_USER_MCP_ACTION_MISMATCH` (the I42 pairing, pinned by
 `test/integration/mcp-sink/capture-action-routing.test.ts`).
 
-**Classification: 140 HITL types, 29 first-party types proposable, 111 denied (`extension.run` joined the denied set with the extension runtime PR 2).** Denied classes: file, calendar
+**Classification: 141 HITL types, 29 first-party types proposable, 112 denied (`extension.run` joined the denied set with the extension runtime PR 2, `registry.add` with the registry client PR 3).** Denied classes: file, calendar
 delete, VCS, pipeline, cloud, IaC, Kubernetes, deployment, incident, data-platform, tribal KB (I25), the confined
 ChatOps posts (I23), gateway-internal types, and `unroutable`. **Known gap, not a policy decision:**
 `obsidian.note.append` is denied as `unroutable` because `obsidian` is spawned by `lazy-mesh/connector-spawns.ts` but

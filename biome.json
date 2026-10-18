@@ -15,6 +15,7 @@
       "!**/coverage",
       "!**/node_modules",
       "!packages/docs",
+      "!**/__fixtures__/maintained-registry",
       "!docs/structure-audit/*.json",
       "!**/src-tauri",
       "!**/*.d.ts",

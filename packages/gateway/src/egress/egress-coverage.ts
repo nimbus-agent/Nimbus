@@ -33,6 +33,7 @@ export const COVERAGE_CLASSES = [
   "mcp",
   "model",
   "peer",
+  "registry",
   "session",
   "sync",
   "task",
@@ -197,6 +198,14 @@ export type CoverageVector = Readonly<Record<CoverageClass, Granularity>>;
  * naming the destination origin — that row IS the mitigation — but a `browser` count of N does not
  * mean at most N requests, and a non-zero count naming an unfamiliar origin deserves reading.
  *
+ * `registry` is `per-call` and covers every REMOTE fetch of an extension registry's index, manifest
+ * or package. Its appender, `egress/registry-egress.ts`'s `recordRegistryEgress`, is called by the
+ * one fetch function (`extensions/registry/registry-fetch.ts`) BEFORE the request, and an append
+ * failure aborts it. D22(h) confines the appender to those two files and bans a bare `fetch(` from
+ * the rest of `extensions/`. READ IT NARROWLY: a registry on a LOCAL path makes no network request
+ * and appends nothing (that is correct, not a gap), and the extension's own traffic at run time is
+ * a different thing (I43). `destination` is the registry's NAME, never a URL.
+ *
  * `[computer_use]` is DEFAULT OFF with an empty `allowed_lanes`, so on a stock install this class's
  * appender is never constructed and its count is zero because nothing ran — which is exactly the
  * claim, and not a weaker one: `per-run` here says "if a browser lane made a request, there is a
@@ -216,6 +225,9 @@ export const THIS_BINARY_COVERAGE: CoverageVector = {
   sync: "per-run",
   model: "per-call",
   peer: "none",
+  // RAISED from "none" in the same commit that gave `recordRegistryEgress` its production caller,
+  // `extensions/registry/registry-fetch.ts`. Per this file's own rule, never ahead of that landing.
+  registry: "per-call",
   // RAISED from "none" in the same commit that lets a generated tool make a brokered request:
   // `toolgen/toolgen-client.ts`'s `spawnGeneratedTool` wires `ToolgenBroker.handleFetch` onto the
   // hand-rolled line-delimited JSON protocol the spawned tool speaks over stdio — deliberately not
@@ -239,6 +251,7 @@ export const ALL_NONE_COVERAGE: CoverageVector = {
   sync: "none",
   model: "none",
   peer: "none",
+  registry: "none",
   tool: "none",
 };
 

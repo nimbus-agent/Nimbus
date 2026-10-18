@@ -65,6 +65,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // with the owner's credentials, defeating the entire I39 gate. `toolgen.list` would enumerate
   // which tools and which hosts the owner has approved. No read verb here is worth preserving.
   "toolgen",
+  // Extension registries (PR 3): `registry.add` pins a trust root behind the LOCAL owner's HITL
+  // prompt, and the rest drive outbound fetches. The WHOLE namespace is CLI-only.
+  "registry",
   // `nimbus explain last` — the WHOLE namespace, matching exec/computer/media/fleet/toolgen.
   // The record carries the owner's question VERBATIM and the titles of items retrieved from the
   // owner's private index, so a peer asking "explain the last ask" would receive the OWNER's ask.

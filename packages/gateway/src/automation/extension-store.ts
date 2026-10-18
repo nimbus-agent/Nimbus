@@ -19,10 +19,17 @@ export type ExtensionRow = {
    * digest vouches for nothing.
    */
   tree_digest: string | null;
+  /** V71: the registry, root-key fingerprint and channel an extension was installed from; `null` for a local install. */
+  source_registry?: string | null;
+  source_root_fingerprint?: string | null;
+  source_channel?: "stable" | "beta" | null;
 };
 
 /** V66 added `tree_digest`; below it the column does not exist and every row reads `null`. */
 const TREE_DIGEST_SCHEMA_VERSION = 66;
+
+/** V71 added the three `source_*` columns; below it every row reads `null` for each. */
+const SOURCE_SCHEMA_VERSION = 71;
 
 function hasTreeDigestColumn(db: Database): boolean {
   return readIndexedUserVersion(db) >= TREE_DIGEST_SCHEMA_VERSION;
@@ -33,9 +40,13 @@ export function listExtensions(db: Database): ExtensionRow[] {
     return [];
   }
   const digest = hasTreeDigestColumn(db) ? "tree_digest" : "NULL AS tree_digest";
+  const source =
+    readIndexedUserVersion(db) >= SOURCE_SCHEMA_VERSION
+      ? "source_registry, source_root_fingerprint, source_channel"
+      : "NULL AS source_registry, NULL AS source_root_fingerprint, NULL AS source_channel";
   return db
     .query(
-      `SELECT id, version, install_path, manifest_hash, entry_hash, enabled, installed_at, last_verified_at, ${digest}
+      `SELECT id, version, install_path, manifest_hash, entry_hash, enabled, installed_at, last_verified_at, ${digest}, ${source}
        FROM extension ORDER BY id`,
     )
     .all() as ExtensionRow[];
@@ -67,6 +78,7 @@ export function updateExtensionRowVersion(
   manifestHash: string,
   entryHash: string,
   lastVerifiedAt: number,
+  treeDigest: string | null = null,
 ): boolean {
   if (readIndexedUserVersion(db) < 10) {
     return false;
@@ -74,15 +86,19 @@ export function updateExtensionRowVersion(
   // The bytes under install_path just changed, so whatever digest the row held describes code that
   // is no longer there. It is cleared here, in the one statement every version change goes through,
   // so a path that forgets to recompute leaves a digest that vouches for nothing rather than one
-  // that vouches for the wrong bytes. A caller that has hashed the new tree follows up with
-  // `setExtensionTreeDigest`.
-  const clearDigest = hasTreeDigestColumn(db) ? ", tree_digest = NULL" : "";
+  // that vouches for the wrong bytes. A caller that has hashed the new tree passes it as
+  // `treeDigest` (written in this same statement) or follows up with `setExtensionTreeDigest`;
+  // omitted, the digest is NULL.
+  const hasDigest = hasTreeDigestColumn(db);
+  const digestSet = hasDigest ? ", tree_digest = ?" : "";
   const r = dbRun(
     db,
     `UPDATE extension
-        SET version = ?, manifest_hash = ?, entry_hash = ?, last_verified_at = ?${clearDigest}
+        SET version = ?, manifest_hash = ?, entry_hash = ?, last_verified_at = ?${digestSet}
       WHERE id = ?`,
-    [version, manifestHash, entryHash, lastVerifiedAt, id],
+    hasDigest
+      ? [version, manifestHash, entryHash, lastVerifiedAt, treeDigest, id]
+      : [version, manifestHash, entryHash, lastVerifiedAt, id],
   );
   return r.changes > 0;
 }

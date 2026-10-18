@@ -780,7 +780,7 @@ jobs:
         shell: bash
         run: |
           # `nimbus-*`, not `nimbus-test-*`. The glob was mismatched to its own job:
-          # `nimbus-test-*` is produced by UNIT tests (registry-fetcher, engine-ask-stream,
+          # `nimbus-test-*` is produced by UNIT tests (engine-ask-stream, toolgen-rpc,
           # the CLI test-runner suite), which run in `unit-coverage` — a job with no
           # cleanup step at all. The suites THIS job runs name their scratch dirs after
           # themselves — `nimbus-share-e2e-`, `nimbus-bindfirst-`, `nimbus-assemble-`,

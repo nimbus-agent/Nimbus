@@ -18,6 +18,65 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-18 — Phase 9.5 project 1, PR 3: extension registries, add, search, install (schema V71, I29 `registry` class, static D22(h), HITL type `registry.add`, I20 widened; no new invariant yet).**
+  The owner can now subscribe to named registries and install from them. `nimbus registry add|list|refresh|remove`
+  pins a registry's root key (`registry add` is TTY-only with no `--yes`, asks under the new `registry.add` HITL
+  action type, and checks an optional `--fingerprint=`); `nimbus extension search`, `extension info
+  --registry/--remote` and `extension install <id> [--registry] [--version] [--channel beta]` read them. A path
+  argument installs from disk as before; a bare id is looked up across registries and refused if it is in more
+  than one, never prioritised. IPC `registry.add|list|refresh|remove|search|info|install`: all CLI-only, the whole
+  `registry` namespace LAN-forbidden and refused on a demo root, none on the Tauri allowlist. Schema **V71**:
+  `extension_registry` (name, URL, pinned root key, `last_sequence` as the rollback anchor) plus nullable
+  `extension.source_registry`/`source_root_fingerprint`/`source_channel`. Transports: https, loopback http outside
+  production, and `file:`/absolute paths (UNC, device and file-host forms refused); redirects are followed by hand,
+  at most 3, each hop re-checked; size caps; the index is verified against the pinned key and the `sequence`
+  anti-rollback write is conditional. A registry install verifies the index, then the manifest and package hashes,
+  then the publisher key taken from the signed index, then the I16 signature, then a Vault key conflict, then the
+  entry hash, ALL before the `extension.install` prompt (reused, now naming the source registry and root
+  fingerprint), and records the source. **I29 widened:** a new `registry` egress source type (the fifteenth) and
+  coverage class, `per-call` — one row per REMOTE request including each redirect hop (`destination` is the
+  registry name, `payload_summary` the method, id, version and host); a local-path registry appends nothing;
+  air-gap refuses a remote registry. Static **D22(h)** confines `recordRegistryEgress` and bans a bare `fetch(`
+  under `extensions/` (temporary allow-list for `publisher-keys.ts`, `registry-client.ts` and `sync.ts`, removed in
+  the next PR; stated bound: an injected fetcher or an alias of `fetch` evades the text scan). **I20 widened:** a
+  delegate never approves `registry.add` or any `extension.*` action (`tryDelegatedApproval` falls back to the
+  local owner). HITL types 140 to 141; proposable stays 29, denied 111 to 112. **Operator note:** adding a coverage
+  class means `nimbus prove` reports a window that spans the upgrade as `indeterminate` (the designed fail-safe: an
+  older boot marker cannot vouch for a class it did not know). Not yet: the update daemon does not use registries
+  (next PR, with invariant I44).
+- **2026-10-18 — Phase 9.5 project 1, PR 2: signed registry format and offline maintainer commands (no migration, no invariant, no egress class).**
+  A registry is a static folder with a signed `index.json` (format 1: `rootKey`, strictly increasing
+  `sequence`, `generatedAt`, and per-extension publisher plus versions carrying channel, name,
+  manifest and package paths, SHA-256s, size, `entryHash`, `publishedAt`). The registry root key
+  signs the canonical JSON of the index; the publisher still signs each manifest (I16), so there are
+  two signatures and two trust roots. The gateway parser (`extensions/registry/index-format.ts`)
+  enforces strict SemVer version keys, tolerates and signs unknown keys, caps the document at 8 MiB
+  and accepts a BOM and CRLF. New offline CLI commands `nimbus registry maintain init|add|remove`
+  build such a registry: the root key is a mode 0600 file (default `~/.nimbus/registry-key`), packages
+  are packed deterministically (sorted entries, mtime 0, mode 0644, portable headers), duplicates,
+  publisher-key changes, unsigned packages and oversize packages are refused, and `index.json` is
+  written atomically. A golden vector shared by the gateway and CLI pins the signing format, and a
+  committed fixture registry is verified by a gateway test. **Nothing in the gateway consumes a
+  registry yet:** adding registries, search, install and updates are the next PR.
+
+- **2026-10-18 — Extension auto-update path repaired (fixes only; no new invariant, no migration).**
+  Extension updates could never apply before this: `nimbus extension install` writes a flat
+  `<extensionsDir>/<id>` while the update swap expected an `active/` subdirectory, so every apply failed
+  at the first rename. The install path now stays flat and previous versions, the pending download and
+  the holding area moved to a sibling `extension-versions/<slug>/` area (slug = first 16 hex of the
+  SHA-256 of the id), which `extension remove` deletes. Also fixed: install and update now share one
+  capped extraction pipeline (`extensions/package-extract.ts`: refuses links, specials, absolute, `..`,
+  backslash and drive-letter entries; 200 MiB unpacked and 5000-entry caps) and the tree digest is
+  computed before the swap and written in the same row update; crash recovery promotes the
+  semver-newest previous version, records its measured hashes, leaves the tree digest NULL and the
+  extension DISABLED until the owner approves the files with `nimbus extension rehash` (recovery
+  never blesses bytes that anything able to write the versions area could have planted), and takes
+  its own `recoveryExtensionsDir` input; `nimbus extension update` and `downgrade` now show the owner's prompt
+  and use the interactive timeout instead of timing out at 30 s; the orphan sweep keeps namespaced
+  extension directories (latent: the sweep is not run in production). The false claim that the
+  orchestrator re-verifies the publisher signature was removed from `SECURITY-INVARIANTS.md`; the
+  signature is re-verified at the next startup pass and before every spawn (I43).
+
 - **2026-10-17 — S3: extension runtime PR 4 of 4 — model access, closing the slice (I42 widened to a second source; no migration, no new invariant).**
   `nimbus extension approve <id> --model` offers an approved extension's tools to the engine agent
   in `nimbus ask` on the same path as a `--model` user MCP server: local owner only, named

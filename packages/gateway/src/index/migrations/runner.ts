@@ -33,6 +33,7 @@ import {
 } from "../embedding-v6-sql.ts";
 import { ENTITY_METADATA_V54_SQL } from "../entity-metadata-v54-sql.ts";
 import { V31_EXTENSION_DEPENDENCY_SQL } from "../extension-dependency-v31-sql.ts";
+import { EXTENSION_REGISTRY_V71_SQL } from "../extension-registry-v71-sql.ts";
 import { EXTENSION_RUN_GRANT_V70_SQL } from "../extension-run-grant-v70-sql.ts";
 import {
   EXTENSION_SESSION_V10_MIGRATION_SQL,
@@ -653,6 +654,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
   { fromVersion: 67, toVersion: 68, apply: migrateIndexedV67ToV68 },
   { fromVersion: 68, toVersion: 69, apply: migrateIndexedV68ToV69 },
   simpleStep(69, 70, "extension run grants (extension_run_grant)", EXTENSION_RUN_GRANT_V70_SQL),
+  simpleStep(
+    70,
+    71,
+    "extension registries (extension_registry) + extension source columns",
+    EXTENSION_REGISTRY_V71_SQL,
+  ),
 ];
 
 /**

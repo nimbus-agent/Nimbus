@@ -109,6 +109,19 @@
  * commit (`tool-egress.ts` ships with no production caller yet) and is raised to `"per-call"` only
  * once `toolgen-broker.ts` exists and calls it — per this file's own rule, never ahead of that
  * landing.
+ *
+ * `registry` is the FIFTEENTH member and an EGRESS class rather than a marker. It records an
+ * outbound fetch of an extension registry's index, manifest or package (S3 extension marketplace
+ * client). The sole appender is `egress/registry-egress.ts`'s `recordRegistryEgress`, called by
+ * `extensions/registry/registry-fetch.ts` BEFORE every REMOTE request; a registry on a local path
+ * makes no request and appends nothing.
+ *
+ * Reusing an existing member was rejected for the SEVENTH time. `sync` is a connector sync run and
+ * `task` implies the executor gated the call, neither of which is true of a registry fetch;
+ * `session` must go on claiming `none` coverage until its own appenders land (the updater's
+ * download it would otherwise absorb is a different path), and folding registry traffic into it
+ * would record a fetch and disclaim it in the same breath. `destination` is the owner's registry
+ * NAME, never a raw URL.
  */
 export const EGRESS_SOURCE_TYPES = [
   "task", // gated connector action
@@ -125,6 +138,7 @@ export const EGRESS_SOURCE_TYPES = [
   "chatops", // an outbound Slack/Teams post
   "browser", // an outbound request made by the computer-use browser lane
   "tool", // an outbound request a runtime-generated tool made through the broker
+  "registry", // an outbound fetch of an extension registry index, manifest or package
 ] as const;
 
 export type EgressSourceType = (typeof EGRESS_SOURCE_TYPES)[number];
