@@ -30,7 +30,7 @@ function getIntInput(name, fallback) {
 }
 var STEP_SUMMARY_MAX_BYTES = 64 * 1024;
 function writeJobSummary(md) {
-  const file = process.env.GITHUB_STEP_SUMMARY;
+  const file = process.env["GITHUB_STEP_SUMMARY"];
   if (file === undefined)
     return;
   const safe = md.length > STEP_SUMMARY_MAX_BYTES ? md.slice(0, STEP_SUMMARY_MAX_BYTES) : md;
@@ -48,7 +48,7 @@ function makeSetOutput(allowedNames) {
     if (!allowedNames.has(name)) {
       throw new Error(`refusing to set unknown output: ${name}`);
     }
-    const outFile = process.env.GITHUB_OUTPUT;
+    const outFile = process.env["GITHUB_OUTPUT"];
     if (outFile === undefined)
       return;
     let delim;

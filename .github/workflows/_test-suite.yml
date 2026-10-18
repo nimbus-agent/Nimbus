@@ -121,7 +121,8 @@ jobs:
         run: bun run audit:windows-console
 
       # A GitHub Action runs its committed dist/index.js as-is; this rebuilds the registry
-      # action's bundle and fails if the committed one is not the build of its sources.
+      # action's bundle and fails if the committed one is not the build of its sources. In CI it
+      # byte-compares with the exact Bun recorded in the bundle header (`bun x bun@<version>`).
       - name: Action bundle drift (registry-action dist is a fresh build)
         run: bun run audit:action-dist
 

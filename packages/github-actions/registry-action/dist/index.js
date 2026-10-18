@@ -1,3 +1,4 @@
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:5a497a8e3f1afa46b733d5b83fa32a52c3201984e99c03d6721fb436e7958061
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -8585,8 +8586,7 @@ function refspecFor(branch) {
   return `+refs/heads/${branch}:refs/remotes/origin/${branch}`;
 }
 function fetchRefs(refs, opts) {
-  for (const r of refs)
-    assertBranchName(r);
+  assertBranchList(refs, "fetchRefs");
   try {
     git(["fetch", "--no-tags", "--depth=1", "origin", ...refs.map(refspecFor)], opts);
   } catch (err) {
@@ -8632,15 +8632,23 @@ function readBlob(ref, path, opts) {
 function tryMergeBase(a, b, opts) {
   try {
     return git(["merge-base", a, b], opts).toString("utf8").trim();
-  } catch {
-    return null;
+  } catch (err) {
+    const status = err !== null && typeof err === "object" && "status" in err ? err.status : null;
+    if (status === 1)
+      return null;
+    throw new Error(`git merge-base ${a} ${b} failed: ${stderrOf(err).trim()}`);
   }
+}
+function assertBranchList(refs, what) {
+  if (refs.length === 0)
+    throw new Error(`${what}: refusing an empty list of branches`);
+  for (const r of refs)
+    assertBranchName(r);
 }
 function findMergeBase(a, b, opts) {
   assertRev(a);
   assertRev(b);
-  for (const r of opts.deepen)
-    assertBranchName(r);
+  assertBranchList(opts.deepen, "findMergeBase deepen");
   const step = opts.step ?? 50;
   const maxRounds = opts.maxRounds ?? 10;
   for (let round = 0;; round++) {
@@ -8656,6 +8664,7 @@ function findMergeBase(a, b, opts) {
     git(["fetch", "--no-tags", `--deepen=${step}`, "origin", ...opts.deepen.map(refspecFor)], opts);
   }
 }
+var ABSENT_MODE = "000000";
 function diffTree(from, to, opts) {
   assertRev(from);
   assertRev(to);
@@ -8665,13 +8674,18 @@ function diffTree(from, to, opts) {
   for (let i = 0;i + 1 < fields.length; i += 2) {
     const meta = fields[i] ?? "";
     const path = fields[i + 1] ?? "";
-    const parts = meta.replace(/^:/, "").split(" ");
-    const mode = parts[1];
-    const status = parts[4];
-    if (!meta.startsWith(":") || mode === undefined || status === undefined) {
+    const [oldMode, mode, , , status] = meta.replace(/^:/, "").split(" ");
+    if (!meta.startsWith(":") || oldMode === undefined || mode === undefined || status === undefined) {
       throw new Error(`unparseable git diff-tree record: ${JSON.stringify(meta)}`);
     }
     assertSafeTreePath(path);
+    if (path.startsWith(EXTENSIONS_PREFIX)) {
+      for (const m of [oldMode, mode]) {
+        if (m !== REGULAR_FILE_MODE && m !== ABSENT_MODE) {
+          throw new Error(`refusing ${path}: git mode ${m} is not a regular file (${REGULAR_FILE_MODE}); symlinks, submodules and executables are not accepted under extensions/`);
+        }
+      }
+    }
     changes.push({ status, path, mode });
   }
   return changes;
@@ -8702,13 +8716,13 @@ function requireInput(name) {
   return v;
 }
 function workspace() {
-  return process.env.GITHUB_WORKSPACE ?? process.cwd();
+  return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
 async function main() {
   try {
     const mode = parseMode(getInput("mode"));
     if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef: process.env.GITHUB_BASE_REF ?? "" });
+      await runCheck({ workspace: workspace(), baseRef: process.env["GITHUB_BASE_REF"] ?? "" });
     } else {
       await runSign({ workspace: workspace(), rootKey: requireInput("root-key") });
     }

@@ -6,10 +6,7 @@
     // and has no node_modules of its own, so the node types come from registry-format's, the
     // package whose sources the bundle inlines.
     "typeRoots": ["../../registry-format/node_modules/@types"],
-    "types": ["node"],
-    // `../shared/gha-io.ts` (shared with the other two actions, which have no typecheck of their
-    // own) reads `process.env.GITHUB_*` with dot access; ui/tsconfig.json makes the same call.
-    "noPropertyAccessFromIndexSignature": false
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "src/**/*.test.ts"]

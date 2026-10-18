@@ -116,7 +116,7 @@ function refspecFor(branch: string): string {
  * never initialised, which gets its own message; any other failure names git's own error.
  */
 export function fetchRefs(refs: readonly string[], opts: GitOptions): void {
-  for (const r of refs) assertBranchName(r);
+  assertBranchList(refs, "fetchRefs");
   try {
     git(["fetch", "--no-tags", "--depth=1", "origin", ...refs.map(refspecFor)], opts);
   } catch (err) {
@@ -169,12 +169,21 @@ export function readBlob(ref: string, path: string, opts: GitOptions): Uint8Arra
   return new Uint8Array(git(["cat-file", "blob", `${ref}:${path}`], opts));
 }
 
+/** `git merge-base`; `null` only for its exit status 1 ("no merge base"). Anything else throws. */
 function tryMergeBase(a: string, b: string, opts: GitOptions): string | null {
   try {
     return git(["merge-base", a, b], opts).toString("utf8").trim();
-  } catch {
-    return null;
+  } catch (err) {
+    const status = err !== null && typeof err === "object" && "status" in err ? err.status : null;
+    if (status === 1) return null;
+    throw new Error(`git merge-base ${a} ${b} failed: ${stderrOf(err).trim()}`);
   }
+}
+
+/** An empty list would make git fall back to the remote's configured refspec: refuse it instead. */
+function assertBranchList(refs: readonly string[], what: string): void {
+  if (refs.length === 0) throw new Error(`${what}: refusing an empty list of branches`);
+  for (const r of refs) assertBranchName(r);
 }
 
 /** Options for `findMergeBase`. */
@@ -195,7 +204,7 @@ export interface MergeBaseOptions extends GitOptions {
 export function findMergeBase(a: string, b: string, opts: MergeBaseOptions): string {
   assertRev(a);
   assertRev(b);
-  for (const r of opts.deepen) assertBranchName(r);
+  assertBranchList(opts.deepen, "findMergeBase deepen");
   const step = opts.step ?? 50;
   const maxRounds = opts.maxRounds ?? 10;
   for (let round = 0; ; round++) {
@@ -213,7 +222,16 @@ export function findMergeBase(a: string, b: string, opts: MergeBaseOptions): str
   }
 }
 
-/** What changed from `from` to `to`, file by file (no rename detection, so a move is D + A). */
+/** The mode `git diff-tree` reports for the side of a change where the path does not exist. */
+const ABSENT_MODE = "000000";
+
+/**
+ * What changed from `from` to `to`, file by file (no rename detection, so a move is D + A). Under
+ * `extensions/` it refuses (throws) any change where either side is something other than a regular
+ * `100644` file: adding, modifying, type-changing to or from, or deleting a symlink, a submodule or
+ * an executable. `000000` is not a mode but git's "absent on this side" (the old side of an add,
+ * the new side of a deletion), so a plain add or delete of a regular file is reported, not refused.
+ */
 export function diffTree(from: string, to: string, opts: GitOptions): TreeChange[] {
   assertRev(from);
   assertRev(to);
@@ -224,13 +242,25 @@ export function diffTree(from: string, to: string, opts: GitOptions): TreeChange
   for (let i = 0; i + 1 < fields.length; i += 2) {
     const meta = fields[i] ?? "";
     const path = fields[i + 1] ?? "";
-    const parts = meta.replace(/^:/, "").split(" ");
-    const mode = parts[1];
-    const status = parts[4];
-    if (!meta.startsWith(":") || mode === undefined || status === undefined) {
+    const [oldMode, mode, , , status] = meta.replace(/^:/, "").split(" ");
+    if (
+      !meta.startsWith(":") ||
+      oldMode === undefined ||
+      mode === undefined ||
+      status === undefined
+    ) {
       throw new Error(`unparseable git diff-tree record: ${JSON.stringify(meta)}`);
     }
     assertSafeTreePath(path);
+    if (path.startsWith(EXTENSIONS_PREFIX)) {
+      for (const m of [oldMode, mode]) {
+        if (m !== REGULAR_FILE_MODE && m !== ABSENT_MODE) {
+          throw new Error(
+            `refusing ${path}: git mode ${m} is not a regular file (${REGULAR_FILE_MODE}); symlinks, submodules and executables are not accepted under extensions/`,
+          );
+        }
+      }
+    }
     changes.push({ status, path, mode });
   }
   return changes;

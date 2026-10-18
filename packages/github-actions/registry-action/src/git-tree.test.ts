@@ -278,7 +278,7 @@ describe("findMergeBase", () => {
     commitAll(repo, "a");
     git(repo, "checkout", "-q", "--orphan", "other");
     commitAll(repo, "b");
-    expect(() => findMergeBase("main", "other", { cwd: repo, deepen: [] })).toThrow(
+    expect(() => findMergeBase("main", "other", { cwd: repo, deepen: ["main"] })).toThrow(
       /main and other have no common history/,
     );
   });
@@ -302,5 +302,75 @@ describe("diffTree", () => {
       { status: "M", path: "keep", mode: "100644" },
     ]);
     expect(diffTree(to, to, { cwd: repo })).toEqual([]);
+  });
+
+  test("refuses an added symlink or a type change to a symlink under extensions/", () => {
+    const repo = newRepo("r");
+    write(repo, "extensions/acme/1.0.0/manifest.json", "{}");
+    const base = commitAll(repo, "c1");
+    const target = hashBlob(repo, "../../../../etc/passwd");
+
+    stageEntry(repo, "120000", target, "extensions/acme/1.0.0/package.tgz");
+    const added = commitIndex(repo, "add symlink");
+    expect(() => diffTree(base, added, { cwd: repo })).toThrow(
+      /refusing extensions\/acme\/1\.0\.0\/package\.tgz: git mode 120000/,
+    );
+
+    git(
+      repo,
+      "update-index",
+      "--cacheinfo",
+      `120000,${target},extensions/acme/1.0.0/manifest.json`,
+    );
+    const typeChanged = commitIndex(repo, "type change");
+    expect(() => diffTree(added, typeChanged, { cwd: repo })).toThrow(
+      /refusing extensions\/acme\/1\.0\.0\/manifest\.json: git mode 120000/,
+    );
+    // Deleting the symlink again is refused too: its old side is not a regular file.
+    expect(() => diffTree(typeChanged, base, { cwd: repo })).toThrow(/git mode 120000/);
+  });
+
+  test("a deleted regular file under extensions/ is reported, not refused", () => {
+    const repo = newRepo("r");
+    write(repo, "extensions/acme/1.0.0/manifest.json", "{}");
+    const from = commitAll(repo, "c1");
+    rmSync(join(repo, "extensions"), { recursive: true });
+    const to = commitAll(repo, "c2");
+    expect(diffTree(from, to, { cwd: repo })).toEqual([
+      { status: "D", path: "extensions/acme/1.0.0/manifest.json", mode: "000000" },
+    ]);
+  });
+
+  test("a symlink outside extensions/ is reported", () => {
+    const repo = newRepo("r");
+    const from = commitAll(repo, "c1");
+    stageEntry(repo, "120000", hashBlob(repo, "x"), "docs/link");
+    const to = commitIndex(repo, "link");
+    expect(diffTree(from, to, { cwd: repo })).toEqual([
+      { status: "A", path: "docs/link", mode: "120000" },
+    ]);
+  });
+});
+
+describe("empty branch lists and failing merge-base", () => {
+  test("fetchRefs([]) refuses instead of falling back to the remote's refspec", () => {
+    const { clone } = originAndClone();
+    expect(() => fetchRefs([], { cwd: clone })).toThrow(/fetchRefs: refusing an empty list/);
+  });
+
+  test("findMergeBase with an empty deepen list refuses", () => {
+    const repo = newRepo("r");
+    commitAll(repo, "a");
+    expect(() => findMergeBase("main", "main", { cwd: repo, deepen: [] })).toThrow(
+      /findMergeBase deepen: refusing an empty list/,
+    );
+  });
+
+  test("a merge-base failure other than 'no merge base' propagates", () => {
+    const repo = newRepo("r");
+    commitAll(repo, "a");
+    expect(() => findMergeBase("no-such-rev", "main", { cwd: repo, deepen: ["main"] })).toThrow(
+      /git merge-base no-such-rev main failed: .*no-such-rev/,
+    );
   });
 });

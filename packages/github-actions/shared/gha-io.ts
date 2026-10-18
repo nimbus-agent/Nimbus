@@ -45,7 +45,7 @@ const STEP_SUMMARY_MAX_BYTES = 64 * 1024;
 
 /** Append markdown to the job summary file (capped), if `GITHUB_STEP_SUMMARY` is set. */
 export function writeJobSummary(md: string): void {
-  const file = process.env.GITHUB_STEP_SUMMARY;
+  const file = process.env["GITHUB_STEP_SUMMARY"];
   if (file === undefined) return;
   const safe = md.length > STEP_SUMMARY_MAX_BYTES ? md.slice(0, STEP_SUMMARY_MAX_BYTES) : md;
   appendFileSync(file, `${safe}\n`);
@@ -74,7 +74,7 @@ export function makeSetOutput(
     if (!allowedNames.has(name)) {
       throw new Error(`refusing to set unknown output: ${name}`);
     }
-    const outFile = process.env.GITHUB_OUTPUT;
+    const outFile = process.env["GITHUB_OUTPUT"];
     if (outFile === undefined) return;
     let delim: string;
     do {

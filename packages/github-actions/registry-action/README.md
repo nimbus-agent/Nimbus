@@ -23,11 +23,13 @@ Both modes read the registry from the git tree, never the working directory: an 
 ## Building
 
 The action runs on `node24` from the committed `dist/index.js`; the runner installs nothing. After
-changing `src/`, rebuild with `bun run build` and commit `dist/index.js`. The bundle must be built
-with the Bun release line CI uses (the `bun-version` default of
-`.github/actions/setup-nimbus-ci/action.yml`): `bun run audit:action-dist` fails when the committed
-bundle is not the build of the current sources. `src/closure.test.ts` fails when the bundle reaches
-a `bun:*` module, the gateway, the CLI or a database module.
+changing `src/` (or a dependency version), rebuild with `bun run build` and commit
+`dist/index.js`. The build writes a first-line header recording the exact Bun that built the
+bundle and an `inputHash` over every bundled input. `bun run audit:action-dist` always checks the
+input hash, and byte-compares the bundle with a fresh build by that exact Bun (in CI through
+`bun x bun@<version>`; locally only when you run that version). Build with the Bun CI uses, in
+Docker `oven/bun:1.4` if yours differs. `src/closure.test.ts` fails when the bundle reaches a
+`bun:*` module, the gateway, the CLI or a database module.
 
 ## License
 

@@ -17,14 +17,14 @@ function requireInput(name: string): string {
 }
 
 function workspace(): string {
-  return process.env.GITHUB_WORKSPACE ?? process.cwd();
+  return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
 
 export async function main(): Promise<void> {
   try {
     const mode = parseMode(getInput("mode"));
     if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef: process.env.GITHUB_BASE_REF ?? "" });
+      await runCheck({ workspace: workspace(), baseRef: process.env["GITHUB_BASE_REF"] ?? "" });
     } else {
       await runSign({ workspace: workspace(), rootKey: requireInput("root-key") });
     }
