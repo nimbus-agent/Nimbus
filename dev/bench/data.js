@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792298768737,
+  "lastUpdate": 1792336824085,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7dc717a0fc0f8b8138a3e62bf3fdde867c44b06a",
-          "message": "fix(release): prune the yum channel, keeping the newest N and the published release (#1010)\n\nCloses #995.\n\nThe `linux-repo` yum channel had grown to **~3.2 GB against a documented\n1 GB GitHub Pages limit** (3,410,232,418 bytes across 69 blobs),\nretaining 44 `nimbus-headless` RPMs forever and growing ~76 MB per\nrelease. The `apt/` pool was already pruned; `yum/` never was. This\nmirrors that logic for yum.\n\n## The destructive bug found in review, and fixed\n\nThe first cut of the retention planner prioritised *\"always keep the\nrelease being published\"* **over** *\"always keep the newest\"*. A\nreviewer reproduced the consequence by running it:\n\n```\nentries 1.0.0 / 2.0.0 / 2.1.0 / 2.2.0, currentVersion=1.0.0, retain=1\n  before:  keep=[1.0.0]           remove=[2.2.0, 2.1.0, 2.0.0]   ← deletes every newer release\n  after:   keep=[2.2.0, 1.0.0]    remove=[2.1.0, 2.0.0]\n```\n\nSo a `workflow_dispatch` re-publish of an **old** tag would have deleted\nevery newer RPM in the channel. The rule is now the **union** of \"newest\nN\" and \"the release being published\" — `retain` is a floor on how many\nnewest releases survive, never a ceiling that the current release can\ndisplace. Pinned by a test using exactly that scenario.\n\nAlso fixed: a malformed retention override was silently swallowed.\n`NIMBUS_LINUX_REPO_RETAIN=\"five\"` (or `\"3 \"`) became `NaN` and fell back\nto the default. It now requires an integer literal and errors otherwise.\n\n## Ordering is the safety property\n\nThe prune must run **before** `createrepo_c` regenerates the metadata. A\nprune that leaves stale repodata *breaks* the channel — worse than it\nbeing large. That ordering is asserted by a test, and that test still\npasses.\n\n## What this does NOT do — worth being explicit\n\nIt shrinks the **served Pages tree**, not the **git repository**. The\npublish workflow commits its output, so the deleted RPMs remain in\nhistory and the repo's packed size is unchanged. That stops the\nPages-limit bleed but does not reclaim the existing ~2.2 GB.\n\nReclaiming that needs either a history rewrite or — better — moving\nbinaries to GitHub Releases assets and keeping only signed metadata in\nthe Pages tree, which makes the question moot. Both are deliberately out\nof scope here; this is prune-forward only.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Linux package repositories now support configurable retention\nsettings.\n* Yum repositories retain the newest releases while safely removing\nolder packages and regenerating metadata.\n  * Apt repositories remove superseded packages during publication.\n* Invalid retention settings are rejected instead of publishing\nincomplete repositories.\n\n* **Documentation**\n* Installation guidance now explains repository retention and how to\naccess older versions through the releases page.\n\n* **Tests**\n* Added comprehensive coverage for retention planning, configuration\nvalidation, package handling, and publication ordering.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-01T12:03:08Z",
-          "tree_id": "d82c067053fd592d9b7472a4591b5ae990b9fa0b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7dc717a0fc0f8b8138a3e62bf3fdde867c44b06a"
-        },
-        "date": 1785586490601,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 335.6346219999999,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 341.0804523999985,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 263.42181404999866,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d69f54f40569f5c2c3b1c33060a0cf08862ffea6",
+          "message": "fix(extensions): make extension updates apply; one capped extraction pipeline (#1695)\n\nFirst of four PRs for Phase 9.5 project 1 (the extension registry\nprotocol and client). This one fixes the existing extension update path\nbefore the registry relies on it. No new feature, no migration, no new\ninvariant.\n\n## What was broken\n\n- **Extension updates could never be applied.** Install writes an\nextension's files directly into `<extensionsDir>/<id>` and records that\nas `install_path`. `applyUpgradeSwap`/`applyDowngradeSwap` renamed\n`<extensionsDir>/<id>/active`, which never exists, so every apply failed\nwith `ENOENT`. The three \"previous version\" lookups also disagreed with\nwhere the swap put old versions.\n- **Updates skipped the safety checks install has.** Install extracted\nwith system `tar` plus escape checks. Update used the npm `tar` package\nwithout them, and a symlink in an update silently left `tree_digest =\nNULL` after the files were already swapped in.\n- **`nimbus extension update|downgrade` hung.** The CLI never registered\na consent handler and kept the 30 s timeout, so the gateway's\n`extension.autoUpdate` prompt was never shown.\n- **Latent: the startup orphan sweep would delete namespaced\nextensions.** It compared top-level directory names with extension ids,\nand `acme/foo` lives under `acme`. The sweep is not run in production\n(`assemble.ts` does not pass it a root), so this never fired, but wiring\nit later would have lost data.\n\n## What changed\n\n- The install path stays flat. Previous versions, pending downloads and\nthe swap buffer live in a versions area that sits next to\n`extensionsDir` (`extension-versions/<slug>/`). It is outside every\ninstall tree and outside the sweep, and every swap is a same-volume\nrename on all three OSes. The slug is the first 16 hex characters of the\nid's SHA-256, which is safe for `/` and for Windows' case-insensitive\nfilesystem. `extension remove` deletes the versions area too.\n- Upgrading still works when `prev/<fromVersion>` already exists, for\nexample after a downgrade.\n- Crash recovery promotes the semver-newest saved version and records\nits measured hashes and tree digest. It gets the extensions directory\nthrough its own input (`recoveryExtensionsDir`), so the orphan sweep\nstays unwired. It also re-reads the row after promoting, which fixes a\nbug where a just-promoted extension was immediately disabled for a hash\nmismatch.\n- `extension info` reports the previous version with the same semver\nrule.\n- Install, dependency install and update share one pipeline\n(`extensions/package-extract.ts`):\n1. A header pre-scan refuses links, special files, and absolute, `..`,\nbackslash or drive-letter paths. It also caps the package at 200 MiB\nunpacked and 5000 entries.\n2. Then the package is extracted, its source root found, and its tree\ndigest computed, all BEFORE anything is swapped in.\n3. The digest is written in the same row update as the version. Staging\nfiles are removed in a `finally`.\n- `nimbus extension update` (apart from `--check`) and `downgrade`\nregister the prompt handler and use the interactive timeout.\n- The orphan sweep treats a top-level directory as in use when it is the\nfirst segment of any installed id.\n- Docs: the CHANGELOG entry; `SECURITY-INVARIANTS.md` no longer claims\nthe update orchestrator re-verifies signatures (it checks hashes and the\ndigest, and signatures are re-verified at the next startup and before\nevery spawn); the auto-update section of `architecture.md`.\n\n## Verification\n\n- `bun run preflight`: every static gate is green.\n- `bun run test:ci`: 29,586 pass. The only failures are 5 PowerShell\ninstaller tests (`scripts/install/install-remote-windows.test.ts`,\n`scripts/release/nimbus-verify-ps1.test.ts`). They fail identically on a\nclean `main` checkout on this machine, so they are environmental.\n- The update, downgrade and crash-recovery E2E and integration suites\nwere migrated to the new layout. They still drive a real signed-tarball\nupgrade.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added commands to create and maintain signed extension registries,\nincluding adding or removing extensions and versions.\n* Added registry management, extension search, remote info, and\nregistry-based installation.\n* **Bug Fixes**\n* Improved extension updates, downgrades, and crash recovery, including\nrestoration of the newest available prior version.\n* Extensions restored after an interrupted update remain disabled until\nan owner approves rehashing.\n* Update and downgrade prompts now have more time to receive a response.\n  * Removing an extension also clears its saved version data.\n* **Security**\n* Extension packages are checked for unsafe archive contents and size\nlimits, with hashes verified before installation or version swaps.\n* Publisher signatures are verified at startup and before extensions\nrun.\n* Registry installation requires owner approval and verifies signed\nregistry data.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-18T15:10:09Z",
+          "tree_id": "e4f136a3291f3fe46ab536a1f8881cb589c8ecc8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d69f54f40569f5c2c3b1c33060a0cf08862ffea6"
+        },
+        "date": 1792336819313,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 274.35826410000084,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 272.3704544999979,
             "unit": "ms"
           }
         ]
