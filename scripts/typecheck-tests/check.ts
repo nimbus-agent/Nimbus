@@ -10,6 +10,7 @@ const BASELINE = resolve(REPO_ROOT, "docs", "structure-audit", "typecheck-tests-
 const PROJECTS = [
   "packages/gateway/tsconfig.tests.json",
   "packages/ui/tsconfig.tests.json",
+  "packages/registry-format/tsconfig.tests.json",
 ] as const;
 
 interface Collected {

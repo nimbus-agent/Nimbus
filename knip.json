@@ -24,8 +24,7 @@
     },
     "packages/registry-format": {
       "entry": ["src/**/*.test.ts"],
-      "project": "src/**/*.ts",
-      "ignoreDependencies": ["@nimbus-dev/sdk", "semver", "tar", "tweetnacl", "@types/semver"]
+      "project": "src/**/*.ts"
     },
     "packages/ui": {
       "entry": ["test/**/*.test.{ts,tsx}"],

@@ -70,7 +70,7 @@ export const PRELOAD_PATH = join(import.meta.dir, "dependency-cruiser-ts6-preloa
  * `__fixtures__` because it holds sample inputs, not source. Widen this deliberately, never narrow it
  * to make the guard pass.
  */
-export const REQUIRED_SOURCES_GLOB = "packages/{gateway,cli,ui}/src/**/*.{ts,tsx}";
+export const REQUIRED_SOURCES_GLOB = "packages/{gateway,cli,registry-format,ui}/src/**/*.{ts,tsx}";
 const NOT_REQUIRED = /\.test\.tsx?$|\/__fixtures__\//;
 
 /**
