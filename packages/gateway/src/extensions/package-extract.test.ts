@@ -77,6 +77,18 @@ describe("extractPackage", () => {
     expect(readdirSync(dest)).toEqual([]);
   });
 
+  it("refuses a backslash-climbing entry", async () => {
+    const archive = rawArchive([new tar.Header({ path: "..\\evil", type: "File", size: 0 })]);
+    await expect(extractPackage(archive, dest)).rejects.toThrow(/package_entry_refused/);
+    expect(readdirSync(dest)).toEqual([]);
+  });
+
+  it("refuses a drive-absolute entry", async () => {
+    const archive = rawArchive([new tar.Header({ path: "C:/evil", type: "File", size: 0 })]);
+    await expect(extractPackage(archive, dest)).rejects.toThrow(/package_entry_refused/);
+    expect(readdirSync(dest)).toEqual([]);
+  });
+
   it("refuses more than MAX_PACKAGE_ENTRIES entries", async () => {
     const headers: tar.Header[] = [];
     for (let i = 0; i <= MAX_PACKAGE_ENTRIES; i++) {

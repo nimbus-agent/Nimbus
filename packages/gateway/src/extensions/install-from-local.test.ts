@@ -22,10 +22,9 @@ import {
   assertSafeExtensionId,
   ExtensionInstallNotApprovedError,
   extensionInstallDirectory,
-  extractTarGzToDirectory,
   installExtensionFromLocalDirectory,
-  resolveSystemTarCommand,
 } from "./install-from-local.ts";
+import { extractTarGzToDirectory, resolveSystemTarCommand } from "./package-extract.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
 import type { FetchManifestResponse, RegistryClient } from "./registry-client.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";

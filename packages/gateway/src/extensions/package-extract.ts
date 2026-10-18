@@ -1,10 +1,78 @@
-import { mkdirSync, readdirSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { type Dirent, lstatSync, mkdirSync, readdirSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import * as tar from "tar";
 
-import { extractTarGzToDirectory } from "./install-from-local.ts";
 import { resolveExtensionManifestPath } from "./manifest.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
+
+/**
+ * `platform`/`env` default to the live process and exist so the Windows branch can be exercised on
+ * any host — every production caller passes neither.
+ */
+export function resolveSystemTarCommand(
+  platform: NodeJS.Platform = process.platform,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  if (platform !== "win32") {
+    return "tar";
+  }
+  const root = env["SystemRoot"] ?? env["windir"];
+  if (root !== undefined && root !== "") {
+    return join(root, "System32", "tar.exe");
+  }
+  return join("C:", "Windows", "System32", "tar.exe");
+}
+
+function checkExtractedEntry(absRoot: string, dir: string, ent: Dirent, stack: string[]): void {
+  const full = join(dir, ent.name);
+  const rel = relative(absRoot, resolve(full));
+  if (rel.startsWith("..") || rel === "..") {
+    throw new Error(`archive entry escapes install root: ${full}`);
+  }
+  const st = lstatSync(full);
+  if (st.isSymbolicLink()) {
+    throw new Error(`archive contains symlink: ${full}`);
+  }
+  if (st.isDirectory()) stack.push(full);
+}
+
+function assertNoEntryEscapes(destDir: string): void {
+  const absRoot = resolve(destDir);
+  const stack: string[] = [absRoot];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (dir === undefined) continue;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      checkExtractedEntry(absRoot, dir, ent, stack);
+    }
+  }
+}
+
+export function extractTarGzToDirectory(archivePath: string, destDir: string): void {
+  const cmd = resolveSystemTarCommand();
+  const args = ["-x", "-z"];
+  if (process.platform === "linux") {
+    args.push("--no-overwrite-dir", "--no-same-owner", "--no-same-permissions");
+  }
+  args.push(`--file=${resolve(archivePath)}`, `--directory=${resolve(destDir)}`);
+  const r = spawnSync(cmd, args, {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (r.status !== 0) {
+    const output = `${r.stderr ?? ""}${r.stdout ?? ""}`.trim();
+    const detail = output || `exit ${String(r.status)}`;
+    throw new Error(`failed to extract archive: ${detail}`);
+  }
+  assertNoEntryEscapes(destDir);
+}
 
 /** Total declared (unpacked) bytes an extension package may carry. */
 export const MAX_UNPACKED_BYTES = 200 * 1024 * 1024;
@@ -14,8 +82,10 @@ export const MAX_PACKAGE_ENTRIES = 5000;
 export type ExtractedPackage = { sourceRoot: string; treeDigest: string };
 
 function hasEscapingPath(path: string): boolean {
+  // Windows tar treats "\\" as a separator and a drive letter as absolute, so both are refused on every host.
   if (isAbsolute(path) || path.startsWith("/") || path.startsWith("\\")) return true;
-  return path.split(/[/]/).includes("..");
+  if (/^[A-Za-z]:/.test(path)) return true;
+  return path.split(/[\\/]/).includes("..");
 }
 
 /**
