@@ -234,9 +234,9 @@ describe("signatureDisabledRegistry", () => {
 
 describe("signatureDisableMessage", () => {
   // Every reason gets its own remediation because the remedies genuinely differ: a missing or
-  // rotated publisher key is fixed by re-fetching the key (`nimbus extension sync`), while a
-  // failed or malformed signature means the bytes on disk no longer match what was signed, and
-  // re-fetching a key would not help. A single generic "reinstall it" line would be wrong for
+  // rotated publisher key is fixed by supplying the key (`--publisher-key`), while a failed or
+  // malformed signature means the bytes on disk no longer match what was signed, and a key would
+  // not help. A single generic "reinstall it" line would be wrong for
   // half the set, which is why the switch is exhaustive over `SignatureDisableReason` rather
   // than defaulting.
   // A hand-written tuple would compile happily when a fifth reason is added, and that reason
@@ -274,18 +274,50 @@ describe("signatureDisableMessage", () => {
     expect(new Set(remediations).size).toBe(REASONS.length);
   });
 
-  test("a key-resolution failure points at `extension sync`, a bytes failure does not", () => {
+  test("a key-resolution failure points at `--publisher-key`, a bytes failure does not", () => {
     expect(signatureDisableMessage("acme.foo", "1.0.0", "publisher_key_missing")).toContain(
-      "nimbus extension sync",
+      "--publisher-key <path>",
     );
     expect(signatureDisableMessage("acme.foo", "1.0.0", "publisher_key_mismatch")).toContain(
-      "nimbus extension sync",
+      "--publisher-key <path>",
     );
     expect(signatureDisableMessage("acme.foo", "1.0.0", "signature_failed")).not.toContain(
-      "nimbus extension sync",
+      "--publisher-key <path>",
     );
     expect(signatureDisableMessage("acme.foo", "1.0.0", "signature_malformed")).not.toContain(
-      "nimbus extension sync",
+      "--publisher-key <path>",
     );
+  });
+
+  test("a local install's key remedy removes first, then reinstalls from the path with the key", () => {
+    for (const r of ["publisher_key_missing", "publisher_key_mismatch"] as const) {
+      for (const src of [undefined, null] as const) {
+        const msg = signatureDisableMessage("acme.foo", "1.0.0", r, src);
+        const remove = msg.indexOf("nimbus extension remove acme.foo");
+        const install = msg.indexOf("nimbus extension install <path> --publisher-key <path>");
+        expect(remove).toBeGreaterThan(-1);
+        // Both install paths refuse an already-installed id, so remove must come first.
+        expect(install).toBeGreaterThan(remove);
+        expect(msg).not.toContain("--registry");
+      }
+    }
+  });
+
+  test("a registry-sourced extension's remedy names its registry and never --publisher-key", () => {
+    for (const r of REASONS) {
+      const msg = signatureDisableMessage("acme.foo", "1.0.0", r, "main");
+      // The registry supplies the key and `install <id> --registry` refuses `--publisher-key`;
+      // a registry install also has no `<path>` to reinstall from.
+      expect(msg).not.toContain("--publisher-key");
+      expect(msg).not.toContain("<path>");
+      const remove = msg.indexOf("nimbus extension remove acme.foo");
+      const install = msg.indexOf("nimbus extension install acme.foo --registry main");
+      expect(remove).toBeGreaterThan(-1);
+      expect(install).toBeGreaterThan(remove);
+    }
+    const remediations = REASONS.map((r) =>
+      signatureDisableMessage("acme.foo", "1.0.0", r, "main"),
+    );
+    expect(new Set(remediations).size).toBe(REASONS.length);
   });
 });

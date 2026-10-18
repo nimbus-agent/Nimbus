@@ -188,6 +188,7 @@ import { execConsent } from "../exec/exec-consent-broker.ts";
 import { resolveRuntimeById } from "../exec/exec-runtimes.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import { createExtensionSlotSource } from "../extensions/extension-runtime.ts";
+import type { RegistryFetchDeps } from "../extensions/registry/registry-fetch.ts";
 import {
   buildExtensionRunGrantEnv,
   isExtensionRuntimeEnabled,
@@ -2052,34 +2053,31 @@ async function registerRemoteVendorRoutes(
   }
 }
 
-/** Start the extensions auto-update daemon when `NIMBUS_EXTENSIONS_REGISTRY_URL` enables it (and
- *  `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` does not veto). Returns the runtime (undefined when not
- *  started) plus the disable flag for the IPC diag surface. */
+/** Start the extensions auto-update daemon whenever boot policy allows it and
+ *  `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` does not veto. Each tick reads the CURRENT registry
+ *  table, so with no registries a tick does nothing and a registry added later is polled on the
+ *  next one. `registryFetch` is the SAME deps object the `registry.*` methods get (one air-gap
+ *  switch). Returns the runtime, or undefined when not started. */
 function maybeStartAutoUpdateRuntime(deps: {
   db: Database;
   vault: NimbusVault;
   paths: PlatformPaths;
   connectorMesh: LazyConnectorMesh;
   sidecarStops: Array<() => void>;
-}): { runtime: AutoUpdateRuntime | undefined; disabled: boolean } {
-  const { db, vault, paths, connectorMesh, sidecarStops } = deps;
+  registryFetch: Omit<RegistryFetchDeps, "db">;
+}): AutoUpdateRuntime | undefined {
+  const { db, vault, paths, connectorMesh, sidecarStops, registryFetch } = deps;
   let autoUpdateRuntime: AutoUpdateRuntime | undefined;
-  const autoUpdateRegistryUrl = (process.env["NIMBUS_EXTENSIONS_REGISTRY_URL"] ?? "").trim();
   const autoUpdateDisabled = process.env["NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE"] === "1";
-  if (
-    autoUpdateRegistryUrl !== "" &&
-    !autoUpdateDisabled &&
-    bootPolicyFor(paths).extensionsAutoUpdate
-  ) {
+  if (!autoUpdateDisabled && bootPolicyFor(paths).extensionsAutoUpdate) {
     const extensionsCfg = loadNimbusExtensionsFromConfigDir(paths.configDir);
     autoUpdateRuntime = createAutoUpdateRuntime({
       db,
       vault,
       extensionsDir: paths.extensionsDir,
       dataDir: paths.dataDir,
-      registryBaseUrl: autoUpdateRegistryUrl,
+      fetch: registryFetch,
       intervalHours: extensionsCfg.updateCheckIntervalHours,
-      enforceAirGap: false,
       stopExtensionClient: (id) => connectorMesh.stopExtensionClient(id),
     });
     void autoUpdateRuntime.daemon.start();
@@ -2088,7 +2086,7 @@ function maybeStartAutoUpdateRuntime(deps: {
       void autoUpdateRuntime?.daemon.stop();
     });
   }
-  return { runtime: autoUpdateRuntime, disabled: autoUpdateDisabled };
+  return autoUpdateRuntime;
 }
 
 /** The auto-update slices of the IPC server options; empty when the daemon is not running. */
@@ -3670,12 +3668,23 @@ export async function assemblePlatformServices(
     extensionSpawnGate.resolve();
   }
 
-  const { runtime: autoUpdateRuntime, disabled: autoUpdateDisabled } = maybeStartAutoUpdateRuntime({
+  // Extension registries: ONE air-gap switch (the LLM router's `enforce_air_gap`), read per call from
+  // the router's boot-resolved config; it does not track a later config or policy change. The SAME
+  // object reaches the `registry.*` methods and the auto-update daemon.
+  const registryFetch: Omit<RegistryFetchDeps, "db"> = {
+    fetchFn: (url, init) => fetch(url, init),
+    enforceAirGap: () => llmRegistry.llmRouter.enforcesAirGap(),
+    now: Date.now,
+    // The compiled release binary counts as production even with NODE_ENV unset (it always is).
+    production: isProductionRuntime(),
+  };
+  const autoUpdateRuntime = maybeStartAutoUpdateRuntime({
     db,
     vault,
     paths,
     connectorMesh,
     sidecarStops,
+    registryFetch,
   });
 
   rt?.startBackgroundJobs();
@@ -3696,21 +3705,13 @@ export async function assemblePlatformServices(
     demo: paths.demo === true,
     extensionsDir: paths.extensionsDir,
     extensionsRuntimeEnabled: extensionRuntimeEnabled,
-    // Extension registries: ONE air-gap switch (the LLM router's `enforce_air_gap`), read per call from
-    // the router's boot-resolved config; it does not track a later config or policy change.
-    registryFetch: {
-      fetchFn: (url, init) => fetch(url, init),
-      enforceAirGap: () => llmRegistry.llmRouter.enforcesAirGap(),
-      now: Date.now,
-      // The compiled release binary counts as production even with NODE_ENV unset (it always is).
-      production: isProductionRuntime(),
-    },
+    registryFetch,
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,
     connectorMesh,
     sandboxRunner,
     llmRegistry,
-    ...autoUpdateIpcOpts(autoUpdateRuntime, paths.configDir, autoUpdateDisabled),
+    ...autoUpdateIpcOpts(autoUpdateRuntime, paths.configDir, registryFetch.enforceAirGap()),
   };
   assignIfPresent(ipcOpts, "sessionMemoryStore", sessionMemoryStore);
   // Readiness is ALWAYS wired, even when there is no runtime at all: a client must be able to

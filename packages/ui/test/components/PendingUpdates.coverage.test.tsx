@@ -171,8 +171,8 @@ describe("PendingUpdates — listing", () => {
     expect(screen.getByRole("button", { name: "Update com.x.a to 1.1.0" })).toBe(
       screen.getByTestId("update-button-com.x.a"),
     );
-    // The needs-sync / signature-failed badges belong to unverified rows only.
-    expect(screen.queryByTestId("needs-sync-com.x.a")).toBeNull();
+    // The key-conflict / signature-failed badges belong to unverified rows only.
+    expect(screen.queryByTestId("key-conflict-com.x.a")).toBeNull();
     expect(screen.queryByTestId("signature-failed-com.x.a")).toBeNull();
   });
 

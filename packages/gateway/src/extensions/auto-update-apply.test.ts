@@ -3,12 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  applyDowngradeSwap,
-  applyUpgradeSwap,
-  downloadTarball,
-  verifyTarballSha256,
-} from "./auto-update-apply.ts";
+import { applyDowngradeSwap, applyUpgradeSwap, verifyTarballSha256 } from "./auto-update-apply.ts";
 import { holdingDir, pendingDir, prevVersionDir, prevVersionsDir } from "./version-store.ts";
 
 describe("verifyTarballSha256", () => {
@@ -27,55 +22,6 @@ describe("verifyTarballSha256", () => {
     const bytes = new TextEncoder().encode("hello");
     const upper = "2CF24DBA5FB0A30E26E83B2AC5B9E29E1B161E5C1FA7425E73043362938B9824";
     expect(await verifyTarballSha256(bytes, upper)).toBe(true);
-  });
-});
-
-describe("downloadTarball", () => {
-  it("returns the response bytes for a successful fetch", async () => {
-    const payload = new TextEncoder().encode("tarball");
-    const fakeFetch = async () =>
-      new Response(payload, { status: 200, headers: { "content-length": "7" } });
-    const bytes = await downloadTarball("https://r/x", {
-      fetcher: fakeFetch,
-      maxBytes: 1024,
-      signal: new AbortController().signal,
-    });
-    expect(bytes).toEqual(payload);
-  });
-
-  it("throws on non-2xx", async () => {
-    const fakeFetch = async () => new Response("nope", { status: 404 });
-    await expect(
-      downloadTarball("https://r/x", {
-        fetcher: fakeFetch,
-        maxBytes: 1024,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow(/404/);
-  });
-
-  it("rejects when content-length exceeds maxBytes", async () => {
-    const fakeFetch = async () =>
-      new Response(new Uint8Array(0), { status: 200, headers: { "content-length": "9999" } });
-    await expect(
-      downloadTarball("https://r/x", {
-        fetcher: fakeFetch,
-        maxBytes: 1024,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow(/too large/i);
-  });
-
-  it("rejects when streamed body exceeds maxBytes (no content-length)", async () => {
-    const big = new Uint8Array(2048);
-    const fakeFetch = async () => new Response(big, { status: 200 });
-    await expect(
-      downloadTarball("https://r/x", {
-        fetcher: fakeFetch,
-        maxBytes: 1024,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow(/too large/i);
   });
 });
 

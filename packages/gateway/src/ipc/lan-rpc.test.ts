@@ -205,14 +205,6 @@ describe("checkLanMethodAllowed", () => {
   });
 });
 
-describe("extension.sync over LAN", () => {
-  test("rejected by checkLanMethodAllowed (T2 PR 2 / I5)", () => {
-    expect(() =>
-      checkLanMethodAllowed("extension.sync", { peerId: "p", writeAllowed: true }),
-    ).toThrow(LanError);
-  });
-});
-
 describe("security namespace over LAN", () => {
   test("rejected by checkLanMethodAllowed regardless of grant-write (I5)", () => {
     expect(() =>
@@ -318,7 +310,7 @@ describe("federation over LAN (I5 + I17)", () => {
   });
 
   test("vault/data/extension remain forbidden over LAN", () => {
-    for (const m of ["vault.get", "data.export", "extension.sync"]) {
+    for (const m of ["vault.get", "data.export", "extension.install"]) {
       expect(() => checkLanMethodAllowed(m, peer)).toThrow(LanError);
     }
   });

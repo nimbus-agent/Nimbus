@@ -20,8 +20,8 @@ import type { PlatformPaths } from "./paths.ts";
  *   reach in time.
  * - `embeddingRuntime`: the embedding runtime downloads `Xenova/all-MiniLM-L6-v2` into
  *   `<dataDir>/models`, which for a demo gateway is the empty, throwaway demo data dir.
- * - `extensionsAutoUpdate`: the extension auto-update daemon polls a registry URL on its own
- *   interval, selected by `NIMBUS_EXTENSIONS_REGISTRY_URL`, not config.
+ * - `extensionsAutoUpdate`: the extension auto-update daemon polls every added registry on its
+ *   own interval; it is constructed on every boot the policy allows, not selected by config.
  * - `chatops`: a `[chatops]` bot opens an outbound Slack/Teams socket and posts. A demo config has
  *   no `[chatops]` section, but that is config, not construction — and the on-call push would
  *   post a demo page's headline through it.

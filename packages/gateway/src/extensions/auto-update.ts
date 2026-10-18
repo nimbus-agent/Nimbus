@@ -4,8 +4,7 @@ import { join } from "node:path";
 import semver from "semver";
 
 import type { AutoUpdateCache } from "./auto-update-cache.ts";
-import { diffPermissions } from "./auto-update-permissions-diff.ts";
-import type { AvailableUpdate, UpdateChannel, VerificationStatus } from "./auto-update-types.ts";
+import type { AvailableUpdate, InstalledExtensionManifestSlice } from "./auto-update-types.ts";
 import { DependencyConflictError, isDependencyConflictError } from "./dependency-errors.ts";
 import { resolveClosure } from "./dependency-graph.ts";
 import type {
@@ -14,64 +13,55 @@ import type {
   RegistryFetcher,
 } from "./dependency-types.ts";
 import { parseExtensionManifestJson } from "./manifest.ts";
-
-interface InstalledExtensionManifestSlice {
-  id: string;
-  version: string;
-  name?: string;
-  updateChannel: UpdateChannel;
-  publisher?: { id: string; key: string };
-  signature?: string;
-  permissions: {
-    network: string[];
-    filesystem: { read: string[]; write: string[] };
-  };
-  dependsOn?: Readonly<Record<string, string>>;
-}
+import type { ExtensionSource } from "./registry/registry-store.ts";
+import type {
+  CollectedRegistryUpdates,
+  InstalledRegistryRow,
+} from "./registry/registry-update-source.ts";
 
 export interface InstalledExtensionRow {
   id: string;
   version: string;
   install_path: string;
   enabled: number;
+  /** The registry the extension was installed from; absent for a local-path install. */
+  source?: ExtensionSource;
   manifest: InstalledExtensionManifestSlice;
-}
-
-export interface FetchLatestVersionResult {
-  version: string;
-  channel: UpdateChannel;
-}
-
-export interface FetchManifestResult {
-  manifest: InstalledExtensionManifestSlice & { signature: string; changelog?: string };
-  manifestRaw: Record<string, unknown>;
-  manifestHash: string;
-  entryHash: string;
-  tarballSha256: string;
-  tarballUrl: string;
-  tarballSizeBytes?: number;
 }
 
 export interface ExtensionAutoUpdaterOpts {
   cache: AutoUpdateCache;
   listInstalled: () => Promise<InstalledExtensionRow[]>;
-  fetchLatestVersion: (
-    id: string,
-    channel: UpdateChannel,
-    signal: AbortSignal,
-  ) => Promise<FetchLatestVersionResult | null>;
-  fetchManifest: (id: string, version: string, signal: AbortSignal) => Promise<FetchManifestResult>;
-  verifyManifestSignature: (manifest: object, pubkey: Uint8Array) => Promise<void>;
-  lookupPublisherKey: (publisherId: string) => Promise<Uint8Array | null>;
+  /**
+   * Detects updates for registry-sourced extensions, each against its OWN source registry
+   * (`registry/registry-update-source.ts`). The single air-gap switch lives in the registry fetch
+   * deps this closes over and is read per request, so a local registry still answers under
+   * air-gap while a remote one is refused.
+   */
+  collect: (rows: InstalledRegistryRow[], signal: AbortSignal) => Promise<CollectedRegistryUpdates>;
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
   intervalHours: number;
-  enforceAirGap: boolean;
   now: () => number;
   random: () => number;
-  solverRemoteFetchManifest?: (
-    id: string,
-    version: string,
-  ) => Promise<{ id: string; version: string; dependsOn?: Readonly<Record<string, string>> }>;
+  /** Told when recording one detection failed (e.g. its audit append); the tick carries on. */
+  onTickError?: (extensionId: string, error: unknown) => void;
+}
+
+/** The rows a tick polls: enabled, signed, and installed from a registry. A local-path install never is. */
+function registryRows(installed: readonly InstalledExtensionRow[]): InstalledRegistryRow[] {
+  const out: InstalledRegistryRow[] = [];
+  for (const r of installed) {
+    if (r.enabled !== 1 || r.source === undefined || r.manifest.publisher === undefined) continue;
+    out.push({
+      id: r.id,
+      version: r.version,
+      enabled: r.enabled,
+      source: r.source,
+      publisherId: r.manifest.publisher.id,
+      manifest: r.manifest,
+    });
+  }
+  return out;
 }
 
 function assertRootConstraintsSatisfied(
@@ -117,7 +107,6 @@ export class ExtensionAutoUpdater {
   start(): Promise<void> {
     // `Promise.try` keeps a throw from the injected `random` a rejection, as `async` did.
     return Promise.try(() => {
-      if (this.opts.enforceAirGap) return;
       if (this.running) return;
       this.running = true;
 
@@ -143,45 +132,83 @@ export class ExtensionAutoUpdater {
     return Promise.resolve();
   }
 
+  /**
+   * One tick: reads the CURRENT install table (so a registry added or removed at runtime is picked
+   * up on the next tick) and asks `collect` for the updates. A registry that fails is skipped by
+   * `collect` without blocking the others. After the tick, a cached update that was not re-reported
+   * is dropped unless its registry ERRORED this tick: a removed or re-pinned registry (which
+   * `collect` skips) or one that answered without that version no longer offers it (spec § 8.3),
+   * while a transient failure does not make an offer flap.
+   */
   async pollOnce(): Promise<void> {
     const installed = await this.opts.listInstalled();
-    for (const row of installed) {
-      if (row.enabled !== 1) continue;
-      if (row.manifest.publisher === undefined) continue;
+    const rows = registryRows(installed);
+    const collected: CollectedRegistryUpdates =
+      rows.length === 0
+        ? { updates: [], errors: [], dependsOn: new Map() }
+        : await this.opts.collect(rows, this.abort.signal);
+    for (const found of collected.updates) {
       try {
-        await this.pollOne(row, installed); // NOSONAR S9382: one registry round-trip per extension, kept serial (no burst at the remote registry) and each new detection appends to the audit chain in a deterministic order
-      } catch {
-        // Per-extension failure does not stop the loop.
+        await this.recordDetection(found, collected, installed); // NOSONAR S9382: each new detection appends to the audit chain in a deterministic order
+      } catch (e) {
+        // One failed audit append must not stop the rest of the tick from being cached.
+        this.opts.onTickError?.(found.id, e);
       }
     }
+    this.dropStaleOffers(collected);
   }
 
-  private computeVerificationStatus(
-    pubkey: Uint8Array | null,
-    manifestRaw: Record<string, unknown>,
-  ): Promise<{
-    verificationStatus: VerificationStatus;
-    publisherStatus: "verified" | "unverified";
-  }> {
-    if (pubkey === null) {
-      return Promise.resolve({ verificationStatus: "needs_sync", publisherStatus: "unverified" });
-    }
-    return this.opts
-      .verifyManifestSignature(manifestRaw, pubkey)
-      .then(() => ({ verificationStatus: "verified", publisherStatus: "verified" }) as const)
-      .catch(
-        () => ({ verificationStatus: "signature_failed", publisherStatus: "unverified" }) as const,
-      );
-  }
-
-  private async computeUpdateConflicts(
-    row: InstalledExtensionRow,
+  private async recordDetection(
+    found: AvailableUpdate,
+    collected: CollectedRegistryUpdates,
     installed: readonly InstalledExtensionRow[],
-    newManifest: InstalledExtensionManifestSlice,
+  ): Promise<void> {
+    const conflicts = await this.computeUpdateConflicts(
+      found.id,
+      found.toVersion,
+      collected.dependsOn.get(found.id),
+      installed,
+    );
+    const update: AvailableUpdate = {
+      ...found,
+      ...(conflicts !== undefined && conflicts.length > 0 ? { conflicts } : {}),
+    };
+    const isNew = this.opts.cache.isNewDetection(update);
+    this.opts.cache.upsert(update);
+    if (isNew) {
+      await this.opts.appendAudit("extension.autoUpdate.detected", {
+        id: update.id,
+        fromVersion: update.fromVersion,
+        toVersion: update.toVersion,
+        channel: update.channel,
+        source_registry: update.sourceRegistry,
+        verification_status: update.verificationStatus,
+      });
+    }
+  }
+
+  private dropStaleOffers(collected: CollectedRegistryUpdates): void {
+    // The cache holds one entry per extension id, so "re-reported" is: same id, same version.
+    const reported = new Map(collected.updates.map((u) => [u.id, u.toVersion]));
+    const errored = new Set(collected.errors.map((e) => e.registry));
+    for (const cached of this.opts.cache.list()) {
+      if (reported.get(cached.id) === cached.toVersion) continue;
+      if (errored.has(cached.sourceRegistry)) continue;
+      this.opts.cache.remove(cached.id);
+    }
+  }
+
+  /**
+   * Whether the bump fits the dependency graph of what is ALREADY installed. Nothing is fetched:
+   * a dependency is satisfied only by an installed version (spec § 8.6 step 8), so a new dependency
+   * that is not installed is reported as a conflict rather than resolved from a registry.
+   */
+  private async computeUpdateConflicts(
+    id: string,
     toVersion: string,
+    newDependsOn: Readonly<Record<string, string>> | undefined,
+    installed: readonly InstalledExtensionRow[],
   ): Promise<readonly DependencyConflict[] | undefined> {
-    const solverRemoteFetchManifest = this.opts.solverRemoteFetchManifest;
-    if (solverRemoteFetchManifest === undefined) return undefined;
     try {
       const installedMap = new Map<string, string>();
       const activeConstraints = new Map<string, Map<string, string>>();
@@ -193,60 +220,41 @@ export class ExtensionAutoUpdater {
           activeConstraints.set(r.id, new Map(Object.entries(r.manifest.dependsOn)));
         }
       }
-      installedMap.set(row.id, toVersion);
-      if (newManifest.dependsOn !== undefined && Object.keys(newManifest.dependsOn).length > 0) {
-        activeConstraints.set(row.id, new Map(Object.entries(newManifest.dependsOn)));
+      installedMap.set(id, toVersion);
+      if (newDependsOn !== undefined && Object.keys(newDependsOn).length > 0) {
+        activeConstraints.set(id, new Map(Object.entries(newDependsOn)));
       } else {
-        activeConstraints.delete(row.id);
+        activeConstraints.delete(id);
       }
 
-      const fetchLatestVersion = this.opts.fetchLatestVersion;
-      const abortSignal = this.abort.signal;
-
-      const fetcher: RegistryFetcher = {
-        listVersions: async (id: string): Promise<readonly string[]> => {
-          const installedVersion = installedMap.get(id);
-          if (installedVersion !== undefined) return [installedVersion];
-          const latest = await fetchLatestVersion(id, "stable", abortSignal);
-          return latest === null ? [] : [latest.version];
-        },
-        fetchManifest: async (id: string, version: string): Promise<ExtensionManifestForSolver> => {
-          if (id === row.id && version === toVersion) {
-            return {
-              id: row.id,
-              version: toVersion,
-              ...(newManifest.dependsOn === undefined ? {} : { dependsOn: newManifest.dependsOn }),
-            };
-          }
-          const installedVersion = installedMap.get(id);
-          if (installedVersion === version) {
-            const dir = dirById.get(id);
-            if (dir !== undefined) {
-              try {
-                const raw = await readFile(join(dir, "nimbus.extension.json"), "utf8");
-                const parsed = parseExtensionManifestJson(raw);
-                return {
-                  id: parsed.id,
-                  version: parsed.version,
-                  ...(parsed.dependsOn === undefined ? {} : { dependsOn: parsed.dependsOn }),
-                };
-              } catch {
-                // Fall through to remote fetch.
-              }
-            }
-          }
-          return await solverRemoteFetchManifest(id, version);
-        },
-      };
-
-      assertRootConstraintsSatisfied(row.id, toVersion, activeConstraints);
-
       const proposedManifest: ExtensionManifestForSolver = {
-        id: row.id,
+        id,
         version: toVersion,
-        ...(newManifest.dependsOn === undefined ? {} : { dependsOn: newManifest.dependsOn }),
+        ...(newDependsOn === undefined ? {} : { dependsOn: newDependsOn }),
+      };
+      const fetcher: RegistryFetcher = {
+        listVersions: (depId: string): Promise<readonly string[]> => {
+          const v = installedMap.get(depId);
+          return Promise.resolve(v === undefined ? [] : [v]);
+        },
+        fetchManifest: async (depId: string, version: string) => {
+          if (depId === id && version === toVersion) return proposedManifest;
+          const dir = dirById.get(depId);
+          if (dir === undefined || installedMap.get(depId) !== version) {
+            throw new Error(`${depId}@${version} is not installed`);
+          }
+          const parsed = parseExtensionManifestJson(
+            await readFile(join(dir, "nimbus.extension.json"), "utf8"),
+          );
+          return {
+            id: parsed.id,
+            version: parsed.version,
+            ...(parsed.dependsOn === undefined ? {} : { dependsOn: parsed.dependsOn }),
+          };
+        },
       };
 
+      assertRootConstraintsSatisfied(id, toVersion, activeConstraints);
       await resolveClosure(proposedManifest, fetcher, {
         installed: installedMap,
         activeConstraints,
@@ -256,72 +264,9 @@ export class ExtensionAutoUpdater {
       if (isDependencyConflictError(e)) {
         return [e.conflict];
       }
-      // OfflineDependencyResolutionError or other network/IO errors:
-      // leave conflicts undefined so the bump is still surfaced without conflict info.
+      // An unreadable installed manifest (or similar IO): the bump is still surfaced, with no
+      // conflict info.
       return undefined;
-    }
-  }
-
-  private async pollOne(
-    row: InstalledExtensionRow,
-    installed: readonly InstalledExtensionRow[],
-  ): Promise<void> {
-    const channel = row.manifest.updateChannel;
-    const latest = await this.opts.fetchLatestVersion(row.id, channel, this.abort.signal);
-    if (latest === null) return;
-    if (latest.version === row.version) return;
-
-    const manifestResult = await this.opts.fetchManifest(row.id, latest.version, this.abort.signal);
-    const newManifest = manifestResult.manifest;
-    const fromVersion = row.version;
-    const toVersion = newManifest.version;
-
-    const publisherId = newManifest.publisher?.id;
-    if (publisherId === undefined) return;
-    const pubkey = await this.opts.lookupPublisherKey(publisherId);
-
-    const { verificationStatus, publisherStatus } = await this.computeVerificationStatus(
-      pubkey,
-      manifestResult.manifestRaw,
-    );
-
-    const permissionDiff = diffPermissions(row.manifest.permissions, newManifest.permissions);
-
-    const conflicts = await this.computeUpdateConflicts(row, installed, newManifest, toVersion);
-
-    const update: AvailableUpdate = {
-      id: row.id,
-      displayName: newManifest.name ?? row.id,
-      fromVersion,
-      toVersion,
-      channel: newManifest.updateChannel,
-      changelog: newManifest.changelog ?? "",
-      publisherStatus,
-      manifestHash: manifestResult.manifestHash,
-      signatureB64: newManifest.signature,
-      entryHash: manifestResult.entryHash,
-      tarballSha256: manifestResult.tarballSha256,
-      tarballUrl: manifestResult.tarballUrl,
-      ...(manifestResult.tarballSizeBytes === undefined
-        ? {}
-        : { tarballSizeBytes: manifestResult.tarballSizeBytes }),
-      permissionDiff,
-      verificationStatus,
-      detectedAt: this.opts.now(),
-      ...(conflicts !== undefined && conflicts.length > 0 ? { conflicts } : {}),
-    };
-
-    const isNew = this.opts.cache.isNewDetection(update);
-    this.opts.cache.upsert(update);
-
-    if (isNew) {
-      await this.opts.appendAudit("extension.autoUpdate.detected", {
-        id: row.id,
-        fromVersion,
-        toVersion,
-        channel: newManifest.updateChannel,
-        verification_status: verificationStatus,
-      });
     }
   }
 }

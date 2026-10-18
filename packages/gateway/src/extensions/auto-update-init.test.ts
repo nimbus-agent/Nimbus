@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,7 +9,13 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
 import { createAutoUpdateRuntime } from "./auto-update-init.ts";
+import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
+import { publisherKeyFingerprint } from "./install-from-local.ts";
 import { writePublisherKey } from "./publisher-keys.ts";
+import { buildTestRegistry, resignIndex } from "./registry/__fixtures__/build-test-registry.ts";
+import { installFromRegistry } from "./registry/install-from-registry.ts";
+import type { RegistryFetchDeps } from "./registry/registry-fetch.ts";
+import { deleteRegistry, insertRegistry } from "./registry/registry-store.ts";
 import { upsertRunGrant } from "./run-grant-store.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 import { prevVersionDir } from "./version-store.ts";
@@ -24,15 +30,22 @@ function freshDb(): Database {
   return db;
 }
 
+/** Registry fetch deps with no network at all: a remote registry request fails loudly. */
+const NO_NETWORK: Omit<RegistryFetchDeps, "db"> = {
+  fetchFn: () => Promise.reject(new Error("no network in this test")),
+  enforceAirGap: () => false,
+  now: () => Date.now(),
+  production: false,
+};
+
 function baseOpts(db: Database, extensionsDir: string, dataDir: string) {
   return {
     db,
     vault: new MockVault(),
     extensionsDir,
     dataDir,
-    registryBaseUrl: "http://127.0.0.1:19999", // unreachable — tests that don't fetch return null
+    fetch: NO_NETWORK,
     intervalHours: 24,
-    enforceAirGap: false,
   };
 }
 
@@ -134,8 +147,7 @@ describe("auto-update-init: listInstalledRows branches", () => {
       baseOpts(db, join(tmpRoot, "extensions"), join(tmpRoot, "data")),
     );
 
-    // forcePoll calls pollOnce → listInstalledRows → mp === undefined → continue
-    // fetchLatestVersion would fail (no server), but the row is skipped before that.
+    // forcePoll calls pollOnce → listInstalledRows → mp === undefined → continue.
     await deps.forcePoll(); // should not throw
 
     // The row has no publisher anyway so cache stays empty — what matters is no crash.
@@ -161,7 +173,7 @@ describe("auto-update-init: listInstalledRows branches", () => {
     expect(deps.cache.list()).toHaveLength(0);
   });
 
-  it("lines 67/69/70: manifest WITH name+publisher+signature → all three fields present in InstalledRow", async () => {
+  it("a signed LOCAL-path install is never polled (no source registry), and no fetch is attempted", async () => {
     tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-allfields-"));
     const db = freshDb();
     const { pubkey, privkey } = generateEd25519Keypair();
@@ -180,15 +192,10 @@ describe("auto-update-init: listInstalledRows branches", () => {
       baseOpts(db, join(tmpRoot, "extensions"), join(tmpRoot, "data")),
     );
 
-    // pollOnce calls listInstalledRows; the ext has a publisher so it proceeds to
-    // fetchLatestVersion.  Because the registry URL is unreachable, the network call
-    // will throw / return null and the row is silently skipped — but listInstalledRows
-    // itself exercised the name/publisher/signature conditional spreads.
-    await deps.forcePoll(); // network error silently swallowed per-extension catch
-
-    // cache may or may not have entries depending on whether fetch throws or returns null.
-    // We just assert the function completed without unhandled exceptions.
-    expect(typeof deps.cache.list()).toBe("object");
+    // The row is signed but has no `source_registry`, so the daemon never hands it to `collect`;
+    // NO_NETWORK would reject any request, and forcePoll resolves.
+    await deps.forcePoll();
+    expect(deps.cache.list()).toHaveLength(0);
   });
 
   it("lines 80-82: malformed manifest JSON → row silently skipped (no throw)", async () => {
@@ -210,64 +217,6 @@ describe("auto-update-init: listInstalledRows branches", () => {
     // Should NOT throw; the catch silently skips the malformed row.
     await deps.forcePoll();
     expect(deps.cache.list()).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Describe: lookupPublisherKey branches (line 162: k ?? null)
-// ---------------------------------------------------------------------------
-
-describe("auto-update-init: lookupPublisherKey returns key vs null (line 162)", () => {
-  let tmpRoot: string;
-  afterEach(() => {
-    try {
-      if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true });
-    } catch {
-      // best-effort
-    }
-  });
-
-  it("returns null when vault has no key for publisherId", async () => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-nokey-"));
-    const db = freshDb();
-    const vault = new MockVault();
-    // No key written for "missing-pub".
-
-    // Verify indirectly: lookupPublisherKey is wired through the vault's readPublisherKey.
-    // Since vault has no key, readPublisherKey returns undefined → k ?? null → result is null.
-    const result = await vault.get("extension.publisher_key.missing-pub");
-    expect(result).toBeNull();
-
-    // Also confirm the runtime constructs without error and deps are wired.
-    const { deps } = createAutoUpdateRuntime({
-      db,
-      vault,
-      extensionsDir: join(tmpRoot, "extensions"),
-      dataDir: join(tmpRoot, "data"),
-      registryBaseUrl: "http://127.0.0.1:19999",
-      intervalHours: 24,
-      enforceAirGap: false,
-    });
-    // getInstalledVersion returns null for unknown id — confirms wiring.
-    expect(await deps.getInstalledVersion("missing-pub")).toBeNull();
-  });
-
-  it("returns the stored key when vault has one for publisherId", async () => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-haskey-"));
-    const vault = new MockVault();
-    const { pubkey } = generateEd25519Keypair();
-
-    // Write the publisher key into the vault.
-    await writePublisherKey(vault, "known-pub", pubkey);
-
-    // Confirm readPublisherKey returns the key (not null / undefined).
-    // The lookupPublisherKey closure returns `k ?? null` where k = readPublisherKey result.
-    const stored = await vault.get("extension.publisher_key.known-pub");
-    expect(stored).not.toBeNull();
-    // Decode and verify it matches (readPublisherKey decodes from base64).
-    const decoded = Buffer.from(stored as string, "base64");
-    expect(decoded).toHaveLength(32);
-    expect(Array.from(new Uint8Array(decoded))).toEqual(Array.from(pubkey));
   });
 });
 
@@ -362,289 +311,6 @@ describe("auto-update-init: getInstalledVersion and hasPrevVersion", () => {
 // Describe: fetchManifest mapping branches via fake HTTP server (lines 133,139,143,145,147)
 // ---------------------------------------------------------------------------
 
-describe("auto-update-init: fetchManifest mapping branches via fake registry", () => {
-  let server: ReturnType<typeof Bun.serve> | undefined;
-  let tmpRoot: string;
-
-  afterEach(async () => {
-    if (server !== undefined) {
-      await server.stop(true);
-      server = undefined;
-    }
-    try {
-      if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true });
-    } catch {
-      // best-effort
-    }
-  });
-
-  /**
-   * Build a minimal valid ExtensionManifest object that `parseExtensionManifestJson` accepts.
-   * The `signature` field is required when `publisher` is present.
-   */
-  function buildManifestPayload(opts: {
-    id: string;
-    version: string;
-    name?: string;
-    publisher?: { id: string; key: string };
-    signature?: string;
-    changelog?: string;
-    tarballSizeBytes?: number;
-  }): Record<string, unknown> {
-    const manifest: Record<string, unknown> = {
-      id: opts.id,
-      version: opts.version,
-      permissions: {},
-      updateChannel: "stable",
-    };
-    if (opts.name !== undefined) manifest["name"] = opts.name;
-    if (opts.publisher !== undefined) manifest["publisher"] = opts.publisher;
-    if (opts.signature !== undefined) manifest["signature"] = opts.signature;
-    if (opts.changelog !== undefined) manifest["changelog"] = opts.changelog;
-
-    const response: Record<string, unknown> = {
-      manifest,
-      manifestRaw: manifest,
-      manifestHash: "a".repeat(64),
-      entryHash: "b".repeat(64),
-      tarballSha256: "f".repeat(64),
-      tarballUrl: "http://127.0.0.1:19997/tarball.tgz",
-    };
-    if (opts.tarballSizeBytes !== undefined) {
-      response["tarballSizeBytes"] = opts.tarballSizeBytes;
-    }
-    return response;
-  }
-
-  it("line 133: sig fallback to '' when manifest has no signature field (unsigned extension)", async () => {
-    // An unsigned manifest (no publisher/signature) parsed by the registry client
-    // will have manifest.signature === undefined, so `m.signature ?? ""` hits the "" branch.
-    tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-nosig-"));
-    const db = freshDb();
-    const { pubkey } = generateEd25519Keypair();
-    const extDir = join(tmpRoot, "ext-nosig");
-
-    // Stage installed ext with publisher so pollOnce proceeds past the publisher check.
-    // manifest on disk has publisher (needed for pollOne to proceed), but the REGISTRY
-    // response returns NO signature — testing the `sig = m.signature ?? ""` branch.
-    await stageExtension({
-      db,
-      dir: extDir,
-      id: "ext.nosig",
-      publisherId: "pub-nosig",
-      pubkey,
-    });
-
-    const { pubkey: pub2 } = generateEd25519Keypair();
-
-    // Build a registry response with a manifest that has NO signature.
-    // BUT parseExtensionManifestJson requires publisher+signature together or neither.
-    // So the registry manifest must either have both or neither.
-    // Test the "neither" case (no publisher, no signature).
-    const registryManifestResponse = buildManifestPayload({
-      id: "ext.nosig",
-      version: "1.1.0",
-      // no signature → m.signature === undefined → sig = m.signature ?? "" = ""
-    });
-
-    const latestResponse = JSON.stringify({ version: "1.1.0", channel: "stable" });
-    const manifestResponse = JSON.stringify(registryManifestResponse);
-
-    server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname.includes("/latest")) {
-          return new Response(latestResponse, {
-            headers: { "content-type": "application/json" },
-          });
-        }
-        if (url.pathname.includes("/manifest")) {
-          return new Response(manifestResponse, {
-            headers: { "content-type": "application/json" },
-          });
-        }
-        return new Response("not found", { status: 404 });
-      },
-    });
-
-    const port = (server as { port: number }).port;
-    const registryBaseUrl = `http://127.0.0.1:${String(port)}`;
-
-    const vault = new MockVault();
-    // Write a fake publisher key so lookupPublisherKey returns a key (not null).
-    await writePublisherKey(vault, "pub-nosig", pub2);
-
-    const runtime = createAutoUpdateRuntime({
-      db,
-      vault,
-      extensionsDir: join(tmpRoot, "extensions"),
-      dataDir: join(tmpRoot, "data"),
-      registryBaseUrl,
-      intervalHours: 24,
-      enforceAirGap: false,
-    });
-
-    // Drive through pollOnce. The fetchManifest mapping closure runs the
-    // `sig = m.signature ?? ""` fallback (registry manifest has no signature).
-    // pollOne then returns early because the new manifest carries no publisher,
-    // so NO available-update is cached — assert exactly that observable outcome.
-    await runtime.daemon.pollOnce();
-    expect(runtime.deps.cache.list()).toHaveLength(0);
-  });
-
-  it("lines 139/143/145/147: tarballSizeBytes/name/publisher/changelog present → all spread branches hit", async () => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-allspreads-"));
-    const db = freshDb();
-    const { pubkey, privkey } = generateEd25519Keypair();
-    const extDir = join(tmpRoot, "ext-spreads");
-
-    await stageExtension({
-      db,
-      dir: extDir,
-      id: "ext.spreads",
-      publisherId: "pub-spreads",
-      pubkey,
-      privkey,
-    });
-
-    // Registry manifest WITH publisher+signature, name, changelog, AND tarballSizeBytes.
-    // signManifest needs the exact manifest fields; use a pre-computed fake valid sig.
-    const fakeSig = `${"B".repeat(86)}==`;
-    const fakeKey = encodeBase64(pubkey);
-
-    const registryManifestResponse = buildManifestPayload({
-      id: "ext.spreads",
-      version: "1.1.0",
-      name: "Spreads Extension",
-      publisher: { id: "pub-spreads", key: fakeKey },
-      signature: fakeSig,
-      changelog: "Bug fixes and improvements.",
-      tarballSizeBytes: 12345,
-    });
-
-    const latestResponse = JSON.stringify({ version: "1.1.0", channel: "stable" });
-    const manifestResponse = JSON.stringify(registryManifestResponse);
-
-    server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname.includes("/latest")) {
-          return new Response(latestResponse, {
-            headers: { "content-type": "application/json" },
-          });
-        }
-        if (url.pathname.includes("/manifest")) {
-          return new Response(manifestResponse, {
-            headers: { "content-type": "application/json" },
-          });
-        }
-        return new Response("not found", { status: 404 });
-      },
-    });
-
-    const port = (server as { port: number }).port;
-    const registryBaseUrl = `http://127.0.0.1:${String(port)}`;
-
-    const vault = new MockVault();
-    await writePublisherKey(vault, "pub-spreads", pubkey);
-
-    const runtime = createAutoUpdateRuntime({
-      db,
-      vault,
-      extensionsDir: join(tmpRoot, "extensions"),
-      dataDir: join(tmpRoot, "data"),
-      registryBaseUrl,
-      intervalHours: 24,
-      enforceAirGap: false,
-    });
-
-    await runtime.daemon.pollOnce();
-
-    // An update should have been detected with the tarballSizeBytes, name, publisher, changelog
-    // having been spread in from the registry manifest. Either verified or signature_failed.
-    const cached = runtime.deps.cache.list();
-    expect(cached).toHaveLength(1);
-    const entry = cached[0];
-    expect(entry).toBeDefined();
-    // tarballSizeBytes was present → spread into the result
-    expect(entry?.tarballSizeBytes).toBe(12345);
-    // displayName comes from newManifest.name
-    expect(entry?.displayName).toBe("Spreads Extension");
-  });
-
-  it("lines 139: tarballSizeBytes absent → NOT spread into result", async () => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-nosizebytes-"));
-    const db = freshDb();
-    const { pubkey, privkey } = generateEd25519Keypair();
-    const extDir = join(tmpRoot, "ext-nosizebytes");
-
-    await stageExtension({
-      db,
-      dir: extDir,
-      id: "ext.nosizebytes",
-      publisherId: "pub-nsb",
-      pubkey,
-      privkey,
-    });
-
-    const fakeSig = `${"B".repeat(86)}==`;
-    const fakeKey = encodeBase64(pubkey);
-
-    // No tarballSizeBytes in response → spread hits the empty `{}` branch.
-    const registryManifestResponse = buildManifestPayload({
-      id: "ext.nosizebytes",
-      version: "1.1.0",
-      publisher: { id: "pub-nsb", key: fakeKey },
-      signature: fakeSig,
-      // no tarballSizeBytes
-    });
-
-    const latestResponse = JSON.stringify({ version: "1.1.0", channel: "stable" });
-    const manifestResponse = JSON.stringify(registryManifestResponse);
-
-    server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname.includes("/latest")) {
-          return new Response(latestResponse, {
-            headers: { "content-type": "application/json" },
-          });
-        }
-        if (url.pathname.includes("/manifest")) {
-          return new Response(manifestResponse, {
-            headers: { "content-type": "application/json" },
-          });
-        }
-        return new Response("not found", { status: 404 });
-      },
-    });
-
-    const port = (server as { port: number }).port;
-    const vault = new MockVault();
-    await writePublisherKey(vault, "pub-nsb", pubkey);
-
-    const runtime = createAutoUpdateRuntime({
-      db,
-      vault,
-      extensionsDir: join(tmpRoot, "extensions"),
-      dataDir: join(tmpRoot, "data"),
-      registryBaseUrl: `http://127.0.0.1:${String(port)}`,
-      intervalHours: 24,
-      enforceAirGap: false,
-    });
-
-    await runtime.daemon.pollOnce();
-
-    const cached = runtime.deps.cache.list();
-    expect(cached).toHaveLength(1);
-    const entry = cached[0];
-    expect(entry?.tarballSizeBytes).toBeUndefined();
-  });
-});
-
 describe("auto-update-init: hasRunGrant (extension runtime PR 3)", () => {
   let tmpRoot: string;
   afterEach(() => {
@@ -674,5 +340,189 @@ describe("auto-update-init: hasRunGrant (extension runtime PR 3)", () => {
     });
     expect(await deps.hasRunGrant?.("com.example.g")).toBe(true);
     db.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Describe: detect and apply against a real (local-folder) signed registry
+// ---------------------------------------------------------------------------
+
+describe("auto-update-init: registry-sourced detect and apply", () => {
+  const ID = "com.example.tool";
+  let tmpRoot: string;
+  let db: Database;
+  afterEach(() => {
+    db.close();
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  /** Installs 1.0.0 from a local registry that also carries 1.2.0, and builds the runtime. */
+  async function installedFromRegistry() {
+    tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-reg-"));
+    db = freshDb();
+    const regDir = join(tmpRoot, "registry");
+    const extensionsDir = join(tmpRoot, "extensions");
+    const reg = await buildTestRegistry(regDir, {
+      id: ID,
+      versions: [{ version: "1.0.0" }, { version: "1.2.0" }],
+    });
+    insertRegistry(db, {
+      name: "main",
+      url: regDir,
+      rootKey: reg.rootKey,
+      rootFingerprint: publisherKeyFingerprint(reg.rootKey),
+      lastSequence: 0,
+      lastGeneratedAt: "2026-10-01T00:00:00Z",
+      addedAt: 1,
+    });
+    const vault = new MockVault();
+    await installFromRegistry(
+      { db, extensionsDir, vault, fetch: NO_NETWORK, approve: async () => true },
+      { id: ID, version: "1.0.0" },
+    );
+    const runtime = createAutoUpdateRuntime({
+      ...baseOpts(db, extensionsDir, join(tmpRoot, "data")),
+      vault,
+    });
+    return { runtime, regDir, extensionsDir, vault };
+  }
+
+  function installedVersion(): string {
+    return (db.query("SELECT version FROM extension WHERE id = ?").get(ID) as { version: string })
+      .version;
+  }
+
+  it("detects the newer version and applies a real signed upgrade end to end", async () => {
+    const { runtime, extensionsDir } = await installedFromRegistry();
+    const before = db.query("SELECT tree_digest FROM extension WHERE id = ?").get(ID) as {
+      tree_digest: string;
+    };
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    expect(cached).toMatchObject({
+      fromVersion: "1.0.0",
+      toVersion: "1.2.0",
+      sourceRegistry: "main",
+      verificationStatus: "verified",
+    });
+    if (cached === undefined) throw new Error("no update detected");
+
+    await runtime.deps.performUpgrade(cached);
+
+    const row = db.query("SELECT version, tree_digest FROM extension WHERE id = ?").get(ID) as {
+      version: string;
+      tree_digest: string;
+    };
+    expect(row.version).toBe("1.2.0");
+    // A new tree digest is what leaves any I43 run grant stale: the owner must re-approve.
+    expect(row.tree_digest).not.toBe(before.tree_digest);
+    expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.2.0");
+  });
+
+  it("apply refuses a package whose sha differs from the one the index signed", async () => {
+    const { runtime, regDir, extensionsDir } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    if (cached === undefined) throw new Error("no update detected");
+    // The registry now serves different package bytes under the same signed index.
+    writeFileSync(join(regDir, "extensions", ID, "1.2.0", "package.tgz"), "tampered");
+
+    await expect(runtime.deps.performUpgrade(cached)).rejects.toThrow(/sha256_mismatch/);
+    expect(installedVersion()).toBe("1.0.0");
+    expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.0.0");
+  });
+
+  it("apply refuses when the re-fetched manifest signature fails, even for a cached 'verified' update", async () => {
+    const { runtime, regDir } = await installedFromRegistry();
+    // The registry re-publishes its versions with manifests that no longer verify.
+    await buildTestRegistry(regDir, {
+      id: ID,
+      versions: [{ version: "1.0.0" }, { version: "1.2.0" }],
+      badManifestSignature: true,
+    });
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    expect(cached?.verificationStatus).toBe("signature_failed");
+    if (cached === undefined) throw new Error("no update detected");
+    // Apply does not trust the cache: a status forged to "verified" is re-checked and refused.
+    await expect(
+      runtime.deps.performUpgrade({ ...cached, verificationStatus: "verified" }),
+    ).rejects.toThrow(/^signature_failed: .*ERR_REGISTRY_SIGNATURE_INVALID/);
+    expect(installedVersion()).toBe("1.0.0");
+  });
+
+  it("detect → remove the registry → next tick: the update is no longer offered", async () => {
+    const { runtime } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.get(ID)?.toVersion).toBe("1.2.0");
+    deleteRegistry(db, "main");
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.list()).toEqual([]);
+  });
+
+  it("detect → the registry errors on the next tick: the update is still offered", async () => {
+    const { runtime, regDir } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    rmSync(join(regDir, "index.json"));
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.get(ID)?.toVersion).toBe("1.2.0");
+  });
+
+  it("detect → the registry re-signs its index without that version: the update is dropped", async () => {
+    const { runtime, regDir } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    const indexPath = join(regDir, "index.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      sequence: number;
+      extensions: Record<string, { versions: Record<string, unknown> }>;
+    };
+    delete index.extensions[ID]?.versions["1.2.0"];
+    resignIndex(indexPath, { ...index, sequence: index.sequence + 1 });
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.list()).toEqual([]);
+  });
+
+  it("apply of an update whose source registry was removed is refused as source_registry_changed", async () => {
+    _resetAutoUpdateMutexForTests();
+    const { runtime } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    deleteRegistry(db, "main");
+    let asked = false;
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: ID, toVersion: "1.2.0" },
+      {
+        ...runtime.deps,
+        gate: async () => {
+          asked = true;
+          return "proceed" as const;
+        },
+      },
+    )) as { applied: boolean; reason?: string; hint?: string };
+    expect(res).toMatchObject({ applied: false, reason: "source_registry_changed" });
+    expect(res.hint).toContain("source registry main was removed or re-pinned");
+    expect(asked).toBe(false);
+    expect(installedVersion()).toBe("1.0.0");
+  });
+
+  it("performUpgrade on a stale entry fails as source_registry_changed, not a signature failure", async () => {
+    const { runtime } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    if (cached === undefined) throw new Error("no update detected");
+    deleteRegistry(db, "main");
+    await expect(runtime.deps.performUpgrade(cached)).rejects.toThrow(/^source_registry_changed: /);
+  });
+
+  it("apply refuses when the Vault has come to trust a different publisher key since detection", async () => {
+    const { runtime, vault } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    if (cached === undefined) throw new Error("no update detected");
+    await writePublisherKey(vault, "acme", generateEd25519Keypair().pubkey);
+    await expect(runtime.deps.performUpgrade(cached)).rejects.toThrow(
+      /^signature_failed: .*ERR_REGISTRY_PUBLISHER_KEY_CONFLICT/,
+    );
+    expect(installedVersion()).toBe("1.0.0");
   });
 });

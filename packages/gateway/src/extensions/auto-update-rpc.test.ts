@@ -17,8 +17,11 @@ function mkCache(): AutoUpdateCache {
     manifestHash: "d".repeat(64),
     signatureB64: "AA==",
     entryHash: "e".repeat(64),
-    tarballSha256: "f".repeat(64),
-    tarballUrl: "https://r/a.tar.gz",
+    packageSha256: "f".repeat(64),
+    packageSizeBytes: 100,
+    sourceRegistry: "main",
+    rootFingerprint: "c".repeat(32),
+    packagePath: "extensions/com.example.a/1.1.0/package.tgz",
     permissionDiff: {
       network: { added: ["b.com"], removed: [] },
       filesystem: {
@@ -95,18 +98,19 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     expect(res.reason).toBe("cache_miss");
   });
 
-  it("rejects publisher_key_missing", async () => {
+  it("rejects publisher_key_conflict, naming the source registry", async () => {
     const deps = baseDeps();
     const cur = deps.cache.get("com.example.a")!;
-    deps.cache.upsert({ ...cur, verificationStatus: "needs_sync" });
+    deps.cache.upsert({ ...cur, verificationStatus: "publisher_key_conflict" });
     const res = (await dispatchAutoUpdateRpc(
       "extension.update",
       { id: "com.example.a", toVersion: "1.1.0" },
       deps,
     )) as { applied: boolean; reason?: string; hint?: string };
     expect(res.applied).toBe(false);
-    expect(res.reason).toBe("publisher_key_missing");
-    expect(res.hint).toMatch(/nimbus extension sync/);
+    expect(res.reason).toBe("publisher_key_conflict");
+    expect(res.hint).toContain("registry main");
+    expect(res.hint).not.toMatch(/extension sync/);
   });
 
   it("rejects signature_failed", async () => {
@@ -156,7 +160,15 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
       deps,
     );
     const calls = (gate as unknown as { mock: { calls: Array<[unknown]> } }).mock.calls;
-    expect((calls[0]?.[0] as { type: string } | undefined)?.type).toBe("extension.autoUpdate");
+    const action = calls[0]?.[0] as { type: string; payload: Record<string, unknown> } | undefined;
+    expect(action?.type).toBe("extension.autoUpdate");
+    // The prompt names where the update comes from; no field is `*Key`-named (the executor
+    // would redact it to [REDACTED]).
+    expect(action?.payload).toMatchObject({
+      sourceRegistry: "main",
+      rootFingerprint: "c".repeat(32),
+    });
+    expect(Object.keys(action?.payload ?? {}).filter((k) => /key/i.test(k))).toEqual([]);
   });
 
   it("returns applied=false / reason=user_rejected when gate rejects", async () => {
@@ -200,17 +212,95 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     expect(res.applied).toBe(true);
   });
 
-  it("rejects pre-release version tag via InvalidVersionFormat", async () => {
+  it("refuses a forward update whose source registry is gone, before the gate", async () => {
+    const deps = baseDeps();
+    const gate = mock(async () => "proceed" as const);
+    deps.gate = gate;
+    deps.isSourceCurrent = async () => false;
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    )) as { applied: boolean; reason?: string; hint?: string };
+    expect(res).toMatchObject({ applied: false, reason: "source_registry_changed" });
+    expect(res.hint).toContain("source registry main was removed or re-pinned");
+    expect(gate).not.toHaveBeenCalled();
+  });
+
+  it("a downgrade from a cached _prev needs no source registry", async () => {
+    const deps = baseDeps();
+    deps.getInstalledVersion = async () => "1.1.0";
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, toVersion: "1.0.0", fromVersion: "1.1.0" });
+    deps.hasPrevVersion = async () => true;
+    deps.isSourceCurrent = async () => false;
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.0.0" },
+      deps,
+    )) as { applied: boolean };
+    expect(res.applied).toBe(true);
+  });
+
+  it("a cached update to a prerelease reaches the gate (SemVer 2.0.0, not x.y.z only)", async () => {
     const deps = baseDeps();
     const cur = deps.cache.get("com.example.a")!;
     deps.cache.upsert({ ...cur, toVersion: "1.1.0-beta.1" });
     deps.getInstalledVersion = async () => "1.0.0";
+    const gated: Array<{ type: string }> = [];
+    deps.gate = async (action) => {
+      gated.push(action);
+      return "proceed";
+    };
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0-beta.1" },
+      deps,
+    )) as { applied: boolean };
+    expect(gated.map((g) => g.type)).toEqual(["extension.autoUpdate"]);
+    expect(res.applied).toBe(true);
+  });
+
+  it("an installed prerelease updates to its release: 1.1.0-beta.1 -> 1.1.0 is an upgrade", async () => {
+    const deps = baseDeps();
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, fromVersion: "1.1.0-beta.1", toVersion: "1.1.0" });
+    deps.getInstalledVersion = async () => "1.1.0-beta.1";
+    const gated: Array<{ type: string }> = [];
+    deps.gate = async (action) => {
+      gated.push(action);
+      return "proceed";
+    };
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    )) as { applied: boolean };
+    expect(gated.map((g) => g.type)).toEqual(["extension.autoUpdate"]);
+    expect(res.applied).toBe(true);
+  });
+
+  it("a release -> its own prerelease is still a downgrade", async () => {
+    const deps = baseDeps();
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, fromVersion: "1.1.0", toVersion: "1.1.0-beta.1" });
+    deps.getInstalledVersion = async () => "1.1.0";
+    deps.hasPrevVersion = async () => false;
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0-beta.1" },
+      deps,
+    )) as { applied: boolean; reason?: string };
+    expect(res).toEqual({ applied: false, reason: "downgrade_unavailable" });
+  });
+
+  it("a version that is not strict SemVer is refused via InvalidVersionFormat", async () => {
+    const deps = baseDeps();
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, toVersion: "v1.1" });
+    deps.getInstalledVersion = async () => "1.0.0";
     await expect(
-      dispatchAutoUpdateRpc(
-        "extension.update",
-        { id: "com.example.a", toVersion: "1.1.0-beta.1" },
-        deps,
-      ),
+      dispatchAutoUpdateRpc("extension.update", { id: "com.example.a", toVersion: "v1.1" }, deps),
     ).rejects.toThrow(/unsupported version format/i);
   });
 
@@ -238,7 +328,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     await first;
   });
 
-  it("returns internal_error and audits failure when performUpgrade throws", async () => {
+  it("returns the failure phase and audits it when performUpgrade throws", async () => {
     const deps = baseDeps();
     const audits: Array<{ type: string; payload: Record<string, unknown> }> = [];
     deps.appendAudit = async (type, payload) => {
@@ -252,7 +342,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
       { id: "com.example.a", toVersion: "1.1.0" },
       deps,
     )) as { applied: boolean; reason?: string };
-    expect(res).toEqual({ applied: false, reason: "internal_error" });
+    expect(res).toEqual({ applied: false, reason: "sha256_mismatch" });
     expect(audits[0]?.type).toBe("extension.autoUpdate.failed");
     expect(audits[0]?.payload["phase"]).toBe("sha256_mismatch");
   });
@@ -290,7 +380,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
   });
 
   // lines 139-151: performDowngrade throws Error → extension.downgrade.failed audit
-  it("returns internal_error and audits extension.downgrade.failed when performDowngrade throws an Error", async () => {
+  it("returns the failure phase and audits extension.downgrade.failed when performDowngrade throws an Error", async () => {
     const deps = baseDeps();
     deps.getInstalledVersion = async () => "1.1.0";
     const cur = deps.cache.get("com.example.a")!;
@@ -308,7 +398,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
       { id: "com.example.a", toVersion: "1.0.0" },
       deps,
     )) as { applied: boolean; reason?: string };
-    expect(res).toEqual({ applied: false, reason: "internal_error" });
+    expect(res).toEqual({ applied: false, reason: "swap_failed" });
     expect(audits[0]?.type).toBe("extension.downgrade.failed");
     expect(audits[0]?.payload["phase"]).toBe("swap_failed");
     expect(audits[0]?.payload["id"]).toBe("com.example.a");
@@ -343,6 +433,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     ["package_hash_unreadable: manifest missing", "package_hash_unreadable"],
     ["signature_failed verification", "signature_failed"],
     ["swap_failed on disk", "swap_failed"],
+    ["downgrade_unavailable", "downgrade_unavailable"],
     ["download timeout exceeded", "download_failed"],
     ["extract tarball failed", "extract_failed"],
     ["something completely unexpected", "internal_error"],
@@ -355,12 +446,14 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     deps.performUpgrade = async () => {
       throw new Error(message);
     };
-    await dispatchAutoUpdateRpc(
+    const res = (await dispatchAutoUpdateRpc(
       "extension.update",
       { id: "com.example.a", toVersion: "1.1.0" },
       deps,
-    );
+    )) as { reason?: string };
     expect(audits[0]?.payload["phase"]).toBe(phase);
+    // The owner is told the same phase the audit row records.
+    expect(res.reason).toBe(phase);
   });
 
   // Happy path audit: upgrade applied emits extension.autoUpdate.applied

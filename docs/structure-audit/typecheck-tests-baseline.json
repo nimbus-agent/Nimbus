@@ -15,9 +15,6 @@
     "packages/gateway/test/e2e/scenarios/decisions.e2e.test.ts": {
       "TS2353": 1
     },
-    "packages/gateway/test/e2e/scenarios/extension-auto-update.e2e.test.ts": {
-      "TS2314": 1
-    },
     "packages/gateway/test/e2e/scenarios/obsidian-indexer.e2e.test.ts": {
       "TS2345": 1
     },
@@ -223,9 +220,6 @@
       "TS2741": 1
     },
     "packages/gateway/test/integration/extensions/auto-update-roundtrip.test.ts": {
-      "TS2314": 1
-    },
-    "packages/gateway/test/integration/extensions/sync-with-mock-registry.test.ts": {
       "TS2314": 1
     },
     "packages/gateway/test/integration/http/deployments-post-route.test.ts": {

@@ -37,7 +37,6 @@ import type { EmbeddingReadiness } from "../../embedding/embedding-readiness.ts"
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { AutoUpdateCache } from "../../extensions/auto-update-cache.ts";
 import type { AvailableUpdate } from "../../extensions/auto-update-types.ts";
-import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
 import { InMemoryDiscoveryProvider } from "../../federation/discovery.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
 import { PeerPairing } from "../../federation/peer-pairing.ts";
@@ -547,20 +546,11 @@ describe("connector.* — forwarded notify and connector mesh", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Extensions: mesh, publisher-key fetcher, air-gap flag, and the auto-update HITL gate
+// Extensions: mesh and the auto-update HITL gate
 // ---------------------------------------------------------------------------
 
 describe("watcher/workflow/extension — forwarded extension deps", () => {
   const session = {} as Parameters<typeof tryDispatchAutomationRpc>[2];
-
-  function fetcher(calls: string[]): PublisherKeyFetcher {
-    return {
-      fetch: (publisherId: string) => {
-        calls.push(publisherId);
-        return Promise.reject(new Error("no publisher should be fetched"));
-      },
-    };
-  }
 
   test("extension.disable stops the running extension client through the forwarded mesh", async () => {
     const index = freshIndex();
@@ -587,43 +577,13 @@ describe("watcher/workflow/extension — forwarded extension deps", () => {
     expect(stopped).toEqual(["ext.wiring"]);
   });
 
-  test("extension.sync uses the forwarded publisher-key fetcher (none installed → nothing fetched)", async () => {
-    const calls: string[] = [];
-    const { ctx } = harness({
-      localIndex: freshIndex(),
-      extensionsPublisherKeyFetcher: fetcher(calls),
-    });
-    expect(await tryDispatchAutomationRpc(ctx, "c1", session, "extension.sync", {})).toEqual({
-      publishersChecked: 0,
-      publishersUnchanged: 0,
-      publishersUpdated: [],
-      publishersEvicted: [],
-      failures: [],
-    });
-    expect(calls).toEqual([]);
-
-    // Negative control: without the fetcher the handler refuses rather than syncing.
-    const { ctx: unwired } = harness({ localIndex: freshIndex() });
-    const err = await rpcErrorOf(
-      tryDispatchAutomationRpc(unwired, "c1", session, "extension.sync", {}),
-    );
-    expect(err.rpcCode).toBe(-32603);
-    expect(err.message).toBe("Gateway is not configured with a publisher key fetcher");
-  });
-
-  test("extension.sync honours the forwarded air-gap flag and refuses", async () => {
-    const calls: string[] = [];
-    const { ctx } = harness({
-      localIndex: freshIndex(),
-      extensionsPublisherKeyFetcher: fetcher(calls),
-      extensionsEnforceAirGap: true,
-    });
+  test("extension.sync is gone: the automation dispatcher answers Method not found", async () => {
+    const { ctx } = harness({ localIndex: freshIndex() });
     const err = await rpcErrorOf(
       tryDispatchAutomationRpc(ctx, "c1", session, "extension.sync", {}),
     );
-    expect(err.rpcCode).toBe(-32603);
-    expect(err.message).toBe("air-gap is enforced; nimbus extension sync refused");
-    expect(calls).toEqual([]);
+    expect(err.rpcCode).toBe(-32601);
+    expect(err.message).toBe("Method not found: extension.sync");
   });
 
   function cachedUpdate(): AvailableUpdate {
@@ -638,8 +598,11 @@ describe("watcher/workflow/extension — forwarded extension deps", () => {
       manifestHash: "abcdef0123456789".repeat(4),
       signatureB64: "",
       entryHash: "e".repeat(64),
-      tarballSha256: "f".repeat(64),
-      tarballUrl: "https://registry.invalid/ext.auto-1.1.0.tgz",
+      packageSha256: "f".repeat(64),
+      packageSizeBytes: 100,
+      sourceRegistry: "main",
+      rootFingerprint: "c".repeat(32),
+      packagePath: "extensions/x/1.1.0/package.tgz",
       permissionDiff: {
         network: { added: [], removed: [] },
         filesystem: { read: { added: [], removed: [] }, write: { added: [], removed: [] } },

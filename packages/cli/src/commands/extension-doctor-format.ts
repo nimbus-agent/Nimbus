@@ -50,3 +50,54 @@ export function doctorExtensionsLines(raw: unknown): { lines: string[]; exit: nu
     exit: 1,
   };
 }
+
+/**
+ * `nimbus doctor`'s extension-registry lines, from a `registry.list` and an `extension.list`
+ * response: one `[warn]` naming installed extensions whose `source_registry` is no longer a
+ * configured registry (they keep running but get no further updates, spec § 8.3), and one per
+ * registry whose signed index is older than 30 days (the gateway's `stale` flag): a registry that
+ * stops publishing can hold back updates indefinitely, since an index never expires. Silent when
+ * no registry is configured and no installed extension came from one. Throws on a malformed
+ * response; the caller turns that into a `[warn]`.
+ */
+export function doctorRegistryLines(
+  registriesRaw: unknown,
+  extensionsRaw: unknown,
+): { lines: string[]; exit: number } {
+  if (!isRecord(registriesRaw) || !Array.isArray(registriesRaw["registries"])) {
+    throw new Error("malformed registry.list response from the gateway");
+  }
+  if (!isRecord(extensionsRaw) || !Array.isArray(extensionsRaw["extensions"])) {
+    throw new Error("malformed extension.list response from the gateway");
+  }
+  const registries = registriesRaw["registries"].filter(isRecord);
+  const configured = new Set(
+    registries.flatMap((r) => (typeof r["name"] === "string" ? [r["name"]] : [])),
+  );
+  const orphans = extensionsRaw["extensions"].flatMap((e: unknown) =>
+    isRecord(e) &&
+    typeof e["id"] === "string" &&
+    typeof e["source_registry"] === "string" &&
+    !configured.has(e["source_registry"])
+      ? [`${stripControl(e["id"])} from "${stripControl(e["source_registry"])}"`]
+      : [],
+  );
+  const lines: string[] = [];
+  if (orphans.length > 0) {
+    const shown = orphans.slice(0, MAX_LISTED).join(", ");
+    const more = orphans.length > MAX_LISTED ? `, +${orphans.length - MAX_LISTED} more` : "";
+    lines.push(
+      `[warn] Extension registries: ${orphans.length} installed extension(s) come from a registry that is no longer configured and will get no updates (${shown}${more}) — re-add it with nimbus registry add <name> <url>, or remove the extension`,
+    );
+  }
+  for (const r of registries) {
+    if (r["stale"] !== true || typeof r["name"] !== "string") continue;
+    const name = stripControl(r["name"]);
+    const generated =
+      typeof r["generatedAt"] === "string" ? stripControl(r["generatedAt"]) : "at an unknown time";
+    lines.push(
+      `[warn] Extension registries: the index of "${name}" was generated ${generated}, more than 30 days ago — nimbus registry refresh ${name}; a registry that stops publishing can hold back updates`,
+    );
+  }
+  return { lines, exit: lines.length > 0 ? 1 : 0 };
+}

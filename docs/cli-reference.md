@@ -3980,6 +3980,7 @@ nimbus doctor
 - On-call push: when `[oncall.push] enabled = true`, warns if your identity is unresolved (no incident could ever be selected); otherwise reports it enabled
 - Notifications: `[ok]` with the backend and `content` mode when OS notifications work; `[info]` when they are off by your choice (`[notifications] enabled = false`, `NIMBUS_NOTIFICATIONS=off`, a demo gateway) or the availability probe has not finished; `[warn]` with the reason when they should work and do not (an invalid `[notifications]` section, an unavailable backend, a platform with none). Silent against a gateway too old to serve `notifications.status`. See [`nimbus notifications`](#nimbus-notifications)
 - Extensions: `[warn]` naming installed extensions that have no run approval or an approval for older code (`nimbus extension approve <id>`); silent when there are none, when the gateway reports the extension runtime off, or on a gateway that predates run approvals. A gateway from before this release does not report whether the runtime is on, so with `[extensions] runtime = false` it can still warn. An extension that had model access is named again with `add --model to keep model access`
+- Extension registries: `[warn]` naming installed extensions whose source registry is no longer configured (they keep running but get no updates; `nimbus registry add` it again, or remove them), and one `[warn]` per registry whose signed index was generated more than 30 days ago (`nimbus registry refresh <name>`; an index never expires, so a registry that stops publishing can hold back updates). Silent when no registry is configured and no installed extension came from one, and on a gateway too old to serve `registry.list`
 - Per-connector health table
 - Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why. On macOS a passing line also names the full SQLite library it loaded through (`using full SQLite at <path>`), since that can be the bundled copy, `NIMBUS_SQLITE_PATH` or a Homebrew install
 
@@ -4399,7 +4400,7 @@ nimbus extension install com.example.notion
 nimbus extension install com.example.notion --registry main --channel beta
 ```
 
-**Installing from a registry.** If the argument is an existing path it is a local install exactly as above, and `--registry`, `--version` and `--channel` are refused with it. Otherwise it is an extension id, looked up in your registries: an id carried by more than one registry needs `--registry <name>` (`ERR_REGISTRY_AMBIGUOUS`; a registry is never chosen by priority). An argument that can only be a path (it contains a backslash, begins with a drive letter, `.`, `~` or `/`) but does not exist reports `no such file or directory` rather than being searched for as an id. The version is the newest on the `stable` channel; `--channel beta` takes the newest across stable and beta, and `--version <v>` is exact (its channel is recorded as the source channel).
+**Installing from a registry.** If the argument is an existing path it is a local install exactly as above, and `--registry`, `--version` and `--channel` are refused with it. Otherwise it is an extension id, looked up in your registries: an id carried by more than one registry needs `--registry <name>` (`ERR_REGISTRY_AMBIGUOUS`; a registry is never chosen by priority), and so does any bare id while one of your registries cannot be read or fails verification, since it might carry the same id (the error names each failed registry as `unreachable` or `failed verification: <code>`; when no registry could be read at all, the error is the verification code itself, or `ERR_REGISTRY_UNREACHABLE`). `nimbus extension search` is not affected: it lists what it found and names the registries it could not read. An argument that can only be a path (it contains a backslash, begins with a drive letter, `.`, `~` or `/`) but does not exist reports `no such file or directory` rather than being searched for as an id. The version is the newest on the `stable` channel; `--channel beta` takes the newest across stable and beta, and `--version <v>` is exact (its channel is recorded as the source channel).
 
 The gateway fetches the manifest and package, checks both against the SHA-256 hashes the signed index lists, checks that the manifest's publisher id and key are the ones the index lists, verifies the manifest's Ed25519 signature (I16) against that key, and refuses with `ERR_REGISTRY_PUBLISHER_KEY_CONFLICT` if the Vault already holds a different key for that publisher id. Only then does the `extension.install` approval prompt appear, now also naming the registry and its root-key fingerprint. An id that is already installed is refused (`ERR_REGISTRY_ALREADY_INSTALLED`; use `nimbus extension update <id>` or remove it first). An extension that declares `dependsOn` installs only when every dependency is already installed and satisfies it; nothing is fetched transitively. `--yes` and `--publisher-key` are refused for a registry install, which is always confirmed by the owner's approval prompt (answered interactively, or through `NIMBUS_SCRIPT_CONSENT_SOURCE` for scripted use). A registry install still does not run anything: `nimbus extension approve` is a separate step.
 
@@ -4484,7 +4485,7 @@ List installed extensions with their status (`enabled` / `disabled` / `disabled 
   com.example.notion@2.0.0 [signature: signature_failed]
 ```
 
-The four reasons are `publisher_key_missing`, `publisher_key_mismatch`, `signature_failed` and `signature_malformed`. Run `nimbus extension info <id>` for the remediation — the remedies differ (a key problem is fixed by `nimbus extension sync`; a signature problem is not). Separately, the `(unverified)` badge in the **Publisher** column means the manifest declares no publisher at all, which is the normal state of an unsigned extension and says nothing about verification having failed.
+The four reasons are `publisher_key_missing`, `publisher_key_mismatch`, `signature_failed` and `signature_malformed`. Run `nimbus extension info <id>` for the remediation — the remedies differ (a key problem is fixed by removing the extension and reinstalling it — from its path with `--publisher-key <path>` for a local install, or with `--registry <name>` for a registry-sourced one, whose registry supplies the key; a signature problem is not). Separately, the `(unverified)` badge in the **Publisher** column means the manifest declares no publisher at all, which is the normal state of an unsigned extension and says nothing about verification having failed.
 
 `--tree` — print an ASCII dependency forest of installed extensions with their forward-dep edges; cycle-safe; NO_COLOR-aware (T2 PR 4).
 
@@ -4506,8 +4507,10 @@ When the extension was hard-disabled by the startup signature check (I16), the `
 Enabled:   no  (signature verification failed: publisher_key_missing)
 …
 Extension com.example.notion v2.0.0 failed signature verification at startup (publisher_key_missing) and was disabled.
-No publisher key is cached for it. Re-fetch keys: nimbus extension sync — or reinstall with a key you already hold: nimbus extension install <path> --publisher-key <path>
+No publisher key is cached for it. Remove it and reinstall: nimbus extension remove com.example.notion, then reinstall it from its path with the publisher's key: nimbus extension install <path> --publisher-key <path>
 ```
+
+For an extension installed from a registry the reinstall line names that registry instead (`nimbus extension install com.example.notion --registry <name>`), since the registry supplies the publisher key and `--publisher-key` is refused there.
 
 ```bash
 nimbus extension info com.example.notion
@@ -4553,7 +4556,11 @@ nimbus extension remove nimbus-notion --yes --json
 
 ### `nimbus extension update [<id>] [--check] [--to <version>] [--json]`
 
-Apply a cached auto-update bump (T2 PR 3). Without an id, lists pending updates the daemon detected on its last poll; with `--check`, forces an immediate registry poll first. With an `<id>`, applies the cached bump for that extension after HITL consent (`extension.autoUpdate` for a forward bump, `extension.downgrade` for a backward one).
+Apply a cached auto-update bump (T2 PR 3). Without an id, lists pending updates the daemon detected on its last poll; with `--check`, forces an immediate poll first. With an `<id>`, applies the cached bump for that extension after HITL consent (`extension.autoUpdate` for a forward bump, `extension.downgrade` for a backward one).
+
+**Updates come only from an extension's own source registry.** The daemon (constructed on every boot unless `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE=1`) reads the current `nimbus registry` table on each tick, groups the registry-installed extensions by the registry they came from, fetches each registry's signed `index.json` once, and fetches a `manifest.json` only for an extension whose index shows a newer version on its channel (`stable`, or `stable` plus `beta` for an extension installed with `--channel beta`). It checks an extension only while that registry's root fingerprint is still the one it was installed under; a local-path install is never auto-updated, a removed registry yields nothing, and the same id in another registry is ignored. Each list row names the source registry (`from <registry>`). A row whose registry now names a different publisher key than the Vault trusts reads `publisher_key_conflict` with a `publisher key changed` marker, and applying it is refused (`reason: publisher_key_conflict`).
+
+The daemon only detects; applying is always the owner's `extension.autoUpdate` prompt, which shows the source registry and its root fingerprint. Apply re-verifies against the registry's current signed index (manifest hash, publisher key, I16 signature) and checks the package hash before anything is swapped. An applied update changes the extension's tree digest, so its run approval no longer matches: run `nimbus extension approve <id>` again before it runs. `[llm] enforce_air_gap` refuses remote registries here exactly as it does for install and search; a local-folder registry still works.
 
 ```bash
 nimbus extension update --check                       # force poll + list
@@ -4563,7 +4570,7 @@ nimbus extension update com.example.notion --to 1.0.0  # roll back to a cached _
 nimbus extension update com.example.notion --json
 ```
 
-Exit code is `0` on success, `1` on apply failure (with a stderr hint — e.g. `publisher_key_missing` directs the user to `nimbus extension sync`).
+Exit code is `0` on success, `1` on apply failure (with a stderr hint — e.g. `publisher_key_conflict` names the registry whose key changed).
 
 ---
 
@@ -4598,18 +4605,6 @@ Sign an extension manifest (`nimbus.extension.json`) in the specified directory 
 ```bash
 nimbus extension sign ./nimbus-my-connector
 nimbus extension sign ./nimbus-my-connector --key ./my-publisher-key
-```
-
----
-
-### `nimbus extension sync [--dry-run] [--json]`
-
-Poll the registry to check the status of installed publishers. Detects key rotations and revoked publishers, then triggers a re-verification of all installed extensions for affected publishers.
-
-```bash
-nimbus extension sync
-nimbus extension sync --dry-run
-nimbus extension sync --json
 ```
 
 ---
@@ -4649,10 +4644,10 @@ A registry is a static folder (or website) of signed extension packages. Two gro
 
 Gateway-backed commands (the gateway must be running). All four are CLI-only: refused over LAN and on a `--demo` root.
 
-- `add <name> <url> [--fingerprint <fp>]` fetches the registry's index, verifies it against its OWN root key, and then asks you, under the `registry.add` approval, to pin that root key. `<name>` is `[a-z0-9][a-z0-9-]*`, at most 32 characters; `<url>` is an `https://` URL, an `http://` loopback URL (non-production), or an absolute local folder path. The prompt shows the name, URL, root key fingerprint, extension count and index date. `--fingerprint` is a pin check, not a way to skip the prompt: pass the 32-hex fingerprint you got from the maintainer out of band and a mismatch refuses BEFORE you are asked (the gateway trims and lowercases it). Needs an interactive terminal; there is no `--yes` and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer the prompt. The index fetch is recorded in the egress ledger even if you then decline. A delegated approver can never answer this prompt.
+- `add <name> <url> [--fingerprint <fp>]` fetches the registry's index, verifies it against its OWN root key, and then asks you, under the `registry.add` approval, to pin that root key. `<name>` is `[a-z0-9][a-z0-9-]*`, at most 32 characters; `<url>` is an `https://` URL, an `http://` loopback URL (outside a production runtime: the compiled release binary, or NODE_ENV=production), or an absolute local folder path. The prompt shows the name, URL, root key fingerprint, extension count and index date. `--fingerprint` is a pin check, not a way to skip the prompt: pass the 32-hex fingerprint you got from the maintainer out of band and a mismatch refuses BEFORE you are asked (the gateway trims and lowercases it). Needs an interactive terminal; there is no `--yes` and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer the prompt. The index fetch is recorded in the egress ledger even if you then decline. A delegated approver can never answer this prompt.
 - `list [--json]` shows each registry's name, URL, fingerprint, last fetch and whether its index is stale (generated more than 30 days ago). Reads the local database only; no network.
 - `refresh [<name>] [--json]` re-fetches and re-verifies one registry, or all of them. Each result is reported separately and the exit code is `1` if any failed. A root key that changed, a bad signature or an older `sequence` than the last seen is refused and never re-pins.
-- `remove <name>` forgets the registry. Extensions already installed from it stay installed and keep running; they get no further updates, and the command names them. Needs no approval.
+- `remove <name>` forgets the registry. Extensions already installed from it stay installed and keep running; they get no further updates, and the command names them (so does `nimbus doctor`, until you add the registry again or remove them). Needs no approval.
 
 ```bash
 nimbus registry add main https://registry.example.com/nimbus --fingerprint 3f9a0c52b1d84e67a2c05f8e91b3d4a6
@@ -5404,7 +5399,6 @@ nimbus lan remove abc123
 | `NIMBUS_SQLITE_PATH` | **macOS only.** Path to a full `libsqlite3.dylib`. Checked first, ahead of the `libsqlite3.dylib` released builds ship beside the binaries and then the Homebrew prefixes (`/opt/homebrew/opt/sqlite/lib/`, then `/usr/local/opt/sqlite/lib/`). Bun links Apple's system SQLite on macOS, which has extension loading compiled out, so sqlite-vec — and therefore vector search, hybrid ranking and session-memory recall — needs one of these present; on a released install the bundled one always is, and this variable is an override rather than a requirement. Mainly useful on a dev checkout, where `process.execPath` is `bun` and no library sits beside it. Ignored on Linux and Windows, which use Bun's own full build. `nimbus doctor` reports the resolved state. |
 | `NIMBUS_UPDATER_URL` | Override the update manifest URL (default: official endpoint) |
 | `NIMBUS_UPDATER_DISABLE` | Set to `1` to disable all auto-update checks (any other value, `true` included, is ignored) |
-| `NIMBUS_EXTENSIONS_REGISTRY_URL` | Extension registry base URL; the auto-update polling daemon is only constructed when this is set |
 | `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` | Set to `1` to hard-disable the extension auto-update polling daemon at Gateway init |
 | `NIMBUS_LAN_PORT` | Override the LAN TCP listen port (default: `7475`) |
 | `NIMBUS_DEV_UPDATER_PUBLIC_KEY` | Override the embedded Ed25519 updater public key — for tests only |

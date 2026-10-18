@@ -11,7 +11,7 @@ import {
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
-import { writePublisherKey } from "../extensions/publisher-keys.ts";
+import { setExtensionSource } from "../extensions/registry/registry-store.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { generateEd25519Keypair } from "../extensions/verify-signature.ts";
 import { newestPrevVersion, prevVersionDir } from "../extensions/version-store.ts";
@@ -768,6 +768,30 @@ describe("extension.info — signature-disabled reason (I16)", () => {
     expect(Object.hasOwn(ext, "cachedUpdate")).toBe(true);
   });
 
+  test("the remediation follows the row's install source", async () => {
+    const db = seededDb();
+    seedExtensionRow(db, "com.example.local", "/p/local");
+    seedExtensionRow(db, "com.example.reg", "/p/reg");
+    setExtensionSource(db, "com.example.reg", {
+      registry: "main",
+      rootFingerprint: "FP",
+      channel: "stable",
+    });
+    signatureDisabledRegistry.mark("com.example.local", "publisher_key_missing");
+    signatureDisabledRegistry.mark("com.example.reg", "publisher_key_missing");
+    const messageFor = async (id: string): Promise<string | undefined> => {
+      const out = await dispatchAutomationRpc({ method: "extension.info", params: { id }, db });
+      return (out as { value: { message?: string } }).value.message;
+    };
+    const local = await messageFor("com.example.local");
+    expect(local).toContain("nimbus extension remove com.example.local");
+    expect(local).toContain("nimbus extension install <path> --publisher-key <path>");
+    const reg = await messageFor("com.example.reg");
+    expect(reg).toContain("nimbus extension remove com.example.reg");
+    expect(reg).toContain("nimbus extension install com.example.reg --registry main");
+    expect(reg).not.toContain("--publisher-key");
+  });
+
   test("an unaffected extension gets no message", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.ok", "/p/ok");
@@ -1115,70 +1139,12 @@ describe("extension.install", () => {
   });
 });
 
-describe("extension.sync", () => {
-  test("returns SyncResult with publishersChecked=1 when extension is signed", async () => {
+describe("extension.sync (removed)", () => {
+  test("is no longer an automation method", async () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     try {
-      const vault = new MockVault();
-      const { pubkey, privkey } = generateEd25519Keypair();
-      await writePublisherKey(vault, "test-pub", pubkey);
-      await stageSignedExtensionOnDisk({
-        db,
-        extensionsDir,
-        publisherId: "test-pub",
-        pubkey,
-        privkey,
-      });
-
-      const out = await dispatchAutomationRpc({
-        method: "extension.sync",
-        params: { dryRun: false },
-        db,
-        vault,
-        fetcher: { fetch: async () => ({ kind: "ok", pubkey }) },
-        enforceAirGap: false,
-      });
-      expect(out.kind).toBe("hit");
-      if (out.kind === "hit") {
-        expect(out.value).toMatchObject({
-          publishersChecked: 1,
-          publishersUnchanged: 1,
-        });
-      }
-    } finally {
-      rmSync(extensionsDir, { recursive: true, force: true });
-    }
-  });
-
-  test("rejects when vault is not provided", async () => {
-    const { db, extensionsDir } = setupFreshExtensionDb();
-    try {
-      await expect(
-        dispatchAutomationRpc({
-          method: "extension.sync",
-          params: {},
-          db,
-        }),
-      ).rejects.toThrow(AutomationRpcError);
-    } finally {
-      rmSync(extensionsDir, { recursive: true, force: true });
-    }
-  });
-
-  test("propagates AirGapEnforcementError when enforceAirGap=true", async () => {
-    const { db, extensionsDir } = setupFreshExtensionDb();
-    try {
-      const vault = new MockVault();
-      await expect(
-        dispatchAutomationRpc({
-          method: "extension.sync",
-          params: { dryRun: false },
-          db,
-          vault,
-          fetcher: { fetch: async () => ({ kind: "not_found" }) },
-          enforceAirGap: true,
-        }),
-      ).rejects.toThrow(AutomationRpcError);
+      const out = await dispatchAutomationRpc({ method: "extension.sync", params: {}, db });
+      expect(out.kind).toBe("miss");
     } finally {
       rmSync(extensionsDir, { recursive: true, force: true });
     }

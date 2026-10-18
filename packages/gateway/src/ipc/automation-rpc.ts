@@ -49,7 +49,6 @@ import {
   ExtensionInstallNotApprovedError,
   installExtensionFromLocalDirectory,
 } from "../extensions/install-from-local.ts";
-import type { PublisherKeyFetcher } from "../extensions/registry-client.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
 import {
   type ExtensionRunGrantRow,
@@ -57,7 +56,6 @@ import {
   listRunGrants,
 } from "../extensions/run-grant-store.ts";
 import { extensionRunFields } from "../extensions/run-state.ts";
-import { syncPublisherKeys } from "../extensions/sync.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
@@ -133,8 +131,6 @@ interface AutomationCtx {
   extensionsDir?: string;
   mesh?: AutomationRpcExtensionMeshHandle;
   vault?: NimbusVault;
-  fetcher?: PublisherKeyFetcher;
-  enforceAirGap?: boolean;
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
@@ -273,8 +269,6 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.approveRun": async (rec, ctx) => handleExtensionApproveRun(rec, ctx),
 
   "extension.revokeRun": async (rec, ctx) => handleExtensionRevokeRun(rec, ctx),
-
-  "extension.sync": async (rec, ctx) => handleExtensionSync(rec, ctx),
 
   "extension.checkForUpdates": async (rec, ctx) =>
     handleAutoUpdateRpc("extension.checkForUpdates", rec, ctx),
@@ -557,7 +551,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
           forwardDeps: fwd,
           reverseDeps: rev,
         },
-        message: signatureDisableMessage(row.id, row.version, signatureReason),
+        message: signatureDisableMessage(row.id, row.version, signatureReason, row.source_registry),
       },
     };
   }
@@ -618,32 +612,6 @@ function resolveExtensionInfoExtras(
   return { prevVersion, cachedUpdate: ctx.autoUpdate?.cache.get(row.id) ?? null };
 }
 
-async function handleExtensionSync(
-  rec: Record<string, unknown> | undefined,
-  ctx: AutomationCtx,
-): Promise<Hit> {
-  if (ctx.vault === undefined) {
-    throw new AutomationRpcError(-32603, "Gateway is not configured with a vault");
-  }
-  if (ctx.fetcher === undefined) {
-    throw new AutomationRpcError(-32603, "Gateway is not configured with a publisher key fetcher");
-  }
-  const dryRun = rec !== undefined && typeof rec["dryRun"] === "boolean" ? rec["dryRun"] : false;
-  try {
-    const result = await syncPublisherKeys({
-      vault: ctx.vault,
-      db: ctx.db,
-      fetcher: ctx.fetcher,
-      enforceAirGap: ctx.enforceAirGap ?? false,
-      dryRun,
-    });
-    return { kind: "hit", value: result as unknown as Record<string, unknown> };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new AutomationRpcError(-32603, msg);
-  }
-}
-
 async function handleExtensionInstall(
   rec: Record<string, unknown> | undefined,
   ctx: AutomationCtx,
@@ -670,8 +638,6 @@ async function handleExtensionInstall(
       extensionsDir: dir,
       sourcePath,
       ...(ctx.vault !== undefined && { vault: ctx.vault }),
-      ...(ctx.fetcher !== undefined && { fetcher: ctx.fetcher }),
-      ...(ctx.enforceAirGap !== undefined && { enforceAirGap: ctx.enforceAirGap }),
       ...(publisherKeyPath !== undefined && publisherKeyPath !== "" && { publisherKeyPath }),
       approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
     });
@@ -889,8 +855,6 @@ export async function dispatchAutomationRpc(options: {
   extensionsDir?: string;
   mesh?: AutomationRpcExtensionMeshHandle;
   vault?: NimbusVault;
-  fetcher?: PublisherKeyFetcher;
-  enforceAirGap?: boolean;
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
@@ -905,8 +869,6 @@ export async function dispatchAutomationRpc(options: {
     ...(options.extensionsDir !== undefined && { extensionsDir: options.extensionsDir }),
     ...(options.mesh !== undefined && { mesh: options.mesh }),
     ...(options.vault !== undefined && { vault: options.vault }),
-    ...(options.fetcher !== undefined && { fetcher: options.fetcher }),
-    ...(options.enforceAirGap !== undefined && { enforceAirGap: options.enforceAirGap }),
     ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
     ...(options.ownerGate !== undefined && { ownerGate: options.ownerGate }),
     ...(options.runGrantEnv !== undefined && { runGrantEnv: options.runGrantEnv }),

@@ -90,7 +90,8 @@ function isoTimestamp(o: Record<string, unknown>, key: string, what: string): st
 const SEMVER_RE =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
-function isValidSemver(v: string): boolean {
+/** Strict SemVer 2.0.0, the one rule the index and update apply share. */
+export function isValidSemver(v: string): boolean {
   return SEMVER_RE.test(v);
 }
 

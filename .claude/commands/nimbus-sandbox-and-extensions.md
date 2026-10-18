@@ -11,10 +11,12 @@ description: >
   lockoff); and the S3 extension runtime (install gate + tree digest V66, run grants V70
   `extension_run_grant` + the `extension.run` HITL type, invariant `I43` + `D33(a)–(c)`, the lazy
   `mesh:ext:<serviceId>` slot, the verified per-spawn copy, `approve --model`, `[extensions]
-  runtime`, run states, `ext_` service ids, `I16` signature verify). Use when touching
+  runtime`, run states, `ext_` service ids, `I16` signature verify; the Phase 9.5 registry client, `nimbus registry *`,
+  registry-sourced install and updates, invariant `I44`). Use when touching
   `packages/gateway/src/{extensions,platform/sandbox,connectors/lazy-mesh}/`, `nimbus connector add
   --mcp`, `nimbus connector tools|call`, `nimbus extension install|approve|revoke|rehash`, when a
-  sandbox test fails on one OS only, or when planning the Phase 9.5 marketplace registry.
+  sandbox test fails on one OS only, or when touching `extensions/registry/` or planning the rest of
+  the Phase 9.5 marketplace.
 ---
 
 # Nimbus — Sandbox, User MCP Servers & the Extension Runtime
@@ -30,8 +32,9 @@ Three kinds of code run in a Nimbus child process: the bundled first-party conne
 | Install integrity | `I16` | a `publisher` manifest's Ed25519 signature is verified at install AND every startup |
 | Run consent | `I43` / `D33(a)–(c)` | extension code runs only from a re-verified copy, under a live owner run grant |
 | Per-call consent | `I42` | every `mcp_*` / `ext_*` action is owner-approved at the executor gate; a delegate never approves |
+| Registry provenance | `I44` | registry-sourced code is installed/updated only through the verified chain, from its own source registry; ambiguity refused |
 
-Full rationale: `docs/SECURITY-INVARIANTS.md` (I1, I15, I16, I42, I43). Operator view: `docs/sandbox.md`. Design record: `docs/architecture.md` (Subsystem 4, "Extension run grants", "Extension runtime").
+Full rationale: `docs/SECURITY-INVARIANTS.md` (I1, I15, I16, I42, I43, I44). Operator view: `docs/sandbox.md`. Design record: `docs/architecture.md` (Subsystem 4, "Extension run grants", "Extension runtime").
 
 ## 1. The Sandbox Runner (I15 / D10)
 
@@ -141,7 +144,7 @@ Install and run are **different consents**. Install records what arrived; a run 
 - Compiled-form autoload of `<cwd>/bunfig.toml` / `.env` stays on (plain `bun build --compile`); for extensions the cwd is the digested stage.
 - The compiled self-role path is reasoned from a compiled probe, not exercised end to end; the dev-tree shape is (`packages/gateway/test/e2e/extension-runtime.e2e.test.ts`).
 - `ext_*` tools are not proposable on the I28 act door; sync, egress configured-ness and capture routing stay `mcp_`-only.
-- **Marketplace registry is Phase 9.5, in progress** (`docs/roadmap.md`): the signed-registry client shipped 2026-10-18 (PR 3 of 4). `nimbus registry add|list|refresh|remove` (V71 `extension_registry`, root key pinned, `registry.add` HITL TTY-only and never delegable), `nimbus extension search`, `extension info --registry/--remote`, `extension install <id> [--registry] [--version] [--channel beta]`; code in `extensions/registry/` (`registry-transport.ts`, `registry-fetch.ts` — the only `fetch(`, I29 `registry` class, D22(h) —, `registry-resolve.ts`, `install-from-registry.ts`, `registry-store.ts`) and `ipc/registry-rpc.ts`. A bare id in two registries is refused, never prioritised. Install verifies index, hashes, publisher key from the signed index, I16 signature, Vault conflict and entry hash BEFORE the `extension.install` prompt. The update daemon does NOT use registries yet (PR 4). Still on the legacy path until then — `extensions/registry-client.ts` (publisher-key fetch), `extensions/registry-fetcher.ts` (dependency solver), `extensions/publisher-keys.ts`, `extensions/auto-update*.ts`.
+- **Marketplace registry is Phase 9.5; its project 1 (registry protocol + client) is complete** (`docs/roadmap.md`): the signed-registry client shipped 2026-10-18 (PR 3), registry-sourced updates and invariant I44 the same day (PR 4). `nimbus registry add|list|refresh|remove` (V71 `extension_registry`, root key pinned, `registry.add` HITL TTY-only and never delegable), `nimbus extension search`, `extension info --registry/--remote`, `extension install <id> [--registry] [--version] [--channel beta]`; code in `extensions/registry/` (`registry-transport.ts`, `registry-fetch.ts` — the only `fetch(`, I29 `registry` class, D22(h) —, `registry-resolve.ts`, `install-from-registry.ts`, `registry-store.ts`) and `ipc/registry-rpc.ts`. A bare id in two registries is refused, never prioritised. Install verifies index, hashes, publisher key from the signed index, I16 signature, Vault conflict and entry hash BEFORE the `extension.install` prompt. The update daemon reads registries (PR 4): `registry/registry-update-source.ts` checks each registry-installed extension against its OWN source registry only (one index fetch per registry per tick, root fingerprint must be unchanged, local-path installs never polled); apply re-verifies against the current signed index before the swap and leaves the run grant stale (re-approve). The old HTTP registry client, `extension sync` and the publisher-key fetcher are deleted; a signed LOCAL install takes `--publisher-key` or a Vault-cached key, never a fetched one. I44 pins all of this (behavioural + chain-order source tests in `security-invariants.test.ts`); `nimbus doctor` warns about an extension whose source registry was removed and a registry whose index is older than 30 days; the dogfood scenario runs end to end in `packages/gateway/test/e2e/registry-acceptance.e2e.test.ts`. Not shipped: network publishing, a baked trust store, dependencies/packs, quality layer, ratings, catalog site.
 
 ## 4. Platform Traps (learned the hard way)
 
@@ -177,8 +180,9 @@ Install and run are **different consents**. Install records what arrived; a run 
 | `packages/gateway/src/connectors/{owner-code-server,user-mcp-store,user-mcp-registration,user-mcp-model-capability,registry}.ts` | I42 helpers + dispatcher check |
 | `packages/gateway/src/platform/spawn-capture.ts` · `scripts/audit/check-windows-console-hide.ts` | hidden spawns (D25, `audit:windows-console`) |
 | `scripts/structure-audit/check-nimbus-invariants.ts` | D10, D25, D33 |
-| `packages/gateway/src/security-invariants.test.ts` | I1 / I15 / I16 / I42 / I43 enforcement |
-| `packages/gateway/test/e2e/{extension-runtime,user-mcp}.e2e.test.ts` | real-gateway E2E |
+| `packages/gateway/src/extensions/registry/*` · `packages/gateway/src/ipc/registry-rpc.ts` | registry client (I44) |
+| `packages/gateway/src/security-invariants.test.ts` | I1 / I15 / I16 / I42 / I43 / I44 enforcement |
+| `packages/gateway/test/e2e/{extension-runtime,user-mcp,registry,registry-acceptance}.e2e.test.ts` | real-gateway E2E |
 
 ## 6. Checklist for Changing This Area
 

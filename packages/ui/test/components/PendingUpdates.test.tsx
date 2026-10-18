@@ -65,10 +65,10 @@ describe("PendingUpdates", () => {
     });
   });
 
-  it("disables Update + renders needs_sync badge when verification needs sync", async () => {
-    callMock.mockResolvedValue([sample({ verificationStatus: "needs_sync" })]);
+  it("disables Update + renders the key-conflict badge when the publisher key changed", async () => {
+    callMock.mockResolvedValue([sample({ verificationStatus: "publisher_key_conflict" })]);
     render(<PendingUpdates offline={false} />);
-    expect(await screen.findByTestId("needs-sync-com.x.a")).toBeInTheDocument();
+    expect(await screen.findByTestId("key-conflict-com.x.a")).toBeInTheDocument();
     expect(screen.getByTestId("update-button-com.x.a")).toBeDisabled();
   });
 
@@ -82,7 +82,7 @@ describe("PendingUpdates", () => {
   it("does not fire extension.update for an unverified row even if clicked programmatically", async () => {
     callMock.mockImplementation(async (method: string) => {
       if (method === "extension.checkForUpdates")
-        return [sample({ verificationStatus: "needs_sync" })];
+        return [sample({ verificationStatus: "publisher_key_conflict" })];
       throw new Error(`unexpected ${method}`);
     });
     render(<PendingUpdates offline={false} />);

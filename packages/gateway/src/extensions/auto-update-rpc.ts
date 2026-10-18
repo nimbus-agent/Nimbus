@@ -2,9 +2,11 @@ import type { AutoUpdateCache } from "./auto-update-cache.ts";
 import {
   ACTION_TYPE_AUTO_UPDATE,
   ACTION_TYPE_DOWNGRADE,
+  type AutoUpdateFailPhase,
   type AvailableUpdate,
   type UpdateApplyResult,
 } from "./auto-update-types.ts";
+import { isValidSemver } from "./registry/index-format.ts";
 
 interface PlannedAction {
   type: typeof ACTION_TYPE_AUTO_UPDATE | typeof ACTION_TYPE_DOWNGRADE;
@@ -27,6 +29,11 @@ export interface AutoUpdateRpcDeps {
    * leaves it stale and the prompt says so (`runGrantNote`). Absent ⇒ no note.
    */
   hasRunGrant?: (id: string) => Promise<boolean>;
+  /**
+   * Whether the update's source registry still exists with the root fingerprint it was detected
+   * under. Absent ⇒ not checked here (apply still re-checks it).
+   */
+  isSourceCurrent?: (cached: AvailableUpdate) => Promise<boolean>;
 }
 
 const mutex = new Map<string, Promise<void>>();
@@ -67,6 +74,9 @@ function buildUpdateAction(
       },
       manifestHash: cached.manifestHash,
       signatureB64: cached.signatureB64,
+      // Never `*Key`-named: the executor's prompt redacts such fields (`SENSITIVE_PAYLOAD_KEY`).
+      sourceRegistry: cached.sourceRegistry,
+      rootFingerprint: cached.rootFingerprint,
       ...(hasRunGrant && { runGrantNote: runGrantNoteFor(cached.id) }),
     },
   };
@@ -87,11 +97,11 @@ async function resolveUpdateTarget(
     return { applied: false, reason: "cache_miss" };
   }
 
-  if (cached.verificationStatus === "needs_sync") {
+  if (cached.verificationStatus === "publisher_key_conflict") {
     return {
       applied: false,
-      reason: "publisher_key_missing",
-      hint: "run `nimbus extension sync` to fetch the rotated publisher key",
+      reason: "publisher_key_conflict",
+      hint: `registry ${cached.sourceRegistry} names a different publisher key than the one this gateway trusts; the update is not applied`,
     };
   }
   if (cached.verificationStatus === "signature_failed") {
@@ -107,6 +117,15 @@ async function resolveUpdateTarget(
   }
 
   const isDowngrade = isStringSemverLess(toVersion, installed);
+  // A forward update comes only from its source registry (spec § 8.3): one removed or re-pinned
+  // since detection offers nothing, and saying so is clearer than a later signature failure.
+  if (!isDowngrade && deps.isSourceCurrent !== undefined && !(await deps.isSourceCurrent(cached))) {
+    return {
+      applied: false,
+      reason: "source_registry_changed",
+      hint: `source registry ${cached.sourceRegistry} was removed or re-pinned since this update was detected`,
+    };
+  }
   if (isDowngrade) {
     const ok = await deps.hasPrevVersion(id, toVersion);
     if (!ok) {
@@ -163,7 +182,8 @@ async function applyUpdateUnderMutex(
         message: e instanceof Error ? e.message : String(e),
       },
     );
-    return { applied: false, reason: "internal_error" };
+    // The owner sees the phase the audit row records (a tampered package is `sha256_mismatch`).
+    return { applied: false, reason: phase };
   } finally {
     mutex.delete(cached.id);
     releaseMutex();
@@ -208,40 +228,34 @@ export async function dispatchAutoUpdateRpc(
   throw new Error(`unknown method: ${method}`);
 }
 
-const STRICT_SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-
 export class InvalidVersionFormat extends Error {
   constructor(version: string) {
-    super(`unsupported version format: ${version} (expected strict x.y.z, no pre-release tags)`);
+    super(`unsupported version format: ${version} (expected strict SemVer 2.0.0)`);
     this.name = "InvalidVersionFormat";
   }
 }
 
+/** The index's own strict SemVer 2.0.0 rule (`registry/index-format.ts`), prerelease tags included. */
 export function assertStrictSemver(v: string): void {
-  if (!STRICT_SEMVER_RE.test(v)) throw new InvalidVersionFormat(v);
+  if (!isValidSemver(v)) throw new InvalidVersionFormat(v);
 }
 
+/** SemVer 2.0.0 precedence, so `1.1.0-beta.1` < `1.1.0` and a prerelease can be updated to or from. */
 function isStringSemverLess(a: string, b: string): boolean {
   assertStrictSemver(a);
   assertStrictSemver(b);
-  const pa = a.split(".").map((s) => Number.parseInt(s, 10));
-  const pb = b.split(".").map((s) => Number.parseInt(s, 10));
-  for (let i = 0; i < 3; i++) {
-    const ai = pa[i] ?? 0;
-    const bi = pb[i] ?? 0;
-    if (ai < bi) return true;
-    if (ai > bi) return false;
-  }
-  return false;
+  return Bun.semver.order(a, b) < 0;
 }
 
-function extractPhase(message: string): string {
+function extractPhase(message: string): AutoUpdateFailPhase | "internal_error" {
+  if (message.includes("source_registry_changed")) return "source_registry_changed";
   if (message.includes("sha256_mismatch")) return "sha256_mismatch";
   if (message.includes("package_hash_mismatch")) return "package_hash_mismatch";
   // An unreadable package is not a readable one with a wrong hash, so it gets its own phase.
   if (message.includes("package_hash_unreadable")) return "package_hash_unreadable";
   if (message.includes("signature_failed")) return "signature_failed";
   if (message.includes("swap_failed")) return "swap_failed";
+  if (message.includes("downgrade_unavailable")) return "downgrade_unavailable";
   if (message.includes("download")) return "download_failed";
   if (message.includes("extract")) return "extract_failed";
   return "internal_error";

@@ -5617,11 +5617,17 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     expect(src).toMatch(
       /if \(bootPolicy\.telemetryFlush\) \{\s*const telemetryStop = startTelemetryFlushScheduler\(/,
     );
-    // `extensionsAutoUpdate` is one of three ANDed preconditions (registry URL configured, not
-    // env-disabled), not a lone `if (bootPolicy.X)` — pin the exact conjunction, not just presence.
+    // `extensionsAutoUpdate` is one of two ANDed preconditions (not env-disabled), not a lone
+    // `if (bootPolicy.X)` — pin the exact conjunction, not just presence. The daemon is built ONCE.
     expect(src).toMatch(
-      /autoUpdateRegistryUrl !== "" &&\s*!autoUpdateDisabled &&\s*bootPolicyFor\(paths\)\.extensionsAutoUpdate\s*\) \{/,
+      /if \(!autoUpdateDisabled && bootPolicyFor\(paths\)\.extensionsAutoUpdate\) \{/,
     );
+    expect(src.match(/createAutoUpdateRuntime\(/g)?.length).toBe(1);
+    // One air-gap switch (spec § 8.8): the daemon and the `registry.*` IPC methods share the SAME
+    // registry fetch deps object, whose `enforceAirGap` is the LLM router's.
+    expect(src).toMatch(/fetch: registryFetch,/);
+    expect(src).toMatch(/^\s*registryFetch,$/m);
+    expect(src).toMatch(/enforceAirGap: \(\) => llmRegistry\.llmRouter\.enforcesAirGap\(\),/);
   });
 
   test("clause 6: a demo-rooted gateway runs no extension — the runtime predicate is false even with [extensions] runtime = true (negative control: real is true)", async () => {
@@ -6178,8 +6184,6 @@ describe("I43 — an installed extension's code runs only through the verified s
         ? {}
         : {
             vault,
-            fetcher: { fetch: async () => ({ kind: "not_found" as const }) },
-            enforceAirGap: false,
             publisherKeyPath,
           }),
     });
@@ -6513,5 +6517,373 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(src).toMatch(
       /const extensionSlots = extensionRuntimeEnabled\s*\?\s*createExtensionSlotSource\(/,
     );
+  });
+});
+
+describe("I44 — registry-sourced extension code arrives only through the verified chain, from its source registry", () => {
+  // Real local-folder registries built by the shared fixture, a real migrated database, the real
+  // installer and the real update runtime. A local registry makes no network request, so nothing
+  // here needs a fetcher; the remote transport is covered by registry-fetch's own tests.
+  const ID = "com.example.i44";
+  const NO_NETWORK = {
+    fetchFn: () => Promise.reject(new Error("no network in the I44 tests")),
+    enforceAirGap: () => false,
+    now: () => Date.now(),
+    production: false,
+  };
+  const roots: string[] = [];
+  const dbs: Database[] = [];
+  afterEach(() => {
+    for (const db of dbs.splice(0)) db.close();
+    for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
+  });
+
+  async function setup(registries: Record<string, string[]>) {
+    const { buildTestRegistry } = await import(
+      "./extensions/registry/__fixtures__/build-test-registry.ts"
+    );
+    const { insertRegistry } = await import("./extensions/registry/registry-store.ts");
+    const { publisherKeyFingerprint } = await import("./extensions/install-from-local.ts");
+    const { MockVault } = await import("./vault/mock.ts");
+    const root = mkdtempSync(join(tmpdir(), "nimbus-i44-"));
+    roots.push(root);
+    const db = new Database(":memory:");
+    dbs.push(db);
+    LocalIndex.ensureSchema(db);
+    const dirs = new Map<string, string>();
+    for (const [name, versions] of Object.entries(registries)) {
+      const dir = join(root, `registry-${name}`);
+      const built = await buildTestRegistry(dir, {
+        id: ID,
+        versions: versions.map((version) => ({ version })),
+      });
+      insertRegistry(db, {
+        name,
+        url: dir,
+        rootKey: built.rootKey,
+        rootFingerprint: publisherKeyFingerprint(built.rootKey),
+        lastSequence: 0,
+        lastGeneratedAt: "2026-10-01T00:00:00Z",
+        addedAt: 1,
+      });
+      dirs.set(name, dir);
+    }
+    const dirOf = (name: string): string => {
+      const d = dirs.get(name);
+      if (d === undefined) throw new Error(`no registry folder ${name}`);
+      return d;
+    };
+    return { db, root, dirOf, vault: new MockVault(), extensionsDir: join(root, "extensions") };
+  }
+
+  type Setup = Awaited<ReturnType<typeof setup>>;
+
+  async function install(s: Setup, req: { id: string; registry?: string; version?: string }) {
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    let asked = 0;
+    const result = installFromRegistry(
+      {
+        db: s.db,
+        extensionsDir: s.extensionsDir,
+        vault: s.vault,
+        fetch: NO_NETWORK,
+        approve: async () => {
+          asked++;
+          return true;
+        },
+      },
+      req,
+    );
+    return { result, asked: () => asked };
+  }
+
+  async function refusalOf(p: Promise<unknown>): Promise<string> {
+    const { RegistryError } = await import("./extensions/registry/registry-errors.ts");
+    const settled = await p.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(settled).toBeInstanceOf(RegistryError);
+    const e = settled as InstanceType<typeof RegistryError>;
+    // `<code> <message>`: a registry that fails verification surfaces its own verification code.
+    return `${e.code} ${e.message}`;
+  }
+
+  function installedIds(db: Database): string[] {
+    return (db.query("SELECT id FROM extension").all() as Array<{ id: string }>).map((r) => r.id);
+  }
+
+  function installedVersion(db: Database): string | undefined {
+    return (
+      db.query("SELECT version FROM extension WHERE id = ?").get(ID) as { version: string } | null
+    )?.version;
+  }
+
+  async function runtimeFor(s: Setup) {
+    const { createAutoUpdateRuntime } = await import("./extensions/auto-update-init.ts");
+    return createAutoUpdateRuntime({
+      db: s.db,
+      vault: s.vault,
+      extensionsDir: s.extensionsDir,
+      dataDir: join(s.root, "data"),
+      fetch: NO_NETWORK,
+      intervalHours: 24,
+    });
+  }
+
+  test("behavioural: an index edited without the root key's signature refuses the install; nothing is asked or installed", async () => {
+    const s = await setup({ main: ["1.0.0"] });
+    const indexPath = join(s.dirOf("main"), "index.json");
+    const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+      extensions: Record<string, { versions: Record<string, { packageSha256: string }> }>;
+    };
+    const v = index.extensions[ID]?.versions["1.0.0"];
+    if (v === undefined) throw new Error("fixture lacks 1.0.0");
+    v.packageSha256 = "0".repeat(64);
+    writeFileSync(indexPath, JSON.stringify(index));
+    const run = await install(s, { id: ID });
+    expect(await refusalOf(run.result)).toMatch(
+      /^ERR_REGISTRY_SIGNATURE_INVALID .*main: failed verification/,
+    );
+    expect(run.asked()).toBe(0);
+    expect(installedIds(s.db)).toEqual([]);
+  });
+
+  test("behavioural: a package byte the signed index does not cover refuses the install before the owner is asked", async () => {
+    const s = await setup({ main: ["1.0.0"] });
+    const pkg = join(s.dirOf("main"), "extensions", ID, "1.0.0", "package.tgz");
+    const bytes = new Uint8Array(await readFile(pkg));
+    bytes[bytes.length - 1] = (bytes.at(-1) ?? 0) ^ 0xff;
+    writeFileSync(pkg, bytes);
+    const run = await install(s, { id: ID });
+    expect(await refusalOf(run.result)).toMatch(/^ERR_REGISTRY_HASH_MISMATCH /);
+    expect(run.asked()).toBe(0);
+    expect(installedIds(s.db)).toEqual([]);
+  });
+
+  test("behavioural: a manifest byte the signed index does not cover refuses the install before the owner is asked", async () => {
+    const s = await setup({ main: ["1.0.0"] });
+    const manifest = join(s.dirOf("main"), "extensions", ID, "1.0.0", "manifest.json");
+    const bytes = new Uint8Array(await readFile(manifest));
+    // A byte inside the JSON (not the last, which could be a newline the parser ignores).
+    const at = Math.floor(bytes.length / 2);
+    bytes[at] = (bytes[at] ?? 0) ^ 0x01;
+    writeFileSync(manifest, bytes);
+    const run = await install(s, { id: ID });
+    expect(await refusalOf(run.result)).toMatch(/^ERR_REGISTRY_HASH_MISMATCH .*manifest/);
+    expect(run.asked()).toBe(0);
+    expect(installedIds(s.db)).toEqual([]);
+  });
+
+  test("behavioural: an index signed by a key other than the pinned root, or with a lower sequence, refuses", async () => {
+    const { getRegistry } = await import("./extensions/registry/registry-store.ts");
+    const { resignIndex } = await import(
+      "./extensions/registry/__fixtures__/build-test-registry.ts"
+    );
+    const s = await setup({ main: ["1.0.0"] });
+    // Pin a different root key than the one the folder is signed with: the pin is never replaced.
+    const other = encodeBase64(generateEd25519Keypair().pubkey);
+    s.db.run("UPDATE extension_registry SET root_key = ? WHERE name = 'main'", [other]);
+    expect(await refusalOf((await install(s, { id: ID })).result)).toMatch(
+      /^ERR_REGISTRY_ROOT_KEY_CHANGED .*main: failed verification/,
+    );
+    expect(getRegistry(s.db, "main")?.rootKey).toBe(other);
+    expect(installedIds(s.db)).toEqual([]);
+    // Anti-rollback: a sequence older than the last one seen refuses.
+    const s2 = await setup({ main: ["1.0.0"] });
+    s2.db.run("UPDATE extension_registry SET last_sequence = 5 WHERE name = 'main'");
+    const indexPath = join(s2.dirOf("main"), "index.json");
+    resignIndex(indexPath, {
+      ...(JSON.parse(await readFile(indexPath, "utf8")) as Record<string, unknown>),
+      sequence: 4,
+    });
+    expect(await refusalOf((await install(s2, { id: ID })).result)).toMatch(
+      /^ERR_REGISTRY_ROLLBACK .*main: failed verification/,
+    );
+    expect(installedIds(s2.db)).toEqual([]);
+  });
+
+  test("behavioural: a bare id carried by two registries is refused, never prioritised", async () => {
+    const { getExtensionSource } = await import("./extensions/registry/registry-store.ts");
+    const s = await setup({ alpha: ["1.0.0"], beta: ["1.0.0"] });
+    const run = await install(s, { id: ID });
+    expect(await refusalOf(run.result)).toMatch(/^ERR_REGISTRY_AMBIGUOUS .*alpha, beta/);
+    expect(run.asked()).toBe(0);
+    expect(installedIds(s.db)).toEqual([]);
+    // Naming the registry resolves it, and the install records THAT registry as the source.
+    await (await install(s, { id: ID, registry: "beta" })).result;
+    expect(getExtensionSource(s.db, ID)?.registry).toBe("beta");
+  });
+
+  test("behavioural: a bare id is refused while another registry cannot be read — never prioritised by reachability", async () => {
+    const { getExtensionSource } = await import("./extensions/registry/registry-store.ts");
+    const s = await setup({ alpha: ["1.0.0"], beta: ["1.0.0"] });
+    // beta carries the same id but cannot be reached this call; alpha alone would resolve it.
+    rmSync(s.dirOf("beta"), { recursive: true, force: true });
+    const run = await install(s, { id: ID });
+    expect(await refusalOf(run.result)).toMatch(
+      /^ERR_REGISTRY_AMBIGUOUS .*beta: unreachable.*--registry <name>/,
+    );
+    expect(run.asked()).toBe(0);
+    expect(installedIds(s.db)).toEqual([]);
+    // Naming the reachable registry is unaffected.
+    await (await install(s, { id: ID, registry: "alpha" })).result;
+    expect(getExtensionSource(s.db, ID)?.registry).toBe("alpha");
+  });
+
+  test("behavioural: a newer version in a registry that is not the source is never offered", async () => {
+    // Installed from `main` (1.0.0 only); `other` carries 9.0.0 of the same id under the same root key.
+    const { buildTestRegistry } = await import(
+      "./extensions/registry/__fixtures__/build-test-registry.ts"
+    );
+    const s = await setup({ main: ["1.0.0"], other: ["1.0.0", "9.0.0"] });
+    await (await install(s, { id: ID, registry: "main" })).result;
+    const runtime = await runtimeFor(s);
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.list()).toEqual([]);
+    // Positive control: the same runtime DOES offer a newer version the source itself publishes.
+    await buildTestRegistry(s.dirOf("main"), {
+      id: ID,
+      versions: [{ version: "1.0.0" }, { version: "2.0.0" }],
+    });
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.list().map((u) => [u.toVersion, u.sourceRegistry])).toEqual([
+      ["2.0.0", "main"],
+    ]);
+  });
+
+  test("behavioural: a source registry re-pinned after detection — apply refuses and the update is no longer offered", async () => {
+    const s = await setup({ main: ["1.0.0", "2.0.0"] });
+    await (await install(s, { id: ID, version: "1.0.0" })).result;
+    const runtime = await runtimeFor(s);
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    if (cached === undefined) throw new Error("no update detected");
+    // The same name now holds a different root fingerprint than the one the extension came from.
+    s.db.run("UPDATE extension_registry SET root_fingerprint = ? WHERE name = 'main'", [
+      "f".repeat(32),
+    ]);
+    const settled = await runtime.deps.performUpgrade(cached).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(settled).toBeInstanceOf(Error);
+    expect((settled as Error).message).toMatch(/^source_registry_changed: /);
+    expect(installedVersion(s.db)).toBe("1.0.0");
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.list()).toEqual([]);
+  });
+
+  test("source pin: install-from-registry resolves through verified indexes, checks the package hash and the I16 signature, then installs", async () => {
+    const src = stripComments(
+      await read("packages/gateway/src/extensions/registry/install-from-registry.ts"),
+    );
+    const fnAt = src.indexOf("export async function installFromRegistry(");
+    expect(fnAt).toBeGreaterThan(-1);
+    // Bounded at the next top-level export, so a later function cannot satisfy the order checks.
+    const nextExport = src.indexOf("\nexport ", fnAt + 1);
+    const body = src.slice(fnAt, nextExport === -1 ? undefined : nextExport);
+    const resolveAt = body.indexOf("await resolveRegistryEntry(");
+    const manifestAt = body.indexOf("await fetchRegistryManifest(");
+    const shaAt = body.search(
+      /sha256HexEqualConstantTime\(sha256Hex\(packageBytes\), vEntry\.packageSha256\)/,
+    );
+    const sigAt = body.indexOf("await verifyRegistryManifestSignature(");
+    const vaultAt = body.indexOf("await vaultPublisherKeyConflicts(");
+    const installAt = body.indexOf("await installExtensionFromLocalDirectory(");
+    for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, installAt]) {
+      expect(at).toBeGreaterThan(-1);
+    }
+    expect(manifestAt).toBeGreaterThan(resolveAt);
+    expect(installAt).toBeGreaterThan(Math.max(manifestAt, shaAt, sigAt, vaultAt));
+    // The installer is handed the INDEX's publisher key (via the fetched manifest), never another.
+    expect(body).toMatch(/const \{ manifest, publisherKey \} = fetched;/);
+    // Resolution reads only freshly VERIFIED indexes, and refuses ambiguity.
+    const resolver = stripComments(
+      await read("packages/gateway/src/extensions/registry/registry-resolve.ts"),
+    );
+    expect(resolver).toMatch(/targets\.map\(\(reg\) => fetchVerifiedIndex\(deps, reg\)\)/);
+    expect(resolver).toMatch(
+      /if \(carrying\.length > 1\) \{\s*throw new RegistryError\(\s*"ERR_REGISTRY_AMBIGUOUS"/,
+    );
+    // …and refuses a bare id while any configured registry failed this call (no reachability priority).
+    expect(resolver).toMatch(
+      /if \(registryName === undefined\) \{\s*throw new RegistryError\(\s*"ERR_REGISTRY_AMBIGUOUS"/,
+    );
+    expect(resolver.indexOf("if (read.failures.length > 0) {")).toBeGreaterThan(-1);
+    expect(resolver.indexOf("if (read.failures.length > 0) {")).toBeLessThan(
+      resolver.indexOf("const found = carrying[0];"),
+    );
+    // Verified = the pinned root key, then the non-decreasing sequence.
+    const fetchSrc = stripComments(
+      await read("packages/gateway/src/extensions/registry/registry-fetch.ts"),
+    );
+    const verifiedAt = fetchSrc.indexOf("export async function fetchVerifiedIndex(");
+    expect(verifiedAt).toBeGreaterThan(-1);
+    const verified = fetchSrc.slice(
+      verifiedAt,
+      fetchSrc.indexOf("export async function", verifiedAt + 1),
+    );
+    const pinnedAt = verified.indexOf("await verifyRegistryIndexPinned(index, reg.rootKey);");
+    const seqAt = verified.indexOf("if (index.sequence < reg.lastSequence)");
+    expect(pinnedAt).toBeGreaterThan(-1);
+    expect(seqAt).toBeGreaterThan(pinnedAt);
+    // The source columns are written by ONE production function, called from the registry installer only.
+    const files = await readDirFiles("packages/gateway/src");
+    const sourceWriters = files
+      .filter((f) => /UPDATE\s+extension\s+SET[^;]*\bsource_/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(sourceWriters).toEqual(["extensions/registry/registry-store.ts"]);
+    const setSourceCallers = files
+      .filter((f) => f.rel !== "extensions/registry/registry-store.ts")
+      .filter((f) => /\bsetExtensionSource\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(setSourceCallers).toEqual(["extensions/registry/install-from-registry.ts"]);
+  });
+
+  test("source pin: an update is detected from the source registry only, and apply re-verifies before the swap", async () => {
+    const detect = stripComments(
+      await read("packages/gateway/src/extensions/registry/registry-update-source.ts"),
+    );
+    expect(detect).toContain("const reg = getRegistry(deps.db, name);");
+    expect(detect).toContain("r.source.rootFingerprint === reg.rootFingerprint");
+    const orch = stripComments(
+      await read("packages/gateway/src/extensions/auto-update-orchestrate.ts"),
+    );
+    const upAt = orch.indexOf("export function createPerformUpgrade(");
+    expect(upAt).toBeGreaterThan(-1);
+    const up = orch.slice(upAt, orch.indexOf("export interface PerformDowngradeDeps"));
+    const reverifyAt = up.indexOf("await deps.reverifyManifest(update, deps.signal);");
+    const fetchAt = up.indexOf("await deps.fetchPackage(update, deps.signal);");
+    const shaAt = up.indexOf('throw new Error("sha256_mismatch");');
+    const swapAt = up.indexOf("await applyUpgradeSwap(");
+    for (const at of [reverifyAt, fetchAt, shaAt, swapAt]) expect(at).toBeGreaterThan(-1);
+    expect(fetchAt).toBeGreaterThan(reverifyAt);
+    expect(swapAt).toBeGreaterThan(Math.max(reverifyAt, shaAt));
+    // The production runtime wires the REAL re-verification and fetches from the source only.
+    const init = stripComments(await read("packages/gateway/src/extensions/auto-update-init.ts"));
+    expect(init).toMatch(
+      /reverifyManifest: \(update, signal\) =>\s*reverifyUpdateManifest\(fetchDeps, opts\.vault, update, signal\),/,
+    );
+    expect(init).toMatch(
+      /fetchRegistryBytes\(\s*fetchDeps,\s*sourceRegistryOf\(opts\.db, update\),/,
+    );
+    const rvAt = init.indexOf("async function reverifyUpdateManifest(");
+    expect(rvAt).toBeGreaterThan(-1);
+    const rv = init.slice(rvAt, init.indexOf("export function createAutoUpdateRuntime("));
+    const order = [
+      "const reg = sourceRegistryOf(fetchDeps.db, update);",
+      "await fetchVerifiedIndex(fetchDeps, reg, signal);",
+      "await fetchRegistryManifest(",
+      "await vaultPublisherKeyConflicts(",
+      "await verifyRegistryManifestSignature(",
+    ].map((needle) => rv.indexOf(needle));
+    for (const at of order) expect(at).toBeGreaterThan(-1);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // The upgrade is built in exactly one production place: that runtime.
+    const callers = (await readDirFiles("packages/gateway/src"))
+      .filter((f) => /(?<!function )\bcreatePerformUpgrade\(/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(callers).toEqual(["extensions/auto-update-init.ts"]);
   });
 });

@@ -608,7 +608,6 @@ nimbus mcp-server                                     # run Nimbus as an MCP ser
 ### Auto-update daemon (Phase 5 T2 PR 3)
 
 ```
-NIMBUS_EXTENSIONS_REGISTRY_URL=<url>     # registry base URL; daemon construction is gated on this
 NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE=1  # hard-disable the polling daemon at Gateway init
 ```
 

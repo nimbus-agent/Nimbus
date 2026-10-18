@@ -12,7 +12,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "bun";
-import * as tar from "tar";
 
 import { listExtensions } from "../../../src/automation/extension-store.ts";
 import { createAutoUpdateRuntime } from "../../../src/extensions/auto-update-init.ts";
@@ -20,14 +19,15 @@ import {
   _resetAutoUpdateMutexForTests,
   dispatchAutoUpdateRpc,
 } from "../../../src/extensions/auto-update-rpc.ts";
+import { publisherKeyFingerprint } from "../../../src/extensions/install-from-local.ts";
 import { writePublisherKey } from "../../../src/extensions/publisher-keys.ts";
+import { buildTestRegistry } from "../../../src/extensions/registry/__fixtures__/build-test-registry.ts";
+import { installFromRegistry } from "../../../src/extensions/registry/install-from-registry.ts";
+import type { RegistryFetchDeps } from "../../../src/extensions/registry/registry-fetch.ts";
+import { insertRegistry } from "../../../src/extensions/registry/registry-store.ts";
 import { computeExtensionTreeDigest } from "../../../src/extensions/tree-digest.ts";
 import { verifyOneExtensionStrict } from "../../../src/extensions/verify-extensions.ts";
-import {
-  encodeBase64,
-  generateEd25519Keypair,
-  signManifest,
-} from "../../../src/extensions/verify-signature.ts";
+import { generateEd25519Keypair } from "../../../src/extensions/verify-signature.ts";
 import {
   prevVersionDir,
   prevVersionsDir,
@@ -36,242 +36,149 @@ import {
 import { MockVault } from "../../../src/vault/mock.ts";
 import { setupFreshExtensionDb } from "../../fixtures/extension.ts";
 
-interface RegistryEntry {
-  version: string;
-  manifest: Record<string, unknown>;
-  manifestHash: string;
-  entryHash: string;
-  tarballBytes: Uint8Array;
-}
-
-interface FakeRegistry {
-  baseUrl: string;
-  set(extensionId: string, entry: RegistryEntry): void;
-  stop(): void;
-}
-
-async function startFakeRegistry(): Promise<FakeRegistry> {
-  const entries = new Map<string, RegistryEntry>();
-  let server: Server | undefined;
-  server = Bun.serve({
+/** Serves a registry FOLDER over real loopback HTTP, so every request is a ledgered remote one. */
+function serveRegistryFolder(dir: string): { url: string; stop: () => void } {
+  const server: Server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
-    fetch: async (req) => {
-      const u = new URL(req.url);
-      let m = /^\/v1\/extensions\/([^/]+)\/latest$/.exec(u.pathname);
-      if (m !== null) {
-        const entry = entries.get(decodeURIComponent(m[1] ?? ""));
-        if (entry === undefined) return new Response("not found", { status: 404 });
-        return new Response(JSON.stringify({ version: entry.version, channel: "stable" }), {
-          status: 200,
-        });
-      }
-      m = /^\/v1\/extensions\/([^/]+)\/manifest$/.exec(u.pathname);
-      if (m !== null) {
-        const entry = entries.get(decodeURIComponent(m[1] ?? ""));
-        if (entry === undefined) return new Response("not found", { status: 404 });
-        const baseUrlForTarball = `http://localhost:${String(server?.port ?? 0)}`;
-        return new Response(
-          JSON.stringify({
-            manifest: entry.manifest,
-            manifestHash: entry.manifestHash,
-            entryHash: entry.entryHash,
-            tarballSha256: createHash("sha256").update(entry.tarballBytes).digest("hex"),
-            tarballUrl: `${baseUrlForTarball}/v1/tarball/${encodeURIComponent(
-              decodeURIComponent(m[1] ?? ""),
-            )}.tar.gz`,
-            tarballSizeBytes: entry.tarballBytes.byteLength,
-          }),
-          { status: 200 },
-        );
-      }
-      m = /^\/v1\/tarball\/(.+)\.tar\.gz$/.exec(u.pathname);
-      if (m !== null) {
-        const entry = entries.get(decodeURIComponent(m[1] ?? ""));
-        if (entry === undefined) return new Response("not found", { status: 404 });
-        return new Response(entry.tarballBytes, {
-          status: 200,
-          headers: { "content-length": String(entry.tarballBytes.byteLength) },
-        });
-      }
-      return new Response("not found", { status: 404 });
+    fetch: (req) => {
+      const parts = new URL(req.url).pathname.split("/").filter(Boolean);
+      if (parts[0] !== "reg") return new Response("not found", { status: 404 });
+      const path = join(dir, ...parts.slice(1));
+      return existsSync(path)
+        ? new Response(readFileSync(path))
+        : new Response("not found", { status: 404 });
     },
   });
-  return {
-    baseUrl: `http://localhost:${String(server.port)}`,
-    set(extensionId, entry) {
-      entries.set(extensionId, entry);
-    },
-    stop() {
-      server?.stop();
-    },
-  };
+  return { url: `http://127.0.0.1:${String(server.port)}/reg/`, stop: () => server.stop(true) };
 }
 
-interface BuiltNewVersion {
-  manifest: Record<string, unknown>;
-  manifestHash: string;
-  entryHash: string;
-  tarballBytes: Uint8Array;
-}
+/** Registry fetch deps for a test: the real global `fetch`, no air-gap, not production. */
+const FETCH: Omit<RegistryFetchDeps, "db"> = {
+  fetchFn: (url, init) => fetch(url, init),
+  enforceAirGap: () => false,
+  now: () => Date.now(),
+  production: false,
+};
 
-async function buildSignedTarball(opts: {
-  extensionId: string;
-  version: string;
-  publisherId: string;
-  pubkey: Uint8Array;
-  privkey: Uint8Array;
-  permissions?: { network: string[]; filesystem: { read: string[]; write: string[] } };
-  entrySource?: string;
-}): Promise<BuiltNewVersion> {
-  const permissions = opts.permissions ?? {
-    network: [],
-    filesystem: { read: [], write: [] },
-  };
-  const baseManifest = {
-    id: opts.extensionId,
-    version: opts.version,
-    permissions,
-    publisher: { id: opts.publisherId, key: encodeBase64(opts.pubkey) },
-  };
-  const signature = await signManifest(baseManifest, opts.privkey);
-  const manifest = { ...baseManifest, signature };
+/** Fields every cached update needs that these hand-built entries do not exercise. */
+const SOURCE_FIELDS = {
+  packageSha256: "f".repeat(64),
+  packageSizeBytes: 100,
+  sourceRegistry: "main",
+  rootFingerprint: "c".repeat(32),
+  packagePath: "extensions/ext-pub-1/1.1.0/package.tgz",
+} as const;
 
-  const stageRoot = mkdtempSync(join(tmpdir(), "nimbus-au-stage-"));
-  try {
-    const manifestText = JSON.stringify(manifest);
-    writeFileSync(join(stageRoot, "nimbus.extension.json"), manifestText, "utf8");
-    mkdirSync(join(stageRoot, "dist"), { recursive: true });
-    const entryText = opts.entrySource ?? `export default { version: "${opts.version}" };`;
-    writeFileSync(join(stageRoot, "dist", "index.js"), entryText, "utf8");
-
-    const manifestBytes = Buffer.from(manifestText, "utf8");
-    const sha256Hex = (b: Buffer): string => createHash("sha256").update(b).digest("hex");
-
-    const tarPath = join(stageRoot, "out.tar.gz");
-    await tar.c({ cwd: stageRoot, file: tarPath, gzip: true }, ["nimbus.extension.json", "dist"]);
-    const tarballBytes = new Uint8Array(readFileSync(tarPath));
-
-    return {
-      manifest,
-      manifestHash: sha256Hex(manifestBytes),
-      // The ENTRY FILE's hash, as a real registry must publish it — not the tarball's.
-      entryHash: sha256Hex(Buffer.from(entryText, "utf8")),
-      tarballBytes,
-    };
-  } finally {
-    rmSync(stageRoot, { recursive: true, force: true });
-  }
-}
-
-let registry: FakeRegistry;
 let tmpRoot: string;
+let stopServer: (() => void) | undefined;
 
-beforeEach(async () => {
-  registry = await startFakeRegistry();
+beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-roundtrip-"));
   _resetAutoUpdateMutexForTests();
 });
 
 afterEach(() => {
-  registry.stop();
+  stopServer?.();
+  stopServer = undefined;
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
 describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", () => {
-  test("poll → cache → apply forward upgrade end-to-end", async () => {
+  test("poll → cache → apply a real signed upgrade from the source registry, end to end", async () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
+    const extensionId = "ext-pub-1";
     try {
-      const { privkey, pubkey } = generateEd25519Keypair();
-      const vault = new MockVault();
-      await writePublisherKey(vault, "pub-1", pubkey);
-
-      const extensionId = "ext-pub-1";
-      const extRoot = join(extensionsDir, extensionId);
-
-      const v1Manifest = {
+      const regDir = join(tmpRoot, "registry");
+      const reg = await buildTestRegistry(regDir, {
         id: extensionId,
-        version: "1.0.0",
-        publisher: { id: "pub-1", key: encodeBase64(pubkey) },
-      };
-      const v1Sig = await signManifest(v1Manifest, privkey);
-      const v1Signed = { ...v1Manifest, signature: v1Sig };
-      mkdirSync(join(extRoot, "dist"), { recursive: true });
-      const v1ManifestText = JSON.stringify(v1Signed);
-      writeFileSync(join(extRoot, "nimbus.extension.json"), v1ManifestText, "utf8");
-      const v1EntryText = `export default { version: "1.0.0" };`;
-      writeFileSync(join(extRoot, "dist", "index.js"), v1EntryText, "utf8");
-
-      const { insertExtensionRow } = await import("../../../src/automation/extension-store.ts");
-      insertExtensionRow(db, {
-        id: extensionId,
-        version: "1.0.0",
-        install_path: extRoot,
-        manifest_hash: createHash("sha256")
-          .update(Buffer.from(v1ManifestText, "utf8"))
-          .digest("hex"),
-        entry_hash: createHash("sha256").update(Buffer.from(v1EntryText, "utf8")).digest("hex"),
-        enabled: 1,
-        installed_at: Date.now(),
-        last_verified_at: Date.now(),
-      });
-
-      const built = await buildSignedTarball({
-        extensionId,
-        version: "1.1.0",
+        versions: [{ version: "1.0.0" }, { version: "1.1.0" }],
         publisherId: "pub-1",
-        pubkey,
-        privkey,
       });
-      registry.set(extensionId, {
-        version: "1.1.0",
-        manifest: built.manifest,
-        manifestHash: built.manifestHash,
-        entryHash: built.entryHash,
-        tarballBytes: built.tarballBytes,
+      const served = serveRegistryFolder(regDir);
+      stopServer = served.stop;
+      insertRegistry(db, {
+        name: "main",
+        url: served.url,
+        rootKey: reg.rootKey,
+        rootFingerprint: publisherKeyFingerprint(reg.rootKey),
+        lastSequence: 0,
+        lastGeneratedAt: "2026-10-01T00:00:00Z",
+        addedAt: 1,
       });
+      const vault = new MockVault();
+      await installFromRegistry(
+        { db, extensionsDir, vault, fetch: FETCH, approve: async () => true },
+        { id: extensionId, version: "1.0.0" },
+      );
+      const rowsBefore = db.query("SELECT COUNT(*) AS n FROM egress_ledger").get() as { n: number };
 
       const runtime = createAutoUpdateRuntime({
         db,
         vault,
         extensionsDir,
         dataDir: tmpRoot,
-        registryBaseUrl: registry.baseUrl,
+        fetch: FETCH,
         intervalHours: 24,
-        enforceAirGap: false,
       });
 
       await runtime.daemon.pollOnce();
       const cached = runtime.deps.cache.get(extensionId);
-      expect(cached).toBeDefined();
-      expect(cached?.toVersion).toBe("1.1.0");
-      expect(cached?.verificationStatus).toBe("verified");
+      expect(cached).toMatchObject({
+        toVersion: "1.1.0",
+        verificationStatus: "verified",
+        sourceRegistry: "main",
+        rootFingerprint: publisherKeyFingerprint(reg.rootKey),
+      });
 
+      let asked: Record<string, unknown> | undefined;
       const res = (await dispatchAutoUpdateRpc(
         "extension.update",
         { id: extensionId, toVersion: "1.1.0" },
-        { ...runtime.deps, gate: async () => "proceed" as const },
+        {
+          ...runtime.deps,
+          gate: async (action) => {
+            asked = action.payload;
+            return "proceed" as const;
+          },
+        },
       )) as { applied: boolean; reason?: string };
       expect(res.applied).toBe(true);
+      expect(asked).toMatchObject({
+        sourceRegistry: "main",
+        rootFingerprint: publisherKeyFingerprint(reg.rootKey),
+      });
 
+      const extRoot = join(extensionsDir, extensionId);
       const newManifestText = readFileSync(join(extRoot, "nimbus.extension.json"), "utf8");
       expect(JSON.parse(newManifestText).version).toBe("1.1.0");
-
       const prevEntries = readdirSync(prevVersionsDir(extensionsDir, extensionId));
       expect(prevEntries).toEqual(["1.0.0"]);
 
       const row = listExtensions(db).find((r) => r.id === extensionId);
       expect(row?.version).toBe("1.1.0");
-      // The swap replaced the bytes, so the digest is the NEW tree's, recomputed — not the
-      // install-time one, and not cleared.
       expect(row?.tree_digest).toBe(computeExtensionTreeDigest(row?.install_path ?? ""));
-      // The row's hashes must survive the next startup verification. Before the registry's
-      // `entryHash` was read as the entry file's hash everywhere, auto-update stored the
-      // TARBALL's hash here and this returned false.
       expect(row).toBeDefined();
       if (row !== undefined) expect(verifyOneExtensionStrict(row)).toBe(true);
+
+      // Every request after the install is one ledgered `registry`-class row, named after the
+      // registry: detection (index + manifest), then apply (index + manifest re-verify + package).
+      const methods = (
+        db.query("SELECT method, destination FROM egress_ledger ORDER BY id").all() as Array<{
+          method: string;
+          destination: string;
+        }>
+      ).slice(rowsBefore.n);
+      expect(methods).toEqual([
+        { method: "registry.index", destination: "main" },
+        { method: "registry.manifest", destination: "main" },
+        { method: "registry.index", destination: "main" },
+        { method: "registry.manifest", destination: "main" },
+        { method: "registry.package", destination: "main" },
+      ]);
     } finally {
       db.close();
-      removeExtensionVersionStore(extensionsDir, "ext-pub-1");
+      removeExtensionVersionStore(extensionsDir, extensionId);
       rmSync(extensionsDir, { recursive: true, force: true });
     }
   });
@@ -326,9 +233,8 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         vault,
         extensionsDir,
         dataDir: tmpRoot,
-        registryBaseUrl: registry.baseUrl,
+        fetch: FETCH,
         intervalHours: 24,
-        enforceAirGap: false,
       });
 
       runtime.deps.cache.upsert({
@@ -354,8 +260,7 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
             ),
           )
           .digest("hex"),
-        tarballSha256: "f".repeat(64),
-        tarballUrl: "https://r/x",
+        ...SOURCE_FIELDS,
         permissionDiff: {
           network: { added: [], removed: [] },
           filesystem: { read: { added: [], removed: [] }, write: { added: [], removed: [] } },
@@ -403,9 +308,8 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         vault,
         extensionsDir,
         dataDir: tmpRoot,
-        registryBaseUrl: registry.baseUrl,
+        fetch: FETCH,
         intervalHours: 24,
-        enforceAirGap: false,
       });
 
       runtime.deps.cache.upsert({
@@ -419,8 +323,7 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         manifestHash: "d".repeat(64),
         signatureB64: "AA==",
         entryHash: "e".repeat(64),
-        tarballSha256: "f".repeat(64),
-        tarballUrl: "https://r/x",
+        ...SOURCE_FIELDS,
         permissionDiff: {
           network: { added: [], removed: [] },
           filesystem: { read: { added: [], removed: [] }, write: { added: [], removed: [] } },
@@ -434,6 +337,8 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         ...runtime.deps,
         gate: async () => "proceed" as const,
         getInstalledVersion: async () => "1.0.0",
+        // The hand-built entry names no real registry; this test is about the mutex.
+        isSourceCurrent: async () => true,
         performUpgrade: async (): Promise<void> => {
           await new Promise<void>((r) => {
             release = r;

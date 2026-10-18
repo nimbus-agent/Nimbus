@@ -1036,13 +1036,15 @@ describe("D22(h) \u2014 the registry appender and fetch are confined", () => {
     ).toEqual([]);
   });
 
-  test("the temporary allow-list still passes the legacy fetcher files", () => {
+  test("the former legacy fetcher files have no exemption left", () => {
+    // `publisher-keys.ts`, `registry-client.ts` and `sync.ts` were temporarily exempt while the
+    // unwired publisher-key fetcher existed; it is deleted, so a fetch there is a violation again.
     for (const f of ["publisher-keys", "registry-client", "sync"]) {
       expect(
         checkRegistryAppenderConfinement(
-          file(`packages/gateway/src/extensions/${f}.ts`, "await opts.fetcher.fetch(id);\n"),
-        ),
-      ).toEqual([]);
+          file(`packages/gateway/src/extensions/${f}.ts`, "await fetch(url);\n"),
+        ).map((x) => x.rule),
+      ).toEqual(["registry-fetch-confined"]);
     }
   });
 });

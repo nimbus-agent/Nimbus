@@ -1950,12 +1950,6 @@ async function dispatchExtensionAutomationRpc(
         : { extensionsDir: ctx.options.extensionsDir }),
       ...(ctx.options.connectorMesh === undefined ? {} : { mesh: ctx.options.connectorMesh }),
       vault: ctx.options.vault,
-      ...(ctx.options.extensionsPublisherKeyFetcher === undefined
-        ? {}
-        : { fetcher: ctx.options.extensionsPublisherKeyFetcher }),
-      ...(ctx.options.extensionsEnforceAirGap === undefined
-        ? {}
-        : { enforceAirGap: ctx.options.extensionsEnforceAirGap }),
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
       ...(ownerGate === undefined ? {} : { ownerGate }),
       ...(runGrantEnv === undefined ? {} : { runGrantEnv }),

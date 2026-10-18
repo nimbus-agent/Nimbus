@@ -37,8 +37,11 @@ describe("auto-update-types", () => {
       manifestHash: "0".repeat(64),
       signatureB64: "AA==",
       entryHash: "0".repeat(64),
-      tarballSha256: "f".repeat(64),
-      tarballUrl: "https://registry.example/ext.tar.gz",
+      packageSha256: "f".repeat(64),
+      packageSizeBytes: 100,
+      sourceRegistry: "main",
+      rootFingerprint: "c".repeat(32),
+      packagePath: "extensions/com.example.a/1.1.0/package.tgz",
       permissionDiff: {
         network: { added: [], removed: [] },
         filesystem: {
