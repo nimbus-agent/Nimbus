@@ -86,7 +86,7 @@ export function ownerNextSteps(opts: {
      Without this, anyone with write access can force-push gh-pages back to an older signed
      index, and the next signing run then publishes a different index at a sequence number
      that was already used. The sign workflow does not check this setting; it is yours to keep.
-On Windows, keep the root key at its default location (~/.nimbus/registry-key): a key file
-written to a custom --key path gets no restrictive ACL.
+On Windows the CLI sets no ACL on the key file: it inherits its folder's permissions. Keep it
+under your user profile (the default ~/.nimbus/registry-key), never on a shared or synced path.
 `;
 }
