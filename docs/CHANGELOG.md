@@ -18,6 +18,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-18 — Phase 9.5 project 2, PR A: registry rules move to a shared pure workspace (refactor; no migration, no invariant, no egress class).**
+  A new private workspace, `packages/registry-format`, is now the single source of the signed registry index format,
+  the canonical signer and verifier (one golden vector instead of two copies), the extension-id rules
+  (`assertSafeExtensionId`, `deriveExtensionServiceId`, `findServiceIdPrefixCollision`), the manifest parse and
+  permissions validator, `publisherKeyFingerprint`, the package file set, the deterministic packer and package
+  inspection, and the size caps. It is Bun-free and imports nothing from gateway/cli/ui (dependency-cruiser rule
+  `registry-format-is-pure`) so a GitHub Action can bundle it later; the gateway and CLI import it via
+  `workspace:*`, the repo's first cross-workspace dependency. Two visible changes: `nimbus registry maintain add <dir>`
+  now packs only the package file set (`nimbus.extension.json`, `dist/**`, top-level `README*`/`LICENSE*`) where it
+  previously packed the whole directory, and its refusals now carry `ERR_REGISTRY_*` codes.
+
 - **2026-10-18 — Phase 9.5 project 1, PR 4: updates come from the source registry; invariant I44 (no migration, no new egress class; closes project 1).**
   The auto-update daemon now reads registries instead of an environment variable. It is built at boot whenever
   boot policy allows auto-update (and `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` is not `1`), and each tick reads the
