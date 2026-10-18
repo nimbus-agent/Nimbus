@@ -1,0 +1,16 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    // The bundle runs on node24, not Bun: type the sources against node only, so a Bun API is a
+    // type error here as well as a closure-test failure. This package is not a workspace member
+    // and has no node_modules of its own, so the node types come from registry-format's, the
+    // package whose sources the bundle inlines.
+    "typeRoots": ["../../registry-format/node_modules/@types"],
+    "types": ["node"],
+    // `../shared/gha-io.ts` (shared with the other two actions, which have no typecheck of their
+    // own) reads `process.env.GITHUB_*` with dot access; ui/tsconfig.json makes the same call.
+    "noPropertyAccessFromIndexSignature": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+}

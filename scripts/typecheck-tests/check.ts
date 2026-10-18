@@ -11,6 +11,7 @@ const PROJECTS = [
   "packages/gateway/tsconfig.tests.json",
   "packages/ui/tsconfig.tests.json",
   "packages/registry-format/tsconfig.tests.json",
+  "packages/github-actions/registry-action/tsconfig.tests.json",
 ] as const;
 
 interface Collected {

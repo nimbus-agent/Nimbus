@@ -1,0 +1,23 @@
+name: "Nimbus extension registry"
+description: >
+  Runs a Nimbus extension registry repository's CI. `check` validates a publish
+  pull request against the signed index on gh-pages and summarises it for the
+  reviewer; `sign` validates every unsigned extension version on the default
+  branch, signs the index with the registry root key and pushes it to gh-pages.
+author: "Nimbus"
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  mode:
+    description: "Which job this is — one of: check | sign."
+    required: true
+  root-key:
+    description: "The registry root signing key (sign only). Pass via an environment secret — never inline."
+    required: false
+    default: ""
+
+runs:
+  using: "node24"
+  main: "dist/index.js"
