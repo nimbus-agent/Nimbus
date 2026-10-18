@@ -67,6 +67,7 @@ export function updateExtensionRowVersion(
   manifestHash: string,
   entryHash: string,
   lastVerifiedAt: number,
+  treeDigest: string | null = null,
 ): boolean {
   if (readIndexedUserVersion(db) < 10) {
     return false;
@@ -74,15 +75,19 @@ export function updateExtensionRowVersion(
   // The bytes under install_path just changed, so whatever digest the row held describes code that
   // is no longer there. It is cleared here, in the one statement every version change goes through,
   // so a path that forgets to recompute leaves a digest that vouches for nothing rather than one
-  // that vouches for the wrong bytes. A caller that has hashed the new tree follows up with
-  // `setExtensionTreeDigest`.
-  const clearDigest = hasTreeDigestColumn(db) ? ", tree_digest = NULL" : "";
+  // that vouches for the wrong bytes. A caller that has hashed the new tree passes it as
+  // `treeDigest` (written in this same statement) or follows up with `setExtensionTreeDigest`;
+  // omitted, the digest is NULL.
+  const hasDigest = hasTreeDigestColumn(db);
+  const digestSet = hasDigest ? ", tree_digest = ?" : "";
   const r = dbRun(
     db,
     `UPDATE extension
-        SET version = ?, manifest_hash = ?, entry_hash = ?, last_verified_at = ?${clearDigest}
+        SET version = ?, manifest_hash = ?, entry_hash = ?, last_verified_at = ?${digestSet}
       WHERE id = ?`,
-    [version, manifestHash, entryHash, lastVerifiedAt, id],
+    hasDigest
+      ? [version, manifestHash, entryHash, lastVerifiedAt, treeDigest, id]
+      : [version, manifestHash, entryHash, lastVerifiedAt, id],
   );
   return r.changes > 0;
 }

@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import * as tar from "tar";
 
 import {
@@ -27,6 +27,7 @@ import { createRegistryClient, type RegistryClient } from "./registry-client.ts"
 import { getRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { verifyManifestSignature } from "./verify-signature.ts";
+import { prevVersionDir } from "./version-store.ts";
 
 export interface AutoUpdateInitOpts {
   db: Database;
@@ -215,7 +216,6 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
 
   const performUpgradeDeps: PerformUpgradeDeps = {
     extensionsRoot: opts.extensionsDir,
-    dataDir: opts.dataDir,
     fetcher: globalThis.fetch.bind(globalThis),
     signal: abortController.signal,
     sha256OfTarball: sha256OfBytes,
@@ -246,8 +246,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
       Promise.try(() => {
         const row = listExtensions(opts.db).find((r) => r.id === id);
         if (!row) return false;
-        const prevPath = join(dirname(row.install_path), "_prev", version);
-        return existsSync(prevPath);
+        return existsSync(prevVersionDir(opts.extensionsDir, id, version));
       }),
     hasRunGrant: (id) => Promise.try(() => getRunGrant(opts.db, id) !== null),
   };

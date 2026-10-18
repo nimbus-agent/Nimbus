@@ -9,6 +9,7 @@ import {
   downloadTarball,
   verifyTarballSha256,
 } from "./auto-update-apply.ts";
+import { holdingDir, pendingDir, prevVersionDir, prevVersionsDir } from "./version-store.ts";
 
 describe("verifyTarballSha256", () => {
   it("returns true when the buffer matches the expected hex hash", async () => {
@@ -78,82 +79,140 @@ describe("downloadTarball", () => {
   });
 });
 
-async function makeExt(root: string, fromVersion: string, prevVersion?: string) {
-  const extRoot = join(root, "com.example.x");
-  await mkdir(join(extRoot, "active"), { recursive: true });
-  await writeFile(join(extRoot, "active", "marker.txt"), `active=${fromVersion}`);
-  if (prevVersion) {
-    await mkdir(join(extRoot, "_prev", prevVersion), { recursive: true });
-    await writeFile(join(extRoot, "_prev", prevVersion, "marker.txt"), `prev=${prevVersion}`);
-  }
-  return extRoot;
+const ID = "acme/foo";
+
+interface Layout {
+  extensionsDir: string;
+  installPath: string;
 }
 
-async function makePending(root: string, id: string, toVersion: string) {
-  const pendingDir = join(root, "_pending", `${id}-${toVersion}`);
-  await mkdir(pendingDir, { recursive: true });
-  await writeFile(join(pendingDir, "marker.txt"), `pending=${toVersion}`);
-  return pendingDir;
+/** A FLAT install (`<extensionsDir>/<id>`, as install writes it) plus an optional prev version. */
+async function makeExt(root: string, fromVersion: string, prevVersion?: string): Promise<Layout> {
+  const extensionsDir = join(root, "extensions");
+  const installPath = join(extensionsDir, ID);
+  await mkdir(installPath, { recursive: true });
+  await writeFile(join(installPath, "nimbus.extension.json"), "{}");
+  await writeFile(join(installPath, "marker.txt"), `active=${fromVersion}`);
+  if (prevVersion) {
+    const prev = prevVersionDir(extensionsDir, ID, prevVersion);
+    await mkdir(prev, { recursive: true });
+    await writeFile(join(prev, "marker.txt"), `prev=${prevVersion}`);
+  }
+  return { extensionsDir, installPath };
 }
+
+async function makePending(extensionsDir: string, toVersion: string) {
+  const dir = pendingDir(extensionsDir, ID, toVersion);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "marker.txt"), `pending=${toVersion}`);
+  return dir;
+}
+
+const gone = (path: string) =>
+  stat(path)
+    .then(() => false)
+    .catch(() => true);
 
 describe("applyUpgradeSwap", () => {
-  it("moves active → _prev/<from> and _pending/<to> → active (no pre-existing _prev)", async () => {
+  it("upgrade swaps a FLAT install dir and keeps the old one under prev/<from>", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-auto-upgrade-"));
     try {
-      const extRoot = await makeExt(root, "1.0.0");
-      const pendingDir = await makePending(root, "com.example.x", "1.1.0");
+      const { extensionsDir, installPath } = await makeExt(root, "1.0.0");
+      const pending = await makePending(extensionsDir, "1.1.0");
 
       await applyUpgradeSwap({
-        extRoot,
-        pendingExtractedDir: pendingDir,
+        installPath,
+        extensionsDir,
+        id: ID,
+        pendingExtractedDir: pending,
         fromVersion: "1.0.0",
         toVersion: "1.1.0",
       });
 
-      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("pending=1.1.0");
-      expect(await readFile(join(extRoot, "_prev", "1.0.0", "marker.txt"), "utf8")).toBe(
-        "active=1.0.0",
-      );
+      expect(await readFile(join(installPath, "marker.txt"), "utf8")).toBe("pending=1.1.0");
+      expect(
+        await readFile(join(prevVersionDir(extensionsDir, ID, "1.0.0"), "marker.txt"), "utf8"),
+      ).toBe("active=1.0.0");
+      expect(await gone(holdingDir(extensionsDir, ID))).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("retires a pre-existing _prev/<older> when a new _prev is created", async () => {
+  it("retires a pre-existing prev/<older> when a new prev is created", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-auto-upgrade-"));
     try {
-      const extRoot = await makeExt(root, "1.0.0", "0.9.0");
-      const pendingDir = await makePending(root, "com.example.x", "1.1.0");
+      const { extensionsDir, installPath } = await makeExt(root, "1.0.0", "0.9.0");
+      const pending = await makePending(extensionsDir, "1.1.0");
 
       await applyUpgradeSwap({
-        extRoot,
-        pendingExtractedDir: pendingDir,
+        installPath,
+        extensionsDir,
+        id: ID,
+        pendingExtractedDir: pending,
         fromVersion: "1.0.0",
         toVersion: "1.1.0",
       });
 
-      const prevEntries = await readdir(join(extRoot, "_prev"));
-      expect(prevEntries).toEqual(["1.0.0"]);
+      expect(await readdir(prevVersionsDir(extensionsDir, ID))).toEqual(["1.0.0"]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("reverts on rename failure mid-swap", async () => {
+  it("upgrade succeeds when prev/<fromVersion> already exists", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-auto-upgrade-"));
     try {
-      const extRoot = await makeExt(root, "1.0.0");
-      const pendingDir = join(root, "_pending", "com.example.x-1.1.0");
+      const { extensionsDir, installPath } = await makeExt(root, "1.0.0");
+      const swap = (from: string, to: string, pendingExtractedDir: string) =>
+        applyUpgradeSwap({
+          installPath,
+          extensionsDir,
+          id: ID,
+          pendingExtractedDir,
+          fromVersion: from,
+          toVersion: to,
+        });
+
+      await swap("1.0.0", "1.1.0", await makePending(extensionsDir, "1.1.0"));
+      await applyDowngradeSwap({
+        installPath,
+        extensionsDir,
+        id: ID,
+        fromVersion: "1.1.0",
+        toVersion: "1.0.0",
+      });
+      // A non-empty prev/1.0.0 left behind by an earlier cycle: it must not block the next swap.
+      const stale = prevVersionDir(extensionsDir, ID, "1.0.0");
+      await mkdir(stale, { recursive: true });
+      await writeFile(join(stale, "marker.txt"), "stale");
+
+      await swap("1.0.0", "1.2.0", await makePending(extensionsDir, "1.2.0"));
+
+      expect(await readFile(join(installPath, "marker.txt"), "utf8")).toBe("pending=1.2.0");
+      expect(await readFile(join(stale, "marker.txt"), "utf8")).toBe("active=1.0.0");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("failed rename leaves the original install untouched", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-auto-upgrade-"));
+    try {
+      const { extensionsDir, installPath } = await makeExt(root, "1.0.0");
+      const pending = pendingDir(extensionsDir, ID, "1.1.0"); // never created
       await expect(
         applyUpgradeSwap({
-          extRoot,
-          pendingExtractedDir: pendingDir,
+          installPath,
+          extensionsDir,
+          id: ID,
+          pendingExtractedDir: pending,
           fromVersion: "1.0.0",
           toVersion: "1.1.0",
         }),
       ).rejects.toThrow();
 
-      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("active=1.0.0");
+      expect(await readFile(join(installPath, "marker.txt"), "utf8")).toBe("active=1.0.0");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -161,32 +220,36 @@ describe("applyUpgradeSwap", () => {
 });
 
 describe("applyDowngradeSwap", () => {
-  it("swaps active and _prev/<to>", async () => {
+  it("downgrade restores prev into the flat install dir", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-auto-downgrade-"));
     try {
-      const extRoot = await makeExt(root, "1.1.0", "1.0.0");
+      const { extensionsDir, installPath } = await makeExt(root, "1.1.0", "1.0.0");
       await applyDowngradeSwap({
-        extRoot,
+        installPath,
+        extensionsDir,
+        id: ID,
         fromVersion: "1.1.0",
         toVersion: "1.0.0",
       });
 
-      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("prev=1.0.0");
-      expect(await readFile(join(extRoot, "_prev", "1.1.0", "marker.txt"), "utf8")).toBe(
-        "active=1.1.0",
-      );
+      expect(await readFile(join(installPath, "marker.txt"), "utf8")).toBe("prev=1.0.0");
+      expect(
+        await readFile(join(prevVersionDir(extensionsDir, ID, "1.1.0"), "marker.txt"), "utf8"),
+      ).toBe("active=1.1.0");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("rejects when _prev/<to> is missing", async () => {
+  it("rejects when prev/<to> is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-auto-downgrade-"));
     try {
-      const extRoot = await makeExt(root, "1.1.0");
+      const { extensionsDir, installPath } = await makeExt(root, "1.1.0");
       await expect(
         applyDowngradeSwap({
-          extRoot,
+          installPath,
+          extensionsDir,
+          id: ID,
           fromVersion: "1.1.0",
           toVersion: "1.0.0",
         }),
@@ -196,21 +259,21 @@ describe("applyDowngradeSwap", () => {
     }
   });
 
-  it("rejects with swap_failed when buffer→_prev/<from> rename fails (non-empty target dir)", async () => {
-    // Strategy: pre-create _prev/<fromVersion> as a non-empty directory so that
-    // renaming the buffer onto it fails with ENOTEMPTY/EEXIST/EPERM cross-platform.
+  it("rejects with swap_failed when buffer -> prev/<from> rename fails (non-empty target dir)", async () => {
+    // Pre-create prev/<fromVersion> as a non-empty directory so renaming the buffer onto it fails
+    // with ENOTEMPTY/EEXIST/EPERM cross-platform.
     const root = await mkdtemp(join(tmpdir(), "nimbus-auto-downgrade-"));
     try {
-      // Build the ext layout: active + _prev/1.0.0 (the rollback target)
-      const extRoot = await makeExt(root, "1.1.0", "1.0.0");
-      // Pre-populate _prev/1.1.0 (swapPrevPath) with a file so rename-onto-it fails.
-      const swapPrevPath = join(extRoot, "_prev", "1.1.0");
+      const { extensionsDir, installPath } = await makeExt(root, "1.1.0", "1.0.0");
+      const swapPrevPath = prevVersionDir(extensionsDir, ID, "1.1.0");
       await mkdir(swapPrevPath, { recursive: true });
       await writeFile(join(swapPrevPath, "blocker.txt"), "blocker");
 
       await expect(
         applyDowngradeSwap({
-          extRoot,
+          installPath,
+          extensionsDir,
+          id: ID,
           fromVersion: "1.1.0",
           toVersion: "1.0.0",
         }),
@@ -222,111 +285,80 @@ describe("applyDowngradeSwap", () => {
 });
 
 describe("applyUpgradeSwap — rollback paths", () => {
-  it("first-rename failure with movedAside: calls restoreHolding then removes _prev, rejects", async () => {
-    // Set up: stale _prev/0.9.0 present (triggers movedAside=true + _holding creation),
-    // but active dir is MISSING → rename(active→_prev/1.0.0) throws ENOENT.
-    // Catch path (lines 98-102): restoreHolding(holding→_prev) then rm(_prev) then rethrow.
-    // So _prev ends up removed and _holding is gone too.
+  it("first-rename failure with movedAside: restores the stale prev entries, rejects", async () => {
+    // Stale prev/0.9.0 present (triggers the holding move) but the install dir is MISSING, so
+    // rename(installPath -> prev/1.0.0) throws ENOENT.
     const root = await mkdtemp(join(tmpdir(), "nimbus-upgrade-roll1-"));
     try {
-      const extRoot = join(root, "com.example.x");
-      // Create _prev/0.9.0 (stale, not fromVersion "1.0.0") — but NO active dir.
-      await mkdir(join(extRoot, "_prev", "0.9.0"), { recursive: true });
-      await writeFile(join(extRoot, "_prev", "0.9.0", "marker.txt"), "prev=0.9.0");
-
-      const pendingDir = await makePending(root, "com.example.x", "1.1.0");
+      const extensionsDir = join(root, "extensions");
+      const installPath = join(extensionsDir, ID);
+      const stale = prevVersionDir(extensionsDir, ID, "0.9.0");
+      await mkdir(stale, { recursive: true });
+      await writeFile(join(stale, "marker.txt"), "prev=0.9.0");
+      const pending = await makePending(extensionsDir, "1.1.0");
 
       await expect(
         applyUpgradeSwap({
-          extRoot,
-          pendingExtractedDir: pendingDir,
+          installPath,
+          extensionsDir,
+          id: ID,
+          pendingExtractedDir: pending,
           fromVersion: "1.0.0",
           toVersion: "1.1.0",
         }),
       ).rejects.toThrow();
 
-      // _prev must be gone (restoreHolding moved entries back, then rm(_prev) was called).
-      const prevExists = await stat(join(extRoot, "_prev"))
-        .then(() => true)
-        .catch(() => false);
-      expect(prevExists).toBe(false);
-      // _holding must also be gone (cleaned up by restoreHolding → rm).
-      const holdingExists = await stat(join(extRoot, "_holding"))
-        .then(() => true)
-        .catch(() => false);
-      expect(holdingExists).toBe(false);
+      expect(await readdir(prevVersionsDir(extensionsDir, ID))).toEqual(["0.9.0"]);
+      expect(await gone(holdingDir(extensionsDir, ID))).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true }).catch(() => {});
     }
   });
 
-  it("second-rename failure with movedAside: restores active and holding, then rejects", async () => {
-    // Set up: stale _prev/0.9.0 present (movedAside=true), active dir exists (first rename
-    // active→_prev/1.0.0 succeeds), pendingExtractedDir is MISSING → second rename throws.
-    // Expected: rejects, active is restored, stale 0.9.0 is back under _prev.
+  it("second-rename failure with movedAside: restores install and holding, then rejects", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-upgrade-roll2-"));
     try {
-      const extRoot = await makeExt(root, "1.0.0", "0.9.0");
-      // pendingDir intentionally NOT created on disk.
-      const pendingDir = join(root, "_pending", "com.example.x-1.1.0");
+      const { extensionsDir, installPath } = await makeExt(root, "1.0.0", "0.9.0");
+      const pending = pendingDir(extensionsDir, ID, "1.1.0"); // never created
 
       await expect(
         applyUpgradeSwap({
-          extRoot,
-          pendingExtractedDir: pendingDir,
+          installPath,
+          extensionsDir,
+          id: ID,
+          pendingExtractedDir: pending,
           fromVersion: "1.0.0",
           toVersion: "1.1.0",
         }),
       ).rejects.toThrow();
 
-      // active must be restored (marker still says active=1.0.0).
-      const activeMarker = await readFile(join(extRoot, "active", "marker.txt"), "utf8");
-      expect(activeMarker).toBe("active=1.0.0");
-
-      // The stale entry 0.9.0 must be back under _prev.
-      const prevEntries = await readdir(join(extRoot, "_prev")).catch(() => [] as string[]);
-      expect(prevEntries).toContain("0.9.0");
-
-      // _holding must be gone.
-      const holdingExists = await stat(join(extRoot, "_holding"))
-        .then(() => true)
-        .catch(() => false);
-      expect(holdingExists).toBe(false);
+      expect(await readFile(join(installPath, "marker.txt"), "utf8")).toBe("active=1.0.0");
+      expect(await readdir(prevVersionsDir(extensionsDir, ID))).toContain("0.9.0");
+      expect(await gone(holdingDir(extensionsDir, ID))).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true }).catch(() => {});
     }
   });
 
-  it("restoreHolding early-returns safely when _holding does not exist (movedAside=false path)", async () => {
-    // When there are no stale _prev entries, movedAside=false and _holding is never created.
-    // If the second rename then fails, restoreHolding is not called; verify behavior stays correct.
-    // But to explicitly cover the early-return: run applyUpgradeSwap with no stale entries
-    // and a missing pendingDir so the second catch fires without movedAside.
+  it("second-rename failure with no stale prev: restores install, never creates holding", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-upgrade-nohld-"));
     try {
-      const extRoot = await makeExt(root, "1.0.0");
-      // No pendingDir → second rename fails; movedAside=false → restoreHolding NOT called.
-      // But verify function still rejects and active is restored (line 107 fires, not restoreHolding).
-      const pendingDir = join(root, "_pending", "com.example.x-1.1.0");
+      const { extensionsDir, installPath } = await makeExt(root, "1.0.0");
+      const pending = pendingDir(extensionsDir, ID, "1.1.0"); // never created
 
       await expect(
         applyUpgradeSwap({
-          extRoot,
-          pendingExtractedDir: pendingDir,
+          installPath,
+          extensionsDir,
+          id: ID,
+          pendingExtractedDir: pending,
           fromVersion: "1.0.0",
           toVersion: "1.1.0",
         }),
       ).rejects.toThrow();
 
-      // active must be restored even without the holding path.
-      const activeMarker = await readFile(join(extRoot, "active", "marker.txt"), "utf8");
-      expect(activeMarker).toBe("active=1.0.0");
-
-      // _holding must not exist (was never created).
-      const holdingExists = await stat(join(extRoot, "_holding"))
-        .then(() => true)
-        .catch(() => false);
-      expect(holdingExists).toBe(false);
+      expect(await readFile(join(installPath, "marker.txt"), "utf8")).toBe("active=1.0.0");
+      expect(await gone(holdingDir(extensionsDir, ID))).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true }).catch(() => {});
     }

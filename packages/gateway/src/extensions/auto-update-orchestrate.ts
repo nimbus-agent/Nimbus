@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   applyDowngradeSwap,
@@ -11,10 +11,10 @@ import {
 } from "./auto-update-apply.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import { assertPackageMatchesClaims } from "./package-hashes.ts";
+import { pendingDir as pendingVersionDir, prevVersionDir } from "./version-store.ts";
 
 export interface PerformUpgradeDeps {
   extensionsRoot: string;
-  dataDir: string;
   fetcher: FetchFn;
   maxBytes?: number;
   signal: AbortSignal;
@@ -31,13 +31,8 @@ export interface PerformUpgradeDeps {
 
 export function createPerformUpgrade(deps: PerformUpgradeDeps) {
   return async function performUpgrade(update: AvailableUpdate): Promise<void> {
-    const pendingDir = join(
-      deps.dataDir,
-      "extensions",
-      "_pending",
-      `${update.id}-${update.toVersion}`,
-    );
-    await mkdir(join(deps.dataDir, "extensions", "_pending"), { recursive: true });
+    const pendingDir = pendingVersionDir(deps.extensionsRoot, update.id, update.toVersion);
+    await mkdir(dirname(pendingDir), { recursive: true });
     await rm(pendingDir, { recursive: true, force: true });
 
     const bytes = await downloadTarball(update.tarballUrl, {
@@ -63,10 +58,11 @@ export function createPerformUpgrade(deps: PerformUpgradeDeps) {
       throw e;
     }
 
-    const extRoot = join(deps.extensionsRoot, update.id);
     try {
       await applyUpgradeSwap({
-        extRoot,
+        installPath: join(deps.extensionsRoot, update.id),
+        extensionsDir: deps.extensionsRoot,
+        id: update.id,
         pendingExtractedDir: pendingDir,
         fromVersion: update.fromVersion,
         toVersion: update.toVersion,
@@ -99,8 +95,7 @@ export interface PerformDowngradeDeps {
 
 export function createPerformDowngrade(deps: PerformDowngradeDeps) {
   return async function performDowngrade(update: AvailableUpdate): Promise<void> {
-    const extRoot = join(deps.extensionsRoot, update.id);
-    const targetPrev = join(extRoot, "_prev", update.toVersion);
+    const targetPrev = prevVersionDir(deps.extensionsRoot, update.id, update.toVersion);
     // Refused here rather than left to `applyDowngradeSwap`, so there is never an unmeasured
     // package whose hashes the row could be given.
     if (!existsSync(targetPrev)) {
@@ -108,7 +103,9 @@ export function createPerformDowngrade(deps: PerformDowngradeDeps) {
     }
     const measured = assertPackageMatchesClaims(targetPrev, update);
     await applyDowngradeSwap({
-      extRoot,
+      installPath: join(deps.extensionsRoot, update.id),
+      extensionsDir: deps.extensionsRoot,
+      id: update.id,
       fromVersion: update.fromVersion,
       toVersion: update.toVersion,
     });

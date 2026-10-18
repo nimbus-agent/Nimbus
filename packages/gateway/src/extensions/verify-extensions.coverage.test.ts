@@ -21,6 +21,7 @@ import {
   missingDependencyRegistry,
 } from "./missing-dependency-registry.ts";
 import { verifyExtensionsBestEffort } from "./verify-extensions.ts";
+import { prevVersionDir, removeExtensionVersionStore } from "./version-store.ts";
 
 interface LogLine {
   readonly o: Record<string, unknown>;
@@ -40,6 +41,8 @@ function memoryLogger(): { logger: Logger; warns: LogLine[]; errors: LogLine[] }
 const sha256 = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 
 const fixtures: Array<{ db: Database; extensionsDir: string }> = [];
+/** Ids whose versions area (a sibling of the temp extensions dir) the test populated. */
+const versionStoreIds: string[] = [];
 
 function fresh(): { db: Database; extensionsDir: string } {
   const f = setupFreshExtensionDb();
@@ -64,8 +67,10 @@ afterEach(() => {
   resetRegistries();
   for (const { db, extensionsDir } of fixtures.splice(0)) {
     db.close();
+    for (const id of versionStoreIds) removeExtensionVersionStore(extensionsDir, id);
     rmSync(extensionsDir, { recursive: true, force: true });
   }
+  versionStoreIds.length = 0;
 });
 
 /** Writes manifest + entry into `dir` and returns their hashes. */
@@ -110,7 +115,7 @@ function stageInstalled(
 }
 
 /**
- * The state an auto-update crash leaves: `_prev/1.0.0` holds the previous version, and the row
+ * The state an auto-update crash leaves: `prev/1.0.0` holds the previous version, and the row
  * points at an `install_path` that does not exist.
  */
 function stageCrashedUpdate(
@@ -119,7 +124,8 @@ function stageCrashedUpdate(
   id: string,
   installPath: string,
 ): string {
-  const prev = join(extensionsDir, id, "_prev", "1.0.0");
+  versionStoreIds.push(id);
+  const prev = prevVersionDir(extensionsDir, id, "1.0.0");
   const { manifestHash, entryHash } = writeExtension(prev, {
     id,
     version: "1.0.0",
@@ -155,7 +161,7 @@ describe("crash recovery when its bookkeeping fails", () => {
   test("a failed crash_recovered audit append is logged, and the promotion still stands", async () => {
     const { db, extensionsDir } = fresh();
     const id = "com.cov.audit-down";
-    const active = join(extensionsDir, id, "active");
+    const active = join(extensionsDir, id);
     stageCrashedUpdate(db, extensionsDir, id, active);
     // Only THIS audit row is refused, so every other append the pass makes still works.
     dbExec(
@@ -182,8 +188,8 @@ describe("crash recovery when its bookkeeping fails", () => {
     const { db, extensionsDir } = fresh();
     const id = "com.cov.rename-fails";
     // A 300-character path component: no filesystem on any of the three platforms accepts it, so
-    // the rename of `_prev/1.0.0` onto it fails (ENAMETOOLONG on POSIX, ENOENT on Windows).
-    const unreachable = join(extensionsDir, id, "a".repeat(300));
+    // the rename of `prev/1.0.0` onto it fails (ENAMETOOLONG on POSIX, ENOENT on Windows).
+    const unreachable = join(extensionsDir, "a".repeat(300));
     const prev = stageCrashedUpdate(db, extensionsDir, id, unreachable);
     const { logger, errors } = memoryLogger();
 

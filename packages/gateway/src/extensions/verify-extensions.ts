@@ -30,12 +30,15 @@ import {
   resolveExtensionManifestPath,
 } from "./manifest.ts";
 import { missingDependencyRegistry } from "./missing-dependency-registry.ts";
+import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
+import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import {
   errorToHardDisableReason,
   type SignatureDisableReason,
   verifyManifestSignature,
 } from "./verify-signature.ts";
+import { newestPrevVersion, prevVersionDir } from "./version-store.ts";
 
 function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
@@ -51,20 +54,24 @@ function tryPromotePrevVersion(
   row: ExtensionRow,
   now: number,
   activePath: string,
+  extensionsDir: string,
 ): boolean {
-  const prevDir = join(dirname(activePath), "_prev");
-  if (!existsSync(prevDir)) return false;
-  let candidates: string[] = [];
-  try {
-    candidates = readdirSync(prevDir).sort();
-  } catch {
-    candidates = [];
-  }
-  const target = candidates.at(-1);
+  const target = newestPrevVersion(extensionsDir, row.id);
   if (target === undefined) return false;
   try {
-    renameSync(join(prevDir, target), activePath);
-    updateExtensionRowVersion(db, row.id, target, row.manifest_hash, row.entry_hash, now);
+    renameSync(prevVersionDir(extensionsDir, row.id, target), activePath);
+    // The promoted bytes are what is on disk now; the row's old hashes describe the version that
+    // was lost, so record what the promoted tree actually measures.
+    const measured = computeExtensionPackageHashes(activePath);
+    updateExtensionRowVersion(
+      db,
+      row.id,
+      target,
+      measured.manifestHash,
+      measured.entryHash,
+      now,
+      computeExtensionTreeDigest(activePath),
+    );
     try {
       appendAuditEntry(db, {
         actionType: "extension.autoUpdate.crash_recovered",
@@ -101,11 +108,12 @@ function maybeRecoverMissingActive(
   logger: Logger,
   row: ExtensionRow,
   now: number,
+  extensionsDir: string,
 ): boolean {
   const activePath = row.install_path;
   if (existsSync(activePath)) return true;
 
-  if (tryPromotePrevVersion(db, logger, row, now, activePath)) {
+  if (tryPromotePrevVersion(db, logger, row, now, activePath, extensionsDir)) {
     return true;
   }
 
@@ -200,13 +208,25 @@ async function verifyOneExtension(
   row: ExtensionRow,
   now: number,
   mesh?: ExtensionMeshHandle,
+  extensionsRoot?: string,
 ): Promise<void> {
-  const recovered = maybeRecoverMissingActive(db, logger, row, now);
+  // Install writes flat at `<extensionsDir>/<id>`, so the dir is the row path's parent unless the
+  // caller named it (an id containing `/` nests deeper).
+  const recovered = maybeRecoverMissingActive(
+    db,
+    logger,
+    row,
+    now,
+    extensionsRoot ?? dirname(row.install_path),
+  );
   if (!recovered) return;
+  // A promotion rewrote the row (version and measured hashes); verify against that, not the
+  // snapshot taken before it.
+  const current = listExtensions(db).find((r) => r.id === row.id) ?? row;
 
-  const manifestPath = resolveExtensionManifestPath(row.install_path);
+  const manifestPath = resolveExtensionManifestPath(current.install_path);
   try {
-    const reachedEnd = await runHashVerification(db, logger, row, now, mesh, manifestPath);
+    const reachedEnd = await runHashVerification(db, logger, current, now, mesh, manifestPath);
     if (!reachedEnd) return;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -488,7 +508,7 @@ export async function verifyExtensionsBestEffort(
   }
   const now = Date.now();
   for (const row of rows) {
-    await verifyOneExtension(db, logger, row, now, mesh); // NOSONAR S9382: I16 startup verify - each row may rename dirs, write the DB and audit chain, and stop its client; rows go one at a time in registry order
+    await verifyOneExtension(db, logger, row, now, mesh, extensionsRoot); // NOSONAR S9382: I16 startup verify - each row may rename dirs, write the DB and audit chain, and stop its client; rows go one at a time in registry order
   }
 
   if (signatureOpts !== undefined) {

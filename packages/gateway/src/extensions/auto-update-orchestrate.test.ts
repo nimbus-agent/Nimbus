@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { createPerformDowngrade, createPerformUpgrade } from "./auto-update-orchestrate.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
+import { prevVersionDir } from "./version-store.ts";
 
 const sha = (s: string): string =>
   createHash("sha256").update(Buffer.from(s, "utf8")).digest("hex");
@@ -52,11 +53,8 @@ describe("createPerformUpgrade", () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
     try {
       const extRoot = join(root, "extensions", "com.example.a");
-      await mkdir(join(extRoot, "active"), { recursive: true });
-      await writeFile(join(extRoot, "active", "marker.txt"), "old");
-
-      const dataDir = join(root, "data");
-      await mkdir(join(dataDir, "extensions"), { recursive: true });
+      await mkdir(extRoot, { recursive: true });
+      await writeFile(join(extRoot, "marker.txt"), "old");
 
       const tarballBytes = new TextEncoder().encode("fake-tarball-bytes");
       const stopExtensionClient = mock(async (_id: string) => {});
@@ -70,7 +68,6 @@ describe("createPerformUpgrade", () => {
 
       const perform = createPerformUpgrade({
         extensionsRoot: join(root, "extensions"),
-        dataDir,
         fetcher: (async () =>
           new Response(tarballBytes, {
             status: 200,
@@ -89,7 +86,7 @@ describe("createPerformUpgrade", () => {
 
       await perform(mkAvailable());
 
-      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("new");
+      expect(await readFile(join(extRoot, "marker.txt"), "utf8")).toBe("new");
       expect(stopExtensionClient).toHaveBeenCalledWith("com.example.a");
       // The row gets the ENTRY FILE's hash — what startup verification re-measures — never the
       // tarball's.
@@ -107,11 +104,10 @@ describe("createPerformUpgrade", () => {
   it("checks the TARBALL against tarballSha256, not entryHash", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
     try {
-      await mkdir(join(root, "extensions", "com.example.a", "active"), { recursive: true });
+      await mkdir(join(root, "extensions", "com.example.a"), { recursive: true });
       const extractTarball = mock(async () => {});
       const perform = createPerformUpgrade({
         extensionsRoot: join(root, "extensions"),
-        dataDir: join(root, "data"),
         fetcher: (async () =>
           new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch,
         maxBytes: 1024,
@@ -134,13 +130,12 @@ describe("createPerformUpgrade", () => {
     let pendingDir: string | undefined;
     try {
       const extRoot = join(root, "extensions", "com.example.a");
-      await mkdir(join(extRoot, "active"), { recursive: true });
-      await writeFile(join(extRoot, "active", "marker.txt"), "old");
+      await mkdir(extRoot, { recursive: true });
+      await writeFile(join(extRoot, "marker.txt"), "old");
       const stopExtensionClient = mock(async () => {});
       const dbUpdateExtensionRow = mock(async () => {});
       const perform = createPerformUpgrade({
         extensionsRoot: join(root, "extensions"),
-        dataDir: join(root, "data"),
         fetcher: (async () =>
           new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch,
         maxBytes: 1024,
@@ -155,7 +150,7 @@ describe("createPerformUpgrade", () => {
       });
 
       await expect(perform(mkAvailable())).rejects.toThrow(/package_hash_mismatch: entry/);
-      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("old");
+      expect(await readFile(join(extRoot, "marker.txt"), "utf8")).toBe("old");
       expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
       expect(stopExtensionClient).not.toHaveBeenCalled();
       expect(pendingDir).toBeDefined();
@@ -170,8 +165,8 @@ describe("createPerformUpgrade", () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
     try {
       const extRoot = join(root, "extensions", "com.example.a");
-      await mkdir(join(extRoot, "active"), { recursive: true });
-      await writeFile(join(extRoot, "active", "marker.txt"), "old");
+      await mkdir(extRoot, { recursive: true });
+      await writeFile(join(extRoot, "marker.txt"), "old");
 
       const stopExtensionClient = mock(async () => {});
       const extractTarball = mock(async () => {
@@ -179,7 +174,6 @@ describe("createPerformUpgrade", () => {
       });
       const perform = createPerformUpgrade({
         extensionsRoot: join(root, "extensions"),
-        dataDir: join(root, "data"),
         fetcher: (async () =>
           new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch,
         maxBytes: 1024,
@@ -193,25 +187,22 @@ describe("createPerformUpgrade", () => {
       await expect(perform(mkAvailable())).rejects.toThrow(/sha256_mismatch/);
       expect(stopExtensionClient).not.toHaveBeenCalled();
       expect(extractTarball).not.toHaveBeenCalled();
-      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("old");
+      expect(await readFile(join(extRoot, "marker.txt"), "utf8")).toBe("old");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
   it("cleans up pendingDir and throws swap_failed when applyUpgradeSwap throws", async () => {
-    // Trigger: extensionsRoot points to a temp dir where the extension's `active`
-    // directory does NOT exist. applyUpgradeSwap's rename(activePath, newPrevPath)
+    // Trigger: extensionsRoot points to a temp dir where the extension's install
+    // directory does NOT exist. applyUpgradeSwap's rename(installPath, newPrevPath)
     // throws ENOENT → the catch block fires → rejects with "swap_failed: ...".
     const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-swap-fail-"));
     let pendingDir: string | undefined;
     try {
-      // extensionsRoot exists but com.example.a/active does NOT — intentional.
+      // extensionsRoot exists but com.example.a does NOT — intentional.
       const extensionsRoot = join(root, "extensions");
       await mkdir(extensionsRoot, { recursive: true });
-
-      const dataDir = join(root, "data");
-      await mkdir(join(dataDir, "extensions"), { recursive: true });
 
       const tarballBytes = new TextEncoder().encode("fake-tarball");
       const stopExtensionClient = mock(async (_id: string) => {});
@@ -227,7 +218,6 @@ describe("createPerformUpgrade", () => {
 
       const perform = createPerformUpgrade({
         extensionsRoot,
-        dataDir,
         fetcher: (async () =>
           new Response(tarballBytes, {
             status: 200,
@@ -262,14 +252,21 @@ describe("createPerformUpgrade", () => {
 });
 
 describe("createPerformDowngrade", () => {
-  it("swaps active and _prev/<to>, invalidates mesh, updates extension row", async () => {
+  it("swaps the install dir and prev/<to>, invalidates mesh, updates extension row", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-down-"));
     try {
       const extRoot = join(root, "extensions", "com.example.a");
-      await mkdir(join(extRoot, "active"), { recursive: true });
-      await writeFile(join(extRoot, "active", "marker.txt"), "vNew");
-      await writePackage(join(extRoot, "_prev", "1.0.0"), MANIFEST_V10, "entry-v1.0");
-      await writeFile(join(extRoot, "_prev", "1.0.0", "marker.txt"), "vOld");
+      await mkdir(extRoot, { recursive: true });
+      await writeFile(join(extRoot, "marker.txt"), "vNew");
+      await writePackage(
+        prevVersionDir(join(root, "extensions"), "com.example.a", "1.0.0"),
+        MANIFEST_V10,
+        "entry-v1.0",
+      );
+      await writeFile(
+        join(prevVersionDir(join(root, "extensions"), "com.example.a", "1.0.0"), "marker.txt"),
+        "vOld",
+      );
 
       const stopExtensionClient = mock(async () => {});
       const dbUpdateExtensionRow = mock(async () => {});
@@ -288,7 +285,7 @@ describe("createPerformDowngrade", () => {
         }),
       );
 
-      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("vOld");
+      expect(await readFile(join(extRoot, "marker.txt"), "utf8")).toBe("vOld");
       expect(stopExtensionClient).toHaveBeenCalledWith("com.example.a");
       expect(dbUpdateExtensionRow).toHaveBeenCalledWith(
         "com.example.a",
@@ -305,8 +302,8 @@ describe("createPerformDowngrade", () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-down-"));
     try {
       const extRoot = join(root, "extensions", "com.example.a");
-      await mkdir(join(extRoot, "active"), { recursive: true });
-      await writeFile(join(extRoot, "active", "marker.txt"), "vNew");
+      await mkdir(extRoot, { recursive: true });
+      await writeFile(join(extRoot, "marker.txt"), "vNew");
       const stopExtensionClient = mock(async () => {});
       const dbUpdateExtensionRow = mock(async () => {});
       const perform = createPerformDowngrade({
@@ -317,7 +314,7 @@ describe("createPerformDowngrade", () => {
       await expect(
         perform(mkAvailable({ fromVersion: "1.1.0", toVersion: "1.0.0" })),
       ).rejects.toThrow(/downgrade_unavailable/);
-      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("vNew");
+      expect(await readFile(join(extRoot, "marker.txt"), "utf8")).toBe("vNew");
       expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
       expect(stopExtensionClient).not.toHaveBeenCalled();
     } finally {
@@ -329,9 +326,13 @@ describe("createPerformDowngrade", () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-down-"));
     try {
       const extRoot = join(root, "extensions", "com.example.a");
-      await mkdir(join(extRoot, "active"), { recursive: true });
-      await writeFile(join(extRoot, "active", "marker.txt"), "vNew");
-      await writePackage(join(extRoot, "_prev", "1.0.0"), MANIFEST_V10, "edited-on-disk");
+      await mkdir(extRoot, { recursive: true });
+      await writeFile(join(extRoot, "marker.txt"), "vNew");
+      await writePackage(
+        prevVersionDir(join(root, "extensions"), "com.example.a", "1.0.0"),
+        MANIFEST_V10,
+        "edited-on-disk",
+      );
 
       const stopExtensionClient = mock(async () => {});
       const dbUpdateExtensionRow = mock(async () => {});
@@ -351,7 +352,7 @@ describe("createPerformDowngrade", () => {
           }),
         ),
       ).rejects.toThrow(/package_hash_mismatch: entry/);
-      expect(await readFile(join(extRoot, "active", "marker.txt"), "utf8")).toBe("vNew");
+      expect(await readFile(join(extRoot, "marker.txt"), "utf8")).toBe("vNew");
       expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
       expect(stopExtensionClient).not.toHaveBeenCalled();
     } finally {

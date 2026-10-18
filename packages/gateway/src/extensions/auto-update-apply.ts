@@ -1,6 +1,8 @@
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { holdingDir, prevVersionDir, prevVersionsDir, swapBufferDir } from "./version-store.ts";
+
 function hexEqualIgnoreCase(a: string, b: string): boolean {
   return a.length === b.length && a.toLowerCase() === b.toLowerCase();
 }
@@ -45,14 +47,19 @@ export async function downloadTarball(url: string, opts: DownloadTarballOpts): P
 }
 
 export interface ApplyUpgradeOpts {
-  extRoot: string;
+  /** The row's flat `install_path`. */
+  installPath: string;
+  extensionsDir: string;
+  id: string;
   pendingExtractedDir: string;
   fromVersion: string;
   toVersion: string;
 }
 
 export interface ApplyDowngradeOpts {
-  extRoot: string;
+  installPath: string;
+  extensionsDir: string;
+  id: string;
   fromVersion: string;
   toVersion: string;
 }
@@ -88,33 +95,33 @@ async function restoreHolding(holdingPath: string, prevDir: string): Promise<voi
 }
 
 export async function applyUpgradeSwap(opts: ApplyUpgradeOpts): Promise<void> {
-  const activePath = join(opts.extRoot, "active");
-  const prevDir = join(opts.extRoot, "_prev");
-  const newPrevPath = join(prevDir, opts.fromVersion);
-  const holdingPath = join(opts.extRoot, "_holding");
+  const prevDir = prevVersionsDir(opts.extensionsDir, opts.id);
+  const newPrevPath = prevVersionDir(opts.extensionsDir, opts.id, opts.fromVersion);
+  const holdingPath = holdingDir(opts.extensionsDir, opts.id);
 
   await mkdir(prevDir, { recursive: true });
 
+  // EVERY existing prev entry leaves the way, including prev/<fromVersion>: after an
+  // upgrade -> downgrade -> upgrade it can be non-empty and would fail the rename below.
   let movedAside = false;
-  const stale = (await readdir(prevDir)).filter((e) => e !== opts.fromVersion);
-  if (stale.length > 0) {
+  const existing = await readdir(prevDir);
+  if (existing.length > 0) {
     await mkdir(holdingPath, { recursive: true });
-    await moveEntriesBestEffort(stale, prevDir, holdingPath);
+    await moveEntriesBestEffort(existing, prevDir, holdingPath);
     movedAside = true;
   }
 
   try {
-    await rename(activePath, newPrevPath);
+    await rename(opts.installPath, newPrevPath);
   } catch (e) {
     if (movedAside) await restoreHolding(holdingPath, prevDir);
-    await rm(prevDir, { recursive: true, force: true }).catch(() => {});
     throw e;
   }
 
   try {
-    await rename(opts.pendingExtractedDir, activePath);
+    await rename(opts.pendingExtractedDir, opts.installPath);
   } catch (e) {
-    await rename(newPrevPath, activePath).catch(() => {});
+    await rename(newPrevPath, opts.installPath).catch(() => {});
     if (movedAside) await restoreHolding(holdingPath, prevDir);
     throw e;
   }
@@ -123,29 +130,28 @@ export async function applyUpgradeSwap(opts: ApplyUpgradeOpts): Promise<void> {
 }
 
 export async function applyDowngradeSwap(opts: ApplyDowngradeOpts): Promise<void> {
-  const activePath = join(opts.extRoot, "active");
-  const prevDir = join(opts.extRoot, "_prev");
-  const targetPrevPath = join(prevDir, opts.toVersion);
-  const swapPrevPath = join(prevDir, opts.fromVersion);
-  const buffer = join(opts.extRoot, "_swap-buffer");
+  const targetPrevPath = prevVersionDir(opts.extensionsDir, opts.id, opts.toVersion);
+  const swapPrevPath = prevVersionDir(opts.extensionsDir, opts.id, opts.fromVersion);
+  const buffer = swapBufferDir(opts.extensionsDir, opts.id);
 
   if (!(await exists(targetPrevPath))) {
     throw new Error("downgrade_unavailable");
   }
-  await mkdir(prevDir, { recursive: true });
+  await mkdir(prevVersionsDir(opts.extensionsDir, opts.id), { recursive: true });
+  await rm(buffer, { recursive: true, force: true });
 
-  await rename(activePath, buffer);
+  await rename(opts.installPath, buffer);
 
   try {
-    await rename(targetPrevPath, activePath);
+    await rename(targetPrevPath, opts.installPath);
   } catch (e) {
-    await rename(buffer, activePath).catch(() => {});
+    await rename(buffer, opts.installPath).catch(() => {});
     throw e;
   }
 
   try {
     await rename(buffer, swapPrevPath);
   } catch (e) {
-    throw new Error(`swap_failed: _prev rename: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(`swap_failed: prev rename: ${e instanceof Error ? e.message : String(e)}`);
   }
 }

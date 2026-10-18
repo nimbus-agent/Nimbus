@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { existsSync, readdirSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { rmSync } from "node:fs";
 import {
   deleteExtensionById,
   type ExtensionRow,
@@ -59,6 +58,7 @@ import { syncPublisherKeys } from "../extensions/sync.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
+import { newestPrevVersion, removeExtensionVersionStore } from "../extensions/version-store.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
 import { emitGatewayEvent } from "./gateway-events.ts";
@@ -367,6 +367,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       if (serviceId !== undefined) deleteConnectorHealthRow(ctx.db, serviceId);
       try {
         rmSync(installPath, { recursive: true, force: true });
+        if (ctx.extensionsDir !== undefined) removeExtensionVersionStore(ctx.extensionsDir, id);
       } catch {
         /* row already removed; best-effort filesystem cleanup */
       }
@@ -582,14 +583,8 @@ function resolveExtensionInfoExtras(
 ): { prevVersion: string | null; cachedUpdate: unknown } {
   let prevVersion: string | null = null;
   try {
-    const extRoot = dirname(row.install_path);
-    const prevDir = join(extRoot, "_prev");
-    if (existsSync(prevDir)) {
-      const entries = readdirSync(prevDir).sort();
-      const last = entries[entries.length - 1];
-      if (last !== undefined) {
-        prevVersion = last;
-      }
+    if (ctx.extensionsDir !== undefined) {
+      prevVersion = newestPrevVersion(ctx.extensionsDir, row.id) ?? null;
     }
   } catch {
     // Best-effort — info still surfaces the row even if _prev/ probe failed.
