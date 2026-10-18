@@ -250,7 +250,10 @@ describe("registry acceptance: add, search, install, approve, update, tamper", (
       // The prompt text names the action type (`Type: <type>`), which is what each step checks.
       const type = /^Type: (\S+)$/m.exec(String(params["prompt"] ?? ""))?.[1] ?? "unknown";
       prompts.push(type);
-      void client.call("consent.respond", { requestId: params["requestId"], approved: true });
+      // A socket closed by teardown rejects the reply; that must not surface as an unhandled rejection.
+      void client
+        .call("consent.respond", { requestId: params["requestId"], approved: true })
+        .catch(() => {});
     });
   }, 180_000);
 
