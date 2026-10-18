@@ -50,3 +50,10 @@ export {
   validateAndNormalizePermissions,
 } from "./permissions-validator.ts";
 export { emptyIndex, publicKeyFromSeed, signIndex, verifyIndexSignature } from "./sign.ts";
+export {
+  type PublishCandidate,
+  type PublishVerdict,
+  parseRegistryConfig,
+  type RegistryConfig,
+  validatePublish,
+} from "./validate-publish.ts";
