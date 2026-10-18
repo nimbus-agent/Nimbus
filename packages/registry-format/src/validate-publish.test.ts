@@ -209,6 +209,25 @@ describe("parseRegistryConfig", () => {
     expect(() => parseRegistryConfig(enc("[1]"))).toThrow("object");
     expect(() => parseRegistryConfig(enc("{nope"))).toThrow("JSON");
   });
+
+  test("every malformed config is refused with ERR_REGISTRY_CONFIG_INVALID", () => {
+    for (const text of [
+      "{nope",
+      "[1]",
+      '{"format":1}',
+      '{"format":2,"requirePublisherNamespace":true}',
+      '{"format":1,"requirePublisherNamespace":true,"x":1}',
+      `{"format":1,"requirePublisherNamespace":true,"pad":"${"p".repeat(5000)}"}`,
+    ]) {
+      let code: string | undefined;
+      try {
+        parseRegistryConfig(enc(text));
+      } catch (e) {
+        code = e instanceof RegistryError ? e.code : "not a RegistryError";
+      }
+      expect(code).toBe("ERR_REGISTRY_CONFIG_INVALID");
+    }
+  });
 });
 
 describe("validatePublish", () => {
@@ -550,16 +569,22 @@ describe("validatePublish", () => {
     );
   });
 
-  test("an entry named only by `entrypoint` is refused rather than hashed as the default", async () => {
+  test("an entry named only by `entrypoint` is accepted and that file is hashed", async () => {
     const manifest = await signedManifest({
       omit: ["entry"],
       extra: { entrypoint: "dist/server.js" },
     });
-    const pkg = await packOf(manifest, { "dist/server.js": "x" });
+    const pkg = await packOf(manifest, { "dist/server.js": "server" });
+    const v = await validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work);
+    expect(v.entryHash).toBe(sha256(enc("server")));
+  });
+
+  test("an `entrypoint` outside dist/ is refused", async () => {
+    const manifest = await signedManifest({ omit: ["entry"], extra: { entrypoint: "README.md" } });
     await expectRefused(
-      validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work),
+      validatePublish(await candidate({ manifest }), await indexOf(), NS, work),
       "ERR_REGISTRY_PACKAGE_FILE_SET",
-      "entry",
+      "inside dist/",
     );
   });
 

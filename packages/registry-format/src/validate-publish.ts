@@ -27,7 +27,6 @@ import { publisherKeyFingerprint } from "./fingerprint.ts";
 import { isValidSemver, type RegistryChannel, type RegistryIndex } from "./index-format.ts";
 import { inspectPackage } from "./inspect.ts";
 import {
-  DEFAULT_EXTENSION_ENTRY,
   type ExtensionManifest,
   extensionEntryRelPath,
   parseExtensionManifestForRegistry,
@@ -116,7 +115,7 @@ function requireExactKeys(
 }
 
 const configInvalid = (detail: string): RegistryError =>
-  new RegistryError("ERR_REGISTRY_INDEX_INVALID", detail);
+  new RegistryError("ERR_REGISTRY_CONFIG_INVALID", detail);
 
 /** Parse `nimbus-registry.json` strictly: unknown keys are refused, so a rule cannot be misspelled. */
 export function parseRegistryConfig(bytes: Uint8Array): RegistryConfig {
@@ -285,21 +284,11 @@ function isCleanRelPath(rel: string): boolean {
 }
 
 // Rule 13.
-function assertFileSet(m: ExtensionManifest, raw: Record<string, unknown>, files: string[]): void {
+// `inspectPackage` resolves the entry by the same rule, so `entryHash` is the hash of this file.
+function assertFileSet(m: ExtensionManifest, files: string[]): void {
   const entry = extensionEntryRelPath(m);
   if (!entry.startsWith(DIST_PREFIX) || !isCleanRelPath(entry)) {
     throw fileSetInvalid(`extension entry ${entry} must be a file inside dist/`);
-  }
-  // `inspectPackage` hashes the raw `entry` (or the default); the gateway runs the PARSED entry
-  // (`entrypoint` fallback, trimmed, `/`-separated). They must name the same file, or the index
-  // would record the hash of a file the client never runs.
-  const declared = raw["entry"];
-  const hashed =
-    typeof declared === "string" && declared !== "" ? declared : DEFAULT_EXTENSION_ENTRY;
-  if (hashed !== entry) {
-    throw fileSetInvalid(
-      `extension entry is ambiguous: the manifest names ${entry} but its entry field reads ${hashed}`,
-    );
   }
   const seen = new Set<string>();
   for (const f of files) {
@@ -374,7 +363,7 @@ export async function validatePublish(
         `the package's ${PACKAGE_MANIFEST_FILE} differs from the committed manifest.json`,
       ); // 12
     }
-    assertFileSet(m, raw, inspected.files); // 13
+    assertFileSet(m, inspected.files); // 13
     return {
       id: m.id,
       version: m.version,
