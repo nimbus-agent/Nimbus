@@ -119,7 +119,7 @@ Install and run are **different consents**. Install records what arrived; a run 
 
 **Boot guards** (`platform/assemble.ts`): the slot source exists only when `isExtensionRuntimeEnabled` (`[extensions] runtime`, default `true`, read once at boot, AND not demo-rooted, I41); every extension spawn waits on a gate resolved in the `finally` of `verifyExtensionsBestEffort` (I16 hard-disables first; a throwing pass cannot wedge spawns). With the runtime off, `approve` refuses `ERR_EXTENSION_RUNTIME_DISABLED`.
 
-**Service id** (`extensions/extension-service-id.ts`): `deriveExtensionServiceId` = `ext_` + the manifest id lowercased with non-`[a-z0-9]` mapped to `_`, matching `EXTENSION_SERVICE_ID_PATTERN`. Computed ONCE at first grant and stored, never recomputed; re-approval keeps it. Prefix collisions at an `_` boundary refuse `ERR_EXTENSION_SERVICE_ID_COLLISION`.
+**Service id** (`extensions/extension-service-id.ts`, wrapping the rule in `packages/registry-format/src/extension-id.ts`): `deriveExtensionServiceId` = `ext_` + the manifest id lowercased with non-`[a-z0-9]` mapped to `_`, matching `EXTENSION_SERVICE_ID_PATTERN`. Computed ONCE at first grant and stored, never recomputed; re-approval keeps it. Prefix collisions at an `_` boundary refuse `ERR_EXTENSION_SERVICE_ID_COLLISION`.
 
 **Run states** (`extensions/run-state.ts`'s `extensionRunState`, cheap — no re-hash): `disabled` → `no_grant` → `grant_stale` (grant's version or tree digest ≠ row's) → `running` (mesh holds a live client, consulted LAST) / `ready`.
 
@@ -181,6 +181,7 @@ Install and run are **different consents**. Install records what arrived; a run 
 | `packages/gateway/src/platform/spawn-capture.ts` · `scripts/audit/check-windows-console-hide.ts` | hidden spawns (D25, `audit:windows-console`) |
 | `scripts/structure-audit/check-nimbus-invariants.ts` | D10, D25, D33 |
 | `packages/gateway/src/extensions/registry/*` · `packages/gateway/src/ipc/registry-rpc.ts` | registry client (I44) |
+| `packages/registry-format/src/*` | the pure index format, signer, manifest parser and id rules the registry client and CLI share |
 | `packages/gateway/src/security-invariants.test.ts` | I1 / I15 / I16 / I42 / I43 / I44 enforcement |
 | `packages/gateway/test/e2e/{extension-runtime,user-mcp,registry,registry-acceptance}.e2e.test.ts` | real-gateway E2E |
 

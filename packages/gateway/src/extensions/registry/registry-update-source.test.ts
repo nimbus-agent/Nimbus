@@ -3,11 +3,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
-
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { MockVault } from "../../vault/mock.ts";
-import { publisherKeyFingerprint } from "../install-from-local.ts";
 import { writePublisherKey } from "../publisher-keys.ts";
 import { verifyManifestSignature } from "../verify-signature.ts";
 import {

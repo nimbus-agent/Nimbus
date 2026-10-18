@@ -1,9 +1,7 @@
 import type { Database } from "bun:sqlite";
-
+import { type RegistryChannel, RegistryError } from "@nimbus-dev/registry-format";
 import { dbRun } from "../../db/write.ts";
 import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
-import type { RegistryChannel } from "./index-format.ts";
-import { RegistryError } from "./registry-errors.ts";
 
 export interface RegistryRow {
   name: string;

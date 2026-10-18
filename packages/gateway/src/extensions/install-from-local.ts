@@ -15,6 +15,8 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
+import { assertSafeExtensionId, publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+
 import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import type { NimbusVault } from "../vault/index.ts";
@@ -35,29 +37,6 @@ import { verifyManifestSignature } from "./verify-signature.ts";
 
 function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
-}
-
-const MAX_EXTENSION_ID_LENGTH = 128;
-
-export function assertSafeExtensionId(extensionId: string): void {
-  if (extensionId.trim() === "" || extensionId.includes("\0")) {
-    throw new Error("invalid extension id");
-  }
-  if (extensionId.length > MAX_EXTENSION_ID_LENGTH) {
-    throw new Error(
-      `extension id too long (max ${String(MAX_EXTENSION_ID_LENGTH)} chars, got ${String(extensionId.length)})`,
-    );
-  }
-  const normalized = extensionId.replaceAll("\\", "/");
-  const parts = normalized.split("/").filter((p) => p !== "" && p !== ".");
-  if (parts.length === 0) {
-    throw new Error("invalid extension id");
-  }
-  for (const p of parts) {
-    if (p === "..") {
-      throw new Error("invalid extension id");
-    }
-  }
 }
 
 export function extensionInstallDirectory(extensionsDir: string, extensionId: string): string {
@@ -477,10 +456,6 @@ export class ExtensionInstallNotApprovedError extends Error {
     super(`ERR_EXTENSION_INSTALL_NOT_APPROVED: install of ${id} was not approved`);
     this.name = "ExtensionInstallNotApprovedError";
   }
-}
-
-export function publisherKeyFingerprint(base64Key: string): string {
-  return createHash("sha256").update(Buffer.from(base64Key, "base64")).digest("hex").slice(0, 32);
 }
 
 function buildInstallApprovalRequest(

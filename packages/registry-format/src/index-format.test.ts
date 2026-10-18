@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import nacl from "tweetnacl";
-import { encodeBase64 } from "../../util/base64.ts";
+
 import {
   MAX_INDEX_BYTES,
   parseRegistryIndex,
@@ -12,6 +9,9 @@ import {
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
 } from "./index-format.ts";
+import { publicKeyFromSeed, signIndex } from "./sign.ts";
+
+const encodeBase64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64");
 
 const SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
 const KEYPAIR = nacl.sign.keyPair.fromSeed(SEED);
@@ -68,9 +68,12 @@ type Mutable = {
 };
 
 describe("registry index format", () => {
-  test("golden vector: fixed key signs the fixture index to the pinned signature", () => {
+  test("golden vector: fixed key signs the fixture index to the pinned signature", async () => {
     expect(ROOT_KEY).toBe("ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=");
     expect(sign(unsigned).signature).toBe(PINNED_SIGNATURE);
+    // The node:crypto signer the maintainer and publishing tools use produces the same bytes.
+    expect(encodeBase64(publicKeyFromSeed(SEED))).toBe(ROOT_KEY);
+    expect((await signIndex(unsigned, SEED)).signature).toBe(PINNED_SIGNATURE);
   });
 
   test("parse accepts a BOM and CRLF", () => {
@@ -164,23 +167,6 @@ describe("registry index format", () => {
   test("rejects index over MAX_INDEX_BYTES before JSON.parse", () => {
     const big = new Uint8Array(MAX_INDEX_BYTES + 1024 * 1024);
     expect(() => parseRegistryIndex(big)).toThrow("ERR_REGISTRY_TOO_LARGE");
-  });
-});
-
-describe("maintainer flow", () => {
-  test("verifies an index produced by the maintainer flow", async () => {
-    const root = join(import.meta.dir, "__fixtures__", "maintained-registry");
-    const index = parseRegistryIndex(readFileSync(join(root, "index.json")));
-    await verifyRegistryIndexPinned(index, ROOT_KEY);
-    const entry = index.extensions["com.example.maintained"]?.versions["1.0.0"];
-    expect(entry).toBeDefined();
-    if (entry === undefined) return;
-    const sha = (rel: string): string =>
-      createHash("sha256")
-        .update(readFileSync(join(root, rel)))
-        .digest("hex");
-    expect(sha(entry.manifest)).toBe(entry.manifestSha256);
-    expect(sha(entry.package)).toBe(entry.packageSha256);
   });
 });
 

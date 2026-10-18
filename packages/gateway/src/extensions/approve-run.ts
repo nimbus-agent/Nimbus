@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import { type ExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import {
@@ -12,7 +12,6 @@ import {
 } from "./extension-run-grants.ts";
 import { assertExtensionServiceIdFree, deriveExtensionServiceId } from "./extension-service-id.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
-import { publisherKeyFingerprint } from "./install-from-local.ts";
 import {
   type ExtensionManifest,
   parseExtensionManifestJson,

@@ -1,5 +1,5 @@
+import type { SandboxPermissions } from "@nimbus-dev/registry-format";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
-import type { SandboxPermissions } from "../../extensions/permissions-validator.ts";
 
 /**
  * What a sandbox runner needs to know to confine a process.

@@ -4,14 +4,16 @@
  * disagree about what a registry manifest must satisfy.
  */
 import { createHash } from "node:crypto";
-
+import {
+  RegistryError,
+  type RegistryExtensionEntry,
+  type RegistryVersionEntry,
+} from "@nimbus-dev/registry-format";
 import { sha256HexEqualConstantTime } from "../../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../../vault/index.ts";
 import { type ExtensionManifest, parseExtensionManifestForRegistry } from "../manifest.ts";
 import { readPublisherKey } from "../publisher-keys.ts";
 import { decodeBase64, verifyManifestSignature } from "../verify-signature.ts";
-import type { RegistryExtensionEntry, RegistryVersionEntry } from "./index-format.ts";
-import { RegistryError } from "./registry-errors.ts";
 import { fetchRegistryBytes, type RegistryFetchDeps } from "./registry-fetch.ts";
 
 /** A registry manifest is a small JSON document; anything larger is refused. */

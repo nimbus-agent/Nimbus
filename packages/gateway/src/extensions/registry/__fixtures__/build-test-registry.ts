@@ -5,12 +5,11 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type RegistryIndex, registryIndexSigningBytes } from "@nimbus-dev/registry-format";
 import * as tar from "tar";
 import nacl from "tweetnacl";
-
 import { encodeBase64 } from "../../../util/base64.ts";
 import { signManifest } from "../../verify-signature.ts";
-import { type RegistryIndex, registryIndexSigningBytes } from "../index-format.ts";
 
 export const ROOT_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
 export const PUBLISHER_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 100);

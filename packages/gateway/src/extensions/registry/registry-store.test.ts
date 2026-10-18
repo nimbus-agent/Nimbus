@@ -1,9 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-
+import { RegistryError } from "@nimbus-dev/registry-format";
 import { listExtensions } from "../../automation/extension-store.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
-import { RegistryError } from "./registry-errors.ts";
 import {
   deleteRegistry,
   getExtensionSource,

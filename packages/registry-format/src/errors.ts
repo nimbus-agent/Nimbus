@@ -21,10 +21,11 @@ export type RegistryErrorCode =
   | "ERR_REGISTRY_EXTRACT_FAILED"
   | "ERR_REGISTRY_INSTALL_REFUSED";
 
+/** A registry refusal. The code leads the message, so a CLI shows it; `detail` is the rest. */
 export class RegistryError extends Error {
   constructor(
     readonly code: RegistryErrorCode,
-    detail: string,
+    readonly detail: string,
   ) {
     super(`${code}: ${detail}`);
     this.name = "RegistryError";

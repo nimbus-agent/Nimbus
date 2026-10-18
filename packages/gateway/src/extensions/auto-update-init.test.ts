@@ -3,14 +3,13 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
 import { createAutoUpdateRuntime } from "./auto-update-init.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
-import { publisherKeyFingerprint } from "./install-from-local.ts";
 import { writePublisherKey } from "./publisher-keys.ts";
 import { buildTestRegistry, resignIndex } from "./registry/__fixtures__/build-test-registry.ts";
 import { installFromRegistry } from "./registry/install-from-registry.ts";

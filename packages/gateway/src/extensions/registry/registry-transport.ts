@@ -1,7 +1,7 @@
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { RegistryError } from "./registry-errors.ts";
+import { RegistryError } from "@nimbus-dev/registry-format";
 
 export type RegistryLocation = { kind: "remote"; base: URL } | { kind: "local"; root: string };
 

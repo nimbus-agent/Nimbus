@@ -6,7 +6,7 @@
  * downloads a package or touches the install tree.
  */
 import type { Database } from "bun:sqlite";
-
+import type { RegistryChannel, RegistryVersionEntry } from "@nimbus-dev/registry-format";
 import type { NimbusVault } from "../../vault/index.ts";
 import { diffPermissions } from "../auto-update-permissions-diff.ts";
 import type {
@@ -14,7 +14,6 @@ import type {
   InstalledExtensionManifestSlice,
   VerificationStatus,
 } from "../auto-update-types.ts";
-import type { RegistryChannel, RegistryVersionEntry } from "./index-format.ts";
 import { fetchVerifiedIndex, type RegistryFetchDeps } from "./registry-fetch.ts";
 import {
   fetchRegistryManifest,
