@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792336824085,
+  "lastUpdate": 1792342632956,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7a3d0e7dd411f73efdb5e4be97d857f8a38bddb0",
-          "message": "ci(release): create brew/scoop publish commits via createCommitOnBranch and assert they are verified (#1014)\n\nAddresses #996 — **step 1 only**, deliberately.\n\nhomebrew-tap, scoop-bucket and linux-repo accept **unsigned, unreviewed\nbot pushes straight to `main`**. Every recent commit is\n`nimbus-release-bot` with `verification.verified = false`. These three\nrepos are what `brew install`, `scoop install` and `yum install` read,\nwhich makes them the shortest path in the estate from a leaked token to\ncode on a user's machine.\n\n## Scope, and why it stops here\n\nThe full fix is two **ordered** steps:\n\n1. **This PR** — create publish commits via the GraphQL\n`createCommitOnBranch` mutation so App-token commits come out\n**Verified**\n2. **NOT this PR** — add `required_signatures` to the three rulesets\n\nDoing (2) first, or both together, breaks the next publish. **No ruleset\nis touched here.**\n\n## The workflow now proves itself\n\nAn earlier review found the mutation selected only `commit { oid url }`\n— so nothing asserted the one property the change exists to deliver. It\nnow selects the signature and **fails the publish** if the commit is not\nverified.\n\nField names were taken from **GraphQL schema introspection, not\nguesswork** — a wrong field would break publishing at release time\nrather than in review. Confirmed: `Commit.signature` is a **nullable**\n`GitSignature` **interface**, with `isValid` / `state` /\n`wasSignedByGitHub` declared on the interface itself (no inline fragment\nneeded), and the full `GitSignatureState` enum enumerated.\n\n**Fails closed:** a null signature is treated as *not verified*, never\nas \"no data, assume fine\". The step stops the publish rather than\nwarning, because that is the property step 2 will depend on.\n\n## What is proven, and what is not\n\n**Proven by tests:** payload building (additions, deletions, base64\nencoding), the stale-`expectedHeadOid` retry decision, and the\nverification assertion across verified / unverified / null-signature /\nmissing-field shapes.\n\n**Not proven, and cannot be locally:** that GitHub actually stamps\n`verification.verified = true` for *this App's installation token*, and\nthat the token's `Contents: write` scope is accepted for the GraphQL\nmutation as it was for the REST path. Both rest on documented GitHub\nbehaviour until a real release runs.\n\nThat is precisely why the assertion matters: after this lands, the\n**first real publish either proves it or fails loudly** — rather than\nsilently producing unverified commits that only surface when\n`required_signatures` is switched on and every publish starts breaking.",
-          "timestamp": "2026-08-01T15:07:23+03:00",
-          "tree_id": "4c946b9ac18fc45e9860b9dc4be176a2bc22fbf2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7a3d0e7dd411f73efdb5e4be97d857f8a38bddb0"
-        },
-        "date": 1785587174115,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 307.55797965000204,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 307.2872287999977,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 272.3704544999979,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c318171c30e136ffe89182b47cbbecb175c38408",
+          "message": "feat(extensions): extension registries — updates from the source registry and invariant I44 (#1699)\n\nThe last of four PRs for **Phase 9.5 project 1: the extension\nregistry**. #1695 landed the update-path repair, the signed static\nregistry format, the offline `nimbus registry maintain` commands and the\nregistry client (add, search, install). Its squash commit kept its\noriginal `fix(…)` subject, so **this PR is where the registry feature is\nannounced**. Release notes should read the two together.\n\n## The registry feature (shipped across #1695 and this PR)\n\n- **A registry is a folder of signed static files** (`index.json` plus\n`extensions/<id>/<version>/{manifest.json,package.tgz}`). It can live in\na local directory, on GitHub Pages, in a bucket or on an internal web\nserver, with no server code. The registry's root key signs the index\nover canonical JSON, and a strictly increasing `sequence` blocks\nrollback. Publishers still sign their manifests (I16).\n- **`nimbus registry maintain init|add|remove`** builds and re-signs a\nregistry offline.\n- **`nimbus registry add|list|refresh|remove`** manages several named\nregistries, each with a pinned root key. Adding one is a terminal-only,\nowner-approved `registry.add` HITL action, never delegable.\n- **`nimbus extension search|info|install <id>`** across registries. A\nbare id in two registries is refused, and so is one requested while any\nregistry failed to answer; neither is resolved by priority. Hashes, the\npublisher key from the index and the I16 signature are all verified\nbefore the owner is asked.\n- **Every remote registry request is in the egress ledger** (class\n`registry`), including each redirect hop, and air-gap refuses them.\n\n## What this PR adds\n\n- **Updates come only from an extension's own source registry**, and\nonly while that registry's root fingerprint is unchanged. The same id in\nanother registry is ignored.\n- The daemon makes one index fetch per registry per tick, and is\nconstructed whenever auto-update is allowed. A registry added at runtime\nis picked up on the next tick.\n- `stable` installs see stable releases; `beta` installs see stable and\nbeta. Prerelease versions apply.\n- A publisher-key change in the index is reported as\n`publisher_key_conflict`. Offers whose source registry was removed or\nre-pinned are dropped.\n- **The daemon only detects.** The owner applies through the\n`extension.autoUpdate` prompt, which now shows the source registry and\nroot fingerprint.\n- Before swapping, apply re-verifies everything: the current signed\nindex, the re-fetched manifest's hash and I16 signature with the index's\nkey, the Vault key and the package SHA-256. Then it runs the capped\nextraction.\n- An applied update changes the tree digest, so the extension does not\nrun until the owner re-approves it (I43).\n- A failed apply reports its phase (`sha256_mismatch`,\n`signature_failed`, `source_registry_changed`, …), not \"internal_error\".\n- **New invariant I44:** registry-sourced extension code is installed or\nupdated only through `registry-fetch.ts`'s verified chain, and only from\nthe extension's recorded source registry while its fingerprint is\nunchanged. A bare id present in two registries, or requested while any\nregistry failed this call, is refused.\n- It has behavioural tests: tampered package, tampered manifest,\nnon-source registry, ambiguity, failed registry, and a stale source at\napply. Source pins cover the check order, and the pins were red-proved\nby mutation.\n- Bounds stated: freeze attacks (no index expiry); `http:` only to\nloopback outside a production runtime; `file:` registries append no\negress row; root-key file protection is the maintainer's; a DB-write\nattacker can rewrite the pinned key.\n- **Dead code removed:** the never-working registry HTTP client\n(`registry-client.ts`, `registry-fetcher.ts`), `nimbus extension sync` /\n`extension.sync`, the unwired publisher-key fetcher and\n`NIMBUS_EXTENSIONS_REGISTRY_URL`. None of them could succeed, so **this\nis not a breaking change**. D22(h) now allows `fetch(` under\n`extensions/` only in `registry-fetch.ts`.\n- A signed local install with no `--publisher-key` and no cached key now\nfails with a message that names `--publisher-key`.\n- **`nimbus doctor`** warns about extensions whose source registry was\nremoved, and about registry indexes older than 30 days.\n- **Acceptance E2E** over a real gateway and socket runs the full flow:\n  1. build a registry folder;\n  2. `registry add`, answering consent over the socket;\n  3. search, install, approve-run;\n  4. publish v2 and detect it;\n  5. apply it, then confirm the run grant no longer matches;\n  6. a v3 with one flipped package byte is refused as `sha256_mismatch`.\n- **Docs:** I44 in `SECURITY-INVARIANTS.md`, CLAUDE.md and GEMINI.md\n(the I1–I44 count updated everywhere), the auto-update and registry\nsections of `architecture.md`, roadmap Phase 9.5 rows partly checked\nwith what did **not** ship stated, `cli-reference.md`, and the\nCHANGELOG.\n\n## Not shipped (later Phase 9.5 projects)\n\nNetwork publishing, a baked verified-publisher trust store and key\nrotation, dependencies and starter packs, the quality layer (`nimbus\neval`, scores, ratings, permission-transparency scoring), the static\ncatalogue site and author onboarding.\n\n## Verification\n\n- Every task passed a spec and code-quality review, and a final\nwhole-branch review checked cross-task seams.\n- This branch replays the reviewed commits onto `main`. There was one\ntextual conflict, resolved so one `registryFetch` object with\n`production: isProductionRuntime()` reaches both IPC and the daemon. One\ntest that `main` gained afterwards was moved to the new apply\ndependencies.\n- `typecheck`, `typecheck:tests` (0 new), biome, `audit:invariants`,\n`audit:status-drift`, `audit:readme-cli` and `preflight:fast` pass.\n10,242 tests pass with 0 failures across the extensions, IPC,\nsecurity-invariants, platform, integration, the registry, acceptance and\nauto-update E2Es, the CLI and the structure audits.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Extension updates are now detected and applied through each\nextension’s source registry, with registry and package details\nre-verified before installation.\n* The update list identifies the source registry and flags publisher-key\nconflicts; conflicting updates cannot be applied.\n* `nimbus doctor` warns about removed registries and outdated registry\nindexes.\n* **Bug Fixes**\n* Updates from registries that are no longer trusted or whose signed\npackage checks fail are refused, leaving the installed extension\nunchanged.\n* **Documentation**\n* Updated guidance for registry-based updates, local signing keys, and\nthe current security invariants.\n* **Removals**\n* Removed the extension sync command and its publisher-key\nsynchronization workflow.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-18T19:46:50+03:00",
+          "tree_id": "11b489de653698ddfd57696f4e7761d4deb7e181",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c318171c30e136ffe89182b47cbbecb175c38408"
+        },
+        "date": 1792342627657,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 266.83780355000164,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 263.73600739999966,
             "unit": "ms"
           }
         ]
