@@ -3,8 +3,25 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyDowngradeSwap, applyUpgradeSwap, verifyTarballSha256 } from "./auto-update-apply.ts";
+import {
+  MAX_UNPACKED_BYTES as FORMAT_MAX_UNPACKED,
+  MAX_PACKAGE_BYTES,
+} from "@nimbus-dev/registry-format";
+import {
+  applyDowngradeSwap,
+  applyUpgradeSwap,
+  MAX_TARBALL_BYTES,
+  verifyTarballSha256,
+} from "./auto-update-apply.ts";
+import { MAX_UNPACKED_BYTES } from "./package-extract.ts";
 import { holdingDir, pendingDir, prevVersionDir, prevVersionsDir } from "./version-store.ts";
+
+describe("package caps", () => {
+  it("the gateway's limits equal the ones the publisher enforces", () => {
+    expect(MAX_TARBALL_BYTES).toBe(MAX_PACKAGE_BYTES);
+    expect(MAX_UNPACKED_BYTES).toBe(FORMAT_MAX_UNPACKED);
+  });
+});
 
 describe("verifyTarballSha256", () => {
   it("returns true when the buffer matches the expected hex hash", async () => {

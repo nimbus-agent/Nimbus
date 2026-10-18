@@ -19,16 +19,24 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join } from "node:path";
 import {
+  assertSafeExtensionId,
   emptyIndex,
+  inspectPackage,
+  isValidSemver,
+  MAX_PACKAGE_BYTES,
+  PUBLISHER_ID_RE,
+  PUBLISHER_KEY_RE,
+  packExtensionDir,
   publicKeyFromSeed,
+  publisherKeyFingerprint,
   type RegistryChannel,
+  RegistryError,
   type RegistryIndex,
   signIndex,
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
-import { extract, list } from "tar";
 import {
   decodeBase64,
   encodeBase64,
@@ -36,7 +44,6 @@ import {
   verifyManifestSignature,
 } from "../lib/extension-signing.ts";
 import { readIndexFile, writeIndexAtomic } from "../lib/registry-index.ts";
-import { packExtensionDir } from "../lib/registry-pack.ts";
 
 export interface MaintainIo {
   stdout: (s: string) => void;
@@ -51,34 +58,19 @@ const DEFAULT_IO: MaintainIo = {
 const USAGE =
   "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>]\n";
 
-const MAX_MANIFEST_BYTES = 64 * 1024;
-const MAX_PACKAGE_BYTES = 50 * 1024 * 1024;
-const MAX_UNPACKED_BYTES = 200 * 1024 * 1024;
-const MAX_ENTRY_COUNT = 5000;
-const MAX_ID_LENGTH = 128;
-const PACKAGE_MANIFEST_FILE = "nimbus.extension.json";
-const DEFAULT_ENTRY = "dist/index.js";
-// Mirror the gateway verifier (`extensions/registry/index-format.ts`), which rejects an index
-// holding anything these do not accept.
-const SEMVER_RE =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const PUBLISHER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
-const KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
-
 class MaintainError extends Error {}
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function fingerprint(pub: Uint8Array): string {
-  return createHash("sha256").update(pub).digest("hex").slice(0, 32);
-}
-
 function assertSafeId(id: string): string[] {
-  if (id.trim() === "" || id.includes("\0") || id.length > MAX_ID_LENGTH) {
+  try {
+    assertSafeExtensionId(id);
+  } catch {
     throw new MaintainError(`invalid extension id: ${JSON.stringify(id)}`);
   }
+  // The id becomes a directory path in the registry folder, so every segment must be a plain name.
   const parts = id.split("/");
   if (parts.some((p) => p === "" || p === "." || p === ".." || p.includes("\\"))) {
     throw new MaintainError(`invalid extension id: ${JSON.stringify(id)}`);
@@ -196,80 +188,8 @@ async function maintainInit(args: string[], io: MaintainIo): Promise<void> {
   writeIndexAtomic(dir, index);
   io.stdout(`registry initialised in ${dir} (sequence 1)\n`);
   io.stdout(`root key:    ${index.rootKey}\n`);
-  io.stdout(`fingerprint: ${fingerprint(pubkey)}\n`);
+  io.stdout(`fingerprint: ${publisherKeyFingerprint(encodeBase64(pubkey))}\n`);
   io.stdout(`key file:    ${keyPath} (keep it secret and backed up)\n`);
-}
-
-interface ExtractedPackage {
-  manifestBytes: Buffer;
-  manifest: Record<string, unknown>;
-  entryHash: string;
-}
-
-function describeEntryType(type: string): string {
-  if (type === "SymbolicLink") return "symlink";
-  if (type === "Link") return "hardlink";
-  return `${type} entry`;
-}
-
-async function inspectPackage(tgz: string, work: string): Promise<ExtractedPackage> {
-  // Refuse a package every client would refuse, before extracting anything: the gateway's
-  // extractor caps the declared unpacked total and the entry count.
-  let entries = 0;
-  let declaredBytes = 0;
-  let badEntry: string | undefined;
-  await list({
-    file: tgz,
-    onReadEntry: (entry) => {
-      entries++;
-      if (badEntry === undefined && entry.type !== "File" && entry.type !== "Directory") {
-        badEntry = `package entry ${entry.path} is a ${describeEntryType(entry.type)}; only files and directories are allowed`;
-      }
-      declaredBytes += entry.size ?? 0;
-      entry.resume();
-    },
-  });
-  if (badEntry !== undefined) throw new MaintainError(badEntry);
-  if (entries > MAX_ENTRY_COUNT) {
-    throw new MaintainError(`package has more than ${String(MAX_ENTRY_COUNT)} entries`);
-  }
-  if (declaredBytes > MAX_UNPACKED_BYTES) {
-    throw new MaintainError("package unpacked size exceeds 200 MiB");
-  }
-  const out = join(work, "x");
-  mkdirSync(out);
-  await extract({
-    file: tgz,
-    cwd: out,
-    strict: true,
-    filter: (_path, entry) => {
-      const type = "type" in entry ? entry.type : "File";
-      return type === "File" || type === "Directory";
-    },
-  });
-  const manifestPath = join(out, PACKAGE_MANIFEST_FILE);
-  if (!existsSync(manifestPath)) {
-    throw new MaintainError(`package has no ${PACKAGE_MANIFEST_FILE} at its root`);
-  }
-  const manifestBytes = readFileSync(manifestPath);
-  if (manifestBytes.length > MAX_MANIFEST_BYTES) throw new MaintainError("manifest is too large");
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(manifestBytes.toString("utf8"));
-  } catch {
-    throw new MaintainError("manifest is not valid JSON");
-  }
-  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
-    throw new MaintainError("manifest is not a JSON object");
-  }
-  const m = manifest as Record<string, unknown>;
-  const declared = m["entry"];
-  const entryRel = typeof declared === "string" && declared !== "" ? declared : DEFAULT_ENTRY;
-  const entryPath = resolve(out, entryRel);
-  if (!entryPath.startsWith(resolve(out) + sep) || !existsSync(entryPath)) {
-    throw new MaintainError(`extension entry ${entryRel} is missing or outside the package`);
-  }
-  return { manifestBytes, manifest: m, entryHash: sha256Hex(readFileSync(entryPath)) };
 }
 
 interface ValidManifest {
@@ -285,7 +205,7 @@ async function validateManifest(m: Record<string, unknown>): Promise<ValidManife
   const version = m["version"];
   if (typeof id !== "string") throw new MaintainError("manifest has no id");
   const idParts = assertSafeId(id);
-  if (typeof version !== "string" || !SEMVER_RE.test(version)) {
+  if (typeof version !== "string" || !isValidSemver(version)) {
     throw new MaintainError(`manifest version ${JSON.stringify(version)} is not strict semver`);
   }
   const pub = m["publisher"] as { id?: unknown; key?: unknown } | undefined;
@@ -300,7 +220,7 @@ async function validateManifest(m: Record<string, unknown>): Promise<ValidManife
       "extension is unsigned: the manifest needs `publisher` and `signature` (run `nimbus extension sign`)",
     );
   }
-  if (pub.id.length > 64 || !PUBLISHER_ID_RE.test(pub.id) || !KEY_RE.test(pub.key)) {
+  if (pub.id.length > 64 || !PUBLISHER_ID_RE.test(pub.id) || !PUBLISHER_KEY_RE.test(pub.key)) {
     throw new MaintainError("manifest publisher id or key is malformed");
   }
   try {
@@ -425,7 +345,7 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
 
 function splitIdVersion(ref: string): { id: string; version: string | undefined } {
   const at = ref.lastIndexOf("@");
-  if (at > 0 && SEMVER_RE.test(ref.slice(at + 1))) {
+  if (at > 0 && isValidSemver(ref.slice(at + 1))) {
     return { id: ref.slice(0, at), version: ref.slice(at + 1) };
   }
   return { id: ref, version: undefined };
@@ -477,7 +397,7 @@ export async function runRegistryMaintain(
     await handler(rest, io);
     return 0;
   } catch (e) {
-    if (e instanceof MaintainError) {
+    if (e instanceof MaintainError || e instanceof RegistryError) {
       io.stderr(`${e.message}\n`);
       return 2;
     }
