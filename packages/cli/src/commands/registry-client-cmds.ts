@@ -36,27 +36,71 @@ interface RefreshResult {
   extensionCount?: number;
 }
 
-/** Splits `args` into positionals and the named flags this command knows. */
+/** Splits `args` into positionals, bare flags and `--fingerprint` (both `--fingerprint x` and `=x`). */
 function parseArgs(args: string[]): {
   positionals: string[];
   flags: Set<string>;
   fingerprint: string | undefined;
+  fingerprintMissing: boolean;
 } {
   const positionals: string[] = [];
   const flags = new Set<string>();
   let fingerprint: string | undefined;
+  let fingerprintMissing = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (a === "--fingerprint") {
-      fingerprint = args[i + 1];
-      i++;
-    } else if (a.startsWith("--") || a === "-y") {
+    if (a.startsWith("--fingerprint=")) {
+      fingerprint = a.slice("--fingerprint=".length);
+      if (fingerprint === "") fingerprintMissing = true;
+    } else if (a === "--fingerprint") {
+      const next = args[i + 1];
+      if (next === undefined || next.startsWith("--")) {
+        fingerprintMissing = true;
+      } else {
+        fingerprint = next;
+        i++;
+      }
+    } else if (a.startsWith("-")) {
       flags.add(a);
     } else {
       positionals.push(a);
     }
   }
-  return { positionals, flags, fingerprint };
+  return { positionals, flags, fingerprint, fingerprintMissing };
+}
+
+/**
+ * The refusals that need no gateway: `--yes`, a missing/unknown flag, and no terminal. Run by the
+ * router BEFORE it connects, and again by `add` itself. Returns an exit code, or undefined to proceed.
+ */
+export function registryAddPrecheck(
+  args: string[],
+  isTty: boolean,
+  stderr: (s: string) => void,
+): number | undefined {
+  const { flags, fingerprintMissing } = parseArgs(args);
+  if (flags.has("--yes") || flags.has("-y")) {
+    stderr(
+      "nimbus registry add has no --yes: adding a registry pins a trust root and must be answered by a person at a terminal.\n",
+    );
+    return 2;
+  }
+  if (fingerprintMissing) {
+    stderr("--fingerprint needs a value: --fingerprint <fp> or --fingerprint=<fp>\n");
+    return 2;
+  }
+  const unknown = [...flags].filter((f) => f !== "--fingerprint");
+  if (unknown.length > 0) {
+    stderr(`nimbus registry add: unknown option ${unknown.join(", ")}\n${REGISTRY_CLIENT_USAGE}`);
+    return 2;
+  }
+  if (!isTty) {
+    stderr(
+      "nimbus registry add needs an interactive terminal: the approval must be answered by a person.\n",
+    );
+    return 2;
+  }
+  return undefined;
 }
 
 function pad(s: string, w: number): string {
@@ -83,19 +127,9 @@ function formatTable(rows: RegistryListEntry[]): string {
 }
 
 async function runAdd(args: string[], deps: RegistryClientDeps): Promise<number> {
-  const { positionals, flags, fingerprint } = parseArgs(args);
-  if (flags.has("--yes") || flags.has("-y")) {
-    deps.stderr(
-      "nimbus registry add has no --yes: adding a registry pins a trust root and must be answered by a person at a terminal.\n",
-    );
-    return 2;
-  }
-  if (!deps.isTty) {
-    deps.stderr(
-      "nimbus registry add needs an interactive terminal: the approval must be answered by a person.\n",
-    );
-    return 2;
-  }
+  const refused = registryAddPrecheck(args, deps.isTty, deps.stderr);
+  if (refused !== undefined) return refused;
+  const { positionals, fingerprint } = parseArgs(args);
   const [name, url] = positionals;
   if (name === undefined || url === undefined || positionals.length !== 2) {
     deps.stderr(REGISTRY_CLIENT_USAGE);

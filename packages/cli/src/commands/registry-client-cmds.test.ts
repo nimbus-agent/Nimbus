@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { IPCClient } from "../ipc-client/index.ts";
-import { runRegistryClient } from "./registry-client-cmds.ts";
+import { registryAddPrecheck, runRegistryClient } from "./registry-client-cmds.ts";
 
 function harness(responses: Record<string, unknown> = {}, isTty = true) {
   const calls: Array<{ method: string; params: unknown }> = [];
@@ -74,6 +74,51 @@ describe("nimbus registry add", () => {
       },
     ]);
     expect(h.stdout()).toContain("Added registry main");
+  });
+});
+
+describe("nimbus registry add: option handling", () => {
+  test("--fingerprint=<fp> passes the value through", async () => {
+    const h = harness({
+      "registry.add": {
+        name: "m",
+        url: "u",
+        rootFingerprint: "x",
+        extensionCount: 0,
+        generatedAt: "g",
+      },
+    });
+    expect(await runRegistryClient("add", ["m", "u", "--fingerprint=ABC"], h.deps)).toBe(0);
+    expect(h.calls[0]?.params).toEqual({ name: "m", url: "u", fingerprint: "ABC" });
+  });
+
+  test("--fingerprint with no value refuses", async () => {
+    for (const args of [
+      ["m", "u", "--fingerprint"],
+      ["m", "u", "--fingerprint="],
+    ]) {
+      const h = harness();
+      expect(await runRegistryClient("add", args, h.deps)).toBe(2);
+      expect(h.stderr()).toContain("--fingerprint needs a value");
+      expect(h.calls).toEqual([]);
+    }
+  });
+
+  test("an unknown flag refuses", async () => {
+    const h = harness();
+    expect(await runRegistryClient("add", ["m", "u", "--finger", "x"], h.deps)).toBe(2);
+    expect(h.stderr()).toContain("unknown option --finger");
+    expect(h.calls).toEqual([]);
+  });
+
+  test("the precheck refuses a non-TTY add without any client", () => {
+    let err = "";
+    expect(
+      registryAddPrecheck(["m", "u"], false, (m) => {
+        err += m;
+      }),
+    ).toBe(2);
+    expect(err).toContain("interactive terminal");
   });
 });
 

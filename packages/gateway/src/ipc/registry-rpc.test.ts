@@ -172,7 +172,7 @@ describe("registry.add", () => {
     const g = gateRecorder(true);
     await expect(
       call("registry.add", { name: "main", url: tmp, fingerprint: "abc" }, { gate: g.gate }),
-    ).rejects.toThrow("expected 32 hex characters");
+    ).rejects.toThrow("must be 32 hex characters");
     expect(g.asked).toEqual([]);
   });
 

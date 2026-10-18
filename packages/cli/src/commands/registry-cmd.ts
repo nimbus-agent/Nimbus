@@ -6,6 +6,7 @@ import { getCliPlatformPaths } from "../paths.ts";
 import {
   REGISTRY_CLIENT_USAGE,
   type RegistryClientSub,
+  registryAddPrecheck,
   registryClientTimeoutMs,
   runRegistryClient,
 } from "./registry-client-cmds.ts";
@@ -25,6 +26,11 @@ export async function runRegistry(args: string[]): Promise<void> {
   if (sub !== undefined && CLIENT_SUBS.has(sub)) {
     const clientSub = sub as RegistryClientSub;
     const isTty = process.stdin.isTTY === true && process.stdout.isTTY === true;
+    if (clientSub === "add") {
+      // TTY / --yes / flag refusals need no gateway, so they report even when none is running.
+      const refused = registryAddPrecheck(rest, isTty, (m) => process.stderr.write(m));
+      if (refused !== undefined) process.exit(refused);
+    }
     const paths = getCliPlatformPaths();
     const state = await readGatewayState(paths);
     if (state === undefined) {

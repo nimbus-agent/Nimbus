@@ -3695,8 +3695,8 @@ export async function assemblePlatformServices(
     demo: paths.demo === true,
     extensionsDir: paths.extensionsDir,
     extensionsRuntimeEnabled: extensionRuntimeEnabled,
-    // Extension registries: ONE air-gap switch (the LLM router's, so a policy or config change to
-    // `enforce_air_gap` reaches registry fetches live), read per call.
+    // Extension registries: ONE air-gap switch (the LLM router's `enforce_air_gap`), read per call from
+    // the router's boot-resolved config; it does not track a later config or policy change.
     registryFetch: {
       fetchFn: (url, init) => fetch(url, init),
       enforceAirGap: () => llmRegistry.llmRouter.enforcesAirGap(),

@@ -75,7 +75,7 @@ function normalizeFingerprint(raw: unknown): string | undefined {
   if (!FINGERPRINT_RE.test(fp)) {
     throw new RegistryError(
       "ERR_REGISTRY_FINGERPRINT_MISMATCH",
-      "a registry fingerprint is expected 32 hex characters",
+      "a registry fingerprint must be 32 hex characters",
     );
   }
   return fp;
@@ -129,16 +129,19 @@ async function handleAdd(
       "the owner declined to add the registry",
     );
   }
-  insertRegistry(o.db, {
-    name,
-    url,
-    rootKey: index.rootKey,
-    rootFingerprint,
-    lastSequence: index.sequence,
-    lastGeneratedAt: index.generatedAt,
-    addedAt: fetch.now(),
-  });
-  recordRegistryFetch(o.db, name, index.rootKey, index.sequence, index.generatedAt, fetch.now());
+  // One transaction: an approved add never leaves a row without its recorded first fetch.
+  o.db.transaction(() => {
+    insertRegistry(o.db, {
+      name,
+      url,
+      rootKey: index.rootKey,
+      rootFingerprint,
+      lastSequence: index.sequence,
+      lastGeneratedAt: index.generatedAt,
+      addedAt: fetch.now(),
+    });
+    recordRegistryFetch(o.db, name, index.rootKey, index.sequence, index.generatedAt, fetch.now());
+  })();
   return { kind: "hit", value: summary };
 }
 
