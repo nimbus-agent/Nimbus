@@ -2435,6 +2435,15 @@ describe("extension update/downgrade owner prompt", () => {
     expect(rpcTimeoutForExtensionSub("update", ["--check"])).toBeUndefined();
   });
 
+  test("update with no id registers no handler, keeps the default timeout, lists only", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    const mock = createMockIpcClient([[]], handlers);
+    await runExtensionUpdate(mock.client, ["update"]);
+    expect(handlers.size).toBe(0);
+    expect(mock.calls.map((c) => c.method)).toEqual(["extension.checkForUpdates"]);
+    expect(rpcTimeoutForExtensionSub("update", [])).toBeUndefined();
+  });
+
   test("update <id> --check never calls extension.update and registers no handler", async () => {
     const handlers = new Map<string, (params: unknown) => void>();
     const mock = createMockIpcClient([[{ id: "ext-a", toVersion: "2.0.0" }]], handlers);

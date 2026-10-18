@@ -735,9 +735,13 @@ async function dispatchExtensionVoid(
  * they get the human-bound budget rather than the 30s default that would time out while the owner
  * is still reading the prompt. `update --check` only reads, so it keeps the default.
  */
-/** ONE apply/read-only decision for `update`: `--check` never applies, whatever else is passed. */
+/**
+ * ONE apply/read-only decision for `update` (`rest` excludes the `update` token): it applies only
+ * with an id and without `--check`. No id lists updates and `--check` never applies.
+ */
 export function extensionUpdateApplies(rest: string[]): boolean {
-  return !hasFlag(rest, "--check");
+  const id = stripFlags(rest).find((a) => !a.startsWith("--"));
+  return id !== undefined && !hasFlag(rest, "--check");
 }
 
 export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number | undefined {
@@ -871,12 +875,13 @@ async function applyExtensionUpdate(
 export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts): Promise<number> {
   const args = opts.args;
   const isJson = hasFlag(args, "--json");
-  const isCheck = !extensionUpdateApplies(args);
+  const applies = extensionUpdateApplies(args);
+  const isCheck = !applies;
   const toVersion = takeFlagValue(args, "--to");
   const id = stripFlags(args).find((a) => !a.startsWith("--"));
 
-  if (id === undefined || !extensionUpdateApplies(args)) {
-    // `--check` is strictly read-only: it never reaches `extension.update`, even with an id.
+  if (id === undefined || !applies) {
+    // No id, or `--check`, is strictly read-only: it never reaches `extension.update`.
     return listExtensionUpdates(opts, isJson, isCheck, id);
   }
   return applyExtensionUpdate(opts, id, toVersion, isJson);
@@ -885,7 +890,7 @@ export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts)
 export async function runExtensionUpdate(client: IPCClient, args: string[]): Promise<number> {
   // The gateway raises the owner's HITL prompt (`extension.update`) over this connection; `--check`
   // only reads, so it never prompts and registers nothing.
-  if (extensionUpdateApplies(args)) {
+  if (extensionUpdateApplies(args.slice(1))) {
     registerConsentFor(client, { kind: "prompt" });
   }
   return runExtensionUpdateWithCaller({

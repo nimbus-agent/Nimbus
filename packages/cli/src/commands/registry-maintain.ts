@@ -208,19 +208,30 @@ interface ExtractedPackage {
   entryHash: string;
 }
 
+function describeEntryType(type: string): string {
+  if (type === "SymbolicLink") return "symlink";
+  if (type === "Link") return "hardlink";
+  return `${type} entry`;
+}
+
 async function inspectPackage(tgz: string, work: string): Promise<ExtractedPackage> {
   // Refuse a package every client would refuse, before extracting anything: the gateway's
   // extractor caps the declared unpacked total and the entry count.
   let entries = 0;
   let declaredBytes = 0;
+  let badEntry: string | undefined;
   await list({
     file: tgz,
     onReadEntry: (entry) => {
       entries++;
+      if (badEntry === undefined && entry.type !== "File" && entry.type !== "Directory") {
+        badEntry = `package entry ${entry.path} is a ${describeEntryType(entry.type)}; only files and directories are allowed`;
+      }
       declaredBytes += entry.size ?? 0;
       entry.resume();
     },
   });
+  if (badEntry !== undefined) throw new MaintainError(badEntry);
   if (entries > MAX_ENTRY_COUNT) {
     throw new MaintainError(`package has more than ${String(MAX_ENTRY_COUNT)} entries`);
   }

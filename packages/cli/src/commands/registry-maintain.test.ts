@@ -242,6 +242,21 @@ describe("registry maintain package caps", () => {
     expect(readIndexFile(join(dir, "index.json")).sequence).toBe(1);
   });
 
+  test("refuses an archive containing a symlink entry", async () => {
+    const { dir, key } = await init();
+    const { Header } = await import("tar");
+    const link = Buffer.alloc(512);
+    new Header({ path: "evil", type: "SymbolicLink", linkpath: "/etc/passwd", mode: 0o777 }).encode(
+      link,
+      0,
+    );
+    const tgz = await craft("link.tgz", [link]);
+    expect(await runRegistryMaintain(["add", dir, tgz, "--key", key], io)).toBe(2);
+    expect(err.join("")).toContain("evil is a symlink");
+    expect(rootListing(dir)).toEqual([]);
+    expect(readIndexFile(join(dir, "index.json")).sequence).toBe(1);
+  });
+
   test("refuses an archive whose declared sizes exceed 200 MiB", async () => {
     const { dir, key } = await init();
     const tgz = await craft("big.tgz", [await header("big", 300 * 1024 * 1024)]);
