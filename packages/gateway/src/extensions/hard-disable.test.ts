@@ -288,4 +288,36 @@ describe("signatureDisableMessage", () => {
       "--publisher-key <path>",
     );
   });
+
+  test("a local install's key remedy removes first, then reinstalls from the path with the key", () => {
+    for (const r of ["publisher_key_missing", "publisher_key_mismatch"] as const) {
+      for (const src of [undefined, null] as const) {
+        const msg = signatureDisableMessage("acme.foo", "1.0.0", r, src);
+        const remove = msg.indexOf("nimbus extension remove acme.foo");
+        const install = msg.indexOf("nimbus extension install <path> --publisher-key <path>");
+        expect(remove).toBeGreaterThan(-1);
+        // Both install paths refuse an already-installed id, so remove must come first.
+        expect(install).toBeGreaterThan(remove);
+        expect(msg).not.toContain("--registry");
+      }
+    }
+  });
+
+  test("a registry-sourced extension's remedy names its registry and never --publisher-key", () => {
+    for (const r of REASONS) {
+      const msg = signatureDisableMessage("acme.foo", "1.0.0", r, "main");
+      // The registry supplies the key and `install <id> --registry` refuses `--publisher-key`;
+      // a registry install also has no `<path>` to reinstall from.
+      expect(msg).not.toContain("--publisher-key");
+      expect(msg).not.toContain("<path>");
+      const remove = msg.indexOf("nimbus extension remove acme.foo");
+      const install = msg.indexOf("nimbus extension install acme.foo --registry main");
+      expect(remove).toBeGreaterThan(-1);
+      expect(install).toBeGreaterThan(remove);
+    }
+    const remediations = REASONS.map((r) =>
+      signatureDisableMessage("acme.foo", "1.0.0", r, "main"),
+    );
+    expect(new Set(remediations).size).toBe(REASONS.length);
+  });
 });

@@ -4485,7 +4485,7 @@ List installed extensions with their status (`enabled` / `disabled` / `disabled 
   com.example.notion@2.0.0 [signature: signature_failed]
 ```
 
-The four reasons are `publisher_key_missing`, `publisher_key_mismatch`, `signature_failed` and `signature_malformed`. Run `nimbus extension info <id>` for the remediation — the remedies differ (a key problem is fixed by reinstalling with `--publisher-key <path>`; a signature problem is not). Separately, the `(unverified)` badge in the **Publisher** column means the manifest declares no publisher at all, which is the normal state of an unsigned extension and says nothing about verification having failed.
+The four reasons are `publisher_key_missing`, `publisher_key_mismatch`, `signature_failed` and `signature_malformed`. Run `nimbus extension info <id>` for the remediation — the remedies differ (a key problem is fixed by removing the extension and reinstalling it — from its path with `--publisher-key <path>` for a local install, or with `--registry <name>` for a registry-sourced one, whose registry supplies the key; a signature problem is not). Separately, the `(unverified)` badge in the **Publisher** column means the manifest declares no publisher at all, which is the normal state of an unsigned extension and says nothing about verification having failed.
 
 `--tree` — print an ASCII dependency forest of installed extensions with their forward-dep edges; cycle-safe; NO_COLOR-aware (T2 PR 4).
 
@@ -4507,8 +4507,10 @@ When the extension was hard-disabled by the startup signature check (I16), the `
 Enabled:   no  (signature verification failed: publisher_key_missing)
 …
 Extension com.example.notion v2.0.0 failed signature verification at startup (publisher_key_missing) and was disabled.
-No publisher key is cached for it. Reinstall it with the publisher's key: nimbus extension install <path> --publisher-key <path>
+No publisher key is cached for it. Remove it and reinstall: nimbus extension remove com.example.notion, then reinstall it from its path with the publisher's key: nimbus extension install <path> --publisher-key <path>
 ```
+
+For an extension installed from a registry the reinstall line names that registry instead (`nimbus extension install com.example.notion --registry <name>`), since the registry supplies the publisher key and `--publisher-key` is refused there.
 
 ```bash
 nimbus extension info com.example.notion

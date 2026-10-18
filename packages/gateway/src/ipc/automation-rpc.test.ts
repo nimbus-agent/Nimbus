@@ -11,6 +11,7 @@ import {
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
+import { setExtensionSource } from "../extensions/registry/registry-store.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { generateEd25519Keypair } from "../extensions/verify-signature.ts";
 import { newestPrevVersion, prevVersionDir } from "../extensions/version-store.ts";
@@ -765,6 +766,30 @@ describe("extension.info — signature-disabled reason (I16)", () => {
     // cache wired), and `toBeNull()` would pass just as happily on a key that is missing entirely.
     expect(Object.hasOwn(ext, "prevVersion")).toBe(true);
     expect(Object.hasOwn(ext, "cachedUpdate")).toBe(true);
+  });
+
+  test("the remediation follows the row's install source", async () => {
+    const db = seededDb();
+    seedExtensionRow(db, "com.example.local", "/p/local");
+    seedExtensionRow(db, "com.example.reg", "/p/reg");
+    setExtensionSource(db, "com.example.reg", {
+      registry: "main",
+      rootFingerprint: "FP",
+      channel: "stable",
+    });
+    signatureDisabledRegistry.mark("com.example.local", "publisher_key_missing");
+    signatureDisabledRegistry.mark("com.example.reg", "publisher_key_missing");
+    const messageFor = async (id: string): Promise<string | undefined> => {
+      const out = await dispatchAutomationRpc({ method: "extension.info", params: { id }, db });
+      return (out as { value: { message?: string } }).value.message;
+    };
+    const local = await messageFor("com.example.local");
+    expect(local).toContain("nimbus extension remove com.example.local");
+    expect(local).toContain("nimbus extension install <path> --publisher-key <path>");
+    const reg = await messageFor("com.example.reg");
+    expect(reg).toContain("nimbus extension remove com.example.reg");
+    expect(reg).toContain("nimbus extension install com.example.reg --registry main");
+    expect(reg).not.toContain("--publisher-key");
   });
 
   test("an unaffected extension gets no message", async () => {

@@ -551,7 +551,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
           forwardDeps: fwd,
           reverseDeps: rev,
         },
-        message: signatureDisableMessage(row.id, row.version, signatureReason),
+        message: signatureDisableMessage(row.id, row.version, signatureReason, row.source_registry),
       },
     };
   }

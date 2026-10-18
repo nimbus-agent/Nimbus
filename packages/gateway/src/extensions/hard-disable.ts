@@ -170,18 +170,33 @@ export const signatureDisabledRegistry = new SignatureDisabledRegistry();
  *
  * The wording deliberately never says the user disabled it — that is the exact ambiguity this
  * message exists to remove.
+ *
+ * The reinstall command depends on where the extension came from: `sourceRegistry` is the row's
+ * `source_registry` (V71), `null`/absent for a local install. A registry-sourced extension cannot
+ * take `--publisher-key` (the registry names the key) and there is no `<path>` to install from, and
+ * both install paths refuse an id that is already installed — so every remedy that reinstalls
+ * starts with `nimbus extension remove`.
  */
 export function signatureDisableMessage(
   id: string,
   version: string,
   reason: SignatureDisableReason,
+  sourceRegistry?: string | null,
 ): string {
   const head = `Extension ${id} v${version} failed signature verification at startup (${reason}) and was disabled.`;
+  const fromRegistry = typeof sourceRegistry === "string" && sourceRegistry !== "";
+  const remove = `nimbus extension remove ${id}`;
+  const reinstallWithKey = fromRegistry
+    ? `${remove}, then reinstall it from its registry, which supplies the publisher's key: nimbus extension install ${id} --registry ${sourceRegistry}`
+    : `${remove}, then reinstall it from its path with the publisher's key: nimbus extension install <path> --publisher-key <path>`;
+  const reinstallTrusted = fromRegistry
+    ? `${remove}, then reinstall it from its registry: nimbus extension install ${id} --registry ${sourceRegistry}`
+    : `nimbus extension install <path>`;
   const remedy: Record<SignatureDisableReason, string> = {
-    publisher_key_missing: `No publisher key is cached for it. Reinstall it with the publisher's key: nimbus extension install <path> --publisher-key <path>`,
-    publisher_key_mismatch: `The cached publisher key does not match the key this manifest was signed with — the publisher may have rotated keys. Nimbus never replaces a cached key on its own; if you trust the new key, remove the extension and reinstall it with that key: nimbus extension install <path> --publisher-key <path>`,
-    signature_failed: `The manifest does not match its signature: the files on disk have changed since it was signed. Reinstall from a source you trust: nimbus extension install <path>`,
-    signature_malformed: `The manifest's signature field is not a well-formed Ed25519 signature. Reinstall from a source you trust: nimbus extension install <path>`,
+    publisher_key_missing: `No publisher key is cached for it. Remove it and reinstall: ${reinstallWithKey}`,
+    publisher_key_mismatch: `The cached publisher key does not match the key this manifest was signed with — the publisher may have rotated keys. Nimbus never replaces a cached key on its own; if you trust the new key, remove the extension and reinstall it: ${reinstallWithKey}`,
+    signature_failed: `The manifest does not match its signature: the files on disk have changed since it was signed. Reinstall from a source you trust: ${reinstallTrusted}`,
+    signature_malformed: `The manifest's signature field is not a well-formed Ed25519 signature. Reinstall from a source you trust: ${reinstallTrusted}`,
   };
   return `${head}\n${remedy[reason]}`;
 }
