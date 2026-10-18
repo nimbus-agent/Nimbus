@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { doctorExtensionsLines } from "./extension-doctor-format.ts";
+import { doctorExtensionsLines, doctorRegistryLines } from "./extension-doctor-format.ts";
 
 const ext = (id: string, runState: string) => ({ id, runState });
 
@@ -95,5 +95,82 @@ describe("doctorExtensionsLines", () => {
         "malformed extension.list response from the gateway",
       );
     }
+  });
+});
+
+describe("doctorRegistryLines", () => {
+  const reg = (name: string, stale: boolean, generatedAt = "2026-08-01T00:00:00Z") => ({
+    name,
+    generatedAt,
+    stale,
+  });
+  const fromReg = (id: string, source_registry: string | null) => ({ id, source_registry });
+
+  test("silent when no registries are configured and no extension came from one", () => {
+    expect(
+      doctorRegistryLines({ registries: [] }, { extensions: [fromReg("local.one", null)] }),
+    ).toEqual({ lines: [], exit: 0 });
+  });
+
+  test("silent when every registry is fresh and every registry-sourced extension's source exists", () => {
+    expect(
+      doctorRegistryLines(
+        { registries: [reg("main", false)] },
+        { extensions: [fromReg("a.b", "main"), fromReg("local.one", null)] },
+      ),
+    ).toEqual({ lines: [], exit: 0 });
+  });
+
+  test("warns about an extension whose source registry was removed", () => {
+    const r = doctorRegistryLines(
+      { registries: [reg("main", false)] },
+      { extensions: [fromReg("a.b", "gone"), fromReg("c.d", "main")] },
+    );
+    expect(r.exit).toBe(1);
+    expect(r.lines).toEqual([
+      '[warn] Extension registries: 1 installed extension(s) come from a registry that is no longer configured and will get no updates (a.b from "gone") — re-add it with nimbus registry add <name> <url>, or remove the extension',
+    ]);
+  });
+
+  test("names orphans even when the last registry was removed", () => {
+    const r = doctorRegistryLines({ registries: [] }, { extensions: [fromReg("a.b", "gone")] });
+    expect(r.exit).toBe(1);
+    expect(r.lines[0]).toContain('(a.b from "gone")');
+  });
+
+  test("warns about a registry whose index is older than 30 days", () => {
+    const r = doctorRegistryLines(
+      { registries: [reg("main", true, "2026-08-01T00:00:00Z"), reg("fresh", false)] },
+      { extensions: [] },
+    );
+    expect(r.exit).toBe(1);
+    expect(r.lines).toEqual([
+      '[warn] Extension registries: the index of "main" was generated 2026-08-01T00:00:00Z, more than 30 days ago — nimbus registry refresh main; a registry that stops publishing can hold back updates',
+    ]);
+  });
+
+  test("both conditions produce one line each; control characters are stripped", () => {
+    const r = doctorRegistryLines(
+      { registries: [reg("main\u001b[31m", true)] },
+      { extensions: [fromReg("x.y\u0007", "old")] },
+    );
+    expect(r.exit).toBe(1);
+    expect(r.lines).toHaveLength(2);
+    for (const line of r.lines) {
+      expect(line).not.toContain("\u001b");
+      expect(line).not.toContain("\u0007");
+    }
+  });
+
+  test("more than five orphans are summarised", () => {
+    const exts = ["a", "b", "c", "d", "e", "f", "g"].map((n) => fromReg(`${n}.x`, "gone"));
+    const r = doctorRegistryLines({ registries: [] }, { extensions: exts });
+    expect(r.lines[0]).toContain("7 installed extension(s)");
+    expect(r.lines[0]).toContain(", +2 more)");
+  });
+
+  test("malformed responses throw (the caller turns that into a [warn])", () => {
+    expect(() => doctorRegistryLines("garbage", { extensions: [] })).toThrow(/registry\.list/);
+    expect(() => doctorRegistryLines({ registries: [] }, "garbage")).toThrow(/extension\.list/);
   });
 });

@@ -18,6 +18,7 @@ import {
   doctorPrintIndexConfidence,
   doctorPrintIndexFromSnapshot,
   doctorPrintOncallPush,
+  doctorPrintRegistries,
   doctorPrintVectorSearchFromSnapshot,
   healthStateMark,
   runDoctor,
@@ -929,5 +930,69 @@ describe("doctorPrintExtensions", () => {
     );
     expect(await doctorPrintExtensions(client)).toBe(1);
     expect(out.stdout).toContain("[warn] Extensions: 1 installed extension(s) not approved");
+  });
+});
+
+describe("doctorPrintRegistries", () => {
+  function byMethod(answer: (method: string) => unknown): Pick<IPCClient, "call"> {
+    return {
+      call: async <T>(method: string): Promise<T> => answer(method) as T,
+    };
+  }
+  const fresh = { name: "main", generatedAt: "2026-10-17T00:00:00Z", stale: false };
+
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("silent when no registries are configured", async () => {
+    const client = byMethod((m) =>
+      m === "registry.list"
+        ? { registries: [] }
+        : { extensions: [{ id: "local.one", source_registry: null }] },
+    );
+    expect(await doctorPrintRegistries(client)).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("doctor warns about an extension whose source registry was removed", async () => {
+    const client = byMethod((m) =>
+      m === "registry.list"
+        ? { registries: [fresh] }
+        : { extensions: [{ id: "acme.tool", source_registry: "internal" }] },
+    );
+    expect(await doctorPrintRegistries(client)).toBe(1);
+    expect(out.stdout).toContain('(acme.tool from "internal")');
+  });
+
+  it("doctor warns about a registry whose index is stale (generatedAt older than 30 days)", async () => {
+    const client = byMethod((m) =>
+      m === "registry.list"
+        ? { registries: [{ name: "main", generatedAt: "2026-08-01T00:00:00Z", stale: true }] }
+        : { extensions: [] },
+    );
+    expect(await doctorPrintRegistries(client)).toBe(1);
+    expect(out.stdout).toContain('the index of "main" was generated 2026-08-01T00:00:00Z');
+  });
+
+  it("Method not found on registry.list (an older gateway) is quiet", async () => {
+    const client = byMethod(() => {
+      throw Object.assign(new Error("nope"), { code: -32601 });
+    });
+    expect(await doctorPrintRegistries(client)).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("any other failure warns and exits 1", async () => {
+    const client = byMethod(() => {
+      throw new Error("down");
+    });
+    expect(await doctorPrintRegistries(client)).toBe(1);
+    expect(out.stdout).toContain("[warn] Extension registries: status check failed (down).");
+  });
+
+  it("a malformed response warns and exits 1", async () => {
+    expect(await doctorPrintRegistries(byMethod(() => "garbage"))).toBe(1);
+    expect(out.stdout).toContain("[warn] Extension registries: malformed registry.list response");
   });
 });
