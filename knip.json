@@ -3,7 +3,11 @@
   "workspaces": {
     ".": {
       "entry": ["scripts/**/*.ts", "packages/github-actions/*/src/main.ts"],
-      "ignore": ["**/*.test.ts", "packages/github-actions/*/dist/**"]
+      "ignore": [
+        "**/*.test.ts",
+        "packages/github-actions/*/dist/**",
+        "packages/github-actions/*/src/testing/**"
+      ]
     },
     "packages/gateway": {
       "entry": [

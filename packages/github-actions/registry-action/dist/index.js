@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:5a497a8e3f1afa46b733d5b83fa32a52c3201984e99c03d6721fb436e7958061
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:df6d44d196987e096d2c10f71e1840d23c913f45ed54dfcb6ffbaa08c86f96ff
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4196,25 +4196,42 @@ __export(exports_git_tree, {
   REGISTRY_NOT_INITIALISED: () => REGISTRY_NOT_INITIALISED,
   REGULAR_FILE_MODE: () => REGULAR_FILE_MODE,
   assertSafeTreePath: () => assertSafeTreePath,
+  commitOf: () => commitOf,
+  commitTime: () => commitTime,
   diffTree: () => diffTree,
   fetchRefs: () => fetchRefs,
   findMergeBase: () => findMergeBase,
   listTreeEntries: () => listTreeEntries,
-  readBlob: () => readBlob
+  readBlob: () => readBlob,
+  remoteDefaultBranch: () => remoteDefaultBranch
 });
 
 // ../shared/gha-io.ts
+import { appendFileSync } from "node:fs";
 function getInput(name) {
   const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
   return process.env[envName] ?? "";
 }
 var STEP_SUMMARY_MAX_BYTES = 64 * 1024;
+function writeJobSummary(md) {
+  const file = process.env["GITHUB_STEP_SUMMARY"];
+  if (file === undefined)
+    return;
+  const safe = md.length > STEP_SUMMARY_MAX_BYTES ? md.slice(0, STEP_SUMMARY_MAX_BYTES) : md;
+  appendFileSync(file, `${safe}
+`);
+}
 function emitAnnotation(level, message) {
   const safe = message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll(`
 `, "%0A");
   process.stdout.write(`::${level}::${safe}
 `);
 }
+
+// src/check.ts
+import { mkdtempSync as mkdtempSync2, rmSync as rmSync2 } from "node:fs";
+import { tmpdir as osTmpdir } from "node:os";
+import { join as join3 } from "node:path";
 
 // ../../registry-format/src/caps.ts
 var MAX_MANIFEST_BYTES = 64 * 1024;
@@ -4972,14 +4989,179 @@ function parseExtensionManifestForRegistry(text) {
 }
 
 // ../../registry-format/src/index-format.ts
+function decodeBase642(s) {
+  return new Uint8Array(Buffer.from(s, "base64"));
+}
 var MAX_INDEX_BYTES = 8 * 1024 * 1024;
+var HEX64_RE = /^[0-9a-f]{64}$/;
+var KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
+var SIGNATURE_RE2 = /^[A-Za-z0-9+/]{86}==$/;
+function invalid(detail) {
+  return new RegistryError("ERR_REGISTRY_INDEX_INVALID", detail);
+}
+function asObject(value, what) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw invalid(`${what} must be an object`);
+  }
+  return value;
+}
+function requireKeys(o, keys, what) {
+  for (const k of keys) {
+    if (!(k in o))
+      throw invalid(`${what} is missing key: ${k}`);
+  }
+}
+function str(o, key, what) {
+  const v = o[key];
+  if (typeof v !== "string" || v === "")
+    throw invalid(`${what}.${key} must be a non-empty string`);
+  return v;
+}
+function matching(o, key, re, what) {
+  const v = str(o, key, what);
+  if (!re.test(v))
+    throw invalid(`${what}.${key} is malformed`);
+  return v;
+}
+function isoTimestamp(o, key, what) {
+  const v = str(o, key, what);
+  if (Number.isNaN(Date.parse(v)))
+    throw invalid(`${what}.${key} is not a timestamp`);
+  return v;
+}
 var SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 function isValidSemver(v) {
   return SEMVER_RE.test(v);
 }
+function parseVersionEntry(raw, id, version) {
+  const what = `extensions.${id}.versions.${version}`;
+  const o = asObject(raw, what);
+  requireKeys(o, [
+    "channel",
+    "name",
+    "manifest",
+    "manifestSha256",
+    "package",
+    "packageSha256",
+    "packageSizeBytes",
+    "entryHash",
+    "publishedAt"
+  ], what);
+  const channel = o["channel"];
+  if (channel !== "stable" && channel !== "beta")
+    throw invalid(`${what}.channel is not known`);
+  const base = `extensions/${id}/${version}`;
+  const manifest = str(o, "manifest", what);
+  if (manifest !== `${base}/manifest.json`)
+    throw invalid(`${what}.manifest is not canonical`);
+  const pkg = str(o, "package", what);
+  if (pkg !== `${base}/package.tgz`)
+    throw invalid(`${what}.package is not canonical`);
+  const size = o["packageSizeBytes"];
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0) {
+    throw invalid(`${what}.packageSizeBytes must be a positive integer`);
+  }
+  return {
+    ...o,
+    channel,
+    name: str(o, "name", what),
+    manifest,
+    manifestSha256: matching(o, "manifestSha256", HEX64_RE, what),
+    package: pkg,
+    packageSha256: matching(o, "packageSha256", HEX64_RE, what),
+    packageSizeBytes: size,
+    entryHash: matching(o, "entryHash", HEX64_RE, what),
+    publishedAt: isoTimestamp(o, "publishedAt", what)
+  };
+}
+function parseExtensionEntry(raw, id) {
+  try {
+    assertSafeExtensionId(id);
+  } catch (e) {
+    throw invalid(`extension id ${JSON.stringify(id)} is not safe: ${e.message}`);
+  }
+  const what = `extensions.${id}`;
+  const o = asObject(raw, what);
+  requireKeys(o, ["publisher", "versions"], what);
+  const p = asObject(o["publisher"], `${what}.publisher`);
+  requireKeys(p, ["id", "key"], `${what}.publisher`);
+  const pid = str(p, "id", `${what}.publisher`);
+  if (pid.length > 64 || !PUBLISHER_ID_RE.test(pid)) {
+    throw invalid(`${what}.publisher.id is malformed`);
+  }
+  const key = matching(p, "key", KEY_RE, `${what}.publisher`);
+  const versionsRaw = asObject(o["versions"], `${what}.versions`);
+  const versions = {};
+  for (const [version, entry] of Object.entries(versionsRaw)) {
+    if (!isValidSemver(version))
+      throw invalid(`${what} has a non-semver version: ${version}`);
+    versions[version] = parseVersionEntry(entry, id, version);
+  }
+  if (Object.keys(versions).length === 0)
+    throw invalid(`${what} has no versions`);
+  return { ...o, publisher: { ...p, id: pid, key }, versions };
+}
+function parseRegistryIndex(bytes) {
+  if (bytes.byteLength > MAX_INDEX_BYTES) {
+    throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `index.json exceeds ${String(MAX_INDEX_BYTES)} bytes`);
+  }
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw invalid("index.json is not valid UTF-8");
+  }
+  if (text.startsWith("\uFEFF"))
+    text = text.slice(1);
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw invalid("index.json is not valid JSON");
+  }
+  const o = asObject(raw, "index");
+  requireKeys(o, ["format", "rootKey", "sequence", "generatedAt", "extensions", "signature"], "index");
+  if (o["format"] !== 1)
+    throw invalid("unsupported index format");
+  const sequence = o["sequence"];
+  if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence <= 0) {
+    throw invalid("index.sequence must be a positive integer");
+  }
+  const extensionsRaw = asObject(o["extensions"], "index.extensions");
+  const extensions = {};
+  for (const [id, entry] of Object.entries(extensionsRaw)) {
+    extensions[id] = parseExtensionEntry(entry, id);
+  }
+  return {
+    ...o,
+    format: 1,
+    rootKey: matching(o, "rootKey", KEY_RE, "index"),
+    sequence,
+    generatedAt: isoTimestamp(o, "generatedAt", "index"),
+    extensions,
+    signature: matching(o, "signature", SIGNATURE_RE2, "index")
+  };
+}
 function registryIndexSigningBytes(index) {
   const { signature: _omitted, ...rest } = index;
   return new TextEncoder().encode(canonicalize(rest));
+}
+async function verifyRegistryIndexSelf(index) {
+  let ok;
+  try {
+    ok = import_tweetnacl.default.sign.detached.verify(registryIndexSigningBytes(index), decodeBase642(index.signature), decodeBase642(index.rootKey));
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    throw new RegistryError("ERR_REGISTRY_SIGNATURE_INVALID", "index signature does not verify");
+  }
+}
+async function verifyRegistryIndexPinned(index, pinnedRootKey) {
+  if (index.rootKey !== pinnedRootKey) {
+    throw new RegistryError("ERR_REGISTRY_ROOT_KEY_CHANGED", "index root key differs from the pinned key");
+  }
+  await verifyRegistryIndexSelf(index);
 }
 // ../../registry-format/src/inspect.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -8322,6 +8504,10 @@ function privateKeyFromSeed(seed) {
     type: "pkcs8"
   });
 }
+function publicKeyFromSeed(seed) {
+  const jwk = createPublicKey(privateKeyFromSeed(seed)).export({ format: "jwk" });
+  return new Uint8Array(Buffer.from(jwk.x, "base64url"));
+}
 var SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 async function signIndex(unsigned, privkey) {
   const { signature: _omitted, ...rest } = unsigned;
@@ -8335,6 +8521,7 @@ import { join as join2 } from "node:path";
 var import_semver2 = __toESM(require_semver2(), 1);
 var MAX_SMALL_JSON_BYTES = 4096;
 var PUBLISH_REQUEST_KEYS = ["id", "version", "channel", "publisherFingerprint"];
+var CONFIG_KEYS = ["format", "requirePublisherNamespace"];
 var FINGERPRINT_RE = /^[0-9a-f]{32}$/;
 var DIST_PREFIX = "dist/";
 function decodeJsonObject(bytes, what, fail) {
@@ -8358,6 +8545,21 @@ function requireExactKeys(o, keys, what, fail) {
     if (!Object.hasOwn(o, k))
       throw fail(`${what} is missing key: ${k}`);
   }
+}
+var configInvalid = (detail) => new RegistryError("ERR_REGISTRY_CONFIG_INVALID", detail);
+function parseRegistryConfig(bytes) {
+  const what = "nimbus-registry.json";
+  if (bytes.byteLength > MAX_SMALL_JSON_BYTES)
+    throw configInvalid(`${what} is too large`);
+  const o = decodeJsonObject(bytes, what, configInvalid);
+  requireExactKeys(o, CONFIG_KEYS, what, configInvalid);
+  if (o["format"] !== 1)
+    throw configInvalid(`${what} has an unsupported format`);
+  const ns = o["requirePublisherNamespace"];
+  if (typeof ns !== "boolean") {
+    throw configInvalid(`${what}.requirePublisherNamespace must be a boolean`);
+  }
+  return { format: 1, requirePublisherNamespace: ns };
 }
 var requestInvalid = (detail) => new RegistryError("ERR_REGISTRY_PUBLISH_REQUEST_INVALID", detail);
 function parsePublishRequest(bytes) {
@@ -8690,17 +8892,413 @@ function diffTree(from, to, opts) {
   }
   return changes;
 }
+function commitOf(rev, opts) {
+  assertRev(rev);
+  return git(["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], opts).toString("utf8").trim();
+}
+function commitTime(rev, opts) {
+  assertRev(rev);
+  const raw = git(["log", "-1", "--format=%cI", rev, "--"], opts).toString("utf8").trim();
+  const ms = Date.parse(raw);
+  if (Number.isNaN(ms))
+    throw new Error(`git gave no commit time for ${rev}: ${JSON.stringify(raw)}`);
+  return new Date(ms).toISOString();
+}
+function remoteDefaultBranch(opts) {
+  const out = git(["ls-remote", "--symref", "origin", "HEAD"], opts).toString("utf8");
+  const m = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(out);
+  if (m?.[1] === undefined)
+    throw new Error("cannot tell origin's default branch from git ls-remote");
+  assertBranchName(m[1]);
+  return m[1];
+}
+
+// src/registry-state.ts
+var PAGES_BRANCH = "gh-pages";
+var PAGES_REF = `origin/${PAGES_BRANCH}`;
+var INDEX_FILE = "index.json";
+var CONFIG_FILE = "nimbus-registry.json";
+var CANDIDATE_FILES = ["manifest.json", "package.tgz", "publish-request.json"];
+var DEFAULT_CONFIG = { format: 1, requirePublisherNamespace: false };
+function hasFile(git, ref, path, cwd) {
+  return git.listTreeEntries(ref, path, { cwd }).some((e) => e.path === path);
+}
+async function readVerifiedIndex(git, cwd) {
+  if (!hasFile(git, PAGES_REF, INDEX_FILE, cwd))
+    throw new Error(git.REGISTRY_NOT_INITIALISED);
+  const index = parseRegistryIndex(git.readBlob(PAGES_REF, INDEX_FILE, { cwd }));
+  await verifyRegistryIndexSelf(index);
+  return index;
+}
+function readConfigAt(git, ref, cwd) {
+  if (!hasFile(git, ref, CONFIG_FILE, cwd))
+    return;
+  const bytes = git.readBlob(ref, CONFIG_FILE, { cwd });
+  return { config: parseRegistryConfig(bytes), bytes };
+}
+function loosens(prev, next) {
+  return prev.requirePublisherNamespace && !next.requirePublisherNamespace;
+}
+function splitExtensionDir(dir) {
+  const m = /^extensions\/(.+)\/([^/]+)$/.exec(dir);
+  if (m?.[1] === undefined || m[2] === undefined)
+    return;
+  return { id: m[1], version: m[2] };
+}
+function readCandidate(git, ref, dir, cwd) {
+  const base = `extensions/${dir.id}/${dir.version}`;
+  const read = (file) => git.readBlob(ref, `${base}/${file}`, { cwd });
+  return {
+    dirId: dir.id,
+    dirVersion: dir.version,
+    manifestBytes: read("manifest.json"),
+    packageBytes: read("package.tgz"),
+    publishRequestBytes: read("publish-request.json")
+  };
+}
+
+// src/report.ts
+var GHA_IO = {
+  annotate: emitAnnotation,
+  summary: writeJobSummary,
+  log: (line) => {
+    process.stdout.write(`${line}
+`);
+  }
+};
+var CONTROL_CHARS = /[\x00-\x1f\x7f]/g;
+function code(s) {
+  const flat = s.replace(CONTROL_CHARS, " ");
+  const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  const pad = longest > 0 ? " " : "";
+  return `${fence}${pad}${flat}${pad}${fence}`;
+}
 
 // src/check.ts
-var SHARED = { validate: validatePublish, git: exports_git_tree };
+var SHARED = { validate: validatePublish, git: exports_git_tree, io: GHA_IO, tmpdir: osTmpdir };
+var FILE_RE = new RegExp(`^(extensions/.+)/(${CANDIDATE_FILES.join("|").replaceAll(".", "\\.")})$`);
+function assertSinglePublish(changes) {
+  if (changes.length === 0)
+    throw new Error("the pull request changes no files");
+  const offending = [];
+  const dirs = new Set;
+  for (const c of changes) {
+    const m = FILE_RE.exec(c.path);
+    if (c.status !== "A" || m?.[1] === undefined) {
+      offending.push(`${c.status} ${c.path}`);
+    } else {
+      dirs.add(m[1]);
+    }
+  }
+  if (offending.length > 0) {
+    throw new Error("a publish pull request may only add manifest.json, package.tgz and publish-request.json " + `under one extensions/<id>/<version>/; it also changes: ${offending.join(", ")}`);
+  }
+  if (dirs.size !== 1) {
+    throw new Error(`a publish pull request adds exactly one extensions/<id>/<version>/; this one adds ${[...dirs].sort().join(", ")}`);
+  }
+  const [dir] = dirs;
+  const coords = dir === undefined ? undefined : splitExtensionDir(dir);
+  if (coords === undefined || changes.length !== CANDIDATE_FILES.length) {
+    throw new Error(`${String(dir)}/ must add all of ${CANDIDATE_FILES.join(", ")}`);
+  }
+  return coords;
+}
+function effectiveConfig(git, baseRef, cwd) {
+  const pages = readConfigAt(git, PAGES_REF, cwd)?.config;
+  const base = readConfigAt(git, `origin/${baseRef}`, cwd)?.config;
+  return {
+    format: 1,
+    requirePublisherNamespace: (pages?.requirePublisherNamespace ?? false) || (base?.requirePublisherNamespace ?? DEFAULT_CONFIG.requirePublisherNamespace)
+  };
+}
+var listOf = (items) => items.length === 0 ? "none" : items.map(code).join(", ");
+function checkSummary(v) {
+  const lines = [`## Registry publish: ${code(`${v.id}@${v.version}`)}`, ""];
+  if (v.newId) {
+    lines.push(`> [!WARNING]`, `> **NEW ID** — ${code(v.id)} is not in the signed index yet. Check the publisher and the name before approving.`, "");
+  }
+  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, "", "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.");
+  return lines.join(`
+`);
+}
 async function runCheck(opts, deps = SHARED) {
-  throw new Error("not implemented");
+  const { git } = deps;
+  const cwd = opts.workspace;
+  if (opts.baseRef === "") {
+    throw new Error("check runs on pull_request: the base branch (GITHUB_BASE_REF) is empty");
+  }
+  git.fetchRefs([opts.baseRef, PAGES_BRANCH], { cwd });
+  const index = await readVerifiedIndex(git, cwd);
+  const mergeBase = git.findMergeBase(`origin/${opts.baseRef}`, "HEAD", {
+    cwd,
+    deepen: [opts.baseRef]
+  });
+  const dir = assertSinglePublish(git.diffTree(mergeBase, "HEAD", { cwd }));
+  const candidate = readCandidate(git, "HEAD", dir, cwd);
+  const config = effectiveConfig(git, opts.baseRef, cwd);
+  const work = mkdtempSync2(join3(deps.tmpdir(), "nimbus-registry-check-"));
+  try {
+    const verdict = await deps.validate(candidate, index, config, work);
+    deps.io.summary(checkSummary(verdict));
+    deps.io.log(`check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`);
+  } finally {
+    rmSync2(work, { recursive: true, force: true });
+  }
 }
 
 // src/sign.ts
-var SHARED2 = { validate: validatePublish, sign: signIndex, git: exports_git_tree };
+import { createHash as createHash4 } from "node:crypto";
+import { mkdtempSync as mkdtempSync4, rmSync as rmSync4 } from "node:fs";
+import { tmpdir as osTmpdir2 } from "node:os";
+import { join as join5 } from "node:path";
+
+// src/site-commit.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { mkdtempSync as mkdtempSync3, rmSync as rmSync3 } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as join4 } from "node:path";
+var BOT_IDENTITY = [
+  "-c",
+  "user.name=github-actions[bot]",
+  "-c",
+  "user.email=41898282+github-actions[bot]@users.noreply.github.com"
+];
+function run(args, opts) {
+  return execFileSync2("git", [...args], {
+    cwd: opts.cwd,
+    env: opts.env ?? process.env,
+    input: opts.input,
+    windowsHide: true,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["pipe", "pipe", "pipe"]
+  }).toString("utf8").trim();
+}
+function commitSite(parent, files, message, cwd) {
+  const scratch = mkdtempSync3(join4(tmpdir(), "nimbus-registry-site-"));
+  try {
+    const env = { ...process.env, GIT_INDEX_FILE: join4(scratch, "index") };
+    run(["read-tree", parent], { cwd, env });
+    for (const f of files) {
+      assertSafeTreePath(f.path);
+      const blob = run(["hash-object", "-w", "--no-filters", "--stdin"], { cwd, input: f.bytes });
+      run(["update-index", "--add", "--cacheinfo", `100644,${blob},${f.path}`], { cwd, env });
+    }
+    const tree = run(["write-tree"], { cwd, env });
+    if (tree === run(["rev-parse", `${parent}^{tree}`], { cwd }))
+      return;
+    return run([...BOT_IDENTITY, "commit-tree", tree, "-p", parent, "-m", message], { cwd });
+  } finally {
+    rmSync3(scratch, { recursive: true, force: true });
+  }
+}
+var NON_FAST_FORWARD = /non-fast-forward|fetch first|\[rejected\]/;
+function pushCommit(commit, branch, cwd) {
+  try {
+    run(["push", "--porcelain", "origin", `${commit}:refs/heads/${branch}`], { cwd });
+    return "pushed";
+  } catch (err) {
+    const text = [
+      err !== null && typeof err === "object" && "stderr" in err ? String(err.stderr) : "",
+      err !== null && typeof err === "object" && "stdout" in err ? String(err.stdout) : ""
+    ].join(`
+`);
+    if (NON_FAST_FORWARD.test(text))
+      return "non-fast-forward";
+    throw new Error(`git push to ${branch} failed: ${text.trim()}`);
+  }
+}
+
+// src/sign.ts
+var SHARED2 = {
+  validate: validatePublish,
+  sign: signIndex,
+  git: exports_git_tree,
+  io: GHA_IO,
+  tmpdir: osTmpdir2
+};
+var MAX_ATTEMPTS = 3;
+var ROOT_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
+function parseRootKey(raw) {
+  const s = raw.trim();
+  if (!ROOT_KEY_RE.test(s)) {
+    throw new Error('input "root-key" is not a registry root key: expected the base64 of a 32-byte Ed25519 seed, as `nimbus registry maintain init` writes it');
+  }
+  return new Uint8Array(Buffer.from(s, "base64"));
+}
+function extensionDirs(git, ref, cwd) {
+  const dirs = new Map;
+  const paths = new Set;
+  for (const e of git.listTreeEntries(ref, "extensions/", { cwd })) {
+    paths.add(e.path);
+    const slash = e.path.lastIndexOf("/");
+    const dir = e.path.slice(0, slash);
+    if (dir === "extensions")
+      continue;
+    const names = dirs.get(dir) ?? new Set;
+    names.add(e.path.slice(slash + 1));
+    dirs.set(dir, names);
+  }
+  return { dirs, paths };
+}
+var sha256Hex2 = (b) => createHash4("sha256").update(b).digest("hex");
+function assertSignedIntact(git, index, ref, paths, cwd) {
+  const problems = [];
+  const signedDirs = new Set;
+  for (const [id, ext] of Object.entries(index.extensions)) {
+    for (const [version, v] of Object.entries(ext.versions)) {
+      signedDirs.add(`extensions/${id}/${version}`);
+      for (const [path, want] of [
+        [v.manifest, v.manifestSha256],
+        [v.package, v.packageSha256]
+      ]) {
+        if (!paths.has(path)) {
+          problems.push(`${path} is signed but was deleted`);
+        } else if (sha256Hex2(git.readBlob(ref, path, { cwd })) !== want) {
+          problems.push(`${path} differs from the signed version`);
+        }
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(`refusing to sign: already-signed versions changed on the default branch (a signed version is immutable): ${problems.join("; ")}`);
+  }
+  return signedDirs;
+}
+function sameFileSet(names) {
+  return names.size === CANDIDATE_FILES.length && CANDIDATE_FILES.every((f) => names.has(f));
+}
+async function attemptSign(opts, seed, rootKey, deps) {
+  const { git } = deps;
+  const cwd = opts.workspace;
+  const mainRef = `origin/${opts.defaultBranch}`;
+  git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
+  const index = await readVerifiedIndex(git, cwd);
+  if (index.rootKey !== rootKey) {
+    throw new Error(`refusing to sign: the root-key input (public key fingerprint ${publisherKeyFingerprint(rootKey)}) is not this registry's root key (fingerprint ${publisherKeyFingerprint(index.rootKey)})`);
+  }
+  const config = readConfigAt(git, mainRef, cwd);
+  if (config === undefined) {
+    throw new Error(`refusing to sign: ${opts.defaultBranch} has no ${CONFIG_FILE}`);
+  }
+  const pagesConfig = readConfigAt(git, PAGES_REF, cwd);
+  if (pagesConfig !== undefined && loosens(pagesConfig.config, config.config)) {
+    throw new Error(`refusing to sign: ${opts.defaultBranch}'s ${CONFIG_FILE} loosens the rules the last signed run used (requirePublisherNamespace true -> false); loosening is a maintainer action done by hand`);
+  }
+  const { dirs, paths } = extensionDirs(git, mainRef, cwd);
+  const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd);
+  const extensions = { ...index.extensions };
+  const publishedAt = git.commitTime(mainRef, { cwd });
+  const added = [];
+  const skipped = [];
+  const files = [{ path: CONFIG_FILE, bytes: config.bytes }];
+  const work = mkdtempSync4(join5(deps.tmpdir(), "nimbus-registry-sign-"));
+  try {
+    for (const dir of [...dirs.keys()].filter((d) => !signedDirs.has(d)).sort()) {
+      const coords = splitExtensionDir(dir);
+      const names = dirs.get(dir) ?? new Set;
+      if (coords === undefined || !sameFileSet(names)) {
+        skipped.push({
+          dir,
+          reason: `must hold exactly ${CANDIDATE_FILES.join(", ")}; holds ${[...names].sort().join(", ")}`
+        });
+        continue;
+      }
+      const candidate = readCandidate(git, mainRef, coords, cwd);
+      let v;
+      try {
+        v = await deps.validate(candidate, { ...index, extensions }, config.config, work);
+      } catch (e) {
+        if (!(e instanceof RegistryError))
+          throw e;
+        skipped.push({ dir, reason: e.message });
+        continue;
+      }
+      const base = `extensions/${v.id}/${v.version}`;
+      const existing = extensions[v.id];
+      extensions[v.id] = {
+        publisher: existing?.publisher ?? v.publisher,
+        versions: {
+          ...existing?.versions,
+          [v.version]: {
+            channel: v.channel,
+            name: v.name,
+            manifest: `${base}/manifest.json`,
+            manifestSha256: v.manifestSha256,
+            package: `${base}/package.tgz`,
+            packageSha256: v.packageSha256,
+            packageSizeBytes: v.packageSizeBytes,
+            entryHash: v.entryHash,
+            publishedAt
+          }
+        }
+      };
+      files.push({ path: `${base}/manifest.json`, bytes: candidate.manifestBytes }, { path: `${base}/package.tgz`, bytes: candidate.packageBytes });
+      added.push({ id: v.id, version: v.version, channel: v.channel });
+    }
+  } finally {
+    rmSync4(work, { recursive: true, force: true });
+  }
+  let sequence = index.sequence;
+  if (added.length > 0) {
+    const signed = await deps.sign({
+      format: 1,
+      rootKey: index.rootKey,
+      sequence: index.sequence + 1,
+      generatedAt: new Date().toISOString(),
+      extensions
+    }, seed);
+    await verifyRegistryIndexPinned(signed, rootKey);
+    sequence = signed.sequence;
+    files.push({
+      path: INDEX_FILE,
+      bytes: new TextEncoder().encode(`${JSON.stringify(signed, null, 2)}
+`)
+    });
+  }
+  const message = added.length > 0 ? `Sign ${added.map((a) => `${a.id}@${a.version}`).join(", ")} (sequence ${String(sequence)})` : `Copy ${CONFIG_FILE} from ${opts.defaultBranch}`;
+  const parent = git.commitOf(PAGES_REF, { cwd });
+  return { commit: commitSite(parent, files, message, cwd), added, skipped, sequence };
+}
+function report(io, a, pushed) {
+  for (const s of a.skipped)
+    io.annotate("warning", `skipped ${s.dir}: ${s.reason}`);
+  const lines = ["## Registry sign", ""];
+  if (a.added.length === 0) {
+    lines.push("Nothing new to sign.");
+  } else {
+    lines.push(`Signed index sequence ${String(a.sequence)}:`, "");
+    for (const x of a.added)
+      lines.push(`- ${code(`${x.id}@${x.version}`)} (${x.channel})`);
+  }
+  if (a.skipped.length > 0) {
+    lines.push("", "**Skipped** (not signed; fix the directory and it is signed on a later run):", "");
+    for (const s of a.skipped)
+      lines.push(`- ${code(s.dir)}: ${code(s.reason)}`);
+  }
+  lines.push("", pushed ? `Pushed to ${code(PAGES_BRANCH)}.` : "No change: nothing was committed.");
+  io.summary(lines.join(`
+`));
+  io.log(pushed ? `signed ${String(a.added.length)} version(s), skipped ${String(a.skipped.length)}; pushed ${PAGES_BRANCH}` : `nothing to sign; skipped ${String(a.skipped.length)}; no commit`);
+}
 async function runSign(opts, deps = SHARED2) {
-  throw new Error("not implemented");
+  const seed = parseRootKey(opts.rootKey);
+  const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
+  const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
+  for (let attempt = 1;attempt <= MAX_ATTEMPTS; attempt++) {
+    const a = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps);
+    if (a.commit === undefined) {
+      report(deps.io, a, false);
+      return;
+    }
+    deps.beforePush?.(attempt);
+    if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
+      report(deps.io, a, true);
+      return;
+    }
+    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
+  }
+  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`);
 }
 
 // src/main.ts
@@ -8715,6 +9313,16 @@ function requireInput(name) {
     throw new Error(`input "${name}" is required`);
   return v;
 }
+function maskSecret(secret, write = (s) => process.stdout.write(s)) {
+  const parts = new Set([secret, secret.trim(), ...secret.split(/[\r\n]+/).map((l) => l.trim())]);
+  parts.delete("");
+  for (const p of parts) {
+    if (/[\r\n]/.test(p))
+      continue;
+    write(`::add-mask::${p.replaceAll("%", "%25")}
+`);
+  }
+}
 function workspace() {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
@@ -8724,7 +9332,9 @@ async function main() {
     if (mode === "check") {
       await runCheck({ workspace: workspace(), baseRef: process.env["GITHUB_BASE_REF"] ?? "" });
     } else {
-      await runSign({ workspace: workspace(), rootKey: requireInput("root-key") });
+      const rootKey = requireInput("root-key");
+      maskSecret(rootKey);
+      await runSign({ workspace: workspace(), rootKey });
     }
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));
@@ -8736,5 +9346,6 @@ if (__require.main == __require.module) {
 }
 export {
   main,
+  maskSecret,
   parseMode
 };

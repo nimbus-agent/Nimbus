@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { parseMode } from "./main.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { main, maskSecret, parseMode } from "./main.ts";
 
 describe("parseMode", () => {
   test("accepts check and sign", () => {
@@ -11,5 +11,81 @@ describe("parseMode", () => {
     expect(() => parseMode(raw)).toThrow(
       `input "mode" must be "check" or "sign"; got ${JSON.stringify(raw)}`,
     );
+  });
+});
+
+describe("maskSecret", () => {
+  test("masks the value, trimmed, and each line, with % escaped", () => {
+    const out: string[] = [];
+    maskSecret(" a%b \nline2\n", (s) => void out.push(s));
+    expect(out).toEqual(["::add-mask::a%25b\n", "::add-mask::line2\n"]);
+  });
+
+  test("masks a single-line key once", () => {
+    const out: string[] = [];
+    maskSecret("AAAA=", (s) => void out.push(s));
+    expect(out).toEqual(["::add-mask::AAAA=\n"]);
+  });
+});
+
+describe("main", () => {
+  const KEYS = ["INPUT_MODE", "INPUT_ROOT_KEY", "GITHUB_BASE_REF", "GITHUB_WORKSPACE"] as const;
+  let saved: Record<string, string | undefined>;
+  let out: string[];
+  let realWrite: typeof process.stdout.write;
+
+  beforeEach(() => {
+    saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+    out = [];
+    realWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((s: string | Uint8Array): boolean => {
+      out.push(typeof s === "string" ? s : new TextDecoder().decode(s));
+      return true;
+    }) as typeof process.stdout.write;
+    process.exitCode = 0;
+  });
+
+  afterEach(() => {
+    process.stdout.write = realWrite;
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    process.exitCode = 0;
+  });
+
+  test("sign masks the root key before anything else and never prints it", async () => {
+    const key = "definitely-not-a-key-but-secret";
+    process.env["INPUT_MODE"] = "sign";
+    process.env["INPUT_ROOT_KEY"] = key;
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out[0]).toBe(`::add-mask::${key}\n`);
+    const rest = out.slice(1).join("");
+    expect(rest).toContain('::error::input "root-key" is not a registry root key');
+    expect(rest).not.toContain(key);
+  });
+
+  test("sign without a root key fails the step", async () => {
+    process.env["INPUT_MODE"] = "sign";
+    delete process.env["INPUT_ROOT_KEY"];
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain('::error::input "root-key" is required');
+  });
+
+  test("a refused check fails the step with an error annotation", async () => {
+    process.env["INPUT_MODE"] = "check";
+    delete process.env["GITHUB_BASE_REF"];
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain("::error::check runs on pull_request");
+  });
+
+  test("an unknown mode fails the step", async () => {
+    process.env["INPUT_MODE"] = "publish";
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain('::error::input "mode" must be "check" or "sign"');
   });
 });

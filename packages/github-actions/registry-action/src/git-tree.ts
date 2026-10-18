@@ -265,3 +265,31 @@ export function diffTree(from: string, to: string, opts: GitOptions): TreeChange
   }
   return changes;
 }
+
+/** The commit id `rev` names. */
+export function commitOf(rev: string, opts: GitOptions): string {
+  assertRev(rev);
+  return git(["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], opts)
+    .toString("utf8")
+    .trim();
+}
+
+/** The committer time of `rev`, as an ISO-8601 UTC timestamp. */
+export function commitTime(rev: string, opts: GitOptions): string {
+  assertRev(rev);
+  const raw = git(["log", "-1", "--format=%cI", rev, "--"], opts).toString("utf8").trim();
+  const ms = Date.parse(raw);
+  if (Number.isNaN(ms))
+    throw new Error(`git gave no commit time for ${rev}: ${JSON.stringify(raw)}`);
+  return new Date(ms).toISOString();
+}
+
+/** The branch `origin`'s `HEAD` points at: the registry repository's default branch. */
+export function remoteDefaultBranch(opts: GitOptions): string {
+  const out = git(["ls-remote", "--symref", "origin", "HEAD"], opts).toString("utf8");
+  const m = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(out);
+  if (m?.[1] === undefined)
+    throw new Error("cannot tell origin's default branch from git ls-remote");
+  assertBranchName(m[1]);
+  return m[1];
+}

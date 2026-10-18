@@ -16,6 +16,23 @@ function requireInput(name: string): string {
   return v;
 }
 
+/**
+ * Register `secret` with the runner's log masking (`::add-mask::`) before anything else touches it.
+ * Each line is masked on its own too, since a multi-line value is masked line by line, and the
+ * value is escaped with the runner's command encoding so a `%` in it cannot alter what is masked.
+ */
+export function maskSecret(
+  secret: string,
+  write: (s: string) => void = (s) => process.stdout.write(s),
+): void {
+  const parts = new Set([secret, secret.trim(), ...secret.split(/[\r\n]+/).map((l) => l.trim())]);
+  parts.delete("");
+  for (const p of parts) {
+    if (/[\r\n]/.test(p)) continue; // covered by its lines
+    write(`::add-mask::${p.replaceAll("%", "%25")}\n`);
+  }
+}
+
 function workspace(): string {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
@@ -26,7 +43,9 @@ export async function main(): Promise<void> {
     if (mode === "check") {
       await runCheck({ workspace: workspace(), baseRef: process.env["GITHUB_BASE_REF"] ?? "" });
     } else {
-      await runSign({ workspace: workspace(), rootKey: requireInput("root-key") });
+      const rootKey = requireInput("root-key");
+      maskSecret(rootKey);
+      await runSign({ workspace: workspace(), rootKey });
     }
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));
