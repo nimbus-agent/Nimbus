@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { verifyIndexSignature } from "@nimbus-dev/registry-format";
-import { Header } from "tar";
+import { Header, create as tarCreate } from "tar";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "../lib/extension-signing.ts";
 import { readIndexFile } from "../lib/registry-index.ts";
 import { runRegistryMaintain } from "./registry-maintain.ts";
@@ -270,12 +270,18 @@ describe("registry maintain add — package and manifest refusals", () => {
   });
 
   test("a manifest with no id", async () => {
-    await refuses(await makeExtension({ edit: (m) => delete m["id"] }), "manifest has no id");
+    await refuses(
+      await makeExtension({ edit: (m) => delete m["id"] }),
+      "ERR_REGISTRY_MANIFEST_INVALID",
+    );
   });
 
   for (const id of ["a/../b", "a//b", "a\\b", " ", "x".repeat(129)]) {
     test(`an unsafe id ${JSON.stringify(id.slice(0, 12))}`, async () => {
-      await refuses(await makeExtension({ edit: (m) => (m["id"] = id) }), "invalid extension id");
+      await refuses(
+        await makeExtension({ edit: (m) => (m["id"] = id) }),
+        "ERR_REGISTRY_MANIFEST_INVALID",
+      );
     });
   }
 
@@ -283,7 +289,7 @@ describe("registry maintain add — package and manifest refusals", () => {
     test(`a non-semver version ${JSON.stringify(version)}`, async () => {
       await refuses(
         await makeExtension({ edit: (m) => (m["version"] = version) }),
-        "is not strict semver",
+        "ERR_REGISTRY_MANIFEST_INVALID",
       );
     });
   }
@@ -291,21 +297,21 @@ describe("registry maintain add — package and manifest refusals", () => {
   test("a manifest without a signature is unsigned", async () => {
     await refuses(
       await makeExtension({ postSign: (m) => delete m["signature"] }),
-      "extension is unsigned",
+      "ERR_REGISTRY_MANIFEST_INVALID",
     );
   });
 
   test("a manifest whose publisher has no key is unsigned", async () => {
     await refuses(
       await makeExtension({ postSign: (m) => (m["publisher"] = { id: "example" }) }),
-      "extension is unsigned",
+      "ERR_REGISTRY_MANIFEST_INVALID",
     );
   });
 
   test("a manifest with a null publisher is unsigned", async () => {
     await refuses(
       await makeExtension({ postSign: (m) => (m["publisher"] = null) }),
-      "extension is unsigned",
+      "ERR_REGISTRY_MANIFEST_INVALID",
     );
   });
 
@@ -314,7 +320,7 @@ describe("registry maintain add — package and manifest refusals", () => {
       await makeExtension({
         edit: (m) => (m["publisher"] = { ...(m["publisher"] as object), id: "Bad Id" }),
       }),
-      "manifest publisher id or key is malformed",
+      "ERR_REGISTRY_MANIFEST_INVALID",
     );
   });
 
@@ -323,7 +329,7 @@ describe("registry maintain add — package and manifest refusals", () => {
       await makeExtension({
         edit: (m) => (m["publisher"] = { ...(m["publisher"] as object), id: "a".repeat(65) }),
       }),
-      "manifest publisher id or key is malformed",
+      "ERR_REGISTRY_MANIFEST_INVALID",
     );
   });
 
@@ -332,14 +338,14 @@ describe("registry maintain add — package and manifest refusals", () => {
       await makeExtension({
         postSign: (m) => (m["publisher"] = { id: "example", key: "not-a-key" }),
       }),
-      "manifest publisher id or key is malformed",
+      "ERR_REGISTRY_MANIFEST_INVALID",
     );
   });
 
   test("a signature that does not verify", async () => {
     await refuses(
       await makeExtension({ postSign: (m) => (m["version"] = "9.9.9") }),
-      "manifest signature does not verify",
+      "ERR_REGISTRY_SIGNATURE_INVALID",
     );
   });
 
@@ -475,5 +481,64 @@ describe("registry maintain add/remove — multi-version flows", () => {
       "com.example.tool@3.0.0 is not in this registry",
     );
     expect(indexText(dir)).toBe(before);
+  });
+});
+
+describe("registry maintain add — parity with the shared publish validator", () => {
+  test("a tampered index is refused before the validator runs", async () => {
+    const { dir, key } = await init();
+    const index = JSON.parse(indexText(dir)) as Record<string, unknown>;
+    index["sequence"] = 99;
+    writeFileSync(join(dir, "index.json"), JSON.stringify(index));
+    const before = indexText(dir);
+    // A package the validator would refuse (unsigned) reports the index failure instead.
+    const unsigned = await makeExtension({ postSign: (m) => delete m["signature"] });
+    const msg = await run(["add", dir, unsigned, "--key", key], 2);
+    expect(msg).toContain("does not verify");
+    expect(msg).not.toContain("ERR_REGISTRY_");
+    expect(indexText(dir)).toBe(before);
+  });
+
+  test("a registry that requires publisher namespaces refuses an id outside it", async () => {
+    const { dir, key } = await init();
+    writeFileSync(
+      join(dir, "nimbus-registry.json"),
+      JSON.stringify({ format: 1, requirePublisherNamespace: true }),
+    );
+    const msg = await run(["add", dir, await makeExtension(), "--key", key], 2);
+    expect(msg).toContain("ERR_REGISTRY_NAMESPACE_REQUIRED");
+  });
+
+  test("a registry that requires namespaces accepts an id inside it", async () => {
+    const { dir, key } = await init();
+    writeFileSync(
+      join(dir, "nimbus-registry.json"),
+      JSON.stringify({ format: 1, requirePublisherNamespace: true }),
+    );
+    await run(
+      ["add", dir, await makeExtension({ edit: (m) => (m["id"] = "example/tool") }), "--key", key],
+      0,
+    );
+  });
+
+  test("a malformed nimbus-registry.json is refused with its own code", async () => {
+    const { dir, key } = await init();
+    writeFileSync(join(dir, "nimbus-registry.json"), JSON.stringify({ format: 1 }));
+    const msg = await run(["add", dir, await makeExtension(), "--key", key], 2);
+    expect(msg).toContain("ERR_REGISTRY_CONFIG_INVALID");
+  });
+
+  test("a package holding a file outside the package set is refused", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension();
+    writeFileSync(join(ext, "secrets.env"), "X=1\n");
+    const tgz = join(tmp, "extra.tgz");
+    await tarCreate({ gzip: true, file: tgz, cwd: ext }, [
+      "nimbus.extension.json",
+      "dist",
+      "secrets.env",
+    ]);
+    const msg = await run(["add", dir, tgz, "--key", key], 2);
+    expect(msg).toContain("ERR_REGISTRY_PACKAGE_FILE_SET");
   });
 });

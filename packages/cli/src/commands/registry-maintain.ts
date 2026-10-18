@@ -3,7 +3,6 @@
  * registry folder (spec § 9). Pure CLI: no gateway, no network, no Vault. The root key is a file
  * holding base64 of the 32-byte Ed25519 seed (the format `nimbus extension keygen` writes).
  */
-import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -21,28 +20,21 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
-  assertSafeExtensionId,
   emptyIndex,
   inspectPackage,
   isValidSemver,
-  MAX_PACKAGE_BYTES,
-  PUBLISHER_ID_RE,
-  PUBLISHER_KEY_RE,
   packExtensionDir,
+  parseRegistryConfig,
   publicKeyFromSeed,
   publisherKeyFingerprint,
-  type RegistryChannel,
+  type RegistryConfig,
   RegistryError,
   type RegistryIndex,
   signIndex,
+  validatePublish,
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
-import {
-  decodeBase64,
-  encodeBase64,
-  generateEd25519Keypair,
-  verifyManifestSignature,
-} from "../lib/extension-signing.ts";
+import { decodeBase64, encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
 import { readIndexFile, writeIndexAtomic } from "../lib/registry-index.ts";
 
 export interface MaintainIo {
@@ -59,24 +51,6 @@ const USAGE =
   "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>]\n";
 
 class MaintainError extends Error {}
-
-function sha256Hex(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-function assertSafeId(id: string): string[] {
-  try {
-    assertSafeExtensionId(id);
-  } catch {
-    throw new MaintainError(`invalid extension id: ${JSON.stringify(id)}`);
-  }
-  // The id becomes a directory path in the registry folder, so every segment must be a plain name.
-  const parts = id.split("/");
-  if (parts.some((p) => p === "" || p === "." || p === ".." || p.includes("\\"))) {
-    throw new MaintainError(`invalid extension id: ${JSON.stringify(id)}`);
-  }
-  return parts;
-}
 
 interface ParsedArgs {
   positional: string[];
@@ -192,49 +166,6 @@ async function maintainInit(args: string[], io: MaintainIo): Promise<void> {
   io.stdout(`key file:    ${keyPath} (keep it secret and backed up)\n`);
 }
 
-interface ValidManifest {
-  id: string;
-  idParts: string[];
-  version: string;
-  name: string;
-  publisher: { id: string; key: string };
-}
-
-async function validateManifest(m: Record<string, unknown>): Promise<ValidManifest> {
-  const id = m["id"];
-  const version = m["version"];
-  if (typeof id !== "string") throw new MaintainError("manifest has no id");
-  const idParts = assertSafeId(id);
-  if (typeof version !== "string" || !isValidSemver(version)) {
-    throw new MaintainError(`manifest version ${JSON.stringify(version)} is not strict semver`);
-  }
-  const pub = m["publisher"] as { id?: unknown; key?: unknown } | undefined;
-  if (
-    pub === undefined ||
-    pub === null ||
-    typeof pub.id !== "string" ||
-    typeof pub.key !== "string" ||
-    typeof m["signature"] !== "string"
-  ) {
-    throw new MaintainError(
-      "extension is unsigned: the manifest needs `publisher` and `signature` (run `nimbus extension sign`)",
-    );
-  }
-  if (pub.id.length > 64 || !PUBLISHER_ID_RE.test(pub.id) || !PUBLISHER_KEY_RE.test(pub.key)) {
-    throw new MaintainError("manifest publisher id or key is malformed");
-  }
-  try {
-    await verifyManifestSignature(m, decodeBase64(pub.key));
-  } catch (e) {
-    throw new MaintainError(
-      `manifest signature does not verify: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-  const declaredName = m["name"];
-  const name = typeof declaredName === "string" && declaredName !== "" ? declaredName : id;
-  return { id, idParts, version, name, publisher: { id: pub.id, key: pub.key } };
-}
-
 /**
  * Opens `source` ONCE and does the type check and the read through that descriptor, so nothing can be
  * swapped between a check and a use of the path. Returns the file's bytes, or `undefined` for a
@@ -271,6 +202,35 @@ function isDirectory(path: string): boolean {
   }
 }
 
+const DEFAULT_REGISTRY_CONFIG: RegistryConfig = { format: 1, requirePublisherNamespace: false };
+
+/** `<dir>/nimbus-registry.json` when present; absent means today's rules (no namespace required). */
+function readRegistryConfig(dir: string): RegistryConfig {
+  const path = join(dir, "nimbus-registry.json");
+  if (!existsSync(path)) return DEFAULT_REGISTRY_CONFIG;
+  return parseRegistryConfig(readFileSync(path));
+}
+
+/** A string field of the package's inner manifest, or "" so the validator reports the real problem. */
+function innerField(manifest: Record<string, unknown>, key: string): string {
+  const v = manifest[key];
+  return typeof v === "string" ? v : "";
+}
+
+/** The publish request a CI check would read, built from the manifest the maintainer is adding. */
+function syntheticPublishRequest(
+  id: string,
+  version: string,
+  channel: string,
+  inner: { manifest: Record<string, unknown> },
+): Uint8Array {
+  const pub = inner.manifest["publisher"] as { key?: unknown } | null | undefined;
+  const key = typeof pub?.key === "string" ? pub.key : "";
+  return new TextEncoder().encode(
+    JSON.stringify({ id, version, channel, publisherFingerprint: publisherKeyFingerprint(key) }),
+  );
+}
+
 async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
   const p = parseArgs(args, ["--key", "--channel"], []);
   const [dir, source] = p.positional;
@@ -297,37 +257,41 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
       writeFileSync(tgz, fileBytes, { flag: "wx" });
     }
     const tgzBytes = readFileSync(tgz);
-    if (tgzBytes.length === 0 || tgzBytes.length > MAX_PACKAGE_BYTES) {
-      throw new MaintainError("package size is out of range");
-    }
-    const pkg = await inspectPackage(tgz, work);
-    const v = await validateManifest(pkg.manifest);
-
+    if (tgzBytes.length === 0) throw new MaintainError("package size is out of range");
+    // The signed index was verified by `loadOwnedIndex` above; the validator trusts it.
+    const config = readRegistryConfig(dir);
+    const inner = await inspectPackage(tgz, work);
+    const manifestId = innerField(inner.manifest, "id");
+    const manifestVersion = innerField(inner.manifest, "version");
+    const v = await validatePublish(
+      {
+        dirId: manifestId,
+        dirVersion: manifestVersion,
+        manifestBytes: inner.manifestBytes,
+        packageBytes: tgzBytes,
+        publishRequestBytes: syntheticPublishRequest(manifestId, manifestVersion, channel, inner),
+      },
+      index,
+      config,
+      work,
+    );
     const existing = index.extensions[v.id];
-    if (existing !== undefined && existing.publisher.key !== v.publisher.key) {
-      throw new MaintainError(
-        `${v.id} is already published under a different publisher key; key rotation is not supported`,
-      );
-    }
-    if (existing?.versions[v.version] !== undefined) {
-      throw new MaintainError(`${v.id}@${v.version} already exists in this registry`);
-    }
 
     const rel = `extensions/${v.id}/${v.version}`;
-    const destDir = join(dir, "extensions", ...v.idParts, v.version);
+    const destDir = join(dir, "extensions", ...v.id.split("/"), v.version);
     mkdirSync(destDir, { recursive: true });
-    writeFileSync(join(destDir, "manifest.json"), pkg.manifestBytes);
+    writeFileSync(join(destDir, "manifest.json"), inner.manifestBytes);
     writeFileSync(join(destDir, "package.tgz"), tgzBytes);
 
     const entry = {
-      channel: channel as RegistryChannel,
+      channel: v.channel,
       name: v.name,
       manifest: `${rel}/manifest.json`,
-      manifestSha256: sha256Hex(pkg.manifestBytes),
+      manifestSha256: v.manifestSha256,
       package: `${rel}/package.tgz`,
-      packageSha256: sha256Hex(tgzBytes),
-      packageSizeBytes: tgzBytes.length,
-      entryHash: pkg.entryHash,
+      packageSha256: v.packageSha256,
+      packageSizeBytes: v.packageSizeBytes,
+      entryHash: v.entryHash,
       publishedAt: new Date().toISOString(),
     };
     const next = await resign(dir, seed, index, {

@@ -168,7 +168,7 @@ describe("registry maintain", () => {
     await runRegistryMaintain(["add", dir, ext, "--key", key], io);
     err.length = 0;
     expect(await runRegistryMaintain(["add", dir, ext, "--key", key], io)).toBe(2);
-    expect(err.join("")).toContain("already exists");
+    expect(err.join("")).toContain("ERR_REGISTRY_VERSION_EXISTS");
   });
 
   test("add refuses a changed publisher key for an existing id", async () => {
@@ -177,14 +177,14 @@ describe("registry maintain", () => {
     const other = await makeExtension("b", { version: "1.1.0" });
     err.length = 0;
     expect(await runRegistryMaintain(["add", dir, other, "--key", key], io)).toBe(2);
-    expect(err.join("")).toContain("different publisher key");
+    expect(err.join("")).toContain("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT");
   });
 
   test("add refuses an unsigned extension", async () => {
     const { dir, key } = await init();
     const ext = await makeExtension("ext", { signed: false });
     expect(await runRegistryMaintain(["add", dir, ext, "--key", key], io)).toBe(2);
-    expect(err.join("")).toContain("unsigned");
+    expect(err.join("")).toContain("ERR_REGISTRY_SIGNATURE_INVALID");
   });
 
   test("remove last version drops the id entry", async () => {
