@@ -83,12 +83,18 @@ async function verifyAndRecordSignature(
     fetcher?: PublisherKeyFetcher;
     enforceAirGap?: boolean;
     publisherKeyPath?: string;
+    publisherKey?: Uint8Array;
   },
   destManifest: ExtensionManifest,
   destManifestText: string,
 ): Promise<void> {
   if (destManifest.publisher === undefined) return;
-  if (options.vault === undefined || options.fetcher === undefined) {
+  // The vault is always required; the fetcher only when no key was supplied explicitly.
+  const fetcher = options.fetcher;
+  if (
+    options.vault === undefined ||
+    (options.publisherKey === undefined && fetcher === undefined)
+  ) {
     throw new Error(
       "signed-extension install requires vault and publisher key fetcher to be wired",
     );
@@ -97,13 +103,24 @@ async function verifyAndRecordSignature(
   const rawManifestObj = JSON.parse(destManifestText) as Record<string, unknown>;
   const vault = options.vault;
   try {
-    const resolvedPubkey = await resolvePublisherKey({
-      publisherId,
-      explicitKeyPath: options.publisherKeyPath,
-      vault,
-      fetcher: options.fetcher,
-      enforceAirGap: options.enforceAirGap ?? false,
-    });
+    // A key passed explicitly (a registry install: the signed index named it) replaces the
+    // path/Vault/fetcher resolution entirely, but must still be the key the manifest declares.
+    let resolvedPubkey: Uint8Array;
+    if (options.publisherKey === undefined) {
+      resolvedPubkey = await resolvePublisherKey({
+        publisherId,
+        explicitKeyPath: options.publisherKeyPath,
+        vault,
+        fetcher: fetcher as PublisherKeyFetcher,
+        enforceAirGap: options.enforceAirGap ?? false,
+      });
+    } else {
+      resolvedPubkey = options.publisherKey;
+      const declared = Buffer.from(destManifest.publisher.key, "base64");
+      if (!Buffer.from(resolvedPubkey).equals(declared)) {
+        throw new Error("manifest publisher key differs from the key supplied for this install");
+      }
+    }
     await verifyManifestSignature(rawManifestObj, resolvedPubkey);
     await writePublisherKey(vault, publisherId, resolvedPubkey);
     appendAuditEntry(options.db, {
@@ -140,6 +157,7 @@ async function completeExtensionInstallAfterCopy(options: {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   publisherKeyPath?: string;
+  publisherKey?: Uint8Array;
 }): Promise<SingleInstallResult> {
   const destManifestPath = resolveExtensionManifestPath(options.dest);
   if (destManifestPath === undefined) {
@@ -227,6 +245,9 @@ async function installExtensionFromArchive(options: {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   publisherKeyPath?: string;
+  publisherKey?: Uint8Array;
+  sourceRegistry?: string;
+  rootFingerprint?: string;
   approve?: ExtensionInstallApprover;
 }): Promise<InstallExtensionFromLocalResult> {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-tgz-"));
@@ -242,6 +263,9 @@ async function installExtensionFromArchive(options: {
       ...(options.publisherKeyPath !== undefined && {
         publisherKeyPath: options.publisherKeyPath,
       }),
+      ...(options.publisherKey !== undefined && { publisherKey: options.publisherKey }),
+      ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
+      ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
       ...(options.approve !== undefined && { approve: options.approve }),
       displaySourcePath: options.archivePath,
     });
@@ -297,6 +321,12 @@ export type ExtensionInstallApprovalRequest = {
   readonly permissions: ExtensionManifest["permissions"];
   /** Packages this install adds, root first, then each newly installed dependency. */
   readonly installs: ReadonlyArray<{ readonly id: string; readonly version: string }>;
+  /**
+   * Set only for a registry install: the registry's name and its pinned root-key fingerprint.
+   * Named `rootFingerprint`, never `*Key`, for the same redaction reason as `publisher.fingerprint`.
+   */
+  readonly sourceRegistry?: string;
+  readonly rootFingerprint?: string;
 };
 
 /** Resolves `true` only when the local owner approved; anything else installs nothing. */
@@ -534,6 +564,7 @@ async function installRootNode(
     fetcher?: PublisherKeyFetcher;
     enforceAirGap?: boolean;
     publisherKeyPath?: string;
+    publisherKey?: Uint8Array;
   },
   sourceResolved: string,
   manifest: ExtensionManifest,
@@ -565,6 +596,7 @@ async function installRootNode(
     ...(options.publisherKeyPath !== undefined && {
       publisherKeyPath: options.publisherKeyPath,
     }),
+    ...(options.publisherKey !== undefined && { publisherKey: options.publisherKey }),
   });
 }
 
@@ -575,6 +607,7 @@ type InstallPlanNodesOptions = {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   publisherKeyPath?: string;
+  publisherKey?: Uint8Array;
   registryClient?: RegistryClient;
 };
 
@@ -656,6 +689,7 @@ function buildInstallApprovalRequest(
   manifest: ExtensionManifest,
   plan: { nodes: readonly ResolvedNode[] },
   sourcePath: string,
+  source?: { sourceRegistry?: string; rootFingerprint?: string },
 ): ExtensionInstallApprovalRequest {
   const others = plan.nodes
     .filter((n) => n.newlyInstalled && n.id !== manifest.id)
@@ -673,6 +707,8 @@ function buildInstallApprovalRequest(
           },
     permissions: manifest.permissions,
     installs: [{ id: manifest.id, version: manifest.version }, ...others],
+    ...(source?.sourceRegistry !== undefined && { sourceRegistry: source.sourceRegistry }),
+    ...(source?.rootFingerprint !== undefined && { rootFingerprint: source.rootFingerprint }),
   };
 }
 
@@ -743,6 +779,11 @@ export async function installExtensionFromLocalDirectory(options: {
   fetcher?: PublisherKeyFetcher;
   enforceAirGap?: boolean;
   publisherKeyPath?: string;
+  /** The publisher's Ed25519 key, supplied by a caller that already established it (a registry install). */
+  publisherKey?: Uint8Array;
+  /** Shown to the owner in the install prompt; set only by a registry install. */
+  sourceRegistry?: string;
+  rootFingerprint?: string;
   registryClient?: RegistryClient;
   abortSignal?: AbortSignal;
   /**
@@ -775,6 +816,9 @@ export async function installExtensionFromLocalDirectory(options: {
       ...(options.publisherKeyPath !== undefined && {
         publisherKeyPath: options.publisherKeyPath,
       }),
+      ...(options.publisherKey !== undefined && { publisherKey: options.publisherKey }),
+      ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
+      ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
       ...(options.registryClient !== undefined && { registryClient: options.registryClient }),
       ...(options.abortSignal !== undefined && { abortSignal: options.abortSignal }),
       ...(options.approve !== undefined && { approve: options.approve }),
@@ -812,7 +856,10 @@ export async function installExtensionFromLocalDirectory(options: {
 
   if (options.approve !== undefined) {
     const approved = await options.approve(
-      buildInstallApprovalRequest(manifest, plan, options.displaySourcePath ?? sourceResolved),
+      buildInstallApprovalRequest(manifest, plan, options.displaySourcePath ?? sourceResolved, {
+        ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
+        ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
+      }),
     );
     if (!approved) {
       throw new ExtensionInstallNotApprovedError(manifest.id);

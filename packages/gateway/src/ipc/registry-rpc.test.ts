@@ -7,6 +7,7 @@ import { join } from "node:path";
 import nacl from "tweetnacl";
 
 import { publisherKeyFingerprint } from "../extensions/install-from-local.ts";
+import { buildTestRegistry } from "../extensions/registry/__fixtures__/build-test-registry.ts";
 import {
   type RegistryIndex,
   registryIndexSigningBytes,
@@ -14,6 +15,8 @@ import {
 import { getRegistry, insertRegistry } from "../extensions/registry/registry-store.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { encodeBase64 } from "../util/base64.ts";
+import { MockVault } from "../vault/mock.ts";
+import { setGatewayEventBroadcast } from "./gateway-events.ts";
 import {
   dispatchRegistryRpc,
   type RegistryFetchBag,
@@ -517,5 +520,81 @@ describe("registry.search and registry.info", () => {
     await expect(call("registry.info", { id: "nope.tool" })).rejects.toThrow(
       "ERR_REGISTRY_NOT_FOUND",
     );
+  });
+});
+
+describe("registry.install", () => {
+  const events: Array<{ method: string; params: Record<string, unknown> }> = [];
+  let extensionsDir: string;
+
+  beforeEach(() => {
+    events.length = 0;
+    setGatewayEventBroadcast((method, params) => events.push({ method, params }));
+    extensionsDir = join(tmp, "installed");
+  });
+
+  afterEach(() => {
+    setGatewayEventBroadcast(undefined);
+  });
+
+  const install = (params: unknown, gate: RegistryOwnerGate | undefined) =>
+    dispatchRegistryRpc({
+      method: "registry.install",
+      params,
+      db,
+      fetch: fetchBag(),
+      extensionsDir,
+      vault: new MockVault(),
+      ...(gate === undefined ? {} : { ownerGate: gate }),
+    });
+
+  test("registry.install emits extension.stateChanged on success and on failure", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    const g = gateRecorder(true);
+    const out = await install({ id: "acme.tool" }, g.gate);
+    expect(out).toMatchObject({
+      kind: "hit",
+      value: { id: "acme.tool", version: "1.0.0", sourceRegistry: "main" },
+    });
+    expect(g.asked).toHaveLength(1);
+    expect(g.asked[0]).toMatchObject({
+      type: "extension.install",
+      payload: { sourceRegistry: "main", rootFingerprint: FINGERPRINT },
+    });
+    expect(events.at(-1)).toMatchObject({
+      method: "gateway.event",
+      params: {
+        kind: "extension.stateChanged",
+        payload: { extensionId: "acme.tool", action: "install", ok: true },
+      },
+    });
+
+    await expect(install({ id: "acme.tool" }, g.gate)).rejects.toThrow(
+      "ERR_REGISTRY_ALREADY_INSTALLED",
+    );
+    expect(events.at(-1)).toMatchObject({
+      params: {
+        kind: "extension.stateChanged",
+        payload: { extensionId: "acme.tool", action: "install", ok: false },
+      },
+    });
+  });
+
+  test("a denied approval is an internal-class error and installs nothing", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    await expect(install({ id: "acme.tool" }, gateRecorder(false).gate)).rejects.toMatchObject({
+      rpcCode: -32603,
+    });
+  });
+
+  test("it refuses without the owner gate, and rejects a bad channel before anything runs", async () => {
+    await expect(install({ id: "acme.tool" }, undefined)).rejects.toThrow("HITL gate");
+    await expect(
+      install({ id: "acme.tool", channel: "nightly" }, gateRecorder(true).gate),
+    ).rejects.toThrow("ERR_INVALID_PARAMS");
   });
 });

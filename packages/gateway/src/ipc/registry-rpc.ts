@@ -1,13 +1,16 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 
-import { publisherKeyFingerprint } from "../extensions/install-from-local.ts";
+import {
+  ExtensionInstallNotApprovedError,
+  publisherKeyFingerprint,
+} from "../extensions/install-from-local.ts";
 import { parseExtensionManifestForRegistry } from "../extensions/manifest.ts";
 import type {
   RegistryExtensionEntry,
-  RegistryIndex,
   RegistryVersionEntry,
 } from "../extensions/registry/index-format.ts";
+import { installFromRegistry } from "../extensions/registry/install-from-registry.ts";
 import { RegistryError } from "../extensions/registry/registry-errors.ts";
 import {
   fetchRegistryBytes,
@@ -15,6 +18,7 @@ import {
   fetchVerifiedIndex,
   type RegistryFetchDeps,
 } from "../extensions/registry/registry-fetch.ts";
+import { readIndexes, resolveRegistryEntry } from "../extensions/registry/registry-resolve.ts";
 import {
   deleteRegistry,
   getRegistry,
@@ -25,7 +29,9 @@ import {
   recordRegistryFetch,
 } from "../extensions/registry/registry-store.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
+import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
+import { emitGatewayEvent } from "./gateway-events.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
 
 /** The local owner's HITL gate (`ToolExecutor.gate`): `true` only for "proceed". */
@@ -43,6 +49,9 @@ export interface RegistryRpcOptions {
   /** Absent only on a bespoke harness: every method that fetches then refuses. */
   fetch?: RegistryFetchBag;
   ownerGate?: RegistryOwnerGate;
+  /** `registry.install` only: where extensions install, and the Vault holding publisher keys. */
+  extensionsDir?: string;
+  vault?: NimbusVault;
 }
 
 type Hit = { kind: "hit"; value: unknown };
@@ -154,6 +163,78 @@ async function handleAdd(
   return { kind: "hit", value: summary };
 }
 
+async function handleInstall(
+  rec: Record<string, unknown> | undefined,
+  o: RegistryRpcOptions,
+): Promise<Hit> {
+  const id = stringParam(rec, "id");
+  const registry = rec?.["registry"] === undefined ? undefined : stringParam(rec, "registry");
+  const version = rec?.["version"] === undefined ? undefined : stringParam(rec, "version");
+  const channel = rec?.["channel"];
+  if (channel !== undefined && channel !== "stable" && channel !== "beta") {
+    throw invalidParams("channel must be stable or beta");
+  }
+  const ownerGate = o.ownerGate;
+  if (ownerGate === undefined) {
+    throw new RpcMethodError(-32603, "registry.install requires the owner's HITL gate");
+  }
+  const fetch = requireFetch(o.fetch);
+  if (o.extensionsDir === undefined || o.extensionsDir.trim() === "" || o.vault === undefined) {
+    throw new RpcMethodError(
+      -32603,
+      "Gateway is not configured with an extensions directory and Vault",
+    );
+  }
+  try {
+    const installed = await installFromRegistry(
+      {
+        db: o.db,
+        extensionsDir: o.extensionsDir,
+        vault: o.vault,
+        fetch,
+        // The same HITL action as a local install; the request now also names the registry.
+        approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
+      },
+      {
+        id,
+        ...(registry !== undefined && { registry }),
+        ...(version !== undefined && { version }),
+        ...(channel !== undefined && { channel }),
+      },
+    );
+    emitGatewayEvent("extension.stateChanged", {
+      extensionId: installed.id,
+      action: "install",
+      ok: true,
+    });
+    return {
+      kind: "hit",
+      value: {
+        id: installed.id,
+        version: installed.version,
+        sourceRegistry: installed.sourceRegistry,
+        rootFingerprint: installed.rootFingerprint,
+        publisher: installed.publisher,
+        installPath: installed.installPath,
+        treeDigest: installed.treeDigest,
+      },
+    };
+  } catch (e) {
+    emitGatewayEvent("extension.stateChanged", {
+      extensionId: id,
+      action: "install",
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    if (e instanceof RegistryError || e instanceof RpcMethodError) throw e;
+    // A refusal AFTER the owner was involved is internal-class, like `extension.install`'s.
+    throw new RpcMethodError(
+      e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+}
+
 function handleList(o: RegistryRpcOptions): Hit {
   const now = o.fetch?.now() ?? Date.now();
   const registries = listRegistries(o.db).map((r) => {
@@ -225,30 +306,6 @@ function handleRemove(rec: Record<string, unknown> | undefined, o: RegistryRpcOp
 /** A registry manifest is a small JSON document; anything larger is refused. */
 const MAX_MANIFEST_BYTES = 64 * 1024;
 
-type IndexRead = { reg: RegistryRow; index: RegistryIndex };
-
-/** Freshly verified indexes of `targets`, fetched concurrently; a failing registry is reported, not thrown. */
-async function readIndexes(
-  targets: readonly RegistryRow[],
-  o: RegistryRpcOptions,
-): Promise<{ ok: IndexRead[]; errors: Array<{ registry: string; error: string }> }> {
-  const fetch = requireFetch(o.fetch);
-  const settled = await Promise.allSettled(
-    targets.map((reg) => fetchVerifiedIndex({ ...fetch, db: o.db }, reg)),
-  );
-  const ok: IndexRead[] = [];
-  const errors: Array<{ registry: string; error: string }> = [];
-  settled.forEach((r, i) => {
-    const reg = targets[i] as RegistryRow;
-    if (r.status === "fulfilled") ok.push({ reg, index: r.value });
-    else {
-      const e: unknown = r.reason;
-      errors.push({ registry: reg.name, error: e instanceof Error ? e.message : String(e) });
-    }
-  });
-  return { ok, errors };
-}
-
 /** Versions of an entry, semver-newest first (across channels). */
 function versionsNewestFirst(entry: RegistryExtensionEntry): Array<[string, RegistryVersionEntry]> {
   return Object.entries(entry.versions).sort(([a], [b]) => Bun.semver.order(b, a));
@@ -259,7 +316,7 @@ async function handleSearch(
   o: RegistryRpcOptions,
 ): Promise<Hit> {
   const needle = stringParam(rec, "query").toLowerCase();
-  const read = await readIndexes(listRegistries(o.db), o);
+  const read = await readIndexes({ ...requireFetch(o.fetch), db: o.db }, listRegistries(o.db));
   const results: Array<{
     registry: string;
     id: string;
@@ -294,34 +351,13 @@ async function handleInfo(
   o: RegistryRpcOptions,
 ): Promise<Hit> {
   const id = stringParam(rec, "id");
-  let targets: RegistryRow[];
-  if (rec?.["registry"] === undefined) {
-    targets = listRegistries(o.db);
-  } else {
-    const name = stringParam(rec, "registry");
-    const one = getRegistry(o.db, name);
-    if (one === undefined) {
-      throw new RegistryError("ERR_REGISTRY_NOT_FOUND", `no registry named "${name}"`);
-    }
-    targets = [one];
-  }
-  const read = await readIndexes(targets, o);
-  const carrying = read.ok.filter((r) => r.index.extensions[id] !== undefined);
-  if (carrying.length > 1) {
-    throw new RegistryError(
-      "ERR_REGISTRY_AMBIGUOUS",
-      `"${id}" is carried by ${carrying.map((r) => r.reg.name).join(", ")}; pass --registry <name>`,
-    );
-  }
-  const found = carrying[0];
-  const entry = found?.index.extensions[id];
-  if (found === undefined || entry === undefined) {
-    const failed = read.errors.map((e) => `${e.registry}: ${e.error}`).join("; ");
-    throw new RegistryError(
-      "ERR_REGISTRY_NOT_FOUND",
-      `no registry carries "${id}"${failed === "" ? "" : ` (unreachable: ${failed})`}`,
-    );
-  }
+  const registryName = rec?.["registry"] === undefined ? undefined : stringParam(rec, "registry");
+  const found = await resolveRegistryEntry(
+    { ...requireFetch(o.fetch), db: o.db },
+    id,
+    registryName,
+  );
+  const entry = found.entry;
   const versions = versionsNewestFirst(entry);
   const newest = versions[0];
   if (newest === undefined) {
@@ -377,6 +413,8 @@ export async function dispatchRegistryRpc(o: RegistryRpcOptions): Promise<Hit | 
         return await handleRefresh(rec, o);
       case "registry.remove":
         return handleRemove(rec, o);
+      case "registry.install":
+        return await handleInstall(rec, o);
       case "registry.search":
         return await handleSearch(rec, o);
       case "registry.info":

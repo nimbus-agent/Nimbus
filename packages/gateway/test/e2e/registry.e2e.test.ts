@@ -12,7 +12,7 @@ import {
 
 describe("registry.* over a real socket", () => {
   test(
-    "all six methods reach their handler through both dispatcher layers",
+    "all seven methods reach their handler through both dispatcher layers",
     async () => {
       const gw = await startRealGateway("registry");
       const client = new TinyIpcClient();
@@ -40,6 +40,11 @@ describe("registry.* over a real socket", () => {
         const info = await client.raw("registry.info", { id: "a.b", registry: "nope" });
         expect(info.error?.code).toBe(-32000);
         expect(info.error?.message).toContain("ERR_REGISTRY_NOT_FOUND");
+
+        // Reaches the handler and fails on resolution (no registry added), before any prompt.
+        const install = await client.raw("registry.install", { id: "a.b" });
+        expect(install.error?.code).toBe(-32000);
+        expect(install.error?.message).toContain("ERR_REGISTRY_NOT_FOUND");
 
         const remove = await client.raw("registry.remove", { name: "nope" });
         expect(remove.error).toBeUndefined();

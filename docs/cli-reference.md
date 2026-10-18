@@ -4386,9 +4386,9 @@ To re-enable: `nimbus config set telemetry.enabled true`
 
 ## Extensions
 
-### `nimbus extension install <path|url|package>`
+### `nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes]`
 
-Install a third-party extension. Accepts a local path, URL, or npm package name. The manifest SHA-256 is verified before installation.
+Install a third-party extension, from a local path or from a registry you added with `nimbus registry add`. The manifest SHA-256 is verified before installation.
 
 > **Install does not run anything; an approval does.** Install copies the package, hashes it, verifies a publisher's Ed25519 signature (I16), records it and enables it. An extension runs only after a separate `nimbus extension approve` (below), and then only as a sandboxed MCP server that you invoke yourself with `nimbus connector tools|call ext_<id>`. It adds tools to `nimbus ask` only if you approve it with `--model`. To run your own MCP server without the extension machinery, use `nimbus connector add --mcp`.
 
@@ -4397,6 +4397,10 @@ nimbus extension install @community/nimbus-notion
 nimbus extension install ./nimbus-my-connector
 nimbus extension install https://example.com/nimbus-ext.tar.gz
 ```
+
+**Installing from a registry.** If the argument is an existing path it is a local install exactly as above, and `--registry`, `--version` and `--channel` are refused with it. Otherwise it is an extension id, looked up in your registries: an id carried by more than one registry needs `--registry <name>` (`ERR_REGISTRY_AMBIGUOUS`; a registry is never chosen by priority). An argument that can only be a path (it contains a backslash, begins with a drive letter, `.`, `~` or `/`) but does not exist reports `no such file or directory` rather than being searched for as an id. The version is the newest on the `stable` channel; `--channel beta` takes the newest across stable and beta, and `--version <v>` is exact (its channel is recorded as the source channel).
+
+The gateway fetches the manifest and package, checks both against the SHA-256 hashes the signed index lists, checks that the manifest's publisher id and key are the ones the index lists, verifies the manifest's Ed25519 signature (I16) against that key, and refuses with `ERR_REGISTRY_PUBLISHER_KEY_CONFLICT` if the Vault already holds a different key for that publisher id. Only then does the `extension.install` approval prompt appear, now also naming the registry and its root-key fingerprint. An id that is already installed is refused (`ERR_REGISTRY_ALREADY_INSTALLED`; use `nimbus extension update <id>` or remove it first). An extension that declares `dependsOn` installs only when every dependency is already installed and satisfies it; nothing is fetched transitively. `--yes` and `--publisher-key` are refused for a registry install, which is always confirmed at the prompt, and there is no non-TTY mode. A registry install still does not run anything: `nimbus extension approve` is a separate step.
 
 **Approval is the gateway's, not the CLI's.** Before anything is copied, fetched or recorded, the gateway resolves the install plan and asks you to approve it through its HITL gate (action type `extension.install`): the extension's id and version, the source path, the publisher id and a fingerprint of its key as the manifest *claims* them, the declared permissions, and every package the install adds, dependencies included. The publisher signature is still verified after approval, and a failure there rolls the whole install back. On a TTY the prompt is interactive; `--yes` approves it on your behalf and echoes what it approved to stderr; without a TTY and without `--yes` the command refuses. A declined or timed-out approval installs nothing.
 
@@ -4638,7 +4642,7 @@ nimbus test ./nimbus-my-connector
 
 ## Extension Registry
 
-A registry is a static folder (or website) of signed extension packages. Two groups of commands work with one: `registry maintain` builds it offline, and `registry add|list|refresh|remove` tell the gateway which registries to trust. Searching and installing from a registry are not part of these commands yet.
+A registry is a static folder (or website) of signed extension packages. Two groups of commands work with one: `registry maintain` builds it offline, and `registry add|list|refresh|remove` tell the gateway which registries to trust. Searching and installing from a registry are `nimbus extension search`, `info` and `install`.
 
 ### `nimbus registry add|list|refresh|remove`
 

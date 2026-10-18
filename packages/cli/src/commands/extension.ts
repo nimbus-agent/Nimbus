@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
@@ -346,6 +346,70 @@ export async function runExtensionInfo(
   }
 }
 
+/** An argument that can only be a filesystem path, never an extension id. */
+function looksLikePath(arg: string): boolean {
+  return (
+    arg.includes("\\") ||
+    /^[A-Za-z]:/.test(arg) ||
+    arg.startsWith(".") ||
+    arg.startsWith("~") ||
+    arg.startsWith("/")
+  );
+}
+
+const INSTALL_USAGE =
+  "Usage: nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes]";
+
+/** `nimbus extension install <id>`: resolve, verify and install from a registry (never `--yes`). */
+async function runExtensionInstallFromRegistry(
+  client: IPCClient,
+  args: string[],
+  id: string,
+): Promise<void> {
+  if (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
+    throw new Error(
+      "--yes is not accepted for a registry install: a registry install is always confirmed at the gateway's prompt",
+    );
+  }
+  if (hasFlag(args, "--publisher-key")) {
+    throw new Error("--publisher-key applies to a local install only; the registry names the key");
+  }
+  if (process.stdout.isTTY !== true) {
+    throw new Error("Refusing to install from a registry without an interactive confirmation.");
+  }
+  const channel = takeFlagValue(args, "--channel");
+  if (channel !== undefined && channel !== "stable" && channel !== "beta") {
+    throw new Error("--channel must be stable or beta");
+  }
+  registerConsentFor(client, { kind: "prompt" });
+  const params: Record<string, unknown> = { id };
+  for (const [flag, key] of [
+    ["--registry", "registry"],
+    ["--version", "version"],
+    ["--channel", "channel"],
+  ] as const) {
+    const v = takeFlagValue(args, flag);
+    if (v !== undefined) params[key] = v;
+  }
+  const out = await client.call<{
+    id: string;
+    version: string;
+    sourceRegistry: string;
+    rootFingerprint?: string;
+    publisher?: { id: string; fingerprint: string };
+    installPath: string;
+  }>("registry.install", params);
+  const who =
+    out.publisher === undefined
+      ? ""
+      : `, publisher ${out.publisher.id} (${out.publisher.fingerprint})`;
+  const root = out.rootFingerprint === undefined ? "" : ` (root ${out.rootFingerprint})`;
+  console.log(
+    `installed ${out.id}@${out.version} from registry ${out.sourceRegistry}${root}${who}`,
+  );
+  console.log(JSON.stringify(out, undefined, 2));
+}
+
 export async function runExtensionInstall(
   client: IPCClient,
   args: string[],
@@ -353,7 +417,19 @@ export async function runExtensionInstall(
 ): Promise<void> {
   const sourceRaw = rest[0]?.trim() ?? "";
   if (sourceRaw === "") {
-    throw new Error("Usage: nimbus extension install <path> [--yes]");
+    throw new Error(INSTALL_USAGE);
+  }
+  if (!existsSync(resolve(process.cwd(), sourceRaw))) {
+    if (looksLikePath(sourceRaw)) {
+      throw new Error(`no such file or directory: ${sourceRaw}`);
+    }
+    await runExtensionInstallFromRegistry(client, args, sourceRaw);
+    return;
+  }
+  for (const flag of ["--registry", "--version", "--channel"]) {
+    if (hasFlag(args, flag)) {
+      throw new Error(`${flag} applies to a registry install; ${sourceRaw} is an existing path`);
+    }
   }
   const accept = hasFlag(args, "--yes") || hasFlag(args, "-y");
   if (!accept && process.stdout.isTTY !== true) {
@@ -684,7 +760,7 @@ export async function runExtensionSync(client: IPCClient, args: string[]): Promi
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path> [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
 
 async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
   if (sub === "keygen") {

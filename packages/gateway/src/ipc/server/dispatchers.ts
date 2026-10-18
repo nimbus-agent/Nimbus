@@ -2162,7 +2162,7 @@ export async function tryDispatchDiagnosticsRpc(
 }
 
 /**
- * `registry.*` (CLI-only). Only `registry.add` asks the owner; it runs through the same gate-only
+ * `registry.*` (CLI-only). Only `registry.add` and `registry.install` ask the owner; it runs through the same gate-only
  * executor as the extension lifecycle approvals (no connector dispatch, so no egress row of its
  * own — the registry fetch it triggers is ledgered by the `registry` class).
  */
@@ -2180,7 +2180,7 @@ export async function tryDispatchRegistryRpc(
     throw new RpcMethodError(-32603, "Local index is not available");
   }
   let ownerGate: RegistryOwnerGate | undefined;
-  if (method === "registry.add") {
+  if (method === "registry.add" || method === "registry.install") {
     const toolExecutor = buildExtensionGateExecutor(ctx, localIndex, clientId);
     ownerGate = async (action) => (await toolExecutor.gate(action)) === "proceed";
   }
@@ -2190,6 +2190,10 @@ export async function tryDispatchRegistryRpc(
     db: localIndex.getDatabase(),
     ...(ctx.options.registryFetch === undefined ? {} : { fetch: ctx.options.registryFetch }),
     ...(ownerGate === undefined ? {} : { ownerGate }),
+    ...(ctx.options.extensionsDir === undefined
+      ? {}
+      : { extensionsDir: ctx.options.extensionsDir }),
+    vault: ctx.options.vault,
   });
   if (out.kind === "hit") {
     return out.value;
