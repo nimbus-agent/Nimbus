@@ -18,6 +18,32 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-18 — Phase 9.5 project 2, PR B: publish extensions to a registry repository (no migration, no invariant, no egress class).**
+  `nimbus extension publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]`
+  packs the extension's package file set, validates it, and opens a pull request that adds
+  `extensions/<id>/<version>/{manifest.json,package.tgz,publish-request.json}` to a GitHub-hosted registry
+  repository. It needs no gateway, no Vault and no token: `gh` owns GitHub authentication and Nimbus never reads it,
+  and without `gh` (or with `--no-pr`) it commits the branch locally and prints the exact `git push` and
+  `gh pr create` commands. It reads the registry's signed `index.json` from the `gh-pages` branch and verifies it
+  against its own root key before trusting it; a registry with no `gh-pages` is refused as not initialised, and a
+  `--clone` whose `origin` is not the registry is refused. Every refusal happens before any branch or file is written.
+  The rules live in one new function, `validatePublish` (`packages/registry-format/src/validate-publish.ts`): thirteen
+  checks in a fixed order (publish request, manifest, coordinates, the publisher signature, registry state, the
+  package file set and its entry inside `dist/`), shared by `extension publish`, `registry maintain add` and, in the
+  next PR, the registry's own CI. Six new refusal codes: `ERR_REGISTRY_PUBLISH_REQUEST_INVALID`,
+  `ERR_REGISTRY_NAMESPACE_REQUIRED`, `ERR_REGISTRY_SERVICE_ID_COLLISION`, `ERR_REGISTRY_VERSION_EXISTS` (also for a
+  build-metadata twin such as `1.0.0+r2`), `ERR_REGISTRY_PACKAGE_FILE_SET` and `ERR_REGISTRY_CONFIG_INVALID`.
+  Also new: `nimbus scaffold extension <name> [--publisher <id>]`, a template separate from `scaffold mcp` that builds
+  one self-contained `--target=bun` bundle into `dist/` (not `--compile`: the runtime `import()`s the entry), and
+  `nimbus extension sign` now fills a manifest's `publisher.key` from the signing key when the manifest names a
+  publisher id without one, refusing (exit 2) to re-key a manifest whose key differs. Behaviour changes:
+  `nimbus registry maintain add` now validates through `validatePublish`, so it newly refuses a build-metadata version
+  twin, a service-id collision and an entry outside `dist/`, and it reads `<dir>/nimbus-registry.json`
+  (`requirePublisherNamespace`; absent means no namespace required). No new egress class: publish runs in the CLI
+  process, outside the gateway, so its `git` and `gh` traffic is not ledgered. **Not shipped:** the registry
+  repository's CI (the check and sign action and `maintain init --github`) comes in the next PR, so nothing yet signs
+  or merges a publish pull request; the pre-publish `nimbus eval` score is not part of this.
+
 - **2026-10-18 — Phase 9.5 project 2, PR A: registry rules move to a shared pure workspace (refactor; no migration, no invariant, no egress class).**
   A new private workspace, `packages/registry-format`, is now the single source of the signed registry index format,
   the canonical signer and verifier (one golden vector instead of two copies), the extension-id rules
