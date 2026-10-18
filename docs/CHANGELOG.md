@@ -18,6 +18,22 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-18 — Extension auto-update path repaired (fixes only; no new invariant, no migration).**
+  Extension updates could never apply before this: `nimbus extension install` writes a flat
+  `<extensionsDir>/<id>` while the update swap expected an `active/` subdirectory, so every apply failed
+  at the first rename. The install path now stays flat and previous versions, the pending download and
+  the holding area moved to a sibling `extension-versions/<slug>/` area (slug = first 16 hex of the
+  SHA-256 of the id), which `extension remove` deletes. Also fixed: install and update now share one
+  capped extraction pipeline (`extensions/package-extract.ts`: refuses links, specials, absolute, `..`,
+  backslash and drive-letter entries; 200 MiB unpacked and 5000-entry caps) and the tree digest is
+  computed before the swap and written in the same row update; crash recovery promotes the
+  semver-newest previous version, records measured hashes and the tree digest, and takes its own
+  `recoveryExtensionsDir` input; `nimbus extension update` and `downgrade` now show the owner's prompt
+  and use the interactive timeout instead of timing out at 30 s; the orphan sweep keeps namespaced
+  extension directories (latent: the sweep is not run in production). The false claim that the
+  orchestrator re-verifies the publisher signature was removed from `SECURITY-INVARIANTS.md`; the
+  signature is re-verified at the next startup pass and before every spawn (I43).
+
 - **2026-10-17 — S3: extension runtime PR 4 of 4 — model access, closing the slice (I42 widened to a second source; no migration, no new invariant).**
   `nimbus extension approve <id> --model` offers an approved extension's tools to the engine agent
   in `nimbus ask` on the same path as a `--model` user MCP server: local owner only, named
