@@ -96,7 +96,10 @@ function parsePublishArgs(args: string[]): PublishArgs {
   if (dir === undefined || positional.length !== 1) throw new PublishError("publish needs <dir>");
   const repo = options.get("--registry-repo");
   if (repo === undefined) throw new PublishError("--registry-repo <owner/repo> is required");
-  if (!REPO_RE.test(repo)) throw new PublishError(`--registry-repo ${repo} is not <owner>/<repo>`);
+  // A repo part of only dots (`.`, `..`) is a path, not a repository.
+  if (!REPO_RE.test(repo) || /^\.+$/.test(repo.split("/")[1] ?? "")) {
+    throw new PublishError(`--registry-repo ${repo} is not <owner>/<repo>`);
+  }
   const channel = options.get("--channel") ?? "stable";
   if (channel !== "stable" && channel !== "beta") {
     throw new PublishError("--channel must be stable or beta");
@@ -143,6 +146,35 @@ async function readRemote(
   return { defaultBranch };
 }
 
+const GITHUB_REMOTE_RE =
+  /^(?:https:\/\/github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)([^/]+)\/([^/]+)$/i;
+
+/**
+ * A comparable form of a remote URL: `https://github.com/<o>/<r>[.git][/]`,
+ * `ssh://git@github.com/<o>/<r>[.git]` and `git@github.com:<o>/<r>[.git]` all become
+ * `github.com/<o>/<r>`; anything else (a local path in tests) keeps its own text. Case-insensitive.
+ */
+export function normaliseRemoteUrl(url: string): string {
+  const trimmed = url
+    .trim()
+    .replaceAll("\\", "/")
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "");
+  const gh = GITHUB_REMOTE_RE.exec(trimmed);
+  return (gh === null ? trimmed : `github.com/${gh[1]}/${gh[2]}`).toLowerCase();
+}
+
+/** Refuses a `--clone` whose `origin` is not the registry the PR will target. */
+async function assertCloneOrigin(deps: PublishDeps, clone: string, repo: string): Promise<void> {
+  const origin = (await git(deps, clone, ["remote", "get-url", "origin"])).trim();
+  const expected = deps.repoUrl(repo);
+  if (normaliseRemoteUrl(origin) !== normaliseRemoteUrl(expected)) {
+    throw new PublishError(
+      `${clone}'s origin is ${origin}, not ${expected}; use a clone of ${repo} or omit --clone`,
+    );
+  }
+}
+
 /** A working clone with `origin/gh-pages` and `origin/<default>` current, and whether it is ours. */
 async function openClone(
   a: PublishArgs,
@@ -154,6 +186,7 @@ async function openClone(
     if ((await git(deps, clone, ["status", "--porcelain"])).trim() !== "") {
       throw new PublishError(`${clone} is not clean; commit or discard its changes first`);
     }
+    await assertCloneOrigin(deps, clone, a.repo);
     const remote = await readRemote(deps, clone, "origin", a.repo);
     await git(deps, clone, [
       "fetch",
@@ -183,7 +216,7 @@ async function showFile(
   path: string,
 ): Promise<Uint8Array | undefined> {
   const r = await deps.runTool("git", ["show", `${rev}:${path}`], { cwd: clone });
-  return r.code === 0 ? new TextEncoder().encode(r.stdout) : undefined;
+  return r.code === 0 ? r.stdoutBytes : undefined;
 }
 
 /** The signed index on `gh-pages`, verified against its own root key before anything trusts it. */
@@ -214,7 +247,7 @@ async function readConfig(
   return DEFAULT_REGISTRY_CONFIG;
 }
 
-/** `-c user.name/-c user.email` only when the author's git has no identity of its own. */
+/** `-c user.name` / `-c user.email` for whichever of the two the author's git does not set. */
 async function identityArgs(
   deps: PublishDeps,
   clone: string,
@@ -224,13 +257,14 @@ async function identityArgs(
     const r = await deps.runTool("git", ["config", "--get", key], { cwd: clone });
     return r.code === 0 && r.stdout.trim() !== "";
   };
-  if ((await has("user.name")) && (await has("user.email"))) return [];
-  return [
-    "-c",
-    `user.name=${publisherId} (nimbus extension publish)`,
-    "-c",
-    `user.email=${publisherId}@nimbus-publish.invalid`,
-  ];
+  const out: string[] = [];
+  if (!(await has("user.name"))) {
+    out.push("-c", `user.name=${publisherId} (nimbus extension publish)`);
+  }
+  if (!(await has("user.email"))) {
+    out.push("-c", `user.email=${publisherId}@nimbus-publish.invalid`);
+  }
+  return out;
 }
 
 const files = (v: PublishVerdict): string[] =>
@@ -254,6 +288,16 @@ async function commitBranch(
   if (exists.code === 0) {
     throw new PublishError(
       `extensions/${v.id}/${v.version} is already on ${defaultBranch}, waiting to be signed`,
+    );
+  }
+  const taken = await deps.runTool(
+    "git",
+    ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
+    { cwd: clone },
+  );
+  if (taken.code === 0) {
+    throw new PublishError(
+      `branch ${branch} already exists in ${clone}; delete it or use another clone`,
     );
   }
   await git(deps, clone, ["switch", "--no-track", "-c", branch, `origin/${defaultBranch}`]);
@@ -309,7 +353,7 @@ function printManualSteps(
     `Committed ${v.id}@${v.version} on branch ${branch} in ${clone}.\n` +
       "To open the pull request, run:\n" +
       `  cd ${q(clone)}\n` +
-      `  gh repo fork --remote --remote-name ${FORK_REMOTE}\n` +
+      `  gh repo fork ${a.repo} --remote --remote-name ${FORK_REMOTE}\n` +
       `  git push ${FORK_REMOTE} ${branch}\n` +
       `  ${pr}\n` +
       `(Without gh: fork ${a.repo} on github.com, then \`git remote add ${FORK_REMOTE} ` +
@@ -343,10 +387,25 @@ async function openPullRequest(
     if (r.code !== 0) throw new PublishError(`gh ${args[0]} failed: ${r.stderr.trim()}`, 1);
     return r.stdout;
   };
-  await gh(["repo", "fork", "--remote", "--remote-name", FORK_REMOTE]);
-  const owner = forkOwner(await git(deps, clone, ["remote", "get-url", FORK_REMOTE]));
+  const forkUrl = async (): Promise<string | undefined> => {
+    const r = await deps.runTool("git", ["remote", "get-url", FORK_REMOTE], { cwd: clone });
+    return r.code === 0 ? r.stdout.trim() : undefined;
+  };
+  // An existing `fork` remote (a re-run, or the author's own) is reused, never re-forked.
+  let url = await forkUrl();
+  if (url === undefined) {
+    await gh(["repo", "fork", a.repo, "--remote", "--remote-name", FORK_REMOTE]);
+    url = await forkUrl();
+  }
+  if (url === undefined) {
+    // gh forked but added no remote: point one at the signed-in user's fork.
+    const login = (await gh(["api", "user", "--jq", ".login"])).trim();
+    url = `https://github.com/${login}/${a.repo.split("/")[1] ?? ""}.git`;
+    await git(deps, clone, ["remote", "add", FORK_REMOTE, url]);
+  }
+  const owner = forkOwner(url);
   await git(deps, clone, ["push", FORK_REMOTE, branch]);
-  const url = await gh([
+  const prUrl = await gh([
     "pr",
     "create",
     "--repo",
@@ -360,7 +419,7 @@ async function openPullRequest(
     "--body",
     prBody(v),
   ]);
-  return url.trim();
+  return prUrl.trim();
 }
 
 async function publish(a: PublishArgs, deps: PublishDeps): Promise<number> {

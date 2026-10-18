@@ -7,6 +7,8 @@
 export interface ToolResult {
   code: number;
   stdout: string;
+  /** The same output as raw bytes, for content that must not be decoded (`git show <file>`). */
+  stdoutBytes: Uint8Array;
   stderr: string;
 }
 
@@ -34,13 +36,15 @@ export const runTool: RunTool = async (cmd, args, opts) => {
     return {
       code: TOOL_NOT_STARTED,
       stdout: "",
+      stdoutBytes: new Uint8Array(),
       stderr: `${cmd} could not be started: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout as ReadableStream<Uint8Array>).text(),
+  const [stdoutBuffer, stderr, code] = await Promise.all([
+    new Response(proc.stdout as ReadableStream<Uint8Array>).arrayBuffer(),
     new Response(proc.stderr as ReadableStream<Uint8Array>).text(),
     proc.exited,
   ]);
-  return { code, stdout, stderr };
+  const stdoutBytes = new Uint8Array(stdoutBuffer);
+  return { code, stdout: new TextDecoder().decode(stdoutBytes), stdoutBytes, stderr };
 };

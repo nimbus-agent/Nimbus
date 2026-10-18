@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "../lib/extension-signing.ts";
 import { rmDirWithRetry } from "../lib/rm-dir-with-retry.ts";
 import { type RunTool, runTool, TOOL_NOT_STARTED, type ToolResult } from "../lib/run-git.ts";
-import { runExtensionPublish } from "./extension-publish.ts";
+import { normaliseRemoteUrl, runExtensionPublish } from "./extension-publish.ts";
 import { runRegistryMaintain } from "./registry-maintain.ts";
 
 const REPO = "nimbus-agent/registry";
@@ -101,6 +101,10 @@ interface RegistryOpts {
   /** Extension dirs `registry maintain add`ed to the signed index before publishing. */
   indexed?: string[];
   tamper?: boolean;
+  /** `extensions/acme/tool/1.0.0/` already merged on `main`, not yet signed. */
+  onMain?: boolean;
+  /** `nimbus-registry.json` requiring namespaces on `main` only (none on `gh-pages`). */
+  mainConfig?: boolean;
 }
 
 /** A bare remote with `main` (sources) and, unless `ghPages: false`, the signed site on `gh-pages`. */
@@ -131,7 +135,17 @@ async function makeRegistry(opts: RegistryOpts = {}): Promise<string> {
   const src = join(tmp, "src");
   git(tmp, "init", "-b", "main", src);
   writeFileSync(join(src, "README.md"), "# registry\n");
-  git(src, "add", "README.md");
+  if (opts.onMain === true) {
+    mkdirSync(join(src, "extensions", "acme", "tool", "1.0.0"), { recursive: true });
+    writeFileSync(join(src, "extensions", "acme", "tool", "1.0.0", "manifest.json"), "{}");
+  }
+  if (opts.mainConfig === true) {
+    writeFileSync(
+      join(src, "nimbus-registry.json"),
+      JSON.stringify({ format: 1, requirePublisherNamespace: true }),
+    );
+  }
+  git(src, "add", ".");
   git(src, ...TEST_IDENTITY, "commit", "-m", "init");
   git(src, "push", remote, "main");
   if (opts.ghPages !== false) {
@@ -158,13 +172,19 @@ function tools(gh: "absent" | "authed" | "unauthed"): {
 } {
   const calls: Call[] = [];
   const fork = join(tmp, "alice", "registry.git");
-  const ok = (stdout = ""): ToolResult => ({ code: 0, stdout, stderr: "" });
+  const result = (code: number, stdout: string, stderr: string): ToolResult => ({
+    code,
+    stdout,
+    stdoutBytes: new TextEncoder().encode(stdout),
+    stderr,
+  });
+  const ok = (stdout = ""): ToolResult => result(0, stdout, "");
   const run: RunTool = async (cmd, args, opts) => {
     calls.push({ cmd, args });
     if (cmd === "git") return runTool(cmd, args, opts);
-    if (gh === "absent") return { code: TOOL_NOT_STARTED, stdout: "", stderr: "gh: not found" };
+    if (gh === "absent") return result(TOOL_NOT_STARTED, "", "gh: not found");
     if (args[0] === "auth") {
-      return gh === "authed" ? ok() : { code: 1, stdout: "", stderr: "not logged in" };
+      return gh === "authed" ? ok() : result(1, "", "not logged in");
     }
     if (args[0] === "repo" && args[1] === "fork") {
       git(tmp, "init", "--bare", "-b", "main", fork);
@@ -172,7 +192,7 @@ function tools(gh: "absent" | "authed" | "unauthed"): {
       return ok();
     }
     if (args[0] === "pr") return ok(`https://github.com/${REPO}/pull/7\n`);
-    return { code: 1, stdout: "", stderr: "unexpected gh call" };
+    return result(1, "", "unexpected gh call");
   };
   return { run, calls, fork };
 }
@@ -230,7 +250,7 @@ describe("nimbus extension publish", () => {
 
     const ghCalls = t.calls.filter((c) => c.cmd === "gh").map((c) => c.args);
     expect(ghCalls[0]).toEqual(["auth", "status"]);
-    expect(ghCalls[1]).toEqual(["repo", "fork", "--remote", "--remote-name", "fork"]);
+    expect(ghCalls[1]).toEqual(["repo", "fork", REPO, "--remote", "--remote-name", "fork"]);
     const pr = ghCalls[2] ?? [];
     expect(pr.slice(0, 10)).toEqual([
       "pr",
@@ -390,6 +410,128 @@ describe("nimbus extension publish", () => {
     expect(wroteToGit(t.calls)).toBe(false);
   });
 
+  test("refuses a --clone whose origin is not the registry, before writing to git", async () => {
+    const remote = await makeRegistry();
+    const other = join(tmp, "other.git");
+    git(tmp, "clone", "--bare", remote, other);
+    const clone = join(tmp, "other-clone");
+    git(tmp, "clone", other, clone);
+    const ext = await makeExtension("ext");
+    const t = tools("authed");
+    const code = await runExtensionPublish(
+      [ext, "--registry-repo", REPO, "--clone", clone],
+      deps(t.run, remote),
+    );
+    expect(code).toBe(2);
+    expect(err.join("")).toContain("origin is");
+    expect(wroteToGit(t.calls)).toBe(false);
+    expect(t.calls.some((c) => c.args[0] === "fetch")).toBe(false);
+  });
+
+  test("refuses a branch publish/<id>/<version> that already exists in the clone", async () => {
+    const remote = await makeRegistry();
+    const clone = join(tmp, "my-clone");
+    git(tmp, "clone", remote, clone);
+    git(clone, "branch", BRANCH);
+    const ext = await makeExtension("ext");
+    const t = tools("authed");
+    const code = await runExtensionPublish(
+      [ext, "--registry-repo", REPO, "--clone", clone],
+      deps(t.run, remote),
+    );
+    expect(code).toBe(2);
+    expect(err.join("")).toContain(`branch ${BRANCH} already exists`);
+    expect(wroteToGit(t.calls)).toBe(false);
+  });
+
+  test("an existing fork remote is reused, not re-forked", async () => {
+    const remote = await makeRegistry();
+    const clone = join(tmp, "my-clone");
+    git(tmp, "clone", remote, clone);
+    const t = tools("authed");
+    git(tmp, "init", "--bare", "-b", "main", t.fork);
+    git(clone, "remote", "add", "fork", t.fork);
+    const ext = await makeExtension("ext");
+    const code = await runExtensionPublish(
+      [ext, "--registry-repo", REPO, "--clone", clone],
+      deps(t.run, remote),
+    );
+    expect(err.join("")).toBe("");
+    expect(code).toBe(0);
+    const ghCalls = t.calls.filter((c) => c.cmd === "gh").map((c) => c.args.slice(0, 2));
+    expect(ghCalls).toEqual([
+      ["auth", "status"],
+      ["pr", "create"],
+    ]);
+    expect(gitText(t.fork, "rev-parse", "--verify", BRANCH)).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  test("refuses a version already merged on the default branch and waiting to be signed", async () => {
+    const remote = await makeRegistry({ onMain: true });
+    const ext = await makeExtension("ext");
+    const t = tools("authed");
+    const code = await runExtensionPublish([ext, "--registry-repo", REPO], deps(t.run, remote));
+    expect(code).toBe(2);
+    expect(err.join("")).toContain("is already on main, waiting to be signed");
+    expect(wroteToGit(t.calls)).toBe(false);
+  });
+
+  test("falls back to the default branch's config when gh-pages has none", async () => {
+    const remote = await makeRegistry({ mainConfig: true });
+    const ext = await makeExtension("ext", { id: "tool" });
+    const t = tools("authed");
+    const code = await runExtensionPublish([ext, "--registry-repo", REPO], deps(t.run, remote));
+    expect(code).toBe(2);
+    expect(err.join("")).toContain("ERR_REGISTRY_NAMESPACE_REQUIRED: ");
+    expect(wroteToGit(t.calls)).toBe(false);
+  });
+
+  test("overrides only the identity key git does not set", async () => {
+    const remote = await makeRegistry();
+    const ext = await makeExtension("ext");
+    const t = tools("authed");
+    const commits: string[][] = [];
+    const run: RunTool = async (cmd, args, opts) => {
+      if (cmd === "git" && args[0] === "config" && args[2] === "user.name") {
+        return { code: 1, stdout: "", stdoutBytes: new Uint8Array(), stderr: "" };
+      }
+      if (cmd === "git" && args[0] === "config" && args[2] === "user.email") {
+        const stdout = "author@example.invalid\n";
+        return { code: 0, stdout, stdoutBytes: new TextEncoder().encode(stdout), stderr: "" };
+      }
+      if (cmd === "git" && subcommand(args) === "commit") {
+        commits.push(args);
+        // The real commit still needs an email on a machine whose git has none.
+        return t.run(cmd, ["-c", "user.email=author@example.invalid", ...args], opts);
+      }
+      return t.run(cmd, args, opts);
+    };
+    const code = await runExtensionPublish(
+      [ext, "--registry-repo", REPO, "--no-pr"],
+      deps(run, remote),
+    );
+    expect(err.join("")).toBe("");
+    expect(code).toBe(0);
+    expect(commits).toHaveLength(1);
+    const argv = commits[0] ?? [];
+    expect(argv).toContain("user.name=acme (nimbus extension publish)");
+    expect(argv.some((a) => a.startsWith("user.email="))).toBe(false);
+  });
+
+  test("normaliseRemoteUrl equates the GitHub https and ssh forms, case-insensitively", () => {
+    const want = "github.com/acme/registry";
+    for (const url of [
+      "https://github.com/acme/registry",
+      "https://github.com/Acme/Registry.git",
+      "https://github.com/acme/registry/",
+      "git@github.com:acme/registry.git",
+      "ssh://git@github.com/acme/registry.git",
+    ]) {
+      expect(normaliseRemoteUrl(url)).toBe(want);
+    }
+    expect(normaliseRemoteUrl("https://github.com/acme/other.git")).not.toBe(want);
+  });
+
   test("usage errors exit 2", async () => {
     const t = tools("authed");
     const d = deps(t.run, "unused");
@@ -400,6 +542,8 @@ describe("nimbus extension publish", () => {
       await runExtensionPublish(["dir", "--registry-repo", REPO, "--channel", "gamma"], d),
     ).toBe(2);
     expect(await runExtensionPublish(["dir", "--registry-repo", REPO, "--bogus"], d)).toBe(2);
+    expect(await runExtensionPublish(["dir", "--registry-repo", "acme/."], d)).toBe(2);
+    expect(await runExtensionPublish(["dir", "--registry-repo", "acme/.."], d)).toBe(2);
     expect(err.join("")).toContain("--channel must be stable or beta");
     expect(t.calls).toEqual([]);
   });

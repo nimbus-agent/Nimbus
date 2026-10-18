@@ -843,11 +843,10 @@ export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number |
 
 export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
-  const rest = stripFlags(args.slice(1));
-
   if (await runExtensionOffline(sub, args)) {
     return;
   }
+  const rest = stripFlags(args.slice(1));
 
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
