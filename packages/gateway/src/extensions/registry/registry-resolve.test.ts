@@ -3,13 +3,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { publisherKeyFingerprint, RegistryError } from "@nimbus-dev/registry-format";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { encodeBase64 } from "../../util/base64.ts";
 import { generateEd25519Keypair } from "../../util/ed25519.ts";
-import { publisherKeyFingerprint } from "../install-from-local.ts";
 import { buildTestRegistry, resignIndex } from "./__fixtures__/build-test-registry.ts";
-import { RegistryError } from "./registry-errors.ts";
 import type { RegistryFetchDeps } from "./registry-fetch.ts";
 import { resolveRegistryEntry } from "./registry-resolve.ts";
 import { insertRegistry } from "./registry-store.ts";

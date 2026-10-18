@@ -70,7 +70,9 @@
 #
 #   9. packages/gateway/src/extensions/registry/__fixtures__/,
 #      packages/gateway/src/extensions/registry/index-format.test.ts,
-#      packages/cli/src/lib/registry-index.test.ts
+#      packages/cli/src/lib/registry-index.test.ts,
+#      packages/registry-format/src/index-format.test.ts (where the first two
+#      golden-vector tests now live as one; the old paths stay for history)
 #      — signed-registry test fixtures carry Ed25519 PUBLIC keys (base64: the
 #        registry `rootKey` and publisher keys) derived from a fixed test seed
 #        (bytes 0x01..0x20). A public key is published by design and a signature
@@ -100,6 +102,7 @@ paths = [
   '''packages/gateway/src/extensions/registry/__fixtures__/''',
   '''packages/gateway/src/extensions/registry/index-format\.test\.ts''',
   '''packages/cli/src/lib/registry-index\.test\.ts''',
+  '''packages/registry-format/src/index-format\.test\.ts''',
 ]
 
 # 7. One HISTORICAL literal, suppressed by VALUE rather than by path.

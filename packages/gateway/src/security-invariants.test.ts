@@ -382,7 +382,7 @@ describe("I2 — HITL frozen-set membership", () => {
     const { dispatchRegistryRpc } = await import("./ipc/registry-rpc.ts");
     const { listRegistries } = await import("./extensions/registry/registry-store.ts");
     const nacl = (await import("tweetnacl")).default;
-    const { registryIndexSigningBytes } = await import("./extensions/registry/index-format.ts");
+    const { registryIndexSigningBytes } = await import("@nimbus-dev/registry-format");
     const { encodeBase64 } = await import("./util/base64.ts");
     const tmp = mkdtempSync(join(tmpdir(), "nimbus-i2-registry-add-"));
     const db = new Database(":memory:");
@@ -6652,7 +6652,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       "./extensions/registry/__fixtures__/build-test-registry.ts"
     );
     const { insertRegistry } = await import("./extensions/registry/registry-store.ts");
-    const { publisherKeyFingerprint } = await import("./extensions/install-from-local.ts");
+    const { publisherKeyFingerprint } = await import("@nimbus-dev/registry-format");
     const { MockVault } = await import("./vault/mock.ts");
     const root = mkdtempSync(join(tmpdir(), "nimbus-i44-"));
     roots.push(root);
@@ -6707,7 +6707,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
   }
 
   async function refusalOf(p: Promise<unknown>): Promise<string> {
-    const { RegistryError } = await import("./extensions/registry/registry-errors.ts");
+    const { RegistryError } = await import("@nimbus-dev/registry-format");
     const settled = await p.then(
       () => undefined,
       (e: unknown) => e,

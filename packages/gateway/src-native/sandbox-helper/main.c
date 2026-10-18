@@ -71,7 +71,7 @@ static void free_all_resolved(struct addrinfo **resolved, int n_allowed) {
 
 /*
  * RFC 1123 hostname validator. Semantically mirrors the TypeScript
- * HOSTNAME_RE in packages/gateway/src/extensions/permissions-validator.ts —
+ * HOSTNAME_RE in packages/registry-format/src/permissions-validator.ts —
  * both ends of the input pipeline (TOML loader + helper argv) enforce the
  * same contract so a malformed hostname never reaches getaddrinfo() with
  * caller-supplied bytes.

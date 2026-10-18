@@ -1,3 +1,4 @@
+import { isValidSemver } from "@nimbus-dev/registry-format";
 import type { AutoUpdateCache } from "./auto-update-cache.ts";
 import {
   ACTION_TYPE_AUTO_UPDATE,
@@ -6,7 +7,6 @@ import {
   type AvailableUpdate,
   type UpdateApplyResult,
 } from "./auto-update-types.ts";
-import { isValidSemver } from "./registry/index-format.ts";
 
 interface PlannedAction {
   type: typeof ACTION_TYPE_AUTO_UPDATE | typeof ACTION_TYPE_DOWNGRADE;

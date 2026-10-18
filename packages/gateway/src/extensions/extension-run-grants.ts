@@ -1,10 +1,10 @@
+import type { SandboxPermissions } from "@nimbus-dev/registry-format";
 import {
   findProtectedOverlap,
   isSameOrInside,
   pathApiFor,
   pathsOverlap,
 } from "../util/path-overlap.ts";
-import type { SandboxPermissions } from "./permissions-validator.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 
 /** What resolving a grant needs from the machine. Injected so tests never touch real Nimbus dirs. */

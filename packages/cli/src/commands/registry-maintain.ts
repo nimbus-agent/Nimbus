@@ -20,24 +20,22 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
+import {
+  emptyIndex,
+  publicKeyFromSeed,
+  type RegistryChannel,
+  type RegistryIndex,
+  signIndex,
+  verifyIndexSignature,
+} from "@nimbus-dev/registry-format";
 import { extract, list } from "tar";
-
 import {
   decodeBase64,
   encodeBase64,
   generateEd25519Keypair,
   verifyManifestSignature,
 } from "../lib/extension-signing.ts";
-import {
-  emptyIndex,
-  publicKeyFromSeed,
-  type RegistryChannel,
-  type RegistryIndex,
-  readIndexFile,
-  signIndex,
-  verifyIndexSignature,
-  writeIndexAtomic,
-} from "../lib/registry-index.ts";
+import { readIndexFile, writeIndexAtomic } from "../lib/registry-index.ts";
 import { packExtensionDir } from "../lib/registry-pack.ts";
 
 export interface MaintainIo {

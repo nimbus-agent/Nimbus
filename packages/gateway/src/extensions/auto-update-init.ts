@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
-
+import { RegistryError, type RegistryErrorCode } from "@nimbus-dev/registry-format";
 import { listExtensions, updateExtensionRowVersion } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
@@ -16,7 +16,6 @@ import {
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
 import { extractPackage } from "./package-extract.ts";
-import { RegistryError, type RegistryErrorCode } from "./registry/registry-errors.ts";
 import {
   fetchRegistryBytes,
   fetchVerifiedIndex,

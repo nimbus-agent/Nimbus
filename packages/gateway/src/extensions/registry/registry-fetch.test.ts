@@ -3,11 +3,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type RegistryIndex, registryIndexSigningBytes } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
-
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { encodeBase64 } from "../../util/base64.ts";
-import { type RegistryIndex, registryIndexSigningBytes } from "./index-format.ts";
 import {
   fetchRegistryBytes,
   fetchUnpinnedIndex,

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { dbRun } from "../db/write.ts";
 import { AutoUpdateCache } from "../extensions/auto-update-cache.ts";
@@ -17,7 +18,6 @@ import {
   preT2DisableMessage,
   recoveredPendingRehashRegistry,
 } from "../extensions/hard-disable.ts";
-import { publisherKeyFingerprint } from "../extensions/install-from-local.ts";
 import { readPublisherKey } from "../extensions/publisher-keys.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import {

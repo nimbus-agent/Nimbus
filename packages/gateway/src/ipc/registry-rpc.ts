@@ -1,17 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-
 import {
-  ExtensionInstallNotApprovedError,
   publisherKeyFingerprint,
-} from "../extensions/install-from-local.ts";
+  RegistryError,
+  type RegistryExtensionEntry,
+  type RegistryVersionEntry,
+} from "@nimbus-dev/registry-format";
+import { ExtensionInstallNotApprovedError } from "../extensions/install-from-local.ts";
 import { parseExtensionManifestForRegistry } from "../extensions/manifest.ts";
-import type {
-  RegistryExtensionEntry,
-  RegistryVersionEntry,
-} from "../extensions/registry/index-format.ts";
 import { installFromRegistry } from "../extensions/registry/install-from-registry.ts";
-import { RegistryError } from "../extensions/registry/registry-errors.ts";
 import {
   fetchRegistryBytes,
   fetchUnpinnedIndex,

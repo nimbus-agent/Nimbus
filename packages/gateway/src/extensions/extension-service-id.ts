@@ -1,23 +1,26 @@
-import { findServiceIdPrefixCollision } from "../util/service-id-prefix.ts";
+import {
+  deriveExtensionServiceId as deriveServiceId,
+  findServiceIdPrefixCollision,
+  RegistryError,
+} from "@nimbus-dev/registry-format";
+
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 
-/** Disjoint from user MCP's `mcp_` and from every first-party connector id. */
-export const EXTENSION_SERVICE_ID_PATTERN = /^ext_[a-z0-9_]{1,62}$/;
+export { EXTENSION_SERVICE_ID_PATTERN } from "@nimbus-dev/registry-format";
 
 /**
- * `ext_<slug>`, the slug being the manifest id lowercased with everything outside `[a-z0-9]` mapped
- * to `_`. Computed ONCE, when the first grant is created, and stored: never recomputed, so a later
- * change to this rule cannot move an existing extension's tools.
+ * The run-grant spelling of `@nimbus-dev/registry-format`'s `deriveExtensionServiceId`: the rule is
+ * the workspace's, the refusal is `ERR_EXTENSION_SERVICE_ID_INVALID` for run-grant callers.
  */
 export function deriveExtensionServiceId(manifestId: string): string {
-  const id = `ext_${manifestId.toLowerCase().replaceAll(/[^a-z0-9]/g, "_")}`;
-  if (!EXTENSION_SERVICE_ID_PATTERN.test(id)) {
-    throw new ExtensionRunGrantError(
-      "ERR_EXTENSION_SERVICE_ID_INVALID",
-      `extension id "${manifestId}" does not yield a service id of 1-62 characters after "ext_"`,
-    );
+  try {
+    return deriveServiceId(manifestId);
+  } catch (e) {
+    if (e instanceof RegistryError) {
+      throw new ExtensionRunGrantError("ERR_EXTENSION_SERVICE_ID_INVALID", e.detail);
+    }
+    throw e;
   }
-  return id;
 }
 
 export function assertExtensionServiceIdFree(serviceId: string, existing: readonly string[]): void {

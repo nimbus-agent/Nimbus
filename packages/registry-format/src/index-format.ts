@@ -5,12 +5,19 @@
  * `publisher.key` field this envelope does not have. The signed bytes are the canonical JSON of the
  * index without its top-level `signature`, verified against `index.rootKey` with tweetnacl.
  */
+// NOSONAR S1874: deprecated in SDK 1.32.0. The registry signs and verifies the bytes of this export
+// (the gateway's `extensions/canonical-json.ts` wraps the same one); `@nimbus-dev/sdk/signing`
+// NFC-normalises differently and would change the signed bytes for any non-ASCII string.
+import { canonicalize } from "@nimbus-dev/sdk"; // NOSONAR S1874
 import nacl from "tweetnacl";
-import { decodeBase64 } from "../../util/base64.ts";
-import { canonicalize } from "../canonical-json.ts";
-import { assertSafeExtensionId } from "../install-from-local.ts";
-import { PUBLISHER_ID_RE } from "../manifest.ts";
-import { RegistryError } from "./registry-errors.ts";
+
+import { RegistryError } from "./errors.ts";
+import { assertSafeExtensionId } from "./extension-id.ts";
+import { PUBLISHER_ID_RE } from "./manifest.ts";
+
+function decodeBase64(s: string): Uint8Array {
+  return new Uint8Array(Buffer.from(s, "base64"));
+}
 
 export type RegistryChannel = "stable" | "beta";
 
@@ -215,7 +222,7 @@ export function registryIndexSigningBytes(
   index: Omit<RegistryIndex, "signature"> | RegistryIndex,
 ): Uint8Array {
   const { signature: _omitted, ...rest } = index as RegistryIndex;
-  return new TextEncoder().encode(canonicalize(rest));
+  return new TextEncoder().encode(canonicalize(rest)); // NOSONAR S1874
 }
 
 export async function verifyRegistryIndexSelf(index: RegistryIndex): Promise<void> {

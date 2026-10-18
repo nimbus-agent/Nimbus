@@ -12,17 +12,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import * as tar from "tar";
 import nacl from "tweetnacl";
-
 import { listExtensions } from "../../automation/extension-store.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { encodeBase64 } from "../../util/base64.ts";
 import { MockVault } from "../../vault/mock.ts";
-import {
-  type ExtensionInstallApprovalRequest,
-  publisherKeyFingerprint,
-} from "../install-from-local.ts";
+import type { ExtensionInstallApprovalRequest } from "../install-from-local.ts";
 import { writePublisherKey } from "../publisher-keys.ts";
 import {
   buildTestRegistry,

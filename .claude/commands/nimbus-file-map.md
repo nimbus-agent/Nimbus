@@ -67,7 +67,8 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | `packages/gateway/src/extensions/extension-stage.ts` | `stageVerifiedExtension` — the verified per-spawn COPY the extension runs from (its cwd) |
 | `packages/gateway/src/extensions/tree-digest.ts` | `computeExtensionTreeDigest` — the install-gate tree digest (PR 1) |
 | `packages/gateway/src/extensions/extension-run-grants.ts` / `run-grant-env.ts` | Resolve granted network/read/write paths; `isExtensionRuntimeEnabled` (`[extensions] runtime`) |
-| `packages/gateway/src/extensions/extension-service-id.ts` | `deriveExtensionServiceId` — `ext_` + lowercased id, non-alphanumerics → `_` (disjoint from `mcp_`) |
+| `packages/gateway/src/extensions/extension-service-id.ts` | `deriveExtensionServiceId` — `ext_` + lowercased id, non-alphanumerics → `_` (disjoint from `mcp_`); the rule itself lives in `packages/registry-format/src/extension-id.ts`, this wrapper refuses with `ERR_EXTENSION_SERVICE_ID_INVALID` |
+| `packages/registry-format/src/` | `@nimbus-dev/registry-format` — the pure (Bun-free, no gateway/cli import) registry rules shared by gateway and CLI: `index-format.ts` (signed `index.json` model + verifier), `sign.ts` (index signer), `manifest.ts` + `permissions-validator.ts` (manifest parser), `extension-id.ts`, `fingerprint.ts`, `errors.ts` (`RegistryError`) |
 | `packages/gateway/src/extensions/run-extension-entry.ts` | The child-side entry role that starts the extension's MCP stdio server |
 
 ## Extensions — Dependency Resolution

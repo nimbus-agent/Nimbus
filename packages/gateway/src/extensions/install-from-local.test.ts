@@ -18,7 +18,6 @@ import { listExtensions } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import {
-  assertSafeExtensionId,
   ExtensionInstallNotApprovedError,
   extensionInstallDirectory,
   installExtensionFromLocalDirectory,
@@ -52,18 +51,6 @@ function createExtensionInstallFixture(
 }
 
 describe("install-from-local", () => {
-  test("assertSafeExtensionId rejects path traversal", () => {
-    expect(() => assertSafeExtensionId("../evil")).toThrow();
-    expect(() => assertSafeExtensionId("a/../b")).toThrow();
-    expect(() => assertSafeExtensionId("@scope/pkg")).not.toThrow();
-  });
-
-  test("assertSafeExtensionId rejects ids longer than 128 characters", () => {
-    expect(() => assertSafeExtensionId("a".repeat(128))).not.toThrow();
-    expect(() => assertSafeExtensionId("a".repeat(129))).toThrow(/too long/i);
-    expect(() => assertSafeExtensionId(`@scope/${"a".repeat(200)}`)).toThrow(/too long/i);
-  });
-
   test("extensionInstallDirectory joins scoped id safely", () => {
     const root = join(tmpdir(), "nimbus-ext-test");
     expect(extensionInstallDirectory(root, "@acme/demo")).toBe(join(root, "@acme", "demo"));
@@ -853,28 +840,6 @@ describe("verifyAndRecordSignature — I16 audit assertions (Tier C-3)", () => {
 
     // No row inserted
     expect(listExtensions(db)).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// assertSafeExtensionId — additional missing branches (Tier C-4)
-// ---------------------------------------------------------------------------
-describe("assertSafeExtensionId — missing branch coverage (Tier C-4)", () => {
-  test("empty string is rejected", () => {
-    expect(() => assertSafeExtensionId("")).toThrow(/invalid extension id/i);
-  });
-
-  test("whitespace-only string is rejected", () => {
-    expect(() => assertSafeExtensionId("   ")).toThrow(/invalid extension id/i);
-  });
-
-  test("string containing null byte is rejected", () => {
-    expect(() => assertSafeExtensionId("foo\0bar")).toThrow(/invalid extension id/i);
-  });
-
-  test("slash-only or dot-slash yields empty parts and is rejected", () => {
-    expect(() => assertSafeExtensionId("/")).toThrow(/invalid extension id/i);
-    expect(() => assertSafeExtensionId("./")).toThrow(/invalid extension id/i);
   });
 });
 

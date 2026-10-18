@@ -1,15 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { closeSync, fstatSync, openSync, readFileSync, statSync } from "node:fs";
-
-import { recordRegistryEgress } from "../../egress/registry-egress.ts";
 import {
   MAX_INDEX_BYTES,
   parseRegistryIndex,
+  RegistryError,
   type RegistryIndex,
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
-} from "./index-format.ts";
-import { RegistryError } from "./registry-errors.ts";
+} from "@nimbus-dev/registry-format";
+import { recordRegistryEgress } from "../../egress/registry-egress.ts";
 import { getRegistry, type RegistryRow, recordRegistryFetch } from "./registry-store.ts";
 import { resolveRegistryLocation, resolveRegistryResource } from "./registry-transport.ts";
 
