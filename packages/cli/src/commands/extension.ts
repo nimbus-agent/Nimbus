@@ -730,6 +730,21 @@ async function dispatchExtensionVoid(
   }
 }
 
+/**
+ * `install`, `rehash`, `approve`, `update` and `downgrade` block on the owner's HITL prompt, so
+ * they get the human-bound budget rather than the 30s default that would time out while the owner
+ * is still reading the prompt. `update --check` only reads, so it keeps the default.
+ */
+export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number | undefined {
+  if (sub === "install" || sub === "rehash" || sub === "approve" || sub === "downgrade") {
+    return INTERACTIVE_RPC_TIMEOUT_MS;
+  }
+  if (sub === "update" && !hasFlag(rest, "--check")) {
+    return INTERACTIVE_RPC_TIMEOUT_MS;
+  }
+  return undefined;
+}
+
 export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
   const rest = stripFlags(args.slice(1));
@@ -744,14 +759,7 @@ export async function runExtension(args: string[]): Promise<void> {
     throw new Error(gatewayNotRunningMessage(paths.demo === true));
   }
 
-  // `install`, `rehash` and `approve` block on the owner's HITL prompt, so it gets the human-bound budget rather than the
-  // 30s default that would time out while the owner is still reading the prompt.
-  const client = createIpcClient(
-    state.socketPath,
-    sub === "install" || sub === "rehash" || sub === "approve"
-      ? INTERACTIVE_RPC_TIMEOUT_MS
-      : undefined,
-  );
+  const client = createIpcClient(state.socketPath, rpcTimeoutForExtensionSub(sub, args.slice(1)));
   await client.connect();
   try {
     if (await dispatchExtensionVoid(sub, client, args, rest)) {
@@ -867,6 +875,11 @@ export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts)
 }
 
 export async function runExtensionUpdate(client: IPCClient, args: string[]): Promise<number> {
+  // The gateway raises the owner's HITL prompt (`extension.update`) over this connection; `--check`
+  // only reads, so it never prompts and registers nothing.
+  if (!hasFlag(args, "--check")) {
+    registerConsentFor(client, { kind: "prompt" });
+  }
   return runExtensionUpdateWithCaller({
     args: args.slice(1), // drop the "update" subcommand token
     caller: async (method, params) => client.call<unknown>(method, params),
@@ -926,6 +939,7 @@ export async function runExtensionDowngradeWithCaller(
 }
 
 export async function runExtensionDowngrade(client: IPCClient, args: string[]): Promise<number> {
+  registerConsentFor(client, { kind: "prompt" });
   return runExtensionDowngradeWithCaller({
     args: args.slice(1),
     caller: async (method, params) => client.call<unknown>(method, params),

@@ -6,6 +6,7 @@ import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
+import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import type { AvailableUpdateCli, SyncResult, UpdateApplyResultCli } from "./extension.ts";
 
 const extensionMod = await import("./extension.ts");
@@ -31,6 +32,9 @@ const {
   runExtensionSyncWithCaller,
   runExtensionUpdateWithCaller,
   runExtensionDowngradeWithCaller,
+  runExtensionDowngrade,
+  runExtensionUpdate,
+  rpcTimeoutForExtensionSub,
   stripFlags,
   takeFlagValue,
 } = extensionMod;
@@ -2399,5 +2403,48 @@ describe("run state in human output", () => {
     });
     expect(running).toBe("running (ext_a, approved 1970-01-01T00:00:00.000Z, model: no)");
     expect(running).not.toContain("not executed");
+  });
+});
+
+describe("extension update/downgrade owner prompt", () => {
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+  });
+  afterEach(() => {
+    process.exitCode = 0;
+  });
+
+  test("update registers a consent prompt handler and uses the interactive timeout", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    const mock = createMockIpcClient(
+      [[{ id: "ext-a", toVersion: "2.0.0" }], { applied: true }],
+      handlers,
+    );
+    await runExtensionUpdate(mock.client, ["update", "ext-a", "--to", "2.0.0"]);
+    expect(handlers.has("consent.request")).toBe(true);
+    expect(mock.calls.map((c) => c.method)).toContain("extension.update");
+    expect(rpcTimeoutForExtensionSub("update", ["ext-a"])).toBe(INTERACTIVE_RPC_TIMEOUT_MS);
+  });
+
+  test("update --check registers nothing and keeps the default timeout", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    const mock = createMockIpcClient([[]], handlers);
+    await runExtensionUpdate(mock.client, ["update", "--check"]);
+    expect(handlers.size).toBe(0);
+    expect(rpcTimeoutForExtensionSub("update", ["--check"])).toBeUndefined();
+  });
+
+  test("downgrade registers a consent prompt handler and uses the interactive timeout", async () => {
+    const handlers = new Map<string, (params: unknown) => void>();
+    const mock = createMockIpcClient([{ applied: true }], handlers);
+    await runExtensionDowngrade(mock.client, ["downgrade", "ext-a", "--to", "1.0.0"]);
+    expect(handlers.has("consent.request")).toBe(true);
+    expect(mock.calls[0]?.method).toBe("extension.update");
+    expect(rpcTimeoutForExtensionSub("downgrade", ["ext-a"])).toBe(INTERACTIVE_RPC_TIMEOUT_MS);
+  });
+
+  test("read-only subcommands keep the default timeout", () => {
+    expect(rpcTimeoutForExtensionSub("list", [])).toBeUndefined();
   });
 });
