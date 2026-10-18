@@ -53,7 +53,9 @@ nimbus extension publish . --registry-repo <owner>/<repo>
 
 `sign` fills the manifest's `publisher.key` with the public half of your signing key (when `publisher.id` is set and no key is), then signs it; it refuses to re-key a manifest that already names a different key. `publish` packs the package file set (`nimbus.extension.json`, everything under `dist/`, top-level `README*`/`LICENSE*`), checks it against the registry's published state and opens a pull request that adds it to the registry repository. It needs `git` and, to open the pull request itself, a signed-in `gh`; otherwise it prints the commands to finish by hand. Re-sign after any change to the manifest, and bump `version` for each publish: a published `<id>@<version>` is never overwritten. See [`docs/cli-reference.md`](../cli-reference.md#nimbus-extension-publish-dir---registry-repo-ownerrepo---clone-path---channel-stablebeta---no-pr).
 
-The registry repository's own CI (checking and signing publish pull requests) is not shipped yet, so a maintainer still adds accepted packages with `nimbus registry maintain add`.
+A registry hosted on GitHub runs its own CI over your pull request: a **Registry check** job validates it for the reviewer, and after the merge a maintainer approves the **Registry sign** run in the registry's `registry-signing` environment, which signs your version into the published index (see [`docs/registry-hosting.md`](../registry-hosting.md)). A folder registry has no CI; its maintainer adds accepted packages with `nimbus registry maintain add`.
+
+Extension ids a registry accepts are narrower than ids the gateway installs: every `/` segment must start with a letter or digit, hold only letters, digits, `.`, `_` and `-`, and not end in `.` or `.lock`. `nimbus scaffold extension` only produces such ids.
 
 ## 7. CI for your extension repo
 
