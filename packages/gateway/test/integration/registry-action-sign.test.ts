@@ -47,7 +47,17 @@ const ACTION_MAIN = join(
 );
 
 const ACTION_DIST = join(ACTION_MAIN, "..", "..", "dist", "index.js");
-const NODE = Bun.which("node");
+// A real Node, not Bun's `node` fallback shim (Bun images put one on PATH): the shim would run the
+// bundle under Bun and prove nothing about the runner's node24.
+function realNode(): string | null {
+  const bin = Bun.which("node");
+  if (bin === null) return null;
+  const probe = Bun.spawnSync([bin, "-e", "process.stdout.write(String(process.versions.bun))"], {
+    windowsHide: true,
+  });
+  return probe.exitCode === 0 && probe.stdout.toString() === "undefined" ? bin : null;
+}
+const NODE = realNode();
 
 let tmp: string;
 let repo: RegistryRepo;
@@ -186,7 +196,7 @@ describe("registry action sign → gateway install", () => {
   });
 
   test.skipIf(NODE === null)(
-    "the committed bundle signs under node (skipped when node is not on PATH: the runner's node24 is what runs dist/index.js)",
+    "the committed bundle signs under node (skipped when no real node is on PATH: the runner's node24 is what runs dist/index.js)",
     async () => {
       writePublish(repo.maintainer, await makeExtension(mkdtempSync(join(tmp, "scratch-"))));
       pushMaintainer(repo, "main", "merge");
