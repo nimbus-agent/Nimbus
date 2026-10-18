@@ -60,6 +60,8 @@ describe("parseScaffoldArgs", () => {
       ["--publisher"],
       ["--publisher", "Acme"],
       ["--publisher", "a".repeat(65)],
+      ["--publisher", "acme."],
+      ["--publisher", "acme.lock"],
       ["--x", "y"],
       ["acme"],
     ]) {
@@ -67,6 +69,12 @@ describe("parseScaffoldArgs", () => {
         /scaffold extension|--publisher must match/,
       );
     }
+  });
+
+  it("rejects an extension name a registry could not publish", () => {
+    expect(() => parseScaffoldArgs(["extension", "_echo"])).toThrow(/scaffold extension/);
+    // An mcp server name keeps its old rule: it never becomes a registry path.
+    expect(parseScaffoldArgs(["mcp", "_echo"])).toEqual({ kind: "mcp", name: "_echo" });
   });
 
   it("rejects invalid names and missing args", () => {

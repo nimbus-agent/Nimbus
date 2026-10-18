@@ -641,6 +641,44 @@ describe("validatePublish", () => {
     });
   }
 
+  for (const id of [
+    "acme/ec:ho",
+    "acme/ec*ho",
+    "acme/_echo",
+    "acme/.echo",
+    "acme/ec#ho",
+    "acme/ec?ho",
+    "acme/ec%ho",
+    "acme/echo.",
+    "acme/echo.lock",
+  ]) {
+    test(`an id a registry cannot serve, ${JSON.stringify(id)}, is refused`, async () => {
+      const manifest = await signedManifest({ id });
+      await expectRefused(
+        validatePublish(
+          await candidate({ manifest, dirId: id, req: request({ id }) }),
+          await indexOf(),
+          NS,
+          work,
+        ),
+        "ERR_REGISTRY_MANIFEST_INVALID",
+        "cannot be published: segment",
+      );
+    });
+  }
+
+  test("an id with '.', '_' and '-' inside a segment is accepted", async () => {
+    const id = "acme/echo.v2_beta-1";
+    const manifest = await signedManifest({ id });
+    const v = await validatePublish(
+      await candidate({ manifest, dirId: id, req: request({ id }) }),
+      await indexOf(),
+      NS,
+      work,
+    );
+    expect(v.id).toBe(id);
+  });
+
   test("a non-canonical twin of an indexed id is refused, not published as a new id", async () => {
     const signed = await indexOf({ "acme/echo": entryFor("acme/echo", "acme", KEY, ["0.9.0"]) });
     const id = "acme//echo";

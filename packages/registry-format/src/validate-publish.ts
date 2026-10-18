@@ -21,6 +21,7 @@ import { MAX_MANIFEST_BYTES, MAX_PACKAGE_BYTES } from "./caps.ts";
 import { RegistryError } from "./errors.ts";
 import {
   assertCanonicalExtensionId,
+  assertPublishableExtensionId,
   assertSafeExtensionId,
   deriveExtensionServiceId,
   findServiceIdPrefixCollision,
@@ -180,6 +181,8 @@ function parseCandidateManifest(bytes: Uint8Array): {
   }
   // The parser trims; a published id and version are the exact strings it would keep.
   assertCanonicalExtensionId(typeof raw["id"] === "string" ? raw["id"] : "");
+  // A registry serves the id as a git branch, a client directory and a Pages URL path.
+  assertPublishableExtensionId(manifest.id);
   if (raw["version"] !== manifest.version) {
     throw manifestInvalid(`version ${JSON.stringify(raw["version"])} has surrounding whitespace`);
   }

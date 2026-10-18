@@ -10,6 +10,7 @@ export {
 export { RegistryError, type RegistryErrorCode } from "./errors.ts";
 export {
   assertCanonicalExtensionId,
+  assertPublishableExtensionId,
   assertSafeExtensionId,
   deriveExtensionServiceId,
   EXTENSION_SERVICE_ID_PATTERN,

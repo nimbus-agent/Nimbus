@@ -422,19 +422,16 @@ describe("registry maintain add/remove — multi-version flows", () => {
 
   test("an id containing @ but no semver suffix is treated as a whole id", async () => {
     const { dir, key } = await init();
-    const pair = generateEd25519Keypair();
-    await run(
-      [
-        "add",
-        dir,
-        await makeExtension({ pair, edit: (m) => (m["id"] = "acme@tools") }),
-        "--key",
-        key,
-      ],
-      0,
+    // `@` is not publishable, so `add` refuses it; `remove` still parses it as one whole id.
+    expect(
+      await run(
+        ["add", dir, await makeExtension({ edit: (m) => (m["id"] = "acme@tools") }), "--key", key],
+        2,
+      ),
+    ).toContain("cannot be published");
+    expect(await run(["remove", dir, "acme@tools", "--key", key], 2)).toContain(
+      "acme@tools is not in this registry",
     );
-    expect(await run(["remove", dir, "acme@tools", "--key", key], 0)).toBe("");
-    expect(readIndexFile(join(dir, "index.json")).extensions).toEqual({});
   });
 
   test("a scoped id is stored under nested directories and named with its full path", async () => {

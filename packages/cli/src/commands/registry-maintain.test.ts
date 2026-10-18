@@ -49,7 +49,7 @@ const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("he
 
 async function makeExtension(
   name: string,
-  opts: { version?: string; signed?: boolean; seed?: Uint8Array } = {},
+  opts: { version?: string; signed?: boolean; seed?: Uint8Array; id?: string } = {},
 ): Promise<string> {
   const dir = join(tmp, name);
   mkdirSync(join(dir, "dist"), { recursive: true });
@@ -58,7 +58,7 @@ async function makeExtension(
   const privkey = opts.seed ?? (pair as { privkey: Uint8Array }).privkey;
   const pubkey = pair?.pubkey ?? generateEd25519Keypair().pubkey;
   const manifest: Record<string, unknown> = {
-    id: "com.example.tool",
+    id: opts.id ?? "com.example.tool",
     name: "Example Tool",
     version: opts.version ?? "1.0.0",
     entry: "dist/index.js",
@@ -185,6 +185,14 @@ describe("registry maintain", () => {
     const ext = await makeExtension("ext", { signed: false });
     expect(await runRegistryMaintain(["add", dir, ext, "--key", key], io)).toBe(2);
     expect(err.join("")).toContain("ERR_REGISTRY_SIGNATURE_INVALID");
+  });
+
+  test("add refuses an id a registry cannot serve, the same rule publish applies", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext", { id: "example/_tool" });
+    expect(await runRegistryMaintain(["add", dir, ext, "--key", key], io)).toBe(2);
+    expect(err.join("")).toContain("ERR_REGISTRY_MANIFEST_INVALID");
+    expect(err.join("")).toContain('segment "_tool"');
   });
 
   test("remove last version drops the id entry", async () => {

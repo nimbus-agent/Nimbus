@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:ce8182688eda730c137dedd4cfeabcb88dbba2e7a83a5d10f4753afbfadae690
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:952a03705a59ef350baf043181953937a70de94f66024a80be59bf4e902bb4b4
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4279,6 +4279,22 @@ function assertCanonicalExtensionId(extensionId) {
     throw refuse("it contains a backslash");
   if (extensionId.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) {
     throw refuse("it has an empty, '.' or '..' path segment");
+  }
+}
+var PUBLISHABLE_ID_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+function assertPublishableExtensionId(extensionId) {
+  for (const seg of extensionId.split("/")) {
+    let why;
+    if (!PUBLISHABLE_ID_SEGMENT_RE.test(seg)) {
+      why = "must start with a letter or digit and hold only letters, digits, '.', '_' and '-'";
+    } else if (seg.endsWith(".")) {
+      why = "must not end in '.'";
+    } else if (seg.endsWith(".lock")) {
+      why = "must not end in '.lock'";
+    }
+    if (why !== undefined) {
+      throw new RegistryError("ERR_REGISTRY_MANIFEST_INVALID", `extension id ${JSON.stringify(extensionId)} cannot be published: segment ${JSON.stringify(seg)} ${why}`);
+    }
   }
 }
 var EXTENSION_SERVICE_ID_PATTERN = /^ext_[a-z0-9_]{1,62}$/;
@@ -8598,6 +8614,7 @@ function parseCandidateManifest(bytes) {
     throw manifestInvalid2(e.message);
   }
   assertCanonicalExtensionId(typeof raw["id"] === "string" ? raw["id"] : "");
+  assertPublishableExtensionId(manifest.id);
   if (raw["version"] !== manifest.version) {
     throw manifestInvalid2(`version ${JSON.stringify(raw["version"])} has surrounding whitespace`);
   }

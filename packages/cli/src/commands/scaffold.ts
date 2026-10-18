@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, posix, win32 } from "node:path";
 import {
   assertCanonicalExtensionId,
+  assertPublishableExtensionId,
   assertSafeExtensionId,
   deriveExtensionServiceId,
   PUBLISHER_ID_RE,
@@ -15,8 +16,10 @@ export const SCAFFOLD_MCP_SDK_VERSION = "1.32.0";
 const USAGE =
   "Usage: nimbus scaffold mcp <name>  (name: lowercase letters, digits, underscores; 1-62 chars)\n       nimbus scaffold extension <name> [--publisher <id>]";
 const EXTENSION_USAGE =
-  "Usage: nimbus scaffold extension <name> [--publisher <id>]  (name: lowercase letters, digits, underscores; 1-62 chars)";
+  "Usage: nimbus scaffold extension <name> [--publisher <id>]  (name: lowercase letters, digits, underscores, starting with a letter or digit; 1-62 chars)";
 const NAME_RE = /^[a-z0-9_]{1,62}$/;
+// A published id segment may not start with `_` (GitHub Pages' Jekyll drops it).
+const EXTENSION_NAME_RE = /^[a-z0-9][a-z0-9_]{0,61}$/;
 const MAX_PUBLISHER_ID_LENGTH = 64;
 
 export type ScaffoldArgs =
@@ -25,7 +28,7 @@ export type ScaffoldArgs =
 
 function parseExtensionArgs(args: string[]): ScaffoldArgs {
   const name = args[1]?.trim() ?? "";
-  if (!NAME_RE.test(name)) {
+  if (!EXTENSION_NAME_RE.test(name)) {
     throw new Error(EXTENSION_USAGE);
   }
   const rest = args.slice(2);
@@ -36,9 +39,15 @@ function parseExtensionArgs(args: string[]): ScaffoldArgs {
     throw new Error(EXTENSION_USAGE);
   }
   const publisher = rest[1]?.trim() ?? "";
-  if (publisher.length > MAX_PUBLISHER_ID_LENGTH || !PUBLISHER_ID_RE.test(publisher)) {
+  // A trailing `.` or `.lock` is a git ref component git refuses (`publish/<id>/<version>`).
+  if (
+    publisher.length > MAX_PUBLISHER_ID_LENGTH ||
+    !PUBLISHER_ID_RE.test(publisher) ||
+    publisher.endsWith(".") ||
+    publisher.endsWith(".lock")
+  ) {
     throw new Error(
-      `--publisher must match [a-z0-9][a-z0-9._-]* (max ${String(MAX_PUBLISHER_ID_LENGTH)} chars)`,
+      `--publisher must match [a-z0-9][a-z0-9._-]*, not ending in '.' or '.lock' (max ${String(MAX_PUBLISHER_ID_LENGTH)} chars)`,
     );
   }
   return { kind: "extension", name, publisher };
@@ -272,6 +281,8 @@ export function resolveExtensionId(name: string, publisher: string | undefined):
   const id = publisher === undefined ? name : `${publisher}/${name}`;
   assertSafeExtensionId(id);
   assertCanonicalExtensionId(id);
+  // Backstop: the parser's name/publisher rules already produce only publishable ids.
+  assertPublishableExtensionId(id);
   try {
     deriveExtensionServiceId(id);
   } catch (e) {
