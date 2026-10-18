@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { packExtensionDir } from "./registry-pack.ts";
 
 function makeTree(): string {
@@ -30,6 +39,36 @@ describe("registry packer", () => {
     } finally {
       rmSync(src, { recursive: true, force: true });
       rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  test("file modes are normalised to 0644 regardless of on-disk mode", async () => {
+    const a = makeTree();
+    const b = makeTree();
+    const out = mkdtempSync(join(tmpdir(), "nimbus-reg-out-"));
+    try {
+      chmodSync(join(b, "Z.txt"), 0o600);
+      chmodSync(join(b, "src", "a.js"), 0o755);
+      await packExtensionDir(a, join(out, "a.tgz"));
+      await packExtensionDir(b, join(out, "b.tgz"));
+      const ba = readFileSync(join(out, "a.tgz"));
+      expect(ba.equals(readFileSync(join(out, "b.tgz")))).toBe(true);
+      const tar = gunzipSync(ba);
+      let seen = 0;
+      for (let off = 0; off + 512 <= tar.length && tar[off] !== 0; ) {
+        const name = tar
+          .subarray(off, off + 100)
+          .toString()
+          .replaceAll("\0", "");
+        const mode = Number.parseInt(tar.subarray(off + 100, off + 108).toString(), 8);
+        const size = Number.parseInt(tar.subarray(off + 124, off + 136).toString(), 8);
+        expect([name, mode]).toEqual([name, 0o644]);
+        seen++;
+        off += 512 + Math.ceil(size / 512) * 512;
+      }
+      expect(seen).toBe(4);
+    } finally {
+      for (const d of [a, b, out]) rmSync(d, { recursive: true, force: true });
     }
   });
 
