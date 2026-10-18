@@ -30,6 +30,12 @@ export interface PerformUpgradeDeps {
     entryHash: string,
     treeDigest: string,
   ) => Promise<void>;
+  /** Removes a cleanup path; defaults to `rm(..., { recursive: true, force: true })`. Test seam. */
+  removePath?: (path: string) => Promise<void>;
+}
+
+async function defaultRemovePath(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true });
 }
 
 export function createPerformUpgrade(deps: PerformUpgradeDeps) {
@@ -81,8 +87,17 @@ export function createPerformUpgrade(deps: PerformUpgradeDeps) {
     } finally {
       // Whether the package was refused, the swap failed or it all worked, neither the pending
       // version directory (a nested package root is only renamed OUT of it) nor the archive stays.
-      await rm(pendingDir, { recursive: true, force: true });
-      await rm(archivePath, { force: true });
+      // Best-effort: once the row is updated the update IS committed, and a cleanup failure (an
+      // EBUSY on Windows) must not report it as failed, skip the client stop and leave a stale
+      // cache. A leftover pending dir is cleared by the next attempt's own `rm` above.
+      const removePath = deps.removePath ?? defaultRemovePath;
+      for (const leftover of [pendingDir, archivePath]) {
+        try {
+          await removePath(leftover);
+        } catch {
+          // ignored — see above
+        }
+      }
     }
     await deps.stopExtensionClient(update.id);
   };

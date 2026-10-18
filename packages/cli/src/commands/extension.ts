@@ -1042,7 +1042,7 @@ export async function runExtensionDowngradeWithCaller(
   }
   if (toVersion === undefined) {
     opts.writeStderr(
-      `downgrade requires --to <version> (the cached _prev/<v>/ tag to roll back to)\n`,
+      `downgrade requires --to <version> (a previous version kept under extension-versions/<slug>/prev/<version>/)\n`,
     );
     return 1;
   }

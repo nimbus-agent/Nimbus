@@ -595,7 +595,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
 
 /**
  * The two fields `extension.info` resolves from outside the DB row: the newest directory under
- * `_prev/`, and this run's cached auto-update check.
+ * `prev/`, and this run's cached auto-update check.
  *
  * Extracted so the signature-disabled branch above shares them. It was written as an early return
  * placed ABOVE the inline probe, which meant attaching a reason silently dropped both fields from
@@ -613,7 +613,7 @@ function resolveExtensionInfoExtras(
       prevVersion = newestPrevVersion(ctx.extensionsDir, row.id) ?? null;
     }
   } catch {
-    // Best-effort — info still surfaces the row even if _prev/ probe failed.
+    // Best-effort — info still surfaces the row even if the prev/ probe failed.
   }
   return { prevVersion, cachedUpdate: ctx.autoUpdate?.cache.get(row.id) ?? null };
 }

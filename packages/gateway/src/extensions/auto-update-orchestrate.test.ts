@@ -346,6 +346,44 @@ describe("createPerformUpgrade", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("a cleanup that throws after a committed swap still resolves and still stops the client", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
+    try {
+      const extRoot = join(root, "extensions", "com.example.a");
+      await mkdir(extRoot, { recursive: true });
+      await writeFile(join(extRoot, "marker.txt"), "old");
+      const stopExtensionClient = mock(async (_id: string) => {});
+      const dbUpdateExtensionRow = mock(async () => {});
+      const removePath = mock(async (_p: string) => {
+        throw new Error("EBUSY: resource busy or locked");
+      });
+      const perform = createPerformUpgrade({
+        extensionsRoot: join(root, "extensions"),
+        reverifyManifest: async () => {},
+        fetchPackage: async () => new Uint8Array([1]),
+        signal: new AbortController().signal,
+        sha256OfPackage: async () => "f".repeat(64),
+        extractPackage: async (_archive: string, destDir: string) => {
+          await writePackage(destDir, MANIFEST_V11, "entry-v1.1");
+          await writeFile(join(destDir, "marker.txt"), "new");
+          return { sourceRoot: destDir, treeDigest: "d".repeat(64) };
+        },
+        stopExtensionClient,
+        dbUpdateExtensionRow,
+        removePath,
+      });
+
+      await perform(mkAvailable());
+
+      expect(removePath).toHaveBeenCalledTimes(2);
+      expect(dbUpdateExtensionRow).toHaveBeenCalledTimes(1);
+      expect(stopExtensionClient).toHaveBeenCalledWith("com.example.a");
+      expect(await readFile(join(extRoot, "marker.txt"), "utf8")).toBe("new");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("createPerformDowngrade", () => {

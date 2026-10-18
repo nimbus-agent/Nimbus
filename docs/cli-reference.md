@@ -4569,7 +4569,7 @@ Exit code is `0` on success, `1` on apply failure (with a stderr hint — e.g. `
 
 ### `nimbus extension downgrade <id> --to <version> [--json]`
 
-Roll an installed extension back to a cached `_prev/<version>/` (T2 PR 3). The `<version>` must already exist on disk under the extension's `_prev/` directory — typically the version the auto-update flow saved when the user accepted the previous bump.
+Roll an installed extension back to a cached previous version (T2 PR 3). The `<version>` must already exist on disk under the extension's `extension-versions/<slug>/prev/` directory — typically the version the auto-update flow saved when the user accepted the previous bump.
 
 ```bash
 nimbus extension downgrade com.example.notion --to 1.0.0
