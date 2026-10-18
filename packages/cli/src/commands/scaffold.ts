@@ -1,25 +1,59 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, posix, win32 } from "node:path";
+import {
+  assertCanonicalExtensionId,
+  assertSafeExtensionId,
+  deriveExtensionServiceId,
+  PUBLISHER_ID_RE,
+  RegistryError,
+} from "@nimbus-dev/registry-format";
+import { CliExit } from "../lib/cli-exit.ts";
 
 /** Pinned to the CLI's own `@modelcontextprotocol/sdk` dependency; a test enforces equality. */
 export const SCAFFOLD_MCP_SDK_VERSION = "1.32.0";
 
 const USAGE =
-  "Usage: nimbus scaffold mcp <name>  (name: lowercase letters, digits, underscores; 1-62 chars)";
+  "Usage: nimbus scaffold mcp <name>  (name: lowercase letters, digits, underscores; 1-62 chars)\n       nimbus scaffold extension <name> [--publisher <id>]";
+const EXTENSION_USAGE =
+  "Usage: nimbus scaffold extension <name> [--publisher <id>]  (name: lowercase letters, digits, underscores; 1-62 chars)";
 const NAME_RE = /^[a-z0-9_]{1,62}$/;
+const MAX_PUBLISHER_ID_LENGTH = 64;
 
-export type ScaffoldArgs = { kind: "mcp"; name: string; viaAlias: boolean };
+export type ScaffoldArgs =
+  | { kind: "mcp"; name: string }
+  | { kind: "extension"; name: string; publisher?: string };
+
+function parseExtensionArgs(args: string[]): ScaffoldArgs {
+  const name = args[1]?.trim() ?? "";
+  if (!NAME_RE.test(name)) {
+    throw new Error(EXTENSION_USAGE);
+  }
+  const rest = args.slice(2);
+  if (rest.length === 0) {
+    return { kind: "extension", name };
+  }
+  if (rest.length !== 2 || rest[0] !== "--publisher") {
+    throw new Error(EXTENSION_USAGE);
+  }
+  const publisher = rest[1]?.trim() ?? "";
+  if (publisher.length > MAX_PUBLISHER_ID_LENGTH || !PUBLISHER_ID_RE.test(publisher)) {
+    throw new Error(
+      `--publisher must match [a-z0-9][a-z0-9._-]* (max ${String(MAX_PUBLISHER_ID_LENGTH)} chars)`,
+    );
+  }
+  return { kind: "extension", name, publisher };
+}
 
 export function parseScaffoldArgs(args: string[]): ScaffoldArgs {
   const kind = args[0]?.trim() ?? "";
-  if (kind !== "mcp" && kind !== "extension") {
-    throw new Error(USAGE);
+  if (kind === "extension") {
+    return parseExtensionArgs(args);
   }
   const name = args[1]?.trim() ?? "";
-  if (!NAME_RE.test(name)) {
+  if (kind !== "mcp" || !NAME_RE.test(name)) {
     throw new Error(USAGE);
   }
-  return { kind: "mcp", name, viaAlias: kind === "extension" };
+  return { kind: "mcp", name };
 }
 
 export type ScaffoldFile = { readonly path: readonly string[]; readonly content: string };
@@ -157,6 +191,144 @@ export function buildScaffoldFiles(
   ];
 }
 
+/** The extension's tools live apart from its entry so a test can import them without starting stdio. */
+const EXT_TOOLS_TS = `import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+/** Build the server. Exported so the test can drive it in memory. */
+export function createServer(): McpServer {
+  const server = new McpServer({ name: "__NAME__", version: "0.1.0" });
+  server.registerTool(
+    "echo",
+    { description: "Echo text back", inputSchema: { text: z.string() } },
+    async ({ text }) => ({ content: [{ type: "text", text }] }),
+  );
+  return server;
+}
+`;
+
+/**
+ * The entry. It connects when imported — the gateway's extension runtime \`import()\`s the built
+ * bundle, so an \`import.meta.main\` guard would be false there and the server would never start.
+ */
+const EXT_SERVER_TS = `import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+
+import { createServer } from "./tools.ts";
+
+await createServer().connect(new StdioServerTransport());
+`;
+
+function buildExtensionReadme(name: string, id: string, publisher: string | undefined): string {
+  const namespaceNote =
+    publisher === undefined
+      ? `\nThe manifest id is \`${id}\`. The public registry requires a namespaced id
+(\`<publisher>/<name>\`): re-run \`nimbus scaffold extension ${name} --publisher <id>\` or edit
+\`nimbus.extension.json\` before publishing there.\n`
+      : "";
+  return `# ${id}
+
+A minimal Nimbus extension: an MCP server with one \`echo\` tool, installed and run by the Gateway.
+${namespaceNote}
+## Install and test
+
+\`\`\`
+bun install
+bun test
+\`\`\`
+
+## Build
+
+\`\`\`
+bun run build
+\`\`\`
+
+This writes \`dist/index.js\`, one self-contained JavaScript file. The Gateway imports it as it is
+and runs it with no \`node_modules\`, so everything it needs must be inside that bundle.
+
+## Publish
+
+\`\`\`
+nimbus extension keygen
+nimbus extension sign .
+nimbus extension publish . --registry-repo nimbus-agent/extensions
+\`\`\`
+
+\`nimbus extension keygen\` prints your public key. \`nimbus extension sign .\` records it as
+\`publisher.key\` in the manifest${publisher === undefined ? " (add a publisher object with your id first)" : ""} and signs the manifest.
+
+The published package is exactly \`nimbus.extension.json\`, everything under \`dist/\`, and
+\`README.md\` and \`LICENSE\` when present. \`src/\`, tests and \`node_modules/\` are never included.
+`;
+}
+
+/** An extension id the scaffold refuses; `runScaffold` turns it into exit code 2. */
+export class ScaffoldIdRefusedError extends Error {}
+
+/**
+ * The extension id, refusing one the gateway could not give a service id. \`deriveExtensionServiceId\`
+ * is the rule itself (\`ext_\` plus 1-62 characters), so scaffold cannot disagree with install.
+ */
+export function resolveExtensionId(name: string, publisher: string | undefined): string {
+  const id = publisher === undefined ? name : `${publisher}/${name}`;
+  assertSafeExtensionId(id);
+  assertCanonicalExtensionId(id);
+  try {
+    deriveExtensionServiceId(id);
+  } catch (e) {
+    if (e instanceof RegistryError) {
+      throw new ScaffoldIdRefusedError(
+        `extension id "${id}" is too long: its service id (ext_ + the id) may have at most 62 characters after "ext_"`,
+      );
+    }
+    throw e;
+  }
+  return id;
+}
+
+export function buildExtensionScaffoldFiles(
+  name: string,
+  publisher: string | undefined,
+  _platform: NodeJS.Platform,
+  _absDir: string,
+): readonly ScaffoldFile[] {
+  const id = resolveExtensionId(name, publisher);
+  const manifest = {
+    id,
+    version: "0.1.0",
+    name,
+    entry: "dist/index.js",
+    permissions: { network: [], filesystem: { read: [], write: [] } },
+    updateChannel: "stable",
+    ...(publisher === undefined ? {} : { publisher: { id: publisher } }),
+  };
+  const pkg = {
+    name: `nimbus-ext-${name}`,
+    private: true,
+    type: "module",
+    scripts: {
+      start: "bun src/server.ts",
+      test: "bun test",
+      build: "bun build src/server.ts --target=bun --outfile dist/index.js",
+    },
+    dependencies: {
+      "@modelcontextprotocol/sdk": SCAFFOLD_MCP_SDK_VERSION,
+      zod: "^4.6.5",
+    },
+  };
+  return [
+    { path: ["nimbus.extension.json"], content: `${JSON.stringify(manifest, undefined, 2)}\n` },
+    { path: ["package.json"], content: `${JSON.stringify(pkg, undefined, 2)}\n` },
+    { path: ["src", "server.ts"], content: EXT_SERVER_TS },
+    { path: ["src", "tools.ts"], content: EXT_TOOLS_TS.replaceAll("__NAME__", name) },
+    {
+      path: ["src", "tools.test.ts"],
+      content: SERVER_TEST_TS.replaceAll("./server.ts", "./tools.ts").replaceAll("__NAME__", name),
+    },
+    { path: ["README.md"], content: buildExtensionReadme(name, id, publisher) },
+    { path: [".gitignore"], content: "node_modules/\ndist/\n" },
+  ];
+}
+
 /**
  * `nimbus scaffold`. Synchronous — a usage or filesystem error thrown here reaches the CLI's
  * error path exactly as a rejection would.
@@ -167,10 +339,19 @@ export function runScaffold(args: string[]): void {
   if (existsSync(dir)) {
     throw new Error(`./${parsed.name}/ already exists`);
   }
-  if (parsed.viaAlias) {
-    console.log("`nimbus scaffold extension` is now `nimbus scaffold mcp <name>`.");
+  let files: readonly ScaffoldFile[];
+  try {
+    files =
+      parsed.kind === "extension"
+        ? buildExtensionScaffoldFiles(parsed.name, parsed.publisher, process.platform, dir)
+        : buildScaffoldFiles(parsed.name, process.platform, dir);
+  } catch (e) {
+    if (e instanceof ScaffoldIdRefusedError) {
+      console.error(e.message);
+      throw new CliExit(2);
+    }
+    throw e;
   }
-  const files = buildScaffoldFiles(parsed.name, process.platform, dir);
   mkdirSync(join(dir, "src"), { recursive: true });
   for (const file of files) {
     const target = join(dir, ...file.path);
@@ -178,6 +359,8 @@ export function runScaffold(args: string[]): void {
     writeFileSync(target, file.content, "utf8");
   }
   console.log(
-    `Scaffolded MCP server at ./${parsed.name}/ — next: cd ${parsed.name} && bun install && bun test && bun run build`,
+    parsed.kind === "extension"
+      ? `Scaffolded extension at ./${parsed.name}/ — next: cd ${parsed.name} && bun install && bun test && bun run build`
+      : `Scaffolded MCP server at ./${parsed.name}/ — next: cd ${parsed.name} && bun install && bun test && bun run build`,
   );
 }

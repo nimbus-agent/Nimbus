@@ -128,6 +128,7 @@ AUTOMATION & EXTENSIONS
   nimbus registry add|list|refresh|remove …  Pin and manage extension registries
   nimbus registry maintain …  Build a signed static extension registry (init/add/remove)
   nimbus scaffold mcp <name>        Minimal, tested MCP server you can register with connector add --mcp
+  nimbus scaffold extension <name> [--publisher <id>]  Installable extension (bundled MCP server) ready to sign and publish
   nimbus test [dir]         Extension manifest contract + bun test when a test script exists
 
 CONFIG & DIAGNOSTICS

@@ -4619,9 +4619,21 @@ cd my_server && bun test && bun run build
 nimbus connector add --mcp mcp_my_server -- "$PWD/dist/my_server"
 ```
 
-**Compile it; do not register script mode.** A server registered as `bun src/server.ts` cannot run on Windows (Bun fails with `CouldntReadCurrentDirectory` under AppContainer), so the scaffold registers the compiled binary.
+**Compile it; do not register script mode.** A server registered as `bun src/server.ts` cannot run on Windows (Bun fails with `CouldntReadCurrentDirectory` under AppContainer), so the scaffold registers the compiled binary. Neither scaffold is for first-party connectors — those live in the connectors repository (see `docs/CONTRIBUTING.md`).
 
-`nimbus scaffold extension <name>` is kept as an alias: it prints a one-line notice and does the same thing as `scaffold mcp`. It no longer emits the old four-file extension shell. Neither is for first-party connectors — those live in the connectors repository (see `docs/CONTRIBUTING.md`).
+---
+
+### `nimbus scaffold extension <name> [--publisher <id>]`
+
+Scaffold an extension the Gateway can install and run, at `./<name>/` (the command refuses if that directory exists). Unlike `scaffold mcp` it writes a `nimbus.extension.json` (`id` = `<publisher>/<name>` with `--publisher`, else `<name>`; `version` `0.1.0`; `entry` `dist/index.js`; empty permissions; `updateChannel` `stable`; `publisher: { id }` when `--publisher` is given), an MCP server with one `echo` tool (`src/tools.ts`, started unconditionally by `src/server.ts`), its test, and a README with the publish steps. `--publisher` must match `[a-z0-9][a-z0-9._-]*` (max 64 characters). The command refuses (exit 2) an id whose service id (`ext_` plus the id) would exceed 62 characters after `ext_`.
+
+`bun run build` is `bun build src/server.ts --target=bun --outfile dist/index.js` — one self-contained JavaScript file, **not** `--compile`: the extension runtime `import()`s the entry with no `node_modules`, and an `import.meta.main` guard would be false there. The id without `--publisher` is not namespaced; the public registry requires a namespaced id.
+
+```bash
+nimbus scaffold extension my_ext --publisher acme
+cd my_ext && bun install && bun test && bun run build
+nimbus extension keygen && nimbus extension sign .
+```
 
 ---
 
