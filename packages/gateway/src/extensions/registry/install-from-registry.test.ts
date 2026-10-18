@@ -26,6 +26,7 @@ import {
 import { writePublisherKey } from "../publisher-keys.ts";
 import {
   buildTestRegistry,
+  PUBLISHER_SEED,
   resignIndex,
   type TestRegistry,
 } from "./__fixtures__/build-test-registry.ts";
@@ -306,5 +307,85 @@ describe("installFromRegistry", () => {
     const exactBeta = await installFromRegistry(deps(), { id: ID, version: "0.9.0-beta.1" });
     expect(exactBeta.version).toBe("0.9.0-beta.1");
     expect(getExtensionSource(db, ID)?.channel).toBe("stable");
+  });
+});
+
+/** Rewrites one version's artifact, re-hashes it in the index and re-signs the index with the root. */
+function replaceArtifact(
+  version: string,
+  file: "manifest.json" | "package.tgz",
+  bytes: Uint8Array | string,
+): void {
+  const p = join(regDir, "extensions", ID, version, file);
+  writeFileSync(p, bytes);
+  const idxPath = join(regDir, "index.json");
+  const idx = JSON.parse(readFileSync(idxPath, "utf8"));
+  const key = file === "manifest.json" ? "manifestSha256" : "packageSha256";
+  idx.extensions[ID].versions[version][key] = createHash("sha256")
+    .update(readFileSync(p))
+    .digest("hex");
+  resignIndex(idxPath, idx);
+}
+
+describe("installFromRegistry refusals before any prompt", () => {
+  test("a beta-only extension is not found on the default channel, with a hint naming the flags", async () => {
+    await setup([{ version: "0.1.0-beta.1", channel: "beta" }]);
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_VERSION_NOT_FOUND.*no stable version.*\(pass --channel beta or --version\)/,
+    );
+    expect(asked).toHaveLength(0);
+    // The same extension resolves once beta is asked for.
+    const beta = await installFromRegistry(deps(), { id: ID, channel: "beta" });
+    expect(beta.version).toBe("0.1.0-beta.1");
+  });
+
+  test("a manifest.json whose bytes differ from the signed hash refuses HASH_MISMATCH", async () => {
+    await setup([{ version: "1.0.0" }]);
+    const p = join(regDir, "extensions", ID, "1.0.0", "manifest.json");
+    writeFileSync(p, `${readFileSync(p, "utf8")} `);
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_HASH_MISMATCH.*the manifest of/,
+    );
+    expect(asked).toHaveLength(0);
+    expect(listExtensions(db)).toHaveLength(0);
+  });
+
+  test("a signed-hash manifest that is not a valid manifest refuses MANIFEST_INVALID", async () => {
+    await setup([{ version: "1.0.0" }]);
+    replaceArtifact("1.0.0", "manifest.json", "{ not json");
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_MANIFEST_INVALID.*com\.example\.tool@1\.0\.0/,
+    );
+    expect(asked).toHaveLength(0);
+  });
+
+  test("a manifest declaring another version than the index entry refuses MANIFEST_MISMATCH", async () => {
+    await setup([{ version: "1.0.0" }]);
+    const p = join(regDir, "extensions", ID, "1.0.0", "manifest.json");
+    const m = JSON.parse(readFileSync(p, "utf8"));
+    replaceArtifact("1.0.0", "manifest.json", JSON.stringify({ ...m, version: "1.0.1" }));
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_MANIFEST_MISMATCH.*declares com\.example\.tool@1\.0\.1, not com\.example\.tool@1\.0\.0/,
+    );
+    expect(asked).toHaveLength(0);
+  });
+
+  test("a signed-hash package that is not a gzip tarball refuses EXTRACT_FAILED", async () => {
+    await setup([{ version: "1.0.0" }]);
+    replaceArtifact("1.0.0", "package.tgz", new TextEncoder().encode("definitely not a tarball"));
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_EXTRACT_FAILED.*could not be extracted/,
+    );
+    expect(asked).toHaveLength(0);
+    expect(listExtensions(db)).toHaveLength(0);
+  });
+
+  test("a Vault already holding the SAME publisher key installs without a conflict", async () => {
+    await setup([{ version: "1.0.0" }]);
+    await writePublisherKey(vault, "acme", nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey);
+    const out = await installFromRegistry(deps(), { id: ID });
+    expect(out.version).toBe("1.0.0");
+    expect(out.publisher.id).toBe("acme");
+    expect(listExtensions(db).map((r) => r.id)).toEqual([ID]);
   });
 });

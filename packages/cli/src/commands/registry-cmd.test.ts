@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
-import { REGISTRY_USAGE, type RegistryCmdDeps, runRegistry } from "./registry-cmd.ts";
+import type { IPCClient } from "../ipc-client/index.ts";
+import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import {
+  REGISTRY_USAGE,
+  type RegistryCmdDeps,
+  type RegistryGatewayDeps,
+  runRegistry,
+  runRegistryClientOverGateway,
+} from "./registry-cmd.ts";
 
 class ExitCalled extends Error {
   constructor(readonly code: number) {
@@ -9,21 +17,32 @@ class ExitCalled extends Error {
   }
 }
 
-function recorder(maintainCode = 0): {
+function recorder(
+  maintainCode = 0,
+  opts: { clientCode?: number; isTty?: boolean } = {},
+): {
   calls: string[][];
+  clientCalls: Array<{ sub: string; args: string[]; isTty: boolean }>;
   err: string[];
   deps: RegistryCmdDeps;
 } {
   const calls: string[][] = [];
+  const clientCalls: Array<{ sub: string; args: string[]; isTty: boolean }> = [];
   const err: string[] = [];
   return {
     calls,
+    clientCalls,
     err,
     deps: {
       maintain: async (args) => {
         calls.push(args);
         return maintainCode;
       },
+      client: async (sub, args, isTty) => {
+        clientCalls.push({ sub, args, isTty });
+        return opts.clientCode ?? 0;
+      },
+      isTty: () => opts.isTty ?? true,
       writeErr: (s) => void err.push(s),
       exit: (code) => {
         throw new ExitCalled(code);
@@ -62,6 +81,129 @@ describe("runRegistry", () => {
     // The router's usage names both halves: the gateway-backed client subcommands and maintain.
     expect(REGISTRY_USAGE).toStartWith("Usage: nimbus registry add <name> <url>");
     expect(REGISTRY_USAGE).toContain("nimbus registry maintain init|add|remove ...");
+  });
+});
+
+describe("runRegistry client subcommands", () => {
+  test("list/refresh/remove are routed to the client with the remaining args and the TTY state", async () => {
+    for (const sub of ["list", "refresh", "remove"]) {
+      const r = recorder(0, { isTty: false });
+      await expect(runRegistry([sub, "main", "--json"], r.deps)).resolves.toBeUndefined();
+      expect(r.clientCalls).toEqual([{ sub, args: ["main", "--json"], isTty: false }]);
+      expect(r.calls).toEqual([]);
+      expect(r.err).toEqual([]);
+    }
+  });
+
+  test("a non-zero client result becomes the exit code", async () => {
+    const r = recorder(0, { clientCode: 1 });
+    await expect(runRegistry(["refresh"], r.deps)).rejects.toEqual(new ExitCalled(1));
+    expect(r.clientCalls).toHaveLength(1);
+  });
+
+  test("`add` without a terminal is refused before the gateway is ever reached", async () => {
+    const r = recorder(0, { isTty: false });
+    await expect(runRegistry(["add", "main", "https://r.example/"], r.deps)).rejects.toEqual(
+      new ExitCalled(2),
+    );
+    expect(r.clientCalls).toEqual([]);
+    expect(r.err.join("")).toContain("needs an interactive terminal");
+  });
+
+  test("`add --yes` is refused before the gateway is ever reached, even at a terminal", async () => {
+    const r = recorder(0, { isTty: true });
+    await expect(
+      runRegistry(["add", "main", "https://r.example/", "--yes"], r.deps),
+    ).rejects.toEqual(new ExitCalled(2));
+    expect(r.clientCalls).toEqual([]);
+    expect(r.err.join("")).toContain("no --yes");
+  });
+
+  test("`add` that passes the precheck at a terminal reaches the client", async () => {
+    const r = recorder(0, { isTty: true });
+    await runRegistry(["add", "main", "https://r.example/", "--fingerprint", "ab"], r.deps);
+    expect(r.clientCalls).toEqual([
+      { sub: "add", args: ["main", "https://r.example/", "--fingerprint", "ab"], isTty: true },
+    ]);
+    expect(r.err).toEqual([]);
+  });
+});
+
+function fakeGateway(
+  socketPath: string | undefined,
+  responses: Record<string, unknown> = {},
+  opts: { demo?: boolean; callThrows?: Error } = {},
+) {
+  const events: string[] = [];
+  const created: Array<{ socketPath: string; timeoutMs: number | undefined }> = [];
+  let out = "";
+  let err = "";
+  const client = {
+    connect: async () => void events.push("connect"),
+    disconnect: async () => void events.push("disconnect"),
+    call: async (method: string) => {
+      events.push(`call:${method}`);
+      if (opts.callThrows !== undefined) throw opts.callThrows;
+      return responses[method];
+    },
+    onNotification: () => {},
+  } as unknown as IPCClient;
+  const gw: RegistryGatewayDeps = {
+    locate: async () => ({ socketPath, demo: opts.demo ?? false }),
+    createClient: (path, timeoutMs) => {
+      created.push({ socketPath: path, timeoutMs });
+      return client;
+    },
+    stdout: (s) => {
+      out += s;
+    },
+    stderr: (s) => {
+      err += s;
+    },
+  };
+  return { gw, events, created, stdout: () => out, stderr: () => err };
+}
+
+describe("runRegistryClientOverGateway", () => {
+  test("no running gateway throws the not-running hint and creates no client", async () => {
+    const g = fakeGateway(undefined);
+    await expect(runRegistryClientOverGateway("list", [], false, g.gw)).rejects.toThrow(
+      "Gateway is not running. Start with: nimbus start",
+    );
+    expect(g.created).toEqual([]);
+  });
+
+  test("a demo-rooted CLI with no gateway is told to start the demo gateway", async () => {
+    const g = fakeGateway(undefined, {}, { demo: true });
+    await expect(runRegistryClientOverGateway("list", [], false, g.gw)).rejects.toThrow(
+      "nimbus --demo start",
+    );
+  });
+
+  test("connects to the located socket, runs the subcommand, then disconnects", async () => {
+    const g = fakeGateway("/tmp/nimbus.sock", { "registry.list": { registries: [] } });
+    expect(await runRegistryClientOverGateway("list", [], false, g.gw)).toBe(0);
+    expect(g.created).toEqual([{ socketPath: "/tmp/nimbus.sock", timeoutMs: undefined }]);
+    expect(g.events).toEqual(["connect", "call:registry.list", "disconnect"]);
+    expect(g.stdout()).toContain("no registries added");
+  });
+
+  test("refresh uses the interactive timeout and returns 1 when a registry failed", async () => {
+    const g = fakeGateway("/s", {
+      "registry.refresh": { results: [{ name: "main", ok: false, error: "boom" }] },
+    });
+    expect(await runRegistryClientOverGateway("refresh", [], false, g.gw)).toBe(1);
+    expect(g.created[0]?.timeoutMs).toBe(INTERACTIVE_RPC_TIMEOUT_MS);
+    expect(g.stdout()).toBe("main: FAILED boom\n");
+    expect(g.stderr()).toBe("");
+  });
+
+  test("a failing call still disconnects and the error propagates", async () => {
+    const g = fakeGateway("/s", {}, { callThrows: new Error("ipc down") });
+    await expect(runRegistryClientOverGateway("remove", ["main"], false, g.gw)).rejects.toThrow(
+      "ipc down",
+    );
+    expect(g.events).toEqual(["connect", "call:registry.remove", "disconnect"]);
   });
 });
 

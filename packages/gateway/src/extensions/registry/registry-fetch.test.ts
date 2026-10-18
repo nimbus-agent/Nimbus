@@ -377,3 +377,119 @@ describe("fetchVerifiedIndex / fetchUnpinnedIndex", () => {
     );
   });
 });
+
+describe("fetchRegistryBytes: caller signal and edge responses", () => {
+  const REMOTE = { name: "main", url: "https://reg.example/r" };
+
+  test("an already-aborted caller signal aborts the request as UNREACHABLE", async () => {
+    const caller = new AbortController();
+    caller.abort(new Error("owner cancelled"));
+    let sawAborted: boolean | undefined;
+    const d = deps({
+      fetchFn: async (_u, init) => {
+        sawAborted = init?.signal?.aborted;
+        throw new Error("The operation was aborted");
+      },
+    });
+    await expect(fetchRegistryBytes(d, REMOTE, "index.json", META, caller.signal)).rejects.toThrow(
+      "ERR_REGISTRY_UNREACHABLE",
+    );
+    expect(sawAborted).toBe(true);
+  });
+
+  test("a caller abort while the request is in flight reaches the request", async () => {
+    const caller = new AbortController();
+    const d = deps({
+      fetchFn: (_u, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted mid-flight")));
+          caller.abort();
+        }),
+    });
+    await expect(fetchRegistryBytes(d, REMOTE, "index.json", META, caller.signal)).rejects.toThrow(
+      /ERR_REGISTRY_UNREACHABLE.*aborted mid-flight/,
+    );
+  });
+
+  test("a live caller signal lets the request complete, and a later abort touches nothing", async () => {
+    const caller = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    const d = deps({
+      fetchFn: async (_u, init) => {
+        requestSignal = init?.signal ?? undefined;
+        return new Response("abc", { status: 200 });
+      },
+    });
+    const out = await fetchRegistryBytes(d, REMOTE, "index.json", META, caller.signal);
+    expect(new TextDecoder().decode(out)).toBe("abc");
+    // The caller's listener was removed: aborting it now no longer reaches the finished request.
+    caller.abort();
+    expect(requestSignal?.aborted).toBe(false);
+  });
+
+  test("a 2xx answer with no body reads as zero bytes", async () => {
+    const d = deps({ fetchFn: async () => new Response(null, { status: 204 }) });
+    const out = await fetchRegistryBytes(d, REMOTE, "index.json", META);
+    expect(out.byteLength).toBe(0);
+  });
+
+  test("a redirect with a missing or empty Location is UNREACHABLE", async () => {
+    for (const headers of [{}, { location: "" }]) {
+      const d = deps({ fetchFn: async () => new Response(null, { status: 302, headers }) });
+      await expect(fetchRegistryBytes(d, REMOTE, "index.json", META)).rejects.toThrow(
+        /ERR_REGISTRY_UNREACHABLE.*without a Location/,
+      );
+    }
+  });
+
+  test("a non-Error rejection from the transport is UNREACHABLE with a generic reason", async () => {
+    const d = deps({
+      fetchFn: () => Promise.reject("socket hang up" as unknown as Error),
+    });
+    await expect(fetchRegistryBytes(d, REMOTE, "index.json", META)).rejects.toThrow(
+      /ERR_REGISTRY_UNREACHABLE.*registry request failed/,
+    );
+  });
+
+  test("a local registry path that is a file, not a directory, is UNREACHABLE", async () => {
+    const file = join(tmp, "not-a-dir");
+    writeFileSync(file, "x");
+    await expect(
+      fetchRegistryBytes(deps(), { name: "loc", url: file }, "index.json", META),
+    ).rejects.toThrow(/ERR_REGISTRY_UNREACHABLE.*not a directory/);
+  });
+});
+
+describe("fetchVerifiedIndex: the row changes during the fetch", () => {
+  test("a registry removed while its index was in flight refuses ROOT_KEY_CHANGED", async () => {
+    const url = serve(() => new Response(JSON.stringify(signedIndex(7))));
+    const reg = pinned(url, 5);
+    const d = deps({
+      fetchFn: async (u, init) => {
+        const res = await fetch(u, init);
+        db.run("DELETE FROM extension_registry WHERE name = 'main'");
+        return res;
+      },
+    });
+    await expect(fetchVerifiedIndex(d, reg)).rejects.toThrow(
+      /ERR_REGISTRY_ROOT_KEY_CHANGED.*removed or re-pinned/,
+    );
+    expect(getRegistry(db, "main")).toBeUndefined();
+  });
+
+  test("a registry re-pinned to another key while in flight refuses ROOT_KEY_CHANGED", async () => {
+    const url = serve(() => new Response(JSON.stringify(signedIndex(7))));
+    const reg = pinned(url, 5);
+    const otherKey = encodeBase64(OTHER.publicKey);
+    const d = deps({
+      fetchFn: async (u, init) => {
+        const res = await fetch(u, init);
+        db.run("UPDATE extension_registry SET root_key = ? WHERE name = 'main'", [otherKey]);
+        return res;
+      },
+    });
+    await expect(fetchVerifiedIndex(d, reg)).rejects.toThrow("ERR_REGISTRY_ROOT_KEY_CHANGED");
+    expect(getRegistry(db, "main")?.rootKey).toBe(otherKey);
+    expect(getRegistry(db, "main")?.lastSequence).toBe(5);
+  });
+});
