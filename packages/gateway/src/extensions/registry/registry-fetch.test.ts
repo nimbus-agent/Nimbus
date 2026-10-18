@@ -300,6 +300,14 @@ describe("fetchRegistryBytes: local", () => {
       fetchRegistryBytes(deps(), { name: "loc", url: root }, "index.json", META),
     ).rejects.toThrow("ERR_REGISTRY_TOO_LARGE");
   });
+
+  test("a resource that is a directory is refused as not found", async () => {
+    const root = join(tmp, "reg");
+    mkdirSync(join(root, "index.json"), { recursive: true });
+    await expect(
+      fetchRegistryBytes(deps(), { name: "loc", url: root }, "index.json", META),
+    ).rejects.toThrow("ERR_REGISTRY_NOT_FOUND");
+  });
 });
 
 describe("fetchVerifiedIndex / fetchUnpinnedIndex", () => {

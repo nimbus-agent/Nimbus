@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, statSync } from "node:fs";
 
 import { recordRegistryEgress } from "../../egress/registry-egress.ts";
 import {
@@ -85,20 +85,24 @@ function readLocal(path: string, root: string, maxBytes: number): Uint8Array {
     throw unreachable("local registry directory does not exist");
   }
   if (!rootStat.isDirectory()) throw unreachable("local registry path is not a directory");
-  let size: number;
+  let fd: number;
   try {
-    const st = statSync(path);
-    if (!st.isFile()) throw new RegistryError("ERR_REGISTRY_NOT_FOUND", "registry file not found");
-    size = st.size;
-  } catch (e) {
-    if (e instanceof RegistryError) throw e;
+    fd = openSync(path, "r");
+  } catch {
     throw new RegistryError("ERR_REGISTRY_NOT_FOUND", "registry file not found");
   }
-  if (size > maxBytes) throw tooLarge(maxBytes);
-  const bytes = new Uint8Array(readFileSync(path));
-  // The stat-time check can be outrun by a growing file; the bytes actually read are the authority.
-  if (bytes.byteLength > maxBytes) throw tooLarge(maxBytes);
-  return bytes;
+  try {
+    // Everything below goes through the one descriptor, so the file checked is the file read.
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw new RegistryError("ERR_REGISTRY_NOT_FOUND", "registry file not found");
+    if (st.size > maxBytes) throw tooLarge(maxBytes);
+    const bytes = new Uint8Array(readFileSync(fd));
+    // The size check can be outrun by a growing file; the bytes actually read are the authority.
+    if (bytes.byteLength > maxBytes) throw tooLarge(maxBytes);
+    return bytes;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 async function fetchRemote(
