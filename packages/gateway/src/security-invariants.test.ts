@@ -6661,6 +6661,20 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(installedIds(s.db)).toEqual([]);
   });
 
+  test("behavioural: a manifest byte the signed index does not cover refuses the install before the owner is asked", async () => {
+    const s = await setup({ main: ["1.0.0"] });
+    const manifest = join(s.dirOf("main"), "extensions", ID, "1.0.0", "manifest.json");
+    const bytes = new Uint8Array(await readFile(manifest));
+    // A byte inside the JSON (not the last, which could be a newline the parser ignores).
+    const at = Math.floor(bytes.length / 2);
+    bytes[at] = (bytes[at] ?? 0) ^ 0x01;
+    writeFileSync(manifest, bytes);
+    const run = await install(s, { id: ID });
+    expect(await refusalOf(run.result)).toMatch(/^ERR_REGISTRY_HASH_MISMATCH .*manifest/);
+    expect(run.asked()).toBe(0);
+    expect(installedIds(s.db)).toEqual([]);
+  });
+
   test("behavioural: an index signed by a key other than the pinned root, or with a lower sequence, refuses", async () => {
     const { getRegistry } = await import("./extensions/registry/registry-store.ts");
     const { resignIndex } = await import(
@@ -6766,7 +6780,9 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     );
     const fnAt = src.indexOf("export async function installFromRegistry(");
     expect(fnAt).toBeGreaterThan(-1);
-    const body = src.slice(fnAt);
+    // Bounded at the next top-level export, so a later function cannot satisfy the order checks.
+    const nextExport = src.indexOf("\nexport ", fnAt + 1);
+    const body = src.slice(fnAt, nextExport === -1 ? undefined : nextExport);
     const resolveAt = body.indexOf("await resolveRegistryEntry(");
     const manifestAt = body.indexOf("await fetchRegistryManifest(");
     const shaAt = body.search(
@@ -6815,7 +6831,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     // The source columns are written by ONE production function, called from the registry installer only.
     const files = await readDirFiles("packages/gateway/src");
     const sourceWriters = files
-      .filter((f) => /UPDATE extension SET source_/.test(stripComments(f.contents)))
+      .filter((f) => /UPDATE\s+extension\s+SET[^;]*\bsource_/.test(stripComments(f.contents)))
       .map((f) => f.rel);
     expect(sourceWriters).toEqual(["extensions/registry/registry-store.ts"]);
     const setSourceCallers = files
