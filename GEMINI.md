@@ -323,3 +323,5 @@ Domain skills live in `.claude/commands/nimbus-*.md`, **loaded on demand** via t
 | `nimbus-egress` | Auditing/authoring the Egress Ledger & `nimbus prove` (I29/D22 executor dispatch chokepoint, V44 `egress_ledger`, BLAKE3 chain, `egress.*` IPC + `nimbus prove`/`nimbus egress` CLI) |
 | `nimbus-agent-patterns` | Authoring a built-in read-only agent |
 | `nimbus-implicit-knowledge-extraction` | Authoring/auditing the glossary + decisions extraction pipelines (`gateway/src/{glossary,decisions}/`, V45/V46/V47 tables, the debounced post-sync pass, `glossary.*`/`decisions.*` IPC) |
+| `nimbus-sandbox-and-extensions` | Third-party code end to end: the per-OS `SandboxRunner` (I15/D10), user MCP servers (`connector add --mcp`, I42) and the S3 extension runtime (install gate, V70 run grants, I43/D33, `approve --model`); per-OS sandbox traps; touching `gateway/src/{extensions,platform/sandbox,connectors/lazy-mesh}/` |
+| `nimbus-mcp-sink` | The MCP server's write doors (I28/D32(a)–(g), V67–V69): `capture_note`, `propose_*`, `propose_action`, `nimbus captures *`, `[mcp_sink]`, making an action type proposable; touching `gateway/src/mcp-sink/` or `ipc/capture-rpc.ts` |

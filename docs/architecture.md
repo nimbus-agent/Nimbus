@@ -1872,8 +1872,8 @@ per-spawn copy.
 
 ### MCP capture sink
 
-**PR 1 of 3 shipped 2026-10-12** (invariant `I28`, static `D32`, schema `V67`); PR 2 of 3 followed 2026-10-14 (below). Until then the MCP
-server was read-only. An MCP client can now write ONE kind of thing into the local index: a note,
+**Complete, three PRs:** PR 1 (2026-10-12; invariant `I28`, static `D32(a)–(c)`, schema `V67`) — notes; PR 2 (2026-10-14, `V68`, `D32(d)`) — proposed decisions, terms and links; PR 3 (2026-10-15, `V69`, `D32(e)–(g)`) — proposed connector actions; each has its own subsection below. Before PR 1 the MCP
+server was read-only. This first part describes the door all of them share, as PR 1 built it for the first kind: a note,
 through the `capture_note` tool. Everything about the design follows from one fact: the writer is
 an untrusted agent, so the human reviews and revokes afterwards instead of approving each write.
 
@@ -1901,8 +1901,8 @@ a fixed order and refuses at the first failing step:
    audit row; an audit failure rolls all of it back. A successful submit records
    `hitl_status = 'not_required'` (no consent gate ran); a refusal at steps 4 to 7 records `rejected`.
 
-**The table.** `capture` (V67, `index/capture-v67-sql.ts`): `id`, `kind`
-(`note|decision|term|link`), `state` (`live|proposed|accepted|rejected|revoked`, CHECK-constrained
+**The table.** `capture` (V67, `index/capture-v67-sql.ts`; rebuilt at V69 to admit kind `action`, the states `executing`/`executed`/`failed`/`expired` and three columns — see the act-door subsection): `id`, `kind`
+(`note|decision|term|link`, plus `action` since V69), `state` (`live|proposed|accepted|rejected|revoked` at V67, CHECK-constrained
 per kind), `item_id`, `payload_json`, `payload_bytes`, `client_label`, `session_id`, `native_ref`,
 `created_at`, `decided_at`. Revoking a row sets `state = 'revoked'` and `decided_at`, clears `payload_json` and `item_id`, and
 leaves every other column unchanged; the CHECK enforces only the `payload_json` half. Only
@@ -1927,7 +1927,7 @@ the whole `capture.*` namespace stay off it. The page's `ui` connection is an ow
 served like the CLI.
 
 **MCP side.** `packages/cli/src/mcp/capture-tools.ts` registers each capture tool (`capture_note`,
-`propose_decision`, `propose_term`, `propose_link`) only if `capture.status` reports the sink enabled for its kind. The decision is made once, when the MCP
+`propose_decision`, `propose_term`, `propose_link`, `propose_action`) only if `capture.status` reports the sink enabled for its kind; `capture_status` is offered whenever any kind is enabled. The decision is made once, when the MCP
 server process spawns; a gateway that is down at that moment, or a failed `session.declareKind`,
 yields no capture tool rather than a guessed one.
 
@@ -1945,11 +1945,11 @@ yields no capture tool rather than a guessed one.
 | `captures.purge` | owner | delete a finished action row (`executed`/`failed`/`rejected`/`expired`) and its stored input; needs no capability; the action is not undone |
 | `capture.state` | `mcp` kind only | kind, state, `expiresAt`, `outcomeRef`, `errorCode` for ONE capture id (PR 3) |
 
-**Config.** `[mcp_sink]`: `enabled` (false), `kinds` (all four), `max_per_hour` (30, 1..1000),
-`max_pending` (100, 1..10000). Out-of-range values and unknown kinds refuse at load, naming the key
+**Config.** `[mcp_sink]`: `enabled` (false), `kinds`, `max_per_hour` (30, 1..1000),
+`max_pending` (100, 1..10000); PR 3 added `action_ttl_hours` and `action_max_pending` (see the act door). Out-of-range values and unknown kinds refuse at load, naming the key
 and value; nothing is clamped.
 
-**Static D32** has four clauses (the fourth, (d), arrived with PR 2 and is described below): (a) the `capture` table identifier only in `capture-store.ts` and
+**Static D32** has seven clauses; the first three arrived with PR 1, (d) with PR 2 and (e)–(g) with PR 3 (each described below): (a) the `capture` table identifier only in `capture-store.ts` and
 the V67 SQL module; (b) `submitCapture`/`acceptCapture`/`rejectCapture`/`revokeCapture` named only in
 `ipc/capture-rpc.ts` and `capture-gate.ts`; (c) `capture-gate.ts` value-imported (or re-exported, or
 dynamically imported) by no gateway module except `ipc/capture-rpc.ts`.

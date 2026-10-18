@@ -89,7 +89,8 @@ what it does not: the legs load the same FILES in the same process SHAPE as the 
 what makes a green PR leg predictive at all — but they still run on runners ~13–18× slower than a dev machine,
 so a wall-clock assumption that holds locally can still fail there. Build paths with `path.join()` / `os.tmpdir()` / `PlatformServices`, never hardcoded separators. `bun run audit:cross-platform` flags hardcoded **Windows-separator** path literals (backslash, drive-letter `C:\`, UNC `\\server`) in `*.test.ts(x)` assertions — the "passes on my Windows machine, fails on the Ubuntu PR gate" footgun. POSIX forward-slash absolutes (`/tmp/...`, `/home/...`) are intentionally **not** flagged: in this codebase they are overwhelmingly legitimate data values (socket-path fixtures, env-var pass-throughs, HTTP/API routes) that a regex cannot distinguish from a constructed path — an empirical pass produced 52 false positives and 0 real bugs, so reliable POSIX-absolute detection is deferred to the AST v2 rewrite (see the script header). Genuinely platform-specific literal? End the line with `// cross-platform-ok`.
 
-**A retry can hide a flake.** Both macOS/Windows legs retry a failed suite once, and a retry that
+**A retry can hide a flake.** Both macOS/Windows legs retry once (only the failed files when the
+JUnit attributes every failure, the whole command otherwise), and a retry that
 passes leaves a green leg with only a warning annotation behind. The nightly
 `.github/workflows/flaky-tests.yml` keeps one `Flaky tests on CI` issue listing those tests, worst
 first; `bun scripts/ci/flaky-tests-report.ts --days 3` prints the same report locally without

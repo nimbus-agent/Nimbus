@@ -85,6 +85,16 @@ IPC gate by design and are audited separately.
 Removing a connector, installing an extension, re-indexing a connector, and
 exporting or deleting service data from the local index.
 
+### Third-party tools: user MCP servers and extensions
+
+Installing an extension does not run it. Running one needs a separate approval
+(`nimbus extension approve <id>`, the `extension.run` action type), and every
+call to one of its tools, like every call to a tool on an MCP server you
+registered yourself with `nimbus connector add --mcp`, asks for your approval
+again. There is no standing approval for those calls, and a delegate can never
+approve one. If you approved an extension or a server with `--model`, the
+assistant may propose calls to its tools, and each one still raises the prompt.
+
 ---
 
 ### Adding a new action type to the set
