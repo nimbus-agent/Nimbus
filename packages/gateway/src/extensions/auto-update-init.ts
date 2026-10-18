@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { listExtensions, updateExtensionRowVersion } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
+import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { ExtensionAutoUpdater, type InstalledExtensionRow } from "./auto-update.ts";
 import { MAX_TARBALL_BYTES } from "./auto-update-apply.ts";
@@ -170,10 +171,10 @@ async function reverifyUpdateManifest(
     if (
       entry === undefined ||
       vEntry === undefined ||
-      vEntry.manifestSha256 !== update.manifestHash ||
-      vEntry.packageSha256 !== update.packageSha256 ||
+      !sha256HexEqualConstantTime(vEntry.manifestSha256, update.manifestHash) ||
+      !sha256HexEqualConstantTime(vEntry.packageSha256, update.packageSha256) ||
       vEntry.package !== update.packagePath ||
-      vEntry.entryHash !== update.entryHash
+      !sha256HexEqualConstantTime(vEntry.entryHash, update.entryHash)
     ) {
       throw new Error(`the index no longer lists this ${update.id}@${update.toVersion}`);
     }

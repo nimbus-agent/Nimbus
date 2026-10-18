@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import { applyDowngradeSwap, applyUpgradeSwap } from "./auto-update-apply.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import type { ExtractedPackage } from "./package-extract.ts";
@@ -56,7 +57,7 @@ export function createPerformUpgrade(deps: PerformUpgradeDeps) {
     }
 
     const actualHash = await deps.sha256OfPackage(bytes);
-    if (actualHash.toLowerCase() !== update.packageSha256.toLowerCase()) {
+    if (!sha256HexEqualConstantTime(actualHash, update.packageSha256)) {
       throw new Error("sha256_mismatch");
     }
 
