@@ -47,6 +47,15 @@ module.exports = {
       to: { path: "^packages/(cli|ui)/" },
     },
 
+    {
+      name: "registry-format-is-pure",
+      severity: "error",
+      comment:
+        "packages/registry-format holds the shared registry rules and must stay runtime-neutral: it imports nothing from gateway/cli/ui.",
+      from: { path: "^packages/registry-format/src" },
+      to: { path: "^packages/(gateway|cli|ui)/src" },
+    },
+
     // ─────────── D3: PAL leakage ───────────
     {
       name: "pal-isolation",

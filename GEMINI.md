@@ -96,7 +96,7 @@ Each live invariant (I1–I45) has a production wiring site + an enforcement tes
 
 ## Subsystems
 
-**This repository is the Gateway, not the whole of Nimbus.** It holds five workspaces; the six
+**This repository is the Gateway, not the whole of Nimbus.** It holds six workspaces; the six
 surfaces listed below live in their own repos and release independently. That balance moved decisively on
 2026-08-27, when the 94 first-party connectors left for
 [nimbus-agent/nimbus-mcp-servers](https://github.com/nimbus-agent/nimbus-mcp-servers) — before
@@ -111,6 +111,7 @@ In this repository:
 - `packages/ui` — Tauri 2.0 + React (desktop)
 - `packages/docs` — Astro Starlight documentation site
 - `packages/admin-console` — dependency-free static admin console served at `/admin/*` (Phase 6 Slice 4)
+- `packages/registry-format` — pure, Bun-free extension-registry rules (manifest, signing, tarball, index) shared by the gateway, the CLI and the registry CI action; imports nothing from gateway/cli/ui (`registry-format-is-pure`)
 - `packages/github-actions/*` — first-party GitHub Actions (annotate-action, preflight-query); tracked but intentionally NOT workspace members
 
 Everything else releases on its own cadence, and a change to one of these is a PR in that repo —

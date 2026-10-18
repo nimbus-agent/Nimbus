@@ -20,6 +20,7 @@
     "packages/admin-console",
     "packages/gateway",
     "packages/cli",
+    "packages/registry-format",
     "packages/ui",
     "packages/docs"
   ],
@@ -105,7 +106,7 @@
     "hooks:install": "bun scripts/install-hooks.ts",
     "platform:link": "bun run scripts/platform-link.ts",
     "format": "biome format --write .",
-    "test": "bun test packages/gateway packages/cli scripts",
+    "test": "bun test packages/gateway packages/cli packages/registry-format scripts",
     "test:ci": "bun scripts/run-tests.ts",
     "test:scripts": "bun test scripts",
     "kill-gateway": "bun scripts/kill-gateway.ts",

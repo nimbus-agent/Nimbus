@@ -143,6 +143,7 @@ export async function discoverSourceFiles(): Promise<string[]> {
     new Glob("packages/gateway/src/**/*.tsx"),
     new Glob("packages/cli/src/**/*.ts"),
     new Glob("packages/cli/src/**/*.tsx"),
+    new Glob("packages/registry-format/src/**/*.ts"),
   ];
   for (const glob of globs) {
     for await (const rawRel of glob.scan({ cwd: REPO_ROOT })) {
