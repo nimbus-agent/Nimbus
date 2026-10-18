@@ -126,6 +126,7 @@ contain `/` (existing namespaced ids are nested directories); the layout nests t
       "versions": {
         "<version>": {
           "channel": "stable",          // "stable" | "beta"
+          "name": "Acme Deploy",        // copied from the manifest by `maintain add`, for search
           "manifest": "extensions/<id>/<version>/manifest.json",
           "manifestSha256": "<64 hex>",
           "package": "extensions/<id>/<version>/package.tgz",
@@ -148,10 +149,18 @@ contain `/` (existing namespaced ids are nested directories); the layout nests t
 - **Unsigned extensions are not listable.** A registry entry must carry a publisher; the
   maintainer refuses a package whose manifest has no `publisher`/`signature`.
 - **Freshness (my call):** no hard expiry, because an air-gapped mirror would break. `sequence`
-  gives rollback protection (§ 8.3); a stale `generatedAt` is reported by `nimbus doctor` and
+  gives rollback protection (§ 8.2); a stale `generatedAt` is reported by `nimbus doctor` and
   `registry list`, not refused. Freeze attacks are therefore a stated bound, not prevented.
-- **Size caps (my call):** `index.json` ≤ 8 MiB, `manifest.json` ≤ 64 KiB, package ≤ 50 MB (the
-  existing auto-update cap). Exceeding a cap refuses before parsing.
+- **Size caps (my call):** `index.json` ≤ 8 MiB, `manifest.json` ≤ 64 KiB, package ≤ 50 MB
+  compressed (the existing auto-update cap). Exceeding a cap refuses before parsing. Extraction
+  separately caps the UNCOMPRESSED total and the file count (§ 8.10), so a small gzip bomb cannot
+  fill the disk.
+- **Package layout:** files at the archive root (`./nimbus.extension.json`), no symlinks, no
+  special files, entries in sorted order with normalised mtimes/modes so the same tree packs to
+  the same bytes (cheap now; project 3's provenance work wants it). `maintain add` produces exactly
+  this; the client's extractor still accepts the existing single-top-level-folder form.
+- **Removing the last version of an id removes the id's whole entry**, publisher binding included.
+  Tombstones that keep a binding reserved belong to project 3's takedown work.
 
 ### 7.3 Transports
 
@@ -159,7 +168,11 @@ contain `/` (existing namespaced ids are nested directories); the layout nests t
 - `http://` — only to a loopback host, and only outside production builds (copy
   `updater/manifest-fetcher.ts`'s rule). Needed for tests.
 - `file://` or a plain absolute directory path — a local registry. Makes no network request and
-  therefore appends no egress row and is allowed under air-gap (my call).
+  therefore appends no egress row and is allowed under air-gap (my call). **A UNC path
+  (`\\host\share`, `//host/share`, `\\?\UNC\...`) or a `file://` URL whose host is anything but
+  empty or `localhost` is REFUSED**: on Windows those open an SMB/WebDAV connection, i.e. real
+  outbound traffic with no ledger row and under air-gap. `file://` URLs are resolved with
+  `node:url`'s `fileURLToPath`.
 
 The old `/v1/...` endpoints and `/publishers/{id}.key` are removed, not kept beside the new layout.
 `NIMBUS_EXTENSIONS_REGISTRY_URL` is removed. Not a breaking change: no registry has ever existed to
@@ -175,8 +188,15 @@ New table (V71 tentatively) `extension_registry`:
 
 Stored in the DB, not `nimbus.toml` (my call): the gateway writes it only after fetching the index
 and obtaining the owner's consent, and the same pattern already holds user MCP registrations
-(`user_mcp_connector`). The `extension` row gains `source_registry` and `source_root_fingerprint`
-(both NULL for a local-path install).
+(`user_mcp_connector`). The `extension` row gains `source_registry`, `source_root_fingerprint` and
+`source_channel` (`stable`|`beta`, recorded at install from `--channel`, default `stable`); all
+three NULL for a local-path install. A `beta` extension is offered the newest version across
+`stable ∪ beta`; a `stable` one only `stable`. The manifest's `updateChannel` stops deciding what
+the daemon polls.
+
+**Fingerprint format:** root fingerprints use the existing `publisherKeyFingerprint`
+(`install-from-local.ts`, first 32 hex chars of SHA-256 over the 32 raw key bytes), so root and
+publisher fingerprints look the same everywhere.
 
 ### 8.2 Fetch-and-verify (one function every caller uses)
 
@@ -190,10 +210,13 @@ and obtaining the owner's consent, and the same pattern already holds user MCP r
 
 ### 8.3 Managing registries — `nimbus registry add|list|refresh|remove`
 
-- `add <name> <url> [--fingerprint <fp>]`: fetches the index, shows the root-key fingerprint, the
-  extension count and `generatedAt`, and asks the owner to confirm. `--fingerprint` makes the
-  command refuse unless the fetched key matches it (for scripts), but consent is still asked.
-  Name or URL already present → refuse.
+- `add <name> <url> [--fingerprint <fp>]`, in this order: validate `name`; refuse a name or URL
+  already present; fetch the index (one egress row, `destination` = the candidate name — it records
+  a fetch that really happened even if the owner then declines); verify the index against its OWN
+  `rootKey`; if `--fingerprint` was given, refuse unless it matches; prompt the `registry.add`
+  HITL gate with `{ name, url, rootFingerprint, extensionCount, generatedAt }`; on approval insert
+  the row with that key pinned. `--fingerprint` is a pin check (you got the fingerprint out of
+  band and want a mismatch to refuse before you are even asked), not a way to skip the prompt.
 - `list`: name, URL, fingerprint, extension count, last fetched, staleness.
 - `refresh [<name>]`: re-runs fetch-and-verify.
 - `remove <name>`: deletes the record. Installed extensions from it stay installed and keep
@@ -203,8 +226,22 @@ and obtaining the owner's consent, and the same pattern already holds user MCP r
 
 Adding a registry widens what may later be offered for install, so it is a new HITL action type
 `registry.add` in the I2 frozen set, prompted at the executor with the name, URL and fingerprint.
-The CLI additionally requires a TTY (a CLI-side guard, like `extension approve`). `remove`,
-`list` and `refresh` need no consent.
+The CLI additionally requires a TTY exactly like `extension approve`: no `--yes`, and the prompt
+handler is registered directly so `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer it. Automated tests
+answer the consent request over the raw socket at the gateway level, as the existing approve tests
+do; the § 11 dogfood run is done by a person. `remove`, `list` and `refresh` need no consent.
+
+- The gate that prompts `registry.add` is wired with `NULL_EGRESS_SINK`, like
+  `buildExtensionGateExecutor`, so approving it appends no spurious `task`-class row next to the
+  real `registry` row.
+- **Never delegable (I20):** `tryDelegatedApproval` refuses `registry.add` and every `extension.*`
+  action type alongside `isUserMcpActionType`, so a federated peer holding a delegation can never
+  approve a trust root or local code. Today only the gate's `delegation: undefined` stops it; this
+  makes it structural.
+- **Prompt field names never contain `key`/`auth`:** the executor's `SENSITIVE_PAYLOAD_KEY`
+  redacts any such field to `[REDACTED]` in the prompt. Use `rootFingerprint`,
+  `sourceRootFingerprint`, `publisherFingerprint` in the `registry.add`, `extension.install` and
+  `extension.autoUpdate` payloads, never `rootKey`/`publisherKey`.
 
 ### 8.5 References and search
 
@@ -242,7 +279,10 @@ The CLI additionally requires a TTY (a CLI-side guard, like `extension approve`)
    also equal the index's.
 6. Record `source_registry` and `source_root_fingerprint`. Running still requires
    `nimbus extension approve` (I43, unchanged).
-7. A manifest with a non-empty `dependsOn` installs only when every dependency is ALREADY
+7. An id that is already installed is refused, as today (`installRootNode` refuses an existing
+   directory); the message points at `nimbus extension update` or remove-then-install. No in-place
+   version switching through `install`.
+8. A manifest with a non-empty `dependsOn` installs only when every dependency is ALREADY
    installed and satisfies it; nothing is fetched transitively (project 4). The existing
    `registryClient` dependency path is not wired.
 
@@ -256,12 +296,22 @@ raised in the same commit as the appender's production caller. A static rule in 
 confines the registry fetch primitive to the registry client module (my call on exact shape).
 Local (`file://`/path) registries append nothing.
 
+Mechanics the builder must get right: `registry` is INSERTED in sort order in `COVERAGE_CLASSES`
+(between `peer` and `session` — the array order is the boot marker's hashed wire format), and
+added to `EGRESS_SOURCE_TYPES`, `ALL_NONE_COVERAGE` and the CLI's hand-maintained
+`COVERAGE_CLASS_LABELS` in `prove.ts`. Adding a class makes markers written by older binaries
+unparseable, so `nimbus prove` reports a window spanning the upgrade as `indeterminate`: the
+documented fail-safe, stated in the CHANGELOG.
+
 ### 8.8 Auto-update daemon
 
 - Constructed at boot whenever boot policy allows auto-update and
   `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` is not `1` (replacing the env-var check); each tick reads
   the CURRENT registry table, so a registry added at runtime is picked up on the next tick with no
   restart, and no registries means a tick that does nothing. (My call, after review.)
+- **One index fetch per registry per tick:** a tick groups enabled registry-sourced extensions by
+  `source_registry`, fetches and verifies each registry's `index.json` once (one egress row), and
+  fetches a `manifest.json` only for an extension whose index shows a newer version.
 - Checks each enabled extension with a `source_registry` against THAT registry only, and only
   while the registry's current root fingerprint equals `source_root_fingerprint`. A local-path
   install is never auto-updated. The same id in another registry is ignored.
@@ -272,19 +322,60 @@ Local (`file://`/path) registries append nothing.
   and the extension does not run until the owner re-approves it with `nimbus extension approve`.
   This is intended: every run approval covers code the owner was shown. No grant carry-over.
 - Apply verifies exactly as § 8.6 steps 2–5 (this also closes the `manifestRaw` ↔ `manifestHash`
-  gap, since the manifest is now matched to the signed index hash). `enforceAirGap` is read from
-  config rather than hard-coded `false`.
+  gap, since the manifest is now matched to the signed index hash). **One air-gap switch:** `[llm] enforce_air_gap` (the
+  only existing key, already gateway-wide) is read by the update runtime AND set on
+  `CreateIpcServerOptions.extensionsEnforceAirGap`, which `assemble.ts` never sets today, so install,
+  search, `info --remote`, `registry add|refresh` and the daemon all obey the same switch.
 
 ### 8.9 Fixes folded in
 
 - Local install of a signed extension with no `--publisher-key` and no Vault-cached key fails with
   a clear message naming `--publisher-key`, instead of "requires vault and publisher key fetcher".
   The unwired `extensionsPublisherKeyFetcher` option and `/publishers/{id}.key` path are deleted.
+- **`nimbus extension sync` / `extension.sync` / `extensions/sync.ts` are removed**, with the
+  `needs_sync` status and its hint in `auto-update-rpc.ts`/`auto-update.ts`. All existed only to
+  call the never-wired `PublisherKeyFetcher`, so the command could not succeed in production. A
+  registry-sourced update now gets its publisher key from the signed index; a Vault key that
+  differs yields `ERR_REGISTRY_PUBLISHER_KEY_CONFLICT`. Not breaking: nothing that worked stops.
 - `docs/architecture.md`'s sample manifest (§ Subsystem 4) is corrected to match `manifest.ts`.
 - `docs/SECURITY-INVARIANTS.md`'s claim that the update orchestrator re-verifies signatures is
   corrected or made true (it becomes true via § 8.8).
 
-### 8.10 Demo-rooted gateways (my call)
+### 8.10 Existing update-path bugs this project must fix first
+
+Review found that the apply path the § 11 scenario depends on has never worked against a real
+install. These are existing defects, not new design, and the plan should land them as their own
+first PR before the registry work (my call on ordering):
+
+1. **Layout mismatch (`ENOENT` on every update).** Install writes files flat at
+   `<extensionsDir>/<id>` and records that as `install_path`; `applyUpgradeSwap`/`applyDowngradeSwap`
+   rename `<extensionsDir>/<id>/active`, which never exists; three `_prev` lookups use
+   `dirname(install_path)/_prev`, which disagrees with where the swap puts it. **Fix: keep the flat
+   `install_path`** (no migration of installed extensions, and nested namespaced ids stay simple)
+   and move `_prev/<id>/<version>`, the holding buffer and `_pending` into one versions area OUTSIDE
+   every extension's install tree and outside what the orphan sweep walks; update
+   `applyUpgradeSwap`, `applyDowngradeSwap`, `hasPrevVersion`, `resolveExtensionInfoExtras` and
+   `tryPromotePrevVersion` together. No installed extension can be in the old `active/` shape, since
+   no update ever succeeded.
+2. **The startup orphan sweep deletes namespaced extensions.** `sweepOrphanActiveDirsBestEffort`
+   matches each top-level directory name against `extension.id`; for `acme/foo` the directory is
+   `acme`, matches nothing, and is `rmSync`'d at every boot. **Fix:** treat a top-level directory as
+   live when it is any installed id's first path segment, and skip the versions area. Data loss
+   today for anyone with a namespaced id, so it goes first.
+3. **`_pending` with a namespaced id** joins `<id>-<version>` under `_pending` but only creates
+   `_pending` itself. **Fix:** a slugged directory name (same slug as the versions area).
+4. **One extraction pipeline.** Install uses system `tar` plus `assertNoEntryEscapes` and
+   `findExtensionSourceRootInTree`; update uses the npm `tar` package with neither, and a symlink in
+   an update silently leaves `tree_digest = NULL` after the swap. **Fix:** both use the install
+   pipeline; escape checks, the uncompressed-size and file-count caps, and
+   `computeExtensionTreeDigest` all run on the extracted tree BEFORE anything is swapped in, and a
+   failure refuses the update with the old version untouched.
+5. **`nimbus extension update`/`downgrade` hang.** The CLI never registers a consent handler and
+   keeps the 30 s timeout, so the gateway's `extension.autoUpdate` prompt is never shown and the
+   call times out. **Fix:** register the prompt handler and use `INTERACTIVE_RPC_TIMEOUT_MS`, as
+   `install` does.
+
+### 8.11 Demo-rooted gateways (my call)
 
 Every new `registry.*` method and `extension.search`/registry `info` is refused on a demo-rooted
 gateway with `ERR_DEMO_FORBIDDEN`, added to I41's `dispatchMethod` gate. `extension.install` is
@@ -305,6 +396,9 @@ Pure CLI, like today's `nimbus extension keygen` / `sign`, operating on a folder
 - `nimbus registry maintain remove <dir> <id>[@<version>] [--key <path>]` — removes the entry from
   the index and re-signs. Files may stay (content-addressed takedown semantics come in project 3).
 
+Every `maintain` command writes `index.json` through a temp file in `<dir>` plus an atomic
+rename, so a gateway reading a local registry or a sync job copying it never sees half an index.
+
 The root key lives in a file, not the Vault, matching how publisher keys work today and because
 registry maintenance happens on a machine that may not run a gateway.
 
@@ -316,7 +410,7 @@ registry maintenance happens on a machine that may not run a gateway.
   `extension.search`, `extension.registryInfo` (exact names: builder's call). All CLI-only,
   LAN-forbidden, not on the Tauri allowlist. Each needs BOTH the inner handler and the outer
   dispatcher routing entry, proven by an E2E over a real socket.
-- **Schema:** one migration (registry table + two `extension` columns).
+- **Schema:** one migration (registry table + three `extension` columns).
 - **Security docs:** a new invariant is likely warranted (my call — "registry-sourced code is
   installed or updated only through the fetch-and-verify chain, from its source registry"),
   with wiring + docs + test in one commit per the triple rule.
@@ -324,7 +418,7 @@ registry maintenance happens on a machine that may not run a gateway.
 ## 11. Testing and acceptance
 
 - Unit: index canonicalisation/signing round trip, schema validation, every refusal code in § 8,
-  reference parsing (including Windows drive-letter paths vs `<registry>/<id>`).
+  path-vs-id resolution (including Windows drive-letter, UNC and `file://` host refusals).
 - Integration (real SQLite, temp dirs, real files): a registry folder built by the maintainer
   commands, served both as a local path and over a loopback `Bun.serve`; tampering tests for each
   hash, the signature, the root key and the sequence; ambiguity across two registries; an update
@@ -346,6 +440,10 @@ re-approved, and tampering with any byte in the folder makes install or update r
   IPC method names, error-code spellings, CLI output formatting, PR split.
 - Whether search reads indexes concurrently.
 - Exact shape of the D22-family static rule.
+
+**Deferred from review:** a `description` field in the index (project 6's catalogue needs it;
+search over id/name/publisher is enough now); tombstones that reserve a removed id's publisher
+binding (project 3).
 
 **Follow-ups noted, not in scope:** org-policy allowlist of registry fingerprints (I22); the
 desktop Marketplace "Install from directory" button that can never work (remove it or route it
