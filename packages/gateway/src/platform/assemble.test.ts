@@ -114,6 +114,7 @@ describe("appendBootMarkerOrWarn", () => {
       sync: "none",
       model: "none",
       peer: "none",
+      registry: "none",
       tool: "none",
     });
   });

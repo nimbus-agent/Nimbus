@@ -3263,6 +3263,9 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     // `recordToolEgress` its production caller — `toolgen/toolgen-broker.ts`'s brokered-fetch
     // handler, wired onto the spawned tool's stdio protocol by `toolgen-client.ts`'s
     // `spawnGeneratedTool`. Per this file's own rule, never ahead of that landing (I39).
+    // `registry` is the NINTH non-`none` class, `per-call`, RAISED in the same commit that gave
+    // `recordRegistryEgress` its production caller, `extensions/registry/registry-fetch.ts`, the
+    // one function that fetches registry bytes (static D22(h)).
     // `peer`/`session` stay `none` until THEIR appenders land — raising an
     // entry without a landed appender behind it is a review moment, not a test to re-bank. (An
     // earlier version of this comment pointed to an `EgressCompleteness.tier` #1057 note in
@@ -3277,6 +3280,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       "http",
       "mcp",
       "model",
+      "registry",
       "sync",
       "task",
       "tool",

@@ -41,7 +41,7 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
   // runtime-generated tool made through the broker (S2 runtime tool generation). Its
   // `COVERAGE_CLASSES` entry first landed at `"none"`, while `tool-egress.ts` had no production
   // caller; it is `per-call` now that `toolgen-broker.ts` appends before every brokered request.
-  test("is exactly these fourteen members, in this order", () => {
+  test("is exactly these fifteen members, in this order", () => {
     expect(EGRESS_SOURCE_TYPES).toEqual([
       "task",
       "prune",
@@ -57,6 +57,7 @@ describe("EGRESS_SOURCE_TYPES — frozen union", () => {
       "chatops",
       "browser",
       "tool",
+      "registry",
     ]);
   });
 

@@ -1449,6 +1449,68 @@ export function checkEmbeddingAppenderConfinement(files: readonly FileEntry[]): 
   return out;
 }
 
+// D22 (h): the REGISTRY appender and the registry fetch. `egress/registry-egress.ts`'s
+// `recordRegistryEgress` is the I29 `registry`-class appender; its sole production caller is
+// `extensions/registry/registry-fetch.ts`, the one function that fetches registry bytes. Two
+// rules close the two ways to bypass it: (1) `recordRegistryEgress` named anywhere else is a
+// second, unreviewed fetch path (or a forged row); (2) a bare `fetch(` call anywhere else under
+// `extensions/` is a network request the registry ledger and its transport checks never saw.
+const D22_REGISTRY_APPENDER_RE = /\brecordRegistryEgress\b/;
+const D22_REGISTRY_APPENDER_ALLOWED: readonly string[] = [
+  "packages/gateway/src/egress/registry-egress.ts",
+  "packages/gateway/src/extensions/registry/registry-fetch.ts",
+];
+const D22_REGISTRY_FETCH_RE = /\bfetch\s*\(/;
+const D22_REGISTRY_FETCH_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/registry/registry-fetch.ts",
+  // Temporary: these still call a publisher-key fetcher / the legacy registry client.
+  "packages/gateway/src/extensions/publisher-keys.ts", // removed in Task 13 (registry-sourced updates)
+  "packages/gateway/src/extensions/registry-client.ts", // removed in Task 13 (registry-sourced updates)
+  "packages/gateway/src/extensions/sync.ts", // removed in Task 13 (registry-sourced updates)
+];
+
+function scanRegistryRule(
+  files: readonly FileEntry[],
+  prefix: string,
+  re: RegExp,
+  allowed: readonly string[],
+  rule: string,
+): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith(prefix)) continue;
+    if (allowed.includes(f.relPath)) continue;
+    const stripped = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    const g = new RegExp(re.source, "g");
+    for (const m of stripped.matchAll(g)) {
+      const line = stripped.slice(0, m.index).split("\n").length;
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    }
+  }
+  return out;
+}
+
+export function checkRegistryAppenderConfinement(files: readonly FileEntry[]): Violation[] {
+  return [
+    ...scanRegistryRule(
+      files,
+      "packages/gateway/src/",
+      D22_REGISTRY_APPENDER_RE,
+      D22_REGISTRY_APPENDER_ALLOWED,
+      "registry-appender-confined",
+    ),
+    ...scanRegistryRule(
+      files,
+      "packages/gateway/src/extensions/",
+      D22_REGISTRY_FETCH_RE,
+      D22_REGISTRY_FETCH_ALLOWED,
+      "registry-fetch-confined",
+    ),
+  ];
+}
+
 // D22 (f), second allow-list: the CONSTRUCTOR, not just the decorator that wraps its result. The
 // rule above sees only a file that already mentions `wrapLedgeredEmbedder` -- a NEW file that
 // calls `createOpenAIEmbedder(...)` bare, never mentioning the decorator at all, spells nothing
@@ -3057,6 +3119,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D22(f) wrapLedgeredEmbedder referenced outside the three construction sites/embedding-egress.ts — an unrecorded remote embed; I29 regression: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkRegistryAppenderConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D22(h) ${e.rule}: recordRegistryEgress outside egress/registry-egress.ts + extensions/registry/registry-fetch.ts, or a bare fetch( under extensions/ outside registry-fetch.ts — an unrecorded registry request; I29 regression: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
