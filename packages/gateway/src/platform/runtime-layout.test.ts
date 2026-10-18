@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_RUNTIME_LAYOUT,
   isCompiledBinary,
+  isProductionRuntime,
   ROLE_SENTINELS,
   type RuntimeLayout,
   selfSpawn,
@@ -28,6 +29,23 @@ const COMPILED_WIN: RuntimeLayout = {
   moduleDir: "B:\\~BUN\\root",
   gatewayEntry: "B:\\~BUN\\root\\index.ts",
 };
+
+describe("isProductionRuntime", () => {
+  test("a dev tree without NODE_ENV is not production", () => {
+    expect(isProductionRuntime({ layout: DEV, env: {} })).toBe(false);
+  });
+
+  test("a dev tree with NODE_ENV=production is production", () => {
+    expect(isProductionRuntime({ layout: DEV, env: { NODE_ENV: "production" } })).toBe(true);
+  });
+
+  test("the compiled binary is production with NODE_ENV unset, on both OS roots", () => {
+    expect(isProductionRuntime({ layout: COMPILED_POSIX, env: {} })).toBe(true);
+    expect(isProductionRuntime({ layout: COMPILED_WIN, env: { NODE_ENV: "development" } })).toBe(
+      true,
+    );
+  });
+});
 
 describe("isCompiledBinary", () => {
   test("is false in a dev tree", () => {

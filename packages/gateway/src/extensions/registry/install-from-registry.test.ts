@@ -293,4 +293,18 @@ describe("installFromRegistry", () => {
       "ERR_REGISTRY_VERSION_NOT_FOUND",
     );
   });
+
+  test("records the REQUESTED channel, not the resolved version's (spec § 8.1)", async () => {
+    await setup([{ version: "1.0.0" }, { version: "0.9.0-beta.1", channel: "beta" }]);
+    // --channel beta whose newest pick across stable and beta is a STABLE version keeps tracking beta.
+    const betaToStable = await installFromRegistry(deps(), { id: ID, channel: "beta" });
+    expect(betaToStable.version).toBe("1.0.0");
+    expect(getExtensionSource(db, ID)?.channel).toBe("beta");
+
+    // --version of a beta build with no --channel records the default, stable.
+    resetInstalled();
+    const exactBeta = await installFromRegistry(deps(), { id: ID, version: "0.9.0-beta.1" });
+    expect(exactBeta.version).toBe("0.9.0-beta.1");
+    expect(getExtensionSource(db, ID)?.channel).toBe("stable");
+  });
 });

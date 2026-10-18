@@ -368,7 +368,7 @@ async function runExtensionInstallFromRegistry(
 ): Promise<void> {
   if (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
     throw new Error(
-      "--yes is not accepted for a registry install: a registry install is always confirmed at the gateway's prompt",
+      "--yes is not accepted for a registry install: it is always confirmed by the owner's approval prompt (answered interactively, or by NIMBUS_SCRIPT_CONSENT_SOURCE for scripted use)",
     );
   }
   if (hasFlag(args, "--publisher-key")) {

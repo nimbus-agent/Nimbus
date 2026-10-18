@@ -248,7 +248,9 @@ export async function installFromRegistry(
     setExtensionSource(deps.db, installed.id, {
       registry: reg.name,
       rootFingerprint,
-      channel: vEntry.channel,
+      // The channel the owner ASKED for (spec § 8.1), not the resolved version's: a `--channel beta`
+      // install that resolved to a stable version keeps tracking beta.
+      channel: req.channel ?? "stable",
     });
     return {
       ...installed,

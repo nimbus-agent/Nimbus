@@ -396,6 +396,7 @@ import {
 } from "./notifications/notifications-runtime.ts";
 import type { PlatformPaths } from "./paths.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
+import { isProductionRuntime } from "./runtime-layout.ts";
 import { sandboxCwdFor } from "./sandbox/sandbox-cwd.ts";
 import { createSandboxRunner } from "./sandbox/sandbox-runner.ts";
 import { reapAppContainersAtBoot, revokeLegacyDataDirGrantsAtBoot } from "./sandbox/win32-reap.ts";
@@ -3701,7 +3702,8 @@ export async function assemblePlatformServices(
       fetchFn: (url, init) => fetch(url, init),
       enforceAirGap: () => llmRegistry.llmRouter.enforcesAirGap(),
       now: Date.now,
-      production: process.env["NODE_ENV"] === "production",
+      // The compiled release binary counts as production even with NODE_ENV unset (it always is).
+      production: isProductionRuntime(),
     },
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,

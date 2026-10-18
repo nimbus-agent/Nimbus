@@ -18,7 +18,11 @@ export interface RegistryFetchDeps {
   fetchFn: (url: string, init?: RequestInit) => Promise<Response>;
   enforceAirGap: () => boolean;
   now: () => number;
-  /** `NODE_ENV === "production"`, injected so the functions below never read the environment. */
+  /**
+   * A production runtime (the compiled release binary, or `NODE_ENV=production`; see
+   * `platform/runtime-layout.ts` `isProductionRuntime`), injected so the functions below never read
+   * the environment.
+   */
   production: boolean;
 }
 
