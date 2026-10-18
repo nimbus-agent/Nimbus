@@ -183,3 +183,172 @@ describe("maintainer flow", () => {
     expect(sha(entry.package)).toBe(entry.packageSha256);
   });
 });
+
+describe("registry index parser refusals", () => {
+  type Json = Record<string, unknown>;
+  const ID = "acme/deploy";
+  const V = "1.0.0";
+
+  /** A signed index whose ONE version entry has been edited by `edit` (fresh clone each call). */
+  function withEntry(edit: (entry: Json) => void): Uint8Array {
+    const idx = structuredClone(unsigned) as unknown as Mutable;
+    const entry = idx.extensions[ID]!.versions[V]!;
+    edit(entry);
+    return enc(sign(idx));
+  }
+
+  /** A signed index whose extension entry for ID has been replaced by `edit`'s result. */
+  function withExtension(edit: (ext: Json) => unknown): Uint8Array {
+    const idx = structuredClone(unsigned) as unknown as { extensions: Record<string, unknown> };
+    idx.extensions[ID] = edit(idx.extensions[ID] as Json);
+    return enc(sign(idx));
+  }
+
+  /** The top-level index with `edit` applied to a signed copy (signature kept as signed). */
+  function withTop(edit: (top: Json) => void): Uint8Array {
+    const top = structuredClone(sign(unsigned)) as unknown as Json;
+    edit(top);
+    return enc(top);
+  }
+
+  const cases: ReadonlyArray<readonly [string, Uint8Array, string]> = [
+    ["invalid UTF-8", new Uint8Array([0x7b, 0xff, 0xfe, 0x7d]), "not valid UTF-8"],
+    ["invalid JSON", new TextEncoder().encode("{not json"), "not valid JSON"],
+    ["a top-level array", enc([1, 2]), "index must be an object"],
+    ["a top-level null", enc(null), "index must be an object"],
+    ["a missing signature key", withTop((t) => delete t["signature"]), "missing key: signature"],
+    ["a zero sequence", withTop((t) => (t["sequence"] = 0)), "sequence must be a positive"],
+    ["a string sequence", withTop((t) => (t["sequence"] = "42")), "sequence must be a positive"],
+    ["a fractional sequence", withTop((t) => (t["sequence"] = 1.5)), "sequence must be a positive"],
+    ["extensions as an array", withTop((t) => (t["extensions"] = [])), "index.extensions must be"],
+    ["a malformed rootKey", withTop((t) => (t["rootKey"] = "short")), "index.rootKey is malformed"],
+    ["an empty rootKey", withTop((t) => (t["rootKey"] = "")), "index.rootKey must be a non-empty"],
+    [
+      "a non-timestamp generatedAt",
+      withTop((t) => (t["generatedAt"] = "yesterday")),
+      "generatedAt is not a timestamp",
+    ],
+    ["a malformed signature", withTop((t) => (t["signature"] = "AAAA")), "signature is malformed"],
+    ["an extension entry that is a string", withExtension(() => "x"), `extensions.${ID} must be`],
+    [
+      "an extension with no versions key",
+      withExtension((e) => ({ publisher: e["publisher"] })),
+      "missing key: versions",
+    ],
+    [
+      "a publisher with no key",
+      withExtension((e) => ({ ...e, publisher: { id: "acme" } })),
+      "publisher is missing key: key",
+    ],
+    [
+      "a publisher id with upper case",
+      withExtension((e) => ({ ...e, publisher: { id: "ACME", key: PUBKEY_B } })),
+      "publisher.id is malformed",
+    ],
+    [
+      "a publisher id over 64 chars",
+      withExtension((e) => ({ ...e, publisher: { id: "a".repeat(65), key: PUBKEY_B } })),
+      "publisher.id is malformed",
+    ],
+    [
+      "a malformed publisher key",
+      withExtension((e) => ({ ...e, publisher: { id: "acme", key: "nope" } })),
+      "publisher.key is malformed",
+    ],
+    ["an empty versions object", withExtension((e) => ({ ...e, versions: {} })), "has no versions"],
+    [
+      "a version entry that is an array",
+      withExtension((e) => ({ ...e, versions: { [V]: [] } })),
+      `versions.${V} must be an object`,
+    ],
+    [
+      "a version entry missing entryHash",
+      withEntry((v) => delete v["entryHash"]),
+      "missing key: entryHash",
+    ],
+    ["an unknown channel", withEntry((v) => (v["channel"] = "nightly")), "channel is not known"],
+    [
+      "a non-canonical package path",
+      withEntry((v) => (v["package"] = "elsewhere/package.tgz")),
+      "package is not canonical",
+    ],
+    [
+      "a zero package size",
+      withEntry((v) => (v["packageSizeBytes"] = 0)),
+      "packageSizeBytes must be a positive",
+    ],
+    [
+      "a string package size",
+      withEntry((v) => (v["packageSizeBytes"] = "12")),
+      "packageSizeBytes must be a positive",
+    ],
+    [
+      "an unsafe-integer package size",
+      withEntry((v) => (v["packageSizeBytes"] = 2 ** 60)),
+      "packageSizeBytes must be a positive",
+    ],
+    ["an empty name", withEntry((v) => (v["name"] = "")), "name must be a non-empty string"],
+    [
+      "an upper-case manifest hash",
+      withEntry((v) => (v["manifestSha256"] = "A".repeat(64))),
+      "manifestSha256 is malformed",
+    ],
+    [
+      "a short package hash",
+      withEntry((v) => (v["packageSha256"] = "b".repeat(63))),
+      "packageSha256 is malformed",
+    ],
+    [
+      "a non-hex entry hash",
+      withEntry((v) => (v["entryHash"] = "z".repeat(64))),
+      "entryHash is malformed",
+    ],
+    [
+      "a non-timestamp publishedAt",
+      withEntry((v) => (v["publishedAt"] = "not a date")),
+      "publishedAt is not a timestamp",
+    ],
+  ];
+
+  for (const [label, bytes, detail] of cases) {
+    test(`refuses ${label}`, () => {
+      let thrown: unknown;
+      try {
+        parseRegistryIndex(bytes);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      expect(message).toStartWith("ERR_REGISTRY_INDEX_INVALID: ");
+      expect(message).toContain(detail);
+    });
+  }
+
+  test("an index without a BOM parses to the same document as the BOM-prefixed one", () => {
+    const plain = parseRegistryIndex(enc(sign(unsigned)));
+    expect(plain.rootKey).toBe(ROOT_KEY);
+    expect(Object.keys(plain.extensions["acme/deploy"]!.versions).sort()).toEqual([
+      "1.0.0",
+      "1.1.0-beta.1",
+    ]);
+  });
+
+  test("a signature that is not decodable base64 fails SIGNATURE_INVALID rather than throwing raw", async () => {
+    const idx = sign(unsigned);
+    const garbled = { ...idx, signature: "!!!not-base64!!!" };
+    await expect(verifyRegistryIndexSelf(garbled)).rejects.toThrow(
+      "ERR_REGISTRY_SIGNATURE_INVALID",
+    );
+  });
+
+  test("a signature by a different key fails SIGNATURE_INVALID", async () => {
+    const other = nacl.sign.keyPair.fromSeed(Uint8Array.from({ length: 32 }, (_, i) => 200 - i));
+    const idx = sign(unsigned);
+    const forged = {
+      ...idx,
+      signature: encodeBase64(nacl.sign.detached(registryIndexSigningBytes(idx), other.secretKey)),
+    };
+    await expect(verifyRegistryIndexSelf(forged)).rejects.toThrow("ERR_REGISTRY_SIGNATURE_INVALID");
+  });
+});
