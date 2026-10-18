@@ -93,7 +93,7 @@ all three OSes), no `any`, Vault-only secrets. Invariants that bind this work:
 - **I43** — run grants are untouched: a registry install still needs `nimbus extension approve`
   before the code runs.
 - **I41** — a demo-rooted gateway must remain unable to reach the real install; registry fetches
-  are outbound and need an explicit demo decision (§ 8.10).
+  are outbound and need an explicit demo decision (§ 8.11).
 - Schema is forward-only; the next free migration number (V71 at time of writing — re-check).
 
 ## 7. Registry format
