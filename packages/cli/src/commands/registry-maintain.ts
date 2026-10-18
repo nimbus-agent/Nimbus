@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import { extract } from "tar";
+import { extract, list } from "tar";
 
 import {
   decodeBase64,
@@ -50,7 +50,9 @@ const USAGE =
   "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>]\n";
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
-const MAX_PACKAGE_BYTES = 50 * 1_000_000;
+const MAX_PACKAGE_BYTES = 50 * 1024 * 1024;
+const MAX_UNPACKED_BYTES = 200 * 1024 * 1024;
+const MAX_ENTRY_COUNT = 5000;
 const MAX_ID_LENGTH = 128;
 const PACKAGE_MANIFEST_FILE = "nimbus.extension.json";
 const DEFAULT_ENTRY = "dist/index.js";
@@ -203,6 +205,24 @@ interface ExtractedPackage {
 }
 
 async function inspectPackage(tgz: string, work: string): Promise<ExtractedPackage> {
+  // Refuse a package every client would refuse, before extracting anything: the gateway's
+  // extractor caps the declared unpacked total and the entry count.
+  let entries = 0;
+  let declaredBytes = 0;
+  await list({
+    file: tgz,
+    onReadEntry: (entry) => {
+      entries++;
+      declaredBytes += entry.size ?? 0;
+      entry.resume();
+    },
+  });
+  if (entries > MAX_ENTRY_COUNT) {
+    throw new MaintainError(`package has more than ${String(MAX_ENTRY_COUNT)} entries`);
+  }
+  if (declaredBytes > MAX_UNPACKED_BYTES) {
+    throw new MaintainError("package unpacked size exceeds 200 MiB");
+  }
   const out = join(work, "x");
   mkdirSync(out);
   await extract({

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -155,5 +155,42 @@ describe("registry maintain", () => {
   test("an unknown subcommand prints usage and exits 2", async () => {
     expect(await runRegistryMaintain([], io)).toBe(2);
     expect(err.join("")).toContain("Usage:");
+  });
+});
+
+describe("registry maintain package caps", () => {
+  async function craft(name: string, blocks: Buffer[]): Promise<string> {
+    const { gzipSync } = await import("node:zlib");
+    const file = join(tmp, name);
+    writeFileSync(file, gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)])));
+    return file;
+  }
+  async function header(path: string, size: number): Promise<Buffer> {
+    const { Header } = await import("tar");
+    const buf = Buffer.alloc(512);
+    new Header({ path, type: "File", size, mode: 0o644 }).encode(buf, 0);
+    return buf;
+  }
+  function rootListing(dir: string): string[] {
+    return readdirSync(join(dir, "extensions"));
+  }
+
+  test("refuses an archive declaring more than 5000 entries", async () => {
+    const { dir, key } = await init();
+    const blocks: Buffer[] = [];
+    for (let i = 0; i < 5001; i++) blocks.push(await header(`f${String(i)}`, 0));
+    const tgz = await craft("many.tgz", blocks);
+    expect(await runRegistryMaintain(["add", dir, tgz, "--key", key], io)).toBe(2);
+    expect(err.join("")).toContain("entries");
+    expect(rootListing(dir)).toEqual([]);
+    expect(readIndexFile(join(dir, "index.json")).sequence).toBe(1);
+  });
+
+  test("refuses an archive whose declared sizes exceed 200 MiB", async () => {
+    const { dir, key } = await init();
+    const tgz = await craft("big.tgz", [await header("big", 300 * 1024 * 1024)]);
+    expect(await runRegistryMaintain(["add", dir, tgz, "--key", key], io)).toBe(2);
+    expect(err.join("")).toContain("200 MiB");
+    expect(rootListing(dir)).toEqual([]);
   });
 });
