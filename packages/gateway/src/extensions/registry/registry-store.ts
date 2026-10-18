@@ -120,6 +120,18 @@ export function setExtensionSource(db: Database, id: string, src: ExtensionSourc
   );
 }
 
+/** Ids of installed extensions whose recorded source is the named registry (remove's orphans). */
+export function listExtensionIdsFromRegistry(db: Database, registry: string): string[] {
+  if (readIndexedUserVersion(db) < 71) {
+    return [];
+  }
+  return (
+    db
+      .query("SELECT id FROM extension WHERE source_registry = ? ORDER BY id")
+      .all(registry) as Array<{ id: string }>
+  ).map((r) => r.id);
+}
+
 export function getExtensionSource(db: Database, id: string): ExtensionSource | undefined {
   if (readIndexedUserVersion(db) < 71) {
     return undefined;

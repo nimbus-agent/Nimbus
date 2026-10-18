@@ -3695,6 +3695,14 @@ export async function assemblePlatformServices(
     demo: paths.demo === true,
     extensionsDir: paths.extensionsDir,
     extensionsRuntimeEnabled: extensionRuntimeEnabled,
+    // Extension registries: ONE air-gap switch (the LLM router's, so a policy or config change to
+    // `enforce_air_gap` reaches registry fetches live), read per call.
+    registryFetch: {
+      fetchFn: (url, init) => fetch(url, init),
+      enforceAirGap: () => llmRegistry.llmRouter.enforcesAirGap(),
+      now: Date.now,
+      production: process.env["NODE_ENV"] === "production",
+    },
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,
     connectorMesh,

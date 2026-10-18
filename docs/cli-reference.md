@@ -4627,7 +4627,23 @@ nimbus test ./nimbus-my-connector
 
 ## Extension Registry
 
-A registry is a static folder (or website) of signed extension packages. These maintainer commands only build one; this release has no gateway-side registry client yet, so nothing installs from a registry.
+A registry is a static folder (or website) of signed extension packages. Two groups of commands work with one: `registry maintain` builds it offline, and `registry add|list|refresh|remove` tell the gateway which registries to trust. Searching and installing from a registry are not part of these commands yet.
+
+### `nimbus registry add|list|refresh|remove`
+
+Gateway-backed commands (the gateway must be running). All four are CLI-only: refused over LAN and on a `--demo` root.
+
+- `add <name> <url> [--fingerprint <fp>]` fetches the registry's index, verifies it against its OWN root key, and then asks you, under the `registry.add` approval, to pin that root key. `<name>` is `[a-z0-9][a-z0-9-]*`, at most 32 characters; `<url>` is an `https://` URL, an `http://` loopback URL (non-production), or an absolute local folder path. The prompt shows the name, URL, root key fingerprint, extension count and index date. `--fingerprint` is a pin check, not a way to skip the prompt: pass the 32-hex fingerprint you got from the maintainer out of band and a mismatch refuses BEFORE you are asked (the gateway trims and lowercases it). Needs an interactive terminal; there is no `--yes` and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer the prompt. The index fetch is recorded in the egress ledger even if you then decline. A delegated approver can never answer this prompt.
+- `list [--json]` shows each registry's name, URL, fingerprint, last fetch and whether its index is stale (generated more than 30 days ago). Reads the local database only; no network.
+- `refresh [<name>] [--json]` re-fetches and re-verifies one registry, or all of them. Each result is reported separately and the exit code is `1` if any failed. A root key that changed, a bad signature or an older `sequence` than the last seen is refused and never re-pins.
+- `remove <name>` forgets the registry. Extensions already installed from it stay installed and keep running; they get no further updates, and the command names them. Needs no approval.
+
+```bash
+nimbus registry add main https://registry.example.com/nimbus --fingerprint 3f9a0c52b1d84e67a2c05f8e91b3d4a6
+nimbus registry list
+nimbus registry refresh main
+nimbus registry remove main
+```
 
 ### `nimbus registry maintain init|add|remove`
 

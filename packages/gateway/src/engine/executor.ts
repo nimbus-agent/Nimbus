@@ -145,6 +145,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Extension runtime § 4.4: approving an installed extension to RUN, unattended, with resolved
   // grants. A separate consent from install. Gate site: extensions/approve-run.ts.
   "extension.run",
+  // Adding a registry pins a trust root that later extension installs verify against. Gate site:
+  // the `registry.add` handler in ipc/registry-rpc.ts, through the gate-only executor that
+  // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).
+  "registry.add",
   "connector.addMcp",
   "data.export",
   "connector.reindex",
@@ -363,6 +367,9 @@ export class ToolExecutor {
   ): Promise<"approved" | "rejected" | "fallback"> {
     // I42: a delegate never approves a user-MCP call — the LOCAL owner always answers it.
     if (this.delegation === undefined || isUserMcpActionType(action.type)) return "fallback";
+    // I20: a delegate never approves a trust root (`registry.add`) or local code (`extension.*`);
+    // only the local owner can. Structural, not left to the gate's `delegation: undefined`.
+    if (action.type === "registry.add" || action.type.startsWith("extension.")) return "fallback";
     const del = this.delegation;
     const service = serviceOf(action.type);
     const now = Date.now();

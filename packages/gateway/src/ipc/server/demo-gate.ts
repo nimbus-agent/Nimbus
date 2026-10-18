@@ -25,6 +25,7 @@ const DEMO_REFUSED_METHODS: ReadonlySet<string> = new Set([
 /** The refusal for `method` on a demo-rooted gateway, or `undefined` when it may proceed. */
 export function demoRefusal(method: string): RpcMethodError | undefined {
   const refused =
+    method.startsWith("registry.") ||
     (method.startsWith("connector.") && !DEMO_CONNECTOR_READS.has(method)) ||
     DEMO_REFUSED_METHODS.has(method);
   if (!refused) return undefined;
