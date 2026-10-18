@@ -150,14 +150,17 @@ describe("registry maintain", () => {
     expect(err.join("")).toContain("does not exist");
   });
 
-  test.skipIf(!canSymlink())("add refuses a symlinked source", async () => {
-    const { dir, key } = await init();
-    const ext = await makeExtension("ext");
-    const link = join(tmp, "link");
-    symlinkSync(ext, link, "dir");
-    expect(await runRegistryMaintain(["add", dir, link, "--key", key], io)).toBe(2);
-    expect(err.join("")).toContain("symlink");
-  });
+  test.skipIf(!canSymlink() || process.platform === "win32")(
+    "add refuses a symlinked source (POSIX O_NOFOLLOW; Windows follows the maintainer-local path)",
+    async () => {
+      const { dir, key } = await init();
+      const ext = await makeExtension("ext");
+      const link = join(tmp, "link");
+      symlinkSync(ext, link, "dir");
+      expect(await runRegistryMaintain(["add", dir, link, "--key", key], io)).toBe(2);
+      expect(err.join("")).toContain("symlink");
+    },
+  );
 
   test("add refuses an existing id@version", async () => {
     const { dir, key } = await init();

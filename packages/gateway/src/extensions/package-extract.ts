@@ -88,6 +88,13 @@ function hasEscapingPath(path: string): boolean {
   return path.split(/[\\/]/).includes("..");
 }
 
+/** Plain-words name for a refused tar entry type, so the refusal reads as what it is. */
+function plainEntryType(type: string): string {
+  if (type === "SymbolicLink") return "symlink";
+  if (type === "Link") return "hardlink";
+  return type.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+}
+
 /**
  * Reads the archive's headers only, writing nothing, and refuses a package that is too large, has too
  * many entries, or carries anything but plain files and directories (links, devices, FIFOs) or a path
@@ -104,7 +111,7 @@ async function scanPackage(archivePath: string): Promise<void> {
       entries += 1;
       bytes += entry.size;
       if (refused === undefined && entry.type !== "File" && entry.type !== "Directory") {
-        refused = `${entry.path} (${entry.type})`;
+        refused = `${entry.path} (${plainEntryType(entry.type)})`;
       } else if (refused === undefined && hasEscapingPath(entry.path)) {
         refused = entry.path;
       }
