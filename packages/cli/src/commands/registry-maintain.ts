@@ -164,6 +164,17 @@ const GITHUB_ONLY = [
   "--no-publisher-namespace",
 ] as const;
 
+/**
+ * Fixed files of the gh-pages site. `.nojekyll` stops GitHub Pages' Jekyll from dropping paths
+ * that start with `_` or `.`; `.gitattributes` keeps git from rewriting the line endings of the
+ * hashed and signed bytes the site serves. The sign action builds on the previous site tree, so
+ * both survive every sign run.
+ */
+const SITE_FILES: ReadonlyArray<readonly [string, string]> = [
+  [".nojekyll", ""],
+  [".gitattributes", "* -text\n"],
+];
+
 /** Everything `init --github` will write, decided and checked before the key is generated. */
 interface GithubPlan {
   pin: ActionPin;
@@ -265,6 +276,7 @@ function planGithubInit(
       ...mainFiles.map(([rel]) => join(dir, ...rel.split("/"))),
       join(site, "index.json"),
       join(site, "nimbus-registry.json"),
+      ...SITE_FILES.map(([rel]) => join(site, rel)),
     ];
     const taken = targets.find((t) => existsSync(t));
     if (taken !== undefined) {
@@ -296,6 +308,7 @@ function writeGithubRegistry(dir: string, plan: GithubPlan, index: RegistryIndex
   mkdirSync(plan.site, { recursive: true });
   writeIndexAtomic(plan.site, index);
   writeFileSync(join(plan.site, "nimbus-registry.json"), plan.configText);
+  for (const [rel, text] of SITE_FILES) writeFileSync(join(plan.site, rel), text);
 }
 
 async function maintainInit(args: string[], io: MaintainIo, build: MaintainBuild): Promise<void> {

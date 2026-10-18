@@ -152,6 +152,20 @@ describe("runSign", () => {
     expect(summaries[0]).toContain("No change: nothing was committed.");
   });
 
+  test("keeps the site's .nojekyll and .gitattributes across a sign run", async () => {
+    const before = originHead(repo, "gh-pages");
+    await mergePublish();
+    await sign();
+    expect(originHead(repo, "gh-pages")).not.toBe(before);
+    const tree = git(repo.origin, "ls-tree", "--name-only", "gh-pages").trim().split("\n");
+    expect(tree).toContain(".nojekyll");
+    expect(tree).toContain(".gitattributes");
+    expect(originFile(repo, "gh-pages", ".nojekyll").byteLength).toBe(0);
+    expect(new TextDecoder().decode(originFile(repo, "gh-pages", ".gitattributes"))).toBe(
+      "* -text\n",
+    );
+  });
+
   test("a later publish to an indexed id appends a version at sequence + 1", async () => {
     await mergePublish();
     await sign();

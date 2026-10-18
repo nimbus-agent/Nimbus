@@ -117,9 +117,16 @@ describe("registry maintain init --github", () => {
     expect(readFileSync(join(dir, "extensions", ".gitkeep"), "utf8")).toBe("");
   });
 
-  test("writes the signed empty index and the config into the site folder", async () => {
+  test("writes the signed empty index, the config and the Pages files into the site folder", async () => {
     const { dir, key, site } = await initGithub();
-    expect(tree(site)).toEqual(["index.json", "nimbus-registry.json"]);
+    expect(tree(site)).toEqual([
+      ".gitattributes",
+      ".nojekyll",
+      "index.json",
+      "nimbus-registry.json",
+    ]);
+    expect(readFileSync(join(site, ".nojekyll"), "utf8")).toBe("");
+    expect(readFileSync(join(site, ".gitattributes"), "utf8")).toBe("* -text\n");
     const index = readIndexFile(join(site, "index.json"));
     expect(index.sequence).toBe(1);
     expect(index.extensions).toEqual({});
@@ -238,6 +245,41 @@ describe("registry maintain init --github", () => {
     expect(text).toMatch(/Protect gh-pages against force-push and deletion/);
     expect(text).toMatch(/GITHUB_TOKEN push still lands/);
     expect(text).toMatch(/sequence number\s+that was already used/);
+  });
+
+  test("the owner pushes the default branch last, after the environment and its secret", async () => {
+    const { dir, site } = await initGithub();
+    const text = out.join("");
+    const at = (needle: string): number => {
+      const i = text.indexOf(needle);
+      expect(i).toBeGreaterThan(-1);
+      return i;
+    };
+    const environment = at('Create the environment "registry-signing"');
+    const pushMain = at(`push ${dir} to the repository's main branch`);
+    expect(at(`Push ${site} as the gh-pages branch`)).toBeLessThan(environment);
+    expect(environment).toBeLessThan(pushMain);
+    expect(at("gh secret set")).toBeLessThan(pushMain);
+    expect(at("Set GitHub Pages to serve")).toBeLessThan(pushMain);
+    expect(pushMain).toBeLessThan(at("Protect main: require pull requests"));
+  });
+
+  test("the owner pushes the default branch last, after the environment and its secret", async () => {
+    const { dir, site } = await initGithub();
+    const text = out.join("");
+    const at = (needle: string): number => {
+      const i = text.indexOf(needle);
+      expect(i).toBeGreaterThan(-1);
+      return i;
+    };
+    const pushMain = at(`push ${dir} to the repository's main branch`);
+    expect(at(`Push ${site} as the gh-pages branch`)).toBeLessThan(
+      at('Create the environment "registry-signing"'),
+    );
+    expect(at('Create the environment "registry-signing"')).toBeLessThan(pushMain);
+    expect(at("gh secret set")).toBeLessThan(pushMain);
+    expect(at("Set GitHub Pages to serve")).toBeLessThan(pushMain);
+    expect(pushMain).toBeLessThan(at("Protect main: require pull requests"));
   });
 
   test("a release build pins the embedded release commit; --action-ref overrides it", async () => {
@@ -394,6 +436,16 @@ describe("registry maintain init --github", () => {
     expect(code).toBe(2);
     expect(err.join("")).toContain("README.md exists");
     expect(readFileSync(join(tmp, "reg", "README.md"), "utf8")).toBe("# mine\n");
+    expect(existsSync(key)).toBe(false);
+  });
+
+  test("refuses to overwrite an existing site file without --force", async () => {
+    mkdirSync(join(tmp, "reg-site"), { recursive: true });
+    writeFileSync(join(tmp, "reg-site", ".nojekyll"), "mine");
+    const { key, code } = await initGithub();
+    expect(code).toBe(2);
+    expect(err.join("")).toContain(".nojekyll exists");
+    expect(readFileSync(join(tmp, "reg-site", ".nojekyll"), "utf8")).toBe("mine");
     expect(existsSync(key)).toBe(false);
   });
 });

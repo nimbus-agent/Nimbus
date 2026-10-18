@@ -72,20 +72,22 @@ export function ownerNextSteps(opts: {
   const secret = `${ROOT_KEY_SECRET} --env ${SIGNING_ENVIRONMENT} --repo ${REPO_PLACEHOLDER}`;
   return `Next steps (nothing has been pushed; replace ${REPO_PLACEHOLDER} with the registry repository):
   1. Make sure the repository is public: the check workflow fetches without credentials.
-  2. Push ${opts.dir} to the repository's ${opts.defaultBranch} branch, and push ${opts.site}
-     as the gh-pages branch.
+  2. Push ${opts.site} as the gh-pages branch.
   3. Create the environment "${SIGNING_ENVIRONMENT}" with required reviewers.
   4. Store the root key as a secret of THAT environment (--env matters: a repository-level
      secret is not gated by the environment's required reviewers):
        bash/zsh:    gh secret set ${secret} < ${bashQuote(opts.keyPath)}
        PowerShell:  Get-Content -Raw ${pwshQuote(opts.keyPath)} | gh secret set ${secret}
   5. Set GitHub Pages to serve the gh-pages branch.
-  6. Protect ${opts.defaultBranch}: require pull requests.
-  7. Protect gh-pages against force-push and deletion, without requiring pull requests,
+  6. Protect gh-pages against force-push and deletion, without requiring pull requests,
      reviews or status checks, so the sign workflow's GITHUB_TOKEN push still lands.
      Without this, anyone with write access can force-push gh-pages back to an older signed
      index, and the next signing run then publishes a different index at a sequence number
      that was already used. The sign workflow does not check this setting; it is yours to keep.
+  7. Only now push ${opts.dir} to the repository's ${opts.defaultBranch} branch. The push starts
+     the first sign run, which needs the environment and its secret: pushed earlier, that run
+     fails and GitHub creates "${SIGNING_ENVIRONMENT}" itself, with no required reviewers.
+  8. Protect ${opts.defaultBranch}: require pull requests.
 On Windows the CLI sets no ACL on the key file: it inherits its folder's permissions. Keep it
 under your user profile (the default ~/.nimbus/registry-key), never on a shared or synced path.
 `;

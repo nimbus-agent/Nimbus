@@ -192,7 +192,9 @@ export async function makeRegistryRepo(
   );
   write(maintainer, "index.json", `${JSON.stringify(index, null, 2)}\n`);
   write(maintainer, "nimbus-registry.json", configBytes(ns));
-  git(maintainer, "add", "index.json", "nimbus-registry.json");
+  write(maintainer, ".nojekyll", "");
+  write(maintainer, ".gitattributes", "* -text\n");
+  git(maintainer, "add", "index.json", "nimbus-registry.json", ".nojekyll", ".gitattributes");
   git(maintainer, "commit", "-q", "-m", "site");
   git(maintainer, "checkout", "-q", "main");
 
