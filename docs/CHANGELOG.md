@@ -24,8 +24,10 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   with a read-only token and no secrets, validates it against the signed `index.json` on `gh-pages` and writes a
   summary for the reviewer; it is a reviewer aid, not a boundary, since a pull request can edit it. `sign` runs on a
   push to the default branch (or by hand) behind the `registry-signing` environment's required reviewers: it refuses
-  if an already-signed version changed, if the root-key input is not the registry's root key, or if the rules were
-  loosened; otherwise it re-validates every unsigned version (skipping and naming failures), signs the index at
+  if the `gh-pages` index does not verify, if the root-key input is not the registry's root key, if
+  `nimbus-registry.json` is missing on the default branch or loosens the last signed rules, or if an already-signed
+  version's files changed or were deleted; otherwise it re-validates every unsigned version (skipping and naming
+  failures, each with a `::warning::`), signs the index at
   `sequence + 1` and pushes `gh-pages`. `nimbus registry maintain init <dir> --github [--action-ref <40-hex>]
   [--site <path>] [--default-branch <name>]` writes the whole repository: the two workflows (every `uses:` SHA-pinned,
   the registry action pinned to the commit the release was built from, which `release.yml` now embeds through

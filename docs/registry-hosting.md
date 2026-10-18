@@ -11,7 +11,7 @@ A Nimbus extension registry is a folder of signed static files (see [architectur
 
 ## Owner steps
 
-Replace `nimbus-agent/extensions` with your own `<owner>/<repo>`.
+Step 1 prints these steps (numbered there from "Make sure the repository is public") with your folder and key paths filled in; replace `<owner>/<repo>` in them with your repository. Below, `nimbus-agent/extensions` is the example.
 
 1. **Scaffold.** `nimbus registry maintain init ./extensions --github`. This writes the repository folder, a sibling `./extensions-site` for `gh-pages`, and a root key at `~/.nimbus/registry-key`. It prints the key's fingerprint and the steps below with your paths filled in; it never prints the key. Nothing is pushed. The workflows reference the registry action pinned to the commit your CLI was built from; a development build needs `--action-ref <40-hex>`.
 2. **Make the repository public.** The check workflow fetches `gh-pages` and `main` without credentials.
@@ -39,7 +39,7 @@ After a merge, the **Registry sign** run waits in the `registry-signing` environ
 - the workflow file it runs is the one expected. A publish pull request can edit the sign workflow file (`registry-sign.yml`), and the required approval is what stops a changed copy from using the key;
 - the versions it will add are the ones that were reviewed and merged.
 
-Then they approve. The run re-validates every unsigned version, skips and names any that fail (fix the directory and a later run signs it), signs the rest at `sequence + 1` and pushes `gh-pages`. If a version that is already signed has changed on `main`, or the `nimbus-registry.json` rules were loosened, the run refuses and signs nothing. Runs are serialised (`concurrency: registry-sign`).
+Then they approve. The run re-validates every unsigned version, skips and names any that fail (fix the directory and a later run signs it), signs the rest at `sequence + 1` and pushes `gh-pages`. Each skipped version also gets a `::warning::` annotation and a line in the run summary. The run refuses outright, signing and pushing nothing, if the `gh-pages` index does not verify against its own root key, if the `root-key` secret is not that index's root key, if `main` has no `nimbus-registry.json` or its copy loosens the one `gh-pages` last used (`requirePublisherNamespace` true to false), or if an already-signed version's `manifest.json` or `package.tgz` changed or was deleted on `main`. Runs are serialised (`concurrency: registry-sign`).
 
 ## Bounds, stated plainly
 
