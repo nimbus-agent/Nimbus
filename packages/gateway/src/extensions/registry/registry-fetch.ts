@@ -104,8 +104,19 @@ async function fetchRemote(
   startUrl: string,
   signal: AbortSignal | undefined,
 ): Promise<Uint8Array> {
+  // One controller aborts on either the timeout or the caller's signal.
+  const controller = new AbortController();
   const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-  const combined = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+  const abortFrom = (src: AbortSignal) => () => controller.abort(src.reason);
+  const onTimeout = abortFrom(timeout);
+  const onCaller = signal === undefined ? undefined : abortFrom(signal);
+  if (timeout.aborted) onTimeout();
+  else timeout.addEventListener("abort", onTimeout, { once: true });
+  if (signal !== undefined && onCaller !== undefined) {
+    if (signal.aborted) onCaller();
+    else signal.addEventListener("abort", onCaller, { once: true });
+  }
+  const combined = controller.signal;
   let url = startUrl;
   try {
     for (let hop = 0; ; hop++) {
@@ -157,6 +168,11 @@ async function fetchRemote(
   } catch (e) {
     if (e instanceof RegistryError) throw e;
     throw unreachable(e instanceof Error ? e.message : "registry request failed");
+  } finally {
+    // Do not leak a listener on the caller's long-lived signal.
+    if (signal !== undefined && onCaller !== undefined)
+      signal.removeEventListener("abort", onCaller);
+    timeout.removeEventListener("abort", onTimeout);
   }
 }
 
