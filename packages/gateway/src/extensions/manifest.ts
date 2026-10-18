@@ -55,7 +55,7 @@ export type ExtensionManifest = {
   dependsOn?: Readonly<Record<string, string>>;
 };
 
-const PUBLISHER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
+export const PUBLISHER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
 const PUBLISHER_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
 

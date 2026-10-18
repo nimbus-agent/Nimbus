@@ -1,0 +1,27 @@
+export type RegistryErrorCode =
+  | "ERR_REGISTRY_INDEX_INVALID"
+  | "ERR_REGISTRY_ROOT_KEY_CHANGED"
+  | "ERR_REGISTRY_SIGNATURE_INVALID"
+  | "ERR_REGISTRY_ROLLBACK"
+  | "ERR_REGISTRY_TOO_LARGE"
+  | "ERR_REGISTRY_HASH_MISMATCH"
+  | "ERR_REGISTRY_TRANSPORT_REFUSED"
+  | "ERR_REGISTRY_AIR_GAP"
+  | "ERR_REGISTRY_UNREACHABLE"
+  | "ERR_REGISTRY_NOT_FOUND"
+  | "ERR_REGISTRY_EXISTS"
+  | "ERR_REGISTRY_AMBIGUOUS"
+  | "ERR_REGISTRY_FINGERPRINT_MISMATCH"
+  | "ERR_REGISTRY_ADD_NOT_APPROVED"
+  | "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT"
+  | "ERR_REGISTRY_ALREADY_INSTALLED";
+
+export class RegistryError extends Error {
+  constructor(
+    readonly code: RegistryErrorCode,
+    detail: string,
+  ) {
+    super(`${code}: ${detail}`);
+    this.name = "RegistryError";
+  }
+}
