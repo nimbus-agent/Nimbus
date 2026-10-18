@@ -143,6 +143,16 @@ function parseEntry(o: Record<string, unknown>): string | undefined {
   return typeof raw === "string" ? raw.trim().replaceAll("\\", "/") : undefined;
 }
 
+/**
+ * The entry a raw (unvalidated) manifest object names, by the SAME rule the full parse applies
+ * (`parseEntry` then {@link extensionEntryRelPath}). For a reader that must find the entry without
+ * refusing the rest of the manifest — package inspection hashes the file the gateway will run.
+ */
+export function rawManifestEntryRelPath(raw: Record<string, unknown>): string {
+  const entry = parseEntry(raw);
+  return extensionEntryRelPath(entry === undefined ? {} : { entry });
+}
+
 export function parseExtensionManifestJson(text: string): ExtensionManifest {
   return parseExtensionManifestForRegistry(text).manifest;
 }
