@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "rootKey": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+  "sequence": 2,
+  "generatedAt": "2026-10-18T11:22:14.970Z",
+  "extensions": {
+    "com.example.maintained": {
+      "publisher": {
+        "id": "example",
+        "key": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ="
+      },
+      "versions": {
+        "1.0.0": {
+          "channel": "stable",
+          "name": "Maintained Example",
+          "manifest": "extensions/com.example.maintained/1.0.0/manifest.json",
+          "manifestSha256": "3057dd960bfecd0244d15b2388e095556bb20aed28a5306be4b35c90c2b5bc9d",
+          "package": "extensions/com.example.maintained/1.0.0/package.tgz",
+          "packageSha256": "fc165192082f285a8f52fb14579709bc2d0371668cfb8c1f7b64b1094a9ed827",
+          "packageSizeBytes": 385,
+          "entryHash": "96909e1dce85ca534fd8881f6c8369a8a87e06df5a4bf81ef44a72db195b0704",
+          "publishedAt": "2026-10-18T11:22:14.969Z"
+        }
+      }
+    }
+  },
+  "signature": "v8lj8JcP/1vs6UzJU7MFMXrWIhPvWtvUWxJ2jJobhRYqyZYaRY/MnHTmoiT10kJjTNoMeCTKpaYUcsPJ2oN2DQ=="
+}

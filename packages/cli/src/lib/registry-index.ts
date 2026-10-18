@@ -3,7 +3,7 @@
  * `extensions/registry/index-format.ts` (the packages may not import each other); the golden vector
  * in `registry-index.test.ts` is the contract that keeps the two byte-identical.
  */
-import { createPrivateKey, createPublicKey, type KeyObject, sign } from "node:crypto";
+import { createPrivateKey, createPublicKey, type KeyObject, sign, verify } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -56,6 +56,25 @@ function privateKeyFromSeed(seed: Uint8Array): KeyObject {
 export function publicKeyFromSeed(seed: Uint8Array): Uint8Array {
   const jwk = createPublicKey(privateKeyFromSeed(seed)).export({ format: "jwk" }) as { x: string };
   return new Uint8Array(Buffer.from(jwk.x, "base64url"));
+}
+
+// SPKI wrapper for a raw 32-byte Ed25519 public key.
+const SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+
+/** True when `index.signature` verifies against `index.rootKey` over the canonical bytes. */
+export function verifyIndexSignature(index: RegistryIndex): boolean {
+  try {
+    const { signature, ...rest } = index;
+    const key = createPublicKey({
+      key: Buffer.concat([SPKI_ED25519_PREFIX, Buffer.from(index.rootKey, "base64")]),
+      format: "der",
+      type: "spki",
+    });
+    const bytes = new TextEncoder().encode(canonicalize(rest)); // NOSONAR S1874
+    return verify(null, bytes, key, Buffer.from(signature, "base64"));
+  } catch {
+    return false;
+  }
 }
 
 export function emptyIndex(rootKeyB64: string): Omit<RegistryIndex, "signature"> {

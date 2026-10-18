@@ -49,6 +49,7 @@ export const COMMAND_NAMES = [
   "profile",
   "prove",
   "query",
+  "registry",
   "repl",
   "run",
   "scaffold",

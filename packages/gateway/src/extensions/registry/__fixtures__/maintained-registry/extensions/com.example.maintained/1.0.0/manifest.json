@@ -1,0 +1,12 @@
+{
+  "id": "com.example.maintained",
+  "name": "Maintained Example",
+  "version": "1.0.0",
+  "entry": "dist/index.js",
+  "permissions": {},
+  "publisher": {
+    "id": "example",
+    "key": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ="
+  },
+  "signature": "XqvSlajkekjegWFuk09f8QpaRYAoYpU0SBK8CbMYCQlp1VY56UkDH17XsdvUm23L9AEN0t2mp/V1V+AXnHAPCw=="
+}

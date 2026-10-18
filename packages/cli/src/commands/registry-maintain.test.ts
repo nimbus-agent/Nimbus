@@ -1,0 +1,159 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { encodeBase64, generateEd25519Keypair, signManifest } from "../lib/extension-signing.ts";
+import { readIndexFile, verifyIndexSignature } from "../lib/registry-index.ts";
+import { runRegistryMaintain } from "./registry-maintain.ts";
+
+let tmp: string;
+let out: string[];
+let err: string[];
+const io = {
+  stdout: (s: string) => void out.push(s),
+  stderr: (s: string) => void err.push(s),
+};
+
+beforeEach(() => {
+  tmp = mkdtempSync(join(tmpdir(), "nimbus-registry-maintain-"));
+  out = [];
+  err = [];
+});
+afterEach(() => {
+  rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+});
+
+const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
+
+async function makeExtension(
+  name: string,
+  opts: { version?: string; signed?: boolean; seed?: Uint8Array } = {},
+): Promise<string> {
+  const dir = join(tmp, name);
+  mkdirSync(join(dir, "dist"), { recursive: true });
+  writeFileSync(join(dir, "dist", "index.js"), "export default 1;\n");
+  const pair = opts.seed === undefined ? generateEd25519Keypair() : undefined;
+  const privkey = opts.seed ?? (pair as { privkey: Uint8Array }).privkey;
+  const pubkey = pair?.pubkey ?? generateEd25519Keypair().pubkey;
+  const manifest: Record<string, unknown> = {
+    id: "com.example.tool",
+    name: "Example Tool",
+    version: opts.version ?? "1.0.0",
+    entry: "dist/index.js",
+    permissions: {},
+  };
+  if (opts.signed !== false) {
+    manifest["publisher"] = { id: "example", key: encodeBase64(pubkey) };
+    manifest["signature"] = await signManifest(manifest, privkey);
+  }
+  writeFileSync(join(dir, "nimbus.extension.json"), JSON.stringify(manifest, null, 2));
+  return dir;
+}
+
+async function init(name = "reg"): Promise<{ dir: string; key: string }> {
+  const dir = join(tmp, name);
+  const key = join(tmp, `${name}-key`);
+  expect(await runRegistryMaintain(["init", dir, "--key", key], io)).toBe(0);
+  return { dir, key };
+}
+
+describe("registry maintain", () => {
+  test("init writes a self-verifying index with sequence 1", async () => {
+    const { dir, key } = await init();
+    const index = readIndexFile(join(dir, "index.json"));
+    expect(index.sequence).toBe(1);
+    expect(index.extensions).toEqual({});
+    expect(verifyIndexSignature(index)).toBe(true);
+    expect(readFileSync(key, "utf8").trim()).toHaveLength(44);
+    expect(out.join("")).toContain("fingerprint:");
+  });
+
+  test("init refuses to overwrite a key without --force", async () => {
+    const { key } = await init();
+    err.length = 0;
+    const code = await runRegistryMaintain(["init", join(tmp, "reg2"), "--key", key], io);
+    expect(code).toBe(2);
+    expect(err.join("")).toContain("without --force");
+    expect(
+      await runRegistryMaintain(["init", join(tmp, "reg2"), "--key", key, "--force"], io),
+    ).toBe(0);
+  });
+
+  test("add a dir then the index lists it with correct hashes and sequence 2", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext");
+    expect(await runRegistryMaintain(["add", dir, ext, "--key", key], io)).toBe(0);
+    const index = readIndexFile(join(dir, "index.json"));
+    expect(index.sequence).toBe(2);
+    expect(verifyIndexSignature(index)).toBe(true);
+    const entry = index.extensions["com.example.tool"]?.versions["1.0.0"];
+    expect(entry).toBeDefined();
+    if (entry === undefined) return;
+    expect(entry.channel).toBe("stable");
+    expect(entry.name).toBe("Example Tool");
+    const base = join(dir, "extensions", "com.example.tool", "1.0.0");
+    const manifestBytes = readFileSync(join(base, "manifest.json"));
+    const pkgBytes = readFileSync(join(base, "package.tgz"));
+    expect(entry.manifest).toBe("extensions/com.example.tool/1.0.0/manifest.json");
+    expect(entry.manifestSha256).toBe(sha(manifestBytes));
+    expect(entry.packageSha256).toBe(sha(pkgBytes));
+    expect(entry.packageSizeBytes).toBe(pkgBytes.length);
+    expect(entry.entryHash).toBe(sha(Buffer.from("export default 1;\n")));
+    expect(manifestBytes.toString("utf8")).toBe(
+      readFileSync(join(ext, "nimbus.extension.json"), "utf8"),
+    );
+  });
+
+  test("add refuses an existing id@version", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext");
+    await runRegistryMaintain(["add", dir, ext, "--key", key], io);
+    err.length = 0;
+    expect(await runRegistryMaintain(["add", dir, ext, "--key", key], io)).toBe(2);
+    expect(err.join("")).toContain("already exists");
+  });
+
+  test("add refuses a changed publisher key for an existing id", async () => {
+    const { dir, key } = await init();
+    await runRegistryMaintain(["add", dir, await makeExtension("a"), "--key", key], io);
+    const other = await makeExtension("b", { version: "1.1.0" });
+    err.length = 0;
+    expect(await runRegistryMaintain(["add", dir, other, "--key", key], io)).toBe(2);
+    expect(err.join("")).toContain("different publisher key");
+  });
+
+  test("add refuses an unsigned extension", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext", { signed: false });
+    expect(await runRegistryMaintain(["add", dir, ext, "--key", key], io)).toBe(2);
+    expect(err.join("")).toContain("unsigned");
+  });
+
+  test("remove last version drops the id entry", async () => {
+    const { dir, key } = await init();
+    await runRegistryMaintain(["add", dir, await makeExtension("ext"), "--key", key], io);
+    expect(
+      await runRegistryMaintain(["remove", dir, "com.example.tool@1.0.0", "--key", key], io),
+    ).toBe(0);
+    const index = readIndexFile(join(dir, "index.json"));
+    expect(index.extensions).toEqual({});
+    expect(index.sequence).toBe(3);
+    expect(verifyIndexSignature(index)).toBe(true);
+  });
+
+  test("maintain on a folder signed by another key refuses", async () => {
+    const { dir } = await init();
+    const otherKey = join(tmp, "other-key");
+    writeFileSync(otherKey, `${encodeBase64(generateEd25519Keypair().privkey)}\n`);
+    err.length = 0;
+    expect(await runRegistryMaintain(["remove", dir, "x", "--key", otherKey], io)).toBe(2);
+    expect(err.join("")).toContain("different key");
+  });
+
+  test("an unknown subcommand prints usage and exits 2", async () => {
+    expect(await runRegistryMaintain([], io)).toBe(2);
+    expect(err.join("")).toContain("Usage:");
+  });
+});

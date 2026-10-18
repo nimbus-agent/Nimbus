@@ -21,7 +21,10 @@ import { generateKeyPairSync } from "node:crypto";
 // NOSONAR S1874: deprecated in SDK 1.32.0 with NO shipped replacement. `signManifest` IS the
 // contract — what this CLI signs is what the gateway verifies at install and every startup (I16) —
 // so it must stay the SDK's, unlike the codec and keygen above, which this file owns outright.
-import { signManifest as sdkSignManifest } from "@nimbus-dev/sdk"; // NOSONAR S1874
+import {
+  signManifest as sdkSignManifest, // NOSONAR S1874
+  verifyManifestSignature as sdkVerifyManifestSignature, // NOSONAR S1874
+} from "@nimbus-dev/sdk";
 
 /** Encode bytes as standard (padded, non-URL-safe) base64. */
 export function encodeBase64(bytes: Uint8Array): string {
@@ -53,4 +56,12 @@ export async function signManifest(
   privkey: Uint8Array,
 ): Promise<string> {
   return await sdkSignManifest(manifest, privkey); // NOSONAR S1874
+}
+
+/** Verify a manifest's signature against a public key; throws on any mismatch. */
+export async function verifyManifestSignature(
+  manifest: { publisher?: { id: string; key: string }; signature?: string; [k: string]: unknown },
+  pubkey: Uint8Array,
+): Promise<void> {
+  await sdkVerifyManifestSignature(manifest, pubkey); // NOSONAR S1874
 }

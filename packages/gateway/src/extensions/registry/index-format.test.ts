@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import nacl from "tweetnacl";
 import { encodeBase64 } from "../../util/base64.ts";
 import {
@@ -161,5 +164,22 @@ describe("registry index format", () => {
   test("rejects index over MAX_INDEX_BYTES before JSON.parse", () => {
     const big = new Uint8Array(MAX_INDEX_BYTES + 1024 * 1024);
     expect(() => parseRegistryIndex(big)).toThrow("ERR_REGISTRY_TOO_LARGE");
+  });
+});
+
+describe("maintainer flow", () => {
+  test("verifies an index produced by the maintainer flow", async () => {
+    const root = join(import.meta.dir, "__fixtures__", "maintained-registry");
+    const index = parseRegistryIndex(readFileSync(join(root, "index.json")));
+    await verifyRegistryIndexPinned(index, ROOT_KEY);
+    const entry = index.extensions["com.example.maintained"]?.versions["1.0.0"];
+    expect(entry).toBeDefined();
+    if (entry === undefined) return;
+    const sha = (rel: string): string =>
+      createHash("sha256")
+        .update(readFileSync(join(root, rel)))
+        .digest("hex");
+    expect(sha(entry.manifest)).toBe(entry.manifestSha256);
+    expect(sha(entry.package)).toBe(entry.packageSha256);
   });
 });

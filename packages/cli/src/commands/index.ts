@@ -48,6 +48,7 @@ export { runPreflightCli } from "./preflight.ts";
 export { runProfile } from "./profile.ts";
 export { runEgress, runProve } from "./prove.ts";
 export { runQuery } from "./query.ts";
+export { runRegistry } from "./registry-cmd.ts";
 export { runRepl } from "./repl.ts";
 export { runWorkflowFromFile } from "./run-workflow.ts";
 export { runScaffold } from "./scaffold.ts";
