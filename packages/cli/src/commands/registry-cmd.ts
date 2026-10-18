@@ -1,9 +1,9 @@
 /** `nimbus registry …` dispatcher. `maintain` is offline; add/list/refresh/remove talk to the gateway. */
 import type { IPCClient } from "../ipc-client/index.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
+import { type GatewayStateFile, readGatewayState } from "../lib/gateway-process.ts";
 import { createIpcClient } from "../lib/rpc-timeouts.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
 import {
   REGISTRY_CLIENT_USAGE,
   type RegistryClientSub,
@@ -30,13 +30,18 @@ export interface RegistryGatewayDeps {
   readonly stderr: (s: string) => void;
 }
 
+/** Where the gateway recorded its socket under `paths`, read through `readState`. */
+export async function locateGateway(
+  paths: CliPlatformPaths,
+  readState: (paths: CliPlatformPaths) => Promise<GatewayStateFile | undefined>,
+): Promise<{ socketPath: string | undefined; demo: boolean }> {
+  const state = await readState(paths);
+  return { socketPath: state?.socketPath, demo: paths.demo === true };
+}
+
 const DEFAULT_GATEWAY_DEPS: RegistryGatewayDeps = {
-  locate: async () => {
-    const paths = getCliPlatformPaths();
-    const state = await readGatewayState(paths);
-    return { socketPath: state?.socketPath, demo: paths.demo === true };
-  },
-  createClient: (socketPath, timeoutMs) => createIpcClient(socketPath, timeoutMs),
+  locate: () => locateGateway(getCliPlatformPaths(), readGatewayState),
+  createClient: createIpcClient,
   stdout: (s) => void process.stdout.write(s),
   stderr: (s) => void process.stderr.write(s),
 };
@@ -44,13 +49,15 @@ const DEFAULT_GATEWAY_DEPS: RegistryGatewayDeps = {
 /**
  * Connects to the running gateway, runs one client subcommand and always disconnects. Throws the
  * demo-aware "not running" hint when no gateway is up. Returns the subcommand's exit code.
+ * `overrides` replaces individual seams (a test); anything not overridden is the real thing.
  */
 export async function runRegistryClientOverGateway(
   sub: RegistryClientSub,
   args: string[],
   isTty: boolean,
-  gw: RegistryGatewayDeps = DEFAULT_GATEWAY_DEPS,
+  overrides: Partial<RegistryGatewayDeps> = {},
 ): Promise<number> {
+  const gw: RegistryGatewayDeps = { ...DEFAULT_GATEWAY_DEPS, ...overrides };
   const { socketPath, demo } = await gw.locate();
   if (socketPath === undefined) {
     throw new Error(gatewayNotRunningMessage(demo));
@@ -85,7 +92,7 @@ export interface RegistryCmdDeps {
 
 const DEFAULT_DEPS: RegistryCmdDeps = {
   maintain: (args) => runRegistryMaintain(args),
-  client: (sub, args, isTty) => runRegistryClientOverGateway(sub, args, isTty),
+  client: runRegistryClientOverGateway,
   isTty: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
   writeErr: (s) => void process.stderr.write(s),
   exit: (code) => process.exit(code),

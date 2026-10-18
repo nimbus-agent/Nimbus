@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 import type { IPCClient } from "../ipc-client/index.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import type { CliPlatformPaths } from "../paths.ts";
 import {
+  locateGateway,
   REGISTRY_USAGE,
   type RegistryCmdDeps,
   type RegistryGatewayDeps,
@@ -224,6 +226,91 @@ describe("runRegistry with its production defaults", () => {
   test("`maintain` with no subcommand runs the real maintain usage path and exits 2", async () => {
     await expect(runRegistry(["maintain"])).rejects.toThrow("process.exit(2)");
     expect(cap.stderrChunks.join("")).toStartWith("Usage: nimbus registry maintain init <dir>");
+    expect(cap.stdoutChunks).toEqual([]);
+  });
+});
+
+describe("locateGateway", () => {
+  const BASE: CliPlatformPaths = {
+    configDir: "/cfg",
+    dataDir: "/data",
+    logDir: "/log",
+    socketPath: "/data/unused.sock",
+    extensionsDir: "/ext",
+    tempDir: "/tmp",
+    sandboxDir: "/sbx",
+  };
+
+  test("no recorded gateway means no socket, and the demo flag comes from the paths", async () => {
+    const seen: CliPlatformPaths[] = [];
+    const none = async (p: CliPlatformPaths) => {
+      seen.push(p);
+      return undefined;
+    };
+    expect(await locateGateway(BASE, none)).toEqual({ socketPath: undefined, demo: false });
+    const demo: CliPlatformPaths = { ...BASE, demo: true };
+    expect(await locateGateway(demo, none)).toEqual({ socketPath: undefined, demo: true });
+    // The state is read under exactly the paths it was given (the demo root, for a demo CLI).
+    expect(seen).toEqual([BASE, demo]);
+  });
+
+  test("a recorded gateway yields the socket it wrote", async () => {
+    const recorded = async () => ({ pid: 4242, socketPath: "/run/g.sock" });
+    expect(await locateGateway(BASE, recorded)).toEqual({
+      socketPath: "/run/g.sock",
+      demo: false,
+    });
+  });
+});
+
+describe("runRegistryClientOverGateway with the real output seams", () => {
+  const cap = createStreamCapture();
+  beforeEach(() => cap.install());
+  afterEach(() => {
+    cap.restore();
+    cap.stdoutChunks.length = 0;
+    cap.stderrChunks.length = 0;
+  });
+
+  function onlyTransport(responses: Record<string, unknown>): Partial<RegistryGatewayDeps> {
+    const g = fakeGateway("/s", responses);
+    return { locate: g.gw.locate, createClient: g.gw.createClient };
+  }
+
+  test("a subcommand's output reaches the real stdout when only the transport is replaced", async () => {
+    const code = await runRegistryClientOverGateway(
+      "list",
+      [],
+      false,
+      onlyTransport({ "registry.list": { registries: [] } }),
+    );
+    expect(code).toBe(0);
+    expect(cap.stdoutChunks.join("")).toContain("no registries added");
+    expect(cap.stderrChunks).toEqual([]);
+  });
+
+  test("a usage error reaches the real stderr", async () => {
+    const code = await runRegistryClientOverGateway("remove", [], false, onlyTransport({}));
+    expect(code).toBe(2);
+    expect(cap.stderrChunks.join("")).toStartWith("Usage: nimbus registry add");
+    expect(cap.stdoutChunks).toEqual([]);
+  });
+});
+
+describe("runRegistry `add` with its production defaults", () => {
+  const cap = createStreamCapture({ captureExit: true });
+  beforeEach(() => cap.install());
+  afterEach(() => {
+    cap.restore();
+    cap.stdoutChunks.length = 0;
+    cap.stderrChunks.length = 0;
+  });
+
+  test("`add --yes` is refused by the real router before any gateway lookup, TTY or not", async () => {
+    await expect(runRegistry(["add", "main", "https://r.example/", "--yes"])).rejects.toThrow(
+      "process.exit(2)",
+    );
+    expect(cap.stderrChunks.join("")).toContain("nimbus registry add has no --yes");
     expect(cap.stdoutChunks).toEqual([]);
   });
 });
