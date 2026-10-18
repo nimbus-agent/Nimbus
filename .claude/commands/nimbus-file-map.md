@@ -78,7 +78,6 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | `packages/gateway/src/extensions/dependency-errors.ts` | `DependencyConflictError` / `OfflineDependencyResolutionError` / `ReverseDepBlockedError` + `is*` |
 | `packages/gateway/src/extensions/dependency-graph.ts` | `resolveClosure(root, fetcher, opts)` — backtracking DFS solver |
 | `packages/gateway/src/extensions/dependency-store.ts` | `recordInstall` / `clearDeps` / `forwardDeps` / `reverseDeps` over V31 `extension_dependency` |
-| `packages/gateway/src/extensions/registry-fetcher.ts` | `createRegistryFetcher` — local-first solver adapter |
 | `packages/gateway/src/extensions/missing-dependency-registry.ts` | `missingDependencyRegistry` singleton + completeness-guard reasons |
 | `packages/gateway/src/index/extension-dependency-v31-sql.ts` | V31 — `extension_dependency` table + reverse index |
 

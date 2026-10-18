@@ -36,8 +36,11 @@ function mkAvailable(overrides: Partial<AvailableUpdate> = {}): AvailableUpdate 
     manifestHash: sha(MANIFEST_V11),
     signatureB64: `${"B".repeat(86)}==`,
     entryHash: sha("entry-v1.1"),
-    tarballSha256: "f".repeat(64),
-    tarballUrl: "https://r/x.tar.gz",
+    packageSha256: "f".repeat(64),
+    packageSizeBytes: 100,
+    sourceRegistry: "main",
+    rootFingerprint: "c".repeat(32),
+    packagePath: "extensions/com.example.a/1.1.0/package.tgz",
     permissionDiff: {
       network: { added: [], removed: [] },
       filesystem: {
@@ -78,14 +81,10 @@ describe("createPerformUpgrade", () => {
 
       const perform = createPerformUpgrade({
         extensionsRoot: join(root, "extensions"),
-        fetcher: (async () =>
-          new Response(tarballBytes, {
-            status: 200,
-            headers: { "content-length": String(tarballBytes.byteLength) },
-          })) as unknown as typeof fetch,
-        maxBytes: 1024,
+        reverifyManifest: async () => {},
+        fetchPackage: async () => tarballBytes,
         signal: new AbortController().signal,
-        sha256OfTarball: async (b) => {
+        sha256OfPackage: async (b) => {
           expect(b).toEqual(tarballBytes);
           return "f".repeat(64);
         },
@@ -112,19 +111,18 @@ describe("createPerformUpgrade", () => {
     }
   });
 
-  it("checks the TARBALL against tarballSha256, not entryHash", async () => {
+  it("checks the PACKAGE against packageSha256, not entryHash", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
     try {
       await mkdir(join(root, "extensions", "com.example.a"), { recursive: true });
       const extractPackage = mock(async () => ({ sourceRoot: "", treeDigest: "" }));
       const perform = createPerformUpgrade({
         extensionsRoot: join(root, "extensions"),
-        fetcher: (async () =>
-          new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch,
-        maxBytes: 1024,
+        reverifyManifest: async () => {},
+        fetchPackage: async () => new Uint8Array([1, 2, 3]),
         signal: new AbortController().signal,
         // Equal to entryHash: the old check accepted this tarball; the fixed one must not.
-        sha256OfTarball: async () => sha("entry-v1.1"),
+        sha256OfPackage: async () => sha("entry-v1.1"),
         extractPackage,
         stopExtensionClient: async () => {},
         dbUpdateExtensionRow: async () => {},
@@ -147,11 +145,10 @@ describe("createPerformUpgrade", () => {
       const dbUpdateExtensionRow = mock(async () => {});
       const perform = createPerformUpgrade({
         extensionsRoot: join(root, "extensions"),
-        fetcher: (async () =>
-          new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch,
-        maxBytes: 1024,
+        reverifyManifest: async () => {},
+        fetchPackage: async () => new Uint8Array([1, 2, 3]),
         signal: new AbortController().signal,
-        sha256OfTarball: async () => "f".repeat(64),
+        sha256OfPackage: async () => "f".repeat(64),
         extractPackage: async (_archive, destDir) => {
           pendingDir = destDir;
           await writePackage(destDir, MANIFEST_V11, "tampered-entry");
@@ -173,7 +170,7 @@ describe("createPerformUpgrade", () => {
     }
   });
 
-  it("throws sha256_mismatch before any disk mutation", async () => {
+  it("apply refuses a package whose sha differs (sha256_mismatch, before any disk mutation)", async () => {
     const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
     try {
       const extRoot = join(root, "extensions", "com.example.a");
@@ -186,11 +183,10 @@ describe("createPerformUpgrade", () => {
       });
       const perform = createPerformUpgrade({
         extensionsRoot: join(root, "extensions"),
-        fetcher: (async () =>
-          new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch,
-        maxBytes: 1024,
+        reverifyManifest: async () => {},
+        fetchPackage: async () => new Uint8Array([1, 2, 3]),
         signal: new AbortController().signal,
-        sha256OfTarball: async () => "0".repeat(64), // mismatch
+        sha256OfPackage: async () => "0".repeat(64), // mismatch
         extractPackage,
         stopExtensionClient,
         dbUpdateExtensionRow: async () => {},
@@ -200,6 +196,63 @@ describe("createPerformUpgrade", () => {
       expect(stopExtensionClient).not.toHaveBeenCalled();
       expect(extractPackage).not.toHaveBeenCalled();
       expect(await readFile(join(extRoot, "marker.txt"), "utf8")).toBe("old");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("apply refuses when the re-fetched manifest signature fails, before the package is fetched", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
+    try {
+      const extRoot = join(root, "extensions", "com.example.a");
+      await mkdir(extRoot, { recursive: true });
+      await writeFile(join(extRoot, "marker.txt"), "old");
+      const fetchPackage = mock(async () => new Uint8Array([1]));
+      const dbUpdateExtensionRow = mock(async () => {});
+      const perform = createPerformUpgrade({
+        extensionsRoot: join(root, "extensions"),
+        reverifyManifest: async () => {
+          throw new Error("signature_failed: ERR_REGISTRY_SIGNATURE_INVALID: does not verify");
+        },
+        fetchPackage,
+        signal: new AbortController().signal,
+        sha256OfPackage: async () => "f".repeat(64),
+        extractPackage: async () => {
+          throw new Error("should not reach extract");
+        },
+        stopExtensionClient: async () => {},
+        dbUpdateExtensionRow,
+      });
+      await expect(perform(mkAvailable())).rejects.toThrow(/^signature_failed/);
+      expect(fetchPackage).not.toHaveBeenCalled();
+      expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
+      expect(await readFile(join(extRoot, "marker.txt"), "utf8")).toBe("old");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("a package that cannot be fetched fails as download_failed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-"));
+    try {
+      await mkdir(join(root, "extensions", "com.example.a"), { recursive: true });
+      const perform = createPerformUpgrade({
+        extensionsRoot: join(root, "extensions"),
+        reverifyManifest: async () => {},
+        fetchPackage: async () => {
+          throw new Error("ERR_REGISTRY_UNREACHABLE: registry answered HTTP 503");
+        },
+        signal: new AbortController().signal,
+        sha256OfPackage: async () => "f".repeat(64),
+        extractPackage: async () => {
+          throw new Error("should not reach extract");
+        },
+        stopExtensionClient: async () => {},
+        dbUpdateExtensionRow: async () => {},
+      });
+      await expect(perform(mkAvailable())).rejects.toThrow(
+        /^download_failed: ERR_REGISTRY_UNREACHABLE/,
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -237,15 +290,11 @@ describe("createPerformUpgrade", () => {
 
       const perform = createPerformUpgrade({
         extensionsRoot,
-        fetcher: (async () =>
-          new Response(tarballBytes, {
-            status: 200,
-            headers: { "content-length": String(tarballBytes.byteLength) },
-          })) as unknown as typeof fetch,
-        maxBytes: 1024,
+        reverifyManifest: async () => {},
+        fetchPackage: async () => tarballBytes,
         signal: new AbortController().signal,
-        // Return exactly update.tarballSha256 so the tarball check passes.
-        sha256OfTarball: async () => "f".repeat(64),
+        // Return exactly update.packageSha256 so the package check passes.
+        sha256OfPackage: async () => "f".repeat(64),
         extractPackage,
         stopExtensionClient,
         dbUpdateExtensionRow,
@@ -279,11 +328,10 @@ describe("createPerformUpgrade", () => {
       const stopExtensionClient = mock(async () => {});
       const perform = createPerformUpgrade({
         extensionsRoot: join(root, "extensions"),
-        fetcher: (async () =>
-          new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch,
-        maxBytes: 1024,
+        reverifyManifest: async () => {},
+        fetchPackage: async () => new Uint8Array([1, 2, 3]),
         signal: new AbortController().signal,
-        sha256OfTarball: async () => "f".repeat(64),
+        sha256OfPackage: async () => "f".repeat(64),
         extractPackage: async () => {
           throw new Error("package_entry_refused: evil (SymbolicLink)");
         },
@@ -319,11 +367,10 @@ describe("createPerformUpgrade", () => {
       const dbUpdateExtensionRow = mock(async () => {});
       const perform = createPerformUpgrade({
         extensionsRoot,
-        fetcher: (async () =>
-          new Response(archiveBytes, { status: 200 })) as unknown as typeof fetch,
-        maxBytes: 1024 * 1024,
+        reverifyManifest: async () => {},
+        fetchPackage: async () => archiveBytes,
         signal: new AbortController().signal,
-        sha256OfTarball: async () => "f".repeat(64),
+        sha256OfPackage: async () => "f".repeat(64),
         extractPackage: realExtractPackage,
         stopExtensionClient: async () => {},
         dbUpdateExtensionRow,

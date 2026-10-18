@@ -4484,7 +4484,7 @@ List installed extensions with their status (`enabled` / `disabled` / `disabled 
   com.example.notion@2.0.0 [signature: signature_failed]
 ```
 
-The four reasons are `publisher_key_missing`, `publisher_key_mismatch`, `signature_failed` and `signature_malformed`. Run `nimbus extension info <id>` for the remediation — the remedies differ (a key problem is fixed by `nimbus extension sync`; a signature problem is not). Separately, the `(unverified)` badge in the **Publisher** column means the manifest declares no publisher at all, which is the normal state of an unsigned extension and says nothing about verification having failed.
+The four reasons are `publisher_key_missing`, `publisher_key_mismatch`, `signature_failed` and `signature_malformed`. Run `nimbus extension info <id>` for the remediation — the remedies differ (a key problem is fixed by reinstalling with `--publisher-key <path>`; a signature problem is not). Separately, the `(unverified)` badge in the **Publisher** column means the manifest declares no publisher at all, which is the normal state of an unsigned extension and says nothing about verification having failed.
 
 `--tree` — print an ASCII dependency forest of installed extensions with their forward-dep edges; cycle-safe; NO_COLOR-aware (T2 PR 4).
 
@@ -4506,7 +4506,7 @@ When the extension was hard-disabled by the startup signature check (I16), the `
 Enabled:   no  (signature verification failed: publisher_key_missing)
 …
 Extension com.example.notion v2.0.0 failed signature verification at startup (publisher_key_missing) and was disabled.
-No publisher key is cached for it. Re-fetch keys: nimbus extension sync — or reinstall with a key you already hold: nimbus extension install <path> --publisher-key <path>
+No publisher key is cached for it. Reinstall it with the publisher's key: nimbus extension install <path> --publisher-key <path>
 ```
 
 ```bash
@@ -4553,7 +4553,11 @@ nimbus extension remove nimbus-notion --yes --json
 
 ### `nimbus extension update [<id>] [--check] [--to <version>] [--json]`
 
-Apply a cached auto-update bump (T2 PR 3). Without an id, lists pending updates the daemon detected on its last poll; with `--check`, forces an immediate registry poll first. With an `<id>`, applies the cached bump for that extension after HITL consent (`extension.autoUpdate` for a forward bump, `extension.downgrade` for a backward one).
+Apply a cached auto-update bump (T2 PR 3). Without an id, lists pending updates the daemon detected on its last poll; with `--check`, forces an immediate poll first. With an `<id>`, applies the cached bump for that extension after HITL consent (`extension.autoUpdate` for a forward bump, `extension.downgrade` for a backward one).
+
+**Updates come only from an extension's own source registry.** The daemon (constructed on every boot unless `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE=1`) reads the current `nimbus registry` table on each tick, groups the registry-installed extensions by the registry they came from, fetches each registry's signed `index.json` once, and fetches a `manifest.json` only for an extension whose index shows a newer version on its channel (`stable`, or `stable` plus `beta` for an extension installed with `--channel beta`). It checks an extension only while that registry's root fingerprint is still the one it was installed under; a local-path install is never auto-updated, a removed registry yields nothing, and the same id in another registry is ignored. Each list row names the source registry (`from <registry>`). A row whose registry now names a different publisher key than the Vault trusts reads `publisher_key_conflict` with a `publisher key changed` marker, and applying it is refused (`reason: publisher_key_conflict`).
+
+The daemon only detects; applying is always the owner's `extension.autoUpdate` prompt, which shows the source registry and its root fingerprint. Apply re-verifies against the registry's current signed index (manifest hash, publisher key, I16 signature) and checks the package hash before anything is swapped. An applied update changes the extension's tree digest, so its run approval no longer matches: run `nimbus extension approve <id>` again before it runs. `[llm] enforce_air_gap` refuses remote registries here exactly as it does for install and search; a local-folder registry still works.
 
 ```bash
 nimbus extension update --check                       # force poll + list
@@ -4563,7 +4567,7 @@ nimbus extension update com.example.notion --to 1.0.0  # roll back to a cached _
 nimbus extension update com.example.notion --json
 ```
 
-Exit code is `0` on success, `1` on apply failure (with a stderr hint — e.g. `publisher_key_missing` directs the user to `nimbus extension sync`).
+Exit code is `0` on success, `1` on apply failure (with a stderr hint — e.g. `publisher_key_conflict` names the registry whose key changed).
 
 ---
 
@@ -4598,18 +4602,6 @@ Sign an extension manifest (`nimbus.extension.json`) in the specified directory 
 ```bash
 nimbus extension sign ./nimbus-my-connector
 nimbus extension sign ./nimbus-my-connector --key ./my-publisher-key
-```
-
----
-
-### `nimbus extension sync [--dry-run] [--json]`
-
-Poll the registry to check the status of installed publishers. Detects key rotations and revoked publishers, then triggers a re-verification of all installed extensions for affected publishers.
-
-```bash
-nimbus extension sync
-nimbus extension sync --dry-run
-nimbus extension sync --json
 ```
 
 ---
@@ -5404,7 +5396,6 @@ nimbus lan remove abc123
 | `NIMBUS_SQLITE_PATH` | **macOS only.** Path to a full `libsqlite3.dylib`. Checked first, ahead of the `libsqlite3.dylib` released builds ship beside the binaries and then the Homebrew prefixes (`/opt/homebrew/opt/sqlite/lib/`, then `/usr/local/opt/sqlite/lib/`). Bun links Apple's system SQLite on macOS, which has extension loading compiled out, so sqlite-vec — and therefore vector search, hybrid ranking and session-memory recall — needs one of these present; on a released install the bundled one always is, and this variable is an override rather than a requirement. Mainly useful on a dev checkout, where `process.execPath` is `bun` and no library sits beside it. Ignored on Linux and Windows, which use Bun's own full build. `nimbus doctor` reports the resolved state. |
 | `NIMBUS_UPDATER_URL` | Override the update manifest URL (default: official endpoint) |
 | `NIMBUS_UPDATER_DISABLE` | Set to `1` to disable all auto-update checks (any other value, `true` included, is ignored) |
-| `NIMBUS_EXTENSIONS_REGISTRY_URL` | Extension registry base URL; the auto-update polling daemon is only constructed when this is set |
 | `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` | Set to `1` to hard-disable the extension auto-update polling daemon at Gateway init |
 | `NIMBUS_LAN_PORT` | Override the LAN TCP listen port (default: `7475`) |
 | `NIMBUS_DEV_UPDATER_PUBLIC_KEY` | Override the embedded Ed25519 updater public key — for tests only |

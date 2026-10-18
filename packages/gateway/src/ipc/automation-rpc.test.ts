@@ -11,7 +11,6 @@ import {
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
-import { writePublisherKey } from "../extensions/publisher-keys.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { generateEd25519Keypair } from "../extensions/verify-signature.ts";
 import { newestPrevVersion, prevVersionDir } from "../extensions/version-store.ts";
@@ -1115,70 +1114,12 @@ describe("extension.install", () => {
   });
 });
 
-describe("extension.sync", () => {
-  test("returns SyncResult with publishersChecked=1 when extension is signed", async () => {
+describe("extension.sync (removed)", () => {
+  test("is no longer an automation method", async () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     try {
-      const vault = new MockVault();
-      const { pubkey, privkey } = generateEd25519Keypair();
-      await writePublisherKey(vault, "test-pub", pubkey);
-      await stageSignedExtensionOnDisk({
-        db,
-        extensionsDir,
-        publisherId: "test-pub",
-        pubkey,
-        privkey,
-      });
-
-      const out = await dispatchAutomationRpc({
-        method: "extension.sync",
-        params: { dryRun: false },
-        db,
-        vault,
-        fetcher: { fetch: async () => ({ kind: "ok", pubkey }) },
-        enforceAirGap: false,
-      });
-      expect(out.kind).toBe("hit");
-      if (out.kind === "hit") {
-        expect(out.value).toMatchObject({
-          publishersChecked: 1,
-          publishersUnchanged: 1,
-        });
-      }
-    } finally {
-      rmSync(extensionsDir, { recursive: true, force: true });
-    }
-  });
-
-  test("rejects when vault is not provided", async () => {
-    const { db, extensionsDir } = setupFreshExtensionDb();
-    try {
-      await expect(
-        dispatchAutomationRpc({
-          method: "extension.sync",
-          params: {},
-          db,
-        }),
-      ).rejects.toThrow(AutomationRpcError);
-    } finally {
-      rmSync(extensionsDir, { recursive: true, force: true });
-    }
-  });
-
-  test("propagates AirGapEnforcementError when enforceAirGap=true", async () => {
-    const { db, extensionsDir } = setupFreshExtensionDb();
-    try {
-      const vault = new MockVault();
-      await expect(
-        dispatchAutomationRpc({
-          method: "extension.sync",
-          params: { dryRun: false },
-          db,
-          vault,
-          fetcher: { fetch: async () => ({ kind: "not_found" }) },
-          enforceAirGap: true,
-        }),
-      ).rejects.toThrow(AutomationRpcError);
+      const out = await dispatchAutomationRpc({ method: "extension.sync", params: {}, db });
+      expect(out.kind).toBe("miss");
     } finally {
       rmSync(extensionsDir, { recursive: true, force: true });
     }

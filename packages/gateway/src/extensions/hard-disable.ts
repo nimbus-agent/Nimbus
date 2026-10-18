@@ -178,8 +178,8 @@ export function signatureDisableMessage(
 ): string {
   const head = `Extension ${id} v${version} failed signature verification at startup (${reason}) and was disabled.`;
   const remedy: Record<SignatureDisableReason, string> = {
-    publisher_key_missing: `No publisher key is cached for it. Re-fetch keys: nimbus extension sync — or reinstall with a key you already hold: nimbus extension install <path> --publisher-key <path>`,
-    publisher_key_mismatch: `The cached publisher key does not match the key this manifest was signed with — the publisher may have rotated keys. Re-fetch keys: nimbus extension sync`,
+    publisher_key_missing: `No publisher key is cached for it. Reinstall it with the publisher's key: nimbus extension install <path> --publisher-key <path>`,
+    publisher_key_mismatch: `The cached publisher key does not match the key this manifest was signed with — the publisher may have rotated keys. Nimbus never replaces a cached key on its own; if you trust the new key, remove the extension and reinstall it with that key: nimbus extension install <path> --publisher-key <path>`,
     signature_failed: `The manifest does not match its signature: the files on disk have changed since it was signed. Reinstall from a source you trust: nimbus extension install <path>`,
     signature_malformed: `The manifest's signature field is not a well-formed Ed25519 signature. Reinstall from a source you trust: nimbus extension install <path>`,
   };

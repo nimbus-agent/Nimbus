@@ -234,9 +234,9 @@ describe("signatureDisabledRegistry", () => {
 
 describe("signatureDisableMessage", () => {
   // Every reason gets its own remediation because the remedies genuinely differ: a missing or
-  // rotated publisher key is fixed by re-fetching the key (`nimbus extension sync`), while a
-  // failed or malformed signature means the bytes on disk no longer match what was signed, and
-  // re-fetching a key would not help. A single generic "reinstall it" line would be wrong for
+  // rotated publisher key is fixed by supplying the key (`--publisher-key`), while a failed or
+  // malformed signature means the bytes on disk no longer match what was signed, and a key would
+  // not help. A single generic "reinstall it" line would be wrong for
   // half the set, which is why the switch is exhaustive over `SignatureDisableReason` rather
   // than defaulting.
   // A hand-written tuple would compile happily when a fifth reason is added, and that reason
@@ -274,18 +274,18 @@ describe("signatureDisableMessage", () => {
     expect(new Set(remediations).size).toBe(REASONS.length);
   });
 
-  test("a key-resolution failure points at `extension sync`, a bytes failure does not", () => {
+  test("a key-resolution failure points at `--publisher-key`, a bytes failure does not", () => {
     expect(signatureDisableMessage("acme.foo", "1.0.0", "publisher_key_missing")).toContain(
-      "nimbus extension sync",
+      "--publisher-key <path>",
     );
     expect(signatureDisableMessage("acme.foo", "1.0.0", "publisher_key_mismatch")).toContain(
-      "nimbus extension sync",
+      "--publisher-key <path>",
     );
     expect(signatureDisableMessage("acme.foo", "1.0.0", "signature_failed")).not.toContain(
-      "nimbus extension sync",
+      "--publisher-key <path>",
     );
     expect(signatureDisableMessage("acme.foo", "1.0.0", "signature_malformed")).not.toContain(
-      "nimbus extension sync",
+      "--publisher-key <path>",
     );
   });
 });

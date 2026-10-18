@@ -2,13 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import {
-  applyDowngradeSwap,
-  applyUpgradeSwap,
-  downloadTarball,
-  type FetchFn,
-  MAX_TARBALL_BYTES,
-} from "./auto-update-apply.ts";
+import { applyDowngradeSwap, applyUpgradeSwap } from "./auto-update-apply.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import type { ExtractedPackage } from "./package-extract.ts";
 import { assertPackageMatchesClaims } from "./package-hashes.ts";
@@ -17,10 +11,17 @@ import { pendingDir as pendingVersionDir, prevVersionDir } from "./version-store
 
 export interface PerformUpgradeDeps {
   extensionsRoot: string;
-  fetcher: FetchFn;
-  maxBytes?: number;
   signal: AbortSignal;
-  sha256OfTarball: (bytes: Uint8Array) => Promise<string>;
+  /**
+   * Re-checks the update against its source registry's CURRENT signed index before anything is
+   * downloaded: the index must still list this exact manifest and package, and the manifest must
+   * verify with the index's publisher key (spec § 8.8 — apply verifies as § 8.6 steps 2–5).
+   * Throws an error whose message starts `signature_failed` when it does not.
+   */
+  reverifyManifest: (update: AvailableUpdate, signal: AbortSignal) => Promise<void>;
+  /** One ledgered `registry.package` fetch of `update.packagePath` from `update.sourceRegistry`. */
+  fetchPackage: (update: AvailableUpdate, signal: AbortSignal) => Promise<Uint8Array>;
+  sha256OfPackage: (bytes: Uint8Array) => Promise<string>;
   extractPackage: (archivePath: string, destDir: string) => Promise<ExtractedPackage>;
   stopExtensionClient: (extensionId: string) => Promise<void>;
   dbUpdateExtensionRow: (
@@ -44,14 +45,16 @@ export function createPerformUpgrade(deps: PerformUpgradeDeps) {
     await mkdir(dirname(pendingDir), { recursive: true });
     await rm(pendingDir, { recursive: true, force: true });
 
-    const bytes = await downloadTarball(update.tarballUrl, {
-      fetcher: deps.fetcher,
-      maxBytes: deps.maxBytes ?? MAX_TARBALL_BYTES,
-      signal: deps.signal,
-    });
+    await deps.reverifyManifest(update, deps.signal);
+    let bytes: Uint8Array;
+    try {
+      bytes = await deps.fetchPackage(update, deps.signal);
+    } catch (e) {
+      throw new Error(`download_failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
 
-    const actualHash = await deps.sha256OfTarball(bytes);
-    if (actualHash.toLowerCase() !== update.tarballSha256.toLowerCase()) {
+    const actualHash = await deps.sha256OfPackage(bytes);
+    if (actualHash.toLowerCase() !== update.packageSha256.toLowerCase()) {
       throw new Error("sha256_mismatch");
     }
 

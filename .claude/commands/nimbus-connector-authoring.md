@@ -181,6 +181,8 @@ hard-disable the extension at startup with a structured reason
 (`publisher_key_missing`, `publisher_key_mismatch`, `signature_failed`, or
 `signature_malformed`). See `docs/SECURITY-INVARIANTS.md` §I16.
 
-For air-gap installs, ship the public key as a separate file and install
-with `--publisher-key <path>`. To refresh keys for already-installed
-extensions when the publisher rotates, run `nimbus extension sync`.
+A local install never fetches a key: ship the public key as a separate
+file and install with `--publisher-key <path>` (or rely on a key the Vault
+already caches for that publisher). A registry install takes the key from
+the registry's signed index; a key that differs from the cached one is
+refused (`ERR_REGISTRY_PUBLISHER_KEY_CONFLICT`) rather than replaced.

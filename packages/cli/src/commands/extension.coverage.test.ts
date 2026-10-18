@@ -15,7 +15,6 @@ import {
   runExtensionKeygen,
   runExtensionList,
   runExtensionRemove,
-  runExtensionSync,
   runExtensionUpdate,
 } from "./extension.ts";
 
@@ -272,23 +271,7 @@ describe("runExtension — offline subcommands", () => {
   });
 });
 
-describe("sync / update / downgrade — production output wiring", () => {
-  test("sync writes the summary to stdout and an unreachable publisher to stderr (exit 4)", async () => {
-    const ipc = createMockIpcClient([
-      {
-        publishersChecked: 1,
-        publishersUnchanged: 0,
-        publishersUpdated: [],
-        publishersEvicted: [],
-        failures: [{ id: "acme", reason: "timeout" }],
-      },
-    ]);
-    expect(await runExtensionSync(ipc.client, ["sync"])).toBe(4);
-    expect(ipc.calls).toEqual([{ method: "extension.sync", params: { dryRun: false } }]);
-    expect(stdout()).toContain("publishers checked: 1\n");
-    expect(stderr()).toContain("publisher acme unreachable (timeout)");
-  });
-
+describe("update / downgrade — production output wiring", () => {
   test("update writes a failed apply and its hint to stderr (exit 1)", async () => {
     const ipc = createMockIpcClient([
       [
@@ -298,11 +281,12 @@ describe("sync / update / downgrade — production output wiring", () => {
           fromVersion: "1.0.0",
           toVersion: "1.1.0",
           channel: "stable",
-          publisherStatus: "verified",
-          verificationStatus: "verified",
+          publisherStatus: "unverified",
+          verificationStatus: "publisher_key_conflict",
+          sourceRegistry: "main",
         },
       ],
-      { applied: false, reason: "publisher_key_missing", hint: "run nimbus extension sync" },
+      { applied: false, reason: "publisher_key_conflict", hint: "the update is not applied" },
     ]);
     expect(await runExtensionUpdate(ipc.client, ["update", "acme.notes"])).toBe(1);
     expect(ipc.calls.map((c) => c.method)).toEqual([
@@ -310,7 +294,7 @@ describe("sync / update / downgrade — production output wiring", () => {
       "extension.update",
     ]);
     expect(stderr()).toBe(
-      "update failed: publisher_key_missing\n  hint: run nimbus extension sync\n",
+      "update failed: publisher_key_conflict\n  hint: the update is not applied\n",
     );
     expect(stdout()).toBe("");
   });

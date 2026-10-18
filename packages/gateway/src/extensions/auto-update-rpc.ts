@@ -67,6 +67,9 @@ function buildUpdateAction(
       },
       manifestHash: cached.manifestHash,
       signatureB64: cached.signatureB64,
+      // Never `*Key`-named: the executor's prompt redacts such fields (`SENSITIVE_PAYLOAD_KEY`).
+      sourceRegistry: cached.sourceRegistry,
+      rootFingerprint: cached.rootFingerprint,
       ...(hasRunGrant && { runGrantNote: runGrantNoteFor(cached.id) }),
     },
   };
@@ -87,11 +90,11 @@ async function resolveUpdateTarget(
     return { applied: false, reason: "cache_miss" };
   }
 
-  if (cached.verificationStatus === "needs_sync") {
+  if (cached.verificationStatus === "publisher_key_conflict") {
     return {
       applied: false,
-      reason: "publisher_key_missing",
-      hint: "run `nimbus extension sync` to fetch the rotated publisher key",
+      reason: "publisher_key_conflict",
+      hint: `registry ${cached.sourceRegistry} names a different publisher key than the one this gateway trusts; the update is not applied`,
     };
   }
   if (cached.verificationStatus === "signature_failed") {

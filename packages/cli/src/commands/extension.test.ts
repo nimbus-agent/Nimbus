@@ -7,7 +7,7 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
-import type { AvailableUpdateCli, SyncResult, UpdateApplyResultCli } from "./extension.ts";
+import type { AvailableUpdateCli, UpdateApplyResultCli } from "./extension.ts";
 
 const extensionMod = await import("./extension.ts");
 const {
@@ -29,7 +29,6 @@ const {
   runExtensionRemove,
   runExtensionRevoke,
   runExtensionSign,
-  runExtensionSyncWithCaller,
   runExtensionUpdateWithCaller,
   runExtensionDowngradeWithCaller,
   runExtensionDowngrade,
@@ -775,30 +774,21 @@ describe("runExtension top-level dispatcher", () => {
     expect(ipcCalls.some((c) => c.method === "extension.disable")).toBe(true);
   });
 
-  test("dispatches 'sync' subcommand through gateway fixture ipcClient and returns 0", async () => {
+  test("the removed 'sync' subcommand is refused with the usage text and calls nothing", async () => {
     const ipcCalls: Array<{ method: string; params: unknown }> = [];
     setFixture({
       gatewayState: { socketPath: "fake.sock" },
       ipcClient: {
         call: async (method: string, params: unknown) => {
           ipcCalls.push({ method, params });
-          if (method === "extension.sync") {
-            return {
-              publishersChecked: 0,
-              publishersUnchanged: 0,
-              publishersUpdated: [],
-              publishersEvicted: [],
-              failures: [],
-            };
-          }
           return undefined;
         },
         connect: async () => {},
         disconnect: async () => {},
       },
     });
-    await runExtension(["sync"]);
-    expect(ipcCalls.some((c) => c.method === "extension.sync")).toBe(true);
+    await expect(runExtension(["sync"])).rejects.toThrow(/^Usage: nimbus extension/);
+    expect(ipcCalls).toEqual([]);
   });
 
   test("dispatches 'info' subcommand through gateway fixture ipcClient", async () => {
@@ -1490,182 +1480,6 @@ describe("runExtensionInfo --deps — partial dep sets", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// runExtensionSyncWithCaller
-// ---------------------------------------------------------------------------
-describe("runExtensionSyncWithCaller", () => {
-  beforeEach(() => {
-    out.reset();
-    process.exitCode = 0;
-  });
-  afterEach(() => {
-    process.exitCode = 0;
-    clearFixture();
-  });
-
-  function makeSyncResult(overrides: Partial<SyncResult> = {}): SyncResult {
-    return {
-      publishersChecked: 1,
-      publishersUnchanged: 1,
-      publishersUpdated: [],
-      publishersEvicted: [],
-      failures: [],
-      ...overrides,
-    };
-  }
-
-  test("happy path (no flags) prints human summary and returns 0", async () => {
-    const stderrChunks: string[] = [];
-    const stdoutChunks: string[] = [];
-    const result = makeSyncResult({ publishersChecked: 2, publishersUnchanged: 2 });
-    const code = await runExtensionSyncWithCaller({
-      args: [],
-      caller: async () => result,
-      writeStdout: (s) => stdoutChunks.push(s),
-      writeStderr: (s) => stderrChunks.push(s),
-    });
-    expect(code).toBe(0);
-    expect(stdoutChunks.join("")).toContain("publishers checked: 2");
-  });
-
-  test("--json flag emits JSON instead of human text", async () => {
-    const stdoutChunks: string[] = [];
-    const result = makeSyncResult();
-    const code = await runExtensionSyncWithCaller({
-      args: ["--json"],
-      caller: async () => result,
-      writeStdout: (s) => stdoutChunks.push(s),
-      writeStderr: () => {},
-    });
-    expect(code).toBe(0);
-    const parsed = JSON.parse(stdoutChunks.join("").trim()) as SyncResult;
-    expect(parsed.publishersChecked).toBe(1);
-  });
-
-  test("--dry-run passes dryRun:true to caller", async () => {
-    let callerArgs: Record<string, unknown> | undefined;
-    const result = makeSyncResult();
-    await runExtensionSyncWithCaller({
-      args: ["--dry-run"],
-      caller: async (params) => {
-        callerArgs = params;
-        return result;
-      },
-      writeStdout: () => {},
-      writeStderr: () => {},
-    });
-    expect(callerArgs?.["dryRun"]).toBe(true);
-  });
-
-  test("error with 'air-gap' in message returns exit code 3", async () => {
-    const code = await runExtensionSyncWithCaller({
-      args: [],
-      caller: async () => {
-        throw new Error("air-gap: network not available");
-      },
-      writeStdout: () => {},
-      writeStderr: () => {},
-    });
-    expect(code).toBe(3);
-  });
-
-  test("generic error (not air-gap) returns exit code 1", async () => {
-    const code = await runExtensionSyncWithCaller({
-      args: [],
-      caller: async () => {
-        throw new Error("some other failure");
-      },
-      writeStdout: () => {},
-      writeStderr: () => {},
-    });
-    expect(code).toBe(1);
-  });
-
-  test("non-Error thrown returns exit code 1", async () => {
-    const code = await runExtensionSyncWithCaller({
-      args: [],
-      caller: async () => {
-        // eslint-disable-next-line @typescript-eslint/no-throw-literal
-        throw "plain string error";
-      },
-      writeStdout: () => {},
-      writeStderr: () => {},
-    });
-    expect(code).toBe(1);
-  });
-
-  test("reverifyResult=failed in updated entry writes stderr and returns 2", async () => {
-    const stderrChunks: string[] = [];
-    const result = makeSyncResult({
-      publishersUpdated: [
-        { id: "pub-x", reverifyResult: "failed", failedExtensions: ["ext-a", "ext-b"] },
-      ],
-    });
-    const code = await runExtensionSyncWithCaller({
-      args: [],
-      caller: async () => result,
-      writeStdout: () => {},
-      writeStderr: (s) => stderrChunks.push(s),
-    });
-    expect(code).toBe(2);
-    expect(stderrChunks.join("")).toContain("pub-x");
-    expect(stderrChunks.join("")).toContain("ext-a");
-  });
-
-  test("reverifyResult=ok in updated entry does not write stderr", async () => {
-    const stderrChunks: string[] = [];
-    const result = makeSyncResult({
-      publishersUpdated: [{ id: "pub-ok", reverifyResult: "ok", failedExtensions: [] }],
-    });
-    const code = await runExtensionSyncWithCaller({
-      args: [],
-      caller: async () => result,
-      writeStdout: () => {},
-      writeStderr: (s) => stderrChunks.push(s),
-    });
-    expect(code).toBe(0);
-    expect(stderrChunks.join("")).not.toContain("pub-ok");
-  });
-
-  test("all publishers failed (failures.length === publishersChecked > 0) returns 4", async () => {
-    const result = makeSyncResult({
-      publishersChecked: 2,
-      publishersUnchanged: 0,
-      publishersUpdated: [],
-      failures: [
-        { id: "pub-a", reason: "timeout" },
-        { id: "pub-b", reason: "timeout" },
-      ],
-    });
-    const stderrChunks: string[] = [];
-    const code = await runExtensionSyncWithCaller({
-      args: [],
-      caller: async () => result,
-      writeStdout: () => {},
-      writeStderr: (s) => stderrChunks.push(s),
-    });
-    expect(code).toBe(4);
-    expect(stderrChunks.join("")).toContain("pub-a");
-  });
-
-  test("partial failures (some pass) returns 0, not 4", async () => {
-    const result = makeSyncResult({
-      publishersChecked: 3,
-      failures: [{ id: "pub-a", reason: "timeout" }],
-    });
-    const code = await runExtensionSyncWithCaller({
-      args: [],
-      caller: async () => result,
-      writeStdout: () => {},
-      writeStderr: () => {},
-    });
-    expect(code).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// runExtensionUpdateWithCaller — listExtensionUpdates
-// ---------------------------------------------------------------------------
 describe("runExtensionUpdateWithCaller — list mode (no id)", () => {
   beforeEach(() => {
     out.reset();
@@ -1685,6 +1499,7 @@ describe("runExtensionUpdateWithCaller — list mode (no id)", () => {
       channel: "stable",
       publisherStatus: "verified",
       verificationStatus: "verified",
+      sourceRegistry: "main",
       ...overrides,
     };
   }
@@ -1713,6 +1528,23 @@ describe("runExtensionUpdateWithCaller — list mode (no id)", () => {
     expect(stdoutChunks.join("")).toContain("ext-a");
     expect(stdoutChunks.join("")).toContain("1.0.0");
     expect(stdoutChunks.join("")).toContain("1.1.0");
+    expect(stdoutChunks.join("")).toContain("from main");
+    expect(stdoutChunks.join("")).not.toContain("publisher key changed");
+  });
+
+  test("a publisher_key_conflict row carries a 'publisher key changed' marker", async () => {
+    const stdoutChunks: string[] = [];
+    await runExtensionUpdateWithCaller({
+      args: [],
+      caller: async () => [
+        makeUpdate({ verificationStatus: "publisher_key_conflict", publisherStatus: "unverified" }),
+      ],
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    expect(stdoutChunks.join("")).toBe(
+      "ext-a\t1.0.0 → 1.1.0\t[stable]\tfrom main\tunverified\tpublisher_key_conflict\tpublisher key changed\n",
+    );
   });
 
   test("--json flag prints JSON array", async () => {
@@ -1765,6 +1597,7 @@ describe("runExtensionUpdateWithCaller — apply mode (with id)", () => {
       channel: "stable",
       publisherStatus: "verified",
       verificationStatus: "verified",
+      sourceRegistry: "main",
       ...overrides,
     };
   }

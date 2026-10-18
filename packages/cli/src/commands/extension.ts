@@ -685,79 +685,8 @@ export async function runExtensionSign(args: string[]): Promise<number> {
   return 0;
 }
 
-export type SyncResult = {
-  publishersChecked: number;
-  publishersUnchanged: number;
-  publishersUpdated: { id: string; reverifyResult: "ok" | "failed"; failedExtensions: string[] }[];
-  publishersEvicted: string[];
-  failures: { id: string; reason: string }[];
-};
-
-export type SyncIpcCaller = (params: Record<string, unknown>) => Promise<SyncResult>;
-
-export interface RunExtensionSyncOpts {
-  args: string[];
-  caller: SyncIpcCaller;
-  writeStdout: (s: string) => void;
-  writeStderr: (s: string) => void;
-}
-
-function printSyncResultHuman(result: SyncResult, opts: RunExtensionSyncOpts): void {
-  opts.writeStdout(`publishers checked: ${String(result.publishersChecked)}\n`);
-  opts.writeStdout(`unchanged:          ${String(result.publishersUnchanged)}\n`);
-  opts.writeStdout(`updated:            ${String(result.publishersUpdated.length)}\n`);
-  opts.writeStdout(`evicted:            ${String(result.publishersEvicted.length)}\n`);
-  opts.writeStdout(`failed:             ${String(result.failures.length)}\n`);
-  for (const u of result.publishersUpdated) {
-    if (u.reverifyResult === "failed") {
-      opts.writeStderr(
-        `publisher ${u.id} rotated keys; ${String(u.failedExtensions.length)} extension(s) failed re-verify: ${u.failedExtensions.join(", ")}\n`,
-      );
-    }
-  }
-  for (const f of result.failures) {
-    opts.writeStderr(
-      `publisher ${f.id} unreachable (${f.reason}); cached key (if present) remains in use; re-run \`nimbus extension sync\` later, or reinstall affected extensions with \`--publisher-key <path>\` if you have a fresh key locally\n`,
-    );
-  }
-}
-
-function syncResultExitCode(result: SyncResult): number {
-  if (result.publishersUpdated.some((u) => u.reverifyResult === "failed")) return 2;
-  if (result.publishersChecked > 0 && result.failures.length === result.publishersChecked) return 4;
-  return 0;
-}
-
-export async function runExtensionSyncWithCaller(opts: RunExtensionSyncOpts): Promise<number> {
-  const dryRun = opts.args.includes("--dry-run");
-  const json = opts.args.includes("--json");
-  let result: SyncResult;
-  try {
-    result = await opts.caller({ dryRun });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    opts.writeStderr(`${msg}\n`);
-    return /air-gap/i.test(msg) ? 3 : 1;
-  }
-  if (json) {
-    opts.writeStdout(`${JSON.stringify(result)}\n`);
-  } else {
-    printSyncResultHuman(result, opts);
-  }
-  return syncResultExitCode(result);
-}
-
-export async function runExtensionSync(client: IPCClient, args: string[]): Promise<number> {
-  return runExtensionSyncWithCaller({
-    args,
-    caller: async (params) => await client.call("extension.sync", params),
-    writeStdout: (s) => process.stdout.write(s),
-    writeStderr: (s) => process.stderr.write(s),
-  });
-}
-
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
 
 async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
   if (sub === "keygen") {
@@ -785,7 +714,6 @@ async function dispatchExtensionWithCode(
         stdout: (s) => process.stdout.write(s),
         stderr: (s) => process.stderr.write(s),
       }),
-    sync: () => runExtensionSync(client, args),
     update: () => runExtensionUpdate(client, args),
     downgrade: () => runExtensionDowngrade(client, args),
   };
@@ -903,7 +831,9 @@ export interface AvailableUpdateCli {
   readonly toVersion: string;
   readonly channel: "stable" | "beta";
   readonly publisherStatus: "verified" | "unverified";
-  readonly verificationStatus: "verified" | "needs_sync" | "signature_failed";
+  readonly verificationStatus: "verified" | "signature_failed" | "publisher_key_conflict";
+  /** The registry the extension was installed from — the only one its updates come from. */
+  readonly sourceRegistry: string;
 }
 
 export interface UpdateApplyResultCli {
@@ -926,7 +856,9 @@ export interface RunExtensionUpdateOpts {
 }
 
 function formatUpdateRow(u: AvailableUpdateCli): string {
-  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\t${u.publisherStatus}\t${u.verificationStatus}`;
+  const keyChanged =
+    u.verificationStatus === "publisher_key_conflict" ? "\tpublisher key changed" : "";
+  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${u.publisherStatus}\t${u.verificationStatus}${keyChanged}`;
 }
 
 async function listExtensionUpdates(

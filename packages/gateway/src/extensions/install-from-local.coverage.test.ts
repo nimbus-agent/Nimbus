@@ -2,31 +2,22 @@
  * Paths of `install-from-local.ts` that `install-from-local.test.ts` does not reach: the Windows
  * tar resolution on any host, archive layouts, a dependency chain read back from disk, a non-Error
  * publisher-key failure (I16's `extension.signature_failed` row), copy failures, and a source
- * manifest changed while the install was resolving its dependencies.
+ * manifest changed while the owner was being asked to approve the install.
  */
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { listExtensions } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
-import { registerGlobalFetchRestore, requestUrlString } from "../testing/bun-test-support.ts";
+import { registerGlobalFetchRestore } from "../testing/bun-test-support.ts";
 import { MockVault } from "../vault/mock.ts";
 import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
 import { resolveSystemTarCommand } from "./package-extract.ts";
-import type { FetchManifestResponse, RegistryClient } from "./registry-client.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 
 const tempRoots: string[] = [];
@@ -207,13 +198,12 @@ describe("I16 — a publisher-key failure that is not an Error", () => {
     const signature = await signManifest(unsigned, privkey);
     const src = writeSource(f.root, "src", { ...unsigned, signature });
 
-    const thrown: unknown = Object.freeze({ toString: () => "registry socket reset" });
-    const fetcher = {
-      fetch: async () => {
-        throw thrown;
-      },
-    };
+    const thrown: unknown = Object.freeze({ toString: () => "vault backend reset" });
     const vault = new MockVault();
+    const realGet = vault.get.bind(vault);
+    vault.get = async () => {
+      throw thrown;
+    };
 
     let caught: unknown;
     try {
@@ -222,7 +212,6 @@ describe("I16 — a publisher-key failure that is not an Error", () => {
         extensionsDir: f.extensionsDir,
         sourcePath: src,
         vault,
-        fetcher,
       });
     } catch (e) {
       caught = e;
@@ -234,12 +223,12 @@ describe("I16 — a publisher-key failure that is not an Error", () => {
         id: "signed.thrower",
         publisher_id: "acme-pub",
         error: "Unknown",
-        message: "registry socket reset",
+        message: "vault backend reset",
       },
     ]);
     expect(auditPayloads(f.db, "extension.signature_verified")).toEqual([]);
     expect(listExtensions(f.db)).toEqual([]);
-    expect(await vault.get("extension.publisher_key.acme-pub")).toBeNull();
+    expect(await realGet("extension.publisher_key.acme-pub")).toBeNull();
     // The failed install left nothing behind for the next attempt to collide with.
     expect(existsSync(join(f.extensionsDir, "signed.thrower"))).toBe(false);
   });
@@ -262,71 +251,21 @@ describe("copy failures are reported as such and leave nothing installed", () =>
     expect(listExtensions(f.db)).toEqual([]);
     expect(statSync(join(f.extensionsDir, "acme")).isFile()).toBe(true);
   });
-
-  test("a registry dependency: a file standing where its install directory belongs", async () => {
-    const f = fixture("nimbus-ifl-cov-depcp-");
-    const depStage = join(f.root, "dep-stage");
-    writeSource(depStage, "pkg", { id: "dep.blocked", version: "1.0.0" });
-    const tarball = join(f.root, "dep.tgz");
-    packArchive(tarball, depStage, ["pkg"]);
-    const tarballBytes = new Uint8Array(readFileSync(tarball));
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      const url = requestUrlString(input);
-      if (url !== "https://registry.invalid/dep.tgz") throw new Error(`unexpected fetch ${url}`);
-      return new Response(tarballBytes, { status: 200 });
-    }) as typeof fetch;
-    const registryClient: RegistryClient = {
-      fetchPublisherKey: async () => ({ kind: "not_found" }),
-      fetchLatestVersion: async (_id, channel) => ({ version: "1.0.0", channel }),
-      fetchManifest: async (id, version) => ({
-        manifest: {
-          id,
-          version,
-          permissions: { network: [], filesystem: { read: [], write: [] } },
-          updateChannel: "stable",
-        },
-        manifestRaw: { id, version },
-        manifestHash: "0".repeat(64),
-        entryHash: "0".repeat(64),
-        tarballSha256: "f".repeat(64),
-        tarballUrl: "https://registry.invalid/dep.tgz",
-      }),
-    };
-    mkdirSync(f.extensionsDir, { recursive: true });
-    writeFileSync(join(f.extensionsDir, "dep.blocked"), "a stray file, not a directory");
-    const src = writeSource(f.root, "root", {
-      id: "root.of.blocked",
-      version: "1.0.0",
-      dependsOn: { "dep.blocked": "^1.0.0" },
-    });
-
-    await expect(
-      installExtensionFromLocalDirectory({
-        db: f.db,
-        extensionsDir: f.extensionsDir,
-        sourcePath: src,
-        registryClient,
-      }),
-    ).rejects.toThrow(/^dependency copy failed: /);
-    // The dependency failed first, so the root was never copied either.
-    expect(existsSync(join(f.extensionsDir, "root.of.blocked"))).toBe(false);
-    expect(listExtensions(f.db)).toEqual([]);
-  });
 });
 
-describe("a source manifest changed while dependencies were being resolved", () => {
+describe("a source manifest changed while the owner was being asked", () => {
   /**
-   * Installs `toctou.dep`, then removes its on-disk manifest so the solver must ask the registry
-   * for it — the one `await` between reading the root's source manifest and copying the source.
-   * `onResolve` runs inside that call, standing in for a concurrent edit of the source directory.
+   * Installs `toctou.root` with an approval hook. `onApprove` runs inside that call — the one
+   * `await` between reading the root's source manifest and copying the source — standing in for a
+   * concurrent edit of the source directory while the owner looks at the prompt.
    */
   async function installRootWhileResolving(
     prefix: string,
-    onResolve: (rootSourceDir: string) => void,
+    onApprove: (rootSourceDir: string) => void,
   ): Promise<{
     readonly f: Fixture;
     readonly attempt: Promise<unknown>;
-    readonly registryCalls: () => number;
+    readonly approvals: () => number;
   }> {
     const f = fixture(prefix);
     await installExtensionFromLocalDirectory({
@@ -334,47 +273,29 @@ describe("a source manifest changed while dependencies were being resolved", () 
       extensionsDir: f.extensionsDir,
       sourcePath: writeSource(f.root, "dep", { id: "toctou.dep", version: "1.0.0" }),
     });
-    rmSync(join(f.extensionsDir, "toctou.dep", "nimbus.extension.json"));
     const rootSrc = writeSource(f.root, "root", {
       id: "toctou.root",
       version: "1.0.0",
       dependsOn: { "toctou.dep": "^1.0.0" },
     });
-    let resolved = 0;
-    const registryClient: RegistryClient = {
-      fetchPublisherKey: async () => ({ kind: "not_found" }),
-      fetchLatestVersion: async () => null,
-      fetchManifest: async (id, version): Promise<FetchManifestResponse> => {
-        resolved += 1;
-        onResolve(rootSrc);
-        return {
-          manifest: {
-            id,
-            version,
-            permissions: { network: [], filesystem: { read: [], write: [] } },
-            updateChannel: "stable",
-          },
-          manifestRaw: { id, version },
-          manifestHash: "0".repeat(64),
-          entryHash: "0".repeat(64),
-          tarballSha256: "f".repeat(64),
-          tarballUrl: "https://registry.invalid/unused.tgz",
-        };
-      },
-    };
+    let asked = 0;
     const attempt = installExtensionFromLocalDirectory({
       db: f.db,
       extensionsDir: f.extensionsDir,
       sourcePath: rootSrc,
-      registryClient,
+      approve: async () => {
+        asked += 1;
+        onApprove(rootSrc);
+        return true;
+      },
     });
     // Handled here so the rejection is never reported as unhandled before the caller awaits it.
     attempt.catch(() => undefined);
-    return { f, attempt, registryCalls: () => resolved };
+    return { f, attempt, approvals: () => asked };
   }
 
   test("a version bump is refused rather than installed under the identity that was resolved", async () => {
-    const { f, attempt, registryCalls } = await installRootWhileResolving(
+    const { f, attempt, approvals } = await installRootWhileResolving(
       "nimbus-ifl-cov-bump-",
       (dir) => {
         writeFileSync(
@@ -384,20 +305,20 @@ describe("a source manifest changed while dependencies were being resolved", () 
       },
     );
     await expect(attempt).rejects.toThrow("manifest id/version changed across copy");
-    expect(registryCalls()).toBe(1); // the edit really did land inside resolution
+    expect(approvals()).toBe(1); // the edit really did land inside the approval window
     expect(existsSync(join(f.extensionsDir, "toctou.root"))).toBe(false); // rolled back
     expect(listExtensions(f.db).map((e) => e.id)).toEqual(["toctou.dep"]);
   });
 
   test("a deleted manifest is refused after the copy, not installed without one", async () => {
-    const { f, attempt, registryCalls } = await installRootWhileResolving(
+    const { f, attempt, approvals } = await installRootWhileResolving(
       "nimbus-ifl-cov-gone-",
       (dir) => {
         rmSync(join(dir, "nimbus.extension.json"));
       },
     );
     await expect(attempt).rejects.toThrow("extension manifest missing after copy");
-    expect(registryCalls()).toBe(1);
+    expect(approvals()).toBe(1);
     expect(existsSync(join(f.extensionsDir, "toctou.root"))).toBe(false);
     expect(listExtensions(f.db).map((e) => e.id)).toEqual(["toctou.dep"]);
   });

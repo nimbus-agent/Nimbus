@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 
 import type { NimbusVault } from "../vault/index.ts";
-import type { PublisherKeyFetcher } from "./registry-client.ts";
 import { decodeBase64, encodeBase64 } from "./verify-signature.ts";
 
 export const PUBLISHER_KEY_VAULT_PREFIX = "extension.publisher_key." as const;
@@ -36,38 +35,15 @@ export async function evictPublisherKey(vault: NimbusVault, publisherId: string)
   await vault.delete(key(publisherId));
 }
 
-export async function listCachedPublisherIds(vault: NimbusVault): Promise<readonly string[]> {
-  const all = await vault.listKeys(PUBLISHER_KEY_VAULT_PREFIX);
-  const out: string[] = [];
-  for (const k of all) {
-    if (k.startsWith(PUBLISHER_KEY_VAULT_PREFIX)) {
-      out.push(k.slice(PUBLISHER_KEY_VAULT_PREFIX.length));
-    }
-  }
-  return out.sort((a, b) => a.localeCompare(b));
-}
-
-export class AirGapNoPublisherKey extends Error {
-  override readonly name = "AirGapNoPublisherKey";
+/**
+ * Thrown when a signed LOCAL install has no publisher key to verify with: none was passed and the
+ * Vault caches none for that publisher. A local install never fetches a key (spec § 8.9).
+ */
+export class PublisherKeyRequired extends Error {
+  override readonly name = "PublisherKeyRequired";
   constructor(publisherId: string) {
     super(
-      `air-gap is enforced; publisher key for "${publisherId}" is not in your local cache — re-run \`nimbus extension install <path-or-url> --publisher-key <path>\` with the key locally available`,
-    );
-  }
-}
-
-export class PublisherNotRegistered extends Error {
-  override readonly name = "PublisherNotRegistered";
-  constructor(publisherId: string) {
-    super(`publisher "${publisherId}" is not registered with the registry; install refused`);
-  }
-}
-
-export class RegistryUnreachable extends Error {
-  override readonly name = "RegistryUnreachable";
-  constructor(publisherId: string, reason: string) {
-    super(
-      `could not reach registry for publisher "${publisherId}" (${reason}); check your network connection and re-run the install, or re-run \`nimbus extension install <path-or-url> --publisher-key <path>\` with the key locally available — \`nimbus extension sync\` cannot help here because it only refreshes already-installed extensions`,
+      `extension is signed by publisher "${publisherId}" and no key for it is cached in the Vault; re-run with \`--publisher-key <path>\` naming that publisher's public key file`,
     );
   }
 }
@@ -76,10 +52,9 @@ export interface ResolvePublisherKeyOpts {
   publisherId: string;
   explicitKeyPath: string | undefined;
   vault: NimbusVault;
-  fetcher: PublisherKeyFetcher;
-  enforceAirGap: boolean;
 }
 
+/** The key file the owner named, else the Vault's cached key, else `PublisherKeyRequired`. */
 export async function resolvePublisherKey(opts: ResolvePublisherKeyOpts): Promise<Uint8Array> {
   if (opts.explicitKeyPath !== undefined) {
     let text: string;
@@ -103,15 +78,5 @@ export async function resolvePublisherKey(opts: ResolvePublisherKeyOpts): Promis
   }
   const cached = await readPublisherKey(opts.vault, opts.publisherId);
   if (cached !== undefined) return cached;
-  if (opts.enforceAirGap) throw new AirGapNoPublisherKey(opts.publisherId);
-  const result = await opts.fetcher.fetch(opts.publisherId);
-  if (result.kind === "ok") return result.pubkey;
-  if (result.kind === "not_found") throw new PublisherNotRegistered(opts.publisherId);
-  if (result.kind === "transient") {
-    throw new RegistryUnreachable(opts.publisherId, result.message);
-  }
-  throw new RegistryUnreachable(
-    opts.publisherId,
-    `${String(result.statusCode)}: ${result.message}`,
-  );
+  throw new PublisherKeyRequired(opts.publisherId);
 }

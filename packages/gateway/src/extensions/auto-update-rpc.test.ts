@@ -17,8 +17,11 @@ function mkCache(): AutoUpdateCache {
     manifestHash: "d".repeat(64),
     signatureB64: "AA==",
     entryHash: "e".repeat(64),
-    tarballSha256: "f".repeat(64),
-    tarballUrl: "https://r/a.tar.gz",
+    packageSha256: "f".repeat(64),
+    packageSizeBytes: 100,
+    sourceRegistry: "main",
+    rootFingerprint: "c".repeat(32),
+    packagePath: "extensions/com.example.a/1.1.0/package.tgz",
     permissionDiff: {
       network: { added: ["b.com"], removed: [] },
       filesystem: {
@@ -95,18 +98,19 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     expect(res.reason).toBe("cache_miss");
   });
 
-  it("rejects publisher_key_missing", async () => {
+  it("rejects publisher_key_conflict, naming the source registry", async () => {
     const deps = baseDeps();
     const cur = deps.cache.get("com.example.a")!;
-    deps.cache.upsert({ ...cur, verificationStatus: "needs_sync" });
+    deps.cache.upsert({ ...cur, verificationStatus: "publisher_key_conflict" });
     const res = (await dispatchAutoUpdateRpc(
       "extension.update",
       { id: "com.example.a", toVersion: "1.1.0" },
       deps,
     )) as { applied: boolean; reason?: string; hint?: string };
     expect(res.applied).toBe(false);
-    expect(res.reason).toBe("publisher_key_missing");
-    expect(res.hint).toMatch(/nimbus extension sync/);
+    expect(res.reason).toBe("publisher_key_conflict");
+    expect(res.hint).toContain("registry main");
+    expect(res.hint).not.toMatch(/extension sync/);
   });
 
   it("rejects signature_failed", async () => {
@@ -156,7 +160,15 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
       deps,
     );
     const calls = (gate as unknown as { mock: { calls: Array<[unknown]> } }).mock.calls;
-    expect((calls[0]?.[0] as { type: string } | undefined)?.type).toBe("extension.autoUpdate");
+    const action = calls[0]?.[0] as { type: string; payload: Record<string, unknown> } | undefined;
+    expect(action?.type).toBe("extension.autoUpdate");
+    // The prompt names where the update comes from; no field is `*Key`-named (the executor
+    // would redact it to [REDACTED]).
+    expect(action?.payload).toMatchObject({
+      sourceRegistry: "main",
+      rootFingerprint: "c".repeat(32),
+    });
+    expect(Object.keys(action?.payload ?? {}).filter((k) => /key/i.test(k))).toEqual([]);
   });
 
   it("returns applied=false / reason=user_rejected when gate rejects", async () => {

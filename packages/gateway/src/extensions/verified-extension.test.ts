@@ -109,8 +109,6 @@ async function setup(
       ? {}
       : {
           vault,
-          fetcher: { fetch: async () => ({ kind: "not_found" as const }) },
-          enforceAirGap: false,
           publisherKeyPath,
         }),
   });

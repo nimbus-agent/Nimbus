@@ -260,7 +260,6 @@ No production code constructs a `VoiceService` (`ctx.options.voiceService` is se
 | `extension.remove` | request | Uninstall (also stops a running extension) |
 | `extension.info` | request | One extension's detail, incl. `runState` (`disabled`/`no_grant`/`grant_stale`/`ready`/`running`, `extensions/run-state.ts`) and `model: yes\|no` |
 | `extension.rehash` | request | Adopt the on-disk tree digest as trusted (HITL-gated like an install; CLI-only, LAN-forbidden) |
-| `extension.sync` | request | Sync publisher public keys into the Vault (CLI-only, LAN-forbidden) |
 | `extension.checkForUpdates` / `extension.update` | request | Registry poll / apply a cached bump (HITL `extension.autoUpdate`/`extension.downgrade`) |
 | `extension.approveRun` | request | Record a run grant under the `extension.run` HITL action (V70 `extension_run_grant`); `model: true` also offers its tools to the engine agent (I42/I43). CLI-only, LAN-forbidden, not on the Tauri allowlist |
 | `extension.revokeRun` | request | Withdraw the run grant (stops it if running). CLI-only, LAN-forbidden |

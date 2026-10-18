@@ -5617,11 +5617,17 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
     expect(src).toMatch(
       /if \(bootPolicy\.telemetryFlush\) \{\s*const telemetryStop = startTelemetryFlushScheduler\(/,
     );
-    // `extensionsAutoUpdate` is one of three ANDed preconditions (registry URL configured, not
-    // env-disabled), not a lone `if (bootPolicy.X)` — pin the exact conjunction, not just presence.
+    // `extensionsAutoUpdate` is one of two ANDed preconditions (not env-disabled), not a lone
+    // `if (bootPolicy.X)` — pin the exact conjunction, not just presence. The daemon is built ONCE.
     expect(src).toMatch(
-      /autoUpdateRegistryUrl !== "" &&\s*!autoUpdateDisabled &&\s*bootPolicyFor\(paths\)\.extensionsAutoUpdate\s*\) \{/,
+      /if \(!autoUpdateDisabled && bootPolicyFor\(paths\)\.extensionsAutoUpdate\) \{/,
     );
+    expect(src.match(/createAutoUpdateRuntime\(/g)?.length).toBe(1);
+    // One air-gap switch (spec § 8.8): the daemon and the `registry.*` IPC methods share the SAME
+    // registry fetch deps object, whose `enforceAirGap` is the LLM router's.
+    expect(src).toMatch(/fetch: registryFetch,/);
+    expect(src).toMatch(/^\s*registryFetch,$/m);
+    expect(src).toMatch(/enforceAirGap: \(\) => llmRegistry\.llmRouter\.enforcesAirGap\(\),/);
   });
 
   test("clause 6: a demo-rooted gateway runs no extension — the runtime predicate is false even with [extensions] runtime = true (negative control: real is true)", async () => {
@@ -6178,8 +6184,6 @@ describe("I43 — an installed extension's code runs only through the verified s
         ? {}
         : {
             vault,
-            fetcher: { fetch: async () => ({ kind: "not_found" as const }) },
-            enforceAirGap: false,
             publisherKeyPath,
           }),
     });

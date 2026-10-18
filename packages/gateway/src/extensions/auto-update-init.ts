@@ -5,6 +5,7 @@ import { listExtensions, updateExtensionRowVersion } from "../automation/extensi
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { ExtensionAutoUpdater, type InstalledExtensionRow } from "./auto-update.ts";
+import { MAX_TARBALL_BYTES } from "./auto-update-apply.ts";
 import { AutoUpdateCache } from "./auto-update-cache.ts";
 import {
   createPerformDowngrade,
@@ -14,10 +15,21 @@ import {
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
 import { extractPackage } from "./package-extract.ts";
-import { readPublisherKey } from "./publisher-keys.ts";
-import { createRegistryClient, type RegistryClient } from "./registry-client.ts";
+import { RegistryError, type RegistryErrorCode } from "./registry/registry-errors.ts";
+import {
+  fetchRegistryBytes,
+  fetchVerifiedIndex,
+  type RegistryFetchDeps,
+} from "./registry/registry-fetch.ts";
+import {
+  fetchRegistryManifest,
+  vaultPublisherKeyConflicts,
+  verifyRegistryManifestSignature,
+  verifySignedManifest,
+} from "./registry/registry-manifest.ts";
+import { getRegistry, type RegistryRow } from "./registry/registry-store.ts";
+import { collectRegistryUpdates } from "./registry/registry-update-source.ts";
 import { getRunGrant } from "./run-grant-store.ts";
-import { verifyManifestSignature } from "./verify-signature.ts";
 import { prevVersionDir } from "./version-store.ts";
 
 export interface AutoUpdateInitOpts {
@@ -25,9 +37,12 @@ export interface AutoUpdateInitOpts {
   vault: NimbusVault;
   extensionsDir: string;
   dataDir: string;
-  registryBaseUrl: string;
+  /**
+   * The registry fetch deps `platform/assemble.ts` also hands the `registry.*` methods — the SAME
+   * object, so the daemon, install, search and `registry add|refresh` obey ONE air-gap switch.
+   */
+  fetch: Omit<RegistryFetchDeps, "db">;
   intervalHours: number;
-  enforceAirGap: boolean;
   stopExtensionClient?: (extensionId: string) => Promise<void>;
 }
 
@@ -62,6 +77,15 @@ function listInstalledRows(db: Database): InstalledExtensionRow[] {
         version: r.version,
         install_path: r.install_path,
         enabled: r.enabled,
+        ...(r.source_registry != null &&
+          r.source_root_fingerprint != null &&
+          r.source_channel != null && {
+            source: {
+              registry: r.source_registry,
+              rootFingerprint: r.source_root_fingerprint,
+              channel: r.source_channel,
+            },
+          }),
         manifest: {
           id: manifest.id,
           version: manifest.version,
@@ -76,6 +100,7 @@ function listInstalledRows(db: Database): InstalledExtensionRow[] {
               write: [...manifest.permissions.filesystem.write],
             },
           },
+          ...(manifest.dependsOn !== undefined && { dependsOn: manifest.dependsOn }),
         },
       });
     } catch {
@@ -92,10 +117,91 @@ async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
     .join("");
 }
 
+/** Registry errors that mean the bytes could not be FETCHED, as opposed to fetched and refused. */
+const FETCH_FAILURE_CODES: ReadonlySet<RegistryErrorCode> = new Set<RegistryErrorCode>([
+  "ERR_REGISTRY_UNREACHABLE",
+  "ERR_REGISTRY_AIR_GAP",
+  "ERR_REGISTRY_TRANSPORT_REFUSED",
+  "ERR_REGISTRY_TOO_LARGE",
+  "ERR_REGISTRY_NOT_FOUND",
+]);
+
+/** The update's source registry, still pinned to the root key the update was detected under. */
+function sourceRegistryOf(db: Database, update: AvailableUpdate): RegistryRow {
+  const reg = getRegistry(db, update.sourceRegistry);
+  if (reg === undefined || reg.rootFingerprint !== update.rootFingerprint) {
+    throw new RegistryError(
+      "ERR_REGISTRY_ROOT_KEY_CHANGED",
+      `registry "${update.sourceRegistry}" was removed or re-pinned since the update was detected`,
+    );
+  }
+  return reg;
+}
+
+/**
+ * Apply-time re-verification (spec § 8.8, § 8.6 steps 2–4): the CURRENT signed index must still list
+ * exactly this manifest and package for `id@toVersion`, the manifest must match its signed hash and
+ * the index's publisher, the Vault must not trust a different key for that publisher, and the I16
+ * signature must verify with the index's key. A failure to REACH the registry throws
+ * `download_failed: …`; every other failure throws `signature_failed: …` (the audit phase).
+ */
+async function reverifyUpdateManifest(
+  fetchDeps: RegistryFetchDeps,
+  vault: NimbusVault,
+  update: AvailableUpdate,
+  signal: AbortSignal,
+): Promise<void> {
+  // The publisher the INSTALLED copy declares: an index that now lists another publisher for this
+  // id is a different trust root, whatever the Vault holds for the new one.
+  const installedPublisher = listInstalledRows(fetchDeps.db).find((r) => r.id === update.id)
+    ?.manifest.publisher?.id;
+  try {
+    const reg = sourceRegistryOf(fetchDeps.db, update);
+    const index = await fetchVerifiedIndex(fetchDeps, reg, signal);
+    const entry = index.extensions[update.id];
+    const vEntry = entry?.versions[update.toVersion];
+    if (
+      entry === undefined ||
+      vEntry === undefined ||
+      vEntry.manifestSha256 !== update.manifestHash ||
+      vEntry.packageSha256 !== update.packageSha256 ||
+      vEntry.package !== update.packagePath ||
+      vEntry.entryHash !== update.entryHash
+    ) {
+      throw new Error(`the index no longer lists this ${update.id}@${update.toVersion}`);
+    }
+    const fetched = await fetchRegistryManifest(
+      fetchDeps,
+      reg,
+      entry,
+      update.id,
+      update.toVersion,
+      vEntry,
+      signal,
+    );
+    if (
+      entry.publisher.id !== installedPublisher ||
+      (await vaultPublisherKeyConflicts(vault, entry.publisher.id, fetched.publisherKey))
+    ) {
+      throw new RegistryError(
+        "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
+        `the index names publisher "${entry.publisher.id}" with a key the Vault does not trust for ${update.id}`,
+      );
+    }
+    await verifyRegistryManifestSignature(fetched, update.id, update.toVersion);
+  } catch (e) {
+    const phase =
+      e instanceof RegistryError && FETCH_FAILURE_CODES.has(e.code)
+        ? "download_failed"
+        : "signature_failed";
+    throw new Error(`${phase}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRuntime {
   const cache = new AutoUpdateCache();
-  const registry: RegistryClient = createRegistryClient({ baseUrl: opts.registryBaseUrl });
   const abortController = new AbortController();
+  const fetchDeps: RegistryFetchDeps = { ...opts.fetch, db: opts.db };
 
   // The SQLite reads/writes below are synchronous, but the daemon and the IPC bag take
   // Promise-returning callbacks. A body that can throw is lifted with `Promise.try`, which keeps
@@ -139,45 +245,20 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   const daemon = new ExtensionAutoUpdater({
     cache,
     listInstalled: () => Promise.try(() => listInstalledRows(opts.db)),
-    fetchLatestVersion: (id, channel, signal) => registry.fetchLatestVersion(id, channel, signal),
-    fetchManifest: async (id, version, signal) => {
-      const r = await registry.fetchManifest(id, version, signal);
-      const m = r.manifest;
-      const sig = m.signature ?? "";
-      return {
-        manifestHash: r.manifestHash,
-        entryHash: r.entryHash,
-        tarballSha256: r.tarballSha256,
-        tarballUrl: r.tarballUrl,
-        manifestRaw: r.manifestRaw,
-        ...(r.tarballSizeBytes === undefined ? {} : { tarballSizeBytes: r.tarballSizeBytes }),
-        manifest: {
-          id: m.id,
-          version: m.version,
-          ...(m.name !== undefined && { name: m.name }),
-          updateChannel: m.updateChannel,
-          ...(m.publisher !== undefined && { publisher: m.publisher }),
-          signature: sig,
-          ...(m.changelog !== undefined && { changelog: m.changelog }),
-          permissions: {
-            network: [...m.permissions.network],
-            filesystem: {
-              read: [...m.permissions.filesystem.read],
-              write: [...m.permissions.filesystem.write],
-            },
-          },
+    collect: (rows, signal) =>
+      collectRegistryUpdates(
+        {
+          db: opts.db,
+          fetch: fetchDeps,
+          vault: opts.vault,
+          verifyManifestSignature: verifySignedManifest,
+          now: () => Date.now(),
         },
-      };
-    },
-    verifyManifestSignature: (manifest, pubkey) =>
-      verifyManifestSignature(manifest as Parameters<typeof verifyManifestSignature>[0], pubkey),
-    lookupPublisherKey: async (publisherId) => {
-      const k = await readPublisherKey(opts.vault, publisherId);
-      return k ?? null;
-    },
+        rows,
+        signal,
+      ),
     appendAudit: wrapAudit,
     intervalHours: opts.intervalHours,
-    enforceAirGap: opts.enforceAirGap,
     now: () => Date.now(),
     random: () => Math.random(),
   });
@@ -186,9 +267,23 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
 
   const performUpgradeDeps: PerformUpgradeDeps = {
     extensionsRoot: opts.extensionsDir,
-    fetcher: globalThis.fetch.bind(globalThis),
     signal: abortController.signal,
-    sha256OfTarball: sha256OfBytes,
+    reverifyManifest: (update, signal) =>
+      reverifyUpdateManifest(fetchDeps, opts.vault, update, signal),
+    fetchPackage: (update, signal) =>
+      fetchRegistryBytes(
+        fetchDeps,
+        sourceRegistryOf(opts.db, update),
+        update.packagePath,
+        {
+          method: "registry.package",
+          extensionId: update.id,
+          version: update.toVersion,
+          maxBytes: MAX_TARBALL_BYTES,
+        },
+        signal,
+      ),
+    sha256OfPackage: sha256OfBytes,
     extractPackage,
     stopExtensionClient: opts.stopExtensionClient ?? noopStop,
     dbUpdateExtensionRow,

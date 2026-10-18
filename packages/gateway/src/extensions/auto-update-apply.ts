@@ -18,33 +18,8 @@ export async function verifyTarballSha256(
   return hexEqualIgnoreCase(hex, expectedHex);
 }
 
-export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
-
-export interface DownloadTarballOpts {
-  fetcher: FetchFn;
-  maxBytes: number;
-  signal: AbortSignal;
-}
-
+/** The package size cap for an install or update (the registry's `registry.package` fetch). */
 export const MAX_TARBALL_BYTES = 50 * 1024 * 1024;
-export async function downloadTarball(url: string, opts: DownloadTarballOpts): Promise<Uint8Array> {
-  const res = await opts.fetcher(url, { signal: opts.signal });
-  if (res.status < 200 || res.status >= 300) {
-    throw new Error(`tarball fetch failed: HTTP ${res.status}`);
-  }
-  const cl = res.headers.get("content-length");
-  if (cl !== null) {
-    const declared = Number(cl);
-    if (Number.isFinite(declared) && declared > opts.maxBytes) {
-      throw new Error(`tarball too large: content-length=${declared} > ${opts.maxBytes}`);
-    }
-  }
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  if (bytes.byteLength > opts.maxBytes) {
-    throw new Error(`tarball too large: body=${bytes.byteLength} > ${opts.maxBytes}`);
-  }
-  return bytes;
-}
 
 export interface ApplyUpgradeOpts {
   /** The row's flat `install_path`. */

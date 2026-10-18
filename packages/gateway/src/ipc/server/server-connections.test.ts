@@ -163,8 +163,11 @@ function cachedUpdate(): AvailableUpdate {
     manifestHash: "0123456789abcdef".repeat(4),
     signatureB64: "",
     entryHash: "e".repeat(64),
-    tarballSha256: "f".repeat(64),
-    tarballUrl: "https://registry.invalid/ext.pending-1.1.0.tgz",
+    packageSha256: "f".repeat(64),
+    packageSizeBytes: 100,
+    sourceRegistry: "main",
+    rootFingerprint: "c".repeat(32),
+    packagePath: "extensions/x/1.1.0/package.tgz",
     permissionDiff: {
       network: { added: [], removed: [] },
       filesystem: { read: { added: [], removed: [] }, write: { added: [], removed: [] } },

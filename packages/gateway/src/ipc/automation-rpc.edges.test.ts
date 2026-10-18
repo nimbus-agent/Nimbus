@@ -18,8 +18,7 @@ import {
   recoveredPendingRehashRegistry,
 } from "../extensions/hard-disable.ts";
 import { publisherKeyFingerprint } from "../extensions/install-from-local.ts";
-import { readPublisherKey, writePublisherKey } from "../extensions/publisher-keys.ts";
-import type { PublisherKeyFetcher } from "../extensions/registry-client.ts";
+import { readPublisherKey } from "../extensions/publisher-keys.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import {
   encodeBase64,
@@ -151,6 +150,15 @@ describe("watcher.create — what counts as declaring filter.affectedService", (
 });
 
 describe("extension.install through the RPC", () => {
+  /** A Vault whose every read rejects with a bare (non-Error) value. */
+  function rejectingVault(reason: string): MockVault {
+    const vault = new MockVault();
+    vault.get = () => Promise.reject(reason);
+    return vault;
+  }
+  const BLANK_KEY_REFUSAL =
+    'extension is signed by publisher "test-pub" and no key for it is cached in the Vault; re-run with `--publisher-key <path>` naming that publisher\'s public key file';
+
   function unsignedSource(root: string, id: string, version: string): string {
     const src = join(root, "src");
     mkdirSync(join(src, "dist"), { recursive: true });
@@ -178,7 +186,6 @@ describe("extension.install through the RPC", () => {
     return src;
   }
 
-  const NOT_FOUND: PublisherKeyFetcher = { fetch: async () => ({ kind: "not_found" }) };
   /** Stands in for the executor gate the server dispatcher builds; approves everything. */
   const approveAll = async (): Promise<boolean> => true;
 
@@ -223,9 +230,6 @@ describe("extension.install through the RPC", () => {
       db: indexDb(),
       extensionsDir: join(root, "extensions"),
       vault,
-      // The registry knows nothing of this publisher, so only the explicit key can verify it.
-      fetcher: NOT_FOUND,
-      enforceAirGap: false,
     });
     expect((out as { value: { id: string } }).value.id).toBe("test.ext.signed");
     const stored = await readPublisherKey(vault, "test-pub");
@@ -234,7 +238,7 @@ describe("extension.install through the RPC", () => {
     );
   });
 
-  test("a BLANK key path is not passed on: resolution falls to the registry, which refuses", async () => {
+  test("a BLANK key path is not passed on: with no Vault key the install refuses naming --publisher-key", async () => {
     const root = tempDir("nimbus-auto-blankkey-");
     const src = await signedSource(root, generateEd25519Keypair());
     const events = captureStateChanges();
@@ -246,27 +250,24 @@ describe("extension.install through the RPC", () => {
         db: indexDb(),
         extensionsDir: join(root, "extensions"),
         vault: new MockVault(),
-        fetcher: NOT_FOUND,
       }),
     );
     expect(err).toBeInstanceOf(AutomationRpcError);
     expect((err as AutomationRpcError).rpcCode).toBe(-32602);
-    expect((err as AutomationRpcError).message).toBe(
-      'publisher "test-pub" is not registered with the registry; install refused',
-    );
+    expect((err as AutomationRpcError).message).toBe(BLANK_KEY_REFUSAL);
     expect(events).toEqual([
       {
         extensionId: src,
         action: "install",
         ok: false,
-        error: 'publisher "test-pub" is not registered with the registry; install refused',
+        error: BLANK_KEY_REFUSAL,
       },
     ]);
   });
 
-  test("a fetcher that rejects with a NON-Error is still a -32602 carrying its text", async () => {
-    // The fetcher is an injected registry client; its rejection reaches the wire as a message
-    // either way, never as a bare value the JSON-RPC layer cannot render.
+  test("a Vault read that rejects with a NON-Error is still a -32602 carrying its text", async () => {
+    // The rejection reaches the wire as a message either way, never as a bare value the JSON-RPC
+    // layer cannot render.
     const root = tempDir("nimbus-auto-rejectfetch-");
     const src = await signedSource(root, generateEd25519Keypair());
     const events = captureStateChanges();
@@ -277,14 +278,13 @@ describe("extension.install through the RPC", () => {
         params: { sourcePath: src },
         db: indexDb(),
         extensionsDir: join(root, "extensions"),
-        vault: new MockVault(),
-        fetcher: { fetch: () => Promise.reject("registry socket closed") },
+        vault: rejectingVault("vault socket closed"),
       }),
     );
     expect(err).toBeInstanceOf(AutomationRpcError);
     expect((err as AutomationRpcError).rpcCode).toBe(-32602);
-    expect((err as AutomationRpcError).message).toBe("registry socket closed");
-    expect(events.map((e) => e.error)).toEqual(["registry socket closed"]);
+    expect((err as AutomationRpcError).message).toBe("vault socket closed");
+    expect(events.map((e) => e.error)).toEqual(["vault socket closed"]);
   });
 
   test("REFUSES without the owner gate, and writes nothing (Non-Negotiable 2)", async () => {
@@ -331,7 +331,7 @@ describe("extension.install through the RPC", () => {
     const src = await signedSource(root, keypair);
     const extensionsDir = join(root, "extensions");
     const seen: Array<{ type: string; payload: Record<string, unknown>; copied: boolean }> = [];
-    // The signed source fails I16 later (no key is resolvable), which is fine: this test is about
+    // The signed source fails I16 later (no key is cached), which is fine: this test is about
     // what the owner was asked, and that the question came before anything reached the disk.
     await rejectionOf(
       dispatchAutomationRpc({
@@ -347,7 +347,6 @@ describe("extension.install through the RPC", () => {
         db: indexDb(),
         extensionsDir,
         vault: new MockVault(),
-        fetcher: NOT_FOUND,
       }),
     );
     expect(seen).toHaveLength(1);
@@ -366,33 +365,6 @@ describe("extension.install through the RPC", () => {
       installs: [{ id: "test.ext.signed", version: "1.0.0" }],
     });
   });
-
-  test("enforceAirGap reaches the install: an uncached publisher key is refused before any fetch", async () => {
-    const root = tempDir("nimbus-auto-airgap-");
-    const src = await signedSource(root, generateEd25519Keypair());
-    let fetched = 0;
-    const err = await rejectionOf(
-      dispatchAutomationRpc({
-        method: "extension.install",
-        ownerGate: approveAll,
-        params: { sourcePath: src },
-        db: indexDb(),
-        extensionsDir: join(root, "extensions"),
-        vault: new MockVault(),
-        fetcher: {
-          fetch: async () => {
-            fetched++;
-            return { kind: "not_found" };
-          },
-        },
-        enforceAirGap: true,
-      }),
-    );
-    expect((err as AutomationRpcError).message).toStartWith(
-      'air-gap is enforced; publisher key for "test-pub" is not in your local cache',
-    );
-    expect(fetched).toBe(0);
-  });
 });
 
 describe("extension.update — the stateChanged event mirrors the outcome", () => {
@@ -410,8 +382,11 @@ describe("extension.update — the stateChanged event mirrors the outcome", () =
       manifestHash: "abcdef0123456789abcdef0123456789",
       signatureB64: "",
       entryHash: "",
-      tarballSha256: "f".repeat(64),
-      tarballUrl: "https://registry.invalid/x.tgz",
+      packageSha256: "f".repeat(64),
+      packageSizeBytes: 100,
+      sourceRegistry: "main",
+      rootFingerprint: "c".repeat(32),
+      packagePath: "extensions/x/1.1.0/package.tgz",
       permissionDiff: {
         network: { added: [], removed: [] },
         filesystem: { read: { added: [], removed: [] }, write: { added: [], removed: [] } },
@@ -646,92 +621,6 @@ describe("extension.list / extension.info — pre-T2 and prev decorations", () =
 
   test("an unreadable prev/ (a file, not a directory) still returns the row, with no version", async () => {
     expect(await infoPrevVersion(extensionsDirWithPrev("file"))).toBeNull();
-  });
-});
-
-describe("extension.sync — prerequisites and defaults", () => {
-  test("a vault without a key fetcher is a -32603 naming the fetcher", async () => {
-    const err = await rejectionOf(
-      dispatchAutomationRpc({
-        method: "extension.sync",
-        params: {},
-        db: indexDb(),
-        vault: new MockVault(),
-      }),
-    );
-    expect((err as AutomationRpcError).rpcCode).toBe(-32603);
-    expect((err as AutomationRpcError).message).toBe(
-      "Gateway is not configured with a publisher key fetcher",
-    );
-  });
-
-  /** One installed extension signed by `test-pub`, whose key is already cached in `vault`. */
-  async function stageSignedRow(db: Database, vault: MockVault): Promise<void> {
-    const keypair = generateEd25519Keypair();
-    await writePublisherKey(vault, "test-pub", keypair.pubkey);
-    const extDir = join(tempDir("nimbus-sync-ext-"), "ext-test-pub");
-    mkdirSync(join(extDir, "dist"), { recursive: true });
-    const manifest = {
-      id: "ext-test-pub",
-      version: "1.0.0",
-      permissions: {},
-      publisher: { id: "test-pub", key: encodeBase64(keypair.pubkey) },
-    };
-    const signature = await signManifest(manifest, keypair.privkey);
-    writeFileSync(
-      join(extDir, "nimbus.extension.json"),
-      JSON.stringify({ ...manifest, signature }),
-    );
-    writeFileSync(join(extDir, "dist", "index.js"), "export default {};");
-    insertExtensionRow(db, {
-      id: "ext-test-pub",
-      version: "1.0.0",
-      install_path: extDir,
-      manifest_hash: "m".repeat(64),
-      entry_hash: "e".repeat(64),
-      enabled: 1,
-      installed_at: 1,
-      last_verified_at: 1,
-    });
-  }
-
-  test("a fetcher rejecting with a NON-Error is a -32603 carrying its text", async () => {
-    const db = indexDb();
-    const vault = new MockVault();
-    await stageSignedRow(db, vault);
-    const err = await rejectionOf(
-      dispatchAutomationRpc({
-        method: "extension.sync",
-        params: {},
-        db,
-        vault,
-        fetcher: { fetch: () => Promise.reject("registry socket closed") },
-      }),
-    );
-    expect(err).toBeInstanceOf(AutomationRpcError);
-    expect((err as AutomationRpcError).rpcCode).toBe(-32603);
-    expect((err as AutomationRpcError).message).toBe("registry socket closed");
-  });
-
-  test("a non-boolean dryRun is NOT a dry run, and an absent enforceAirGap does not enforce", async () => {
-    // A publisher the registry no longer knows is EVICTED from the vault on a real run and only
-    // reported on a dry one — so the vault's state says which kind of run this was.
-    const db = indexDb();
-    const vault = new MockVault();
-    await stageSignedRow(db, vault);
-
-    const out = await dispatchAutomationRpc({
-      method: "extension.sync",
-      params: { dryRun: "yes" },
-      db,
-      vault,
-      fetcher: { fetch: async () => ({ kind: "not_found" }) },
-    });
-    expect(out.kind).toBe("hit");
-    expect((out as { value: { publishersEvicted: string[] } }).value.publishersEvicted).toEqual([
-      "test-pub",
-    ]);
-    expect(await readPublisherKey(vault, "test-pub")).toBeUndefined();
   });
 });
 

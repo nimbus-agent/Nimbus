@@ -1466,10 +1466,6 @@ const D22_REGISTRY_APPENDER_ALLOWED: readonly string[] = [
 const D22_REGISTRY_FETCH_RE = /\bfetch\s*\(/;
 const D22_REGISTRY_FETCH_ALLOWED: readonly string[] = [
   "packages/gateway/src/extensions/registry/registry-fetch.ts",
-  // Temporary: these still call a publisher-key fetcher / the legacy registry client.
-  "packages/gateway/src/extensions/publisher-keys.ts", // removed in Task 13 (registry-sourced updates)
-  "packages/gateway/src/extensions/registry-client.ts", // removed in Task 13 (registry-sourced updates)
-  "packages/gateway/src/extensions/sync.ts", // removed in Task 13 (registry-sourced updates)
 ];
 
 function scanRegistryRule(

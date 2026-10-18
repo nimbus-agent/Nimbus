@@ -3,8 +3,6 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Server } from "bun";
-import * as tar from "tar";
 
 import { insertExtensionRow, listExtensions } from "../../../src/automation/extension-store.ts";
 import { createAutoUpdateRuntime } from "../../../src/extensions/auto-update-init.ts";
@@ -12,12 +10,13 @@ import {
   _resetAutoUpdateMutexForTests,
   dispatchAutoUpdateRpc,
 } from "../../../src/extensions/auto-update-rpc.ts";
+import { publisherKeyFingerprint } from "../../../src/extensions/install-from-local.ts";
 import { writePublisherKey } from "../../../src/extensions/publisher-keys.ts";
-import {
-  encodeBase64,
-  generateEd25519Keypair,
-  signManifest,
-} from "../../../src/extensions/verify-signature.ts";
+import { buildTestRegistry } from "../../../src/extensions/registry/__fixtures__/build-test-registry.ts";
+import { installFromRegistry } from "../../../src/extensions/registry/install-from-registry.ts";
+import type { RegistryFetchDeps } from "../../../src/extensions/registry/registry-fetch.ts";
+import { insertRegistry } from "../../../src/extensions/registry/registry-store.ts";
+import { generateEd25519Keypair } from "../../../src/extensions/verify-signature.ts";
 import {
   prevVersionDir,
   removeExtensionVersionStore,
@@ -25,190 +24,68 @@ import {
 import { MockVault } from "../../../src/vault/mock.ts";
 import { setupFreshExtensionDb } from "../../fixtures/extension.ts";
 
-interface RegistryEntry {
-  version: string;
-  manifest: Record<string, unknown>;
-  manifestHash: string;
-  entryHash: string;
-  tarballBytes: Uint8Array;
-}
+/** A local-folder registry makes no network request at all; any remote fetch would fail. */
+const NO_NETWORK: Omit<RegistryFetchDeps, "db"> = {
+  fetchFn: () => Promise.reject(new Error("no network in this test")),
+  enforceAirGap: () => false,
+  now: () => Date.now(),
+  production: false,
+};
 
-async function startRegistry(): Promise<{
-  baseUrl: string;
-  set(id: string, entry: RegistryEntry): void;
-  stop(): void;
-}> {
-  const entries = new Map<string, RegistryEntry>();
-  let server: Server | undefined;
-  server = Bun.serve({
-    port: 0,
-    fetch: async (req) => {
-      const u = new URL(req.url);
-      let m = /^\/v1\/extensions\/([^/]+)\/latest$/.exec(u.pathname);
-      if (m !== null) {
-        const e = entries.get(decodeURIComponent(m[1] ?? ""));
-        if (e === undefined) return new Response("not found", { status: 404 });
-        return new Response(JSON.stringify({ version: e.version, channel: "stable" }), {
-          status: 200,
-        });
-      }
-      m = /^\/v1\/extensions\/([^/]+)\/manifest$/.exec(u.pathname);
-      if (m !== null) {
-        const e = entries.get(decodeURIComponent(m[1] ?? ""));
-        if (e === undefined) return new Response("not found", { status: 404 });
-        const base = `http://localhost:${String(server?.port ?? 0)}`;
-        return new Response(
-          JSON.stringify({
-            manifest: e.manifest,
-            manifestHash: e.manifestHash,
-            entryHash: e.entryHash,
-            tarballSha256: createHash("sha256").update(e.tarballBytes).digest("hex"),
-            tarballUrl: `${base}/v1/tarball/${encodeURIComponent(
-              decodeURIComponent(m[1] ?? ""),
-            )}.tar.gz`,
-            tarballSizeBytes: e.tarballBytes.byteLength,
-          }),
-          { status: 200 },
-        );
-      }
-      m = /^\/v1\/tarball\/(.+)\.tar\.gz$/.exec(u.pathname);
-      if (m !== null) {
-        const e = entries.get(decodeURIComponent(m[1] ?? ""));
-        if (e === undefined) return new Response("not found", { status: 404 });
-        return new Response(e.tarballBytes, {
-          status: 200,
-          headers: { "content-length": String(e.tarballBytes.byteLength) },
-        });
-      }
-      return new Response("not found", { status: 404 });
-    },
-  });
-  return {
-    baseUrl: `http://localhost:${String(server.port)}`,
-    set(id, entry) {
-      entries.set(id, entry);
-    },
-    stop() {
-      server?.stop();
-    },
-  };
-}
-
-async function buildTarball(opts: {
-  extensionId: string;
-  version: string;
-  publisherId: string;
-  pubkey: Uint8Array;
-  privkey: Uint8Array;
-}): Promise<{
-  manifest: Record<string, unknown>;
-  manifestHash: string;
-  entryHash: string;
-  tarballBytes: Uint8Array;
-}> {
-  const baseManifest = {
-    id: opts.extensionId,
-    version: opts.version,
-    permissions: { network: [], filesystem: { read: [], write: [] } },
-    publisher: { id: opts.publisherId, key: encodeBase64(opts.pubkey) },
-  };
-  const signature = await signManifest(baseManifest, opts.privkey);
-  const manifest = { ...baseManifest, signature };
-  const manifestText = JSON.stringify(manifest);
-  const entryText = `export default { version: "${opts.version}" };`;
-
-  const stage = mkdtempSync(join(tmpdir(), "nimbus-au-e2e-stage-"));
-  try {
-    writeFileSync(join(stage, "nimbus.extension.json"), manifestText, "utf8");
-    mkdirSync(join(stage, "dist"), { recursive: true });
-    writeFileSync(join(stage, "dist", "index.js"), entryText, "utf8");
-    const tarPath = join(stage, "out.tar.gz");
-    await tar.c({ cwd: stage, file: tarPath, gzip: true }, ["nimbus.extension.json", "dist"]);
-    const tarballBytes = new Uint8Array(readFileSync(tarPath));
-    return {
-      manifest,
-      manifestHash: createHash("sha256").update(Buffer.from(manifestText, "utf8")).digest("hex"),
-      entryHash: createHash("sha256").update(Buffer.from(entryText, "utf8")).digest("hex"),
-      tarballBytes,
-    };
-  } finally {
-    rmSync(stage, { recursive: true, force: true });
-  }
-}
-
-let registry: Awaited<ReturnType<typeof startRegistry>>;
+const ID = "ext-pub-1";
 let tmpRoot: string;
 
-beforeEach(async () => {
-  registry = await startRegistry();
+beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-e2e-"));
   _resetAutoUpdateMutexForTests();
 }, 30_000);
 
 afterEach(() => {
-  registry.stop();
   rmSync(tmpRoot, { recursive: true, force: true });
 });
+
+/** Installs `ID@1.0.0` from a local signed registry that also carries 1.1.0. */
+async function installedFromRegistry(
+  db: Parameters<typeof insertRegistry>[0],
+  extensionsDir: string,
+  vault: MockVault,
+): Promise<void> {
+  const regDir = join(tmpRoot, "registry");
+  const reg = await buildTestRegistry(regDir, {
+    id: ID,
+    versions: [{ version: "1.0.0" }, { version: "1.1.0" }],
+    publisherId: "pub-1",
+  });
+  insertRegistry(db, {
+    name: "main",
+    url: regDir,
+    rootKey: reg.rootKey,
+    rootFingerprint: publisherKeyFingerprint(reg.rootKey),
+    lastSequence: 0,
+    lastGeneratedAt: "2026-10-01T00:00:00Z",
+    addedAt: 1,
+  });
+  await installFromRegistry(
+    { db, extensionsDir, vault, fetch: NO_NETWORK, approve: async () => true },
+    { id: ID, version: "1.0.0" },
+  );
+}
 
 describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () => {
   test("checkForUpdates {force} → update apply → disk swap; audit/output clean of secrets", async () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     try {
-      const { privkey, pubkey } = generateEd25519Keypair();
       const vault = new MockVault();
-      await writePublisherKey(vault, "pub-1", pubkey);
-
-      const extensionId = "ext-pub-1";
-      const extRoot = join(extensionsDir, extensionId);
-
-      const v1 = {
-        id: extensionId,
-        version: "1.0.0",
-        publisher: { id: "pub-1", key: encodeBase64(pubkey) },
-      };
-      const v1Sig = await signManifest(v1, privkey);
-      const v1ManifestText = JSON.stringify({ ...v1, signature: v1Sig });
-      const v1EntryText = `export default { version: "1.0.0" };`;
-      mkdirSync(join(extRoot, "dist"), { recursive: true });
-      writeFileSync(join(extRoot, "nimbus.extension.json"), v1ManifestText, "utf8");
-      writeFileSync(join(extRoot, "dist", "index.js"), v1EntryText, "utf8");
-
-      insertExtensionRow(db, {
-        id: extensionId,
-        version: "1.0.0",
-        install_path: extRoot,
-        manifest_hash: createHash("sha256")
-          .update(Buffer.from(v1ManifestText, "utf8"))
-          .digest("hex"),
-        entry_hash: createHash("sha256").update(Buffer.from(v1EntryText, "utf8")).digest("hex"),
-        enabled: 1,
-        installed_at: Date.now(),
-        last_verified_at: Date.now(),
-      });
-
-      const built = await buildTarball({
-        extensionId,
-        version: "1.1.0",
-        publisherId: "pub-1",
-        pubkey,
-        privkey,
-      });
-      registry.set(extensionId, {
-        version: "1.1.0",
-        manifest: built.manifest,
-        manifestHash: built.manifestHash,
-        entryHash: built.entryHash,
-        tarballBytes: built.tarballBytes,
-      });
+      await installedFromRegistry(db, extensionsDir, vault);
+      const extRoot = join(extensionsDir, ID);
 
       const runtime = createAutoUpdateRuntime({
         db,
         vault,
         extensionsDir,
         dataDir: tmpRoot,
-        registryBaseUrl: registry.baseUrl,
+        fetch: NO_NETWORK,
         intervalHours: 24,
-        enforceAirGap: false,
       });
       const autoUpdateDeps = { ...runtime.deps, gate: async () => "proceed" as const };
 
@@ -216,14 +93,13 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
         "extension.checkForUpdates",
         { force: true },
         autoUpdateDeps,
-      )) as Array<{ id: string; fromVersion: string; toVersion: string }>;
+      )) as Array<{ id: string; toVersion: string; sourceRegistry: string }>;
       expect(list).toHaveLength(1);
-      expect(list[0]?.id).toBe(extensionId);
-      expect(list[0]?.toVersion).toBe("1.1.0");
+      expect(list[0]).toMatchObject({ id: ID, toVersion: "1.1.0", sourceRegistry: "main" });
 
       const apply = (await dispatchAutoUpdateRpc(
         "extension.update",
-        { id: extensionId, toVersion: "1.1.0" },
+        { id: ID, toVersion: "1.1.0" },
         autoUpdateDeps,
       )) as { applied: boolean; jobId?: string };
       expect(apply.applied).toBe(true);
@@ -233,9 +109,9 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
         readFileSync(join(extRoot, "nimbus.extension.json"), "utf8"),
       ) as { version: string };
       expect(activeManifest.version).toBe("1.1.0");
-      expect(existsSync(prevVersionDir(extensionsDir, extensionId, "1.0.0"))).toBe(true);
+      expect(existsSync(prevVersionDir(extensionsDir, ID, "1.0.0"))).toBe(true);
 
-      const row = listExtensions(db).find((r) => r.id === extensionId);
+      const row = listExtensions(db).find((r) => r.id === ID);
       expect(row?.version).toBe("1.1.0");
 
       const auditRows = db.query(`SELECT action_json FROM audit_log`).all() as Array<{
@@ -246,10 +122,6 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       expect(auditDump).not.toMatch(/password/i);
       expect(auditDump).not.toMatch(/secret_value/i);
 
-      const types = auditRows
-        .map((r) => JSON.parse(r.action_json) as { id?: string })
-        .filter((p) => p.id === extensionId).length;
-      expect(types).toBeGreaterThan(0);
       const actionTypes = db.query(`SELECT action_type FROM audit_log`).all() as Array<{
         action_type: string;
       }>;
@@ -258,7 +130,7 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
       expect(seen.has("extension.autoUpdate.applied")).toBe(true);
     } finally {
       db.close();
-      removeExtensionVersionStore(extensionsDir, "ext-pub-1");
+      removeExtensionVersionStore(extensionsDir, ID);
       rmSync(extensionsDir, { recursive: true, force: true });
     }
   });
@@ -311,9 +183,8 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
         vault,
         extensionsDir,
         dataDir: tmpRoot,
-        registryBaseUrl: registry.baseUrl,
+        fetch: NO_NETWORK,
         intervalHours: 24,
-        enforceAirGap: false,
       });
       runtime.deps.cache.upsert({
         id: extensionId,
@@ -339,8 +210,11 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
             ),
           )
           .digest("hex"),
-        tarballSha256: "f".repeat(64),
-        tarballUrl: "https://r/x",
+        packageSha256: "f".repeat(64),
+        packageSizeBytes: 100,
+        sourceRegistry: "main",
+        rootFingerprint: "c".repeat(32),
+        packagePath: "extensions/ext-pub-1/1.0.0/package.tgz",
         permissionDiff: {
           network: { added: [], removed: [] },
           filesystem: { read: { added: [], removed: [] }, write: { added: [], removed: [] } },
@@ -369,54 +243,51 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
     }
   });
 
-  test("publisher_key_missing path → {applied:false, reason, hint}", async () => {
+  test("publisher_key_conflict path → {applied:false, reason, hint}, nothing swapped", async () => {
     const { db, extensionsDir } = setupFreshExtensionDb();
     try {
       const vault = new MockVault();
+      await installedFromRegistry(db, extensionsDir, vault);
+      // The Vault now trusts a DIFFERENT key for "pub-1" than the one the signed index names.
+      await writePublisherKey(vault, "pub-1", generateEd25519Keypair().pubkey);
 
-      const extensionId = "ext-orphan";
       const runtime = createAutoUpdateRuntime({
         db,
         vault,
         extensionsDir,
         dataDir: tmpRoot,
-        registryBaseUrl: registry.baseUrl,
+        fetch: NO_NETWORK,
         intervalHours: 24,
-        enforceAirGap: false,
       });
-      runtime.deps.cache.upsert({
-        id: extensionId,
-        displayName: extensionId,
-        fromVersion: "1.0.0",
-        toVersion: "1.1.0",
-        channel: "stable",
-        changelog: "",
-        publisherStatus: "unverified",
-        manifestHash: "d".repeat(64),
-        signatureB64: "AA==",
-        entryHash: "e".repeat(64),
-        tarballSha256: "f".repeat(64),
-        tarballUrl: "https://r/x",
-        permissionDiff: {
-          network: { added: [], removed: [] },
-          filesystem: { read: { added: [], removed: [] }, write: { added: [], removed: [] } },
+      let asked = false;
+      const autoUpdateDeps = {
+        ...runtime.deps,
+        gate: async () => {
+          asked = true;
+          return "proceed" as const;
         },
-        verificationStatus: "needs_sync",
-        detectedAt: 1,
-      });
-      const autoUpdateDeps = { ...runtime.deps, gate: async () => "proceed" as const };
+      };
+      const list = (await dispatchAutoUpdateRpc(
+        "extension.checkForUpdates",
+        { force: true },
+        autoUpdateDeps,
+      )) as Array<{ verificationStatus: string }>;
+      expect(list.map((u) => u.verificationStatus)).toEqual(["publisher_key_conflict"]);
 
       const apply = (await dispatchAutoUpdateRpc(
         "extension.update",
-        { id: extensionId, toVersion: "1.1.0" },
+        { id: ID, toVersion: "1.1.0" },
         autoUpdateDeps,
       )) as { applied: boolean; reason?: string; hint?: string };
       expect(apply.applied).toBe(false);
-      expect(apply.reason).toBe("publisher_key_missing");
-      expect(apply.hint).toMatch(/nimbus extension sync/);
+      expect(apply.reason).toBe("publisher_key_conflict");
+      expect(apply.hint).toContain("registry main");
+      // Refused before the owner is ever asked, and nothing on disk moved.
+      expect(asked).toBe(false);
+      expect(listExtensions(db).find((r) => r.id === ID)?.version).toBe("1.0.0");
     } finally {
       db.close();
-      removeExtensionVersionStore(extensionsDir, "ext-orphan");
+      removeExtensionVersionStore(extensionsDir, ID);
       rmSync(extensionsDir, { recursive: true, force: true });
     }
   });

@@ -83,7 +83,6 @@ const FORBIDDEN_OVER_LAN = new Set([
   "connector.userMcpCall",
   "connector.detectLocalAuth", // full method — reads the owner's local CLI logins
   "connector.adoptLocalAuth", // full method — copies/points credentials into the owner's Vault
-  "extension.sync", // T2 PR 2 — CLI-only sync of publisher pubkeys via vault writes
   "extension.checkForUpdates", // T2 PR 3 — CLI-only auto-update detection
   "extension.update", // T2 PR 3 — CLI-only auto-update apply (HITL-gated)
   // Extension management is local/CLI-only — never reachable over the LAN channel (I5

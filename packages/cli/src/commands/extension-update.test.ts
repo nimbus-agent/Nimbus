@@ -21,6 +21,7 @@ function sampleUpdate(): AvailableUpdateCli {
     channel: "stable",
     publisherStatus: "verified",
     verificationStatus: "verified",
+    sourceRegistry: "main",
   };
 }
 
@@ -106,13 +107,13 @@ describe("runExtensionUpdateWithCaller — apply mode (id supplied)", () => {
     expect(parsed.applied).toBe(true);
   });
 
-  test("exit 1 and stderr hint on publisher_key_missing", async () => {
+  test("exit 1 and stderr hint on publisher_key_conflict", async () => {
     const caller: AutoUpdateIpcCaller = async (method) => {
       if (method === "extension.checkForUpdates") return [sampleUpdate()];
       return {
         applied: false,
-        reason: "publisher_key_missing",
-        hint: "run `nimbus extension sync`",
+        reason: "publisher_key_conflict",
+        hint: "registry main names a different publisher key than the one this gateway trusts; the update is not applied",
       } satisfies UpdateApplyResultCli;
     };
     const captured = captureStreams();
@@ -123,8 +124,10 @@ describe("runExtensionUpdateWithCaller — apply mode (id supplied)", () => {
       writeStderr: (s) => captured.stderr.push(s),
     });
     expect(code).toBe(1);
-    expect(captured.stderr.join("")).toContain("publisher_key_missing");
-    expect(captured.stderr.join("")).toMatch(/nimbus extension sync/);
+    expect(captured.stderr.join("")).toContain("publisher_key_conflict");
+    expect(captured.stderr.join("")).toContain(
+      "hint: registry main names a different publisher key",
+    );
   });
 
   test("exit 1 when no cached entry for the id", async () => {

@@ -54,8 +54,6 @@ describe("Signed install round-trip integration (T2 PR 2 Task 22)", () => {
           extensionsDir,
           sourcePath: sourceDir,
           vault,
-          fetcher: { fetch: async () => ({ kind: "not_found" }) },
-          enforceAirGap: false,
           publisherKeyPath: keyFile,
         });
         expect(installResult.id).toBe("roundtrip-ext");
@@ -112,8 +110,6 @@ describe("Signed install round-trip integration (T2 PR 2 Task 22)", () => {
           extensionsDir,
           sourcePath: sourceDir,
           vault,
-          fetcher: { fetch: async () => ({ kind: "not_found" }) },
-          enforceAirGap: false,
           publisherKeyPath: keyFile,
         }),
       ).rejects.toThrow();

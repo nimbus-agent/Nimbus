@@ -10,7 +10,7 @@ export interface AvailableUpdateUi {
   readonly toVersion: string;
   readonly channel: "stable" | "beta";
   readonly publisherStatus: "verified" | "unverified";
-  readonly verificationStatus: "verified" | "needs_sync" | "signature_failed";
+  readonly verificationStatus: "verified" | "signature_failed" | "publisher_key_conflict";
 }
 
 export interface UpdateApplyResultUi {
@@ -123,12 +123,12 @@ export function PendingUpdates({
                   >
                     publisher: {u.publisherStatus}
                   </span>
-                  {u.verificationStatus === "needs_sync" && (
+                  {u.verificationStatus === "publisher_key_conflict" && (
                     <span
-                      data-testid={`needs-sync-${u.id}`}
+                      data-testid={`key-conflict-${u.id}`}
                       className="px-1.5 py-0.5 rounded bg-amber-200 text-amber-900"
                     >
-                      needs sync — run <code>nimbus extension sync</code>
+                      publisher key changed — not applied
                     </span>
                   )}
                   {u.verificationStatus === "signature_failed" && (
