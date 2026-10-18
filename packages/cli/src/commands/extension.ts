@@ -18,6 +18,7 @@ import {
 } from "../lib/interactive-ipc-handlers.ts";
 import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { runExtensionPublish } from "./extension-publish.ts";
 import { runExtensionInfoRemote, runExtensionSearch } from "./extension-registry-cmds.ts";
 import {
   formatNetworkIsolationLine,
@@ -721,9 +722,19 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json] | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]";
 
-async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
+/**
+ * Subcommands that need no gateway. `publish` gets the RAW args: `stripFlags` drops `--channel` and
+ * its value, which would silently publish a beta as stable.
+ */
+async function runExtensionOffline(sub: string, args: string[]): Promise<boolean> {
+  if (sub === "publish") {
+    const code = await runExtensionPublish(args.slice(1));
+    if (code !== 0) process.exit(code);
+    return true;
+  }
+  const rest = stripFlags(args.slice(1));
   if (sub === "keygen") {
     const code = await runExtensionKeygen(rest);
     if (code !== 0) process.exit(code);
@@ -834,7 +845,7 @@ export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
   const rest = stripFlags(args.slice(1));
 
-  if (await runExtensionOffline(sub, rest)) {
+  if (await runExtensionOffline(sub, args)) {
     return;
   }
 

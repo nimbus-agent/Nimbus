@@ -21,7 +21,6 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   emptyIndex,
-  inspectPackage,
   isValidSemver,
   packExtensionDir,
   parseRegistryConfig,
@@ -35,6 +34,7 @@ import {
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
 import { decodeBase64, encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
+import { buildPublishCandidate, DEFAULT_REGISTRY_CONFIG } from "../lib/publish-candidate.ts";
 import { readIndexFile, writeIndexAtomic } from "../lib/registry-index.ts";
 
 export interface MaintainIo {
@@ -202,33 +202,11 @@ function isDirectory(path: string): boolean {
   }
 }
 
-const DEFAULT_REGISTRY_CONFIG: RegistryConfig = { format: 1, requirePublisherNamespace: false };
-
 /** `<dir>/nimbus-registry.json` when present; absent means today's rules (no namespace required). */
 function readRegistryConfig(dir: string): RegistryConfig {
   const path = join(dir, "nimbus-registry.json");
   if (!existsSync(path)) return DEFAULT_REGISTRY_CONFIG;
   return parseRegistryConfig(readFileSync(path));
-}
-
-/** A string field of the package's inner manifest, or "" so the validator reports the real problem. */
-function innerField(manifest: Record<string, unknown>, key: string): string {
-  const v = manifest[key];
-  return typeof v === "string" ? v : "";
-}
-
-/** The publish request a CI check would read, built from the manifest the maintainer is adding. */
-function syntheticPublishRequest(
-  id: string,
-  version: string,
-  channel: string,
-  inner: { manifest: Record<string, unknown> },
-): Uint8Array {
-  const pub = inner.manifest["publisher"] as { key?: unknown } | null | undefined;
-  const key = typeof pub?.key === "string" ? pub.key : "";
-  return new TextEncoder().encode(
-    JSON.stringify({ id, version, channel, publisherFingerprint: publisherKeyFingerprint(key) }),
-  );
 }
 
 async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
@@ -256,32 +234,18 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
     } else {
       writeFileSync(tgz, fileBytes, { flag: "wx" });
     }
-    const tgzBytes = readFileSync(tgz);
-    if (tgzBytes.length === 0) throw new MaintainError("package size is out of range");
+    if (statSync(tgz).size === 0) throw new MaintainError("package size is out of range");
     // The signed index was verified by `loadOwnedIndex` above; the validator trusts it.
     const config = readRegistryConfig(dir);
-    const inner = await inspectPackage(tgz, work);
-    const manifestId = innerField(inner.manifest, "id");
-    const manifestVersion = innerField(inner.manifest, "version");
-    const v = await validatePublish(
-      {
-        dirId: manifestId,
-        dirVersion: manifestVersion,
-        manifestBytes: inner.manifestBytes,
-        packageBytes: tgzBytes,
-        publishRequestBytes: syntheticPublishRequest(manifestId, manifestVersion, channel, inner),
-      },
-      index,
-      config,
-      work,
-    );
+    const candidate = await buildPublishCandidate(tgz, work, channel);
+    const v = await validatePublish(candidate, index, config, work);
     const existing = index.extensions[v.id];
 
     const rel = `extensions/${v.id}/${v.version}`;
     const destDir = join(dir, "extensions", ...v.id.split("/"), v.version);
     mkdirSync(destDir, { recursive: true });
-    writeFileSync(join(destDir, "manifest.json"), inner.manifestBytes);
-    writeFileSync(join(destDir, "package.tgz"), tgzBytes);
+    writeFileSync(join(destDir, "manifest.json"), candidate.manifestBytes);
+    writeFileSync(join(destDir, "package.tgz"), candidate.packageBytes);
 
     const entry = {
       channel: v.channel,

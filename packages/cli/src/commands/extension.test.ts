@@ -710,6 +710,37 @@ describe("runExtension top-level dispatcher", () => {
     }
   });
 
+  test("publish --channel beta reaches runExtensionPublish intact", async () => {
+    // `stripFlags` would drop `--channel <v>`; an invalid value proves the flag arrived, because
+    // only runExtensionPublish itself can refuse it — before any git or network call.
+    const origExit = process.exit.bind(process);
+    const origErr = process.stderr.write.bind(process.stderr);
+    const errChunks: string[] = [];
+    process.exit = ((code?: number) => {
+      throw new Error(`process.exit(${code ?? ""})`);
+    }) as typeof process.exit;
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      errChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      await expect(
+        runExtension([
+          "publish",
+          "ext-dir",
+          "--registry-repo",
+          "acme/registry",
+          "--channel",
+          "gamma",
+        ]),
+      ).rejects.toThrow("process.exit(2)");
+      expect(errChunks.join("")).toContain("--channel must be stable or beta");
+    } finally {
+      process.exit = origExit;
+      process.stderr.write = origErr;
+    }
+  });
+
   test("dispatches 'list' subcommand through gateway fixture ipcClient", async () => {
     const ipcCalls: Array<{ method: string; params: unknown }> = [];
     setFixture({

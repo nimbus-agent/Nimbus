@@ -4611,6 +4611,25 @@ nimbus extension sign ./nimbus-my-connector --key ./my-publisher-key
 
 ---
 
+### `nimbus extension publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]`
+
+Open a pull request that adds a signed extension to a git-repository registry on GitHub. No gateway, no Vault and no token: `gh` owns GitHub authentication and Nimbus never reads it.
+
+1. Packs the package file set of `<dir>` (`nimbus.extension.json`, everything under `dist/`, top-level `README*`/`LICENSE*`) and validates it with the same rules the registry's own check runs: the manifest, the publisher signature, the entry inside `dist/`, the caps, and, against the registry's published state, that `<id>@<version>` is new and that the publisher id keeps its key.
+2. Reads that state from the registry's `gh-pages` branch: the signed `index.json` (verified against its own root key first) and `nimbus-registry.json` (falling back to the default branch's copy; absent from both means no id namespace is required). A registry with no `gh-pages` branch is refused as not initialised.
+3. Works in a shallow temp clone (`git clone --depth 1 --no-single-branch`), or in `--clone <path>`, an existing clean clone whose `origin` is the registry.
+4. On a new branch `publish/<id>/<version>` writes exactly `extensions/<id>/<version>/manifest.json` (the signed bytes, verbatim), `package.tgz` and `publish-request.json` (`id`, `version`, `channel`, `publisherFingerprint`; `--channel` defaults to `stable`) and commits them with `core.autocrlf=false`, so a Windows checkout cannot change the committed bytes. Your own git identity is used; a fallback is passed only when git has none.
+5. When `gh` is installed and signed in (`gh auth status`), forks the registry (`gh repo fork --remote --remote-name fork`), pushes the branch to the fork and runs `gh pr create`. Otherwise, or with `--no-pr`, it prints the branch, the clone path and the exact `git push` / `gh pr create` commands, and keeps the clone.
+
+Every refusal happens before anything is written to git. Exit code `2` for a usage error or a refusal (registry refusals print `ERR_REGISTRY_*: detail`), `1` for a failed `git`/`gh` command or anything unexpected.
+
+```bash
+nimbus extension publish . --registry-repo nimbus-agent/extensions
+nimbus extension publish . --registry-repo nimbus-agent/extensions --channel beta --no-pr
+```
+
+---
+
 ### `nimbus scaffold mcp <name>`
 
 Scaffold a real, tested MCP server you can register with `nimbus connector add --mcp`. The name is positional (lowercase letters, digits and underscores, 1-62 characters) and the package is always created at `./<name>/` in the current working directory — there is no `--name` or `--output` flag, and the command refuses if that directory already exists. The server is built on `@modelcontextprotocol/sdk` 1.32.0 (the version the CLI itself pins) and exposes one tool, `echo`; the package carries its own test and a `bun run build` that compiles it with `bun build --compile` to `dist/<name>` (`.exe` on Windows), plus a README with the register and call commands.
