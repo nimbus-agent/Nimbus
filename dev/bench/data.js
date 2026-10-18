@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792266174019,
+  "lastUpdate": 1792298768737,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d3d252e8c6ea3342fb5b9b80391eb056d952ff3c",
-          "message": "feat(cli): implement --json on the six commands that documented it (#1011)\n\nCloses #998.\n\n`--json` was documented on six commands and parsed by none — silently\nignored, with human-readable output printed instead. A script piping\n`nimbus status --json` into `jq` got formatted text and failed\nconfusingly.\n\nNow implemented on **`status`**, **`connector list`**, **`db verify`**,\n**`db repair`**, **`config list`** and **`audit`**. Each emits parseable\nJSON on stdout with **nothing else on stdout**, verified end-to-end\nagainst a live gateway.\n\n## A false claim, corrected\n\nThe first cut documented behaviour that a reviewer proved wrong in three\nplaces: `status.ts`'s `StatusJson` docblock and `docs/cli-reference.md`\nboth claimed *\"a stale state file whose socket no longer responds\nreports `running: false` with the IPC message in `error`\"*. That isn't\nwhat happens. All three places now describe the behaviour actually\nestablished by experiment, pinned by two red-proved tests.\n\nBehaviour was **documented, not changed** — `runStatus` is untouched.\nThere's a defensible alternative (catch and report the IPC error rather\nthan describing the current shape), but changing runtime behaviour\nbelongs in its own PR, not one whose remit is making a documented flag\nreal.\n\n## Interaction with #1000\n\n#1000 corrected 52 wrong doc claims, including adding *\"`nimbus status`\nreads only `--verbose` and `--drift`; there is no JSON output mode\"* —\nwhich this PR makes false. Rebased onto it and resolved by documenting\nthe new support **on top of** #1000's corrected text. An independent\nreviewer confirmed **none of #1000's other corrections were reverted**\nin the process.\n\n## Note on scope\n\nThis is an API commitment: the JSON shapes are now something consumers\ncan depend on. The shapes follow the convention already used by `nimbus\nquery --json` rather than inventing a new envelope. Tests assert the\n**parsed shape**, not string matches against formatted text.",
-          "timestamp": "2026-08-01T11:40:26Z",
-          "tree_id": "174262ba3948995215c7faff75660bf575f4420c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d3d252e8c6ea3342fb5b9b80391eb056d952ff3c"
-        },
-        "date": 1785585114637,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 308.82578834999697,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.2260839499992,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 253.64567704999718,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d91c63c20face0654f5a100c2325920c1e4542e3",
+          "message": "docs: sync skills and docs with the extension runtime and CI changes; add sandbox/extensions and MCP-sink skills (#1694)\n\nBrings the skills, the CI-doctor agent and the docs-site HITL page up to\ndate with the S3 extension runtime (#1665, #1689, #1692) and the CI\nretry changes (#1676, #1685, #1687).\n\nThe PRs themselves had already updated `CLAUDE.md`/`GEMINI.md`,\n`docs/README.md`, `docs/architecture.md`, `docs/roadmap.md`,\n`docs/cli-reference.md` and `docs/SECURITY-INVARIANTS.md`. I re-checked\ntheir headline facts against code (HITL set 140, schema V70, invariants\nI1–I43, nine `ai_v2` names, Tauri allowlist 109) and found nothing\nstale, so this PR leaves them alone. What had fallen behind:\n\n- **`nimbus-ipc` skill**: the `extension.*` table listed 5 methods. It\nnow lists the live set: `info`, `rehash`, `sync`,\n`checkForUpdates`/`update`, `approveRun`, `revokeRun`, and the\n`stateChanged` event. It also has a paragraph on the I43 runtime: the\nlazy `mesh:ext:<serviceId>` slot, `ext_` service-id derivation and\n`connector.userMcpTools`/`userMcpCall`.\n- **`nimbus-commands` skill**: new block for `extension approve\n[--model]` / `revoke` / `rehash`, `connector tools|call ext_<sid>`, and\n`[extensions] runtime`. The `audit:invariants` line now names\nD33(a)–(c).\n- **`nimbus-file-map` skill**: new \"Extensions — Runtime (I43)\" section\ncovering the ten runtime files.\n- **`nimbus-architecture` skill**: the `extensions/` row now mentions\nthe install gate, run grants and runtime.\n- **`nimbus-ci-doctor` agent, `nimbus-testing` and `nimbus-preflight`\nskills**: these still said the retry wrappers \"re-run the whole suite\nonce\". `test-with-retry.ts` now re-runs only the failed files when the\nJUnit report accounts for every failure, and kills an attempt that is\nsilent for 5 minutes.\n- **Docs site `user-guide/hitl-and-safety.mdx`**: new section explaining\nthat installing an extension does not run it, running one needs `nimbus\nextension approve`, and every tool call to an extension or user MCP\nserver asks for approval, `--model` included.\n\nRun states, method names, the service-id rule and the CLI syntax were\nall checked against `extensions/run-state.ts`,\n`extension-service-id.ts`, `ipc/automation-rpc.ts` and\n`docs/cli-reference.md`. `bun run preflight:fast` passes.\n\n### Second commit: two new skills, an agent fix, and a stale\narchitecture section\n\n- **New skill `nimbus-sandbox-and-extensions`.** It covers third-party\ncode end to end: the per-OS `SandboxRunner` (I15/D10, I1, D25), user MCP\nservers and I42, and the S3 extension runtime (PRs 1–4: tree digest V66,\nrun grants V70, I43, D33(a)–(c), `approve --model`, run states, `ext_`\nids). It also lists the per-OS sandbox traps this repo has hit, and has\na file table and a change checklist. These directories are the busiest\nin the gateway right now (`lazy-mesh` had 10 commits in the last 30\ndays, `extensions` 8, `platform/sandbox` 7), and the next S3 item, the\nmarketplace registry, lands here.\n- **New skill `nimbus-mcp-sink`.** It covers the three write doors (I28,\nD32(a)–(g), V67–V69): the fixed gate order of `submitCapture`,\n`acceptCapture` and `acceptAction`, the proposability table (derived\nfrom code: 140 actions that need approval, 29 proposable, 111 denied),\n`[mcp_sink]` config, bounds and pitfalls.\n- Both skills are registered in the skill tables of `CLAUDE.md` and\n`GEMINI.md`, which stay identical.\n- **`nimbus-sonar-gate` agent.**\n- It had a hardcoded `Co-Authored-By: Claude Opus 4.8 (1M context)`\ntrailer. It now defers to the session's attribution instructions.\n- It now says where the gate blocks. The `SonarQube quality gate\n(enforced)` step in `Unit + Coverage` reds the `PR quality — required\ngates` aggregator. The step is not one of the individually required\nruleset checks, and it lets the job pass if the scanner itself fails (no\nreport, the analysis task fails or times out, or no `SONAR_TOKEN`). It\nruns after the coverage-floor step, so a floor failure means it never\nran.\n- **`docs/architecture.md` § MCP capture sink.** Its PR 1 overview still\nread as the current state: \"ONE kind of thing\", V67-only states, four\nconfig keys, \"D32 has four clauses\". It now names all three PRs and\npoints to the V69 rebuild, `propose_action`/`capture_status`, the\n`action_*` config keys, and D32(a)–(g).\n\nEvery backticked identifier in the two new skills was checked to exist\nin `packages/` or `scripts/`. The one exception, `StdioClientTransport`,\nis a third-party class that `docs/SECURITY-INVARIANTS.md` § I15 already\nnames. `audit:doc-refs` resolves every cited path, and `bun run\npreflight:fast` passes.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Clarified that installing an extension does not run it: extensions\nrequire separate approval to run, and each tool call requires its own\napproval.\n* Expanded guidance on extension runtime controls, permissions, updates,\nstatus, and sandboxing.\n* Updated CI testing documentation to explain when retries rerun failed\nfiles versus the full command, and how successful retries are reported.\n* Added guidance on MCP capture: notes are searchable immediately, while\nproposals and actions require owner acceptance; actions also require\nexecutor approval. Documented configuration and capture status behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-18T07:35:39+03:00",
+          "tree_id": "030aa98d9088af25ee963a0e6184080a82d4eea5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d91c63c20face0654f5a100c2325920c1e4542e3"
+        },
+        "date": 1792298763658,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 265.08513024999974,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 263.42181404999866,
             "unit": "ms"
           }
         ]
