@@ -5,7 +5,7 @@ import { join, resolve, sep } from "node:path";
 import { extract, list } from "tar";
 import { MAX_ENTRY_COUNT, MAX_MANIFEST_BYTES, MAX_UNPACKED_BYTES } from "./caps.ts";
 import { RegistryError } from "./errors.ts";
-import { DEFAULT_EXTENSION_ENTRY } from "./manifest.ts";
+import { rawManifestEntryRelPath } from "./manifest.ts";
 import { PACKAGE_MANIFEST_FILE } from "./package-set.ts";
 
 export interface InspectedPackage {
@@ -82,9 +82,9 @@ export async function inspectPackage(tgz: string, work: string): Promise<Inspect
     throw manifestInvalid("manifest is not a JSON object");
   }
   const m = manifest as Record<string, unknown>;
-  const declared = m["entry"];
-  const entryRel =
-    typeof declared === "string" && declared !== "" ? declared : DEFAULT_EXTENSION_ENTRY;
+  // The gateway's rule (`entry`, else the `entrypoint` alias, else the default), so the hash
+  // recorded is the hash of the file a client will run.
+  const entryRel = rawManifestEntryRelPath(m);
   const entryPath = resolve(out, entryRel);
   if (!entryPath.startsWith(resolve(out) + sep) || !existsSync(entryPath)) {
     throw manifestInvalid(`extension entry ${entryRel} is missing or outside the package`);

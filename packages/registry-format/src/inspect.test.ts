@@ -209,6 +209,29 @@ describe("inspectPackage refusals after extraction", () => {
     }
   });
 
+  test("a manifest naming its entry only by `entrypoint` hashes that file", async () => {
+    const tgz = writeRawTar([
+      {
+        name: "nimbus.extension.json",
+        body: JSON.stringify({ id: "a", entrypoint: "dist/server.js" }),
+      },
+      { name: "dist/index.js", body: "default" },
+      { name: "dist/server.js", body: "server" },
+    ]);
+    const r = await inspectPackage(tgz, freshWork());
+    expect(r.entryHash).toBe(createHash("sha256").update("server").digest("hex"));
+  });
+
+  test("a manifest naming neither entry nor entrypoint hashes dist/index.js", async () => {
+    const tgz = writeRawTar([
+      { name: "nimbus.extension.json", body: JSON.stringify({ id: "a" }) },
+      { name: "dist/index.js", body: "default" },
+      { name: "dist/server.js", body: "server" },
+    ]);
+    const r = await inspectPackage(tgz, freshWork());
+    expect(r.entryHash).toBe(createHash("sha256").update("default").digest("hex"));
+  });
+
   test("a repeated file name is listed once per archive entry, in sorted order", async () => {
     const tgz = writeRawTar([
       ...VALID,
