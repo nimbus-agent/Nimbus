@@ -3657,7 +3657,14 @@ export async function assemblePlatformServices(
   ]);
 
   try {
-    await verifyExtensionsBestEffort(db, syncLogger, connectorMesh, { vault });
+    await verifyExtensionsBestEffort(
+      db,
+      syncLogger,
+      connectorMesh,
+      { vault },
+      undefined,
+      paths.extensionsDir,
+    );
   } finally {
     extensionSpawnGate.resolve();
   }

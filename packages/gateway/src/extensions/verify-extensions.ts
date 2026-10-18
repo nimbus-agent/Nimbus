@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Logger } from "pino";
 import semver from "semver";
@@ -59,6 +59,8 @@ function tryPromotePrevVersion(
   const target = newestPrevVersion(extensionsDir, row.id);
   if (target === undefined) return false;
   try {
+    // A slash id nests the install path, and its parent may not exist after a crash.
+    mkdirSync(dirname(activePath), { recursive: true });
     renameSync(prevVersionDir(extensionsDir, row.id, target), activePath);
     // The promoted bytes are what is on disk now; the row's old hashes describe the version that
     // was lost, so record what the promoted tree actually measures.
@@ -108,12 +110,19 @@ function maybeRecoverMissingActive(
   logger: Logger,
   row: ExtensionRow,
   now: number,
-  extensionsDir: string,
+  extensionsDir: string | undefined,
 ): boolean {
   const activePath = row.install_path;
   if (existsSync(activePath)) return true;
 
-  if (tryPromotePrevVersion(db, logger, row, now, activePath, extensionsDir)) {
+  // The versions area is a sibling of the extensions dir, and an id containing `/` nests the
+  // install path deeper, so the dir cannot be derived from the row: without it, never guess.
+  if (extensionsDir === undefined) {
+    logger.warn(
+      { extensionId: row.id },
+      "extensions: crash recovery skipped — extensions dir not provided",
+    );
+  } else if (tryPromotePrevVersion(db, logger, row, now, activePath, extensionsDir)) {
     return true;
   }
 
@@ -208,17 +217,9 @@ async function verifyOneExtension(
   row: ExtensionRow,
   now: number,
   mesh?: ExtensionMeshHandle,
-  extensionsRoot?: string,
+  recoveryExtensionsDir?: string,
 ): Promise<void> {
-  // Install writes flat at `<extensionsDir>/<id>`, so the dir is the row path's parent unless the
-  // caller named it (an id containing `/` nests deeper).
-  const recovered = maybeRecoverMissingActive(
-    db,
-    logger,
-    row,
-    now,
-    extensionsRoot ?? dirname(row.install_path),
-  );
+  const recovered = maybeRecoverMissingActive(db, logger, row, now, recoveryExtensionsDir);
   if (!recovered) return;
   // A promotion rewrote the row (version and measured hashes); verify against that, not the
   // snapshot taken before it.
@@ -492,6 +493,8 @@ export async function verifyExtensionsBestEffort(
   mesh?: ExtensionMeshHandle,
   signatureOpts?: VerifyExtensionsSignatureOpts,
   extensionsRoot?: string,
+  /** Where crash recovery finds the versions area; separate from `extensionsRoot`, which gates the orphan sweep. */
+  recoveryExtensionsDir?: string,
 ): Promise<void> {
   if (readIndexedUserVersion(db) < 10) {
     return;
@@ -508,7 +511,7 @@ export async function verifyExtensionsBestEffort(
   }
   const now = Date.now();
   for (const row of rows) {
-    await verifyOneExtension(db, logger, row, now, mesh, extensionsRoot); // NOSONAR S9382: I16 startup verify - each row may rename dirs, write the DB and audit chain, and stop its client; rows go one at a time in registry order
+    await verifyOneExtension(db, logger, row, now, mesh, recoveryExtensionsDir); // NOSONAR S9382: I16 startup verify - each row may rename dirs, write the DB and audit chain, and stop its client; rows go one at a time in registry order
   }
 
   if (signatureOpts !== undefined) {

@@ -172,7 +172,7 @@ describe("crash recovery when its bookkeeping fails", () => {
     );
     const { logger, warns, errors } = memoryLogger();
 
-    await verifyExtensionsBestEffort(db, logger);
+    await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
 
     expect(existsSync(join(active, "nimbus.extension.json"))).toBe(true);
     expect(rowOf(db, id)).toMatchObject({ enabled: 1, version: "1.0.0" });
@@ -193,7 +193,7 @@ describe("crash recovery when its bookkeeping fails", () => {
     const prev = stageCrashedUpdate(db, extensionsDir, id, unreachable);
     const { logger, errors } = memoryLogger();
 
-    await verifyExtensionsBestEffort(db, logger);
+    await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
 
     const renameFailed = errors.filter(
       (e) => e.msg === "extensions: crash-recovery promote rename failed",

@@ -321,7 +321,7 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
         last_verified_at: Date.now(),
       });
 
-      await verifyExtensionsBestEffort(db, logger);
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
 
       expect(readFileSync(join(installPath, "nimbus.extension.json"), "utf8")).toBe(manifestText);
       const row = listExtensions(db).find((r) => r.id === id);
@@ -505,6 +505,100 @@ describe("verifyExtensionsBestEffort — orphan-active sweep (Task 12)", () => {
       expect(existsSync(realDir)).toBe(true);
     } finally {
       dbRun(db, "DELETE FROM extension WHERE 1=1");
+      db.close();
+    }
+  });
+});
+
+describe("verifyExtensionsBestEffort — crash recovery extensions dir", () => {
+  function stagePrev(extensionsDir: string, id: string): string {
+    const prevDir = prevVersionDir(extensionsDir, id, "1.0.0");
+    mkdirSync(join(prevDir, "dist"), { recursive: true });
+    writeFileSync(join(prevDir, "nimbus.extension.json"), JSON.stringify({ id, version: "1.0.0" }));
+    writeFileSync(join(prevDir, "dist", "index.js"), "// prev");
+    return prevDir;
+  }
+
+  test("a slash id promotes from <dirname(ext)>/extension-versions/<slug>/prev", async () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-slash-rec-"));
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const { logger } = memoryLogger();
+    const id = "acme/foo";
+    try {
+      const extensionsDir = join(root, "extensions");
+      mkdirSync(extensionsDir, { recursive: true });
+      const installPath = join(extensionsDir, id);
+      const prevDir = stagePrev(extensionsDir, id);
+      expect(prevDir.startsWith(join(root, "extension-versions"))).toBe(true);
+      insertExtensionRow(db, {
+        id,
+        version: "1.1.0",
+        install_path: installPath,
+        manifest_hash: "0".repeat(64),
+        entry_hash: "0".repeat(64),
+        enabled: 1,
+        installed_at: Date.now(),
+        last_verified_at: Date.now(),
+      });
+
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
+
+      const row = listExtensions(db).find((r) => r.id === id);
+      expect(row?.version).toBe("1.0.0");
+      expect(row?.enabled).toBe(1);
+      expect(existsSync(join(installPath, "nimbus.extension.json"))).toBe(true);
+    } finally {
+      db.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("without the extensions dir, recovery is skipped with a log line and the row is disabled", async () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-slash-norec-"));
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const { logger, warns } = memoryLogger();
+    const id = "acme/foo";
+    try {
+      const extensionsDir = join(root, "extensions");
+      mkdirSync(extensionsDir, { recursive: true });
+      stagePrev(extensionsDir, id);
+      insertExtensionRow(db, {
+        id,
+        version: "1.1.0",
+        install_path: join(extensionsDir, id),
+        manifest_hash: "0".repeat(64),
+        entry_hash: "0".repeat(64),
+        enabled: 1,
+        installed_at: Date.now(),
+        last_verified_at: Date.now(),
+      });
+
+      await verifyExtensionsBestEffort(db, logger);
+
+      expect(listExtensions(db).find((r) => r.id === id)?.enabled).toBe(0);
+      expect(JSON.stringify(warns)).toContain("crash recovery skipped");
+    } finally {
+      db.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("giving only the recovery dir does not run the orphan sweep", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    try {
+      const orphanDir = join(extensionsDir, "com.orphan");
+      mkdirSync(orphanDir, { recursive: true });
+      writeFileSync(join(orphanDir, "nimbus.extension.json"), "{}", "utf8");
+      stageMinimalExtension(db, extensionsDir, "com.real", "1.0.0");
+
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
+
+      expect(existsSync(orphanDir)).toBe(true);
+    } finally {
+      rmSync(extensionsDir, { recursive: true, force: true });
       db.close();
     }
   });
