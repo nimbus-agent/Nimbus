@@ -18,6 +18,38 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-18 — Phase 9.5 project 1, PR 4: updates come from the source registry; invariant I44 (no migration, no new egress class; closes project 1).**
+  The auto-update daemon now reads registries instead of an environment variable. It is built at boot whenever
+  boot policy allows auto-update (and `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` is not `1`), and each tick reads the
+  CURRENT registry table: enabled registry-sourced extensions are grouped by `source_registry`, each registry's
+  verified index is fetched once, a `manifest.json` only for an extension the index shows a newer version of on
+  its channel set (`stable`, or `stable` ∪ `beta` for a beta install), and only while the registry's root
+  fingerprint still equals the one the extension was installed under. The same id in another registry is never
+  consulted, a local-path install is never polled, and an offer the source no longer makes is dropped on the next
+  tick. Applying stays an owner action (`nimbus extension update`, the `extension.autoUpdate` prompt, which now
+  names the source registry and root fingerprint): it refuses `source_registry_changed` if the source was removed
+  or re-pinned, and re-verifies against the source's CURRENT signed index (manifest hash and publisher, Vault key,
+  I16 with the index's key) before fetching the package, checking its SHA-256 and extracting through the capped
+  pipeline, all before the swap. An applied update changes the tree digest, so the extension's run grant goes
+  stale and it does not run until the owner approves it again (no grant carry-over). `nimbus doctor` now warns
+  about installed extensions whose source registry was removed (they keep running but get no updates) and about
+  registries whose index is older than 30 days. **Removed** (not breaking — none of it could ever succeed: it all
+  depended on a publisher-key fetcher that was never wired in production): `nimbus extension sync` and the
+  `extension.sync` IPC method, the HTTP registry client (`extensions/registry-client.ts`), the `needs_sync`
+  update status, and the `NIMBUS_EXTENSIONS_REGISTRY_URL` environment variable. D22(h)'s temporary `fetch(`
+  allow-list is gone with them; `extensions/registry/registry-fetch.ts` is the one network path left under
+  `extensions/`. **New invariant I44:** registry-sourced extension code is installed or updated only through
+  `registry-fetch.ts`'s verified chain (pinned root key, non-decreasing sequence, index hashes for manifest and
+  package, the index-named publisher key and its I16 signature), and only from the extension's recorded source
+  registry while that registry's root fingerprint is unchanged; a bare id present in two registries is refused,
+  never prioritised. Stated bounds: no index expiry, so a registry can freeze updates (made visible by `registry
+  list` staleness and `nimbus doctor`, not prevented); `http:` is loopback-only and refused in production; a
+  local registry appends no egress row by design; the root key file's protection is the maintainer's; a
+  DB-write attacker can rewrite the pinned key. Acceptance: `packages/gateway/test/e2e/registry-acceptance.e2e.test.ts`
+  runs the dogfood scenario over a real gateway (add, search, install, approve, a v2 detected and applied with
+  the run grant left stale, a v3 with one flipped package byte refused at apply). Not shipped (later Phase 9.5
+  projects): network publishing, a hosted public registry, a baked trust store and key rotation, dependency
+  resolution and starter packs, the quality layer and ratings, a catalog site, desktop registry UI.
 - **2026-10-18 — Phase 9.5 project 1, PR 3: extension registries, add, search, install (schema V71, I29 `registry` class, static D22(h), HITL type `registry.add`, I20 widened; no new invariant yet).**
   The owner can now subscribe to named registries and install from them. `nimbus registry add|list|refresh|remove`
   pins a registry's root key (`registry add` is TTY-only with no `--yes`, asks under the new `registry.add` HITL
