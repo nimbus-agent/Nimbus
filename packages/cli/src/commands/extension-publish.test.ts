@@ -162,6 +162,7 @@ async function makeRegistry(opts: RegistryOpts = {}): Promise<string> {
 interface Call {
   cmd: "git" | "gh";
   args: string[];
+  cwd: string;
 }
 
 /** Real git; `gh` faked per `gh`. A `repo fork` adds a `fork` remote pointing at a local bare repo. */
@@ -180,7 +181,7 @@ function tools(gh: "absent" | "authed" | "unauthed"): {
   });
   const ok = (stdout = ""): ToolResult => result(0, stdout, "");
   const run: RunTool = async (cmd, args, opts) => {
-    calls.push({ cmd, args });
+    calls.push({ cmd, args, cwd: opts.cwd });
     if (cmd === "git") return runTool(cmd, args, opts);
     if (gh === "absent") return result(TOOL_NOT_STARTED, "", "gh: not found");
     if (args[0] === "auth") {
@@ -250,7 +251,10 @@ describe("nimbus extension publish", () => {
 
     const ghCalls = t.calls.filter((c) => c.cmd === "gh").map((c) => c.args);
     expect(ghCalls[0]).toEqual(["auth", "status"]);
-    expect(ghCalls[1]).toEqual(["repo", "fork", REPO, "--remote", "--remote-name", "fork"]);
+    // No repository argument: gh forks the clone's own (verified) origin, from inside the clone.
+    expect(ghCalls[1]).toEqual(["repo", "fork", "--remote", "--remote-name", "fork"]);
+    const forkCall = t.calls.find((c) => c.cmd === "gh" && c.args[1] === "fork");
+    expect(forkCall?.cwd).toContain("nimbus-publish-clone-");
     const pr = ghCalls[2] ?? [];
     expect(pr.slice(0, 10)).toEqual([
       "pr",
@@ -319,6 +323,7 @@ describe("nimbus extension publish", () => {
     expect(code).toBe(0);
     const text = out.join("");
     expect(text).toContain(`git push fork ${BRANCH}`);
+    expect(text).toContain("  gh repo fork --remote --remote-name fork\n");
     expect(text).toContain(
       `gh pr create --repo ${REPO} --base main --head <your-github-user>:${BRANCH} --title "Publish acme/tool@1.0.0"`,
     );
@@ -478,6 +483,16 @@ describe("nimbus extension publish", () => {
 
   test("falls back to the default branch's config when gh-pages has none", async () => {
     const remote = await makeRegistry({ mainConfig: true });
+    const ext = await makeExtension("ext", { id: "tool" });
+    const t = tools("authed");
+    const code = await runExtensionPublish([ext, "--registry-repo", REPO], deps(t.run, remote));
+    expect(code).toBe(2);
+    expect(err.join("")).toContain("ERR_REGISTRY_NAMESPACE_REQUIRED: ");
+    expect(wroteToGit(t.calls)).toBe(false);
+  });
+
+  test("a namespace rule present only on the default branch refuses even when gh-pages' config allows it", async () => {
+    const remote = await makeRegistry({ requireNamespace: false, mainConfig: true });
     const ext = await makeExtension("ext", { id: "tool" });
     const t = tools("authed");
     const code = await runExtensionPublish([ext, "--registry-repo", REPO], deps(t.run, remote));

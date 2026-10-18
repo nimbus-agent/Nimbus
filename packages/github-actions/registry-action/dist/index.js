@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:952a03705a59ef350baf043181953937a70de94f66024a80be59bf4e902bb4b4
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:0833a01c8167f036474a990fb3fb64ef5920b35ab915bae79679995be19ec04f
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -8579,6 +8579,12 @@ function parseRegistryConfig(bytes) {
   }
   return { format: 1, requirePublisherNamespace: ns };
 }
+function effectiveRegistryConfig(pages, defaultBranch) {
+  return {
+    format: 1,
+    requirePublisherNamespace: (pages?.requirePublisherNamespace ?? false) || (defaultBranch?.requirePublisherNamespace ?? false)
+  };
+}
 var requestInvalid = (detail) => new RegistryError("ERR_REGISTRY_PUBLISH_REQUEST_INVALID", detail);
 function parsePublishRequest(bytes) {
   const what = "publish-request.json";
@@ -8938,7 +8944,6 @@ var PAGES_REF = `origin/${PAGES_BRANCH}`;
 var INDEX_FILE = "index.json";
 var CONFIG_FILE = "nimbus-registry.json";
 var CANDIDATE_FILES = ["manifest.json", "package.tgz", "publish-request.json"];
-var DEFAULT_CONFIG = { format: 1, requirePublisherNamespace: false };
 function hasFile(git, ref, path, cwd) {
   return git.listTreeEntries(ref, path, { cwd }).some((e) => e.path === path);
 }
@@ -9024,12 +9029,7 @@ function assertSinglePublish(changes) {
   return coords;
 }
 function effectiveConfig(git, baseRef, cwd) {
-  const pages = readConfigAt(git, PAGES_REF, cwd)?.config;
-  const base = readConfigAt(git, `origin/${baseRef}`, cwd)?.config;
-  return {
-    format: 1,
-    requirePublisherNamespace: (pages?.requirePublisherNamespace ?? false) || (base?.requirePublisherNamespace ?? DEFAULT_CONFIG.requirePublisherNamespace)
-  };
+  return effectiveRegistryConfig(readConfigAt(git, PAGES_REF, cwd)?.config, readConfigAt(git, `origin/${baseRef}`, cwd)?.config);
 }
 var listOf = (items) => items.length === 0 ? "none" : items.map(code).join(", ");
 function checkSummary(v) {

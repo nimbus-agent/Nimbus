@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  effectiveRegistryConfig,
   type PublishVerdict,
   packExtensionDir,
   parseRegistryConfig,
@@ -24,7 +25,7 @@ import {
   validatePublish,
   verifyRegistryIndexSelf,
 } from "@nimbus-dev/registry-format";
-import { buildPublishCandidate, DEFAULT_REGISTRY_CONFIG } from "../lib/publish-candidate.ts";
+import { buildPublishCandidate } from "../lib/publish-candidate.ts";
 import { rmDirWithRetry } from "../lib/rm-dir-with-retry.ts";
 import { type RunTool, runTool } from "../lib/run-git.ts";
 
@@ -234,17 +235,20 @@ async function readSignedIndex(
   return index;
 }
 
-/** The config the sign job enforces (`gh-pages`), else the default branch's, else today's rules. */
+/**
+ * The config the sign job enforces: the stricter of `gh-pages`'s and the default branch's, exactly
+ * as the registry action's `check` reads it (`effectiveRegistryConfig`).
+ */
 async function readConfig(
   deps: PublishDeps,
   clone: string,
   defaultBranch: string,
 ): Promise<RegistryConfig> {
-  for (const rev of [`origin/${PAGES}`, `origin/${defaultBranch}`]) {
+  const at = async (rev: string): Promise<RegistryConfig | undefined> => {
     const bytes = await showFile(deps, clone, rev, "nimbus-registry.json");
-    if (bytes !== undefined) return parseRegistryConfig(bytes);
-  }
-  return DEFAULT_REGISTRY_CONFIG;
+    return bytes === undefined ? undefined : parseRegistryConfig(bytes);
+  };
+  return effectiveRegistryConfig(await at(`origin/${PAGES}`), await at(`origin/${defaultBranch}`));
 }
 
 /** `-c user.name` / `-c user.email` for whichever of the two the author's git does not set. */
@@ -353,7 +357,7 @@ function printManualSteps(
     `Committed ${v.id}@${v.version} on branch ${branch} in ${clone}.\n` +
       "To open the pull request, run:\n" +
       `  cd ${q(clone)}\n` +
-      `  gh repo fork ${a.repo} --remote --remote-name ${FORK_REMOTE}\n` +
+      `  gh repo fork --remote --remote-name ${FORK_REMOTE}\n` +
       `  git push ${FORK_REMOTE} ${branch}\n` +
       `  ${pr}\n` +
       `(Without gh: fork ${a.repo} on github.com, then \`git remote add ${FORK_REMOTE} ` +
@@ -394,7 +398,9 @@ async function openPullRequest(
   // An existing `fork` remote (a re-run, or the author's own) is reused, never re-forked.
   let url = await forkUrl();
   if (url === undefined) {
-    await gh(["repo", "fork", a.repo, "--remote", "--remote-name", FORK_REMOTE]);
+    // No repository argument: gh forks the clone's own `origin`, already verified to be `a.repo`,
+    // and only then adds the `fork` remote to this clone.
+    await gh(["repo", "fork", "--remote", "--remote-name", FORK_REMOTE]);
     url = await forkUrl();
   }
   if (url === undefined) {

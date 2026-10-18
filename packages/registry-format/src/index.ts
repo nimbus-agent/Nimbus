@@ -53,6 +53,7 @@ export {
 } from "./permissions-validator.ts";
 export { emptyIndex, publicKeyFromSeed, signIndex, verifyIndexSignature } from "./sign.ts";
 export {
+  effectiveRegistryConfig,
   type PublishCandidate,
   type PublishVerdict,
   parseRegistryConfig,

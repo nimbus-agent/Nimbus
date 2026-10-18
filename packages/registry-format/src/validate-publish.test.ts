@@ -13,6 +13,7 @@ import type { RegistryExtensionEntry, RegistryIndex } from "./index-format.ts";
 import { packExtensionDir } from "./pack.ts";
 import { emptyIndex, publicKeyFromSeed, signIndex } from "./sign.ts";
 import {
+  effectiveRegistryConfig,
   type PublishCandidate,
   parseRegistryConfig,
   type RegistryConfig,
@@ -255,6 +256,17 @@ describe("parseRegistryConfig", () => {
       }
       expect(code).toBe("ERR_REGISTRY_CONFIG_INVALID");
     }
+  });
+});
+
+describe("effectiveRegistryConfig", () => {
+  test("is the stricter of gh-pages' and the default branch's, absent counting as no rule", () => {
+    expect(effectiveRegistryConfig(undefined, undefined)).toEqual(NO_NS);
+    expect(effectiveRegistryConfig(NO_NS, NO_NS)).toEqual(NO_NS);
+    expect(effectiveRegistryConfig(NS, undefined)).toEqual(NS);
+    expect(effectiveRegistryConfig(undefined, NS)).toEqual(NS);
+    expect(effectiveRegistryConfig(NO_NS, NS)).toEqual(NS);
+    expect(effectiveRegistryConfig(NS, NO_NS)).toEqual(NS);
   });
 });
 

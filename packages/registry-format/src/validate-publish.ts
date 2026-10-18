@@ -134,6 +134,24 @@ export function parseRegistryConfig(bytes: Uint8Array): RegistryConfig {
   return { format: 1, requirePublisherNamespace: ns };
 }
 
+/**
+ * The rules a merged publish meets: the stricter of `gh-pages`'s config (the last signed run's) and
+ * the default branch's (`undefined` when that ref has no `nimbus-registry.json`). The sign job
+ * refuses a default branch that loosens `gh-pages`'s, so the stricter one is what sign applies.
+ * Shared by the action's `check` and the CLI's `publish`, so the two cannot disagree.
+ */
+export function effectiveRegistryConfig(
+  pages: RegistryConfig | undefined,
+  defaultBranch: RegistryConfig | undefined,
+): RegistryConfig {
+  return {
+    format: 1,
+    requirePublisherNamespace:
+      (pages?.requirePublisherNamespace ?? false) ||
+      (defaultBranch?.requirePublisherNamespace ?? false),
+  };
+}
+
 const requestInvalid = (detail: string): RegistryError =>
   new RegistryError("ERR_REGISTRY_PUBLISH_REQUEST_INVALID", detail);
 

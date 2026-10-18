@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  effectiveRegistryConfig,
   type PublishVerdict,
   publisherKeyFingerprint,
   type RegistryConfig,
@@ -19,7 +20,6 @@ import {
 import * as gitTree from "./git-tree.ts";
 import {
   CANDIDATE_FILES,
-  DEFAULT_CONFIG,
   PAGES_BRANCH,
   PAGES_REF,
   readCandidate,
@@ -91,20 +91,12 @@ function assertSinglePublish(changes: readonly gitTree.TreeChange[]): {
   return coords;
 }
 
-/**
- * The rules the sign job will apply: the stricter of `gh-pages`'s copy (the last signed run's) and
- * the base branch's. Sign refuses a base branch that loosens `gh-pages`'s, so the stricter one is
- * what a merged publish meets.
- */
+/** The rules the sign job will apply (`effectiveRegistryConfig`): the stricter of the two copies. */
 function effectiveConfig(git: typeof gitTree, baseRef: string, cwd: string): RegistryConfig {
-  const pages = readConfigAt(git, PAGES_REF, cwd)?.config;
-  const base = readConfigAt(git, `origin/${baseRef}`, cwd)?.config;
-  return {
-    format: 1,
-    requirePublisherNamespace:
-      (pages?.requirePublisherNamespace ?? false) ||
-      (base?.requirePublisherNamespace ?? DEFAULT_CONFIG.requirePublisherNamespace),
-  };
+  return effectiveRegistryConfig(
+    readConfigAt(git, PAGES_REF, cwd)?.config,
+    readConfigAt(git, `origin/${baseRef}`, cwd)?.config,
+  );
 }
 
 const listOf = (items: readonly string[]): string =>

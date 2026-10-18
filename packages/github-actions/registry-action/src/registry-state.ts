@@ -22,9 +22,6 @@ export const CONFIG_FILE = "nimbus-registry.json";
 /** The three files a publish adds, and the only files an `extensions/<id>/<version>/` may hold. */
 export const CANDIDATE_FILES = ["manifest.json", "package.tgz", "publish-request.json"] as const;
 
-/** A registry with no `nimbus-registry.json` anywhere uses today's rules: no namespace required. */
-export const DEFAULT_CONFIG: RegistryConfig = { format: 1, requirePublisherNamespace: false };
-
 type Git = typeof gitTree;
 
 /** True when `path` is a file in the tree of `ref`. */
