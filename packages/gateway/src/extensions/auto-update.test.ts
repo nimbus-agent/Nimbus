@@ -179,6 +179,82 @@ describe("ExtensionAutoUpdater.pollOnce", () => {
   });
 });
 
+describe("ExtensionAutoUpdater: an offer lasts only while its source registry offers it", () => {
+  /** A daemon whose `collect` answers from a queue, one result per tick. */
+  function ticking(results: CollectedRegistryUpdates[]) {
+    return daemon({
+      listInstalled: async () => [installed("com.a")],
+      collect: async () => results.shift() ?? collected([]),
+    });
+  }
+
+  it("a registry that answered without the update drops it (removed, re-pinned or re-signed)", async () => {
+    // `collect` skips a removed or re-pinned registry, and a re-signed index without the version
+    // reports nothing for it: either way the next tick neither re-reports nor errors.
+    const t = ticking([collected([update("com.a")]), collected([])]);
+    await t.daemon.pollOnce();
+    expect(t.cache.get("com.a")?.toVersion).toBe("1.2.0");
+    await t.daemon.pollOnce();
+    expect(t.cache.list()).toEqual([]);
+  });
+
+  it("a registry that ERRORED this tick keeps its offer (no flapping on a transient failure)", async () => {
+    const t = ticking([
+      collected([update("com.a")]),
+      {
+        updates: [],
+        errors: [{ registry: "main", error: "ERR_REGISTRY_UNREACHABLE" }],
+        dependsOn: new Map(),
+      },
+    ]);
+    await t.daemon.pollOnce();
+    await t.daemon.pollOnce();
+    expect(t.cache.get("com.a")?.toVersion).toBe("1.2.0");
+  });
+
+  it("an error from ANOTHER registry does not keep an offer its own registry stopped making", async () => {
+    const t = ticking([
+      collected([update("com.a")]),
+      { updates: [], errors: [{ registry: "other", error: "down" }], dependsOn: new Map() },
+    ]);
+    await t.daemon.pollOnce();
+    await t.daemon.pollOnce();
+    expect(t.cache.list()).toEqual([]);
+  });
+
+  it("with no registry-sourced extension left, every offer is dropped", async () => {
+    let rows: InstalledExtensionRow[] = [installed("com.a")];
+    const t = daemon({
+      listInstalled: async () => rows,
+      collect: async () => collected([update("com.a")]),
+    });
+    await t.daemon.pollOnce();
+    rows = [];
+    await t.daemon.pollOnce();
+    expect(t.cache.list()).toEqual([]);
+  });
+
+  it("one failed audit append does not stop the rest of the tick", async () => {
+    const failures: string[] = [];
+    const t = daemon({
+      listInstalled: async () => [installed("com.a"), installed("com.b")],
+      collect: async () => collected([update("com.a"), update("com.b")]),
+      appendAudit: async (_type, payload) => {
+        if (payload["id"] === "com.a") throw new Error("audit chain locked");
+      },
+      onTickError: (id) => failures.push(id),
+    });
+    await t.daemon.pollOnce();
+    expect(
+      t.cache
+        .list()
+        .map((u) => u.id)
+        .sort(),
+    ).toEqual(["com.a", "com.b"]);
+    expect(failures).toEqual(["com.a"]);
+  });
+});
+
 describe("ExtensionAutoUpdater: dependency conflicts against what is installed", () => {
   function manifestDir(id: string, version: string, dependsOn?: Record<string, string>): string {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-au-dep-"));

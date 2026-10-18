@@ -337,6 +337,8 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         ...runtime.deps,
         gate: async () => "proceed" as const,
         getInstalledVersion: async () => "1.0.0",
+        // The hand-built entry names no real registry; this test is about the mutex.
+        isSourceCurrent: async () => true,
         performUpgrade: async (): Promise<void> => {
           await new Promise<void>((r) => {
             release = r;

@@ -43,6 +43,8 @@ export interface ExtensionAutoUpdaterOpts {
   intervalHours: number;
   now: () => number;
   random: () => number;
+  /** Told when recording one detection failed (e.g. its audit append); the tick carries on. */
+  onTickError?: (extensionId: string, error: unknown) => void;
 }
 
 /** The rows a tick polls: enabled, signed, and installed from a registry. A local-path install never is. */
@@ -133,36 +135,66 @@ export class ExtensionAutoUpdater {
   /**
    * One tick: reads the CURRENT install table (so a registry added or removed at runtime is picked
    * up on the next tick) and asks `collect` for the updates. A registry that fails is skipped by
-   * `collect` without blocking the others.
+   * `collect` without blocking the others. After the tick, a cached update that was not re-reported
+   * is dropped unless its registry ERRORED this tick: a removed or re-pinned registry (which
+   * `collect` skips) or one that answered without that version no longer offers it (spec § 8.3),
+   * while a transient failure does not make an offer flap.
    */
   async pollOnce(): Promise<void> {
     const installed = await this.opts.listInstalled();
     const rows = registryRows(installed);
-    if (rows.length === 0) return;
-    const collected = await this.opts.collect(rows, this.abort.signal);
+    const collected: CollectedRegistryUpdates =
+      rows.length === 0
+        ? { updates: [], errors: [], dependsOn: new Map() }
+        : await this.opts.collect(rows, this.abort.signal);
     for (const found of collected.updates) {
-      const conflicts = await this.computeUpdateConflicts(
-        found.id,
-        found.toVersion,
-        collected.dependsOn.get(found.id),
-        installed,
-      );
-      const update: AvailableUpdate = {
-        ...found,
-        ...(conflicts !== undefined && conflicts.length > 0 ? { conflicts } : {}),
-      };
-      const isNew = this.opts.cache.isNewDetection(update);
-      this.opts.cache.upsert(update);
-      if (isNew) {
-        await this.opts.appendAudit("extension.autoUpdate.detected", {
-          id: update.id,
-          fromVersion: update.fromVersion,
-          toVersion: update.toVersion,
-          channel: update.channel,
-          source_registry: update.sourceRegistry,
-          verification_status: update.verificationStatus,
-        });
+      try {
+        await this.recordDetection(found, collected, installed); // NOSONAR S9382: each new detection appends to the audit chain in a deterministic order
+      } catch (e) {
+        // One failed audit append must not stop the rest of the tick from being cached.
+        this.opts.onTickError?.(found.id, e);
       }
+    }
+    this.dropStaleOffers(collected);
+  }
+
+  private async recordDetection(
+    found: AvailableUpdate,
+    collected: CollectedRegistryUpdates,
+    installed: readonly InstalledExtensionRow[],
+  ): Promise<void> {
+    const conflicts = await this.computeUpdateConflicts(
+      found.id,
+      found.toVersion,
+      collected.dependsOn.get(found.id),
+      installed,
+    );
+    const update: AvailableUpdate = {
+      ...found,
+      ...(conflicts !== undefined && conflicts.length > 0 ? { conflicts } : {}),
+    };
+    const isNew = this.opts.cache.isNewDetection(update);
+    this.opts.cache.upsert(update);
+    if (isNew) {
+      await this.opts.appendAudit("extension.autoUpdate.detected", {
+        id: update.id,
+        fromVersion: update.fromVersion,
+        toVersion: update.toVersion,
+        channel: update.channel,
+        source_registry: update.sourceRegistry,
+        verification_status: update.verificationStatus,
+      });
+    }
+  }
+
+  private dropStaleOffers(collected: CollectedRegistryUpdates): void {
+    // The cache holds one entry per extension id, so "re-reported" is: same id, same version.
+    const reported = new Map(collected.updates.map((u) => [u.id, u.toVersion]));
+    const errored = new Set(collected.errors.map((e) => e.registry));
+    for (const cached of this.opts.cache.list()) {
+      if (reported.get(cached.id) === cached.toVersion) continue;
+      if (errored.has(cached.sourceRegistry)) continue;
+      this.opts.cache.remove(cached.id);
     }
   }
 

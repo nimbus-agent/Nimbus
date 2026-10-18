@@ -56,6 +56,8 @@ export interface AutoUpdateRuntimeBag {
   hasPrevVersion: (id: string, version: string) => Promise<boolean>;
   /** Optional for test bags; the production bag (below) always answers from the run-grant store. */
   hasRunGrant?: (id: string) => Promise<boolean>;
+  /** Whether the update's source registry still exists under the detected root fingerprint. */
+  isSourceCurrent?: (cached: AvailableUpdate) => Promise<boolean>;
 }
 
 export interface AutoUpdateRuntime {
@@ -126,13 +128,18 @@ const FETCH_FAILURE_CODES: ReadonlySet<RegistryErrorCode> = new Set<RegistryErro
   "ERR_REGISTRY_NOT_FOUND",
 ]);
 
-/** The update's source registry, still pinned to the root key the update was detected under. */
-function sourceRegistryOf(db: Database, update: AvailableUpdate): RegistryRow {
+/** The update's source registry, if it still exists under the root key the update was detected with. */
+function currentSourceRegistry(db: Database, update: AvailableUpdate): RegistryRow | undefined {
   const reg = getRegistry(db, update.sourceRegistry);
-  if (reg === undefined || reg.rootFingerprint !== update.rootFingerprint) {
-    throw new RegistryError(
-      "ERR_REGISTRY_ROOT_KEY_CHANGED",
-      `registry "${update.sourceRegistry}" was removed or re-pinned since the update was detected`,
+  return reg !== undefined && reg.rootFingerprint === update.rootFingerprint ? reg : undefined;
+}
+
+/** As above, or throws `source_registry_changed: …` (its own audit phase, not a signature failure). */
+function sourceRegistryOf(db: Database, update: AvailableUpdate): RegistryRow {
+  const reg = currentSourceRegistry(db, update);
+  if (reg === undefined) {
+    throw new Error(
+      `source_registry_changed: registry "${update.sourceRegistry}" was removed or re-pinned since the update was detected`,
     );
   }
   return reg;
@@ -155,8 +162,8 @@ async function reverifyUpdateManifest(
   // id is a different trust root, whatever the Vault holds for the new one.
   const installedPublisher = listInstalledRows(fetchDeps.db).find((r) => r.id === update.id)
     ?.manifest.publisher?.id;
+  const reg = sourceRegistryOf(fetchDeps.db, update);
   try {
-    const reg = sourceRegistryOf(fetchDeps.db, update);
     const index = await fetchVerifiedIndex(fetchDeps, reg, signal);
     const entry = index.extensions[update.id];
     const vEntry = entry?.versions[update.toVersion];
@@ -314,6 +321,8 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
         return existsSync(prevVersionDir(opts.extensionsDir, id, version));
       }),
     hasRunGrant: (id) => Promise.try(() => getRunGrant(opts.db, id) !== null),
+    isSourceCurrent: (cached) =>
+      Promise.try(() => currentSourceRegistry(opts.db, cached) !== undefined),
   };
 
   return { daemon, deps, abortController };

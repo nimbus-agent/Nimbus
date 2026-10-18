@@ -27,6 +27,11 @@ export interface AutoUpdateRpcDeps {
    * leaves it stale and the prompt says so (`runGrantNote`). Absent ⇒ no note.
    */
   hasRunGrant?: (id: string) => Promise<boolean>;
+  /**
+   * Whether the update's source registry still exists with the root fingerprint it was detected
+   * under. Absent ⇒ not checked here (apply still re-checks it).
+   */
+  isSourceCurrent?: (cached: AvailableUpdate) => Promise<boolean>;
 }
 
 const mutex = new Map<string, Promise<void>>();
@@ -110,6 +115,15 @@ async function resolveUpdateTarget(
   }
 
   const isDowngrade = isStringSemverLess(toVersion, installed);
+  // A forward update comes only from its source registry (spec § 8.3): one removed or re-pinned
+  // since detection offers nothing, and saying so is clearer than a later signature failure.
+  if (!isDowngrade && deps.isSourceCurrent !== undefined && !(await deps.isSourceCurrent(cached))) {
+    return {
+      applied: false,
+      reason: "source_registry_changed",
+      hint: `source registry ${cached.sourceRegistry} was removed or re-pinned since this update was detected`,
+    };
+  }
   if (isDowngrade) {
     const ok = await deps.hasPrevVersion(id, toVersion);
     if (!ok) {
@@ -239,6 +253,7 @@ function isStringSemverLess(a: string, b: string): boolean {
 }
 
 function extractPhase(message: string): string {
+  if (message.includes("source_registry_changed")) return "source_registry_changed";
   if (message.includes("sha256_mismatch")) return "sha256_mismatch";
   if (message.includes("package_hash_mismatch")) return "package_hash_mismatch";
   // An unreadable package is not a readable one with a wrong hash, so it gets its own phase.

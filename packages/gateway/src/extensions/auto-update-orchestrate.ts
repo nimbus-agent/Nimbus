@@ -50,7 +50,9 @@ export function createPerformUpgrade(deps: PerformUpgradeDeps) {
     try {
       bytes = await deps.fetchPackage(update, deps.signal);
     } catch (e) {
-      throw new Error(`download_failed: ${e instanceof Error ? e.message : String(e)}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      // A source registry gone since detection is its own phase, not a failed download.
+      throw new Error(msg.startsWith("source_registry_changed") ? msg : `download_failed: ${msg}`);
     }
 
     const actualHash = await deps.sha256OfPackage(bytes);

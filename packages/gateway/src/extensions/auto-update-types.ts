@@ -61,6 +61,7 @@ export const ACTION_TYPE_AUTO_UPDATE = "extension.autoUpdate" as const;
 export const ACTION_TYPE_DOWNGRADE = "extension.downgrade" as const;
 
 export type AutoUpdateFailPhase =
+  | "source_registry_changed"
   | "sha256_mismatch"
   | "package_hash_mismatch"
   | "package_hash_unreadable"
@@ -72,6 +73,7 @@ export type AutoUpdateFailPhase =
 export type UpdateRejectReason =
   | "cache_miss"
   | "publisher_key_conflict"
+  | "source_registry_changed"
   | "signature_failed"
   | "same_version"
   | "downgrade_unavailable"

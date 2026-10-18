@@ -9,12 +9,13 @@ import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
 import { createAutoUpdateRuntime } from "./auto-update-init.ts";
+import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
 import { publisherKeyFingerprint } from "./install-from-local.ts";
 import { writePublisherKey } from "./publisher-keys.ts";
-import { buildTestRegistry } from "./registry/__fixtures__/build-test-registry.ts";
+import { buildTestRegistry, resignIndex } from "./registry/__fixtures__/build-test-registry.ts";
 import { installFromRegistry } from "./registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "./registry/registry-fetch.ts";
-import { insertRegistry } from "./registry/registry-store.ts";
+import { deleteRegistry, insertRegistry } from "./registry/registry-store.ts";
 import { upsertRunGrant } from "./run-grant-store.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 import { prevVersionDir } from "./version-store.ts";
@@ -448,6 +449,69 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       runtime.deps.performUpgrade({ ...cached, verificationStatus: "verified" }),
     ).rejects.toThrow(/^signature_failed: .*ERR_REGISTRY_SIGNATURE_INVALID/);
     expect(installedVersion()).toBe("1.0.0");
+  });
+
+  it("detect → remove the registry → next tick: the update is no longer offered", async () => {
+    const { runtime } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.get(ID)?.toVersion).toBe("1.2.0");
+    deleteRegistry(db, "main");
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.list()).toEqual([]);
+  });
+
+  it("detect → the registry errors on the next tick: the update is still offered", async () => {
+    const { runtime, regDir } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    rmSync(join(regDir, "index.json"));
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.get(ID)?.toVersion).toBe("1.2.0");
+  });
+
+  it("detect → the registry re-signs its index without that version: the update is dropped", async () => {
+    const { runtime, regDir } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    const indexPath = join(regDir, "index.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      sequence: number;
+      extensions: Record<string, { versions: Record<string, unknown> }>;
+    };
+    delete index.extensions[ID]?.versions["1.2.0"];
+    resignIndex(indexPath, { ...index, sequence: index.sequence + 1 });
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.list()).toEqual([]);
+  });
+
+  it("apply of an update whose source registry was removed is refused as source_registry_changed", async () => {
+    _resetAutoUpdateMutexForTests();
+    const { runtime } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    deleteRegistry(db, "main");
+    let asked = false;
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: ID, toVersion: "1.2.0" },
+      {
+        ...runtime.deps,
+        gate: async () => {
+          asked = true;
+          return "proceed" as const;
+        },
+      },
+    )) as { applied: boolean; reason?: string; hint?: string };
+    expect(res).toMatchObject({ applied: false, reason: "source_registry_changed" });
+    expect(res.hint).toContain("source registry main was removed or re-pinned");
+    expect(asked).toBe(false);
+    expect(installedVersion()).toBe("1.0.0");
+  });
+
+  it("performUpgrade on a stale entry fails as source_registry_changed, not a signature failure", async () => {
+    const { runtime } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    if (cached === undefined) throw new Error("no update detected");
+    deleteRegistry(db, "main");
+    await expect(runtime.deps.performUpgrade(cached)).rejects.toThrow(/^source_registry_changed: /);
   });
 
   it("apply refuses when the Vault has come to trust a different publisher key since detection", async () => {

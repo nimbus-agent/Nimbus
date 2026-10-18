@@ -212,6 +212,36 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     expect(res.applied).toBe(true);
   });
 
+  it("refuses a forward update whose source registry is gone, before the gate", async () => {
+    const deps = baseDeps();
+    const gate = mock(async () => "proceed" as const);
+    deps.gate = gate;
+    deps.isSourceCurrent = async () => false;
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    )) as { applied: boolean; reason?: string; hint?: string };
+    expect(res).toMatchObject({ applied: false, reason: "source_registry_changed" });
+    expect(res.hint).toContain("source registry main was removed or re-pinned");
+    expect(gate).not.toHaveBeenCalled();
+  });
+
+  it("a downgrade from a cached _prev needs no source registry", async () => {
+    const deps = baseDeps();
+    deps.getInstalledVersion = async () => "1.1.0";
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, toVersion: "1.0.0", fromVersion: "1.1.0" });
+    deps.hasPrevVersion = async () => true;
+    deps.isSourceCurrent = async () => false;
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.0.0" },
+      deps,
+    )) as { applied: boolean };
+    expect(res.applied).toBe(true);
+  });
+
   it("rejects pre-release version tag via InvalidVersionFormat", async () => {
     const deps = baseDeps();
     const cur = deps.cache.get("com.example.a")!;
