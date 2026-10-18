@@ -1,6 +1,6 @@
 /** Unpacks a registry package into a private work dir and reads what the index will record. */
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { extract, list } from "tar";
 import { MAX_ENTRY_COUNT, MAX_MANIFEST_BYTES, MAX_UNPACKED_BYTES } from "./caps.ts";
@@ -86,17 +86,28 @@ export async function inspectPackage(tgz: string, work: string): Promise<Inspect
   // recorded is the hash of the file a client will run.
   const entryRel = rawManifestEntryRelPath(m);
   const entryPath = resolve(out, entryRel);
-  if (
-    !entryPath.startsWith(resolve(out) + sep) ||
-    !existsSync(entryPath) ||
-    !lstatSync(entryPath).isFile()
-  ) {
-    throw manifestInvalid(`extension entry ${entryRel} is missing or outside the package`);
+  const missing = (): RegistryError =>
+    manifestInvalid(`extension entry ${entryRel} is missing or outside the package`);
+  if (!entryPath.startsWith(resolve(out) + sep)) throw missing();
+  // One open, then stat and read through the same descriptor: no check-then-read window, and a
+  // directory (`"entry": "dist"`) is refused here rather than surfacing as a raw EISDIR.
+  let fd: number;
+  try {
+    fd = openSync(entryPath, "r");
+  } catch {
+    throw missing();
+  }
+  let entryBytes: Buffer;
+  try {
+    if (!fstatSync(fd).isFile()) throw missing();
+    entryBytes = readFileSync(fd);
+  } finally {
+    closeSync(fd);
   }
   return {
     manifestBytes,
     manifest: m,
-    entryHash: createHash("sha256").update(readFileSync(entryPath)).digest("hex"),
+    entryHash: createHash("sha256").update(entryBytes).digest("hex"),
     files: files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
   };
 }
