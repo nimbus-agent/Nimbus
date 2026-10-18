@@ -57,10 +57,12 @@ function asObject(value: unknown, what: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function exactKeys(o: Record<string, unknown>, keys: readonly string[], what: string): void {
-  for (const k of Object.keys(o)) {
-    if (!keys.includes(k)) throw invalid(`${what} has unknown key: ${k}`);
-  }
+/**
+ * Required keys must be present; unknown keys are TOLERATED so a validly signed index that adds a
+ * field later still parses on older clients. They are carried through (see the `...o` spreads) so the
+ * signature, which covers the whole document, still verifies. `format` is the breaking-change switch.
+ */
+function requireKeys(o: Record<string, unknown>, keys: readonly string[], what: string): void {
   for (const k of keys) {
     if (!(k in o)) throw invalid(`${what} is missing key: ${k}`);
   }
@@ -84,18 +86,18 @@ function isoTimestamp(o: Record<string, unknown>, key: string, what: string): st
   return v;
 }
 
+// Strict SemVer 2.0.0: the version is joined into a path, so no range syntax, `v` prefix or whitespace.
+const SEMVER_RE =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
 function isValidSemver(v: string): boolean {
-  try {
-    return Bun.semver.satisfies(v, v);
-  } catch {
-    return false;
-  }
+  return SEMVER_RE.test(v);
 }
 
 function parseVersionEntry(raw: unknown, id: string, version: string): RegistryVersionEntry {
   const what = `extensions.${id}.versions.${version}`;
   const o = asObject(raw, what);
-  exactKeys(
+  requireKeys(
     o,
     [
       "channel",
@@ -122,6 +124,7 @@ function parseVersionEntry(raw: unknown, id: string, version: string): RegistryV
     throw invalid(`${what}.packageSizeBytes must be a positive integer`);
   }
   return {
+    ...o,
     channel,
     name: str(o, "name", what),
     manifest,
@@ -142,9 +145,9 @@ function parseExtensionEntry(raw: unknown, id: string): RegistryExtensionEntry {
   }
   const what = `extensions.${id}`;
   const o = asObject(raw, what);
-  exactKeys(o, ["publisher", "versions"], what);
+  requireKeys(o, ["publisher", "versions"], what);
   const p = asObject(o["publisher"], `${what}.publisher`);
-  exactKeys(p, ["id", "key"], `${what}.publisher`);
+  requireKeys(p, ["id", "key"], `${what}.publisher`);
   const pid = str(p, "id", `${what}.publisher`);
   if (pid.length > 64 || !PUBLISHER_ID_RE.test(pid)) {
     throw invalid(`${what}.publisher.id is malformed`);
@@ -157,7 +160,7 @@ function parseExtensionEntry(raw: unknown, id: string): RegistryExtensionEntry {
     versions[version] = parseVersionEntry(entry, id, version);
   }
   if (Object.keys(versions).length === 0) throw invalid(`${what} has no versions`);
-  return { publisher: { id: pid, key }, versions };
+  return { ...o, publisher: { ...p, id: pid, key }, versions };
 }
 
 export function parseRegistryIndex(bytes: Uint8Array): RegistryIndex {
@@ -181,7 +184,7 @@ export function parseRegistryIndex(bytes: Uint8Array): RegistryIndex {
     throw invalid("index.json is not valid JSON");
   }
   const o = asObject(raw, "index");
-  exactKeys(
+  requireKeys(
     o,
     ["format", "rootKey", "sequence", "generatedAt", "extensions", "signature"],
     "index",
@@ -197,6 +200,7 @@ export function parseRegistryIndex(bytes: Uint8Array): RegistryIndex {
     extensions[id] = parseExtensionEntry(entry, id);
   }
   return {
+    ...o,
     format: 1,
     rootKey: matching(o, "rootKey", KEY_RE, "index"),
     sequence,

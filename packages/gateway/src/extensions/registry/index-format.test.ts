@@ -115,6 +115,49 @@ describe("registry index format", () => {
     );
   });
 
+  test("rejects version keys that are not strict SemVer", () => {
+    const e = unsigned.extensions["acme/deploy"];
+    for (const v of ["1.0.0/../x", "v1.0.0", "1.0.0 || 2.0.0", "01.0.0", "", "1.0.0 "]) {
+      const bad = {
+        ...unsigned,
+        extensions: { "acme/deploy": { ...e, versions: { [v]: e.versions["1.0.0"] } } },
+      };
+      expect(() => parseRegistryIndex(enc(sign(bad)))).toThrow("ERR_REGISTRY_INDEX_INVALID");
+    }
+  });
+
+  test("accepts prerelease and build-metadata versions", () => {
+    const e = unsigned.extensions["acme/deploy"];
+    for (const v of ["1.1.0-beta.1", "1.0.0+build.5"]) {
+      const entry = version("acme/deploy", v, "stable", "X");
+      const ok = { ...unsigned, extensions: { "acme/deploy": { ...e, versions: { [v]: entry } } } };
+      expect(parseRegistryIndex(enc(sign(ok)))).toBeDefined();
+    }
+  });
+
+  test("unknown keys are tolerated and still covered by the signature; format 2 is refused", async () => {
+    const e = unsigned.extensions["acme/deploy"];
+    const extra = {
+      ...unsigned,
+      description: "later field",
+      extensions: {
+        "acme/deploy": {
+          ...e,
+          versions: { "1.0.0": { ...e.versions["1.0.0"], note: "later field" } },
+        },
+      },
+    };
+    const parsed = parseRegistryIndex(enc(sign(extra)));
+    await expect(verifyRegistryIndexSelf(parsed)).resolves.toBeUndefined();
+    const tampered = parseRegistryIndex(enc({ ...sign(extra), description: "changed" }));
+    await expect(verifyRegistryIndexSelf(tampered)).rejects.toThrow(
+      "ERR_REGISTRY_SIGNATURE_INVALID",
+    );
+    expect(() => parseRegistryIndex(enc(sign({ ...unsigned, format: 2 })))).toThrow(
+      "ERR_REGISTRY_INDEX_INVALID",
+    );
+  });
+
   test("rejects index over MAX_INDEX_BYTES before JSON.parse", () => {
     const big = new Uint8Array(MAX_INDEX_BYTES + 1024 * 1024);
     expect(() => parseRegistryIndex(big)).toThrow("ERR_REGISTRY_TOO_LARGE");
