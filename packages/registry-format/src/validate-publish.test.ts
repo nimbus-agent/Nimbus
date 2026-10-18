@@ -106,6 +106,34 @@ async function rawTgz(manifestBytes: Uint8Array, rels: string[]): Promise<Uint8A
   return new Uint8Array(readFileSync(tgz));
 }
 
+/** An uncompressed ustar archive built byte by byte, so it can hold names a filesystem cannot. */
+function ustar(entries: { name: string; body: Uint8Array | string }[]): Uint8Array {
+  const parts: Buffer[] = [];
+  for (const e of entries) {
+    const body = Buffer.from(e.body);
+    const h = Buffer.alloc(512);
+    const put = (off: number, value: string): void => {
+      h.write(value, off, "ascii");
+    };
+    put(0, e.name);
+    put(100, "0000644\0");
+    put(108, "0000000\0");
+    put(116, "0000000\0");
+    put(124, `${body.length.toString(8).padStart(11, "0")}\0`);
+    put(136, "00000000000\0");
+    h.fill(" ", 148, 156);
+    put(156, "0");
+    put(257, "ustar\0");
+    put(263, "00");
+    let sum = 0;
+    for (const b of h) sum += b;
+    put(148, `${sum.toString(8).padStart(6, "0")}\0 `);
+    parts.push(h, body, Buffer.alloc((512 - (body.length % 512)) % 512));
+  }
+  parts.push(Buffer.alloc(1024));
+  return new Uint8Array(Buffer.concat(parts));
+}
+
 function request(o: Record<string, unknown> = {}): Uint8Array {
   return enc(
     JSON.stringify({
@@ -555,7 +583,7 @@ describe("validatePublish", () => {
     await expectRefused(
       validatePublish(await candidate({ manifest }), await indexOf(), NS, work),
       "ERR_REGISTRY_PACKAGE_FILE_SET",
-      "dist/",
+      "extension entry README.md must be a file inside dist/",
     );
   });
 
@@ -584,7 +612,113 @@ describe("validatePublish", () => {
     await expectRefused(
       validatePublish(await candidate({ manifest }), await indexOf(), NS, work),
       "ERR_REGISTRY_PACKAGE_FILE_SET",
-      "inside dist/",
+      "extension entry README.md must be a file inside dist/",
+    );
+  });
+
+  // Rule 2: only the canonical spelling of an id may be published.
+  for (const [id, config] of [
+    ["acme//echo", NS],
+    ["acme/./echo", NS],
+    [" acme/echo", NS],
+    ["acme/echo/", NS],
+    ["acme\\echo", NO_NS],
+    ["./acme/echo", NO_NS],
+    ["/acme/echo", NO_NS],
+  ] as const) {
+    test(`a non-canonical id ${JSON.stringify(id)} is refused`, async () => {
+      const manifest = await signedManifest({ id });
+      await expectRefused(
+        validatePublish(
+          await candidate({ manifest, dirId: id, req: request({ id }) }),
+          await indexOf(),
+          config,
+          work,
+        ),
+        "ERR_REGISTRY_MANIFEST_INVALID",
+        "is not canonical",
+      );
+    });
+  }
+
+  test("a non-canonical twin of an indexed id is refused, not published as a new id", async () => {
+    const signed = await indexOf({ "acme/echo": entryFor("acme/echo", "acme", KEY, ["0.9.0"]) });
+    const id = "acme//echo";
+    const manifest = await signedManifest({ id });
+    await expectRefused(
+      validatePublish(
+        await candidate({ manifest, dirId: id, req: request({ id }) }),
+        signed,
+        NS,
+        work,
+      ),
+      "ERR_REGISTRY_MANIFEST_INVALID",
+      "is not canonical",
+    );
+  });
+
+  test("a version with surrounding whitespace is refused", async () => {
+    const manifest = await signedManifest({ version: " 1.0.0" });
+    await expectRefused(
+      validatePublish(await candidate({ manifest }), await indexOf(), NS, work),
+      "ERR_REGISTRY_MANIFEST_INVALID",
+      "surrounding whitespace",
+    );
+  });
+
+  test("a version with build metadata is refused", async () => {
+    const manifest = await signedManifest({ version: "1.0.0+r2" });
+    await expectRefused(
+      validatePublish(
+        await candidate({
+          manifest,
+          dirVersion: "1.0.0+r2",
+          req: request({ version: "1.0.0+r2" }),
+        }),
+        await indexOf(),
+        NS,
+        work,
+      ),
+      "ERR_REGISTRY_MANIFEST_INVALID",
+      "build metadata",
+    );
+  });
+
+  test("a version of equal precedence to an indexed one is refused", async () => {
+    const signed = await indexOf({ "acme/echo": entryFor("acme/echo", "acme", KEY, ["1.0.0+r1"]) });
+    await expectRefused(
+      validatePublish(await candidate(), signed, NS, work),
+      "ERR_REGISTRY_VERSION_EXISTS",
+      "as 1.0.0+r1",
+    );
+  });
+
+  test("a package holding the same file twice is refused", async () => {
+    const manifest = await signedManifest();
+    const pkg = ustar([
+      { name: "nimbus.extension.json", body: manifest },
+      { name: "dist/index.js", body: ENTRY_SOURCE },
+      { name: "dist/index.js", body: ENTRY_SOURCE },
+    ]);
+    await expectRefused(
+      validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work),
+      "ERR_REGISTRY_PACKAGE_FILE_SET",
+      "package holds dist/index.js more than once",
+    );
+  });
+
+  test("package files that differ only by case are refused", async () => {
+    const manifest = await signedManifest();
+    const pkg = ustar([
+      { name: "nimbus.extension.json", body: manifest },
+      { name: "dist/index.js", body: ENTRY_SOURCE },
+      { name: "dist/lib.js", body: "a" },
+      { name: "dist/LIB.js", body: "b" },
+    ]);
+    await expectRefused(
+      validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work),
+      "ERR_REGISTRY_PACKAGE_FILE_SET",
+      "differ only by case",
     );
   });
 

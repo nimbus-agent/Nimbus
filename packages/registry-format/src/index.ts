@@ -9,6 +9,7 @@ export {
 } from "./caps.ts";
 export { RegistryError, type RegistryErrorCode } from "./errors.ts";
 export {
+  assertCanonicalExtensionId,
   assertSafeExtensionId,
   deriveExtensionServiceId,
   EXTENSION_SERVICE_ID_PATTERN,

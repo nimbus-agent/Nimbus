@@ -15,10 +15,12 @@ import { join } from "node:path";
 // `publisher.key` + `signature` shape. This is the same verify the gateway runs at install and at
 // every startup (I16), so a manifest accepted here is one every client accepts.
 import { verifyManifestSignature } from "@nimbus-dev/sdk"; // NOSONAR S1874
+import semver from "semver";
 
 import { MAX_MANIFEST_BYTES, MAX_PACKAGE_BYTES } from "./caps.ts";
 import { RegistryError } from "./errors.ts";
 import {
+  assertCanonicalExtensionId,
   assertSafeExtensionId,
   deriveExtensionServiceId,
   findServiceIdPrefixCollision,
@@ -173,10 +175,22 @@ function parseCandidateManifest(bytes: Uint8Array): {
     manifest = parseExtensionManifestForRegistry(new TextDecoder().decode(bytes)).manifest;
     assertSafeExtensionId(manifest.id);
   } catch (e) {
+    if (e instanceof RegistryError) throw e;
     throw manifestInvalid((e as Error).message);
+  }
+  // The parser trims; a published id and version are the exact strings it would keep.
+  assertCanonicalExtensionId(typeof raw["id"] === "string" ? raw["id"] : "");
+  if (raw["version"] !== manifest.version) {
+    throw manifestInvalid(`version ${JSON.stringify(raw["version"])} has surrounding whitespace`);
   }
   if (!isValidSemver(manifest.version)) {
     throw manifestInvalid(`version ${JSON.stringify(manifest.version)} is not strict semver`);
+  }
+  // Build metadata has no SemVer precedence: `1.0.0+r2` would be a second `1.0.0`.
+  if (manifest.version.includes("+")) {
+    throw manifestInvalid(
+      `version ${manifest.version} carries build metadata, which a published version may not`,
+    );
   }
   return { manifest, raw };
 }
@@ -266,10 +280,14 @@ function assertRegistryState(
         `${m.id} is bound to publisher ${existing.publisher.id} with a different key`,
       );
     }
-    if (Object.hasOwn(existing.versions, m.version)) {
+    // Equal precedence, not just an equal string: an indexed `1.0.0+r1` already IS `1.0.0`.
+    const taken = Object.keys(existing.versions).find(
+      (v) => v === m.version || semver.compare(v, m.version) === 0,
+    );
+    if (taken !== undefined) {
       throw new RegistryError(
         "ERR_REGISTRY_VERSION_EXISTS",
-        `${m.id}@${m.version} is already in the index`,
+        `${m.id}@${m.version} is already in the index (as ${taken})`,
       );
     }
   }
@@ -291,9 +309,16 @@ function assertFileSet(m: ExtensionManifest, files: string[]): void {
     throw fileSetInvalid(`extension entry ${entry} must be a file inside dist/`);
   }
   const seen = new Set<string>();
+  const folded = new Map<string, string>();
   for (const f of files) {
     if (seen.has(f)) throw fileSetInvalid(`package holds ${f} more than once`);
     seen.add(f);
+    // On a case-insensitive client filesystem (Windows, macOS) these overwrite each other.
+    const twin = folded.get(f.toLowerCase());
+    if (twin !== undefined) {
+      throw fileSetInvalid(`package holds ${twin} and ${f}, which differ only by case`);
+    }
+    folded.set(f.toLowerCase(), f);
     if (!isCleanRelPath(f) || !isPackageFile(f)) {
       throw fileSetInvalid(`package holds ${f}, which is outside the package file set`);
     }

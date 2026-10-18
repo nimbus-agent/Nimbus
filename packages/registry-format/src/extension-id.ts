@@ -28,6 +28,25 @@ export function assertSafeExtensionId(extensionId: string): void {
   }
 }
 
+/**
+ * Refuse an id that is safe but not CANONICAL: surrounding whitespace, a backslash, a leading or trailing
+ * `/`, or an empty or `.` segment. The installer normalises all of those away, so a non-canonical id
+ * would install into the SAME directory as its canonical twin while deriving a different service id —
+ * a registry must only ever hold the one spelling. Run after {@link assertSafeExtensionId}.
+ */
+export function assertCanonicalExtensionId(extensionId: string): void {
+  const refuse = (why: string): RegistryError =>
+    new RegistryError(
+      "ERR_REGISTRY_MANIFEST_INVALID",
+      `extension id ${JSON.stringify(extensionId)} is not canonical: ${why}`,
+    );
+  if (extensionId !== extensionId.trim()) throw refuse("it has surrounding whitespace");
+  if (extensionId.includes("\\")) throw refuse("it contains a backslash");
+  if (extensionId.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) {
+    throw refuse("it has an empty, '.' or '..' path segment");
+  }
+}
+
 /** Disjoint from user MCP's `mcp_` and from every first-party connector id. */
 export const EXTENSION_SERVICE_ID_PATTERN = /^ext_[a-z0-9_]{1,62}$/;
 
