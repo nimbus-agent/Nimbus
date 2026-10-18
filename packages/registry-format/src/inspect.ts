@@ -1,6 +1,6 @@
 /** Unpacks a registry package into a private work dir and reads what the index will record. */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { extract, list } from "tar";
 import { MAX_ENTRY_COUNT, MAX_MANIFEST_BYTES, MAX_UNPACKED_BYTES } from "./caps.ts";
@@ -86,7 +86,11 @@ export async function inspectPackage(tgz: string, work: string): Promise<Inspect
   // recorded is the hash of the file a client will run.
   const entryRel = rawManifestEntryRelPath(m);
   const entryPath = resolve(out, entryRel);
-  if (!entryPath.startsWith(resolve(out) + sep) || !existsSync(entryPath)) {
+  if (
+    !entryPath.startsWith(resolve(out) + sep) ||
+    !existsSync(entryPath) ||
+    !lstatSync(entryPath).isFile()
+  ) {
     throw manifestInvalid(`extension entry ${entryRel} is missing or outside the package`);
   }
   return {

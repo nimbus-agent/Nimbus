@@ -50,6 +50,12 @@ describe("inspectPackage", () => {
     );
   });
 
+  test("an entry naming a directory is refused as a registry error", async () => {
+    await expect(inspectDir(makeExt({ id: "a", entry: "dist" }))).rejects.toThrow(
+      "extension entry dist is missing or outside the package",
+    );
+  });
+
   test("a non-JSON manifest is refused", async () => {
     await expect(inspectDir(makeExt("{nope"))).rejects.toThrow("manifest is not valid JSON");
   });
