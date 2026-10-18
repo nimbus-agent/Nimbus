@@ -235,7 +235,7 @@ export class InvalidVersionFormat extends Error {
   }
 }
 
-/** The index's own strict SemVer 2.0.0 rule (`registry/index-format.ts`), prerelease tags included. */
+/** The index's own strict SemVer 2.0.0 rule (`@nimbus-dev/registry-format`), prerelease tags included. */
 export function assertStrictSemver(v: string): void {
   if (!isValidSemver(v)) throw new InvalidVersionFormat(v);
 }

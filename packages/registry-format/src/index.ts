@@ -1,6 +1,12 @@
 /** Version of the extension-registry format rules this package implements. */
 export const REGISTRY_FORMAT_VERSION = 1;
 
+export {
+  MAX_ENTRY_COUNT,
+  MAX_MANIFEST_BYTES,
+  MAX_PACKAGE_BYTES,
+  MAX_UNPACKED_BYTES,
+} from "./caps.ts";
 export { RegistryError, type RegistryErrorCode } from "./errors.ts";
 export {
   assertSafeExtensionId,
@@ -22,6 +28,7 @@ export {
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
 } from "./index-format.ts";
+export { type InspectedPackage, inspectPackage } from "./inspect.ts";
 export {
   DEFAULT_EXTENSION_ENTRY,
   type ExtensionManifest,
@@ -32,6 +39,8 @@ export {
   parseExtensionManifestJson,
   type RegistryParseResult,
 } from "./manifest.ts";
+export { packExtensionDir } from "./pack.ts";
+export { isPackageFile, listPackageFiles, PACKAGE_MANIFEST_FILE } from "./package-set.ts";
 export {
   DEFAULT_NETWORK_PORT,
   type FilesystemPermissions,
