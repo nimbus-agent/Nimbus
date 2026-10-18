@@ -19,10 +19,17 @@ export type ExtensionRow = {
    * digest vouches for nothing.
    */
   tree_digest: string | null;
+  /** V71: the registry, root-key fingerprint and channel an extension was installed from; `null` for a local install. */
+  source_registry?: string | null;
+  source_root_fingerprint?: string | null;
+  source_channel?: "stable" | "beta" | null;
 };
 
 /** V66 added `tree_digest`; below it the column does not exist and every row reads `null`. */
 const TREE_DIGEST_SCHEMA_VERSION = 66;
+
+/** V71 added the three `source_*` columns; below it every row reads `null` for each. */
+const SOURCE_SCHEMA_VERSION = 71;
 
 function hasTreeDigestColumn(db: Database): boolean {
   return readIndexedUserVersion(db) >= TREE_DIGEST_SCHEMA_VERSION;
@@ -33,9 +40,13 @@ export function listExtensions(db: Database): ExtensionRow[] {
     return [];
   }
   const digest = hasTreeDigestColumn(db) ? "tree_digest" : "NULL AS tree_digest";
+  const source =
+    readIndexedUserVersion(db) >= SOURCE_SCHEMA_VERSION
+      ? "source_registry, source_root_fingerprint, source_channel"
+      : "NULL AS source_registry, NULL AS source_root_fingerprint, NULL AS source_channel";
   return db
     .query(
-      `SELECT id, version, install_path, manifest_hash, entry_hash, enabled, installed_at, last_verified_at, ${digest}
+      `SELECT id, version, install_path, manifest_hash, entry_hash, enabled, installed_at, last_verified_at, ${digest}, ${source}
        FROM extension ORDER BY id`,
     )
     .all() as ExtensionRow[];

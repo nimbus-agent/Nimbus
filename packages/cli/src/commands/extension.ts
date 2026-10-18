@@ -59,6 +59,7 @@ type ExtensionListEntry = {
   reverseDeps?: Array<{ extensionId: string; range: string }>;
   runState?: string;
   runGrant?: { serviceId: string; approvedAt: number; modelAccess: boolean } | null;
+  source_registry?: string | null;
 };
 
 export interface ExtensionListTableRow {
@@ -74,6 +75,8 @@ export interface ExtensionListTableRow {
    */
   signatureDisabled?: boolean;
   runState?: string;
+  /** The registry the extension was installed from; absent for a local-path install. */
+  sourceRegistry?: string;
 }
 
 /** One definition, read by the renderer and by the colour rule below. */
@@ -84,9 +87,10 @@ export function formatExtensionListTable(
   opts: { isTty: boolean; noColor: boolean },
 ): string {
   const showRun = rows.some((r) => r.runState !== undefined);
-  const headers = showRun
-    ? ["ID", "Version", "Publisher", "Status", "Run"]
-    : ["ID", "Version", "Publisher", "Status"];
+  const showSource = rows.some((r) => r.sourceRegistry !== undefined);
+  const headers = ["ID", "Version", "Publisher", "Status"];
+  if (showRun) headers.push("Run");
+  if (showSource) headers.push("Source");
   const data = rows.map((r) => {
     const isEnabled = typeof r.enabled === "number" ? r.enabled === 1 : r.enabled;
     let status: string;
@@ -101,7 +105,9 @@ export function formatExtensionListTable(
       r.publisher === undefined ? "(unverified)" : r.publisher.id,
       status,
     ];
-    return showRun ? [...cells, r.runState ?? "-"] : cells;
+    if (showRun) cells.push(r.runState ?? "-");
+    if (showSource) cells.push(r.sourceRegistry === undefined ? "-" : `from ${r.sourceRegistry}`);
+    return cells;
   });
   const widths = headers.map((h, i) =>
     Math.max(h.length, ...data.map((row) => (row[i] ?? "").length)),
@@ -181,6 +187,7 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
     if (r.publisher !== undefined) base.publisher = r.publisher;
     if (r.signature_disabled === true) base.signatureDisabled = true;
     if (r.runState !== undefined) base.runState = r.runState;
+    if (typeof r.source_registry === "string") base.sourceRegistry = r.source_registry;
     return base;
   });
   const table = formatExtensionListTable(tableRows, { isTty, noColor });
