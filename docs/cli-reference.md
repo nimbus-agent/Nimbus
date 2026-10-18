@@ -4535,24 +4535,6 @@ nimbus extension remove nimbus-notion --yes --json
 
 ---
 
-### `nimbus registry maintain init|add|remove`
-
-Offline commands (no gateway, no network) that build a signed static extension registry: a folder holding a signed `index.json` plus `extensions/<id>/<version>/{manifest.json,package.tgz}`. The root key is a file containing base64 of the 32-byte Ed25519 seed (the format `nimbus extension keygen` writes), default `~/.nimbus/registry-key`, mode 0600.
-
-- `init <dir> [--key <path>] [--force]` generates the root key, creates `<dir>/extensions/`, writes a signed empty index at `sequence` 1 and prints the root key and fingerprint. Refuses to overwrite an existing key or index without `--force` (exit 2).
-- `add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--key <path>]` packs a directory deterministically (or takes a `.tgz` with `nimbus.extension.json` at its root), requires a publisher-signed manifest, verifies its signature, refuses an existing `<id>@<version>` or a changed publisher key for an id, copies the files in and re-signs with `sequence + 1`.
-- `remove <dir> <id>[@<version>] [--key <path>]` removes one version (or the whole id) from the index and re-signs. Files stay on disk. Removing an id's last version removes the id entry.
-
-Every command checks that the folder's index is signed by the key given, and writes `index.json` through a temporary file and an atomic rename. Exit code is `2` for a refusal or usage error.
-
-```bash
-nimbus registry maintain init ./registry --key ./registry-key
-nimbus registry maintain add ./registry ./my-extension --channel beta --key ./registry-key
-nimbus registry maintain remove ./registry com.example.tool@1.0.0 --key ./registry-key
-```
-
----
-
 ### `nimbus extension update [<id>] [--check] [--to <version>] [--json]`
 
 Apply a cached auto-update bump (T2 PR 3). Without an id, lists pending updates the daemon detected on its last poll; with `--check`, forces an immediate registry poll first. With an `<id>`, applies the cached bump for that extension after HITL consent (`extension.autoUpdate` for a forward bump, `extension.downgrade` for a backward one).
@@ -4639,6 +4621,28 @@ Run contract tests for an extension against the `@nimbus-dev/sdk` manifest contr
 ```bash
 nimbus test                     # In extension root directory
 nimbus test ./nimbus-my-connector
+```
+
+---
+
+## Extension Registry
+
+A registry is a static folder (or website) of signed extension packages. These maintainer commands only build one; this release has no gateway-side registry client yet, so nothing installs from a registry.
+
+### `nimbus registry maintain init|add|remove`
+
+Offline commands (no gateway, no network) that build a signed static extension registry: a folder holding a signed `index.json` plus `extensions/<id>/<version>/{manifest.json,package.tgz}`. The root key is a file containing base64 of the 32-byte Ed25519 seed (the format `nimbus extension keygen` writes), default `~/.nimbus/registry-key`, mode 0600.
+
+- `init <dir> [--key <path>] [--force]` generates the root key, creates `<dir>/extensions/`, writes a signed empty index at `sequence` 1 and prints the root key and fingerprint. Refuses to overwrite an existing key or index without `--force` (exit 2).
+- `add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--key <path>]` packs a directory deterministically (or takes a `.tgz` with `nimbus.extension.json` at its root), requires a publisher-signed manifest, verifies its signature, refuses an existing `<id>@<version>` or a changed publisher key for an id, copies the files in and re-signs with `sequence + 1`.
+- `remove <dir> <id>[@<version>] [--key <path>]` removes one version (or the whole id) from the index and re-signs. Files stay on disk. Removing an id's last version removes the id entry.
+
+Every command checks that the folder's index is signed by the key given, and writes `index.json` through a temporary file and an atomic rename. Exit code is `2` for a refusal or usage error.
+
+```bash
+nimbus registry maintain init ./registry --key ./registry-key
+nimbus registry maintain add ./registry ./my-extension --channel beta --key ./registry-key
+nimbus registry maintain remove ./registry com.example.tool@1.0.0 --key ./registry-key
 ```
 
 ---

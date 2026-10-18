@@ -18,6 +18,21 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-18 — Phase 9.5 project 1, PR 2: signed registry format and offline maintainer commands (no migration, no invariant, no egress class).**
+  A registry is a static folder with a signed `index.json` (format 1: `rootKey`, strictly increasing
+  `sequence`, `generatedAt`, and per-extension publisher plus versions carrying channel, name,
+  manifest and package paths, SHA-256s, size, `entryHash`, `publishedAt`). The registry root key
+  signs the canonical JSON of the index; the publisher still signs each manifest (I16), so there are
+  two signatures and two trust roots. The gateway parser (`extensions/registry/index-format.ts`)
+  enforces strict SemVer version keys, tolerates and signs unknown keys, caps the document at 8 MiB
+  and accepts a BOM and CRLF. New offline CLI commands `nimbus registry maintain init|add|remove`
+  build such a registry: the root key is a mode 0600 file (default `~/.nimbus/registry-key`), packages
+  are packed deterministically (sorted entries, mtime 0, mode 0644, portable headers), duplicates,
+  publisher-key changes, unsigned packages and oversize packages are refused, and `index.json` is
+  written atomically. A golden vector shared by the gateway and CLI pins the signing format, and a
+  committed fixture registry is verified by a gateway test. **Nothing in the gateway consumes a
+  registry yet:** adding registries, search, install and updates are the next PR.
+
 - **2026-10-18 — Extension auto-update path repaired (fixes only; no new invariant, no migration).**
   Extension updates could never apply before this: `nimbus extension install` writes a flat
   `<extensionsDir>/<id>` while the update swap expected an `active/` subdirectory, so every apply failed
