@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,6 +32,18 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
+
+function canSymlink(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), "nimbus-symlink-probe-"));
+  try {
+    symlinkSync(probe, join(probe, "l"), "dir");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+}
 
 const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
 
@@ -104,6 +124,39 @@ describe("registry maintain", () => {
     expect(manifestBytes.toString("utf8")).toBe(
       readFileSync(join(ext, "nimbus.extension.json"), "utf8"),
     );
+  });
+
+  test("add of a .tgz file records the hash of the bytes in the registry copy", async () => {
+    const first = await init("first");
+    const ext = await makeExtension("ext");
+    await runRegistryMaintain(["add", first.dir, ext, "--key", first.key], io);
+    const src = join(first.dir, "extensions", "com.example.tool", "1.0.0", "package.tgz");
+    const second = await init("second");
+    expect(await runRegistryMaintain(["add", second.dir, src, "--key", second.key], io)).toBe(0);
+    const entry = readIndexFile(join(second.dir, "index.json")).extensions["com.example.tool"]
+      ?.versions["1.0.0"];
+    const copy = readFileSync(
+      join(second.dir, "extensions", "com.example.tool", "1.0.0", "package.tgz"),
+    );
+    expect(entry?.packageSha256).toBe(sha(copy));
+    expect(sha(copy)).toBe(sha(readFileSync(src)));
+  });
+
+  test("add of a missing source says it does not exist", async () => {
+    const { dir, key } = await init();
+    expect(await runRegistryMaintain(["add", dir, join(tmp, "nope.tgz"), "--key", key], io)).toBe(
+      2,
+    );
+    expect(err.join("")).toContain("does not exist");
+  });
+
+  test.skipIf(!canSymlink())("add refuses a symlinked source", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext");
+    const link = join(tmp, "link");
+    symlinkSync(ext, link, "dir");
+    expect(await runRegistryMaintain(["add", dir, link, "--key", key], io)).toBe(2);
+    expect(err.join("")).toContain("symlink");
   });
 
   test("add refuses an existing id@version", async () => {

@@ -7,11 +7,11 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -314,14 +314,26 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
   }
   const seed = loadSeed(keyPathOf(p));
   const index = loadOwnedIndex(dir, seed);
-  if (!existsSync(source)) throw new MaintainError(`${source} does not exist`);
+  let sourceIsDir: boolean;
+  try {
+    const st = lstatSync(source);
+    if (st.isSymbolicLink()) throw new MaintainError(`${source} is a symlink; refusing`);
+    sourceIsDir = st.isDirectory();
+  } catch (e) {
+    if (e instanceof MaintainError) throw e;
+    throw new MaintainError(`${source} does not exist`);
+  }
 
   const work = mkdtempSync(join(tmpdir(), "nimbus-registry-add-"));
   try {
-    let tgz = source;
-    if (statSync(source).isDirectory()) {
-      tgz = join(work, "package.tgz");
+    // The package is read ONCE. A file source is copied into the private work dir from that single
+    // read; from then on inspection, hashing and the registry copy all use that private copy, never
+    // `source` again, so what was validated is exactly what is published.
+    const tgz = join(work, "package.tgz");
+    if (sourceIsDir) {
       await packExtensionDir(source, tgz);
+    } else {
+      writeFileSync(tgz, readFileSync(source), { flag: "wx" });
     }
     const tgzBytes = readFileSync(tgz);
     if (tgzBytes.length === 0 || tgzBytes.length > MAX_PACKAGE_BYTES) {
