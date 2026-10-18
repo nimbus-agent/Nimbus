@@ -17,14 +17,19 @@
 //
 // The registry lives in a local bare repository. `publish --clone` requires the clone's `origin`
 // to BE the GitHub repository it targets, so the clone's origin is `git@github.com:<repo>.git`
-// and its `core.sshCommand` is a fake ssh that serves the local bare repository: nothing reaches
-// github.com, and if the fake were bypassed the run would fail rather than reach the network
-// silently (the fake records every invocation, and that record is asserted).
+// and its `core.sshCommand` is a fake ssh that serves the local bare repository. That holds only
+// while nothing overrides the repository's own setting, so every child that runs git gets an
+// isolated environment: no system or global git config (a developer's `insteadOf` could turn the
+// origin back into https://github.com), and no `GIT_SSH_COMMAND`/`GIT_SSH`/`GIT_CONFIG_*`, which
+// would take precedence. A bypass would make a real connection attempt, so it is guarded rather
+// than tolerated: the fake records every invocation and that record is asserted, and a positive
+// control shows an outer `GIT_SSH_COMMAND` never reaches the publish.
 //
 // The publisher id is unique per run: an install caches the publisher key in the Vault, which on
 // macOS/Linux is the machine-global keychain. The cached key is evicted afterwards. Embeddings are
 // skipped (NIMBUS_SKIP_EMBEDDING_RUNTIME=1); nothing here needs the index.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   copyFileSync,
@@ -42,7 +47,6 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { git } from "../../../github-actions/registry-action/src/testing/registry-repo.ts";
 import { evictPublisherKey } from "../../src/extensions/publisher-keys.ts";
 import type { PlatformPaths } from "../../src/platform/paths.ts";
 import { createSandboxRunner } from "../../src/platform/sandbox/sandbox-runner.ts";
@@ -156,6 +160,18 @@ const REPO = resolve(import.meta.dir, "..", "..", "..", "..");
 const CLI_ENTRY = join(REPO, "packages", "cli", "src", "index.ts");
 const ACTION_MAIN = join(REPO, "packages", "github-actions", "registry-action", "src", "main.ts");
 const IS_CI = process.env["CI"] === "true";
+
+/** The commit identity the test's own git calls use; the isolated global config has none. */
+const GIT_IDENTITY = [
+  "-c",
+  "user.name=test",
+  "-c",
+  "user.email=test@example.invalid",
+  "-c",
+  "commit.gpgsign=false",
+  "-c",
+  "core.autocrlf=false",
+];
 
 /** Any 40-hex commit: a dev build has no embedded release commit for `init --github` to pin. */
 const ACTION_REF = "0123456789abcdef0123456789abcdef01234567";
@@ -296,14 +312,41 @@ describe("publish to run: scaffold → sign → publish → check → merge → 
   const signWorkspace = join(tmp, "sign-workspace");
   const servedSite = join(tmp, "served-site");
 
-  function cliEnv(extra: Record<string, string> = {}): Record<string, string> {
-    const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+  /** An empty global git config: no developer `insteadOf`, `sshCommand` or identity applies. */
+  const emptyGitConfig = join(tmp, "user", "empty-gitconfig");
+
+  /**
+   * `base` with every per-user directory pointed inside `tmp` and git's configuration isolated:
+   * no system or global config, and none of the environment variables that override a
+   * repository's own `core.sshCommand` or inject config (`GIT_SSH_COMMAND` and `GIT_SSH` take
+   * precedence over it; `GIT_CONFIG_*` can set anything). Every child that runs git gets this,
+   * so the clone's fake ssh is the only way its github-shaped origin can be reached.
+   */
+  function isolatedEnv(
+    base: Record<string, string | undefined>,
+    extra: Record<string, string> = {},
+  ): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(base)) {
+      if (v !== undefined) env[k] = v;
+    }
+    for (const k of Object.keys(env)) {
+      if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(k)) delete env[k];
+    }
     for (const k of [
       "NIMBUS_DEMO",
       "NIMBUS_CONFIG_DIR",
       "NIMBUS_GATEWAY_SOCKET",
       "NIMBUS_PROFILE",
       "NIMBUS_SCRIPT_CONSENT_SOURCE",
+      "GIT_SSH_COMMAND",
+      "GIT_SSH",
+      "GIT_SSH_VARIANT",
+      "GIT_CONFIG_PARAMETERS",
+      "GIT_CONFIG_COUNT",
+      "GIT_CONFIG",
+      "GIT_DIR",
+      "GIT_WORK_TREE",
     ]) {
       delete env[k];
     }
@@ -319,8 +362,36 @@ describe("publish to run: scaffold → sign → publish → check → merge → 
       TMPDIR: user.tmp,
       TEMP: user.tmp,
       TMP: user.tmp,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: emptyGitConfig,
       ...extra,
     };
+  }
+
+  /** The env every CLI subprocess gets; `base` lets a test seed the OUTER env it is built from. */
+  function cliEnv(
+    extra: Record<string, string> = {},
+    base: Record<string, string | undefined> = process.env,
+  ): Record<string, string> {
+    return isolatedEnv(base, extra);
+  }
+
+  /** The test's own git calls, under the same isolated config (identity passed explicitly). */
+  function git(cwd: string, ...args: string[]): string {
+    return execFileSync("git", [...GIT_IDENTITY, ...args], {
+      cwd,
+      env: isolatedEnv(process.env),
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).toString("utf8");
+  }
+
+  /** How many times the fake ssh has served a fetch so far. */
+  function uploadPackCount(): number {
+    if (!existsSync(sshLog)) return 0;
+    return readFileSync(sshLog, "utf8")
+      .split("\n")
+      .filter((l) => l.startsWith("git-upload-pack")).length;
   }
 
   /** The data dir the CLI resolves under `cliEnv()` (mirrors packages/cli/src/paths.ts). */
@@ -332,8 +403,13 @@ describe("publish to run: scaffold → sign → publish → check → merge → 
     return join(user.xdgData, "nimbus");
   }
 
-  function cli(args: string[], cwd: string, extra?: Record<string, string>): Promise<Run> {
-    return run(["bun", CLI_ENTRY, ...args], cwd, cliEnv(extra));
+  function cli(
+    args: string[],
+    cwd: string,
+    extra?: Record<string, string>,
+    base?: Record<string, string | undefined>,
+  ): Promise<Run> {
+    return run(["bun", CLI_ENTRY, ...args], cwd, cliEnv(extra, base));
   }
 
   async function action(
@@ -341,17 +417,21 @@ describe("publish to run: scaffold → sign → publish → check → merge → 
     workspace: string,
     extra: Record<string, string>,
   ): Promise<Run> {
-    return run(["bun", ACTION_MAIN], workspace, {
-      ...(process.env as Record<string, string>),
-      INPUT_MODE: mode,
-      GITHUB_WORKSPACE: workspace,
-      GITHUB_STEP_SUMMARY: join(tmp, `summary-${mode}.md`),
-      ...extra,
-    });
+    return run(
+      ["bun", ACTION_MAIN],
+      workspace,
+      isolatedEnv(process.env, {
+        INPUT_MODE: mode,
+        GITHUB_WORKSPACE: workspace,
+        GITHUB_STEP_SUMMARY: join(tmp, `summary-${mode}.md`),
+        ...extra,
+      }),
+    );
   }
 
   beforeAll(() => {
     for (const d of Object.values(user)) mkdirSync(d, { recursive: true });
+    writeFileSync(emptyGitConfig, "");
     mkdirSync(authorDir, { recursive: true });
   });
 
@@ -500,6 +580,29 @@ describe("publish to run: scaffold → sign → publish → check → merge → 
       git(publishClone, "config", "ssh.variant", "simple");
       git(publishClone, "remote", "set-url", "origin", `git@github.com:${REGISTRY_REPO}.git`);
 
+      // A trap ssh: records that it ran and fails, so nothing it is handed is ever contacted.
+      const trapSsh = join(tmp, "trap-ssh.sh");
+      const trapMarker = join(tmp, "trap-ssh.marker");
+      writeFileSync(
+        trapSsh,
+        ["#!/bin/sh", `printf 'ran\\n' >> '${posix(trapMarker)}'`, "exit 1", ""].join("\n"),
+      );
+      const trapCommand = `sh '${posix(trapSsh)}'`;
+      // Positive control: an inherited GIT_SSH_COMMAND DOES beat the clone's core.sshCommand, so
+      // "the marker stays absent" below is evidence of the scrub, not of an inert trap.
+      const control = Bun.spawnSync(["git", "ls-remote", "origin"], {
+        cwd: publishClone,
+        env: isolatedEnv(process.env, { GIT_SSH_COMMAND: trapCommand }),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+      });
+      expect(control.exitCode).not.toBe(0);
+      expect(existsSync(trapMarker)).toBe(true);
+      rmSync(trapMarker, { force: true });
+
+      // The publish runs from an OUTER environment that carries the trap; the CLI's env drops it.
       const publish = await cli(
         [
           "extension",
@@ -512,13 +615,16 @@ describe("publish to run: scaffold → sign → publish → check → merge → 
           "--no-pr",
         ],
         authorDir,
+        undefined,
+        { ...process.env, GIT_SSH_COMMAND: trapCommand },
       );
       expect(publish.code, describeRun("extension publish", publish)).toBe(0);
+      expect(existsSync(trapMarker)).toBe(false);
       expect(publish.stdout).toContain(
         `Committed ${extensionId}@${EXT_VERSION} on branch ${branch}`,
       );
       // Every fetch went through the fake: the publish read the registry, and nothing else served it.
-      expect(readFileSync(sshLog, "utf8")).toContain("git-upload-pack");
+      expect(uploadPackCount()).toBeGreaterThan(0);
 
       expect(git(publishClone, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe(branch);
       const added = git(publishClone, "diff", "--name-only", "origin/main", "HEAD")
@@ -537,10 +643,18 @@ describe("publish to run: scaffold → sign → publish → check → merge → 
     "step 4: the registry action's check passes the publish branch",
     async () => {
       // The clone stands in for the pull request's checkout: HEAD is the publish branch.
+      const fetchesBefore = uploadPackCount();
       const check = await action("check", publishClone, { GITHUB_BASE_REF: "main" });
       const out = `${check.stdout}${check.stderr}`;
       expect(out).not.toContain("::error::");
       expect(check.code, describeRun("action check", check)).toBe(0);
+      // It really validated this publish (an exit 0 alone would also cover a no-op)…
+      expect(check.stdout).toContain(`check passed: ${extensionId}@${EXT_VERSION}`);
+      expect(readFileSync(join(tmp, "summary-check.md"), "utf8")).toContain(
+        `## Registry publish: \`${extensionId}@${EXT_VERSION}\``,
+      );
+      // …and its fetch of the base and gh-pages went through the fake ssh too.
+      expect(uploadPackCount()).toBeGreaterThan(fetchesBefore);
     },
     STEP_TIMEOUT_MS,
   );
