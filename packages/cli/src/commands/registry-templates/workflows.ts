@@ -33,9 +33,11 @@ function actionUses(pin: ActionPin): string {
 /**
  * `registry-check.yml`: a reviewer aid on every pull request, with no secrets and a read-only token.
  * Full history (`fetch-depth: 0`) so the action can find the pull request's merge base; no
- * persisted credentials, since nothing in this job pushes.
+ * persisted credentials, since nothing in this job pushes (so the repository must be public for its
+ * fetches to work). `defaultBranch` is a name `init` already validated as YAML- and ref-safe; it is
+ * still emitted JSON-quoted so a numeric-looking name stays a string.
  */
-export function registryCheckWorkflow(pin: ActionPin): string {
+export function registryCheckWorkflow(pin: ActionPin, defaultBranch: string): string {
   return `# Validates a publish pull request against the signed index on gh-pages and summarises it
 # for the reviewer. A green check is a reviewer aid, not the boundary: a pull request can edit
 # this file. The boundary is the sign workflow and its required approval.
@@ -43,6 +45,7 @@ name: Registry check
 
 on:
   pull_request:
+    branches: [${JSON.stringify(defaultBranch)}]
 
 permissions:
   contents: read
@@ -71,15 +74,16 @@ jobs:
  * required reviewers, one run at a time, and pushes the signed site to `gh-pages` with the job's
  * token, which is why its checkout keeps the persisted credentials.
  */
-export function registrySignWorkflow(pin: ActionPin): string {
-  return `# Validates every unsigned extension version on main, signs the index with the registry root
-# key and pushes the site to gh-pages. Before approving a run, check that run's workflow diff:
+export function registrySignWorkflow(pin: ActionPin, defaultBranch: string): string {
+  return `# Validates every unsigned extension version on ${defaultBranch}, signs the index with the
+# registry root key and pushes the site to gh-pages. Before approving a run, check that run's
+# workflow diff:
 # the required approval is what stops a changed copy of this file from using the key.
 name: Registry sign
 
 on:
   push:
-    branches: [main]
+    branches: [${JSON.stringify(defaultBranch)}]
   workflow_dispatch:
 
 permissions:

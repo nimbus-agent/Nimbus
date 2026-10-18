@@ -311,6 +311,8 @@ jobs:
           # through unchanged (single quotes, no double quotes inside), instead of `--define`. No
           # `require`: it turns the eval into CommonJS, where Bun exits 0 on a thrown error.
           bun -e 'const s = process.env.RELEASE_COMMIT ?? ``; if (!/^[0-9a-f]{40}$/.test(s)) throw new Error(`RELEASE_COMMIT is not a 40-hex SHA`); process.getBuiltinModule(`node:fs`).writeFileSync(`packages/cli/src/release-commit.ts`, `export const NIMBUS_RELEASE_COMMIT: string | undefined = ${JSON.stringify(s)};\n`)'
+          # Read the file back rather than trusting the eval's exit code.
+          grep -Eq '"[0-9a-f]{40}"' packages/cli/src/release-commit.ts || exit 1
           cd packages/cli
           # Bun 1.4 on Windows will not create a missing --outfile directory; create it on every OS.
           mkdir -p ../../dist
@@ -336,6 +338,8 @@ jobs:
           # `require`: it turns the eval into CommonJS, where Bun exits 0 on a thrown error.
           bun -e 'const s = process.env.RELEASE_COMMIT ?? ``; if (!/^[0-9a-f]{40}$/.test(s)) throw new Error(`RELEASE_COMMIT is not a 40-hex SHA`); process.getBuiltinModule(`node:fs`).writeFileSync(`packages/cli/src/release-commit.ts`, `export const NIMBUS_RELEASE_COMMIT: string | undefined = ${JSON.stringify(s)};\n`)'
           if ($LASTEXITCODE -ne 0) { throw "could not embed the release commit" }
+          # Read the file back rather than trusting the eval's exit code.
+          if (-not (Select-String -Quiet -Pattern '"[0-9a-f]{40}"' -Path packages/cli/src/release-commit.ts)) { throw "release-commit.ts does not hold a 40-hex commit" }
           cd packages/cli
           # Bun 1.4 on Windows will not create a missing --outfile directory ("could not open output directory").
           New-Item -ItemType Directory -Force -Path ../../dist | Out-Null

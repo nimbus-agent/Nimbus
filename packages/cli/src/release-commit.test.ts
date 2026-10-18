@@ -38,6 +38,22 @@ describe("release-commit.ts", () => {
       expect(write).toBeGreaterThan(-1);
       expect(write).toBeLessThan(code.indexOf("bun build"));
       expect(code).not.toContain("--define");
+      // A read-back guard that does not depend on the eval's exit code, after the write and
+      // before the compile; on pwsh also the native exit-code check pwsh does not do itself.
+      const windows = step.name?.startsWith("Build CLI binary (Windows") === true;
+      const guard = windows
+        ? code.indexOf(
+            `if (-not (Select-String -Quiet -Pattern '"[0-9a-f]{40}"' -Path packages/cli/src/release-commit.ts)) { throw`,
+          )
+        : code.indexOf(`grep -Eq '"[0-9a-f]{40}"' packages/cli/src/release-commit.ts || exit 1`);
+      expect(guard).toBeGreaterThan(write);
+      expect(guard).toBeLessThan(code.indexOf("bun build"));
+      if (windows) {
+        const exitCheck = code.indexOf("if ($LASTEXITCODE -ne 0) { throw");
+        expect(exitCheck).toBeGreaterThan(write);
+        expect(exitCheck).toBeLessThan(guard);
+      }
     }
+    expect(builds.filter((s) => s.name?.startsWith("Build CLI binary (Windows")).length).toBe(1);
   });
 });

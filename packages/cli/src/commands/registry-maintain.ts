@@ -41,7 +41,6 @@ import { NIMBUS_VERSION } from "../version.ts";
 import { ownerNextSteps, registryReadme } from "./registry-templates/readme.ts";
 import {
   type ActionPin,
-  ROOT_KEY_SECRET,
   registryCheckWorkflow,
   registrySignWorkflow,
 } from "./registry-templates/workflows.ts";
@@ -68,7 +67,7 @@ const DEFAULT_BUILD: MaintainBuild = {
 };
 
 const USAGE =
-  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>]\n";
+  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>]\n";
 
 class MaintainError extends Error {}
 
@@ -158,12 +157,18 @@ async function resign(
 const COMMIT_SHA_RE = /^[0-9a-f]{40}$/;
 
 /** Options that only mean something with `--github`. */
-const GITHUB_ONLY = ["--action-ref", "--site", "--no-publisher-namespace"] as const;
+const GITHUB_ONLY = [
+  "--action-ref",
+  "--site",
+  "--default-branch",
+  "--no-publisher-namespace",
+] as const;
 
 /** Everything `init --github` will write, decided and checked before the key is generated. */
 interface GithubPlan {
   pin: ActionPin;
   site: string;
+  defaultBranch: string;
   /** Main-branch files, relative to `<dir>` (`/`-separated), with their contents. */
   mainFiles: ReadonlyArray<readonly [string, string]>;
   configText: string;
@@ -192,18 +197,52 @@ function isSameOrInside(child: string, parent: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+/**
+ * A conservative subset of git's ref-format rules, so the name is safe both as a branch and inside
+ * the emitted YAML: ASCII letters, digits, `.`, `_`, `-` and `/`; no leading `-` or `.`; no `..`,
+ * `//`, `/.`, trailing `/` or `.`, or `.lock` suffix.
+ */
+const BRANCH_RE = /^[A-Za-z0-9_][A-Za-z0-9._/-]{0,99}$/;
+
+function resolveDefaultBranch(p: ParsedArgs): string {
+  const branch = p.options.get("--default-branch") ?? "main";
+  const unsafe =
+    !BRANCH_RE.test(branch) ||
+    branch.includes("..") ||
+    branch.includes("//") ||
+    branch.includes("/.") ||
+    branch.endsWith("/") ||
+    branch.endsWith(".") ||
+    branch.endsWith(".lock");
+  if (unsafe) {
+    throw new MaintainError(
+      "--default-branch must be a plain branch name (letters, digits, . _ - /; no leading - or ., no .., no trailing / or .)",
+    );
+  }
+  return branch;
+}
+
 function planGithubInit(
   p: ParsedArgs,
   dir: string,
+  keyPath: string,
   build: MaintainBuild,
   force: boolean,
 ): GithubPlan {
   const pin = resolveActionPin(p, build);
+  const defaultBranch = resolveDefaultBranch(p);
   const site = p.options.get("--site") ?? `${resolve(dir)}-site`;
-  if (isSameOrInside(site, dir)) {
+  if (isSameOrInside(site, dir) || isSameOrInside(dir, site)) {
     throw new MaintainError(
-      `--site ${site} is inside ${dir}; the site goes to the gh-pages branch, so it must live outside the main-branch folder`,
+      `--site ${site} overlaps ${dir}; the site goes to the gh-pages branch and <dir> to the main branch, so neither folder may hold the other`,
     );
+  }
+  for (const folder of [dir, site]) {
+    if (isSameOrInside(keyPath, folder)) {
+      throw new MaintainError(
+        `the root key ${keyPath} would be inside ${folder}, which is pushed to GitHub; keep it outside the registry folders (the default is ~/.nimbus/registry-key)`,
+      );
+    }
   }
   if (existsSync(join(dir, "index.json"))) {
     throw new MaintainError(
@@ -213,10 +252,10 @@ function planGithubInit(
   const requirePublisherNamespace = !p.flags.has("--no-publisher-namespace");
   const configText = `${JSON.stringify({ format: 1, requirePublisherNamespace }, null, 2)}\n`;
   const mainFiles: Array<readonly [string, string]> = [
-    [".github/workflows/registry-check.yml", registryCheckWorkflow(pin)],
-    [".github/workflows/registry-sign.yml", registrySignWorkflow(pin)],
+    [".github/workflows/registry-check.yml", registryCheckWorkflow(pin, defaultBranch)],
+    [".github/workflows/registry-sign.yml", registrySignWorkflow(pin, defaultBranch)],
     ["nimbus-registry.json", configText],
-    ["README.md", registryReadme({ requirePublisherNamespace })],
+    ["README.md", registryReadme({ requirePublisherNamespace, defaultBranch })],
     ["extensions/.gitkeep", ""],
     // Package bytes are hashed and signed: git must never rewrite their line endings.
     ["extensions/.gitattributes", "* -text\n"],
@@ -232,7 +271,7 @@ function planGithubInit(
       throw new MaintainError(`${taken} exists; refusing to overwrite without --force`);
     }
   }
-  return { pin, site, mainFiles, configText };
+  return { pin, site, defaultBranch, mainFiles, configText };
 }
 
 function writeRootKey(keyPath: string, privkey: Uint8Array, force: boolean): void {
@@ -262,7 +301,7 @@ function writeGithubRegistry(dir: string, plan: GithubPlan, index: RegistryIndex
 async function maintainInit(args: string[], io: MaintainIo, build: MaintainBuild): Promise<void> {
   const p = parseArgs(
     args,
-    ["--key", "--action-ref", "--site"],
+    ["--key", "--action-ref", "--site", "--default-branch"],
     ["--force", "--github", "--no-publisher-namespace"],
   );
   const dir = p.positional[0];
@@ -272,7 +311,7 @@ async function maintainInit(args: string[], io: MaintainIo, build: MaintainBuild
   const keyPath = keyPathOf(p);
   let plan: GithubPlan | undefined;
   if (github) {
-    plan = planGithubInit(p, dir, build, force);
+    plan = planGithubInit(p, dir, keyPath, build, force);
   } else {
     const stray = GITHUB_ONLY.find((o) => p.options.has(o) || p.flags.has(o));
     if (stray !== undefined) throw new MaintainError(`${stray} needs --github`);
@@ -299,10 +338,8 @@ async function maintainInit(args: string[], io: MaintainIo, build: MaintainBuild
   io.stdout(`key file:    ${keyPath} (keep it secret and backed up)\n`);
   if (plan !== undefined) {
     io.stdout(`action pin:  ${plan.pin.commit} (Nimbus v${plan.pin.version})\n`);
-    io.stdout(
-      `secret value for ${ROOT_KEY_SECRET} (the key file's contents; not printed again):\n${encodeBase64(privkey)}\n\n`,
-    );
-    io.stdout(ownerNextSteps({ dir, site: plan.site }));
+    io.stdout("\n");
+    io.stdout(ownerNextSteps({ dir, site: plan.site, keyPath, defaultBranch: plan.defaultBranch }));
   }
 }
 

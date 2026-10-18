@@ -186,7 +186,7 @@ describe("registry maintain init --github", () => {
   test("the check workflow: pull_request, read-only, no environment, full history, no credentials", async () => {
     const { dir } = await initGithub();
     const { doc } = workflow(dir, "registry-check.yml");
-    expect(Object.keys(doc["on"] as object)).toEqual(["pull_request"]);
+    expect(doc["on"]).toEqual({ pull_request: { branches: ["main"] } });
     expect(doc["permissions"]).toEqual({ contents: "read" });
     expect(doc["concurrency"]).toBeUndefined();
     expect(Object.keys(doc["jobs"] as object)).toEqual(["check"]);
@@ -219,15 +219,22 @@ describe("registry maintain init --github", () => {
     });
   });
 
-  test("prints the fingerprint, the secret value once, and the owner's next steps", async () => {
+  test("never prints the root seed; prints the environment-scoped secret commands", async () => {
     const { key, site } = await initGithub();
     const text = out.join("");
     const seed = readFileSync(key, "utf8").trim();
     expect(text).toContain("fingerprint:");
-    expect(text.split(seed).length - 1).toBe(1);
-    expect(text).toContain(ROOT_KEY_SECRET);
-    expect(text).toContain("registry-signing");
+    expect(text.split(seed).length - 1).toBe(0);
+    const scoped = `gh secret set ${ROOT_KEY_SECRET} --env registry-signing --repo <owner>/<repo>`;
+    expect(text).toContain(`${scoped} < '${key}'`);
+    expect(text).toContain(`Get-Content -Raw '${key}' | ${scoped}`);
+    // The secret is set only after the environment that gates it exists.
+    expect(text.indexOf(scoped)).toBeGreaterThan(
+      text.indexOf('Create the environment "registry-signing"'),
+    );
     expect(text).toContain(site);
+    expect(text).toMatch(/repository is public/);
+    expect(text).toMatch(/On Windows, keep the root key at its default location/);
     expect(text).toMatch(/Protect gh-pages against force-push and deletion/);
     expect(text).toMatch(/GITHUB_TOKEN push still lands/);
     expect(text).toMatch(/sequence number\s+that was already used/);
@@ -275,6 +282,7 @@ describe("registry maintain init --github", () => {
   test.each([
     ["--action-ref", ["--action-ref", SHA]],
     ["--site", ["--site", "x"]],
+    ["--default-branch", ["--default-branch", "trunk"]],
     ["--no-publisher-namespace", ["--no-publisher-namespace"]],
   ] as const)("%s without --github refuses", async (_name, flag) => {
     const code = await runRegistryMaintain(
@@ -287,9 +295,87 @@ describe("registry maintain init --github", () => {
   });
 
   test("refuses a site folder inside <dir>", async () => {
-    const { code } = await initGithub(["--action-ref", SHA, "--site", join(tmp, "reg", "site")]);
+    const { key, code } = await initGithub([
+      "--action-ref",
+      SHA,
+      "--site",
+      join(tmp, "reg", "site"),
+    ]);
     expect(code).toBe(2);
-    expect(err.join("")).toContain("outside the main-branch folder");
+    expect(err.join("")).toContain("neither folder may hold the other");
+    expect(existsSync(key)).toBe(false);
+  });
+
+  test("refuses a site folder that contains <dir>", async () => {
+    const dir = join(tmp, "site", "reg");
+    const key = join(tmp, "k");
+    const code = await runRegistryMaintain(
+      ["init", dir, "--key", key, "--github", "--action-ref", SHA, "--site", join(tmp, "site")],
+      io,
+      DEV,
+    );
+    expect(code).toBe(2);
+    expect(err.join("")).toContain("neither folder may hold the other");
+    expect(existsSync(key)).toBe(false);
+  });
+
+  test.each([
+    ["inside <dir>", ["reg", ".nimbus", "registry-key"]],
+    ["equal to a file path in <dir>", ["reg", "README.md"]],
+    ["inside the site folder", ["reg-site", "registry-key"]],
+  ])("refuses a --key path %s, before generating any key", async (_what, rel) => {
+    const key = join(tmp, ...rel);
+    const code = await runRegistryMaintain(
+      ["init", join(tmp, "reg"), "--key", key, "--github", "--action-ref", SHA],
+      io,
+      DEV,
+    );
+    expect(code).toBe(2);
+    expect(err.join("")).toContain("pushed to GitHub");
+    expect(existsSync(key)).toBe(false);
+    expect(existsSync(join(tmp, "reg"))).toBe(false);
+  });
+
+  test("--default-branch is threaded into both workflows' branch filters", async () => {
+    const { dir, code } = await initGithub(["--action-ref", SHA, "--default-branch", "release/v2"]);
+    expect(code).toBe(0);
+    expect(workflow(dir, "registry-check.yml").doc["on"]).toEqual({
+      pull_request: { branches: ["release/v2"] },
+    });
+    expect(workflow(dir, "registry-sign.yml").doc["on"]).toEqual({
+      push: { branches: ["release/v2"] },
+      workflow_dispatch: null,
+    });
+    expect(lintWorkflow("registry-sign.yml", workflow(dir, "registry-sign.yml").text)).toEqual([]);
+  });
+
+  test("a numeric-looking branch name stays a string in the YAML", async () => {
+    const { dir } = await initGithub(["--action-ref", SHA, "--default-branch", "2024"]);
+    expect(workflow(dir, "registry-sign.yml").doc["on"]).toEqual({
+      push: { branches: ["2024"] },
+      workflow_dispatch: null,
+    });
+  });
+
+  test.each([
+    "-main",
+    ".main",
+    "a..b",
+    "a//b",
+    "a/.b",
+    "main/",
+    "main.",
+    "main.lock",
+    "has space",
+    "x:y",
+    "a]b",
+    "",
+    "x".repeat(101),
+  ])("refuses --default-branch %p", async (branch) => {
+    const { key, code } = await initGithub(["--action-ref", SHA, "--default-branch", branch]);
+    expect(code).toBe(2);
+    expect(err.join("")).toMatch(/--default-branch/);
+    expect(existsSync(key)).toBe(false);
   });
 
   test("refuses when <dir> holds an index.json, even with --force", async () => {
