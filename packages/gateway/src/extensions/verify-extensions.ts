@@ -67,8 +67,11 @@ function tryPromotePrevVersion(
     // adopts them with `extension rehash`. Anything able to write the versions area could have
     // planted that tree, so recovery must not make it look healthy.
     const measured = computeExtensionPackageHashes(activePath);
-    updateExtensionRowVersion(db, row.id, target, measured.manifestHash, measured.entryHash, now);
-    setExtensionEnabled(db, row.id, false);
+    // One transaction: an interruption must not leave a recovered row enabled with a NULL digest.
+    db.transaction(() => {
+      updateExtensionRowVersion(db, row.id, target, measured.manifestHash, measured.entryHash, now);
+      setExtensionEnabled(db, row.id, false);
+    })();
     recoveredPendingRehashRegistry.mark(row.id);
     try {
       appendAuditEntry(db, {

@@ -735,11 +735,16 @@ async function dispatchExtensionVoid(
  * they get the human-bound budget rather than the 30s default that would time out while the owner
  * is still reading the prompt. `update --check` only reads, so it keeps the default.
  */
+/** ONE apply/read-only decision for `update`: `--check` never applies, whatever else is passed. */
+export function extensionUpdateApplies(rest: string[]): boolean {
+  return !hasFlag(rest, "--check");
+}
+
 export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number | undefined {
   if (sub === "install" || sub === "rehash" || sub === "approve" || sub === "downgrade") {
     return INTERACTIVE_RPC_TIMEOUT_MS;
   }
-  if (sub === "update" && !hasFlag(rest, "--check")) {
+  if (sub === "update" && extensionUpdateApplies(rest)) {
     return INTERACTIVE_RPC_TIMEOUT_MS;
   }
   return undefined;
@@ -811,10 +816,12 @@ async function listExtensionUpdates(
   opts: RunExtensionUpdateOpts,
   isJson: boolean,
   isCheck: boolean,
+  onlyId?: string,
 ): Promise<number> {
-  const list = (await opts.caller("extension.checkForUpdates", {
+  const all = (await opts.caller("extension.checkForUpdates", {
     ...(isCheck ? { force: true } : {}),
   })) as AvailableUpdateCli[];
+  const list = onlyId === undefined ? all : all.filter((u) => u.id === onlyId);
   if (isJson) {
     opts.writeStdout(`${JSON.stringify(list, undefined, 2)}\n`);
     return 0;
@@ -864,12 +871,13 @@ async function applyExtensionUpdate(
 export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts): Promise<number> {
   const args = opts.args;
   const isJson = hasFlag(args, "--json");
-  const isCheck = hasFlag(args, "--check");
+  const isCheck = !extensionUpdateApplies(args);
   const toVersion = takeFlagValue(args, "--to");
   const id = stripFlags(args).find((a) => !a.startsWith("--"));
 
-  if (id === undefined) {
-    return listExtensionUpdates(opts, isJson, isCheck);
+  if (id === undefined || !extensionUpdateApplies(args)) {
+    // `--check` is strictly read-only: it never reaches `extension.update`, even with an id.
+    return listExtensionUpdates(opts, isJson, isCheck, id);
   }
   return applyExtensionUpdate(opts, id, toVersion, isJson);
 }
@@ -877,7 +885,7 @@ export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts)
 export async function runExtensionUpdate(client: IPCClient, args: string[]): Promise<number> {
   // The gateway raises the owner's HITL prompt (`extension.update`) over this connection; `--check`
   // only reads, so it never prompts and registers nothing.
-  if (!hasFlag(args, "--check")) {
+  if (extensionUpdateApplies(args)) {
     registerConsentFor(client, { kind: "prompt" });
   }
   return runExtensionUpdateWithCaller({

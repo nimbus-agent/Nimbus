@@ -106,6 +106,9 @@ export async function applyUpgradeSwap(opts: ApplyUpgradeOpts): Promise<void> {
   let movedAside = false;
   const existing = await readdir(prevDir);
   if (existing.length > 0) {
+    // A crash after the move-aside but before the final cleanup leaves holding/ populated; stale
+    // entries there would make this run's renames fail silently, so start from an empty one.
+    await rm(holdingPath, { recursive: true, force: true });
     await mkdir(holdingPath, { recursive: true });
     await moveEntriesBestEffort(existing, prevDir, holdingPath);
     movedAside = true;
