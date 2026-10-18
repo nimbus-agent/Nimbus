@@ -6,6 +6,7 @@ import {
   deriveExtensionServiceId,
   EXTENSION_SERVICE_ID_PATTERN,
 } from "./extension-service-id.ts";
+import { ExtensionRunGrantError } from "./run-grant-error.ts";
 
 describe("deriveExtensionServiceId", () => {
   test("lowercases and maps every non-alphanumeric to _", () => {
@@ -17,6 +18,31 @@ describe("deriveExtensionServiceId", () => {
       /ERR_EXTENSION_SERVICE_ID_INVALID/,
     );
     expect(deriveExtensionServiceId("a".repeat(62))).toBe(`ext_${"a".repeat(62)}`);
+  });
+
+  test("the invalid-id refusal carries the workspace's detail under the run-grant code", () => {
+    let caught: unknown;
+    try {
+      deriveExtensionServiceId("");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ExtensionRunGrantError);
+    expect((caught as ExtensionRunGrantError).message).toContain(
+      'extension id "" does not yield a service id',
+    );
+  });
+
+  test("a failure that is not a registry refusal propagates unchanged, never relabelled", () => {
+    // A malformed caller (a non-string id off an unvalidated row) must not read as an invalid id.
+    let caught: unknown;
+    try {
+      deriveExtensionServiceId(42 as unknown as string);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TypeError);
+    expect(caught).not.toBeInstanceOf(ExtensionRunGrantError);
   });
 
   test("no first-party connector id lives in the ext_ namespace", () => {

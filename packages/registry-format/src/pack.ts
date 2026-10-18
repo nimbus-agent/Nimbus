@@ -1,4 +1,5 @@
 /** Deterministic `.tgz` packer for registry extension packages. */
+import type { Stats } from "node:fs";
 import { create } from "tar";
 import { listPackageFiles } from "./package-set.ts";
 
@@ -20,7 +21,12 @@ export async function packExtensionDir(srcDir: string, outFile: string): Promise
       mtime: new Date(0),
       noDirRecurse: true,
       onWriteEntry: (entry) => {
-        if (entry.stat) entry.stat.mode = (entry.stat.mode & ~0o7777) | 0o644;
+        // tar calls this hook only from the header builder, which has already thrown "cannot write
+        // header before stat" when `stat` is unset; its `stat?` type is wider than that contract.
+        // No `if (entry.stat)` guard: were the contract ever to change, a silent skip would ship
+        // non-deterministic modes, so this fails loudly instead.
+        const stat = entry.stat as Stats;
+        stat.mode = (stat.mode & ~0o7777) | 0o644;
       },
     },
     files,
