@@ -18,6 +18,32 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-18 — Phase 9.5 project 1, PR 3: extension registries, add, search, install (schema V71, I29 `registry` class, static D22(h), HITL type `registry.add`, I20 widened; no new invariant yet).**
+  The owner can now subscribe to named registries and install from them. `nimbus registry add|list|refresh|remove`
+  pins a registry's root key (`registry add` is TTY-only with no `--yes`, asks under the new `registry.add` HITL
+  action type, and checks an optional `--fingerprint=`); `nimbus extension search`, `extension info
+  --registry/--remote` and `extension install <id> [--registry] [--version] [--channel beta]` read them. A path
+  argument installs from disk as before; a bare id is looked up across registries and refused if it is in more
+  than one, never prioritised. IPC `registry.add|list|refresh|remove|search|info|install`: all CLI-only, the whole
+  `registry` namespace LAN-forbidden and refused on a demo root, none on the Tauri allowlist. Schema **V71**:
+  `extension_registry` (name, URL, pinned root key, `last_sequence` as the rollback anchor) plus nullable
+  `extension.source_registry`/`source_root_fingerprint`/`source_channel`. Transports: https, loopback http outside
+  production, and `file:`/absolute paths (UNC, device and file-host forms refused); redirects are followed by hand,
+  at most 3, each hop re-checked; size caps; the index is verified against the pinned key and the `sequence`
+  anti-rollback write is conditional. A registry install verifies the index, then the manifest and package hashes,
+  then the publisher key taken from the signed index, then the I16 signature, then a Vault key conflict, then the
+  entry hash, ALL before the `extension.install` prompt (reused, now naming the source registry and root
+  fingerprint), and records the source. **I29 widened:** a new `registry` egress source type (the fifteenth) and
+  coverage class, `per-call` — one row per REMOTE request including each redirect hop (`destination` is the
+  registry name, `payload_summary` the method, id, version and host); a local-path registry appends nothing;
+  air-gap refuses a remote registry. Static **D22(h)** confines `recordRegistryEgress` and bans a bare `fetch(`
+  under `extensions/` (temporary allow-list for `publisher-keys.ts`, `registry-client.ts` and `sync.ts`, removed in
+  the next PR; stated bound: an injected fetcher or an alias of `fetch` evades the text scan). **I20 widened:** a
+  delegate never approves `registry.add` or any `extension.*` action (`tryDelegatedApproval` falls back to the
+  local owner). HITL types 140 to 141; proposable stays 29, denied 111 to 112. **Operator note:** adding a coverage
+  class means `nimbus prove` reports a window that spans the upgrade as `indeterminate` (the designed fail-safe: an
+  older boot marker cannot vouch for a class it did not know). Not yet: the update daemon does not use registries
+  (next PR, with invariant I44).
 - **2026-10-18 — Phase 9.5 project 1, PR 2: signed registry format and offline maintainer commands (no migration, no invariant, no egress class).**
   A registry is a static folder with a signed `index.json` (format 1: `rootKey`, strictly increasing
   `sequence`, `generatedAt`, and per-extension publisher plus versions carrying channel, name,

@@ -11,6 +11,7 @@ import type { AskExplainRecorder } from "../../engine/ask-explain-recorder.ts";
 import type { ExecutorPolicyDep } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
+import type { RegistryFetchDeps } from "../../extensions/registry/registry-fetch.ts";
 import type { PublisherKeyFetcher } from "../../extensions/registry-client.ts";
 import type { DiscoveryProvider } from "../../federation/discovery.ts";
 import type { PeerPairing } from "../../federation/peer-pairing.ts";
@@ -103,6 +104,12 @@ export type CreateIpcServerOptions = {
   sandboxRunner?: SandboxRunner;
   extensionsPublisherKeyFetcher?: PublisherKeyFetcher;
   extensionsEnforceAirGap?: boolean;
+  /**
+   * What `registry.*` fetches with (spec § 8): the injected `fetch`, the single air-gap switch, the
+   * clock and the production flag. `db` is added per call from `localIndex`. Absent means every
+   * registry method that fetches refuses.
+   */
+  registryFetch?: Omit<RegistryFetchDeps, "db">;
   /**
    * `isExtensionRuntimeEnabled` as `platform/assemble.ts` resolved it (`[extensions] runtime` and
    * not demo-rooted). `false` makes `extension.approveRun` refuse `ERR_EXTENSION_RUNTIME_DISABLED`

@@ -4386,17 +4386,22 @@ To re-enable: `nimbus config set telemetry.enabled true`
 
 ## Extensions
 
-### `nimbus extension install <path|url|package>`
+### `nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes]`
 
-Install a third-party extension. Accepts a local path, URL, or npm package name. The manifest SHA-256 is verified before installation.
+Install a third-party extension, from a local path or from a registry you added with `nimbus registry add`. The manifest SHA-256 is verified before installation.
 
 > **Install does not run anything; an approval does.** Install copies the package, hashes it, verifies a publisher's Ed25519 signature (I16), records it and enables it. An extension runs only after a separate `nimbus extension approve` (below), and then only as a sandboxed MCP server that you invoke yourself with `nimbus connector tools|call ext_<id>`. It adds tools to `nimbus ask` only if you approve it with `--model`. To run your own MCP server without the extension machinery, use `nimbus connector add --mcp`.
 
 ```bash
-nimbus extension install @community/nimbus-notion
 nimbus extension install ./nimbus-my-connector
-nimbus extension install https://example.com/nimbus-ext.tar.gz
+nimbus extension install ./nimbus-ext.tar.gz
+nimbus extension install com.example.notion
+nimbus extension install com.example.notion --registry main --channel beta
 ```
+
+**Installing from a registry.** If the argument is an existing path it is a local install exactly as above, and `--registry`, `--version` and `--channel` are refused with it. Otherwise it is an extension id, looked up in your registries: an id carried by more than one registry needs `--registry <name>` (`ERR_REGISTRY_AMBIGUOUS`; a registry is never chosen by priority). An argument that can only be a path (it contains a backslash, begins with a drive letter, `.`, `~` or `/`) but does not exist reports `no such file or directory` rather than being searched for as an id. The version is the newest on the `stable` channel; `--channel beta` takes the newest across stable and beta, and `--version <v>` is exact (its channel is recorded as the source channel).
+
+The gateway fetches the manifest and package, checks both against the SHA-256 hashes the signed index lists, checks that the manifest's publisher id and key are the ones the index lists, verifies the manifest's Ed25519 signature (I16) against that key, and refuses with `ERR_REGISTRY_PUBLISHER_KEY_CONFLICT` if the Vault already holds a different key for that publisher id. Only then does the `extension.install` approval prompt appear, now also naming the registry and its root-key fingerprint. An id that is already installed is refused (`ERR_REGISTRY_ALREADY_INSTALLED`; use `nimbus extension update <id>` or remove it first). An extension that declares `dependsOn` installs only when every dependency is already installed and satisfies it; nothing is fetched transitively. `--yes` and `--publisher-key` are refused for a registry install, which is always confirmed at the gateway's prompt (answered interactively, or through `NIMBUS_SCRIPT_CONSENT_SOURCE` for scripted use). A registry install still does not run anything: `nimbus extension approve` is a separate step.
 
 **Approval is the gateway's, not the CLI's.** Before anything is copied, fetched or recorded, the gateway resolves the install plan and asks you to approve it through its HITL gate (action type `extension.install`): the extension's id and version, the source path, the publisher id and a fingerprint of its key as the manifest *claims* them, the declared permissions, and every package the install adds, dependencies included. The publisher signature is still verified after approval, and a failure there rolls the whole install back. On a TTY the prompt is interactive; `--yes` approves it on your behalf and echoes what it approved to stderr; without a TTY and without `--yes` the command refuses. A declined or timed-out approval installs nothing.
 
@@ -4491,7 +4496,7 @@ nimbus extension list --tree
 
 ---
 
-### `nimbus extension info <id> [--deps] [--json]`
+### `nimbus extension info <id> [--deps] [--registry <name> | --remote] [--json]`
 
 Show details for an installed extension. `--deps` appends a Dependencies section showing forward deps (extensions this one requires) and reverse deps (extensions that depend on this one) from the `extension_dependency` table (T2 PR 4).
 
@@ -4508,6 +4513,17 @@ No publisher key is cached for it. Re-fetch keys: nimbus extension sync — or r
 nimbus extension info com.example.notion
 nimbus extension info com.example.notion --deps
 nimbus extension info com.example.notion --deps --json
+```
+
+With `--registry <name>` (or `--remote` to look in every added registry) the command describes a registry entry instead of an installed extension: its publisher id and key fingerprint, every version with channel, publish time and package size, and the newest version's declared permissions. The permissions come from the version's `manifest.json`, whose hash is checked against the signed index before it is read (`ERR_REGISTRY_HASH_MISMATCH` otherwise). An id carried by more than one registry is `ERR_REGISTRY_AMBIGUOUS` (exit 1, naming each registry) until `--registry` picks one. Plain `info <id>` is unchanged.
+
+### `nimbus extension search <query> [--json]`
+
+Searches every added registry (`nimbus registry add`) for extensions whose id, name or publisher id contains `<query>`, case-insensitively. Each registry's freshly verified index is read concurrently; results are tagged with their registry and show the latest stable and beta versions. A registry that cannot be read does not fail the search: after the table, one line `registry <name>: <error>` is printed per such registry. The name shown is the newest version's name.
+
+```bash
+nimbus extension search notion
+nimbus extension search acme --json
 ```
 
 ---
@@ -4627,7 +4643,23 @@ nimbus test ./nimbus-my-connector
 
 ## Extension Registry
 
-A registry is a static folder (or website) of signed extension packages. These maintainer commands only build one; this release has no gateway-side registry client yet, so nothing installs from a registry.
+A registry is a static folder (or website) of signed extension packages. Two groups of commands work with one: `registry maintain` builds it offline, and `registry add|list|refresh|remove` tell the gateway which registries to trust. Searching and installing from a registry are `nimbus extension search`, `info` and `install`.
+
+### `nimbus registry add|list|refresh|remove`
+
+Gateway-backed commands (the gateway must be running). All four are CLI-only: refused over LAN and on a `--demo` root.
+
+- `add <name> <url> [--fingerprint <fp>]` fetches the registry's index, verifies it against its OWN root key, and then asks you, under the `registry.add` approval, to pin that root key. `<name>` is `[a-z0-9][a-z0-9-]*`, at most 32 characters; `<url>` is an `https://` URL, an `http://` loopback URL (non-production), or an absolute local folder path. The prompt shows the name, URL, root key fingerprint, extension count and index date. `--fingerprint` is a pin check, not a way to skip the prompt: pass the 32-hex fingerprint you got from the maintainer out of band and a mismatch refuses BEFORE you are asked (the gateway trims and lowercases it). Needs an interactive terminal; there is no `--yes` and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer the prompt. The index fetch is recorded in the egress ledger even if you then decline. A delegated approver can never answer this prompt.
+- `list [--json]` shows each registry's name, URL, fingerprint, last fetch and whether its index is stale (generated more than 30 days ago). Reads the local database only; no network.
+- `refresh [<name>] [--json]` re-fetches and re-verifies one registry, or all of them. Each result is reported separately and the exit code is `1` if any failed. A root key that changed, a bad signature or an older `sequence` than the last seen is refused and never re-pins.
+- `remove <name>` forgets the registry. Extensions already installed from it stay installed and keep running; they get no further updates, and the command names them. Needs no approval.
+
+```bash
+nimbus registry add main https://registry.example.com/nimbus --fingerprint 3f9a0c52b1d84e67a2c05f8e91b3d4a6
+nimbus registry list
+nimbus registry refresh main
+nimbus registry remove main
+```
 
 ### `nimbus registry maintain init|add|remove`
 

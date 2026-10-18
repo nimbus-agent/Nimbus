@@ -76,6 +76,7 @@ import { dispatchPolicyRpc, PolicyRpcError } from "../policy-rpc.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../preflight-rpc.ts";
 import { dispatchPremortemRpc, PremortemRpcError } from "../premortem-rpc.ts";
 import { dispatchProfileRpc, ProfileRpcError } from "../profile-rpc.ts";
+import { dispatchRegistryRpc, type RegistryOwnerGate } from "../registry-rpc.ts";
 import { dispatchReindexRpc, ReindexRpcError } from "../reindex-rpc.ts";
 import { dispatchSecurityRpc, SecurityRpcError } from "../security-rpc.ts";
 import type { ClientSession } from "../session.ts";
@@ -97,6 +98,7 @@ import {
   peopleRpcSkipped,
   phase4RpcSkipped,
   preflightRpcSkipped,
+  registryRpcSkipped,
   type ServerCtx,
   sessionRpcSkipped,
 } from "./context.ts";
@@ -2157,4 +2159,44 @@ export async function tryDispatchDiagnosticsRpc(
     throw e;
   }
   return diagnosticsRpcSkipped;
+}
+
+/**
+ * `registry.*` (CLI-only). Only `registry.add` and `registry.install` ask the owner; it runs through the same gate-only
+ * executor as the extension lifecycle approvals (no connector dispatch, so no egress row of its
+ * own — the registry fetch it triggers is ledgered by the `registry` class).
+ */
+export async function tryDispatchRegistryRpc(
+  ctx: ServerCtx,
+  clientId: string,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("registry.")) {
+    return registryRpcSkipped;
+  }
+  const localIndex = ctx.options.localIndex;
+  if (localIndex === undefined) {
+    throw new RpcMethodError(-32603, "Local index is not available");
+  }
+  let ownerGate: RegistryOwnerGate | undefined;
+  if (method === "registry.add" || method === "registry.install") {
+    const toolExecutor = buildExtensionGateExecutor(ctx, localIndex, clientId);
+    ownerGate = async (action) => (await toolExecutor.gate(action)) === "proceed";
+  }
+  const out = await dispatchRegistryRpc({
+    method,
+    params,
+    db: localIndex.getDatabase(),
+    ...(ctx.options.registryFetch === undefined ? {} : { fetch: ctx.options.registryFetch }),
+    ...(ownerGate === undefined ? {} : { ownerGate }),
+    ...(ctx.options.extensionsDir === undefined
+      ? {}
+      : { extensionsDir: ctx.options.extensionsDir }),
+    vault: ctx.options.vault,
+  });
+  if (out.kind === "hit") {
+    return out.value;
+  }
+  throw new RpcMethodError(-32601, `Method not found: ${method}`);
 }

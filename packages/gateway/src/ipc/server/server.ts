@@ -25,6 +25,7 @@ import {
   diagnosticsRpcSkipped,
   peopleRpcSkipped,
   phase4RpcSkipped,
+  registryRpcSkipped,
   type ServerCtx,
   sessionRpcSkipped,
 } from "./context.ts";
@@ -35,6 +36,7 @@ import {
   tryDispatchDiagnosticsRpc,
   tryDispatchPeopleRpc,
   tryDispatchPhase4Rpc,
+  tryDispatchRegistryRpc,
   tryDispatchSessionRpc,
 } from "./dispatchers.ts";
 import {
@@ -181,6 +183,9 @@ export function createIpcServer(
       params,
     );
     if (automationOutcome !== automationRpcSkipped) return automationOutcome;
+
+    const registryOutcome = await tryDispatchRegistryRpc(ctx, clientId, method, params);
+    if (registryOutcome !== registryRpcSkipped) return registryOutcome;
 
     const connectorOutcome = await tryDispatchConnectorRpc(ctx, method, params, clientId);
     if (connectorOutcome !== connectorRpcSkipped) return connectorOutcome;

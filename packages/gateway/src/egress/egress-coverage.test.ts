@@ -20,6 +20,7 @@ const NONE: CoverageVector = {
   sync: "none",
   model: "none",
   peer: "none",
+  registry: "none",
   tool: "none",
 };
 
@@ -36,7 +37,7 @@ const NONE: CoverageVector = {
  * trails it for the same reason (`"task" < "tool"`).
  */
 const CANONICAL =
-  "browser=per-run;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;session=none;sync=per-run;task=per-call;tool=per-call";
+  "browser=per-run;chatops=per-call;http=per-call;mcp=per-call;model=per-call;peer=none;registry=per-call;session=none;sync=per-run;task=per-call;tool=per-call";
 
 /** The six-class string every binary before the `http` class wrote. See the blackout test below. */
 const PRE_HTTP_MARKER = "mcp=per-call;model=none;peer=none;session=none;sync=none;task=per-call";
@@ -80,6 +81,7 @@ describe("coverage vector", () => {
       sync: "per-run",
       model: "per-call",
       peer: "none",
+      registry: "per-call",
       // "per-call", raised from "none" in the same commit that gives `tool-egress.ts`'s appender a
       // reachable caller: `toolgen/toolgen-client.ts`'s `spawnGeneratedTool` wires
       // `ToolgenBroker.handleFetch` onto the spawned tool's stdio protocol.
@@ -99,6 +101,7 @@ describe("coverage vector", () => {
       "mcp",
       "model",
       "peer",
+      "registry",
       "session",
       "sync",
       "task",
@@ -127,7 +130,9 @@ describe("coverage vector", () => {
     // string with every class missing from this fixture (`http`, `chatops`, `browser`, and now
     // `tool` too) restored parses fine.
     expect(
-      parseCoverage(`browser=none;chatops=none;http=none;${PRE_HTTP_MARKER};tool=none`),
+      parseCoverage(
+        `browser=none;chatops=none;http=none;${PRE_HTTP_MARKER};registry=none;tool=none`,
+      ),
     ).not.toBeNull();
   });
 
@@ -186,6 +191,7 @@ describe("coverage vector", () => {
       sync: "per-run",
       model: "per-call",
       peer: "per-call",
+      registry: "per-call",
       tool: "per-call",
     };
     expect(weakestCoverage([rich, THIS_BINARY_COVERAGE])).toEqual({
@@ -198,6 +204,7 @@ describe("coverage vector", () => {
       sync: "per-run", // both per-run
       model: "per-call", // both per-call
       peer: "none",
+      registry: "per-call",
       tool: "per-call", // both per-call
     });
   });
@@ -287,5 +294,17 @@ describe("tool coverage class", () => {
 
   test("ALL_NONE_COVERAGE carries tool too, and stays none regardless of THIS_BINARY_COVERAGE", () => {
     expect(ALL_NONE_COVERAGE.tool).toBe("none");
+  });
+});
+
+describe("registry coverage class", () => {
+  test("registry sits between peer and session, is per-call, and is part of the wire format", () => {
+    expect(COVERAGE_CLASSES.indexOf("registry")).toBe(COVERAGE_CLASSES.indexOf("peer") + 1);
+    expect(COVERAGE_CLASSES.indexOf("session")).toBe(COVERAGE_CLASSES.indexOf("registry") + 1);
+    expect(THIS_BINARY_COVERAGE.registry).toBe("per-call");
+    expect(ALL_NONE_COVERAGE.registry).toBe("none");
+    expect(serializeCoverage(THIS_BINARY_COVERAGE)).toContain(
+      "peer=none;registry=per-call;session=",
+    );
   });
 });
