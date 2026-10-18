@@ -12,7 +12,8 @@ import {
 } from "./registry-client-cmds.ts";
 import { runRegistryMaintain } from "./registry-maintain.ts";
 
-const USAGE = `${REGISTRY_CLIENT_USAGE}       nimbus registry maintain init|add|remove ...\n`;
+/** The router's usage: the gateway-backed client subcommands, then the offline `maintain` line. */
+export const REGISTRY_USAGE = `${REGISTRY_CLIENT_USAGE}       nimbus registry maintain init|add|remove ...\n`;
 
 const CLIENT_SUBS: ReadonlySet<string> = new Set(["add", "list", "refresh", "remove"]);
 
@@ -71,6 +72,6 @@ export async function runRegistry(
     if (code !== 0) process.exit(code);
     return;
   }
-  deps.writeErr(USAGE);
+  deps.writeErr(REGISTRY_USAGE);
   deps.exit(2);
 }

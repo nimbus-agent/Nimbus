@@ -360,10 +360,11 @@ describe("createPerformUpgrade", () => {
       });
       const perform = createPerformUpgrade({
         extensionsRoot: join(root, "extensions"),
-        reverifyManifest: async () => {},
-        fetchPackage: async () => new Uint8Array([1]),
+        fetcher: (async () =>
+          new Response(new Uint8Array([1]), { status: 200 })) as unknown as typeof fetch,
+        maxBytes: 1024 * 1024,
         signal: new AbortController().signal,
-        sha256OfPackage: async () => "f".repeat(64),
+        sha256OfTarball: async () => "f".repeat(64),
         extractPackage: async (_archive: string, destDir: string) => {
           await writePackage(destDir, MANIFEST_V11, "entry-v1.1");
           await writeFile(join(destDir, "marker.txt"), "new");

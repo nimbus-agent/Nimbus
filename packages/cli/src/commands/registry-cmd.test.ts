@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
-import { type RegistryCmdDeps, runRegistry } from "./registry-cmd.ts";
+import { REGISTRY_USAGE, type RegistryCmdDeps, runRegistry } from "./registry-cmd.ts";
 
 class ExitCalled extends Error {
   constructor(readonly code: number) {
@@ -57,8 +57,11 @@ describe("runRegistry", () => {
       const r = recorder(0);
       await expect(runRegistry(args, r.deps)).rejects.toEqual(new ExitCalled(2));
       expect(r.calls).toEqual([]);
-      expect(r.err).toEqual(["Usage: nimbus registry maintain init|add|remove ...\n"]);
+      expect(r.err).toEqual([REGISTRY_USAGE]);
     }
+    // The router's usage names both halves: the gateway-backed client subcommands and maintain.
+    expect(REGISTRY_USAGE).toStartWith("Usage: nimbus registry add <name> <url>");
+    expect(REGISTRY_USAGE).toContain("nimbus registry maintain init|add|remove ...");
   });
 });
 
@@ -73,7 +76,7 @@ describe("runRegistry with its production defaults", () => {
 
   test("an unknown subcommand writes usage to the real stderr and calls process.exit(2)", async () => {
     await expect(runRegistry(["bogus"])).rejects.toThrow("process.exit(2)");
-    expect(cap.stderrChunks).toEqual(["Usage: nimbus registry maintain init|add|remove ...\n"]);
+    expect(cap.stderrChunks).toEqual([REGISTRY_USAGE]);
   });
 
   test("`maintain` with no subcommand runs the real maintain usage path and exits 2", async () => {
