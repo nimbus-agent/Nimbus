@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Runtime:** Bun v1.2+ / TypeScript 7.x (strict)
-**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants I1–I43; schema V70.
+**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants I1–I43; schema V71.
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
 >
@@ -1880,6 +1880,52 @@ per-spawn copy.
 
 **Not verified:** macOS and Linux were not run locally; the end-to-end test runs on those CI legs.
 
+### Extension registry client
+
+**PR 3 of 4 shipped 2026-10-18** (Phase 9.5 project 1; schema V71; I29 `registry` class, static D22(h); HITL type
+`registry.add`; I20 widened; no new invariant, the update daemon and I44 are PR 4). The registry FORMAT is described under
+[Extension Marketplace](#extension-marketplace--tauri-ui); this section is the client.
+
+**Registries table.** `extension_registry` (V71, `extensions/registry/registry-store.ts`) holds one row per registry the owner
+added: a name, a URL or local path, the pinned root key and `last_sequence`, the highest index `sequence` ever accepted, which is
+the rollback anchor. `extension` gains nullable `source_registry`, `source_root_fingerprint` and `source_channel`, written at install
+and shown by `nimbus extension list|info`. The table lives in the index, not in `nimbus.toml` (see Rejected).
+
+**Trust model.** Two roots, as in the format: the registry root key vouches for the catalogue, the publisher key vouches for the code.
+The root key is pinned by the owner at `nimbus registry add` (TTY only, no `--yes`, the `registry.add` HITL prompt shows the key's
+fingerprint, an optional `--fingerprint=` is checked against it); `registry.add` is owner-gated and never delegable (I20). Every fetch
+is then fetch-and-verify against that pinned key: the index signature, a strictly higher `sequence` than `last_sequence` (the write
+that advances it is conditional, so two racing refreshes cannot move it backwards), and per-file SHA-256s from the signed index. The
+publisher key is taken from the signed index, never fetched separately.
+
+**Transports** (`registry-transport.ts`, `registry-fetch.ts`): https; loopback http outside production; and `file:` or absolute paths
+(UNC, device and file-host forms refused). Redirects are followed by hand, at most 3, each hop re-checked against the same rules;
+index, manifest and package have size caps, rechecked after a local read. Every REMOTE request appends one I29 `registry` row first,
+each redirect hop included; a local registry appends nothing; `enforce_air_gap` refuses a remote registry.
+
+**Multi-registry rules.** A bare extension id present in more than one registry is REFUSED, never resolved by priority; the owner names
+one with `--registry`. `extension install <arg>` decides path versus id: an argument that exists as a path installs from disk (and then refuses `--registry`/`--version`/`--channel`); one that does not exist and can only be a path (a separator, drive letter, leading `.`, `~` or `/`) is an error; anything else is looked up as an id in the registries. `--channel beta` opts in to
+pre-releases; `--version` pins one.
+
+**Install verification order** (`install-from-registry.ts`, all BEFORE the prompt): verified index, then manifest and package
+SHA-256 against the index, then the publisher key from the index, then the I16 manifest signature, then refusal on a Vault
+publisher-key conflict, then the entry hash. Only then does the reused `extension.install` prompt run, now naming the source registry
+and root fingerprint; `--yes` is refused for registry installs. The recorded source feeds nothing yet: the update daemon does NOT use
+registries (PR 4).
+
+**IPC.** `registry.add|list|refresh|remove|search|info|install`, all CLI-only; the whole `registry` namespace is LAN-forbidden
+(the denylist, so this is an explicit entry), refused on a demo root, and absent from the Tauri allowlist.
+
+**Rejected alternatives.**
+
+- *TOFU fetch of the publisher key from `/publishers/{id}.key`.* A first-use fetch trusts whatever the host answers with, and a
+  compromised host can swap the key and the package together. The key travels inside the signed index instead, so it is vouched for by
+  the root key the owner pinned.
+- *Priority-ordered registries.* Resolving a bare id by list order lets an earlier registry silently shadow a later one, so adding a
+  registry could change what an existing id installs. Ambiguity is an error; the owner chooses.
+- *Registries in `nimbus.toml`.* A trust root is state the owner approved through a HITL prompt, with a rollback anchor that must
+  update atomically with a fetch; a hand-edited config file has neither the approval nor the transaction.
+
 ### MCP capture sink
 
 **Complete, three PRs:** PR 1 (2026-10-12; invariant `I28`, static `D32(a)–(c)`, schema `V67`) — notes; PR 2 (2026-10-14, `V68`, `D32(d)`) — proposed decisions, terms and links; PR 3 (2026-10-15, `V69`, `D32(e)–(g)`) — proposed connector actions; each has its own subsection below. Before PR 1 the MCP
@@ -2077,7 +2123,7 @@ servers registered `--model` and only while `user_mcp_model_access` allows it) c
 dispatch without it is refused `ERR_USER_MCP_ACTION_MISMATCH` (the I42 pairing, pinned by
 `test/integration/mcp-sink/capture-action-routing.test.ts`).
 
-**Classification: 140 HITL types, 29 first-party types proposable, 111 denied (`extension.run` joined the denied set with the extension runtime PR 2).** Denied classes: file, calendar
+**Classification: 141 HITL types, 29 first-party types proposable, 112 denied (`extension.run` joined the denied set with the extension runtime PR 2, `registry.add` with the registry client PR 3).** Denied classes: file, calendar
 delete, VCS, pipeline, cloud, IaC, Kubernetes, deployment, incident, data-platform, tribal KB (I25), the confined
 ChatOps posts (I23), gateway-internal types, and `unroutable`. **Known gap, not a policy decision:**
 `obsidian.note.append` is denied as `unroutable` because `obsidian` is spawned by `lazy-mesh/connector-spawns.ts` but
