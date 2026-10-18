@@ -38,7 +38,11 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   `extension.sync` IPC method, the HTTP registry client (`extensions/registry-client.ts`), the `needs_sync`
   update status, and the `NIMBUS_EXTENSIONS_REGISTRY_URL` environment variable. D22(h)'s temporary `fetch(`
   allow-list is gone with them; `extensions/registry/registry-fetch.ts` is the one network path left under
-  `extensions/`. **New invariant I44:** registry-sourced extension code is installed or updated only through
+  `extensions/`. **Resolution fixed:** a bare id was resolved over only the registries that answered, so with two
+  registries carrying it and one unreachable it silently went to the other; a bare id is now refused
+  (`ERR_REGISTRY_AMBIGUOUS`) while any configured registry failed, and a registry that fails verification is
+  reported as `failed verification: <code>` (its own code when nothing verified) rather than as not found.
+  **New invariant I44:** registry-sourced extension code is installed or updated only through
   `registry-fetch.ts`'s verified chain (pinned root key, non-decreasing sequence, index hashes for manifest and
   package, the index-named publisher key and its I16 signature), and only from the extension's recorded source
   registry while that registry's root fingerprint is unchanged; a bare id present in two registries is refused,
