@@ -70,7 +70,7 @@ async function runAction(
   const env: Record<string, string | undefined> = {
     ...process.env,
     INPUT_MODE: mode,
-    INPUT_ROOT_KEY: rootKey,
+    "INPUT_ROOT-KEY": rootKey,
     GITHUB_WORKSPACE: repo.workspace,
     GITHUB_STEP_SUMMARY: join(tmp, "summary.md"),
   };
@@ -118,7 +118,7 @@ describe("registry action sign → gateway install", () => {
     // No git child inherited the root key.
     const childEnv = readFileSync(envDump, "utf8");
     expect(childEnv).toContain("GITHUB_WORKSPACE=");
-    expect(childEnv).not.toContain("INPUT_ROOT_KEY");
+    expect(childEnv).not.toContain("INPUT_ROOT");
     expect(childEnv).not.toContain(ROOT_KEY_INPUT);
 
     const site = join(tmp, "site");

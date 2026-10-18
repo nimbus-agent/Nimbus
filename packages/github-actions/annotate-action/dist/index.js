@@ -13,9 +13,11 @@ function safeInt(raw) {
   const n = typeof raw === "number" ? raw : Number(raw);
   return Number.isFinite(n) ? Math.trunc(n) : 0;
 }
+function inputEnvName(name) {
+  return `INPUT_${name.replaceAll(" ", "_").toUpperCase()}`;
+}
 function getInput(name) {
-  const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
-  return process.env[envName] ?? "";
+  return process.env[inputEnvName(name)] ?? "";
 }
 function getBooleanInput(name) {
   const raw = getInput(name).toLowerCase();

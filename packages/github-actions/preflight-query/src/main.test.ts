@@ -125,7 +125,7 @@ describe("parseMode", () => {
 describe("getInput family", () => {
   const touched: string[] = [];
   function setInput(name: string, value: string): void {
-    const key = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
+    const key = `INPUT_${name.toUpperCase()}`;
     process.env[key] = value;
     touched.push(key);
   }

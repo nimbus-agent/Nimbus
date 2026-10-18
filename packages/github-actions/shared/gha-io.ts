@@ -21,10 +21,18 @@ export function safeInt(raw: unknown): number {
   return Number.isFinite(n) ? Math.trunc(n) : 0;
 }
 
-/** Read an action input from its `INPUT_<NAME>` env var (missing → ""). */
+/**
+ * The env var the runner sets for an input. Mirrors actions/toolkit `core.getInput`
+ * (`INPUT_${name.replace(/ /g, '_').toUpperCase()}`): spaces become `_`, the name is upper-cased,
+ * and hyphens are KEPT, so the input `root-key` arrives as `INPUT_ROOT-KEY`.
+ */
+export function inputEnvName(name: string): string {
+  return `INPUT_${name.replaceAll(" ", "_").toUpperCase()}`;
+}
+
+/** Read an action input from its runner env var (see `inputEnvName`; missing → ""). */
 export function getInput(name: string): string {
-  const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
-  return process.env[envName] ?? "";
+  return process.env[inputEnvName(name)] ?? "";
 }
 
 /** Read a boolean action input ("true"/"1"/"yes" → true, case-insensitive). */

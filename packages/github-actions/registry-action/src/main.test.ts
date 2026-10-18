@@ -29,7 +29,7 @@ describe("maskSecret", () => {
 });
 
 describe("main", () => {
-  const KEYS = ["INPUT_MODE", "INPUT_ROOT_KEY", "GITHUB_BASE_REF", "GITHUB_WORKSPACE"] as const;
+  const KEYS = ["INPUT_MODE", "INPUT_ROOT-KEY", "GITHUB_BASE_REF", "GITHUB_WORKSPACE"] as const;
   let saved: Record<string, string | undefined>;
   let out: string[];
   let realWrite: typeof process.stdout.write;
@@ -57,7 +57,7 @@ describe("main", () => {
   test("sign masks the root key before anything else and never prints it", async () => {
     const key = "definitely-not-a-key-but-secret";
     process.env["INPUT_MODE"] = "sign";
-    process.env["INPUT_ROOT_KEY"] = key;
+    process.env["INPUT_ROOT-KEY"] = key;
     await main();
     expect(process.exitCode).toBe(1);
     expect(out[0]).toBe(`::add-mask::${key}\n`);
@@ -68,7 +68,7 @@ describe("main", () => {
 
   test("sign without a root key fails the step", async () => {
     process.env["INPUT_MODE"] = "sign";
-    delete process.env["INPUT_ROOT_KEY"];
+    delete process.env["INPUT_ROOT-KEY"];
     await main();
     expect(process.exitCode).toBe(1);
     expect(out.join("")).toContain('::error::input "root-key" is required');

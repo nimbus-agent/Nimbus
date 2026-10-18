@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:1e7516edd1c828d7e1dbb7bf07a99a1851cffe03842ef1cffe10886021f8c371
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:ce8182688eda730c137dedd4cfeabcb88dbba2e7a83a5d10f4753afbfadae690
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4208,9 +4208,11 @@ __export(exports_git_tree, {
 
 // ../shared/gha-io.ts
 import { appendFileSync } from "node:fs";
+function inputEnvName(name) {
+  return `INPUT_${name.replaceAll(" ", "_").toUpperCase()}`;
+}
 function getInput(name) {
-  const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
-  return process.env[envName] ?? "";
+  return process.env[inputEnvName(name)] ?? "";
 }
 var STEP_SUMMARY_MAX_BYTES = 64 * 1024;
 function writeJobSummary(md) {
@@ -9358,7 +9360,7 @@ async function main() {
     } else {
       const rootKey = requireInput("root-key");
       maskSecret(rootKey);
-      delete process.env["INPUT_ROOT_KEY"];
+      delete process.env[inputEnvName("root-key")];
       await runSign({ workspace: workspace(), rootKey });
     }
   } catch (err) {

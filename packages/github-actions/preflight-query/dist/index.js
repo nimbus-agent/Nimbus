@@ -13,9 +13,11 @@ function safeInt(raw) {
   const n = typeof raw === "number" ? raw : Number(raw);
   return Number.isFinite(n) ? Math.trunc(n) : 0;
 }
+function inputEnvName(name) {
+  return `INPUT_${name.replaceAll(" ", "_").toUpperCase()}`;
+}
 function getInput(name) {
-  const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
-  return process.env[envName] ?? "";
+  return process.env[inputEnvName(name)] ?? "";
 }
 function getBooleanInput(name) {
   const raw = getInput(name).toLowerCase();
@@ -30,7 +32,7 @@ function getIntInput(name, fallback) {
 }
 var STEP_SUMMARY_MAX_BYTES = 64 * 1024;
 function writeJobSummary(md) {
-  const file = process.env.GITHUB_STEP_SUMMARY;
+  const file = process.env["GITHUB_STEP_SUMMARY"];
   if (file === undefined)
     return;
   const safe = md.length > STEP_SUMMARY_MAX_BYTES ? md.slice(0, STEP_SUMMARY_MAX_BYTES) : md;
@@ -48,7 +50,7 @@ function makeSetOutput(allowedNames) {
     if (!allowedNames.has(name)) {
       throw new Error(`refusing to set unknown output: ${name}`);
     }
-    const outFile = process.env.GITHUB_OUTPUT;
+    const outFile = process.env["GITHUB_OUTPUT"];
     if (outFile === undefined)
       return;
     let delim;
@@ -131,7 +133,7 @@ function decideExitCode(args) {
 
 // src/main.ts
 function safeVerdict(raw) {
-  return raw === "warn" ? "warn" : "ok";
+  return raw === "ok" ? "ok" : "warn";
 }
 function safeFindings(raw) {
   if (!Array.isArray(raw))
