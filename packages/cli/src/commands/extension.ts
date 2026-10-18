@@ -17,6 +17,7 @@ import {
 } from "../lib/interactive-ipc-handlers.ts";
 import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { runExtensionInfoRemote, runExtensionSearch } from "./extension-registry-cmds.ts";
 import {
   formatNetworkIsolationLine,
   type SandboxPlatformCapabilities,
@@ -37,8 +38,17 @@ export function stripFlags(args: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === "--yes" || a === "-y" || a === "--json" || a === "--model") continue;
-    if (a === "--filter" || a === "--publisher-key") {
+    if (a === "--yes" || a === "-y" || a === "--json" || a === "--model" || a === "--remote") {
+      continue;
+    }
+    if (
+      a === "--filter" ||
+      a === "--publisher-key" ||
+      a === "--registry" ||
+      a === "--version" ||
+      a === "--channel" ||
+      a === "--to"
+    ) {
       i += 1;
       continue;
     }
@@ -289,6 +299,16 @@ export async function runExtensionInfo(
   const id = rest[0]?.trim() ?? "";
   if (id === "") {
     throw new Error("Usage: nimbus extension info <id> [--json]");
+  }
+  const registry = takeFlagValue(args, "--registry");
+  if (registry !== undefined || hasFlag(args, "--remote")) {
+    const code = await runExtensionInfoRemote(id, registry, hasFlag(args, "--json"), {
+      client,
+      stdout: (s) => process.stdout.write(s),
+      stderr: (s) => process.stderr.write(s),
+    });
+    if (code !== 0) process.exit(code);
+    return;
   }
   const out = await client.call<{
     extension: ExtensionListEntry;
@@ -664,7 +684,7 @@ export async function runExtensionSync(client: IPCClient, args: string[]): Promi
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--json] | install <path> [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path> [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | sync [--dry-run] [--json] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
 
 async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
   if (sub === "keygen") {
@@ -686,6 +706,12 @@ async function dispatchExtensionWithCode(
   args: string[],
 ): Promise<boolean> {
   const handlers: Record<string, () => Promise<number>> = {
+    search: async () =>
+      runExtensionSearch(stripFlags(args.slice(1)).join(" "), hasFlag(args, "--json"), {
+        client,
+        stdout: (s) => process.stdout.write(s),
+        stderr: (s) => process.stderr.write(s),
+      }),
     sync: () => runExtensionSync(client, args),
     update: () => runExtensionUpdate(client, args),
     downgrade: () => runExtensionDowngrade(client, args),
@@ -744,6 +770,13 @@ async function dispatchExtensionVoid(
  */
 export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number | undefined {
   if (sub === "install" || sub === "rehash" || sub === "approve" || sub === "downgrade") {
+    return INTERACTIVE_RPC_TIMEOUT_MS;
+  }
+  // Registry lookups fetch and verify every index; the 30s default is the fetch timeout itself.
+  if (
+    sub === "search" ||
+    (sub === "info" && (hasFlag(rest, "--remote") || hasFlag(rest, "--registry")))
+  ) {
     return INTERACTIVE_RPC_TIMEOUT_MS;
   }
   if (sub === "update" && !hasFlag(rest, "--check")) {

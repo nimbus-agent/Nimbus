@@ -12,7 +12,7 @@ import {
 
 describe("registry.* over a real socket", () => {
   test(
-    "all four methods reach their handler through both dispatcher layers",
+    "all six methods reach their handler through both dispatcher layers",
     async () => {
       const gw = await startRealGateway("registry");
       const client = new TinyIpcClient();
@@ -31,6 +31,15 @@ describe("registry.* over a real socket", () => {
         const list = await client.raw("registry.list", {});
         expect(list.error).toBeUndefined();
         expect(list.result).toEqual({ registries: [] });
+
+        // Search over zero registries is an empty answer, not an error.
+        const search = await client.raw("registry.search", { query: "x" });
+        expect(search.error).toBeUndefined();
+        expect(search.result).toEqual({ results: [], errors: [] });
+
+        const info = await client.raw("registry.info", { id: "a.b", registry: "nope" });
+        expect(info.error?.code).toBe(-32000);
+        expect(info.error?.message).toContain("ERR_REGISTRY_NOT_FOUND");
 
         const remove = await client.raw("registry.remove", { name: "nope" });
         expect(remove.error).toBeUndefined();

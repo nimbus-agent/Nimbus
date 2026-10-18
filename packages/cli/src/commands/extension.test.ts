@@ -88,6 +88,15 @@ describe("stripFlags", () => {
   test("removes --publisher-key + value pair", () => {
     expect(stripFlags(["install", "/p", "--publisher-key", "/tmp/k"])).toEqual(["install", "/p"]);
   });
+  test("stripFlags keeps the id when --registry and --version precede it", () => {
+    expect(stripFlags(["info", "--registry", "main", "--version", "1.0.0", "acme.tool"])).toEqual([
+      "info",
+      "acme.tool",
+    ]);
+    expect(
+      stripFlags(["install", "--channel", "beta", "--to", "2.0.0", "--remote", "a.b"]),
+    ).toEqual(["install", "a.b"]);
+  });
   test("preserves non-flag positional args", () => {
     expect(stripFlags(["install", "/some/path"])).toEqual(["install", "/some/path"]);
   });

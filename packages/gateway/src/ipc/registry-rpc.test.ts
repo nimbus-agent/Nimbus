@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import nacl from "tweetnacl";
@@ -285,4 +286,236 @@ describe("registry.remove", () => {
 
 test("an unknown registry method is a miss", async () => {
   expect(await call("registry.nope", {})).toEqual({ kind: "miss" });
+});
+
+type FixtureVersion = {
+  version: string;
+  channel: "stable" | "beta";
+  name: string;
+  manifestOverride?: string;
+};
+
+/** A local registry directory with a root-signed index and one manifest per version. */
+function makeRegistry(
+  dir: string,
+  extensions: Record<string, { publisherId: string; versions: FixtureVersion[] }>,
+  sequence = 3,
+): void {
+  const entries: RegistryIndex["extensions"] = {};
+  const built: Record<string, unknown> = {};
+  for (const [id, ext] of Object.entries(extensions)) {
+    const versions: Record<string, unknown> = {};
+    for (const v of ext.versions) {
+      const base = `extensions/${id}/${v.version}`;
+      const manifest = JSON.stringify({
+        id,
+        name: v.name,
+        version: v.version,
+        entry: "dist/index.js",
+        permissions: { network: ["api.example.com"] },
+      });
+      mkdirSync(join(dir, base), { recursive: true });
+      writeFileSync(join(dir, base, "manifest.json"), v.manifestOverride ?? manifest);
+      versions[v.version] = {
+        channel: v.channel,
+        name: v.name,
+        manifest: `${base}/manifest.json`,
+        manifestSha256: createHash("sha256").update(manifest).digest("hex"),
+        package: `${base}/package.tgz`,
+        packageSha256: "a".repeat(64),
+        packageSizeBytes: 1234,
+        entryHash: "b".repeat(64),
+        publishedAt: "2026-10-01T00:00:00Z",
+      };
+    }
+    built[id] = { publisher: { id: ext.publisherId, key: ROOT_KEY }, versions };
+  }
+  Object.assign(entries, built);
+  const base = {
+    format: 1 as const,
+    rootKey: ROOT_KEY,
+    sequence,
+    generatedAt: "2026-10-18T12:00:00Z",
+    extensions: entries,
+  };
+  const sig = nacl.sign.detached(registryIndexSigningBytes(base), KEYPAIR.secretKey);
+  writeFileSync(join(dir, "index.json"), JSON.stringify({ ...base, signature: encodeBase64(sig) }));
+}
+
+function pin(name: string, url: string): void {
+  insertRegistry(db, {
+    name,
+    url,
+    rootKey: ROOT_KEY,
+    rootFingerprint: FINGERPRINT,
+    lastSequence: 1,
+    lastGeneratedAt: "2026-10-18T12:00:00Z",
+    addedAt: 1,
+  });
+}
+
+describe("registry.search and registry.info", () => {
+  let other: string;
+  beforeEach(() => {
+    other = mkdtempSync(join(tmpdir(), "nimbus-registry-rpc-b-"));
+  });
+  afterEach(() => rmSync(other, { recursive: true, force: true }));
+
+  test("search matches name case-insensitively across two registries and tags results", async () => {
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [
+          { version: "1.0.0", channel: "stable", name: "Old Name" },
+          { version: "1.1.0", channel: "stable", name: "Widget Tool" },
+          { version: "1.2.0-beta.1", channel: "beta", name: "Widget Tool" },
+        ],
+      },
+    });
+    makeRegistry(other, {
+      "other.widget": {
+        publisherId: "other",
+        versions: [{ version: "2.0.0", channel: "stable", name: "Another" }],
+      },
+      "x.unrelated": {
+        publisherId: "x",
+        versions: [{ version: "1.0.0", channel: "stable", name: "Nope" }],
+      },
+    });
+    pin("main", tmp);
+    pin("second", other);
+    const out = (await call("registry.search", { query: "WIDGET" })) as {
+      value: { results: unknown[]; errors: unknown[] };
+    };
+    expect(out.value.errors).toEqual([]);
+    expect(out.value.results).toEqual([
+      {
+        registry: "main",
+        id: "acme.tool",
+        name: "Widget Tool",
+        publisherId: "acme",
+        latestStable: "1.1.0",
+        latestBeta: "1.2.0-beta.1",
+      },
+      {
+        registry: "second",
+        id: "other.widget",
+        name: "Another",
+        publisherId: "other",
+        latestStable: "2.0.0",
+        latestBeta: null,
+      },
+    ]);
+  });
+
+  test("search reports an unreachable registry and still returns others", async () => {
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [{ version: "1.0.0", channel: "stable", name: "Tool" }],
+      },
+    });
+    pin("main", tmp);
+    pin("gone", join(other, "missing"));
+    const out = (await call("registry.search", { query: "tool" })) as {
+      value: {
+        results: Array<{ registry: string }>;
+        errors: Array<{ registry: string; error: string }>;
+      };
+    };
+    expect(out.value.results.map((r) => r.registry)).toEqual(["main"]);
+    expect(out.value.errors).toHaveLength(1);
+    expect(out.value.errors[0]?.registry).toBe("gone");
+    expect(out.value.errors[0]?.error).toContain("ERR_REGISTRY_");
+  });
+
+  test("info without --registry is ambiguous when two registries carry the id", async () => {
+    const ext = {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [{ version: "1.0.0", channel: "stable" as const, name: "Tool" }],
+      },
+    };
+    makeRegistry(tmp, ext);
+    makeRegistry(other, ext);
+    pin("main", tmp);
+    pin("second", other);
+    await expect(call("registry.info", { id: "acme.tool" })).rejects.toThrow(
+      /ERR_REGISTRY_AMBIGUOUS.*main.*second/,
+    );
+    const ok = (await call("registry.info", { id: "acme.tool", registry: "second" })) as {
+      value: { registry: string };
+    };
+    expect(ok.value.registry).toBe("second");
+  });
+
+  test("info shows permissions from the hash-checked manifest", async () => {
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [
+          { version: "1.0.0", channel: "stable", name: "Tool" },
+          { version: "1.1.0", channel: "beta", name: "Tool" },
+        ],
+      },
+    });
+    pin("main", tmp);
+    const out = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+      value: Record<string, unknown>;
+    };
+    expect(out.value).toEqual({
+      registry: "main",
+      id: "acme.tool",
+      publisherId: "acme",
+      publisherFingerprint: FINGERPRINT,
+      versions: [
+        {
+          version: "1.1.0",
+          channel: "beta",
+          publishedAt: "2026-10-01T00:00:00Z",
+          packageSizeBytes: 1234,
+          permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
+        },
+        {
+          version: "1.0.0",
+          channel: "stable",
+          publishedAt: "2026-10-01T00:00:00Z",
+          packageSizeBytes: 1234,
+        },
+      ],
+    });
+  });
+
+  test("info refuses a manifest whose hash differs from the index", async () => {
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [
+          {
+            version: "1.0.0",
+            channel: "stable",
+            name: "Tool",
+            manifestOverride: JSON.stringify({
+              id: "acme.tool",
+              version: "1.0.0",
+              entry: "x.js",
+              permissions: { network: ["evil.example.com"] },
+            }),
+          },
+        ],
+      },
+    });
+    pin("main", tmp);
+    await expect(call("registry.info", { id: "acme.tool", registry: "main" })).rejects.toThrow(
+      "ERR_REGISTRY_HASH_MISMATCH",
+    );
+  });
+
+  test("info for an id no registry carries is ERR_REGISTRY_NOT_FOUND", async () => {
+    makeRegistry(tmp, {});
+    pin("main", tmp);
+    await expect(call("registry.info", { id: "nope.tool" })).rejects.toThrow(
+      "ERR_REGISTRY_NOT_FOUND",
+    );
+  });
 });

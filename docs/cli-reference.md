@@ -4491,7 +4491,7 @@ nimbus extension list --tree
 
 ---
 
-### `nimbus extension info <id> [--deps] [--json]`
+### `nimbus extension info <id> [--deps] [--registry <name> | --remote] [--json]`
 
 Show details for an installed extension. `--deps` appends a Dependencies section showing forward deps (extensions this one requires) and reverse deps (extensions that depend on this one) from the `extension_dependency` table (T2 PR 4).
 
@@ -4508,6 +4508,17 @@ No publisher key is cached for it. Re-fetch keys: nimbus extension sync — or r
 nimbus extension info com.example.notion
 nimbus extension info com.example.notion --deps
 nimbus extension info com.example.notion --deps --json
+```
+
+With `--registry <name>` (or `--remote` to look in every added registry) the command describes a registry entry instead of an installed extension: its publisher id and key fingerprint, every version with channel, publish time and package size, and the newest version's declared permissions. The permissions come from the version's `manifest.json`, whose hash is checked against the signed index before it is read (`ERR_REGISTRY_HASH_MISMATCH` otherwise). An id carried by more than one registry is `ERR_REGISTRY_AMBIGUOUS` (exit 1, naming each registry) until `--registry` picks one. Plain `info <id>` is unchanged.
+
+### `nimbus extension search <query> [--json]`
+
+Searches every added registry (`nimbus registry add`) for extensions whose id, name or publisher id contains `<query>`, case-insensitively. Each registry's freshly verified index is read concurrently; results are tagged with their registry and show the latest stable and beta versions. A registry that cannot be read does not fail the search: after the table, one line `registry <name>: <error>` is printed per such registry. The name shown is the newest version's name.
+
+```bash
+nimbus extension search notion
+nimbus extension search acme --json
 ```
 
 ---
