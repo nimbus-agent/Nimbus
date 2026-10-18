@@ -61,6 +61,27 @@ describe("extractPackage", () => {
     expect(readdirSync(dest)).toEqual([]);
   });
 
+  it("names a symlink refusal in plain words (typeflag 2 raw header)", async () => {
+    const archive = rawArchive([
+      new tar.Header({
+        path: "pkg/evil.link",
+        type: "SymbolicLink",
+        linkpath: "/etc/passwd",
+        size: 0,
+      }),
+    ]);
+    await expect(extractPackage(archive, dest)).rejects.toThrow(
+      /package_entry_refused: pkg\/evil\.link \(symlink\)/i,
+    );
+  });
+
+  it("names a hardlink refusal in plain words", async () => {
+    const archive = rawArchive([
+      new tar.Header({ path: "pkg/h", type: "Link", linkpath: "pkg/x", size: 0 }),
+    ]);
+    await expect(extractPackage(archive, dest)).rejects.toThrow(/\(hardlink\)/);
+  });
+
   it("refuses a link entry type from a raw header, extracting nothing", async () => {
     const archive = rawArchive([
       new tar.Header({ path: "evil", type: "SymbolicLink", linkpath: "/etc/passwd", size: 0 }),

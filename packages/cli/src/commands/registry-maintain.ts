@@ -6,12 +6,16 @@
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
-  lstatSync,
+  constants as fsConstants,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -302,6 +306,42 @@ async function validateManifest(m: Record<string, unknown>): Promise<ValidManife
   return { id, idParts, version, name, publisher: { id: pub.id, key: pub.key } };
 }
 
+/**
+ * Opens `source` ONCE and does the type check and the read through that descriptor, so nothing can be
+ * swapped between a check and a use of the path. Returns the file's bytes, or `undefined` for a
+ * directory (which the packer walks). A symlink is refused where the OS can refuse it at open
+ * (`O_NOFOLLOW`, POSIX); Windows has no such flag, and there the source is the maintainer's own local
+ * path, so a link is followed.
+ */
+function readSourceFile(source: string): Buffer | undefined {
+  let fd: number;
+  try {
+    fd = openSync(source, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ELOOP") throw new MaintainError(`${source} is a symlink; refusing`);
+    if (code === "ENOENT") throw new MaintainError(`${source} does not exist`);
+    if ((code === "EISDIR" || code === "EPERM" || code === "EACCES") && isDirectory(source)) {
+      return undefined; // Windows cannot open a directory as a file
+    }
+    throw new MaintainError(`${source} cannot be read`);
+  }
+  try {
+    if (fstatSync(fd).isDirectory()) return undefined;
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
   const p = parseArgs(args, ["--key", "--channel"], []);
   const [dir, source] = p.positional;
@@ -314,15 +354,7 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
   }
   const seed = loadSeed(keyPathOf(p));
   const index = loadOwnedIndex(dir, seed);
-  let sourceIsDir: boolean;
-  try {
-    const st = lstatSync(source);
-    if (st.isSymbolicLink()) throw new MaintainError(`${source} is a symlink; refusing`);
-    sourceIsDir = st.isDirectory();
-  } catch (e) {
-    if (e instanceof MaintainError) throw e;
-    throw new MaintainError(`${source} does not exist`);
-  }
+  const fileBytes = readSourceFile(source);
 
   const work = mkdtempSync(join(tmpdir(), "nimbus-registry-add-"));
   try {
@@ -330,10 +362,10 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
     // read; from then on inspection, hashing and the registry copy all use that private copy, never
     // `source` again, so what was validated is exactly what is published.
     const tgz = join(work, "package.tgz");
-    if (sourceIsDir) {
+    if (fileBytes === undefined) {
       await packExtensionDir(source, tgz);
     } else {
-      writeFileSync(tgz, readFileSync(source), { flag: "wx" });
+      writeFileSync(tgz, fileBytes, { flag: "wx" });
     }
     const tgzBytes = readFileSync(tgz);
     if (tgzBytes.length === 0 || tgzBytes.length > MAX_PACKAGE_BYTES) {
