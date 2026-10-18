@@ -6605,8 +6605,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     );
     expect(settled).toBeInstanceOf(RegistryError);
     const e = settled as InstanceType<typeof RegistryError>;
-    // A registry whose index fails verification is reported, not thrown, by resolution: the
-    // refusal is `ERR_REGISTRY_NOT_FOUND` naming the verification failure as the cause.
+    // `<code> <message>`: a registry that fails verification surfaces its own verification code.
     return `${e.code} ${e.message}`;
   }
 
@@ -6644,7 +6643,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     writeFileSync(indexPath, JSON.stringify(index));
     const run = await install(s, { id: ID });
     expect(await refusalOf(run.result)).toMatch(
-      /^ERR_REGISTRY_NOT_FOUND .*ERR_REGISTRY_SIGNATURE_INVALID/,
+      /^ERR_REGISTRY_SIGNATURE_INVALID .*main: failed verification/,
     );
     expect(run.asked()).toBe(0);
     expect(installedIds(s.db)).toEqual([]);
@@ -6672,7 +6671,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const other = encodeBase64(generateEd25519Keypair().pubkey);
     s.db.run("UPDATE extension_registry SET root_key = ? WHERE name = 'main'", [other]);
     expect(await refusalOf((await install(s, { id: ID })).result)).toMatch(
-      /^ERR_REGISTRY_NOT_FOUND .*ERR_REGISTRY_ROOT_KEY_CHANGED/,
+      /^ERR_REGISTRY_ROOT_KEY_CHANGED .*main: failed verification/,
     );
     expect(getRegistry(s.db, "main")?.rootKey).toBe(other);
     expect(installedIds(s.db)).toEqual([]);
@@ -6685,7 +6684,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       sequence: 4,
     });
     expect(await refusalOf((await install(s2, { id: ID })).result)).toMatch(
-      /^ERR_REGISTRY_NOT_FOUND .*ERR_REGISTRY_ROLLBACK/,
+      /^ERR_REGISTRY_ROLLBACK .*main: failed verification/,
     );
     expect(installedIds(s2.db)).toEqual([]);
   });
@@ -6700,6 +6699,22 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     // Naming the registry resolves it, and the install records THAT registry as the source.
     await (await install(s, { id: ID, registry: "beta" })).result;
     expect(getExtensionSource(s.db, ID)?.registry).toBe("beta");
+  });
+
+  test("behavioural: a bare id is refused while another registry cannot be read — never prioritised by reachability", async () => {
+    const { getExtensionSource } = await import("./extensions/registry/registry-store.ts");
+    const s = await setup({ alpha: ["1.0.0"], beta: ["1.0.0"] });
+    // beta carries the same id but cannot be reached this call; alpha alone would resolve it.
+    rmSync(s.dirOf("beta"), { recursive: true, force: true });
+    const run = await install(s, { id: ID });
+    expect(await refusalOf(run.result)).toMatch(
+      /^ERR_REGISTRY_AMBIGUOUS .*beta: unreachable.*--registry <name>/,
+    );
+    expect(run.asked()).toBe(0);
+    expect(installedIds(s.db)).toEqual([]);
+    // Naming the reachable registry is unaffected.
+    await (await install(s, { id: ID, registry: "alpha" })).result;
+    expect(getExtensionSource(s.db, ID)?.registry).toBe("alpha");
   });
 
   test("behavioural: a newer version in a registry that is not the source is never offered", async () => {
@@ -6774,6 +6789,14 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(resolver).toMatch(/targets\.map\(\(reg\) => fetchVerifiedIndex\(deps, reg\)\)/);
     expect(resolver).toMatch(
       /if \(carrying\.length > 1\) \{\s*throw new RegistryError\(\s*"ERR_REGISTRY_AMBIGUOUS"/,
+    );
+    // …and refuses a bare id while any configured registry failed this call (no reachability priority).
+    expect(resolver).toMatch(
+      /if \(registryName === undefined\) \{\s*throw new RegistryError\(\s*"ERR_REGISTRY_AMBIGUOUS"/,
+    );
+    expect(resolver.indexOf("if (read.failures.length > 0) {")).toBeGreaterThan(-1);
+    expect(resolver.indexOf("if (read.failures.length > 0) {")).toBeLessThan(
+      resolver.indexOf("const found = carrying[0];"),
     );
     // Verified = the pinned root key, then the non-decreasing sequence.
     const fetchSrc = stripComments(
