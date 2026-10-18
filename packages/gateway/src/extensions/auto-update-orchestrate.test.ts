@@ -258,6 +258,75 @@ describe("createPerformUpgrade", () => {
     }
   });
 
+  /** An upgrade whose fetch fails with `thrown`; nothing past the fetch may run. */
+  async function upgradeFailingFetch(thrown: unknown): Promise<unknown> {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-fetch-"));
+    try {
+      const sha256OfPackage = mock(async () => "f".repeat(64));
+      const perform = createPerformUpgrade({
+        extensionsRoot: join(root, "extensions"),
+        reverifyManifest: async () => {},
+        fetchPackage: async () => {
+          throw thrown;
+        },
+        signal: new AbortController().signal,
+        sha256OfPackage,
+        extractPackage: async () => {
+          throw new Error("should not reach extract");
+        },
+        stopExtensionClient: async () => {},
+        dbUpdateExtensionRow: async () => {},
+      });
+      const err = await perform(mkAvailable()).catch((e: unknown) => e);
+      expect(sha256OfPackage).not.toHaveBeenCalled();
+      return err;
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  it("a source registry gone since detection keeps its own phase, not download_failed", async () => {
+    const err = await upgradeFailingFetch(
+      new Error("source_registry_changed: registry main was removed"),
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("source_registry_changed: registry main was removed");
+  });
+
+  it("a non-Error fetch failure is stringified into download_failed", async () => {
+    const err = await upgradeFailingFetch("socket hang up");
+    expect((err as Error).message).toBe("download_failed: socket hang up");
+  });
+
+  it("a non-Error source_registry_changed fetch failure also keeps its own phase", async () => {
+    const err = await upgradeFailingFetch("source_registry_changed: gone");
+    expect((err as Error).message).toBe("source_registry_changed: gone");
+  });
+
+  it("accepts a package hash reported in upper-case hex (comparison is case-insensitive)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-case-"));
+    try {
+      const extractPackage = mock(async () => {
+        throw new Error("reached extract");
+      });
+      const perform = createPerformUpgrade({
+        extensionsRoot: join(root, "extensions"),
+        reverifyManifest: async () => {},
+        fetchPackage: async () => new TextEncoder().encode("pkg"),
+        signal: new AbortController().signal,
+        sha256OfPackage: async () => "F".repeat(64),
+        extractPackage,
+        stopExtensionClient: async () => {},
+        dbUpdateExtensionRow: async () => {},
+      });
+      // Past the hash check: the next step (extract) is what fails, not sha256_mismatch.
+      await expect(perform(mkAvailable())).rejects.toThrow("reached extract");
+      expect(extractPackage).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("cleans up pendingDir and throws swap_failed when applyUpgradeSwap throws", async () => {
     // Trigger: extensionsRoot points to a temp dir where the extension's install
     // directory does NOT exist. applyUpgradeSwap's rename(installPath, newPrevPath)
