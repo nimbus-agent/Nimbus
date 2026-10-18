@@ -904,30 +904,23 @@ Per-host network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Pla
 
 ```json
 {
-  "$schema": "https://nimbus-agent.dev/schemas/extension/v1.json",
   "id": "com.example.notion",
-  "displayName": "Notion",
   "version": "1.0.0",
-  "description": "Index and search your Notion workspace from Nimbus.",
-  "author": "Example Corp <hello@example.com>",
-  "homepage": "https://github.com/example/nimbus-notion",
-  "icon": "assets/icon.png",
-  "entrypoint": "dist/server.js",
-  "runtime": "bun",
-  "permissions": ["read", "write"],
-  "hitlRequired": ["write"],
-  "oauth": {
-    "provider": "notion",
-    "scopes": ["read_content", "update_content"],
-    "authUrl": "https://api.notion.com/v1/oauth/authorize",
-    "tokenUrl": "https://api.notion.com/v1/oauth/token",
-    "pkce": true
+  "name": "Notion",
+  "entry": "dist/server.js",
+  "permissions": {
+    "network": ["api.notion.com"],
+    "filesystem": { "read": [], "write": [] }
   },
-  "syncInterval": 300,
-  "tags": ["productivity", "notes"],
-  "minNimbusVersion": "0.3.0"
+  "publisher": { "id": "example", "key": "<base64 Ed25519 public key>" },
+  "signature": "<base64 Ed25519 signature>",
+  "updateChannel": "stable",
+  "changelog": "Initial release.",
+  "dependsOn": { "com.example.base": "^1.0.0" }
 }
 ```
+
+Source of truth: `packages/gateway/src/extensions/manifest.ts`. Optional fields: `name`, `entry` (default `dist/index.js`), `publisher`, `signature`, `changelog`, `dependsOn`. The manifest file is `nimbus.extension.json` (legacy `nimbus-extension.json` is still read).
 
 ### User MCP Servers and Scaffold
 
@@ -973,7 +966,22 @@ Both are in `FORBIDDEN_OVER_LAN` (I5) and in Tauri `ALLOWED_METHODS` (I7 — the
 
 ### Extension Marketplace — Tauri UI
 
-The Tauri desktop application ships an Extension Marketplace panel. It is not a cloud service. The registry index is a JSON file fetched from `https://registry.nimbus-agent.dev/index.json` and cached locally. All installation, validation, and loading is performed by the local Gateway.
+The Tauri desktop application ships an Extension Marketplace panel. It is not a cloud service: a registry is a static folder or website, and all installation, validation, and loading is performed by the local Gateway. The registry client (adding registries, search, install, updates) lands in the next PR; what exists today is the signed registry format and the offline tooling that builds one.
+
+**Registry layout.**
+
+```text
+<registry>/
+  index.json                                       signed by the registry root key
+  extensions/<id>/<version>/manifest.json          publisher-signed manifest (I16)
+  extensions/<id>/<version>/package.tgz            deterministic package
+```
+
+**`index.json`** (format 1, `packages/gateway/src/extensions/registry/index-format.ts`): `format` (`1`), `rootKey` (base64 Ed25519 public key), `sequence` (strictly increasing integer, the rollback guard), `generatedAt`, `extensions` (extension id to `{ publisher: { id, key }, versions }`) and `signature`. Each key of `versions` is a strict SemVer string and maps to `{ channel (stable|beta), name, manifest, manifestSha256, package, packageSha256, packageSizeBytes, entryHash, publishedAt }`; `manifest` and `package` are paths relative to the registry root. Unknown keys are tolerated (and signed) so a later additive field does not break older clients; `format` is the breaking-change switch. The parser caps the document at 8 MiB and tolerates a BOM and CRLF.
+
+**Two signatures, two trust roots.** The publisher signs each extension manifest (Ed25519, verified as in I16), which vouches for the extension's code and grants. The registry root key signs the whole index over its canonical JSON (the document without `signature`), which vouches for the catalogue: which versions exist, their hashes and sizes. Neither substitutes for the other. The index signature is verified by `index-format.ts` itself, not by the SDK manifest verifier, because the index envelope has no `publisher.key`.
+
+**Deterministic packages.** `nimbus registry maintain add` packs an extension directory with entries sorted by UTF-16 code unit and `/` separators, files only (symlinks and special files refused), mtime fixed at epoch 0, uid/gid/names dropped (`portable`), every mode normalised to 0644 and the gzip level pinned, so the same tree yields the same bytes on every platform. A golden vector shared by the gateway verifier and the CLI signer pins the signing format. `nimbus registry maintain init|add|remove` is offline, keeps the root key in a mode 0600 file, refuses duplicate versions, a changed publisher key for an existing id, unsigned manifests and oversize packages, and writes `index.json` through an atomic rename. A committed fixture registry under `packages/gateway/src/extensions/registry/__fixtures__/maintained-registry/` is verified by a gateway test.
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
