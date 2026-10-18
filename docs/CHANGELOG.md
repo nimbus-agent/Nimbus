@@ -18,6 +18,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-19 — Phase 9.5 project 2, PR C: registry CI — check and sign publish pull requests (no migration, no invariant, no egress class).**
+  A GitHub-hosted registry repository now validates and signs publish pull requests itself. The new node24 action
+  `packages/github-actions/registry-action` has two modes. `check` runs on every pull request to the default branch
+  with a read-only token and no secrets, validates it against the signed `index.json` on `gh-pages` and writes a
+  summary for the reviewer; it is a reviewer aid, not a boundary, since a pull request can edit it. `sign` runs on a
+  push to the default branch (or by hand) behind the `registry-signing` environment's required reviewers: it refuses
+  if an already-signed version changed, if the root-key input is not the registry's root key, or if the rules were
+  loosened; otherwise it re-validates every unsigned version (skipping and naming failures), signs the index at
+  `sequence + 1` and pushes `gh-pages`. `nimbus registry maintain init <dir> --github [--action-ref <40-hex>]
+  [--site <path>] [--default-branch <name>]` writes the whole repository: the two workflows (every `uses:` SHA-pinned,
+  the registry action pinned to the commit the release was built from, which `release.yml` now embeds through
+  `packages/cli/src/release-commit.ts`), `nimbus-registry.json`, a README and a signed empty site folder for
+  `gh-pages`, and prints the owner's next steps (public repository, environment with reviewers, the
+  environment-scoped `NIMBUS_REGISTRY_ROOT_KEY` secret in bash and PowerShell forms, Pages, branch protection); a
+  development build refuses `--github` without `--action-ref`. The action's `dist/index.js` carries a header with the
+  building Bun version and an input hash, and the new `audit:action-dist` gate checks that hash everywhere and
+  byte-compares against the recorded Bun in CI. **Fixed, user-visible, in the two already-shipped actions:**
+  `packages/github-actions/shared/gha-io.ts` read hyphenated inputs under the wrong environment name
+  (`INPUT_ROOT_KEY` instead of the runner's `INPUT_ROOT-KEY`), so inputs such as `target-ref`, `gateway-url` and
+  `timeout-ms` arrived empty in the annotate and preflight-query actions and silently fell back to defaults; both
+  bundles are rebuilt. Rebuilding preflight-query also ships a source change merged earlier but never bundled: an
+  unknown verdict now maps to "warn", not "ok". No new egress class (the action runs on GitHub, outside the gateway),
+  no invariant, no migration. Owner steps are in `docs/registry-hosting.md`. **Bounds, stated:** a force-push of
+  `gh-pages` lets a later sign publish a different index at an already-used `sequence`, and the client accepts an
+  equal sequence, so the owner must protect `gh-pages` (client-side refusal is a project 3 trust-layer follow-up);
+  the registry repository must be public because `check` fetches without credentials; the sign trigger follows
+  `--default-branch`; on Windows the CLI sets no ACL on the key file; the GitHub fork fallback in `extension publish`
+  is untested. **Not shipped:** the `nimbus eval` score and registry-side reproducibility re-run, forges other than
+  GitHub, private registries.
+
 - **2026-10-18 — Phase 9.5 project 2, PR B: publish extensions to a registry repository (no migration, no invariant, no egress class).**
   `nimbus extension publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]`
   packs the extension's package file set, validates it, and opens a pull request that adds
