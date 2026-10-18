@@ -101,7 +101,11 @@ The extension template:
   function decides the set; scaffold documents it; publish and `registry maintain add <dir>` use
   it (a `<dir>` input to `maintain add` packs the same set).
 - README "next steps": build → `nimbus extension keygen` → `nimbus extension sign .` →
-  `nimbus extension publish . --registry-repo nimbus-agent/extensions`.
+  `nimbus extension publish . --registry-repo nimbus-agent/extensions`. For that to work with no
+  hand-editing, `nimbus extension sign` gains: when the manifest has `publisher.id` (scaffold writes
+  it from `--publisher`) but no `publisher.key`, it fills `publisher.key` from the signing key's
+  public half before signing; when both are present and the key differs from the signing key, it
+  refuses (never silently re-keys).
 - Test: the scaffolded tree, built and signed, installs via the gateway's installer AND, approved
   to run, starts and answers an MCP `tools/list` with the `echo` tool through the real I43 runtime
   (sandbox-dependent leg skipped only where the sandbox is unavailable, never silently).
@@ -142,12 +146,16 @@ Offline-first, no gateway, no token:
 ### 7.4 The registry action (`packages/github-actions/registry-action`, **node24**)
 
 One action, `mode: check | sign`, bundled with `bun build --target=node` into a committed
-`dist/`. **Single source of rules:** it bundles the same validation the CLI uses. That requires a
-refactor, part of this project: move `assertSafeExtensionId` and the other pure helpers out of
-`install-from-local.ts` into a leaf module; extract the package inspection/validation from
-`registry-maintain.ts` (`inspectPackage`, `validateManifest`) into an exported lib module that uses
-the gateway's manifest rules (one validator, not two); keep `index-format.ts` and the signer free of
-Bun-only and database imports. A **closure test** builds the action bundle and fails if its import
+`dist/`. **Single source of rules — a new private workspace `packages/registry-format`** (pure
+TypeScript; depends only on `@nimbus-dev/sdk` and `tar`; no Bun-only APIs, no DB, no gateway or CLI
+imports). It owns: the index format (moved from `gateway/src/extensions/registry/index-format.ts`),
+the canonical signer/verifier (replacing the CLI's duplicate in `cli/src/lib/registry-index.ts`, so
+the golden vector becomes a single test), extension-id rules (`assertSafeExtensionId` moved out of
+`install-from-local.ts`), the manifest parse (moved from `gateway/src/extensions/manifest.ts`), the
+package file set + deterministic packer + package inspection (moved from the CLI), and THE publish
+validator (§ 11). The gateway, the CLI and the action all import it — `.dependency-cruiser.cjs`
+gains rules that `packages/registry-format` imports nothing from gateway/cli/ui, and the existing
+`cli-no-import-gateway` rule is untouched (the CLI imports `registry-format`, not the gateway). A **closure test** builds the action bundle and fails if its import
 graph reaches `bun:*`, the migration runner, sqlite-vec or any DB module; a **drift gate** fails if
 `dist/` is not the build of the current sources. Project 1's golden vector runs against the bundled
 signer.
@@ -189,11 +197,22 @@ In addition to today's init, writes `.github/workflows/registry-check.yml`,
 `.github/workflows/registry-sign.yml` (exact triggers/permissions/environment/concurrency of
 § 7.4), `nimbus-registry.json` (`requirePublisherNamespace: true` unless
 `--no-publisher-namespace`), and a README explaining how to publish and how to approve signing
-runs. The workflows reference the action by **path in this monorepo pinned to the CLI's own
-release tag** (`nimbus-agent/Nimbus/packages/github-actions/registry-action@v<cli-version>`; tags
-are immutable under the protected-tags ruleset). It prints the root key's fingerprint and the
-secret value to set, once. The empty signed index goes to the `gh-pages` layout (init creates the
-site folder the sign job maintains; the owner pushes it to `gh-pages` once).
+runs. The workflows reference the action by **path in this monorepo pinned to a 40-hex commit SHA**
+(`nimbus-agent/Nimbus/packages/github-actions/registry-action@<sha>  # v<cli-version>`), because the
+`nimbus-agent` org enforces `sha_pinning_required: true` (`.github/org-access.json`) and a tag pin
+would fail at startup. The release build embeds the release commit SHA as a build constant;
+`--action-ref <40-hex>` overrides it, and a dev build with no embedded SHA REFUSES `--github`
+without `--action-ref` (never writes an unpinned ref). Every other `uses:` in the templates
+(`actions/checkout`, Pages actions if any) is SHA-pinned too, with a version comment; a test
+asserts every `uses:` in the emitted YAML is `@<40-hex>`. Every job declares `timeout-minutes`
+(the repo's `audit:workflow-lint` rule) and the emitted YAML is run through `lintWorkflow` in a
+test. It prints the root key's fingerprint and the secret value to set,
+once. **Exact tree:** `init <dir> --github [--site <path>]` writes the MAIN-branch content into
+`<dir>` (`.github/workflows/registry-check.yml`, `.github/workflows/registry-sign.yml`,
+`nimbus-registry.json`, `README.md`, an empty `extensions/.gitkeep`) and NO `index.json`; it writes
+the initial SITE into `--site` (default `<dir>-site`): the signed empty `index.json` and a copy of
+`nimbus-registry.json`. The owner pushes `<dir>` to `main` and the site folder to `gh-pages`.
+Without `--github`, init behaves exactly as today.
 
 ### 7.6 The first registry — owner steps (docs page)
 
@@ -220,6 +239,51 @@ Nothing in this project pushes to that repo.
   tools ext_…` lists `echo` (the extension RUNS). Sandbox-dependent step skipped only where the
   sandbox is unavailable, with the skip stated.
 
+## 11. Design-review resolutions (binding)
+
+1. **Publisher id ↔ key is 1:1 across the WHOLE registry**, not per extension id: if any indexed
+   extension has `publisher.id === manifest.publisher.id`, its key must equal
+   `manifest.publisher.key`. (Clients key the Vault by publisher id, so a second key under the same
+   publisher id would break every client that installed the first.) With namespacing on, the id's
+   namespace must equal `publisher.id`.
+2. **Ids must map to a valid, collision-free service id:** the validator applies the gateway's
+   `deriveExtensionServiceId` rule (lowercase, non-alphanumerics → `_`, `ext_` + 1..62 chars) and
+   refuses an id that would fail it at `extension approve`; it also refuses a NEW id whose derived
+   service id prefix-collides at an underscore boundary with any id already in the registry (the
+   gateway's `findServiceIdPrefixCollision` rule). Cross-registry collisions remain the client's
+   existing refusal at approve time (stated bound). `scaffold extension` validates the same rule up
+   front.
+3. **Package file set:** `nimbus.extension.json` + everything under `dist/` + top-level files whose
+   name matches `README*` or `LICENSE*` case-insensitively. The manifest `entry` MUST be inside
+   `dist/` for anything published via `extension publish` or `maintain add <dir>`; existing test
+   fixtures that place the entry elsewhere are updated. A `.tgz` given to `maintain add` must
+   contain exactly a file set of that shape.
+4. **Git-tree integrity in check and sign:** files are read from the git tree, not the working
+   directory: any entry under `extensions/` with mode `120000` (symlink) or `160000` (submodule) is
+   refused; only regular files `100644` are accepted, and paths are validated before joining. The
+   committed `manifest.json` must be byte-identical to the `nimbus.extension.json` inside
+   `package.tgz`.
+5. **`publish-request.json` is validated:** exactly `{ id, version, channel, publisherFingerprint }`
+   (no unknown keys); `channel ∈ {stable, beta}`; `id`/`version` equal the manifest's and the
+   directory path's; `publisherFingerprint === publisherKeyFingerprint(manifest.publisher.key)`.
+6. **Loosening detection:** `sign` copies `nimbus-registry.json` to `gh-pages` on every run;
+   before signing it compares `main:nimbus-registry.json` with `gh-pages:nimbus-registry.json` and
+   refuses if any rule is weaker (today: `requirePublisherNamespace` true → false). Publish reads
+   both `index.json` and the config from `gh-pages`.
+7. **Already-signed versions:** `sha256(main:…/manifest.json) === manifestSha256` and
+   `sha256(main:…/package.tgz) === packageSha256` for every indexed version, and no indexed
+   version's directory may be deleted from `main`; any violation fails the run before anything is
+   signed.
+8. **Exit codes:** a run that signed what passed and skipped invalid dirs exits 0, but each skipped
+   dir is a GitHub `::warning` annotation plus a summary entry; a run exits non-zero on any
+   refusal in (6), (7), a root-key mismatch, or a push that still fails after the bounded retry.
+9. **`publish` git/gh mechanics:** a temp clone is `git clone --depth 1 --no-single-branch` (or an
+   explicit `git fetch --depth 1 origin gh-pages`); state is read with `git show
+   origin/gh-pages:index.json` (no second checkout), also for `--clone <path>`; `gh repo fork
+   --remote`, `git push`, and `gh pr create --title "Publish <id>@<version>" --body … --head …` are
+   all fully non-interactive. Every `git`/`gh` spawn in the CLI and in the action passes
+   `windowsHide: true` with argv arrays (the repo's `audit:windows-console` rule).
+
 ## 9. Left to the builder
 
 Module names for the extracted leaf modules; action source layout; CLI output wording; the bounded
@@ -229,11 +293,13 @@ must not affect the signed index).
 **Follow-ups to record (not in scope):** unify the SDK `runContractTests` schema with the gateway's;
 non-GitHub forges; bucket-hosted private registries; migrate the two existing actions to node24.
 
-## 10. Calls made after the builder check (owner to skim)
+## 10. Calls made after the builder check and design review (owner to skim)
 
 `gh-pages` holds the signed site so `main` stays protected; the sign job (with required approval)
 is the security boundary, the check job a reviewer aid; bad dirs are skipped and reported, not
 run-blocking; the SDK sandbox probe is dropped; the action targets node24 and is pinned by path to
 the CLI release tag; refactor shared validation into Bun-free leaf modules with a closure test;
 the scaffold becomes its own template that builds a runnable JS bundle with a defined package file
-set; acceptance proves the extension runs.
+set; acceptance proves the extension runs. After the design review: shared rules move into a new
+pure workspace `packages/registry-format` (not an exception to the CLI→gateway import ban); the
+action is pinned by 40-hex SHA embedded at release build; the eleven resolutions in § 11.
