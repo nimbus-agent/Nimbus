@@ -1,16 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import * as tar from "tar";
 
-import {
-  listExtensions,
-  selectExtensionInstallPath,
-  setExtensionTreeDigest,
-  updateExtensionRowVersion,
-} from "../automation/extension-store.ts";
+import { listExtensions, updateExtensionRowVersion } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { ExtensionAutoUpdater, type InstalledExtensionRow } from "./auto-update.ts";
@@ -22,10 +13,10 @@ import {
 } from "./auto-update-orchestrate.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
+import { extractPackage } from "./package-extract.ts";
 import { readPublisherKey } from "./publisher-keys.ts";
 import { createRegistryClient, type RegistryClient } from "./registry-client.ts";
 import { getRunGrant } from "./run-grant-store.ts";
-import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { verifyManifestSignature } from "./verify-signature.ts";
 import { prevVersionDir } from "./version-store.ts";
 
@@ -101,35 +92,6 @@ async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
     .join("");
 }
 
-async function extractTarballToDir(bytes: Uint8Array, destDir: string): Promise<void> {
-  const { mkdir } = await import("node:fs/promises");
-  await mkdir(destDir, { recursive: true });
-  const tmpDir = await mkdtemp(join(tmpdir(), "nimbus-au-"));
-  const tmpFile = join(tmpDir, "src.tar");
-  try {
-    await writeFile(tmpFile, bytes);
-    await tar.x({ cwd: destDir, file: tmpFile });
-  } finally {
-    await rm(tmpDir, { recursive: true, force: true });
-  }
-}
-
-/**
- * After an owner-approved upgrade or downgrade swapped new bytes into place, hash the tree that is
- * now there. `updateExtensionRowVersion` has already cleared the old digest, so a failure here
- * (a symlink in the swapped-in tree, an unreadable file) leaves the row at NULL — a digest that
- * vouches for nothing — rather than failing an update whose files are already swapped.
- */
-function recordTreeDigestAfterSwap(db: Database, id: string): void {
-  const installPath = selectExtensionInstallPath(db, id);
-  if (installPath === null) return;
-  try {
-    setExtensionTreeDigest(db, id, computeExtensionTreeDigest(installPath));
-  } catch {
-    /* left NULL by updateExtensionRowVersion; see above */
-  }
-}
-
 export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRuntime {
   const cache = new AutoUpdateCache();
   const registry: RegistryClient = createRegistryClient({ baseUrl: opts.registryBaseUrl });
@@ -160,10 +122,18 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     version,
     manifestHash,
     entryHash,
+    treeDigest,
   ) =>
     Promise.try(() => {
-      updateExtensionRowVersion(opts.db, id, version, manifestHash, entryHash, Date.now());
-      recordTreeDigestAfterSwap(opts.db, id);
+      updateExtensionRowVersion(
+        opts.db,
+        id,
+        version,
+        manifestHash,
+        entryHash,
+        Date.now(),
+        treeDigest,
+      );
     });
 
   const daemon = new ExtensionAutoUpdater({
@@ -219,7 +189,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     fetcher: globalThis.fetch.bind(globalThis),
     signal: abortController.signal,
     sha256OfTarball: sha256OfBytes,
-    extractTarball: extractTarballToDir,
+    extractPackage,
     stopExtensionClient: opts.stopExtensionClient ?? noopStop,
     dbUpdateExtensionRow,
   };

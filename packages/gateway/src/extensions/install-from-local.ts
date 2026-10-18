@@ -50,6 +50,7 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
+import { extractPackage } from "./package-extract.ts";
 import { resolvePublisherKey, writePublisherKey } from "./publisher-keys.ts";
 import type {
   FetchManifestResponse,
@@ -299,8 +300,7 @@ async function installExtensionFromArchive(options: {
 }): Promise<InstallExtensionFromLocalResult> {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-tgz-"));
   try {
-    extractTarGzToDirectory(options.archivePath, tmp);
-    const root = findExtensionSourceRootInTree(tmp);
+    const { sourceRoot: root } = await extractPackage(options.archivePath, tmp);
     return await installExtensionFromLocalDirectory({
       db: options.db,
       extensionsDir: options.extensionsDir,
@@ -321,23 +321,6 @@ async function installExtensionFromArchive(options: {
       /* best-effort */
     }
   }
-}
-
-function findExtensionSourceRootInTree(extractedRoot: string): string {
-  if (resolveExtensionManifestPath(extractedRoot) !== undefined) {
-    return extractedRoot;
-  }
-  for (const ent of readdirSync(extractedRoot, { withFileTypes: true })) {
-    if (ent.isDirectory()) {
-      const sub = join(extractedRoot, ent.name);
-      if (resolveExtensionManifestPath(sub) !== undefined) {
-        return sub;
-      }
-    }
-  }
-  throw new Error(
-    "archive does not contain nimbus.extension.json (at root or one subdirectory deep)",
-  );
 }
 
 function assertEntryInsideInstall(installRoot: string, entryRel: string): string {
@@ -453,20 +436,18 @@ async function downloadDepTarball(
   }
 }
 
-function extractAndValidateDepSource(
+async function extractAndValidateDepSource(
   tmp: string,
   tarballBytes: Uint8Array,
   depId: string,
   depVersion: string,
-): { sourceRoot: string; extractedManifest: ExtensionManifest } {
+): Promise<{ sourceRoot: string; extractedManifest: ExtensionManifest }> {
   const tarPath = join(tmp, "dep.tar.gz");
   writeFileSync(tarPath, tarballBytes);
 
   const extractDir = join(tmp, "extracted");
   mkdirSync(extractDir, { recursive: true });
-  extractTarGzToDirectory(tarPath, extractDir);
-
-  const sourceRoot = findExtensionSourceRootInTree(extractDir);
+  const { sourceRoot } = await extractPackage(tarPath, extractDir);
 
   const srcManifestPath = resolveExtensionManifestPath(sourceRoot);
   if (srcManifestPath === undefined) {
@@ -503,7 +484,7 @@ async function installDepFromRegistry(opts: {
 
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-dep-"));
   try {
-    const { sourceRoot, extractedManifest } = extractAndValidateDepSource(
+    const { sourceRoot, extractedManifest } = await extractAndValidateDepSource(
       tmp,
       tarballBytes,
       opts.depId,

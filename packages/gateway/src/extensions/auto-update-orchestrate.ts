@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -10,7 +10,9 @@ import {
   MAX_TARBALL_BYTES,
 } from "./auto-update-apply.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
+import type { ExtractedPackage } from "./package-extract.ts";
 import { assertPackageMatchesClaims } from "./package-hashes.ts";
+import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { pendingDir as pendingVersionDir, prevVersionDir } from "./version-store.ts";
 
 export interface PerformUpgradeDeps {
@@ -19,13 +21,14 @@ export interface PerformUpgradeDeps {
   maxBytes?: number;
   signal: AbortSignal;
   sha256OfTarball: (bytes: Uint8Array) => Promise<string>;
-  extractTarball: (bytes: Uint8Array, destDir: string) => Promise<void>;
+  extractPackage: (archivePath: string, destDir: string) => Promise<ExtractedPackage>;
   stopExtensionClient: (extensionId: string) => Promise<void>;
   dbUpdateExtensionRow: (
     id: string,
     version: string,
     manifestHash: string,
     entryHash: string,
+    treeDigest: string,
   ) => Promise<void>;
 }
 
@@ -46,38 +49,41 @@ export function createPerformUpgrade(deps: PerformUpgradeDeps) {
       throw new Error("sha256_mismatch");
     }
 
-    await deps.extractTarball(bytes, pendingDir);
-
-    // `entryHash` names the entry FILE, which is what the row stores and startup verification
-    // re-measures — so measure the extracted package and refuse before anything is swapped in.
-    let measured: ReturnType<typeof assertPackageMatchesClaims>;
+    const archivePath = `${pendingDir}.tgz`;
     try {
-      measured = assertPackageMatchesClaims(pendingDir, update);
-    } catch (e) {
-      await rm(pendingDir, { recursive: true, force: true });
-      throw e;
-    }
+      await writeFile(archivePath, bytes);
+      const { sourceRoot, treeDigest } = await deps.extractPackage(archivePath, pendingDir);
 
-    try {
-      await applyUpgradeSwap({
-        installPath: join(deps.extensionsRoot, update.id),
-        extensionsDir: deps.extensionsRoot,
-        id: update.id,
-        pendingExtractedDir: pendingDir,
-        fromVersion: update.fromVersion,
-        toVersion: update.toVersion,
-      });
-    } catch (e) {
-      await rm(pendingDir, { recursive: true, force: true });
-      throw new Error(`swap_failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
+      // `entryHash` names the entry FILE, which is what the row stores and startup verification
+      // re-measures — so measure the extracted package and refuse before anything is swapped in.
+      const measured = assertPackageMatchesClaims(sourceRoot, update);
 
-    await deps.dbUpdateExtensionRow(
-      update.id,
-      update.toVersion,
-      measured.manifestHash,
-      measured.entryHash,
-    );
+      try {
+        await applyUpgradeSwap({
+          installPath: join(deps.extensionsRoot, update.id),
+          extensionsDir: deps.extensionsRoot,
+          id: update.id,
+          pendingExtractedDir: sourceRoot,
+          fromVersion: update.fromVersion,
+          toVersion: update.toVersion,
+        });
+      } catch (e) {
+        throw new Error(`swap_failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+
+      await deps.dbUpdateExtensionRow(
+        update.id,
+        update.toVersion,
+        measured.manifestHash,
+        measured.entryHash,
+        treeDigest,
+      );
+    } finally {
+      // Whether the package was refused, the swap failed or it all worked, neither the pending
+      // version directory (a nested package root is only renamed OUT of it) nor the archive stays.
+      await rm(pendingDir, { recursive: true, force: true });
+      await rm(archivePath, { force: true });
+    }
     await deps.stopExtensionClient(update.id);
   };
 }
@@ -90,6 +96,7 @@ export interface PerformDowngradeDeps {
     version: string,
     manifestHash: string,
     entryHash: string,
+    treeDigest: string,
   ) => Promise<void>;
 }
 
@@ -102,6 +109,8 @@ export function createPerformDowngrade(deps: PerformDowngradeDeps) {
       throw new Error("downgrade_unavailable");
     }
     const measured = assertPackageMatchesClaims(targetPrev, update);
+    // Digested before the swap, so a tree that cannot be digested is refused with nothing moved.
+    const treeDigest = computeExtensionTreeDigest(targetPrev);
     await applyDowngradeSwap({
       installPath: join(deps.extensionsRoot, update.id),
       extensionsDir: deps.extensionsRoot,
@@ -114,6 +123,7 @@ export function createPerformDowngrade(deps: PerformDowngradeDeps) {
       update.toVersion,
       measured.manifestHash,
       measured.entryHash,
+      treeDigest,
     );
     await deps.stopExtensionClient(update.id);
   };
