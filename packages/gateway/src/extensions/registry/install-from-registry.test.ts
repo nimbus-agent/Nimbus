@@ -1,8 +1,18 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as tar from "tar";
 import nacl from "tweetnacl";
 
 import { listExtensions } from "../../automation/extension-store.ts";
@@ -14,8 +24,12 @@ import {
   publisherKeyFingerprint,
 } from "../install-from-local.ts";
 import { writePublisherKey } from "../publisher-keys.ts";
-import { buildTestRegistry, type TestRegistry } from "./__fixtures__/build-test-registry.ts";
-import { installFromRegistry } from "./install-from-registry.ts";
+import {
+  buildTestRegistry,
+  resignIndex,
+  type TestRegistry,
+} from "./__fixtures__/build-test-registry.ts";
+import { type InstallFromRegistryDeps, installFromRegistry } from "./install-from-registry.ts";
 import { getExtensionSource, insertRegistry } from "./registry-store.ts";
 
 const ID = "com.example.tool";
@@ -62,7 +76,7 @@ async function setup(
   });
 }
 
-function deps(approve = true) {
+function deps(approve = true): InstallFromRegistryDeps {
   return {
     db,
     extensionsDir,
@@ -170,11 +184,89 @@ describe("installFromRegistry", () => {
 
   test("missing dependency refuses and fetches nothing transitively", async () => {
     await setup([{ version: "1.0.0", dependsOn: { "com.example.dep": "^1.0.0" } }]);
-    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow();
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_INSTALL_REFUSED/,
+    );
+    expect(asked).toHaveLength(0);
     expect(listExtensions(db)).toHaveLength(0);
     expect(existsSync(join(extensionsDir, ID))).toBe(false);
     expect(existsSync(join(extensionsDir, "com.example.dep"))).toBe(false);
-    expect(fetchCalls).toBe(0);
+  });
+
+  test("a remote registry is asked only for the root's manifest and package, nothing transitive", async () => {
+    await setup([{ version: "1.0.0", dependsOn: { "com.example.dep": "^1.0.0" } }]);
+    db.run("UPDATE extension_registry SET url = 'https://reg.example/r' WHERE name = 'main'");
+    const urls: string[] = [];
+    const d = deps();
+    d.fetch.fetchFn = (url: string) => {
+      urls.push(url);
+      const rel = url.replace("https://reg.example/r/", "");
+      return Promise.resolve(new Response(readFileSync(join(regDir, rel))));
+    };
+    await expect(installFromRegistry(d, { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_INSTALL_REFUSED/,
+    );
+    expect(urls).toEqual([
+      "https://reg.example/r/index.json",
+      `https://reg.example/r/extensions/${ID}/1.0.0/manifest.json`,
+      `https://reg.example/r/extensions/${ID}/1.0.0/package.tgz`,
+    ]);
+    expect(asked).toHaveLength(0);
+    expect(listExtensions(db)).toHaveLength(0);
+  });
+
+  test("the nimbus-reg temp dir is gone after a success and after a refusal", async () => {
+    await setup([{ version: "1.0.0" }]);
+    const before = new Set(readdirSync(tmpdir()).filter((n) => n.startsWith("nimbus-reg-")));
+    await installFromRegistry(deps(), { id: ID });
+    resetInstalled();
+    await expect(installFromRegistry(deps(false), { id: ID })).rejects.toThrow(
+      "ERR_EXTENSION_INSTALL_NOT_APPROVED",
+    );
+    const after = readdirSync(tmpdir()).filter(
+      (n) => n.startsWith("nimbus-reg-") && !before.has(n),
+    );
+    expect(after).toEqual([]);
+  });
+
+  test("an index entryHash that does not match the packaged entry is refused before any prompt", async () => {
+    await setup([{ version: "1.0.0" }], { entryHashOverride: "0".repeat(64) });
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_HASH_MISMATCH.*entry file/,
+    );
+    expect(asked).toHaveLength(0);
+    expect(listExtensions(db)).toHaveLength(0);
+    expect(existsSync(join(extensionsDir, ID))).toBe(false);
+  });
+
+  test("a packaged manifest that differs from the signed manifest is refused before any prompt", async () => {
+    await setup([{ version: "1.0.0" }]);
+    const base = join(regDir, "extensions", ID, "1.0.0");
+    // Rebuild the package around a different (still well-formed) manifest, and re-hash it in the index.
+    const alt = join(tmp, "alt");
+    mkdirSync(join(alt, "pkg", "dist"), { recursive: true });
+    writeFileSync(join(alt, "pkg", "dist", "index.js"), "x");
+    writeFileSync(join(alt, "pkg", "nimbus.extension.json"), '{"id":"other"}');
+    await tar.c({ gzip: true, file: join(base, "package.tgz"), cwd: alt }, ["pkg"]);
+    const idxPath = join(regDir, "index.json");
+    const idx = JSON.parse(readFileSync(idxPath, "utf8"));
+    idx.extensions[ID].versions["1.0.0"].packageSha256 = createHash("sha256")
+      .update(readFileSync(join(base, "package.tgz")))
+      .digest("hex");
+    resignIndex(idxPath, idx);
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_HASH_MISMATCH.*packaged manifest/,
+    );
+    expect(asked).toHaveLength(0);
+    expect(listExtensions(db)).toHaveLength(0);
+  });
+
+  test("a manifest signature that does not verify carries ERR_REGISTRY_SIGNATURE_INVALID", async () => {
+    await setup([{ version: "1.0.0" }], { badManifestSignature: true });
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      "ERR_REGISTRY_SIGNATURE_INVALID",
+    );
+    expect(asked).toHaveLength(0);
   });
 
   test("stable is the default; beta picks the newest of stable and beta; --version is exact", async () => {

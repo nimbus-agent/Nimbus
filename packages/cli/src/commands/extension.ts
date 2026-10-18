@@ -374,9 +374,6 @@ async function runExtensionInstallFromRegistry(
   if (hasFlag(args, "--publisher-key")) {
     throw new Error("--publisher-key applies to a local install only; the registry names the key");
   }
-  if (process.stdout.isTTY !== true) {
-    throw new Error("Refusing to install from a registry without an interactive confirmation.");
-  }
   const channel = takeFlagValue(args, "--channel");
   if (channel !== undefined && channel !== "stable" && channel !== "beta") {
     throw new Error("--channel must be stable or beta");

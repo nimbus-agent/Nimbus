@@ -437,6 +437,15 @@ describe("runExtensionInstall — path versus registry id", () => {
     );
   });
 
+  test("a registry install without a TTY still goes to the gateway prompt", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const { client, calls } = createMockIpcClient([
+      { id: "acme.tool", version: "1.0.0", sourceRegistry: "main", installPath: "/p" },
+    ]);
+    await runExtensionInstall(client, ["install", "acme.tool"], ["acme.tool"]);
+    expect(calls.map((c) => c.method)).toEqual(["registry.install"]);
+  });
+
   test("--yes is refused for a registry install, before any call", async () => {
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
     const { client, calls } = createMockIpcClient([]);

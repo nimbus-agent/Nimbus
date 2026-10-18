@@ -38,6 +38,10 @@ export async function buildTestRegistry(
     publisherId?: string;
     /** What the INDEX lists as the publisher key (the manifest is always signed by PUBLISHER_SEED). */
     indexPublisherKey?: string;
+    /** List this entryHash in the index instead of the real one. */
+    entryHashOverride?: string;
+    /** Sign the manifests with a key other than the one they declare. */
+    badManifestSignature?: boolean;
   },
 ): Promise<TestRegistry> {
   const root = nacl.sign.keyPair.fromSeed(ROOT_SEED);
@@ -64,7 +68,10 @@ export async function buildTestRegistry(
     };
     const manifestText = JSON.stringify({
       ...unsigned,
-      signature: await signManifest(unsigned, PUBLISHER_SEED),
+      signature: await signManifest(
+        unsigned,
+        opts.badManifestSignature === true ? ROOT_SEED : PUBLISHER_SEED,
+      ),
     });
     writeFileSync(join(pkg, "nimbus.extension.json"), manifestText);
     writeFileSync(join(base, "manifest.json"), manifestText);
@@ -82,7 +89,7 @@ export async function buildTestRegistry(
       package: `extensions/${opts.id}/${v.version}/package.tgz`,
       packageSha256: sha(tgz),
       packageSizeBytes: tgz.byteLength,
-      entryHash: sha(entrySource),
+      entryHash: opts.entryHashOverride ?? sha(entrySource),
       publishedAt: "2026-10-18T10:00:00Z",
     };
   }
@@ -110,4 +117,17 @@ export async function buildTestRegistry(
     publisherKey,
     entryHashOf: (version) => entryHashes.get(version) ?? "",
   };
+}
+
+/** Re-signs an edited index document with the root key and writes it back. */
+export function resignIndex(path: string, index: Record<string, unknown>): void {
+  const { signature: _drop, ...rest } = index;
+  const root = nacl.sign.keyPair.fromSeed(ROOT_SEED);
+  const sig = encodeBase64(
+    nacl.sign.detached(
+      registryIndexSigningBytes(rest as unknown as Omit<RegistryIndex, "signature">),
+      root.secretKey,
+    ),
+  );
+  writeFileSync(path, JSON.stringify({ ...rest, signature: sig }));
 }

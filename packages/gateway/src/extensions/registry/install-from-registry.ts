@@ -6,9 +6,9 @@
  */
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 import { deleteExtensionById, listExtensions } from "../../automation/extension-store.ts";
 import { sha256HexEqualConstantTime } from "../../util/timing-safe-compare.ts";
@@ -17,11 +17,16 @@ import { MAX_TARBALL_BYTES } from "../auto-update-apply.ts";
 import { clearDeps } from "../dependency-store.ts";
 import {
   type ExtensionInstallApprover,
+  ExtensionInstallNotApprovedError,
   type InstallExtensionFromLocalResult,
   installExtensionFromLocalDirectory,
   publisherKeyFingerprint,
 } from "../install-from-local.ts";
-import { parseExtensionManifestForRegistry, resolveExtensionManifestPath } from "../manifest.ts";
+import {
+  extensionEntryRelPath,
+  parseExtensionManifestForRegistry,
+  resolveExtensionManifestPath,
+} from "../manifest.ts";
 import { extractPackage } from "../package-extract.ts";
 import { readPublisherKey } from "../publisher-keys.ts";
 import { decodeBase64, verifyManifestSignature } from "../verify-signature.ts";
@@ -134,7 +139,15 @@ export async function installFromRegistry(
   }
 
   const manifestText = new TextDecoder().decode(manifestBytes);
-  const { manifest } = parseExtensionManifestForRegistry(manifestText);
+  let manifest: ReturnType<typeof parseExtensionManifestForRegistry>["manifest"];
+  try {
+    manifest = parseExtensionManifestForRegistry(manifestText).manifest;
+  } catch (e) {
+    throw new RegistryError(
+      "ERR_REGISTRY_MANIFEST_INVALID",
+      `the manifest of ${req.id}@${version} is not valid: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
   if (manifest.id !== req.id || manifest.version !== version) {
     throw new RegistryError(
       "ERR_REGISTRY_MANIFEST_MISMATCH",
@@ -152,7 +165,17 @@ export async function installFromRegistry(
     );
   }
   const publisherKey = decodeBase64(entry.publisher.key);
-  await verifyManifestSignature(JSON.parse(manifestText) as Record<string, unknown>, publisherKey);
+  try {
+    await verifyManifestSignature(
+      JSON.parse(manifestText) as Record<string, unknown>,
+      publisherKey,
+    );
+  } catch (e) {
+    throw new RegistryError(
+      "ERR_REGISTRY_SIGNATURE_INVALID",
+      `the manifest signature of ${req.id}@${version} does not verify: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 
   const cached = await readPublisherKey(deps.vault, entry.publisher.id);
   if (cached !== undefined && !Buffer.from(cached).equals(Buffer.from(publisherKey))) {
@@ -166,7 +189,15 @@ export async function installFromRegistry(
   try {
     const archivePath = join(tmp, "package.tgz");
     writeFileSync(archivePath, packageBytes);
-    const { sourceRoot } = await extractPackage(archivePath, join(tmp, "pkg"));
+    let sourceRoot: string;
+    try {
+      sourceRoot = (await extractPackage(archivePath, join(tmp, "pkg"))).sourceRoot;
+    } catch (e) {
+      throw new RegistryError(
+        "ERR_REGISTRY_EXTRACT_FAILED",
+        `the package of ${req.id}@${version} could not be extracted: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
     // The package must carry the very manifest the index signed.
     const inPackage = resolveExtensionManifestPath(sourceRoot);
     if (
@@ -175,17 +206,38 @@ export async function installFromRegistry(
     ) {
       throw hashMismatch("packaged manifest", req.id, version);
     }
-    const installed = await installExtensionFromLocalDirectory({
-      db: deps.db,
-      extensionsDir: deps.extensionsDir,
-      sourcePath: sourceRoot,
-      displaySourcePath: `registry ${reg.name}: ${req.id}@${version}`,
-      vault: deps.vault,
-      publisherKey,
-      sourceRegistry: reg.name,
-      rootFingerprint,
-      approve: deps.approve,
-    });
+    // The entry file must be the one the index listed BEFORE the owner is asked anything.
+    const entryPath = resolve(sourceRoot, extensionEntryRelPath(manifest));
+    const entryRel = relative(resolve(sourceRoot), entryPath);
+    if (
+      entryRel === "" ||
+      entryRel === ".." ||
+      entryRel.startsWith(`..${sep}`) ||
+      !existsSync(entryPath) ||
+      !sha256HexEqualConstantTime(sha256Hex(readFileSync(entryPath)), vEntry.entryHash)
+    ) {
+      throw hashMismatch("entry file", req.id, version);
+    }
+    let installed: InstallExtensionFromLocalResult;
+    try {
+      installed = await installExtensionFromLocalDirectory({
+        db: deps.db,
+        extensionsDir: deps.extensionsDir,
+        sourcePath: sourceRoot,
+        displaySourcePath: `registry ${reg.name}: ${req.id}@${version}`,
+        vault: deps.vault,
+        publisherKey,
+        sourceRegistry: reg.name,
+        rootFingerprint,
+        approve: deps.approve,
+      });
+    } catch (e) {
+      if (e instanceof RegistryError || e instanceof ExtensionInstallNotApprovedError) throw e;
+      throw new RegistryError(
+        "ERR_REGISTRY_INSTALL_REFUSED",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
     if (!sha256HexEqualConstantTime(installed.entryHash, vEntry.entryHash)) {
       // Installed bytes disagree with the signed index: undo the install rather than keep it.
       clearDeps(deps.db, installed.id);
@@ -208,6 +260,10 @@ export async function installFromRegistry(
       },
     };
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* best-effort: the extension is already committed (or the install refused) */
+    }
   }
 }
