@@ -2,7 +2,16 @@
  * `check` over real git: a bare origin with `main` and a signed `gh-pages`, a workspace clone with
  * the pull request checked out at `HEAD`. Nothing leaves the temp directory.
  */
-import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +21,7 @@ import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
 import { runSign } from "./sign.ts";
 import {
+  copyRegistryRepo,
   git,
   makeExtension,
   makeRegistryRepo,
@@ -23,8 +33,21 @@ import {
   writePublish,
 } from "./testing/registry-repo.ts";
 
-// Each test builds real repositories and spawns git dozens of times.
+// Each test copies real repositories and spawns git dozens of times.
 setDefaultTimeout(60_000);
+
+// One registry is built per file and copied per test; building one costs ~15 git spawns.
+let templateDir: string;
+let template: RegistryRepo;
+
+beforeAll(async () => {
+  templateDir = mkdtempSync(join(tmpdir(), "nimbus-registry-check-template-"));
+  template = await makeRegistryRepo(join(templateDir, "reg"));
+});
+
+afterAll(() => {
+  rmSync(templateDir, { recursive: true, force: true });
+});
 
 let tmp: string;
 let scratch: string;
@@ -33,11 +56,11 @@ let summaries: string[];
 let logs: string[];
 let validated: number;
 
-beforeEach(async () => {
+beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "nimbus-registry-check-"));
   scratch = join(tmp, "scratch");
   mkdirSync(scratch);
-  repo = await makeRegistryRepo(join(tmp, "reg"));
+  repo = copyRegistryRepo(template, join(tmp, "reg"));
   summaries = [];
   logs = [];
   validated = 0;
@@ -65,12 +88,16 @@ function deps(): CheckDeps {
   };
 }
 
-/** Check out a pull-request branch in the workspace and let `edit` change it. */
-function openPr(edit: (ws: string) => void): void {
+/**
+ * Check out a pull-request branch in the workspace, let `edit` change it, stage everything, then
+ * let `staged` adjust the index (a mode change, say) before the commit.
+ */
+function openPr(edit: (ws: string) => void, staged?: (ws: string) => void): void {
   git(repo.workspace, "fetch", "-q", "origin");
   git(repo.workspace, "checkout", "-q", "-b", "pr", "origin/main");
   edit(repo.workspace);
   git(repo.workspace, "add", "-A");
+  staged?.(repo.workspace);
   git(repo.workspace, "commit", "-q", "--allow-empty", "-m", "pr");
 }
 
@@ -137,6 +164,7 @@ describe("runCheck", () => {
     await expect(run()).rejects.toThrow(
       /M extensions\/acme\/other\/1\.0\.0\/publish-request\.json/,
     );
+    expect(validated).toBe(0);
   });
 
   test("rejects a second version directory", async () => {
@@ -147,6 +175,53 @@ describe("runCheck", () => {
       writePublish(ws, b);
     });
     await expect(run()).rejects.toThrow(/adds exactly one extensions\/<id>\/<version>\//);
+    expect(validated).toBe(0);
+  });
+
+  test("rejects a deletion alongside a publish", async () => {
+    const ext = await makeExtension(scratch);
+    openPr((ws) => {
+      writePublish(ws, ext);
+      rmSync(join(ws, "README.md"));
+    });
+    await expect(run()).rejects.toThrow(/it also changes: D README\.md/);
+    expect(validated).toBe(0);
+  });
+
+  test("rejects a git mv of a signed file into the new dir (seen as D + A, never a rename)", async () => {
+    writePublish(repo.maintainer, await makeExtension(scratch));
+    pushMaintainer(repo, "main", "merge acme/echo@1.0.0");
+    await signMain();
+    validated = 0;
+    const next = await makeExtension(scratch, { version: "1.1.0" });
+    openPr((ws) => {
+      write(ws, "extensions/acme/echo/1.1.0/manifest.json", next.manifest);
+      write(ws, "extensions/acme/echo/1.1.0/publish-request.json", next.request);
+      const from = "extensions/acme/echo/1.0.0/package.tgz";
+      git(ws, "mv", from, "extensions/acme/echo/1.1.0/package.tgz");
+    });
+    await expect(run()).rejects.toThrow(/D extensions\/acme\/echo\/1\.0\.0\/package\.tgz/);
+    expect(validated).toBe(0);
+  });
+
+  test("rejects a mode change to an added file", async () => {
+    const ext = await makeExtension(scratch);
+    openPr(
+      (ws) => writePublish(ws, ext),
+      (ws) => git(ws, "update-index", "--chmod=+x", "extensions/acme/echo/1.0.0/package.tgz"),
+    );
+    await expect(run()).rejects.toThrow(/package\.tgz: git mode 100755 is not a regular file/);
+    expect(validated).toBe(0);
+  });
+
+  test("rejects a .gitattributes edit alongside a publish", async () => {
+    const ext = await makeExtension(scratch);
+    openPr((ws) => {
+      writePublish(ws, ext);
+      write(ws, ".gitattributes", "*.tgz -text\n");
+    });
+    await expect(run()).rejects.toThrow(/it also changes: A \.gitattributes/);
+    expect(validated).toBe(0);
   });
 
   test("rejects a publish missing one of its three files", async () => {

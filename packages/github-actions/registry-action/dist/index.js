@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:df6d44d196987e096d2c10f71e1840d23c913f45ed54dfcb6ffbaa08c86f96ff
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:1e7516edd1c828d7e1dbb7bf07a99a1851cffe03842ef1cffe10886021f8c371
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -9058,12 +9058,15 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 import { mkdtempSync as mkdtempSync3, rmSync as rmSync3 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join4 } from "node:path";
-var BOT_IDENTITY = [
-  "-c",
-  "user.name=github-actions[bot]",
-  "-c",
-  "user.email=41898282+github-actions[bot]@users.noreply.github.com"
-];
+var BOT_NAME = "github-actions[bot]";
+var BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
+var BOT_IDENTITY = ["-c", `user.name=${BOT_NAME}`, "-c", `user.email=${BOT_EMAIL}`];
+var BOT_ENV = {
+  GIT_AUTHOR_NAME: BOT_NAME,
+  GIT_AUTHOR_EMAIL: BOT_EMAIL,
+  GIT_COMMITTER_NAME: BOT_NAME,
+  GIT_COMMITTER_EMAIL: BOT_EMAIL
+};
 function run(args, opts) {
   return execFileSync2("git", [...args], {
     cwd: opts.cwd,
@@ -9087,7 +9090,10 @@ function commitSite(parent, files, message, cwd) {
     const tree = run(["write-tree"], { cwd, env });
     if (tree === run(["rev-parse", `${parent}^{tree}`], { cwd }))
       return;
-    return run([...BOT_IDENTITY, "commit-tree", tree, "-p", parent, "-m", message], { cwd });
+    return run([...BOT_IDENTITY, "commit-tree", tree, "-p", parent, "-m", message], {
+      cwd,
+      env: { ...process.env, ...BOT_ENV }
+    });
   } finally {
     rmSync3(scratch, { recursive: true, force: true });
   }
@@ -9261,8 +9267,7 @@ async function attemptSign(opts, seed, rootKey, deps) {
   return { commit: commitSite(parent, files, message, cwd), added, skipped, sequence };
 }
 function report(io, a, pushed) {
-  for (const s of a.skipped)
-    io.annotate("warning", `skipped ${s.dir}: ${s.reason}`);
+  warnSkipped(io, a);
   const lines = ["## Registry sign", ""];
   if (a.added.length === 0) {
     lines.push("Nothing new to sign.");
@@ -9281,24 +9286,43 @@ function report(io, a, pushed) {
 `));
   io.log(pushed ? `signed ${String(a.added.length)} version(s), skipped ${String(a.skipped.length)}; pushed ${PAGES_BRANCH}` : `nothing to sign; skipped ${String(a.skipped.length)}; no commit`);
 }
-async function runSign(opts, deps = SHARED2) {
-  const seed = parseRootKey(opts.rootKey);
+function warnSkipped(io, a) {
+  for (const s of a.skipped)
+    io.annotate("warning", `skipped ${s.dir}: ${s.reason}`);
+}
+async function signLoop(opts, seed, deps) {
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  for (let attempt = 1;attempt <= MAX_ATTEMPTS; attempt++) {
-    const a = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps);
-    if (a.commit === undefined) {
-      report(deps.io, a, false);
-      return;
+  let last;
+  try {
+    for (let attempt = 1;attempt <= MAX_ATTEMPTS; attempt++) {
+      last = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps);
+      if (last.commit === undefined) {
+        report(deps.io, last, false);
+        return;
+      }
+      await deps.beforePush?.(attempt);
+      if (pushCommit(last.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
+        report(deps.io, last, true);
+        return;
+      }
+      deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
     }
-    deps.beforePush?.(attempt);
-    if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
-      report(deps.io, a, true);
-      return;
-    }
-    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
+  } catch (e) {
+    if (last !== undefined)
+      warnSkipped(deps.io, last);
+    throw e;
   }
+  warnSkipped(deps.io, last);
   throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`);
+}
+async function runSign(opts, deps = SHARED2) {
+  const seed = parseRootKey(opts.rootKey);
+  try {
+    await signLoop(opts, seed, deps);
+  } finally {
+    seed.fill(0);
+  }
 }
 
 // src/main.ts
@@ -9334,6 +9358,7 @@ async function main() {
     } else {
       const rootKey = requireInput("root-key");
       maskSecret(rootKey);
+      delete process.env["INPUT_ROOT_KEY"];
       await runSign({ workspace: workspace(), rootKey });
     }
   } catch (err) {

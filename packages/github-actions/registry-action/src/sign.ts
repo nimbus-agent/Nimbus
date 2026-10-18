@@ -67,7 +67,7 @@ export interface SignDeps {
   /** Where the validator's scratch directory goes. */
   tmpdir: () => string;
   /** Called between building the commit and pushing it; tests race a concurrent push here. */
-  beforePush?: (attempt: number) => void;
+  beforePush?: (attempt: number) => void | Promise<void>;
 }
 
 const SHARED: SignDeps = {
@@ -293,7 +293,7 @@ async function attemptSign(
 }
 
 function report(io: ActionIo, a: Attempt, pushed: boolean): void {
-  for (const s of a.skipped) io.annotate("warning", `skipped ${s.dir}: ${s.reason}`);
+  warnSkipped(io, a);
   const lines = ["## Registry sign", ""];
   if (a.added.length === 0) {
     lines.push("Nothing new to sign.");
@@ -318,25 +318,45 @@ function report(io: ActionIo, a: Attempt, pushed: boolean): void {
   );
 }
 
-/** Run the `sign` mode. Throws (failing the run, nothing pushed) on any refusal. */
-export async function runSign(opts: SignOptions, deps: SignDeps = SHARED): Promise<void> {
-  const seed = parseRootKey(opts.rootKey);
+function warnSkipped(io: ActionIo, a: Attempt): void {
+  for (const s of a.skipped) io.annotate("warning", `skipped ${s.dir}: ${s.reason}`);
+}
+
+async function signLoop(opts: SignOptions, seed: Uint8Array, deps: SignDeps): Promise<void> {
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const a = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps);
-    if (a.commit === undefined) {
-      report(deps.io, a, false);
-      return;
+  let last: Attempt | undefined;
+  try {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      last = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps);
+      if (last.commit === undefined) {
+        report(deps.io, last, false);
+        return;
+      }
+      await deps.beforePush?.(attempt);
+      if (pushCommit(last.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
+        report(deps.io, last, true);
+        return;
+      }
+      deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
     }
-    deps.beforePush?.(attempt);
-    if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
-      report(deps.io, a, true);
-      return;
-    }
-    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
+  } catch (e) {
+    // A dir this run skipped is still worth naming when the run itself then fails.
+    if (last !== undefined) warnSkipped(deps.io, last);
+    throw e;
   }
+  warnSkipped(deps.io, last as Attempt);
   throw new Error(
     `refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`,
   );
+}
+
+/** Run the `sign` mode. Throws (failing the run, nothing pushed) on any refusal. */
+export async function runSign(opts: SignOptions, deps: SignDeps = SHARED): Promise<void> {
+  const seed = parseRootKey(opts.rootKey);
+  try {
+    await signLoop(opts, seed, deps);
+  } finally {
+    seed.fill(0);
+  }
 }

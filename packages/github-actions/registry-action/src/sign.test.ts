@@ -3,7 +3,16 @@
  * a maintainer clone that lands "merges" on `main` and races pushes to `gh-pages`. Nothing leaves
  * the temp directory.
  */
-import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,6 +27,7 @@ import type { ActionIo } from "./report.ts";
 import { runSign, type SignDeps } from "./sign.ts";
 import {
   b64,
+  copyRegistryRepo,
   git,
   makeExtension,
   makeRegistryRepo,
@@ -34,8 +44,21 @@ import {
   writePublish,
 } from "./testing/registry-repo.ts";
 
-// Each test builds real repositories and spawns git dozens of times.
+// Each test copies real repositories and spawns git dozens of times.
 setDefaultTimeout(60_000);
+
+// One registry is built per file and copied per test; building one costs ~15 git spawns.
+let templateDir: string;
+let template: RegistryRepo;
+
+beforeAll(async () => {
+  templateDir = mkdtempSync(join(tmpdir(), "nimbus-registry-sign-template-"));
+  template = await makeRegistryRepo(join(templateDir, "reg"));
+});
+
+afterAll(() => {
+  rmSync(templateDir, { recursive: true, force: true });
+});
 
 let tmp: string;
 let scratch: string;
@@ -44,11 +67,11 @@ let warnings: string[];
 let summaries: string[];
 let validated: number;
 
-beforeEach(async () => {
+beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "nimbus-registry-sign-"));
   scratch = join(tmp, "scratch");
   mkdirSync(scratch);
-  repo = await makeRegistryRepo(join(tmp, "reg"));
+  repo = copyRegistryRepo(template, join(tmp, "reg"));
   warnings = [];
   summaries = [];
   validated = 0;
@@ -234,8 +257,10 @@ describe("runSign", () => {
     idx["sequence"] = 9;
     write(repo.maintainer, "index.json", JSON.stringify(idx));
     pushMaintainer(repo, "gh-pages", "tamper");
+    const head = originHead(repo, "gh-pages");
     await expect(sign()).rejects.toThrow(/ERR_REGISTRY_SIGNATURE_INVALID: index signature/);
     expect(validated).toBe(0);
+    expect(originHead(repo, "gh-pages")).toBe(head);
   });
 
   test("copies a stricter config to gh-pages without re-signing", async () => {
@@ -256,19 +281,86 @@ describe("runSign", () => {
 
   test("on a non-fast-forward it re-fetches and retries from the top", async () => {
     await mergePublish();
+    const other = await makeExtension(scratch, { id: "acme/other" });
     let raced = 0;
     await sign({
-      beforePush: (attempt) => {
+      beforePush: async (attempt) => {
         if (attempt !== 1) return;
         raced++;
-        syncMaintainer(repo, "gh-pages");
-        write(repo.maintainer, "CNAME", "registry.example.org\n");
-        pushMaintainer(repo, "gh-pages", "concurrent");
+        // A REAL concurrent sign lands first: it signs acme/other (sequence 2) from a branch that
+        // never saw acme/echo, and acme/other is then merged into main as well.
+        syncMaintainer(repo, "main");
+        git(repo.maintainer, "checkout", "-q", "-b", "racer", "HEAD~1");
+        writePublish(repo.maintainer, other);
+        pushMaintainer(repo, "racer", "racer: merge acme/other");
+        const racerWs = join(tmp, "racer-ws");
+        git(tmp, "clone", "-q", repo.originUrl, racerWs);
+        await runSign(
+          { workspace: racerWs, rootKey: ROOT_KEY_INPUT, defaultBranch: "racer" },
+          deps(),
+        );
+        expect(originIndex(repo).sequence).toBe(2);
+        syncMaintainer(repo, "main");
+        writePublish(repo.maintainer, other);
+        pushMaintainer(repo, "main", "merge acme/other");
       },
     });
     expect(raced).toBe(1);
-    expect(originFile(repo, "gh-pages", "CNAME").toString()).toBe("registry.example.org\n");
-    expect(originIndex(repo).sequence).toBe(2);
+    const index = originIndex(repo);
+    await verifyRegistryIndexPinned(index, ROOT_PUBLIC_KEY);
+    expect(index.sequence).toBe(3);
+    expect(Object.keys(index.extensions).sort()).toEqual(["acme/echo", "acme/other"]);
+  });
+
+  test("skipped dirs are still warned about when the run then fails", async () => {
+    await mergePublish({ id: "acme/bad", badSignature: true });
+    await mergePublish();
+    git(repo.workspace, "remote", "set-url", "--push", "origin", join(tmp, "nowhere.git"));
+    await expect(sign()).rejects.toThrow(/git push to gh-pages failed/);
+    expect(warnings).toEqual([expect.stringMatching(/^skipped extensions\/acme\/bad\/1\.0\.0: /)]);
+  });
+
+  test("the seed is zeroed when the run ends, and the commit identity cannot be overridden", async () => {
+    await mergePublish();
+    let seen: Uint8Array | undefined;
+    const saved = {
+      name: process.env["GIT_AUTHOR_NAME"],
+      email: process.env["GIT_COMMITTER_EMAIL"],
+    };
+    process.env["GIT_AUTHOR_NAME"] = "someone else";
+    process.env["GIT_COMMITTER_EMAIL"] = "someone@else.invalid";
+    try {
+      await sign({
+        sign: (unsigned, seed) => {
+          seen = seed;
+          expect(seed.some((b) => b !== 0)).toBe(true);
+          return signIndex(unsigned, seed);
+        },
+      });
+    } finally {
+      if (saved.name === undefined) delete process.env["GIT_AUTHOR_NAME"];
+      else process.env["GIT_AUTHOR_NAME"] = saved.name;
+      if (saved.email === undefined) delete process.env["GIT_COMMITTER_EMAIL"];
+      else process.env["GIT_COMMITTER_EMAIL"] = saved.email;
+    }
+    expect(seen?.every((b) => b === 0)).toBe(true);
+    const bot = "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>";
+    expect(git(repo.origin, "log", "-1", "--format=%an <%ae>", "gh-pages").trim()).toBe(bot);
+    expect(git(repo.origin, "log", "-1", "--format=%cn <%ce>", "gh-pages").trim()).toBe(bot);
+  });
+
+  test("the seed is zeroed when the run fails too", async () => {
+    await mergePublish();
+    let seen: Uint8Array | undefined;
+    await expect(
+      sign({
+        sign: (_unsigned, seed) => {
+          seen = seed;
+          return Promise.reject(new Error("signer down"));
+        },
+      }),
+    ).rejects.toThrow("signer down");
+    expect(seen?.every((b) => b === 0)).toBe(true);
   });
 
   test("fails after 3 lost races, leaving gh-pages as the racer left it", async () => {

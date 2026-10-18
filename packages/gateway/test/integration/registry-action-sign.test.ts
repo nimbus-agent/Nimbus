@@ -8,7 +8,7 @@
  * The action package may not import the gateway, so this proof lives here (design § 8; Ruling R17).
  */
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -46,6 +46,9 @@ const ACTION_MAIN = join(
   "main.ts",
 );
 
+const ACTION_DIST = join(ACTION_MAIN, "..", "..", "dist", "index.js");
+const NODE = Bun.which("node");
+
 let tmp: string;
 let repo: RegistryRepo;
 
@@ -59,7 +62,11 @@ afterEach(() => {
 });
 
 /** Run the action's entry point the way the runner does: mode and inputs in the environment. */
-async function runAction(mode: string, rootKey: string): Promise<{ code: number; out: string }> {
+async function runAction(
+  mode: string,
+  rootKey: string,
+  argv: string[] = [process.execPath, ACTION_MAIN],
+): Promise<{ code: number; out: string }> {
   const env: Record<string, string | undefined> = {
     ...process.env,
     INPUT_MODE: mode,
@@ -67,7 +74,7 @@ async function runAction(mode: string, rootKey: string): Promise<{ code: number;
     GITHUB_WORKSPACE: repo.workspace,
     GITHUB_STEP_SUMMARY: join(tmp, "summary.md"),
   };
-  const proc = Bun.spawn([process.execPath, ACTION_MAIN], {
+  const proc = Bun.spawn(argv, {
     cwd: repo.workspace,
     env,
     stdout: "pipe",
@@ -82,18 +89,37 @@ async function runAction(mode: string, rootKey: string): Promise<{ code: number;
   return { code, out: `${out}${err}` };
 }
 
+/**
+ * A `pre-push` hook in the workspace dumps the environment git hands its children: the push is the
+ * last git child the sign run starts, so the dump shows what every git child inherited.
+ */
+function captureGitChildEnv(): string {
+  const dump = join(tmp, "git-child-env.txt");
+  const hook = join(repo.workspace, ".git", "hooks", "pre-push");
+  const script = ["#!/bin/sh", `env > "${dump.replaceAll("\\", "/")}"`, ""].join("\n");
+  writeFileSync(hook, script);
+  if (process.platform !== "win32") chmodSync(hook, 0o755);
+  return dump;
+}
+
 describe("registry action sign → gateway install", () => {
   test("the signed gh-pages tree verifies with verifyRegistryIndexPinned and installs", async () => {
     const scratch = join(tmp, "scratch");
     writePublish(repo.maintainer, await makeExtension(mkdtempSync(`${scratch}-`)));
     pushMaintainer(repo, "main", "merge acme/echo@1.0.0");
 
+    const envDump = captureGitChildEnv();
     const { code, out } = await runAction("sign", ROOT_KEY_INPUT);
     expect(out).not.toContain("::error::");
     expect(code).toBe(0);
     expect(out.startsWith(`::add-mask::${ROOT_KEY_INPUT}\n`)).toBe(true);
     expect(out.split(ROOT_KEY_INPUT)).toHaveLength(2); // only inside the mask command
     expect(readFileSync(join(tmp, "summary.md"), "utf8")).toContain("`acme/echo@1.0.0`");
+    // No git child inherited the root key.
+    const childEnv = readFileSync(envDump, "utf8");
+    expect(childEnv).toContain("GITHUB_WORKSPACE=");
+    expect(childEnv).not.toContain("INPUT_ROOT_KEY");
+    expect(childEnv).not.toContain(ROOT_KEY_INPUT);
 
     const site = join(tmp, "site");
     git(tmp, "clone", "-q", "--branch", "gh-pages", repo.originUrl, site);
@@ -158,4 +184,20 @@ describe("registry action sign → gateway install", () => {
     expect(out.split(wrong)).toHaveLength(2);
     expect(git(repo.origin, "rev-parse", "gh-pages").trim()).toBe(head);
   });
+
+  test.skipIf(NODE === null)(
+    "the committed bundle signs under node (skipped when node is not on PATH: the runner's node24 is what runs dist/index.js)",
+    async () => {
+      writePublish(repo.maintainer, await makeExtension(mkdtempSync(join(tmp, "scratch-"))));
+      pushMaintainer(repo, "main", "merge");
+      const { code, out } = await runAction("sign", ROOT_KEY_INPUT, [NODE ?? "node", ACTION_DIST]);
+      expect(out).not.toContain("::error::");
+      expect(code).toBe(0);
+      const index = parseRegistryIndex(
+        new Uint8Array(Buffer.from(git(repo.origin, "show", "gh-pages:index.json"), "utf8")),
+      );
+      await verifyRegistryIndexPinned(index, ROOT_PUBLIC_KEY);
+      expect(Object.keys(index.extensions)).toEqual(["acme/echo"]);
+    },
+  );
 });

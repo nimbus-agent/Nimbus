@@ -45,6 +45,8 @@ export async function main(): Promise<void> {
     } else {
       const rootKey = requireInput("root-key");
       maskSecret(rootKey);
+      // Every git child inherits this process's environment: the key must not ride along.
+      delete process.env["INPUT_ROOT_KEY"];
       await runSign({ workspace: workspace(), rootKey });
     }
   } catch (err) {

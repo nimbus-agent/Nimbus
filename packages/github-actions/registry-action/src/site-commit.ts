@@ -15,13 +15,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertSafeTreePath } from "./git-tree.ts";
 
-/** The identity the sign job commits as. */
-const BOT_IDENTITY = [
-  "-c",
-  "user.name=github-actions[bot]",
-  "-c",
-  "user.email=41898282+github-actions[bot]@users.noreply.github.com",
-] as const;
+const BOT_NAME = "github-actions[bot]";
+const BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
+
+/**
+ * The identity the sign job commits as, set both as config and as the author/committer env vars,
+ * which take precedence over config, so nothing in the runner's environment can override it.
+ */
+const BOT_IDENTITY = ["-c", `user.name=${BOT_NAME}`, "-c", `user.email=${BOT_EMAIL}`] as const;
+const BOT_ENV = {
+  GIT_AUTHOR_NAME: BOT_NAME,
+  GIT_AUTHOR_EMAIL: BOT_EMAIL,
+  GIT_COMMITTER_NAME: BOT_NAME,
+  GIT_COMMITTER_EMAIL: BOT_EMAIL,
+};
 
 export interface SiteFile {
   path: string;
@@ -68,7 +75,10 @@ export function commitSite(
     }
     const tree = run(["write-tree"], { cwd, env });
     if (tree === run(["rev-parse", `${parent}^{tree}`], { cwd })) return undefined;
-    return run([...BOT_IDENTITY, "commit-tree", tree, "-p", parent, "-m", message], { cwd });
+    return run([...BOT_IDENTITY, "commit-tree", tree, "-p", parent, "-m", message], {
+      cwd,
+      env: { ...process.env, ...BOT_ENV },
+    });
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

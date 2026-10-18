@@ -10,7 +10,7 @@
  * than importing the SDK, which this package cannot resolve.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -76,8 +76,26 @@ export interface PublishFiles {
   request: Uint8Array;
 }
 
-/** A signed manifest, packed with the real packer, plus its publish request. */
-export async function makeExtension(scratch: string, o: ExtensionOpts = {}): Promise<PublishFiles> {
+/**
+ * Packed extensions by their options. Signing and packing are deterministic, so one build per
+ * distinct `o` serves every test in a file; the returned bytes are never mutated by callers.
+ */
+const EXTENSION_CACHE = new Map<string, Promise<PublishFiles>>();
+
+/** A signed manifest, packed with the real packer, plus its publish request (cached by `o`). */
+export function makeExtension(scratch: string, o: ExtensionOpts = {}): Promise<PublishFiles> {
+  const key = JSON.stringify(o, (_k, v: unknown) =>
+    v instanceof Uint8Array ? Buffer.from(v).toString("hex") : v,
+  );
+  let hit = EXTENSION_CACHE.get(key);
+  if (hit === undefined) {
+    hit = buildExtension(scratch, o);
+    EXTENSION_CACHE.set(key, hit);
+  }
+  return hit;
+}
+
+async function buildExtension(scratch: string, o: ExtensionOpts): Promise<PublishFiles> {
   const seed = o.seed ?? PUBLISHER_SEED;
   const key = b64(publicKeyFromSeed(seed));
   const id = o.id ?? "acme/echo";
@@ -127,6 +145,8 @@ export function writePublish(root: string, f: PublishFiles): void {
 }
 
 export interface RegistryRepo {
+  /** The directory holding all three repositories. */
+  root: string;
   /** The bare `origin`. */
   origin: string;
   originUrl: string;
@@ -184,7 +204,21 @@ export async function makeRegistryRepo(
 
   const workspace = join(root, "workspace");
   git(root, "clone", "-q", "--branch", "main", originUrl, workspace);
-  return { origin, originUrl, maintainer, workspace };
+  return { root, origin, originUrl, maintainer, workspace };
+}
+
+/**
+ * A fresh, independent copy of `template` at `root`: the three repositories are copied as files
+ * and the two clones re-pointed at the copied origin, which is far cheaper than building one.
+ */
+export function copyRegistryRepo(template: RegistryRepo, root: string): RegistryRepo {
+  cpSync(template.root, root, { recursive: true });
+  const origin = join(root, "origin.git");
+  const originUrl = pathToFileURL(origin).href;
+  const maintainer = join(root, "maintainer");
+  const workspace = join(root, "workspace");
+  for (const clone of [maintainer, workspace]) git(clone, "remote", "set-url", "origin", originUrl);
+  return { root, origin, originUrl, maintainer, workspace };
 }
 
 /** Commit everything in the maintainer clone's `branch` and push it, as a merge would land. */
