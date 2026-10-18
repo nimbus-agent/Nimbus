@@ -4602,6 +4602,8 @@ nimbus extension keygen --out ./my-publisher-key
 
 Sign an extension manifest (`nimbus.extension.json`) in the specified directory using the private key at `~/.nimbus/publisher-key` (or `<path>`). The `signature` field is injected directly into the manifest file.
 
+If the manifest has a `publisher` with an `id` but no `key`, `sign` fills `publisher.key` with the public half of the signing key before signing (what `nimbus scaffold extension --publisher <id>` leaves for you). If `publisher.key` is already set and is not the signing key's public half, `sign` refuses with exit code 2 and prints both key fingerprints, leaving the file untouched; it never re-keys silently. A manifest with no `publisher` is signed as before.
+
 ```bash
 nimbus extension sign ./nimbus-my-connector
 nimbus extension sign ./nimbus-my-connector --key ./my-publisher-key
