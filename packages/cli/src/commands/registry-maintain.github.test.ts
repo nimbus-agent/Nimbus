@@ -234,7 +234,7 @@ describe("registry maintain init --github", () => {
     );
     expect(text).toContain(site);
     expect(text).toMatch(/repository is public/);
-    expect(text).toMatch(/On Windows, keep the root key at its default location/);
+    expect(text).toMatch(/On Windows the CLI sets no ACL on the key file/);
     expect(text).toMatch(/Protect gh-pages against force-push and deletion/);
     expect(text).toMatch(/GITHUB_TOKEN push still lands/);
     expect(text).toMatch(/sequence number\s+that was already used/);
