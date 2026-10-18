@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { AutoUpdateCache } from "../extensions/auto-update-cache.ts";
 import {
@@ -24,6 +24,7 @@ import {
   generateEd25519Keypair,
   signManifest,
 } from "../extensions/verify-signature.ts";
+import { prevVersionsDir } from "../extensions/version-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "./automation-rpc.ts";
@@ -524,7 +525,7 @@ describe("extension.update — the stateChanged event mirrors the outcome", () =
   });
 });
 
-describe("extension.list / extension.info — pre-T2 and _prev decorations", () => {
+describe("extension.list / extension.info — pre-T2 and prev decorations", () => {
   function seedRow(db: Database, id: string, installPath: string): void {
     insertExtensionRow(db, {
       id,
@@ -585,58 +586,64 @@ describe("extension.list / extension.info — pre-T2 and _prev decorations", () 
     expect(value.extension["reverseDeps"]).toEqual([]);
   });
 
-  /** `<extRoot>/active` is the install path; `<extRoot>/_prev/<version>` holds the rollback copy. */
-  function extRootWithPrev(prev: "two" | "prerelease" | "empty" | "file"): string {
-    const extRoot = join(tempDir("nimbus-ext-root-"), "com.example.a");
-    mkdirSync(join(extRoot, "active"), { recursive: true });
+  /** The flat install is `<extensionsDir>/<id>`; `prevVersionsDir(extensionsDir, id)` holds the rollback copies. */
+  function extensionsDirWithPrev(prev: "two" | "semver" | "prerelease" | "empty" | "file"): string {
+    const extensionsDir = join(tempDir("nimbus-ext-root-"), "extensions");
+    mkdirSync(join(extensionsDir, "com.example.a"), { recursive: true });
+    const prevDir = prevVersionsDir(extensionsDir, "com.example.a");
+    const mk = (v: string) => mkdirSync(join(prevDir, v), { recursive: true });
     if (prev === "two") {
-      // The upgrade swap keeps ONE version here; two survive only an interrupted swap. Two
-      // entries are what make "the first one" and "the last one" give different answers.
-      mkdirSync(join(extRoot, "_prev", "1.4.0"), { recursive: true });
-      mkdirSync(join(extRoot, "_prev", "1.3.0"), { recursive: true });
+      mk("1.4.0");
+      mk("1.3.0");
+    }
+    if (prev === "semver") {
+      // A code-unit sort picks 1.9.0; semver precedence picks 1.10.0.
+      mk("1.9.0");
+      mk("1.10.0");
     }
     if (prev === "prerelease") {
-      // Two names whose CODE-UNIT order ("R" 0x52 < "b" 0x62) is the reverse of a case-folding
-      // directory listing's: NTFS hands these back as [beta, RC1], so a probe that stopped
-      // sorting would answer "1.4.0-RC1" there. ("two" above cannot show that — NTFS already
-      // lists 1.3.0 before 1.4.0, so a missing sort passes it on Windows.)
-      mkdirSync(join(extRoot, "_prev", "1.4.0-RC1"), { recursive: true });
-      mkdirSync(join(extRoot, "_prev", "1.4.0-beta"), { recursive: true });
+      // Prerelease identifiers compare in ASCII order, so "beta" outranks "RC1" whatever order
+      // the filesystem lists them in.
+      mk("1.4.0-RC1");
+      mk("1.4.0-beta");
     }
-    if (prev === "empty") mkdirSync(join(extRoot, "_prev"), { recursive: true });
-    if (prev === "file") writeFileSync(join(extRoot, "_prev"), "not a directory");
-    return extRoot;
+    if (prev === "empty") mkdirSync(prevDir, { recursive: true });
+    if (prev === "file") {
+      mkdirSync(dirname(prevDir), { recursive: true });
+      writeFileSync(prevDir, "not a directory");
+    }
+    return extensionsDir;
   }
 
-  async function infoPrevVersion(extRoot: string): Promise<unknown> {
+  async function infoPrevVersion(extensionsDir: string): Promise<unknown> {
     const db = indexDb();
-    seedRow(db, "com.example.a", join(extRoot, "active"));
+    seedRow(db, "com.example.a", join(extensionsDir, "com.example.a"));
     const out = await dispatchAutomationRpc({
       method: "extension.info",
       params: { id: "com.example.a" },
       db,
+      extensionsDir,
     });
     return (out as { value: { extension: Record<string, unknown> } }).value.extension[
       "prevVersion"
     ];
   }
 
-  test("prevVersion is the version kept under _prev/ — the last in sorted order if several", async () => {
-    expect(await infoPrevVersion(extRootWithPrev("two"))).toBe("1.4.0");
+  test("prevVersion is the newest version kept under prev/ when several are present", async () => {
+    expect(await infoPrevVersion(extensionsDirWithPrev("two"))).toBe("1.4.0");
   });
 
-  test("the order is the probe's own code-unit sort, never the filesystem's listing order", async () => {
-    // Code-unit order also agrees with semver precedence here: prerelease identifiers compare in
-    // ASCII order, so "beta" outranks "RC1".
-    expect(await infoPrevVersion(extRootWithPrev("prerelease"))).toBe("1.4.0-beta");
+  test("the order is semver precedence (1.10.0 over 1.9.0), never the filesystem's listing order", async () => {
+    expect(await infoPrevVersion(extensionsDirWithPrev("semver"))).toBe("1.10.0");
+    expect(await infoPrevVersion(extensionsDirWithPrev("prerelease"))).toBe("1.4.0-beta");
   });
 
-  test("an empty _prev/ means no previous version", async () => {
-    expect(await infoPrevVersion(extRootWithPrev("empty"))).toBeNull();
+  test("an empty prev/ means no previous version", async () => {
+    expect(await infoPrevVersion(extensionsDirWithPrev("empty"))).toBeNull();
   });
 
-  test("an unreadable _prev/ (a file, not a directory) still returns the row, with no version", async () => {
-    expect(await infoPrevVersion(extRootWithPrev("file"))).toBeNull();
+  test("an unreadable prev/ (a file, not a directory) still returns the row, with no version", async () => {
+    expect(await infoPrevVersion(extensionsDirWithPrev("file"))).toBeNull();
   });
 });
 
