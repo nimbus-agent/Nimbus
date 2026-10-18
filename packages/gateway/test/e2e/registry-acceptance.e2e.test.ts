@@ -373,8 +373,8 @@ describe("registry acceptance: add, search, install, approve, update, tamper", (
       id: EXTENSION_ID,
       toVersion: "3.0.0",
     });
-    expect(result).toMatchObject({ applied: false, reason: "internal_error" });
-    // The audit row names the phase: the package hash, not some unrelated failure.
+    expect(result).toMatchObject({ applied: false, reason: "sha256_mismatch" });
+    // The audit row names the same phase: the package hash, not some unrelated failure.
     const audit = await client.call<Array<{ actionType: string; actionJson: string }>>(
       "audit.list",
       { limit: 50 },

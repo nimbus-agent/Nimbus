@@ -68,17 +68,17 @@ export type AutoUpdateFailPhase =
   | "signature_failed"
   | "swap_failed"
   | "download_failed"
-  | "extract_failed";
+  | "extract_failed"
+  | "downgrade_unavailable";
 
+/** Refused before the prompt, rejected at it, or — after approval — the phase the apply failed in. */
 export type UpdateRejectReason =
   | "cache_miss"
   | "publisher_key_conflict"
-  | "source_registry_changed"
-  | "signature_failed"
   | "same_version"
-  | "downgrade_unavailable"
   | "update_in_flight"
   | "user_rejected"
+  | AutoUpdateFailPhase
   | "internal_error";
 
 export interface UpdateApplyResult {
