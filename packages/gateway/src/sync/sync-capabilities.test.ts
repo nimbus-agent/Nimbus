@@ -79,6 +79,7 @@ describe("the capability set exposes no raw handle", () => {
       "upsertBlameLines",
       "upsertItem",
       "writeApiEndpointsForSpec",
+      "writeBatch",
       "writeObsidianVault",
     ]);
   });
@@ -140,6 +141,77 @@ describe("every capability routes to its gateway function", () => {
       syncedAt: 1,
     });
     expect(db.query("SELECT COUNT(*) AS n FROM item").get()).toEqual({ n: 1 });
+  });
+
+  describe("writeBatch", () => {
+    const pr = (n: number) => ({
+      service: "github",
+      type: "pull_request",
+      externalId: `o/r#${String(100 + n)}`,
+      title: "PR",
+      bodyPreview: "b",
+      modifiedAt: 1,
+      metadata: {},
+      syncedAt: 1,
+    });
+    function batchCaps() {
+      const d = deps({});
+      const scheduled: { id: string; committedRows: number }[] = [];
+      const c = buildSyncCapabilities(
+        {
+          ...d,
+          // Record how many rows a SEPARATE observer would see at the moment each embed is asked
+          // for — that is what the embedding worker's own connection sees.
+          scheduleItemEmbedding: (id) => {
+            const row = d.db.query("SELECT COUNT(*) AS n FROM item").get() as { n: number };
+            scheduled.push({ id, committedRows: row.n });
+          },
+        },
+        "github",
+      );
+      return { c, db: d.db, scheduled };
+    }
+
+    test("commits the page and only then asks for its embeddings", () => {
+      const { c, db, scheduled } = batchCaps();
+      const out = c.writeBatch(() => {
+        c.upsertItem(pr(1));
+        c.upsertItem(pr(2));
+        expect(scheduled).toEqual([]);
+        return "done";
+      });
+      expect(out).toBe("done");
+      expect(db.query("SELECT COUNT(*) AS n FROM item").get()).toEqual({ n: 2 });
+      expect(scheduled.map((s) => s.id)).toEqual(["github:o/r#101", "github:o/r#102"]);
+      expect(scheduled.every((s) => s.committedRows === 2)).toBe(true);
+      expect(db.inTransaction).toBe(false);
+    });
+
+    test("a throwing batch rolls back every row and drops its embeddings", () => {
+      const { c, db, scheduled } = batchCaps();
+      expect(() =>
+        c.writeBatch(() => {
+          c.upsertItem(pr(3));
+          throw new Error("page failed");
+        }),
+      ).toThrow("page failed");
+      expect(db.query("SELECT COUNT(*) AS n FROM item").get()).toEqual({ n: 0 });
+      expect(scheduled).toEqual([]);
+      // Outside a batch, embeddings are scheduled immediately again.
+      c.upsertItem(pr(4));
+      expect(scheduled.map((s) => s.id)).toEqual(["github:o/r#104"]);
+    });
+
+    test("a nested batch joins the outer one", () => {
+      const { c, db, scheduled } = batchCaps();
+      c.writeBatch(() => {
+        c.upsertItem(pr(5));
+        c.writeBatch(() => c.upsertItem(pr(6)));
+        expect(scheduled).toEqual([]);
+      });
+      expect(db.query("SELECT COUNT(*) AS n FROM item").get()).toEqual({ n: 2 });
+      expect(scheduled).toHaveLength(2);
+    });
   });
 
   test("deleteItem removes what upsertItem wrote", () => {

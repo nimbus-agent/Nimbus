@@ -154,7 +154,7 @@ import {
   effectiveRetentionDays,
   startToolCallLogRetention,
 } from "../db/tool-call-log-retention.ts";
-import { applyWritablePragmas } from "../db/writable-pragmas.ts";
+import { applyWritablePragmas, optimizeQueryPlanner } from "../db/writable-pragmas.ts";
 import { rebuildDecisions, runDecisionPass } from "../decisions/decision-extract.ts";
 import { createDecisionLlm, type DecisionLlm } from "../decisions/decision-llm-adapter.ts";
 import { createDecisionRefresher, type DecisionRefresher } from "../decisions/decision-refresh.ts";
@@ -488,6 +488,7 @@ function openGatewaySqlite(
   // nimbus.db to WAL for every other connection (journal_mode is a file property).
   applyWritablePragmas(db);
   LocalIndex.ensureSchema(db, { backupDir: join(dataDir, "backups"), dbPath });
+  optimizeQueryPlanner(db);
   const stopLatency = startLatencyFlushScheduler(db);
   sidecarStops.push(() => stopLatency.stop());
   return { db, dbPath };

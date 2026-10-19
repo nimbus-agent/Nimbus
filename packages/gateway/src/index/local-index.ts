@@ -9,6 +9,7 @@ import {
   type QueryLatencyKind,
   recordSlowQuery,
 } from "../db/latency-ring-buffer.ts";
+import { optimizeQueryPlanner } from "../db/writable-pragmas.ts";
 import { dbRun } from "../db/write.ts";
 import type { DualVectorsOutcome } from "../embedding/embedding-readiness.ts";
 import {
@@ -967,6 +968,8 @@ export class LocalIndex {
   }
 
   close(): void {
+    // Keep planner statistics current for the next run (cheap: only tables whose stats drifted).
+    optimizeQueryPlanner(this.db, "close");
     try {
       dbRun(this.db, "PRAGMA wal_checkpoint(TRUNCATE)");
     } catch {
