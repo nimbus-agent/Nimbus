@@ -319,6 +319,7 @@ function seed(): Database {
       permissions_json: "{}",
       model_access: 0,
       approved_at: 1,
+      credentials_json: "{}",
     });
   }
   return db;

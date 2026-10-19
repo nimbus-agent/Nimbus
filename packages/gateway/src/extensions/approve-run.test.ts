@@ -21,12 +21,14 @@ import {
 } from "../automation/extension-store.ts";
 import { redactPayloadForConsentDisplay } from "../engine/executor.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { MockVault } from "../vault/mock.ts";
 import {
   approveExtensionRun,
   buildRunConsentPayload,
   readVerifiedManifest,
   revokeExtensionRun,
 } from "./approve-run.ts";
+import type { ContinuityEntry } from "./continuity/continuity-table.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
 import {
@@ -35,6 +37,7 @@ import {
 } from "./install-from-local.ts";
 import { getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
+import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -48,8 +51,18 @@ type Asked = { type: string; payload: Record<string, unknown> };
  * the manifest is written, so `manifest(root)` can declare grants naming them.
  */
 async function setup(
-  opts: { id?: string; manifest?: (root: string) => Record<string, unknown> } = {},
-): Promise<{ db: Database; root: string; installPath: string; env: ExtensionRunGrantEnv }> {
+  opts: {
+    id?: string;
+    manifest?: (root: string) => Record<string, unknown>;
+    signed?: boolean;
+  } = {},
+): Promise<{
+  db: Database;
+  root: string;
+  installPath: string;
+  env: ExtensionRunGrantEnv;
+  publisherKey?: string;
+}> {
   const id = opts.id ?? "com.example.run";
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-approve-run-")));
   const db = new Database(":memory:");
@@ -60,15 +73,23 @@ async function setup(
   mkdirSync(join(root, "data"), { recursive: true });
   const src = join(root, "src");
   mkdirSync(join(src, "dist"), { recursive: true });
-  writeFileSync(
-    join(src, "nimbus.extension.json"),
-    JSON.stringify({
-      id,
-      version: "1.0.0",
-      entry: "dist/index.js",
-      ...(opts.manifest?.(root) ?? {}),
-    }),
-  );
+  const manifest: Record<string, unknown> = {
+    id,
+    version: "1.0.0",
+    entry: "dist/index.js",
+    ...(opts.manifest?.(root) ?? {}),
+  };
+  let publisherKey: string | undefined;
+  let publisherKeyPath: string | undefined;
+  if (opts.signed === true) {
+    const kp = generateEd25519Keypair();
+    publisherKey = encodeBase64(kp.pubkey);
+    manifest["publisher"] = { id: "test-pub", key: publisherKey };
+    manifest["signature"] = await signManifest(manifest, kp.privkey);
+    publisherKeyPath = join(root, "pub.key");
+    writeFileSync(publisherKeyPath, `${publisherKey}\n`);
+  }
+  writeFileSync(join(src, "nimbus.extension.json"), JSON.stringify(manifest));
   writeFileSync(join(src, "dist", "index.js"), "export {};\n");
   const extensionsDir = join(root, "data", "extensions");
   await installExtensionFromLocalDirectory({
@@ -76,6 +97,7 @@ async function setup(
     extensionsDir,
     sourcePath: src,
     approve: async () => true,
+    ...(publisherKeyPath === undefined ? {} : { vault: new MockVault(), publisherKeyPath }),
   });
   const env: ExtensionRunGrantEnv = {
     platform: process.platform,
@@ -83,7 +105,13 @@ async function setup(
     runtimeReadPaths: [join(root, "bun-bin")],
     realpath: (p) => realpathSync.native(p),
   };
-  return { db, root, installPath: join(extensionsDir, id), env };
+  return {
+    db,
+    root,
+    installPath: join(extensionsDir, id),
+    env,
+    ...(publisherKey === undefined ? {} : { publisherKey }),
+  };
 }
 
 const gateThat = (answer: boolean, seen: Asked[]) => async (a: Asked) => {
@@ -154,6 +182,7 @@ describe("approveExtensionRun", () => {
       }),
       model_access: 0,
       approved_at: 42,
+      credentials_json: "{}",
     });
   });
 
@@ -437,6 +466,7 @@ describe("approveExtensionRun", () => {
       permissions_json: "{}",
       model_access: 0,
       approved_at: 1,
+      credentials_json: "{}",
     });
     const seen: Asked[] = [];
     await expect(
@@ -477,6 +507,7 @@ describe("approveExtensionRun", () => {
       { network: [], read: [], write: [] },
       { platform: "linux", protectedRoots: [], runtimeReadPaths: [], realpath: (p) => p },
       false,
+      {},
     );
     const fp = publisherKeyFingerprint(key);
     expect(fp).toMatch(/^[0-9a-f]{32}$/);
@@ -562,6 +593,7 @@ describe("state that changes while the prompt is open", () => {
             permissions_json: "{}",
             model_access: 0,
             approved_at: 1,
+            credentials_json: "{}",
           });
           return true;
         },
@@ -571,6 +603,133 @@ describe("state that changes while the prompt is open", () => {
     ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
     expect(getRunGrant(db, "a.b")).toBeNull();
     expect(listRunGrants(db).map((g) => g.extension_id)).toEqual(["a.b.c"]);
+  });
+});
+
+describe("credentials", () => {
+  const credManifest =
+    (extra: Record<string, unknown> = {}) =>
+    () => ({
+      credentials: { token: { env: "X_TOKEN" } },
+      ...extra,
+    });
+
+  test("consent payload lists credential names and never a vault key", async () => {
+    const s = await setup({ id: "com.example.cred", manifest: credManifest() });
+    const seen: Asked[] = [];
+    await approveExtensionRun("com.example.cred", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 1,
+    });
+    const p = seen[0]?.payload ?? {};
+    expect(p["vaultEnv"]).toEqual([{ name: "token", env: "X_TOKEN" }]);
+    const shown = JSON.stringify(p);
+    expect(shown).not.toContain("ext.ext_com_example_cred.token");
+    expect(shown).not.toContain("vaultKey");
+    // It survives both redactors (a field NAMED "credentials" would be hidden by both).
+    expect(JSON.stringify(redactPayloadForConsentDisplay(p))).toContain("X_TOKEN");
+    expect(redactAuditPayload(p, 4096)).toContain("X_TOKEN");
+    // No sync block, no sync sentence.
+    expect(p["sync"]).toBeUndefined();
+  });
+
+  test("grant row stores credentials_json (unbound: the extension's own key)", async () => {
+    const s = await setup({ id: "com.example.cred", manifest: credManifest() });
+    await approveExtensionRun("com.example.cred", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, []),
+      runtimeEnabled: true,
+      now: () => 1,
+    });
+    expect(getRunGrant(s.db, "com.example.cred")?.credentials_json).toBe(
+      '{"token":{"env":"X_TOKEN","vaultKey":"ext.ext_com_example_cred.token"}}',
+    );
+  });
+
+  test("a continuity binding stores the legacy vault key; a fingerprint mismatch does not bind", async () => {
+    const s = await setup({ id: "com.example.cred", manifest: credManifest(), signed: true });
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'root-fp' WHERE id = ?", [
+      "com.example.cred",
+    ]);
+    const entry: ContinuityEntry = {
+      legacyServiceId: "readwise",
+      extensionId: "com.example.cred",
+      publisherKey: s.publisherKey ?? "",
+      sourceRootFingerprint: "root-fp",
+      credentials: { token: "readwise.token" },
+      expectedPermissions: { network: [], read: [], write: [] },
+      itemTypes: [],
+    };
+    const seen: Asked[] = [];
+    await approveExtensionRun("com.example.cred", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 1,
+      continuityTable: [entry],
+    });
+    expect(getRunGrant(s.db, "com.example.cred")?.credentials_json).toBe(
+      '{"token":{"env":"X_TOKEN","vaultKey":"readwise.token"}}',
+    );
+    expect(JSON.stringify(seen[0]?.payload)).not.toContain("readwise.token");
+
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'other' WHERE id = ?", [
+      "com.example.cred",
+    ]);
+    await approveExtensionRun("com.example.cred", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 2,
+      continuityTable: [entry],
+    });
+    // The resolved credentials changed, so the owner is asked again.
+    expect(seen).toHaveLength(2);
+    expect(getRunGrant(s.db, "com.example.cred")?.credentials_json).toBe(
+      '{"token":{"env":"X_TOKEN","vaultKey":"ext.ext_com_example_cred.token"}}',
+    );
+  });
+
+  test("a sync block adds the local-index sentence", async () => {
+    const s = await setup({
+      id: "com.example.sync",
+      manifest: credManifest({
+        sync: { contract: "1", intervalSeconds: 3600, itemTypes: ["highlight"] },
+      }),
+    });
+    const seen: Asked[] = [];
+    await approveExtensionRun("com.example.sync", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 1,
+    });
+    expect(seen[0]?.payload["sync"]).toBe(
+      "this extension syncs into your local index (item types: highlight)",
+    );
+  });
+
+  test("an unchanged re-approval with credentials short-circuits", async () => {
+    const s = await setup({ id: "com.example.cred", manifest: credManifest() });
+    const seen: Asked[] = [];
+    const approve = () =>
+      approveExtensionRun("com.example.cred", {
+        db: s.db,
+        env: s.env,
+        gate: gateThat(true, seen),
+        runtimeEnabled: true,
+        now: () => 1,
+      });
+    await approve();
+    expect((await approve()).changed).toBe(false);
+    expect(seen).toHaveLength(1);
   });
 });
 

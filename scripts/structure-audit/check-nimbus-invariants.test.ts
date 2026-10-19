@@ -248,7 +248,7 @@ describe("D11 — checkVaultKeyAllowList", () => {
 });
 
 describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
-  test("VAULT_KEY_ALLOW_LIST has exactly 12 entries", () => {
+  test("VAULT_KEY_ALLOW_LIST has exactly 13 entries", () => {
     // 9 → 10: slice 2b adds ONLY `llm/vendor-vault-keys.ts`, which owns the vendor keyspace. The
     // `<vendor>.api_key` when resolving the credential per call. 10 → 11: the toolgen credential
     // store (`toolgen-credentials.ts`) composes the DYNAMIC `toolgen.<toolId>.<hostSlug>` keyspace
@@ -259,8 +259,10 @@ describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
     // genuinely sees these, so this entry is real enforcement rather than keyspace documentation.
     // The count is frozen ON PURPOSE — a file gaining permission to construct a vault key is a
     // decision, so it must be made deliberately in a commit that also explains it, never absorbed
-    // silently.
-    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(12);
+    // silently. 12 → 13: `extensions/extension-credentials.ts` composes an extension's own DYNAMIC
+    // `ext.<serviceId>.<name>` keyspace (V72 run-grant credentials) — documentation of a keyspace
+    // the literal scan cannot see, the same footing as `toolgen-credentials.ts`.
+    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(13);
   });
 });
 
@@ -3167,7 +3169,7 @@ describe("D31-listener-registry-registration — a listen site registers with th
 describe("D33(b) — extension_run_grant is named only by its store and its DDL", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
 
-  test("allows the store and the V70 SQL module", () => {
+  test("allows the store and the V70 and V72 SQL modules", () => {
     expect(
       checkRunGrantTableConfinement([
         file(
@@ -3177,6 +3179,10 @@ describe("D33(b) — extension_run_grant is named only by its store and its DDL"
         file(
           "packages/gateway/src/index/extension-run-grant-v70-sql.ts",
           "CREATE TABLE IF NOT EXISTS extension_run_grant (",
+        ),
+        file(
+          "packages/gateway/src/index/extension-run-grant-credentials-v72-sql.ts",
+          "ALTER TABLE extension_run_grant ADD COLUMN credentials_json TEXT",
         ),
       ]),
     ).toEqual([]);

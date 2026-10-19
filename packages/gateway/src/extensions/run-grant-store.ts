@@ -11,6 +11,8 @@ import { EXTENSION_SERVICE_ID_PATTERN } from "./extension-service-id.ts";
  * those two and `automation/extension-store.ts`.
  */
 export const RUN_GRANT_SCHEMA_VERSION = 70;
+/** V72 added `credentials_json`; a grant read below it reads `'{}'` (no credentials). */
+export const RUN_GRANT_CREDENTIALS_SCHEMA_VERSION = 72;
 
 export type ExtensionRunGrantRow = {
   extension_id: string;
@@ -20,19 +22,31 @@ export type ExtensionRunGrantRow = {
   permissions_json: string;
   model_access: number;
   approved_at: number;
+  /** Canonical `serializeRunCredentials` output (V72); `'{}'` when none declared or pre-V72. */
+  credentials_json: string;
 };
 
-const COLS =
+const BASE_COLS =
   "extension_id, service_id, version, tree_digest, permissions_json, model_access, approved_at";
+const WRITE_COLS = `${BASE_COLS}, credentials_json`;
 
 function hasTable(db: Database): boolean {
   return readIndexedUserVersion(db) >= RUN_GRANT_SCHEMA_VERSION;
 }
 
+function hasCredentialsColumn(db: Database): boolean {
+  return readIndexedUserVersion(db) >= RUN_GRANT_CREDENTIALS_SCHEMA_VERSION;
+}
+
+/** The select list: below V72 the column does not exist yet, so it reads as `'{}'`. */
+function readCols(db: Database): string {
+  return hasCredentialsColumn(db) ? WRITE_COLS : `${BASE_COLS}, '{}' AS credentials_json`;
+}
+
 export function getRunGrant(db: Database, extensionId: string): ExtensionRunGrantRow | null {
   if (!hasTable(db)) return null;
   const row = db
-    .query(`SELECT ${COLS} FROM extension_run_grant WHERE extension_id = ?`)
+    .query(`SELECT ${readCols(db)} FROM extension_run_grant WHERE extension_id = ?`)
     .get(extensionId) as ExtensionRunGrantRow | null;
   return row ?? null;
 }
@@ -40,7 +54,7 @@ export function getRunGrant(db: Database, extensionId: string): ExtensionRunGran
 export function listRunGrants(db: Database): ExtensionRunGrantRow[] {
   if (!hasTable(db)) return [];
   return db
-    .query(`SELECT ${COLS} FROM extension_run_grant ORDER BY extension_id`)
+    .query(`SELECT ${readCols(db)} FROM extension_run_grant ORDER BY extension_id`)
     .all() as ExtensionRunGrantRow[];
 }
 
@@ -70,21 +84,28 @@ export function listModelAccessibleExtensionGrants(
     .map((r) => ({ serviceId: r.service_id, extensionId: r.extension_id }));
 }
 
-/** Creates or replaces the extension's grant. Throws below V70 rather than dropping a grant. */
+/**
+ * Creates or replaces the extension's grant. Throws below V70 rather than dropping a grant, and
+ * below V72 rather than dropping the credentials the owner approved with it.
+ */
 export function upsertRunGrant(db: Database, row: ExtensionRunGrantRow): void {
   if (!hasTable(db)) {
     throw new Error("Extension run grants require schema v70+");
   }
+  if (!hasCredentialsColumn(db)) {
+    throw new Error("Extension run grants require schema v72+");
+  }
   dbRun(
     db,
-    `INSERT INTO extension_run_grant (${COLS}) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO extension_run_grant (${WRITE_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(extension_id) DO UPDATE SET
        service_id = excluded.service_id,
        version = excluded.version,
        tree_digest = excluded.tree_digest,
        permissions_json = excluded.permissions_json,
        model_access = excluded.model_access,
-       approved_at = excluded.approved_at`,
+       approved_at = excluded.approved_at,
+       credentials_json = excluded.credentials_json`,
     [
       row.extension_id,
       row.service_id,
@@ -93,6 +114,7 @@ export function upsertRunGrant(db: Database, row: ExtensionRunGrantRow): void {
       row.permissions_json,
       row.model_access,
       row.approved_at,
+      row.credentials_json,
     ],
   );
 }

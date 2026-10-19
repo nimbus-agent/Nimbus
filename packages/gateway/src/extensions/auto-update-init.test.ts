@@ -337,6 +337,7 @@ describe("auto-update-init: hasRunGrant (extension runtime PR 3)", () => {
       permissions_json: "{}",
       model_access: 0,
       approved_at: 1,
+      credentials_json: "{}",
     });
     expect(await deps.hasRunGrant?.("com.example.g")).toBe(true);
     db.close();

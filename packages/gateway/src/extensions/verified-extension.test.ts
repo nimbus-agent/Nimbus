@@ -168,6 +168,7 @@ function manualInstall(
     permissions_json: serializeRunGrants({ network: [], read: [], write: [] }),
     model_access: 0,
     approved_at: 1,
+    credentials_json: "{}",
   });
   return { db, root, installPath, env, vault: new MockVault(), id };
 }

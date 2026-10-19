@@ -12,6 +12,7 @@ const grant: ExtensionRunGrantRow = {
   permissions_json: "{}",
   model_access: 0,
   approved_at: 5,
+  credentials_json: "{}",
 };
 
 describe("extensionRunState", () => {

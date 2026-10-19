@@ -39,6 +39,7 @@ function grant(over: Partial<ExtensionRunGrantRow> = {}): ExtensionRunGrantRow {
     permissions_json: '{"network":[],"read":[],"write":[]}',
     model_access: 0,
     approved_at: 1,
+    credentials_json: "{}",
     ...over,
   };
 }
@@ -69,6 +70,30 @@ describe("run-grant-store", () => {
     ]);
     expect(deleteRunGrant(d, "com.example.a")).toBe(true);
     expect(deleteRunGrant(d, "com.example.a")).toBe(false);
+  });
+
+  test("grant row stores credentials_json", () => {
+    const d = db();
+    withExtension(d);
+    const credentials_json = '{"token":{"env":"X_TOKEN","vaultKey":"ext.ext_com_example_a.token"}}';
+    upsertRunGrant(d, grant({ credentials_json }));
+    expect(getRunGrant(d, "com.example.a")?.credentials_json).toBe(credentials_json);
+    upsertRunGrant(d, grant());
+    expect(getRunGrant(d, "com.example.a")?.credentials_json).toBe("{}");
+  });
+
+  test("at V70/V71 a grant reads back with credentials_json '{}' and a write throws", () => {
+    const d = new Database(":memory:");
+    open.push(d);
+    runIndexedSchemaMigrations(d, 71);
+    withExtension(d);
+    d.run(
+      `INSERT INTO extension_run_grant (extension_id, service_id, version, tree_digest, permissions_json, model_access, approved_at)
+       VALUES ('com.example.a', 'ext_com_example_a', '1.0.0', 'd', '{}', 0, 1)`,
+    );
+    expect(getRunGrant(d, "com.example.a")?.credentials_json).toBe("{}");
+    expect(listRunGrants(d).map((g) => g.credentials_json)).toEqual(["{}"]);
+    expect(() => upsertRunGrant(d, grant())).toThrow(/v72/);
   });
 
   test("below V70 reads are empty and a write throws", () => {
