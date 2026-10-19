@@ -19,12 +19,15 @@ import { dirname, join } from "node:path";
 import {
   createGatewayPinoLogger,
   createGatewayPinoLoggerForStream,
+  DEFAULT_LOG_RETENTION_DAYS,
   emergencyGatewayLog,
   emergencyGatewayLogForPlatform,
   gatewayDailyLogPath,
   gatewayLogBasename,
   platformDailyLogPath,
+  pruneGatewayLogs,
   REDACT_VALUE_PATTERNS,
+  resolveLogRetentionDays,
   scrubRedactedValuePatterns,
 } from "./gateway-log-file.ts";
 
@@ -722,4 +725,60 @@ describe("emergency log hardening", () => {
       }
     },
   );
+});
+
+describe("daily log retention (audit P4)", () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
+  });
+  function dirWith(names: string[]): string {
+    const d = mkdtempSync(join(tmpdir(), "nimbus-log-retention-"));
+    roots.push(d);
+    for (const n of names) writeFileSync(join(d, n), "x");
+    return d;
+  }
+  const NOW = new Date(2026, 9, 19, 12, 0, 0).getTime();
+
+  test("removes daily logs older than the window and nothing else", () => {
+    const dir = dirWith([
+      "gateway-2026-10-19.log",
+      "gateway-2026-09-20.log",
+      "gateway-2026-09-18.log",
+      "gateway-2025-01-01.log",
+      "gateway-2025-01-01.log.bak",
+      "notes.txt",
+      "other-2020-01-01.log",
+    ]);
+    const removed = pruneGatewayLogs(dir, 30, NOW);
+    expect(removed.sort()).toEqual(["gateway-2025-01-01.log", "gateway-2026-09-18.log"]);
+    expect(readdirSync(dir).sort()).toEqual([
+      "gateway-2025-01-01.log.bak",
+      "gateway-2026-09-20.log",
+      "gateway-2026-10-19.log",
+      "notes.txt",
+      "other-2020-01-01.log",
+    ]);
+  });
+
+  test("0 keeps everything, and today's file survives a one-day window", () => {
+    const dir = dirWith(["gateway-2020-01-01.log", "gateway-2026-10-19.log"]);
+    expect(pruneGatewayLogs(dir, 0, NOW)).toEqual([]);
+    expect(pruneGatewayLogs(dir, 1, NOW)).toEqual(["gateway-2020-01-01.log"]);
+    expect(readdirSync(dir)).toEqual(["gateway-2026-10-19.log"]);
+  });
+
+  test("a missing directory is not an error", () => {
+    expect(pruneGatewayLogs(join(tmpdir(), "nimbus-no-such-dir-xyz"), 30, NOW)).toEqual([]);
+  });
+
+  test("NIMBUS_LOG_RETENTION_DAYS parses whole days and falls back on anything else", () => {
+    expect(resolveLogRetentionDays(undefined)).toBe(DEFAULT_LOG_RETENTION_DAYS);
+    expect(resolveLogRetentionDays("7")).toBe(7);
+    expect(resolveLogRetentionDays(" 90 ")).toBe(90);
+    expect(resolveLogRetentionDays("0")).toBe(0);
+    for (const bad of ["", "-1", "1.5", "ten", "99999", "4000"]) {
+      expect(resolveLogRetentionDays(bad)).toBe(DEFAULT_LOG_RETENTION_DAYS);
+    }
+  });
 });

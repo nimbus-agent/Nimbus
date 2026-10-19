@@ -147,6 +147,7 @@ import {
   USER_MCP_SERVICE_ID_PATTERN,
 } from "../connectors/user-mcp-store.ts";
 import { resolveTeamListOpenSession } from "../connectors/warehouse-sync-transport.ts";
+import { startActivityRetention } from "../db/activity-retention.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { startLatencyFlushScheduler } from "../db/latency-ring-buffer.ts";
 import { readToolCallLog } from "../db/tool-call-log.ts";
@@ -3581,6 +3582,8 @@ export async function assemblePlatformServices(
     ),
   });
   sidecarStops.push(() => toolCallLogRetention.stop());
+  const activityRetention = startActivityRetention(db);
+  sidecarStops.push(() => activityRetention.stop());
 
   // GDPR purge-retry (Task 25): each cycle, retry the pending `federation.purge`
   // requests durable in the gdpr_purge ledger; when all of a job's requests are

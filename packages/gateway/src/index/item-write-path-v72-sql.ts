@@ -23,6 +23,9 @@
  * **Person handle lookups** (`person-store.ts`'s `findPersonBy*`, one per synced author) were full
  * scans of `person`; each handle column gets a partial index over its non-NULL rows.
  *
+ * **`watcher_event` by watcher**: `nimbus watcher history` reads one watcher's newest events, and
+ * the table had no index but its primary key, so each read scanned every event of every watcher.
+ *
  * No `ANALYZE` here: on a large index it would hold the upgrade for seconds, and the
  * `PRAGMA optimize` the gateway already runs at open and close gathers statistics for the new
  * indexes on its own.
@@ -56,6 +59,7 @@ export const ITEM_WRITE_PATH_V72_SQL: readonly string[] = [
   "CREATE INDEX IF NOT EXISTS idx_item_author_modified ON item(author_id, modified_at)",
   "DROP INDEX IF EXISTS idx_item_service",
   "DROP INDEX IF EXISTS idx_item_type",
+  "CREATE INDEX IF NOT EXISTS idx_watcher_event_watcher_fired ON watcher_event(watcher_id, fired_at)",
   ...PERSON_HANDLE_COLUMNS.map(
     (col) =>
       `CREATE INDEX IF NOT EXISTS idx_person_${col} ON person(${col}) WHERE ${col} IS NOT NULL`,

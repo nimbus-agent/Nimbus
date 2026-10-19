@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { platform } from "node:os";
 import { dirname, join } from "node:path";
 import type { Logger } from "pino";
@@ -171,6 +171,58 @@ function resolveLogLevel(): string {
   return "warn";
 }
 
+/** How many days of `gateway-YYYY-MM-DD.log` files are kept when nothing overrides it. */
+export const DEFAULT_LOG_RETENTION_DAYS = 30;
+
+const DAILY_LOG_RE = /^gateway-(\d{4})-(\d{2})-(\d{2})\.log$/;
+const DAY_MS = 86_400_000;
+
+/**
+ * `NIMBUS_LOG_RETENTION_DAYS`: a whole number of days (1–3650), or `0` to keep every log. Anything
+ * else falls back to {@link DEFAULT_LOG_RETENTION_DAYS}.
+ */
+export function resolveLogRetentionDays(raw = processEnvGet("NIMBUS_LOG_RETENTION_DAYS")): number {
+  if (raw === undefined || !/^\d{1,4}$/.test(raw.trim())) return DEFAULT_LOG_RETENTION_DAYS;
+  const n = Number(raw.trim());
+  return n <= 3650 ? n : DEFAULT_LOG_RETENTION_DAYS;
+}
+
+/**
+ * Delete the daily logs in `logDir` whose date is more than `keepDays` days before `now`. Log
+ * lines carry item titles, queries and URLs, and nothing used to remove them, so a year of use left
+ * a year of them on disk.
+ *
+ * Only files named exactly `gateway-YYYY-MM-DD.log` are candidates: anything else in the directory
+ * (a user's own file, another tool's log) is never touched. Today's file is always kept, whatever
+ * `keepDays` says. Best-effort: returns the names it removed and never throws.
+ */
+export function pruneGatewayLogs(logDir: string, keepDays: number, now = Date.now()): string[] {
+  if (keepDays <= 0) return [];
+  let names: string[];
+  try {
+    names = readdirSync(logDir);
+  } catch {
+    return [];
+  }
+  const cutoff = now - keepDays * DAY_MS;
+  const removed: string[] = [];
+  for (const name of names) {
+    const m = DAILY_LOG_RE.exec(name);
+    if (m === null) continue;
+    // Local time, as `gatewayLogBasename` names the files.
+    const day = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+    // End of that day, so a file is kept for the whole of its last retained day.
+    if (Number.isNaN(day) || day + DAY_MS > cutoff) continue;
+    try {
+      rmSync(join(logDir, name), { force: true });
+      removed.push(name);
+    } catch {
+      /* best-effort: a file we cannot delete is left for the next start */
+    }
+  }
+  return removed;
+}
+
 export function createGatewayPinoLogger(logDir: string): Logger {
   const level = resolveLogLevel();
   const logPath = gatewayDailyLogPath(logDir);
@@ -190,6 +242,8 @@ export function createGatewayPinoLogger(logDir: string): Logger {
   } catch {
     /* best-effort daily log — ignore directory-creation failures */
   }
+
+  pruneGatewayLogs(logDir, resolveLogRetentionDays());
 
   // Owner-only on creation; a file left by an older install is tightened. Log lines can carry
   // item titles, queries and URLs, so they get the same protection as the index.
