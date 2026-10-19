@@ -1,4 +1,4 @@
-import { SENSITIVE_VALUE_PATTERNS } from "../audit/format-audit-payload.ts";
+import { CONTACT_VALUE_PATTERNS, SENSITIVE_VALUE_PATTERNS } from "../audit/format-audit-payload.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
 
 // Share-specific PII patterns, each tagged with a stable family name (added on top of secrets).
@@ -10,8 +10,11 @@ import { codeUnitCompare } from "../util/code-unit-compare.ts";
 // result). Bounds reflect real-world limits (RFC-5321 local-part ≤64, label ≤63, etc.). The IPv4
 // form intentionally over-matches dotted-decimal runs (`\d{1,3}`) rather than range-validating each
 // octet — over-redaction is the safe direction for a privacy filter and keeps the regex linear.
+//
+// Emails and phone numbers come from `CONTACT_VALUE_PATTERNS` (one definition, shared with the
+// egress ledger), under the family names `emails` and `phones`.
 const SHARE_PII_PATTERNS: ReadonlyArray<{ readonly family: string; readonly pattern: RegExp }> = [
-  { family: "emails", pattern: /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}/g },
+  ...[...CONTACT_VALUE_PATTERNS].map(([family, pattern]) => ({ family, pattern })),
   { family: "slack-handles", pattern: /<[@#][A-Z0-9]{6,32}(?:\|[^>]{1,256})?>/g },
   { family: "credit-cards", pattern: /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g },
   { family: "ips", pattern: /(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])/g },
@@ -21,6 +24,14 @@ const SHARE_PII_PATTERNS: ReadonlyArray<{ readonly family: string; readonly patt
     pattern: /(?<![\w.])(?:[a-z0-9-]{1,63}\.){1,16}(?:internal|local|corp|lan|intra)(?!\w)/gi,
   },
 ];
+
+/**
+ * An object key whose value is a credential however it looks (`{apiKey: "plainvalue"}` matches no
+ * value pattern). Narrower than the audit scrubber's key test, which also matches a bare `key` or
+ * `auth` and so would blank `author` and `sortKey` in every shared transcript.
+ */
+const SHARE_SENSITIVE_KEY =
+  /(token|secret|passw(?:or)?d|credential|api[_-]?key|private[_-]?key|access[_-]?key|bearer|^authorization$|^pat$)/i;
 
 export interface ShareRedactionResult {
   readonly redacted: unknown;
@@ -67,7 +78,12 @@ function walk(value: unknown, applied: Set<string>, caller: readonly RegExp[]): 
         while (Object.hasOwn(out, `${sk}#${i}`)) i++;
         sk = `${sk}#${i}`;
       }
-      out[sk] = walk(v, applied, caller);
+      if (SHARE_SENSITIVE_KEY.test(k) && (typeof v === "string" || typeof v === "number")) {
+        applied.add("secrets");
+        out[sk] = "[REDACTED]";
+      } else {
+        out[sk] = walk(v, applied, caller);
+      }
     }
     return out;
   }

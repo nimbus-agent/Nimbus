@@ -1,4 +1,4 @@
-import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import { redactPayloadWithContacts } from "../audit/format-audit-payload.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import type { EgressSourceType } from "./egress-source-type.ts";
@@ -30,13 +30,14 @@ export function summarizeDestination(actionType: string): string {
 }
 
 /**
- * The redacted, length-capped payload summary. Reuses the shipped `redactAuditPayload` (strips
- * gh*_/sk-/Bearer/JWT/AWS families + token|key|secret|… object keys). Best-effort credential
+ * The redacted, length-capped payload summary: the audit scrubber's credential families and
+ * token|key|secret|… object keys, plus email addresses and phone numbers (the ledger records that
+ * something left the machine, not who it was addressed to). Best-effort credential
  * scrubbing for debugging — NOT relied on as the security boundary (the security claim is the
  * append-before-dispatch chokepoint, not the redactor).
  */
 export function redactEgressSummary(payload: unknown): string {
-  return redactAuditPayload(payload ?? {}, EGRESS_SUMMARY_MAX_BYTES);
+  return redactPayloadWithContacts(payload ?? {}, EGRESS_SUMMARY_MAX_BYTES);
 }
 
 /** Build a ledger entry from a gated action. `now` is injected (DI; the clock seam). */

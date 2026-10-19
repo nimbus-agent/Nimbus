@@ -68,3 +68,42 @@ describe("redactForShare", () => {
     expect(Object.values(out).sort()).toEqual([1, 2]);
   });
 });
+
+describe("redactForShare — key names and phones (audit P7)", () => {
+  test("a credential under a credential-named key is redacted whatever it looks like", () => {
+    const { redacted, applied } = redactForShare({
+      apiKey: "plainvalue",
+      client_secret: "x",
+      Authorization: "Basic abc",
+      pin: 1234,
+      author: "Alice Liddell",
+      sortKey: "title",
+    });
+    expect(redacted).toEqual({
+      apiKey: "[REDACTED]",
+      client_secret: "[REDACTED]",
+      Authorization: "[REDACTED]",
+      pin: 1234,
+      author: "Alice Liddell",
+      sortKey: "title",
+    });
+    expect(applied).toContain("secrets");
+  });
+
+  test("a nested object under a credential-named key is walked, not blanked", () => {
+    const { redacted } = redactForShare({ tokenInfo: { scope: "read", expires: 3600 } });
+    expect(redacted).toEqual({ tokenInfo: { scope: "read", expires: 3600 } });
+  });
+
+  test("phone numbers are a family of their own", () => {
+    const { redacted, applied } = redactForShare({ note: "ring +1 415-555-0100 tomorrow" });
+    expect(redacted).toEqual({ note: "ring [REDACTED] tomorrow" });
+    expect(applied).toContain("phones");
+  });
+
+  test("credentials in URLs are redacted", () => {
+    const { redacted } = redactForShare("see https://u:p4ss@db.internal.example/?sig=abcdef");
+    expect(redacted).not.toContain("p4ss");
+    expect(redacted).not.toContain("abcdef");
+  });
+});

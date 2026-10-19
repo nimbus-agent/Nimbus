@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import type { Logger } from "pino";
 import pino from "pino";
 
+import { SENSITIVE_VALUE_PATTERNS } from "../audit/format-audit-payload.ts";
 import { processEnvGet } from "./env-access.ts";
 import {
   OWNER_ONLY_DIR_MODE,
@@ -86,6 +87,10 @@ const PINO_REDACT_PATHS: readonly string[] = [
 ];
 
 export const REDACT_VALUE_PATTERNS: ReadonlyArray<RegExp> = [
+  // The canonical credential families (shared with the audit and egress scrubbers), so a family
+  // added there reaches the log too. The looser forms below stay: they predate the shared map and
+  // catch shorter or differently-bounded tokens in free-form error text.
+  ...SENSITIVE_VALUE_PATTERNS.values(),
   /Bearer\s+[A-Za-z0-9._\-+/=]+/g,
   /sk-[A-Za-z0-9_-]{16,}/g,
   /sk-ant-[A-Za-z0-9_-]{16,}/g,
@@ -94,10 +99,6 @@ export const REDACT_VALUE_PATTERNS: ReadonlyArray<RegExp> = [
   /xox[baprs]-[A-Za-z0-9-]{8,}/g,
   /AKIA[0-9A-Z]{16}/g,
   /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
-  // A credential that matches no token family above but is labelled as one, e.g. an error
-  // message quoting `api_key=plainsecret` or a URL's `?access_token=…`. The label goes too.
-  // A quoted value is consumed whole (spaces included) before the unquoted form is tried.
-  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s"'&,;]+)/gi,
 ];
 
 export function scrubRedactedValuePatterns(s: string): string {

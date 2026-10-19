@@ -167,6 +167,53 @@ const GENERATORS: ReadonlyMap<string, fc.Arbitrary<string>> = new Map([
       .tuple(fc.constantFrom("AKIA", "ASIA"), charsetArb(UPPERNUM, 16, 16))
       .map(([p, b]) => `${p}${b}`),
   ],
+  [
+    "stripe",
+    fc
+      .tuple(fc.constantFrom("sk", "rk"), fc.constantFrom("live", "test"), charsetArb(ALNUM, 16))
+      .map(([k, env, b]) => `${k}_${env}_${b}`),
+  ],
+  ["gitlab", charsetArb(ALNUM_UD, 20).map((b) => `glpat-${b}`)],
+  ["google_api", charsetArb(ALNUM_UD, 35, 35).map((b) => `AIza${b}`)],
+  ["slack_app", charsetArb(ALNUM_D, 10).map((b) => `xapp-${b}`)],
+  [
+    "pem_private_key",
+    fc
+      .tuple(fc.constantFrom("", "RSA ", "EC ", "OPENSSH "), charsetArb(`${ALNUM}+/=\n`, 8, 200))
+      .map(
+        ([kind, body]) =>
+          `-----BEGIN ${kind}PRIVATE KEY-----\n${body}\n-----END ${kind}PRIVATE KEY-----`,
+      ),
+  ],
+  [
+    "url_userinfo",
+    fc
+      .tuple(
+        fc.constantFrom("https", "git+ssh", "postgres"),
+        charsetArb(ALNUM, 1, 12),
+        charsetArb(ALNUM, 4),
+      )
+      .map(([scheme, user, pass]) => `${scheme}://${user}:${pass}@db.example`),
+  ],
+  [
+    "url_secret_param",
+    fc
+      .tuple(
+        fc.constantFrom("access_token", "token", "api_key", "sig", "client_secret"),
+        charsetArb(ALNUM, 6),
+      )
+      .map(([name, v]) => `/cb?${name}=${v}`),
+  ],
+  [
+    "labelled_credential",
+    fc
+      .tuple(
+        fc.constantFrom("password", "passwd", "secret", "api_key", "apiKey", "client-secret"),
+        fc.constantFrom("=", ": ", " = "),
+        charsetArb(ALNUM, 6),
+      )
+      .map(([label, eq, v]) => `${label}${eq}${v}`),
+  ],
 ]);
 
 // Non-empty, non-alphanumeric separators — guarantee a token boundary on each

@@ -71,3 +71,26 @@ describe("buildEgressEntry", () => {
     expect(e.hitlStatus).toBe("rejected");
   });
 });
+
+describe("redactEgressSummary — contact details (audit P5)", () => {
+  test("email addresses and phone numbers are scrubbed; ids and timestamps are not", () => {
+    const out = redactEgressSummary({
+      to: "alice@example.com",
+      note: "call +44 20 7946 0958 or (415) 555-0100",
+      ts: 1_792_432_507_353,
+      id: "4155550100",
+    });
+    expect(out).not.toContain("alice@example.com");
+    expect(out).not.toContain("7946");
+    expect(out).not.toContain("555-0100");
+    expect(out).toContain("1792432507353");
+    expect(out).toContain("4155550100");
+  });
+
+  test("credentials are still scrubbed alongside", () => {
+    const out = redactEgressSummary({ url: "https://bob:hunter2@api.example/x?token=abc123" });
+    expect(out).not.toContain("hunter2");
+    expect(out).not.toContain("abc123");
+    expect(out).toContain("api.example");
+  });
+});
