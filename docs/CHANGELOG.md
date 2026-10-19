@@ -18,6 +18,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-19 — Owner-only permissions on the index, logs and config (POSIX; no migration).**
+  `nimbus.db` (and through it `-wal`/`-shm`) and the daily gateway logs are created `0600`, and the data, config, vault
+  and log directories `0700`; an existing install's looser modes are tightened at boot. Before this they followed the
+  umask (typically `0644` in `0755`), so on a multi-user Linux machine another account could read the plaintext
+  index. Backups and snapshots were already `0600`. The fatal emergency log now scrubs token-shaped values like every
+  other log line. Windows is unaffected (LocalAppData ACLs already apply). Audit items S5 and P10.
+
 - **2026-10-19 — DNS-rebinding guard on every loopback HTTP listener; invariant I45 (no migration, no new egress class).**
   The read-only/I13 HTTP API, the Prometheus sidecar and the OAuth PKCE callback now answer HTTP 403 unless the
   `Host` header names loopback (`localhost`, `127.0.0.0/8`, `[::1]`), checked before any routing. Binding to

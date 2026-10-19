@@ -5,6 +5,11 @@ import type { Logger } from "pino";
 import pino from "pino";
 
 import { processEnvGet } from "./env-access.ts";
+import {
+  OWNER_ONLY_DIR_MODE,
+  OWNER_ONLY_FILE_MODE,
+  tightenToOwnerOnly,
+} from "./owner-only-mode.ts";
 import { createDarwinPaths, createLinuxPaths, createWindowsPaths } from "./paths.ts";
 
 export function gatewayLogBasename(): string {
@@ -176,12 +181,15 @@ export function createGatewayPinoLogger(logDir: string): Logger {
   // fail (EACCES/ENOSPC/EROFS); swallow it and let the destination's async `error` handler below
   // absorb the subsequent open failure (mirrors emergencyGatewayLog's defensive try/catch).
   try {
-    mkdirSync(logDir, { recursive: true });
+    mkdirSync(logDir, { recursive: true, mode: OWNER_ONLY_DIR_MODE });
   } catch {
     /* best-effort daily log — ignore directory-creation failures */
   }
 
-  const fileDest = pino.destination({ dest: logPath, sync: false });
+  // Owner-only on creation; a file left by an older install is tightened. Log lines can carry
+  // item titles, queries and URLs, so they get the same protection as the index.
+  tightenToOwnerOnly(logPath);
+  const fileDest = pino.destination({ dest: logPath, sync: false, mode: OWNER_ONLY_FILE_MODE });
   // `sync: false` opens and flushes on a later tick via a background SonicBoom stream. Without an
   // `error` listener an async open/flush failure (e.g. the dir was removed after the logger was
   // built, as happens for short-lived loggers in tests) becomes an unhandled `error` event that
@@ -236,9 +244,15 @@ export function emergencyGatewayLogForPlatform(err: unknown, os: NodeJS.Platform
     if (path === null) {
       return;
     }
-    mkdirSync(dirname(path), { recursive: true });
-    const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
-    appendFileSync(path, `[${new Date().toISOString()}] [gateway] fatal: ${msg}\n`, "utf8");
+    mkdirSync(dirname(path), { recursive: true, mode: OWNER_ONLY_DIR_MODE });
+    // Scrubbed like every pino line (`pinoLogFormatter`): a fatal stack can quote a token.
+    const msg = scrubRedactedValuePatterns(
+      err instanceof Error ? (err.stack ?? err.message) : String(err),
+    );
+    appendFileSync(path, `[${new Date().toISOString()}] [gateway] fatal: ${msg}\n`, {
+      encoding: "utf8",
+      mode: OWNER_ONLY_FILE_MODE,
+    });
   } catch {
     /* ignore secondary failures */
   }

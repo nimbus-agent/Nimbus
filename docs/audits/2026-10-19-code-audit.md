@@ -130,7 +130,7 @@ Updated as each item lands on this branch. Status is one of: `todo`, `done`, `de
 | Item | Status | Notes |
 |------|--------|-------|
 | S1 Host/Origin check + bearer on data GETs | done (Host) | Host guard shipped as invariant I45. Bearer on data GETs deferred: it breaks existing local HTTP readers and needs a decision. |
-| S5 0700/0600 permissions + umask | todo | |
+| S5 0700/0600 permissions + umask | done | Data, config, vault and log directories are 0700 (an existing install is tightened). The database (whose `-wal`/`-shm` inherit its mode) and log files are 0600. P10's emergency-log scrub landed in the same change. A global `umask(077)` was left out: it would also change the mode of files the gateway writes for the user, such as exports. |
 | F1 per-page sync transactions | todo | |
 | F2 SQLite PRAGMAs | todo | |
 | P6 workflow-runner redaction | todo | |

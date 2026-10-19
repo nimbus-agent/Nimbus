@@ -395,6 +395,7 @@ import {
   createNotificationsRuntime,
   showIgnoringFailure,
 } from "./notifications/notifications-runtime.ts";
+import { ensureOwnerOnlyFile, tightenToOwnerOnly } from "./owner-only-mode.ts";
 import type { PlatformPaths } from "./paths.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
 import { isProductionRuntime } from "./runtime-layout.ts";
@@ -477,6 +478,11 @@ function openGatewaySqlite(
   // only works while no database is open, and without it `loadExtension` — and therefore
   // sqlite-vec — cannot work at all. No-op off darwin. See platform/sqlite-runtime.ts.
   ensureFullSqlite();
+  // Owner-only before the first open, so SQLite creates `-wal`/`-shm` with the same mode; the
+  // sidecars of an older install are tightened explicitly.
+  ensureOwnerOnlyFile(dbPath);
+  tightenToOwnerOnly(`${dbPath}-wal`);
+  tightenToOwnerOnly(`${dbPath}-shm`);
   const db = new Database(dbPath);
   // Before ensureSchema: migrations write, and this is the handle that converts
   // nimbus.db to WAL for every other connection (journal_mode is a file property).
