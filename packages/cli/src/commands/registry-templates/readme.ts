@@ -87,7 +87,9 @@ export function ownerNextSteps(opts: {
   7. Only now push ${opts.dir} to the repository's ${opts.defaultBranch} branch. The push starts
      the first sign run, which needs the environment and its secret: pushed earlier, that run
      fails and GitHub creates "${SIGNING_ENVIRONMENT}" itself, with no required reviewers.
-  8. Protect ${opts.defaultBranch}: require pull requests.
+  8. Protect ${opts.defaultBranch}: require pull requests. If the repository was empty, step 2 made
+     gh-pages its default branch: set the default branch to ${opts.defaultBranch} (Settings, General)
+     so pull requests and forks target it.
 On Windows the CLI sets no ACL on the key file: it inherits its folder's permissions. Keep it
 under your user profile (the default ~/.nimbus/registry-key), never on a shared or synced path.
 `;

@@ -31,7 +31,7 @@ Step 1 prints these steps (numbered there from "Make sure the repository is publ
 6. **Serve `gh-pages` with GitHub Pages** (Settings, Pages, branch `gh-pages`). Clients add the registry at the Pages URL with `nimbus registry add`.
 7. **Protect `gh-pages` against force-push and deletion**, without requiring pull requests, reviews or status checks, so the sign workflow's `GITHUB_TOKEN` push still lands.
 8. **Only now push `main`.** Push `./extensions` as `main`. The push starts the first **Registry sign** run, which needs the environment and its secret: pushed before steps 4 and 5, that run fails, and GitHub creates `registry-signing` itself, with no required reviewers.
-9. **Protect `main`:** require pull requests. If you used `--default-branch`, push and protect that branch instead; both workflows follow it.
+9. **Protect `main`:** require pull requests. If you used `--default-branch`, push and protect that branch instead; both workflows follow it. If the repository was empty when you pushed `gh-pages` in step 3, GitHub made `gh-pages` its default branch: set the default branch back to `main` (Settings, General) so pull requests and forks target it.
 
 ## Approving a signing run
 
