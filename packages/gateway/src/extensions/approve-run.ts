@@ -177,6 +177,7 @@ export function buildRunConsentPayload(
   env: ExtensionRunGrantEnv,
   modelAccess: boolean,
   credentials: ResolvedRunCredentials,
+  reusesConnector?: string,
 ): Record<string, unknown> {
   let installPath = row.install_path;
   try {
@@ -219,18 +220,25 @@ export function buildRunConsentPayload(
       : {
           sync: `this extension syncs into your local index (item types: ${manifest.sync.itemTypes.join(", ")})`,
         }),
+    // Bound through the continuity table: the extension reads an EXISTING connector's credential.
+    // The legacy service id only — never its Vault key. Not named with "credential" for the same
+    // redaction reason as `vaultEnv`.
+    ...(reusesConnector === undefined ? {} : { reusesConnector }),
   };
 }
 
-/** The credentials the grant carries, for `row` as it is now (its source decides the binding). */
+/**
+ * The credentials the grant carries, for `row` as it is now (its source decides the binding), and
+ * the legacy connector they are bound to, if any.
+ */
 function resolvedCredentialsFor(
   row: ExtensionRow,
   manifest: ExtensionManifest,
   serviceId: string,
   table: readonly ContinuityEntry[],
-): ResolvedRunCredentials {
+): { credentials: ResolvedRunCredentials; binding: ContinuityEntry | undefined } {
   const binding = findContinuityBinding(bindingInputFor(row, manifest), table);
-  return resolveRunCredentials(manifest, serviceId, binding);
+  return { credentials: resolveRunCredentials(manifest, serviceId, binding), binding };
 }
 
 /** Re-resolved grants, serialized; `null` when they no longer resolve at all. */
@@ -279,7 +287,12 @@ export async function approveExtensionRun(
   }
   const permissionsJson = serializeRunGrants(grants);
   const continuityTable = deps.continuityTable ?? CONTINUITY_TABLE;
-  const credentials = resolvedCredentialsFor(row, manifest, serviceId, continuityTable);
+  const { credentials, binding } = resolvedCredentialsFor(
+    row,
+    manifest,
+    serviceId,
+    continuityTable,
+  );
   const credentialsJson = serializeRunCredentials(credentials);
   const modelAccess = deps.modelAccess === true;
   const base = { id: row.id, serviceId, version: row.version, treeDigest, grants, modelAccess };
@@ -305,6 +318,7 @@ export async function approveExtensionRun(
       deps.env,
       modelAccess,
       credentials,
+      binding?.legacyServiceId,
     ),
   });
   if (!approved) {
@@ -328,8 +342,9 @@ export async function approveExtensionRun(
     reresolvedGrants(manifest, after.install_path, deps.env) !== permissionsJson ||
     // The binding reads the row's source fingerprint, which an update can rewrite while the prompt
     // is open; the stored credentials must still be the ones the owner saw.
-    serializeRunCredentials(resolvedCredentialsFor(after, manifest, serviceId, continuityTable)) !==
-      credentialsJson
+    serializeRunCredentials(
+      resolvedCredentialsFor(after, manifest, serviceId, continuityTable).credentials,
+    ) !== credentialsJson
   ) {
     throw new ExtensionRunGrantError(
       "ERR_EXTENSION_RUN_CHANGED",

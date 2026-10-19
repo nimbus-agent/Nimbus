@@ -632,8 +632,9 @@ describe("credentials", () => {
     // It survives both redactors (a field NAMED "credentials" would be hidden by both).
     expect(JSON.stringify(redactPayloadForConsentDisplay(p))).toContain("X_TOKEN");
     expect(redactAuditPayload(p, 4096)).toContain("X_TOKEN");
-    // No sync block, no sync sentence.
+    // No sync block, no sync sentence; not bound, so no reused connector.
     expect(p["sync"]).toBeUndefined();
+    expect(p["reusesConnector"]).toBeUndefined();
   });
 
   test("grant row stores credentials_json (unbound: the extension's own key)", async () => {
@@ -676,7 +677,15 @@ describe("credentials", () => {
     expect(getRunGrant(s.db, "com.example.cred")?.credentials_json).toBe(
       '{"token":{"env":"X_TOKEN","vaultKey":"readwise.token"}}',
     );
-    expect(JSON.stringify(seen[0]?.payload)).not.toContain("readwise.token");
+    const bound = seen[0]?.payload ?? {};
+    expect(JSON.stringify(bound)).not.toContain("readwise.token");
+    // The owner is told the extension reuses the legacy connector's credential, and the disclosure
+    // survives both redactors while naming no Vault key.
+    expect(bound["reusesConnector"]).toBe("readwise");
+    expect(redactPayloadForConsentDisplay(bound)).toMatchObject({ reusesConnector: "readwise" });
+    expect(JSON.parse(redactAuditPayload(bound, 4096))).toMatchObject({
+      reusesConnector: "readwise",
+    });
 
     s.db.run("UPDATE extension SET source_root_fingerprint = 'other' WHERE id = ?", [
       "com.example.cred",
@@ -689,8 +698,9 @@ describe("credentials", () => {
       now: () => 2,
       continuityTable: [entry],
     });
-    // The resolved credentials changed, so the owner is asked again.
+    // The resolved credentials changed, so the owner is asked again — with no reuse disclosure.
     expect(seen).toHaveLength(2);
+    expect(seen[1]?.payload["reusesConnector"]).toBeUndefined();
     expect(getRunGrant(s.db, "com.example.cred")?.credentials_json).toBe(
       '{"token":{"env":"X_TOKEN","vaultKey":"ext.ext_com_example_cred.token"}}',
     );

@@ -23,6 +23,12 @@ describe("V72 migration — extension run-grant credentials", () => {
       expect(c?.notnull).toBe(1);
       expect(c?.dflt_value).toBe("'{}'");
       expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 72 });
+      expect(
+        db.query("SELECT version, description FROM _schema_migrations WHERE version = 72").get(),
+      ).toEqual({
+        version: 72,
+        description: "extension run-grant credentials (extension_run_grant.credentials_json)",
+      });
     } finally {
       db.close();
     }
