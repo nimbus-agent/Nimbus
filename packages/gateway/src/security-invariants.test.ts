@@ -6925,9 +6925,14 @@ describe("I45 — a loopback HTTP listener answers only a Host header that names
     for (const rel of serving) {
       const src = files.find((f) => f.rel === rel)?.contents ?? "";
       const serveAt = src.indexOf("Bun.serve(");
-      const fetchBody = src.slice(serveAt, src.indexOf("registerListener(", serveAt));
-      // The guard runs inside the fetch handler, before any routing call.
-      expect(fetchBody).toMatch(/rejectNonLoopbackHost\(req\)/);
+      const serveBlock = src.slice(serveAt, src.indexOf("registerListener(", serveAt));
+      // POSITION, not just presence: the guard must be the first statement of the `fetch`
+      // handler (or the left side of its single returned `??`), so no route can answer first.
+      const handler = /fetch\(req(?::\s*Request)?\)(?::\s*[^{]+)?\s*\{\s*([^;]*;)/.exec(serveBlock);
+      expect(handler, `${rel}: no fetch(req) handler found`).not.toBeNull();
+      expect(handler?.[1] ?? "").toMatch(
+        /^(?:const \w+ = rejectNonLoopbackHost\(req\);|return rejectNonLoopbackHost\(req\) \?\?)/,
+      );
     }
   });
 });

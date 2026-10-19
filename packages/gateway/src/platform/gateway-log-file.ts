@@ -94,6 +94,9 @@ export const REDACT_VALUE_PATTERNS: ReadonlyArray<RegExp> = [
   /xox[baprs]-[A-Za-z0-9-]{8,}/g,
   /AKIA[0-9A-Z]{16}/g,
   /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+  // A credential that matches no token family above but is labelled as one, e.g. an error
+  // message quoting `api_key=plainsecret` or a URL's `?access_token=…`. The label goes too.
+  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b\s*[=:]\s*["']?[^\s"'&,;]+/gi,
 ];
 
 export function scrubRedactedValuePatterns(s: string): string {
@@ -245,6 +248,10 @@ export function emergencyGatewayLogForPlatform(err: unknown, os: NodeJS.Platform
       return;
     }
     mkdirSync(dirname(path), { recursive: true, mode: OWNER_ONLY_DIR_MODE });
+    // This can run before boot's directory pass (a failure inside platform setup), so an older
+    // install's 0755/0644 must be tightened here too, not only on creation.
+    tightenToOwnerOnly(dirname(path));
+    tightenToOwnerOnly(path);
     // Scrubbed like every pino line (`pinoLogFormatter`): a fatal stack can quote a token.
     const msg = scrubRedactedValuePatterns(
       err instanceof Error ? (err.stack ?? err.message) : String(err),

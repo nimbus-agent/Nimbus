@@ -211,6 +211,11 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
     },
     writeBatch: <T>(fn: () => T): T => {
       if (heldEmbeds !== null) return fn();
+      // Inside a transaction someone ELSE opened, our "commit" would only release a savepoint:
+      // the rows stay invisible to the embedding worker until that outer commit, and could still
+      // roll back. We cannot see that commit, so do not batch or hold anything here — the outer
+      // transaction already groups the writes, and embeddings are scheduled as they always were.
+      if (deps.db.inTransaction) return fn();
       heldEmbeds = [];
       try {
         const result = deps.db.transaction(fn)();

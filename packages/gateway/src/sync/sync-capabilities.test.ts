@@ -202,6 +202,16 @@ describe("every capability routes to its gateway function", () => {
       expect(scheduled.map((s) => s.id)).toEqual(["github:o/r#104"]);
     });
 
+    test("inside a transaction it did not open, it neither nests a savepoint nor holds embeddings", () => {
+      const { c, db, scheduled } = batchCaps();
+      db.transaction(() => {
+        c.writeBatch(() => c.upsertItem(pr(7)));
+        // Not held for a commit this batch cannot see: scheduled as it happens, as before batching.
+        expect(scheduled.map((s) => s.id)).toEqual(["github:o/r#107"]);
+      })();
+      expect(db.query("SELECT COUNT(*) AS n FROM item").get()).toEqual({ n: 1 });
+    });
+
     test("a nested batch joins the outer one", () => {
       const { c, db, scheduled } = batchCaps();
       c.writeBatch(() => {
