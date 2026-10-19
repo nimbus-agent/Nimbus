@@ -759,25 +759,24 @@ describe("runAction — the envelope", () => {
       expect(n).toBe(1);
     });
 
-    test("an approved 'download' fails closed instead of recording a phantom actuation", async () => {
-      // CodeRabbit finding: `BrowserLane` has no download method, so `performActuation` used to
-      // return null for it (no work done) while `cu-gate.ts` still recorded `outcome: 'actuated'`
-      // / `hitl_status: 'approved'` — an owner-approved download that "succeeded" at nothing.
-      // `download` classifies as `actuating`, so `requestApproval` (always true in this stub) is
-      // consulted first; `performActuation` now throws for real, with no stubbed fault needed.
+    test("a 'download' is refused out of envelope before consent: no lane can perform one", async () => {
+      // It used to be prompted for, approved, and then fail in `performActuation` (recorded
+      // `failed_after_approval`): the owner was asked to approve something nothing could do.
+      // `performActuation` still throws for it (cu-actuate.test.ts) as a second line.
       const spy: Spy = { approvals: 0, actuations: 0, closes: 0 };
       const { deps: d, db } = deps({}, spy);
       const sessionId = await openDefault(d); // consumes one approval (the envelope itself)
       const approvalsBefore = spy.approvals;
       const out = await runAction({ sessionId, kind: "download" }, d);
-      expect(out.outcome).toBe("failed_after_approval");
-      expect(spy.approvals).toBe(approvalsBefore + 1); // consent WAS sought and granted for the action
+      expect(out.outcome).toBe("refused_out_of_envelope");
+      expect(spy.approvals).toBe(approvalsBefore); // no consent prompt for the action
+      expect(spy.actuations).toBe(0);
       const row = db
         .query<{ hitl_status: string }, []>(
           `SELECT hitl_status FROM audit_log WHERE action_type='computer.action' ORDER BY id DESC LIMIT 1`,
         )
         .get();
-      expect(row?.hitl_status).toBe("approved");
+      expect(row?.hitl_status).toBe("rejected");
     });
 
     test("the reviewer's headline scenario: a click actuates, then the POST domSnapshot() throws — still exactly one row", async () => {

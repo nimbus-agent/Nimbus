@@ -15,7 +15,8 @@ export const CLIP_USAGE = `Usage:
   nimbus clip list [--tag <t>] [--limit N] [--json]   list saved clips
   nimbus clip delete <id|url> | --all [--yes]         delete clips
 
-Scopes: clip, briefs, agents, resolve, fetch (default: clip,briefs)`;
+Scopes: clip, briefs, agents, resolve, fetch, egress, data (default: clip,briefs)
+  data: GET /v1/items, /v1/people and /v1/audit (raw index rows)`;
 
 export function formatStatus(
   devices: Array<{ label: string; fingerprint: string; scopes: readonly string[] }>,

@@ -4106,18 +4106,20 @@ nimbus serve --port 7474        # Default port: 7474
 
 **Endpoints:**
 
+The raw-row reads — `/v1/items`, `/v1/items/:id`, `/v1/people`, `/v1/people/:id` and `/v1/audit` — require a labelled client token with the `data` scope (since 2026-10-19; they were public before). Mint one with `nimbus clip pair --label <name> --scopes data` and confirm the pairing code, or add the scope to an existing token with `nimbus clip scopes <label> --set <scopes>,data`, then send `Authorization: Bearer <token>`. A missing or unknown token gets `401`, a token without `data` gets `403`. Every route also refuses a `Host` header that does not name loopback (invariant `I45`).
+
 | Endpoint | Description |
 |---|---|
-| `GET /v1/audit` | Recent audit log entries |
+| `GET /v1/audit` | Recent audit log entries (`data` scope) |
 | `GET /v1/connectors` | List connectors and health states |
 | `GET /v1/health` | Gateway health summary |
-| `GET /v1/items` | List indexed items (supports `service`, `type`, `since`, `until`, `limit` query params) |
-| `GET /v1/items/:id` | Get a single item by ID |
+| `GET /v1/items` | List indexed items (supports `service`, `type`, `since`, `until`, `limit` query params; `data` scope) |
+| `GET /v1/items/:id` | Get a single item by ID (`data` scope) |
 | `GET /v1/metrics/dora` | DORA metrics for a service (supports `service`, `since` query params) |
 | `GET /v1/metrics/stats` | One DORA-family or related operational metric as a bucketed time series, over the same service config as `/v1/metrics/dora` at a different resolution (`service`, `metric`, `window_ms`, `bucket_ms`; all positive, at most 400 buckets). Its metric set is **wider** than that route's: the same four DORA metrics plus `pr-merges` and `incidents-opened`. Buckets are disjoint, so a line between points is meaningful; an unknown service is **refused** rather than answered softly, because a series has nothing honest to place-hold |
 | `GET /v1/openapi.json` | Machine-readable OpenAPI 3.1 schema for this API |
-| `GET /v1/people` | List people graph entries |
-| `GET /v1/people/:id` | Get a single person record |
+| `GET /v1/people` | List people graph entries (`data` scope) |
+| `GET /v1/people/:id` | Get a single person record (`data` scope) |
 | `GET /v1/preflight/deploy` | Pre-deploy check: active P1 incidents, failing CI, merge conflicts |
 
 **Write endpoints** — the complete `WRITE_ROUTE_ALLOWLIST` (invariant `I13`); every write not on this list is rejected:
@@ -4833,7 +4835,7 @@ nimbus people link person:abc123 person:def456
 Open a browser-extension pairing session and print the one-time code **plus the gateway URL** to enter in the extension's Options page. The code expires after 2 minutes. `--label` gives the paired device a human-readable name; if omitted the gateway assigns one.
 
 `--scopes` sets what the minted token is allowed to reach. It takes a comma-separated list drawn
-from six names:
+from seven names:
 
 | Scope | Unlocks |
 |---|---|
@@ -4843,6 +4845,7 @@ from six names:
 | `resolve` | The local reads: `GET /v1/items/resolve` (resolve-by-URL), `GET /v1/items/resolve-file` (resolve a forge file coordinate to a local checkout path), `GET /v1/items/resolve-ids` (resolve item ids back to their references), and `GET /v1/services/resolve` (resolve a repo URN to the configured service that claims it — the only one of the four that reads `nimbus.toml` rather than the index) |
 | `fetch` | The targeted fetch-on-miss write: `POST /v1/items/fetch` — makes an outbound request through a configured connector, so it is a separate scope from `resolve`'s purely local reads |
 | `egress` | The egress-ledger reads: `GET /v1/egress`, `GET /v1/egress/head`, `GET /v1/egress/verify`, `GET /v1/egress/prove` |
+| `data` | The index's raw rows: `GET /v1/items`, `GET /v1/items/:id`, `GET /v1/people`, `GET /v1/people/:id`, `GET /v1/audit` (public until 2026-10-19; never granted to an older token automatically) |
 
 If `--scopes` is omitted, the minted token is granted `clip,briefs` — the two surfaces that shipped
 before scopes existed. **A client paired before this change holds exactly `clip,briefs` and gains

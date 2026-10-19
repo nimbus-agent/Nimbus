@@ -4,7 +4,13 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyWritablePragmas, BUSY_TIMEOUT_MS, readJournalMode } from "./writable-pragmas.ts";
+import {
+  applyWritablePragmas,
+  BUSY_TIMEOUT_MS,
+  optimizeQueryPlanner,
+  PAGE_CACHE_KIB,
+  readJournalMode,
+} from "./writable-pragmas.ts";
 
 describe("applyWritablePragmas", () => {
   let dir: string;
@@ -112,4 +118,46 @@ describe("production writable handles wire the pragmas", () => {
       expect(src).toContain("applyWritablePragmas(");
     });
   }
+});
+
+describe("throughput pragmas", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-pragmas-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a WAL handle gets synchronous=NORMAL, in-memory temp store and the larger cache", () => {
+    const db = new Database(join(dir, "nimbus.db"));
+    expect(applyWritablePragmas(db)).toBe("wal");
+    // 1 = NORMAL, 2 = MEMORY.
+    expect(db.query("PRAGMA synchronous;").get()).toEqual({ synchronous: 1 });
+    expect(db.query("PRAGMA temp_store;").get()).toEqual({ temp_store: 2 });
+    expect(db.query("PRAGMA cache_size;").get()).toEqual({ cache_size: -PAGE_CACHE_KIB });
+    db.close();
+  });
+
+  test("a handle that could not adopt WAL keeps the corruption-safe default synchronous=FULL", () => {
+    const db = new Database(":memory:");
+    expect(applyWritablePragmas(db)).toBe("memory");
+    // 2 = FULL, SQLite's default; NORMAL is only safe under WAL.
+    expect(db.query("PRAGMA synchronous;").get()).toEqual({ synchronous: 2 });
+    db.close();
+  });
+
+  test("optimizeQueryPlanner analyzes a never-analyzed table and never throws", () => {
+    const db = new Database(join(dir, "nimbus.db"));
+    applyWritablePragmas(db);
+    db.run("CREATE TABLE t (x INTEGER)");
+    db.run("CREATE INDEX t_x ON t(x)");
+    for (let i = 0; i < 50; i++) db.run("INSERT INTO t VALUES (?)", [i]);
+    optimizeQueryPlanner(db);
+    optimizeQueryPlanner(db, "close");
+    db.close();
+    const closed = new Database(":memory:");
+    closed.close();
+    expect(() => optimizeQueryPlanner(closed)).not.toThrow();
+  });
 });

@@ -1,7 +1,7 @@
 import pino from "pino";
-
 import { isLoopbackHost } from "../llm/base-url-locality.ts";
 import { registerListener } from "../locality/listener-registry.ts";
+import { rejectNonLoopbackHost } from "../locality/loopback-host-guard.ts";
 import { validateVaultKeyOrThrow } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
@@ -198,7 +198,7 @@ async function runOnLocalPort(
     hostname: bindHost,
     port: bindPort,
     fetch(req) {
-      return handlePkceCallbackRequest(req, state, completion);
+      return rejectNonLoopbackHost(req) ?? handlePkceCallbackRequest(req, state, completion);
     },
   });
   const unregisterListener = registerListener(() => ({

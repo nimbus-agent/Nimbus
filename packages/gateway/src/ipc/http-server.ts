@@ -27,6 +27,7 @@ import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import { resolveFileByRemote } from "../index/resolve-file-by-remote.ts";
 import { RESOLVE_IDS_MAX_BATCH, resolveItemsByIds } from "../index/resolve-ids.ts";
 import { registerListener } from "../locality/listener-registry.ts";
+import { rejectNonLoopbackHost } from "../locality/loopback-host-guard.ts";
 import {
   type ParsedDoraRepoUrn,
   parseDoraRepoUrn,
@@ -50,15 +51,20 @@ import {
   enforceClipScope,
   ROUTE_KEY_AGENT_RUN_GET,
   ROUTE_KEY_AGENTS_LIST,
+  ROUTE_KEY_AUDIT_LIST,
   ROUTE_KEY_BRIEF_GET,
   ROUTE_KEY_CLIPS_RELATED,
   ROUTE_KEY_EGRESS_HEAD,
   ROUTE_KEY_EGRESS_LIST,
   ROUTE_KEY_EGRESS_PROVE,
   ROUTE_KEY_EGRESS_VERIFY,
+  ROUTE_KEY_ITEM_GET,
+  ROUTE_KEY_ITEMS_LIST,
   ROUTE_KEY_ITEMS_RESOLVE,
   ROUTE_KEY_ITEMS_RESOLVE_FILE,
   ROUTE_KEY_ITEMS_RESOLVE_IDS,
+  ROUTE_KEY_PEOPLE_LIST,
+  ROUTE_KEY_PERSON_GET,
   ROUTE_KEY_SERVICES_RESOLVE,
 } from "./http-route-auth.ts";
 import {
@@ -628,8 +634,9 @@ async function handleAdminConsole(
   return new Response(Bun.file(asset.path), { headers: { "content-type": contentTypeFor(rel) } });
 }
 
-// Read-only data routes (no bearer gate, never fall through). Returns null when `path` matches no
-// data route, so the caller can try the bearer-gated admin routes before 404.
+// Read-only public routes (no bearer gate, never fall through). Returns null when `path` matches no
+// public route, so the caller can try the bearer-gated admin routes before 404. The raw-row reads
+// (items, people, audit) are NOT here: they need a `data`-scoped token — see `tryDataScopedGet`.
 function dispatchReadOnlyDataGet(
   path: string,
   url: URL,
@@ -639,23 +646,8 @@ function dispatchReadOnlyDataGet(
   if (path === "/v1/health") {
     return json({ status: "ok", gateway: "read_only_http" });
   }
-  if (path === "/v1/items") {
-    return handleItemsList(url, db);
-  }
-  if (path.startsWith("/v1/items/")) {
-    return handleItemByPath(path, db);
-  }
   if (path === "/v1/connectors") {
     return handleConnectors(db);
-  }
-  if (path === "/v1/people") {
-    return handlePeopleList(db);
-  }
-  if (path.startsWith("/v1/people/")) {
-    return handlePersonByPath(path, db);
-  }
-  if (path === "/v1/audit") {
-    return handleAudit(url, db);
   }
   if (path === "/v1/metrics/dora") {
     return handleMetricsDora(url, db, opts);
@@ -1481,6 +1473,46 @@ async function tryBearerAuthedGet(
   if (url.pathname === "/v1/agents") return await handleAgentsList(req, opts);
   const agentRun = AGENT_RUN_GET_RE.exec(url.pathname);
   if (agentRun !== null) return await handleAgentRunGet(req, agentRun[1] as string, opts);
+  return await tryDataScopedGet(req, url, db, opts);
+}
+
+/**
+ * The index's raw-row reads, behind a `data`-scoped client token. Matched AFTER every other
+ * bearer read above, because `/v1/items/resolve*` share the `/v1/items/` prefix and must keep
+ * their own `resolve` scope. `null` means "not one of these routes".
+ */
+async function tryDataScopedGet(
+  req: Request,
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response | null> {
+  const path = url.pathname;
+  // A GET to a write route's path keeps its 405 from `handleGet`, never a data-scope answer.
+  if (WRITE_ROUTE_ALLOWLIST.some((r) => r.endsWith(` ${path}`))) return null;
+  // One gate call per route, each naming its own ROUTE_KEY_* constant (http-read-gates.test.ts
+  // derives the scoped-route table from exactly these call sites).
+  const disabled = (): Response => json({ error: "data_disabled" }, 404);
+  if (path === "/v1/items") {
+    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_ITEMS_LIST, disabled);
+    return gate.ok ? handleItemsList(url, db) : gate.response;
+  }
+  if (path.startsWith("/v1/items/")) {
+    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_ITEM_GET, disabled);
+    return gate.ok ? handleItemByPath(path, db) : gate.response;
+  }
+  if (path === "/v1/people") {
+    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_PEOPLE_LIST, disabled);
+    return gate.ok ? handlePeopleList(db) : gate.response;
+  }
+  if (path.startsWith("/v1/people/")) {
+    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_PERSON_GET, disabled);
+    return gate.ok ? handlePersonByPath(path, db) : gate.response;
+  }
+  if (path === "/v1/audit") {
+    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_AUDIT_LIST, disabled);
+    return gate.ok ? handleAudit(url, db) : gate.response;
+  }
   return null;
 }
 
@@ -1522,6 +1554,10 @@ export function startReadOnlyHttpServer(
     hostname: "127.0.0.1",
     port,
     async fetch(req: Request): Promise<Response> {
+      // DNS-rebinding guard: before ANY routing, since the unauthenticated data GETs below would
+      // otherwise answer a rebound page (see loopback-host-guard.ts).
+      const badHost = rejectNonLoopbackHost(req);
+      if (badHost !== null) return badHost;
       const url = new URL(req.url);
       // SCIM roster read (spec §6) — bearer-checked GET; reads stay off the I13 write surface.
       if (

@@ -2,8 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { API_SCOPES, isApiScope, LEGACY_SCOPES } from "./api-scopes.ts";
 
 describe("api-scopes", () => {
-  test("the vocabulary is exactly the six scopes, in declaration order", () => {
-    expect([...API_SCOPES]).toEqual(["clip", "briefs", "agents", "resolve", "fetch", "egress"]);
+  test("the vocabulary is exactly the seven scopes, in declaration order", () => {
+    expect([...API_SCOPES]).toEqual([
+      "clip",
+      "briefs",
+      "agents",
+      "resolve",
+      "fetch",
+      "egress",
+      "data",
+    ]);
   });
 
   test("LEGACY_SCOPES grants exactly what a pre-scopes token could already do", () => {
@@ -16,6 +24,9 @@ describe("api-scopes", () => {
     // behalf. A token minted before the scope existed must not silently acquire
     // it — the owner grants it deliberately with `nimbus clip scopes`.
     expect(LEGACY_SCOPES).not.toContain("egress");
+    // `data` reads the index's raw rows (items, people, audit), public until 2026-10-19: scoping
+    // them would mean nothing if a token in the wild silently gained them.
+    expect(LEGACY_SCOPES).not.toContain("data");
   });
 
   test("isApiScope accepts known scopes and rejects everything else", () => {

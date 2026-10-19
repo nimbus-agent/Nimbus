@@ -18,6 +18,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-19 — The HTTP API's raw-row reads need a `data`-scoped client token (breaking for scripts that read them; no migration).**
+  `GET /v1/items`, `/v1/items/<id>`, `/v1/people`, `/v1/people/<id>` and `/v1/audit` were public: any local
+  process could read every indexed body, the people graph and the audit log (which carries I33 script bodies).
+  They now sit behind the labelled client-token map under a new `data` scope, answering `401` without a token,
+  `403` for a token without `data` and `404 data_disabled` when the client-token surface is not mounted. `data`
+  is not in `LEGACY_SCOPES`, so no existing token gains it: grant it with
+  `nimbus clip scopes <label> --set <scopes>,data`, or mint a token with `nimbus clip pair --label <name> --scopes
+  data`. `/v1/health`, `/v1/connectors`, `/v1/metrics/*`, `/v1/preflight/deploy` and `/v1/openapi.json` stay
+  public. **What a user must do:** a script or tool reading those five routes needs a `data` token. Audit item
+  S1, part 2.
+- **2026-10-19 — Embeddings warn when the OpenAI key comes from the environment.**
+  The embedding runtime still accepts `OPENAI_API_KEY` (unlike the LLM adapters, which dropped the env fallback in
+  `v5.0.0`), but now logs a warning naming the Vault key `openai.api_key` whenever the environment supplied it.
+  Behaviour is otherwise unchanged. Audit item P9.
+
+- **2026-10-19 — Owner-only permissions on the index, logs and config (POSIX; no migration).**
+  `nimbus.db` (and through it `-wal`/`-shm`) and the daily gateway logs are created `0600`, and the data, config, vault
+  and log directories `0700`; an existing install's looser modes are tightened at boot. Before this they followed the
+  umask (typically `0644` in `0755`), so on a multi-user Linux machine another account could read the plaintext
+  index. Backups and snapshots were already `0600`. The fatal emergency log now scrubs token-shaped values like every
+  other log line. Windows is unaffected (LocalAppData ACLs already apply). Audit items S5 and P10.
+
+- **2026-10-19 — DNS-rebinding guard on every loopback HTTP listener; invariant I45 (no migration, no new egress class).**
+  The read-only/I13 HTTP API, the Prometheus sidecar and the OAuth PKCE callback now answer HTTP 403 unless the
+  `Host` header names loopback (`localhost`, `127.0.0.0/8`, `[::1]`), checked before any routing. Binding to
+  `127.0.0.1` kept other machines out but not other web origins: a page whose DNS answer was switched to
+  `127.0.0.1` could read the no-bearer data routes (`/v1/items/<id>` with full bodies, `/v1/people`, `/v1/audit`).
+  Local processes are unaffected, and a request with no `Host` header is still served. Found by the 2026-10-19
+  code audit (`docs/audits/2026-10-19-code-audit.md`, item S1).
+
 - **2026-10-18 — Phase 9.5 project 1, PR 4: updates come from the source registry; invariant I44 (no migration, no new egress class; closes project 1).**
   The auto-update daemon now reads registries instead of an environment variable. It is built at boot whenever
   boot policy allows auto-update (and `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` is not `1`), and each tick reads the

@@ -80,13 +80,16 @@ const ACTION_KINDS = [
 ] as const;
 export type CuActionKind = (typeof ACTION_KINDS)[number];
 
+// `download` is a recognised kind but NOT a browser-lane action: no lane can perform one (the
+// driver denies downloads at the browser level, and `performActuation` throws for it). Listing it
+// here used to send the owner a consent prompt for an action that could only fail after approval;
+// leaving it out refuses it out of envelope, before consent and without spending budget.
 const BROWSER_KINDS: ReadonlySet<CuActionKind> = new Set<CuActionKind>([
   "click",
   "type",
   "navigate",
   "read",
   "screenshot",
-  "download",
 ]);
 const TERMINAL_KINDS: ReadonlySet<CuActionKind> = new Set<CuActionKind>(["terminal_write"]);
 

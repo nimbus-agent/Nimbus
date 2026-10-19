@@ -54,6 +54,14 @@ describe("startMetricsServer", () => {
     expect(await res.text()).toBe("ok\n");
   });
 
+  test("a non-loopback Host is refused before routing (I45 DNS-rebinding guard)", async () => {
+    handle = startMetricsServer(() => db, 0);
+    const res = await fetch(`http://127.0.0.1:${String(handle.port)}/metrics`, {
+      headers: { host: `attacker.example:${String(handle.port)}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
   test("unknown path returns 404 Not Found", async () => {
     handle = startMetricsServer(() => db, 0);
     const res = await get(handle.port, "/nope");

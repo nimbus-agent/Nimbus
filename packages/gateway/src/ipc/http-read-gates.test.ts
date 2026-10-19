@@ -31,15 +31,20 @@ import {
   HTTP_ROUTE_AUTH,
   ROUTE_KEY_AGENT_RUN_GET,
   ROUTE_KEY_AGENTS_LIST,
+  ROUTE_KEY_AUDIT_LIST,
   ROUTE_KEY_BRIEF_GET,
   ROUTE_KEY_CLIPS_RELATED,
   ROUTE_KEY_EGRESS_HEAD,
   ROUTE_KEY_EGRESS_LIST,
   ROUTE_KEY_EGRESS_PROVE,
   ROUTE_KEY_EGRESS_VERIFY,
+  ROUTE_KEY_ITEM_GET,
+  ROUTE_KEY_ITEMS_LIST,
   ROUTE_KEY_ITEMS_RESOLVE,
   ROUTE_KEY_ITEMS_RESOLVE_FILE,
   ROUTE_KEY_ITEMS_RESOLVE_IDS,
+  ROUTE_KEY_PEOPLE_LIST,
+  ROUTE_KEY_PERSON_GET,
   ROUTE_KEY_SERVICES_RESOLVE,
 } from "./http-route-auth.ts";
 import {
@@ -75,7 +80,7 @@ function seededVault(): NimbusVault {
     JSON.stringify({
       full: {
         token: FULL_TOKEN,
-        scopes: ["clip", "briefs", "agents", "resolve", "fetch", "egress"],
+        scopes: ["clip", "briefs", "agents", "resolve", "fetch", "egress", "data"],
       },
       narrow: { token: NARROW_TOKEN, scopes: ["fetch"] },
     }),
@@ -154,6 +159,7 @@ type ScopedRoute = {
 
 const RESOLVE_DISABLED = { json: { error: "resolve_disabled" } };
 const EGRESS_DISABLED = { json: { error: "egress_disabled" } };
+const DATA_DISABLED = { json: { error: "data_disabled" } };
 const BRIEFS_DISABLED = {
   json: {
     error: "briefs_disabled",
@@ -239,6 +245,46 @@ const SCOPED_ROUTES: readonly ScopedRoute[] = [
     path: "/v1/egress/prove",
     scope: "egress",
     disabled: EGRESS_DISABLED,
+    admitted: { status: 200 },
+  },
+  {
+    routeKey: ROUTE_KEY_ITEMS_LIST,
+    method: "GET",
+    path: "/v1/items",
+    scope: "data",
+    disabled: DATA_DISABLED,
+    admitted: { status: 200 },
+  },
+  {
+    routeKey: ROUTE_KEY_ITEM_GET,
+    method: "GET",
+    path: "/v1/items/github%3Aunknown",
+    scope: "data",
+    disabled: DATA_DISABLED,
+    admitted: { status: 200 },
+  },
+  {
+    routeKey: ROUTE_KEY_PEOPLE_LIST,
+    method: "GET",
+    path: "/v1/people",
+    scope: "data",
+    disabled: DATA_DISABLED,
+    admitted: { status: 200 },
+  },
+  {
+    routeKey: ROUTE_KEY_PERSON_GET,
+    method: "GET",
+    path: "/v1/people/unknown",
+    scope: "data",
+    disabled: DATA_DISABLED,
+    admitted: { status: 200 },
+  },
+  {
+    routeKey: ROUTE_KEY_AUDIT_LIST,
+    method: "GET",
+    path: "/v1/audit",
+    scope: "data",
+    disabled: DATA_DISABLED,
     admitted: { status: 200 },
   },
   {

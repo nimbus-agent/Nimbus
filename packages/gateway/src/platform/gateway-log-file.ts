@@ -5,6 +5,11 @@ import type { Logger } from "pino";
 import pino from "pino";
 
 import { processEnvGet } from "./env-access.ts";
+import {
+  OWNER_ONLY_DIR_MODE,
+  OWNER_ONLY_FILE_MODE,
+  tightenToOwnerOnly,
+} from "./owner-only-mode.ts";
 import { createDarwinPaths, createLinuxPaths, createWindowsPaths } from "./paths.ts";
 
 export function gatewayLogBasename(): string {
@@ -89,6 +94,10 @@ export const REDACT_VALUE_PATTERNS: ReadonlyArray<RegExp> = [
   /xox[baprs]-[A-Za-z0-9-]{8,}/g,
   /AKIA[0-9A-Z]{16}/g,
   /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+  // A credential that matches no token family above but is labelled as one, e.g. an error
+  // message quoting `api_key=plainsecret` or a URL's `?access_token=…`. The label goes too.
+  // A quoted value is consumed whole (spaces included) before the unquoted form is tried.
+  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s"'&,;]+)/gi,
 ];
 
 export function scrubRedactedValuePatterns(s: string): string {
@@ -176,12 +185,15 @@ export function createGatewayPinoLogger(logDir: string): Logger {
   // fail (EACCES/ENOSPC/EROFS); swallow it and let the destination's async `error` handler below
   // absorb the subsequent open failure (mirrors emergencyGatewayLog's defensive try/catch).
   try {
-    mkdirSync(logDir, { recursive: true });
+    mkdirSync(logDir, { recursive: true, mode: OWNER_ONLY_DIR_MODE });
   } catch {
     /* best-effort daily log — ignore directory-creation failures */
   }
 
-  const fileDest = pino.destination({ dest: logPath, sync: false });
+  // Owner-only on creation; a file left by an older install is tightened. Log lines can carry
+  // item titles, queries and URLs, so they get the same protection as the index.
+  tightenToOwnerOnly(logPath);
+  const fileDest = pino.destination({ dest: logPath, sync: false, mode: OWNER_ONLY_FILE_MODE });
   // `sync: false` opens and flushes on a later tick via a background SonicBoom stream. Without an
   // `error` listener an async open/flush failure (e.g. the dir was removed after the logger was
   // built, as happens for short-lived loggers in tests) becomes an unhandled `error` event that
@@ -236,9 +248,19 @@ export function emergencyGatewayLogForPlatform(err: unknown, os: NodeJS.Platform
     if (path === null) {
       return;
     }
-    mkdirSync(dirname(path), { recursive: true });
-    const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
-    appendFileSync(path, `[${new Date().toISOString()}] [gateway] fatal: ${msg}\n`, "utf8");
+    mkdirSync(dirname(path), { recursive: true, mode: OWNER_ONLY_DIR_MODE });
+    // This can run before boot's directory pass (a failure inside platform setup), so an older
+    // install's 0755/0644 must be tightened here too, not only on creation.
+    tightenToOwnerOnly(dirname(path));
+    tightenToOwnerOnly(path);
+    // Scrubbed like every pino line (`pinoLogFormatter`): a fatal stack can quote a token.
+    const msg = scrubRedactedValuePatterns(
+      err instanceof Error ? (err.stack ?? err.message) : String(err),
+    );
+    appendFileSync(path, `[${new Date().toISOString()}] [gateway] fatal: ${msg}\n`, {
+      encoding: "utf8",
+      mode: OWNER_ONLY_FILE_MODE,
+    });
   } catch {
     /* ignore secondary failures */
   }

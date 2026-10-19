@@ -143,6 +143,15 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
   recordPrChangedFiles(input: Parameters<typeof recordPrChangedFiles>[1]): void;
   upsertBlameLines(repoRoot: string, filePath: string, rows: readonly BlameRow[]): void;
   pruneBlameForFile(repoRoot: string, filePath: string): void;
+  /**
+   * Runs `fn` — a run of `upsertItem`/`deleteItem` calls for one fetched page — in ONE SQLite
+   * transaction. Without it every item is several autocommitted statements (the item upsert, its
+   * FTS trigger rows, the graph populator's writes), each its own fsync. Embedding requests raised
+   * inside the batch are held until it commits, so the embedding worker (a separate connection)
+   * never looks for a row that is not yet visible to it; a batch that throws rolls back and drops
+   * them. Nesting is allowed and joins the outer batch.
+   */
+  writeBatch<T>(fn: () => T): T;
 }
 
 /**
@@ -172,6 +181,19 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
   deps: SyncCapabilityDeps,
   serviceId: S,
 ): SyncCapabilities<S> {
+  // Embedding ids raised while a `writeBatch` is open; `null` outside one.
+  let heldEmbeds: string[] | null = null;
+  const schedule = deps.scheduleItemEmbedding;
+  const upsertDeps: SyncCapabilityDeps =
+    schedule === undefined
+      ? deps
+      : {
+          ...deps,
+          scheduleItemEmbedding: (itemId) => {
+            if (heldEmbeds === null) schedule(itemId);
+            else heldEmbeds.push(itemId);
+          },
+        };
   return {
     getSecret: (keyName) => readConnectorSecret(deps.vault, serviceId, keyName),
     scopedVaultView: (service) => createServiceScopedVaultView(deps.vault, service),
@@ -185,7 +207,25 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
       return readConnectorSecret(deps.vault, family, keyName);
     },
     upsertItem: (row) => {
-      upsertIndexedItemForSync(deps, row);
+      upsertIndexedItemForSync(upsertDeps, row);
+    },
+    writeBatch: <T>(fn: () => T): T => {
+      if (heldEmbeds !== null) return fn();
+      // Inside a transaction someone ELSE opened, our "commit" would only release a savepoint:
+      // the rows stay invisible to the embedding worker until that outer commit, and could still
+      // roll back. We cannot see that commit, so do not batch or hold anything here — the outer
+      // transaction already groups the writes, and embeddings are scheduled as they always were.
+      if (deps.db.inTransaction) return fn();
+      heldEmbeds = [];
+      try {
+        const result = deps.db.transaction(fn)();
+        const committed = heldEmbeds;
+        heldEmbeds = null;
+        for (const itemId of committed) schedule?.(itemId);
+        return result;
+      } finally {
+        heldEmbeds = null;
+      }
     },
     accessToken: () => resolveAccessTokenForService(deps.vault, serviceId),
     resolvePerson: (hints) => resolvePersonForSync(deps.db, hints),
@@ -281,5 +321,6 @@ export function unboundSyncCapabilities(): SyncCapabilities {
     pruneBlameForFile: () => refuse("pruneBlameForFile"),
     upsertItem: () => refuse("upsertItem"),
     resolvePerson: () => refuse("resolvePerson"),
+    writeBatch: () => refuse("writeBatch"),
   };
 }
