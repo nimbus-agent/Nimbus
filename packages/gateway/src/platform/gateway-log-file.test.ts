@@ -679,6 +679,16 @@ describe("emergency log hardening", () => {
     expect(out).toContain("x=1");
   });
 
+  test("a quoted multi-word credential is redacted whole, not only its first word", () => {
+    const out = scrubRedactedValuePatterns(
+      `bad config password="correct horse battery staple" secret='two words' next`,
+    );
+    for (const w of ["correct", "horse", "battery", "staple", "two words"]) {
+      expect(out).not.toContain(w);
+    }
+    expect(out).toContain("next");
+  });
+
   test.skipIf(platform() !== "linux")(
     "tightens an older install's log dir and file before appending, and scrubs the stack",
     () => {

@@ -96,7 +96,8 @@ export const REDACT_VALUE_PATTERNS: ReadonlyArray<RegExp> = [
   /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
   // A credential that matches no token family above but is labelled as one, e.g. an error
   // message quoting `api_key=plainsecret` or a URL's `?access_token=…`. The label goes too.
-  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b\s*[=:]\s*["']?[^\s"'&,;]+/gi,
+  // A quoted value is consumed whole (spaces included) before the unquoted form is tried.
+  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s"'&,;]+)/gi,
 ];
 
 export function scrubRedactedValuePatterns(s: string): string {

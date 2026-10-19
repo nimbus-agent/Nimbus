@@ -6926,12 +6926,16 @@ describe("I45 — a loopback HTTP listener answers only a Host header that names
       const src = files.find((f) => f.rel === rel)?.contents ?? "";
       const serveAt = src.indexOf("Bun.serve(");
       const serveBlock = src.slice(serveAt, src.indexOf("registerListener(", serveAt));
-      // POSITION, not just presence: the guard must be the first statement of the `fetch`
-      // handler (or the left side of its single returned `??`), so no route can answer first.
-      const handler = /fetch\(req(?::\s*Request)?\)(?::\s*[^{]+)?\s*\{\s*([^;]*;)/.exec(serveBlock);
+      // POSITION and EFFECT: the handler must open with the guard and return its refusal
+      // immediately — either `const x = rejectNonLoopbackHost(req); if (x !== null) return x;`
+      // or a single `return rejectNonLoopbackHost(req) ?? …`. A call whose result is dropped, or
+      // a guard below a route, enforces nothing.
+      const handler = /fetch\(req(?::\s*Request)?\)(?::\s*[^{]+)?\s*\{\s*([\s\S]{0,240})/.exec(
+        serveBlock,
+      );
       expect(handler, `${rel}: no fetch(req) handler found`).not.toBeNull();
       expect(handler?.[1] ?? "").toMatch(
-        /^(?:const \w+ = rejectNonLoopbackHost\(req\);|return rejectNonLoopbackHost\(req\) \?\?)/,
+        /^(?:const (\w+) = rejectNonLoopbackHost\(req\);\s*if \(\1 !== null\) return \1;|return rejectNonLoopbackHost\(req\) \?\?)/,
       );
     }
   });
