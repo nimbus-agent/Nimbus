@@ -22,6 +22,8 @@ import {
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import { approveExtensionRun } from "./approve-run.ts";
+import type { ContinuityEntry } from "./continuity/continuity-table.ts";
+import { serializeRunCredentials } from "./extension-credentials.ts";
 import { type ExtensionRunGrantEnv, serializeRunGrants } from "./extension-run-grants.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
 import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
@@ -511,5 +513,107 @@ describe("readVerifiedExtensionForSpawn", () => {
     await readVerifiedExtensionForSpawn(f.id, { ...deps(f), treeDigest });
     await readVerifiedExtensionForSpawn(f.id, { ...deps(f), treeDigest });
     expect(calls).toBe(2);
+  });
+});
+
+describe("readVerifiedExtensionForSpawn — credentials (step 9)", () => {
+  const withToken = () => ({ credentials: { token: { env: "READWISE_TOKEN" } } });
+
+  function publisherKeyOf(f: Fixture): string {
+    const m = JSON.parse(readFileSync(join(f.installPath, "nimbus.extension.json"), "utf8")) as {
+      publisher?: { key?: string };
+    };
+    return m.publisher?.key ?? "";
+  }
+
+  function entryFor(f: Fixture, fp: string): ContinuityEntry {
+    return {
+      legacyServiceId: "readwise",
+      extensionId: f.id,
+      publisherKey: publisherKeyOf(f),
+      sourceRootFingerprint: fp,
+      credentials: { token: "readwise.token" },
+      expectedPermissions: { network: [], read: [], write: [] },
+      itemTypes: [],
+    };
+  }
+
+  test("happy path: the re-resolved credentials equal the stored grant and are exposed", async () => {
+    const f = await setup({ manifest: withToken });
+    const v = await readVerifiedExtensionForSpawn(f.id, deps(f));
+    expect(v.credentials).toEqual({
+      token: { env: "READWISE_TOKEN", vaultKey: "ext.ext_com_example_spawn.token" },
+    });
+    expect(serializeRunCredentials(v.credentials)).toBe(
+      getRunGrant(f.db, f.id)?.credentials_json ?? "",
+    );
+  });
+
+  test("no declared credentials resolve to {}", async () => {
+    const f = await setup();
+    const v = await readVerifiedExtensionForSpawn(f.id, deps(f));
+    expect(v.credentials).toEqual({});
+  });
+
+  test("manifest adds a credential after approval -> ERR_EXTENSION_RUN_CHANGED", async () => {
+    const f = await setup();
+    // The manifest gains a credential, and every OTHER record is brought into line with it (row
+    // hashes, row digest, approved digest), so the credential check is the only one that can fire.
+    const manifestPath = join(f.installPath, "nimbus.extension.json");
+    const m = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    writeFileSync(manifestPath, JSON.stringify({ ...m, ...withToken() }));
+    f.db.run("UPDATE extension SET manifest_hash = ? WHERE id = ?", [
+      sha256Hex(readFileSync(manifestPath)),
+      f.id,
+    ]);
+    const digest = computeExtensionTreeDigest(f.installPath);
+    setExtensionTreeDigest(f.db, f.id, digest);
+    const g = getRunGrant(f.db, f.id);
+    if (g === null) throw new Error("no grant");
+    upsertRunGrant(f.db, { ...g, tree_digest: digest });
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, deps(f)),
+      "ERR_EXTENSION_RUN_CHANGED",
+      /credentials/,
+    );
+  });
+
+  test("a stored credential mapping that differs from the re-resolved one refuses RUN_CHANGED", async () => {
+    const f = await setup({ manifest: withToken });
+    const g = getRunGrant(f.db, f.id);
+    if (g === null) throw new Error("no grant");
+    upsertRunGrant(f.db, {
+      ...g,
+      credentials_json: serializeRunCredentials({
+        token: { env: "READWISE_TOKEN", vaultKey: "github.pat" },
+      }),
+    });
+    await expectCode(readVerifiedExtensionForSpawn(f.id, deps(f)), "ERR_EXTENSION_RUN_CHANGED");
+  });
+
+  test("a continuity binding resolved at spawn must match the one approved", async () => {
+    const f = await setup({ manifest: withToken, signed: true, approve: false });
+    f.db.run("UPDATE extension SET source_root_fingerprint = 'root-fp' WHERE id = ?", [f.id]);
+    const table = [entryFor(f, "root-fp")];
+    await approveExtensionRun(f.id, {
+      db: f.db,
+      env: f.env,
+      gate: async () => true,
+      runtimeEnabled: true,
+      now: () => 1,
+      continuityTable: table,
+    });
+    // Bound at approval and at spawn: the legacy key is what the spawn reads.
+    const v = await readVerifiedExtensionForSpawn(f.id, { ...deps(f), continuityTable: table });
+    expect(v.credentials).toEqual({ token: { env: "READWISE_TOKEN", vaultKey: "readwise.token" } });
+    // The same grant read against a table that no longer binds it (production's empty default)
+    // re-resolves to the extension's own key, which is not what was approved.
+    await expectCode(readVerifiedExtensionForSpawn(f.id, deps(f)), "ERR_EXTENSION_RUN_CHANGED");
+    // And a source whose root fingerprint changed after approval no longer binds either.
+    f.db.run("UPDATE extension SET source_root_fingerprint = 'other' WHERE id = ?", [f.id]);
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, { ...deps(f), continuityTable: table }),
+      "ERR_EXTENSION_RUN_CHANGED",
+    );
   });
 });

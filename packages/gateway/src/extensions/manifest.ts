@@ -7,6 +7,7 @@ import {
   type SandboxPermissions,
   validateAndNormalizePermissions,
 } from "./permissions-validator.ts";
+import { isExtensionBaselineEnvKey } from "./spawn-env.ts";
 
 export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";
 
@@ -162,7 +163,13 @@ function parseDependsOn(value: unknown): Readonly<Record<string, string>> | unde
 
 const SYNC_NAME_RE = /^[a-z][a-z0-9_]{0,31}$/;
 const CREDENTIAL_ENV_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
-const RESERVED_ENV_PREFIXES = ["NIMBUS_", "BUN_", "NODE_"] as const;
+/**
+ * A credential env name is refused when it could change what the child RUNS rather than carry a
+ * secret: the gateway's and the runtimes' own namespaces, the dynamic loaders' injection variables
+ * (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, ...), Windows command resolution, and every baseline key
+ * `extensionProcessEnv` copies, which a credential of that name would overwrite.
+ */
+const RESERVED_ENV_PREFIXES = ["NIMBUS_", "BUN_", "NODE_", "LD_", "DYLD_"] as const;
 const RESERVED_ENV_NAMES: ReadonlySet<string> = new Set([
   "PATH",
   "HOME",
@@ -171,6 +178,8 @@ const RESERVED_ENV_NAMES: ReadonlySet<string> = new Set([
   "TMP",
   "TMPDIR",
   "SYSTEMROOT",
+  "COMSPEC",
+  "PATHEXT",
 ]);
 const MIN_SYNC_INTERVAL_SECONDS = 60;
 
@@ -220,7 +229,11 @@ function parseSync(value: unknown): ExtensionSyncManifest | undefined {
 }
 
 function isReservedEnv(env: string): boolean {
-  return RESERVED_ENV_NAMES.has(env) || RESERVED_ENV_PREFIXES.some((p) => env.startsWith(p));
+  return (
+    RESERVED_ENV_NAMES.has(env) ||
+    isExtensionBaselineEnvKey(env) ||
+    RESERVED_ENV_PREFIXES.some((p) => env.startsWith(p))
+  );
 }
 
 function parseCredentials(value: unknown): ExtensionCredentialDecls | undefined {

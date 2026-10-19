@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { parseExtensionManifestForRegistry, parseExtensionManifestJson } from "./manifest.ts";
+import { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./spawn-env.ts";
 
 describe("parseExtensionManifestJson", () => {
   test("parses minimal manifest", () => {
@@ -279,6 +280,40 @@ describe("parseExtensionManifestJson — sync + credentials", () => {
   test("refuses reserved env var NODE_OPTIONS", () => {
     for (const env of ["NODE_OPTIONS", "NIMBUS_X", "BUN_X", "PATH", "HOME", "TMPDIR", "lower"]) {
       expect(() => parse({ credentials: { token: { env } } })).toThrow(/env/);
+    }
+  });
+
+  test("refuses dynamic-loader injection variables (LD_*, DYLD_*)", () => {
+    for (const env of [
+      "LD_PRELOAD",
+      "LD_LIBRARY_PATH",
+      "LD_AUDIT",
+      "DYLD_INSERT_LIBRARIES",
+      "DYLD_X",
+    ]) {
+      expect(() => parse({ credentials: { token: { env } } })).toThrow(/reserved/);
+    }
+  });
+
+  test("refuses Windows command-resolution variables COMSPEC and PATHEXT", () => {
+    for (const env of ["COMSPEC", "PATHEXT"]) {
+      expect(() => parse({ credentials: { token: { env } } })).toThrow(/reserved/);
+    }
+  });
+
+  test("refuses every extensionProcessEnv baseline key (a credential would overwrite it)", () => {
+    for (const env of BASELINE_KEYS) {
+      expect(() => parse({ credentials: { token: { env } } })).toThrow(/reserved/);
+    }
+    // Including the ones the older hand-written list missed.
+    for (const env of ["APPDATA", "LOCALAPPDATA", "LANG", "TZ", "BUN_INSTALL"]) {
+      expect(isExtensionBaselineEnvKey(env)).toBe(true);
+    }
+  });
+
+  test("a name merely containing a reserved fragment is still accepted", () => {
+    for (const env of ["MY_LD_TOKEN", "API_PATH", "XDYLD_KEY", "COMSPEC_TOKEN"]) {
+      expect(parse({ credentials: { token: { env } } }).credentials).toEqual({ token: { env } });
     }
   });
 
