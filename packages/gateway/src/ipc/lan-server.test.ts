@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import {
+  connectLan,
+  fakePairing,
+  framed,
+  openV2Session,
+  v2Hello,
+  v2PairRequest,
+  v2Rpc,
+} from "../../test/helpers/lan-v2-test-client.ts";
 import { processListeners } from "../locality/listener-registry.ts";
-import { generateBoxKeypair, openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
+import { generateBoxKeypair } from "./lan-crypto.ts";
 import { LanServer } from "./lan-server.ts";
 
 let server: LanServer | undefined;
@@ -13,13 +22,7 @@ function makeServer(): LanServer {
     onMessage: async () => ({}),
     isKnownPeer: () => null,
     rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-    pairing: {
-      isOpen: () => false,
-      consume: () => false,
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
-    },
+    pairing: fakePairing(null),
     registerPeer: () => "peer-id",
   });
 }
@@ -67,77 +70,9 @@ async function sendEncryptedRpc(
   serverPort: number,
   msg: { id: number; method: string; params?: unknown },
 ): Promise<{ result?: unknown; error?: { code: string; message: string } }> {
-  const payload = new TextEncoder().encode(JSON.stringify(msg));
-  const frame = sealBoxFrame(payload, serverPubkey, clientKeypair.secretKey);
-  const header = new Uint8Array(4);
-  new DataView(header.buffer).setUint32(0, frame.length, false);
-
-  const helloMsg = JSON.stringify({
-    kind: "hello",
-    client_pubkey: Buffer.from(clientKeypair.publicKey).toString("base64"),
-  });
-  const helloBytes = new TextEncoder().encode(helloMsg);
-  const helloHeader = new Uint8Array(4);
-  new DataView(helloHeader.buffer).setUint32(0, helloBytes.length, false);
-
-  let buffer = new Uint8Array(0);
-
-  return new Promise((resolve, reject) => {
-    const conn = Bun.connect({
-      hostname: "127.0.0.1",
-      port: serverPort,
-      socket: {
-        open(socket) {
-          socket.write(helloHeader);
-          socket.write(helloBytes);
-        },
-        data(socket, chunk) {
-          try {
-            const merged = new Uint8Array(buffer.length + chunk.length);
-            merged.set(buffer, 0);
-            merged.set(chunk, buffer.length);
-            buffer = merged;
-
-            while (buffer.length >= 4) {
-              const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-              const len = view.getUint32(0, false);
-              if (buffer.length < 4 + len) {
-                return;
-              }
-              const body = buffer.slice(4, 4 + len);
-              buffer = buffer.slice(4 + len);
-
-              const text = new TextDecoder().decode(body);
-              if (text.includes("hello_ok")) {
-                socket.write(header);
-                socket.write(frame);
-              } else {
-                const plain = openBoxFrame(body, serverPubkey, clientKeypair.secretKey);
-                resolve(
-                  JSON.parse(new TextDecoder().decode(plain)) as {
-                    result?: unknown;
-                    error?: { code: string; message: string };
-                  },
-                );
-                socket.end();
-                return;
-              }
-            }
-          } catch (e) {
-            reject(e instanceof Error ? e : new Error(String(e)));
-          }
-        },
-        error(_, err) {
-          reject(err);
-        },
-        close() {},
-      },
-    });
-    setTimeout(() => {
-      conn.then((s) => s.end());
-      reject(new Error("timeout"));
-    }, 3000);
-  });
+  const resp = await v2Rpc(serverPort, clientKeypair, serverPubkey, msg);
+  if (resp === null) throw new Error("no encrypted reply");
+  return resp;
 }
 
 describe("LanServer gate (G4)", () => {
@@ -165,13 +100,7 @@ describe("LanServer gate (G4)", () => {
       },
       isKnownPeer: () => ({ peerId: "test-peer", writeAllowed: false }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(null),
       registerPeer: () => "test-peer",
     });
     await server.start();
@@ -242,13 +171,7 @@ async function buildBareLanServer(
       recordFailure: rateLimit?.recordFailure ?? (() => {}),
       recordSuccess: () => {},
     },
-    pairing: {
-      isOpen: () => false,
-      consume: () => false,
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
-    },
+    pairing: fakePairing(null),
     registerPeer: () => "p",
   });
 }
@@ -344,13 +267,7 @@ describe("LanServer oversized frame post-handshake", () => {
         recordFailure: (ip) => recordedFailures.push(ip),
         recordSuccess: () => {},
       },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(null),
       registerPeer: () => "post-hs-peer",
     });
     await svr.start();
@@ -358,10 +275,7 @@ describe("LanServer oversized frame post-handshake", () => {
 
     let closed = false;
     await new Promise<void>((resolve) => {
-      const helloMsg = JSON.stringify({
-        kind: "hello",
-        client_pubkey: Buffer.from(clientKeypair.publicKey).toString("base64"),
-      });
+      const helloMsg = v2Hello(clientKeypair).json;
       const helloBytes = new TextEncoder().encode(helloMsg);
       const helloHeader = new Uint8Array(4);
       new DataView(helloHeader.buffer).setUint32(0, helloBytes.length, false);
@@ -483,13 +397,7 @@ describe("LanServer.handleHandshake — additional guard branches", () => {
       onMessage: async () => ({}),
       isKnownPeer: () => null,
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(null),
       registerPeer: () => "p",
     });
     await svr.start();
@@ -512,7 +420,7 @@ describe("LanServer.handleHandshake — additional guard branches", () => {
   // line=136 block=9 branch=0: client_pubkey is not a string
   test("closes without reply when client_pubkey is missing (line=136 branch=0)", async () => {
     const port = await startHandshakeServer();
-    const reply = await sendRawHandshakePayload(port, JSON.stringify({ kind: "hello" }));
+    const reply = await sendRawHandshakePayload(port, JSON.stringify({ kind: "hello", v: 2 }));
     expect(reply).toBeNull();
   });
 
@@ -523,14 +431,14 @@ describe("LanServer.handleHandshake — additional guard branches", () => {
     const shortPub = Buffer.from(new Uint8Array(16).fill(2)).toString("base64");
     const reply = await sendRawHandshakePayload(
       port,
-      JSON.stringify({ kind: "hello", client_pubkey: shortPub }),
+      JSON.stringify({ kind: "hello", v: 2, client_pubkey: shortPub }),
     );
     expect(reply).toBeNull();
   });
 
-  // line=164 block=16 branch=0: pairing window open, code present, but consume() returns false
-  test("replies pair_err and records failure when consume() returns false (line=164 branch=0)", async () => {
+  test("replies pair_err and records failure when the pairing proof does not match the open code", async () => {
     const failures: string[] = [];
+    let registered = 0;
     svr = new LanServer({
       bind: "127.0.0.1",
       port: 0,
@@ -542,25 +450,23 @@ describe("LanServer.handleHandshake — additional guard branches", () => {
         recordFailure: (ip) => failures.push(ip),
         recordSuccess: () => {},
       },
-      pairing: {
-        isOpen: () => true, // window IS open
-        consume: () => false, // but code is wrong — consume returns false
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
+      pairing: fakePairing("the-real-code"), // window IS open
+      registerPeer: () => {
+        registered += 1;
+        return "p";
       },
-      registerPeer: () => "p",
     });
     await svr.start();
     const port = svr.listenAddr()!.port;
 
-    const validPub = Buffer.from(new Uint8Array(32).fill(5)).toString("base64");
+    // A proof computed over the WRONG code.
     const reply = await sendRawHandshakePayload(
       port,
-      JSON.stringify({ kind: "pair", client_pubkey: validPub, pairing_code: "wrong-code" }),
+      v2PairRequest(generateBoxKeypair(), "wrong-code"),
     );
     expect(reply?.kind).toBe("pair_err");
     expect(failures).toHaveLength(1);
+    expect(registered).toBe(0);
   });
 });
 
@@ -580,81 +486,7 @@ async function sendEncryptedPayload(
   serverPort: number,
   plaintext: string,
 ): Promise<{ result?: unknown; error?: { code: string; message: string } } | null> {
-  const payload = new TextEncoder().encode(plaintext);
-  const frame = sealBoxFrame(payload, hostPubkey, clientKeypair.secretKey);
-  const frameHeader = new Uint8Array(4);
-  new DataView(frameHeader.buffer).setUint32(0, frame.length, false);
-
-  const helloMsg = JSON.stringify({
-    kind: "hello",
-    client_pubkey: Buffer.from(clientKeypair.publicKey).toString("base64"),
-  });
-  const helloBytes = new TextEncoder().encode(helloMsg);
-  const helloHeader = new Uint8Array(4);
-  new DataView(helloHeader.buffer).setUint32(0, helloBytes.length, false);
-
-  return new Promise((resolve) => {
-    let phase: "hello" | "rpc" = "hello";
-    // Reassemble length-prefixed frames: the server writes the 4-byte header and
-    // the payload as two separate socket.write() calls, which TCP may deliver split
-    // across data callbacks (or coalesced). Buffer bytes and only act on complete frames.
-    let buf = new Uint8Array(0);
-    const conn = Bun.connect({
-      hostname: "127.0.0.1",
-      port: serverPort,
-      socket: {
-        open(socket) {
-          socket.write(helloHeader);
-          socket.write(helloBytes);
-        },
-        data(socket, chunk) {
-          const merged = new Uint8Array(buf.length + chunk.length);
-          merged.set(buf, 0);
-          merged.set(chunk, buf.length);
-          buf = merged;
-          while (buf.length >= 4) {
-            const len = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getUint32(
-              0,
-              false,
-            );
-            if (buf.length < 4 + len) break; // wait for the rest of the frame
-            const body = buf.slice(4, 4 + len);
-            buf = buf.slice(4 + len);
-            if (phase === "hello") {
-              if (new TextDecoder().decode(body).includes("hello_ok")) {
-                phase = "rpc";
-                socket.write(frameHeader);
-                socket.write(frame);
-              }
-            } else {
-              try {
-                const plain = openBoxFrame(body, hostPubkey, clientKeypair.secretKey);
-                const parsed = JSON.parse(new TextDecoder().decode(plain)) as {
-                  result?: unknown;
-                  error?: { code: string; message: string };
-                };
-                resolve(parsed);
-              } catch {
-                resolve(null);
-              }
-              socket.end();
-              return;
-            }
-          }
-        },
-        error() {
-          resolve(null);
-        },
-        close() {
-          resolve(null);
-        },
-      },
-    });
-    setTimeout(() => {
-      conn.then((s) => s.end()).catch(() => {});
-      resolve(null);
-    }, 3_000);
-  });
+  return v2Rpc(serverPort, clientKeypair, hostPubkey, JSON.parse(plaintext));
 }
 
 describe("LanServer.handleEncryptedMessage — method and error branches", () => {
@@ -676,13 +508,7 @@ describe("LanServer.handleEncryptedMessage — method and error branches", () =>
       onMessage: async (method) => onMsg(method),
       isKnownPeer: () => ({ peerId: "enc-peer", writeAllowed: true }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(null),
       registerPeer: () => "enc-peer",
     });
     await svr.start();
@@ -718,13 +544,7 @@ describe("LanServer.handleEncryptedMessage — method and error branches", () =>
       },
       isKnownPeer: () => ({ peerId: "enc-peer2", writeAllowed: true }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(null),
       registerPeer: () => "enc-peer2",
     });
     await svr.start();
@@ -757,13 +577,7 @@ describe("LanServer.handleEncryptedMessage — method and error branches", () =>
       },
       isKnownPeer: () => ({ peerId: "enc-peer3", writeAllowed: true }),
       rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-      pairing: {
-        isOpen: () => false,
-        consume: () => false,
-        open: () => {},
-        close: () => {},
-        getExpiresAt: () => undefined,
-      },
+      pairing: fakePairing(null),
       registerPeer: () => "enc-peer3",
     });
     await svr.start();
@@ -794,3 +608,174 @@ describe("LanServer.handleEncryptedMessage — method and error branches", () =>
 //     set together (lines 171-172 and 192-193), so this guard is structurally
 //     unreachable without corrupting internal state.
 //
+
+// ---------------------------------------------------------------------------
+// LAN protocol v2 security properties (code audit 2026-10-19, S2 + S3)
+// ---------------------------------------------------------------------------
+
+describe("LAN protocol v2 — replay, downgrade and pairing", () => {
+  let svr: LanServer | undefined;
+
+  afterEach(async () => {
+    await svr?.stop();
+    svr = undefined;
+  });
+
+  async function startV2Server(opts: {
+    calls?: string[];
+    pairing?: ReturnType<typeof fakePairing>;
+    registered?: string[];
+  }): Promise<{ hostKeypair: ReturnType<typeof generateBoxKeypair>; port: number }> {
+    const hostKeypair = generateBoxKeypair();
+    svr = new LanServer({
+      bind: "127.0.0.1",
+      port: 0,
+      hostKeypair,
+      onMessage: async (method) => {
+        opts.calls?.push(method);
+        return { ok: true };
+      },
+      isKnownPeer: () => ({ peerId: "v2-peer", writeAllowed: true }),
+      rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
+      pairing: opts.pairing ?? fakePairing(null),
+      registerPeer: (pk) => {
+        opts.registered?.push(Buffer.from(pk).toString("hex"));
+        return "v2-peer";
+      },
+    });
+    await svr.start();
+    return { hostKeypair, port: svr.listenAddr()!.port };
+  }
+
+  test("a frame recorded on one connection is refused when replayed on a new one", async () => {
+    const calls: string[] = [];
+    const { hostKeypair, port } = await startV2Server({ calls });
+    const clientKp = generateBoxKeypair();
+
+    // Connection A: a legitimate RPC, whose sealed frame an eavesdropper records.
+    const a = await openV2Session(port, clientKp, hostKeypair.publicKey);
+    if (a.session === null) throw new Error("hello refused");
+    const recorded = a.session.seal({ id: 1, method: "connector.remove", params: {} });
+    a.conn.send(framed(recorded));
+    expect(a.session.open((await a.conn.nextFrame()) ?? new Uint8Array())).toMatchObject({ id: 1 });
+    a.conn.end();
+    expect(calls).toEqual(["connector.remove"]);
+
+    // Connection B: a fresh hello (the replayer can produce one: it is unauthenticated text),
+    // then the recorded frame. B's session key differs, so the frame does not open.
+    const b = await openV2Session(port, clientKp, hostKeypair.publicKey);
+    expect(b.session).not.toBeNull();
+    b.conn.send(framed(recorded));
+    expect(await b.conn.closed()).toBe(true);
+    expect(calls).toEqual(["connector.remove"]);
+  });
+
+  test("replaying a frame within its own connection (sequence reuse) closes it; the RPC runs once", async () => {
+    const calls: string[] = [];
+    const { hostKeypair, port } = await startV2Server({ calls });
+    const clientKp = generateBoxKeypair();
+    const { conn, session } = await openV2Session(port, clientKp, hostKeypair.publicKey);
+    if (session === null) throw new Error("hello refused");
+    const frame = session.seal({ id: 1, method: "workflow.run", params: {} }, 0);
+    conn.send(framed(frame));
+    expect(await conn.nextFrame()).not.toBeNull();
+    conn.send(framed(frame)); // seq 0 again; the server expects seq 1
+    expect(await conn.closed()).toBe(true);
+    expect(calls).toEqual(["workflow.run"]);
+  });
+
+  test("consecutive frames on one connection each get an answer (the counters advance)", async () => {
+    const calls: string[] = [];
+    const { hostKeypair, port } = await startV2Server({ calls });
+    const clientKp = generateBoxKeypair();
+    const { conn, session } = await openV2Session(port, clientKp, hostKeypair.publicKey);
+    if (session === null) throw new Error("hello refused");
+    for (const id of [1, 2, 3]) {
+      conn.send(framed(session.seal({ id, method: "status.list", params: {} })));
+      expect(session.open((await conn.nextFrame()) ?? new Uint8Array())).toMatchObject({ id });
+    }
+    conn.end();
+    expect(calls).toHaveLength(3);
+  });
+
+  test("a v1 hello (no version, no ephemeral key) is refused as protocol_version", async () => {
+    const calls: string[] = [];
+    const { port } = await startV2Server({ calls });
+    const conn = await connectLan(port);
+    conn.send(
+      framed(
+        JSON.stringify({
+          kind: "hello",
+          client_pubkey: Buffer.from(generateBoxKeypair().publicKey).toString("base64"),
+        }),
+      ),
+    );
+    expect(await conn.nextJson<Record<string, unknown>>()).toEqual({
+      kind: "hello_err",
+      reason: "protocol_version",
+    });
+    expect(await conn.closed()).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a v1 pair carrying a cleartext pairing_code is refused and never registers a peer", async () => {
+    const registered: string[] = [];
+    const pairing = fakePairing("OPEN-CODE");
+    const { port } = await startV2Server({ registered, pairing });
+    const conn = await connectLan(port);
+    conn.send(
+      framed(
+        JSON.stringify({
+          kind: "pair",
+          client_pubkey: Buffer.from(generateBoxKeypair().publicKey).toString("base64"),
+          pairing_code: "OPEN-CODE",
+        }),
+      ),
+    );
+    expect(await conn.nextJson<Record<string, unknown>>()).toEqual({
+      kind: "pair_err",
+      reason: "protocol_version",
+    });
+    expect(registered).toHaveLength(0);
+    // The window was not consumed by the refused request.
+    expect(pairing.isOpen()).toBe(true);
+  });
+
+  test("a v2 hello whose client_eph is missing is refused before any session exists", async () => {
+    const { port } = await startV2Server({});
+    const conn = await connectLan(port);
+    conn.send(
+      framed(
+        JSON.stringify({
+          kind: "hello",
+          v: 2,
+          client_pubkey: Buffer.from(generateBoxKeypair().publicKey).toString("base64"),
+        }),
+      ),
+    );
+    expect(await conn.nextJson<Record<string, unknown>>()).toEqual({ kind: "hello_err" });
+  });
+
+  test("a v2 pair request never carries the pairing code, and pairing ends the connection", async () => {
+    const registered: string[] = [];
+    const code = "Zx9QpairCODEonlyHere1";
+    const pairing = fakePairing(code);
+    const { hostKeypair, port } = await startV2Server({ registered, pairing });
+    const clientKp = generateBoxKeypair();
+    const request = v2PairRequest(clientKp, code);
+    expect(request).not.toContain(code);
+    expect(Buffer.from(framed(request)).includes(Buffer.from(code))).toBe(false);
+
+    const conn = await connectLan(port);
+    conn.send(framed(request));
+    const reply = await conn.nextJson<Record<string, unknown>>();
+    expect(reply?.["kind"]).toBe("pair_ok");
+    expect(reply?.["host_pubkey"]).toBe(Buffer.from(hostKeypair.publicKey).toString("base64"));
+    expect(typeof reply?.["host_proof"]).toBe("string");
+    expect(JSON.stringify(reply)).not.toContain(code);
+    expect(registered).toEqual([Buffer.from(clientKp.publicKey).toString("hex")]);
+    // Single use, and no RPC rides the pairing connection.
+    expect(pairing.isOpen()).toBe(false);
+    expect(await conn.closed()).toBe(true);
+  });
+});

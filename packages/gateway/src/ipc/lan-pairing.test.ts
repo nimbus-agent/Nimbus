@@ -67,3 +67,40 @@ describe("PairingWindow", () => {
     expect(w.getExpiresAt()).toBeNull();
   });
 });
+
+describe("PairingWindow.consumeMatching (LAN v2 proof pairing)", () => {
+  test("a matching proof consumes the code once and hands it back", () => {
+    const w = new PairingWindow(5_000);
+    w.open("code-1");
+    expect(w.consumeMatching((c) => c === "code-1")).toBe("code-1");
+    expect(w.isOpen()).toBe(false);
+    expect(w.consumeMatching(() => true)).toBeNull();
+  });
+
+  test("a non-matching proof leaves the window open", () => {
+    const w = new PairingWindow(5_000);
+    w.open("code-1");
+    expect(w.consumeMatching(() => false)).toBeNull();
+    expect(w.isOpen()).toBe(true);
+  });
+
+  test("an expired window closes and never asks the matcher", () => {
+    let now = 0;
+    const w = new PairingWindow(5_000, () => now);
+    w.open("code-1");
+    now = 5_001;
+    let asked = false;
+    expect(
+      w.consumeMatching(() => {
+        asked = true;
+        return true;
+      }),
+    ).toBeNull();
+    expect(asked).toBe(false);
+    expect(w.getExpiresAt()).toBeNull();
+  });
+
+  test("a closed window returns null", () => {
+    expect(new PairingWindow(5_000).consumeMatching(() => true)).toBeNull();
+  });
+});

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type BoxKeypair, generateBoxKeypair } from "./lan-crypto.ts";
+import { fakePairing } from "../../test/helpers/lan-v2-test-client.ts";
+import { type BoxKeypair, generateBoxKeypair, pairingProof } from "./lan-crypto.ts";
 import { LanServer, type LanServerOptions } from "./lan-server.ts";
 
 let server: LanServer | undefined;
@@ -31,13 +32,7 @@ async function startServer(
     onMessage: async () => ({}),
     isKnownPeer: isKnown,
     rateLimit: rate,
-    pairing: {
-      isOpen: () => false,
-      consume: () => false,
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
-    },
+    pairing: fakePairing(null),
     registerPeer: () => "peer-id",
   });
   await server.start();
@@ -53,7 +48,11 @@ function sendHandshake(
 ): Promise<{ kind?: string } | null> {
   const msg = JSON.stringify({
     kind,
+    v: 2,
     client_pubkey: Buffer.from(clientPubkey).toString("base64"),
+    ...(kind === "hello"
+      ? { client_eph: Buffer.from(generateBoxKeypair().publicKey).toString("base64") }
+      : { proof: Buffer.from(pairingProof("ANY", "client", clientPubkey)).toString("base64") }),
   });
   const bytes = new TextEncoder().encode(msg);
   const header = new Uint8Array(4);

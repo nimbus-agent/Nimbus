@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Socket, TCPSocketListener } from "bun";
+import { fakePairing } from "../../test/helpers/lan-v2-test-client.ts";
 import {
   buildFrame,
   exchangeOneFrame,
@@ -9,7 +10,12 @@ import {
   replyKindForMessage,
   sendFederatedOverWire,
 } from "./lan-client.ts";
-import { generateBoxKeypair, sealBoxFrame } from "./lan-crypto.ts";
+import {
+  deriveLanSessionKey,
+  generateBoxKeypair,
+  pairingProof,
+  sealSessionFrame,
+} from "./lan-crypto.ts";
 import { generatePairingCode, PairingWindow } from "./lan-pairing.ts";
 import { LanRateLimiter } from "./lan-rate-limit.ts";
 import { LanServer } from "./lan-server.ts";
@@ -306,7 +312,7 @@ async function startResponder(open: boolean) {
   if (open) pairingWindow.open(code);
   const pairing = {
     isOpen: () => pairingWindow.isOpen(),
-    consume: (c: string) => pairingWindow.consume(c),
+    consumeMatching: (m: (c: string) => boolean) => pairingWindow.consumeMatching(m),
     open: (c: string) => pairingWindow.open(c),
     close: () => pairingWindow.close(),
     getExpiresAt: () => pairingWindow.getExpiresAt() ?? undefined,
@@ -428,13 +434,7 @@ test("sendFederatedOverWire performs hello + encrypted RPC against a known peer"
     bind: "127.0.0.1",
     port: 0,
     hostKeypair: hostKp,
-    pairing: {
-      isOpen: () => false,
-      consume: () => false,
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
-    },
+    pairing: fakePairing(null),
     rateLimit: new LanRateLimiter({ maxFailures: 3, windowMs: 2000, lockoutMs: 2000 }),
     isKnownPeer: (pub) =>
       Buffer.compare(Buffer.from(pub), Buffer.from(selfKp.publicKey)) === 0
@@ -796,34 +796,46 @@ describe("sendFederatedOverWire — buildRpc guard branches", () => {
   test("rejects with trimmed 'lan-client: peer error' when error has no code or message", async () => {
     const rawHostKp = generateBoxKeypair();
     const selfKp = generateBoxKeypair();
-    let clientPub: Uint8Array | null = null;
+    let sessionKey: Uint8Array | null = null;
 
     const port = await startHelloRpcServer({
       onHello(socket, helloPayload) {
         // Parse the hello to capture the client's public key.
-        let msg: { kind?: string; client_pubkey?: string };
+        let msg: { kind?: string; client_pubkey?: string; client_eph?: string };
         try {
           msg = JSON.parse(new TextDecoder().decode(helloPayload)) as typeof msg;
         } catch {
           socket.end();
           return;
         }
-        clientPub = msg.client_pubkey
-          ? new Uint8Array(Buffer.from(msg.client_pubkey, "base64"))
-          : new Uint8Array(32);
+        // Play the host's half of the v2 handshake so the forged reply opens on the client.
+        const serverEph = generateBoxKeypair();
+        sessionKey = deriveLanSessionKey({
+          ownStatic: rawHostKp,
+          ownEphemeral: serverEph,
+          peerStaticPublic: new Uint8Array(Buffer.from(msg.client_pubkey ?? "", "base64")),
+          peerEphemeralPublic: new Uint8Array(Buffer.from(msg.client_eph ?? "", "base64")),
+          role: "host",
+        });
 
         // Reply with a valid hello_ok so the client advances to the RPC phase.
         const helloOk = JSON.stringify({
           kind: "hello_ok",
+          v: 2,
           host_pubkey: Buffer.from(rawHostKp.publicKey).toString("base64"),
+          server_eph: Buffer.from(serverEph.publicKey).toString("base64"),
         });
         writeRawFrame(socket, new TextEncoder().encode(helloOk));
       },
       onRpc(socket) {
         // Return a forged encrypted reply: { id: 1, error: {} } — no code/message.
-        const cp = clientPub ?? new Uint8Array(32);
         const forgedResp = new TextEncoder().encode(JSON.stringify({ id: 1, error: {} }));
-        const sealed = sealBoxFrame(forgedResp, cp, rawHostKp.secretKey);
+        const sealed = sealSessionFrame(
+          sessionKey ?? new Uint8Array(32),
+          "host_to_client",
+          0,
+          forgedResp,
+        );
         writeRawFrame(socket, sealed);
       },
     });
@@ -914,3 +926,128 @@ describe("outboundPairHandshake — guard branches", () => {
 //
 // D8. line=198 block=23 branch=1 — exchangeHelloThenRpc .catch non-Error.
 //     Same as D3.
+
+// ---------------------------------------------------------------------------
+// LAN protocol v2 — the client's half (code audit 2026-10-19, S2 + S3)
+// ---------------------------------------------------------------------------
+
+describe("outboundPairHandshake — v2 pairing proof", () => {
+  test("the pair request carries a proof of the code, never the code itself", async () => {
+    const code = generatePairingCode();
+    let sent: Uint8Array = new Uint8Array(0);
+    const port = await startDataServer((socket, chunk) => {
+      sent = chunk;
+      writeRawFrame(socket, new TextEncoder().encode(JSON.stringify({ kind: "pair_err" })));
+    });
+    const selfKp = generateBoxKeypair();
+    await expect(outboundPairHandshake("127.0.0.1", port, code, selfKp, 500)).rejects.toThrow(
+      "pairing rejected (pair_err)",
+    );
+    expect(sent.length).toBeGreaterThan(0);
+    expect(Buffer.from(sent).includes(Buffer.from(code))).toBe(false);
+    const body = JSON.parse(new TextDecoder().decode(sent.subarray(4))) as Record<string, unknown>;
+    expect(body).toMatchObject({ kind: "pair", v: 2 });
+    expect(body["pairing_code"]).toBeUndefined();
+    expect(body["proof"]).toBe(
+      Buffer.from(pairingProof(code, "client", selfKp.publicKey)).toString("base64"),
+    );
+  });
+
+  test("a man in the middle that substitutes its own host key is refused, and no key is returned", async () => {
+    // The MITM saw the client's proof but not the code, so it cannot produce a host proof for
+    // ITS key; the best it can do is replay some other proof (here: one over the wrong code).
+    const mitm = generateBoxKeypair();
+    const selfKp = generateBoxKeypair();
+    const code = generatePairingCode();
+    const port = await startDataServer((socket) => {
+      const reply = JSON.stringify({
+        kind: "pair_ok",
+        v: 2,
+        host_pubkey: Buffer.from(mitm.publicKey).toString("base64"),
+        host_proof: Buffer.from(
+          pairingProof("not-the-code", "host", selfKp.publicKey, mitm.publicKey),
+        ).toString("base64"),
+        peer_id: "x",
+      });
+      writeRawFrame(socket, new TextEncoder().encode(reply));
+    });
+    await expect(outboundPairHandshake("127.0.0.1", port, code, selfKp, 500)).rejects.toThrow(
+      "lan-client: responder could not prove it holds the pairing code",
+    );
+  });
+
+  test("a pair_ok with no host_proof at all is refused", async () => {
+    const port = await startDataServer((socket) => {
+      const reply = JSON.stringify({
+        kind: "pair_ok",
+        host_pubkey: Buffer.from(generateBoxKeypair().publicKey).toString("base64"),
+      });
+      writeRawFrame(socket, new TextEncoder().encode(reply));
+    });
+    await expect(
+      outboundPairHandshake("127.0.0.1", port, "code", generateBoxKeypair(), 500),
+    ).rejects.toThrow("could not prove it holds the pairing code");
+  });
+
+  test("against a real responder: the host proof verifies and the real host key is returned", async () => {
+    const { hostKp, code, port } = await startResponder(true);
+    const hostPub = await outboundPairHandshake("127.0.0.1", port, code, generateBoxKeypair());
+    expect(Buffer.from(hostPub).equals(Buffer.from(hostKp.publicKey))).toBe(true);
+  });
+});
+
+describe("sendFederatedOverWire — v2 session", () => {
+  test("a responder that answers hello_ok without v2 session material gets no RPC", async () => {
+    const hostKp = generateBoxKeypair();
+    let rpcFrames = 0;
+    const port = await startHelloRpcServer({
+      onHello(socket) {
+        // A v1 responder: the pinned key, but no version and no ephemeral key.
+        const msg = JSON.stringify({
+          kind: "hello_ok",
+          host_pubkey: Buffer.from(hostKp.publicKey).toString("base64"),
+        });
+        writeRawFrame(socket, new TextEncoder().encode(msg));
+      },
+      onRpc() {
+        rpcFrames += 1;
+      },
+    });
+    await expect(
+      sendFederatedOverWire(
+        "127.0.0.1",
+        port,
+        generateBoxKeypair(),
+        hostKp.publicKey,
+        "federation.query",
+        {},
+        500,
+      ),
+    ).rejects.toThrow("does not speak LAN protocol v2");
+    expect(rpcFrames).toBe(0);
+  });
+
+  test("the hello carries a fresh ephemeral key per call", async () => {
+    const hellos: string[] = [];
+    const selfKp = generateBoxKeypair();
+    const peer = generateBoxKeypair().publicKey;
+    for (let i = 0; i < 2; i++) {
+      // A fresh listener per call: startHelloRpcServer tracks one connection's phase.
+      const port = await startHelloRpcServer({
+        onHello(socket, payload) {
+          hellos.push(
+            (JSON.parse(new TextDecoder().decode(payload)) as { client_eph?: string }).client_eph ??
+              "",
+          );
+          socket.end();
+        },
+      });
+      await sendFederatedOverWire("127.0.0.1", port, selfKp, peer, "m", {}, 500).catch(() => {});
+      rawServer?.stop(true);
+      rawServer = undefined;
+    }
+    expect(hellos).toHaveLength(2);
+    expect(hellos[0]).not.toBe(hellos[1]);
+    expect(Buffer.from(hellos[0] ?? "", "base64")).toHaveLength(32);
+  });
+});

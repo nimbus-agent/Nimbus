@@ -1,11 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import type { Socket } from "bun";
-import { type BoxKeypair, generateBoxKeypair, sealBoxFrame } from "../../../src/ipc/lan-crypto.ts";
+import {
+  type BoxKeypair,
+  generateBoxKeypair,
+  pairingProof,
+  pairingProofMatches,
+} from "../../../src/ipc/lan-crypto.ts";
 import { generatePairingCode, PairingWindow } from "../../../src/ipc/lan-pairing.ts";
 import { LanRateLimiter } from "../../../src/ipc/lan-rate-limit.ts";
 import { checkLanMethodAllowed } from "../../../src/ipc/lan-rpc.ts";
 import { LanServer } from "../../../src/ipc/lan-server.ts";
+import {
+  connectLan,
+  framed,
+  openV2Session,
+  v2PairRequest,
+} from "../../helpers/lan-v2-test-client.ts";
 
 interface TestHost {
   server: LanServer;
@@ -48,13 +58,6 @@ async function spinUpHost(port: number): Promise<TestHost> {
   return { server, pairing, rateLimit, hostKp, peers };
 }
 
-function writeFrame(socket: Socket<undefined>, payload: Uint8Array): void {
-  const header = new Uint8Array(4);
-  new DataView(header.buffer).setUint32(0, payload.length, false);
-  socket.write(header);
-  socket.write(payload);
-}
-
 describe("LAN end-to-end pair → read → write → tamper", () => {
   let host: TestHost;
   beforeEach(async () => {
@@ -64,7 +67,7 @@ describe("LAN end-to-end pair → read → write → tamper", () => {
     await host.server.stop();
   });
 
-  test("full 9-step flow", async () => {
+  test("full flow: pair, open a session, read, write, tamper", async () => {
     const listen = host.server.listenAddr();
     if (!listen) throw new Error("no listen addr");
 
@@ -73,63 +76,66 @@ describe("LAN end-to-end pair → read → write → tamper", () => {
     const code = generatePairingCode();
     host.pairing.open(code);
 
-    const sock = await Bun.connect<undefined>({
-      hostname: "127.0.0.1",
-      port: listen.port,
-      socket: { data() {}, open() {}, close() {}, error() {} },
-    });
-    writeFrame(
-      sock,
-      new TextEncoder().encode(
-        JSON.stringify({
-          kind: "pair",
-          client_pubkey: Buffer.from(clientKp.publicKey).toString("base64"),
-          pairing_code: code,
-        }),
+    // 1. Pair on its own connection. The host answers with its key and a proof bound to it.
+    const pairConn = await connectLan(listen.port);
+    pairConn.send(framed(v2PairRequest(clientKp, code)));
+    const pairOk = await pairConn.nextJson<Record<string, unknown>>();
+    expect(pairOk?.["kind"]).toBe("pair_ok");
+    expect(
+      pairingProofMatches(
+        pairingProof(code, "host", clientKp.publicKey, host.hostKp.publicKey),
+        new Uint8Array(Buffer.from(String(pairOk?.["host_proof"]), "base64")),
       ),
-    );
-
-    await Bun.sleep(50);
+    ).toBe(true);
+    expect(await pairConn.closed()).toBe(true);
     expect(host.peers.size).toBe(1);
+    expect(host.pairing.isOpen()).toBe(false); // single use
 
+    // 2. Open a session and read.
+    const { conn, session } = await openV2Session(listen.port, clientKp, host.hostKp.publicKey);
+    if (session === null) throw new Error("hello refused");
+    conn.send(framed(session.seal({ id: 1, method: "index.search", params: { q: "x" } })));
+    expect(
+      session.open<Record<string, unknown>>((await conn.nextFrame()) ?? new Uint8Array()),
+    ).toEqual({
+      id: 1,
+      result: { ok: true, echo: "index.search" },
+    });
+
+    // 3. A write is refused until the owner grants it, then allowed on the same session.
+    conn.send(framed(session.seal({ id: 2, method: "engine.ask", params: {} })));
+    const refused = session.open((await conn.nextFrame()) ?? new Uint8Array());
+    expect(refused.id).toBe(2);
+    expect(refused.error?.message).toContain("ERR_LAN_WRITE_FORBIDDEN");
     const [peerId] = [...host.peers.keys()];
-    const readReq = sealBoxFrame(
-      new TextEncoder().encode(
-        JSON.stringify({ id: 1, method: "index.search", params: { q: "x" } }),
-      ),
-      host.hostKp.publicKey,
-      clientKp.secretKey,
-    );
-    writeFrame(sock, readReq);
-    await Bun.sleep(50);
-
-    expect(peerId).toBeDefined();
     if (!peerId) throw new Error("no peerId");
     const peer = host.peers.get(peerId);
     if (!peer) throw new Error("peer not registered");
     peer.writeAllowed = true;
-
-    const writeReq = sealBoxFrame(
-      new TextEncoder().encode(JSON.stringify({ id: 2, method: "engine.ask", params: {} })),
-      host.hostKp.publicKey,
-      clientKp.secretKey,
+    // The grant is read when a session opens, so the open session keeps its read-only grant ...
+    conn.send(framed(session.seal({ id: 3, method: "engine.ask", params: {} })));
+    expect(session.open((await conn.nextFrame()) ?? new Uint8Array()).error?.message).toContain(
+      "ERR_LAN_WRITE_FORBIDDEN",
     );
-    writeFrame(sock, writeReq);
-    await Bun.sleep(50);
+    conn.end();
+    // ... and the next session gets the write.
+    const next = await openV2Session(listen.port, clientKp, host.hostKp.publicKey);
+    if (next.session === null) throw new Error("hello refused");
+    next.conn.send(framed(next.session.seal({ id: 4, method: "engine.ask", params: {} })));
+    expect(
+      next.session.open<Record<string, unknown>>((await next.conn.nextFrame()) ?? new Uint8Array()),
+    ).toEqual({
+      id: 4,
+      result: { ok: true, echo: "engine.ask" },
+    });
 
-    const tampered = sealBoxFrame(
-      new TextEncoder().encode(JSON.stringify({ id: 3, method: "index.search", params: {} })),
-      host.hostKp.publicKey,
-      clientKp.secretKey,
-    );
+    // 4. A tampered frame ends the session.
+    const tampered = next.session.seal({ id: 5, method: "index.search", params: {} });
     tampered[tampered.length - 1] = (tampered.at(-1) ?? 0) ^ 0xff;
-    writeFrame(sock, tampered);
-    await Bun.sleep(50);
-    sock.end();
+    next.conn.send(framed(tampered));
+    expect(await next.conn.closed()).toBe(true);
 
-    await Bun.sleep(2100);
-    expect(host.pairing.isOpen()).toBe(false);
-
+    // 5. Repeated handshake failures lock an address out.
     for (let i = 0; i < 4; i++) {
       host.rateLimit.recordFailure("192.0.2.3");
     }

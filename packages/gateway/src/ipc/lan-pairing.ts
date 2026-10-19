@@ -44,6 +44,24 @@ export class PairingWindow {
     return this.consumeAt(code, this.now());
   }
 
+  /**
+   * Consume the open code when `matches(code)` says the caller proved knowledge of it, and return
+   * the code so the caller can prove knowledge back. The LAN v2 pairing handshake never sends the
+   * code itself, only an HMAC over it, so the window cannot be asked "is this the code?". Expiry
+   * and single use work exactly as in {@link consume}.
+   */
+  consumeMatching(matches: (code: string) => boolean): string | null {
+    if (!this.code || this.openedAt === null) return null;
+    if (this.now() - this.openedAt > this.windowMs) {
+      this.close();
+      return null;
+    }
+    const code = this.code;
+    if (!matches(code)) return null;
+    this.close();
+    return code;
+  }
+
   consumeAt(code: string, nowMs: number): boolean {
     if (!this.code || this.openedAt === null) return false;
     if (nowMs - this.openedAt > this.windowMs) {

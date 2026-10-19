@@ -410,7 +410,7 @@ Team-vault secrets are **consumed** only via `federation/invoke-gate.ts` `answer
 
 ### `federation.*` — Team federation (Phase 6 Slice 1)
 
-Consent-scoped peer-to-peer federated query over the E2EE LAN channel. Over-the-wire answering goes through the `query-gate.ts` leak-proof gate (`I17`). LAN admits **only** `federation.query` / `federation.expertise`; all management methods are local/Tauri-only (`I5`), and `federation.pair` is CLI-only (out-of-band pairing code, same class as `lan.pair`).
+Consent-scoped peer-to-peer federated query over the E2EE LAN channel (protocol v2: a per-connection key from static + ephemeral X25519, counter nonces, so a recorded frame cannot be replayed; a v1 peer is refused). Over-the-wire answering goes through the `query-gate.ts` leak-proof gate (`I17`). LAN admits **only** `federation.query` / `federation.expertise`; all management methods are local/Tauri-only (`I5`), and `federation.pair` is CLI-only (out-of-band pairing code, same class as `lan.pair`).
 
 | Method | Type | Description |
 |---|---|---|
@@ -421,7 +421,7 @@ Consent-scoped peer-to-peer federated query over the E2EE LAN channel. Over-the-
 | `federation.peers` | request | List paired peers. Renderer-callable |
 | `federation.namespace.grant` / `.publish` / `.revoke` | request | Per-peer namespace RBAC grants. Renderer-callable |
 | `federation.consentRespond` | request | Owner's local consent decision for an over-the-wire query (`federation.consentRequest` is a notification delivered to the renderer) |
-| `federation.pair` | request | Mutual-approval peer pairing. **CLI-only** — transmits an out-of-band pairing code |
+| `federation.pair` | request | Mutual-approval peer pairing. **CLI-only** — takes an out-of-band pairing code; on the wire (LAN v2) only an HMAC proof of it is sent, and the host's reply proves it too before its key is pinned |
 
 ---
 

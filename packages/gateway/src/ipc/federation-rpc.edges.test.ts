@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
+import { fakePairing } from "../../test/helpers/lan-v2-test-client.ts";
 import { quorumCoordinator } from "../engine/quorum/quorum-singleton.ts";
 import { PeerPairing } from "../federation/peer-pairing.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
@@ -71,13 +72,7 @@ async function askerWithPeer(answers: Record<string, Answer>): Promise<{
     isKnownPeer: () => ({ peerId: "asker", writeAllowed: false }),
     registerPeer: () => "asker",
     rateLimit: { checkAllowed: () => true, recordFailure: () => {}, recordSuccess: () => {} },
-    pairing: {
-      isOpen: () => false,
-      consume: () => false,
-      open: () => {},
-      close: () => {},
-      getExpiresAt: () => undefined,
-    },
+    pairing: fakePairing(null),
   });
   await server.start();
   servers.push(server);

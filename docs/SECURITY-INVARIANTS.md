@@ -205,11 +205,11 @@ The comment at `search/vec-store.ts:16` documents that the virtual-table identif
 
 **Defense:** every comparison of a hash, signature, MAC, pairing code, or bearer token uses the canonical helpers exported from `packages/gateway/src/util/timing-safe-compare.ts` — never `===` or `!==`, and never a locally-defined `timingSafeEqual` / `constantTimeStringEqual` outside that module.
 
-**Wired at:** `packages/gateway/src/util/timing-safe-compare.ts` (canonical module — single source of truth). Call sites: `extensions/verify-extensions.ts` + `updater/updater.ts` consume `sha256HexEqualConstantTime`; `ipc/lan-pairing.ts` + `ipc/http-auth.ts` consume `constantTimeStringEqual`.
+**Wired at:** `packages/gateway/src/util/timing-safe-compare.ts` (canonical module — single source of truth). Call sites: `extensions/verify-extensions.ts` + `updater/updater.ts` consume `sha256HexEqualConstantTime`; `ipc/lan-pairing.ts` + `ipc/http-auth.ts` consume `constantTimeStringEqual`; `ipc/lan-crypto.ts` consumes `timingSafeEqualBytes` for the LAN v2 pairing proofs (an HMAC compared as bytes).
 
 **Anti-pattern:** `if (computed === expected)` for any value that an attacker can probe by timing. S6-F10 / S7-F8 were short-circuit equality on hashes. Redefining a local `timingSafeEqual` or `constantTimeStringEqual` outside `util/timing-safe-compare.ts` is the same anti-pattern — it creates a parallel, untested code path that future changes may regress silently.
 
-**How to comply:** import `sha256HexEqualConstantTime` (for SHA-256 hex strings) or `constantTimeStringEqual` (for arbitrary same-length strings including bearer tokens and pairing codes) from `util/timing-safe-compare.ts`. Never roll a local timing-safe helper; the module's length-mismatch burn cycle and Buffer coercion cover the edge cases.
+**How to comply:** import `sha256HexEqualConstantTime` (for SHA-256 hex strings), `constantTimeStringEqual` (for arbitrary same-length strings including bearer tokens and pairing codes) or `timingSafeEqualBytes` (for raw MACs and proofs) from `util/timing-safe-compare.ts`. Never roll a local timing-safe helper; the module's length-mismatch burn cycle and Buffer coercion cover the edge cases.
 
 ### Migrated rationale (2026-05-28)
 

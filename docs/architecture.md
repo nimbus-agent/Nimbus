@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Runtime:** Bun v1.2+ / TypeScript 7.x (strict)
-**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants I1–I45; schema V71.
+**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants I1–I45; schema V72.
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
 >
@@ -1882,7 +1882,7 @@ per-spawn copy.
 
 ### Extension registry client
 
-**PR 3 of 4 shipped 2026-10-18** (Phase 9.5 project 1; schema V71; I29 `registry` class, static D22(h); HITL type
+**PR 3 of 4 shipped 2026-10-18** (Phase 9.5 project 1; the V71 migration; I29 `registry` class, static D22(h); HITL type
 `registry.add`; I20 widened; no new invariant, the update daemon and I44 are PR 4). The registry FORMAT is described under
 [Extension Marketplace](#extension-marketplace--tauri-ui); this section is the client.
 

@@ -60,13 +60,13 @@ function peerIdFor(pubkey: Uint8Array): string {
 
 /**
  * Adapt a {@link PairingWindow} to the {@link PairingService} the LanServer expects.
- * Exported for testing — LanServer only invokes isOpen/consume during a handshake, so the
+ * Exported for testing — LanServer only invokes isOpen/consumeMatching during a handshake, so the
  * open/close/getExpiresAt arms are otherwise exercised only here.
  */
 export function pairingServiceFor(pairingWindow: PairingWindow): PairingService {
   return {
     isOpen: () => pairingWindow.isOpen(),
-    consume: (code) => pairingWindow.consume(code),
+    consumeMatching: (matches) => pairingWindow.consumeMatching(matches),
     open: (code) => pairingWindow.open(code),
     close: () => pairingWindow.close(),
     // PairingWindow returns number|null; PairingService expects number|undefined

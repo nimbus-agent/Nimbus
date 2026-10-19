@@ -474,9 +474,12 @@ test("pairingServiceFor adapts a PairingWindow to the PairingService interface",
   expect(svc.isOpen()).toBe(true);
   expect(typeof svc.getExpiresAt()).toBe("number");
 
-  // consume(): wrong code rejected, correct code accepted
-  expect(svc.consume("000000")).toBe(false);
-  expect(svc.consume(code)).toBe(true);
+  // consumeMatching(): a non-matching proof leaves the window open; a matching one consumes it
+  // and hands the code back (the LAN v2 host needs it to prove itself in reply)
+  expect(svc.consumeMatching((c) => c === "000000")).toBeNull();
+  expect(svc.isOpen()).toBe(true);
+  expect(svc.consumeMatching((c) => c === code)).toBe(code);
+  expect(svc.isOpen()).toBe(false);
 
   // close(): re-open then close clears the window
   svc.open(generatePairingCode());

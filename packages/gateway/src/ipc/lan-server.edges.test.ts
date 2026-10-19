@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type BoxKeypair, generateBoxKeypair, openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
+import {
+  fakePairing,
+  V2ClientSession,
+  v2Hello,
+  v2PairRequest,
+} from "../../test/helpers/lan-v2-test-client.ts";
+import {
+  type BoxKeypair,
+  generateBoxKeypair,
+  openSessionFrame,
+  sealSessionFrame,
+} from "./lan-crypto.ts";
 import {
   type LanPeerMatch,
   LanServer,
@@ -36,13 +47,7 @@ function frame(payload: Uint8Array): Uint8Array {
   return out;
 }
 
-const NO_PAIRING = {
-  isOpen: () => false,
-  consume: () => false,
-  open: () => {},
-  close: () => {},
-  getExpiresAt: () => undefined,
-};
+const NO_PAIRING = fakePairing(null);
 
 async function startServer(): Promise<{
   port: number;
@@ -88,7 +93,7 @@ type Outcome = { closedByServer: boolean; frames: string[] };
 function converse(
   port: number,
   first: Uint8Array,
-  afterHello?: (hostPub: Uint8Array) => Uint8Array,
+  afterHello?: (hostPub: Uint8Array, helloOk: { server_eph?: string }) => Uint8Array,
   endAfterFrames?: number,
 ): Promise<Outcome> {
   return new Promise((resolve) => {
@@ -126,10 +131,14 @@ function converse(
             const text = new TextDecoder().decode(body);
             frames.push(text);
             if (afterHello !== undefined && frames.length === 1) {
-              const reply = JSON.parse(text) as { kind?: string; host_pubkey?: string };
+              const reply = JSON.parse(text) as {
+                kind?: string;
+                host_pubkey?: string;
+                server_eph?: string;
+              };
               if (reply.kind === "hello_ok" && reply.host_pubkey !== undefined) {
                 const hostPub = new Uint8Array(Buffer.from(reply.host_pubkey, "base64"));
-                socket.write(frame(afterHello(hostPub)));
+                socket.write(frame(afterHello(hostPub, reply)));
               }
             }
             if (endAfterFrames !== undefined && frames.length >= endAfterFrames) {
@@ -150,15 +159,25 @@ function converse(
   });
 }
 
+/** A v2 hello frame, plus a function that derives the client's session from the host's reply. */
+function hello(client: BoxKeypair): {
+  frame: Uint8Array;
+  session: (
+    hostPub: Uint8Array,
+    helloOk: { server_eph?: string },
+    as?: BoxKeypair,
+  ) => V2ClientSession;
+} {
+  const { json, ephemeral } = v2Hello(client);
+  return {
+    frame: frame(new TextEncoder().encode(json)),
+    session: (hostPub, helloOk, as = client) =>
+      V2ClientSession.fromHelloOk(as, ephemeral, hostPub, helloOk),
+  };
+}
+
 function helloFrame(client: BoxKeypair): Uint8Array {
-  return frame(
-    new TextEncoder().encode(
-      JSON.stringify({
-        kind: "hello",
-        client_pubkey: Buffer.from(client.publicKey).toString("base64"),
-      }),
-    ),
-  );
+  return hello(client).frame;
 }
 
 describe("LanServer — malformed frames are closed on, never dispatched", () => {
@@ -174,13 +193,11 @@ describe("LanServer — malformed frames are closed on, never dispatched", () =>
     const { port, dispatched } = await startServer();
     const client = generateBoxKeypair();
     const stranger = generateBoxKeypair();
-    const out = await converse(port, helloFrame(client), (hostPub) =>
-      // Sealed by a key the session does not know, so `openBoxFrame` rejects it.
-      sealBoxFrame(
-        new TextEncoder().encode(JSON.stringify({ id: 1, method: "index.search", params: {} })),
-        hostPub,
-        stranger.secretKey,
-      ),
+    const h = hello(client);
+    const out = await converse(port, h.frame, (hostPub, helloOk) =>
+      // Sealed under a session derived from a static key the host does not know the client by,
+      // so `openSessionFrame` rejects it.
+      h.session(hostPub, helloOk, stranger).seal({ id: 1, method: "index.search", params: {} }),
     );
     expect(out.closedByServer).toBe(true);
     expect(out.frames).toHaveLength(1);
@@ -191,8 +208,14 @@ describe("LanServer — malformed frames are closed on, never dispatched", () =>
   test("after a good hello, a frame that decrypts to non-JSON is closed on", async () => {
     const { port, dispatched } = await startServer();
     const client = generateBoxKeypair();
-    const out = await converse(port, helloFrame(client), (hostPub) =>
-      sealBoxFrame(new TextEncoder().encode("method=index.search"), hostPub, client.secretKey),
+    const h = hello(client);
+    const out = await converse(port, h.frame, (hostPub, helloOk) =>
+      sealSessionFrame(
+        h.session(hostPub, helloOk).key,
+        "client_to_host",
+        0,
+        new TextEncoder().encode("method=index.search"),
+      ),
     );
     expect(out.closedByServer).toBe(true);
     expect(out.frames).toHaveLength(1);
@@ -203,15 +226,12 @@ describe("LanServer — malformed frames are closed on, never dispatched", () =>
     // Without this, the two refusals above could pass because the session never worked at all.
     const { port, dispatched } = await startServer();
     const client = generateBoxKeypair();
+    const h = hello(client);
     const out = await converse(
       port,
-      helloFrame(client),
-      (hostPub) =>
-        sealBoxFrame(
-          new TextEncoder().encode(JSON.stringify({ id: 7, method: "index.search", params: {} })),
-          hostPub,
-          client.secretKey,
-        ),
+      h.frame,
+      (hostPub, helloOk) =>
+        h.session(hostPub, helloOk).seal({ id: 7, method: "index.search", params: {} }),
       2,
     );
     expect(dispatched).toEqual(["index.search"]);
@@ -238,6 +258,7 @@ describe("LanServer — guards below the socket protocol", () => {
     buffer: Uint8Array;
     peerPubkey?: Uint8Array;
     peerMatch?: LanPeerMatch;
+    session?: { key: Uint8Array; rxSeq: number; txSeq: number };
     /** Attached by `fakeSocket`, as the server's own `open` handler attaches one. */
     writer?: QueuedSocketWriter;
   };
@@ -329,15 +350,8 @@ describe("LanServer — guards below the socket protocol", () => {
       const client = generateBoxKeypair();
       // 3 bytes per write: the pair_err reply cannot drain, so the end stays pending.
       const sock = fakeSocket({ peerIp: "10.0.0.9", buffer: new Uint8Array(0) }, 3);
-      const pair = frame(
-        new TextEncoder().encode(
-          JSON.stringify({
-            kind: "pair",
-            client_pubkey: Buffer.from(client.publicKey).toString("base64"),
-            pairing_code: "000000",
-          }),
-        ),
-      );
+      // A v2 pair against a closed window: refused AND counted as a failure.
+      const pair = frame(new TextEncoder().encode(v2PairRequest(client, "000000")));
       const hello = helloFrame(client);
 
       if (sameChunk) {
@@ -388,6 +402,7 @@ describe("LanServer — guards below the socket protocol", () => {
       buffer: pending,
       peerPubkey: client.publicKey,
       peerMatch: PEER,
+      session: { key: new Uint8Array(32), rxSeq: 0, txSeq: 0 },
     });
     // …a read that overshoots the bound by one byte, though it is small on its own (~64 KiB).
     const chunk = new Uint8Array(MAX_PENDING_BYTES - pending.length + 1);
@@ -418,59 +433,67 @@ describe("LanServer — guards below the socket protocol", () => {
   });
 
   describe("an encrypted frame with no authenticated session is never dispatched", () => {
-    function sealedRpc(hostPub: Uint8Array, client: BoxKeypair): Uint8Array {
-      return sealBoxFrame(
+    const KEY = new Uint8Array(32).fill(9);
+    const newSession = () => ({ key: KEY, rxSeq: 0, txSeq: 0 });
+    function sealedRpc(): Uint8Array {
+      return sealSessionFrame(
+        KEY,
+        "client_to_host",
+        0,
         new TextEncoder().encode(JSON.stringify({ id: 1, method: "index.search", params: {} })),
-        hostPub,
-        client.secretKey,
       );
     }
 
-    // Only the first row can fail on the GUARD alone: with its `!peerMatch` half removed, a frame
-    // that decrypts under the session key is dispatched (with no peer to check it against). The
-    // second row pins the same outcome but cannot tell the guard's `!peerPubkey` half from what
-    // follows it — `openBoxFrame` with no key throws, and that catch closes the socket the same way.
+    // Each row is missing exactly one of the three things a session needs, and every row's frame
+    // WOULD open under the session key it does carry, so the refusal is the guard's alone.
     test.each([
-      ["a peer key but no peer match", true, false],
-      ["a peer match but no peer key", false, true],
-    ])("%s: closed, nothing written, nothing dispatched", async (_label, withKey, withMatch) => {
-      const { internals, hostKeypair, dispatched } = unstartedServer();
-      const client = generateBoxKeypair();
-      const sock = fakeSocket({
-        peerIp: "10.0.0.9",
-        buffer: new Uint8Array(0),
-        ...(withKey ? { peerPubkey: client.publicKey } : {}),
-        ...(withMatch ? { peerMatch: PEER } : {}),
-      });
+      ["a peer key and session but no peer match", true, false, true],
+      ["a peer match and session but no peer key", false, true, true],
+      ["a peer key and match but no session key", true, true, false],
+    ])(
+      "%s: closed, nothing written, nothing dispatched",
+      async (_label, withKey, withMatch, withSession) => {
+        const { internals, dispatched } = unstartedServer();
+        const client = generateBoxKeypair();
+        const sock = fakeSocket({
+          peerIp: "10.0.0.9",
+          buffer: new Uint8Array(0),
+          ...(withKey ? { peerPubkey: client.publicKey } : {}),
+          ...(withMatch ? { peerMatch: PEER } : {}),
+          ...(withSession ? { session: newSession() } : {}),
+        });
 
-      await internals.handleEncryptedMessage(sock, sealedRpc(hostKeypair.publicKey, client));
+        await internals.handleEncryptedMessage(sock, sealedRpc());
 
-      expect(sock.ended).toBe(1);
-      expect(sock.written).toEqual([]);
-      expect(dispatched).toEqual([]);
-    });
+        expect(sock.ended).toBe(1);
+        expect(sock.written).toEqual([]);
+        expect(dispatched).toEqual([]);
+      },
+    );
 
     test("control: the same frame on a full session IS dispatched and answered", async () => {
       // Without this, the refusals above could pass because the frame itself never decrypted.
-      const { internals, hostKeypair, dispatched } = unstartedServer();
+      const { internals, dispatched } = unstartedServer();
       const client = generateBoxKeypair();
       const sock = fakeSocket({
         peerIp: "10.0.0.9",
         buffer: new Uint8Array(0),
         peerPubkey: client.publicKey,
         peerMatch: PEER,
+        session: newSession(),
       });
 
-      await internals.handleEncryptedMessage(sock, sealedRpc(hostKeypair.publicKey, client));
+      await internals.handleEncryptedMessage(sock, sealedRpc());
 
       expect(dispatched).toEqual(["index.search"]);
       expect(sock.ended).toBe(0);
       // A 4-byte length header, then the sealed reply.
       expect(sock.written).toHaveLength(2);
-      const reply = openBoxFrame(
+      const reply = openSessionFrame(
+        KEY,
+        "host_to_client",
+        0,
         sock.written[1] ?? new Uint8Array(0),
-        hostKeypair.publicKey,
-        client.secretKey,
       );
       expect(JSON.parse(new TextDecoder().decode(reply))).toEqual({ id: 1, result: { ok: true } });
     });
@@ -478,7 +501,7 @@ describe("LanServer — guards below the socket protocol", () => {
     // Regression: Bun's raw socket write drops what the kernel does not accept. A reply larger than
     // the free send buffer used to lose its tail, so the peer's frame reader waited forever.
     test("a reply the socket cannot take in one write is finished on drain, never dropped", async () => {
-      const { internals, hostKeypair } = unstartedServer();
+      const { internals } = unstartedServer();
       const client = generateBoxKeypair();
       const sock = fakeSocket(
         {
@@ -486,11 +509,12 @@ describe("LanServer — guards below the socket protocol", () => {
           buffer: new Uint8Array(0),
           peerPubkey: client.publicKey,
           peerMatch: PEER,
+          session: newSession(),
         },
         5,
       );
 
-      await internals.handleEncryptedMessage(sock, sealedRpc(hostKeypair.publicKey, client));
+      await internals.handleEncryptedMessage(sock, sealedRpc());
 
       const writer = sock.data.writer;
       if (writer === undefined) throw new Error("fakeSocket attaches a writer");
@@ -506,7 +530,7 @@ describe("LanServer — guards below the socket protocol", () => {
       }
       const len = new DataView(all.buffer).getUint32(0, false);
       expect(all.length).toBe(4 + len);
-      const reply = openBoxFrame(all.subarray(4), hostKeypair.publicKey, client.secretKey);
+      const reply = openSessionFrame(KEY, "host_to_client", 0, all.subarray(4));
       expect(JSON.parse(new TextDecoder().decode(reply))).toEqual({ id: 1, result: { ok: true } });
       expect(sock.ended).toBe(0);
     });

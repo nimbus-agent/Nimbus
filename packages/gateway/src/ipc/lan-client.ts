@@ -1,6 +1,14 @@
 import type { Socket } from "bun";
 import type { BoxKeypair } from "./lan-crypto.ts";
-import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
+import {
+  deriveLanSessionKey,
+  generateBoxKeypair,
+  LAN_PROTOCOL_VERSION,
+  openSessionFrame,
+  pairingProof,
+  pairingProofMatches,
+  sealSessionFrame,
+} from "./lan-crypto.ts";
 import { MAX_ENCRYPTED_FRAME, MAX_HANDSHAKE_FRAME } from "./lan-server.ts";
 import {
   createQueuedSocketWriter,
@@ -178,12 +186,19 @@ export function writeFrame(socket: Socket<undefined>, payload: Uint8Array): void
   writerFor(socket).writeBytes(buildFrame(payload));
 }
 
+interface HelloReply {
+  kind?: string;
+  v?: number;
+  host_pubkey?: string;
+  server_eph?: string;
+}
+
 /** Two-frame exchange: send req frame A (hello), read reply A, send req frame B (from reply A), read reply B. */
 function exchangeHelloThenRpc(
   host: string,
   port: number,
   hello: Uint8Array,
-  buildRpc: (helloReply: { host_pubkey?: string; kind?: string }) => Uint8Array,
+  buildRpc: (helloReply: HelloReply) => Uint8Array,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<Uint8Array> {
   return new Promise<Uint8Array>((resolve, reject) => {
@@ -215,7 +230,7 @@ function exchangeHelloThenRpc(
           }
           if (body === undefined) return;
           if (phase === "hello") {
-            let reply: { host_pubkey?: string; kind?: string };
+            let reply: HelloReply;
             try {
               reply = JSON.parse(new TextDecoder().decode(body)) as typeof reply;
             } catch {
@@ -270,12 +285,16 @@ export async function sendFederatedOverWire(
   params: unknown,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<unknown> {
+  const ownEphemeral = generateBoxKeypair();
   const hello = new TextEncoder().encode(
     JSON.stringify({
       kind: "hello",
+      v: LAN_PROTOCOL_VERSION,
       client_pubkey: Buffer.from(selfKp.publicKey).toString("base64"),
+      client_eph: Buffer.from(ownEphemeral.publicKey).toString("base64"),
     }),
   );
+  let sessionKey: Uint8Array | undefined;
   const replyFrame = await exchangeHelloThenRpc(
     host,
     port,
@@ -288,15 +307,28 @@ export async function sendFederatedOverWire(
       if (Buffer.compare(Buffer.from(hostPub), Buffer.from(peerPubkey)) !== 0) {
         throw new Error("lan-client: responder pubkey does not match pinned peer key");
       }
-      return sealBoxFrame(
+      const serverEph = new Uint8Array(Buffer.from(reply.server_eph ?? "", "base64"));
+      if (reply.v !== LAN_PROTOCOL_VERSION || serverEph.length !== 32) {
+        throw new Error("lan-client: responder does not speak LAN protocol v2 (upgrade the peer)");
+      }
+      sessionKey = deriveLanSessionKey({
+        ownStatic: selfKp,
+        ownEphemeral,
+        peerStaticPublic: peerPubkey,
+        peerEphemeralPublic: serverEph,
+        role: "client",
+      });
+      return sealSessionFrame(
+        sessionKey,
+        "client_to_host",
+        0,
         new TextEncoder().encode(JSON.stringify({ id: 1, method, params })),
-        peerPubkey,
-        selfKp.secretKey,
       );
     },
     timeoutMs,
   );
-  const plain = openBoxFrame(replyFrame, peerPubkey, selfKp.secretKey);
+  if (sessionKey === undefined) throw new Error("lan-client: no session established");
+  const plain = openSessionFrame(sessionKey, "host_to_client", 0, replyFrame);
   const resp = JSON.parse(new TextDecoder().decode(plain)) as {
     result?: unknown;
     error?: { code?: string; message?: string };
@@ -317,11 +349,13 @@ export async function outboundPairHandshake(
   selfKp: BoxKeypair,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<Uint8Array> {
+  // The code itself never leaves this machine: only a proof bound to our key (see lan-crypto.ts).
   const req = new TextEncoder().encode(
     JSON.stringify({
       kind: "pair",
+      v: LAN_PROTOCOL_VERSION,
       client_pubkey: Buffer.from(selfKp.publicKey).toString("base64"),
-      pairing_code: code,
+      proof: Buffer.from(pairingProof(code, "client", selfKp.publicKey)).toString("base64"),
     }),
   );
   const body = await exchangeOneFrame(
@@ -334,11 +368,19 @@ export async function outboundPairHandshake(
   const msg = JSON.parse(new TextDecoder().decode(body)) as {
     kind?: string;
     host_pubkey?: string;
+    host_proof?: string;
   };
   if (msg.kind !== "pair_ok" || typeof msg.host_pubkey !== "string") {
     throw new Error(`lan-client: pairing rejected (${replyKindForMessage(msg.kind)})`);
   }
   const hostPub = new Uint8Array(Buffer.from(msg.host_pubkey, "base64"));
   if (hostPub.length !== 32) throw new Error("lan-client: bad host pubkey length");
+  // Only something that knows the code can produce this, so a key swapped in on the path is
+  // refused here, before the caller pins it.
+  const expected = pairingProof(code, "host", selfKp.publicKey, hostPub);
+  const received = new Uint8Array(Buffer.from(msg.host_proof ?? "", "base64"));
+  if (!pairingProofMatches(expected, received)) {
+    throw new Error("lan-client: responder could not prove it holds the pairing code");
+  }
   return hostPub;
 }

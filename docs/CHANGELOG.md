@@ -18,6 +18,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-19 — LAN federation protocol v2: per-connection keys and code-free pairing (breaking between peers; no migration).**
+  Two paired gateways now open each connection with a fresh X25519 key from each side, mixed with the pinned static
+  keys into a per-connection `secretbox` key, and number every frame (the nonce is never sent). Before this, frames
+  were sealed under the static keys alone, so a recorded request from a write-allowed peer (`connector.remove`,
+  `workflow.run`) could be replayed on a new connection. Pairing no longer sends the pairing code: the requester sends
+  an HMAC of it bound to its key, and the host answers with one bound to both keys, which the requester checks before
+  pinning the host key, so a machine on the path can neither read the code nor substitute a key. **What a user must
+  do:** upgrade both peers; a v2 gateway refuses a v1 peer (`protocol_version`) rather than speak the replayable
+  protocol, and a v1 gateway cannot reach a v2 one. Existing pairings are kept. Audit items S2 and S3.
+- **2026-10-19 — Retention for gateway logs and operational history; the CLI refuses a socket another user owns.**
+  Daily `gateway-YYYY-MM-DD.log` files older than `NIMBUS_LOG_RETENTION_DAYS` (default 30, `0` keeps all) are
+  deleted at Gateway start, and `sync_telemetry` / `watcher_event` rows older than 90 days daily. On Linux and macOS
+  the CLI now checks that the Gateway socket belongs to the user running it before connecting
+  (`ERR_GATEWAY_SOCKET_FOREIGN_OWNER`), so with `XDG_RUNTIME_DIR` unset another account cannot pre-create
+  `/tmp/nimbus-gateway.sock` and receive `nimbus vault set` secrets. Audit items P4 (part) and S4 (POSIX part).
+- **2026-10-19 — One credential map for audit, egress, share and log scrubbing; contacts out of egress summaries.**
+  Added credential families: Stripe (`sk_live_`/`rk_test_`), GitLab `glpat-`, Google `AIza`, Slack `xapp-`, PEM
+  private-key blocks, `user:password@` URL userinfo, secret-named query parameters and labelled credentials
+  (`password=…`). The egress ledger's payload summary and shares also drop email addresses and phone numbers;
+  `audit_log` rows keep recipients on purpose. Shares now blank values under credential-named keys (`apiKey`,
+  `client_secret`, `Authorization`). Audit items P5 and P7.
+- **2026-10-19 — Schema V72: faster sync writes and reads, deleted data scrubbed (no user action).**
+  The `item_fts` update trigger fires only when an item's title or body changed, and a sync that re-writes an
+  unchanged item no longer re-embeds it. Composite indexes cover the agents' `service`/`type`/`modified_at` and
+  `author_id` filters, every `person` handle lookup and watcher history. The embedding backfill uses a keyset cursor,
+  so items that embed to nothing or fail are tried once per pass instead of forever, and the next vector rowid is read
+  with an index seek instead of a scan per embedded item. Every writable handle sets `secure_delete = FAST`, and
+  `nimbus data delete` runs under `secure_delete = ON`, then merges `item_fts` and truncates the WAL, so deleted
+  bodies do not survive in the file. `nimbus data delete --dry-run`'s vector count is now correct. Audit items F3–F8
+  and P2.
 - **2026-10-19 — The HTTP API's raw-row reads need a `data`-scoped client token (breaking for scripts that read them; no migration).**
   `GET /v1/items`, `/v1/items/<id>`, `/v1/people`, `/v1/people/<id>` and `/v1/audit` were public: any local
   process could read every indexed body, the people graph and the audit log (which carries I33 script bodies).

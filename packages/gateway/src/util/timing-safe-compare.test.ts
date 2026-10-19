@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
-import { constantTimeStringEqual, sha256HexEqualConstantTime } from "./timing-safe-compare.ts";
+import {
+  constantTimeStringEqual,
+  sha256HexEqualConstantTime,
+  timingSafeEqualBytes,
+} from "./timing-safe-compare.ts";
 
 const HEX_A = "a".repeat(64);
 const HEX_B = "b".repeat(64);
@@ -146,6 +150,27 @@ describe("timing-safe-compare — properties (fast-check)", () => {
         expect(sha256HexEqualConstantTime(corrupted, h)).toBe(false);
       }),
       { numRuns: 500 },
+    );
+  });
+});
+
+describe("timingSafeEqualBytes", () => {
+  test("equal bytes match; any differing byte or length does not", () => {
+    const a = new Uint8Array([1, 2, 3, 4]);
+    expect(timingSafeEqualBytes(a, new Uint8Array([1, 2, 3, 4]))).toBe(true);
+    expect(timingSafeEqualBytes(a, new Uint8Array([1, 2, 3, 5]))).toBe(false);
+    expect(timingSafeEqualBytes(a, new Uint8Array([1, 2, 3]))).toBe(false);
+    expect(timingSafeEqualBytes(new Uint8Array(0), new Uint8Array(0))).toBe(true);
+  });
+
+  test("property: agrees with element-wise equality", () => {
+    fc.assert(
+      fc.property(fc.uint8Array({ maxLength: 40 }), fc.uint8Array({ maxLength: 40 }), (x, y) => {
+        const same = x.length === y.length && x.every((v, i) => v === y[i]);
+        expect(timingSafeEqualBytes(x, y)).toBe(same);
+        expect(timingSafeEqualBytes(x, x.slice())).toBe(true);
+      }),
+      { numRuns: 300 },
     );
   });
 });

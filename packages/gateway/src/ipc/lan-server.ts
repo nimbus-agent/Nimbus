@@ -2,7 +2,15 @@ import type { Socket, TCPSocketListener } from "bun";
 import { isLoopbackHost } from "../llm/base-url-locality.ts";
 import { registerListener } from "../locality/listener-registry.ts";
 import type { BoxKeypair } from "./lan-crypto.ts";
-import { openBoxFrame, sealBoxFrame } from "./lan-crypto.ts";
+import {
+  deriveLanSessionKey,
+  generateBoxKeypair,
+  LAN_PROTOCOL_VERSION,
+  openSessionFrame,
+  pairingProof,
+  pairingProofMatches,
+  sealSessionFrame,
+} from "./lan-crypto.ts";
 import { checkLanMethodAllowed, LanError } from "./lan-rpc.ts";
 import {
   createQueuedSocketWriter,
@@ -15,7 +23,8 @@ export const MAX_PENDING_BYTES = MAX_ENCRYPTED_FRAME + 65_536;
 
 export interface PairingService {
   isOpen(): boolean;
-  consume(code: string): boolean;
+  /** Consume the open code if `matches(code)`, returning it; `null` when closed, expired or no match. */
+  consumeMatching(matches: (code: string) => boolean): string | null;
   open(code: string): void;
   close(): void;
   getExpiresAt(): number | undefined;
@@ -43,9 +52,17 @@ export interface LanServerOptions {
   pairing: PairingService;
 }
 
+/** An established v2 session: the per-connection key and each direction's next sequence number. */
+interface LanSession {
+  key: Uint8Array;
+  rxSeq: number;
+  txSeq: number;
+}
+
 interface SessionState {
   peerPubkey?: Uint8Array;
   peerMatch?: LanPeerMatch;
+  session?: LanSession;
   peerIp: string;
   buffer: Uint8Array;
   /** Every write and end goes through this; Bun's raw `write()` drops what the kernel refuses. */
@@ -155,13 +172,15 @@ export class LanServer {
   }
 
   private handleHandshake(socket: Socket<SessionState>, payload: Uint8Array): void {
-    let msg: { kind?: string; client_pubkey?: string; pairing_code?: string };
+    let msg: {
+      kind?: string;
+      v?: number;
+      client_pubkey?: string;
+      client_eph?: string;
+      proof?: string;
+    };
     try {
-      msg = JSON.parse(new TextDecoder().decode(payload)) as {
-        kind?: string;
-        client_pubkey?: string;
-        pairing_code?: string;
-      };
+      msg = JSON.parse(new TextDecoder().decode(payload)) as typeof msg;
     } catch {
       socket.data.writer.end();
       return;
@@ -170,69 +189,110 @@ export class LanServer {
       socket.data.writer.end();
       return;
     }
-    if (typeof msg.client_pubkey !== "string") {
+    const errKind = msg.kind === "hello" ? "hello_err" : "pair_err";
+    // A v1 peer (no `v`, a cleartext `pairing_code`, no ephemeral key) is refused outright rather
+    // than served the old, replayable protocol.
+    if (msg.v !== LAN_PROTOCOL_VERSION) {
+      this.writeFrame(socket, JSON.stringify({ kind: errKind, reason: "protocol_version" }));
       socket.data.writer.end();
       return;
     }
-    const clientPubkey = new Uint8Array(Buffer.from(msg.client_pubkey, "base64"));
-    if (clientPubkey.length !== 32) {
+    const clientPubkey = decodeKey(msg.client_pubkey);
+    if (clientPubkey === null) {
       socket.data.writer.end();
       return;
     }
 
     const ip = socket.data.peerIp;
     if (!this.opts.rateLimit.checkAllowed(ip)) {
-      this.writeFrame(
-        socket,
-        JSON.stringify({ kind: msg.kind === "hello" ? "hello_err" : "pair_err" }),
-      );
+      this.writeFrame(socket, JSON.stringify({ kind: errKind }));
       socket.data.writer.end();
       return;
     }
 
     if (msg.kind === "pair") {
-      if (typeof msg.pairing_code !== "string" || !this.opts.pairing.isOpen()) {
-        this.opts.rateLimit.recordFailure(ip);
-        this.writeFrame(socket, JSON.stringify({ kind: "pair_err" }));
-        socket.data.writer.end();
-        return;
-      }
-      const ok = this.opts.pairing.consume(msg.pairing_code);
-      if (!ok) {
-        this.opts.rateLimit.recordFailure(ip);
-        this.writeFrame(socket, JSON.stringify({ kind: "pair_err" }));
-        socket.data.writer.end();
-        return;
-      }
-      const peerId = this.opts.registerPeer(clientPubkey, ip);
-      socket.data.peerPubkey = clientPubkey;
-      socket.data.peerMatch = { peerId, writeAllowed: false };
-      this.opts.rateLimit.recordSuccess(ip);
-      this.writeFrame(
-        socket,
-        JSON.stringify({
-          kind: "pair_ok",
-          host_pubkey: Buffer.from(this.opts.hostKeypair.publicKey).toString("base64"),
-          peer_id: peerId,
-        }),
-      );
+      this.handlePair(socket, clientPubkey, msg.proof);
       return;
     }
+    this.handleHello(socket, clientPubkey, decodeKey(msg.client_eph));
+  }
 
-    const match = this.opts.isKnownPeer(clientPubkey);
-    if (!match) {
+  /**
+   * Pairing: the client proves it holds the open code without sending it, and the reply proves the
+   * host holds it too, so the client can check the host key before pinning it. The pairing
+   * connection carries no RPCs; the client opens a session with `hello` afterwards.
+   */
+  private handlePair(
+    socket: Socket<SessionState>,
+    clientPubkey: Uint8Array,
+    proofB64: string | undefined,
+  ): void {
+    const ip = socket.data.peerIp;
+    const proof = typeof proofB64 === "string" ? Buffer.from(proofB64, "base64") : null;
+    const code =
+      proof === null || !this.opts.pairing.isOpen()
+        ? null
+        : this.opts.pairing.consumeMatching((c) =>
+            pairingProofMatches(pairingProof(c, "client", clientPubkey), new Uint8Array(proof)),
+          );
+    if (code === null) {
       this.opts.rateLimit.recordFailure(ip);
+      this.writeFrame(socket, JSON.stringify({ kind: "pair_err" }));
+      socket.data.writer.end();
+      return;
+    }
+    const peerId = this.opts.registerPeer(clientPubkey, ip);
+    this.opts.rateLimit.recordSuccess(ip);
+    const hostPub = this.opts.hostKeypair.publicKey;
+    this.writeFrame(
+      socket,
+      JSON.stringify({
+        kind: "pair_ok",
+        v: LAN_PROTOCOL_VERSION,
+        host_pubkey: Buffer.from(hostPub).toString("base64"),
+        host_proof: Buffer.from(pairingProof(code, "host", clientPubkey, hostPub)).toString(
+          "base64",
+        ),
+        peer_id: peerId,
+      }),
+    );
+    socket.data.writer.end();
+  }
+
+  /** Session open: a known peer plus a fresh ephemeral key from each side. */
+  private handleHello(
+    socket: Socket<SessionState>,
+    clientPubkey: Uint8Array,
+    clientEph: Uint8Array | null,
+  ): void {
+    const match = clientEph === null ? null : this.opts.isKnownPeer(clientPubkey);
+    if (match === null || clientEph === null) {
+      this.opts.rateLimit.recordFailure(socket.data.peerIp);
       this.writeFrame(socket, JSON.stringify({ kind: "hello_err" }));
       socket.data.writer.end();
       return;
     }
+    const serverEph = generateBoxKeypair();
     socket.data.peerPubkey = clientPubkey;
     socket.data.peerMatch = match;
+    socket.data.session = {
+      key: deriveLanSessionKey({
+        ownStatic: this.opts.hostKeypair,
+        ownEphemeral: serverEph,
+        peerStaticPublic: clientPubkey,
+        peerEphemeralPublic: clientEph,
+        role: "host",
+      }),
+      rxSeq: 0,
+      txSeq: 0,
+    };
     this.writeFrame(
       socket,
       JSON.stringify({
         kind: "hello_ok",
+        v: LAN_PROTOCOL_VERSION,
         host_pubkey: Buffer.from(this.opts.hostKeypair.publicKey).toString("base64"),
+        server_eph: Buffer.from(serverEph.publicKey).toString("base64"),
       }),
     );
   }
@@ -241,17 +301,19 @@ export class LanServer {
     socket: Socket<SessionState>,
     frame: Uint8Array,
   ): Promise<void> {
-    if (!socket.data.peerPubkey || !socket.data.peerMatch) {
+    const session = socket.data.session;
+    if (!socket.data.peerPubkey || !socket.data.peerMatch || session === undefined) {
       socket.data.writer.end();
       return;
     }
     let plain: Uint8Array;
     try {
-      plain = openBoxFrame(frame, socket.data.peerPubkey, this.opts.hostKeypair.secretKey);
+      plain = openSessionFrame(session.key, "client_to_host", session.rxSeq, frame);
     } catch {
       socket.data.writer.end();
       return;
     }
+    session.rxSeq += 1;
     let msg: { id?: string | number; method?: string; params?: unknown };
     try {
       msg = JSON.parse(new TextDecoder().decode(plain)) as {
@@ -281,11 +343,13 @@ export class LanServer {
       }
     }
     const response = error ? { id: msg.id, error } : { id: msg.id, result };
-    const replyFrame = sealBoxFrame(
+    const replyFrame = sealSessionFrame(
+      session.key,
+      "host_to_client",
+      session.txSeq,
       new TextEncoder().encode(JSON.stringify(response)),
-      socket.data.peerPubkey,
-      this.opts.hostKeypair.secretKey,
     );
+    session.txSeq += 1;
     this.writeFrameRaw(socket, replyFrame);
   }
 
@@ -299,4 +363,11 @@ export class LanServer {
     socket.data.writer.writeBytes(header);
     socket.data.writer.writeBytes(payload);
   }
+}
+
+/** A base64 32-byte public key, or `null` for anything else. */
+function decodeKey(b64: unknown): Uint8Array | null {
+  if (typeof b64 !== "string") return null;
+  const key = new Uint8Array(Buffer.from(b64, "base64"));
+  return key.length === 32 ? key : null;
 }

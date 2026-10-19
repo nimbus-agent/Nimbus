@@ -26,3 +26,12 @@ export function constantTimeStringEqual(a: string, b: string): boolean {
   }
   return timingSafeEqual(aBuf, bBuf);
 }
+
+/** Constant-time equality of two byte arrays (a MAC, a proof). Unequal lengths are never equal. */
+export function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) {
+    timingSafeEqual(a, a);
+    return false;
+  }
+  return timingSafeEqual(a, b);
+}

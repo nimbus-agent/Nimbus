@@ -1,63 +1,166 @@
 import { describe, expect, test } from "bun:test";
 import {
   boxKeypairFromSecretKey,
+  deriveLanSessionKey,
   generateBoxKeypair,
-  openBoxFrame,
-  sealBoxFrame,
+  openSessionFrame,
+  pairingProof,
+  pairingProofMatches,
+  sealSessionFrame,
 } from "./lan-crypto.ts";
 
-describe("LAN crypto — NaCl box round-trip", () => {
-  test("seal + open recovers the plaintext", () => {
-    const alice = generateBoxKeypair();
-    const bob = generateBoxKeypair();
-    const message = new TextEncoder().encode('{"method":"index.search","params":{"q":"x"}}');
-    const frame = sealBoxFrame(message, bob.publicKey, alice.secretKey);
-    const plain = openBoxFrame(frame, alice.publicKey, bob.secretKey);
-    expect(new TextDecoder().decode(plain)).toBe('{"method":"index.search","params":{"q":"x"}}');
+const hex = (b: Uint8Array): string => Buffer.from(b).toString("hex");
+
+function pairOfKeys(): {
+  client: ReturnType<typeof generateBoxKeypair>;
+  host: ReturnType<typeof generateBoxKeypair>;
+  clientEph: ReturnType<typeof generateBoxKeypair>;
+  hostEph: ReturnType<typeof generateBoxKeypair>;
+} {
+  return {
+    client: generateBoxKeypair(),
+    host: generateBoxKeypair(),
+    clientEph: generateBoxKeypair(),
+    hostEph: generateBoxKeypair(),
+  };
+}
+
+function bothKeys(k: ReturnType<typeof pairOfKeys>): { client: Uint8Array; host: Uint8Array } {
+  return {
+    client: deriveLanSessionKey({
+      ownStatic: k.client,
+      ownEphemeral: k.clientEph,
+      peerStaticPublic: k.host.publicKey,
+      peerEphemeralPublic: k.hostEph.publicKey,
+      role: "client",
+    }),
+    host: deriveLanSessionKey({
+      ownStatic: k.host,
+      ownEphemeral: k.hostEph,
+      peerStaticPublic: k.client.publicKey,
+      peerEphemeralPublic: k.clientEph.publicKey,
+      role: "host",
+    }),
+  };
+}
+
+describe("deriveLanSessionKey", () => {
+  test("client and host derive the same 32-byte key", () => {
+    const { client, host } = bothKeys(pairOfKeys());
+    expect(client.length).toBe(32);
+    expect(hex(client)).toBe(hex(host));
   });
 
-  test("open throws on tampered ciphertext", () => {
-    const alice = generateBoxKeypair();
-    const bob = generateBoxKeypair();
-    const frame = sealBoxFrame(new TextEncoder().encode("hi"), bob.publicKey, alice.secretKey);
-    frame[frame.length - 1] = (frame.at(-1) ?? 0) ^ 0xff;
-    expect(() => openBoxFrame(frame, alice.publicKey, bob.secretKey)).toThrow();
+  test("a different ephemeral key on either side gives a different session key", () => {
+    const k = pairOfKeys();
+    const first = bothKeys(k).client;
+    const second = bothKeys({ ...k, hostEph: generateBoxKeypair() }).client;
+    const third = bothKeys({ ...k, clientEph: generateBoxKeypair() }).client;
+    expect(hex(first)).not.toBe(hex(second));
+    expect(hex(first)).not.toBe(hex(third));
   });
 
-  test("open throws when wrong peer pubkey", () => {
-    const alice = generateBoxKeypair();
-    const bob = generateBoxKeypair();
-    const eve = generateBoxKeypair();
-    const frame = sealBoxFrame(new TextEncoder().encode("hi"), bob.publicKey, alice.secretKey);
-    expect(() => openBoxFrame(frame, eve.publicKey, bob.secretKey)).toThrow();
+  test("a client holding the wrong static key derives a key the host does not share", () => {
+    const k = pairOfKeys();
+    const host = bothKeys(k).host;
+    const impostor = deriveLanSessionKey({
+      ownStatic: generateBoxKeypair(), // not the key the host knows the client by
+      ownEphemeral: k.clientEph,
+      peerStaticPublic: k.host.publicKey,
+      peerEphemeralPublic: k.hostEph.publicKey,
+      role: "client",
+    });
+    expect(hex(impostor)).not.toBe(hex(host));
   });
 
-  test("nonces are unique across 1000 frames", () => {
-    const alice = generateBoxKeypair();
-    const bob = generateBoxKeypair();
-    const nonces = new Set<string>();
-    for (let i = 0; i < 1000; i++) {
-      const frame = sealBoxFrame(
-        new TextEncoder().encode(`msg-${i}`),
-        bob.publicKey,
-        alice.secretKey,
-      );
-      const nonceHex = Buffer.from(frame.slice(0, 24)).toString("hex");
-      nonces.add(nonceHex);
-    }
-    expect(nonces.size).toBe(1000);
+  test("rejects a peer key that is not 32 bytes", () => {
+    const k = pairOfKeys();
+    expect(() =>
+      deriveLanSessionKey({
+        ownStatic: k.client,
+        ownEphemeral: k.clientEph,
+        peerStaticPublic: new Uint8Array(31),
+        peerEphemeralPublic: k.hostEph.publicKey,
+        role: "client",
+      }),
+    ).toThrow(/32 bytes/);
+  });
+});
+
+describe("session frames", () => {
+  const key = bothKeys(pairOfKeys()).client;
+  const msg = new TextEncoder().encode('{"method":"index.search","params":{"q":"x"}}');
+
+  test("seal + open with the same direction and sequence recovers the plaintext", () => {
+    const frame = sealSessionFrame(key, "client_to_host", 7, msg);
+    expect(new TextDecoder().decode(openSessionFrame(key, "client_to_host", 7, frame))).toBe(
+      '{"method":"index.search","params":{"q":"x"}}',
+    );
+  });
+
+  test("the wrong sequence number does not open (replay / reorder)", () => {
+    const frame = sealSessionFrame(key, "client_to_host", 0, msg);
+    expect(() => openSessionFrame(key, "client_to_host", 1, frame)).toThrow();
+  });
+
+  test("the wrong direction does not open (reflection)", () => {
+    const frame = sealSessionFrame(key, "client_to_host", 0, msg);
+    expect(() => openSessionFrame(key, "host_to_client", 0, frame)).toThrow();
+  });
+
+  test("a tampered byte or another session's key does not open", () => {
+    const frame = sealSessionFrame(key, "client_to_host", 0, msg);
+    const tampered = frame.slice();
+    tampered[tampered.length - 1] = (tampered.at(-1) ?? 0) ^ 0xff;
+    expect(() => openSessionFrame(key, "client_to_host", 0, tampered)).toThrow();
+    const otherKey = bothKeys(pairOfKeys()).client;
+    expect(() => openSessionFrame(otherKey, "client_to_host", 0, frame)).toThrow();
+    expect(() => openSessionFrame(key, "client_to_host", 0, new Uint8Array(4))).toThrow(/short/);
+  });
+
+  test("a negative or fractional sequence number is refused", () => {
+    expect(() => sealSessionFrame(key, "client_to_host", -1, msg)).toThrow();
+    expect(() => sealSessionFrame(key, "client_to_host", 1.5, msg)).toThrow();
+  });
+
+  test("the nonce is never on the wire: the frame is ciphertext + MAC only", () => {
+    const frame = sealSessionFrame(key, "client_to_host", 0, msg);
+    expect(frame.length).toBe(msg.length + 16);
+  });
+});
+
+describe("pairingProof", () => {
+  const client = generateBoxKeypair().publicKey;
+  const host = generateBoxKeypair().publicKey;
+
+  test("deterministic for the same code and keys, and verified in constant time", () => {
+    const a = pairingProof("CODE123", "client", client);
+    const b = pairingProof("CODE123", "client", client);
+    expect(a.length).toBe(32);
+    expect(pairingProofMatches(a, b)).toBe(true);
+  });
+
+  test("client and host proofs differ, and each is bound to the code and the keys", () => {
+    const c = pairingProof("CODE123", "client", client);
+    const h = pairingProof("CODE123", "host", client, host);
+    expect(pairingProofMatches(c, h)).toBe(false);
+    expect(pairingProofMatches(c, pairingProof("CODE124", "client", client))).toBe(false);
+    expect(pairingProofMatches(c, pairingProof("CODE123", "client", host))).toBe(false);
+    const swappedHost = pairingProof("CODE123", "host", client, generateBoxKeypair().publicKey);
+    expect(pairingProofMatches(h, swappedHost)).toBe(false);
+  });
+
+  test("a host proof needs the host key; a short received proof never matches", () => {
+    expect(() => pairingProof("CODE123", "host", client)).toThrow(/host key/);
+    expect(pairingProofMatches(pairingProof("C", "client", client), new Uint8Array(0))).toBe(false);
   });
 });
 
 test("boxKeypairFromSecretKey recovers the same keypair from its secret", () => {
   const kp = generateBoxKeypair();
   const recovered = boxKeypairFromSecretKey(kp.secretKey);
-  expect(Buffer.from(recovered.publicKey).toString("hex")).toBe(
-    Buffer.from(kp.publicKey).toString("hex"),
-  );
-  expect(Buffer.from(recovered.secretKey).toString("hex")).toBe(
-    Buffer.from(kp.secretKey).toString("hex"),
-  );
+  expect(hex(recovered.publicKey)).toBe(hex(kp.publicKey));
+  expect(hex(recovered.secretKey)).toBe(hex(kp.secretKey));
 });
 
 test("boxKeypairFromSecretKey rejects a wrong-length secret", () => {
