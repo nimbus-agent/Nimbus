@@ -27,6 +27,7 @@ import { resolveItemByUrl } from "../index/resolve-by-url.ts";
 import { resolveFileByRemote } from "../index/resolve-file-by-remote.ts";
 import { RESOLVE_IDS_MAX_BATCH, resolveItemsByIds } from "../index/resolve-ids.ts";
 import { registerListener } from "../locality/listener-registry.ts";
+import { rejectNonLoopbackHost } from "../locality/loopback-host-guard.ts";
 import {
   type ParsedDoraRepoUrn,
   parseDoraRepoUrn,
@@ -1522,6 +1523,10 @@ export function startReadOnlyHttpServer(
     hostname: "127.0.0.1",
     port,
     async fetch(req: Request): Promise<Response> {
+      // DNS-rebinding guard: before ANY routing, since the unauthenticated data GETs below would
+      // otherwise answer a rebound page (see loopback-host-guard.ts).
+      const badHost = rejectNonLoopbackHost(req);
+      if (badHost !== null) return badHost;
       const url = new URL(req.url);
       // SCIM roster read (spec §6) — bearer-checked GET; reads stay off the I13 write surface.
       if (

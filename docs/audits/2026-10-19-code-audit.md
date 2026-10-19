@@ -129,7 +129,7 @@ Updated as each item lands on this branch. Status is one of: `todo`, `done`, `de
 
 | Item | Status | Notes |
 |------|--------|-------|
-| S1 Host/Origin check + bearer on data GETs | todo | |
+| S1 Host/Origin check + bearer on data GETs | done (Host) | Host guard shipped as invariant I45. Bearer on data GETs deferred: it breaks existing local HTTP readers and needs a decision. |
 | S5 0700/0600 permissions + umask | todo | |
 | F1 per-page sync transactions | todo | |
 | F2 SQLite PRAGMAs | todo | |

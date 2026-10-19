@@ -18,6 +18,14 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-19 — DNS-rebinding guard on every loopback HTTP listener; invariant I45 (no migration, no new egress class).**
+  The read-only/I13 HTTP API, the Prometheus sidecar and the OAuth PKCE callback now answer HTTP 403 unless the
+  `Host` header names loopback (`localhost`, `127.0.0.0/8`, `[::1]`), checked before any routing. Binding to
+  `127.0.0.1` kept other machines out but not other web origins: a page whose DNS answer was switched to
+  `127.0.0.1` could read the no-bearer data routes (`/v1/items/<id>` with full bodies, `/v1/people`, `/v1/audit`).
+  Local processes are unaffected, and a request with no `Host` header is still served. Found by the 2026-10-19
+  code audit (`docs/audits/2026-10-19-code-audit.md`, item S1).
+
 - **2026-10-18 — Phase 9.5 project 1, PR 4: updates come from the source registry; invariant I44 (no migration, no new egress class; closes project 1).**
   The auto-update daemon now reads registries instead of an environment variable. It is built at boot whenever
   boot policy allows auto-update (and `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE` is not `1`), and each tick reads the

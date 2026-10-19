@@ -196,6 +196,18 @@ describe("startReadOnlyHttpServer — lifecycle and dispatcher arms", () => {
     }
   });
 
+  it("refuses a non-loopback Host header before routing (DNS-rebinding guard)", async () => {
+    handle = startReadOnlyHttpServer(dbPath, 0);
+    const rebound = await fetch(`http://127.0.0.1:${handle.port}/v1/items`, {
+      headers: { host: `evil.example:${handle.port}` },
+    });
+    expect(rebound.status).toBe(403);
+    const loopback = await fetch(`http://127.0.0.1:${handle.port}/v1/health`, {
+      headers: { host: `localhost:${handle.port}` },
+    });
+    expect(loopback.status).toBe(200);
+  });
+
   it("binds an OS-assigned port when port = 0", () => {
     handle = startReadOnlyHttpServer(dbPath, 0);
     expect(handle.port).toBeGreaterThan(0);
