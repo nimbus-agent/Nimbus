@@ -623,7 +623,7 @@ async function runExtensionCredentialSet(
     value,
   });
   console.log(
-    `${id.trim()}: ${out.name} stored. The next scheduled sync picks it up (or run \`nimbus connector sync <service>\` now).`,
+    `${id.trim()}: ${out.name} stored. It takes effect the next time the extension starts (it was stopped if it was running).`,
   );
 }
 

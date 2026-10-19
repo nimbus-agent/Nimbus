@@ -7,7 +7,11 @@ import { join } from "node:path";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
-import { type AutomationOwnerGate, dispatchAutomationRpc } from "./automation-rpc.ts";
+import {
+  type AutomationOwnerGate,
+  type AutomationRpcExtensionMeshHandle,
+  dispatchAutomationRpc,
+} from "./automation-rpc.ts";
 
 const EXT = "rpc.cred";
 const KEY = "ext.ext_rpc_cred.token";
@@ -80,7 +84,75 @@ async function rejection(p: Promise<unknown>): Promise<{ rpcCode?: number; messa
   return e as { rpcCode?: number; message: string };
 }
 
+function recordingMesh(): { mesh: AutomationRpcExtensionMeshHandle; stopped: string[] } {
+  const stopped: string[] = [];
+  return {
+    stopped,
+    mesh: {
+      stopExtensionClient: async (id) => {
+        stopped.push(id);
+      },
+      isExtensionRunning: () => true,
+      removeExtensionSandbox: async () => {},
+    },
+  };
+}
+
 describe("extension.credentialSet / credentialStatus over the automation dispatcher", () => {
+  test("a successful set stops the live client, so the next use re-spawns with the new value", async () => {
+    const { db, vault } = await approved();
+    const { mesh, stopped } = recordingMesh();
+    await dispatchAutomationRpc({
+      method: "extension.credentialSet",
+      params: { id: EXT, name: "token", value: SECRET },
+      db,
+      vault,
+      mesh,
+      ownerGate: async () => true,
+    });
+    expect(stopped).toEqual([EXT]);
+  });
+
+  test("a denied or refused set stops nothing", async () => {
+    const { db, vault } = await approved();
+    const { mesh, stopped } = recordingMesh();
+    for (const [params, gate] of [
+      [{ id: EXT, name: "token", value: SECRET }, async () => false],
+      [{ id: EXT, name: "other", value: SECRET }, async () => true],
+      [{ id: EXT, name: "token", value: "  " }, async () => true],
+    ] as const) {
+      await dispatchAutomationRpc({
+        method: "extension.credentialSet",
+        params,
+        db,
+        vault,
+        mesh,
+        ownerGate: gate,
+      }).catch(() => undefined);
+    }
+    expect(stopped).toEqual([]);
+  });
+
+  test("a stop failure does not fail a set that was stored", async () => {
+    const { db, vault } = await approved();
+    const out = await dispatchAutomationRpc({
+      method: "extension.credentialSet",
+      params: { id: EXT, name: "token", value: SECRET },
+      db,
+      vault,
+      mesh: {
+        stopExtensionClient: async () => {
+          throw new Error("stop failed");
+        },
+        isExtensionRunning: () => true,
+        removeExtensionSandbox: async () => {},
+      },
+      ownerGate: async () => true,
+    });
+    expect(out).toEqual({ kind: "hit", value: { name: "token", set: true } });
+    expect(await vault.get(KEY)).toBe(SECRET);
+  });
+
   test("one owner prompt per set; the write lands at the grant's key; status reports it", async () => {
     const { db, vault } = await approved();
     const { gate, calls } = recordingGate(true);

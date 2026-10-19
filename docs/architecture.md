@@ -183,8 +183,9 @@ constructor option rather than on whether `start()` was ever called — `tick()`
 return early only on `stopped`, and every finished job's own `.finally` calls `tick()`, so an
 unstarted-but-not-disabled scheduler would re-animate its own schedule the first time anything ran
 one job on it. `ipc/server/demo-gate.ts`'s `demoRefusal(method)` is the separate IPC-layer gate: an
-allow-list of three `connector.*` reads plus a deny-list of four writes (`vault.set`, `vault.delete`,
-`data.import`, `extension.install`), returning `ERR_DEMO_FORBIDDEN` (`-32000`) for everything else
+allow-list of three `connector.*` reads plus a deny-list (`vault.set`, `vault.delete`, `data.import`,
+`extension.install`, `extension.approveRun`, `extension.revokeRun`, `extension.credentialSet`, and every
+`registry.*` method), returning `ERR_DEMO_FORBIDDEN` (`-32000`) for everything else
 under `connector.*` — so a connector method added later is refused until someone decides otherwise,
 rather than silently becoming a way to bring real credentials into a root labelled "not your data".
 
@@ -1822,14 +1823,21 @@ dynamically composed identifier evades a text scan and capability confinement is
 import is caught; comments and test files are not scanned), with the same stated bound that a dynamically
 composed call evades a text scan. The
 IPC methods `extension.approveRun` / `extension.revokeRun` are CLI-only, LAN-forbidden, refused in a demo
-root and absent from the Tauri allowlist. `extension.credentialSet` (`{ id, name, value }` → `{ name, set: true }`) and
+root and absent from the Tauri allowlist. `model_access` is set by `nimbus extension approve <id> --model` (PR 4); every approval states the whole grant, so approving without the flag clears it.
+
+`extension.credentialSet` (`{ id, name, value }` → `{ name, set: true }`) and
 `extension.credentialStatus` (`{ id }` → `{ credentials: [{ name, set }] }`), behind `nimbus extension
 credential set|status` (`extensions/extension-credential-set.ts`), are CLI-only, LAN-forbidden and absent from
 the Tauri allowlist, and `credentialSet` is refused in a demo root. `credentialSet` resolves the Vault key
 from the grant's `credentials_json` server-side (an undeclared name refuses `ERR_EXTENSION_CREDENTIAL_UNKNOWN`,
 no grant `ERR_EXTENSION_CREDENTIAL_NO_GRANT`), asks the owner exactly once under the frozen-set `vault.set`
 type with the payload `{ extensionId, name }`, re-reads the grant after approval and writes only if it still
-names the same key; the value and the key are never in the payload, the audit row, the response or an error. `model_access` is set by `nimbus extension approve <id> --model` (PR 4); every approval states the whole grant, so approving without the flag clears it.
+names the same key; the value and the key are never in the payload, the audit row, the response or an error.
+A stored key is trusted only when it is the extension's own `ext.<serviceId>.<name>` key or the legacy key a
+`CONTINUITY_TABLE` entry for that extension maps the name to (then the prompt payload also carries
+`reusesConnector: <legacyServiceId>`); any other key refuses both methods `ERR_EXTENSION_CREDENTIAL_GRANT_INVALID`,
+so neither can write or probe an arbitrary Vault key. After a successful set the extension's live
+`mesh:ext:` client is stopped (best effort), so the credential takes effect on its next start.
 
 ### Extension runtime
 

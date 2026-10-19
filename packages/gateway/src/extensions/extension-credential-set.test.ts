@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { redactPayloadForConsentDisplay } from "../engine/executor.ts";
 import { MockVault } from "../vault/mock.ts";
+import type { ContinuityEntry } from "./continuity/continuity-table.ts";
 import {
   CREDENTIAL_SET_ACTION_TYPE,
   type CredentialOwnerGate,
@@ -35,6 +36,19 @@ const DECLARED = JSON.stringify({
   token: { env: "READER_TOKEN", vaultKey: KEY },
 });
 
+/** A continuity binding for EXT: `api_secret` reuses the legacy `reader` connector's key. */
+const TABLE: readonly ContinuityEntry[] = [
+  {
+    legacyServiceId: "reader",
+    extensionId: EXT,
+    publisherKey: "k",
+    sourceRootFingerprint: "f",
+    credentials: { api_secret: "legacy.reader.secret" },
+    expectedPermissions: { network: [], read: [], write: [] },
+    itemTypes: [],
+  },
+];
+
 type GateCall = { type: string; payload: Record<string, unknown> };
 
 function recordingGate(answer: boolean): { gate: CredentialOwnerGate; calls: GateCall[] } {
@@ -56,8 +70,9 @@ function deps(
   vault: MockVault;
   readGrant: (id: string) => ExtensionRunGrantRow | null;
   gate: CredentialOwnerGate;
+  continuityTable: readonly ContinuityEntry[];
 } {
-  return { vault, readGrant: (id) => (id === EXT ? row : null), gate };
+  return { vault, readGrant: (id) => (id === EXT ? row : null), gate, continuityTable: TABLE };
 }
 
 async function refusal(p: Promise<unknown>): Promise<ExtensionCredentialError> {
@@ -84,11 +99,83 @@ describe("setExtensionCredential", () => {
     expect(await d.vault.get(KEY)).toBe(SECRET);
   });
 
-  test("a binding-mapped (legacy) key is the one written", async () => {
-    const { gate } = recordingGate(true);
+  test("a binding-mapped (legacy) key is the one written, and the prompt names the connector", async () => {
+    const { gate, calls } = recordingGate(true);
     const d = deps(grant(DECLARED), gate);
     await setExtensionCredential(d, { extensionId: EXT, name: "api_secret", value: SECRET });
     expect(await d.vault.get("legacy.reader.secret")).toBe(SECRET);
+    expect(calls[0]?.payload).toEqual({
+      extensionId: EXT,
+      name: "api_secret",
+      reusesConnector: "reader",
+    });
+    expect(JSON.stringify(calls)).not.toContain("legacy.reader.secret");
+  });
+
+  test("the extension's own key carries no reusesConnector", async () => {
+    const { gate, calls } = recordingGate(true);
+    await setExtensionCredential(deps(grant(DECLARED), gate), {
+      extensionId: EXT,
+      name: "token",
+      value: SECRET,
+    });
+    expect(calls[0]?.payload).not.toHaveProperty("reusesConnector");
+  });
+
+  test("a stored key neither the extension's own nor a binding's refuses both methods", async () => {
+    const vault = new MockVault();
+    await vault.set("github.pat", "real-pat");
+    let reads = 0;
+    const realGet = vault.get.bind(vault);
+    vault.get = async (k) => {
+      reads += 1;
+      return realGet(k);
+    };
+    const row = grant(JSON.stringify({ token: { env: "READER_TOKEN", vaultKey: "github.pat" } }));
+    const { gate, calls } = recordingGate(true);
+    const e1 = await refusal(
+      setExtensionCredential(
+        { vault, gate, readGrant: () => row, continuityTable: TABLE },
+        { extensionId: EXT, name: "token", value: SECRET },
+      ),
+    );
+    expect(e1.code).toBe("ERR_EXTENSION_CREDENTIAL_GRANT_INVALID");
+    expect(calls).toHaveLength(0);
+    const e2 = await refusal(
+      extensionCredentialStatus({ vault, readGrant: () => row, continuityTable: TABLE }, EXT),
+    );
+    expect(e2.code).toBe("ERR_EXTENSION_CREDENTIAL_GRANT_INVALID");
+    expect(reads).toBe(0);
+    expect(await realGet("github.pat")).toBe("real-pat");
+  });
+
+  test("a binding for a DIFFERENT extension does not make its key trusted", async () => {
+    const other = TABLE.map((e) => ({ ...e, extensionId: "com.other" }));
+    const { gate } = recordingGate(true);
+    const e = await refusal(
+      setExtensionCredential(
+        { vault: new MockVault(), gate, readGrant: () => grant(DECLARED), continuityTable: other },
+        { extensionId: EXT, name: "token", value: SECRET },
+      ),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_GRANT_INVALID");
+  });
+
+  test("a grant revoked between approval and write refuses and writes nothing", async () => {
+    const vault = new MockVault();
+    let current: ExtensionRunGrantRow | null = grant(DECLARED);
+    const gate: CredentialOwnerGate = async () => {
+      current = null;
+      return true;
+    };
+    const e = await refusal(
+      setExtensionCredential(
+        { vault, gate, readGrant: () => current, continuityTable: TABLE },
+        { extensionId: EXT, name: "token", value: SECRET },
+      ),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_CHANGED");
+    expect(await vault.get(KEY)).toBeNull();
   });
 
   test("the action type is the frozen-set vault.set", () => {
@@ -209,7 +296,7 @@ describe("setExtensionCredential", () => {
     };
     const e = await refusal(
       setExtensionCredential(
-        { vault, gate, readGrant: () => current },
+        { vault, gate, readGrant: () => current, continuityTable: TABLE },
         { extensionId: EXT, name: "token", value: SECRET },
       ),
     );
@@ -226,7 +313,7 @@ describe("setExtensionCredential", () => {
     const { gate } = recordingGate(true);
     const e = await refusal(
       setExtensionCredential(
-        { vault, gate, readGrant: () => grant(DECLARED) },
+        { vault, gate, readGrant: () => grant(DECLARED), continuityTable: TABLE },
         { extensionId: EXT, name: "token", value: SECRET },
       ),
     );
@@ -241,7 +328,10 @@ describe("extensionCredentialStatus", () => {
     const vault = new MockVault();
     await vault.set(KEY, SECRET);
     await vault.set("legacy.reader.secret", "   ");
-    const out = await extensionCredentialStatus({ vault, readGrant: () => grant(DECLARED) }, EXT);
+    const out = await extensionCredentialStatus(
+      { vault, readGrant: () => grant(DECLARED), continuityTable: TABLE },
+      EXT,
+    );
     expect(out).toEqual({
       credentials: [
         { name: "api_secret", set: false },

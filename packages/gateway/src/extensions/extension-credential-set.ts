@@ -1,5 +1,9 @@
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
-import type { ResolvedRunCredentials } from "./extension-credentials.ts";
+import { CONTINUITY_TABLE, type ContinuityEntry } from "./continuity/continuity-table.ts";
+import {
+  extensionCredentialVaultKey,
+  type ResolvedRunCredentials,
+} from "./extension-credentials.ts";
 import type { ExtensionRunGrantRow } from "./run-grant-store.ts";
 
 /**
@@ -47,6 +51,8 @@ export const CREDENTIAL_POST_CONSENT_CODES: ReadonlySet<ExtensionCredentialError
 export type CredentialReadDeps = {
   readonly vault: NimbusVault;
   readonly readGrant: (extensionId: string) => ExtensionRunGrantRow | null;
+  /** The continuity bindings a legacy key may come from; default {@link CONTINUITY_TABLE}. */
+  readonly continuityTable?: readonly ContinuityEntry[];
 };
 
 export type CredentialSetDeps = CredentialReadDeps & { readonly gate: CredentialOwnerGate };
@@ -82,12 +88,57 @@ export function parseRunCredentials(json: string): ResolvedRunCredentials | unde
   return out;
 }
 
-/** The consent/audit payload: names the owner can read, and nothing secret. */
-export function credentialGatePayload(extensionId: string, name: string): Record<string, unknown> {
-  return { extensionId, name };
+/**
+ * The consent/audit payload: names the owner can read, and nothing secret. `reusesConnector` (the
+ * legacy service id, never its Vault key) is present only when the credential is a bound
+ * connector's existing one — the same field the run approval's prompt uses.
+ */
+export function credentialGatePayload(
+  extensionId: string,
+  name: string,
+  reusesConnector?: string,
+): Record<string, unknown> {
+  return { extensionId, name, ...(reusesConnector === undefined ? {} : { reusesConnector }) };
 }
 
-function grantCredentials(deps: CredentialReadDeps, extensionId: string): ResolvedRunCredentials {
+type TrustedCredential = { readonly vaultKey: string; readonly reusesConnector?: string };
+
+function grantInvalid(extensionId: string): ExtensionCredentialError {
+  return new ExtensionCredentialError(
+    "ERR_EXTENSION_CREDENTIAL_GRANT_INVALID",
+    `${extensionId}'s run approval records unreadable credentials; approve it again`,
+  );
+}
+
+/**
+ * The stored key is DB data, so it is trusted only when it is one `resolveRunCredentials` could have
+ * produced: the extension's own `ext.<serviceId>.<name>` key, or the legacy key a continuity entry
+ * for THIS extension maps the name to. Anything else (a row pointing at, say, `github.pat`) refuses,
+ * so neither method can write or probe an arbitrary Vault key.
+ */
+function trustCredential(
+  row: ExtensionRunGrantRow,
+  name: string,
+  vaultKey: string,
+  table: readonly ContinuityEntry[],
+): TrustedCredential | undefined {
+  if (vaultKey === extensionCredentialVaultKey(row.service_id, name)) return { vaultKey };
+  for (const entry of table) {
+    if (
+      entry.extensionId === row.extension_id &&
+      Object.hasOwn(entry.credentials, name) &&
+      entry.credentials[name] === vaultKey
+    ) {
+      return { vaultKey, reusesConnector: entry.legacyServiceId };
+    }
+  }
+  return undefined;
+}
+
+function grantCredentials(
+  deps: CredentialReadDeps,
+  extensionId: string,
+): ReadonlyMap<string, TrustedCredential> {
   const row = deps.readGrant(extensionId);
   if (row === null) {
     throw new ExtensionCredentialError(
@@ -96,17 +147,17 @@ function grantCredentials(deps: CredentialReadDeps, extensionId: string): Resolv
     );
   }
   const creds = parseRunCredentials(row.credentials_json);
-  if (creds === undefined) {
-    throw new ExtensionCredentialError(
-      "ERR_EXTENSION_CREDENTIAL_GRANT_INVALID",
-      `${extensionId}'s run approval records unreadable credentials; approve it again`,
-    );
+  if (creds === undefined) throw grantInvalid(extensionId);
+  const table = deps.continuityTable ?? CONTINUITY_TABLE;
+  const out = new Map<string, TrustedCredential>();
+  for (const name of Object.keys(creds).sort()) {
+    const vaultKey = creds[name]?.vaultKey;
+    const trusted =
+      vaultKey === undefined ? undefined : trustCredential(row, name, vaultKey, table);
+    if (trusted === undefined) throw grantInvalid(extensionId);
+    out.set(name, trusted);
   }
-  return creds;
-}
-
-function declaredVaultKey(creds: ResolvedRunCredentials, name: string): string | undefined {
-  return Object.hasOwn(creds, name) ? creds[name]?.vaultKey : undefined;
+  return out;
 }
 
 export async function setExtensionCredential(
@@ -120,8 +171,8 @@ export async function setExtensionCredential(
       `the value for ${name} is blank`,
     );
   }
-  const vaultKey = declaredVaultKey(grantCredentials(deps, extensionId), name);
-  if (vaultKey === undefined) {
+  const declared = grantCredentials(deps, extensionId).get(name);
+  if (declared === undefined) {
     throw new ExtensionCredentialError(
       "ERR_EXTENSION_CREDENTIAL_UNKNOWN",
       `${extensionId}'s run approval declares no credential named ${JSON.stringify(name)}`,
@@ -129,7 +180,7 @@ export async function setExtensionCredential(
   }
   const approved = await deps.gate({
     type: CREDENTIAL_SET_ACTION_TYPE,
-    payload: credentialGatePayload(extensionId, name),
+    payload: credentialGatePayload(extensionId, name, declared.reusesConnector),
   });
   if (!approved) {
     throw new ExtensionCredentialError(
@@ -141,10 +192,11 @@ export async function setExtensionCredential(
   // the grant still names, which must be the one resolved before the owner was asked.
   let after: string | undefined;
   try {
-    after = declaredVaultKey(grantCredentials(deps, extensionId), name);
+    after = grantCredentials(deps, extensionId).get(name)?.vaultKey;
   } catch {
     after = undefined;
   }
+  const vaultKey = declared.vaultKey;
   if (after !== vaultKey) {
     throw new ExtensionCredentialError(
       "ERR_EXTENSION_CREDENTIAL_CHANGED",
@@ -167,11 +219,8 @@ export async function extensionCredentialStatus(
   deps: CredentialReadDeps,
   extensionId: string,
 ): Promise<{ credentials: Array<{ name: string; set: boolean }> }> {
-  const creds = grantCredentials(deps, extensionId);
   const credentials: Array<{ name: string; set: boolean }> = [];
-  for (const name of Object.keys(creds).sort()) {
-    const vaultKey = declaredVaultKey(creds, name);
-    if (vaultKey === undefined) continue;
+  for (const [name, { vaultKey }] of grantCredentials(deps, extensionId)) {
     const value = await deps.vault.get(vaultKey);
     credentials.push({ name, set: value !== null && value.trim() !== "" });
   }

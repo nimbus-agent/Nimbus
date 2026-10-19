@@ -862,7 +862,7 @@ function requireInstalledExtension(ctx: AutomationCtx, id: string): void {
 /**
  * Set one credential an approved extension declares (CLI-only, LAN-forbidden, refused in a demo
  * root). The Vault key comes from the run grant, never from the caller; the owner is asked once,
- * under `vault.set`. The value is read here and passed straight to the Vault — it never appears in
+ * under `vault.set`. A running extension is stopped after the write, so it takes effect on its next start. The value is read here and passed straight to the Vault — it never appears in
  * the gate payload, the response, an error message or the audit row.
  */
 async function handleExtensionCredentialSet(
@@ -886,6 +886,9 @@ async function handleExtensionCredentialSet(
       { vault, gate, readGrant: (x) => getRunGrant(ctx.db, x) },
       { extensionId: id, name, value },
     );
+    // A live `mesh:ext:` child keeps the env it was spawned with. Stopping it makes the next use
+    // re-spawn — re-verifying and reading the new value; nothing else picks the change up.
+    if (ctx.mesh !== undefined) await stopExtensionBestEffort(ctx.mesh, id);
     return { kind: "hit", value: out };
   } catch (e) {
     throw credentialRpcError(e);

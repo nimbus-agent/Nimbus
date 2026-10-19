@@ -6492,8 +6492,7 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(Object.values(prepared.spec.env)).not.toContain("i43-ungranted-value");
     expect(JSON.stringify(prepared.spec.args)).not.toContain("i43-granted-value");
     prepared.discard();
-    // A stored credential mapping that no longer equals the re-resolved one refuses the spawn
-    // before any Vault value is read for it.
+    // A stored credential mapping that no longer equals the re-resolved one refuses the spawn.
     upsertRunGrant(f.db, {
       ...g,
       credentials_json: JSON.stringify({ token: { env: "I43_TOKEN", vaultKey: "github.pat" } }),

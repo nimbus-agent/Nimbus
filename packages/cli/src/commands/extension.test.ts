@@ -2427,7 +2427,8 @@ describe("runExtensionCredential", () => {
     ]);
     expect(i.state.consentRegistered).toBe(1);
     expect(out.stdout).toContain("com.x: token stored");
-    expect(out.stdout).toContain("nimbus connector sync <service>");
+    expect(out.stdout).toContain("takes effect the next time the extension starts");
+    expect(out.stdout).not.toContain("sync");
     expect(out.stdout).not.toContain(SECRET);
   });
 
