@@ -6,6 +6,7 @@ import { mergePeople } from "../people/linker.ts";
 import {
   buildPersonListSql,
   countItemsByAuthor,
+  countItemsByAuthors,
   getPersonById,
   listPersons,
   searchPersons,
@@ -64,6 +65,14 @@ function personToJson(p: PersonRecord, itemCount: number): Record<string, unknow
     metadata: p.metadata ?? {},
     itemCount,
   };
+}
+
+function peopleToJson(db: Database, rows: readonly PersonRecord[]): Record<string, unknown>[] {
+  const counts = countItemsByAuthors(
+    db,
+    rows.map((p) => p.id),
+  );
+  return rows.map((p) => personToJson(p, counts.get(p.id) ?? 0));
 }
 
 type Hit = { kind: "hit"; value: unknown };
@@ -154,7 +163,7 @@ function rpcPeopleList(rec: Record<string, unknown> | undefined, db: Database): 
     if (outcome.kind === "refused") {
       return { kind: "hit", value: outcome.refusal };
     }
-    const people = outcome.rows.map((p) => personToJson(p, countItemsByAuthor(db, p.id)));
+    const people = peopleToJson(db, outcome.rows);
     return {
       kind: "hit",
       value: {
@@ -167,7 +176,7 @@ function rpcPeopleList(rec: Record<string, unknown> | undefined, db: Database): 
   }
 
   const rows = listPersons(db, { unlinkedOnly, limit });
-  const people = rows.map((p) => personToJson(p, countItemsByAuthor(db, p.id)));
+  const people = peopleToJson(db, rows);
   if (!explain) {
     return { kind: "hit", value: people };
   }
@@ -181,7 +190,7 @@ function rpcPeopleUnlinked(rec: Record<string, unknown> | undefined, db: Databas
   const rows = listPersons(db, { unlinkedOnly: true, limit });
   return {
     kind: "hit",
-    value: rows.map((p) => personToJson(p, countItemsByAuthor(db, p.id))),
+    value: peopleToJson(db, rows),
   };
 }
 
@@ -191,7 +200,7 @@ function rpcPeopleSearch(rec: Record<string, unknown> | undefined, db: Database)
   const rows = searchPersons(db, q, limit);
   return {
     kind: "hit",
-    value: rows.map((p) => personToJson(p, countItemsByAuthor(db, p.id))),
+    value: peopleToJson(db, rows),
   };
 }
 

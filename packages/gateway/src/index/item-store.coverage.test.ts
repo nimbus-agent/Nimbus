@@ -147,6 +147,47 @@ describe("upsertIndexedItemForSync at summary depth", () => {
     expect(scheduled).toEqual(["notion:embed-me"]);
     db.close();
   });
+
+  test("re-writing an item with unchanged text does not schedule its embedding again", () => {
+    const db = openDb();
+    const scheduled: string[] = [];
+    const ctx = {
+      db,
+      depth: "full" as const,
+      scheduleItemEmbedding: (id: string) => scheduled.push(id),
+    };
+    const row = { ...base, externalId: "same", body: "unchanged text" };
+    upsertIndexedItemForSync(ctx, row);
+    upsertIndexedItemForSync(ctx, { ...row, syncedAt: row.syncedAt + 1000, url: "https://x/1" });
+    expect(scheduled).toEqual(["notion:same"]);
+    // Title, body/preview and type each count as a change.
+    upsertIndexedItemForSync(ctx, { ...row, body: "new text" });
+    upsertIndexedItemForSync(ctx, { ...row, body: "new text", title: "Renamed" });
+    upsertIndexedItemForSync(ctx, { ...row, body: "new text", title: "Renamed", type: "database" });
+    expect(scheduled).toHaveLength(4);
+    db.close();
+  });
+
+  test("a depth change that suppresses the body counts as a text change", () => {
+    const db = openDb();
+    const scheduled: string[] = [];
+    const push = (id: string): number => scheduled.push(id);
+    const row = { ...base, externalId: "depth", body: "full body text" };
+    upsertIndexedItemForSync({ db, depth: "full", scheduleItemEmbedding: push }, row);
+    upsertIndexedItemForSync({ db, depth: "metadata_only", scheduleItemEmbedding: push }, row);
+    expect(scheduled).toHaveLength(2);
+    db.close();
+  });
+
+  test("upsertIndexedItem reports whether the embedded text changed", () => {
+    const db = openDb();
+    const row = { ...base, externalId: "outcome", body: "b" };
+    expect(upsertIndexedItem(db, row).embeddingTextChanged).toBe(true);
+    expect(upsertIndexedItem(db, { ...row, syncedAt: row.syncedAt + 1 }).embeddingTextChanged).toBe(
+      false,
+    );
+    db.close();
+  });
 });
 
 describe("upsertNimbusItemIntoItemTable", () => {

@@ -364,6 +364,35 @@ export function countItemsByAuthor(db: Database, personId: string): number {
   return typeof c === "number" && Number.isFinite(c) ? Math.floor(c) : 0;
 }
 
+/** Most bound parameters per `IN (...)` list, well under SQLite's 32,766 default. */
+const AUTHOR_COUNT_CHUNK = 500;
+
+/**
+ * `countItemsByAuthor` for many people in one `GROUP BY` per 500 ids, instead of one query per
+ * person (the people list used to issue up to `limit` separate counts). Every requested id is in
+ * the result; a person who authored nothing maps to 0.
+ */
+export function countItemsByAuthors(
+  db: Database,
+  personIds: readonly string[],
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const id of personIds) counts.set(id, 0);
+  const unique = [...counts.keys()];
+  for (let i = 0; i < unique.length; i += AUTHOR_COUNT_CHUNK) {
+    const chunk = unique.slice(i, i + AUTHOR_COUNT_CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .query(
+        `SELECT author_id AS id, COUNT(*) AS c FROM item WHERE author_id IN (${placeholders}) GROUP BY author_id`,
+      )
+      .all(...chunk) as { id: string; c: number | bigint }[];
+    // `Number` rather than `Math.floor`: a `safeIntegers` handle returns COUNT(*) as a bigint.
+    for (const r of rows) counts.set(r.id, Number(r.c));
+  }
+  return counts;
+}
+
 export function deletePersonById(db: Database, id: string): void {
   dbRun(db, "DELETE FROM person WHERE id = ?", [id]);
 }

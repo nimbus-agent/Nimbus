@@ -1,3 +1,4 @@
+import { purgeDeletedResidue, withSecureDelete } from "../db/writable-pragmas.ts";
 import { dbRun } from "../db/write.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -63,12 +64,20 @@ async function buildPreflight(input: RunDataDeleteInput): Promise<DataDeletePref
   };
 }
 
+/**
+ * The vectors that go with the service's items: one per `embedding_chunk` row, of any model or
+ * dimension (the chunk rows' delete triggers remove the matching vec rows). This used to count
+ * `vec_items_384` rows whose rowid equalled an item's rowid, but vec rowids are allocated on their
+ * own (`index/vec-rowid.ts`), so that count was unrelated to the service and ignored 1536-dim
+ * vectors entirely.
+ */
 function vecRowsForService(idx: LocalIndex, service: string): number {
   try {
     const row = idx.rawDb
       .query(
-        `SELECT COUNT(*) AS c FROM vec_items_384
-         WHERE rowid IN (SELECT rowid FROM item WHERE service = ?)`,
+        `SELECT COUNT(*) AS c FROM embedding_chunk c
+         JOIN item i ON i.id = c.item_id
+         WHERE i.service = ?`,
       )
       .get(service) as { c: number } | undefined;
     return row?.c ?? 0;
@@ -81,14 +90,18 @@ export async function runDataDelete(input: RunDataDeleteInput): Promise<RunDataD
   const preflight = await buildPreflight(input);
   if (input.dryRun) return { preflight, deleted: false };
 
-  input.index.rawDb.transaction(() => {
-    dbRun(input.index.rawDb, `DELETE FROM item WHERE service = ?`, [input.service]);
-    dbRun(
-      input.index.rawDb,
-      `DELETE FROM sync_state WHERE ${SYNC_STATE_FOR_SERVICE}`,
-      syncStateParams(input.service),
-    );
-  })();
+  const db = input.index.rawDb;
+  withSecureDelete(db, () => {
+    db.transaction(() => {
+      dbRun(db, `DELETE FROM item WHERE service = ?`, [input.service]);
+      dbRun(
+        db,
+        `DELETE FROM sync_state WHERE ${SYNC_STATE_FOR_SERVICE}`,
+        syncStateParams(input.service),
+      );
+    })();
+  });
+  purgeDeletedResidue(db);
 
   for (const key of preflight.vaultKeys) {
     await input.vault.delete(key); // NOSONAR S9382: the macOS vault's delete rewrites one shared key-index file (read-modify-write); concurrent deletes would lose index updates

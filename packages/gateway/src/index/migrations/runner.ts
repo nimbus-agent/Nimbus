@@ -52,6 +52,7 @@ import { GRAPH_LINEAGE_TYPES_V40_SQL } from "../graph-lineage-types-v40-sql.ts";
 import { GRAPH_RELATION_TYPES_V12_SQL } from "../graph-relation-types-v12-sql.ts";
 import { GRAPH_V7_MIGRATION_SQL } from "../graph-v7-sql.ts";
 import { V34_IDENTITY_SQL } from "../identity-v34-sql.ts";
+import { ITEM_WRITE_PATH_V72_SQL } from "../item-write-path-v72-sql.ts";
 import { KNOWN_NAMESPACES_V38_SQL } from "../known-namespaces-v38-sql.ts";
 import { LAN_PEERS_V19_SQL } from "../lan-peers-v19-sql.ts";
 import { LLM_CONTEXT_WINDOW_V16_ALTER_SQL, LLM_MODELS_V16_SQL } from "../llm-models-v16-sql.ts";
@@ -659,6 +660,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     71,
     "extension registries (extension_registry) + extension source columns",
     EXTENSION_REGISTRY_V71_SQL,
+  ),
+  simpleStep(
+    71,
+    72,
+    "item write path: FTS update only on text change + composite read indexes",
+    ITEM_WRITE_PATH_V72_SQL,
   ),
 ];
 

@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { dbRun } from "../db/write.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
+import { nextVecRowid } from "../index/vec-rowid.ts";
 
 export type SessionMemoryRole = "user" | "assistant" | "tool";
 
@@ -100,10 +101,7 @@ export class SessionMemoryStore {
       return;
     }
     this.db.transaction(() => {
-      const maxRow = this.db
-        .query(`SELECT COALESCE(MAX(rowid), 0) AS m FROM vec_items_384`)
-        .get() as { m: number | bigint };
-      const rowid = Number(maxRow.m) + 1;
+      const rowid = nextVecRowid(this.db, "vec_items_384");
       dbRun(this.db, `INSERT INTO vec_items_384(rowid, embedding) VALUES (?, vec_f32(?))`, [
         BigInt(rowid),
         new Float32Array(vec),

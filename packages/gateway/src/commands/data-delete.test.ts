@@ -56,6 +56,22 @@ describe("data delete", () => {
     ).toEqual({ c: 3 });
   });
 
+  test("vecRowsToDelete counts the service's embedding chunks, of every dimension", async () => {
+    seed(idx, "github", 2);
+    seed(idx, "slack", 1);
+    const ins = idx.rawDb.query(
+      `INSERT INTO embedding_chunk (item_id, chunk_index, chunk_text, vec_rowid, model, dims, embedded_at)
+       VALUES (?, ?, 't', ?, ?, ?, 1)`,
+    );
+    ins.run("github-0", 0, 900, "minilm", 384);
+    ins.run("github-0", 1, 901, "minilm", 384);
+    ins.run("github-1", 0, 902, "openai", 1536);
+    ins.run("slack-0", 0, 903, "minilm", 384);
+    ins.finalize();
+    const result = await runDataDelete({ service: "github", dryRun: true, vault, index: idx });
+    expect(result.preflight.vecRowsToDelete).toBe(3);
+  });
+
   test("confirmed deletion removes items + vault keys for the service only", async () => {
     seed(idx, "github", 3);
     seed(idx, "slack", 2);
@@ -257,14 +273,14 @@ describe("data delete", () => {
   test("vecRowsForService returns 0 when the COUNT row is absent (row?.c ?? 0 arm)", async () => {
     // Distinct from the catch arm above: here the vec query SUCCEEDS (no throw) but yields no
     // row, so the `row?.c ?? 0` fallback fires instead of the try/catch. A delegating proxy
-    // returns an empty statement for the vec_items_384 query and forwards everything else.
+    // returns an empty statement for the vector-count query and forwards everything else.
     seed(idx, "jira", 3);
     const realDb = idx.rawDb;
     const dbProxy = new Proxy(realDb, {
       get(target, prop, recv) {
         if (prop === "query") {
           return (sql: string) =>
-            sql.includes("vec_items_384")
+            sql.includes("embedding_chunk")
               ? // a statement whose .get() yields no row → exercises `row?.c ?? 0`
                 ({ get: () => undefined } as unknown as ReturnType<typeof target.query>)
               : target.query(sql);

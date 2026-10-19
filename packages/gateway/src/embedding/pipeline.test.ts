@@ -820,3 +820,94 @@ describe.skipIf(!VEC_AVAILABLE)("SqliteEmbeddingPipeline — dim awareness", () 
     expect(embedded).toBe(ITEMS);
   });
 });
+
+describe.skipIf(!VEC_AVAILABLE)("backfill keyset cursor (audit F8)", () => {
+  function seed(db: Database, titles: string[]): void {
+    const now = Date.now();
+    titles.forEach((title, i) => {
+      upsertIndexedItem(db, {
+        service: "filesystem",
+        type: "file",
+        externalId: `k${String(i)}`,
+        title,
+        bodyPreview: "",
+        modifiedAt: now - i,
+        syncedAt: now,
+      });
+    });
+  }
+
+  test("a page of items that chunk to nothing is attempted once, so the backfill ends", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    // Blank titles and bodies: `embedItem` writes no chunk, so each item stays unembedded.
+    seed(db, ["", " ", "", "real text", ""]);
+    let embedCalls = 0;
+    const embedder: Embedder = {
+      ...mockEmbedder(384, "keyset-m"),
+      async embed(texts: string[]) {
+        embedCalls += 1;
+        return texts.map(() => new Float32Array(384).fill(0.01));
+      },
+    };
+    const pipeline = new SqliteEmbeddingPipeline({ db, embedder, backfillBatchSize: 2 });
+    // Before the cursor this never resolved: the first page was the two blank items forever.
+    await pipeline.backfillAll();
+    expect(embedCalls).toBe(1);
+    const embedded = db
+      .query("SELECT item_id FROM embedding_chunk WHERE model = 'keyset-m'")
+      .all() as { item_id: string }[];
+    expect(new Set(embedded.map((r) => r.item_id))).toEqual(new Set(["filesystem:k3"]));
+    db.close();
+  });
+
+  test("an item whose embed throws is attempted once per pass, not forever", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    seed(db, ["poison", "fine one", "fine two"]);
+    const attempts = new Map<string, number>();
+    const embedder: Embedder = {
+      ...mockEmbedder(384, "keyset-fail"),
+      async embed(texts: string[]) {
+        for (const t of texts) attempts.set(t, (attempts.get(t) ?? 0) + 1);
+        if (texts.some((t) => t.includes("poison"))) throw new Error("embed failed");
+        return texts.map(() => new Float32Array(384).fill(0.01));
+      },
+    };
+    const pipeline = new SqliteEmbeddingPipeline({ db, embedder, backfillBatchSize: 1 });
+    await pipeline.backfillAll();
+    expect(attempts.get("poison")).toBe(1);
+    const embedded = db
+      .query("SELECT COUNT(DISTINCT item_id) AS c FROM embedding_chunk WHERE model = 'keyset-fail'")
+      .get() as { c: number };
+    expect(embedded.c).toBe(2);
+    db.close();
+  });
+
+  test("items with the same modified_at are all visited (the id tiebreak)", async () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const now = Date.now();
+    for (let i = 0; i < 5; i++) {
+      upsertIndexedItem(db, {
+        service: "filesystem",
+        type: "file",
+        externalId: `same${String(i)}`,
+        title: `tie ${String(i)}`,
+        modifiedAt: now,
+        syncedAt: now,
+      });
+    }
+    const pipeline = new SqliteEmbeddingPipeline({
+      db,
+      embedder: mockEmbedder(384, "keyset-tie"),
+      backfillBatchSize: 2,
+    });
+    await pipeline.backfillAll();
+    const embedded = db
+      .query("SELECT COUNT(DISTINCT item_id) AS c FROM embedding_chunk WHERE model = 'keyset-tie'")
+      .get() as { c: number };
+    expect(embedded.c).toBe(5);
+    db.close();
+  });
+});

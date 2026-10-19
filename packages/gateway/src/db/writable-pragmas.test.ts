@@ -1,15 +1,20 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { upsertIndexedItem } from "../index/item-store.ts";
+import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 
 import {
   applyWritablePragmas,
   BUSY_TIMEOUT_MS,
   optimizeQueryPlanner,
   PAGE_CACHE_KIB,
+  purgeDeletedResidue,
   readJournalMode,
+  withSecureDelete,
 } from "./writable-pragmas.ts";
 
 describe("applyWritablePragmas", () => {
@@ -159,5 +164,99 @@ describe("throughput pragmas", () => {
     const closed = new Database(":memory:");
     closed.close();
     expect(() => optimizeQueryPlanner(closed)).not.toThrow();
+  });
+});
+
+describe("deleted data is not left on disk (audit P2)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-secure-delete-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const MARKER = "zqxsecretmarkerzqx";
+
+  /** Does the marker survive anywhere in the database file or its WAL? */
+  function markerOnDisk(path: string): boolean {
+    return [path, `${path}-wal`].some(
+      (p) => existsSync(p) && readFileSync(p).includes(Buffer.from(MARKER)),
+    );
+  }
+
+  /** An indexed item whose body carries the marker, deleted the way `nimbus data delete` does. */
+  function seedAndDelete(path: string, scrub: boolean): void {
+    const db = new Database(path);
+    applyWritablePragmas(db);
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    for (let i = 0; i < 40; i++) {
+      upsertIndexedItem(db, {
+        service: i === 7 ? "gmail" : "slack",
+        type: "message",
+        externalId: `m${String(i)}`,
+        title: `message ${String(i)}`,
+        body: i === 7 ? `the body holds ${MARKER} and more text` : `ordinary text ${String(i)}`,
+        modifiedAt: i,
+        syncedAt: i,
+      });
+    }
+    dbCheckpoint(db);
+    const del = (): void => {
+      db.run("DELETE FROM item WHERE service = 'gmail'");
+    };
+    if (scrub) {
+      withSecureDelete(db, del);
+      purgeDeletedResidue(db);
+    } else {
+      db.run("PRAGMA secure_delete = OFF");
+      del();
+      dbCheckpoint(db);
+    }
+    db.close();
+  }
+
+  function dbCheckpoint(db: Database): void {
+    db.query("PRAGMA wal_checkpoint(TRUNCATE)").get();
+  }
+
+  test("control: without secure_delete the deleted body is still readable in the file", () => {
+    const path = join(dir, "control.db");
+    seedAndDelete(path, false);
+    expect(markerOnDisk(path)).toBe(true);
+  });
+
+  test("with secure_delete ON and the residue purge, the deleted body is gone from file and WAL", () => {
+    const path = join(dir, "nimbus.db");
+    seedAndDelete(path, true);
+    expect(markerOnDisk(path)).toBe(false);
+  });
+
+  test("every writable handle defaults to secure_delete FAST, and withSecureDelete restores it", () => {
+    const db = new Database(join(dir, "fast.db"));
+    applyWritablePragmas(db);
+    // 2 = FAST, 1 = ON.
+    expect(db.query("PRAGMA secure_delete").get()).toEqual({ secure_delete: 2 });
+    const inside = withSecureDelete(db, () => db.query("PRAGMA secure_delete").get());
+    expect(inside).toEqual({ secure_delete: 1 });
+    expect(db.query("PRAGMA secure_delete").get()).toEqual({ secure_delete: 2 });
+    expect(() =>
+      withSecureDelete(db, () => {
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+    expect(db.query("PRAGMA secure_delete").get()).toEqual({ secure_delete: 2 });
+    db.close();
+  });
+
+  test("purgeDeletedResidue reports what it did and tolerates a schema with no item_fts", () => {
+    const db = new Database(join(dir, "bare.db"));
+    applyWritablePragmas(db);
+    db.run("CREATE TABLE t (x)");
+    expect(purgeDeletedResidue(db)).toEqual({ ftsMerged: false, walTruncated: true });
+    db.close();
+    const mem = new Database(":memory:");
+    expect(purgeDeletedResidue(mem)).toEqual({ ftsMerged: false, walTruncated: false });
+    mem.close();
   });
 });

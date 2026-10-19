@@ -39,6 +39,11 @@ export const BUSY_TIMEOUT_MS = 8000;
  * - `temp_store = MEMORY`, so sorts and temporary indexes for large agent queries skip disk.
  * - `cache_size`, raised from SQLite's 2 MiB default to {@link PAGE_CACHE_KIB} KiB. Pages are
  *   allocated only as they are used, so an idle handle does not pay for it.
+ *
+ * And one for deleted data: `secure_delete = FAST`, so a deleted or overwritten row's bytes are
+ * zeroed in its b-tree page instead of lingering there until the page is reused. That is the
+ * level that costs no extra I/O; it leaves traces on freelist pages, which the explicit erasure
+ * paths close with {@link withSecureDelete} (`ON`) and {@link purgeDeletedResidue}.
  */
 export function applyWritablePragmas(db: Database): string {
   dbRun(db, "PRAGMA journal_mode = WAL");
@@ -47,7 +52,49 @@ export function applyWritablePragmas(db: Database): string {
   if (mode === "wal") dbRun(db, "PRAGMA synchronous = NORMAL");
   dbRun(db, "PRAGMA temp_store = MEMORY");
   dbRun(db, `PRAGMA cache_size = -${String(PAGE_CACHE_KIB)}`);
+  dbRun(db, "PRAGMA secure_delete = FAST");
   return mode;
+}
+
+/**
+ * Run `fn` with `secure_delete = ON`, then put the handle back to `FAST`. `ON` also zeroes pages as
+ * they move to the freelist, which `FAST` skips because it costs I/O; an explicit erasure (`nimbus
+ * data delete`) is rare enough to pay it.
+ */
+export function withSecureDelete<T>(db: Database, fn: () => T): T {
+  dbRun(db, "PRAGMA secure_delete = ON");
+  try {
+    return fn();
+  } finally {
+    dbRun(db, "PRAGMA secure_delete = FAST");
+  }
+}
+
+/**
+ * After an explicit erasure, remove the copies SQLite keeps outside the live b-tree:
+ * - `item_fts` is an external-content FTS5 index, so a deleted row's tokens stay in its segment
+ *   b-trees (as a delete marker beside the original terms) until segments merge; `'optimize'`
+ *   merges them now.
+ * - The WAL still holds the pre-delete page images until a checkpoint copies the new pages back
+ *   and the file is truncated.
+ *
+ * Best-effort, and reported rather than thrown: the delete itself already committed. A checkpoint
+ * that a concurrent reader blocks reports `busy` and leaves the WAL for the next one.
+ */
+export function purgeDeletedResidue(db: Database): { ftsMerged: boolean; walTruncated: boolean } {
+  let ftsMerged = false;
+  try {
+    dbRun(db, "INSERT INTO item_fts(item_fts) VALUES ('optimize')");
+    ftsMerged = true;
+  } catch {
+    /* no item_fts on this handle (a bare test schema): nothing to merge */
+  }
+  let walTruncated = false;
+  if (readJournalMode(db) === "wal") {
+    const row = db.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy?: number } | null;
+    walTruncated = row?.busy === 0;
+  }
+  return { ftsMerged, walTruncated };
 }
 
 /** Per-connection page cache ceiling, in KiB (negative `cache_size` means KiB, not pages). */

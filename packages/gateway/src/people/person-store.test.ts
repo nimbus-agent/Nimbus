@@ -9,6 +9,7 @@ import { openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
 import {
   buildPersonListSql,
   countItemsByAuthor,
+  countItemsByAuthors,
   deletePersonById,
   findPersonByBitbucketUuid,
   findPersonByCanonicalEmail,
@@ -255,6 +256,39 @@ describe("countItemsByAuthor / deletePersonById / normalizeEmail", () => {
     ins.finalize();
     expect(countItemsByAuthor(db, "p-auth")).toBe(2);
     expect(countItemsByAuthor(db, "p-nobody")).toBe(0);
+  });
+
+  test("countItemsByAuthors answers every id in one pass, zero for an author of nothing", () => {
+    const ins = db.query(
+      "INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, author_id) VALUES (?, 'github', 'pr', ?, 't', 1, 1, ?)",
+    );
+    ins.run("github:a1", "a1", "p-a");
+    ins.run("github:a2", "a2", "p-a");
+    ins.run("github:b1", "b1", "p-b");
+    ins.finalize();
+    const counts = countItemsByAuthors(db, ["p-a", "p-b", "p-none", "p-a"]);
+    expect([...counts.entries()].sort()).toEqual([
+      ["p-a", 2],
+      ["p-b", 1],
+      ["p-none", 0],
+    ]);
+    expect(countItemsByAuthors(db, []).size).toBe(0);
+  });
+
+  test("countItemsByAuthors chunks a long id list and returns numbers from a bigint handle", () => {
+    const big = new Database(":memory:", { safeIntegers: true });
+    try {
+      big.run("CREATE TABLE item (author_id TEXT)");
+      big.run("INSERT INTO item (author_id) VALUES ('p-0'), ('p-0'), ('p-1200')");
+      const ids = Array.from({ length: 1201 }, (_, i) => `p-${String(i)}`);
+      const counts = countItemsByAuthors(big, ids);
+      expect(counts.size).toBe(1201);
+      expect(counts.get("p-0")).toBe(2);
+      expect(counts.get("p-1200")).toBe(1);
+      expect(typeof counts.get("p-0")).toBe("number");
+    } finally {
+      big.close();
+    }
   });
 
   test("always returns a finite JS number, even from a handle that hands back bigint counts", () => {

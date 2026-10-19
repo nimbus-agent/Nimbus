@@ -78,7 +78,7 @@ export function upsertIndexedItem(
     syncedAt: number;
   } & IndexedItemBodyInput,
   resolveServiceId?: ResolveServiceId,
-): void {
+): UpsertOutcome {
   const id = itemPrimaryKey(row.service, row.externalId);
   const meta = JSON.stringify(row.metadata ?? {});
   if (Buffer.byteLength(meta, "utf8") > RAW_META_MAX_BYTES) {
@@ -108,6 +108,16 @@ export function upsertIndexedItem(
   // for a stored key because the READ side parse-checks before it canonicalizes.
   const resolveSource = row.canonicalUrl ?? row.url ?? null;
   const resolveKey = resolveSource === null ? null : canonicalizeUrl(resolveSource);
+  const before = db.query("SELECT type, title, body_preview FROM item WHERE id = ?").get(id) as {
+    type: string;
+    title: string;
+    body_preview: string | null;
+  } | null;
+  const embeddingTextChanged =
+    before === null ||
+    before.type !== row.type ||
+    before.title !== row.title ||
+    before.body_preview !== preview;
   dbRun(
     db,
     `INSERT INTO item (
@@ -164,7 +174,16 @@ export function upsertIndexedItem(
     },
     resolveServiceId,
   );
+  return { embeddingTextChanged };
 }
+
+/**
+ * What an upsert changed that a caller may act on. `embeddingTextChanged` is false only when the
+ * row already existed with the same type, title and preview, the three inputs to the item's
+ * embedding (`itemTextForEmbedding` reads title + preview; `type` picks the embedding route), so a
+ * sync that re-writes an unchanged item does not re-run model inference over it.
+ */
+export type UpsertOutcome = { embeddingTextChanged: boolean };
 
 export type BodyRow = Parameters<typeof upsertIndexedItem>[1];
 
@@ -218,8 +237,18 @@ export interface UpsertSyncDeps {
   scheduleItemEmbedding?: (itemId: string) => void;
 }
 
+/**
+ * Embedding is scheduled only when the embedded text changed. An item that has no embedding yet
+ * for some other reason (embeddings were off when it was written, or the embed failed) is not lost
+ * by skipping: the embedding backfill selects every item with no chunk for the current model.
+ */
 export function upsertIndexedItemForSync(ctx: UpsertSyncDeps, row: BodyRow): void {
-  upsertIndexedItem(ctx.db, applyDepth(ctx.depth, row), ctx.resolveServiceId);
+  const { embeddingTextChanged } = upsertIndexedItem(
+    ctx.db,
+    applyDepth(ctx.depth, row),
+    ctx.resolveServiceId,
+  );
+  if (!embeddingTextChanged) return;
   const id = itemPrimaryKey(row.service, row.externalId);
   ctx.scheduleItemEmbedding?.(id);
 }

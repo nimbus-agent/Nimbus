@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
 
 import { dbRun, dbStmtRun } from "../db/write.ts";
+import { nextVecRowid } from "../index/vec-rowid.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
 import { type ChunkOptions, chunkText, itemTextForEmbedding } from "./chunker.ts";
 import { SUPPORTED_EMBEDDING_DIMS } from "./routing.ts";
@@ -140,10 +141,7 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
         model,
       ]);
 
-      const maxRow = this.db
-        .query(`SELECT COALESCE(MAX(rowid), 0) AS m FROM ${this.vecTable}`)
-        .get() as { m: number | bigint };
-      let nextRowid = Number(maxRow.m) + 1;
+      let nextRowid = nextVecRowid(this.db, this.vecTable);
 
       const insertVec = this.db.prepare(
         `INSERT INTO ${this.vecTable}(rowid, embedding) VALUES (?, vec_f32(?))`,
@@ -213,27 +211,54 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
       onProgress?.(done, total);
     };
 
+    await this.drainBackfill("", [model], reportOne);
+  }
+
+  /**
+   * Embed every still-unembedded item matching `filter`, newest first, one page at a time.
+   *
+   * The page query carries a KEYSET cursor (`modified_at`, then `id`, both descending) rather than
+   * re-reading from the newest item each time. Without it, an item that stays unembedded after
+   * `embedItem` (it chunks to nothing, or the embedder threw and the failure was logged) matched
+   * the next page's `NOT EXISTS` again, so a page made of such items was re-selected forever and
+   * the backfill never finished. With the cursor each item is attempted once per pass; a failed one
+   * is retried by the next pass, as before.
+   */
+  private async drainBackfill(
+    filter: string,
+    params: readonly string[],
+    reportOne: () => void,
+  ): Promise<void> {
+    let cursor: { modifiedAt: number; id: string } | null = null;
     while (true) {
       // Before the SELECT, not after it: a paused gate must not hold a page of rows for however
       // long the machine stays on battery, and re-reading them on resume costs one query.
       if (this.backfillGate !== undefined && !(await this.backfillGate())) return;
+      const after =
+        cursor === null ? "" : "AND (i.modified_at < ? OR (i.modified_at = ? AND i.id < ?))";
+      const afterParams: (string | number)[] =
+        cursor === null ? [] : [cursor.modifiedAt, cursor.modifiedAt, cursor.id];
       const rows = this.db
         .query(
           `SELECT i.id AS id, i.service AS service, i.type AS type,
-                  i.title AS title, i.body_preview AS body_preview
+                  i.title AS title, i.body_preview AS body_preview, i.modified_at AS modified_at
            FROM item i WHERE NOT EXISTS (
              SELECT 1 FROM embedding_chunk c
              WHERE c.item_id = i.id AND c.model = ?
-           )
-           ORDER BY i.modified_at DESC
+           ) ${filter} ${after}
+           ORDER BY i.modified_at DESC, i.id DESC
            LIMIT ?`,
         )
-        .all(model, this.backfillBatchSize) as IndexedItem[];
+        .all(...params, ...afterParams, this.backfillBatchSize) as (IndexedItem & {
+        modified_at: number;
+      })[];
 
-      if (rows.length === 0) {
+      const last = rows.at(-1);
+      if (last === undefined) {
         break;
       }
-      await this.embedBatch(rows, reportOne); // NOSONAR S9382: drain loop - each page is the items still un-embedded, so it exists only after the previous batch is written
+      cursor = { modifiedAt: last.modified_at, id: last.id };
+      await this.embedBatch(rows, reportOne); // NOSONAR S9382: drain loop - each page starts after the previous one's cursor, so it is known only once the previous page was read
     }
   }
 
@@ -268,25 +293,6 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
       onProgress?.(done, total);
     };
 
-    while (true) {
-      if (this.backfillGate !== undefined && !(await this.backfillGate())) return;
-      const rows = this.db
-        .query(
-          `SELECT i.id AS id, i.service AS service, i.type AS type,
-                  i.title AS title, i.body_preview AS body_preview
-           FROM item i WHERE NOT EXISTS (
-             SELECT 1 FROM embedding_chunk c
-             WHERE c.item_id = i.id AND c.model = ?
-           ) ${filter}
-           ORDER BY i.modified_at DESC
-           LIMIT ?`,
-        )
-        .all(model, ...keys, this.backfillBatchSize) as IndexedItem[];
-
-      if (rows.length === 0) {
-        break;
-      }
-      await this.embedBatch(rows, reportOne); // NOSONAR S9382: drain loop - each page is the items still un-embedded, so it exists only after the previous batch is written
-    }
+    await this.drainBackfill(filter, [model, ...keys], reportOne);
   }
 }
