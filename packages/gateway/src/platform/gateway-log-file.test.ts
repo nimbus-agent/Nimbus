@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -692,10 +695,16 @@ describe("emergency log hardening", () => {
         chmodSync(logPath, 0o644);
         emergencyGatewayLogForPlatform(new Error("boom api_key=plainsecret"), "linux");
         expect(statSync(dirname(logPath)).mode & 0o077).toBe(0);
-        expect(statSync(logPath).mode & 0o077).toBe(0);
-        const content = readFileSync(logPath, "utf8");
-        expect(content).toContain("boom");
-        expect(content).not.toContain("plainsecret");
+        // One descriptor for both the mode check and the read, so they observe the same file.
+        const fd = openSync(logPath, "r");
+        try {
+          expect(fstatSync(fd).mode & 0o077).toBe(0);
+          const content = readFileSync(fd, "utf8");
+          expect(content).toContain("boom");
+          expect(content).not.toContain("plainsecret");
+        } finally {
+          closeSync(fd);
+        }
       } finally {
         if (saved === undefined) delete process.env["XDG_DATA_HOME"];
         else process.env["XDG_DATA_HOME"] = saved;
