@@ -6898,13 +6898,14 @@ describe("I45 — a loopback HTTP listener answers only a Host header that names
     seed.close();
     const handle = startReadOnlyHttpServer(dbPath, 0);
     try {
-      // `/v1/items` is on the no-bearer table: exactly what a rebound page would read.
+      // `/v1/items` is what a rebound page would want; the host guard answers before routing.
       const rebound = await fetch(`http://127.0.0.1:${handle.port}/v1/items`, {
         headers: { host: `attacker.example:${handle.port}` },
       });
       expect(rebound.status).toBe(403);
-      // Positive control, so the 403 above is not "every request fails".
-      const loopback = await fetch(`http://127.0.0.1:${handle.port}/v1/items`, {
+      // Positive control, so the 403 above is not "every request fails". (`/v1/items` itself now
+      // needs a `data`-scoped token, so the control uses the always-public health route.)
+      const loopback = await fetch(`http://127.0.0.1:${handle.port}/v1/health`, {
         headers: { host: `127.0.0.1:${handle.port}` },
       });
       expect(loopback.status).toBe(200);

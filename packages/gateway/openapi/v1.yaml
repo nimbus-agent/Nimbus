@@ -36,6 +36,8 @@ paths:
     get:
       operationId: listItems
       summary: List indexed items
+      security:
+        - clientToken: []
       parameters:
         - { in: query, name: service, required: false, schema: { type: array, items: { type: string } }, style: form, explode: true }
         - { in: query, name: type, required: false, schema: { type: string } }
@@ -44,6 +46,12 @@ paths:
         - { in: query, name: sinceMs, required: false, schema: { type: integer } }
         - { in: query, name: untilMs, required: false, schema: { type: integer } }
       responses:
+        "401":
+          description: Missing or unknown client token.
+        "403":
+          description: The token does not carry the `data` scope.
+        "404":
+          description: "`data_disabled`: the client-token surface is not mounted on this gateway."
         "200":
           description: A page of items.
           content:
@@ -55,9 +63,17 @@ paths:
     get:
       operationId: getItem
       summary: Fetch one indexed item by id
+      security:
+        - clientToken: []
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
+        "401":
+          description: Missing or unknown client token.
+        "403":
+          description: The token does not carry the `data` scope.
+        "404":
+          description: "`data_disabled`: the client-token surface is not mounted on this gateway."
         "200":
           description: "Item found (or `data: null`)."
           content:
@@ -98,7 +114,15 @@ paths:
     get:
       operationId: listPeople
       summary: List indexed people
+      security:
+        - clientToken: []
       responses:
+        "401":
+          description: Missing or unknown client token.
+        "403":
+          description: The token does not carry the `data` scope.
+        "404":
+          description: "`data_disabled`: the client-token surface is not mounted on this gateway."
         "200":
           description: A page of people.
           content:
@@ -120,9 +144,17 @@ paths:
     get:
       operationId: getPerson
       summary: Fetch one person by id
+      security:
+        - clientToken: []
       parameters:
         - { in: path, name: id, required: true, schema: { type: string } }
       responses:
+        "401":
+          description: Missing or unknown client token.
+        "403":
+          description: The token does not carry the `data` scope.
+        "404":
+          description: "`data_disabled`: the client-token surface is not mounted on this gateway."
         "200":
           description: "Person found (or `data: null`)."
           content:
@@ -137,9 +169,17 @@ paths:
     get:
       operationId: listAuditLog
       summary: Tail the audit log (most recent first)
+      security:
+        - clientToken: []
       parameters:
         - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
+        "401":
+          description: Missing or unknown client token.
+        "403":
+          description: The token does not carry the `data` scope.
+        "404":
+          description: "`data_disabled`: the client-token surface is not mounted on this gateway."
         "200":
           description: Recent audit entries.
           content:
@@ -606,6 +646,13 @@ components:
           type: boolean
           description: True iff status=success AND environment ∈ deploy-counted set.
   securitySchemes:
+    clientToken:
+      type: http
+      scheme: bearer
+      description: |
+        A labelled client token carrying the `data` scope. Obtain one with
+        `nimbus clip pair --label <name> --scopes data`, or add the scope to an
+        existing token with `nimbus clip scopes <label> --set <scopes>,data`.
     bearerAuth:
       type: http
       scheme: bearer

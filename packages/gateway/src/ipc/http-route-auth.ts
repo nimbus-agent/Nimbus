@@ -27,6 +27,11 @@ export const ROUTE_KEY_EGRESS_LIST = "GET /v1/egress";
 export const ROUTE_KEY_EGRESS_HEAD = "GET /v1/egress/head";
 export const ROUTE_KEY_EGRESS_VERIFY = "GET /v1/egress/verify";
 export const ROUTE_KEY_EGRESS_PROVE = "GET /v1/egress/prove";
+export const ROUTE_KEY_ITEMS_LIST = "GET /v1/items";
+export const ROUTE_KEY_ITEM_GET = "GET /v1/items/*";
+export const ROUTE_KEY_PEOPLE_LIST = "GET /v1/people";
+export const ROUTE_KEY_PERSON_GET = "GET /v1/people/*";
+export const ROUTE_KEY_AUDIT_LIST = "GET /v1/audit";
 
 export type RouteAuth =
   | { readonly kind: "public" }
@@ -47,18 +52,13 @@ export type RouteAuth =
 export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freeze({
   // --- Unauthenticated reads. Public BY DECISION, recorded so the next one is a decision too.
   "GET /v1/health": { kind: "public" },
-  "GET /v1/items": { kind: "public" },
-  "GET /v1/items/*": { kind: "public" },
   "GET /v1/connectors": { kind: "public" },
-  "GET /v1/people": { kind: "public" },
-  "GET /v1/people/*": { kind: "public" },
-  "GET /v1/audit": { kind: "public" },
   "GET /v1/metrics/dora": { kind: "public" },
   // The same config and the same service as the line above, at a different resolution — so it
   // inherits that route's mount rather than choosing a new one. Its metric set is WIDER, not
   // identical: the four DORA metrics plus `pr-merges` and `incidents-opened`. That widens what
-  // is public, but not what is REACHABLE — both extras count rows in `item` that `GET /v1/items`
-  // already serves publicly and unaggregated.
+  // is public by two COUNTS over `item` — aggregates, never the rows themselves, which have needed
+  // a `data`-scoped token since 2026-10-19.
   // Scoping the series while the scalar beside it stays public would be a seam no caller could
   // explain, and `/v1/metrics/dora`'s own `since` already lets a caller walk nested windows.
   // Contrast `GET /v1/services/resolve` below, which is scoped for the opposite reason.
@@ -68,6 +68,7 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
 
   // --- SCIM-token reads. Matched by `isScimPath(url)` (identity/scim-http-routes.ts), NOT by a
   // literal in http-server.ts — see EXTERNALLY_ROUTED in the test.
+  // (The raw-row reads under the `data` scope are listed with the other client-token reads below.)
   "GET /scim/v2/Users": { kind: "scim" },
   "GET /scim/v2/Users/{id}": { kind: "scim" },
 
@@ -101,11 +102,10 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   //
   //   1. A public mount would NOT preserve this route's own narrowing. Its whole argument over a
   //      `GET /v1/services` list form is that it discloses one answer about one repository the
-  //      caller already named, rather than the owner's whole service-to-repo grouping. But
-  //      `GET /v1/items` is public and projects `metadata`, so repo names are already enumerable
-  //      unauthenticated — and with the repo list in hand, N cheap calls here would rebuild exactly
-  //      the grouping the resolve form claims not to expose. The scope is what makes "strictly less
-  //      disclosure" true rather than nominal.
+  //      caller already named, rather than the owner's whole service-to-repo grouping. Given a repo
+  //      list (which `GET /v1/items` projected publicly until it moved behind the `data` scope on
+  //      2026-10-19), N cheap calls here would rebuild exactly the grouping the resolve form claims
+  //      not to expose. The scope is what makes "strictly less disclosure" true rather than nominal.
   //   2. It costs the consumer nothing. A browser client holding `resolve` for `resolve-file` /
   //      `resolve-ids` already has this; no re-pairing, no new scope, no owner gesture.
   //   3. It stays off HTTP_ROUTES and `openapi/v1.yaml`, like every other clip-scoped read. A
@@ -124,6 +124,15 @@ export const HTTP_ROUTE_AUTH: Readonly<Record<string, RouteAuth>> = Object.freez
   [ROUTE_KEY_EGRESS_HEAD]: { kind: "clip", scope: "egress" },
   [ROUTE_KEY_EGRESS_VERIFY]: { kind: "clip", scope: "egress" },
   [ROUTE_KEY_EGRESS_PROVE]: { kind: "clip", scope: "egress" },
+  // The index's raw rows: item bodies and metadata, the people graph, the audit log (which carries
+  // I33 script bodies). PUBLIC until 2026-10-19, which meant any local process — and, before I45, a
+  // DNS-rebinding page — could read the whole index. Their own `data` scope, absent from
+  // LEGACY_SCOPES, so the owner grants it deliberately (`nimbus clip scopes <label> --set …,data`).
+  [ROUTE_KEY_ITEMS_LIST]: { kind: "clip", scope: "data" },
+  [ROUTE_KEY_ITEM_GET]: { kind: "clip", scope: "data" },
+  [ROUTE_KEY_PEOPLE_LIST]: { kind: "clip", scope: "data" },
+  [ROUTE_KEY_PERSON_GET]: { kind: "clip", scope: "data" },
+  [ROUTE_KEY_AUDIT_LIST]: { kind: "clip", scope: "data" },
 
   // --- Writes. Keys are the `ROUTE_*` constant VALUES from http-write-routes.ts, verbatim.
   // Note `{id}`, not `:id` — copied from source, not guessed.
@@ -201,7 +210,12 @@ export type ClipReadRouteKey =
   | typeof ROUTE_KEY_EGRESS_LIST
   | typeof ROUTE_KEY_EGRESS_HEAD
   | typeof ROUTE_KEY_EGRESS_VERIFY
-  | typeof ROUTE_KEY_EGRESS_PROVE;
+  | typeof ROUTE_KEY_EGRESS_PROVE
+  | typeof ROUTE_KEY_ITEMS_LIST
+  | typeof ROUTE_KEY_ITEM_GET
+  | typeof ROUTE_KEY_PEOPLE_LIST
+  | typeof ROUTE_KEY_PERSON_GET
+  | typeof ROUTE_KEY_AUDIT_LIST;
 
 export type ClipScopeVerdict =
   | { readonly ok: true }

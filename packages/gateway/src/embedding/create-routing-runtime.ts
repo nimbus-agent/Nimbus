@@ -6,7 +6,6 @@ import type { NimbusEmbeddingToml } from "../config/nimbus-toml.ts";
 import { wrapLedgeredEmbedder } from "../egress/embedding-egress.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { ensureSqliteVecForConnection } from "../index/sqlite-vec-load.ts";
-import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { BackfillGate } from "./backfill-gate.ts";
@@ -20,19 +19,11 @@ import {
 import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import { type CreateLocalEmbedderOptions, createLocalEmbedder } from "./model.ts";
 import { createOpenAIEmbedder } from "./openai-embedder.ts";
+import { resolveOpenAIEmbeddingKey } from "./openai-key.ts";
 import { SqliteEmbeddingPipeline } from "./pipeline.ts";
 import { EMBEDDING_DIM_LOCAL, EMBEDDING_DIM_OPENAI } from "./routing.ts";
 import { RoutingEmbeddingPipeline } from "./routing-pipeline.ts";
 import type { Embedder, EmbeddingDualVectors, IndexedItem } from "./types.ts";
-
-async function resolveOpenAIApiKey(vault: NimbusVault): Promise<string> {
-  const envKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
-  if (envKey !== "") {
-    return envKey;
-  }
-  const v = await vault.get("openai.api_key");
-  return typeof v === "string" ? v.trim() : "";
-}
 
 /**
  * The seams and the one piece of production wiring this factory takes beyond its five required
@@ -59,7 +50,7 @@ export async function tryCreateRoutingEmbeddingRuntime(
 ): Promise<EmbeddingRuntime | null> {
   const createEmbedder = deps.createEmbedder ?? createLocalEmbedder;
   const checkVec = deps.checkVec ?? ensureSqliteVecForConnection;
-  const apiKey = await resolveOpenAIApiKey(vault);
+  const apiKey = await resolveOpenAIEmbeddingKey(vault, logger);
   if (apiKey === "") {
     logger.warn("Hybrid embedding: openai.api_key missing; routing falls back to MiniLM-only");
     return null;

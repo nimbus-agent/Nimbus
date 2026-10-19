@@ -129,7 +129,7 @@ Updated as each item lands on this branch. Status is one of: `todo`, `done`, `de
 
 | Item | Status | Notes |
 |------|--------|-------|
-| S1 Host/Origin check + bearer on data GETs | done (Host) | Host guard shipped as invariant I45. Bearer on data GETs deferred: it breaks existing local HTTP readers and needs a decision. |
+| S1 Host/Origin check + bearer on data GETs | done | Host guard shipped as invariant I45. `/v1/items*`, `/v1/people*` and `/v1/audit` now need a client token with the new `data` scope, which no existing token gains automatically. The owner chose to ship this; scripts that read those routes need a token. |
 | S5 0700/0600 permissions + umask | done | Data, config, vault and log directories are 0700 (an existing install is tightened). The database (whose `-wal`/`-shm` inherit its mode) and log files are 0600. P10's emergency-log scrub landed in the same change. A global `umask(077)` was left out: it would also change the mode of files the gateway writes for the user, such as exports. |
 | F1 per-page sync transactions | done (partial) | New `writeBatch` sync capability: one transaction per page, with embedding requests held until commit. `upsertMapped` uses it, covering 22 connectors. Connectors with hand-written `ctx.upsertItem` loops (about 58 call sites) still need moving over. |
 | F2 SQLite PRAGMAs | done | `synchronous=NORMAL` (only once WAL is confirmed), `temp_store=MEMORY`, a 16 MiB page cache, and `PRAGMA optimize` at open and close. `mmap_size` was left out on purpose: mmap behaviour differs across platforms. |
@@ -137,4 +137,4 @@ Updated as each item lands on this branch. Status is one of: `todo`, `done`, `de
 | P3 `data.delete` LIKE match | done (LIKE only) | Matches the exact id or a `-`/`:` sub-key, with the id escaped, so deleting `github` no longer clears `github_actions`. The wider erasure gaps (people, graph, logs and other PII tables) are still open under P3/P4. |
 | S10 `data.import` schema | done | `parseVaultEntries` checks every entry before any write: string key and value, vault-key format, no duplicates. Errors never echo values. Also found and fixed: the unpacked bundle staging directory was never removed. |
 | D14 CU `download` kind | done | Removed from the browser lane's kinds, so it is refused out of envelope before consent. `performActuation` still throws as a second line of defence. Autostart stub not changed. |
-| P9 embedding key from Vault only | needs decision | Removing the `OPENAI_API_KEY` env fallback means a user who relies on it has to act, which makes it a breaking change (v5.0.0 did the same for the LLM adapters). Waiting for the owner to decide on the versioning. |
+| P9 embedding key from Vault only | done (warn) | Owner decision: keep the `OPENAI_API_KEY` fallback and warn. All four read sites now share `embedding/openai-key.ts`, which warns (naming the Vault key, never the value) whenever the environment supplies the key. |

@@ -3,6 +3,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { makeInMemoryVault } from "../../test/helpers/in-memory-vault.ts";
+import { addApiToken } from "../clips/clip-token-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { processListeners } from "../locality/listener-registry.ts";
@@ -404,11 +406,36 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
   let dbPath: string;
   let handle: ReturnType<typeof startReadOnlyHttpServer> | undefined;
 
-  beforeEach(() => {
+  // The raw-row reads (items, people, audit) need a `data`-scoped client token since 2026-10-19.
+  const DATA_TOKEN = "tok-data-reader";
+  const dataFetch = (url: string): Promise<Response> =>
+    fetch(url, { headers: { authorization: `Bearer ${DATA_TOKEN}` } });
+
+  beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "nimbus-http-server-routes-"));
     dbPath = join(tmpDir, "nimbus.db");
     makeSeededDb(dbPath);
-    handle = startReadOnlyHttpServer(dbPath, 0);
+    const vault = makeInMemoryVault();
+    await addApiToken(vault, "reader", DATA_TOKEN, ["data"]);
+    await addApiToken(vault, "clipper", "tok-clip-only", ["clip", "briefs"]);
+    handle = startReadOnlyHttpServer(dbPath, 0, { clipsVault: vault });
+  });
+
+  it("the raw-row reads refuse a missing token (401) and a token without `data` (403)", async () => {
+    for (const path of [
+      "/v1/items",
+      "/v1/items/github:pr_1",
+      "/v1/people",
+      "/v1/people/p",
+      "/v1/audit",
+    ]) {
+      const anon = await fetch(`http://127.0.0.1:${handle!.port}${path}`);
+      expect(anon.status).toBe(401);
+      const clipOnly = await fetch(`http://127.0.0.1:${handle!.port}${path}`, {
+        headers: { authorization: "Bearer tok-clip-only" },
+      });
+      expect(clipOnly.status).toBe(403);
+    }
   });
 
   afterEach(() => {
@@ -430,7 +457,7 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
   });
 
   it("GET /v1/items returns the seeded row", async () => {
-    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/items?service=github`);
+    const res = await dataFetch(`http://127.0.0.1:${handle!.port}/v1/items?service=github`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: unknown[]; meta: { total: number } };
     expect(Array.isArray(body.data)).toBe(true);
@@ -439,7 +466,7 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
 
   it("GET /v1/items honours limit and since-window query params", async () => {
     const url = `http://127.0.0.1:${handle!.port}/v1/items?limit=5&since=30d&untilMs=999999999999`;
-    const res = await fetch(url);
+    const res = await dataFetch(url);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { meta: { limit: number } };
     expect(body.meta.limit).toBe(5);
@@ -447,20 +474,20 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
 
   it("GET /v1/items honours sinceMs numeric param", async () => {
     const url = `http://127.0.0.1:${handle!.port}/v1/items?sinceMs=0`;
-    const res = await fetch(url);
+    const res = await dataFetch(url);
     expect(res.status).toBe(200);
     await res.json();
   });
 
   it("GET /v1/items/:id returns the seeded row", async () => {
-    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/items/github:pr_1`);
+    const res = await dataFetch(`http://127.0.0.1:${handle!.port}/v1/items/github:pr_1`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: Record<string, unknown> | null };
     expect(body.data).not.toBeNull();
   });
 
   it("GET /v1/items/ (trailing slash, empty id) returns 400 missing id", async () => {
-    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/items/`);
+    const res = await dataFetch(`http://127.0.0.1:${handle!.port}/v1/items/`);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: string };
     expect(body.error).toBe("missing id");
@@ -475,7 +502,7 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
   });
 
   it("GET /v1/people returns the seeded person", async () => {
-    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/people`);
+    const res = await dataFetch(`http://127.0.0.1:${handle!.port}/v1/people`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: unknown[] };
     expect(Array.isArray(body.data)).toBe(true);
@@ -483,21 +510,21 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
   });
 
   it("GET /v1/people/:id returns the seeded person", async () => {
-    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/people/person:1`);
+    const res = await dataFetch(`http://127.0.0.1:${handle!.port}/v1/people/person:1`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: Record<string, unknown> | null };
     expect(body.data).not.toBeNull();
   });
 
   it("GET /v1/people/ (empty id) returns 400 missing id", async () => {
-    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/people/`);
+    const res = await dataFetch(`http://127.0.0.1:${handle!.port}/v1/people/`);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: string };
     expect(body.error).toBe("missing id");
   });
 
   it("GET /v1/audit returns the seeded row", async () => {
-    const res = await fetch(`http://127.0.0.1:${handle!.port}/v1/audit?limit=10`);
+    const res = await dataFetch(`http://127.0.0.1:${handle!.port}/v1/audit?limit=10`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: unknown[]; meta: { limit: number } };
     expect(Array.isArray(body.data)).toBe(true);

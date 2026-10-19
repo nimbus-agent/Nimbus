@@ -4,10 +4,10 @@ import type { Logger } from "pino";
 import { wrapLedgeredEmbedder } from "../egress/embedding-egress.ts";
 import { createLocalEmbedder } from "../embedding/model.ts";
 import { createOpenAIEmbedder } from "../embedding/openai-embedder.ts";
+import { resolveOpenAIEmbeddingKey } from "../embedding/openai-key.ts";
 import { SqliteEmbeddingPipeline } from "../embedding/pipeline.ts";
 import type { Embedder, IndexedItem } from "../embedding/types.ts";
 import { bootPolicyFor } from "../platform/demo-boot.ts";
-import { processEnvGet } from "../platform/env-access.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
@@ -87,12 +87,7 @@ export async function resolveEmbedder(
   ctx: IndexReembedRpcContext,
 ): Promise<Embedder> {
   if (model.startsWith("openai:")) {
-    const envKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
-    let apiKey = envKey;
-    if (apiKey === "") {
-      const v = await ctx.vault.get("openai.api_key");
-      apiKey = typeof v === "string" ? v.trim() : "";
-    }
+    const apiKey = await resolveOpenAIEmbeddingKey(ctx.vault, ctx.logger);
     if (apiKey === "") {
       throw new IndexReembedRpcError(
         -32603,
@@ -148,16 +143,13 @@ export async function assertModelUsable(
   ctx: IndexReembedRpcContext,
 ): Promise<void> {
   if (p.model.startsWith("openai:")) {
-    const envKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
-    if (envKey === "") {
-      const v = await ctx.vault.get("openai.api_key");
-      const vaultKey = typeof v === "string" ? v.trim() : "";
-      if (vaultKey === "") {
-        throw new IndexReembedRpcError(
-          -32603,
-          "openai.api_key missing in vault. Run `nimbus vault set openai.api_key <key>`.",
-        );
-      }
+    // Silent here: `resolveEmbedder` resolves (and warns about an environment key) right after.
+    const apiKey = await resolveOpenAIEmbeddingKey(ctx.vault, { warn: () => undefined });
+    if (apiKey === "") {
+      throw new IndexReembedRpcError(
+        -32603,
+        "openai.api_key missing in vault. Run `nimbus vault set openai.api_key <key>`.",
+      );
     }
   } else if (p.model !== "Xenova/all-MiniLM-L6-v2" && p.model !== "local") {
     throw new IndexReembedRpcError(-32602, `Unsupported model: ${p.model}`);
