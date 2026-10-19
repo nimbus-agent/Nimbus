@@ -135,6 +135,6 @@ Updated as each item lands on this branch. Status is one of: `todo`, `done`, `de
 | F2 SQLite PRAGMAs | done | `synchronous=NORMAL` (only once WAL is confirmed), `temp_store=MEMORY`, a 16 MiB page cache, and `PRAGMA optimize` at open and close. `mmap_size` was left out on purpose: mmap behaviour differs across platforms. |
 | P6 workflow-runner redaction | done | Now uses `redactAuditPayload`. A test fails if any production file outside `audit/` calls the unredacted formatter. |
 | P3 `data.delete` LIKE match | done (LIKE only) | Matches the exact id or a `-`/`:` sub-key, with the id escaped, so deleting `github` no longer clears `github_actions`. The wider erasure gaps (people, graph, logs and other PII tables) are still open under P3/P4. |
-| S10 `data.import` schema | todo | |
+| S10 `data.import` schema | done | `parseVaultEntries` checks every entry before any write: string key and value, vault-key format, no duplicates. Errors never echo values. Also found and fixed: the unpacked bundle staging directory was never removed. |
 | D14 CU `download` kind | todo | |
 | P9 embedding key from Vault only | todo | |
