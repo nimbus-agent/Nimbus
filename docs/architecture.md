@@ -1822,7 +1822,14 @@ dynamically composed identifier evades a text scan and capability confinement is
 import is caught; comments and test files are not scanned), with the same stated bound that a dynamically
 composed call evades a text scan. The
 IPC methods `extension.approveRun` / `extension.revokeRun` are CLI-only, LAN-forbidden, refused in a demo
-root and absent from the Tauri allowlist. `model_access` is set by `nimbus extension approve <id> --model` (PR 4); every approval states the whole grant, so approving without the flag clears it.
+root and absent from the Tauri allowlist. `extension.credentialSet` (`{ id, name, value }` → `{ name, set: true }`) and
+`extension.credentialStatus` (`{ id }` → `{ credentials: [{ name, set }] }`), behind `nimbus extension
+credential set|status` (`extensions/extension-credential-set.ts`), are CLI-only, LAN-forbidden and absent from
+the Tauri allowlist, and `credentialSet` is refused in a demo root. `credentialSet` resolves the Vault key
+from the grant's `credentials_json` server-side (an undeclared name refuses `ERR_EXTENSION_CREDENTIAL_UNKNOWN`,
+no grant `ERR_EXTENSION_CREDENTIAL_NO_GRANT`), asks the owner exactly once under the frozen-set `vault.set`
+type with the payload `{ extensionId, name }`, re-reads the grant after approval and writes only if it still
+names the same key; the value and the key are never in the payload, the audit row, the response or an error. `model_access` is set by `nimbus extension approve <id> --model` (PR 4); every approval states the whole grant, so approving without the flag clears it.
 
 ### Extension runtime
 

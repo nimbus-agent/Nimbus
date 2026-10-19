@@ -682,6 +682,11 @@ mod tests {
         assert!(is_method_allowed("extension.enable"));
         assert!(!is_method_allowed("extension.approveRun"));
         assert!(!is_method_allowed("extension.revokeRun"));
+        // An extension's credentials are set and inspected from the CLI only: `credentialSet`
+        // writes the owner's Vault (behind a `vault.set` prompt) and `credentialStatus` says
+        // which secrets exist, like `vault.*`, which is off the list too.
+        assert!(!is_method_allowed("extension.credentialSet"));
+        assert!(!is_method_allowed("extension.credentialStatus"));
     }
 
     #[test]

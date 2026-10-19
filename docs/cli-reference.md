@@ -4475,6 +4475,22 @@ nimbus extension revoke com.example.notion
 
 ---
 
+### `nimbus extension credential set <id> <name>` / `nimbus extension credential status <id>`
+
+Store a credential an approved extension declares in its manifest (`credentials`), or see which of them are set. `set` reads the value from a hidden prompt at a terminal, or from stdin when stdin is not a terminal (one trailing newline is dropped) — **never from the command line**, and a value passed as an extra argument is refused. The gateway looks up where the credential lives from the extension's run approval (`nimbus extension approve`), so you name the credential, never a Vault key, and asks you to approve the write once, under the `vault.set` action type; the prompt shows the extension id and the credential name, never the value. With stdin piped, that prompt cannot be answered at the terminal, so `set` refuses unless `NIMBUS_SCRIPT_CONSENT_SOURCE` names a consent script.
+
+```bash
+nimbus extension credential set com.example.reader token
+printf '%s' "$READER_TOKEN" | NIMBUS_SCRIPT_CONSENT_SOURCE=./consent.jsonl nimbus extension credential set com.example.reader token
+nimbus extension credential status com.example.reader
+```
+
+Nothing restarts or syncs on its own: the next scheduled sync picks the credential up, or run `nimbus connector sync <service>` to sync now. `status` prints `<name>: set` or `<name>: not set` for each declared credential (a blank value counts as not set) and never prints a value.
+
+Refusals: `Extension not found` (JSON-RPC `-32602`); `ERR_EXTENSION_CREDENTIAL_NO_GRANT` (no run approval yet — run `nimbus extension approve <id>` first); `ERR_EXTENSION_CREDENTIAL_UNKNOWN` (the approval declares no credential by that name); `ERR_EXTENSION_CREDENTIAL_BLANK` (an empty or whitespace value, refused before you are asked); `ERR_EXTENSION_CREDENTIAL_GRANT_INVALID` (the stored approval is unreadable — approve again). After you answer: `ERR_EXTENSION_CREDENTIAL_NOT_APPROVED` (you declined), `ERR_EXTENSION_CREDENTIAL_CHANGED` (the approval was revoked or replaced while the prompt was open) and `ERR_EXTENSION_CREDENTIAL_WRITE_FAILED` (the Vault refused the write); none of them writes anything. Both commands are backed by CLI-only, LAN-forbidden IPC methods; `set` is also refused in a demo root (`--demo`).
+
+---
+
 ### `nimbus extension list [--tree] [--json]`
 
 List installed extensions with their status (`enabled` / `disabled` / `disabled (signature)`).

@@ -20,6 +20,7 @@ const DEMO_REFUSED_METHODS: ReadonlySet<string> = new Set([
   "extension.install",
   "extension.approveRun",
   "extension.revokeRun",
+  "extension.credentialSet",
 ]);
 
 /** The refusal for `method` on a demo-rooted gateway, or `undefined` when it may proceed. */

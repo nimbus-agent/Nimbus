@@ -542,6 +542,121 @@ export async function runExtensionRevoke(client: IPCClient, rest: string[]): Pro
   console.log(out.revoked ? `${out.id}: run approval revoked` : `${out.id}: had no run approval`);
 }
 
+const CREDENTIAL_USAGE = "Usage: nimbus extension credential set <id> <name> | status <id>";
+
+/** Where `credential set` reads the secret from, and how its connection answers the gateway's prompt. */
+export interface CredentialCliIo {
+  readonly stdinIsTty: boolean;
+  /** `NIMBUS_SCRIPT_CONSENT_SOURCE`, which is the only way to answer the prompt with stdin piped. */
+  readonly scriptConsentSource: string | undefined;
+  /** A hidden prompt; `undefined` when the operator cancels. */
+  readHidden(message: string): Promise<string | undefined>;
+  readStdin(): Promise<string>;
+  registerConsent(client: IPCClient): void;
+}
+
+function defaultCredentialIo(): CredentialCliIo {
+  return {
+    stdinIsTty: process.stdin.isTTY === true,
+    scriptConsentSource: process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"],
+    readHidden: async (message) => {
+      // Loaded on use: the CLI test helpers mock `@clack/prompts` process-wide without `password`,
+      // and a static named import would fail every test file that loads this module.
+      const { password } = await import("@clack/prompts");
+      const v = await password({ message });
+      return isCancel(v) ? undefined : v;
+    },
+    readStdin: () => Bun.stdin.text(),
+    registerConsent: (client) => registerConsentFor(client, { kind: "prompt" }),
+  };
+}
+
+/** One trailing line ending is the shell's (`echo`, a here-string), not part of the secret. */
+function stripOneTrailingNewline(s: string): string {
+  if (s.endsWith("\r\n")) return s.slice(0, -2);
+  if (s.endsWith("\n")) return s.slice(0, -1);
+  return s;
+}
+
+async function readCredentialValue(io: CredentialCliIo, name: string): Promise<string> {
+  if (io.stdinIsTty) {
+    const v = await io.readHidden(`Value for ${name} (input is hidden)`);
+    if (v === undefined) throw new Error("Cancelled; nothing was stored.");
+    return v;
+  }
+  return stripOneTrailingNewline(await io.readStdin());
+}
+
+/**
+ * `nimbus extension credential set <id> <name>` — store a credential an approved extension declares.
+ * The value is read from a hidden prompt, or from stdin when stdin is not a terminal, and NEVER from
+ * argv (where it would land in shell history and the process list). The gateway resolves the Vault
+ * key from the extension's run approval and asks the owner once, under `vault.set`.
+ */
+async function runExtensionCredentialSet(
+  client: IPCClient,
+  rest: string[],
+  io: CredentialCliIo,
+): Promise<void> {
+  const [id, name, extra] = rest;
+  if (id === undefined || id.trim() === "" || name === undefined || name.trim() === "") {
+    throw new Error(CREDENTIAL_USAGE);
+  }
+  if (extra !== undefined) {
+    throw new Error(
+      "nimbus extension credential set never takes the value as an argument: it is read from a hidden prompt, or from stdin when stdin is not a terminal.",
+    );
+  }
+  if (!io.stdinIsTty && (io.scriptConsentSource === undefined || io.scriptConsentSource === "")) {
+    throw new Error(
+      "With the value piped on stdin, the vault.set approval cannot be answered at this terminal; set NIMBUS_SCRIPT_CONSENT_SOURCE, or run it at a terminal to be prompted for the value.",
+    );
+  }
+  const value = await readCredentialValue(io, name);
+  if (value.trim() === "") {
+    throw new Error(`The value for ${name} is blank; nothing was stored.`);
+  }
+  io.registerConsent(client);
+  const out = await client.call<{ name: string; set: boolean }>("extension.credentialSet", {
+    id: id.trim(),
+    name: name.trim(),
+    value,
+  });
+  console.log(
+    `${id.trim()}: ${out.name} stored. The next scheduled sync picks it up (or run \`nimbus connector sync <service>\` now).`,
+  );
+}
+
+async function runExtensionCredentialStatus(client: IPCClient, rest: string[]): Promise<void> {
+  const id = rest[0]?.trim() ?? "";
+  if (id === "" || rest.length > 1) {
+    throw new Error(CREDENTIAL_USAGE);
+  }
+  const out = await client.call<{ credentials: Array<{ name: string; set: boolean }> }>(
+    "extension.credentialStatus",
+    { id },
+  );
+  if (out.credentials.length === 0) {
+    console.log(`${id}: declares no credentials`);
+    return;
+  }
+  for (const c of out.credentials) {
+    console.log(`${c.name}: ${c.set ? "set" : "not set"}`);
+  }
+}
+
+/** `nimbus extension credential set <id> <name> | status <id>` (`rest` excludes `credential`). */
+export async function runExtensionCredential(
+  client: IPCClient,
+  rest: string[],
+  io: CredentialCliIo = defaultCredentialIo(),
+): Promise<void> {
+  const [action, ...tail] = rest;
+  if (action === "set") return runExtensionCredentialSet(client, tail, io);
+  if (action === "status") return runExtensionCredentialStatus(client, tail);
+  throw new Error(CREDENTIAL_USAGE);
+}
+
 export async function runExtensionEnable(client: IPCClient, rest: string[]): Promise<void> {
   const id = rest[0]?.trim() ?? "";
   if (id === "") {
@@ -686,7 +801,7 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
 
 async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
   if (sub === "keygen") {
@@ -750,6 +865,9 @@ async function dispatchExtensionVoid(
     case "revoke":
       await runExtensionRevoke(client, rest);
       return true;
+    case "credential":
+      await runExtensionCredential(client, rest);
+      return true;
     case "enable":
       await runExtensionEnable(client, rest);
       return true;
@@ -790,6 +908,10 @@ export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number |
     return INTERACTIVE_RPC_TIMEOUT_MS;
   }
   if (sub === "update" && extensionUpdateApplies(rest)) {
+    return INTERACTIVE_RPC_TIMEOUT_MS;
+  }
+  // `credential set` waits on the owner's vault.set prompt.
+  if (sub === "credential" && rest[0] === "set") {
     return INTERACTIVE_RPC_TIMEOUT_MS;
   }
   return undefined;
