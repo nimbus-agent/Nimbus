@@ -24,6 +24,21 @@ export type RunDataDeleteResult = {
   deleted: boolean;
 };
 
+/**
+ * A service's own sync_state rows: its exact id plus `<service>-…` / `<service>:…` sub-keys.
+ *
+ * This was a bare `LIKE '<service>%'`, which also matched every OTHER service whose id merely
+ * starts with this one — deleting `github` wiped `github_actions`'s sync state (and `_` is itself
+ * a LIKE wildcard). The separator is now required and the service id is escaped.
+ */
+const SYNC_STATE_FOR_SERVICE =
+  "(connector_id = ? OR connector_id LIKE ? ESCAPE '\\' OR connector_id LIKE ? ESCAPE '\\')";
+
+function syncStateParams(service: string): [string, string, string] {
+  const escaped = service.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+  return [service, `${escaped}-%`, `${escaped}:%`];
+}
+
 async function buildPreflight(input: RunDataDeleteInput): Promise<DataDeletePreflight> {
   const items = (
     input.index.rawDb
@@ -33,8 +48,8 @@ async function buildPreflight(input: RunDataDeleteInput): Promise<DataDeletePref
   const vecRows = vecRowsForService(input.index, input.service);
   const syncTokens = (
     input.index.rawDb
-      .query(`SELECT COUNT(*) AS c FROM sync_state WHERE connector_id LIKE ?`)
-      .get(`${input.service}%`) as { c: number }
+      .query(`SELECT COUNT(*) AS c FROM sync_state WHERE ${SYNC_STATE_FOR_SERVICE}`)
+      .get(...syncStateParams(input.service)) as { c: number }
   ).c;
   const vaultKeys = await input.vault.listKeys(`${input.service}.`);
   return {
@@ -68,9 +83,11 @@ export async function runDataDelete(input: RunDataDeleteInput): Promise<RunDataD
 
   input.index.rawDb.transaction(() => {
     dbRun(input.index.rawDb, `DELETE FROM item WHERE service = ?`, [input.service]);
-    dbRun(input.index.rawDb, `DELETE FROM sync_state WHERE connector_id LIKE ?`, [
-      `${input.service}%`,
-    ]);
+    dbRun(
+      input.index.rawDb,
+      `DELETE FROM sync_state WHERE ${SYNC_STATE_FOR_SERVICE}`,
+      syncStateParams(input.service),
+    );
   })();
 
   for (const key of preflight.vaultKeys) {

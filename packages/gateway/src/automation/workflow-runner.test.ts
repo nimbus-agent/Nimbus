@@ -238,6 +238,22 @@ describe("runWorkflowExecution (dry run and validation)", () => {
     expect(row.params_override_json).toBeNull();
   });
 
+  test("the workflow.run.completed audit entry redacts credentials in paramsOverride", async () => {
+    const db = freshDb();
+    seedOneStepWorkflow(db, "audit-redact", { run: "echo hi" });
+    const token = `ghp_${"a".repeat(36)}`;
+    await runWorkflowExecution(
+      makeRunParams(db, "audit-redact", {
+        dryRun: true,
+        paramsOverride: { "step-1": { apiToken: "plain-secret", note: `use ${token}` } },
+      }),
+    );
+    const entry = lastRunCompletedAudit<{ action_json: string }>(db, "action_json");
+    expect(entry.action_json).not.toContain("plain-secret");
+    expect(entry.action_json).not.toContain(token);
+    expect(entry.action_json).toContain("[REDACTED]");
+  });
+
   test("runWorkflowExecution writes a workflow.run.completed audit entry on success", async () => {
     const db = freshDb();
     seedOneStepWorkflow(db, "audit-ok", { run: "echo hi" });

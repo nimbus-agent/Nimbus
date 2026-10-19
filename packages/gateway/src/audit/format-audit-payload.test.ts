@@ -232,3 +232,22 @@ describe("redactAuditPayload — structural: every pattern has a generator", () 
     expect(generatorKeys).toEqual(patternKeys);
   });
 });
+
+describe("formatAuditPayload is not an audit-writer entry point", () => {
+  test("no production file outside audit/ calls the unredacted formatter", async () => {
+    // An audit row written through `formatAuditPayload` skips credential redaction entirely; the
+    // workflow runner did exactly that until 2026-10-19. Callers outside this directory must use
+    // `redactAuditPayload`.
+    const { readdir, readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const root = join(import.meta.dir, "..");
+    const entries = await readdir(root, { recursive: true });
+    const offenders: string[] = [];
+    for (const rel of entries.map((e) => e.replaceAll("\\", "/"))) {
+      if (!rel.endsWith(".ts") || rel.endsWith(".test.ts") || rel.startsWith("audit/")) continue;
+      const src = await readFile(join(root, rel), "utf8");
+      if (/\bformatAuditPayload\s*\(/.test(src)) offenders.push(rel);
+    }
+    expect(offenders).toEqual([]);
+  });
+});

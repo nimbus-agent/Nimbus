@@ -133,8 +133,8 @@ Updated as each item lands on this branch. Status is one of: `todo`, `done`, `de
 | S5 0700/0600 permissions + umask | done | Data, config, vault and log directories are 0700 (an existing install is tightened). The database (whose `-wal`/`-shm` inherit its mode) and log files are 0600. P10's emergency-log scrub landed in the same change. A global `umask(077)` was left out: it would also change the mode of files the gateway writes for the user, such as exports. |
 | F1 per-page sync transactions | done (partial) | New `writeBatch` sync capability: one transaction per page, with embedding requests held until commit. `upsertMapped` uses it, covering 22 connectors. Connectors with hand-written `ctx.upsertItem` loops (about 58 call sites) still need moving over. |
 | F2 SQLite PRAGMAs | done | `synchronous=NORMAL` (only once WAL is confirmed), `temp_store=MEMORY`, a 16 MiB page cache, and `PRAGMA optimize` at open and close. `mmap_size` was left out on purpose: mmap behaviour differs across platforms. |
-| P6 workflow-runner redaction | todo | |
-| P3 `data.delete` LIKE match | todo | |
+| P6 workflow-runner redaction | done | Now uses `redactAuditPayload`. A test fails if any production file outside `audit/` calls the unredacted formatter. |
+| P3 `data.delete` LIKE match | done (LIKE only) | Matches the exact id or a `-`/`:` sub-key, with the id escaped, so deleting `github` no longer clears `github_actions`. The wider erasure gaps (people, graph, logs and other PII tables) are still open under P3/P4. |
 | S10 `data.import` schema | todo | |
 | D14 CU `download` kind | todo | |
 | P9 embedding key from Vault only | todo | |
