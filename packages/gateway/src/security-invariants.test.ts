@@ -6565,7 +6565,7 @@ describe("I43 — an installed extension's code runs only through the verified s
     );
     expect(ok.credentials).toEqual({ token: { env: "I43_TOKEN" } });
     // The CALLS, not the names: removing either check from the parser fails here.
-    const src = stripComments(await read("packages/gateway/src/extensions/manifest.ts"));
+    const src = stripComments(await read("packages/registry-format/src/manifest.ts"));
     expect(src).toMatch(/!CREDENTIAL_ENV_RE\.test\(env\) \|\| isReservedEnv\(env\)/);
     expect(src).toMatch(/isExtensionBaselineEnvKey\(env\)/);
   });

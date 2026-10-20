@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-
+import { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./extension-env.ts";
 import { parseExtensionManifestForRegistry, parseExtensionManifestJson } from "./manifest.ts";
-import { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./spawn-env.ts";
 
 describe("parseExtensionManifestJson", () => {
   test("parses minimal manifest", () => {
