@@ -77,6 +77,11 @@ let fetches: string[];
 let resumed: string[];
 let refreshed: string[];
 let logs: unknown[];
+/** The fake scheduler's registrations: service id -> extension id. */
+let registered: Map<string, string>;
+/** Where the fake registrar registers a live, granted extension's sync. */
+let registerMode: "legacy" | "none" | "ext";
+const CODE_ID = "ext_com_example_reader";
 const extraCleanups: Array<() => Promise<void> | void> = [];
 
 async function buildRegistry(extra: Record<string, unknown> = MANIFEST_EXTRA): Promise<void> {
@@ -112,6 +117,8 @@ beforeEach(async () => {
   resumed = [];
   refreshed = [];
   logs = [];
+  registered = new Map();
+  registerMode = "legacy";
 });
 
 afterEach(async () => {
@@ -158,13 +165,24 @@ function deps(over: Partial<MigrationEngineDeps> = {}): MigrationEngineDeps {
     env: grantEnv(),
     runtimeEnabled: true,
     sandbox: { canConfine: () => null },
-    extensionSync: { refresh: (id) => refreshed.push(id) },
+    extensionSync: {
+      // Mirrors the real registrar's contract: (re)register a live, granted extension, else
+      // unregister whatever it registered.
+      refresh: (id) => {
+        refreshed.push(id);
+        for (const [k, v] of registered) if (v === id) registered.delete(k);
+        const live = listExtensions(db).some((r) => r.id === id) && getRunGrant(db, id) !== null;
+        if (!live || registerMode === "none") return;
+        registered.set(registerMode === "legacy" ? LEGACY : CODE_ID, id);
+      },
+    },
     scheduler: {
       resume: (id) => {
         resumed.push(id);
         setPaused(db, id, false);
         transitionHealth(db, id, { type: "resumed" });
       },
+      syncableFor: (id) => registered.get(id),
     },
     now: () => NOW,
     logger: { info: (...a: unknown[]) => logs.push(a), warn: (...a: unknown[]) => logs.push(a) },
@@ -807,4 +825,159 @@ test("a row left by an older release whose stage path lies outside its own direc
   );
   expect(existsSync(tmp)).toBe(true);
   expect(listExtensions(db)).toEqual([]);
+});
+
+describe("fix round 1: retry (B10)", () => {
+  test("after decline, boot evaluate does not re-prepare", async () => {
+    const e = engine();
+    await e.evaluate();
+    const row = onlyRow();
+    e.decline(row.id);
+    const n = fetches.length;
+    await e.evaluate();
+    await engine().evaluate();
+    expect(onlyRow().state).toBe("declined");
+    expect(fetches.length).toBe(n);
+    expect(existsSync(stageRootOf(row.id))).toBe(false);
+    // The declined note names the way back.
+    expect(getConnectorHealth(db, LEGACY).lastError).toContain(
+      "`nimbus connector migrate retry` to change your mind",
+    );
+  });
+
+  test("retry re-prepares a declined row", async () => {
+    const e = engine();
+    await e.evaluate();
+    const declined = e.decline(onlyRow().id);
+    await e.retry();
+    const row = onlyRow();
+    expect(row.id).toBe(declined.id);
+    expect(row.state).toBe("awaiting_approval");
+    expect(existsSync(row.stagePath ?? "")).toBe(true);
+    expect(getConnectorHealth(db, LEGACY).lastError).toBe(
+      awaitingApprovalReason("Fixture Reader", row.id),
+    );
+    // …and it can then be accepted.
+    expect((await e.accept(row.id, consentThat(true, []))).state).toBe("approved");
+  });
+
+  test("retry re-prepares a failed row", async () => {
+    offline = true;
+    await engine().evaluate();
+    expect(onlyRow().state).toBe("failed");
+    offline = false;
+    await engine().retry();
+    expect(onlyRow().state).toBe("awaiting_approval");
+  });
+
+  test("retry on an approved row is a no-op", async () => {
+    const e = engine();
+    await e.evaluate();
+    await e.accept(onlyRow().id, consentThat(true, []));
+    const before = onlyRow();
+    const n = fetches.length;
+    await e.retry();
+    expect(onlyRow()).toEqual(before);
+    expect(fetches.length).toBe(n);
+  });
+
+  test("retry with no Vault credential prepares nothing, even for a declined row", async () => {
+    const e = engine();
+    await e.evaluate();
+    e.decline(onlyRow().id);
+    await vault.delete(LEGACY_KEY);
+    await e.retry();
+    expect(onlyRow().state).toBe("declined");
+  });
+});
+
+describe("fix round 1: a decline during evaluate's Vault read", () => {
+  test("is not overwritten: no re-prepare, no orphan stage, no awaiting-approval pause", async () => {
+    await engine().evaluate();
+    const row = onlyRow();
+    // A missing stage makes the next evaluate re-prepare — unless the decline below wins.
+    rmSync(stageRootOf(row.id), { recursive: true, force: true });
+    let e: MigrationEngine | undefined;
+    let declinedOnce = false;
+    const racing: NimbusVault = {
+      ...vault,
+      get: async (key) => {
+        if (!declinedOnce && e !== undefined) {
+          declinedOnce = true;
+          e.decline(row.id);
+        }
+        return vault.get(key);
+      },
+    };
+    e = engine({ vault: racing });
+    const n = fetches.length;
+    await e.evaluate();
+    expect(declinedOnce).toBe(true);
+    expect(onlyRow().state).toBe("declined");
+    expect(fetches.length).toBe(n);
+    expect(existsSync(stageRootOf(row.id))).toBe(false);
+    expect(getConnectorHealth(db, LEGACY).lastError).toContain("was declined");
+  });
+});
+
+describe("fix round 1: accept checks the sync took over the LEGACY id", () => {
+  async function acceptExpectingFailure(pattern: RegExp): Promise<string> {
+    const e = engine();
+    await e.evaluate();
+    const row = onlyRow();
+    await expect(e.accept(row.id, consentThat(true, []))).rejects.toThrow(pattern);
+    // Nothing half-approved: row failed, extension and grant gone, never resumed, still paused,
+    // stage deleted, nothing left registered.
+    expect(getMigration(db, row.id)?.state).toBe("failed");
+    expect(listExtensions(db)).toEqual([]);
+    expect(getRunGrant(db, EXT)).toBeNull();
+    expect(existsSync(join(tmp, "data", "extensions", EXT))).toBe(false);
+    expect(resumed).toEqual([]);
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(1);
+    expect(getConnectorHealth(db, LEGACY).state).toBe("paused");
+    expect(existsSync(stageRootOf(row.id))).toBe(false);
+    expect([...registered.keys()]).toEqual([]);
+    return getMigration(db, row.id)?.error ?? "";
+  }
+
+  test("refresh registers nothing -> failed, not resumed", async () => {
+    registerMode = "none";
+    const error = await acceptExpectingFailure(/ERR_EXTENSION_MIGRATION_FAILED.*not registered/);
+    expect(error).toContain(`not registered under ${LEGACY}`);
+  });
+
+  test("refresh registers under ext_<slug> -> failed", async () => {
+    registerMode = "ext";
+    const error = await acceptExpectingFailure(/ERR_EXTENSION_MIGRATION_FAILED.*own id/);
+    expect(error).toContain(CODE_ID);
+  });
+
+  test("another syncable already holding the legacy id -> failed", async () => {
+    registered.set(LEGACY, "someone-else");
+    const e = engine();
+    await e.evaluate();
+    const row = onlyRow();
+    await expect(e.accept(row.id, consentThat(true, []))).rejects.toThrow(/already uses/);
+    expect(listExtensions(db)).toEqual([]);
+    expect(resumed).toEqual([]);
+  });
+
+  test("a throw after the grant (resume) leaves no half-approved state", async () => {
+    const e = engine({
+      scheduler: {
+        resume: () => {
+          throw new Error("scheduler stopped");
+        },
+        syncableFor: (id) => registered.get(id),
+      },
+    });
+    await e.evaluate();
+    const row = onlyRow();
+    await expect(e.accept(row.id, consentThat(true, []))).rejects.toThrow(/scheduler stopped/);
+    expect(getMigration(db, row.id)?.state).toBe("failed");
+    expect(listExtensions(db)).toEqual([]);
+    expect(getRunGrant(db, EXT)).toBeNull();
+    expect(getConnectorHealth(db, LEGACY).state).toBe("paused");
+    expect([...registered.keys()]).toEqual([]);
+  });
 });

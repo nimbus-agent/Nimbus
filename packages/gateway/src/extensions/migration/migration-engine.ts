@@ -78,6 +78,7 @@ import {
   type MigrationRow,
   recordMigrationFailed,
   recordMigrationPrepared,
+  reopenDeclinedMigration,
 } from "./migration-store.ts";
 
 export type { MigrationRow, MigrationState } from "./migration-store.ts";
@@ -134,8 +135,13 @@ export function migrationConsentViaGate(gate: ExtensionRunGate): MigrationConsen
 }
 
 export interface MigrationEngine {
-  /** Boot and `migrate retry`: prepare every configured, not-yet-decided continuity entry. */
+  /** Boot: prepare every configured continuity entry with no approved or declined row. */
   evaluate(): Promise<void>;
+  /**
+   * `nimbus connector migrate retry`: like `evaluate`, and also re-prepares a DECLINED row (spec
+   * § 7.2 step 6, "the command to change their mind, which re-runs Prepare"). Approved rows stay.
+   */
+  retry(): Promise<void>;
   accept(id: string, consent: MigrationConsent): Promise<MigrationRow>;
   decline(id: string): MigrationRow;
   list(): readonly MigrationRow[];
@@ -166,8 +172,14 @@ export interface MigrationEngineDeps {
   };
   /** The extension sync registrar (PR 3). */
   readonly extensionSync: { refresh(extensionId: string): void };
-  /** The sync scheduler: `resume` clears `paused` AND transitions health. */
-  readonly scheduler: { resume(serviceId: string): void };
+  /**
+   * The sync scheduler: `resume` clears `paused` AND transitions health; `syncableFor` is how
+   * accept checks that the extension took over the LEGACY id (never its own `ext_` id).
+   */
+  readonly scheduler: {
+    resume(serviceId: string): void;
+    syncableFor(serviceId: string): unknown;
+  };
   readonly now: () => number;
   readonly newId?: () => string;
   readonly logger?: Pick<Logger, "info" | "warn">;
@@ -189,7 +201,7 @@ function failedReason(error: string): string {
 }
 
 function declinedReason(displayName: string): string {
-  return `${displayName} stays off: moving it to an extension was declined (your items are kept)`;
+  return `${displayName} stays off: moving it to an extension was declined (your items are kept) — run ${RETRY} to change your mind`;
 }
 
 const DEFAULT_PAUSED_INTERVAL_MS = 600_000;
@@ -368,6 +380,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   /** Legacy service ids with a prepare or an accept in flight in THIS process. */
   const busy = new Set<string>();
   let evaluating: Promise<void> | null = null;
+  let retrying: Promise<void> | null = null;
 
   const stageDirFor = (id: string): string => {
     if (!SAFE_ID.test(id)) throw new Error("migration id is not a safe path segment");
@@ -426,7 +439,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
 
   const markFailed = (entry: ContinuityEntry, id: string, error: string): void => {
     removeStage(id);
-    recordMigrationFailed(
+    const written = recordMigrationFailed(
       db,
       {
         id,
@@ -436,7 +449,9 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       },
       deps.now(),
     );
-    pauseLegacyService(db, entry.legacyServiceId, failedReason(error), deps.now());
+    // Refused: the row reached a terminal state meanwhile (the owner declined). Never pause on its
+    // behalf — that state's own reason stands.
+    if (written) pauseLegacyService(db, entry.legacyServiceId, failedReason(error), deps.now());
   };
 
   const prepare = async (
@@ -482,7 +497,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       );
       return;
     }
-    recordMigrationPrepared(
+    const written = recordMigrationPrepared(
       db,
       {
         id,
@@ -494,6 +509,12 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       },
       deps.now(),
     );
+    if (!written) {
+      // The row reached a terminal state while the package was fetched: nothing staged for it may
+      // remain, and the legacy service is not paused on its behalf.
+      removeStage(id);
+      return;
+    }
     pauseLegacyService(
       db,
       entry.legacyServiceId,
@@ -502,7 +523,15 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     );
   };
 
-  const evaluateOne = async (entry: ContinuityEntry, reg: BuiltinRegistryConfig): Promise<void> => {
+  /**
+   * `reopen` is `migrate retry`'s: it also re-prepares a DECLINED row (spec § 7.2 step 6, the
+   * owner changing their mind). Boot evaluation never does, so a decline is never re-prompted.
+   */
+  const evaluateOne = async (
+    entry: ContinuityEntry,
+    reg: BuiltinRegistryConfig,
+    reopen: boolean,
+  ): Promise<void> => {
     if (isBundled(entry.legacyServiceId)) {
       deps.logger?.info(
         { legacyServiceId: entry.legacyServiceId, extensionId: entry.extensionId },
@@ -510,13 +539,20 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       );
       return;
     }
+    const skips = (row: MigrationRow | undefined): boolean =>
+      row?.state === "approved" || (row?.state === "declined" && !reopen);
     if (busy.has(entry.legacyServiceId)) return;
-    const existing = getMigrationByLegacyService(db, entry.legacyServiceId);
-    if (existing?.state === "approved" || existing?.state === "declined") return;
+    if (skips(getMigrationByLegacyService(db, entry.legacyServiceId))) return;
     if (!(await legacyConfigured(entry))) return;
     if (busy.has(entry.legacyServiceId)) return;
     busy.add(entry.legacyServiceId);
     try {
+      // Re-read under `busy`: a decline (or an accept) can land while the Vault read above awaits.
+      const existing = getMigrationByLegacyService(db, entry.legacyServiceId);
+      if (skips(existing)) return;
+      if (existing?.state === "declined" && !reopenDeclinedMigration(db, existing.id, deps.now())) {
+        return;
+      }
       if (existing?.state === "awaiting_approval" && existing.extensionId === entry.extensionId) {
         const stage = checkStage(existing);
         if (stage.kind === "intact") return;
@@ -533,11 +569,11 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     }
   };
 
-  const runEvaluate = async (): Promise<void> => {
+  const runEvaluate = async (reopen: boolean): Promise<void> => {
     if (builtin === null) return;
     for (const entry of table) {
       try {
-        await evaluateOne(entry, builtin); // NOSONAR S9382: sequential by design, one fetch at a time
+        await evaluateOne(entry, builtin, reopen); // NOSONAR S9382: sequential by design, one fetch at a time
       } catch (e) {
         deps.logger?.warn(
           {
@@ -602,6 +638,31 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     clearDeps(db, extensionId);
     deleteExtensionById(db, extensionId);
     rmSync(installPath, { recursive: true, force: true });
+  };
+
+  /**
+   * Spec § 7.2 step 5: the extension must write into the EXISTING legacy namespace, so items are
+   * updated in place and never duplicated. The registrar binds through its own continuity table;
+   * this checks the outcome rather than trusting that both tables agree: nothing may hold the
+   * legacy id before the refresh, the refresh must register a syncable under it, and none under the
+   * extension's own `ext_` id. Throws otherwise.
+   */
+  const registerUnderLegacyId = (row: MigrationRow, entry: ContinuityEntry): void => {
+    const codeServerId = deriveExtensionServiceId(entry.extensionId);
+    if (deps.scheduler.syncableFor(row.legacyServiceId) !== undefined) {
+      throw new Error(
+        `another syncable already uses ${row.legacyServiceId}, so the extension could not take over its sync`,
+      );
+    }
+    deps.extensionSync.refresh(entry.extensionId);
+    if (deps.scheduler.syncableFor(codeServerId) !== undefined) {
+      throw new Error(
+        `the extension's sync registered under its own id ${codeServerId} instead of ${row.legacyServiceId}, which would duplicate your items`,
+      );
+    }
+    if (deps.scheduler.syncableFor(row.legacyServiceId) === undefined) {
+      throw new Error(`the extension's sync was not registered under ${row.legacyServiceId}`);
+    }
   };
 
   const acceptLocked = async (
@@ -710,9 +771,27 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
         `the run approval could not be recorded: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
-    deps.extensionSync.refresh(entry.extensionId);
-    deps.scheduler.resume(row.legacyServiceId);
-    finishMigration(db, row.id, "approved", null, deps.now());
+    // From here the extension is installed and granted. Any failure undoes both (the grant goes
+    // with the extension row), unregisters whatever the registrar registered, fails the row and
+    // leaves the legacy service paused — never a half-approved migration.
+    try {
+      registerUnderLegacyId(row, entry);
+      deps.scheduler.resume(row.legacyServiceId);
+      if (!finishMigration(db, row.id, "approved", null, deps.now())) {
+        throw new Error("the migration row changed while it was being approved");
+      }
+    } catch (e) {
+      undoInstall(entry.extensionId, installed.installPath);
+      try {
+        deps.extensionSync.refresh(entry.extensionId); // the row is gone: this unregisters it
+      } catch {
+        // Best effort: the extension's row and grant are gone, so it can never sync or spawn.
+      }
+      return failAccept(
+        row,
+        `${e instanceof Error ? e.message : String(e)}; the install was undone`,
+      );
+    }
     removeStage(row.id);
     const done = getMigration(db, row.id);
     if (done === undefined) throw new Error("the migration row disappeared");
@@ -722,10 +801,20 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   return {
     evaluate() {
       if (evaluating !== null) return evaluating;
-      evaluating = runEvaluate().finally(() => {
+      evaluating = runEvaluate(false).finally(() => {
         evaluating = null;
       });
       return evaluating;
+    },
+
+    async retry() {
+      // After any evaluation already in flight, so the two never prepare one entry at once.
+      if (evaluating !== null) await evaluating;
+      if (retrying !== null) return retrying;
+      retrying = runEvaluate(true).finally(() => {
+        retrying = null;
+      });
+      return retrying;
     },
 
     async accept(id, consent) {

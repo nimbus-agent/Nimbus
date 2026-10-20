@@ -10,6 +10,7 @@ import {
   pendingMigrationForExtension,
   recordMigrationFailed,
   recordMigrationPrepared,
+  reopenDeclinedMigration,
 } from "./migration-store.ts";
 
 const dbs: Database[] = [];
@@ -104,5 +105,21 @@ describe("migration-store", () => {
     expect(finishMigration(db, "m1", "approved", null, 3)).toBe(false);
     expect(finishMigration(db, "missing", "declined", null, 3)).toBe(false);
     expect(getMigration(db, "m1")?.state).toBe("failed");
+  });
+});
+
+describe("reopenDeclinedMigration", () => {
+  test("reopens only a declined row", () => {
+    const db = open();
+    recordMigrationPrepared(db, PREPARED, 1);
+    expect(reopenDeclinedMigration(db, "m1", 2)).toBe(false);
+    finishMigration(db, "m1", "declined", null, 3);
+    expect(reopenDeclinedMigration(db, "m1", 4)).toBe(true);
+    expect(getMigration(db, "m1")?.state).toBe("failed");
+    // Prepare may now rewrite it.
+    expect(recordMigrationPrepared(db, PREPARED, 5)).toBe(true);
+    finishMigration(db, "m1", "approved", null, 6);
+    expect(reopenDeclinedMigration(db, "m1", 7)).toBe(false);
+    expect(getMigration(db, "m1")?.state).toBe("approved");
   });
 });

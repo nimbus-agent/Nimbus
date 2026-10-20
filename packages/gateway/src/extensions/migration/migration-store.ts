@@ -10,7 +10,8 @@ import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
  *
  * The spec's `prepared` state is folded into `awaiting_approval`: a row is written only once the
  * package is fetched, verified and staged, so there is no observable gap between the two.
- * `approved` and `declined` are terminal — every write below refuses to move a row out of either.
+ * `approved` is terminal. `declined` is terminal for every write here except the owner's explicit
+ * `migrate retry` (`reopenDeclinedMigration`); boot evaluation never reopens it.
  */
 export const MIGRATION_SCHEMA_VERSION = 73;
 
@@ -211,6 +212,21 @@ export function finishMigration(
     `UPDATE connector_migration SET state = ?, error = ?, stage_path = NULL, updated_at = ?
      WHERE id = ? AND state = 'awaiting_approval'`,
     [to, error, now, id],
+  );
+  return r.changes > 0;
+}
+
+/**
+ * `migrate retry` on a DECLINED row (spec § 7.2 step 6: the owner changes their mind, which re-runs
+ * Prepare). Moves it to `failed`, the state Prepare rewrites, conditionally on it still being
+ * declined. `approved` is never reopened. Returns whether the row moved.
+ */
+export function reopenDeclinedMigration(db: Database, id: string, now: number): boolean {
+  const r = dbRun(
+    db,
+    `UPDATE connector_migration SET state = 'failed', error = 'preparing again at the owner''s request', stage_path = NULL, updated_at = ?
+     WHERE id = ? AND state = 'declined'`,
+    [now, id],
   );
   return r.changes > 0;
 }
