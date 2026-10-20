@@ -5,7 +5,15 @@
  * `installExtensionFromLocalDirectory`) BEFORE a byte lands in the install tree.
  */
 import type { Database } from "bun:sqlite";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import {
@@ -25,8 +33,13 @@ import {
   type InstallExtensionFromLocalResult,
   installExtensionFromLocalDirectory,
 } from "../install-from-local.ts";
-import { extensionEntryRelPath, resolveExtensionManifestPath } from "../manifest.ts";
+import {
+  type ExtensionManifest,
+  extensionEntryRelPath,
+  resolveExtensionManifestPath,
+} from "../manifest.ts";
 import { extractPackage } from "../package-extract.ts";
+import { decodeBase64 } from "../verify-signature.ts";
 import { fetchRegistryBytes, type RegistryFetchDeps } from "./registry-fetch.ts";
 import {
   fetchRegistryManifest,
@@ -36,7 +49,7 @@ import {
   verifyRegistryManifestSignature,
 } from "./registry-manifest.ts";
 import { resolveRegistryEntry } from "./registry-resolve.ts";
-import { setExtensionSource } from "./registry-store.ts";
+import { type RegistryRow, setExtensionSource } from "./registry-store.ts";
 
 export { MAX_REGISTRY_MANIFEST_BYTES } from "./registry-manifest.ts";
 
@@ -92,10 +105,57 @@ export type RegistryInstallResult = InstallExtensionFromLocalResult & {
   publisher: { id: string; fingerprint: string };
 };
 
-export async function installFromRegistry(
+/**
+ * A registry package that has been fetched and fully verified, and staged under `intoDir`, but not
+ * installed. `reg` is the `RegistryRow` the fetch resolved (the built-in one included), so a later
+ * fetch can reuse it. `publisherKey` is the base64 key the signed index lists; the manifest declares
+ * the same one.
+ */
+export interface VerifiedRegistryPackage {
+  readonly id: string;
+  readonly version: string;
+  /** The extracted package root, inside the `intoDir` it was staged into. */
+  readonly sourceRoot: string;
+  readonly manifest: ExtensionManifest;
+  readonly publisherKey: string;
+  /** The entry-file hash the signed index lists, and the staged entry file matched. */
+  readonly entryHash: string;
+  readonly reg: RegistryRow;
+  readonly rootFingerprint: string;
+}
+
+/** `intoDir` must be absent or an empty directory: a staged package is never merged into another tree. */
+function assertEmptyStagingDir(intoDir: string): void {
+  if (existsSync(intoDir) && readdirSync(intoDir).length > 0) {
+    throw new RegistryError(
+      "ERR_REGISTRY_EXTRACT_FAILED",
+      `the staging directory ${intoDir} is not empty; refusing to merge a package into it`,
+    );
+  }
+  mkdirSync(intoDir, { recursive: true });
+}
+
+/**
+ * Spec § 8.6 steps 1-5 for an install: resolve the entry, fetch the signed index's manifest and
+ * package, check every hash and the I16 publisher signature, check the Vault's cached publisher key,
+ * and extract the package into `intoDir`. Nothing is installed: no `extension` row, no publisher key
+ * written to the Vault, no install audit row, no approval prompt.
+ *
+ * It is NOT write-free. Resolving the entry fetches the signed index, which advances the registry's
+ * anti-rollback sequence (`registry` row) and appends the registry egress ledger rows for every
+ * index, manifest and package request. Those belong to fetching and stay here. The only other
+ * write is the staged tree under `intoDir`.
+ *
+ * `intoDir` is the caller's: it must be absent or an empty directory (otherwise this throws
+ * `ERR_REGISTRY_EXTRACT_FAILED` before fetching anything). The archive and the extracted tree are
+ * written inside it; on any failure they are removed again. On success the caller owns the staged
+ * tree and removes it.
+ */
+export async function fetchVerifiedRegistryPackage(
   deps: InstallFromRegistryDeps,
   req: InstallFromRegistryRequest,
-): Promise<RegistryInstallResult> {
+  intoDir: string,
+): Promise<VerifiedRegistryPackage> {
   // An installed id is refused before anything is fetched, whichever registry carries it.
   if (listExtensions(deps.db).some((r) => r.id === req.id)) {
     throw new RegistryError(
@@ -103,6 +163,7 @@ export async function installFromRegistry(
       `${req.id} is already installed; use \`nimbus extension update ${req.id}\`, or remove it first`,
     );
   }
+  assertEmptyStagingDir(intoDir);
   const fetchDeps: RegistryFetchDeps = { ...deps.fetch, db: deps.db };
   const { reg, entry } = await resolveRegistryEntry(fetchDeps, req.id, req.registry);
   const [version, vEntry] = selectVersion(req.id, entry.versions, req);
@@ -119,23 +180,23 @@ export async function installFromRegistry(
   if (!sha256HexEqualConstantTime(sha256Hex(packageBytes), vEntry.packageSha256)) {
     throw registryHashMismatch("package", req.id, version);
   }
-  const { manifest, publisherKey } = fetched;
+  const { manifest } = fetched;
   await verifyRegistryManifestSignature(fetched, req.id, version);
 
-  if (await vaultPublisherKeyConflicts(deps.vault, entry.publisher.id, publisherKey)) {
+  if (await vaultPublisherKeyConflicts(deps.vault, entry.publisher.id, fetched.publisherKey)) {
     throw new RegistryError(
       "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
       `the Vault already holds a different key for publisher "${entry.publisher.id}"; refusing to replace it`,
     );
   }
 
-  const tmp = mkdtempSync(join(tmpdir(), "nimbus-reg-"));
+  const archivePath = join(intoDir, "package.tgz");
+  const extractDir = join(intoDir, "pkg");
   try {
-    const archivePath = join(tmp, "package.tgz");
     writeFileSync(archivePath, packageBytes);
     let sourceRoot: string;
     try {
-      sourceRoot = (await extractPackage(archivePath, join(tmp, "pkg"))).sourceRoot;
+      sourceRoot = (await extractPackage(archivePath, extractDir)).sourceRoot;
     } catch (e) {
       throw new RegistryError(
         "ERR_REGISTRY_EXTRACT_FAILED",
@@ -162,49 +223,92 @@ export async function installFromRegistry(
     ) {
       throw registryHashMismatch("entry file", req.id, version);
     }
-    let installed: InstallExtensionFromLocalResult;
-    try {
-      installed = await installExtensionFromLocalDirectory({
-        db: deps.db,
-        extensionsDir: deps.extensionsDir,
-        sourcePath: sourceRoot,
-        displaySourcePath: `registry ${reg.name}: ${req.id}@${version}`,
-        vault: deps.vault,
-        publisherKey,
-        sourceRegistry: reg.name,
-        rootFingerprint,
-        approve: deps.approve,
-      });
-    } catch (e) {
-      if (e instanceof RegistryError || e instanceof ExtensionInstallNotApprovedError) throw e;
-      throw new RegistryError(
-        "ERR_REGISTRY_INSTALL_REFUSED",
-        e instanceof Error ? e.message : String(e),
-      );
-    }
-    if (!sha256HexEqualConstantTime(installed.entryHash, vEntry.entryHash)) {
-      // Installed bytes disagree with the signed index: undo the install rather than keep it.
-      clearDeps(deps.db, installed.id);
-      deleteExtensionById(deps.db, installed.id);
-      rmSync(installed.installPath, { recursive: true, force: true });
-      throw registryHashMismatch("entry file", req.id, version);
-    }
-    setExtensionSource(deps.db, installed.id, {
-      registry: reg.name,
-      rootFingerprint,
-      // The channel the owner ASKED for (spec § 8.1), not the resolved version's: a `--channel beta`
-      // install that resolved to a stable version keeps tracking beta.
-      channel: req.channel ?? "stable",
-    });
     return {
-      ...installed,
+      id: req.id,
+      version,
+      sourceRoot,
+      manifest,
+      publisherKey: entry.publisher.key,
+      entryHash: vEntry.entryHash,
+      reg,
+      rootFingerprint,
+    };
+  } catch (e) {
+    try {
+      rmSync(archivePath, { force: true });
+      rmSync(extractDir, { recursive: true, force: true });
+    } catch {
+      /* best-effort: the original refusal is the error that matters */
+    }
+    throw e;
+  }
+}
+
+/**
+ * Installs a package `fetchVerifiedRegistryPackage` already verified: the Vault is already checked,
+ * the owner is asked (inside `installExtensionFromLocalDirectory`) before a byte lands in the install
+ * tree, and the `extension` row, the Vault publisher key and the install audit row are written here
+ * and nowhere else. `channel` is the one the owner ASKED for (spec § 8.1), not the resolved
+ * version's: a `--channel beta` install that resolved to a stable version keeps tracking beta.
+ * The staged tree under `pkg.sourceRoot` is left for the caller to remove.
+ */
+export async function installVerifiedRegistryPackage(
+  deps: InstallFromRegistryDeps,
+  pkg: VerifiedRegistryPackage,
+  channel: RegistryChannel,
+): Promise<RegistryInstallResult> {
+  const { id, version, reg, rootFingerprint } = pkg;
+  const publisher = pkg.manifest.publisher;
+  if (publisher === undefined) {
+    throw new RegistryError(
+      "ERR_REGISTRY_MANIFEST_MISMATCH",
+      `the verified manifest of ${id}@${version} names no publisher`,
+    );
+  }
+  let installed: InstallExtensionFromLocalResult;
+  try {
+    installed = await installExtensionFromLocalDirectory({
+      db: deps.db,
+      extensionsDir: deps.extensionsDir,
+      sourcePath: pkg.sourceRoot,
+      displaySourcePath: `registry ${reg.name}: ${id}@${version}`,
+      vault: deps.vault,
+      publisherKey: decodeBase64(pkg.publisherKey),
       sourceRegistry: reg.name,
       rootFingerprint,
-      publisher: {
-        id: entry.publisher.id,
-        fingerprint: publisherKeyFingerprint(entry.publisher.key),
-      },
-    };
+      approve: deps.approve,
+    });
+  } catch (e) {
+    if (e instanceof RegistryError || e instanceof ExtensionInstallNotApprovedError) throw e;
+    throw new RegistryError(
+      "ERR_REGISTRY_INSTALL_REFUSED",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+  if (!sha256HexEqualConstantTime(installed.entryHash, pkg.entryHash)) {
+    // Installed bytes disagree with the signed index: undo the install rather than keep it.
+    clearDeps(deps.db, installed.id);
+    deleteExtensionById(deps.db, installed.id);
+    rmSync(installed.installPath, { recursive: true, force: true });
+    throw registryHashMismatch("entry file", id, version);
+  }
+  setExtensionSource(deps.db, installed.id, { registry: reg.name, rootFingerprint, channel });
+  return {
+    ...installed,
+    sourceRegistry: reg.name,
+    rootFingerprint,
+    publisher: { id: publisher.id, fingerprint: publisherKeyFingerprint(pkg.publisherKey) },
+  };
+}
+
+export async function installFromRegistry(
+  deps: InstallFromRegistryDeps,
+  req: InstallFromRegistryRequest,
+): Promise<RegistryInstallResult> {
+  const tmp = mkdtempSync(join(tmpdir(), "nimbus-reg-"));
+  try {
+    const pkg = await fetchVerifiedRegistryPackage(deps, req, tmp);
+    return await installVerifiedRegistryPackage(deps, pkg, req.channel ?? "stable");
   } finally {
     try {
       rmSync(tmp, { recursive: true, force: true });
