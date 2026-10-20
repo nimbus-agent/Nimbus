@@ -40,7 +40,8 @@ export function extractCommitLinks(file: string, content: string): CommitLink[] 
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
     for (const m of (lines[i] ?? "").matchAll(COMMIT_LINK)) {
-      const ref = m[1] ?? "";
+      // GFM drops trailing punctuation from a bare autolink, so a URL ending a sentence does too.
+      const ref = (m[1] ?? "").replace(/[.,:;!*_~]+$/, "");
       const lower = ref.toLowerCase();
       out.push({ file, line: i + 1, ref, sha: SHA.test(lower) ? lower : null });
     }

@@ -25,6 +25,15 @@ describe("extractCommitLinks", () => {
     ]);
   });
 
+  test("a bare URL ending a sentence drops the trailing punctuation, as GFM does", () => {
+    const text = `Fixed in ${REPO}/0407fb0. Also ${REPO}/9f9215b, and ${REPO}/abcdef1!`;
+    expect(extractCommitLinks("C.md", text).map((l) => l.sha)).toEqual([
+      "0407fb0",
+      "9f9215b",
+      "abcdef1",
+    ]);
+  });
+
   test("ignores other repos and compare links", () => {
     const text = [
       "https://github.com/nimbus-agent/nimbus-sdk/commit/0407fb0c1410a15435c3e170b113a6163db8518e",
