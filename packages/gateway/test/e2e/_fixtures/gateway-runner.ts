@@ -5,15 +5,25 @@
 //                                assembly so the ChatOps auto-start finds them
 //   NIMBUS_E2E_SEED_SCIM_JSON  — SCIM users [{externalId,userName,email,active}] + the active
 //                                operator session for [identity].issuer, seeded AFTER assembly
+//   NIMBUS_E2E_MIGRATION_FIXTURE_JSON — { builtin, continuityTable }: a fixture built-in registry
+//                                and continuity table, handed to `assemblePlatformServices` as its
+//                                composition options (ruling B1). This RUNNER is test code; the
+//                                gateway itself never reads either from the environment, and the
+//                                production entry points pass no composition options at all.
+//   NIMBUS_E2E_SEED_LEGACY_JSON — { serviceId, items, scheduler }: the index rows and scheduler row
+//                                a bundled connector would have left, seeded AFTER assembly
 // The engine read path is bound to a deterministic stub: this harness proves the CHATOPS wiring
 // (transports → identity → policy → HITL gate → dispatch → reply), not the LLM.
 
 import { loadNimbusIdentityFromConfigDir } from "../../../src/config/nimbus-toml.ts";
+import { dbRun } from "../../../src/db/write.ts";
 import { makeEgressSink } from "../../../src/egress/egress-ledger.ts";
 import { runAsk } from "../../../src/engine/run-ask.ts";
 import type { ConnectorDispatcher } from "../../../src/engine/types.ts";
 import { IdentityStore } from "../../../src/identity/identity-store.ts";
+import { upsertIndexedItem } from "../../../src/index/item-store.ts";
 import { assemblePlatformServices } from "../../../src/platform/assemble.ts";
+import type { AssembleCompositionOptions } from "../../../src/platform/migration-boot.ts";
 import type { PlatformPaths } from "../../../src/platform/paths.ts";
 import { createNimbusVault } from "../../../src/vault/factory.ts";
 
@@ -50,7 +60,46 @@ const vaultSeeds = envJson<Record<string, string>>("NIMBUS_E2E_SEED_VAULT_JSON")
 // needs notifications ON must set a different value explicitly.
 process.env["NIMBUS_NOTIFICATIONS"] ??= "off";
 
-const services = await assemblePlatformServices(paths);
+const migrationFixture = envJson<NonNullable<AssembleCompositionOptions["migration"]>>(
+  "NIMBUS_E2E_MIGRATION_FIXTURE_JSON",
+);
+const services = await assemblePlatformServices(
+  paths,
+  undefined,
+  migrationFixture === undefined ? undefined : { migration: migrationFixture },
+);
+
+// Seed what a bundled connector leaves behind (connector-migration e2e): its index rows and its
+// scheduler row. The boot migration evaluation runs concurrently and touches only `paused` and the
+// health row, so the scheduler seed sets every OTHER column, whichever of the two lands first.
+interface LegacySeed {
+  serviceId: string;
+  items: Array<{ type: string; externalId: string; title: string }>;
+  scheduler: { cursor: string; intervalMs: number; lastSyncAt: number; nextSyncAt: number };
+}
+const legacySeed = envJson<LegacySeed>("NIMBUS_E2E_SEED_LEGACY_JSON");
+if (legacySeed !== undefined) {
+  const db = services.localIndex.getDatabase();
+  for (const it of legacySeed.items) {
+    upsertIndexedItem(db, {
+      service: legacySeed.serviceId,
+      type: it.type,
+      externalId: it.externalId,
+      title: it.title,
+      modifiedAt: legacySeed.scheduler.lastSyncAt,
+      syncedAt: legacySeed.scheduler.lastSyncAt,
+    });
+  }
+  const s = legacySeed.scheduler;
+  dbRun(
+    db,
+    `INSERT INTO scheduler_state (service_id, cursor, interval_ms, last_sync_at, next_sync_at, status, error_msg, consecutive_failures, paused)
+     VALUES (?, ?, ?, ?, ?, 'ok', NULL, 0, 0)
+     ON CONFLICT(service_id) DO UPDATE SET cursor = excluded.cursor, interval_ms = excluded.interval_ms,
+       last_sync_at = excluded.last_sync_at, next_sync_at = excluded.next_sync_at`,
+    [legacySeed.serviceId, s.cursor, s.intervalMs, s.lastSyncAt, s.nextSyncAt],
+  );
+}
 
 // Seed SCIM users + an active operator session for the configured issuer (I18 inputs).
 interface ScimSeed {
