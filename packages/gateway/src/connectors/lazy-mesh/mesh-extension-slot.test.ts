@@ -828,30 +828,47 @@ describe("reserved sync tool", () => {
   });
 
   test("a call past the timeout rejects", async () => {
-    let release: (v: unknown) => void = () => undefined;
     let signal: AbortSignal | undefined;
     const h = harness({
       tools: (k) => ({
         [`${k}___nimbus_sync`]: {
           execute: (_input: unknown, ctx?: unknown) => {
             signal = (ctx as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
-            return new Promise<unknown>((r) => {
-              release = r;
-            });
+            // Never settles: the drain is released by the timeout, so the afterEach stop is prompt.
+            return new Promise<unknown>(() => undefined);
           },
         },
       }),
     });
-    try {
-      await expect(syncMesh(h).callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 20)).rejects.toThrow(
-        /exceeded 20ms/,
-      );
-      expect(signal).toBeDefined();
-      expect(signal?.aborted).toBe(true);
-    } finally {
-      // settle the abandoned call so the slot's drain (which the afterEach disconnect awaits) ends
-      release(textResult("{}"));
-    }
+    await expect(syncMesh(h).callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 20)).rejects.toThrow(
+      /exceeded 20ms/,
+    );
+    expect(signal).toBeDefined();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  test("a sync call that ignores the abort does not hold a stop past its timeout", async () => {
+    const h = harness({
+      tools: (k) => ({
+        [`${k}___nimbus_sync`]: {
+          // Ignores the abort signal and never settles.
+          execute: () => new Promise<unknown>(() => undefined),
+        },
+      }),
+    });
+    const m = syncMesh(h);
+    await expect(m.callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 20)).rejects.toThrow(
+      /exceeded 20ms/,
+    );
+    let stopped = false;
+    const stop = m.stopExtensionClient(EXTENSION_ID).then(() => {
+      stopped = true;
+    });
+    // Holding the drain until the abandoned call settles would park this stop on the ten-minute
+    // drain cap; released with the race, it completes at once.
+    await Promise.race([stop, Bun.sleep(1000)]);
+    expect(stopped).toBe(true);
+    expect(h.clients[0]?.disconnectCalls).toBe(1);
   });
 
   test("an extension without the sync tool, or an unlisted id, is refused", async () => {

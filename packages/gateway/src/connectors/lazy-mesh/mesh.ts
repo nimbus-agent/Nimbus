@@ -409,10 +409,12 @@ export class LazyConnectorMesh {
 
   /**
    * Calls an extension's reserved `__nimbus_sync` tool once and returns the parsed JSON body.
-   * Takes the slot's UNFILTERED tool map (drain-wrapped, so an idle-out or stop waits for the
-   * call) and executes the tool directly, so the 4 MiB result cap is enforced HERE — a direct
-   * execute bypasses the dispatcher's own cap. A timeout rejects; the child is left to the slot's
-   * normal stop/idle path.
+   * Takes the slot's UNFILTERED tool map and executes the tool directly, so the 4 MiB result cap is
+   * enforced HERE — a direct execute bypasses the dispatcher's own cap. The slot's drain refcount
+   * is held for the BOUNDED race, not for the underlying call: an idle-out or stop waits for the
+   * call, but a call that outlives its timeout (an extension that ignores the abort) releases the
+   * drain when the timeout rejects, so a stop never waits on an abandoned call. A timeout rejects;
+   * the child is left to the slot's normal stop/idle path.
    */
   async callExtensionSyncTool(
     codeServerId: string,
@@ -420,10 +422,7 @@ export class LazyConnectorMesh {
     timeoutMs: number,
   ): Promise<unknown> {
     const key = extensionMeshKey(codeServerId);
-    const tools = this.wrapSlotToolsWithDrain(
-      key,
-      await this.extensionSlots.listToolsUnfiltered(codeServerId),
-    );
+    const tools = await this.extensionSlots.listToolsUnfiltered(codeServerId);
     if (tools === undefined) {
       throw new Error(`${codeServerId} is not an approved extension`);
     }
@@ -433,19 +432,27 @@ export class LazyConnectorMesh {
     if (execute === undefined) {
       throw new Error(`${codeServerId} does not expose the sync tool`);
     }
+    // The same tracker `wrapSlotToolsWithDrain` would use, looked up the same way.
+    const drain = this.lazySlots.get(key)?.drain;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const abort = new AbortController();
-    const result = await Promise.race([
-      execute(req, { abortSignal: abort.signal }),
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          abort.abort();
-          reject(new Error(`${codeServerId} sync call exceeded ${String(timeoutMs)}ms`));
-        }, timeoutMs);
-      }),
-    ]).finally(() => {
+    let result: unknown;
+    drain?.bump();
+    try {
+      // try/finally rather than `.finally`: an execute that throws synchronously still drops.
+      result = await Promise.race([
+        execute(req, { abortSignal: abort.signal }),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            abort.abort();
+            reject(new Error(`${codeServerId} sync call exceeded ${String(timeoutMs)}ms`));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
       if (timer !== undefined) clearTimeout(timer);
-    });
+      drain?.drop();
+    }
     return JSON.parse(extractMcpToolText(result, MCP_TOOL_RESULT_MAX_BYTES));
   }
 
