@@ -68,6 +68,7 @@ import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
 import { dispatchLocalityRpc, LocalityRpcError } from "../locality-rpc.ts";
 import { dispatchMediaRpc } from "../media-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
+import { dispatchMigrationRpc } from "../migration-rpc.ts";
 import { dispatchNotificationsRpc } from "../notifications-rpc.ts";
 import { dispatchOncallPushRpc, OncallPushRpcError } from "../oncall-push-rpc.ts";
 import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
@@ -1497,6 +1498,35 @@ export async function tryDispatchCaptureRpc(
   return out.kind === "hit" ? out.value : phase4RpcSkipped;
 }
 
+/**
+ * `migration.*` (Readwise unbundling spec § 7.2/§ 7.3): CLI-only — every method is in
+ * `FORBIDDEN_OVER_LAN` (I5) and none is on the Tauri allowlist (I7). Only `migration.accept` asks
+ * the owner, through the SAME gate-only executor the extension lifecycle approvals use, bound to
+ * THIS session's consent channel, so the `extension.migrate` prompt is unicast to the caller.
+ */
+export async function tryDispatchMigrationRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("migration.")) return phase4RpcSkipped;
+  const engine = ctx.options.migrationEngine;
+  const localIndex = ctx.options.localIndex;
+  if (engine === undefined || localIndex === undefined) return phase4RpcSkipped;
+  let ownerGate: RegistryOwnerGate | undefined;
+  if (method === "migration.accept") {
+    const toolExecutor = buildExtensionGateExecutor(ctx, localIndex, clientId);
+    ownerGate = async (action) => (await toolExecutor.gate(action)) === "proceed";
+  }
+  const out = await dispatchMigrationRpc(method, params, {
+    engine,
+    ...(ownerGate === undefined ? {} : { ownerGate }),
+  });
+  if (out.kind === "hit") return out.value;
+  throw new RpcMethodError(-32601, `Method not found: ${method}`);
+}
+
 export async function tryDispatchShareRpc(
   ctx: ServerCtx,
   method: string,
@@ -1777,6 +1807,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchOncallPushRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,
+  tryDispatchMigrationRpc,
   tryDispatchMediaRpc,
   tryDispatchEgressRpc,
   tryDispatchGlossaryRpc,

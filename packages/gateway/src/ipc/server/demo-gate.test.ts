@@ -61,6 +61,9 @@ describe("demoRefusal", () => {
     "registry.list",
     "registry.refresh",
     "registry.remove",
+    "migration.accept",
+    "migration.decline",
+    "migration.retry",
   ])("%s is refused", (m) => {
     expect(demoRefusal(m)?.rpcCode).toBe(-32000);
   });
@@ -71,6 +74,7 @@ describe("demoRefusal", () => {
     "vault.get",
     "diag.snapshot",
     "connector.listStatus",
+    "migration.list",
   ])("%s is allowed", (m) => {
     expect(demoRefusal(m)).toBeUndefined();
   });

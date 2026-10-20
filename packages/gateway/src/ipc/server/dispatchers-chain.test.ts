@@ -37,6 +37,7 @@ import {
 import type { DecisionPassSummary } from "../../decisions/decision-extract.ts";
 import type { DecisionRefresher } from "../../decisions/decision-refresh.ts";
 import { type ExecApprovalInput, ExecConsentBroker } from "../../exec/exec-consent-broker.ts";
+import type { MigrationRow } from "../../extensions/migration/migration-engine.ts";
 import { IdentityStore } from "../../identity/identity-store.ts";
 import { CURRENT_SCHEMA_VERSION, LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
@@ -59,6 +60,7 @@ import {
   tryDispatchComputerRpc,
   tryDispatchDecisionsRpc,
   tryDispatchExecRpc,
+  tryDispatchMigrationRpc,
   tryDispatchPhase4Rpc,
   tryDispatchToolgenRpc,
 } from "./dispatchers.ts";
@@ -838,5 +840,102 @@ describe("clip.* — reached through the chain with each optional dep forwarded"
     const err = await rpcErrorOf(tryDispatchPhase4Rpc(ctx, "clip.notAVerb", {}, "c1"));
     expect(err.rpcCode).toBe(-32601);
     expect(err.message).toBe("Method not found: clip.notAVerb");
+  });
+});
+
+describe("migration.* — reached through the chain, accept asks only the calling session", () => {
+  const ROW: MigrationRow = {
+    id: "m-1",
+    legacyServiceId: "fixturewise",
+    extensionId: "com.example.fixturewise",
+    version: "1.0.0",
+    treeDigest: "d".repeat(64),
+    stagePath: "/var/lib/nimbus/migrations/m-1/pkg",
+    state: "awaiting_approval",
+    error: null,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const engine = (calls: string[]): NonNullable<CreateIpcServerOptions["migrationEngine"]> => ({
+    list: () => [ROW],
+    accept: async (id, consent) => {
+      calls.push(`accept:${id}`);
+      const ok = await consent({
+        migrationId: id,
+        extensionId: ROW.extensionId,
+        summary: "s",
+        publisher: { id: "nimbus", fingerprint: "f" },
+        version: "1.0.0",
+        network: "no network access",
+        readTools: "r",
+        knownLoss: "k",
+      });
+      return { ...ROW, state: ok ? "approved" : "awaiting_approval", stagePath: null };
+    },
+    decline: (id) => {
+      calls.push(`decline:${id}`);
+      return { ...ROW, state: "declined", stagePath: null };
+    },
+    retry: async () => {
+      calls.push("retry");
+    },
+  });
+
+  test("migration.list is answered by the migration handler, without a path", async () => {
+    const { ctx } = harness({ localIndex: freshIndex(), migrationEngine: engine([]) });
+    const out = (await tryDispatchPhase4Rpc(ctx, "migration.list", {}, "c1")) as {
+      migrations: Array<Record<string, unknown>>;
+    };
+    expect(out.migrations.map((m) => m["id"])).toEqual(["m-1"]);
+    expect(out.migrations[0]).not.toHaveProperty("stagePath");
+  });
+
+  test("migration.accept raises extension.migrate to the CALLING session only", async () => {
+    const asked: Array<{ clientId: string; prompt: string }> = [];
+    const consent: ConsentCoordinatorImpl = new ConsentCoordinatorImpl(
+      (clientId) => (notification) => {
+        const params = notification.params as Record<string, unknown>;
+        asked.push({ clientId, prompt: String(params["prompt"]) });
+        queueMicrotask(() => {
+          consent.handleRespond(clientId, { requestId: params["requestId"], approved: true });
+        });
+      },
+    );
+    const calls: string[] = [];
+    const { ctx } = harness({ localIndex: freshIndex(), migrationEngine: engine(calls) });
+    const withConsent: ServerCtx = { ...ctx, consentImpl: consent };
+    const out = (await tryDispatchPhase4Rpc(
+      withConsent,
+      "migration.accept",
+      { id: "m-1" },
+      "caller-7",
+    )) as Record<string, unknown>;
+    expect(out["state"]).toBe("approved");
+    expect(asked.map((a) => a.clientId)).toEqual(["caller-7"]);
+    expect(asked[0]?.prompt).toContain("extension.migrate");
+    expect(calls).toEqual(["accept:m-1"]);
+  });
+
+  test("a disconnected caller fails closed: the gate denies, nothing is approved", async () => {
+    const { ctx } = harness({ localIndex: freshIndex(), migrationEngine: engine([]) });
+    const out = (await tryDispatchPhase4Rpc(
+      ctx,
+      "migration.accept",
+      { id: "m-1" },
+      "c1",
+    )) as Record<string, unknown>;
+    expect(out["state"]).toBe("awaiting_approval");
+  });
+
+  test("decline and retry reach the engine; an unknown verb is -32601; no engine is a skip", async () => {
+    const calls: string[] = [];
+    const { ctx } = harness({ localIndex: freshIndex(), migrationEngine: engine(calls) });
+    await tryDispatchPhase4Rpc(ctx, "migration.decline", { id: "m-1" }, "c1");
+    await tryDispatchPhase4Rpc(ctx, "migration.retry", {}, "c1");
+    expect(calls).toEqual(["decline:m-1", "retry"]);
+    const err = await rpcErrorOf(tryDispatchPhase4Rpc(ctx, "migration.evaluate", {}, "c1"));
+    expect(err.rpcCode).toBe(-32601);
+    const { ctx: bare } = harness({ localIndex: freshIndex() });
+    expect(await tryDispatchMigrationRpc(bare, "migration.list", {}, "c1")).toBe(phase4RpcSkipped);
   });
 });

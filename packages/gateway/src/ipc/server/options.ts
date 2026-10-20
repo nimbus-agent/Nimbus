@@ -11,6 +11,7 @@ import type { AskExplainRecorder } from "../../engine/ask-explain-recorder.ts";
 import type { ExecutorPolicyDep } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
+import type { MigrationEngine } from "../../extensions/migration/migration-engine.ts";
 import type { RegistryFetchDeps } from "../../extensions/registry/registry-fetch.ts";
 import type { DiscoveryProvider } from "../../federation/discovery.ts";
 import type { PeerPairing } from "../../federation/peer-pairing.ts";
@@ -120,6 +121,12 @@ export type CreateIpcServerOptions = {
    * purge. Absent means no extension sync host (tests).
    */
   extensionSync?: AutomationRpcExtensionSyncHandle;
+  /**
+   * The connector migration engine (Readwise unbundling spec § 7.2), built once by
+   * `platform/assemble.ts`, which also runs its boot `evaluate()`. Serves `migration.*` (CLI-only,
+   * LAN-forbidden). Absent means those methods are not served (tests).
+   */
+  migrationEngine?: Pick<MigrationEngine, "list" | "accept" | "decline" | "retry">;
   extensionsAutoUpdate?: AutoUpdateRuntimeBag;
   extensionsAutoUpdateDiag?: {
     cachedUpdatesCount: () => number;
