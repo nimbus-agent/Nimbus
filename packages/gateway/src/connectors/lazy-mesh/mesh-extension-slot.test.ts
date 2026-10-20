@@ -829,13 +829,16 @@ describe("reserved sync tool", () => {
 
   test("a call past the timeout rejects", async () => {
     let release: (v: unknown) => void = () => undefined;
+    let signal: AbortSignal | undefined;
     const h = harness({
       tools: (k) => ({
         [`${k}___nimbus_sync`]: {
-          execute: () =>
-            new Promise<unknown>((r) => {
+          execute: (_input: unknown, ctx?: unknown) => {
+            signal = (ctx as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
+            return new Promise<unknown>((r) => {
               release = r;
-            }),
+            });
+          },
         },
       }),
     });
@@ -843,6 +846,8 @@ describe("reserved sync tool", () => {
       await expect(syncMesh(h).callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 20)).rejects.toThrow(
         /exceeded 20ms/,
       );
+      expect(signal).toBeDefined();
+      expect(signal?.aborted).toBe(true);
     } finally {
       // settle the abandoned call so the slot's drain (which the afterEach disconnect awaits) ends
       release(textResult("{}"));

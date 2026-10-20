@@ -752,6 +752,19 @@ export class SyncScheduler {
     return { connector, row };
   }
 
+  /** Pauses the service with `reason` and rejects force waiters; nothing else is recorded. */
+  private refuseRun(job: Job, reason: string): void {
+    let failure: Error = new Error(reason);
+    try {
+      this.pause(job.serviceId, reason);
+    } catch (err) {
+      failure = new Error(
+        `${reason} (pausing failed: ${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+    this.resolveForceWaiters(job.serviceId, job.reason === "force" ? failure : undefined);
+  }
+
   private async runJob(job: Job): Promise<void> {
     const ctx = this.resolveRunJobContext(job);
     if (ctx === null) {
@@ -761,13 +774,16 @@ export class SyncScheduler {
 
     // A service that cannot run at all right now is paused BEFORE anything is recorded: no
     // configured transition, no `sync.run` egress row, no success telemetry.
-    const refusal = connector.preflight?.() ?? null;
+    // A preflight that throws is a refusal too (fail closed): never an unhandled rejection, never
+    // a force waiter left hanging.
+    let refusal: string | null;
+    try {
+      refusal = connector.preflight?.() ?? null;
+    } catch (err) {
+      refusal = `preflight failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
     if (refusal !== null) {
-      this.pause(job.serviceId, refusal);
-      this.resolveForceWaiters(
-        job.serviceId,
-        job.reason === "force" ? new Error(refusal) : undefined,
-      );
+      this.refuseRun(job, refusal);
       return;
     }
 

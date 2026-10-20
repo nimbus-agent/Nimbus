@@ -19,11 +19,7 @@ export interface ExtensionSyncableDeps {
   readonly isConfigured: () => Promise<boolean>;
   /** `SandboxRunner.canConfine` over the extension's spawn policy: non-null = why it cannot. */
   readonly canConfine: () => string | null;
-  readonly budget: {
-    readonly maxPages: number;
-    readonly maxMs: number;
-    readonly callTimeoutMs: number;
-  };
+  readonly budget: { readonly maxPages: number; readonly maxMs: number };
 }
 
 export const EXTENSION_SYNC_BUDGET = {

@@ -361,6 +361,8 @@ export function transitionHealth(
       // A pause with a stated reason (e.g. a sandbox that cannot confine an extension) is the
       // one place the owner learns WHY nothing is syncing, so it lands in `last_error` too.
       if (event.reason === undefined) {
+        // No stated reason: drop any earlier error so a status never shows a stale one under a pause.
+        lastError = null;
         reason = "connector paused";
       } else {
         lastError = truncate(event.reason);

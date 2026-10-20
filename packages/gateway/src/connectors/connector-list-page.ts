@@ -10,7 +10,7 @@ export const DEFAULT_LIST_PAGE_SIZE = 200;
 /** Hard backstop against a misbehaving cursor that never terminates. */
 const MAX_PAGES = 1000;
 
-/** A list page is bounded by the dispatcher's own result cap; this just keeps the call total. */
+/** A generous per-page ceiling so the shared extractor is total here; not a tuned limit. */
 const LIST_PAGE_MAX_BYTES = 64 * 1024 * 1024;
 
 function extractMcpText(result: unknown): string {

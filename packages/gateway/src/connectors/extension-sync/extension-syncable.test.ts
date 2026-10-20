@@ -10,7 +10,7 @@ import { unboundSyncCapabilities } from "../../sync/sync-capabilities.ts";
 import type { SyncContext, SyncRuntimeContext } from "../../sync/types.ts";
 import { RateLimitError, UnauthenticatedError } from "../../sync/types.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../../testing/bun-test-support.ts";
-import { getConnectorHealth } from "../health.ts";
+import { getConnectorHealth, transitionHealth } from "../health.ts";
 import type { ExtensionIdentity } from "./extension-identity.ts";
 import {
   createExtensionSyncable,
@@ -238,6 +238,41 @@ describe("createExtensionSyncable", () => {
 });
 
 describe("scheduler integration", () => {
+  test("a throwing preflight is a refusal: paused, no egress row, force waiter rejected", async () => {
+    const db = freshDb();
+    const ctx = scheduledCtx(db);
+    await ctx.vault.set("ext.ext_x.token", "secret");
+    const rows: unknown[] = [];
+    const sched = new SyncScheduler(ctx, undefined, { appendSyncEgress: (r) => rows.push(r) });
+    sched.register(
+      createExtensionSyncable(
+        deps({
+          canConfine: () => {
+            throw new Error("grant vanished");
+          },
+        }),
+      ),
+    );
+    await expect(sched.forceSync("ext_x")).rejects.toThrow(/preflight failed: grant vanished/);
+    await sched.stop();
+    expect(rows).toHaveLength(0);
+    expect(getConnectorHealth(db, "ext_x").state).toBe("paused");
+    expect(getConnectorHealth(db, "ext_x").lastError).toContain("preflight failed");
+  });
+
+  test("a reason-less pause clears a stale error from the status", async () => {
+    const db = freshDb();
+    const ctx = scheduledCtx(db);
+    const sched = new SyncScheduler(ctx);
+    sched.register(createExtensionSyncable(deps()));
+    transitionHealth(db, "ext_x", { type: "unauthenticated" });
+    sched.pause("ext_x");
+    const status = new LocalIndex(db).persistedConnectorStatuses("ext_x")[0];
+    expect(status?.status).toBe("paused");
+    expect(status?.lastError).toBeNull();
+    await sched.stop();
+  });
+
   test("one sync() call == one scheduler run == one sync.run row", async () => {
     const db = freshDb();
     const ctx = scheduledCtx(db);
@@ -295,7 +330,9 @@ describe("scheduler integration", () => {
         }),
       ),
     );
-    await sched.forceSync("ext_x").catch(() => undefined);
+    await expect(sched.forceSync("ext_x")).rejects.toThrow(
+      /sandbox cannot confine this extension: no bwrap/,
+    );
     const row = db
       .query("SELECT paused FROM scheduler_state WHERE service_id = ?")
       .get("ext_x") as { paused: number };

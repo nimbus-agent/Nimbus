@@ -434,10 +434,12 @@ export class LazyConnectorMesh {
       throw new Error(`${codeServerId} does not expose the sync tool`);
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const abort = new AbortController();
     const result = await Promise.race([
-      execute(req, {}),
+      execute(req, { abortSignal: abort.signal }),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
+          abort.abort();
           reject(new Error(`${codeServerId} sync call exceeded ${String(timeoutMs)}ms`));
         }, timeoutMs);
       }),

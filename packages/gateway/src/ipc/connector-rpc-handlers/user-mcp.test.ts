@@ -84,9 +84,18 @@ describe("owner code server (ext_) over connector.userMcp*", () => {
       listed += 1;
       return extTools;
     });
-    const tools = await handleConnectorUserMcpTools(mesh, { serviceId: "ext_foo" });
-    expect(tools.tools.map((t) => t.name)).not.toContain("__nimbus_sync");
-    listed = 0;
+    // Listing is filtered in the mesh slot (covered in mesh-extension-slot.test.ts); here the
+    // refusal must hold on the NAME even if a mesh listed the reserved tool.
+    const leaky = meshWith(async () => ({
+      ...extTools,
+      ext_foo___nimbus_sync: { execute: async () => null },
+    }));
+    const leakyErr = await handleConnectorUserMcpCall(leaky, recordingExecutor(seen), {
+      serviceId: "ext_foo",
+      tool: "__nimbus_sync",
+    }).catch((e: unknown) => e);
+    expect((leakyErr as ConnectorRpcError).message).toContain("ERR_EXTENSION_RESERVED_TOOL");
+    expect(seen).toEqual([]);
     const err = await handleConnectorUserMcpCall(mesh, recordingExecutor(seen), {
       serviceId: "ext_foo",
       tool: "__nimbus_sync",
