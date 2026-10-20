@@ -11,15 +11,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { packExtensionDir } from "./registry-pack.ts";
+import { packExtensionDir } from "./pack.ts";
 
 function makeTree(): string {
   const dir = mkdtempSync(join(tmpdir(), "nimbus-reg-pack-"));
-  writeFileSync(join(dir, "manifest.json"), '{"id":"x"}');
-  mkdirSync(join(dir, "src"));
-  writeFileSync(join(dir, "src", "b.js"), "b");
-  writeFileSync(join(dir, "src", "a.js"), "a");
-  writeFileSync(join(dir, "Z.txt"), "z");
+  writeFileSync(join(dir, "nimbus.extension.json"), '{"id":"x"}');
+  mkdirSync(join(dir, "dist"));
+  writeFileSync(join(dir, "dist", "b.js"), "b");
+  writeFileSync(join(dir, "dist", "a.js"), "a");
+  writeFileSync(join(dir, "README.md"), "z");
   return dir;
 }
 
@@ -62,8 +62,8 @@ describe("registry packer", () => {
     const b = makeTree();
     const out = mkdtempSync(join(tmpdir(), "nimbus-reg-out-"));
     try {
-      chmodSync(join(b, "Z.txt"), 0o600);
-      chmodSync(join(b, "src", "a.js"), 0o755);
+      chmodSync(join(b, "README.md"), 0o600);
+      chmodSync(join(b, "dist", "a.js"), 0o755);
       await packExtensionDir(a, join(out, "a.tgz"));
       await packExtensionDir(b, join(out, "b.tgz"));
       const ba = readFileSync(join(out, "a.tgz"));
@@ -91,16 +91,16 @@ describe("registry packer", () => {
     const src = makeTree();
     const out = mkdtempSync(join(tmpdir(), "nimbus-reg-out-"));
     try {
-      mkdirSync(join(src, "src", "deep"));
-      writeFileSync(join(src, "src", "deep", "c.js"), "c");
-      mkdirSync(join(src, "empty"));
+      mkdirSync(join(src, "dist", "deep"));
+      writeFileSync(join(src, "dist", "deep", "c.js"), "c");
+      mkdirSync(join(src, "dist", "empty"));
       await packExtensionDir(src, join(out, "x.tgz"));
       expect(tarNames(gunzipSync(readFileSync(join(out, "x.tgz"))))).toEqual([
-        "Z.txt",
-        "manifest.json",
-        "src/a.js",
-        "src/b.js",
-        "src/deep/c.js",
+        "README.md",
+        "dist/a.js",
+        "dist/b.js",
+        "dist/deep/c.js",
+        "nimbus.extension.json",
       ]);
     } finally {
       rmSync(src, { recursive: true, force: true });
@@ -112,12 +112,34 @@ describe("registry packer", () => {
     const src = makeTree();
     const out = mkdtempSync(join(tmpdir(), "nimbus-reg-out-"));
     try {
-      const fifo = join(src, "src", "pipe");
+      const fifo = join(src, "dist", "pipe");
       const r = Bun.spawnSync(["mkfifo", fifo]);
       expect(r.exitCode).toBe(0);
       await expect(packExtensionDir(src, join(out, "x.tgz"))).rejects.toThrow(
-        "refusing to pack a special file: src/pipe",
+        "refusing to pack a special file: dist/pipe",
       );
+    } finally {
+      rmSync(src, { recursive: true, force: true });
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  test("only the package file set is packed", async () => {
+    const src = makeTree();
+    const out = mkdtempSync(join(tmpdir(), "nimbus-reg-out-"));
+    try {
+      mkdirSync(join(src, "node_modules"));
+      writeFileSync(join(src, "node_modules", "x.js"), "x");
+      mkdirSync(join(src, "src"));
+      writeFileSync(join(src, "src", "i.ts"), "i");
+      writeFileSync(join(src, ".env"), "SECRET=1");
+      await packExtensionDir(src, join(out, "x.tgz"));
+      expect(tarNames(gunzipSync(readFileSync(join(out, "x.tgz"))))).toEqual([
+        "README.md",
+        "dist/a.js",
+        "dist/b.js",
+        "nimbus.extension.json",
+      ]);
     } finally {
       rmSync(src, { recursive: true, force: true });
       rmSync(out, { recursive: true, force: true });
@@ -129,7 +151,7 @@ describe("registry packer", () => {
     const out = mkdtempSync(join(tmpdir(), "nimbus-reg-out-"));
     try {
       try {
-        symlinkSync(join(src, "Z.txt"), join(src, "link.txt"));
+        symlinkSync(join(src, "README.md"), join(src, "dist", "link.txt"));
       } catch {
         return; // symlink creation not permitted on this host
       }

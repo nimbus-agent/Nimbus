@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
-
+import type { SandboxPermissions } from "@nimbus-dev/registry-format";
 import { diffPermissions, isWidened } from "./auto-update-permissions-diff.ts";
-import type { SandboxPermissions } from "./permissions-validator.ts";
 
 const empty: SandboxPermissions = { network: [], filesystem: { read: [], write: [] } };
 

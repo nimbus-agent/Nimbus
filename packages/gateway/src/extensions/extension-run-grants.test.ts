@@ -2,14 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import type { SandboxPermissions } from "@nimbus-dev/registry-format";
 import {
   type ExtensionRunGrantEnv,
   extensionRunGrantProtectedRoots,
   resolveExtensionRunGrants,
   serializeRunGrants,
 } from "./extension-run-grants.ts";
-import type { SandboxPermissions } from "./permissions-validator.ts";
 
 let root: string;
 let dataDir: string;

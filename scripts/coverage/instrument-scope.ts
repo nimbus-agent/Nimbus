@@ -10,7 +10,7 @@
 // source sat outside this scope, so it produced no coverage records at all and
 // Sonar reported its files at 0% while a comment elsewhere called the gap closed.
 // Keep this regex to packages that actually live here.
-const FIRST_PARTY = /\/packages\/(?:gateway|cli)\/src\//;
+const FIRST_PARTY = /\/packages\/(?:gateway|cli|registry-format)\/src\//;
 const GHA_SRC = /\/packages\/github-actions\/(?:shared|[^/]+\/src)\//;
 
 export function shouldInstrument(absPath: string): boolean {

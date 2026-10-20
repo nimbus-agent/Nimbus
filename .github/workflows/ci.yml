@@ -536,7 +536,7 @@ jobs:
         # The slowest healthy file in run 39002089029 took 23 s on macOS and 36 s on Windows, and a
         # file whose tests time out one after another goes quiet 60 s per test — 5 minutes allows
         # for five of those in a row.
-        run: bun scripts/ci/test-with-retry.ts --label="${{ matrix.label }}" --cap-seconds=1500 --silence-seconds=300 --report-dir="${RUNNER_TEMP}" -- bun test packages/gateway packages/cli scripts --timeout=60000 --parallel --shard=${{ matrix.shard }} --timings="${RUNNER_TEMP}/ci-test-timings.json"
+        run: bun scripts/ci/test-with-retry.ts --label="${{ matrix.label }}" --cap-seconds=1500 --silence-seconds=300 --report-dir="${RUNNER_TEMP}" -- bun test packages/gateway packages/cli packages/registry-format scripts --timeout=60000 --parallel --shard=${{ matrix.shard }} --timings="${RUNNER_TEMP}/ci-test-timings.json"
         env:
           CI: "true"
 

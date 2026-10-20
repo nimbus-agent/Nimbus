@@ -33,7 +33,7 @@
  *        - dependency-cruiser's own environment diagnosis (`summary.environment.issues`, e.g.
  *          `missing-typescript-transpiler`) is fatal, as is a run with no usable TypeScript
  *          compiler at all;
- *        - COVERAGE: every non-test `.ts`/`.tsx` file under `packages/{gateway,cli,ui}/src` must
+ *        - COVERAGE: every non-test `.ts`/`.tsx` file under `packages/{gateway,cli,registry-format,ui}/src` must
  *          be a cruised module. Those three workspaces are what the D1/D3 rules govern, and they
  *          are ~97% of the graph. The set is enumerated from the filesystem, NOT from the config
  *          under test, so a config change that narrows the scope fails here too. It is also not
@@ -70,7 +70,7 @@ export const PRELOAD_PATH = join(import.meta.dir, "dependency-cruiser-ts6-preloa
  * `__fixtures__` because it holds sample inputs, not source. Widen this deliberately, never narrow it
  * to make the guard pass.
  */
-export const REQUIRED_SOURCES_GLOB = "packages/{gateway,cli,ui}/src/**/*.{ts,tsx}";
+export const REQUIRED_SOURCES_GLOB = "packages/{gateway,cli,registry-format,ui}/src/**/*.{ts,tsx}";
 const NOT_REQUIRED = /\.test\.tsx?$|\/__fixtures__\//;
 
 /**

@@ -2,8 +2,12 @@
  * Resolving an extension id across the owner's registries, shared by `registry.info` and
  * `registry.install` so the two can never disagree about which registry a bare id means.
  */
-import type { RegistryExtensionEntry, RegistryIndex } from "./index-format.ts";
-import { RegistryError, type RegistryErrorCode } from "./registry-errors.ts";
+import {
+  RegistryError,
+  type RegistryErrorCode,
+  type RegistryExtensionEntry,
+  type RegistryIndex,
+} from "@nimbus-dev/registry-format";
 import { fetchVerifiedIndex, type RegistryFetchDeps } from "./registry-fetch.ts";
 import { getRegistry, listRegistries, type RegistryRow } from "./registry-store.ts";
 

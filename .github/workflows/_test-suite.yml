@@ -341,7 +341,7 @@ jobs:
             echo "::endgroup::"
           }
 
-          for pkg in packages/gateway packages/cli; do
+          for pkg in packages/gateway packages/cli packages/registry-format; do
             run_pkg "${pkg}"
           done
 
@@ -409,7 +409,7 @@ jobs:
         # attempt 1's with the retried files replaced by the retry's results. `--silence-seconds`
         # ends a hung attempt after 5 quiet minutes rather than at the cap; why 300: `ci.yml`'s
         # cross-platform step, which runs the same command.
-        run: bun scripts/ci/test-with-retry.ts --label="${{ inputs.runner }} (push)" --cap-seconds=1500 --silence-seconds=300 --report-dir="${RUNNER_TEMP}" --final-junit=junit-reports/junit-unit.xml -- bun test packages/gateway packages/cli scripts --timeout=60000 --parallel --timings="${RUNNER_TEMP}/test-timings.json" --update-timings
+        run: bun scripts/ci/test-with-retry.ts --label="${{ inputs.runner }} (push)" --cap-seconds=1500 --silence-seconds=300 --report-dir="${RUNNER_TEMP}" --final-junit=junit-reports/junit-unit.xml -- bun test packages/gateway packages/cli packages/registry-format scripts --timeout=60000 --parallel --timings="${RUNNER_TEMP}/test-timings.json" --update-timings
         env:
           CI: "true"
 

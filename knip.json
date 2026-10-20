@@ -22,6 +22,10 @@
       "entry": ["src/index.ts", "src/**/*.test.ts", "src/**/*.test.tsx"],
       "project": "src/**/*.{ts,tsx}"
     },
+    "packages/registry-format": {
+      "entry": ["src/**/*.test.ts"],
+      "project": "src/**/*.ts"
+    },
     "packages/ui": {
       "entry": ["test/**/*.test.{ts,tsx}"],
       "project": "src/**/*.{ts,tsx}"

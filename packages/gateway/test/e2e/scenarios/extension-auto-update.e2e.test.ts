@@ -3,14 +3,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import { insertExtensionRow, listExtensions } from "../../../src/automation/extension-store.ts";
 import { createAutoUpdateRuntime } from "../../../src/extensions/auto-update-init.ts";
 import {
   _resetAutoUpdateMutexForTests,
   dispatchAutoUpdateRpc,
 } from "../../../src/extensions/auto-update-rpc.ts";
-import { publisherKeyFingerprint } from "../../../src/extensions/install-from-local.ts";
 import { writePublisherKey } from "../../../src/extensions/publisher-keys.ts";
 import { buildTestRegistry } from "../../../src/extensions/registry/__fixtures__/build-test-registry.ts";
 import { installFromRegistry } from "../../../src/extensions/registry/install-from-registry.ts";

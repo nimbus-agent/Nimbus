@@ -8,10 +8,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
+import { verifyIndexSignature } from "@nimbus-dev/registry-format";
 import { Header } from "tar";
-
 import { encodeBase64, generateEd25519Keypair, signManifest } from "../lib/extension-signing.ts";
-import { readIndexFile, verifyIndexSignature } from "../lib/registry-index.ts";
+import { readIndexFile } from "../lib/registry-index.ts";
 import { runRegistryMaintain } from "./registry-maintain.ts";
 
 let tmp: string;

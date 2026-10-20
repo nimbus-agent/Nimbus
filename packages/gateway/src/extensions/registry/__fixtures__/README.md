@@ -2,7 +2,7 @@
 
 A registry folder produced by the CLI's offline maintainer flow, committed so the gateway test
 `verifies an index produced by the maintainer flow` proves the CLI's signed index verifies in the
-gateway verifier (the two packages cannot import each other).
+gateway verifier, end to end through the maintainer command (`maintained-registry.test.ts`).
 
 Both the root key and the example extension's publisher key are the golden key: the 32-byte seed
 `0x01..0x20`, whose public key is `ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=`. This is a test
@@ -13,8 +13,9 @@ How it was produced:
 1. Wrote the golden seed (base64 plus newline) to a key file, and a small signed extension
    (`com.example.maintained` 1.0.0, entry `dist/index.js`, publisher key = golden key) to a
    directory, with `signManifest` from `packages/cli/src/lib/extension-signing.ts`.
-2. Created the empty signed index (`emptyIndex` + `signIndex` from
-   `packages/cli/src/lib/registry-index.ts`, because `maintain init` always generates a new key).
+2. Created the empty signed index (`emptyIndex` + `signIndex`, then in
+   `packages/cli/src/lib/registry-index.ts` and now in `packages/registry-format/src/sign.ts`,
+   because `maintain init` always generates a new key).
 3. Ran the maintainer command:
 
    ```text

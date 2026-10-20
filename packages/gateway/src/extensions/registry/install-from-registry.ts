@@ -8,7 +8,12 @@ import type { Database } from "bun:sqlite";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
-
+import {
+  publisherKeyFingerprint,
+  type RegistryChannel,
+  RegistryError,
+  type RegistryVersionEntry,
+} from "@nimbus-dev/registry-format";
 import { deleteExtensionById, listExtensions } from "../../automation/extension-store.ts";
 import { sha256HexEqualConstantTime } from "../../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../../vault/index.ts";
@@ -19,12 +24,9 @@ import {
   ExtensionInstallNotApprovedError,
   type InstallExtensionFromLocalResult,
   installExtensionFromLocalDirectory,
-  publisherKeyFingerprint,
 } from "../install-from-local.ts";
 import { extensionEntryRelPath, resolveExtensionManifestPath } from "../manifest.ts";
 import { extractPackage } from "../package-extract.ts";
-import type { RegistryChannel, RegistryVersionEntry } from "./index-format.ts";
-import { RegistryError } from "./registry-errors.ts";
 import { fetchRegistryBytes, type RegistryFetchDeps } from "./registry-fetch.ts";
 import {
   fetchRegistryManifest,

@@ -15,8 +15,9 @@
  * spawn). Switching canonicalizers would invalidate both on disk. The migration is therefore a
  * re-signing exercise, not an import swap, and it happens when the detached-JWS envelope lands.
  *
- * Until then the deprecated import stays here and nowhere else, wrapped rather than re-exported so
- * consumers bind a live symbol.
+ * Until then the deprecated import stays here, wrapped rather than re-exported so consumers bind a
+ * live symbol. (The registry index, outside the gateway, binds the same export in
+ * `@nimbus-dev/registry-format`'s `index-format.ts`, for the same reason.)
  */
 // NOSONAR S1874: deprecated in SDK 1.32.0, and here the replacement EXISTS but produces different
 // bytes — see this module's docstring. Migrating would invalidate every extension and saved-tool

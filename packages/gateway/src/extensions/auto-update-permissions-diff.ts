@@ -1,5 +1,5 @@
+import type { SandboxPermissions } from "@nimbus-dev/registry-format";
 import type { PermissionDiff } from "./auto-update-types.ts";
-import type { SandboxPermissions } from "./permissions-validator.ts";
 
 function diffArrays(
   before: readonly string[],

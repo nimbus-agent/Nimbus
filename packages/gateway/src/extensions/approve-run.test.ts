@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import {
   insertExtensionRow,
@@ -31,10 +31,7 @@ import {
 import type { ContinuityEntry } from "./continuity/continuity-table.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
-import {
-  installExtensionFromLocalDirectory,
-  publisherKeyFingerprint,
-} from "./install-from-local.ts";
+import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
 import { getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";

@@ -4,14 +4,13 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import nacl from "tweetnacl";
-
-import { publisherKeyFingerprint } from "../extensions/install-from-local.ts";
-import { buildTestRegistry } from "../extensions/registry/__fixtures__/build-test-registry.ts";
 import {
+  publisherKeyFingerprint,
   type RegistryIndex,
   registryIndexSigningBytes,
-} from "../extensions/registry/index-format.ts";
+} from "@nimbus-dev/registry-format";
+import nacl from "tweetnacl";
+import { buildTestRegistry } from "../extensions/registry/__fixtures__/build-test-registry.ts";
 import { getRegistry, insertRegistry } from "../extensions/registry/registry-store.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { encodeBase64 } from "../util/base64.ts";

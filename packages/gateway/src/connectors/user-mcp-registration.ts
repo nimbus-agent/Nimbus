@@ -5,9 +5,8 @@
  */
 
 import type path from "node:path";
-
+import { findServiceIdPrefixCollision } from "@nimbus-dev/registry-format";
 import { findProtectedOverlap, pathApiFor } from "../util/path-overlap.ts";
-import { findServiceIdPrefixCollision } from "../util/service-id-prefix.ts";
 
 export type UserMcpRegistrationInput = {
   readonly serviceId: string;

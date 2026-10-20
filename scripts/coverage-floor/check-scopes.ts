@@ -89,7 +89,11 @@ export const SCOPE_GATES: readonly ScopeGate[] = Object.freeze([
       p.startsWith("packages/gateway/src/automation/graph-predicate") ||
       p.startsWith("packages/gateway/src/watcher/"),
   },
-  { name: "Extensions", floorLines: 85, match: gw("extensions/") },
+  {
+    name: "Extensions",
+    floorLines: 85,
+    match: (p) => gw("extensions/")(p) || p.startsWith("packages/registry-format/src/"),
+  },
   { name: "Sandbox", floorLines: 80, match: gw("platform/sandbox/") },
   { name: "Security", floorLines: 80, match: gw("security/") },
   { name: "Config", floorLines: 80, match: gw("config/") },

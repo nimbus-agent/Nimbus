@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { parseNetworkEntry } from "../../extensions/permissions-validator.ts";
+import { parseNetworkEntry } from "@nimbus-dev/registry-format";
 import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
