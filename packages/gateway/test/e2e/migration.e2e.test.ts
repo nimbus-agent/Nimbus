@@ -18,7 +18,9 @@
 //   - the ONE sync that accept's `resume()` schedules (the seeded row came due while paused;
 //     `connector.sync` cannot address a non-catalog fixture id) appends exactly ONE `sync.run` egress
 //     row (I29), still one two seconds later, and updates the seeded items IN PLACE: same ids, same
-//     count, nothing under the extension's own `ext_` id.
+//     count, nothing under the extension's own `ext_` id. The gateway is booted once as the
+//     previous release first, so the upgrade boot has no fresh-install queue of bundled syncables
+//     for `resume()` to land behind (`pendingRuns`).
 //
 // Sandbox seams — the same ones `extension-sync.e2e.test.ts` (PR 3) uses: the fixture's pages are
 // produced INSIDE the extension, so the manifest declares no network at all (the Windows
@@ -271,6 +273,15 @@ async function until<T>(
 }
 
 type RowView = { id: string; state: string; error: string | null; [k: string]: unknown };
+type StatusRow = {
+  serviceId: string;
+  status: string;
+  nextSyncAt: number | null;
+  healthState: string;
+  [k: string]: unknown;
+};
+/** The scheduler's `SKIP_HEALTH_STATES`: a service in one is never dispatched by a tick. */
+const HEALTH_SKIPPED: ReadonlySet<string> = new Set(["rate_limited", "unauthenticated", "paused"]);
 type IndexedItem = { id?: unknown; externalId?: unknown; name?: unknown; title?: unknown };
 
 describe.skipIf(!sandboxAvailable)(
@@ -346,6 +357,74 @@ describe.skipIf(!sandboxAvailable)(
         .length;
     }
 
+    /**
+     * Every OTHER service whose next run is owed now: due, and neither paused, failed hard nor in
+     * one of the scheduler's health-skip states (`SKIP_HEALTH_STATES` in `src/sync/scheduler.ts`).
+     * A finished run of any kind moves `nextSyncAt` into the future, so these are the runs queued
+     * (or about to be) ahead of a service resumed now — `resume()` appends to the BACK of the queue.
+     *
+     * Why it matters: a FRESH gateway registers every bundled syncable (about ninety) due at once
+     * and runs them three at a time. On Windows that drains in under a second. On Linux it is far
+     * slower — most syncables start their MCP server before finding no credential, the cloud ones
+     * (aws, azure, gcp, bigquery, athena, cloudwatch) slowest of all — and on the CI runner the
+     * queue outlasted the 60 s wait, so the run under test never started. An upgrading user is not a fresh install, which is why
+     * `beforeAll` boots the previous release first; this asserts that precondition.
+     */
+    async function pendingRuns(): Promise<string[]> {
+      const now = Date.now();
+      const rows = await call<StatusRow[]>("connector.listStatus", {});
+      return rows
+        .filter(
+          (s) =>
+            s.serviceId !== LEGACY &&
+            s.status !== "paused" &&
+            s.status !== "error" &&
+            !HEALTH_SKIPPED.has(s.healthState) &&
+            s.nextSyncAt !== null &&
+            s.nextSyncAt <= now,
+        )
+        .map((s) => s.serviceId);
+    }
+
+    /** Boots the runner over `paths` (one data dir across boots) and waits for it to bind. */
+    async function bootGateway(fixtureEnv: Record<string, string>): Promise<void> {
+      gatewayLog = "";
+      proc = Bun.spawn(["bun", RUNNER], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...(process.env as Record<string, string>),
+          NIMBUS_E2E_PATHS_JSON: JSON.stringify(paths),
+          ...fixtureEnv,
+          NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
+          NIMBUS_NOTIFICATIONS: "off",
+        },
+      });
+      const collect = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
+        const decoder = new TextDecoder();
+        for await (const chunk of stream) gatewayLog += decoder.decode(chunk);
+      };
+      void collect(proc.stderr as ReadableStream<Uint8Array>);
+      void collect(proc.stdout as ReadableStream<Uint8Array>);
+      try {
+        await until(
+          async () => (gatewayLog.includes("[gateway] ready (e2e)") ? true : undefined),
+          "gateway bind",
+        );
+      } catch (e) {
+        throw new Error(
+          `${e instanceof Error ? e.message : String(e)}\n--- gateway output (tail) ---\n${gatewayLog.slice(-6000)}`,
+        );
+      }
+    }
+
+    async function stopGateway(): Promise<void> {
+      proc?.kill();
+      await proc?.exited.catch(() => {});
+      proc = undefined;
+    }
+
     beforeAll(async () => {
       // 1. The extension: scaffold, replace the entry, bundle into one file.
       mkdirSync(scaffoldRoot, { recursive: true });
@@ -404,59 +483,41 @@ describe.skipIf(!sandboxAvailable)(
         ],
       };
 
-      // 3. A gateway that has the bundled-style state, booted with the fixture composition.
+      // 3. The release the user upgrades FROM: one plain boot, so every bundled syncable has the
+      // scheduler row a previous run leaves. Without it this would be a fresh install, whose first
+      // boot queues all ~90 bundled syncables at once (see `pendingRuns`). On the upgrade boot,
+      // `start()` moves each overdue row out by its own interval (`catchUpOnRestart: false`), as
+      // it does for every real user's restart, so nothing is queued ahead of the resumed service.
       restoreHelper = installDefaultHelper();
       for (const d of [paths.configDir, paths.dataDir]) mkdirSync(d, { recursive: true });
+      await bootGateway({});
+      await stopGateway();
+
+      // 4. The upgrade: the bundled-style state, booted with the fixture composition.
       const now = Date.now();
-      proc = Bun.spawn(["bun", RUNNER], {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...(process.env as Record<string, string>),
-          NIMBUS_E2E_PATHS_JSON: JSON.stringify(paths),
-          NIMBUS_E2E_SEED_VAULT_JSON: JSON.stringify({ [LEGACY_KEY]: TOKEN }),
-          NIMBUS_E2E_MIGRATION_FIXTURE_JSON: JSON.stringify(migrationFixture),
-          NIMBUS_E2E_SEED_LEGACY_JSON: JSON.stringify({
-            serviceId: LEGACY,
-            items: SEEDED_ITEMS,
-            // Last synced 15 minutes ago, so its next run came due while the migration kept it
-            // paused: the scheduler runs it once as soon as accept resumes it, and then not again
-            // for the extension's hour-long interval.
-            scheduler: {
-              cursor: SEEDED_CURSOR,
-              intervalMs: 600_000,
-              lastSyncAt: now - 900_000,
-              nextSyncAt: now - 300_000,
-            },
-          }),
-          NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
-          NIMBUS_NOTIFICATIONS: "off",
-        },
+      await bootGateway({
+        NIMBUS_E2E_SEED_VAULT_JSON: JSON.stringify({ [LEGACY_KEY]: TOKEN }),
+        NIMBUS_E2E_MIGRATION_FIXTURE_JSON: JSON.stringify(migrationFixture),
+        NIMBUS_E2E_SEED_LEGACY_JSON: JSON.stringify({
+          serviceId: LEGACY,
+          items: SEEDED_ITEMS,
+          // Last synced 15 minutes ago, so its next run came due while the migration kept it
+          // paused: the scheduler runs it once as soon as accept resumes it, and then not again
+          // for the extension's hour-long interval.
+          scheduler: {
+            cursor: SEEDED_CURSOR,
+            intervalMs: 600_000,
+            lastSyncAt: now - 900_000,
+            nextSyncAt: now - 300_000,
+          },
+        }),
       });
-      const collect = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
-        const decoder = new TextDecoder();
-        for await (const chunk of stream) gatewayLog += decoder.decode(chunk);
-      };
-      void collect(proc.stderr as ReadableStream<Uint8Array>);
-      void collect(proc.stdout as ReadableStream<Uint8Array>);
-      try {
-        await until(
-          async () => (gatewayLog.includes("[gateway] ready (e2e)") ? true : undefined),
-          "gateway bind",
-        );
-      } catch (e) {
-        throw new Error(
-          `${e instanceof Error ? e.message : String(e)}\n--- gateway output (tail) ---\n${gatewayLog.slice(-6000)}`,
-        );
-      }
       await client.connect(paths.socketPath);
     }, 240_000);
 
     afterAll(async () => {
       client.disconnect();
-      proc?.kill();
-      await proc?.exited.catch(() => {});
+      await stopGateway();
       restoreHelper();
       try {
         rmSync(tmp, { recursive: true, force: true });
@@ -502,6 +563,8 @@ describe.skipIf(!sandboxAvailable)(
       async () => {
         expect(migrationId).not.toBe("");
         const lines: string[] = [];
+        // An upgraded gateway, not a fresh one: nothing is queued ahead of the run accept resumes.
+        expect(await pendingRuns()).toEqual([]);
         await runConnectorMigrate(["accept", migrationId], ttyIo(lines));
         expect(prompts).toHaveLength(1);
         expect(prompts[0]).toContain("extension.migrate");
@@ -528,7 +591,16 @@ describe.skipIf(!sandboxAvailable)(
         await until(async () => {
           const now = await items(LEGACY);
           return now.length > 0 && now.every(migrated) ? true : undefined;
-        }, "the resumed sync to update the items");
+        }, "the resumed sync to update the items").catch(async (e: unknown) => {
+          const legacy = (await call<StatusRow[]>("connector.listStatus", {})).find(
+            (s) => s.serviceId === LEGACY,
+          );
+          throw new Error(
+            `${e instanceof Error ? e.message : String(e)}; ${LEGACY}: ${JSON.stringify(legacy)}; ` +
+              `still due ahead of it: ${(await pendingRuns()).join(", ")}\n` +
+              `--- gateway output (tail) ---\n${gatewayLog.slice(-6000)}`,
+          );
+        });
         expect(await syncRows(LEGACY)).toBe(1);
         // …and it stays one: nothing else runs within the extension's hour-long interval.
         await new Promise((r) => setTimeout(r, 2_000));
