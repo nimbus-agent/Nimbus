@@ -10,6 +10,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -1090,5 +1091,70 @@ describe("Task 5.4: a sandbox that cannot confine keeps sync paused after accept
     expect(health.state).toBe("paused");
     expect(health.lastError).toContain(`sandbox cannot confine this extension: ${REASON}`);
     expect(health.lastError).toContain(`nimbus connector resume ${LEGACY}`);
+  });
+});
+
+describe("Task 5.4 fix round 1: no stored or thrown text names a path; a leftover install is handled", () => {
+  test("a failure whose error names a path with a space stores a path-free row error and paused reason", async () => {
+    // A data root with a space in it, as macOS's `~/Library/Application Support/Nimbus` has, and an
+    // UNQUOTED path under it: only the known-root pass can tell where that path ends.
+    const dataDir = join(tmp, "Application Support", "Nimbus", "data");
+    const leaky = join(dataDir, "migrations", "x", "index.json");
+    const e = engine({
+      dataDir,
+      extensionsDir: join(dataDir, "extensions"),
+      fetch: {
+        ...deps().fetch,
+        fetchFn: async () => {
+          throw new Error(`ENOENT: no such file or directory, open ${leaky}`);
+        },
+      },
+    });
+    await e.evaluate();
+    const row = onlyRow();
+    expect(row.state).toBe("failed");
+    const reason = getConnectorHealth(db, LEGACY).lastError ?? "";
+    for (const text of [row.error ?? "", reason]) {
+      expect(text).toContain("<path>");
+      expect(text).not.toContain(tmp);
+      expect(text).not.toContain("Support");
+    }
+  });
+
+  test("a leftover install directory with no extension row is removed before the prompt, and accept succeeds", async () => {
+    const e = engine();
+    await e.evaluate();
+    const leftover = join(tmp, "data", "extensions", EXT);
+    mkdirSync(leftover, { recursive: true });
+    writeFileSync(join(leftover, "stale.js"), "1;\n");
+    const seen: MigrationConsentPayload[] = [];
+    const row = await e.accept(onlyRow().id, consentThat(true, seen));
+    expect(row.state).toBe("approved");
+    expect(seen).toHaveLength(1);
+    expect(existsSync(join(leftover, "stale.js"))).toBe(false);
+  });
+
+  test("a leftover that cannot be removed fails the row with an actionable, path-free message and no prompt", async () => {
+    const e = engine({
+      removeInstallTree: () => {
+        throw new Error("EPERM: operation not permitted");
+      },
+    });
+    await e.evaluate();
+    const id = onlyRow().id;
+    const leftover = join(tmp, "data", "extensions", EXT);
+    mkdirSync(leftover, { recursive: true });
+    const seen: MigrationConsentPayload[] = [];
+    const err = await e.accept(id, consentThat(true, seen)).then(
+      () => undefined,
+      (x: unknown) => x as Error,
+    );
+    expect(err?.message).toMatch(/^ERR_EXTENSION_MIGRATION_FAILED: /);
+    expect(err?.message).toContain(`"${EXT}" folder`);
+    expect(err?.message).toContain("nimbus connector migrate retry");
+    expect(err?.message).not.toContain(tmp);
+    expect(seen).toEqual([]);
+    expect(getMigration(db, id)?.state).toBe("failed");
+    expect(getConnectorHealth(db, LEGACY).lastError).toContain(EXT);
   });
 });

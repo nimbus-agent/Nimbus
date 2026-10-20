@@ -15,8 +15,10 @@
 //   - boot `evaluate()` prepares the migration, and `nimbus connector migrate list` shows the row;
 //   - `nimbus connector migrate accept <id>`, driven in-process with a TTY on stdin and stdout and
 //     answered "y" at the gateway's one `extension.migrate` prompt, installs, grants and resumes;
-//   - one forced sync appends exactly ONE `sync.run` egress row (I29) and updates the seeded items
-//     IN PLACE: same ids, same count, nothing under the extension's own `ext_` id.
+//   - the ONE sync that accept's `resume()` schedules (the seeded row came due while paused;
+//     `connector.sync` cannot address a non-catalog fixture id) appends exactly ONE `sync.run` egress
+//     row (I29), still one two seconds later, and updates the seeded items IN PLACE: same ids, same
+//     count, nothing under the extension's own `ext_` id.
 //
 // Sandbox seams — the same ones `extension-sync.e2e.test.ts` (PR 3) uses: the fixture's pages are
 // produced INSIDE the extension, so the manifest declares no network at all (the Windows

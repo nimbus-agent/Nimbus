@@ -49,7 +49,7 @@ import {
 } from "../extension-run-grants.ts";
 import { extensionSpawnPolicyForGrants } from "../extension-runtime.ts";
 import { deriveExtensionServiceId } from "../extension-service-id.ts";
-import type { ExtensionInstallApprover } from "../install-from-local.ts";
+import { type ExtensionInstallApprover, extensionInstallDirectory } from "../install-from-local.ts";
 import {
   type ExtensionManifest,
   extensionEntryRelPath,
@@ -70,6 +70,7 @@ import {
 } from "../registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "../registry/registry-fetch.ts";
 import { computeExtensionTreeDigest } from "../tree-digest.ts";
+import { migrationRedactionRoots, redactMigrationPaths } from "./migration-redact.ts";
 import {
   finishMigration,
   getMigration,
@@ -386,6 +387,12 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   const newId = deps.newId ?? randomUUID;
   const install = deps.installVerified ?? installVerifiedRegistryPackage;
   const migrationsRoot = join(deps.dataDir, "migrations");
+  /**
+   * Every error text the engine stores or throws is path-free: it reaches the row, the health row's
+   * paused reason (`nimbus doctor`, `connector.listStatus`, the desktop) and the refusal message.
+   */
+  const redactRoots = migrationRedactionRoots([deps.dataDir, deps.extensionsDir, migrationsRoot]);
+  const pathFree = (text: string): string => redactMigrationPaths(text, redactRoots);
   /** Legacy service ids with a prepare or an accept in flight in THIS process. */
   const busy = new Set<string>();
   let evaluating: Promise<void> | null = null;
@@ -446,7 +453,8 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     return true;
   };
 
-  const markFailed = (entry: ContinuityEntry, id: string, error: string): void => {
+  const markFailed = (entry: ContinuityEntry, id: string, rawError: string): void => {
+    const error = pathFree(rawError);
     removeStage(id);
     const written = recordMigrationFailed(
       db,
@@ -616,7 +624,8 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   };
 
   /** Fails an accepted row: stage deleted, row `failed`, legacy service still paused, error thrown. */
-  const failAccept = (row: MigrationRow, error: string): never => {
+  const failAccept = (row: MigrationRow, rawError: string): never => {
+    const error = pathFree(rawError);
     removeStage(row.id);
     finishMigration(db, row.id, "failed", error, deps.now());
     pauseLegacyService(db, row.legacyServiceId, failedReason(error), deps.now());
@@ -657,11 +666,42 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     try {
       removeTree(installPath);
     } catch (e) {
+      // The local log names the path (it never leaves the machine), so the owner can find it.
       deps.logger?.warn(
-        { extensionId, err: e instanceof Error ? e.message : String(e) },
+        { extensionId, installPath, err: e instanceof Error ? e.message : String(e) },
         "an undone migration install could not be removed from disk; it has no row and cannot run",
       );
     }
+  };
+
+  /**
+   * A previous accept's undo could not remove its files (M1: the rows go first, so they can never
+   * run). Left there, the next install would refuse on its destination. With NO extension row for the
+   * id, the directory is that leftover and nothing else can use it, so it is removed here — before the
+   * prompt, so the owner is never asked a question that cannot succeed. If it still cannot be
+   * removed, the row fails with a message that names the extension and what to do, never the path.
+   */
+  const clearLeftoverInstall = (row: MigrationRow, entry: ContinuityEntry): void => {
+    if (listExtensions(db).some((r) => r.id === entry.extensionId)) return;
+    const dir = extensionInstallDirectory(deps.extensionsDir, entry.extensionId);
+    if (!existsSync(dir)) return;
+    try {
+      removeTree(dir);
+    } catch (e) {
+      deps.logger?.warn(
+        {
+          extensionId: entry.extensionId,
+          installPath: dir,
+          err: e instanceof Error ? e.message : String(e),
+        },
+        "a leftover migration install could not be removed",
+      );
+    }
+    if (!existsSync(dir)) return;
+    failAccept(
+      row,
+      `files from an earlier attempt to install ${entry.extensionId} are still in the Nimbus extensions directory and could not be removed (another program may have them open) — close it or restart the computer, delete the "${entry.extensionId}" folder in the extensions directory if it is still there, then run \`nimbus connector migrate retry\``,
+    );
   };
 
   /**
@@ -730,6 +770,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       ),
     );
 
+    clearLeftoverInstall(row, entry);
     const approved = await consent(
       buildConsentPayload(row, entry, manifest, deps.env.platform, confineRefusal),
     );

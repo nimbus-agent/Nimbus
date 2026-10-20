@@ -11,9 +11,10 @@
  *   migration.retry           -> { migrations: MigrationRowView[] }   (re-prepares failed AND
  *                                                                      declined rows — B10)
  *
- * Nothing here returns a filesystem path: a row's `stagePath` is dropped, and any absolute path
- * inside an error text is replaced before it leaves the gateway. No Vault value ever reaches a row
- * or an error (the engine only checks a credential is non-blank).
+ * Nothing here returns a filesystem path: a row's `stagePath` is dropped, and every path inside an
+ * error text is replaced before it leaves the gateway (`migration-redact.ts`: the gateway's own roots
+ * literally first, so a path with a space is redacted whole). No Vault value ever reaches a row or an
+ * error (the engine only checks a credential is non-blank).
  */
 import type { ExtensionRunGate } from "../extensions/approve-run.ts";
 import {
@@ -22,8 +23,11 @@ import {
   type MigrationRow,
   migrationConsentViaGate,
 } from "../extensions/migration/migration-engine.ts";
+import { redactMigrationPaths } from "../extensions/migration/migration-redact.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
+
+export { redactMigrationPaths } from "../extensions/migration/migration-redact.ts";
 
 /** A migration row as a client sees it: every column but the staging path. */
 export interface MigrationRowView {
@@ -45,36 +49,20 @@ export interface MigrationRpcContext {
    * session's consent channel, so the `extension.migrate` prompt goes to that session alone.
    */
   readonly ownerGate?: ExtensionRunGate;
+  /**
+   * The gateway's own directories (data, extensions, config, home), substituted literally before
+   * any pattern runs. Absent means the pattern passes alone.
+   */
+  readonly redactRoots?: readonly string[];
 }
 
 type Hit = { kind: "hit"; value: unknown };
 type Miss = { kind: "miss" };
 
-const PATH_PLACEHOLDER = "<path>";
-/** `file:` URLs name a local path too. */
-const FILE_URL_RE = /\bfile:\/\/[^\s'"`<>]*/gi;
-/** A drive-letter path (`C:\…` or `C:/…`) or a UNC path (`\\host\share\…`). */
-const WINDOWS_PATH_RE = /(?:\b[A-Za-z]:[\\/]|\\\\)[^\s'"`<>|]*/g;
-/**
- * A POSIX absolute path at the start of a token. The preceding character excludes `:` and `/`, so
- * the `//host/path` of an `https://` URL is not taken for one.
- */
-const POSIX_PATH_RE = /(^|[\s'"`(=,[])\/(?!\/)[^\s'"`<>)\],]*/g;
-
-/**
- * Replaces every absolute filesystem path in `text`. Error texts come from the registry fetch,
- * the install and the filesystem, any of which can name the data directory, the extensions
- * directory or a staging path. Stated bound: a RELATIVE path survives, and a bare word is never
- * taken for a path.
- */
-export function redactMigrationPaths(text: string): string {
-  return text
-    .replace(FILE_URL_RE, PATH_PLACEHOLDER)
-    .replace(WINDOWS_PATH_RE, PATH_PLACEHOLDER)
-    .replace(POSIX_PATH_RE, (_m, lead: string) => `${lead}${PATH_PLACEHOLDER}`);
-}
-
-export function toMigrationRowView(row: MigrationRow): MigrationRowView {
+export function toMigrationRowView(
+  row: MigrationRow,
+  redactRoots: readonly string[] = [],
+): MigrationRowView {
   return {
     id: row.id,
     legacyServiceId: row.legacyServiceId,
@@ -82,14 +70,14 @@ export function toMigrationRowView(row: MigrationRow): MigrationRowView {
     version: row.version,
     treeDigest: row.treeDigest,
     state: row.state,
-    error: row.error === null ? null : redactMigrationPaths(row.error),
+    error: row.error === null ? null : redactMigrationPaths(row.error, redactRoots),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
-function listView(engine: MigrationRpcContext["engine"]): { migrations: MigrationRowView[] } {
-  return { migrations: engine.list().map(toMigrationRowView) };
+function listView(ctx: MigrationRpcContext): { migrations: MigrationRowView[] } {
+  return { migrations: ctx.engine.list().map((r) => toMigrationRowView(r, ctx.redactRoots)) };
 }
 
 function requireId(rec: Record<string, unknown> | undefined): string {
@@ -101,9 +89,11 @@ function requireId(rec: Record<string, unknown> | undefined): string {
 }
 
 /** A `MigrationError` keeps its code (it leads the message, and rides in `data`); paths never. */
-function rpcErrorOf(e: unknown): unknown {
+function rpcErrorOf(e: unknown, redactRoots: readonly string[] | undefined): unknown {
   if (!(e instanceof MigrationError)) return e;
-  return new RpcMethodError(-32000, redactMigrationPaths(e.message), { code: e.code });
+  return new RpcMethodError(-32000, redactMigrationPaths(e.message, redactRoots), {
+    code: e.code,
+  });
 }
 
 async function handleAccept(
@@ -118,7 +108,7 @@ async function handleAccept(
   // `migrationConsentViaGate` is the ONE way the owner's gate becomes the migration consent: it
   // asks under `extension.migrate` (I2 frozen set, never delegable — I20) and nothing else.
   const row = await ctx.engine.accept(id, migrationConsentViaGate(gate));
-  return { kind: "hit", value: toMigrationRowView(row) };
+  return { kind: "hit", value: toMigrationRowView(row, ctx.redactRoots) };
 }
 
 export async function dispatchMigrationRpc(
@@ -130,20 +120,23 @@ export async function dispatchMigrationRpc(
   try {
     switch (method) {
       case "migration.list":
-        return { kind: "hit", value: listView(ctx.engine) };
+        return { kind: "hit", value: listView(ctx) };
       case "migration.accept":
         return await handleAccept(rec, ctx);
       case "migration.decline":
-        return { kind: "hit", value: toMigrationRowView(ctx.engine.decline(requireId(rec))) };
+        return {
+          kind: "hit",
+          value: toMigrationRowView(ctx.engine.decline(requireId(rec)), ctx.redactRoots),
+        };
       case "migration.retry":
         // B10: `retry`, never `evaluate` — it also re-prepares a DECLINED row (the owner changing
         // their mind, spec § 7.2 step 6), which boot evaluation never does.
         await ctx.engine.retry();
-        return { kind: "hit", value: listView(ctx.engine) };
+        return { kind: "hit", value: listView(ctx) };
       default:
         return { kind: "miss" };
     }
   } catch (e) {
-    throw rpcErrorOf(e);
+    throw rpcErrorOf(e, ctx.redactRoots);
   }
 }

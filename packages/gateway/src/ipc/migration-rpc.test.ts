@@ -231,3 +231,71 @@ describe("redactMigrationPaths", () => {
     expect(redactMigrationPaths(s)).toBe(s);
   });
 });
+
+describe("redactMigrationPaths with the gateway's roots (fix round 1: paths with a space)", () => {
+  const MAC_DATA = "/Users/jane/Library/Application Support/Nimbus/data";
+  const WIN_HOME = String.raw`C:\Users\John Smith`;
+  const WIN_DATA = String.raw`C:\Users\John Smith\AppData\Roaming\Nimbus\data`;
+
+  test("the macOS data root, which contains a space, is redacted whole", () => {
+    const input = `rmdir ${MAC_DATA}/migrations/m-1/pkg failed`;
+    // The reviewer's input, against the pattern pass alone (what the first version did): leaks.
+    expect(redactMigrationPaths(input, [], "darwin")).toContain("Support/Nimbus");
+    expect(redactMigrationPaths(input, [MAC_DATA, "/Users/jane"], "darwin")).toBe(
+      "rmdir <path> failed",
+    );
+  });
+
+  test("a Windows profile with a space is redacted whole", () => {
+    expect(redactMigrationPaths(String.raw`${WIN_DATA}\x`, [WIN_DATA, WIN_HOME], "win32")).toBe(
+      "<path>",
+    );
+  });
+
+  test("on Windows the root matches in any case and with either separator", () => {
+    const roots = [WIN_DATA, WIN_HOME];
+    expect(
+      redactMigrationPaths(
+        String.raw`c:\users\JOHN SMITH\appdata\roaming\nimbus\DATA\x and more`,
+        roots,
+        "win32",
+      ),
+    ).toBe("<path> and more");
+    expect(
+      redactMigrationPaths(
+        "open C:/Users/John Smith/AppData/Roaming/Nimbus/data/z",
+        roots,
+        "win32",
+      ),
+    ).toBe("open <path>");
+  });
+
+  test("a quoted path with a space outside every root is redacted whole; a quoted URL is kept", () => {
+    expect(
+      redactMigrationPaths(
+        String.raw`EBUSY: resource busy or locked, rmdir 'D:\Other Place\x y\z'`,
+      ),
+    ).toBe("EBUSY: resource busy or locked, rmdir '<path>'");
+    expect(redactMigrationPaths('open "/srv/my data/x"')).toBe('open "<path>"');
+    expect(redactMigrationPaths('fetch "https://registry.example/index.json"')).toBe(
+      'fetch "https://registry.example/index.json"',
+    );
+  });
+
+  test("a message with no path is unchanged, roots or not", () => {
+    const s = "the staged package is missing — run `nimbus connector migrate retry`";
+    expect(redactMigrationPaths(s, [MAC_DATA, "/Users/jane"], "darwin")).toBe(s);
+  });
+
+  test("the RPC redacts row errors and refusals with the context's roots", async () => {
+    const e = fakeEngine({
+      list: () => [{ ...ROW, state: "failed", error: `cannot remove ${MAC_DATA}/extensions/x` }],
+    });
+    const out = await dispatchMigrationRpc(
+      "migration.list",
+      {},
+      { engine: e.ctxEngine, redactRoots: [MAC_DATA] },
+    );
+    expect(JSON.stringify(out)).not.toContain("Support");
+  });
+});

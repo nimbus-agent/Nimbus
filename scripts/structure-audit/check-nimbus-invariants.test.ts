@@ -3365,6 +3365,12 @@ describe("D34 — the connector migration's table, grant entry point and consent
           'import { approveMigratedExtensionRun } from "../approve-run.ts";\nexport const EXTENSION_MIGRATE_ACTION_TYPE = "extension.migrate";\nexport function migrationConsentViaGate() {}\nexport function createMigrationEngine() {}',
         ),
         file(RPC, "engine.accept(id, migrationConsentViaGate(gate));"),
+        file("packages/gateway/src/platform/assemble.ts", "ipcOpts.migrationEngine = engine;"),
+        file("packages/gateway/src/ipc/server/options.ts", "migrationEngine?: MigrationEngine;"),
+        file(
+          "packages/gateway/src/ipc/server/dispatchers.ts",
+          "const engine = ctx.options.migrationEngine;",
+        ),
         file(
           "packages/gateway/src/platform/migration-boot.ts",
           "return createMigrationEngine({});",
@@ -3404,6 +3410,11 @@ describe("D34 — the connector migration's table, grant entry point and consent
     ],
     ["the literal", 'gate({ type: "extension.migrate", payload });', "migration-consent-raisers"],
     ["a second engine", "createMigrationEngine(deps);", "migration-consent-raisers"],
+    [
+      "a prompt-less accept through the engine option",
+      "await ctx.options.migrationEngine.accept(id, async () => true);",
+      "migration-consent-raisers",
+    ],
   ])("FAILS on %s from anywhere else", (_n, src, rule) => {
     const v = checkMigrationConfinement([file("packages/gateway/src/ipc/automation-rpc.ts", src)]);
     expect(v).toHaveLength(1);

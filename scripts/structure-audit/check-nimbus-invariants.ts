@@ -2043,15 +2043,21 @@ export function checkRunGrantWriters(files: readonly FileEntry[]): Violation[] {
 //     `migrationConsentViaGate` and `EXTENSION_MIGRATE_ACTION_TYPE` are named only by the engine and
 //     `ipc/migration-rpc.ts`; the `"extension.migrate"` literal only by the engine, the I2 frozen set
 //     (`engine/executor.ts`, which is what gates it) and the proposability table
-//     (`connectors/proposable-actions.ts`, which denies it); and `createMigrationEngine` only by the
-//     engine and `platform/migration-boot.ts`, the one production constructor.
+//     (`connectors/proposable-actions.ts`, which denies it); `createMigrationEngine` only by the
+//     engine and `platform/migration-boot.ts`, the one production constructor; and the
+//     `migrationEngine` option that carries the built instance only by `platform/assemble.ts` (which
+//     sets it), `ipc/server/options.ts` (which types it) and `ipc/server/dispatchers.ts` (which hands
+//     it to `ipc/migration-rpc.ts`).
 // Comments are stripped first; identifiers are matched as words after string literals are stripped
 // too (so an aliased import is caught), the literal on comment-stripped source. Test files and
 // anything outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c): a dynamically
-// composed name evades a text scan, a second call inside an allow-listed file is exempt whole-file,
-// and a holder of the engine instance could pass `accept` a consent callback of its own — the
-// instance reaches only `ipc/server/options.ts`'s `migrationEngine` and `ipc/migration-rpc.ts`, so
-// capability confinement is the real defense there.
+// composed name (`options["migration" + "Engine"]`) evades a text scan, and a second use inside an
+// allow-listed file is exempt whole-file. That matters for `dispatchers.ts`: every dispatcher there
+// receives the `ServerCtx` that carries the engine, and a caller holding it could pass `accept` a
+// consent callback of its own (`async () => true`). The rule cannot see which function in that file
+// reads the option; an I44-block test in `security-invariants.test.ts` pins that exactly one place in
+// `dispatchers.ts` does — `tryDispatchMigrationRpc` — and that `accept` is called only by
+// `ipc/migration-rpc.ts`.
 const D34_TABLE_RE = sqlTableReferenceRe("connector_migration");
 const D34_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/extensions/migration/migration-store.ts",
@@ -2075,6 +2081,15 @@ const D34_IDENTIFIER_SCANS: ReadonlyArray<
     "migration-consent-raisers",
     /\bcreateMigrationEngine\b/g,
     [D34_ENGINE, "packages/gateway/src/platform/migration-boot.ts"],
+  ],
+  [
+    "migration-consent-raisers",
+    /\bmigrationEngine\b/g,
+    [
+      "packages/gateway/src/platform/assemble.ts",
+      "packages/gateway/src/ipc/server/options.ts",
+      "packages/gateway/src/ipc/server/dispatchers.ts",
+    ],
   ],
 ];
 const D34_LITERAL_RE = /["'`]extension\.migrate["'`]/g;
@@ -3296,7 +3311,7 @@ async function run(): Promise<void> {
       "migration-grant-callers":
         "(b) approveMigratedExtensionRun named outside approve-run.ts and the migration engine",
       "migration-consent-raisers":
-        "(c) the extension.migrate consent (migrationConsentViaGate / EXTENSION_MIGRATE_ACTION_TYPE / createMigrationEngine / the literal) named outside the engine and the RPC path",
+        "(c) the extension.migrate consent (migrationConsentViaGate / EXTENSION_MIGRATE_ACTION_TYPE / createMigrationEngine / the migrationEngine option / the literal) named outside the engine and the RPC path",
     };
     for (const e of v) {
       console.error(

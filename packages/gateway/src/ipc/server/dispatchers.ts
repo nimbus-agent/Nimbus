@@ -14,6 +14,7 @@ import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts"
 import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { ExtensionRunGrantEnv } from "../../extensions/extension-run-grants.ts";
+import { migrationRedactionRoots } from "../../extensions/migration/migration-redact.ts";
 import { buildExtensionRunGrantEnv } from "../../extensions/run-grant-env.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
 import { preflightConsent } from "../../federation/preflight-consent-broker.ts";
@@ -1522,6 +1523,11 @@ export async function tryDispatchMigrationRpc(
   const out = await dispatchMigrationRpc(method, params, {
     engine,
     ...(ownerGate === undefined ? {} : { ownerGate }),
+    redactRoots: migrationRedactionRoots([
+      ctx.options.dataDir,
+      ctx.options.extensionsDir,
+      ctx.options.configDir,
+    ]),
   });
   if (out.kind === "hit") return out.value;
   throw new RpcMethodError(-32601, `Method not found: ${method}`);

@@ -6773,6 +6773,27 @@ describe("I43 — an installed extension's code runs only through the verified s
     ]);
   });
 
+  test("D34 bound: inside dispatchers.ts only tryDispatchMigrationRpc reads the engine, and only migration-rpc.ts calls accept", async () => {
+    // D34(c) exempts `dispatchers.ts` whole-file, and every dispatcher there receives the ServerCtx
+    // that carries the engine. A holder could call `accept` with a consent callback of its own, so
+    // this pins WHERE in that file the option is read, and who calls `accept` at all.
+    const src = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const reads = [...src.matchAll(/\bmigrationEngine\b/g)].map((m) => m.index ?? -1);
+    expect(reads).toHaveLength(1);
+    const fnAt = src.indexOf("export async function tryDispatchMigrationRpc(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const fnEnd = src.indexOf("\n}\n", fnAt);
+    expect(reads[0]).toBeGreaterThan(fnAt);
+    expect(reads[0]).toBeLessThan(fnEnd);
+    const acceptCallers = (await readDirFiles("packages/gateway/src"))
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) =>
+        /\bengine\.accept\(|\bmigrationEngine\??\.accept\(/.test(stripComments(f.contents)),
+      )
+      .map((f) => f.rel);
+    expect(acceptCallers).toEqual(["ipc/migration-rpc.ts"]);
+  });
+
   test("assemble: no extension spawns until the boot verification pass ends; the gate resolves in its finally", async () => {
     const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
     expect(src).toMatch(
