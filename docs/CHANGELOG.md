@@ -18,6 +18,22 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-20 — Built-in official registry and connector migration (Readwise unbundling pilot, gateway PR 5; schema V73, HITL type `extension.migrate`, static D34, no new invariant).**
+  A release that moves a bundled connector out to a signed extension can now carry the official registry's URL and root key
+  (`nimbus-official`, a reserved name `registry.add` refuses) and a continuity table, and move an existing user over with ONE
+  decision. At every start the gateway checks each table entry: if the owner had the connector configured, it fetches and fully
+  verifies the extension, stages it WITHOUT installing it, and pauses the connector with a reason. `nimbus connector migrate list`
+  shows it; `nimbus connector migrate accept <id>` (a terminal on stdin and stdout, no `--yes`) asks once under
+  `extension.migrate` — publisher, version, fingerprint, the same access as before, a network line that is true per OS — and that
+  one answer installs the extension, approves it to run against the EXISTING Vault credential (no re-entry) and resumes sync into
+  the connector's existing namespace, so items are updated in place and the sync position carries over. A "no" leaves it pending;
+  `decline <id>` keeps the connector off and its items kept; `retry` prepares failed and declined migrations again (it is how a
+  decline is changed). `nimbus doctor` warns for a pending or failed migration and notes a declined one quietly. The four
+  `migration.*` methods are CLI-only (LAN-forbidden, not on the desktop allowlist; the desktop surface is a later PR). **Known
+  loss:** items the bundled connector indexed with a timestamp before 1970 or more than 64 KiB of metadata are dropped by the
+  extension path. **What a user must do:** nothing in this release — the official registry and the continuity table ship empty,
+  so nothing is migrated until the release that drops bundled Readwise. Design: `docs/architecture.md` § Connector migration.
+
 - **2026-10-20 — Extensions can sync into the index (Readwise unbundling pilot, PR 3; no migration, no new invariant).**
   An approved extension whose manifest declares a `sync` block is registered with the sync scheduler and
   syncs through its reserved `__nimbus_sync` tool: one scheduler run fetches up to 40 pages (60 s per call,
