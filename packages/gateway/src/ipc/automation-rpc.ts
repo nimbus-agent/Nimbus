@@ -123,6 +123,18 @@ export interface AutomationRpcExtensionMeshHandle {
 }
 
 /**
+ * The extension sync host's lifecycle hooks (`platform/register-extension-sync.ts`): every handler
+ * that changes whether an extension may sync calls `refresh`, and `extension.remove` unregisters and
+ * purges under the extension's INDEX id before its row and grant are deleted. Absent ⇒ no extension
+ * sync host is running (tests, or a gateway that never built one).
+ */
+export interface AutomationRpcExtensionSyncHandle {
+  refresh(extensionId: string): void;
+  unregister(extensionId: string): void;
+  purgeBeforeRemove(extensionId: string): Promise<unknown>;
+}
+
+/**
  * The local owner's HITL gate, as the executor runs it (`ToolExecutor.gate`): resolves `true` only
  * for "proceed". Built per call by the server dispatcher with the caller's own consent channel, so
  * the prompt reaches the client that asked.
@@ -142,6 +154,7 @@ interface AutomationCtx {
   runGrantEnv?: ExtensionRunGrantEnv;
   /** `[extensions] runtime` and not demo-rooted; absent means the default, `true`. */
   runtimeEnabled?: boolean;
+  extensionSync?: AutomationRpcExtensionSyncHandle;
 }
 
 type AutomationHandler = (
@@ -321,6 +334,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.enable": (rec, ctx) => {
     const id = requireString(rec, "id");
     const ok = setExtensionEnabled(ctx.db, id, true);
+    if (ok) ctx.extensionSync?.refresh(id);
     emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "enable", ok });
     return { kind: "hit", value: { ok } };
   },
@@ -328,6 +342,8 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.disable": async (rec, ctx) => {
     const id = requireString(rec, "id");
     const ok = setExtensionEnabled(ctx.db, id, false);
+    // Unregistered before the stop, so no scheduled sync spawns it again; items are kept.
+    if (ok) ctx.extensionSync?.refresh(id);
     if (ok && ctx.mesh !== undefined) {
       // After the row reads disabled, so a concurrent spawn's verifier already refuses, and awaited
       // so the reply means the child is gone. A stop failure never fails the disable.
@@ -358,6 +374,16 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       // With no grant (revoked earlier, or never approved) it is derived, since a revoke or an
       // earlier spawn may still have left a stage behind.
       const serviceId = extensionServiceIdForCleanup(getRunGrant(ctx.db, id)?.service_id, id);
+      // Plan decision 7: the ONE removal path for an extension-backed connector. Sync is
+      // unregistered (no new run starts) and the live client stopped (an in-flight run's next
+      // page call fails, so it cannot write items back after the purge); then items, scheduler,
+      // health and credentials go under the INDEX id — read from the row and grant, so this
+      // precedes their delete. The client is stopped again below, after the row is gone.
+      if (ctx.extensionSync !== undefined && listExtensions(ctx.db).some((r) => r.id === id)) {
+        ctx.extensionSync.unregister(id);
+        if (ctx.mesh !== undefined) await stopExtensionBestEffort(ctx.mesh, id);
+        await ctx.extensionSync.purgeBeforeRemove(id);
+      }
       const installPath = deleteExtensionById(ctx.db, id);
       if (installPath === null) {
         throw new AutomationRpcError(-32602, "Extension not found");
@@ -734,6 +760,9 @@ async function handleExtensionRehash(
     setExtensionEnabled(ctx.db, id, true);
     recoveredPendingRehashRegistry.unmark(id);
   }
+  // A new digest leaves the run grant stale: its sync is unregistered and paused for re-approval
+  // (and a crash-recovered extension re-enabled above is considered again).
+  ctx.extensionSync?.refresh(id);
   return { kind: "hit", value: { id, treeDigest, changed: true } };
 }
 
@@ -785,6 +814,8 @@ async function handleExtensionApproveRun(
       now: Date.now,
       modelAccess: rawModelAccess === true,
     });
+    // Registers its sync under the index id (or resumes a stale-grant pause) once the grant is live.
+    ctx.extensionSync?.refresh(id);
     // `list`/`info` now carry runState, so a connected client must hear that it moved — as it
     // already does for install/enable/disable/remove/update. An unchanged re-approval moved nothing.
     if (out.changed) {
@@ -822,6 +853,8 @@ async function handleExtensionRevokeRun(
     );
     // After the stop, the stages go too: a later re-approval starts from nothing a previous run
     // left, and a revoked extension leaves no copy of its code in the sandbox root.
+    // Revoke stops sync and keeps items (spec § 8.3).
+    if (out.revoked) ctx.extensionSync?.refresh(id);
     if (out.revoked && mesh !== undefined && serviceId !== undefined) {
       await mesh.removeExtensionSandbox(serviceId);
     }
@@ -945,6 +978,7 @@ export async function dispatchAutomationRpc(options: {
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
   extensionsRuntimeEnabled?: boolean;
+  extensionSync?: AutomationRpcExtensionSyncHandle;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -961,6 +995,7 @@ export async function dispatchAutomationRpc(options: {
     ...(options.extensionsRuntimeEnabled !== undefined && {
       runtimeEnabled: options.extensionsRuntimeEnabled,
     }),
+    ...(options.extensionSync !== undefined && { extensionSync: options.extensionSync }),
   };
   return await handler(asRecord(options.params), ctx);
 }

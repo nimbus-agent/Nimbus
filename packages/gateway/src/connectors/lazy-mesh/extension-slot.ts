@@ -121,6 +121,21 @@ export class ExtensionSlots {
    * and the listing rejects `ERR_EXTENSION_RUN_START_FAILED`.
    */
   async listTools(serviceId: string): Promise<LazyMeshToolMap | undefined> {
+    const all = await this.listToolsUnfiltered(serviceId);
+    if (all === undefined) return undefined;
+    // The reserved `__nimbus_*` tools (the sync entry point) are the gateway's, never listed. The
+    // key is `<serverKey>_<tool>`, so the test is on the UNPREFIXED name: a raw-key test would
+    // miss `ext_x___nimbus_sync` only by accident of where the underscores fall.
+    const prefixLen = extensionServerKey(serviceId).length + 1;
+    const visible: Record<string, LazyMeshToolMap[string]> = {};
+    for (const [key, tool] of Object.entries(all)) {
+      if (!isReservedExtensionToolName(key.slice(prefixLen))) visible[key] = tool;
+    }
+    return visible as LazyMeshToolMap;
+  }
+
+  /** {@link listTools} without the reserved-name filter. For the gateway's own sync host ONLY. */
+  async listToolsUnfiltered(serviceId: string): Promise<LazyMeshToolMap | undefined> {
     if (!(await this.ensureRunning(serviceId))) return undefined;
     const key = extensionMeshKey(serviceId);
     const client = this.host.getLazyClient(key);
@@ -265,7 +280,7 @@ export class ExtensionSlots {
       throw stoppedWhileStarting(serviceId);
     }
     const key = extensionMeshKey(serviceId);
-    const serverKey = serviceId.replaceAll(/[^a-zA-Z0-9_-]/g, "_");
+    const serverKey = extensionServerKey(serviceId);
     const client = this.options.createClient(`nimbus-extension-${serviceId}-${randomUUID()}`, {
       [serverKey]: prepared.spec,
     });
@@ -288,6 +303,18 @@ export class ExtensionSlots {
       transitionHealth(db, serviceId, { type: "sync_success" });
     }
   }
+}
+
+/** The MCP server name an extension slot registers under: `@mastra/mcp` keys tools `<it>_<tool>`. */
+export function extensionServerKey(serviceId: string): string {
+  return serviceId.replaceAll(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/** Tool names starting `__nimbus_` belong to the gateway (the sync entry point). */
+export const RESERVED_EXTENSION_TOOL_PREFIX = "__nimbus_";
+
+export function isReservedExtensionToolName(unprefixedName: string): boolean {
+  return unprefixedName.startsWith(RESERVED_EXTENSION_TOOL_PREFIX);
 }
 
 function stoppedWhileStarting(serviceId: string): ExtensionRunGrantError {

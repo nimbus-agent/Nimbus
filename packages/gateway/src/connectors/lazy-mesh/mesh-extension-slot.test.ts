@@ -80,6 +80,8 @@ function harness(
     disconnect?: (index: number) => Promise<void>;
     /** Per client (0-based); a per-server start error `listToolsWithErrors` reports. */
     startError?: (index: number) => string | undefined;
+    /** Replaces the default `echo` tool map. */
+    tools?: (serverKey: string) => FakeTools;
   } = {},
 ) {
   let prepareCalls = 0;
@@ -109,9 +111,10 @@ function harness(
   };
   const createExtensionClient = (id: string, servers: Record<string, ServerSpec>): MCPClient => {
     const serverKey = Object.keys(servers)[0] ?? "";
-    const tools = (): FakeTools => ({
-      [`${serverKey}_echo`]: { execute: (): Promise<unknown> => Promise.resolve("echo") },
-    });
+    const tools = (): FakeTools =>
+      opts.tools?.(serverKey) ?? {
+        [`${serverKey}_echo`]: { execute: (): Promise<unknown> => Promise.resolve("echo") },
+      };
     const client: FakeClient = {
       id,
       servers,
@@ -746,5 +749,184 @@ describe("removeExtensionSandbox", () => {
     await expect(mesh.removeExtensionSandbox(SERVICE_ID)).resolves.toBeUndefined();
     // Three attempts for each of the two directories.
     expect(calls).toBe(6);
+  });
+});
+
+const SYNC_REQ = { cursor: null, depth: "full" as const };
+const textResult = (text: string, isError = false) => ({
+  content: [{ type: "text", text }],
+  ...(isError ? { isError: true } : {}),
+});
+
+function syncMesh(h: ReturnType<typeof harness>): LazyConnectorMesh {
+  mesh = new LazyConnectorMesh(makePaths(), createMockVault(), {
+    extensionSlots: h.source,
+    createExtensionClient: h.createExtensionClient,
+  });
+  return mesh;
+}
+
+describe("reserved sync tool", () => {
+  test("reserved key filtered on the unprefixed name", async () => {
+    const h = harness({
+      tools: (k) => ({
+        [`${k}___nimbus_sync`]: { execute: () => Promise.resolve(textResult("{}")) },
+        [`${k}_list`]: { execute: () => Promise.resolve("l") },
+      }),
+    });
+    const m = syncMesh(h);
+    expect(Object.keys((await m.listExtensionTools(SERVICE_ID)) ?? {})).toEqual(["ext_foo_list"]);
+    expect(Object.keys((await m.listExtensionToolsForDispatcher(SERVICE_ID)) ?? {})).toEqual([
+      "ext_foo_list",
+    ]);
+  });
+
+  test("a tool whose unprefixed name merely contains __nimbus_ later is not reserved", async () => {
+    const h = harness({
+      tools: (k) => ({ [`${k}_a__nimbus_b`]: { execute: () => Promise.resolve("x") } }),
+    });
+    const m = syncMesh(h);
+    expect(Object.keys((await m.listExtensionTools(SERVICE_ID)) ?? {})).toEqual([
+      "ext_foo_a__nimbus_b",
+    ]);
+  });
+
+  test("callExtensionSyncTool unwraps the CallToolResult envelope and rejects isError", async () => {
+    let seen: unknown;
+    let reply = textResult(JSON.stringify({ status: "ok", n: 1 }));
+    const h = harness({
+      tools: (k) => ({
+        [`${k}___nimbus_sync`]: {
+          execute: (input: unknown) => {
+            seen = input;
+            return Promise.resolve(reply);
+          },
+        },
+      }),
+    });
+    const m = syncMesh(h);
+    expect(await m.callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 1000)).toEqual({
+      status: "ok",
+      n: 1,
+    });
+    expect(seen).toEqual(SYNC_REQ);
+    reply = textResult("nope", true);
+    await expect(m.callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 1000)).rejects.toThrow(/error/);
+  });
+
+  test("a 5 MiB sync result is rejected", async () => {
+    const h = harness({
+      tools: (k) => ({
+        [`${k}___nimbus_sync`]: {
+          execute: () => Promise.resolve(textResult("x".repeat(5 * 1024 * 1024))),
+        },
+      }),
+    });
+    await expect(syncMesh(h).callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 1000)).rejects.toThrow(
+      /cap/,
+    );
+  });
+
+  test("a call past the timeout rejects", async () => {
+    let signal: AbortSignal | undefined;
+    const h = harness({
+      tools: (k) => ({
+        [`${k}___nimbus_sync`]: {
+          execute: (_input: unknown, ctx?: unknown) => {
+            signal = (ctx as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
+            // Never settles: the drain is released by the timeout, so the afterEach stop is prompt.
+            return new Promise<unknown>(() => undefined);
+          },
+        },
+      }),
+    });
+    await expect(syncMesh(h).callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 20)).rejects.toThrow(
+      /exceeded 20ms/,
+    );
+    expect(signal).toBeDefined();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  test("a sync call that ignores the abort does not hold a stop past its timeout", async () => {
+    const h = harness({
+      tools: (k) => ({
+        [`${k}___nimbus_sync`]: {
+          // Ignores the abort signal and never settles.
+          execute: () => new Promise<unknown>(() => undefined),
+        },
+      }),
+    });
+    const m = syncMesh(h);
+    await expect(m.callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 20)).rejects.toThrow(
+      /exceeded 20ms/,
+    );
+    let stopped = false;
+    const stop = m.stopExtensionClient(EXTENSION_ID).then(() => {
+      stopped = true;
+    });
+    // Holding the drain until the abandoned call settles would park this stop on the ten-minute
+    // drain cap; released with the race, it completes at once.
+    await Promise.race([stop, Bun.sleep(1000)]);
+    expect(stopped).toBe(true);
+    expect(h.clients[0]?.disconnectCalls).toBe(1);
+  });
+
+  test("one timeout budget covers tool discovery and the call", async () => {
+    const h = harness({
+      // A slow start: discovery alone outlasts the whole budget.
+      prepare: () => Bun.sleep(300),
+      tools: (k) => ({
+        [`${k}___nimbus_sync`]: { execute: () => Promise.resolve(textResult("{}")) },
+      }),
+    });
+    const m = syncMesh(h);
+    const started = performance.now();
+    await expect(m.callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 20)).rejects.toThrow(
+      /exceeded 20ms/,
+    );
+    expect(performance.now() - started).toBeLessThan(250);
+    // Let the slow start finish so the afterEach stop has a settled slot.
+    await Bun.sleep(350);
+  });
+
+  test("an extension without the sync tool, or an unlisted id, is refused", async () => {
+    const m = syncMesh(harness());
+    await expect(m.callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 100)).rejects.toThrow(
+      /does not expose the sync tool/,
+    );
+    await expect(m.callExtensionSyncTool("ext_other", SYNC_REQ, 100)).rejects.toThrow(
+      /not an approved extension/,
+    );
+  });
+
+  test("stop() during an in-flight sync waits for it", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    const h = harness({
+      tools: (k) => ({
+        [`${k}___nimbus_sync`]: {
+          execute: () =>
+            new Promise<unknown>((r) => {
+              release = r;
+            }),
+        },
+      }),
+    });
+    const m = syncMesh(h);
+    const call = m.callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 5000);
+    // let the call reach execute()
+    for (let i = 0; i < 20 && h.clients.length === 0; i += 1) await Bun.sleep(5);
+    await Bun.sleep(10);
+    let stopped = false;
+    const stop = m.stopExtensionClient(EXTENSION_ID).then(() => {
+      stopped = true;
+    });
+    await Bun.sleep(50);
+    expect(stopped).toBe(false);
+    expect(h.clients[0]?.disconnectCalls).toBe(0);
+    release(textResult("{}"));
+    await call;
+    await stop;
+    expect(stopped).toBe(true);
+    expect(h.clients[0]?.disconnectCalls).toBe(1);
   });
 });

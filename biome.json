@@ -16,6 +16,7 @@
       "!**/node_modules",
       "!packages/docs",
       "!**/__fixtures__/maintained-registry",
+      "!**/__fixtures__/sync-v1",
       "!docs/structure-audit/*.json",
       "!**/src-tauri",
       "!**/*.d.ts",

@@ -347,7 +347,8 @@ export class LocalIndex {
       nextSyncAt: row.next_sync_at,
       intervalMs: row.interval_ms,
       itemCount: countItemsForService(db, row.service_id),
-      lastError: row.error_msg,
+      // A pause carries its reason in the health row, not the scheduler row.
+      lastError: row.error_msg ?? (status === "paused" ? (health.lastError ?? null) : null),
       consecutiveFailures: row.consecutive_failures,
       healthState: health.state,
       healthRetryAfterMs: health.retryAfter === undefined ? null : health.retryAfter.getTime(),

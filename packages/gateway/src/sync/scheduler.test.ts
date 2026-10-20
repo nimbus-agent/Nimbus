@@ -838,6 +838,31 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
   });
 
   describe("appendSyncEgress", () => {
+    test("an unbound ext_ job with a blank declared credential appends no sync.run row; with it set, exactly one", async () => {
+      const db = openMemoryIndexDatabase();
+      const vault = createMemoryVault();
+      const ctx: SyncRuntimeContext = {
+        ...testContext(db),
+        vault,
+        extensionCredentialsFor: (id) =>
+          id === "ext_a_b" ? { token: { env: "T", vaultKey: "ext.ext_a_b.token" } } : undefined,
+      };
+      const rows: Array<{ destination: string; sourceType: string; method: string }> = [];
+      const sched = new SyncScheduler(ctx, undefined, {
+        appendSyncEgress: (r) => rows.push(r),
+      });
+      sched.register(okSyncable("ext_a_b"));
+
+      await sched.forceSync("ext_a_b");
+      expect(rows).toHaveLength(0);
+
+      await vault.set("ext.ext_a_b.token", "secret");
+      await sched.forceSync("ext_a_b");
+      await sched.stop();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ destination: "ext_a_b", method: "sync.run" });
+    });
+
     test("a sync run appends exactly one per-run sync egress row before syncing", async () => {
       const db = openMemoryIndexDatabase();
       const ctx = testContext(db);

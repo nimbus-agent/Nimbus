@@ -324,3 +324,21 @@ describe("registerAtlassianApiConnectorAuth", () => {
     expect(localIndex.persistedConnectorStatuses("confluence")).toHaveLength(0);
   });
 });
+
+describe("extension service ids", () => {
+  test("connector status accepts ext_ ids", () => {
+    expect(resolveConnectorListFilterServiceId("ext_com_nimbus_readwise")).toBe(
+      "ext_com_nimbus_readwise",
+    );
+    expect(resolveConnectorListFilterServiceId("EXT_Com_Nimbus_Readwise")).toBe(
+      "ext_com_nimbus_readwise",
+    );
+    expect(resolveConnectorListFilterServiceId("nonsense")).toBeNull();
+  });
+
+  test("the scheduler id check admits an ext_ id (then requires a persisted status)", () => {
+    expect(() => requireRegisteredSchedulerServiceId({ serviceId: "ext_a_b" }, localIndex)).toThrow(
+      "Unknown connector: ext_a_b",
+    );
+  });
+});

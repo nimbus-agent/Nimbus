@@ -44,6 +44,31 @@ export interface AutoUpdateInitOpts {
   fetch: Omit<RegistryFetchDeps, "db">;
   intervalHours: number;
   stopExtensionClient?: (extensionId: string) => Promise<void>;
+  /**
+   * Called once an upgrade or downgrade has been APPLIED (row rewritten, client stopped). The
+   * extension sync host refreshes here: the run grant now names the old version, so its sync is
+   * unregistered and the index id paused with the re-approve reason. Never called on a failure.
+   */
+  onUpdateApplied?: (extensionId: string) => void;
+}
+
+/**
+ * `perform`, then `onApplied(update.id)` — only when `perform` resolved. A throwing hook is
+ * swallowed: the update is committed by then, and reporting it as failed would be false.
+ */
+export function withUpdateAppliedHook(
+  perform: (update: AvailableUpdate) => Promise<void>,
+  onApplied: ((extensionId: string) => void) | undefined,
+): (update: AvailableUpdate) => Promise<void> {
+  if (onApplied === undefined) return perform;
+  return async (update) => {
+    await perform(update);
+    try {
+      onApplied(update.id);
+    } catch {
+      // The update stands; the stale grant still refuses every spawn (I43) until re-approval.
+    }
+  };
 }
 
 export interface AutoUpdateRuntimeBag {
@@ -296,12 +321,18 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     dbUpdateExtensionRow,
   };
 
-  const performUpgrade = createPerformUpgrade(performUpgradeDeps);
-  const performDowngrade = createPerformDowngrade({
-    extensionsRoot: opts.extensionsDir,
-    stopExtensionClient: opts.stopExtensionClient ?? noopStop,
-    dbUpdateExtensionRow,
-  });
+  const performUpgrade = withUpdateAppliedHook(
+    createPerformUpgrade(performUpgradeDeps),
+    opts.onUpdateApplied,
+  );
+  const performDowngrade = withUpdateAppliedHook(
+    createPerformDowngrade({
+      extensionsRoot: opts.extensionsDir,
+      stopExtensionClient: opts.stopExtensionClient ?? noopStop,
+      dbUpdateExtensionRow,
+    }),
+    opts.onUpdateApplied,
+  );
 
   const deps: AutoUpdateRuntimeBag = {
     cache,

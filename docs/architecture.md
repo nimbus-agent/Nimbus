@@ -1897,6 +1897,67 @@ per-spawn copy.
 
 **Not verified:** macOS and Linux were not run locally; the end-to-end test runs on those CI legs.
 
+### Extension sync
+
+**Shipped 2026-10-20** (Readwise unbundling pilot, PR 3; no migration, no new invariant). An approved
+extension whose manifest declares a `sync` block (`contract: "1"`, `intervalSeconds`, `itemTypes`)
+syncs into the local index through the ordinary `SyncScheduler`, so it is listed, paused, resumed and
+forced like any connector.
+
+**Two ids.** The *code-server* id is always the grant's `ext_<slug>` (`mesh:ext:` slot, I42/I43, every
+`^ext_` check). The *index* id is what the scheduler, items, catalog, org policy and status use: the
+bound legacy id (`readwise`) when the continuity table binds the extension (extension id + the
+verified manifest's publisher key + a source root fingerprint equal to the official one), else the
+same `ext_` id. `connectors/extension-sync/extension-identity.ts` derives both, from the row, the
+installed manifest and the grant, on every read; nothing stores the binding as an authority. The
+continuity table is empty in production until the bundled Readwise connector is deleted.
+
+**One run, many pages.** `createExtensionSyncable` (`connectors/extension-sync/extension-syncable.ts`)
+adapts the reserved `__nimbus_sync` tool (every `__nimbus_` tool is hidden from listings and refused
+by `connector call`): one scheduler run loops pages through `mesh.callExtensionSyncTool` (60 s per
+call, aborted on timeout; the 4 MiB result cap) within a 40-page / 5-minute budget, validates each
+page (`sync-response.ts`: undeclared types and malformed or oversized items are dropped and counted,
+a malformed response fails the run), writes each page in one batch, and returns `hasMore: false`, so
+the run is ONE `sync.run` egress row (I29). A failure keeps earlier pages and does not advance the
+cursor. Before every run, `preflight()` asks `SandboxRunner.canConfine` over the exact spawn policy
+(`extensionSpawnPolicyForGrants`, pinned equal to the spawn manifest's) and the scheduler pauses with
+the reason when it cannot. Configured-ness reads the grant's own credentials: while any is blank the
+run returns before spawning and appends no row.
+
+**Lifecycle** (`platform/register-extension-sync.ts`). The registrar keeps the scheduler's set equal
+to "enabled, a live (non-stale) grant, a `sync` block": boot registration runs only after the
+extension boot-integrity pass resolves and only when the runtime is on and the scheduler can run (a
+demo-rooted gateway registers nothing, I41), through the same I22 policy filter as every mesh
+syncable. `extension.approveRun`, `revokeRun`, `enable`, `disable` and an adopted `rehash` refresh it; an applied update
+(`auto-update-init.ts`'s `withUpdateAppliedHook`, both directions) leaves the grant stale, so the
+sync is unregistered and the index id paused with "updated to <version> — run `nimbus extension
+approve <id>` to resume sync"; a later approval lifts exactly that pause and no other (an extension
+with no `sync` block is never paused). Revoke and disable keep items. Unregistering is a CANCEL:
+each registration carries a liveness token that unregister flips synchronously, and the syncable
+checks it before every page call and again right before a returned page is written (no `await` in
+between), throwing `ExtensionSyncCancelledError`; the scheduler, seeing its connector withdrawn
+mid-run, records nothing after the run (no telemetry, health, notification or success hook). So a
+run that outlives its registration neither calls (re-spawning the extension) nor writes.
+`extension.remove` is the ONE removal path for an extension-backed connector: it unregisters, stops
+the live client, then — while the row and grant still exist — purges under the index id (items,
+scheduler and status rows, and every granted credential key, including a bound legacy key such as
+`readwise.token`), then deletes the row. `connector.remove` refuses an extension-backed id (a bound
+legacy id, or an `ext_` id with a grant) with `ERR_CONNECTOR_IS_EXTENSION`, since it would clear the
+index while the slot and the grant lived on; pause, resume and sync stay allowed.
+
+**Collision.** If a syncable is already registered under the index id — the bundled `readwise`
+connector, until it is deleted — the extension's sync is NOT registered and a warning is logged; a
+built-in is never replaced, and the registrar only ever unregisters what it registered itself.
+
+**Bounds.** The extension's own requests to its granted hosts are not individually ledgered (I43);
+the gateway's limiter cannot throttle them — the page budget, call timeout, interval and the network
+grant are the bounds. A manifest that cannot be read loses the binding, so a bound extension's legacy
+namespace is then not purged by `extension remove`. Dropped-item counts are logged and returned on
+the run's `SyncResult`, but not yet persisted or shown by `nimbus connector status` (spec § 8.3's
+visibility clause is open: every surface that status reads would need a new column). The end-to-end test
+(`packages/gateway/test/e2e/extension-sync.e2e.test.ts`) runs a real gateway and the real sandbox, and proves the
+credential reaches the confined child through its env by a digest the fixture returns.
+
 ### Extension registry client
 
 **PR 3 of 4 shipped 2026-10-18** (Phase 9.5 project 1; migration V71; I29 `registry` class, static D22(h); HITL type

@@ -3027,6 +3027,8 @@ The CLI asks for confirmation before it sends `connector.remove`. Declining the 
 
 `connector.remove` is also a HITL action on the Gateway side, but you are only asked once: the CLI confirmation *is* the consent decision, and the CLI answers the Gateway's consent request with it. A declined prompt never reaches the Gateway at all, and `--yes` covers both — the auto-approval is still noted on stderr (`[--yes] auto-approving HITL request: …`) so it shows up in a script's log. If the Gateway rejects the removal anyway (for example an org policy that forbids it), the command exits non-zero with the rejection reason and removes nothing.
 
+**An extension-backed id is refused.** When the id is one an approved extension syncs under — its `ext_` id, or the legacy connector id it is bound to (for example `readwise` once a Readwise extension is bound to it) — the Gateway refuses with `ERR_CONNECTOR_IS_EXTENSION` (JSON-RPC `-32602`), naming `nimbus extension remove <extension-id>`, and removes nothing. That command is the one removal path for such a connector: it also stops the extension and withdraws its approval, which `connector remove` would leave running. `nimbus connector pause`, `resume` and `sync` still work for the id.
+
 ---
 
 ### `nimbus connector reindex <name>`
@@ -4457,6 +4459,8 @@ After you answer, two further refusals can occur: `ERR_EXTENSION_RUN_NOT_APPROVE
 
 Approving again after an update (new version or digest) prompts again and replaces the grant, keeping the original service id.
 
+**Sync.** An extension whose manifest declares a `sync` block starts syncing into the index once approved: it is registered with the sync scheduler under its `ext_` id (or the legacy connector id it is bound to), runs on the manifest's interval, and appears in `nimbus connector list` and `status`. It never syncs while a credential it declares is unset (`nimbus extension credential set`). An update leaves the grant naming the old version, so sync stops and the connector shows paused with `updated to <version> — run nimbus extension approve <id> to resume sync`; approving again resumes it.
+
 **`--model`** also offers the extension's tools to the model in `nimbus ask` (and the desktop app), named `ext_<id>__<tool>`, for you as the local owner only — each call still raises the I42 approval prompt. Every approval states the whole grant: running `nimbus extension approve <id>` again without `--model` prompts and turns model access off — including the re-approval an update needs, so pass `--model` again then to keep it (`nimbus doctor` names those extensions). The prompt and the output both show the setting (`model access: on|off`), and `nimbus extension info` shows `model: yes|no`. An extension whose files changed since the approval, or that failed its signature check, is not offered. A signed org policy with `user_mcp_model_access = false` stops it being offered (the grant itself is kept and takes effect again if the policy is lifted).
 
 ```bash
@@ -4467,7 +4471,7 @@ nimbus extension approve com.example.notion --model
 
 ### `nimbus extension revoke <id>`
 
-Withdraw a run approval. It is not gated, since it only narrows what may happen, and it is idempotent: revoking an extension with no approval reports that and exits normally. A running extension is stopped first, then its per-spawn copies are deleted. An unknown id is refused with `Extension not found` (JSON-RPC `-32602`).
+Withdraw a run approval. It is not gated, since it only narrows what may happen, and it is idempotent: revoking an extension with no approval reports that and exits normally. A running extension is stopped first, then its per-spawn copies are deleted. Its sync stops; what it already synced stays in the index until `nimbus extension remove`. An unknown id is refused with `Extension not found` (JSON-RPC `-32602`).
 
 ```bash
 nimbus extension revoke com.example.notion
@@ -4560,7 +4564,7 @@ nimbus extension disable nimbus-notion
 
 ### `nimbus extension remove <name> [--yes] [--force] [--json]`
 
-Uninstall an extension and remove its process. Does not delete the extension's Vault entries automatically — use `nimbus connector remove` first if the extension registered connectors.
+Uninstall an extension and remove its process. Its sync stops first, and then everything it synced is purged under the id it synced under (its `ext_` id, or the legacy connector id it is bound to): every index item, the connector's scheduler and status rows, and every credential its approval granted — for an extension bound to a legacy connector that includes the legacy key (for example `readwise.token`), exactly as `nimbus connector remove readwise` would. Revoking (`nimbus extension revoke`) or disabling it stops sync and keeps the items.
 
 If other installed extensions depend on this one, the remove is refused unless `--force` is passed. With `--force`, the removal proceeds after a warning listing the affected dependents; the startup completeness guard will hard-disable those dependents on the next Gateway start via `MissingDependencyRegistry` (T2 PR 4).
 
