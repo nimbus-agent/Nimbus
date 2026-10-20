@@ -374,11 +374,14 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       // With no grant (revoked earlier, or never approved) it is derived, since a revoke or an
       // earlier spawn may still have left a stage behind.
       const serviceId = extensionServiceIdForCleanup(getRunGrant(ctx.db, id)?.service_id, id);
-      // Plan decision 7: the ONE removal path for an extension-backed connector. Sync stops first
-      // (so no run re-inserts what is purged), then items, scheduler, health and credentials go
-      // under the INDEX id — read from the row and grant, so this precedes their delete.
+      // Plan decision 7: the ONE removal path for an extension-backed connector. Sync is
+      // unregistered (no new run starts) and the live client stopped (an in-flight run's next
+      // page call fails, so it cannot write items back after the purge); then items, scheduler,
+      // health and credentials go under the INDEX id — read from the row and grant, so this
+      // precedes their delete. The client is stopped again below, after the row is gone.
       if (ctx.extensionSync !== undefined && listExtensions(ctx.db).some((r) => r.id === id)) {
         ctx.extensionSync.unregister(id);
+        if (ctx.mesh !== undefined) await stopExtensionBestEffort(ctx.mesh, id);
         await ctx.extensionSync.purgeBeforeRemove(id);
       }
       const installPath = deleteExtensionById(ctx.db, id);

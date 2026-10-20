@@ -130,7 +130,7 @@ describe("extension.* handlers drive the extension sync host", () => {
     expect(calls).toEqual([]);
   });
 
-  test("remove unregisters, then purges while the grant still exists, before deleting the row", async () => {
+  test("remove unregisters and stops the client, then purges while the grant still exists, before deleting the row", async () => {
     const { db, env } = await installedAndApproved();
     await dispatchAutomationRpc({
       db,
@@ -145,8 +145,22 @@ describe("extension.* handlers drive the extension sync host", () => {
       extensionSync: handle,
       method: "extension.remove",
       params: { id: "rpc.sync" },
+      mesh: {
+        stopExtensionClient: async (x) => {
+          calls.push(`stop:${x}:grant=${String(getRunGrant(db, "rpc.sync") !== null)}`);
+        },
+        isExtensionRunning: () => true,
+        removeExtensionSandbox: async () => {},
+      },
     });
-    expect(calls).toEqual(["unregister:rpc.sync", "purge:rpc.sync:grant=true"]);
+    // Unregister, then stop the live client (an in-flight run cannot write back), then purge — all
+    // while the grant exists — then the row goes and the client is stopped once more.
+    expect(calls).toEqual([
+      "unregister:rpc.sync",
+      "stop:rpc.sync:grant=true",
+      "purge:rpc.sync:grant=true",
+      "stop:rpc.sync:grant=false",
+    ]);
     expect(getRunGrant(db, "rpc.sync")).toBeNull();
   });
 });

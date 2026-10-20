@@ -28,6 +28,7 @@ import {
   handleConnectorSync,
   handleConnectorUserMcpCall,
   handleConnectorUserMcpTools,
+  refuseExtensionBackedRemoval,
   requireAddMcpPlatform,
   resolveConnectorAddMcp,
 } from "./connector-rpc-handlers/index.ts";
@@ -184,6 +185,8 @@ export async function dispatchConnectorRpc(options: {
       if (toolExecutor === undefined) {
         throw new ConnectorRpcError(-32603, "connector.remove requires a toolExecutor");
       }
+      // Refused BEFORE the gate: no prompt, and no audit row for a removal that cannot run.
+      refuseExtensionBackedRemoval(ctx);
       // `serviceId`, not `service`: `handleConnectorRemove` resolves the id via
       // `requireRegisteredSchedulerServiceId`, which reads `serviceId` only. The
       // gate read `service`, so this destructive action (deletes index entries,

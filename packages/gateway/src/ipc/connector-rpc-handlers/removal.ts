@@ -109,6 +109,41 @@ async function restoreGoogleAndMicrosoftOAuthBackups(
   }
 }
 
+/**
+ * Plan decision 7: an extension-backed id has ONE removal path, `extension remove`, which also stops
+ * the mesh slot and drops the grant; clearing only the index here would leave both alive. Returns
+ * the refusal for `id`, or `undefined` when no extension backs it.
+ */
+function extensionBackedRefusal(
+  ctx: ConnectorRpcHandlerContext,
+  id: string,
+): ConnectorRpcError | undefined {
+  const db = ctx.localIndex.getDatabase();
+  const backing = ctx.extensionBackingId ?? ((s: string) => extensionIdBackingServiceId(db, s));
+  const extensionId = backing(id);
+  if (extensionId === undefined) return undefined;
+  return new ConnectorRpcError(
+    -32602,
+    `ERR_CONNECTOR_IS_EXTENSION: ${id} is synced by the extension ${extensionId}; remove it with \`nimbus extension remove ${extensionId}\` (connector pause, resume and sync still work)`,
+  );
+}
+
+/**
+ * Asked by the router BEFORE the owner HITL gate, so an extension-backed removal is refused with no
+ * prompt and no "approved" audit row for a removal that never ran. An id that does not resolve is
+ * left for the handler to refuse after the gate, exactly as before.
+ */
+export function refuseExtensionBackedRemoval(ctx: ConnectorRpcHandlerContext): void {
+  let id: string;
+  try {
+    id = requireRegisteredSchedulerServiceId(ctx.rec, ctx.localIndex);
+  } catch {
+    return;
+  }
+  const refusal = extensionBackedRefusal(ctx, id);
+  if (refusal !== undefined) throw refusal;
+}
+
 export async function handleConnectorRemove(
   ctx: ConnectorRpcHandlerContext,
 ): Promise<ConnectorRpcHit> {
@@ -116,16 +151,9 @@ export async function handleConnectorRemove(
   const id = requireRegisteredSchedulerServiceId(rec, localIndex);
   const db = localIndex.getDatabase();
 
-  // Plan decision 7: an extension-backed id has ONE removal path, `extension remove`, which also
-  // stops the mesh slot and drops the grant. Clearing only the index here would leave both alive.
-  const backing = ctx.extensionBackingId ?? ((s: string) => extensionIdBackingServiceId(db, s));
-  const extensionId = backing(id);
-  if (extensionId !== undefined) {
-    throw new ConnectorRpcError(
-      -32602,
-      `ERR_CONNECTOR_IS_EXTENSION: ${id} is synced by the extension ${extensionId}; remove it with \`nimbus extension remove ${extensionId}\` (connector pause, resume and sync still work)`,
-    );
-  }
+  // Backstop for a caller that reaches the handler without the router's pre-gate check.
+  const refusal = extensionBackedRefusal(ctx, id);
+  if (refusal !== undefined) throw refusal;
 
   writeRemoveIntent(db, id);
 
