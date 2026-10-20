@@ -7020,26 +7020,84 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const src = stripComments(
       await read("packages/gateway/src/extensions/registry/install-from-registry.ts"),
     );
-    const fnAt = src.indexOf("export async function installFromRegistry(");
-    expect(fnAt).toBeGreaterThan(-1);
-    // Bounded at the next top-level export, so a later function cannot satisfy the order checks.
-    const nextExport = src.indexOf("\nexport ", fnAt + 1);
-    const body = src.slice(fnAt, nextExport === -1 ? undefined : nextExport);
-    const resolveAt = body.indexOf("await resolveRegistryEntry(");
-    const manifestAt = body.indexOf("await fetchRegistryManifest(");
-    const shaAt = body.search(
+    // Each function's body, bounded at the next top-level export, so a later function cannot
+    // satisfy another's order checks.
+    const bodyOf = (code: string, header: string): string => {
+      const at = code.indexOf(header);
+      expect(at, header).toBeGreaterThan(-1);
+      const next = code.indexOf("\nexport ", at + 1);
+      return code.slice(at, next === -1 ? undefined : next);
+    };
+    // (1) The composition: installFromRegistry fetches-and-verifies, THEN installs that package.
+    const compose = bodyOf(src, "export async function installFromRegistry(");
+    const composeFetchAt = compose.indexOf("const pkg = await fetchVerifiedRegistryPackage(");
+    const composeInstallAt = compose.indexOf("await installVerifiedRegistryPackage(deps, pkg,");
+    expect(composeFetchAt).toBeGreaterThan(-1);
+    expect(composeInstallAt).toBeGreaterThan(composeFetchAt);
+    // (2) The fetch half: resolve through verified indexes, then the manifest, the package hash, the
+    // I16 signature and the Vault key check, ALL before a byte is written or extracted and before
+    // the verified package is handed back.
+    const fetchBody = bodyOf(src, "export async function fetchVerifiedRegistryPackage(");
+    const resolveAt = fetchBody.indexOf("await resolveRegistryEntry(");
+    const manifestAt = fetchBody.indexOf("await fetchRegistryManifest(");
+    const shaAt = fetchBody.search(
       /sha256HexEqualConstantTime\(sha256Hex\(packageBytes\), vEntry\.packageSha256\)/,
     );
-    const sigAt = body.indexOf("await verifyRegistryManifestSignature(");
-    const vaultAt = body.indexOf("await vaultPublisherKeyConflicts(");
-    const installAt = body.indexOf("await installExtensionFromLocalDirectory(");
-    for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, installAt]) {
+    const sigAt = fetchBody.indexOf("await verifyRegistryManifestSignature(");
+    const vaultAt = fetchBody.indexOf("await vaultPublisherKeyConflicts(");
+    const writeAt = fetchBody.indexOf("writeFileSync(archivePath, packageBytes)");
+    const returnAt = fetchBody.indexOf("return {");
+    for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, writeAt, returnAt]) {
       expect(at).toBeGreaterThan(-1);
     }
     expect(manifestAt).toBeGreaterThan(resolveAt);
-    expect(installAt).toBeGreaterThan(Math.max(manifestAt, shaAt, sigAt, vaultAt));
-    // The installer is handed the INDEX's publisher key (via the fetched manifest), never another.
-    expect(body).toMatch(/const \{ manifest, publisherKey \} = fetched;/);
+    expect(writeAt).toBeGreaterThan(Math.max(manifestAt, shaAt, sigAt, vaultAt));
+    expect(returnAt).toBeGreaterThan(writeAt);
+    // The package carries the INDEX's publisher key, the one the signature and Vault checks used.
+    expect(fetchBody).toMatch(/publisherKey: entry\.publisher\.key,/);
+    expect(fetchBody).toMatch(
+      /vaultPublisherKeyConflicts\(deps\.vault, entry\.publisher\.id, fetched\.publisherKey\)/,
+    );
+    // (3) The install half installs ONLY through installExtensionFromLocalDirectory, handed that
+    // index key and recorded against the SOURCE registry; the post-copy entry hash is compared to
+    // the signed index's before the source is recorded, and a mismatch undoes the install.
+    const installBody = bodyOf(src, "export async function installVerifiedRegistryPackage(");
+    const localAt = installBody.indexOf("await installExtensionFromLocalDirectory(");
+    const entryHashAt = installBody.indexOf(
+      "sha256HexEqualConstantTime(installed.entryHash, pkg.entryHash)",
+    );
+    const undoAt = installBody.indexOf("deleteExtensionById(deps.db, installed.id)");
+    const sourceAt = installBody.indexOf("setExtensionSource(deps.db, installed.id,");
+    for (const at of [localAt, entryHashAt, undoAt, sourceAt]) expect(at).toBeGreaterThan(-1);
+    expect(entryHashAt).toBeGreaterThan(localAt);
+    expect(undoAt).toBeGreaterThan(entryHashAt);
+    expect(sourceAt).toBeGreaterThan(undoAt);
+    expect(installBody).toMatch(/publisherKey: decodeBase64\(pkg\.publisherKey\),/);
+    expect(installBody).toMatch(/sourceRegistry: reg\.name,/);
+    // ...and inside it the I16 signature of the COPIED manifest is re-verified against that key
+    // before the extension row is written: the install lands only after verification.
+    const local = stripComments(
+      await read("packages/gateway/src/extensions/install-from-local.ts"),
+    );
+    const afterCopy = local.slice(
+      local.indexOf("async function completeExtensionInstallAfterCopy("),
+    );
+    const reverifyAt = afterCopy.indexOf("await verifyAndRecordSignature(options, destManifest");
+    const rowAt = afterCopy.indexOf("insertExtensionRow(options.db,");
+    expect(reverifyAt).toBeGreaterThan(-1);
+    expect(rowAt).toBeGreaterThan(reverifyAt);
+    // (4) Only two production files may name the install half (a call, an import or an alias): the
+    // composition above, and the migration engine, which rebuilds the package from a stage whose
+    // tree digest equals the one fetchVerifiedRegistryPackage verified, and requires the installed
+    // digest to equal it too.
+    const callers = (await readDirFiles("packages/gateway/src"))
+      .filter((f) => /\binstallVerifiedRegistryPackage\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(callers).toEqual([
+      "extensions/migration/migration-engine.ts",
+      "extensions/registry/install-from-registry.ts",
+    ]);
     // Resolution reads only freshly VERIFIED indexes, and refuses ambiguity.
     const resolver = stripComments(
       await read("packages/gateway/src/extensions/registry/registry-resolve.ts"),
