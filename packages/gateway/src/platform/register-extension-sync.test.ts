@@ -209,6 +209,60 @@ describe("createExtensionSyncRegistrar", () => {
     expect(h.sched.syncableFor("readwise")).toBeDefined();
   });
 
+  test("unregister mid-run: exactly one page call, nothing written after it", async () => {
+    let release: (v: unknown) => void = () => {};
+    let entered: () => void = () => {};
+    const enteredP = new Promise<void>((r) => {
+      entered = r;
+    });
+    let calls = 0;
+    const h = harness(seed(), {
+      mesh: {
+        callExtensionSyncTool: async () => {
+          calls += 1;
+          entered();
+          return new Promise((r) => {
+            release = r;
+          });
+        },
+      },
+    });
+    await h.vault.set("readwise.token", "tok");
+    const r = createExtensionSyncRegistrar(h.deps);
+    r.refresh(EXT_ID);
+    const forced = h.sched.forceSync("readwise").then(
+      () => "resolved",
+      (e: unknown) => (e instanceof Error ? e.message : String(e)),
+    );
+    await enteredP;
+    r.unregister(EXT_ID);
+    // A non-empty page that asks for more: without the liveness checks it would be written and a
+    // second call (a re-spawn, mid-remove) would follow.
+    release({
+      status: "ok",
+      items: [{ type: "highlight", externalId: "1", title: "t", modifiedAt: 5, metadata: {} }],
+      cursor: "c2",
+      hasMore: true,
+    });
+    expect(await forced).toBe("Connector removed");
+    await new Promise((res) => setTimeout(res, 0));
+    expect(calls).toBe(1);
+    expect(new LocalIndex(h.db).search({ service: "readwise" })).toHaveLength(0);
+  });
+
+  test("a tool-only extension whose update leaves the grant stale is not paused", () => {
+    const { sync: _unusedSync, ...noSync } = manifest();
+    const h = harness(seed(), {}, () => noSync);
+    updateExtensionRowVersion(h.db, EXT_ID, "1.1.0", "h2", "e2", 2, "d2");
+    createExtensionSyncRegistrar(h.deps).refresh(EXT_ID);
+    expect(getConnectorHealth(h.db, "readwise").state).not.toBe("paused");
+    expect(getConnectorHealth(h.db, CODE_ID).state).not.toBe("paused");
+    const row = h.db
+      .query("SELECT COUNT(*) AS c FROM sync_state WHERE connector_id IN (?, ?)")
+      .get("readwise", CODE_ID) as { c: number };
+    expect(row.c).toBe(0);
+  });
+
   test("disable then enable re-registers", () => {
     const h = harness(seed());
     const r = createExtensionSyncRegistrar(h.deps);

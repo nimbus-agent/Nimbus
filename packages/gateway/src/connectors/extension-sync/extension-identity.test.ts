@@ -234,3 +234,19 @@ describe("org policy names the index id", () => {
     expect(indexServiceIdForCodeServer(db, CODE_ID, TABLE, () => manifest())).toBe(CODE_ID);
   });
 });
+
+describe("createExtensionCredentialsResolver — an ext_ id reads its grant directly", () => {
+  test("an unreadable manifest cannot drop an ext_ id to the vacuous 'configured' answer", async () => {
+    const db = seed({
+      fingerprint: null,
+      credentialsJson: JSON.stringify({ token: { env: "T", vaultKey: `ext.${CODE_ID}.token` } }),
+    });
+    const resolve = createExtensionCredentialsResolver(db, TABLE, () => undefined);
+    expect(resolve(CODE_ID)).toEqual({ token: { env: "T", vaultKey: `ext.${CODE_ID}.token` } });
+    const vault = createMockVault();
+    expect(await isConnectorConfigured(vault, CODE_ID, resolve)).toBe(false);
+    await vault.set(`ext.${CODE_ID}.token`, "tok");
+    expect(await isConnectorConfigured(vault, CODE_ID, resolve)).toBe(true);
+    db.close();
+  });
+});

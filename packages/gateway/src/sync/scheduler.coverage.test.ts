@@ -678,28 +678,25 @@ describe("SyncScheduler — state that changes between the dispatch gate and the
     },
   ];
 
-  test("a continuation queued for a connector removed mid-run is dropped, not run, and frees its slot", async () => {
+  test("a connector removed mid-run records nothing after its run, queues no continuation, and frees its slot", async () => {
     const db = openMemoryIndexDatabase();
     let release!: () => void;
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    const firstDone = deferred();
+    const returned = deferred();
+    const succeeded: string[] = [];
     const mover = probe("mover", async () => {
       await gate;
+      returned.resolve();
       return { ...OK, hasMore: true };
     });
-    // One slot: if the dropped continuation leaked it, the re-registered connector below could
-    // never run and the final force request would time out.
+    // One slot: if the withdrawn run leaked it, the re-registered connector below could never run
+    // and the final force request would time out.
     const sched = new SyncScheduler(
       ctxFor(db),
       { maxConcurrentSyncs: 1 },
-      {
-        isOnline: online,
-        onConnectorSyncSuccess: (id) => {
-          if (id === "mover") firstDone.resolve();
-        },
-      },
+      { isOnline: online, onConnectorSyncSuccess: (id) => void succeeded.push(id) },
     );
     sched.register(mover.syncable);
     const forced = sched.forceSync("mover");
@@ -709,23 +706,17 @@ describe("SyncScheduler — state that changes between the dispatch gate and the
       "Connector removed",
     );
 
-    // The run already in flight still finishes and, having more pages, queues a continuation. That
-    // job passes the dispatch gate (unregister keeps the state row) and only runJob finds no
-    // connector — it must be dropped, never run as a failure against an undefined connector.
+    // The run already in flight finishes with more pages. Its connector was withdrawn, so nothing
+    // after it is recorded — no telemetry, no state update, no success hook — and no continuation
+    // is queued (a removed connector's purged rows must not be written back).
     release();
-    await within(firstDone.promise, "the in-flight run to finish");
+    await within(returned.promise, "the in-flight run to return");
     await macrotask();
     expect(mover.calls()).toBe(1);
+    expect(succeeded).toEqual([]);
     expect(
-      db
-        .query(`SELECT error_msg, had_more FROM sync_telemetry WHERE service = ? ORDER BY id`)
-        .all("mover"),
-    ).toEqual([{ error_msg: null, had_more: 1 }]);
-    expect(
-      db
-        .query(`SELECT status, consecutive_failures FROM scheduler_state WHERE service_id = ?`)
-        .get("mover"),
-    ).toEqual({ status: "ok", consecutive_failures: 0 });
+      db.query(`SELECT COUNT(*) AS c FROM sync_telemetry WHERE service = ?`).get("mover"),
+    ).toEqual({ c: 0 });
 
     const again = probe("mover");
     sched.register(again.syncable);
@@ -761,6 +752,45 @@ describe("SyncScheduler — state that changes between the dispatch gate and the
         await within(victim.entered, "the connector to run once its state is restored");
         expect(victim.calls()).toBe(1);
       }
+      await sched.stop();
+      db.close();
+    });
+  }
+});
+
+describe("SyncScheduler — a connector withdrawn mid-run records nothing afterwards", () => {
+  for (const outcome of ["throws unauthenticated", "returns"] as const) {
+    test(`unregister during a running sync that ${outcome}: no sync_state row, no notify, force rejected`, async () => {
+      const db = openMemoryIndexDatabase();
+      const notified: string[] = [];
+      const sched = new SyncScheduler(
+        ctxFor(db),
+        {},
+        { isOnline: online, notify: async (title) => void notified.push(title) },
+      );
+      const release = deferred();
+      const p = probe("withdrawn", async () => {
+        await release.promise;
+        if (outcome === "returns") return OK;
+        throw new UnauthenticatedError();
+      });
+      sched.register(p.syncable);
+      const forced = sched.forceSync("withdrawn").then(
+        () => "resolved",
+        (e: unknown) => (e instanceof Error ? e.message : String(e)),
+      );
+      await within(p.entered, "sync entered");
+      sched.unregister("withdrawn");
+      // What `extension remove`'s purge does next: the health row goes.
+      db.run("DELETE FROM sync_state WHERE connector_id = ?", ["withdrawn"]);
+      release.resolve();
+      expect(await within(forced, "force settled")).toBe("Connector removed");
+      await macrotask();
+      const rows = db
+        .query("SELECT COUNT(*) AS c FROM sync_state WHERE connector_id = ?")
+        .get("withdrawn") as { c: number };
+      expect(rows.c).toBe(0);
+      expect(notified).toEqual([]);
       await sched.stop();
       db.close();
     });

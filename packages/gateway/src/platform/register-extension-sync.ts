@@ -110,12 +110,13 @@ function planFor(deps: ExtensionSyncRegistrarDeps, extensionId: string): SyncPla
   const grant = getRunGrant(deps.db, extensionId);
   if (row === undefined || grant === null || row.enabled !== 1) return { kind: "none" };
   const manifest = (deps.readManifest ?? readInstalledManifest)(row);
-  if (manifest === undefined) return { kind: "none" };
+  // An extension that does not sync has nothing to pause — checked before staleness, so updating a
+  // tool-only extension leaves no "resume sync" row behind.
+  if (manifest === undefined || manifest.sync === undefined) return { kind: "none" };
   const identity = resolveExtensionIdentity(row, manifest, grant, deps.table ?? CONTINUITY_TABLE);
   if (isStale(row, grant)) {
     return { kind: "stale", identity, reason: staleGrantPauseReason(extensionId, row, grant) };
   }
-  if (manifest.sync === undefined) return { kind: "none" };
   return { kind: "live", identity, sync: manifest.sync };
 }
 
@@ -145,8 +146,10 @@ function buildSyncable(
   deps: ExtensionSyncRegistrarDeps,
   identity: ExtensionIdentity,
   sync: NonNullable<ExtensionManifest["sync"]>,
+  isLive: () => boolean,
 ): Syncable {
   return createExtensionSyncable({
+    isLive,
     identity,
     intervalMs: sync.intervalSeconds * 1000,
     itemTypes: sync.itemTypes,
@@ -166,11 +169,16 @@ export function createExtensionSyncRegistrar(
   deps: ExtensionSyncRegistrarDeps,
 ): ExtensionSyncRegistrar {
   /** extension id -> what THIS registrar registered, so only its own syncable is ever removed. */
-  const registered = new Map<string, { indexServiceId: string; syncable: Syncable }>();
+  const registered = new Map<
+    string,
+    { indexServiceId: string; syncable: Syncable; live: { current: boolean } }
+  >();
 
   const unregister = (extensionId: string): void => {
     const mine = registered.get(extensionId);
     if (mine === undefined) return;
+    // Synchronously, before the scheduler forgets it: an in-flight run stops at its next check.
+    mine.live.current = false;
     registered.delete(extensionId);
     if (deps.scheduler.syncableFor(mine.indexServiceId) === mine.syncable) {
       deps.scheduler.unregister(mine.indexServiceId);
@@ -192,11 +200,12 @@ export function createExtensionSyncRegistrar(
       );
       return;
     }
-    const syncable = buildSyncable(deps, identity, sync);
+    const live = { current: true };
+    const syncable = buildSyncable(deps, identity, sync, () => live.current);
     deps.scheduler.register(syncable);
     // The policy-filtered registrar drops a blocked id silently; track only what really landed.
     if (deps.scheduler.syncableFor(indexId) !== syncable) return;
-    registered.set(identity.extensionId, { indexServiceId: indexId, syncable });
+    registered.set(identity.extensionId, { indexServiceId: indexId, syncable, live });
     // The stale-grant pause names re-approval as the way back, so a re-approval honours it. Any
     // other pause (the owner's own, a sandbox preflight) is left for `connector resume`.
     const health = getConnectorHealth(deps.db, indexId);

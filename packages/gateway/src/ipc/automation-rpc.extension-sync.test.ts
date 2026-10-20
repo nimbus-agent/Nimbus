@@ -56,7 +56,11 @@ function spyHandle(
 }
 
 describe("extension.* handlers drive the extension sync host", () => {
-  async function installedAndApproved(): Promise<{ db: Database; env: ExtensionRunGrantEnv }> {
+  async function installedAndApproved(): Promise<{
+    db: Database;
+    env: ExtensionRunGrantEnv;
+    installPath: string;
+  }> {
     const root = tempRoot();
     const db = freshDb();
     const src = join(root, "src");
@@ -79,7 +83,7 @@ describe("extension.* handlers drive the extension sync host", () => {
       runtimeReadPaths: [],
       realpath: (p) => realpathSync.native(p),
     };
-    return { db, env };
+    return { db, env, installPath: join(root, "data", "extensions", "rpc.sync") };
   }
 
   test("approveRun, disable, enable and revokeRun each refresh it", async () => {
@@ -114,6 +118,21 @@ describe("extension.* handlers drive the extension sync host", () => {
       "refresh:rpc.sync",
       "refresh:rpc.sync",
     ]);
+  });
+
+  test("an adopted rehash refreshes it (the new digest leaves the grant stale)", async () => {
+    const { db, installPath } = await installedAndApproved();
+    writeFileSync(join(installPath, "dist", "extra.js"), "export const x = 1;\n");
+    const { handle, calls } = spyHandle(db, "rpc.sync");
+    const out = (await dispatchAutomationRpc({
+      db,
+      extensionSync: handle,
+      method: "extension.rehash",
+      params: { id: "rpc.sync" },
+      ownerGate: async () => true,
+    })) as { value: { changed: boolean } };
+    expect(out.value.changed).toBe(true);
+    expect(calls).toEqual(["refresh:rpc.sync"]);
   });
 
   test("a denied approval refreshes nothing", async () => {

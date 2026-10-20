@@ -16,6 +16,7 @@ import {
   createExtensionSyncable,
   EXTENSION_SYNC_BUDGET,
   type ExtensionSyncableDeps,
+  ExtensionSyncCancelledError,
 } from "./extension-syncable.ts";
 import type { ExtensionSyncRequest } from "./sync-response.ts";
 
@@ -48,6 +49,7 @@ function deps(over: Partial<ExtensionSyncableDeps> = {}): ExtensionSyncableDeps 
     isConfigured: async () => true,
     canConfine: () => null,
     budget: EXTENSION_SYNC_BUDGET,
+    isLive: () => true,
     ...over,
   };
 }
@@ -353,5 +355,47 @@ describe("scheduler integration", () => {
     await sched.stop();
     expect(rows).toHaveLength(0);
     expect(spawns).toBe(0);
+  });
+});
+
+describe("liveness token", () => {
+  test("withdrawn between pages: page 1 is kept, page 2 is never called", async () => {
+    let checks = 0;
+    let calls = 0;
+    const s = createExtensionSyncable(
+      deps({
+        // Live for page 1's pre-call and post-call checks, withdrawn from then on.
+        isLive: () => {
+          checks += 1;
+          return checks <= 2;
+        },
+        callSync: async () => {
+          calls += 1;
+          return wire([`i${calls}`], `c${calls}`, true);
+        },
+      }),
+    );
+    const { ctx, upserts } = recordingCtx();
+    const err = await s.sync(ctx, null).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ExtensionSyncCancelledError);
+    expect(calls).toBe(1);
+    expect(upserts).toEqual(["i1"]);
+  });
+
+  test("withdrawn while a call is pending: its page is not written", async () => {
+    let live = true;
+    const s = createExtensionSyncable(
+      deps({
+        isLive: () => live,
+        callSync: async () => {
+          live = false;
+          return wire(["late"], "c", true);
+        },
+      }),
+    );
+    const { ctx, upserts } = recordingCtx();
+    const err = await s.sync(ctx, null).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ExtensionSyncCancelledError);
+    expect(upserts).toEqual([]);
   });
 });

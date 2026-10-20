@@ -130,7 +130,14 @@ export function createExtensionCredentialsResolver(
   const boundIds = new Set(table.map((e) => e.legacyServiceId));
   return (serviceId) => {
     // Called on every scheduled run of every connector: answer built-ins with no I/O at all.
-    if (!EXTENSION_SERVICE_ID_PATTERN.test(serviceId) && !boundIds.has(serviceId)) return undefined;
+    const isExt = EXTENSION_SERVICE_ID_PATTERN.test(serviceId);
+    if (!isExt && !boundIds.has(serviceId)) return undefined;
+    // An `ext_` index id IS its grant's code-server id: read the grant directly, so a manifest that
+    // has become unreadable cannot drop the id to the vacuous "configured" answer (I29).
+    if (isExt) {
+      const grant = listRunGrants(db).find((g) => g.service_id === serviceId);
+      if (grant !== undefined) return parseCredentials(grant.credentials_json);
+    }
     const hit = listExtensionIdentities(db, table, readManifest).find(
       (e) => e.identity.indexServiceId === serviceId,
     );

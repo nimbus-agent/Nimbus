@@ -26,8 +26,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   legacy connector id the continuity table binds it to (empty until the bundled Readwise connector goes).
   It never spawns or appends a row while a credential it declares is blank, and a sandbox that cannot
   confine it pauses it with the reason. Lifecycle: boot registration runs after the extension integrity pass
-  and only with the runtime on (never on a demo gateway); approve, enable, disable and revoke re-register or
-  unregister it (revoke and disable keep items); an applied update pauses it with "updated to <version> —
+  and only with the runtime on (never on a demo gateway); approve, enable, disable, revoke and rehash re-register
+  or unregister it (revoke and disable keep items; an unregistered run is cancelled before its next page call
+  or write); an applied update pauses it with "updated to <version> —
   run `nimbus extension approve <id>` to resume sync", lifted by the re-approval; `nimbus extension remove`
   purges its items, scheduler and status rows and granted credentials (a bound legacy key such as
   `readwise.token` included); and `nimbus connector remove` now refuses an extension-backed id with

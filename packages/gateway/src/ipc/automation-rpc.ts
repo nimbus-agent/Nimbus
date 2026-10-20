@@ -760,6 +760,9 @@ async function handleExtensionRehash(
     setExtensionEnabled(ctx.db, id, true);
     recoveredPendingRehashRegistry.unmark(id);
   }
+  // A new digest leaves the run grant stale: its sync is unregistered and paused for re-approval
+  // (and a crash-recovered extension re-enabled above is considered again).
+  ctx.extensionSync?.refresh(id);
   return { kind: "hit", value: { id, treeDigest, changed: true } };
 }
 

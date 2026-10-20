@@ -1928,12 +1928,18 @@ run returns before spawning and appends no row.
 to "enabled, a live (non-stale) grant, a `sync` block": boot registration runs only after the
 extension boot-integrity pass resolves and only when the runtime is on and the scheduler can run (a
 demo-rooted gateway registers nothing, I41), through the same I22 policy filter as every mesh
-syncable. `extension.approveRun`, `revokeRun`, `enable` and `disable` refresh it; an applied update
+syncable. `extension.approveRun`, `revokeRun`, `enable`, `disable` and an adopted `rehash` refresh it; an applied update
 (`auto-update-init.ts`'s `withUpdateAppliedHook`, both directions) leaves the grant stale, so the
 sync is unregistered and the index id paused with "updated to <version> — run `nimbus extension
-approve <id>` to resume sync"; a later approval lifts exactly that pause and no other. Revoke and
-disable keep items. `extension.remove` is the ONE removal path for an extension-backed connector:
-it unregisters, then — while the row and grant still exist — purges under the index id (items,
+approve <id>` to resume sync"; a later approval lifts exactly that pause and no other (an extension
+with no `sync` block is never paused). Revoke and disable keep items. Unregistering is a CANCEL:
+each registration carries a liveness token that unregister flips synchronously, and the syncable
+checks it before every page call and again right before a returned page is written (no `await` in
+between), throwing `ExtensionSyncCancelledError`; the scheduler, seeing its connector withdrawn
+mid-run, records nothing after the run (no telemetry, health, notification or success hook). So a
+run that outlives its registration neither calls (re-spawning the extension) nor writes.
+`extension.remove` is the ONE removal path for an extension-backed connector: it unregisters, stops
+the live client, then — while the row and grant still exist — purges under the index id (items,
 scheduler and status rows, and every granted credential key, including a bound legacy key such as
 `readwise.token`), then deletes the row. `connector.remove` refuses an extension-backed id (a bound
 legacy id, or an `ext_` id with a grant) with `ERR_CONNECTOR_IS_EXTENSION`, since it would clear the
@@ -1946,7 +1952,9 @@ built-in is never replaced, and the registrar only ever unregisters what it regi
 **Bounds.** The extension's own requests to its granted hosts are not individually ledgered (I43);
 the gateway's limiter cannot throttle them — the page budget, call timeout, interval and the network
 grant are the bounds. A manifest that cannot be read loses the binding, so a bound extension's legacy
-namespace is then not purged by `extension remove`. The end-to-end test
+namespace is then not purged by `extension remove`. Dropped-item counts are logged and returned on
+the run's `SyncResult`, but not yet persisted or shown by `nimbus connector status` (spec § 8.3's
+visibility clause is open: every surface that status reads would need a new column). The end-to-end test
 (`packages/gateway/test/e2e/extension-sync.e2e.test.ts`) runs a real gateway and the real sandbox, and proves the
 credential reaches the confined child through its env by a digest the fixture returns.
 

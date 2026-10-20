@@ -20,6 +20,21 @@ export interface ExtensionSyncableDeps {
   /** `SandboxRunner.canConfine` over the extension's spawn policy: non-null = why it cannot. */
   readonly canConfine: () => string | null;
   readonly budget: { readonly maxPages: number; readonly maxMs: number };
+  /**
+   * `false` once the registration this syncable belongs to was withdrawn (remove, revoke, disable,
+   * a stale grant). Checked before every page call and again right before a page is written, with
+   * no `await` in between, so a run that outlives its registration neither calls (re-spawning the
+   * extension) nor writes (after a purge).
+   */
+  readonly isLive: () => boolean;
+}
+
+/** A run stopped because its registration was withdrawn mid-run; nothing more was called or written. */
+export class ExtensionSyncCancelledError extends Error {
+  constructor(serviceId: string) {
+    super(`${serviceId}: extension sync cancelled (no longer registered)`);
+    this.name = "ExtensionSyncCancelledError";
+  }
 }
 
 export const EXTENSION_SYNC_BUDGET = {
@@ -73,7 +88,10 @@ async function runPages(
   let cursor = startCursor;
   let upserted = 0;
   for (let pages = 1; ; pages += 1) {
+    if (!deps.isLive()) throw new ExtensionSyncCancelledError(deps.identity.indexServiceId);
     const raw = await deps.callSync({ cursor, depth: ctx.depth, historyFloorMs });
+    // No await between this check and the writeBatch below.
+    if (!deps.isLive()) throw new ExtensionSyncCancelledError(deps.identity.indexServiceId);
     const page = parseSyncResponse(raw, {
       indexServiceId: deps.identity.indexServiceId,
       itemTypes: deps.itemTypes,

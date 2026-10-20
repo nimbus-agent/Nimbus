@@ -827,6 +827,7 @@ export class SyncScheduler {
       });
       result = await connector.sync(runCtx, row.cursor);
     } catch (err) {
+      if (this.wasWithdrawnMidRun(job, connector)) return;
       if (err instanceof RateLimitError) {
         transitionHealth(this.db, job.serviceId, {
           type: "rate_limited",
@@ -859,7 +860,23 @@ export class SyncScheduler {
     // writes `result.cursor` via `updateState` and re-queues a "continuation"
     // job, and that job resumes from the persisted cursor — which bypasses the
     // cold-start override entirely. The floor has done its job by then.
+    if (this.wasWithdrawnMidRun(job, connector)) return;
     this.historyFloors.delete(job.serviceId);
     this.runJobRecordSyncSuccess(job, row, startedAt, result);
+  }
+
+  /**
+   * `true` when `connector` was unregistered (or replaced) while its `sync()` was running. Such a
+   * run records NOTHING after it — no telemetry, no health transition, no notification, no success
+   * hook — so a removed connector's purged health row is never re-inserted and its owner is never
+   * told a connector they just removed "lost authentication". Any force waiter is settled.
+   */
+  private wasWithdrawnMidRun(job: Job, connector: Syncable): boolean {
+    if (this.connectors.get(job.serviceId) === connector) return false;
+    this.resolveForceWaiters(
+      job.serviceId,
+      job.reason === "force" ? new Error("Connector removed") : undefined,
+    );
+    return true;
   }
 }
