@@ -981,3 +981,114 @@ describe("fix round 1: accept checks the sync took over the LEGACY id", () => {
     expect([...registered.keys()]).toEqual([]);
   });
 });
+
+describe("Task 5.4 M1: an undone install whose files cannot be removed still fails the row", () => {
+  const ebusy = (): never => {
+    const err = new Error("EBUSY: resource busy or locked, rmdir 'x'") as NodeJS.ErrnoException;
+    err.code = "EBUSY";
+    throw err;
+  };
+
+  test("a throw after the grant with a throwing removal: unregistered, failed, still paused", async () => {
+    const e = engine({
+      removeInstallTree: ebusy,
+      scheduler: {
+        resume: () => {
+          throw new Error("scheduler stopped");
+        },
+        syncableFor: (id) => registered.get(id),
+      },
+    });
+    await e.evaluate();
+    const row = onlyRow();
+    await expect(e.accept(row.id, consentThat(true, []))).rejects.toThrow(/scheduler stopped/);
+    // The unregister ran: the registrar was refreshed again after the undo and holds nothing.
+    expect([...registered.keys()]).toEqual([]);
+    expect(refreshed.filter((id) => id === EXT)).toHaveLength(2);
+    // failAccept ran: the row failed and the legacy service stays paused with the reason.
+    expect(getMigration(db, row.id)?.state).toBe("failed");
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(1);
+    expect(getConnectorHealth(db, LEGACY).lastError).toContain("scheduler stopped");
+    // The rows went first, so the leftover files can never run.
+    expect(listExtensions(db)).toEqual([]);
+    expect(getRunGrant(db, EXT)).toBeNull();
+    expect(JSON.stringify(logs)).toContain("could not be removed from disk");
+  });
+
+  test("a tree-digest mismatch with a throwing removal still fails the row", async () => {
+    const e = engine({
+      removeInstallTree: ebusy,
+      installVerified: async (d, pkg, channel) => {
+        writeFileSync(join(pkg.sourceRoot, "late.js"), "1;\n");
+        return installVerifiedRegistryPackage(d, pkg, channel);
+      },
+    });
+    await e.evaluate();
+    const row = onlyRow();
+    await expect(e.accept(row.id, consentThat(true, []))).rejects.toThrow(
+      /ERR_EXTENSION_MIGRATION_FAILED.*digest/,
+    );
+    expect(getMigration(db, row.id)?.state).toBe("failed");
+    expect(listExtensions(db)).toEqual([]);
+  });
+});
+
+describe("Task 5.4: a sandbox that cannot confine keeps sync paused after accept (spec § 7.2 step 4a)", () => {
+  test("the prompt says so, and the scheduler's preflight re-pauses with the fix named", async () => {
+    const REASON = "the sandbox helper is not installed";
+    const egress: Array<{ destination: string; method: string }> = [];
+    const sched = new SyncScheduler(
+      {
+        ...unboundSyncCapabilities(),
+        db,
+        vault,
+        logger: pino({ level: "silent" }),
+        rateLimiter: new ProviderRateLimiter(),
+        sandboxCwd: os.tmpdir(),
+        credentialFor: () => ({ credential: "personal" }),
+        runTeamList: async () => [],
+        depth: "full",
+        extensionCredentialsFor: createExtensionCredentialsResolver(db, [entry]),
+      },
+      undefined,
+      { appendSyncEgress: (r) => egress.push(r) },
+    );
+    extraCleanups.push(() => sched.stop());
+    const meshCalls: string[] = [];
+    // The forced-canConfine seam PR 3's registrar tests use: the registrar's own `sandbox`.
+    const registrar = createExtensionSyncRegistrar({
+      db,
+      vault,
+      scheduler: sched,
+      mesh: {
+        callExtensionSyncTool: async (id) => {
+          meshCalls.push(id);
+          return { status: "ok", items: [], cursor: null, hasMore: false };
+        },
+      },
+      sandbox: { canConfine: () => REASON },
+      runtimeReadPaths: () => [join(tmp, "bun-bin")],
+      table: [entry],
+    });
+    const seen: MigrationConsentPayload[] = [];
+    const e = engine({
+      extensionSync: registrar,
+      scheduler: sched,
+      sandbox: { canConfine: () => REASON },
+    });
+    await e.evaluate();
+    const row = await e.accept(onlyRow().id, consentThat(true, seen));
+    expect(row.state).toBe("approved");
+    expect(seen[0]?.sandbox).toBe(`sync will stay paused until the sandbox is fixed: ${REASON}`);
+
+    // Accept resumed the service; the first run's preflight pauses it again, before any spawn.
+    await sched.forceSync(LEGACY).catch(() => undefined);
+    expect(meshCalls).toEqual([]);
+    expect(egress).toEqual([]);
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(1);
+    const health = getConnectorHealth(db, LEGACY);
+    expect(health.state).toBe("paused");
+    expect(health.lastError).toContain(`sandbox cannot confine this extension: ${REASON}`);
+    expect(health.lastError).toContain(`nimbus connector resume ${LEGACY}`);
+  });
+});

@@ -183,8 +183,17 @@ export interface MigrationEngineDeps {
   readonly now: () => number;
   readonly newId?: () => string;
   readonly logger?: Pick<Logger, "info" | "warn">;
-  /** Test seam for the install step; production uses `installVerifiedRegistryPackage`. */
+  /**
+   * Test seam for the install step; production uses `installVerifiedRegistryPackage`. Never passed
+   * in production: `platform/migration-boot.ts` builds the deps field by field, and an I44 source
+   * pin confines the name to this file.
+   */
   readonly installVerified?: typeof installVerifiedRegistryPackage;
+  /**
+   * Test seam for removing an undone install's tree; production uses `rmSync`. Same confinement as
+   * `installVerified`.
+   */
+  readonly removeInstallTree?: (path: string) => void;
 }
 
 // ---- paused reasons ------------------------------------------------------------------------------
@@ -633,11 +642,26 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     }
   };
 
+  const removeTree =
+    deps.removeInstallTree ?? ((p: string): void => rmSync(p, { recursive: true, force: true }));
+
   const undoInstall = (extensionId: string, installPath: string): void => {
-    // The same undo `installVerifiedRegistryPackage` performs on an entry-hash mismatch.
+    // The same undo `installVerifiedRegistryPackage` performs on an entry-hash mismatch. The rows
+    // go first: with no extension row (and so no grant) the leftover files can never run, sync or
+    // be listed.
     clearDeps(db, extensionId);
     deleteExtensionById(db, extensionId);
-    rmSync(installPath, { recursive: true, force: true });
+    // Best effort: on Windows a file still held open (an antivirus scan, an indexer) makes this throw
+    // EBUSY/EPERM. That must not skip what the caller does next — unregistering the syncable and
+    // failing the row — or the migration would stay `awaiting_approval` with its sync registered.
+    try {
+      removeTree(installPath);
+    } catch (e) {
+      deps.logger?.warn(
+        { extensionId, err: e instanceof Error ? e.message : String(e) },
+        "an undone migration install could not be removed from disk; it has no row and cannot run",
+      );
+    }
   };
 
   /**
