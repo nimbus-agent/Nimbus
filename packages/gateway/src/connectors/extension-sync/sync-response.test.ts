@@ -155,15 +155,22 @@ describe("sync v1 corpus", () => {
         if (want === undefined) {
           throw new Error(`no expectation for ${f}`);
         }
-        expect(r.status).toBe(want.status);
         if (r.status === "ok") {
           expect(r.dropped).toEqual({ undeclaredType: 0, malformed: 0, oversized: 0 });
-          expect(r.rows.map((x) => `${x.service}:${x.externalId}`)).toEqual(want.rows);
-          expect(r.hasMore).toBe(want.hasMore);
-          expect(r.cursor).toBe(want.cursor);
-        } else if (r.status === "rate_limited") {
-          expect(r.retryAfterMs).toBe(want.retryAfterMs);
         }
+        // One projection per status arm, compared whole against the expectation.
+        const got: Record<string, unknown> =
+          r.status === "ok"
+            ? {
+                status: r.status,
+                rows: r.rows.map((x) => `${x.service}:${x.externalId}`),
+                hasMore: r.hasMore,
+                cursor: r.cursor,
+              }
+            : r.status === "rate_limited"
+              ? { status: r.status, retryAfterMs: r.retryAfterMs }
+              : { status: r.status };
+        expect(got).toEqual(want);
         return;
       }
       let dropped = 0;
