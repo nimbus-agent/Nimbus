@@ -53,7 +53,8 @@ module.exports = {
       comment:
         "packages/registry-format holds the shared registry rules and must stay runtime-neutral: it imports nothing from gateway/cli/ui.",
       from: { path: "^packages/registry-format/src" },
-      to: { path: "^packages/(gateway|cli|ui)/src" },
+      // Any file in those packages, not only `src/` (e.g. `packages/gateway/compile-gateway.ts`).
+      to: { path: "^packages/(gateway|cli|ui)/" },
     },
 
     // ─────────── D3: PAL leakage ───────────

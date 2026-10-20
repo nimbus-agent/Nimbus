@@ -188,6 +188,17 @@ describe("inspectPackage refusals after extraction", () => {
     });
   });
 
+  test("a manifest that is a directory entry is refused as a registry error, not a raw EISDIR", async () => {
+    const tgz = writeRawTar([
+      { name: "nimbus.extension.json/", type: "5" },
+      { name: "dist/index.js", body: "1" },
+    ]);
+    await expect(inspectPackage(tgz, freshWork())).rejects.toMatchObject({
+      code: "ERR_REGISTRY_MANIFEST_INVALID",
+      message: expect.stringContaining("package has no nimbus.extension.json at its root"),
+    });
+  });
+
   test("an oversize manifest is refused", async () => {
     const big = JSON.stringify({ id: "a", pad: "p".repeat(MAX_MANIFEST_BYTES) });
     await expect(inspectDir(makeExt(big))).rejects.toThrow("manifest is too large");

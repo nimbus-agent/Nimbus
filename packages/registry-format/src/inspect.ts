@@ -1,6 +1,6 @@
 /** Unpacks a registry package into a private work dir and reads what the index will record. */
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { extract, list } from "tar";
 import { MAX_ENTRY_COUNT, MAX_MANIFEST_BYTES, MAX_UNPACKED_BYTES } from "./caps.ts";
@@ -26,6 +26,30 @@ const extractFailed = (detail: string): RegistryError =>
   new RegistryError("ERR_REGISTRY_EXTRACT_FAILED", detail);
 const manifestInvalid = (detail: string): RegistryError =>
   new RegistryError("ERR_REGISTRY_MANIFEST_INVALID", detail);
+
+/**
+ * Reads a file the archive put on disk through ONE descriptor: open, then stat and read the same
+ * fd, so there is no check-then-read window, and a directory (`"entry": "dist"`, or a
+ * `nimbus.extension.json/` directory entry) is refused as `missing()` rather than surfacing as a
+ * raw EISDIR. With `maxBytes`, an oversize file is refused from its size before it is read.
+ */
+function readRegularFile(path: string, missing: () => RegistryError, maxBytes?: number): Buffer {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    throw missing();
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw missing();
+    if (maxBytes !== undefined && st.size > maxBytes)
+      throw manifestInvalid("manifest is too large");
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
 
 /**
  * Refuses a package every client would refuse BEFORE extracting anything (entry types, entry count,
@@ -66,12 +90,11 @@ export async function inspectPackage(tgz: string, work: string): Promise<Inspect
       return type === "File" || type === "Directory";
     },
   });
-  const manifestPath = join(out, PACKAGE_MANIFEST_FILE);
-  if (!existsSync(manifestPath)) {
-    throw manifestInvalid(`package has no ${PACKAGE_MANIFEST_FILE} at its root`);
-  }
-  const manifestBytes = readFileSync(manifestPath);
-  if (manifestBytes.length > MAX_MANIFEST_BYTES) throw manifestInvalid("manifest is too large");
+  const manifestBytes = readRegularFile(
+    join(out, PACKAGE_MANIFEST_FILE),
+    () => manifestInvalid(`package has no ${PACKAGE_MANIFEST_FILE} at its root`),
+    MAX_MANIFEST_BYTES,
+  );
   let manifest: unknown;
   try {
     manifest = JSON.parse(manifestBytes.toString("utf8"));
@@ -89,21 +112,7 @@ export async function inspectPackage(tgz: string, work: string): Promise<Inspect
   const missing = (): RegistryError =>
     manifestInvalid(`extension entry ${entryRel} is missing or outside the package`);
   if (!entryPath.startsWith(resolve(out) + sep)) throw missing();
-  // One open, then stat and read through the same descriptor: no check-then-read window, and a
-  // directory (`"entry": "dist"`) is refused here rather than surfacing as a raw EISDIR.
-  let fd: number;
-  try {
-    fd = openSync(entryPath, "r");
-  } catch {
-    throw missing();
-  }
-  let entryBytes: Buffer;
-  try {
-    if (!fstatSync(fd).isFile()) throw missing();
-    entryBytes = readFileSync(fd);
-  } finally {
-    closeSync(fd);
-  }
+  const entryBytes = readRegularFile(entryPath, missing);
   return {
     manifestBytes,
     manifest: m,
