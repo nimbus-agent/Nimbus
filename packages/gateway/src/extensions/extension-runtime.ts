@@ -1,3 +1,5 @@
+import type { SandboxPermissions } from "@nimbus-dev/registry-format";
+
 import { listExtensions } from "../automation/extension-store.ts";
 import {
   type ExtensionManifestReader,
@@ -13,7 +15,9 @@ import {
   selfSpawn,
 } from "../platform/runtime-layout.ts";
 import { extensionStageRootFor } from "../platform/sandbox/sandbox-cwd.ts";
+import type { SandboxPolicy } from "../platform/sandbox/sandbox-policy.ts";
 import { readCredentialEnv } from "./extension-credentials.ts";
+import type { ResolvedRunGrants } from "./extension-run-grants.ts";
 import {
   type ExtensionStageDeps,
   removeBestEffort,
@@ -44,14 +48,41 @@ export function buildExtensionRuntimeManifest(
   return {
     id: `ext.${v.serviceId}`,
     version: v.version,
-    permissions: {
-      network: [...v.grants.network],
-      filesystem: {
-        read: [...v.grants.read, ...runtimeReadPaths],
-        write: [...v.grants.write],
-      },
-    },
+    permissions: extensionRuntimePermissions(v.grants, runtimeReadPaths),
     updateChannel: "stable",
+  };
+}
+
+/** Granted reach plus the runtime's read paths — the ONE composition the spawn policy uses. */
+function extensionRuntimePermissions(
+  grants: ResolvedRunGrants,
+  runtimeReadPaths: readonly string[],
+): SandboxPermissions {
+  return {
+    network: [...grants.network],
+    filesystem: {
+      read: [...grants.read, ...runtimeReadPaths],
+      write: [...grants.write],
+    },
+  };
+}
+
+/**
+ * The sandbox policy an extension with these stored grants spawns under, for asking
+ * `SandboxRunner.canConfine` BEFORE a spawn (the extension sync host's preflight). Built from the
+ * same composition {@link buildExtensionRuntimeManifest} uses, so the question asked is about the
+ * policy that spawns. Not a spawn path: it builds no spec and verifies nothing (I43 stays the spawn
+ * path's job).
+ */
+export function extensionSpawnPolicyForGrants(
+  serviceId: string,
+  grants: ResolvedRunGrants,
+  runtimeReadPaths: readonly string[],
+): SandboxPolicy {
+  return {
+    // The id `buildExtensionRuntimeManifest` gives the spawn; it keys the AppContainer profile.
+    id: `ext.${serviceId}`,
+    permissions: extensionRuntimePermissions(grants, runtimeReadPaths),
   };
 }
 

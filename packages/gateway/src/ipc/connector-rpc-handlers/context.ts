@@ -91,4 +91,10 @@ export type ConnectorRpcHandlerContext = {
    * missing.
    */
   realpath?: (p: string) => string;
+  /**
+   * Test seam. Omitted in production, where `connector.remove` asks `extensionIdBackingServiceId`
+   * over the production continuity table. Returns the extension id that backs a connector id
+   * (refused as `ERR_CONNECTOR_IS_EXTENSION`), or `undefined`.
+   */
+  extensionBackingId?: (serviceId: string) => string | undefined;
 };

@@ -3603,6 +3603,109 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       db.close();
     }
   });
+
+  test("behavioural: an extension sync appends ONE sync.run row per run under its index id, and none while its credential is blank", async () => {
+    const { insertExtensionRow } = await import("./automation/extension-store.ts");
+    const { upsertRunGrant } = await import("./extensions/run-grant-store.ts");
+    const { createExtensionCredentialsResolver } = await import(
+      "./connectors/extension-sync/extension-identity.ts"
+    );
+    const { createExtensionSyncRegistrar } = await import("./platform/register-extension-sync.ts");
+    const { SyncScheduler } = await import("./sync/scheduler.ts");
+    const { ProviderRateLimiter } = await import("./sync/rate-limiter.ts");
+    const { unboundSyncCapabilities } = await import("./sync/sync-capabilities.ts");
+    const { createMemoryVault, openMemoryIndexDatabase } = await import(
+      "./testing/bun-test-support.ts"
+    );
+    const pino = (await import("pino")).default;
+    const db = openMemoryIndexDatabase();
+    const vault = createMemoryVault();
+    const manifest = {
+      id: "i29.sync",
+      version: "1.0.0",
+      permissions: { network: [], filesystem: { read: [], write: [] } },
+      updateChannel: "stable" as const,
+      credentials: { token: { env: "I29_TOKEN" } },
+      sync: { contract: "1" as const, intervalSeconds: 300, itemTypes: ["note"] },
+    };
+    insertExtensionRow(db, {
+      id: "i29.sync",
+      version: "1.0.0",
+      install_path: join(tmpdir(), "i29-nowhere"),
+      manifest_hash: "h",
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+      tree_digest: "d",
+    });
+    upsertRunGrant(db, {
+      extension_id: "i29.sync",
+      service_id: "ext_i29_sync",
+      version: "1.0.0",
+      tree_digest: "d",
+      permissions_json: JSON.stringify({ network: [], read: [], write: [] }),
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: JSON.stringify({
+        token: { env: "I29_TOKEN", vaultKey: "ext.ext_i29_sync.token" },
+      }),
+    });
+    const rows: Array<{ destination: string; sourceType: string; method: string }> = [];
+    const sched = new SyncScheduler(
+      {
+        ...unboundSyncCapabilities(),
+        db,
+        vault,
+        logger: pino({ level: "silent" }),
+        rateLimiter: new ProviderRateLimiter(),
+        sandboxCwd: tmpdir(),
+        credentialFor: () => ({ credential: "personal" }),
+        runTeamList: async () => [],
+        depth: "full",
+        extensionCredentialsFor: createExtensionCredentialsResolver(db, [], () => manifest),
+      },
+      undefined,
+      { appendSyncEgress: (r) => rows.push(r) },
+    );
+    let calls = 0;
+    try {
+      createExtensionSyncRegistrar({
+        db,
+        vault,
+        scheduler: sched,
+        mesh: {
+          callExtensionSyncTool: async () => {
+            calls += 1;
+            return {
+              status: "ok",
+              items: [
+                { type: "note", externalId: `n${calls}`, title: "t", modifiedAt: 1, metadata: {} },
+              ],
+              cursor: `c${calls}`,
+              hasMore: calls === 1,
+            };
+          },
+        },
+        sandbox: { canConfine: () => null },
+        runtimeReadPaths: () => [],
+        table: [],
+        readManifest: () => manifest,
+      }).refresh("i29.sync");
+      await vault.set("ext.ext_i29_sync.token", "  ");
+      await sched.forceSync("ext_i29_sync");
+      expect({ rows: rows.length, calls }).toEqual({ rows: 0, calls: 0 });
+      await vault.set("ext.ext_i29_sync.token", "tok");
+      await sched.forceSync("ext_i29_sync");
+      // Two pages, one run, one row.
+      expect(calls).toBe(2);
+      expect(rows).toEqual([
+        { destination: "ext_i29_sync", sourceType: "sync", method: "sync.run" },
+      ]);
+    } finally {
+      await sched.stop();
+      db.close();
+    }
+  });
 });
 
 describe("I34 — locality is declared once, and a cloud adapter can never claim to be local", () => {

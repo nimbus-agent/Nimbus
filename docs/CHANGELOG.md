@@ -18,6 +18,23 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-20 — Extensions can sync into the index (Readwise unbundling pilot, PR 3; no migration, no new invariant).**
+  An approved extension whose manifest declares a `sync` block is registered with the sync scheduler and
+  syncs through its reserved `__nimbus_sync` tool: one scheduler run fetches up to 40 pages (60 s per call,
+  5 minutes per run), validates every item (undeclared types, malformed and oversized items are dropped and
+  counted), and appends ONE `sync.run` egress row (I29) under the id it syncs under — its `ext_` id, or a
+  legacy connector id the continuity table binds it to (empty until the bundled Readwise connector goes).
+  It never spawns or appends a row while a credential it declares is blank, and a sandbox that cannot
+  confine it pauses it with the reason. Lifecycle: boot registration runs after the extension integrity pass
+  and only with the runtime on (never on a demo gateway); approve, enable, disable and revoke re-register or
+  unregister it (revoke and disable keep items); an applied update pauses it with "updated to <version> —
+  run `nimbus extension approve <id>` to resume sync", lifted by the re-approval; `nimbus extension remove`
+  purges its items, scheduler and status rows and granted credentials (a bound legacy key such as
+  `readwise.token` included); and `nimbus connector remove` now refuses an extension-backed id with
+  `ERR_CONNECTOR_IS_EXTENSION`, naming `nimbus extension remove`. A built-in connector already registered
+  under the same id is never replaced. **What a user must do:** nothing — no extension declares `sync` yet.
+  Design: `docs/architecture.md` § Extension sync.
+
 - **2026-10-19 — The HTTP API's raw-row reads need a `data`-scoped client token (breaking for scripts that read them; no migration).**
   `GET /v1/items`, `/v1/items/<id>`, `/v1/people`, `/v1/people/<id>` and `/v1/audit` were public: any local
   process could read every indexed body, the people graph and the audit log (which carries I33 script bodies).

@@ -31,6 +31,7 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { VoiceService } from "../../voice/service.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { AgentInvokeHandler } from "../agent-invoke.ts";
+import type { AutomationRpcExtensionSyncHandle } from "../automation-rpc.ts";
 import type { CaptureRpcCtx } from "../capture-rpc.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
 import type { ComputerRpcCtx } from "../computer-rpc.ts";
@@ -113,6 +114,12 @@ export type CreateIpcServerOptions = {
    * before the prompt. Absent means the default (`true`); assemble always sets it.
    */
   extensionsRuntimeEnabled?: boolean;
+  /**
+   * The extension sync host's lifecycle hooks (`platform/register-extension-sync.ts`), called by the
+   * `extension.*` handlers that change whether an extension may sync, and by `extension.remove`'s
+   * purge. Absent means no extension sync host (tests).
+   */
+  extensionSync?: AutomationRpcExtensionSyncHandle;
   extensionsAutoUpdate?: AutoUpdateRuntimeBag;
   extensionsAutoUpdateDiag?: {
     cachedUpdatesCount: () => number;

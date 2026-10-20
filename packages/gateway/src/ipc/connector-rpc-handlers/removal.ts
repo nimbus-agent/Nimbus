@@ -11,6 +11,7 @@ import {
   clearOAuthVaultIfProviderUnused,
   sharedOAuthKey,
 } from "../../connectors/connector-vault.ts";
+import { extensionIdBackingServiceId } from "../../connectors/extension-sync/extension-identity.ts";
 import {
   clearRemoveIntent,
   getPendingRemoveIntents,
@@ -24,6 +25,7 @@ import type { LocalIndex } from "../../index/local-index.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import {
+  ConnectorRpcError,
   requireRegisteredSchedulerServiceId,
   sumItemsSiblingServices,
 } from "../connector-rpc-shared.ts";
@@ -113,6 +115,17 @@ export async function handleConnectorRemove(
   const { rec, vault, localIndex, syncScheduler } = ctx;
   const id = requireRegisteredSchedulerServiceId(rec, localIndex);
   const db = localIndex.getDatabase();
+
+  // Plan decision 7: an extension-backed id has ONE removal path, `extension remove`, which also
+  // stops the mesh slot and drops the grant. Clearing only the index here would leave both alive.
+  const backing = ctx.extensionBackingId ?? ((s: string) => extensionIdBackingServiceId(db, s));
+  const extensionId = backing(id);
+  if (extensionId !== undefined) {
+    throw new ConnectorRpcError(
+      -32602,
+      `ERR_CONNECTOR_IS_EXTENSION: ${id} is synced by the extension ${extensionId}; remove it with \`nimbus extension remove ${extensionId}\` (connector pause, resume and sync still work)`,
+    );
+  }
 
   writeRemoveIntent(db, id);
 

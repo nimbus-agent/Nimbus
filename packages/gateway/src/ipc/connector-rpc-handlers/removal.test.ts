@@ -8,7 +8,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { createRpcFixture, type RpcFixture } from "../../../test/helpers/rpc-harness.ts";
+import { insertExtensionRow } from "../../automation/extension-store.ts";
+import { extensionIdBackingServiceId } from "../../connectors/extension-sync/extension-identity.ts";
 import { LazyConnectorMesh } from "../../connectors/lazy-mesh/mesh.ts";
+import { dbRun } from "../../db/write.ts";
+import type { ContinuityEntry } from "../../extensions/continuity/continuity-table.ts";
+import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import { upsertRunGrant } from "../../extensions/run-grant-store.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { ConnectorRpcHandlerContext } from "./context.ts";
@@ -587,5 +593,100 @@ describe("handleConnectorRemove — user MCP sandbox cleanup", () => {
     } finally {
       await mesh.disconnect();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan decision 7 — an extension-backed id has ONE removal path: `extension remove`
+// ---------------------------------------------------------------------------
+
+describe("handleConnectorRemove — extension-backed ids refuse ERR_CONNECTOR_IS_EXTENSION", () => {
+  const KEY = `${"A".repeat(43)}=`;
+  const FP = "fp-official-root";
+  const EXT = "com.nimbus.readwise";
+  const CODE = "ext_com_nimbus_readwise";
+  const TABLE: ContinuityEntry[] = [
+    {
+      legacyServiceId: "readwise",
+      extensionId: EXT,
+      publisherKey: KEY,
+      sourceRootFingerprint: FP,
+      credentials: { token: "readwise.token" },
+      expectedPermissions: { network: ["readwise.io"], read: [], write: [] },
+      itemTypes: ["highlight", "book"],
+    },
+  ];
+  const MANIFEST = {
+    id: EXT,
+    version: "1.0.0",
+    permissions: { network: [], filesystem: { read: [], write: [] } },
+    publisher: { id: "nimbus", key: KEY },
+    updateChannel: "stable",
+  } satisfies ExtensionManifest;
+
+  function seedApprovedExtension(): void {
+    insertExtensionRow(fixture.db, {
+      id: EXT,
+      version: "1.0.0",
+      install_path: join(fixture.dataDir, "nowhere"),
+      manifest_hash: "h",
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    dbRun(fixture.db, "UPDATE extension SET source_root_fingerprint = ? WHERE id = ?", [FP, EXT]);
+    upsertRunGrant(fixture.db, {
+      extension_id: EXT,
+      service_id: CODE,
+      version: "1.0.0",
+      tree_digest: "d",
+      permissions_json: "{}",
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: "{}",
+    });
+  }
+
+  const backing = (s: string): string | undefined =>
+    extensionIdBackingServiceId(fixture.db, s, TABLE, () => MANIFEST);
+
+  test("connector remove readwise refuses while extension-backed", async () => {
+    seedApprovedExtension();
+    registerConnector("readwise");
+    fixture.localIndex.upsert({ id: "1", service: "readwise", itemType: "highlight", name: "h" });
+    await fixture.vault.set("readwise.token", "tok");
+    const { stub, calls } = makeSchedulerStub();
+    const err = await handleConnectorRemove({
+      ...buildCtx({ serviceId: "readwise" }, stub),
+      extensionBackingId: backing,
+    }).catch((e: unknown) => e);
+    expect((err as { rpcCode?: number }).rpcCode).toBe(-32602);
+    expect((err as Error).message).toStartWith("ERR_CONNECTOR_IS_EXTENSION:");
+    expect((err as Error).message).toContain(`nimbus extension remove ${EXT}`);
+    // Nothing was touched: no intent, no unregister, items and token intact.
+    expect(calls.unregistered).toEqual([]);
+    expect(fixture.localIndex.search({ service: "readwise" })).toHaveLength(1);
+    expect(await fixture.vault.get("readwise.token")).toBe("tok");
+    expect(
+      fixture.db
+        .query("SELECT service_id FROM connector_remove_intent WHERE service_id = ?")
+        .get("readwise"),
+    ).toBeNull();
+  });
+
+  test("an ext_ code-server id with a run grant refuses too (production seam)", async () => {
+    seedApprovedExtension();
+    registerConnector(CODE);
+    const err = await handleConnectorRemove(buildCtx({ serviceId: CODE })).catch((e: unknown) => e);
+    expect((err as Error).message).toStartWith("ERR_CONNECTOR_IS_EXTENSION:");
+  });
+
+  test("readwise with no extension bound to it is removed as before", async () => {
+    registerConnector("readwise");
+    const r = await handleConnectorRemove({
+      ...buildCtx({ serviceId: "readwise" }),
+      extensionBackingId: backing,
+    });
+    expect((r.value as { ok: boolean }).ok).toBe(true);
   });
 });

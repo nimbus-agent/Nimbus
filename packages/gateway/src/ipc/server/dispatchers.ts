@@ -1957,6 +1957,9 @@ async function dispatchExtensionAutomationRpc(
       ...(ctx.options.extensionsRuntimeEnabled === undefined
         ? {}
         : { extensionsRuntimeEnabled: ctx.options.extensionsRuntimeEnabled }),
+      ...(ctx.options.extensionSync === undefined
+        ? {}
+        : { extensionSync: ctx.options.extensionSync }),
     });
     if (out.kind === "hit") {
       return out.value;

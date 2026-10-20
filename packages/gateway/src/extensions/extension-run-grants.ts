@@ -143,3 +143,27 @@ export function serializeRunGrants(grants: ResolvedRunGrants): string {
     write: [...grants.write],
   });
 }
+
+function stringArray(v: unknown): string[] | undefined {
+  return Array.isArray(v) && v.every((e) => typeof e === "string") ? [...v] : undefined;
+}
+
+/**
+ * The inverse of {@link serializeRunGrants}, for a reader that only needs the stored grants (the
+ * extension sync host's pre-spawn `canConfine` question). `undefined` for anything that is not
+ * exactly the stored shape. Not verification: the spawn path re-resolves and compares (I43).
+ */
+export function parseRunGrants(json: string): ResolvedRunGrants | undefined {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const network = stringArray(Reflect.get(raw, "network"));
+  const read = stringArray(Reflect.get(raw, "read"));
+  const write = stringArray(Reflect.get(raw, "write"));
+  if (network === undefined || read === undefined || write === undefined) return undefined;
+  return { network, read, write };
+}

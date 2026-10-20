@@ -16,7 +16,11 @@ import { insertExtensionRow } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { DEFAULT_RUNTIME_LAYOUT, type RuntimeLayout } from "../platform/runtime-layout.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../platform/sandbox/sandbox-cwd.ts";
-import { SANDBOX_CWD_ENV, SANDBOX_POLICY_ENV } from "../platform/sandbox/sandbox-policy.ts";
+import {
+  policyFromManifest,
+  SANDBOX_CWD_ENV,
+  SANDBOX_POLICY_ENV,
+} from "../platform/sandbox/sandbox-policy.ts";
 import { MockVault } from "../vault/mock.ts";
 import { approveExtensionRun } from "./approve-run.ts";
 import type { ContinuityEntry } from "./continuity/continuity-table.ts";
@@ -25,6 +29,7 @@ import {
   buildExtensionRuntimeManifest,
   buildExtensionSpawnSpec,
   createExtensionSlotSource,
+  extensionSpawnPolicyForGrants,
 } from "./extension-runtime.ts";
 import {
   copyRegularTree,
@@ -109,6 +114,15 @@ describe("buildExtensionRuntimeManifest", () => {
     expect(m.permissions.filesystem?.write).toEqual([...v.grants.write]);
     expect(m.permissions.filesystem?.write).not.toContain(v.installPath);
     expect(m.permissions.network).toEqual(["api.example.com"]);
+  });
+});
+
+describe("extensionSpawnPolicyForGrants", () => {
+  test("is exactly the policy the spawn manifest carries, so a preflight asks about what spawns", () => {
+    const { v } = realInstall();
+    expect(extensionSpawnPolicyForGrants(v.serviceId, v.grants, runtimeReadPaths)).toEqual(
+      policyFromManifest(buildExtensionRuntimeManifest(v, runtimeReadPaths)),
+    );
   });
 });
 

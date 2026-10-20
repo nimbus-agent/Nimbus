@@ -137,3 +137,27 @@ export function createExtensionCredentialsResolver(
     return hit === undefined ? undefined : parseCredentials(hit.grant.credentials_json);
   };
 }
+
+/**
+ * The extension that a connector id belongs to, or `undefined` for every other id: an `ext_`
+ * code-server id carried by a run grant, or the INDEX id an approved extension syncs under (the
+ * bound legacy id, e.g. `readwise`). `connector.remove` refuses these (plan decision 7) — removing
+ * one there would clear index rows while the mesh slot and the grant lived on. Built-in ids that the
+ * table does not bind answer with no I/O beyond the grant list.
+ */
+export function extensionIdBackingServiceId(
+  db: Database,
+  serviceId: string,
+  table: readonly ContinuityEntry[] = CONTINUITY_TABLE,
+  readManifest: ExtensionManifestReader = readInstalledManifest,
+): string | undefined {
+  const isExt = EXTENSION_SERVICE_ID_PATTERN.test(serviceId);
+  if (isExt) {
+    const grant = listRunGrants(db).find((g) => g.service_id === serviceId);
+    if (grant !== undefined) return grant.extension_id;
+  }
+  if (!isExt && !table.some((e) => e.legacyServiceId === serviceId)) return undefined;
+  return listExtensionIdentities(db, table, readManifest).find(
+    (e) => e.identity.indexServiceId === serviceId,
+  )?.identity.extensionId;
+}

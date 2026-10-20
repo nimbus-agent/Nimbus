@@ -398,6 +398,10 @@ import {
 } from "./notifications/notifications-runtime.ts";
 import { ensureOwnerOnlyFile, tightenToOwnerOnly } from "./owner-only-mode.ts";
 import type { PlatformPaths } from "./paths.ts";
+import {
+  createExtensionSyncRegistrarForBoot,
+  purgeExtensionIndexData,
+} from "./register-extension-sync.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
 import { isProductionRuntime } from "./runtime-layout.ts";
 import { sandboxCwdFor } from "./sandbox/sandbox-cwd.ts";
@@ -696,6 +700,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   ownershipRefresher: OwnershipRefresher | undefined;
   premortemRefresher: PremortemRefresher | undefined;
   oncallPush: OncallPushRuntime;
+  /** The I22 policy-filtered `register`, for the extension sync host built after the boot gate. */
+  policyFilteredRegistrar: Pick<SyncScheduler, "register">;
 }> {
   const {
     paths,
@@ -1001,6 +1007,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     ownershipRefresher,
     premortemRefresher,
     oncallPush,
+    policyFilteredRegistrar,
   };
 }
 
@@ -2073,8 +2080,9 @@ function maybeStartAutoUpdateRuntime(deps: {
   connectorMesh: LazyConnectorMesh;
   sidecarStops: Array<() => void>;
   registryFetch: Omit<RegistryFetchDeps, "db">;
+  onUpdateApplied: (extensionId: string) => void;
 }): AutoUpdateRuntime | undefined {
-  const { db, vault, paths, connectorMesh, sidecarStops, registryFetch } = deps;
+  const { db, vault, paths, connectorMesh, sidecarStops, registryFetch, onUpdateApplied } = deps;
   let autoUpdateRuntime: AutoUpdateRuntime | undefined;
   const autoUpdateDisabled = process.env["NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE"] === "1";
   if (!autoUpdateDisabled && bootPolicyFor(paths).extensionsAutoUpdate) {
@@ -2087,6 +2095,7 @@ function maybeStartAutoUpdateRuntime(deps: {
       fetch: registryFetch,
       intervalHours: extensionsCfg.updateCheckIntervalHours,
       stopExtensionClient: (id) => connectorMesh.stopExtensionClient(id),
+      onUpdateApplied,
     });
     void autoUpdateRuntime.daemon.start();
     sidecarStops.push(() => {
@@ -3640,6 +3649,7 @@ export async function assemblePlatformServices(
     ownershipRefresher,
     premortemRefresher,
     oncallPush,
+    policyFilteredRegistrar,
   } = await createSchedulerWithMesh({
     paths,
     vault,
@@ -3680,6 +3690,30 @@ export async function assemblePlatformServices(
     extensionSpawnGate.resolve();
   }
 
+  // The extension sync host (Readwise unbundling pilot, spec § 8.3). Built only AFTER the boot
+  // verification pass, so nothing it registers is something that pass just hard-disabled, and only
+  // when the runtime is on and the scheduler can run (not demo-rooted, I41). Registration goes
+  // through the same I22 policy filter as every other mesh-backed syncable.
+  const extensionSyncRegistrar = createExtensionSyncRegistrarForBoot(
+    { runtimeEnabled: extensionRuntimeEnabled, syncEnabled: bootPolicyFor(paths).syncScheduler },
+    {
+      db,
+      vault,
+      scheduler: {
+        register: (c, i) => policyFilteredRegistrar.register(c, i),
+        unregister: (id) => syncScheduler.unregister(id),
+        pause: (id, reason) => syncScheduler.pause(id, reason),
+        resume: (id) => syncScheduler.resume(id),
+        syncableFor: (id) => syncScheduler.syncableFor(id),
+      },
+      mesh: connectorMesh,
+      sandbox: sandboxRunner,
+      runtimeReadPaths: () => resolveRuntimeById("bun").requiredReadPaths(),
+      logger: syncLogger,
+    },
+  );
+  extensionSyncRegistrar.registerAllFromDatabase();
+
   // Extension registries: ONE air-gap switch (the LLM router's `enforce_air_gap`), read per call from
   // the router's boot-resolved config; it does not track a later config or policy change. The SAME
   // object reaches the `registry.*` methods and the auto-update daemon.
@@ -3697,6 +3731,7 @@ export async function assemblePlatformServices(
     connectorMesh,
     sidecarStops,
     registryFetch,
+    onUpdateApplied: (id) => extensionSyncRegistrar.refresh(id),
   });
 
   rt?.startBackgroundJobs();
@@ -3717,6 +3752,12 @@ export async function assemblePlatformServices(
     demo: paths.demo === true,
     extensionsDir: paths.extensionsDir,
     extensionsRuntimeEnabled: extensionRuntimeEnabled,
+    extensionSync: {
+      refresh: (id) => extensionSyncRegistrar.refresh(id),
+      unregister: (id) => extensionSyncRegistrar.unregister(id),
+      // Always wired, runtime on or off: items an extension synced earlier go with it either way.
+      purgeBeforeRemove: (id) => purgeExtensionIndexData({ db, vault, localIndex }, id),
+    },
     registryFetch,
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,
