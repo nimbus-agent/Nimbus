@@ -102,6 +102,7 @@ describe("listPolicyGatedModelAccessibleOwnerCodeServerIds (user MCP + extension
       permissions_json: '{"network":[],"read":[],"write":[]}',
       model_access: 1,
       approved_at: 1,
+      credentials_json: "{}",
     });
     return db;
   }

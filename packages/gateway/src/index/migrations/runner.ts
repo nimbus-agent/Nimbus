@@ -34,6 +34,7 @@ import {
 import { ENTITY_METADATA_V54_SQL } from "../entity-metadata-v54-sql.ts";
 import { V31_EXTENSION_DEPENDENCY_SQL } from "../extension-dependency-v31-sql.ts";
 import { EXTENSION_REGISTRY_V71_SQL } from "../extension-registry-v71-sql.ts";
+import { EXTENSION_RUN_GRANT_CREDENTIALS_V72_SQL } from "../extension-run-grant-credentials-v72-sql.ts";
 import { EXTENSION_RUN_GRANT_V70_SQL } from "../extension-run-grant-v70-sql.ts";
 import {
   EXTENSION_SESSION_V10_MIGRATION_SQL,
@@ -659,6 +660,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     71,
     "extension registries (extension_registry) + extension source columns",
     EXTENSION_REGISTRY_V71_SQL,
+  ),
+  simpleStep(
+    71,
+    72,
+    "extension run-grant credentials (extension_run_grant.credentials_json)",
+    EXTENSION_RUN_GRANT_CREDENTIALS_V72_SQL,
   ),
 ];
 

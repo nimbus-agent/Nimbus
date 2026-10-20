@@ -2113,6 +2113,7 @@ code_execution=true
       permissions_json: '{"network":[],"read":[],"write":[]}',
       model_access: 1,
       approved_at: 1,
+      credentials_json: "{}",
     });
     expect(
       listPolicyGatedModelAccessibleOwnerCodeServerIds(index, allow.enforced(), () => false),
@@ -6129,6 +6130,8 @@ describe("I43 — an installed extension's code runs only through the verified s
       signed?: boolean;
       approve?: boolean;
       stage?: import("./extensions/extension-stage.ts").ExtensionStageDeps;
+      /** Declare one credential, `token` -> env `I43_TOKEN`. */
+      credential?: boolean;
     } = {},
   ) {
     const { installExtensionFromLocalDirectory } = await import(
@@ -6162,6 +6165,7 @@ describe("I43 — an installed extension's code runs only through the verified s
         network: ["api.example.com"],
         filesystem: { read: [join(root, "outside")], write: [] },
       },
+      ...(opts.credential === true ? { credentials: { token: { env: "I43_TOKEN" } } } : {}),
     };
     let publisherKeyPath: string | undefined;
     if (opts.signed === true) {
@@ -6459,6 +6463,111 @@ describe("I43 — an installed extension's code runs only through the verified s
     const specDefAt = src.indexOf("export function buildExtensionSpawnSpec(");
     expect(manifestCalls[0]).toBeGreaterThan(specDefAt);
     expect(manifestCalls[0]).toBeLessThan(src.indexOf("export type ExtensionSlotSourceDeps"));
+  });
+
+  test("behavioural: a granted credential reaches the spec env with its Vault value; ungranted secrets and a stale mapping do not", async () => {
+    const { getRunGrant, upsertRunGrant } = await import("./extensions/run-grant-store.ts");
+    const { extensionProcessEnv } = await import("./extensions/spawn-env.ts");
+    const { SANDBOX_POLICY_ENV, SANDBOX_CWD_ENV } = await import(
+      "./platform/sandbox/sandbox-policy.ts"
+    );
+    const f = await installAndMaybeApprove({ credential: true });
+    const g = getRunGrant(f.db, f.id);
+    if (g === null) throw new Error("no grant");
+    const ownKey = `ext.${g.service_id}.token`;
+    expect(JSON.parse(g.credentials_json)).toEqual({
+      token: { env: "I43_TOKEN", vaultKey: ownKey },
+    });
+    await f.vault.set(ownKey, "i43-granted-value");
+    await f.vault.set("github.pat", "i43-ungranted-value");
+    const prepared = await f.source.prepareSpawn(g.service_id);
+    expect(prepared.spec.env["I43_TOKEN"]).toBe("i43-granted-value");
+    const allowed = new Set([
+      ...Object.keys(extensionProcessEnv({})),
+      SANDBOX_POLICY_ENV,
+      SANDBOX_CWD_ENV,
+      "I43_TOKEN",
+    ]);
+    expect(Object.keys(prepared.spec.env).filter((k) => !allowed.has(k))).toEqual([]);
+    expect(Object.values(prepared.spec.env)).not.toContain("i43-ungranted-value");
+    expect(JSON.stringify(prepared.spec.args)).not.toContain("i43-granted-value");
+    prepared.discard();
+    // A stored credential mapping that no longer equals the re-resolved one refuses the spawn.
+    upsertRunGrant(f.db, {
+      ...g,
+      credentials_json: JSON.stringify({ token: { env: "I43_TOKEN", vaultKey: "github.pat" } }),
+    });
+    expect(await refusalCode(f.source.prepareSpawn(g.service_id))).toBe(
+      "ERR_EXTENSION_RUN_CHANGED",
+    );
+  });
+
+  test("source pin: credential values reach the child ONLY as extensionProcessEnv's extra, read after verification", async () => {
+    const src = stripComments(await read("packages/gateway/src/extensions/extension-runtime.ts"));
+    // The spec's env is built in exactly one place, from the credential env and nothing else.
+    expect(src.match(/\benv:/g) ?? []).toHaveLength(1);
+    expect(src).toMatch(/\{ command, args, env: extensionProcessEnv\(deps\.credentialEnv\) \}/);
+    expect(src.match(/extensionProcessEnv\(/g) ?? []).toHaveLength(1);
+    // prepareSpawn reads the values for the VERIFIED credentials, after the verifier and before
+    // staging, and hands them to the spec builder.
+    const prepAt = src.indexOf("async prepareSpawn(");
+    const prep = src.slice(prepAt);
+    const readAt = prep.indexOf(
+      "const credentialEnv = await readCredentialEnv(deps.vault, verified.credentials);",
+    );
+    expect(readAt).toBeGreaterThan(prep.indexOf("await verify("));
+    expect(prep.indexOf("stageVerifiedExtension(")).toBeGreaterThan(readAt);
+    expect(prep).toMatch(/buildExtensionSpawnSpec\(staged, \{[^}]*\bcredentialEnv,\s*\}\)/);
+    // The Vault-reading helper has no other production caller.
+    const files = await readDirFiles("packages/gateway/src");
+    const readers = files
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => /\breadCredentialEnv\(/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(readers).toEqual([
+      "extensions/extension-credentials.ts",
+      "extensions/extension-runtime.ts",
+    ]);
+    // The verifier re-resolves the credentials from the manifest it verified and compares them
+    // with the stored grant, refusing RUN_CHANGED on any difference.
+    const ver = stripComments(await read("packages/gateway/src/extensions/verified-extension.ts"));
+    expect(ver).toMatch(
+      /if \(serializeRunCredentials\(credentials\) !== grant\.credentials_json\) \{\s*refuse\(\s*"ERR_EXTENSION_RUN_CHANGED",/,
+    );
+    expect(ver).toMatch(/findContinuityBinding\(\s*bindingInputFor\(row, manifest\),/);
+  });
+
+  test("behavioural: a credential env name that could change what the child runs is refused at parse", async () => {
+    const { parseExtensionManifestJson } = await import("./extensions/manifest.ts");
+    const { BASELINE_KEYS } = await import("./extensions/spawn-env.ts");
+    const reserved = [
+      "NODE_OPTIONS",
+      "BUN_X",
+      "NIMBUS_X",
+      "LD_PRELOAD",
+      "DYLD_INSERT_LIBRARIES",
+      "COMSPEC",
+      "PATHEXT",
+      ...BASELINE_KEYS,
+    ];
+    for (const env of reserved) {
+      expect(() =>
+        parseExtensionManifestJson(
+          JSON.stringify({ id: "x", version: "1.0.0", credentials: { token: { env } } }),
+        ),
+      ).toThrow(/reserved variable/);
+    }
+    // Positive control: the same manifest with an ordinary name parses, so the refusals above are
+    // about the NAME and not some other defect in the fixture.
+    const ok = parseExtensionManifestJson(
+      JSON.stringify({ id: "x", version: "1.0.0", credentials: { token: { env: "I43_TOKEN" } } }),
+    );
+    expect(ok.credentials).toEqual({ token: { env: "I43_TOKEN" } });
+    // The CALLS, not the names: removing either check from the parser fails here.
+    const src = stripComments(await read("packages/gateway/src/extensions/manifest.ts"));
+    expect(src).toMatch(/!CREDENTIAL_ENV_RE\.test\(env\) \|\| isReservedEnv\(env\)/);
+    expect(src).toMatch(/isExtensionBaselineEnvKey\(env\)/);
   });
 
   test("the run grant is created only behind the executor-gated extension.run approval (I2 frozen set)", () => {

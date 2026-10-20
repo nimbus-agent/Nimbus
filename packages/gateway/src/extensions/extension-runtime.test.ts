@@ -18,6 +18,8 @@ import { DEFAULT_RUNTIME_LAYOUT, type RuntimeLayout } from "../platform/runtime-
 import { extensionStageRootFor, sandboxCwdFor } from "../platform/sandbox/sandbox-cwd.ts";
 import { SANDBOX_CWD_ENV, SANDBOX_POLICY_ENV } from "../platform/sandbox/sandbox-policy.ts";
 import { MockVault } from "../vault/mock.ts";
+import { approveExtensionRun } from "./approve-run.ts";
+import type { ContinuityEntry } from "./continuity/continuity-table.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import {
   buildExtensionRuntimeManifest,
@@ -29,11 +31,13 @@ import {
   type StagedExtensionForSpawn,
   stageVerifiedExtension,
 } from "./extension-stage.ts";
+import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
-import { upsertRunGrant } from "./run-grant-store.ts";
+import { getRunGrant, upsertRunGrant } from "./run-grant-store.ts";
 import { extensionProcessEnv } from "./spawn-env.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import type { VerifiedExtensionForSpawn } from "./verified-extension.ts";
+import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -66,6 +70,7 @@ function realInstall(serviceId = "ext_foo"): {
       entryPath: join(installPath, "dist", "index.js"),
       grants: { network: ["api.example.com"], read: [join(root, "r1")], write: [join(root, "w1")] },
       treeDigest: computeExtensionTreeDigest(installPath),
+      credentials: {},
     },
     sandboxDir,
     leaf: sandboxCwdFor(sandboxDir, `ext.${serviceId}`),
@@ -133,7 +138,11 @@ describe("buildExtensionSpawnSpec", () => {
 
   test("compiled: the self-role runs the STAGED entry", () => {
     const { s } = staged();
-    const spec = buildExtensionSpawnSpec(s, { runtimeReadPaths, layout: COMPILED_LAYOUT });
+    const spec = buildExtensionSpawnSpec(s, {
+      runtimeReadPaths,
+      layout: COMPILED_LAYOUT,
+      credentialEnv: {},
+    });
     // The sandbox wrapper prefix comes from the live layout; the confined command is the layout's
     // own executable re-entered in the extension role.
     expect(spec.args.slice(-3)).toEqual([
@@ -146,7 +155,11 @@ describe("buildExtensionSpawnSpec", () => {
 
   test("dev tree: the inline role runs the STAGED entry with no .env and no auto-install, loading no gateway source", () => {
     const { s } = staged();
-    const spec = buildExtensionSpawnSpec(s, { runtimeReadPaths, layout: DEV_LAYOUT });
+    const spec = buildExtensionSpawnSpec(s, {
+      runtimeReadPaths,
+      layout: DEV_LAYOUT,
+      credentialEnv: {},
+    });
     const tail = spec.args.slice(-6);
     expect(tail[0]).toBe(DEV_LAYOUT.execPath);
     expect(tail.slice(1, 4)).toEqual(["--no-env-file", "--no-install", "-e"]);
@@ -173,6 +186,7 @@ function devInlineRole(): string {
   const spec = buildExtensionSpawnSpec(stageVerifiedExtension(v, stageRoot), {
     runtimeReadPaths,
     layout: DEV_LAYOUT,
+    credentialEnv: {},
   });
   return spec.args.at(-2) ?? "";
 }
@@ -319,6 +333,7 @@ function seed(): Database {
       permissions_json: "{}",
       model_access: 0,
       approved_at: 1,
+      credentials_json: "{}",
     });
   }
   return db;
@@ -407,5 +422,147 @@ describe("createExtensionSlotSource", () => {
     p.discard();
     expect(stages(stageRoot)).toEqual([]);
     expect(existsSync(stageRoot)).toBe(true);
+  });
+});
+
+describe("prepareSpawn: credentials reach the child only through extensionProcessEnv (I1/I43)", () => {
+  const ID = "com.example.readwise";
+  const TOKEN = "rw-secret-token-value";
+  const OTHER = "unrelated-secret-value";
+
+  /**
+   * A real signed install, bound through a fixture continuity entry to the legacy `readwise`
+   * connector and approved through `approveExtensionRun`; the slot source uses the REAL verifier
+   * with the same table. Nothing here spawns a process.
+   */
+  async function boundFixture(token: string) {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-ext-cred-")));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const db = new Database(":memory:");
+    cleanups.push(() => db.close());
+    LocalIndex.ensureSchema(db);
+    mkdirSync(join(root, "data"), { recursive: true });
+    const env: ExtensionRunGrantEnv = {
+      platform: process.platform,
+      protectedRoots: [join(root, "data"), join(root, "config")],
+      runtimeReadPaths: [join(root, "bun-bin")],
+      realpath: (p) => realpathSync.native(p),
+    };
+    const vault = new MockVault();
+    const src = join(root, "src");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    const kp = generateEd25519Keypair();
+    const manifest: Record<string, unknown> = {
+      id: ID,
+      version: "1.0.0",
+      entry: "dist/index.js",
+      credentials: { token: { env: "READWISE_TOKEN" } },
+      publisher: { id: "rw-pub", key: encodeBase64(kp.pubkey) },
+    };
+    manifest["signature"] = await signManifest(manifest, kp.privkey);
+    const publisherKeyPath = join(root, "pub.key");
+    writeFileSync(publisherKeyPath, `${encodeBase64(kp.pubkey)}\n`);
+    writeFileSync(join(src, "nimbus.extension.json"), JSON.stringify(manifest));
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    await installExtensionFromLocalDirectory({
+      db,
+      extensionsDir: join(root, "data", "extensions"),
+      sourcePath: src,
+      approve: async () => true,
+      vault,
+      publisherKeyPath,
+    });
+    db.run("UPDATE extension SET source_root_fingerprint = 'root-fp' WHERE id = ?", [ID]);
+    const table: ContinuityEntry[] = [
+      {
+        legacyServiceId: "readwise",
+        extensionId: ID,
+        publisherKey: encodeBase64(kp.pubkey),
+        sourceRootFingerprint: "root-fp",
+        credentials: { token: "readwise.token" },
+        expectedPermissions: { network: [], read: [], write: [] },
+        itemTypes: [],
+      },
+    ];
+    await approveExtensionRun(ID, {
+      db,
+      env,
+      gate: async () => true,
+      runtimeEnabled: true,
+      now: () => 1,
+      continuityTable: table,
+    });
+    // The granted (legacy) key, plus secrets the extension was never granted: among them the key
+    // its OWN keyspace would use had it not been bound.
+    await vault.set("readwise.token", token);
+    await vault.set("github.pat", OTHER);
+    await vault.set("ext.ext_com_example_readwise.token", OTHER);
+    const serviceId = getRunGrant(db, ID)?.service_id ?? "";
+    const source = createExtensionSlotSource({
+      db,
+      vault,
+      env,
+      sandboxDir: join(root, "sandbox"),
+      runtimeReadPaths: () => [join(root, "bun-bin")],
+      isConnectorAllowed: () => true,
+      continuityTable: table,
+    });
+    return { source, serviceId };
+  }
+
+  const allowedKeys = (extra: readonly string[]): Set<string> =>
+    new Set([
+      ...Object.keys(extensionProcessEnv({})),
+      SANDBOX_POLICY_ENV,
+      SANDBOX_CWD_ENV,
+      ...extra,
+    ]);
+
+  test("spawn env carries READWISE_TOKEN from the granted key only", async () => {
+    const { source, serviceId } = await boundFixture(TOKEN);
+    expect(serviceId).toBe("ext_com_example_readwise");
+    const p = await source.prepareSpawn(serviceId);
+    expect(p.spec.env["READWISE_TOKEN"]).toBe(TOKEN);
+    const allowed = allowedKeys(["READWISE_TOKEN"]);
+    for (const k of Object.keys(p.spec.env)) expect(allowed.has(k)).toBe(true);
+    // No ungranted secret reaches the child under any name, and no value travels in argv.
+    expect(Object.values(p.spec.env)).not.toContain(OTHER);
+    expect(JSON.stringify(p.spec.args)).not.toContain(TOKEN);
+    expect(JSON.stringify(p.spec.args)).not.toContain(OTHER);
+    p.discard();
+  });
+
+  test("blank vault value -> env var absent, not empty", async () => {
+    const { source, serviceId } = await boundFixture("   ");
+    const p = await source.prepareSpawn(serviceId);
+    expect(Object.hasOwn(p.spec.env, "READWISE_TOKEN")).toBe(false);
+    const allowed = allowedKeys([]);
+    for (const k of Object.keys(p.spec.env)) expect(allowed.has(k)).toBe(true);
+    p.discard();
+  });
+
+  test("a refused verification reads no credential from the Vault", async () => {
+    const reads: string[] = [];
+    const vault = new MockVault();
+    const get = vault.get.bind(vault);
+    vault.get = async (k: string) => {
+      reads.push(k);
+      return get(k);
+    };
+    const src = createExtensionSlotSource({
+      db: seed(),
+      vault,
+      env: {} as ExtensionRunGrantEnv,
+      sandboxDir: "x",
+      runtimeReadPaths: () => [],
+      isConnectorAllowed: () => true,
+      verify: (async () => {
+        throw new ExtensionRunGrantError("ERR_EXTENSION_RUN_CHANGED", "changed");
+      }) as never,
+    });
+    await expect(src.prepareSpawn("ext_a")).rejects.toMatchObject({
+      code: "ERR_EXTENSION_RUN_CHANGED",
+    });
+    expect(reads).toEqual([]);
   });
 });

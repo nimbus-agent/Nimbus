@@ -7,6 +7,7 @@ import {
   type SandboxPermissions,
   validateAndNormalizePermissions,
 } from "./permissions-validator.ts";
+import { isExtensionBaselineEnvKey } from "./spawn-env.ts";
 
 export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";
 
@@ -42,6 +43,14 @@ export function extensionEntryRelPath(manifest: { readonly entry?: string }): st
     : DEFAULT_EXTENSION_ENTRY;
 }
 
+export type ExtensionSyncManifest = {
+  readonly contract: "1";
+  readonly intervalSeconds: number;
+  readonly itemTypes: readonly string[];
+};
+
+export type ExtensionCredentialDecls = Readonly<Record<string, { readonly env: string }>>;
+
 export type ExtensionManifest = {
   id: string;
   version: string;
@@ -53,6 +62,8 @@ export type ExtensionManifest = {
   updateChannel: "stable" | "beta";
   changelog?: string;
   dependsOn?: Readonly<Record<string, string>>;
+  sync?: ExtensionSyncManifest;
+  credentials?: ExtensionCredentialDecls;
 };
 
 export const PUBLISHER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -150,6 +161,109 @@ function parseDependsOn(value: unknown): Readonly<Record<string, string>> | unde
   return Object.keys(out).length === 0 ? undefined : out;
 }
 
+const SYNC_NAME_RE = /^[a-z][a-z0-9_]{0,31}$/;
+const CREDENTIAL_ENV_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
+/**
+ * A credential env name is refused when it could change what the child RUNS rather than carry a
+ * secret: the gateway's and the runtimes' own namespaces, the dynamic loaders' injection variables
+ * (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, ...), Windows command resolution, and every baseline key
+ * `extensionProcessEnv` copies, which a credential of that name would overwrite.
+ */
+const RESERVED_ENV_PREFIXES = ["NIMBUS_", "BUN_", "NODE_", "LD_", "DYLD_"] as const;
+const RESERVED_ENV_NAMES: ReadonlySet<string> = new Set([
+  "PATH",
+  "HOME",
+  "USERPROFILE",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "SYSTEMROOT",
+  "COMSPEC",
+  "PATHEXT",
+]);
+const MIN_SYNC_INTERVAL_SECONDS = 60;
+
+function asPlainObject(value: unknown, what: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`extension manifest ${what} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function rejectUnknownKeys(o: Record<string, unknown>, allowed: readonly string[], what: string) {
+  for (const k of Object.keys(o)) {
+    if (!allowed.includes(k)) {
+      throw new Error(`extension manifest ${what} has unknown key: ${k}`);
+    }
+  }
+}
+
+function parseSync(value: unknown): ExtensionSyncManifest | undefined {
+  if (value === undefined) return undefined;
+  const o = asPlainObject(value, "sync");
+  rejectUnknownKeys(o, ["contract", "intervalSeconds", "itemTypes"], "sync");
+  if (o["contract"] !== "1") {
+    throw new Error('extension manifest sync.contract must be exactly "1"');
+  }
+  const interval = o["intervalSeconds"];
+  if (
+    typeof interval !== "number" ||
+    !Number.isInteger(interval) ||
+    interval < MIN_SYNC_INTERVAL_SECONDS
+  ) {
+    throw new Error(
+      `extension manifest sync.intervalSeconds must be an integer >= ${MIN_SYNC_INTERVAL_SECONDS}`,
+    );
+  }
+  const types = o["itemTypes"];
+  if (
+    !Array.isArray(types) ||
+    types.length === 0 ||
+    !types.every((t) => typeof t === "string" && SYNC_NAME_RE.test(t))
+  ) {
+    throw new Error(
+      "extension manifest sync.itemTypes must be a non-empty array of [a-z][a-z0-9_]{0,31} names",
+    );
+  }
+  return { contract: "1", intervalSeconds: interval, itemTypes: [...(types as string[])] };
+}
+
+function isReservedEnv(env: string): boolean {
+  return (
+    RESERVED_ENV_NAMES.has(env) ||
+    isExtensionBaselineEnvKey(env) ||
+    RESERVED_ENV_PREFIXES.some((p) => env.startsWith(p))
+  );
+}
+
+function parseCredentials(value: unknown): ExtensionCredentialDecls | undefined {
+  if (value === undefined) return undefined;
+  const o = asPlainObject(value, "credentials");
+  const out: Record<string, { readonly env: string }> = {};
+  const seenEnv = new Set<string>();
+  for (const [name, entry] of Object.entries(o)) {
+    if (!SYNC_NAME_RE.test(name)) {
+      throw new Error(
+        `extension manifest credentials name must match [a-z][a-z0-9_]{0,31}: ${name}`,
+      );
+    }
+    const e = asPlainObject(entry, `credentials.${name}`);
+    rejectUnknownKeys(e, ["env"], `credentials.${name}`);
+    const env = e["env"];
+    if (typeof env !== "string" || !CREDENTIAL_ENV_RE.test(env) || isReservedEnv(env)) {
+      throw new Error(
+        `extension manifest credentials.${name}.env must match [A-Z][A-Z0-9_]{0,63} and not be a reserved variable`,
+      );
+    }
+    if (seenEnv.has(env)) {
+      throw new Error(`extension manifest credentials has duplicate env var: ${env}`);
+    }
+    seenEnv.add(env);
+    out[name] = { env };
+  }
+  return out;
+}
+
 // All 94 first-party connectors (each `connectors/<id>/nimbus.extension.json` in
 // `@nimbus-dev/connectors`) declare `entrypoint`; this parser
 // read only `entry`, so every one of them fell back to "dist/index.js" while building
@@ -182,6 +296,22 @@ function parseManifestObject(text: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+/** The optional manifest blocks that are present; an absent block leaves no key at all. */
+function parseOptionalBlocks(
+  o: Record<string, unknown>,
+): Pick<ExtensionManifest, "changelog" | "dependsOn" | "sync" | "credentials"> {
+  const changelog = parseChangelog(o["changelog"]);
+  const dependsOn = parseDependsOn(o["dependsOn"]);
+  const sync = parseSync(o["sync"]);
+  const credentials = parseCredentials(o["credentials"]);
+  return {
+    ...(changelog === undefined ? {} : { changelog }),
+    ...(dependsOn === undefined ? {} : { dependsOn }),
+    ...(sync === undefined ? {} : { sync }),
+    ...(credentials === undefined ? {} : { credentials }),
+  };
+}
+
 export function parseExtensionManifestForRegistry(text: string): RegistryParseResult {
   const o = parseManifestObject(text);
   const id = typeof o["id"] === "string" ? o["id"].trim() : "";
@@ -197,8 +327,7 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
     throw new Error("extension manifest must have publisher and signature together, or neither");
   }
   const updateChannel = parseUpdateChannel(o["updateChannel"]);
-  const changelog = parseChangelog(o["changelog"]);
-  const dependsOn = parseDependsOn(o["dependsOn"]);
+  const blocks = parseOptionalBlocks(o);
   const isPreT2Legacy = Array.isArray(o["permissions"]);
   const permissions = validateAndNormalizePermissions(
     o["permissions"] === undefined ? {} : o["permissions"],
@@ -213,8 +342,7 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
       ...(publisher === undefined ? {} : { publisher }),
       ...(signature === undefined ? {} : { signature }),
       updateChannel,
-      ...(changelog === undefined ? {} : { changelog }),
-      ...(dependsOn === undefined ? {} : { dependsOn }),
+      ...blocks,
     },
     isPreT2Legacy,
   };

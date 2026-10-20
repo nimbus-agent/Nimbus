@@ -1900,6 +1900,7 @@ const OWNER_GATED_EXTENSION_METHODS: ReadonlySet<string> = new Set([
   "extension.install",
   "extension.rehash",
   "extension.approveRun",
+  "extension.credentialSet",
 ]);
 
 function buildExtensionOwnerGate(

@@ -232,6 +232,15 @@ describe("extension management over LAN (I5 — CLI-only)", () => {
     }
   });
 
+  test("credentialSet/credentialStatus are forbidden over LAN regardless of grant-write", () => {
+    for (const m of ["extension.credentialSet", "extension.credentialStatus"]) {
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: false })).toThrow(
+        LanError,
+      );
+    }
+  });
+
   test("extension.install rejection is ERR_METHOD_NOT_ALLOWED (not merely write-forbidden)", () => {
     let thrown: LanError | undefined;
     try {

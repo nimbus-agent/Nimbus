@@ -7,7 +7,7 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
-import type { AvailableUpdateCli, UpdateApplyResultCli } from "./extension.ts";
+import type { AvailableUpdateCli, CredentialCliIo, UpdateApplyResultCli } from "./extension.ts";
 
 const extensionMod = await import("./extension.ts");
 const {
@@ -19,6 +19,7 @@ const {
   hasFlag,
   runExtension,
   runExtensionApprove,
+  runExtensionCredential,
   runExtensionDisable,
   runExtensionEnable,
   runExtensionInfo,
@@ -2388,5 +2389,138 @@ describe("extension update/downgrade owner prompt", () => {
 
   test("read-only subcommands keep the default timeout", () => {
     expect(rpcTimeoutForExtensionSub("list", [])).toBeUndefined();
+  });
+});
+
+describe("runExtensionCredential", () => {
+  const SECRET = "s3cr3t-value-do-not-leak";
+
+  beforeEach(() => {
+    out.reset();
+  });
+
+  function io(
+    over: Partial<CredentialCliIo> = {},
+  ): CredentialCliIo & { readonly state: { consentRegistered: number } } {
+    const state = { consentRegistered: 0 };
+    return {
+      stdinIsTty: true,
+      scriptConsentSource: undefined,
+      readHidden: async () => SECRET,
+      readStdin: async () => {
+        throw new Error("stdin must not be read at a terminal");
+      },
+      registerConsent: () => {
+        state.consentRegistered += 1;
+      },
+      ...over,
+      state,
+    };
+  }
+
+  test("set reads the value from the hidden prompt and calls extension.credentialSet", async () => {
+    const { client, calls } = createMockIpcClient([{ name: "token", set: true }]);
+    const i = io();
+    await runExtensionCredential(client, ["set", "com.x", "token"], i);
+    expect(calls).toEqual([
+      { method: "extension.credentialSet", params: { id: "com.x", name: "token", value: SECRET } },
+    ]);
+    expect(i.state.consentRegistered).toBe(1);
+    expect(out.stdout).toContain("com.x: token stored");
+    expect(out.stdout).toContain("takes effect the next time the extension starts");
+    expect(out.stdout).not.toContain("sync");
+    expect(out.stdout).not.toContain(SECRET);
+  });
+
+  test("set never takes the value from argv", async () => {
+    const { client, calls } = createMockIpcClient([]);
+    await expect(
+      runExtensionCredential(client, ["set", "com.x", "token", SECRET], io()),
+    ).rejects.toThrow(/never takes the value as an argument/);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("set reads stdin when it is not a terminal, dropping one trailing newline", async () => {
+    const { client, calls } = createMockIpcClient([{ name: "token", set: true }]);
+    await runExtensionCredential(
+      client,
+      ["set", "com.x", "token"],
+      io({
+        stdinIsTty: false,
+        scriptConsentSource: "/tmp/consent.jsonl",
+        readHidden: async () => {
+          throw new Error("no hidden prompt off a terminal");
+        },
+        readStdin: async () => `${SECRET}\r\n`,
+      }),
+    );
+    expect(calls[0]?.params).toEqual({ id: "com.x", name: "token", value: SECRET });
+  });
+
+  test("piped stdin without NIMBUS_SCRIPT_CONSENT_SOURCE refuses before reading or calling", async () => {
+    const { client, calls } = createMockIpcClient([]);
+    let read = false;
+    await expect(
+      runExtensionCredential(
+        client,
+        ["set", "com.x", "token"],
+        io({
+          stdinIsTty: false,
+          readStdin: async () => {
+            read = true;
+            return SECRET;
+          },
+        }),
+      ),
+    ).rejects.toThrow(/NIMBUS_SCRIPT_CONSENT_SOURCE/);
+    expect(read).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a blank value and a cancelled prompt store nothing", async () => {
+    for (const readHidden of [async () => "  ", async () => undefined]) {
+      const { client, calls } = createMockIpcClient([]);
+      await expect(
+        runExtensionCredential(client, ["set", "com.x", "token"], io({ readHidden })),
+      ).rejects.toThrow(/nothing was stored/);
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  test("status prints set / not set per name", async () => {
+    const { client, calls } = createMockIpcClient([
+      {
+        credentials: [
+          { name: "api_secret", set: false },
+          { name: "token", set: true },
+        ],
+      },
+    ]);
+    await runExtensionCredential(client, ["status", "com.x"], io());
+    expect(calls).toEqual([{ method: "extension.credentialStatus", params: { id: "com.x" } }]);
+    expect(out.stdout).toContain("api_secret: not set");
+    expect(out.stdout).toContain("token: set");
+  });
+
+  test("status with no declared credentials says so", async () => {
+    const { client } = createMockIpcClient([{ credentials: [] }]);
+    await runExtensionCredential(client, ["status", "com.x"], io());
+    expect(out.stdout).toContain("com.x: declares no credentials");
+  });
+
+  test("an unknown action or missing args is the usage", async () => {
+    for (const rest of [[], ["nope"], ["set", "com.x"], ["status"]]) {
+      const { client } = createMockIpcClient([]);
+      await expect(runExtensionCredential(client, rest, io())).rejects.toThrow(
+        /extension credential set <id> <name>/,
+      );
+    }
+  });
+
+  test("credential set gets the interactive RPC budget; status keeps the default", () => {
+    expect(rpcTimeoutForExtensionSub("credential", ["set", "com.x", "token"])).toBe(
+      INTERACTIVE_RPC_TIMEOUT_MS,
+    );
+    expect(rpcTimeoutForExtensionSub("credential", ["status", "com.x"])).toBeUndefined();
   });
 });

@@ -30,6 +30,10 @@ export const VAULT_KEY_ALLOW_LIST = [
   // STATIC literals — the audit's literal scan genuinely sees them, so this entry is real
   // enforcement rather than documentation of a keyspace the scan cannot reach.
   "packages/gateway/src/toolgen/toolgen-keypair.ts",
+  // An extension's OWN credential keyspace, `ext.<serviceId>.<name>` (Readwise unbundling, V72).
+  // Composed dynamically like `toolgen-credentials.ts`'s, so the literal scan cannot see it; this
+  // entry documents the keyspace, and the one function that composes it lives in this file.
+  "packages/gateway/src/extensions/extension-credentials.ts",
 ];
 
 /**
@@ -1916,6 +1920,8 @@ const D33_RUN_GRANT_TABLE_RE = sqlTableReferenceRe("extension_run_grant");
 const D33_RUN_GRANT_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/extensions/run-grant-store.ts",
   "packages/gateway/src/index/extension-run-grant-v70-sql.ts",
+  // V72 adds `credentials_json` to the same table; DDL only.
+  "packages/gateway/src/index/extension-run-grant-credentials-v72-sql.ts",
 ];
 
 export function checkRunGrantTableConfinement(files: readonly FileEntry[]): Violation[] {
