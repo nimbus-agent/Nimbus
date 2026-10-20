@@ -810,6 +810,10 @@ export class SyncScheduler {
         job.serviceId,
         this.ctx.extensionCredentialsFor,
       );
+      // The await above can yield while the service is unregistered (`extension remove`): stop
+      // before the egress row, the health transition (which would re-create a purged row) and
+      // `sync()`, settling force waiters exactly as the post-`sync()` checks do.
+      if (this.wasWithdrawnMidRun(job, connector)) return;
       if (configured) {
         this.appendSyncEgress?.({
           destination: job.serviceId,

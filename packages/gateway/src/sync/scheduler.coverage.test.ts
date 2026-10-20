@@ -17,6 +17,7 @@ import {
   transitionHealth,
 } from "../connectors/health.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
 import { SyncScheduler } from "./scheduler.ts";
 import {
@@ -795,4 +796,52 @@ describe("SyncScheduler — a connector withdrawn mid-run records nothing afterw
       db.close();
     });
   }
+
+  test("unregister while the configured check's vault read is pending: no egress, no health row, no sync()", async () => {
+    const db = openMemoryIndexDatabase();
+    const base = createMemoryVault();
+    await base.set("withdrawn.token", "tok");
+    const getEntered = deferred();
+    const gate = deferred();
+    // A vault whose read parks until released, so `unregister` lands inside the configured check.
+    const vault: NimbusVault = {
+      ...base,
+      get: async (key: string) => {
+        getEntered.resolve();
+        await gate.promise;
+        return base.get(key);
+      },
+    };
+    const egress: string[] = [];
+    const sched = new SyncScheduler(
+      ctxFor(db, {
+        vault,
+        extensionCredentialsFor: (id) =>
+          id === "withdrawn" ? { token: { env: "T", vaultKey: "withdrawn.token" } } : undefined,
+      }),
+      {},
+      { isOnline: online, appendSyncEgress: (r) => void egress.push(r.method) },
+    );
+    const p = probe("withdrawn");
+    sched.register(p.syncable);
+    const forced = sched.forceSync("withdrawn").then(
+      () => "resolved",
+      (e: unknown) => (e instanceof Error ? e.message : String(e)),
+    );
+    await within(getEntered.promise, "configured check entered");
+    sched.unregister("withdrawn");
+    // What `extension remove`'s purge does next: the health row goes.
+    db.run("DELETE FROM sync_state WHERE connector_id = ?", ["withdrawn"]);
+    gate.resolve();
+    expect(await within(forced, "force settled")).toBe("Connector removed");
+    await macrotask();
+    expect(egress).toEqual([]);
+    expect(p.calls()).toBe(0);
+    const rows = db
+      .query("SELECT COUNT(*) AS c FROM sync_state WHERE connector_id = ?")
+      .get("withdrawn") as { c: number };
+    expect(rows.c).toBe(0);
+    await sched.stop();
+    db.close();
+  });
 });
