@@ -21,6 +21,7 @@ import {
   INTERACTIVE_RPC_TIMEOUT_MS,
 } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { stripControl } from "./captures-format.ts";
 
 export const MIGRATE_USAGE =
   "Usage: nimbus connector migrate list [--json] | accept <id> | decline <id> | retry [--json]";
@@ -107,7 +108,18 @@ export function migrationNextStep(row: MigrationRowCli): string {
 export function formatMigrationRows(rows: readonly MigrationRowCli[]): string[] {
   if (rows.length === 0) return ["No connector migrations."];
   const lines: string[] = [];
-  for (const r of rows) {
+  for (const raw of rows) {
+    // Row text comes from the gateway (error text can quote a registry fetch failure): never print
+    // a control character or escape sequence to the owner's terminal.
+    const r: MigrationRowCli = {
+      ...raw,
+      id: stripControl(raw.id),
+      legacyServiceId: stripControl(raw.legacyServiceId),
+      extensionId: stripControl(raw.extensionId),
+      version: raw.version === null ? null : stripControl(raw.version),
+      state: stripControl(raw.state),
+      error: raw.error === null ? null : stripControl(raw.error),
+    };
     const version = r.version === null ? "" : ` ${r.version}`;
     lines.push(`${r.id}  ${r.legacyServiceId} -> ${r.extensionId}${version}  ${r.state}`);
     if (r.error !== null && r.state === "failed") lines.push(`    error: ${r.error}`);
@@ -130,6 +142,36 @@ function requireId(verb: string, rest: readonly string[]): string {
   const id = rest.find((a) => !a.startsWith("-"))?.trim() ?? "";
   if (id === "") throw new Error(`Usage: nimbus connector migrate ${verb} <id>`);
   return id;
+}
+
+type SyncState =
+  | { readonly kind: "running" }
+  | { readonly kind: "paused"; readonly reason: string }
+  | { readonly kind: "unknown" };
+
+/**
+ * What the gateway reports for the migrated service right after `accept`, through the existing
+ * `connector.listStatus` (no new method). `accept` itself returns only the row.
+ */
+async function syncStateOf(client: IPCClient, serviceId: string): Promise<SyncState> {
+  try {
+    const out = await client.call<unknown>("connector.listStatus", {});
+    if (!Array.isArray(out)) return { kind: "unknown" };
+    const entry = out.find(
+      (e): e is Record<string, unknown> =>
+        typeof e === "object" &&
+        e !== null &&
+        (e as Record<string, unknown>)["serviceId"] === serviceId,
+    );
+    if (entry === undefined) return { kind: "unknown" };
+    if (entry["status"] === "paused" || entry["healthState"] === "paused") {
+      const reason = typeof entry["lastError"] === "string" ? stripControl(entry["lastError"]) : "";
+      return { kind: "paused", reason };
+    }
+    return { kind: "running" };
+  } catch {
+    return { kind: "unknown" };
+  }
 }
 
 async function runAccept(io: MigrateIo, rest: readonly string[]): Promise<void> {
@@ -164,10 +206,21 @@ async function runAccept(io: MigrateIo, rest: readonly string[]): Promise<void> 
       }
       throw e;
     }
-    const version = row.version === null ? "" : ` ${row.version}`;
-    io.log(
-      `${row.legacyServiceId} now runs as the extension ${row.extensionId}${version}; its items, sync position and credential carried over.`,
-    );
+    const service = stripControl(row.legacyServiceId);
+    const version = row.version === null ? "" : ` ${stripControl(row.version)}`;
+    const moved = `${service} now runs as the extension ${stripControl(row.extensionId)}${version}`;
+    const sync = await syncStateOf(client, row.legacyServiceId);
+    if (sync.kind === "paused") {
+      io.log(
+        `${moved}, but sync is paused${sync.reason === "" ? "" : `: ${sync.reason}`}; your items and credential are kept. Run \`nimbus connector status ${service}\` for details.`,
+      );
+    } else if (sync.kind === "running") {
+      io.log(`${moved}; its items, sync position and credential carried over.`);
+    } else {
+      io.log(
+        `${moved}; its items and credential are kept. Run \`nimbus connector status ${service}\` to confirm it is syncing.`,
+      );
+    }
   } finally {
     await client.disconnect();
   }
@@ -210,7 +263,7 @@ export async function runConnectorMigrate(
       const out = await runSimple(io, "migration.decline", { id });
       if (!isMigrationRow(out)) throw new Error("malformed migration.decline response");
       io.log(
-        `${out.legacyServiceId} stays off; your items are kept. Run \`nimbus connector migrate retry\` to change your mind.`,
+        `${stripControl(out.legacyServiceId)} stays off; your items are kept. Run \`nimbus connector migrate retry\` to change your mind.`,
       );
       return;
     }

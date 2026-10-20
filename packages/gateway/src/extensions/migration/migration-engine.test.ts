@@ -627,6 +627,21 @@ describe("the consent payload", () => {
 });
 
 describe("decline", () => {
+  test("a refused transition surfaces as an error, keeps the stage, and does not pause or report success", async () => {
+    const e = engine();
+    await e.evaluate();
+    const row = onlyRow();
+    setPaused(db, LEGACY, false);
+    // Another writer wins the race: the store's guarded UPDATE changes nothing.
+    db.run(
+      "CREATE TRIGGER refuse_decline BEFORE UPDATE ON connector_migration WHEN NEW.state = 'declined' BEGIN SELECT RAISE(IGNORE); END",
+    );
+    expect(() => e.decline(row.id)).toThrow(/ERR_EXTENSION_MIGRATION_NOT_PENDING/);
+    expect(getMigration(db, row.id)?.state).toBe("awaiting_approval");
+    expect(existsSync(stageRootOf(row.id))).toBe(true);
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(0);
+  });
+
   test("decline keeps items and deletes stage", async () => {
     upsertIndexedItem(db, {
       service: LEGACY,

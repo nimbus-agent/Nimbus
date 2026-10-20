@@ -90,7 +90,7 @@ describe("nimbus connector migrate", () => {
 
   test("accept answers the gateway's prompt at the terminal and reports the move", async () => {
     const h = harness(
-      [{ ...ROW, state: "approved" }, undefined],
+      [{ ...ROW, state: "approved" }, [], undefined],
       { stdin: true, stdout: true },
       true,
     );
@@ -100,7 +100,7 @@ describe("nimbus connector migrate", () => {
     // The consent prompt handler is registered on the connection: a request is answered.
     h.emit("consent.request", { requestId: "r1", prompt: "extension.migrate …" });
     await new Promise((r) => setTimeout(r, 0));
-    expect(h.calls[1]).toEqual({
+    expect(h.calls[2]).toEqual({
       method: "consent.respond",
       params: { requestId: "r1", approved: true },
     });
@@ -110,11 +110,11 @@ describe("nimbus connector migrate", () => {
     const prior = process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
     process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"] = "approve-all";
     try {
-      const h = harness([{ ...ROW, state: "approved" }, undefined], undefined, false);
+      const h = harness([{ ...ROW, state: "approved" }, [], undefined], undefined, false);
       await runConnectorMigrate(["accept", "m-1"], h.io);
       h.emit("consent.request", { requestId: "r2", prompt: "p" });
       await new Promise((r) => setTimeout(r, 0));
-      expect(h.calls[1]).toEqual({
+      expect(h.calls[2]).toEqual({
         method: "consent.respond",
         params: { requestId: "r2", approved: false },
       });
@@ -137,6 +137,58 @@ describe("nimbus connector migrate", () => {
     expect(msg).toContain("still awaiting approval");
     expect(msg).toContain("nimbus connector migrate decline m-1");
     expect(h.disconnects()).toBe(1);
+  });
+
+  test("accept says sync carried over only when the legacy service is not paused", async () => {
+    const h = harness(
+      [
+        { ...ROW, state: "approved" },
+        [{ serviceId: "fixturewise", status: "ok", healthState: "healthy", lastError: null }],
+      ],
+      { stdin: true, stdout: true },
+      true,
+    );
+    await runConnectorMigrate(["accept", "m-1"], h.io);
+    expect(h.calls[1]).toEqual({ method: "connector.listStatus", params: {} });
+    const out = h.lines.join("\n");
+    expect(out).toContain("its items, sync position and credential carried over");
+    expect(out).not.toContain("paused");
+  });
+
+  test("accept says sync is paused, and why, when the gateway reports the service paused", async () => {
+    const h = harness(
+      [
+        { ...ROW, state: "approved" },
+        [
+          {
+            serviceId: "fixturewise",
+            status: "paused",
+            healthState: "paused",
+            lastError: "sync will stay paused until the sandbox is fixed: helper missing",
+          },
+        ],
+      ],
+      { stdin: true, stdout: true },
+      true,
+    );
+    await runConnectorMigrate(["accept", "m-1"], h.io);
+    const out = h.lines.join("\n");
+    expect(out).toContain("sync is paused");
+    expect(out).toContain("sandbox is fixed: helper missing");
+    expect(out).not.toContain("carried over");
+    expect(out).toContain("your items and credential are kept");
+  });
+
+  test("accept does not claim sync is running when the status cannot be read", async () => {
+    const h = harness(
+      [{ ...ROW, state: "approved" }, new Error("boom")],
+      { stdin: true, stdout: true },
+      true,
+    );
+    await runConnectorMigrate(["accept", "m-1"], h.io);
+    const out = h.lines.join("\n");
+    expect(out).toContain("fixturewise now runs as the extension");
+    expect(out).toContain("nimbus connector status fixturewise");
   });
 
   test("any other accept failure propagates unchanged", async () => {
@@ -174,6 +226,28 @@ describe("nimbus connector migrate", () => {
 });
 
 describe("formatMigrationRows", () => {
+  test("strips control characters and escape sequences from every printed row field", () => {
+    const esc = String.fromCharCode(27);
+    const c1 = String.fromCharCode(0x9b);
+    const nul = String.fromCharCode(0);
+    const lines = formatMigrationRows([
+      {
+        ...ROW,
+        id: `m-${esc}[2J1`,
+        legacyServiceId: `fixture${c1}wise`,
+        extensionId: `com.example${nul}.x`,
+        version: `1.0${esc}]0;evil`,
+        state: "failed",
+        error: `bad${esc}[31m red${c1} text${nul}`,
+      },
+    ]);
+    const out = lines.join("\n");
+    for (const code of [0, 27, 0x9b]) {
+      expect(out.includes(String.fromCharCode(code))).toBe(false);
+    }
+    expect(out).toContain("bad[31m red text");
+  });
+
   test("no rows", () => {
     expect(formatMigrationRows([])).toEqual(["No connector migrations."]);
   });

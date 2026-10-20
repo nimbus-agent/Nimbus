@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import {
   publisherKeyFingerprint,
   type RegistryChannel,
@@ -39,6 +39,7 @@ import {
   resolveExtensionManifestPath,
 } from "../manifest.ts";
 import { extractPackage } from "../package-extract.ts";
+import { isStrictlyInside } from "../path-containment.ts";
 import { decodeBase64 } from "../verify-signature.ts";
 import { fetchRegistryBytes, type RegistryFetchDeps } from "./registry-fetch.ts";
 import {
@@ -213,11 +214,8 @@ export async function fetchVerifiedRegistryPackage(
     }
     // The entry file must be the one the index listed BEFORE the owner is asked anything.
     const entryPath = resolve(sourceRoot, extensionEntryRelPath(manifest));
-    const entryRel = relative(resolve(sourceRoot), entryPath);
     if (
-      entryRel === "" ||
-      entryRel === ".." ||
-      entryRel.startsWith(`..${sep}`) ||
+      !isStrictlyInside(sourceRoot, entryPath) ||
       !existsSync(entryPath) ||
       !sha256HexEqualConstantTime(sha256Hex(readFileSync(entryPath)), vEntry.entryHash)
     ) {

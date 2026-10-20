@@ -25,7 +25,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import { publisherKeyFingerprint, RegistryError } from "@nimbus-dev/registry-format";
 import type { Logger } from "pino";
 
@@ -56,6 +56,7 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "../manifest.ts";
+import { isStrictlyInside } from "../path-containment.ts";
 import {
   BUILTIN_REGISTRY,
   BUILTIN_REGISTRY_NAME,
@@ -350,11 +351,6 @@ function driftError(entry: ContinuityEntry, field: string): string {
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
-function isInside(root: string, p: string): boolean {
-  const rel = relative(resolve(root), resolve(p));
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.startsWith(sep);
-}
-
 function digestOrNull(root: string): string | null {
   try {
     return computeExtensionTreeDigest(root);
@@ -418,7 +414,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   const checkStage = (row: MigrationRow): StageCheck => {
     const stagePath = row.stagePath;
     if (stagePath === null || !SAFE_ID.test(row.id)) return { kind: "missing" };
-    if (!isInside(stageDirFor(row.id), stagePath)) return { kind: "tampered" };
+    if (!isStrictlyInside(stageDirFor(row.id), stagePath)) return { kind: "tampered" };
     if (!existsSync(stagePath)) return { kind: "missing" };
     const live = digestOrNull(stagePath);
     return live !== null && live === row.treeDigest
@@ -784,7 +780,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     // The prompt may have been open for a while: what is installed must be what was verified.
     requireIntactStage(row);
     const entryPath = resolve(root, extensionEntryRelPath(manifest));
-    if (!isInside(root, entryPath) || !existsSync(entryPath)) {
+    if (!isStrictlyInside(root, entryPath) || !existsSync(entryPath)) {
       return failAccept(row, "the staged package has no entry file");
     }
     const pkg: VerifiedRegistryPackage = {
@@ -894,8 +890,15 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
 
     decline(id) {
       const row = requirePending(id);
+      // The store's guarded UPDATE is the arbiter: a row another writer already moved is not ours
+      // to decline, so nothing else (stage, pause) changes and no success is reported.
+      if (!finishMigration(db, row.id, "declined", null, deps.now())) {
+        throw new MigrationError(
+          "ERR_EXTENSION_MIGRATION_NOT_PENDING",
+          `migration "${row.id}" changed while it was being declined; nothing was changed`,
+        );
+      }
       removeStage(row.id);
-      finishMigration(db, row.id, "declined", null, deps.now());
       const entry = entryFor(row);
       pauseLegacyService(
         db,
