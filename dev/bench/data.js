@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792516593672,
+  "lastUpdate": 1792521654683,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e210723c8885f77c9be560ff3ccb3cff90e9018e",
-          "message": "fix(share): fail closed on unverified share replay (#1021)\n\n`share.replay` executes tool calls named by a share file against the\nowner's live, credentialed connector mesh. A share file is untrusted\ninput — it can arrive as a pasted URL or via `federation.shareForward` —\nso replay needs to treat it that way. Four hardening changes.\n\n## Enforce verification\n\nThe signature, content hash and expiry were computed and then\n**ignored**: `replayShare` ran unconditionally, and the CLI printed\n`signature: INVALID` only *after* the outbound calls had already gone\nout.\n\nReplay now fails closed unless verification passes. `allowUnsigned`\n(IPC) / `--allow-unsigned` (CLI) is an explicit opt-out for a share you\nproduced yourself.\n\n## Remove `preview` from the read-verb allowlist\n\n`isReadOnlyToolId` classifies by the trailing `_`-segment, i.e. **by\nname**. `iac_pulumi_preview` matched — and it is not a read: it shells\nout to `pulumi preview --cwd <caller-supplied workingDirectory>`, and\n`pulumi preview` evaluates the stack program in that directory.\n\nRemoving the verb costs zero replay coverage: it is the only real\nconnector tool id ending in `_preview`, and the `dataprofile_preview`\nthe list cited as its justification is a name the dataprofile\nno-row-data contract test asserts must *throw*. A new test pins all six\n`iac_*` tools as non-read.\n\nThe general lesson is in the code comment: a verb earns a place on this\nlist only when every tool that can carry it is known to be a read.\n\n## Cap executed steps\n\nThe step array was unbounded, so one file could drive unlimited outbound\ncalls on the owner's credentials. Capped at 256, with the excess\nreported in `ReplaySummary.capped` and printed by the CLI — a truncated\nreplay that reads as complete would be its own defect.\n\n## Resolve the connector mesh lazily\n\n`listReplayTools()` runs `ensureCredentialConnectorsRunning` +\n`ensureUserMcpConnectorsRunning`, so calling it eagerly let a share with\n**zero** replayable steps force-spawn every credential connector and\nevery user-registered MCP server. It is now resolved on first actual\nuse.\n\n## Verification\n\n- `bun test packages/gateway/src/share packages/gateway/src/ipc\npackages/cli/src/commands/share*` — 1587 pass, 0 fail.\n- Each behavioural test was red-proved against the unfixed code first.\n- `typecheck` passes; biome clean on the changed files; `lint:markdown`,\n`audit:doc-refs`, `audit:invariants`, `audit:boundaries`,\n`audit:readme-cli`, `audit:cross-platform`, `audit:status-drift`,\n`audit:any` all pass.\n- Note for anyone re-running locally in a worktree: `bun run lint`\nreports \"No files were processed\" under `.claude/worktrees/`, and\npreflight fail-fasts there, so the later gates were run individually.\n\n## Follow-up, deliberately not in this PR\n\nValidating step params against each tool's declared input schema —\nparams are still passed through verbatim. That needs the tool schema\nsurface and is a larger change; this PR closes the paths that do not.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added `--allow-unsigned` to share verification and replay commands.\n  * Replay results now show steps skipped after the 256-step limit.\n* **Bug Fixes**\n* Invalid signatures, content hashes, and expired shares are rejected\nbefore replay unless explicitly overridden.\n  * Replay now runs only recognized read-only tools.\n  * Preview and shell-based tools are no longer treated as read-only.\n* **Documentation**\n  * Updated CLI reference with the new verification option.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-02T15:37:42Z",
-          "tree_id": "4694606dfd21c107624e0d099ab5287199b6d0eb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e210723c8885f77c9be560ff3ccb3cff90e9018e"
-        },
-        "date": 1785685754739,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.4083715000015,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 334.7455543500029,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 283.90506105000276,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9714f75a2b795ecb8ba42e0f8b7f66b8687e966c",
+          "message": "chore(deps): bump @nimbus-dev/connectors to 0.3.0 (#1708)\n\n## What\n\nThis PR bumps the gateway's `@nimbus-dev/connectors` pin from `^0.2.4`\nto `^0.3.0`.\n\n## Why\n\n`@nimbus-dev/connectors` 0.3.0 was published today\n(nimbus-agent/nimbus-mcp-servers#60). Since then,\n`audit:connector-version-skew` has failed in `preflight:fast` and in CI\n(`_test-suite.yml`) for `main` and every open PR. The audit treats a\nminor-version gap as a failure, and a pre-1.0 caret range (`^0.2.4`)\ndoes not admit 0.3.0.\n\n## What changes for the gateway\n\nNothing it loads. 0.3.0 adds a self-contained Readwise extension entry\n(`connectors/readwise/src/extension.ts`) and its sync modules, which the\nextension bundle uses. The Readwise `server.ts` that the gateway's\nbundled registry runs is byte-identical, and the package's exports are\nunchanged.\n\n## Verification\n\n- `bun run gen:connector-registry` produces no diff.\n- `audit:connector-registry-drift` is ok.\n- `audit:connector-version-skew` reports ok (pinned 0.3.0, latest\n0.3.0).\n- `bun run preflight:fast` passes.\n- The gateway tests that load the bundled connector registry pass\n(20/20).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated the gateway’s connector package to a newer compatible version.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-20T18:29:33Z",
+          "tree_id": "3dba5c009fac2fa292ca99cc2d564584f0c76b16",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9714f75a2b795ecb8ba42e0f8b7f66b8687e966c"
+        },
+        "date": 1792521648122,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 284.71321135000363,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 280.5751874499998,
             "unit": "ms"
           }
         ]
