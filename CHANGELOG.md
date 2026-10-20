@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.0.0](https://github.com/nimbus-agent/Nimbus/compare/v9.2.1...v10.0.0) (2026-10-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **security:** code-audit batch 1 — DNS-rebinding guard (I45), data-scoped HTTP reads, owner-only files, batched sync writes ([#1702](https://github.com/nimbus-agent/Nimbus/issues/1702))
+
+### Features
+
+* **extensions:** owner-approved per-extension credentials ([#1703](https://github.com/nimbus-agent/Nimbus/issues/1703)) ([c5312fb](https://github.com/nimbus-agent/Nimbus/commit/c5312fb29d6f0b7d0718040e928c962d3e49be6c))
+* **security:** code-audit batch 1 — DNS-rebinding guard (I45), data-scoped HTTP reads, owner-only files, batched sync writes ([#1702](https://github.com/nimbus-agent/Nimbus/issues/1702)) ([c77258c](https://github.com/nimbus-agent/Nimbus/commit/c77258c4ae7f596682a22a2ed457891b9dc19c98))
+
 ## [9.2.1](https://github.com/nimbus-agent/Nimbus/compare/v9.2.0...v9.2.1) (2026-10-18)
 
 
