@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792432703416,
+  "lastUpdate": 1792474071223,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "deaf8160fcaa010d6b474f0848b4662ad3ee701f",
-          "message": "chore: release main (#1018)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.16.1</summary>\n\n##\n[1.16.1](https://github.com/nimbus-agent/Nimbus/compare/v1.16.0...v1.16.1)\n(2026-08-01)\n\n\n### Bug Fixes\n\n* **deps:** reconcile overrides, align the sdk floor onto the BOM fix,\nand gate both\n([#1017](https://github.com/nimbus-agent/Nimbus/issues/1017))\n([6dfdc81](https://github.com/nimbus-agent/Nimbus/commit/6dfdc81edfc73e0f8ff2ba3558004352c264e5d8))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-01T14:30:37Z",
-          "tree_id": "8f1aad4a8ab35deb8285b7867b8bec7d2e536b64",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/deaf8160fcaa010d6b474f0848b4662ad3ee701f"
-        },
-        "date": 1785595309898,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 311.2054105000032,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 309.3941897499964,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 265.3495008499951,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c5312fb29d6f0b7d0718040e928c962d3e49be6c",
+          "message": "feat(extensions): owner-approved per-extension credentials (#1703)\n\n## Summary\n\nExtensions can now receive **owner-approved, per-extension credentials**\nfrom the Vault. This is step 2 of the Readwise unbundling pilot, which\nwill move Readwise out of the gateway binary and into a\nregistry-installed extension. Nothing changes for an existing user: no\nshipped extension declares credentials, and the continuity table below\nis empty.\n\n- **Manifest.** An extension can declare `credentials: { <name>: { env }\n}` and a `sync` block. The `sync` block is only parsed and shown in the\nconsent prompt for now; the next PR uses it.\n  - A credential name matches `[a-z][a-z0-9_]{0,31}`.\n- The env var must not be in the `NIMBUS_`, `BUN_`, `NODE_`, `LD_` or\n`DYLD_` namespaces. It must not be `COMSPEC`, `PATHEXT` or any key of\nthe spawn baseline env (which a credential would otherwise overwrite).\nTwo credentials cannot share an env var.\n- **Approval** (`nimbus extension approve`).\n- Each declared credential resolves to a Vault key. That key is\n`ext.<serviceId>.<name>`, unless the new baked **continuity table**\nbinds the extension to a legacy connector key such as `readwise.token`.\n- A binding needs the extension id, the publisher key from the verified\nmanifest, and an install source whose root fingerprint is the official\none. The table is **empty** until the PR that removes bundled Readwise.\n- The resolved mapping is stored on the run grant (schema **V72**,\n`extension_run_grant.credentials_json`).\n- The consent prompt lists credential names and env vars, never Vault\nkeys or values. When a binding applies, it names the reused connector\n(`reusesConnector`).\n- **Spawn** (I43). `readVerifiedExtensionForSpawn` re-resolves the\ncredentials from the manifest it verified on that call, and refuses\n`ERR_EXTENSION_RUN_CHANGED` if they differ from the grant. This happens\nbefore any Vault value is read. Then `prepareSpawn` passes only the\nnon-blank granted values, and only as `extensionProcessEnv`'s `extra`\n(I1). An unset credential is absent from the env, never `\"\"`.\n- **Setting a value.** `nimbus extension credential set <id> <name>`\ntakes the value from a hidden prompt or stdin, never argv. `nimbus\nextension credential status <id>` lists which credentials are set.\n- Both run over new IPC methods `extension.credentialSet` /\n`extension.credentialStatus`. These are **CLI-only**: LAN-forbidden,\nabsent from the Tauri allowlist and refused on a demo gateway.\n- A set is **one** owner prompt (`vault.set`) over `{extensionId,\nname}`.\n- The Vault key is resolved server-side from the grant, and a stored key\nis trusted only if it is the extension's own key or the one the\ncontinuity table maps that name to.\n- After approval the grant is re-read, and a changed or revoked grant\nrefuses.\n- A successful set stops the running extension, so the value takes\neffect on its next start.\n\nThe new extension-credential module is added to the D11 vault-key\nallow-list, and the V72 DDL file to D33(b). The I43 entry in\n`docs/SECURITY-INVARIANTS.md`, CLAUDE.md and GEMINI.md now covers\ncredentials, with tests in the same commit. The demo-gate deny-list\nprose was re-derived from the code; it had been missing\n`extension.approveRun`/`revokeRun`.\n\n**Not covered here, on purpose:**\n- No extension syncs yet. `ExtensionSyncable` is the next PR.\n- No end-to-end test runs a real confined child that reads a credential\nenv var. The I43 tests stop at the prepared spawn spec, as the existing\nones do; the next PR's E2E covers it on all three OSes.\n- `credentialsConfigured` and the continuity-binding path are reached\nonly by tests today, because their production consumers land in later\nPRs of the pilot.\n\n## Related Issue\n\nNone. This is part of the Phase 9.5 connector-unbundling program,\nReadwise pilot step 2 of 7.\n\n## Type of Change\n\n- [ ] Bug fix (non-breaking change that fixes an issue)\n- [x] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [x] Test improvement\n- [ ] Documentation only\n- [ ] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors, and `typecheck:tests`\ntoo\n- [x] `bun run lint` passes (Biome); `bun run preflight:fast` passes\n- [x] Touched suites pass: gateway `ipc` + `extensions` +\n`security-invariants` (4115), the new e2e over a real socket, and the\nCLI extension tests\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced; `credentials_json` is parsed from\n`unknown`\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction\n- [x] The HITL consent gate has not been weakened: one `vault.set`\nprompt per set, no delegate, refused over LAN, from the renderer and on\ndemo gateways\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added CLI commands to securely set credentials declared by extensions\nand check whether they’re configured. Setting a credential requires\napproval; secret values aren’t displayed.\n* Approved credentials are made available to extensions when they run,\nand changes to approved credential details are rechecked before use.\n* Added support for optional extension synchronization settings and\nvalidated credential declarations.\n* **Security**\n* Credential commands are unavailable over LAN and through the desktop\napp’s IPC allowlist. Credential setting is also blocked in demo mode.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-20T08:19:39+03:00",
+          "tree_id": "50c334dc6013dbef6ec9fadb270051d9d91053d7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c5312fb29d6f0b7d0718040e928c962d3e49be6c"
+        },
+        "date": 1792474066399,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 220.85713030000298,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 219.54114970000336,
             "unit": "ms"
           }
         ]
