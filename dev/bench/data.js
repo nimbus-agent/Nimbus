@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792510178497,
+  "lastUpdate": 1792516593672,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "31a8d43b33eedc21dead55d2c8911e8edc80b7b1",
-          "message": "docs: add the ecosystem roadmap, the agents-as-MCP-tools design/plan, and the I29/D22 security spec (#1022)\n\nSeven commits, all documentation. Three artifacts.\n\n## `docs/ecosystem-roadmap.md` — a fourth roadmap surface\n\nThe only outward-facing one: the clients, author toolchain, operator\nsurfaces, and distribution/trust machinery around the gateway. Organised\nas **Track 0** (shipped but dark), **Layer 0** (enabling primitives),\nfive outward tracks, and — added in the second pass — **eleven\nclusters** that replace the tracks as the buildable unit, one design doc\nand one plan each.\n\nTwo findings reshaped it:\n\n- **The largest category is already built and unreachable.** `extension\ninstall` verifies Ed25519 signatures and then nothing ever spawns the\nentry file; `packages/ui` is a complete Tauri app with no `build-ui`\njob, so no desktop binary has ever shipped; `admin-console` is built by\nnothing, so `/admin` 503s on every installed binary;\n`NotificationService.show()` is an empty function, so watchers notify\nnobody and a pending consent prompt is only visible in the terminal that\nopened it. Four of the top five clusters are repair, not addition.\n- **Layer 0 was mis-ranked.** The extension runtime, listed first\nbecause it looked like the biggest unlock, has real transitive leverage\nof zero — all three of its dependents are independently classified\ndo-not-build. Three items filed *outside* Layer 0 out-leverage most of\nit.\n\nAlso records the sequencing rules (one dominates: ledger truth before\nevery ledger report), the cross-cutting decisions that will otherwise be\nmade accidentally by whichever item ships first, and a cut list with\narguments.\n\n## `2026-08-02-agents-as-mcp-tools-*` — design, review, response, plan\n\nExposing the built-in agents as MCP tools on the existing stdio server,\nso an external agent gets private cross-service context while the index\nnever moves.\n\nDecisions of record: briefs cross as raw markdown (indexed prose already\nreaches the editor LLM via `semanticSnippet`, so it is a difference of\ndegree); every invocation appends to the egress ledger gateway-side and\nfail-closed; and the work extends the existing CLI adapter rather than\nadding a second IPC consumer.\n\nThe plan carries a hard prerequisite found during review:\n`awaitAgentBrief` reads `sessionId` and never compares it while\nnotifications are broadcast to every session, so two concurrent callers\ncross briefs — invisible in a one-shot CLI, immediate in any long-lived\nserver. Review rounds are included as separate documents rather than\nfolded in, so the reasoning survives.\n\n## `2026-08-02-i29-d22-egress-completeness-design.md` — security spec\n\n`I29` claims the egress ledger is complete over the executor chokepoint,\nand `D22`'s own comment asserts totality. The mechanism is a regex\nmatching the literal string `connectors.dispatch`, so any path that\nreaches the network without typing it passes — and eleven classes do.\n\nThe spec is deliberate about severity: for nine of the eleven the harm\nis a **false completeness claim** rather than a capability gain, and it\nsays so. `share.replay` is the exception, and its immediate mitigations\nare already fixed in #1021. Remediation is phased truth-before-coverage\n— phase 1 makes the claim honest without extending coverage at all,\nbecause a label that leads its mechanism is the defect being fixed.\n\nAlso records what is **not** wrong, including two claims raised and then\ndisproved during the audit: `I11` is intact (carried by\n`wrapToolForLlm`; what the bypasses skip is `tool_call_log`), and no\narbitrary-SQL warehouse tool is exposed.\n\n## Verification\n\nEvery document separates what was verified directly against the tree\nfrom what is agent-reported with file citations, so nothing here gets\nplanned around without confirmation. `lint:markdown` clean on all files\n(via a scratch copy — the repo config excludes `.claude/worktrees/**`,\nso running it in a worktree silently checks nothing).\n\nDocs-only: no code, no release bump.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-02T15:19:14Z",
-          "tree_id": "af88aed52ebcd24d0021e281bb8bd2ef4f7d8751",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/31a8d43b33eedc21dead55d2c8911e8edc80b7b1"
-        },
-        "date": 1785684467044,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 244.95925054999935,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 244.1702541500017,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 208.48338694999475,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "538a5aa7b7a4cc334cb1ae5d3a0993841bf19a3d",
+          "message": "fix(deps): pin markdown-it 15.0.3 for GHSA-r7fv-28h4-cvq7 (#1707)\n\n## Summary\n\nThe required `Dependency audit` check went red repo-wide on 2026-10-20:\nGHSA-r7fv-28h4-cvq7 (high) is a quadratic-complexity flaw in\nmarkdown-it's smartquotes, which affects `>=15.0.0 <15.0.2`. It first\nshowed on #1706, which touches no dependencies.\n\n**Where it comes from:** `markdown-it` is only a dev dependency, reached\nthrough the root devDependency `markdownlint-cli2`. That package pins\n`markdown-it` to exactly `15.0.1` in its latest release, 0.23.3, so\nupgrading `markdownlint-cli2` cannot fix it yet.\n\n**Fix:** a root `overrides` entry, `\"markdown-it\": \"15.0.3\"`. That is\nthe latest release, a patch within the same major. Lockfile changes:\n- `markdown-it` moves from 15.0.1 to 15.0.3;\n- its `argparse` dependency moves from 3.0.2 to 3.0.3;\n- nothing else changes.\n\nNothing that ships contains markdown-it. It runs only in\n`lint:markdown`, over the repo's own docs.\n\n**When to remove the override:** once `markdownlint-cli2` ships a\nrelease that pins `markdown-it` ≥ 15.0.2. Until then,\n`audit:override-drift` passes.\n\n## Test plan\n- [x] `bun audit --audit-level high` no longer reports markdown-it. The\ntwo highs it still lists, braces and http-cache-semantics, are already\naccepted in `accepted-advisories.ts`.\n- [x] `audit:advisories` reports OK (5 live advisories, all accepted).\n- [x] `audit:override-drift` reports OK.\n- [x] `lint:markdown` finds 0 issues across 61 files.\n- [x] `preflight:fast` passes.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01V7smEk6EQSzTfy5WPQ5NUD\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n* Updated the Markdown rendering dependency override to version 15.0.3.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-20T20:04:24+03:00",
+          "tree_id": "2a58c77dffefd40b877d2c0293b91d004024aa4f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/538a5aa7b7a4cc334cb1ae5d3a0993841bf19a3d"
+        },
+        "date": 1792516587961,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 284.51504530000074,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 283.90506105000276,
             "unit": "ms"
           }
         ]
