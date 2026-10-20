@@ -871,6 +871,24 @@ describe("reserved sync tool", () => {
     expect(h.clients[0]?.disconnectCalls).toBe(1);
   });
 
+  test("one timeout budget covers tool discovery and the call", async () => {
+    const h = harness({
+      // A slow start: discovery alone outlasts the whole budget.
+      prepare: () => Bun.sleep(300),
+      tools: (k) => ({
+        [`${k}___nimbus_sync`]: { execute: () => Promise.resolve(textResult("{}")) },
+      }),
+    });
+    const m = syncMesh(h);
+    const started = performance.now();
+    await expect(m.callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 20)).rejects.toThrow(
+      /exceeded 20ms/,
+    );
+    expect(performance.now() - started).toBeLessThan(250);
+    // Let the slow start finish so the afterEach stop has a settled slot.
+    await Bun.sleep(350);
+  });
+
   test("an extension without the sync tool, or an unlisted id, is refused", async () => {
     const m = syncMesh(harness());
     await expect(m.callExtensionSyncTool(SERVICE_ID, SYNC_REQ, 100)).rejects.toThrow(

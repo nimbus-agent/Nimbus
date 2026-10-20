@@ -413,8 +413,10 @@ export class LazyConnectorMesh {
    * enforced HERE — a direct execute bypasses the dispatcher's own cap. The slot's drain refcount
    * is held for the BOUNDED race, not for the underlying call: an idle-out or stop waits for the
    * call, but a call that outlives its timeout (an extension that ignores the abort) releases the
-   * drain when the timeout rejects, so a stop never waits on an abandoned call. A timeout rejects;
-   * the child is left to the slot's normal stop/idle path.
+   * drain when the timeout rejects, so a stop never waits on an abandoned call. One `timeoutMs`
+   * budget covers tool discovery (which may start the child) AND the call, so a slow start cannot
+   * buy the call a second window. A timeout rejects; the child is left to the slot's normal
+   * stop/idle path.
    */
   async callExtensionSyncTool(
     codeServerId: string,
@@ -422,33 +424,36 @@ export class LazyConnectorMesh {
     timeoutMs: number,
   ): Promise<unknown> {
     const key = extensionMeshKey(codeServerId);
-    const tools = await this.extensionSlots.listToolsUnfiltered(codeServerId);
-    if (tools === undefined) {
-      throw new Error(`${codeServerId} is not an approved extension`);
-    }
-    const toolKey = mcpClientToolKey(extensionServerKey(codeServerId), "__nimbus_sync");
-    const tool = Object.hasOwn(tools, toolKey) ? tools[toolKey] : undefined;
-    const execute = tool?.execute;
-    if (execute === undefined) {
-      throw new Error(`${codeServerId} does not expose the sync tool`);
-    }
-    // The same tracker `wrapSlotToolsWithDrain` would use, looked up the same way.
-    const drain = this.lazySlots.get(key)?.drain;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const abort = new AbortController();
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        abort.abort();
+        reject(new Error(`${codeServerId} sync call exceeded ${String(timeoutMs)}ms`));
+      }, timeoutMs);
+    });
+    let drain: { bump(): void; drop(): void } | undefined;
     let result: unknown;
-    drain?.bump();
     try {
-      // try/finally rather than `.finally`: an execute that throws synchronously still drops.
-      result = await Promise.race([
-        execute(req, { abortSignal: abort.signal }),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => {
-            abort.abort();
-            reject(new Error(`${codeServerId} sync call exceeded ${String(timeoutMs)}ms`));
-          }, timeoutMs);
-        }),
+      const tools = await Promise.race([
+        this.extensionSlots.listToolsUnfiltered(codeServerId),
+        timeout,
       ]);
+      if (tools === undefined) {
+        throw new Error(`${codeServerId} is not an approved extension`);
+      }
+      const toolKey = mcpClientToolKey(extensionServerKey(codeServerId), "__nimbus_sync");
+      const tool = Object.hasOwn(tools, toolKey) ? tools[toolKey] : undefined;
+      const execute = tool?.execute;
+      if (execute === undefined) {
+        throw new Error(`${codeServerId} does not expose the sync tool`);
+      }
+      // The same tracker `wrapSlotToolsWithDrain` would use, looked up the same way; held only
+      // once discovery succeeded, so `finally` drops exactly what was bumped.
+      drain = this.lazySlots.get(key)?.drain;
+      drain?.bump();
+      // try/finally rather than `.finally`: an execute that throws synchronously still drops.
+      result = await Promise.race([execute(req, { abortSignal: abort.signal }), timeout]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       drain?.drop();
