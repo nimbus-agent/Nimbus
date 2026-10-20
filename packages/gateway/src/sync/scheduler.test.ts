@@ -1420,3 +1420,50 @@ describe("appendSyncEgress — user MCP servers append no sync.run row", () => {
     expect(egressCount(db, "egress-normal-svc")).toBe(1);
   });
 });
+
+describe("sync_telemetry.items_dropped", () => {
+  function telemetry(db: Database, service: string): Array<{ items_dropped: number }> {
+    return db
+      .query("SELECT items_dropped FROM sync_telemetry WHERE service = ? ORDER BY id")
+      .all(service) as Array<{ items_dropped: number }>;
+  }
+
+  test("a success with `dropped` writes the sum of its three counts", async () => {
+    const db = openMemoryIndexDatabase();
+    const sched = new SyncScheduler(testContext(db));
+    sched.register({
+      ...okSyncable("drops"),
+      async sync(): Promise<SyncResult> {
+        return {
+          cursor: null,
+          itemsUpserted: 1,
+          itemsDeleted: 0,
+          hasMore: false,
+          durationMs: 0,
+          dropped: { undeclaredType: 1, malformed: 2, oversized: 4 },
+        };
+      },
+    });
+    await sched.forceSync("drops");
+    await sched.stop();
+    expect(telemetry(db, "drops")).toEqual([{ items_dropped: 7 }]);
+  });
+
+  test("a success without `dropped`, and a failed run, write 0", async () => {
+    const db = openMemoryIndexDatabase();
+    const sched = new SyncScheduler(testContext(db), {}, { random: () => 0 });
+    sched.register(okSyncable("plain"));
+    sched.register(throwingSyncable("boom", new Error("boom")));
+    sched.register(throwingSyncable("rl", new RateLimitError(new Date(Date.now() + 60_000))));
+    await sched.forceSync("plain");
+    await sched.forceSync("boom").catch(() => undefined);
+    await sched.forceSync("rl").catch(() => undefined);
+    await sched.stop();
+    // A tick between the forced runs may also start a due one, so count rows loosely.
+    for (const service of ["plain", "boom", "rl"]) {
+      const rows = telemetry(db, service);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(new Set(rows.map((r) => r.items_dropped))).toEqual(new Set([0]));
+    }
+  });
+});

@@ -7,9 +7,9 @@
  * - `builtin_registry_state`: I44's anti-rollback floor for the BUILT-IN official registry, keyed by
  *   its reserved name. The built-in registry is not a row of the owner's `extension_registry`, so
  *   `registry list` stays the owner's list; only `extensions/registry/builtin-registry.ts` writes it.
- * - `sync_telemetry.items_dropped`: extension sync items a run refused (wired by a later task).
- *   `NOT NULL DEFAULT 0`, so every existing row reads 0 and the existing insert, which names its
- *   columns, stays valid unchanged.
+ * - `sync_telemetry.items_dropped`: extension sync items a run refused, written by the scheduler
+ *   on every telemetry row (`SyncResult.dropped` summed, else 0) and read back by
+ *   `nimbus connector status --stats`. `NOT NULL DEFAULT 0`, so every existing row reads 0.
  */
 export const CONNECTOR_MIGRATION_V73_SQL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS connector_migration (

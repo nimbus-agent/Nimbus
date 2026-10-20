@@ -78,6 +78,14 @@ function syncFailureUserMessage(err: unknown): string {
   return t.length > MAX_SYNC_FAILURE_MSG ? `${t.slice(0, MAX_SYNC_FAILURE_MSG)}…` : t;
 }
 
+/** `sync_telemetry.items_dropped` for a successful run: the three `dropped` counts summed, else 0. */
+function droppedTotal(result: SyncResult): number {
+  const d = result.dropped;
+  if (d === undefined) return 0;
+  const sum = d.undeclaredType + d.malformed + d.oversized;
+  return Number.isFinite(sum) && sum > 0 ? Math.floor(sum) : 0;
+}
+
 function toRejectionError(err: unknown): Error {
   if (err instanceof Error) {
     return err;
@@ -617,6 +625,7 @@ export class SyncScheduler {
       bytesTransferred: null,
       hadMore: false,
       errorMsg: msg,
+      itemsDropped: 0,
     });
     if (failures >= 5) {
       this.sched.updateState({
@@ -681,6 +690,7 @@ export class SyncScheduler {
       bytesTransferred: bytes,
       hadMore: result.hasMore,
       errorMsg: null,
+      itemsDropped: droppedTotal(result),
     });
 
     const now = Date.now();
@@ -721,6 +731,7 @@ export class SyncScheduler {
       bytesTransferred: null,
       hadMore: false,
       errorMsg,
+      itemsDropped: 0,
     });
   }
 

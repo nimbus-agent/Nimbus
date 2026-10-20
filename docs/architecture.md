@@ -1958,9 +1958,11 @@ built-in is never replaced, and the registrar only ever unregisters what it regi
 **Bounds.** The extension's own requests to its granted hosts are not individually ledgered (I43);
 the gateway's limiter cannot throttle them — the page budget, call timeout, interval and the network
 grant are the bounds. A manifest that cannot be read loses the binding, so a bound extension's legacy
-namespace is then not purged by `extension remove`. Dropped-item counts are logged and returned on
-the run's `SyncResult`, but not yet persisted or shown by `nimbus connector status` (spec § 8.3's
-visibility clause is open: every surface that status reads would need a new column). The end-to-end test
+namespace is then not purged by `extension remove`. Dropped-item counts are logged, returned on the
+run's `SyncResult`, and recorded: the scheduler writes their sum to `sync_telemetry.items_dropped`
+(V73) on every telemetry row (0 for a run that reports none, and for a failed, rate-limited or
+unauthenticated run), and `nimbus connector status <id> --stats` shows it as `itemsDropped` on each
+of the recent telemetry rows (spec § 8.3's visibility clause). The end-to-end test
 (`packages/gateway/test/e2e/extension-sync.e2e.test.ts`) runs a real gateway and the real sandbox, and proves the
 credential reaches the confined child through its env by a digest the fixture returns.
 

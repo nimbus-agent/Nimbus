@@ -227,13 +227,16 @@ export function insertSyncTelemetry(
     bytesTransferred: number | null;
     hadMore: boolean;
     errorMsg: string | null;
+    /** Items the run returned but did not write (V73); 0 for a run that reports none. */
+    itemsDropped: number;
   },
 ): void {
   dbRun(
     db,
     `INSERT INTO sync_telemetry (
-       service, started_at, duration_ms, items_upserted, items_deleted, bytes_transferred, had_more, error_msg
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       service, started_at, duration_ms, items_upserted, items_deleted, bytes_transferred, had_more, error_msg,
+       items_dropped
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       row.service,
       row.startedAt,
@@ -243,6 +246,7 @@ export function insertSyncTelemetry(
       row.bytesTransferred,
       row.hadMore ? 1 : 0,
       row.errorMsg,
+      row.itemsDropped,
     ],
   );
 }
@@ -255,6 +259,7 @@ export type SyncTelemetryRow = {
   bytesTransferred: number | null;
   hadMore: boolean;
   errorMsg: string | null;
+  itemsDropped: number;
 };
 
 export function listRecentSyncTelemetry(
@@ -265,7 +270,8 @@ export function listRecentSyncTelemetry(
   const cap = Math.min(100, Math.max(1, Math.floor(limit)));
   const rows = db
     .query(
-      `SELECT started_at, duration_ms, items_upserted, items_deleted, bytes_transferred, had_more, error_msg
+      `SELECT started_at, duration_ms, items_upserted, items_deleted, bytes_transferred, had_more, error_msg,
+              items_dropped
        FROM sync_telemetry WHERE service = ? ORDER BY started_at DESC LIMIT ?`,
     )
     .all(service, cap) as Array<{
@@ -276,6 +282,7 @@ export function listRecentSyncTelemetry(
     bytes_transferred: number | null;
     had_more: number;
     error_msg: string | null;
+    items_dropped: number;
   }>;
   const out: SyncTelemetryRow[] = [];
   for (const r of rows) {
@@ -287,6 +294,7 @@ export function listRecentSyncTelemetry(
       bytesTransferred: r.bytes_transferred,
       hadMore: r.had_more === 1,
       errorMsg: r.error_msg,
+      itemsDropped: r.items_dropped,
     });
   }
   return out;

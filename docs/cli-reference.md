@@ -2915,7 +2915,7 @@ nimbus connector status github
 nimbus connector status github --stats   # Attach the 15 most recent sync-telemetry rows
 ```
 
-Output is always JSON; `--stats` is the only flag read.
+Output is always JSON; `--stats` is the only flag read. Each telemetry row carries `startedAt`, `durationMs`, `itemsUpserted`, `itemsDeleted`, `bytesTransferred`, `hadMore`, `errorMsg` and `itemsDropped` — items an extension's sync returned but the gateway refused to write (an undeclared type, a malformed or an oversized item), which is 0 for every built-in connector.
 
 ---
 

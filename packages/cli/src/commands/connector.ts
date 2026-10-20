@@ -40,6 +40,8 @@ type SyncTelemetryEntry = {
   bytesTransferred: number | null;
   hadMore: boolean;
   errorMsg: string | null;
+  /** Items the run returned but did not write (extension sync); 0 otherwise. */
+  itemsDropped: number;
 };
 
 type SyncStatusWithTelemetry = SyncStatus & { telemetry?: SyncTelemetryEntry[] };

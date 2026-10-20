@@ -360,6 +360,35 @@ describe("scheduler integration", () => {
     expect(getConnectorHealth(db, "ext_x").state).toBe("rate_limited");
   });
 
+  test("a run that drops items records the count in sync_telemetry.items_dropped", async () => {
+    const db = freshDb();
+    const ctx = scheduledCtx(db);
+    await ctx.vault.set("ext.ext_x.token", "secret");
+    const bad = { type: "tweet", externalId: "z", title: "t", modifiedAt: 1, metadata: {} };
+    const malformed = {
+      type: "highlight",
+      externalId: "",
+      title: "t",
+      modifiedAt: 1,
+      metadata: {},
+    };
+    const pages = [
+      { ...wire(["1"], "c1", true), items: [...wire(["1"], null, false).items, bad, malformed] },
+      { ...wire(["2"], "c2", false), items: [...wire(["2"], null, false).items, bad] },
+    ];
+    let n = 0;
+    const sched = new SyncScheduler(ctx);
+    sched.register(createExtensionSyncable(deps({ callSync: async () => pages[n++] })));
+    await sched.forceSync("ext_x");
+    await sched.stop();
+    const rows = db
+      .query(
+        "SELECT items_upserted, items_dropped, error_msg FROM sync_telemetry WHERE service = ?",
+      )
+      .all("ext_x");
+    expect(rows).toEqual([{ items_upserted: 2, items_dropped: 3, error_msg: null }]);
+  });
+
   test("rate_limited on page 3 persists page 2's cursor, stays rate_limited, and the next run resumes there", async () => {
     const db = freshDb();
     const ctx = scheduledCtx(db);
