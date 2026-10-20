@@ -3723,6 +3723,9 @@ export async function assemblePlatformServices(
     now: Date.now,
     // The compiled release binary counts as production even with NODE_ENV unset (it always is).
     production: isProductionRuntime(),
+    // `builtin` is deliberately unset, so the baked `BUILTIN_REGISTRY` applies (null until the
+    // Readwise pilot's PR 7). This object's optional `builtin` field is the one seam through which
+    // code, such as an E2E fixture, may inject another; no env var, config key or IPC param sets it.
   };
   const autoUpdateRuntime = maybeStartAutoUpdateRuntime({
     db,

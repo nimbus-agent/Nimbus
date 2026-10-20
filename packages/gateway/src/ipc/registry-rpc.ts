@@ -17,6 +17,7 @@ import {
 } from "../extensions/registry/registry-fetch.ts";
 import { readIndexes, resolveRegistryEntry } from "../extensions/registry/registry-resolve.ts";
 import {
+  assertRegistryNameNotReserved,
   deleteRegistry,
   getRegistry,
   insertRegistry,
@@ -75,6 +76,10 @@ function stringParam(rec: Record<string, unknown> | undefined, key: string): str
 
 function requireName(rec: Record<string, unknown> | undefined): string {
   const name = stringParam(rec, "name");
+  // The built-in official registry's name, refused outright and first: no URL or key makes it
+  // addable (that would be a second way to add the same trust root), and no spelling of it reaches
+  // the name rule, a fetch or the owner's prompt.
+  assertRegistryNameNotReserved(name);
   if (name.length > MAX_NAME_LENGTH || !NAME_RE.test(name)) {
     throw invalidParams(
       `name must match [a-z0-9][a-z0-9-]* and be at most ${MAX_NAME_LENGTH} characters`,
@@ -256,6 +261,8 @@ async function handleRefresh(
 ): Promise<Hit> {
   const fetch = requireFetch(o.fetch);
   let targets: RegistryRow[];
+  // The owner's registries only, by design: `refresh` maintains the owner's list (what `registry
+  // list` shows), and the built-in registry is fetched and verified on every use instead.
   if (rec?.["name"] === undefined) {
     targets = listRegistries(o.db);
   } else {

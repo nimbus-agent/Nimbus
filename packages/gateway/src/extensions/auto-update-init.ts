@@ -16,6 +16,7 @@ import {
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
 import { extractPackage } from "./package-extract.ts";
+import { builtinRegistryOf, resolveRegistry } from "./registry/builtin-registry.ts";
 import {
   fetchRegistryBytes,
   fetchVerifiedIndex,
@@ -27,7 +28,7 @@ import {
   verifyRegistryManifestSignature,
   verifySignedManifest,
 } from "./registry/registry-manifest.ts";
-import { getRegistry, type RegistryRow } from "./registry/registry-store.ts";
+import type { RegistryRow } from "./registry/registry-store.ts";
 import { collectRegistryUpdates } from "./registry/registry-update-source.ts";
 import { getRunGrant } from "./run-grant-store.ts";
 import { prevVersionDir } from "./version-store.ts";
@@ -153,15 +154,21 @@ const FETCH_FAILURE_CODES: ReadonlySet<RegistryErrorCode> = new Set<RegistryErro
   "ERR_REGISTRY_NOT_FOUND",
 ]);
 
-/** The update's source registry, if it still exists under the root key the update was detected with. */
-function currentSourceRegistry(db: Database, update: AvailableUpdate): RegistryRow | undefined {
-  const reg = getRegistry(db, update.sourceRegistry);
+/**
+ * The update's source registry, if it still exists under the root key the update was detected with.
+ * The reserved name resolves to the built-in registry configured on `fetchDeps`.
+ */
+function currentSourceRegistry(
+  fetchDeps: RegistryFetchDeps,
+  update: AvailableUpdate,
+): RegistryRow | undefined {
+  const reg = resolveRegistry(fetchDeps.db, update.sourceRegistry, builtinRegistryOf(fetchDeps));
   return reg !== undefined && reg.rootFingerprint === update.rootFingerprint ? reg : undefined;
 }
 
 /** As above, or throws `source_registry_changed: …` (its own audit phase, not a signature failure). */
-function sourceRegistryOf(db: Database, update: AvailableUpdate): RegistryRow {
-  const reg = currentSourceRegistry(db, update);
+function sourceRegistryOf(fetchDeps: RegistryFetchDeps, update: AvailableUpdate): RegistryRow {
+  const reg = currentSourceRegistry(fetchDeps, update);
   if (reg === undefined) {
     throw new Error(
       `source_registry_changed: registry "${update.sourceRegistry}" was removed or re-pinned since the update was detected`,
@@ -187,7 +194,7 @@ async function reverifyUpdateManifest(
   // id is a different trust root, whatever the Vault holds for the new one.
   const installedPublisher = listInstalledRows(fetchDeps.db).find((r) => r.id === update.id)
     ?.manifest.publisher?.id;
-  const reg = sourceRegistryOf(fetchDeps.db, update);
+  const reg = sourceRegistryOf(fetchDeps, update);
   try {
     const index = await fetchVerifiedIndex(fetchDeps, reg, signal);
     const entry = index.extensions[update.id];
@@ -305,7 +312,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     fetchPackage: (update, signal) =>
       fetchRegistryBytes(
         fetchDeps,
-        sourceRegistryOf(opts.db, update),
+        sourceRegistryOf(fetchDeps, update),
         update.packagePath,
         {
           method: "registry.package",
@@ -353,7 +360,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
       }),
     hasRunGrant: (id) => Promise.try(() => getRunGrant(opts.db, id) !== null),
     isSourceCurrent: (cached) =>
-      Promise.try(() => currentSourceRegistry(opts.db, cached) !== undefined),
+      Promise.try(() => currentSourceRegistry(fetchDeps, cached) !== undefined),
   };
 
   return { daemon, deps, abortController };

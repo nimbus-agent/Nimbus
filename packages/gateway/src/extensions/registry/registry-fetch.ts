@@ -9,7 +9,12 @@ import {
   verifyRegistryIndexSelf,
 } from "@nimbus-dev/registry-format";
 import { recordRegistryEgress } from "../../egress/registry-egress.ts";
-import { getRegistry, type RegistryRow, recordRegistryFetch } from "./registry-store.ts";
+import {
+  type BuiltinRegistryConfig,
+  currentRegistryFloor,
+  recordAnyRegistryFetch,
+} from "./builtin-registry.ts";
+import type { RegistryRow } from "./registry-store.ts";
 import { resolveRegistryLocation, resolveRegistryResource } from "./registry-transport.ts";
 
 export interface RegistryFetchDeps {
@@ -23,6 +28,13 @@ export interface RegistryFetchDeps {
    * the environment.
    */
   production: boolean;
+  /**
+   * The built-in official registry these deps resolve the reserved name to. Absent means the baked
+   * `BUILTIN_REGISTRY` (see `builtin-registry.ts` `builtinRegistryOf`); `null` means none. Only code
+   * sets it — tests, and a composition seam for an E2E — never the environment, a config file or an
+   * IPC parameter.
+   */
+  builtin?: BuiltinRegistryConfig | null;
 }
 
 export type RegistryFetchMeta = {
@@ -236,19 +248,11 @@ export async function fetchVerifiedIndex(
       `index sequence ${index.sequence} is older than the last seen ${reg.lastSequence}`,
     );
   }
-  // Conditional write: the row may have moved (or gone) while this fetch was in flight.
-  if (
-    !recordRegistryFetch(
-      deps.db,
-      reg.name,
-      reg.rootKey,
-      index.sequence,
-      index.generatedAt,
-      deps.now(),
-    )
-  ) {
-    const cur = getRegistry(deps.db, reg.name);
-    if (cur === undefined || cur.rootKey !== reg.rootKey) {
+  // Conditional write: the row may have moved (or gone) while this fetch was in flight. The built-in
+  // registry's floor lives in its own table; the rollback rule is the same for both stores.
+  if (!recordAnyRegistryFetch(deps.db, reg, index.sequence, index.generatedAt, deps.now())) {
+    const cur = currentRegistryFloor(deps.db, reg);
+    if (cur === undefined) {
       throw new RegistryError(
         "ERR_REGISTRY_ROOT_KEY_CHANGED",
         "registry was removed or re-pinned during the fetch",

@@ -1,0 +1,157 @@
+/**
+ * The built-in official registry (Readwise unbundling spec § 7.4). The release carries its URL and
+ * root public key; it is NOT a row of the owner's `extension_registry` — adding it to the owner's
+ * list stays a `registry.add` HITL decision, and `listRegistries` / `nimbus registry list` stay the
+ * owner's list. Three pieces make it usable by code paths that assumed a row:
+ *
+ * - a reserved name, `nimbus-official`, which `registry.add` (and the store) refuse outright;
+ * - its own I44 anti-rollback floor, in the gateway-owned `builtin_registry_state` table (V73);
+ * - one resolver, `resolveRegistry`, which the fetch, update-detection and update-apply paths use
+ *   instead of `getRegistry`, plus `recordAnyRegistryFetch`, which records a verified fetch in the
+ *   store that matches the row.
+ *
+ * The built-in config is never read from the environment, a config file or an IPC parameter. Every
+ * consumer takes it as an injected parameter (or the `builtin` field of `RegistryFetchDeps`) that
+ * defaults to `BUILTIN_REGISTRY`, so tests inject a fixture registry and production uses the baked
+ * value.
+ */
+import type { Database } from "bun:sqlite";
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import { dbRun } from "../../db/write.ts";
+import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
+import {
+  BUILTIN_REGISTRY_NAME,
+  getRegistry,
+  type RegistryRow,
+  recordRegistryFetch,
+} from "./registry-store.ts";
+
+export { BUILTIN_REGISTRY_NAME, isReservedRegistryName } from "./registry-store.ts";
+
+export interface BuiltinRegistryConfig {
+  readonly url: string;
+  /** Base64 Ed25519 root public key; the fingerprint I44 compares is derived from it. */
+  readonly rootKey: string;
+}
+
+/**
+ * The official registry this release trusts. `null` until gateway PR 7 of the Readwise unbundling
+ * pilot bakes the real URL and root key: a test key compiled into release builds would be a trust
+ * root whose private key sits in the repository. While it is `null`, nothing references a built-in
+ * registry and every path behaves exactly as before it existed.
+ */
+export const BUILTIN_REGISTRY: BuiltinRegistryConfig | null = null;
+
+/** The built-in config a set of deps carries: its own `builtin` when given, else the baked one. */
+export function builtinRegistryOf(deps: {
+  readonly builtin?: BuiltinRegistryConfig | null | undefined;
+}): BuiltinRegistryConfig | null {
+  return deps.builtin === undefined ? BUILTIN_REGISTRY : deps.builtin;
+}
+
+type BuiltinStateRow = {
+  last_sequence: number;
+  last_generated_at: string | null;
+  last_fetched_at: number | null;
+};
+
+function readBuiltinState(db: Database): BuiltinStateRow | undefined {
+  // Below V73 the table does not exist yet: no recorded fetch, so the floor is 0.
+  if (readIndexedUserVersion(db) < 73) return undefined;
+  const r = db
+    .query(
+      "SELECT last_sequence, last_generated_at, last_fetched_at FROM builtin_registry_state WHERE name = ?",
+    )
+    .get(BUILTIN_REGISTRY_NAME) as BuiltinStateRow | null;
+  return r ?? undefined;
+}
+
+/** The built-in registry as a `RegistryRow`: URL and key from the release, sequence from V73's table. */
+export function builtinRegistryRow(db: Database, builtin: BuiltinRegistryConfig): RegistryRow {
+  const state = readBuiltinState(db);
+  return {
+    name: BUILTIN_REGISTRY_NAME,
+    url: builtin.url,
+    rootKey: builtin.rootKey,
+    rootFingerprint: publisherKeyFingerprint(builtin.rootKey),
+    lastSequence: state?.last_sequence ?? 0,
+    lastGeneratedAt: state?.last_generated_at ?? "",
+    addedAt: 0,
+    lastFetchedAt: state?.last_fetched_at ?? null,
+    builtin: true,
+  };
+}
+
+/**
+ * The registry a NAME means as a source: the built-in registry for the reserved name when one is
+ * configured, otherwise the owner's row. The reserved name wins over an owner row of the same name,
+ * which can only predate the reservation; with no built-in configured it reads exactly as
+ * `getRegistry`.
+ */
+export function resolveRegistry(
+  db: Database,
+  name: string,
+  builtin: BuiltinRegistryConfig | null = BUILTIN_REGISTRY,
+): RegistryRow | undefined {
+  if (builtin !== null && name === BUILTIN_REGISTRY_NAME) return builtinRegistryRow(db, builtin);
+  return getRegistry(db, name);
+}
+
+/**
+ * The registries a bare `extension install <id>` searches: the owner's, plus the built-in one —
+ * unless none is configured, or an owner registry already carries its root fingerprint (the same
+ * trust root listed twice would trip I44's two-registries refusal for every official extension).
+ * An owner row that predates the reserved name is replaced by the built-in, as `resolveRegistry`
+ * resolves that name.
+ */
+export function bareRegistryTargets(
+  db: Database,
+  owners: readonly RegistryRow[],
+  builtin: BuiltinRegistryConfig | null,
+): RegistryRow[] {
+  if (builtin === null) return [...owners];
+  const official = builtinRegistryRow(db, builtin);
+  if (owners.some((r) => r.rootFingerprint === official.rootFingerprint)) return [...owners];
+  return [...owners.filter((r) => r.name !== BUILTIN_REGISTRY_NAME), official];
+}
+
+/**
+ * Advances the I44 anti-rollback floor of whichever store `reg` came from, conditional in both: a
+ * sequence lower than the stored one changes nothing. Returns whether a row changed. For an owner
+ * row it is `recordRegistryFetch` (also conditional on the pinned key); for the built-in registry
+ * it is an upsert into `builtin_registry_state`, whose key is the release's and cannot change
+ * within a process.
+ */
+export function recordAnyRegistryFetch(
+  db: Database,
+  reg: RegistryRow,
+  sequence: number,
+  generatedAt: string,
+  now: number,
+): boolean {
+  if (reg.builtin !== true) {
+    return recordRegistryFetch(db, reg.name, reg.rootKey, sequence, generatedAt, now);
+  }
+  const r = dbRun(
+    db,
+    `INSERT INTO builtin_registry_state (name, last_sequence, last_generated_at, last_fetched_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET
+       last_sequence = excluded.last_sequence,
+       last_generated_at = excluded.last_generated_at,
+       last_fetched_at = excluded.last_fetched_at
+     WHERE builtin_registry_state.last_sequence <= excluded.last_sequence`,
+    [BUILTIN_REGISTRY_NAME, sequence, generatedAt, now],
+  );
+  return r.changes > 0;
+}
+
+/** The floor currently stored for `reg`'s store, or undefined when its owner row is gone or re-pinned. */
+export function currentRegistryFloor(
+  db: Database,
+  reg: RegistryRow,
+): { lastSequence: number } | undefined {
+  if (reg.builtin === true) return { lastSequence: readBuiltinState(db)?.last_sequence ?? 0 };
+  const cur = getRegistry(db, reg.name);
+  return cur === undefined || cur.rootKey !== reg.rootKey ? undefined : cur;
+}

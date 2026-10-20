@@ -7057,7 +7057,9 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const detect = stripComments(
       await read("packages/gateway/src/extensions/registry/registry-update-source.ts"),
     );
-    expect(detect).toContain("const reg = getRegistry(deps.db, name);");
+    expect(detect).toContain(
+      "const reg = resolveRegistry(deps.db, name, builtinRegistryOf(deps.fetch));",
+    );
     expect(detect).toContain("r.source.rootFingerprint === reg.rootFingerprint");
     const orch = stripComments(
       await read("packages/gateway/src/extensions/auto-update-orchestrate.ts"),
@@ -7078,13 +7080,13 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       /reverifyManifest: \(update, signal\) =>\s*reverifyUpdateManifest\(fetchDeps, opts\.vault, update, signal\),/,
     );
     expect(init).toMatch(
-      /fetchRegistryBytes\(\s*fetchDeps,\s*sourceRegistryOf\(opts\.db, update\),/,
+      /fetchRegistryBytes\(\s*fetchDeps,\s*sourceRegistryOf\(fetchDeps, update\),/,
     );
     const rvAt = init.indexOf("async function reverifyUpdateManifest(");
     expect(rvAt).toBeGreaterThan(-1);
     const rv = init.slice(rvAt, init.indexOf("export function createAutoUpdateRuntime("));
     const order = [
-      "const reg = sourceRegistryOf(fetchDeps.db, update);",
+      "const reg = sourceRegistryOf(fetchDeps, update);",
       "await fetchVerifiedIndex(fetchDeps, reg, signal);",
       "await fetchRegistryManifest(",
       "await vaultPublisherKeyConflicts(",

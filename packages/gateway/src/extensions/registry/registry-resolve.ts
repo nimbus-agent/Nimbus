@@ -1,6 +1,7 @@
 /**
- * Resolving an extension id across the owner's registries, shared by `registry.info` and
- * `registry.install` so the two can never disagree about which registry a bare id means.
+ * Resolving an extension id across the owner's registries (and the built-in one), shared by
+ * `registry.info` and `registry.install` so the two can never disagree about which registry a bare
+ * id means.
  */
 import {
   RegistryError,
@@ -8,8 +9,9 @@ import {
   type RegistryExtensionEntry,
   type RegistryIndex,
 } from "@nimbus-dev/registry-format";
+import { bareRegistryTargets, builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
 import { fetchVerifiedIndex, type RegistryFetchDeps } from "./registry-fetch.ts";
-import { getRegistry, listRegistries, type RegistryRow } from "./registry-store.ts";
+import { listRegistries, type RegistryRow } from "./registry-store.ts";
 
 export type IndexRead = { reg: RegistryRow; index: RegistryIndex };
 
@@ -78,10 +80,14 @@ function describeFailures(failures: readonly IndexFailure[]): string {
     .join("; ");
 }
 
-/** The named registry, or every registry when `name` is undefined. */
+/**
+ * The named registry (the reserved name resolves to the built-in registry when one is configured),
+ * or, when `name` is undefined, every owner registry plus the built-in one (`bareRegistryTargets`).
+ */
 export function registryTargets(deps: RegistryFetchDeps, name: string | undefined): RegistryRow[] {
-  if (name === undefined) return listRegistries(deps.db);
-  const one = getRegistry(deps.db, name);
+  const builtin = builtinRegistryOf(deps);
+  if (name === undefined) return bareRegistryTargets(deps.db, listRegistries(deps.db), builtin);
+  const one = resolveRegistry(deps.db, name, builtin);
   if (one === undefined) {
     throw new RegistryError("ERR_REGISTRY_NOT_FOUND", `no registry named "${name}"`);
   }
