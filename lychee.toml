@@ -52,9 +52,10 @@ exclude = [
   # then 200s within seconds, measured from a dev machine too — and neither the API token nor
   # `check-links.sh`'s second pass made them reliable: main's push run after #1705 failed with 5
   # still 503 on the retry. They are checked OFFLINE instead by `bun run audit:commit-links`
-  # (every sha must be a commit in the repo), which is deterministic. Other repos' commit links
-  # stay checked here.
-  "github\\.com/nimbus-agent/Nimbus/commit/",
+  # (every sha must be a commit in the repo), which is deterministic. Anchored so it skips exactly
+  # the prefix that audit scans, and the audit fails any link under it that is not a resolvable
+  # sha, so nothing excluded here goes unchecked. Other repos' commit links stay checked here.
+  "^https://github\\.com/nimbus-agent/Nimbus/commit/",
 ]
 # 202 Accepted is a 2xx success — figma.com's homepage returns it to scripted UAs,
 # which lychee otherwise rejects (the long-standing intermittent figma.com flake).

@@ -2,22 +2,25 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 /**
- * Checks this repo's OWN commit permalinks offline: every
- * `https://github.com/nimbus-agent/Nimbus/commit/<sha>` in the markdown lychee scans must name a
- * commit that exists in the local repository.
+ * Checks this repo's OWN commit permalinks offline: every link under
+ * `https://github.com/nimbus-agent/Nimbus/commit/` in the markdown lychee scans must name, as a 7-40
+ * hex sha, a commit that exists in the local repository.
  *
- * lychee excludes these links (`lychee.toml`) because github.com answers commit pages with
- * intermittent 503s — the same URL 503s and then 200s within seconds, from a dev machine as well
- * as runner egress, so neither the API token nor `check-links.sh`'s second pass makes them
- * reliable, and `CHANGELOG.md` gains more of them with every release. The question a link check
- * asks of such a link — does this commit exist? — has a deterministic local answer, so it is
- * answered here instead.
+ * lychee excludes exactly that URL prefix (`lychee.toml`, anchored with `^`) because github.com
+ * answers commit pages with intermittent 503s — the same URL 503s and then 200s within seconds,
+ * from a dev machine as well as runner egress, so neither the API token nor `check-links.sh`'s
+ * second pass makes them reliable, and `CHANGELOG.md` gains more of them with every release. The
+ * question a link check asks of such a link — does this commit exist? — has a deterministic local
+ * answer, so it is answered here instead. Every link lychee skips is therefore checked here: one
+ * whose path is not a sha this audit can resolve is an error, never ignored.
  *
- * Fails CLOSED on a shallow clone: there, a missing object proves nothing, and passing would make
- * this a gate that cannot fail. CI checks out with `fetch-depth: 0` for that reason.
+ * On a shallow clone a missing object proves nothing. CI (which checks out with `fetch-depth: 0`)
+ * fails closed there; a local run skips with a warning instead, so a developer on a shallow clone
+ * can still push through the `preflight:fast` pre-push hook. CI is the authoritative run.
  */
 
-const COMMIT_LINK = /https:\/\/github\.com\/nimbus-agent\/Nimbus\/commit\/([0-9a-fA-F]{7,40})\b/g;
+const COMMIT_LINK = /https:\/\/github\.com\/nimbus-agent\/Nimbus\/commit\/([^\s)\]>"'`#?]*)/g;
+const SHA = /^[0-9a-f]{7,40}$/;
 
 /** The same inputs `scripts/check-links.sh` hands lychee, minus lychee's `exclude_path` dirs. */
 const GLOBS = ["docs/**/*.md", "*.md"] as const;
@@ -26,7 +29,10 @@ const EXCLUDED_PREFIXES = [".claude/", "node_modules/", ".git/"] as const;
 export interface CommitLink {
   readonly file: string;
   readonly line: number;
-  readonly sha: string;
+  /** The path segment after `/commit/`, as written. */
+  readonly ref: string;
+  /** `ref` lower-cased when it is a 7-40 hex sha; `null` when it is not one. */
+  readonly sha: string | null;
 }
 
 export function extractCommitLinks(file: string, content: string): CommitLink[] {
@@ -34,21 +40,41 @@ export function extractCommitLinks(file: string, content: string): CommitLink[] 
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
     for (const m of (lines[i] ?? "").matchAll(COMMIT_LINK)) {
-      const sha = m[1];
-      if (sha !== undefined) out.push({ file, line: i + 1, sha: sha.toLowerCase() });
+      const ref = m[1] ?? "";
+      const lower = ref.toLowerCase();
+      out.push({ file, line: i + 1, ref, sha: SHA.test(lower) ? lower : null });
     }
   }
   return out;
 }
 
-/** The links whose sha `exists` rejects, each unique sha asked about once. */
-export function findMissing(
+export interface CommitLinkProblem {
+  readonly link: CommitLink;
+  readonly reason: "not_a_sha" | "missing";
+}
+
+/** Every link that is not a resolvable sha, or whose sha `exists` rejects; each sha asked once. */
+export function findProblems(
   links: readonly CommitLink[],
   exists: (shas: readonly string[]) => ReadonlySet<string>,
-): CommitLink[] {
-  const unique = [...new Set(links.map((l) => l.sha))];
+): CommitLinkProblem[] {
+  const unique = [...new Set(links.flatMap((l) => (l.sha === null ? [] : [l.sha])))];
   const present = exists(unique);
-  return links.filter((l) => !present.has(l.sha));
+  const problems: CommitLinkProblem[] = [];
+  for (const link of links) {
+    if (link.sha === null) problems.push({ link, reason: "not_a_sha" });
+    else if (!present.has(link.sha)) problems.push({ link, reason: "missing" });
+  }
+  return problems;
+}
+
+/** What a run does about a shallow clone: CI fails closed, a local run skips. */
+export function shallowVerdict(
+  isShallow: boolean,
+  ci: string | undefined,
+): "run" | "skip" | "fail" {
+  if (!isShallow) return "run";
+  return ci === "true" ? "fail" : "skip";
 }
 
 function git(args: readonly string[], input?: string): string {
@@ -74,12 +100,18 @@ function existingCommits(shas: readonly string[]): ReadonlySet<string> {
 }
 
 function main(): void {
-  if (git(["rev-parse", "--is-shallow-repository"]).trim() === "true") {
-    console.error(
+  const isShallow = git(["rev-parse", "--is-shallow-repository"]).trim() === "true";
+  const verdict = shallowVerdict(isShallow, process.env["CI"]);
+  if (verdict !== "run") {
+    const msg =
       "audit:commit-links: this is a shallow clone, so a missing commit proves nothing. " +
-        "Fetch full history (`git fetch --unshallow`, or `fetch-depth: 0` in CI).",
-    );
-    process.exit(1);
+      "Fetch full history (`git fetch --unshallow`, or `fetch-depth: 0` in CI).";
+    if (verdict === "fail") {
+      console.error(msg);
+      process.exit(1);
+    }
+    console.warn(`${msg} SKIPPED locally; CI runs it with full history.`);
+    return;
   }
   const files = new Set<string>();
   for (const pattern of GLOBS) {
@@ -89,12 +121,17 @@ function main(): void {
     }
   }
   const links = [...files].sort().flatMap((f) => extractCommitLinks(f, readFileSync(f, "utf8")));
-  const missing = findMissing(links, existingCommits);
-  for (const m of missing) {
-    console.error(`${m.file}:${String(m.line)}: commit ${m.sha} does not exist in this repository`);
+  const problems = findProblems(links, existingCommits);
+  for (const { link, reason } of problems) {
+    const where = `${link.file}:${String(link.line)}`;
+    console.error(
+      reason === "missing"
+        ? `${where}: commit ${link.ref} does not exist in this repository`
+        : `${where}: commit link ${JSON.stringify(link.ref)} is not a 7-40 character hex sha`,
+    );
   }
-  if (missing.length > 0) {
-    console.error(`audit:commit-links: FAILED (${String(missing.length)} broken commit link(s))`);
+  if (problems.length > 0) {
+    console.error(`audit:commit-links: FAILED (${String(problems.length)} broken commit link(s))`);
     process.exit(1);
   }
   console.log(

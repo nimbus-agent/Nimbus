@@ -118,7 +118,8 @@ const FAST: readonly Gate[] = [
   { name: "audit:package-readmes", cmd: ["bun", "run", "audit:package-readmes"], tier: "fast" },
   {
     // This repo's own commit permalinks, checked offline because lychee excludes them
-    // (github.com 503s commit pages intermittently). Fails closed on a shallow clone.
+    // (github.com 503s commit pages intermittently). On a shallow clone it fails closed in CI and
+    // skips with a warning locally, so this pre-push gate never blocks a shallow checkout.
     name: "audit:commit-links",
     cmd: ["bun", "run", "audit:commit-links"],
     tier: "fast",
