@@ -41,6 +41,8 @@ export async function buildTestRegistry(
     entryHashOverride?: string;
     /** Sign the manifests with a key other than the one they declare. */
     badManifestSignature?: boolean;
+    /** Extra manifest fields (permissions, credentials, sync, name …), merged before signing. */
+    manifestExtra?: Record<string, unknown>;
   },
 ): Promise<TestRegistry> {
   const root = nacl.sign.keyPair.fromSeed(ROOT_SEED);
@@ -64,6 +66,7 @@ export async function buildTestRegistry(
       permissions: {},
       publisher: { id: publisherId, key: publisherKey },
       ...(v.dependsOn === undefined ? {} : { dependsOn: v.dependsOn }),
+      ...(opts.manifestExtra ?? {}),
     };
     const manifestText = JSON.stringify({
       ...unsigned,

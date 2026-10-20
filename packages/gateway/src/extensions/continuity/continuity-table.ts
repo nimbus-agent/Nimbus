@@ -22,6 +22,11 @@ export interface ContinuityEntry {
     readonly write: readonly string[];
   };
   readonly itemTypes: readonly string[];
+  /**
+   * The name the owner knows the service by ("Readwise"), used in the migration prompt and the
+   * paused reasons. Absent means the legacy service id is shown instead.
+   */
+  readonly displayName?: string;
 }
 
 /** Empty in production until the cut-over PR fills it. */
