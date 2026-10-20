@@ -53,7 +53,10 @@ const DEFAULT_RETRY_AFTER_MS = 60_000;
  * ONE `sync()` call is ONE scheduler run (so one `sync.run` egress row): it loops pages inside the
  * run, writes each page in a single `writeBatch` (a page is atomic; earlier pages stay committed if
  * a later page fails), and always returns `hasMore: false` — the scheduler never continues it. A
- * timeout or throw propagates and the scheduler persists no cursor.
+ * timeout or throw propagates and the scheduler persists no cursor, EXCEPT a `rate_limited` or
+ * `unauthenticated` page after at least one committed page: its error carries the last committed
+ * page's cursor as `resumeCursor`, which the scheduler persists while still recording the run as
+ * rate-limited / unauthenticated.
  */
 export function createExtensionSyncable(deps: ExtensionSyncableDeps): Syncable {
   const serviceId = deps.identity.indexServiceId;
@@ -97,12 +100,19 @@ async function runPages(
       itemTypes: deps.itemTypes,
       syncedAt: Date.now(),
     });
+    // A stop after at least one committed page hands the scheduler that page's cursor, so the
+    // next run resumes after the committed work rather than re-walking it (and, on a limit that
+    // trips at the same page every run, never getting past it). On the first page there is
+    // nothing committed and nothing to resume: the stored cursor stays as it was.
+    const stop = pages > 1 && cursor !== null ? { resumeCursor: cursor } : undefined;
     if (page.status === "rate_limited") {
       throw new RateLimitError(
         new Date(Date.now() + (page.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS)),
+        undefined,
+        stop,
       );
     }
-    if (page.status === "unauthenticated") throw new UnauthenticatedError();
+    if (page.status === "unauthenticated") throw new UnauthenticatedError(undefined, stop);
     ctx.writeBatch(() => {
       for (const row of page.rows) ctx.upsertItem(row);
     });

@@ -1919,7 +1919,13 @@ call, aborted on timeout; the 4 MiB result cap) within a 40-page / 5-minute budg
 page (`sync-response.ts`: undeclared types and malformed or oversized items are dropped and counted,
 a malformed response fails the run), writes each page in one batch, and returns `hasMore: false`, so
 the run is ONE `sync.run` egress row (I29). A failure keeps earlier pages and does not advance the
-cursor. Before every run, `preflight()` asks `SandboxRunner.canConfine` over the exact spawn policy
+cursor, with one exception: a page answering `rate_limited` or `unauthenticated` after at least one
+committed page throws its `RateLimitError` / `UnauthenticatedError` with an optional `resumeCursor`
+(the last committed page's cursor), which the scheduler writes to `scheduler_state.cursor` alone
+before its usual arm. The run still reports rate-limited (with backoff) or unauthenticated (with the
+lost-auth notification), never success, but the next run resumes after the committed pages instead
+of re-walking them, so a limit that trips at the same page every run cannot pin the sync there. A
+stop on the first page carries no cursor, and no bundled connector sets the field. Before every run, `preflight()` asks `SandboxRunner.canConfine` over the exact spawn policy
 (`extensionSpawnPolicyForGrants`, pinned equal to the spawn manifest's) and the scheduler pauses with
 the reason when it cannot. Configured-ness reads the grant's own credentials: while any is blank the
 run returns before spawning and appends no row.

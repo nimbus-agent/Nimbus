@@ -230,6 +230,52 @@ describe("createExtensionSyncable", () => {
     await expect(s.sync(recordingCtx().ctx, null)).rejects.toBeInstanceOf(UnauthenticatedError);
   });
 
+  /** Pages 1..n-1 answer ok with cursors c1..c(n-1); page n answers `stop`. */
+  function stopsOnPage(n: number, stop: unknown): { callSync: () => Promise<unknown> } {
+    let k = 0;
+    return {
+      callSync: async () => {
+        k += 1;
+        return k === n ? stop : wire([`p${k}`], `c${k}`, true);
+      },
+    };
+  }
+
+  test("rate_limited on page 3 carries page 2's cursor and keeps pages 1-2", async () => {
+    const s = createExtensionSyncable(
+      deps(stopsOnPage(3, { status: "rate_limited", retryAfterMs: 5_000 })),
+    );
+    const { ctx, upserts } = recordingCtx();
+    const err = await s.sync(ctx, "c0").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RateLimitError);
+    expect((err as RateLimitError).resumeCursor).toBe("c2");
+    expect(upserts).toEqual(["p1", "p2"]);
+  });
+
+  test("unauthenticated on page 3 carries page 2's cursor and keeps pages 1-2", async () => {
+    const s = createExtensionSyncable(deps(stopsOnPage(3, { status: "unauthenticated" })));
+    const { ctx, upserts } = recordingCtx();
+    const err = await s.sync(ctx, "c0").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnauthenticatedError);
+    expect((err as UnauthenticatedError).resumeCursor).toBe("c2");
+    expect(upserts).toEqual(["p1", "p2"]);
+  });
+
+  test("rate_limited or unauthenticated on the FIRST page carries no cursor", async () => {
+    const rl = await createExtensionSyncable(
+      deps(stopsOnPage(1, { status: "rate_limited", retryAfterMs: 5_000 })),
+    )
+      .sync(recordingCtx().ctx, "c0")
+      .catch((e: unknown) => e);
+    expect(rl).toBeInstanceOf(RateLimitError);
+    expect((rl as RateLimitError).resumeCursor).toBeUndefined();
+    const ua = await createExtensionSyncable(deps(stopsOnPage(1, { status: "unauthenticated" })))
+      .sync(recordingCtx().ctx, "c0")
+      .catch((e: unknown) => e);
+    expect(ua).toBeInstanceOf(UnauthenticatedError);
+    expect((ua as UnauthenticatedError).resumeCursor).toBeUndefined();
+  });
+
   test("preflight wraps the confinement reason; null when it can confine", () => {
     expect(createExtensionSyncable(deps()).preflight?.()).toBeNull();
     const msg = createExtensionSyncable(deps({ canConfine: () => "no bwrap" })).preflight?.();
@@ -312,6 +358,44 @@ describe("scheduler integration", () => {
     await sched.forceSync("ext_x").catch(() => undefined);
     await sched.stop();
     expect(getConnectorHealth(db, "ext_x").state).toBe("rate_limited");
+  });
+
+  test("rate_limited on page 3 persists page 2's cursor, stays rate_limited, and the next run resumes there", async () => {
+    const db = freshDb();
+    const ctx = scheduledCtx(db);
+    await ctx.vault.set("ext.ext_x.token", "secret");
+    const rows: unknown[] = [];
+    const reqCursors: Array<string | null> = [];
+    let k = 0;
+    const sched = new SyncScheduler(ctx, undefined, { appendSyncEgress: (r) => rows.push(r) });
+    sched.register(
+      createExtensionSyncable(
+        deps({
+          callSync: async (req) => {
+            reqCursors.push(req.cursor);
+            k += 1;
+            if (k === 3) return { status: "rate_limited", retryAfterMs: 60_000 };
+            return wire([`p${k}`], `c${k}`, k < 5);
+          },
+        }),
+      ),
+    );
+    await expect(sched.forceSync("ext_x")).rejects.toBeInstanceOf(RateLimitError);
+    const cursorOf = () =>
+      (
+        db.query("SELECT cursor FROM scheduler_state WHERE service_id = ?").get("ext_x") as {
+          cursor: string | null;
+        }
+      ).cursor;
+    expect(cursorOf()).toBe("c2");
+    expect(getConnectorHealth(db, "ext_x").state).toBe("rate_limited");
+    expect(rows).toHaveLength(1);
+    // A force bypasses the rate-limit gate: the retry starts from the persisted cursor.
+    await sched.forceSync("ext_x");
+    await sched.stop();
+    expect(reqCursors).toEqual([null, "c1", "c2", "c2", "c4"]);
+    expect(cursorOf()).toBe("c5");
+    expect(rows).toHaveLength(2);
   });
 
   test("preflight refusal pauses: paused=1, status paused, reason in last_error, NO sync.run row, no spawn, next tick does not queue it", async () => {

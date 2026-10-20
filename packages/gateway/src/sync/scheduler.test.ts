@@ -520,6 +520,81 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
     expect(getConnectorHealth(db, "rl2").state).toBe("rate_limited");
   });
 
+  /** Succeeds once with cursor "c-ok", then throws `thrown` on every later run. */
+  function okThenThrows(serviceId: string, thrown: unknown): Syncable {
+    let calls = 0;
+    return {
+      serviceId,
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        calls += 1;
+        if (calls > 1) throw thrown;
+        return { cursor: "c-ok", itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+  }
+
+  test("a RateLimitError carrying a resume cursor persists it and still reports rate_limited", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const sched = new SyncScheduler(ctx, {}, { random: () => 0 });
+    const retryAfter = new Date(Date.now() + 60_000);
+    sched.register(
+      okThenThrows("rlc", new RateLimitError(retryAfter, "slow down", { resumeCursor: "c-page2" })),
+    );
+    await sched.forceSync("rlc");
+    const before = loadSchedulerState(db, "rlc");
+    await expect(sched.forceSync("rlc")).rejects.toThrow(/slow down/);
+    await sched.stop();
+    const row = loadSchedulerState(db, "rlc");
+    expect(row?.cursor).toBe("c-page2");
+    // Nothing else about the row moves: not a success, not a failure strike.
+    expect(row?.last_sync_at).toBe(before?.last_sync_at ?? null);
+    expect(row?.status).toBe("ok");
+    expect(row?.consecutive_failures).toBe(0);
+    const health = getConnectorHealth(db, "rlc");
+    expect(health.state).toBe("rate_limited");
+    expect(health.retryAfter?.getTime()).toBe(retryAfter.getTime());
+  });
+
+  test("an UnauthenticatedError carrying a resume cursor persists it, notifies and reports unauthenticated", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    let notifications = 0;
+    const sched = new SyncScheduler(
+      ctx,
+      {},
+      {
+        random: () => 0,
+        notify: async () => {
+          notifications += 1;
+        },
+      },
+    );
+    sched.register(
+      okThenThrows("uac", new UnauthenticatedError("token revoked", { resumeCursor: "c-page2" })),
+    );
+    await sched.forceSync("uac");
+    await expect(sched.forceSync("uac")).rejects.toThrow(/token revoked/);
+    await sched.stop();
+    expect(loadSchedulerState(db, "uac")?.cursor).toBe("c-page2");
+    expect(getConnectorHealth(db, "uac").state).toBe("unauthenticated");
+    expect(notifications).toBe(1);
+  });
+
+  test("a RateLimitError WITHOUT a resume cursor leaves the stored cursor untouched", async () => {
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const sched = new SyncScheduler(ctx, {}, { random: () => 0 });
+    sched.register(okThenThrows("rln", new RateLimitError(new Date(Date.now() + 60_000))));
+    await sched.forceSync("rln");
+    await expect(sched.forceSync("rln")).rejects.toBeInstanceOf(RateLimitError);
+    await sched.stop();
+    expect(loadSchedulerState(db, "rln")?.cursor).toBe("c-ok");
+    expect(getConnectorHealth(db, "rln").state).toBe("rate_limited");
+  });
+
   test("unregister removes the connector and rejects any pending force waiter", async () => {
     const db = openMemoryIndexDatabase();
     const ctx = testContext(db);

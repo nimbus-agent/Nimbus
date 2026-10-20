@@ -203,6 +203,11 @@ export function listAllSchedulerStates(db: Database): SchedulerStateRow[] {
   return out;
 }
 
+/** Writes ONLY the cursor; status, failure count and last/next sync times are left as they are. */
+export function setSchedulerCursor(db: Database, serviceId: string, cursor: string): void {
+  dbRun(db, `UPDATE scheduler_state SET cursor = ? WHERE service_id = ?`, [cursor, serviceId]);
+}
+
 export function clearSchedulerCursor(db: Database, serviceId: string): void {
   dbRun(db, `UPDATE scheduler_state SET cursor = NULL WHERE service_id = ?`, [serviceId]);
 }
