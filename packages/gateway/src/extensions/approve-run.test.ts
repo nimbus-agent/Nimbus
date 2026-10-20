@@ -24,6 +24,7 @@ import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import {
   approveExtensionRun,
+  approveMigratedExtensionRun,
   buildRunConsentPayload,
   readVerifiedManifest,
   revokeExtensionRun,
@@ -32,6 +33,7 @@ import type { ContinuityEntry } from "./continuity/continuity-table.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
 import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
+import { recordMigrationPrepared } from "./migration/migration-store.ts";
 import { getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
@@ -810,5 +812,112 @@ describe("revokeExtensionRun", () => {
       throw new Error("boom");
     });
     expect(out.revoked).toBe(true);
+  });
+});
+
+describe("approveMigratedExtensionRun", () => {
+  const MIG_ID = "com.example.mig";
+
+  /** A signed, bound extension with credentials, plus its continuity entry. */
+  async function migrated(): Promise<{
+    s: Awaited<ReturnType<typeof setup>>;
+    entry: ContinuityEntry;
+    digest: string;
+  }> {
+    const s = await setup({
+      id: MIG_ID,
+      signed: true,
+      manifest: () => ({ credentials: { token: { env: "FIXTURE_TOKEN" } } }),
+    });
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'root-fp' WHERE id = ?", [MIG_ID]);
+    const entry: ContinuityEntry = {
+      legacyServiceId: "fixture_reader",
+      extensionId: MIG_ID,
+      publisherKey: s.publisherKey ?? "",
+      sourceRootFingerprint: "root-fp",
+      credentials: { token: "fixture.token" },
+      expectedPermissions: { network: [], read: [], write: [] },
+      itemTypes: [],
+    };
+    const digest = listExtensions(s.db).find((r) => r.id === MIG_ID)?.tree_digest ?? "";
+    return { s, entry, digest };
+  }
+
+  function pending(db: Database, digest: string, extensionId = MIG_ID): void {
+    recordMigrationPrepared(
+      db,
+      {
+        id: "mig-1",
+        legacyServiceId: "fixture_reader",
+        extensionId,
+        version: "1.0.0",
+        treeDigest: digest,
+        stagePath: "/stage",
+      },
+      1,
+    );
+  }
+
+  test("with a pending migration it grants the LEGACY vault key, without a prompt, model access off", async () => {
+    const { s, entry, digest } = await migrated();
+    pending(s.db, digest);
+    const out = await approveMigratedExtensionRun(
+      { db: s.db, env: s.env, runtimeEnabled: true, now: () => 7, continuityTable: [entry] },
+      MIG_ID,
+    );
+    expect(out.changed).toBe(true);
+    expect(out.modelAccess).toBe(false);
+    const grant = getRunGrant(s.db, MIG_ID);
+    expect(grant?.credentials_json).toBe(
+      '{"token":{"env":"FIXTURE_TOKEN","vaultKey":"fixture.token"}}',
+    );
+    expect(grant?.model_access).toBe(0);
+    expect(grant?.tree_digest).toBe(digest);
+  });
+
+  test("no pending migration refuses ERR_EXTENSION_RUN_NOT_MIGRATED and grants nothing", async () => {
+    const { s, entry } = await migrated();
+    await expect(
+      approveMigratedExtensionRun(
+        { db: s.db, env: s.env, runtimeEnabled: true, now: () => 7, continuityTable: [entry] },
+        MIG_ID,
+      ),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_NOT_MIGRATED/);
+    expect(listRunGrants(s.db)).toEqual([]);
+  });
+
+  test("a pending migration for a DIFFERENT tree refuses", async () => {
+    const { s, entry } = await migrated();
+    pending(s.db, "0".repeat(64));
+    await expect(
+      approveMigratedExtensionRun(
+        { db: s.db, env: s.env, runtimeEnabled: true, now: () => 7, continuityTable: [entry] },
+        MIG_ID,
+      ),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_NOT_MIGRATED/);
+    expect(listRunGrants(s.db)).toEqual([]);
+  });
+
+  test("an extension the continuity table does not bind refuses (no extension-keyspace fallback)", async () => {
+    const { s, digest } = await migrated();
+    pending(s.db, digest);
+    await expect(
+      approveMigratedExtensionRun(
+        { db: s.db, env: s.env, runtimeEnabled: true, now: () => 7, continuityTable: [] },
+        MIG_ID,
+      ),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_NOT_MIGRATED/);
+    expect(listRunGrants(s.db)).toEqual([]);
+  });
+
+  test("the runtime switch still refuses first", async () => {
+    const { s, entry, digest } = await migrated();
+    pending(s.db, digest);
+    await expect(
+      approveMigratedExtensionRun(
+        { db: s.db, env: s.env, runtimeEnabled: false, now: () => 7, continuityTable: [entry] },
+        MIG_ID,
+      ),
+    ).rejects.toThrow(/ERR_EXTENSION_RUNTIME_DISABLED/);
   });
 });
