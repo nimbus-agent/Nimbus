@@ -145,6 +145,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Extension runtime § 4.4: approving an installed extension to RUN, unattended, with resolved
   // grants. A separate consent from install. Gate site: extensions/approve-run.ts.
   "extension.run",
+  // Readwise unbundling spec § 7.2: the ONE owner decision that moves a bundled connector to its
+  // signed extension — install + run grant + credential grant together. Gate site:
+  // extensions/migration/migration-engine.ts (`migrationConsentViaGate`). Never delegable (I20).
+  "extension.migrate",
   // Adding a registry pins a trust root that later extension installs verify against. Gate site:
   // the `registry.add` handler in ipc/registry-rpc.ts, through the gate-only executor that
   // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).

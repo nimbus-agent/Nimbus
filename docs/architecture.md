@@ -2222,7 +2222,7 @@ servers registered `--model` and only while `user_mcp_model_access` allows it) c
 dispatch without it is refused `ERR_USER_MCP_ACTION_MISMATCH` (the I42 pairing, pinned by
 `test/integration/mcp-sink/capture-action-routing.test.ts`).
 
-**Classification: 141 HITL types, 29 first-party types proposable, 112 denied (`extension.run` joined the denied set with the extension runtime PR 2, `registry.add` with the registry client PR 3).** Denied classes: file, calendar
+**Classification: 142 HITL types, 29 first-party types proposable, 113 denied (`extension.run` joined the denied set with the extension runtime PR 2, `registry.add` with the registry client PR 3, `extension.migrate` — the one connector-migration decision — with the Readwise unbundling PR 5).** Denied classes: file, calendar
 delete, VCS, pipeline, cloud, IaC, Kubernetes, deployment, incident, data-platform, tribal KB (I25), the confined
 ChatOps posts (I23), gateway-internal types, and `unroutable`. **Known gap, not a policy decision:**
 `obsidian.note.append` is denied as `unroutable` because `obsidian` is spawned by `lazy-mesh/connector-spawns.ts` but

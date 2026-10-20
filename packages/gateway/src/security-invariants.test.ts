@@ -290,6 +290,35 @@ describe("I2 — HITL frozen-set membership", () => {
     expect(src).toMatch(/ADOPT_ACTION_TYPE = "connector\.adoptLocalAuth"/);
   });
 
+  test("extension.migrate is in the I2 HITL frozen set, and the migration engine raises exactly it", async () => {
+    // The one migration prompt covers install + run grant + credential grant (Readwise unbundling
+    // spec § 7.2 step 4), so it must be a gated type in its own right, never a reuse of
+    // `extension.run` that would render as a different decision.
+    const { HITL_REQUIRED } = await import("./engine/executor.ts");
+    expect(HITL_REQUIRED.has("extension.migrate")).toBe(true);
+    const { EXTENSION_MIGRATE_ACTION_TYPE, migrationConsentViaGate } = await import(
+      "./extensions/migration/migration-engine.ts"
+    );
+    expect(EXTENSION_MIGRATE_ACTION_TYPE).toBe("extension.migrate");
+    const raised: string[] = [];
+    const consent = migrationConsentViaGate(async (a) => {
+      raised.push(a.type);
+      return false;
+    });
+    const payload = {
+      migrationId: "m",
+      extensionId: "com.example.x",
+      summary: "s",
+      publisher: { id: "p", fingerprint: "f" },
+      version: "1.0.0",
+      network: "n",
+      readTools: "r",
+      knownLoss: "k",
+    };
+    expect(await consent(payload)).toBe(false);
+    expect(raised).toEqual(["extension.migrate"]);
+  });
+
   test("extension.install is not merely listed: the IPC install REFUSES without the executor gate and installs nothing on a denial", async () => {
     // Membership alone proved nothing here for a long time: `extension.install` sat in the frozen
     // set while no code ever built an action of that type, and the only consent was a CLI-side
@@ -6138,6 +6167,7 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       "extension.install",
       "extension.run",
       "extension.autoUpdate",
+      "extension.migrate",
     ]) {
       let prompts = 0;
       let remote = 0;
