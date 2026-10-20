@@ -91,6 +91,30 @@ describe("parseSyncResponse", () => {
   });
 });
 
+const VALID_EXPECTED: Record<
+  string,
+  {
+    status: string;
+    rows?: string[];
+    hasMore?: boolean;
+    cursor?: string | null;
+    retryAfterMs?: number;
+  }
+> = {
+  "valid-ok-body.json": {
+    status: "ok",
+    rows: ["readwise:book/7"],
+    hasMore: false,
+    cursor: "opaque é cursor",
+  },
+  "valid-ok-has-more.json": { status: "ok", rows: [], hasMore: true, cursor: "page-2" },
+  "valid-ok-minimal.json": { status: "ok", rows: [], hasMore: false, cursor: null },
+  "valid-ok-preview.json": { status: "ok", rows: ["readwise:101"], hasMore: true, cursor: "c1" },
+  "valid-rate-limited-bare.json": { status: "rate_limited" },
+  "valid-rate-limited.json": { status: "rate_limited", retryAfterMs: 1500 },
+  "valid-unauthenticated.json": { status: "unauthenticated" },
+};
+
 describe("sync v1 corpus", () => {
   const dir = join(import.meta.dir, "__fixtures__", "sync-v1");
   const files = readdirSync(dir)
@@ -127,8 +151,18 @@ describe("sync v1 corpus", () => {
       const cctx = { ...ctx, itemTypes: ["highlight", "book", "t"] };
       if (f.startsWith("valid-")) {
         const r = parseSyncResponse(raw, cctx);
+        const want = VALID_EXPECTED[f];
+        if (want === undefined) {
+          throw new Error(`no expectation for ${f}`);
+        }
+        expect(r.status).toBe(want.status);
         if (r.status === "ok") {
           expect(r.dropped).toEqual({ undeclaredType: 0, malformed: 0, oversized: 0 });
+          expect(r.rows.map((x) => `${x.service}:${x.externalId}`)).toEqual(want.rows);
+          expect(r.hasMore).toBe(want.hasMore);
+          expect(r.cursor).toBe(want.cursor);
+        } else if (r.status === "rate_limited") {
+          expect(r.retryAfterMs).toBe(want.retryAfterMs);
         }
         return;
       }

@@ -112,6 +112,7 @@ function buildRow(o: Record<string, unknown>, ctx: ParseSyncContext): ItemVerdic
     ...(url === undefined ? {} : { url }),
     ...(canonicalUrl === undefined ? {} : { canonicalUrl }),
     ...bodyPart,
+    // Safe: validateBody returns exactly one arm of the body union, so the spread is a valid BodyRow.
   } as BodyRow;
   return { row };
 }
