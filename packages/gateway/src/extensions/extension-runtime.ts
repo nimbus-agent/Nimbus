@@ -143,7 +143,10 @@ export function createExtensionSlotSource(deps: ExtensionSlotSourceDeps): Extens
   const verify = deps.verify ?? readVerifiedExtensionForSpawn;
   // Org policy names the INDEX id (`readwise` for a bound extension, else the `ext_` id). Derived
   // from the installed manifest and the same continuity table the verifier binds with; a spawn is
-  // still refused by the verifier (step 9) if that manifest was tampered with.
+  // still refused by the verifier (step 9) if that manifest was tampered with. Bound: the id is read
+  // from the hash-checked on-disk manifest BEFORE verify, and an unreadable manifest falls back to
+  // the ext_ id — so if it is unreadable here but readable at verify time, an allowlist naming only
+  // the ext_ id admits the spawn (no wider than before index-id policy existed).
   const policyIdFor = (serviceId: string): string =>
     indexServiceIdForCodeServer(deps.db, serviceId, deps.continuityTable, deps.readManifest);
   return {

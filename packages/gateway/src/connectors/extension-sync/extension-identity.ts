@@ -9,6 +9,7 @@ import {
   findContinuityBinding,
 } from "../../extensions/continuity/continuity-table.ts";
 import type { ResolvedRunCredentials } from "../../extensions/extension-credentials.ts";
+import { EXTENSION_SERVICE_ID_PATTERN } from "../../extensions/extension-service-id.ts";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { type ExtensionRunGrantRow, listRunGrants } from "../../extensions/run-grant-store.ts";
 
@@ -126,7 +127,10 @@ export function createExtensionCredentialsResolver(
   table: readonly ContinuityEntry[] = CONTINUITY_TABLE,
   readManifest: ExtensionManifestReader = readInstalledManifest,
 ): (serviceId: string) => ResolvedRunCredentials | undefined {
+  const boundIds = new Set(table.map((e) => e.legacyServiceId));
   return (serviceId) => {
+    // Called on every scheduled run of every connector: answer built-ins with no I/O at all.
+    if (!EXTENSION_SERVICE_ID_PATTERN.test(serviceId) && !boundIds.has(serviceId)) return undefined;
     const hit = listExtensionIdentities(db, table, readManifest).find(
       (e) => e.identity.indexServiceId === serviceId,
     );

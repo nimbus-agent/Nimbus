@@ -174,6 +174,19 @@ describe("configured-ness through the credentials resolver", () => {
     expect(resolver("github")).toBeUndefined();
   });
 
+  test("a built-in id is answered with no reads at all", () => {
+    let reads = 0;
+    const resolver = createExtensionCredentialsResolver(seed({ fingerprint: null }), TABLE, () => {
+      reads++;
+      return manifest();
+    });
+    expect(resolver("github")).toBeUndefined();
+    expect(reads).toBe(0);
+    // A bound legacy id and an ext_ id do read.
+    resolver("readwise");
+    expect(reads).toBe(1);
+  });
+
   test("unparseable stored credentials resolve to nothing", () => {
     const db = seed({ fingerprint: null, credentialsJson: "not json" });
     expect(

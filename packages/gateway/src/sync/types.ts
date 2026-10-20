@@ -18,7 +18,9 @@ export interface SyncRuntimeContext extends SyncContext {
   db: Database;
   /**
    * Index id -> the credentials an approved extension's run grant carries, for the scheduler's
-   * configured-ness gate. Absent when the extension runtime is off.
+   * configured-ness gate. Supplied by assemble.ts unconditionally; it answers `undefined` for any
+   * id no readable grant carries, so it changes no built-in connector's answer. Optional only so
+   * tests and other constructors may omit it.
    */
   extensionCredentialsFor?: (serviceId: string) => ResolvedRunCredentials | undefined;
 }
