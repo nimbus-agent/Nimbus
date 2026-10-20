@@ -6736,6 +6736,43 @@ describe("I43 — an installed extension's code runs only through the verified s
     ]);
   });
 
+  test("D34: the real tree confines the migration table, the migration grant and the extension.migrate consent, and the checker rejects strays", async () => {
+    const { checkMigrationConfinement } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(files.length).toBeGreaterThan(100);
+    // Premise: the confined names are really present in the scanned tree.
+    const named = (re: RegExp) => files.filter((f) => re.test(f.contents)).length;
+    expect(named(/\bconnector_migration\b/)).toBeGreaterThan(0);
+    expect(named(/\bapproveMigratedExtensionRun\b/)).toBeGreaterThan(0);
+    expect(named(/\bmigrationConsentViaGate\b/)).toBeGreaterThan(0);
+    expect(checkMigrationConfinement(files)).toEqual([]);
+    // Non-vacuous: the same checker flags one planted stray per clause.
+    const planted = checkMigrationConfinement([
+      {
+        relPath: "packages/gateway/src/x/a.ts",
+        contents: "db.run(\"UPDATE connector_migration SET state = 'approved'\");\n",
+      },
+      {
+        relPath: "packages/gateway/src/x/b.ts",
+        contents: "await approveMigratedExtensionRun(d, id);\n",
+      },
+      {
+        relPath: "packages/gateway/src/x/c.ts",
+        contents: 'gate({ type: "extension.migrate", payload });\n',
+      },
+    ]);
+    expect(planted.map((v) => [v.file, v.rule])).toEqual([
+      ["packages/gateway/src/x/a.ts", "migration-table-confined"],
+      ["packages/gateway/src/x/b.ts", "migration-grant-callers"],
+      ["packages/gateway/src/x/c.ts", "migration-consent-raisers"],
+    ]);
+  });
+
   test("assemble: no extension spawns until the boot verification pass ends; the gate resolves in its finally", async () => {
     const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
     expect(src).toMatch(
@@ -7139,6 +7176,82 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       .filter((f) => /\bsetExtensionSource\b/.test(stripComments(f.contents)))
       .map((f) => f.rel);
     expect(setSourceCallers).toEqual(["extensions/registry/install-from-registry.ts"]);
+  });
+
+  test("source pin: the migration engine's accept re-digests the stage, installs with the BUILTIN registry row, then checks the installed digest", async () => {
+    // The engine is the second production caller of `installVerifiedRegistryPackage` (above). It
+    // rebuilds the package from its stage rather than refetching, so what makes that install a
+    // verified-chain install is this exact order, AFTER the owner's one `extension.migrate` answer.
+    const src = stripComments(
+      await read("packages/gateway/src/extensions/migration/migration-engine.ts"),
+    );
+    const startAt = src.indexOf("const acceptLocked = async (");
+    expect(startAt).toBeGreaterThan(-1);
+    const accept = src.slice(startAt, src.indexOf("\n  return {", startAt));
+    const consentAt = accept.indexOf("const approved = await consent(");
+    const notApprovedAt = accept.indexOf('"ERR_EXTENSION_MIGRATION_NOT_APPROVED"');
+    // (1) The stage is re-digested against the row's tree_digest after the prompt…
+    const reDigestAt = accept.indexOf("\n    requireIntactStage(row);", notApprovedAt);
+    // (2) …the package carries the BUILT-IN registry row (never an owner registry) and is installed
+    // through the verified install half, with the approver that exists only past the answer…
+    const regAt = accept.indexOf("reg: builtinRegistryRow(db, builtin),");
+    const approverAt = accept.indexOf(
+      "const approvedByMigrationConsent: ExtensionInstallApprover = async () => true;",
+    );
+    const installAt = accept.indexOf(
+      'await install(installDeps(builtin, approvedByMigrationConsent), pkg, "stable")',
+    );
+    // (3) …and the INSTALLED tree must carry the staged digest, in the row and in the result,
+    // before the run grant is written.
+    const installedAt = accept.indexOf(
+      "installedRow?.tree_digest !== row.treeDigest || installed.treeDigest !== row.treeDigest",
+    );
+    const grantAt = accept.indexOf("await approveMigratedExtensionRun(");
+    for (const at of [
+      consentAt,
+      notApprovedAt,
+      reDigestAt,
+      regAt,
+      approverAt,
+      installAt,
+      installedAt,
+      grantAt,
+    ]) {
+      expect(at).toBeGreaterThan(-1);
+    }
+    expect(notApprovedAt).toBeGreaterThan(consentAt);
+    expect(reDigestAt).toBeGreaterThan(notApprovedAt);
+    expect(regAt).toBeGreaterThan(reDigestAt);
+    expect(approverAt).toBeGreaterThan(reDigestAt);
+    expect(installAt).toBeGreaterThan(Math.max(regAt, approverAt));
+    expect(installedAt).toBeGreaterThan(installAt);
+    expect(grantAt).toBeGreaterThan(installedAt);
+    // The re-digest is a real digest comparison against the row, through the extension store's own
+    // digest function — not an existence check.
+    const checkAt = src.indexOf("const checkStage = (row: MigrationRow): StageCheck => {");
+    expect(checkAt).toBeGreaterThan(-1);
+    const check = src.slice(checkAt, src.indexOf("\n  };", checkAt));
+    expect(check).toContain("const live = digestOrNull(stagePath);");
+    expect(check).toContain("live !== null && live === row.treeDigest");
+    expect(src).toMatch(/return computeExtensionTreeDigest\(root\);/);
+    expect(src).toContain(
+      "const install = deps.installVerified ?? installVerifiedRegistryPackage;",
+    );
+  });
+
+  test("M3: the migration engine's test seams are never named by production code outside the engine", async () => {
+    // `installVerified` and `removeInstallTree` replace the verified install and the undo's removal.
+    // The production constructor (`platform/migration-boot.ts`) builds the deps field by field, and
+    // no other non-test gateway file may name either seam.
+    const offenders = (await readDirFiles("packages/gateway/src"))
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => f.rel !== "extensions/migration/migration-engine.ts")
+      .filter((f) => /\b(?:installVerified|removeInstallTree)\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+    const boot = stripComments(await read("packages/gateway/src/platform/migration-boot.ts"));
+    expect(boot).toMatch(/return createMigrationEngine\(\{/);
+    expect(boot).not.toMatch(/\.\.\.\s*d\b/);
   });
 
   test("source pin: an update is detected from the source registry only, and apply re-verifies before the swap", async () => {

@@ -26,6 +26,7 @@ import {
   checkGeneratedManifestConfinement,
   checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
+  checkMigrationConfinement,
   checkPushClientKindConfinement,
   checkRegistryAppenderConfinement,
   checkRemoteVlmConfinement,
@@ -3334,6 +3335,100 @@ describe("D33(a) — the __nimbus-extension role is named only by the layout and
         file("packages/gateway/src/x.ts", '// __nimbus-extension\nselfSpawn("sandbox", [p]);'),
         file("packages/gateway/src/y.test.ts", 'selfSpawn("extension", []); "__nimbus-extension"'),
         file("scripts/z.ts", '"__nimbus-extension"'),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("D34 — the connector migration's table, grant entry point and consent are confined", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const ENGINE = "packages/gateway/src/extensions/migration/migration-engine.ts";
+  const RPC = "packages/gateway/src/ipc/migration-rpc.ts";
+
+  test("allows the store, the DDL, approve-run.ts, the engine, the RPC path, migration-boot.ts, the I2 set and the proposability table", () => {
+    expect(
+      checkMigrationConfinement([
+        file(
+          "packages/gateway/src/extensions/migration/migration-store.ts",
+          "UPDATE connector_migration SET state = ?",
+        ),
+        file(
+          "packages/gateway/src/index/connector-migration-v73-sql.ts",
+          "CREATE TABLE IF NOT EXISTS connector_migration (",
+        ),
+        file(
+          "packages/gateway/src/extensions/approve-run.ts",
+          "export async function approveMigratedExtensionRun() {}",
+        ),
+        file(
+          ENGINE,
+          'import { approveMigratedExtensionRun } from "../approve-run.ts";\nexport const EXTENSION_MIGRATE_ACTION_TYPE = "extension.migrate";\nexport function migrationConsentViaGate() {}\nexport function createMigrationEngine() {}',
+        ),
+        file(RPC, "engine.accept(id, migrationConsentViaGate(gate));"),
+        file(
+          "packages/gateway/src/platform/migration-boot.ts",
+          "return createMigrationEngine({});",
+        ),
+        file("packages/gateway/src/engine/executor.ts", '  "extension.migrate",'),
+        file("packages/gateway/src/connectors/proposable-actions.ts", '  "extension.migrate",'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    [
+      "a write to the table",
+      "INSERT INTO connector_migration (id) VALUES (?)",
+      "migration-table-confined",
+    ],
+    ["a read of the table", "SELECT * FROM connector_migration", "migration-table-confined"],
+    [
+      "a grant without the engine",
+      "await approveMigratedExtensionRun(deps, id);",
+      "migration-grant-callers",
+    ],
+    [
+      "an aliased grant import",
+      'import { approveMigratedExtensionRun as g } from "./x";',
+      "migration-grant-callers",
+    ],
+    [
+      "a second consent raiser",
+      "await engine.accept(id, migrationConsentViaGate(gate));",
+      "migration-consent-raisers",
+    ],
+    [
+      "the action-type constant",
+      "gate({ type: EXTENSION_MIGRATE_ACTION_TYPE, payload });",
+      "migration-consent-raisers",
+    ],
+    ["the literal", 'gate({ type: "extension.migrate", payload });', "migration-consent-raisers"],
+    ["a second engine", "createMigrationEngine(deps);", "migration-consent-raisers"],
+  ])("FAILS on %s from anywhere else", (_n, src, rule) => {
+    const v = checkMigrationConfinement([file("packages/gateway/src/ipc/automation-rpc.ts", src)]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe(rule);
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("the RPC path may raise the consent but never names the table or the grant entry point", () => {
+    expect(
+      checkMigrationConfinement([file(RPC, "await approveMigratedExtensionRun(d, id);")]),
+    ).toHaveLength(1);
+    expect(
+      checkMigrationConfinement([file(RPC, 'gate({ type: "extension.migrate", payload });')]),
+    ).toHaveLength(1);
+  });
+
+  test("does not match a comment, a look-alike identifier, a test file, or a non-gateway file", () => {
+    expect(
+      checkMigrationConfinement([
+        file(
+          "packages/gateway/src/x.ts",
+          '// approveMigratedExtensionRun "extension.migrate"\n/* FROM connector_migration */\nconst approveMigratedExtensionRuns = 1;\nconst t = "extension.migrated";',
+        ),
+        file("packages/gateway/src/y.test.ts", "approveMigratedExtensionRun(d, id);"),
+        file("scripts/z.ts", "migrationConsentViaGate(gate);"),
       ]),
     ).toEqual([]);
   });
