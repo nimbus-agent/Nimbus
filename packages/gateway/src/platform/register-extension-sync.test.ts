@@ -29,6 +29,7 @@ import {
   createExtensionSyncRegistrarForBoot,
   type ExtensionSyncRegistrarDeps,
   type ExtensionSyncScheduler,
+  purgeExtensionIndexData,
 } from "./register-extension-sync.ts";
 
 const KEY = `${"A".repeat(43)}=`;
@@ -383,6 +384,206 @@ describe("createExtensionSyncRegistrar", () => {
     r.refresh(EXT_ID);
     expect(base.sched.syncableFor("readwise")).toBeUndefined();
     r.unregister(EXT_ID);
+  });
+});
+
+describe("createExtensionSyncRegistrar — edges", () => {
+  test("a same-version change to the code pauses with the changed-since-approved reason", () => {
+    const h = harness(seed());
+    const r = createExtensionSyncRegistrar(h.deps);
+    r.refresh(EXT_ID);
+    // Same version, different tree digest: stale, but not "updated to".
+    updateExtensionRowVersion(h.db, EXT_ID, "1.0.0", "h2", "e2", 2, "d2");
+    r.refresh(EXT_ID);
+    expect(h.sched.syncableFor("readwise")).toBeUndefined();
+    expect(getConnectorHealth(h.db, "readwise").lastError).toBe(
+      `changed since it was approved — run \`nimbus extension approve ${EXT_ID}\` to resume sync`,
+    );
+  });
+
+  test("without a manifest reader the installed tree is read, and a missing tree registers nothing", () => {
+    const h = harness(seed());
+    const { readManifest: _unusedReader, ...deps } = h.deps;
+    createExtensionSyncRegistrar(deps).refresh(EXT_ID);
+    expect(h.sched.syncableFor("readwise")).toBeUndefined();
+    expect(h.sched.syncableFor(CODE_ID)).toBeUndefined();
+  });
+
+  test("without a table the built-in continuity table is used; a foreign key binds nothing", () => {
+    const h = harness(seed());
+    const { table: _unusedTable, ...deps } = h.deps;
+    createExtensionSyncRegistrar(deps).refresh(EXT_ID);
+    // The test publisher key is not the official one, so the extension stays in its own namespace.
+    expect(h.sched.syncableFor(CODE_ID)?.serviceId).toBe(CODE_ID);
+    expect(h.sched.syncableFor("readwise")).toBeUndefined();
+  });
+
+  test("a grant revoked behind the registrar's back pauses at preflight and never spawns", async () => {
+    const h = harness(seed());
+    await h.vault.set("readwise.token", "tok");
+    createExtensionSyncRegistrar(h.deps).refresh(EXT_ID);
+    deleteRunGrant(h.db, EXT_ID);
+    await h.sched.forceSync("readwise").catch(() => undefined);
+    expect(h.meshCalls).toEqual([]);
+    expect(h.egress).toEqual([]);
+    expect(h.confineCalls).toEqual([]);
+    expect(getConnectorHealth(h.db, "readwise").lastError).toContain(
+      "the extension no longer has a run approval",
+    );
+  });
+
+  test("unreadable stored grants pause at preflight and never spawn", async () => {
+    const h = harness(seed());
+    await h.vault.set("readwise.token", "tok");
+    createExtensionSyncRegistrar(h.deps).refresh(EXT_ID);
+    upsertRunGrant(h.db, {
+      extension_id: EXT_ID,
+      service_id: CODE_ID,
+      version: "1.0.0",
+      tree_digest: "d",
+      permissions_json: "not json",
+      model_access: 0,
+      approved_at: 2,
+      credentials_json: JSON.stringify({
+        token: { env: "READWISE_TOKEN", vaultKey: "readwise.token" },
+      }),
+    });
+    await h.sched.forceSync("readwise").catch(() => undefined);
+    expect(h.meshCalls).toEqual([]);
+    expect(h.confineCalls).toEqual([]);
+    expect(getConnectorHealth(h.db, "readwise").lastError).toContain(
+      "the run approval's stored grants are unreadable",
+    );
+  });
+
+  test("a grant revoked between preflight and sync is not configured: no spawn", async () => {
+    const db = seed();
+    const h = harness(db, {
+      sandbox: {
+        canConfine: () => {
+          // The revoke lands after the preflight read the grant, before sync() re-reads it.
+          deleteRunGrant(db, EXT_ID);
+          return null;
+        },
+      },
+    });
+    await h.vault.set("readwise.token", "tok");
+    createExtensionSyncRegistrar(h.deps).refresh(EXT_ID);
+    await h.sched.forceSync("readwise");
+    expect(h.meshCalls).toEqual([]);
+    expect(new LocalIndex(h.db).search({ service: "readwise" })).toHaveLength(0);
+  });
+
+  test("unregister leaves a syncable someone else put under the same id", () => {
+    const h = harness(seed());
+    const r = createExtensionSyncRegistrar(h.deps);
+    r.refresh(EXT_ID);
+    expect(h.sched.syncableFor("readwise")).toBeDefined();
+    h.sched.unregister("readwise");
+    const other: Syncable = {
+      serviceId: "readwise",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      sync: async () => ({
+        cursor: null,
+        itemsUpserted: 0,
+        itemsDeleted: 0,
+        hasMore: false,
+        durationMs: 0,
+      }),
+    };
+    h.sched.register(other);
+    r.unregister(EXT_ID);
+    expect(h.sched.syncableFor("readwise")).toBe(other);
+  });
+});
+
+describe("purgeExtensionIndexData — edges", () => {
+  interface SpyIndex {
+    readonly calls: string[];
+    readonly localIndex: { removeConnectorIndexData(id: string): number };
+  }
+  function spyIndex(): SpyIndex {
+    const calls: string[] = [];
+    return {
+      calls,
+      localIndex: {
+        removeConnectorIndexData: (id: string) => {
+          calls.push(id);
+          return 7;
+        },
+      },
+    };
+  }
+
+  test("an extension that is not installed purges nothing", async () => {
+    const db = openMemoryIndexDatabase();
+    openDbs.push(db);
+    const vault = createMemoryVault();
+    await vault.set("readwise.token", "keep");
+    const idx = spyIndex();
+    const out = await purgeExtensionIndexData(
+      { db, vault, localIndex: idx.localIndex, table: TABLE, readManifest: () => manifest() },
+      EXT_ID,
+    );
+    expect(out).toEqual({ indexServiceId: undefined, itemsDeleted: 0, vaultKeysRemoved: [] });
+    expect(idx.calls).toEqual([]);
+    expect(await vault.get("readwise.token")).toBe("keep");
+  });
+
+  test("no grant, an underivable id and no manifest: nothing to purge under", async () => {
+    const db = openMemoryIndexDatabase();
+    openDbs.push(db);
+    // Longer than the 62 characters a service id may carry after `ext_`, so derivation throws.
+    const badId = `com.example.${"x".repeat(70)}`;
+    insertExtensionRow(db, {
+      id: badId,
+      version: "1.0.0",
+      install_path: join(process.cwd(), "nowhere"),
+      manifest_hash: "h",
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    const idx = spyIndex();
+    const out = await purgeExtensionIndexData(
+      { db, vault: createMemoryVault(), localIndex: idx.localIndex, readManifest: () => undefined },
+      badId,
+    );
+    expect(out).toEqual({ indexServiceId: undefined, itemsDeleted: 0, vaultKeysRemoved: [] });
+    expect(idx.calls).toEqual([]);
+  });
+
+  test("default reader on a missing tree: the grant's keys go, under the code-server id", async () => {
+    const db = seed({ fingerprint: null });
+    upsertRunGrant(db, {
+      extension_id: EXT_ID,
+      service_id: CODE_ID,
+      version: "1.0.0",
+      tree_digest: "d",
+      permissions_json: JSON.stringify({ network: ["readwise.io"], read: [], write: [] }),
+      model_access: 0,
+      approved_at: 2,
+      credentials_json: JSON.stringify({
+        b: { env: "B", vaultKey: "zeta.key" },
+        a: { env: "A", vaultKey: "alpha.key" },
+        c: { env: "C", vaultKey: "mid.key" },
+      }),
+    });
+    const vault = createMemoryVault();
+    await vault.set("zeta.key", "z");
+    await vault.set("alpha.key", "a");
+    // mid.key is absent: skipped, not reported as removed.
+    const idx = spyIndex();
+    const out = await purgeExtensionIndexData({ db, vault, localIndex: idx.localIndex }, EXT_ID);
+    expect(out).toEqual({
+      indexServiceId: CODE_ID,
+      itemsDeleted: 7,
+      vaultKeysRemoved: ["alpha.key", "zeta.key"],
+    });
+    expect(idx.calls).toEqual([CODE_ID]);
+    expect(await vault.get("zeta.key")).toBeNull();
+    expect(await vault.get("alpha.key")).toBeNull();
   });
 });
 
