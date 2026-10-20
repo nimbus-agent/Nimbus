@@ -75,6 +75,28 @@ describe("owner code server (ext_) over connector.userMcp*", () => {
     expect(msg).toContain("nimbus extension approve");
   });
 
+  test("reserved tool absent from listTools and refused by connector call", async () => {
+    const seen: PlannedAction[] = [];
+    let listed = 0;
+    // The mesh already filters the reserved tool out of the listing; the call is refused on the
+    // NAME alone, before the mesh is even asked and before any consent prompt.
+    const mesh = meshWith(async () => {
+      listed += 1;
+      return extTools;
+    });
+    const tools = await handleConnectorUserMcpTools(mesh, { serviceId: "ext_foo" });
+    expect(tools.tools.map((t) => t.name)).not.toContain("__nimbus_sync");
+    listed = 0;
+    const err = await handleConnectorUserMcpCall(mesh, recordingExecutor(seen), {
+      serviceId: "ext_foo",
+      tool: "__nimbus_sync",
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectorRpcError);
+    expect((err as ConnectorRpcError).message).toContain("ERR_EXTENSION_RESERVED_TOOL");
+    expect(listed).toBe(0);
+    expect(seen).toEqual([]);
+  });
+
   test("an unknown tool on an ext_ id is refused before the executor", async () => {
     const seen: PlannedAction[] = [];
     const err = await handleConnectorUserMcpCall(

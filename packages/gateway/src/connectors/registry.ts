@@ -4,6 +4,7 @@ import { serviceOf } from "../engine/service-of.ts";
 import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import { MCP_TOOL_RESULT_MAX_BYTES } from "./_lib/mcp-tool-result.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "./lazy-mesh/index.ts";
 import { mcpClientToolKey, resolveServerTool } from "./lazy-mesh/tool-map.ts";
 import {
@@ -75,7 +76,7 @@ export function meshDispatcherClient(mesh: {
 }
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
-export const MAX_TOOL_RESULT_BYTES = 4 * 1024 * 1024;
+export const MAX_TOOL_RESULT_BYTES = MCP_TOOL_RESULT_MAX_BYTES;
 
 export function createConnectorDispatcher(
   client: McpToolListingClient,

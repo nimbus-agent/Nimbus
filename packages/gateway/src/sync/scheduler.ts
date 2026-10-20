@@ -307,9 +307,12 @@ export class SyncScheduler {
     }
   }
 
-  pause(serviceId: string): void {
+  pause(serviceId: string, reason?: string): void {
     this.sched.writePaused(serviceId, true);
-    transitionHealth(this.db, serviceId, { type: "paused" });
+    transitionHealth(this.db, serviceId, {
+      type: "paused",
+      ...(reason === undefined ? {} : { reason }),
+    });
   }
 
   resume(serviceId: string): void {
@@ -428,7 +431,8 @@ export class SyncScheduler {
       nextSyncAt: row.next_sync_at,
       intervalMs: row.interval_ms,
       itemCount,
-      lastError: row.error_msg,
+      // A pause carries its reason in the health row, not the scheduler row.
+      lastError: row.error_msg ?? (status === "paused" ? (health.lastError ?? null) : null),
       consecutiveFailures: row.consecutive_failures,
       healthState: health.state,
       healthRetryAfterMs: health.retryAfter === undefined ? null : health.retryAfter.getTime(),
@@ -754,6 +758,18 @@ export class SyncScheduler {
       return;
     }
     const { connector, row } = ctx;
+
+    // A service that cannot run at all right now is paused BEFORE anything is recorded: no
+    // configured transition, no `sync.run` egress row, no success telemetry.
+    const refusal = connector.preflight?.() ?? null;
+    if (refusal !== null) {
+      this.pause(job.serviceId, refusal);
+      this.resolveForceWaiters(
+        job.serviceId,
+        job.reason === "force" ? new Error(refusal) : undefined,
+      );
+      return;
+    }
 
     const startedAt = Date.now();
     let result: SyncResult;

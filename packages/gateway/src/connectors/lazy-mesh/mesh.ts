@@ -10,6 +10,8 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
+import { extractMcpToolText, MCP_TOOL_RESULT_MAX_BYTES } from "../_lib/mcp-tool-result.ts";
+import type { ExtensionSyncRequest } from "../extension-sync/sync-response.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
   ensureAppleMcp,
@@ -45,6 +47,7 @@ import {
   type CreateExtensionClient,
   defaultCreateExtensionClient,
   ExtensionSlots,
+  extensionServerKey,
 } from "./extension-slot.ts";
 import type { ExtensionSlotSource } from "./extension-slot-source.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
@@ -59,6 +62,7 @@ import type { LazyMcpSlot, MeshLogger, MeshSpawnContext } from "./slot.ts";
 import {
   type LazyMeshToolMap,
   listLazyMeshClientTools,
+  mcpClientToolKey,
   mergeToolMapsOrThrow,
   serviceIdForToolKey,
 } from "./tool-map.ts";
@@ -401,6 +405,46 @@ export class LazyConnectorMesh {
       extensionMeshKey(serviceId),
       await this.listExtensionTools(serviceId),
     );
+  }
+
+  /**
+   * Calls an extension's reserved `__nimbus_sync` tool once and returns the parsed JSON body.
+   * Takes the slot's UNFILTERED tool map (drain-wrapped, so an idle-out or stop waits for the
+   * call) and executes the tool directly, so the 4 MiB result cap is enforced HERE — a direct
+   * execute bypasses the dispatcher's own cap. A timeout rejects; the child is left to the slot's
+   * normal stop/idle path.
+   */
+  async callExtensionSyncTool(
+    codeServerId: string,
+    req: ExtensionSyncRequest,
+    timeoutMs: number,
+  ): Promise<unknown> {
+    const key = extensionMeshKey(codeServerId);
+    const tools = this.wrapSlotToolsWithDrain(
+      key,
+      await this.extensionSlots.listToolsUnfiltered(codeServerId),
+    );
+    if (tools === undefined) {
+      throw new Error(`${codeServerId} is not an approved extension`);
+    }
+    const toolKey = mcpClientToolKey(extensionServerKey(codeServerId), "__nimbus_sync");
+    const tool = Object.hasOwn(tools, toolKey) ? tools[toolKey] : undefined;
+    const execute = tool?.execute;
+    if (execute === undefined) {
+      throw new Error(`${codeServerId} does not expose the sync tool`);
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      execute(req, {}),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${codeServerId} sync call exceeded ${String(timeoutMs)}ms`));
+        }, timeoutMs);
+      }),
+    ]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
+    return JSON.parse(extractMcpToolText(result, MCP_TOOL_RESULT_MAX_BYTES));
   }
 
   /** One owner code server's tools: an extension (`ext_*`) or a user MCP server (anything else). */

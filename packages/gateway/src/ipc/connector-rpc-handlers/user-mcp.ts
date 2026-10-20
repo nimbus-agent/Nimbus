@@ -10,6 +10,10 @@
  * raises a consent prompt for a tool that does not exist.
  */
 import { z } from "zod";
+import {
+  isReservedExtensionToolName,
+  RESERVED_EXTENSION_TOOL_PREFIX,
+} from "../../connectors/lazy-mesh/extension-slot.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
 import type { LazyMeshToolMap } from "../../connectors/lazy-mesh/tool-map.ts";
 import { normalizeOwnerCodeServerServiceId } from "../../connectors/owner-code-server.ts";
@@ -115,6 +119,12 @@ export async function handleConnectorUserMcpCall(
   const tool = rec?.["tool"];
   if (typeof tool !== "string" || tool === "") {
     throw new ConnectorRpcError(-32602, "connector.userMcpCall requires a non-empty tool name");
+  }
+  if (isReservedExtensionToolName(tool)) {
+    throw new ConnectorRpcError(
+      -32602,
+      `ERR_EXTENSION_RESERVED_TOOL: tool names starting "${RESERVED_EXTENSION_TOOL_PREFIX}" are reserved for the gateway`,
+    );
   }
   const rawInput = rec?.["input"] === undefined ? {} : rec["input"];
   if (!isPlainObject(rawInput)) {

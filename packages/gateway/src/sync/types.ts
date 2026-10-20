@@ -138,6 +138,14 @@ export interface Syncable {
   readonly initialSyncDepthDays: number;
   sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult>;
   /**
+   * OPTIONAL. A non-null return is a reason this service cannot run AT ALL right now. The
+   * scheduler calls it FIRST in `runJob` — before the configured-ness check, the `sync.run`
+   * egress append and any health transition — and PAUSES the service with that reason. A no-op
+   * return from `sync()` instead would be recorded as a `sync_success` (overwriting the pause)
+   * after the egress row had already been appended.
+   */
+  preflight?(): string | null;
+  /**
    * Fetch and index ONE item by its web URL.
    *
    * OPTIONAL, and the optionality does real work: 62 connectors do not move, and a service that
@@ -176,6 +184,8 @@ export interface SyncResult {
   hasMore: boolean;
   durationMs: number;
   bytesTransferred?: number;
+  /** Items an extension returned that were not written, summed over the run. */
+  dropped?: { undeclaredType: number; malformed: number; oversized: number };
 }
 
 export function retryAfterDateFromHeader(value: string | null, fallbackSeconds: number): Date {
