@@ -126,12 +126,18 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history: `audit:commit-links` resolves every CHANGELOG commit sha locally and
+          # refuses to run on a shallow clone, where a missing object proves nothing.
+          fetch-depth: 0
 
       - name: Setup Nimbus CI
         uses: ./.github/actions/setup-nimbus-ci
 
       - name: Run markdownlint-cli2
         run: bun run lint:markdown
+
+      - name: Run commit-link audit
+        run: bun run audit:commit-links
 
       - name: Run SVG asset audit
         run: bun run audit:svg-assets

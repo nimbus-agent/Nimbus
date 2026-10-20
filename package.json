@@ -74,6 +74,7 @@
     "audit:svg-assets": "bun scripts/audit/svg-assets.ts",
     "audit:readme-cli": "bun scripts/audit/readme-cli-commands.ts",
     "audit:package-readmes": "bun scripts/audit/package-readmes.ts",
+    "audit:commit-links": "bun scripts/audit/commit-links.ts",
     "audit:cross-platform": "bun scripts/audit/check-cross-platform.ts",
     "audit:windows-console": "bun scripts/audit/check-windows-console-hide.ts",
     "audit:status-drift": "bun scripts/structure-audit/check-status-drift.ts",

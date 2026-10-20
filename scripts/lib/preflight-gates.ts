@@ -116,6 +116,13 @@ const FAST: readonly Gate[] = [
   { name: "audit:svg-assets", cmd: ["bun", "run", "audit:svg-assets"], tier: "fast" },
   { name: "audit:readme-cli", cmd: ["bun", "run", "audit:readme-cli"], tier: "fast" },
   { name: "audit:package-readmes", cmd: ["bun", "run", "audit:package-readmes"], tier: "fast" },
+  {
+    // This repo's own commit permalinks, checked offline because lychee excludes them
+    // (github.com 503s commit pages intermittently). Fails closed on a shallow clone.
+    name: "audit:commit-links",
+    cmd: ["bun", "run", "audit:commit-links"],
+    tier: "fast",
+  },
   { name: "audit:cross-platform", cmd: ["bun", "run", "audit:cross-platform"], tier: "fast" },
   {
     // The detached Gateway has no console of its own, so on Windows every unhidden
