@@ -23,6 +23,15 @@ export function extensionCredentialVaultKey(serviceId: string, name: string): st
 }
 
 /**
+ * Credential names in ORDINAL (code-unit) order. Not `localeCompare`: `serializeRunCredentials`'s
+ * output is stored on the grant and compared byte-for-byte at every spawn, so its order must not
+ * depend on the ICU build a later gateway ships with. Names are unique, so ties cannot occur.
+ */
+export function sortedNames(o: Readonly<Record<string, unknown>>): string[] {
+  return Object.keys(o).sort((a, b) => (a < b ? -1 : 1));
+}
+
+/**
  * Resolves every DECLARED credential. A continuity binding's mapping wins for a name it carries (so a
  * migrated connector keeps reading its legacy key); a declared name the binding lacks falls back to
  * the extension's own key. A name only the binding carries is never granted.
@@ -34,7 +43,7 @@ export function resolveRunCredentials(
 ): ResolvedRunCredentials {
   const out: Record<string, { env: string; vaultKey: string }> = {};
   const decls = manifest.credentials ?? {};
-  for (const name of Object.keys(decls).sort()) {
+  for (const name of sortedNames(decls)) {
     const decl = decls[name];
     if (decl === undefined) continue;
     const legacy =
@@ -49,7 +58,7 @@ export function resolveRunCredentials(
 /** Canonical form: names sorted, fields in a fixed order. `{}` when nothing is declared. */
 export function serializeRunCredentials(c: ResolvedRunCredentials): string {
   const out: Record<string, { env: string; vaultKey: string }> = {};
-  for (const name of Object.keys(c).sort()) {
+  for (const name of sortedNames(c)) {
     const v = c[name];
     if (v === undefined) continue;
     out[name] = { env: v.env, vaultKey: v.vaultKey };
@@ -67,7 +76,7 @@ export async function readCredentialEnv(
   c: ResolvedRunCredentials,
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = {};
-  for (const name of Object.keys(c).sort()) {
+  for (const name of sortedNames(c)) {
     const v = c[name];
     if (v === undefined) continue;
     const value = await vault.get(v.vaultKey);

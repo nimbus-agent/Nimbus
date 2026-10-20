@@ -296,6 +296,22 @@ function parseManifestObject(text: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+/** The optional manifest blocks that are present; an absent block leaves no key at all. */
+function parseOptionalBlocks(
+  o: Record<string, unknown>,
+): Pick<ExtensionManifest, "changelog" | "dependsOn" | "sync" | "credentials"> {
+  const changelog = parseChangelog(o["changelog"]);
+  const dependsOn = parseDependsOn(o["dependsOn"]);
+  const sync = parseSync(o["sync"]);
+  const credentials = parseCredentials(o["credentials"]);
+  return {
+    ...(changelog === undefined ? {} : { changelog }),
+    ...(dependsOn === undefined ? {} : { dependsOn }),
+    ...(sync === undefined ? {} : { sync }),
+    ...(credentials === undefined ? {} : { credentials }),
+  };
+}
+
 export function parseExtensionManifestForRegistry(text: string): RegistryParseResult {
   const o = parseManifestObject(text);
   const id = typeof o["id"] === "string" ? o["id"].trim() : "";
@@ -311,10 +327,7 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
     throw new Error("extension manifest must have publisher and signature together, or neither");
   }
   const updateChannel = parseUpdateChannel(o["updateChannel"]);
-  const changelog = parseChangelog(o["changelog"]);
-  const dependsOn = parseDependsOn(o["dependsOn"]);
-  const sync = parseSync(o["sync"]);
-  const credentials = parseCredentials(o["credentials"]);
+  const blocks = parseOptionalBlocks(o);
   const isPreT2Legacy = Array.isArray(o["permissions"]);
   const permissions = validateAndNormalizePermissions(
     o["permissions"] === undefined ? {} : o["permissions"],
@@ -329,10 +342,7 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
       ...(publisher === undefined ? {} : { publisher }),
       ...(signature === undefined ? {} : { signature }),
       updateChannel,
-      ...(changelog === undefined ? {} : { changelog }),
-      ...(dependsOn === undefined ? {} : { dependsOn }),
-      ...(sync === undefined ? {} : { sync }),
-      ...(credentials === undefined ? {} : { credentials }),
+      ...blocks,
     },
     isPreT2Legacy,
   };

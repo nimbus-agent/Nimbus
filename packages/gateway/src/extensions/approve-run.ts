@@ -14,6 +14,7 @@ import {
   type ResolvedRunCredentials,
   resolveRunCredentials,
   serializeRunCredentials,
+  sortedNames,
 } from "./extension-credentials.ts";
 import {
   type ExtensionRunGrantEnv,
@@ -212,9 +213,7 @@ export function buildRunConsentPayload(
     // would name a legacy connector's keyspace) and never a value. NOT named `credentials`: both the
     // consent display and the audit row redact any field whose name contains "credential", which
     // would hide exactly what the owner is being asked to grant.
-    vaultEnv: Object.keys(credentials)
-      .sort()
-      .map((name) => ({ name, env: credentials[name]?.env ?? "" })),
+    vaultEnv: sortedNames(credentials).map((name) => ({ name, env: credentials[name]?.env ?? "" })),
     ...(manifest.sync === undefined
       ? {}
       : {

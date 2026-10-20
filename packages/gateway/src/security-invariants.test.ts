@@ -6538,6 +6538,38 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(ver).toMatch(/findContinuityBinding\(\s*bindingInputFor\(row, manifest\),/);
   });
 
+  test("behavioural: a credential env name that could change what the child runs is refused at parse", async () => {
+    const { parseExtensionManifestJson } = await import("./extensions/manifest.ts");
+    const { BASELINE_KEYS } = await import("./extensions/spawn-env.ts");
+    const reserved = [
+      "NODE_OPTIONS",
+      "BUN_X",
+      "NIMBUS_X",
+      "LD_PRELOAD",
+      "DYLD_INSERT_LIBRARIES",
+      "COMSPEC",
+      "PATHEXT",
+      ...BASELINE_KEYS,
+    ];
+    for (const env of reserved) {
+      expect(() =>
+        parseExtensionManifestJson(
+          JSON.stringify({ id: "x", version: "1.0.0", credentials: { token: { env } } }),
+        ),
+      ).toThrow(/reserved variable/);
+    }
+    // Positive control: the same manifest with an ordinary name parses, so the refusals above are
+    // about the NAME and not some other defect in the fixture.
+    const ok = parseExtensionManifestJson(
+      JSON.stringify({ id: "x", version: "1.0.0", credentials: { token: { env: "I43_TOKEN" } } }),
+    );
+    expect(ok.credentials).toEqual({ token: { env: "I43_TOKEN" } });
+    // The CALLS, not the names: removing either check from the parser fails here.
+    const src = stripComments(await read("packages/gateway/src/extensions/manifest.ts"));
+    expect(src).toMatch(/!CREDENTIAL_ENV_RE\.test\(env\) \|\| isReservedEnv\(env\)/);
+    expect(src).toMatch(/isExtensionBaselineEnvKey\(env\)/);
+  });
+
   test("the run grant is created only behind the executor-gated extension.run approval (I2 frozen set)", () => {
     expect(HITL_REQUIRED.has("extension.run")).toBe(true);
   });

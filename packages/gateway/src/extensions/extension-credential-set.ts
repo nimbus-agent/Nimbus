@@ -3,6 +3,7 @@ import { CONTINUITY_TABLE, type ContinuityEntry } from "./continuity/continuity-
 import {
   extensionCredentialVaultKey,
   type ResolvedRunCredentials,
+  sortedNames,
 } from "./extension-credentials.ts";
 import type { ExtensionRunGrantRow } from "./run-grant-store.ts";
 
@@ -150,7 +151,7 @@ function grantCredentials(
   if (creds === undefined) throw grantInvalid(extensionId);
   const table = deps.continuityTable ?? CONTINUITY_TABLE;
   const out = new Map<string, TrustedCredential>();
-  for (const name of Object.keys(creds).sort()) {
+  for (const name of sortedNames(creds)) {
     const vaultKey = creds[name]?.vaultKey;
     const trusted =
       vaultKey === undefined ? undefined : trustCredential(row, name, vaultKey, table);
