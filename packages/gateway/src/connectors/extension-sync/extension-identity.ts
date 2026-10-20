@@ -1,0 +1,135 @@
+import type { Database } from "bun:sqlite";
+
+import { type ExtensionRow, listExtensions } from "../../automation/extension-store.ts";
+import { readVerifiedManifest } from "../../extensions/approve-run.ts";
+import {
+  bindingInputFor,
+  CONTINUITY_TABLE,
+  type ContinuityEntry,
+  findContinuityBinding,
+} from "../../extensions/continuity/continuity-table.ts";
+import type { ResolvedRunCredentials } from "../../extensions/extension-credentials.ts";
+import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import { type ExtensionRunGrantRow, listRunGrants } from "../../extensions/run-grant-store.ts";
+
+/**
+ * The two ids one approved extension answers to. The CODE-server id (`ext_<slug>`) keys the run
+ * grant, the `mesh:ext:` slot and every `^ext_` check; the INDEX id is what the scheduler, items,
+ * catalog, org policy and connector status use — the bound legacy id (`readwise`) when the
+ * continuity table binds this extension, else the same `ext_<slug>`.
+ */
+export interface ExtensionIdentity {
+  readonly extensionId: string;
+  readonly codeServerId: string;
+  readonly indexServiceId: string;
+  readonly binding: ContinuityEntry | undefined;
+}
+
+/**
+ * Pure. The binding is `findContinuityBinding(bindingInputFor(row, manifest), table)` — the same
+ * derivation approval and the pre-spawn verifier use, never a reimplementation. Callers may pass a
+ * manifest parsed from the install tree: the I43 pre-spawn verifier re-derives the binding from
+ * the VERIFIED manifest and refuses when the credentials differ from the grant, so a tampered
+ * manifest can never spawn or write.
+ */
+export function resolveExtensionIdentity(
+  row: ExtensionRow,
+  manifest: ExtensionManifest,
+  grant: ExtensionRunGrantRow,
+  table: readonly ContinuityEntry[] = CONTINUITY_TABLE,
+): ExtensionIdentity {
+  const binding = findContinuityBinding(bindingInputFor(row, manifest), table);
+  return {
+    extensionId: row.id,
+    codeServerId: grant.service_id,
+    indexServiceId: binding?.legacyServiceId ?? grant.service_id,
+    binding,
+  };
+}
+
+/** Reads an installed extension's manifest, or `undefined` when it is missing or unparseable. */
+export type ExtensionManifestReader = (row: ExtensionRow) => ExtensionManifest | undefined;
+
+/** Default reader: the hash-checked manifest of the installed tree; any failure reads as absent. */
+export const readInstalledManifest: ExtensionManifestReader = (row) => {
+  try {
+    return readVerifiedManifest(row);
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * An identity for every run grant whose extension row and manifest can be read; a grant whose row
+ * or manifest is missing or unparseable is skipped, never thrown on.
+ */
+export function listExtensionIdentities(
+  db: Database,
+  table: readonly ContinuityEntry[] = CONTINUITY_TABLE,
+  readManifest: ExtensionManifestReader = readInstalledManifest,
+): Array<{ identity: ExtensionIdentity; grant: ExtensionRunGrantRow }> {
+  const rows = new Map(listExtensions(db).map((r) => [r.id, r]));
+  const out: Array<{ identity: ExtensionIdentity; grant: ExtensionRunGrantRow }> = [];
+  for (const grant of listRunGrants(db)) {
+    const row = rows.get(grant.extension_id);
+    if (row === undefined) continue;
+    const manifest = readManifest(row);
+    if (manifest === undefined) continue;
+    out.push({ identity: resolveExtensionIdentity(row, manifest, grant, table), grant });
+  }
+  return out;
+}
+
+/**
+ * The index id the org-policy connector allowlist is asked about for the code-server id
+ * `codeServerId`. Unreadable state falls back to the code-server id itself, which an allowlist
+ * naming only the index id does not list — so a failure to resolve can only refuse, never permit.
+ */
+export function indexServiceIdForCodeServer(
+  db: Database,
+  codeServerId: string,
+  table: readonly ContinuityEntry[] = CONTINUITY_TABLE,
+  readManifest: ExtensionManifestReader = readInstalledManifest,
+): string {
+  const hit = listExtensionIdentities(db, table, readManifest).find(
+    (e) => e.identity.codeServerId === codeServerId,
+  );
+  return hit?.identity.indexServiceId ?? codeServerId;
+}
+
+function parseCredentials(json: string): ResolvedRunCredentials | undefined {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const out: Record<string, { env: string; vaultKey: string }> = {};
+  for (const [name, v] of Object.entries(raw)) {
+    if (typeof v !== "object" || v === null) return undefined;
+    const env: unknown = Reflect.get(v, "env");
+    const vaultKey: unknown = Reflect.get(v, "vaultKey");
+    if (typeof env !== "string" || typeof vaultKey !== "string") return undefined;
+    out[name] = { env, vaultKey };
+  }
+  return out;
+}
+
+/**
+ * Maps an INDEX id to the credentials its approved grant carries (`readwise` when bound, else the
+ * `ext_` id); `undefined` for any id no readable grant answers to, or whose stored credentials do
+ * not parse. Re-read on every call, so an approval, revoke or removal is seen at once.
+ */
+export function createExtensionCredentialsResolver(
+  db: Database,
+  table: readonly ContinuityEntry[] = CONTINUITY_TABLE,
+  readManifest: ExtensionManifestReader = readInstalledManifest,
+): (serviceId: string) => ResolvedRunCredentials | undefined {
+  return (serviceId) => {
+    const hit = listExtensionIdentities(db, table, readManifest).find(
+      (e) => e.identity.indexServiceId === serviceId,
+    );
+    return hit === undefined ? undefined : parseCredentials(hit.grant.credentials_json);
+  };
+}

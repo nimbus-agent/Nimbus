@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
-
 import type { ConnectorServiceId } from "../connectors/connector-catalog.ts";
+import type { ResolvedRunCredentials } from "../extensions/extension-credentials.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { ProviderRateLimiter } from "./rate-limiter.ts";
 import type { SyncCapabilities } from "./sync-capabilities.ts";
@@ -16,6 +16,11 @@ import type { SyncCapabilities } from "./sync-capabilities.ts";
 export interface SyncRuntimeContext extends SyncContext {
   vault: NimbusVault;
   db: Database;
+  /**
+   * Index id -> the credentials an approved extension's run grant carries, for the scheduler's
+   * configured-ness gate. Absent when the extension runtime is off.
+   */
+  extensionCredentialsFor?: (serviceId: string) => ResolvedRunCredentials | undefined;
 }
 
 export interface SyncContext<S extends ConnectorServiceId = ConnectorServiceId>

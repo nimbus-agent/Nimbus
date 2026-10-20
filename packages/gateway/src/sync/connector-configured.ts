@@ -5,6 +5,10 @@ import { hasUsableAwsCredentials } from "../connectors/_lib/aws-cli.ts";
 import { loadGcpAuthFromVault } from "../connectors/_lib/gcp-auth.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
 import { readConnectorSecret } from "../connectors/connector-vault.ts";
+import {
+  credentialsConfigured,
+  type ResolvedRunCredentials,
+} from "../extensions/extension-credentials.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 /**
@@ -146,7 +150,18 @@ const DERIVED_CONFIGURED_CHECKS: Readonly<
 export async function isConnectorConfigured(
   vault: NimbusVault,
   serviceId: string,
+  /**
+   * Maps an INDEX id to the credentials an approved extension's run grant carries. When it answers
+   * for `serviceId` the grant's own credentials decide (every declared one non-blank) — for a bound
+   * id (`readwise`) those are the legacy keys the manifest check below would read, and for an
+   * unbound `ext_` id they stop the empty-manifest-list branch from answering `true` vacuously.
+   */
+  extensionCredentials?: (serviceId: string) => ResolvedRunCredentials | undefined,
 ): Promise<boolean> {
+  const extensionCreds = extensionCredentials?.(serviceId);
+  if (extensionCreds !== undefined) {
+    return credentialsConfigured(vault, extensionCreds);
+  }
   const derivedCheck = Object.hasOwn(DERIVED_CONFIGURED_CHECKS, serviceId)
     ? DERIVED_CONFIGURED_CHECKS[serviceId]
     : undefined;

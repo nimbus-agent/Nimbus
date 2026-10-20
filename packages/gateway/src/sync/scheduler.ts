@@ -773,7 +773,11 @@ export class SyncScheduler {
       // `per-run` is the honest granularity: a sync is a paginated run, not a call. Fail-closed —
       // a throw here aborts the run rather than syncing unrecorded (falls into the `catch` below
       // as an ordinary sync failure, since it happens before any real work started).
-      const configured = await isConnectorConfigured(this.ctx.vault, job.serviceId);
+      const configured = await isConnectorConfigured(
+        this.ctx.vault,
+        job.serviceId,
+        this.ctx.extensionCredentialsFor,
+      );
       if (configured) {
         this.appendSyncEgress?.({
           destination: job.serviceId,

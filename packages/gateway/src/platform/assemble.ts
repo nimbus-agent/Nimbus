@@ -119,6 +119,7 @@ import {
 } from "../connectors/connector-vault.ts";
 import { createConnectorWriteDispatcher } from "../connectors/connector-write-dispatch.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
+import { createExtensionCredentialsResolver } from "../connectors/extension-sync/extension-identity.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
 import { githubFetchOneUrlIsSupported } from "../connectors/github-sync.ts";
 import { gitlabFetchOneUrlIsSupported } from "../connectors/gitlab-sync.ts";
@@ -3559,6 +3560,10 @@ export async function assemblePlatformServices(
     // depth; this is only the safe pass-through default for any other caller.
     depth: "full",
     ...teamCredentialExtras,
+    // The scheduler's configured-ness gate reads an approved extension's own credentials (the
+    // grant's, which for a bound extension are the legacy keys). Answers nothing for an id no grant
+    // carries, so it changes no built-in connector's answer.
+    extensionCredentialsFor: createExtensionCredentialsResolver(db),
   };
   assignIfPresent(syncContext, "scheduleItemEmbedding", scheduleItemEmbedding);
 

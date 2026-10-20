@@ -1,4 +1,8 @@
 import { listExtensions } from "../automation/extension-store.ts";
+import {
+  type ExtensionManifestReader,
+  indexServiceIdForCodeServer,
+} from "../connectors/extension-sync/extension-identity.ts";
 import type { ExtensionSlotSource } from "../connectors/lazy-mesh/extension-slot-source.ts";
 import type { ServerSpec } from "../connectors/lazy-mesh/slot.ts";
 import { wrapServerSpecInCwd } from "../connectors/lazy-mesh/wrap-server-spec.ts";
@@ -129,15 +133,22 @@ export type ExtensionSlotSourceDeps = VerifiedExtensionDeps & {
   readonly runtimeReadPaths: () => readonly string[];
   readonly isConnectorAllowed: (serviceId: string) => boolean;
   readonly verify?: typeof readVerifiedExtensionForSpawn;
+  /** Test seam for the manifest read behind the policy id; production reads the install tree. */
+  readonly readManifest?: ExtensionManifestReader;
   /** Test seams for the staged copy; production passes none. */
   readonly stage?: ExtensionStageDeps;
 };
 
 export function createExtensionSlotSource(deps: ExtensionSlotSourceDeps): ExtensionSlotSource {
   const verify = deps.verify ?? readVerifiedExtensionForSpawn;
+  // Org policy names the INDEX id (`readwise` for a bound extension, else the `ext_` id). Derived
+  // from the installed manifest and the same continuity table the verifier binds with; a spawn is
+  // still refused by the verifier (step 9) if that manifest was tampered with.
+  const policyIdFor = (serviceId: string): string =>
+    indexServiceIdForCodeServer(deps.db, serviceId, deps.continuityTable, deps.readManifest);
   return {
     isAllowed(serviceId) {
-      return deps.isConnectorAllowed(serviceId);
+      return deps.isConnectorAllowed(policyIdFor(serviceId));
     },
     disabledExtensionIdFor(serviceId) {
       const grant = listRunGrants(deps.db).find((g) => g.service_id === serviceId);
@@ -164,10 +175,11 @@ export function createExtensionSlotSource(deps: ExtensionSlotSourceDeps): Extens
           `no extension run approval carries service id "${serviceId}"`,
         );
       }
-      if (!deps.isConnectorAllowed(serviceId)) {
+      const policyId = policyIdFor(serviceId);
+      if (!deps.isConnectorAllowed(policyId)) {
         throw new ExtensionRunGrantError(
           "ERR_EXTENSION_RUN_POLICY",
-          `organization policy does not allow ${serviceId}`,
+          `organization policy does not allow ${policyId}`,
         );
       }
       const verified = await verify(grant.extension_id, deps);
