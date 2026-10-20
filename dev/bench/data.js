@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792477078048,
+  "lastUpdate": 1792510178497,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f4e9d93d533905e19f8dc63ce4f57df17082a76c",
-          "message": "chore: release main (#1020)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.17.0</summary>\n\n##\n[1.17.0](https://github.com/nimbus-agent/Nimbus/compare/v1.16.1...v1.17.0)\n(2026-08-02)\n\n\n### Features\n\n* **decisions:** add nimbus decisions, the implicit ADR extractor\n([#1019](https://github.com/nimbus-agent/Nimbus/issues/1019))\n([e999122](https://github.com/nimbus-agent/Nimbus/commit/e99912257b32315641c1ac43c1f75790146679c5))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-02T12:09:14+03:00",
-          "tree_id": "bd2c19df51201beb2f13914a0854667d329779d4",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f4e9d93d533905e19f8dc63ce4f57df17082a76c"
-        },
-        "date": 1785662316454,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 281.24141534999944,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 282.49270515000063,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 186.51208345000487,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "61e034a57a7aade40035365f5af30332787bbac0",
+          "message": "feat(extensions): extensions can sync into the index (#1705)\n\n## Summary\n\nPR 3 of the Readwise-unbundling pilot. An approved extension whose\nmanifest declares a `sync` block can now sync into the local index.\nUntil now only built-in connectors could. No migration and no new\ninvariant. No extension declares `sync` yet, so nothing changes for\nexisting users.\n\n**How a sync runs**\n- **Parsing (`connectors/extension-sync/sync-response.ts`).** Each\nresponse the extension returns is parsed against the SDK's sync v1\ncontract. The 19 corpus fixtures are byte-identical to `nimbus-sdk`.\n- **What gets dropped.** Items of an undeclared type, malformed items\nand oversized items are dropped and counted, never truncated.\n- **What an item can't set.** An item cannot choose its own service or\n`syncedAt`.\n- **A bad `hasMore`.** `hasMore: true` with an empty cursor is refused.\n\n**Which id it syncs under (`extension-identity.ts`)**\n- **Index id.** An extension syncs under its own `ext_` id. It uses a\nlegacy connector id only when the continuity table binds it to one; that\ntable is empty until PR 5.\n- **Configured.** It counts as configured only when every credential it\ndeclares is set.\n- **Org policy.** The policy allowlist is checked against the id it\nsyncs under.\n\n**The sync host (`extension-syncable.ts`,\n`mesh.callExtensionSyncTool`)**\n- **One run.** One scheduler run is up to 40 pages, 60 s per call and 5\nminutes in total.\n- **Writes.** Each page is written in one `writeBatch`.\n- **Egress.** Each run appends exactly ONE `sync.run` egress row (I29),\nand none while a declared credential is blank.\n- **Responses.** `rate_limited` and `unauthenticated` map onto the\nexisting health states, and the 4 MiB result cap is enforced on the\ndirect call.\n- **Timeouts.** A timed-out call is aborted.\n- **Reserved tool.** The reserved `__nimbus_sync` tool is filtered from\n`connector tools`, checked on the unprefixed name. `connector call`\nrefuses it with `ERR_EXTENSION_RESERVED_TOOL`.\n- **Preflight.** A new `Syncable.preflight?()` hook runs before the\nconfigured check and before the egress append. A sandbox that cannot\nconfine the extension, or a preflight that throws, pauses it with the\nreason and writes no row.\n\n**Lifecycle (`platform/register-extension-sync.ts`)**\n- **Boot.** Registration happens after the extension integrity pass, and\nonly when the runtime is enabled. A demo-rooted gateway registers\nnothing (I41).\n- **Approve, enable, disable, revoke, rehash.** Each of these\nre-registers or unregisters the sync. Revoke and disable keep the items.\n- **Withdrawn mid-run.** A run that is withdrawn while in flight is\ncancelled before its next page call and before its next write. The\nscheduler records nothing more for a connector that was unregistered\nmid-run.\n- **Applied update.** The sync pauses with \"updated to <version> — run\n`nimbus extension approve <id>` to resume sync\". Re-approving lifts that\npause only.\n- **`extension remove`.** It stops the extension first, then purges its\nitems, its scheduler and status rows, and every credential it was\ngranted, including a bound legacy key such as `readwise.token`.\n- **`connector remove`.** It refuses an extension-backed id, whether the\nbound id or an `ext_` id with a grant, with\n`ERR_CONNECTOR_IS_EXTENSION`. The refusal comes before the owner prompt.\n- **Name clash.** A built-in connector already registered under the same\nid is never replaced.\n\nDocs: `docs/architecture.md` § Extension sync, the I29/I43 text in\n`docs/SECURITY-INVARIANTS.md`, CLAUDE.md and GEMINI.md, and the\nCHANGELOG.\n\n**Known bounds, deferred**\n- **Dropped-item counts** are logged but not yet shown in `nimbus\nconnector status`. Showing them needs an `items_dropped` column, which\nlands with PR 5's migration; architecture.md records the deferral.\n- **Binding to the bundled Readwise.** The continuity table is empty in\nproduction, so a binding to the bundled `readwise` connector cannot\nhappen yet. These belong to PR 5/7:\n  - Recovering the binding when the manifest is unreadable.\n  - Purging `readwise:*` while the bundled connector still owns the id.\n  - A paused bound id also pausing the bundled connector.\n  - An end-to-end test of the bound path.\n\n## Test plan\n- [x] `bun run typecheck`, `bun run typecheck:tests` (0 new errors),\n`bun run preflight:fast`\n- [x] `packages/gateway/src` plus the extension-sync and\nextension-runtime E2Es on Windows, against the real sandbox helper:\n20072 pass, 0 fail.\n- [x] New E2E (`test/e2e/extension-sync.e2e.test.ts`): a real gateway\nsubprocess. It checks:\n- the credential env reaches the confined child (a SHA-256 marker; the\nraw token is never logged);\n  - two pages are indexed under one `sync.run` row;\n  - nothing syncs or is ledgered while the token is blank;\n  - the sync is registered again after a restart;\n  - `connector remove` is refused;\n  - `extension remove` purges.\n- [ ] macOS and Linux legs of the E2E (first run is this PR's CI)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01V7smEk6EQSzTfy5WPQ5NUD\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Approved extensions can synchronize indexed content on a schedule\nthrough their declared sync capability.\n* Sync supports pagination, validation, rate limits, credential checks,\nsandbox policies, and configurable runtime limits.\n  * Sync activity is recorded in security and synchronization history.\n* Sync pauses automatically when credentials, approval, or sandbox\nrequirements are unavailable.\n\n* **Bug Fixes**\n* Extension-backed connectors can no longer be removed through the\nconnector removal flow; use extension removal instead.\n* Extension removal now cleans up associated indexed data, status, and\ncredentials.\n  * Reserved extension tools are protected from direct connector calls.\n\n* **Documentation**\n* Added extension synchronization lifecycle, limits, security, and CLI\nbehavior documentation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-20T15:22:53Z",
+          "tree_id": "355c46209715a5a1b04661c6f1ed836d1ca10a79",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/61e034a57a7aade40035365f5af30332787bbac0"
+        },
+        "date": 1792510173168,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 197.22171834999935,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 208.48338694999475,
             "unit": "ms"
           }
         ]
