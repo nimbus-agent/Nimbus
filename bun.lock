@@ -85,7 +85,7 @@
       "dependencies": {
         "@mastra/core": "^1.74.0",
         "@mastra/mcp": "^2.1.2",
-        "@nimbus-dev/connectors": "^0.2.4",
+        "@nimbus-dev/connectors": "^0.3.0",
         "@nimbus-dev/registry-format": "workspace:*",
         "@nimbus-dev/sdk": "^2.0.0",
         "@noble/hashes": "^2.4.0",
@@ -607,7 +607,7 @@
 
     "@nimbus-dev/client": ["@nimbus-dev/client@0.18.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.34.0" } }, "sha512-vFetTND4TNVJUytwJL1muE0H65cUbwGdQGwK+kxo2EJPPvXKWza109MrB7oUXoPOyxi0rSHVNLmwpI21Ai+lmw=="],
 
-    "@nimbus-dev/connectors": ["@nimbus-dev/connectors@0.2.4", "", { "dependencies": { "@modelcontextprotocol/sdk": "1.32.0", "@nimbus-dev/sdk": "^2.0.0", "@types/nodemailer": "^8.0.2", "zod": "^4.6.5" }, "optionalDependencies": { "hyparquet": "^1.31.2", "imapflow": "^2.2.4", "nodemailer": "^10.0.14", "tsdav": "^2.3.5" }, "bin": { "nimbus-connector": "standalone/src/bin.ts" } }, "sha512-kHkapo6roR83Qo3ukthBet7ksFjK06Nhq9rB3h1HZcAHj4MuINDEiAdsHYa9DsN2Ic5SvbDKZmSW9RQF29jMsA=="],
+    "@nimbus-dev/connectors": ["@nimbus-dev/connectors@0.3.0", "", { "dependencies": { "@modelcontextprotocol/sdk": "1.32.0", "@nimbus-dev/sdk": "^2.1.0", "@types/nodemailer": "^8.0.2", "zod": "^4.6.5" }, "optionalDependencies": { "hyparquet": "^1.31.2", "imapflow": "^2.2.4", "nodemailer": "^10.0.14", "tsdav": "^2.3.5" }, "bin": { "nimbus-connector": "standalone/src/bin.ts" } }, "sha512-XX9dEAYNIvJItMFdb/XLB2GUy+xBjY9EE8UUOIM6fWcDrxFXQnj3gCV7oZLeFbF2yJAvGRzTru+UPozDYMjMFw=="],
 
     "@nimbus-dev/registry-format": ["@nimbus-dev/registry-format@workspace:packages/registry-format"],
 
@@ -2490,6 +2490,8 @@
     "@mswjs/interceptors/@open-draft/deferred-promise": ["@open-draft/deferred-promise@2.2.0", "", {}, "sha512-CecwLWx3rhxVQF6V4bAgPS5t+So2sTbPgAzafKkVizyi7tlwpcFpdFqq+wqF2OwNBmqFuu6tOyouTuxgpMfzmA=="],
 
     "@nimbus-dev/client/@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.34.0", "", {}, "sha512-/dN1jMx2KIM11AbHKzqkKY/Y3wcUllfj3lb3aHqXpVUTn70ETE7C673REdP0V77kyh9RE+T5+3VFZ6QRV1k/Rg=="],
+
+    "@nimbus-dev/connectors/@nimbus-dev/sdk": ["@nimbus-dev/sdk@2.1.0", "", {}, "sha512-7KqMDmqyABwOrWbjdf/jIJt+rCLi9nSZNG19PUxDm0caIRfMYeFr32oQKT5LsEcQZBro98BmQe2KUV/r63NjMQ=="],
 
     "@nimbus/docs/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
