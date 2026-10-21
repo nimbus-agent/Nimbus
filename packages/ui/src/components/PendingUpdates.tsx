@@ -45,8 +45,14 @@ function actionableMigrations(data: unknown): MigrationRowUi[] {
   return rows.filter((r): r is MigrationRowUi => {
     if (r === null || typeof r !== "object") return false;
     const rec = r as Record<string, unknown>;
+    const optionalText = (v: unknown): boolean =>
+      v === null || v === undefined || typeof v === "string";
     return (
       typeof rec["id"] === "string" &&
+      typeof rec["legacyServiceId"] === "string" &&
+      typeof rec["extensionId"] === "string" &&
+      optionalText(rec["version"]) &&
+      optionalText(rec["error"]) &&
       (rec["state"] === "awaiting_approval" || rec["state"] === "failed")
     );
   });
@@ -96,7 +102,9 @@ export function PendingUpdates({
     { enabled: !offline },
   );
   const migrations = actionableMigrations(migrationData);
-  const [migrationError, setMigrationError] = useState<string | null>(null);
+  const [migrationError, setMigrationError] = useState<{ id: string; message: string } | null>(
+    null,
+  );
   const [keeping, setKeeping] = useState<string | null>(null);
 
   // `migration.accept` blocks until the owner answers the `extension.migrate` prompt (it is in the
@@ -109,7 +117,7 @@ export function PendingUpdates({
     try {
       await createIpcClient().call<MigrationRowUi>("migration.accept", { id });
     } catch (e) {
-      setMigrationError(e instanceof Error ? e.message : String(e));
+      setMigrationError({ id, message: e instanceof Error ? e.message : String(e) });
     } finally {
       setKeeping(null);
       refetchMigrations();
@@ -138,6 +146,12 @@ export function PendingUpdates({
   const showUpdates = error === null && list.length > 0;
   if (!showUpdates && migrations.length === 0) return null;
 
+  // A refusal belongs to the row it was raised for: once that row is gone, or shows its own failure
+  // text, the message is stale and is not shown.
+  const refusedRow = migrations.find((m) => m.id === migrationError?.id);
+  const shownMigrationError =
+    refusedRow?.state === "awaiting_approval" ? (migrationError?.message ?? null) : null;
+
   const migrationsSection =
     migrations.length === 0 ? null : (
       <section
@@ -145,9 +159,9 @@ export function PendingUpdates({
         className="border rounded p-4 bg-amber-50 border-amber-300 flex flex-col gap-3"
       >
         <h2 className="text-lg font-semibold">Pending migrations</h2>
-        {migrationError !== null && (
+        {shownMigrationError !== null && (
           <p className="text-red-600 text-sm" role="alert" data-testid="migration-error">
-            {migrationError}
+            {shownMigrationError}
           </p>
         )}
         <ul className="flex flex-col gap-2">

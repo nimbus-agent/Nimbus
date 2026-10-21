@@ -439,8 +439,9 @@ export class SyncScheduler {
       nextSyncAt: row.next_sync_at,
       intervalMs: row.interval_ms,
       itemCount,
-      // A pause carries its reason in the health row, not the scheduler row.
-      lastError: row.error_msg ?? (status === "paused" ? (health.lastError ?? null) : null),
+      // A pause carries its reason in the health row, and it wins over a stale sync error.
+      lastError:
+        status === "paused" ? (health.lastError ?? row.error_msg ?? null) : (row.error_msg ?? null),
       consecutiveFailures: row.consecutive_failures,
       healthState: health.state,
       healthRetryAfterMs: health.retryAfter === undefined ? null : health.retryAfter.getTime(),

@@ -88,3 +88,12 @@ describe("ConnectorTile", () => {
     expect(screen.getByText("my-custom-connector")).toBeInTheDocument();
   });
 });
+
+describe("ConnectorTile: lastError is shown only for a paused connector", () => {
+  it("hides lastError on a connector that is not paused", () => {
+    const c: ConnectorStatus = { name: "github", health: "error", lastError: "HTTP 500 from host" };
+    render(<ConnectorTile status={c} highlighted={false} />);
+    expect(screen.queryByTestId("connector-paused-reason")).toBeNull();
+    expect(screen.queryByText(/HTTP 500/)).toBeNull();
+  });
+});

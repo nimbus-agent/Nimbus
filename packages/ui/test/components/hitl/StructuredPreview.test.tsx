@@ -172,3 +172,24 @@ describe("StructuredPreview: extension.migrate", () => {
     expect(screen.queryByTestId("migrate-sandbox")).toBeNull();
   });
 });
+
+describe("StructuredPreview: extension.migrate shows fields it does not know", () => {
+  it("renders an unlisted payload field generically, so nothing is hidden", () => {
+    render(
+      <StructuredPreview
+        details={{
+          migrationId: "m1",
+          extensionId: "com.x",
+          fromRenderer: false,
+          newGatewayField: "extra detail the owner must see",
+        }}
+        action="extension.migrate"
+      />,
+    );
+    const root = screen.getByTestId("migrate-preview");
+    expect(root).toHaveTextContent("newGatewayField");
+    expect(root).toHaveTextContent("extra detail the owner must see");
+    expect(root).not.toHaveTextContent("fromRenderer");
+    expect(root).not.toHaveTextContent("migrationId");
+  });
+});

@@ -206,4 +206,49 @@ describe("PendingUpdates: pending migrations", () => {
     expect(screen.queryByTestId("pending-migrations")).toBeNull();
     expect(callMock).not.toHaveBeenCalled();
   });
+
+  it("drops a row whose fields are not strings instead of crashing the section", async () => {
+    const bad = { ...migrationRow({ id: "bad" }), extensionId: { nope: 1 } } as unknown;
+    serveMigrations([bad as MigrationRowUi, migrationRow({ id: "ok" })]);
+    render(<PendingUpdates offline={false} />);
+    expect(await screen.findByTestId("pending-migration-row-ok")).toBeInTheDocument();
+    expect(screen.queryByTestId("pending-migration-row-bad")).toBeNull();
+  });
+
+  it("clears a refusal once its row is gone from the refreshed list", async () => {
+    let rows = [migrationRow({ id: "m1" }), migrationRow({ id: "m2", extensionId: "com.x.two" })];
+    callMock.mockImplementation(async (method: string) => {
+      if (method === "extension.checkForUpdates") return [];
+      if (method === "migration.list") return { migrations: rows };
+      if (method === "migration.accept") {
+        rows = rows.filter((r) => r.id !== "m1");
+        throw new Error("ERR_EXTENSION_MIGRATION_NOT_PENDING: no longer pending");
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+    render(<PendingUpdates offline={false} />);
+    await userEvent.click(await screen.findByTestId("migration-keep-m1"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("pending-migration-row-m1")).toBeNull();
+    });
+    expect(screen.getByTestId("pending-migration-row-m2")).toBeInTheDocument();
+    expect(screen.queryByTestId("migration-error")).toBeNull();
+  });
+
+  it("does not repeat a refusal beside a row that now shows its own failure", async () => {
+    let rows = [migrationRow({ id: "m1" })];
+    callMock.mockImplementation(async (method: string) => {
+      if (method === "extension.checkForUpdates") return [];
+      if (method === "migration.list") return { migrations: rows };
+      if (method === "migration.accept") {
+        rows = [migrationRow({ id: "m1", state: "failed", error: "digest mismatch" })];
+        throw new Error("ERR_EXTENSION_MIGRATION_FAILED: digest mismatch");
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+    render(<PendingUpdates offline={false} />);
+    await userEvent.click(await screen.findByTestId("migration-keep-m1"));
+    expect(await screen.findByTestId("migration-failed-m1")).toBeInTheDocument();
+    expect(screen.queryByTestId("migration-error")).toBeNull();
+  });
 });

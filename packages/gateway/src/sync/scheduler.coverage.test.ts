@@ -24,6 +24,7 @@ import {
   type SchedulerStateRow,
   SqliteSchedulerStateRepository,
 } from "./scheduler-state-repository.ts";
+import { setPaused } from "./scheduler-store.ts";
 import { unboundSyncCapabilities } from "./sync-capabilities.ts";
 import type { Syncable, SyncResult, SyncRuntimeContext, SyncStatus } from "./types.ts";
 import { UnauthenticatedError } from "./types.ts";
@@ -841,6 +842,43 @@ describe("SyncScheduler — a connector withdrawn mid-run records nothing afterw
       .query("SELECT COUNT(*) AS c FROM sync_state WHERE connector_id = ?")
       .get("withdrawn") as { c: number };
     expect(rows.c).toBe(0);
+    await sched.stop();
+    db.close();
+  });
+});
+
+describe("getStatus: the pause reason", () => {
+  test("a pause with a stated reason wins over a stale sync error", async () => {
+    const db = openMemoryIndexDatabase();
+    const sched = new SyncScheduler(ctxFor(db), {}, { isOnline: online, random: () => 0 });
+    sched.register(
+      probe("readwise", async () => {
+        throw new Error("old sync failure");
+      }).syncable,
+    );
+    await expect(within(sched.forceSync("readwise"), "the failing run")).rejects.toThrow();
+    expect(sched.getStatus("readwise")[0]?.lastError).toBe("old sync failure");
+    setPaused(db, "readwise", true);
+    transitionHealth(db, "readwise", { type: "paused", reason: "moving to a signed extension" });
+    const status = sched.getStatus("readwise")[0];
+    expect(status?.status).toBe("paused");
+    expect(status?.lastError).toBe("moving to a signed extension");
+    await sched.stop();
+    db.close();
+  });
+
+  test("a pause with no stated reason keeps the sync error", async () => {
+    const db = openMemoryIndexDatabase();
+    const sched = new SyncScheduler(ctxFor(db), {}, { isOnline: online, random: () => 0 });
+    sched.register(
+      probe("plain", async () => {
+        throw new Error("old sync failure");
+      }).syncable,
+    );
+    await expect(within(sched.forceSync("plain"), "the failing run")).rejects.toThrow();
+    setPaused(db, "plain", true);
+    transitionHealth(db, "plain", { type: "paused" });
+    expect(sched.getStatus("plain")[0]?.lastError).toBe("old sync failure");
     await sched.stop();
     db.close();
   });
