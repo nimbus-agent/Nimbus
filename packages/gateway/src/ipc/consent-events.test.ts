@@ -149,3 +149,34 @@ describe("HITL observation events", () => {
     expect(settled).toBe(false);
   });
 });
+
+describe("consent.request carries the action type", () => {
+  test("the unicast consent.request includes actionType when the executor knows it", () => {
+    const unicast: unknown[] = [];
+    const c = new ConsentCoordinatorImpl(() => (n) => unicast.push(n));
+    void c.requestConsent("client-a", { requestId: "r9", prompt: "p", actionType: "data.delete" });
+    const notif = unicast[0] as { params: Record<string, unknown> };
+    expect(notif.params["actionType"]).toBe("data.delete");
+  });
+
+  test("without an action type the field is absent, so an older client sees the old shape", () => {
+    const unicast: unknown[] = [];
+    const c = new ConsentCoordinatorImpl(() => (n) => unicast.push(n));
+    void c.requestConsent("client-a", { requestId: "r10", prompt: "p" });
+    const notif = unicast[0] as { params: Record<string, unknown> };
+    expect("actionType" in notif.params).toBe(false);
+  });
+});
+
+describe("the migration prompt hides its audit-only field", () => {
+  test("fromRenderer is not in the prompt text, but stays in the action's own payload", () => {
+    const action = {
+      type: "extension.migrate",
+      payload: { extensionId: "com.x", version: "1.0.0", fromRenderer: true },
+    };
+    const prompt = formatConsentPrompt(action);
+    expect(prompt).toContain("com.x");
+    expect(prompt).not.toContain("fromRenderer");
+    expect(action.payload.fromRenderer).toBe(true);
+  });
+});

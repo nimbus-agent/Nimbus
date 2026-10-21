@@ -18,6 +18,25 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-21 — The desktop app can accept a connector migration (Readwise unbundling pilot, PR 6; invariant I46; no migration).**
+  `migration.list` and `migration.accept` join the desktop allowlist (109 → 111), so a pending connector migration can be kept from
+  the desktop as well as with `nimbus connector migrate accept <id>`. Accept takes the migration id and nothing else, and succeeds
+  only for a migration the gateway prepared itself from the built-in official registry, whose staged files still match and whose
+  access, credential mapping and item types are exactly what the release expects; it then asks once, in the desktop's own consent
+  popup. New invariant **I46** states that whitelist and its bound: a compromised desktop renderer could answer that prompt, and the
+  most it could do is re-enable Nimbus-signed code with the access the built-in connector already had. Declining and retrying stay
+  in the terminal, and `extension.install` and `extension.approveRun` stay off the desktop allowlist. `migration.accept` waits for
+  the owner's answer without the bridge's 30-second timeout. The bridge now declares its connection's kind (`ui`) when it connects,
+  so the prompt's audit row records `fromRenderer` — an audit field only, never read by a check, and left out of the prompt text.
+  The Marketplace page gains a **Pending migrations** group: a migration awaiting your answer has a Keep button that waits while
+  the approval popup is open and shows a refusal beside its row; a failed one shows its error and points to
+  `nimbus connector migrate retry`. A paused connector's tile now shows why it is paused. `consent.request` gains an additive
+  `actionType` (older gateways omit it, older clients ignore it), and the approval popup now keys its preview and default focus on
+  that real type: a destructive request such as `data.delete` focuses Reject, and the `extension.autoUpdate` and
+  `extension.downgrade` previews render, neither of which ever happened from the desktop before. When the type is absent the popup
+  focuses Reject. `connector.listStatus` — and so `nimbus connector status`, `nimbus status` and the MCP adapter — now reports a
+  paused connector's stated pause reason instead of a stale sync error.
+
 - **2026-10-20 — Built-in official registry and connector migration (Readwise unbundling pilot, gateway PR 5; schema V73, HITL type `extension.migrate`, static D34, no new invariant).**
   A release that moves a bundled connector out to a signed extension can now carry the official registry's URL and root key
   (`nimbus-official`, a reserved name `registry.add` refuses) and a continuity table, and move an existing user over with ONE

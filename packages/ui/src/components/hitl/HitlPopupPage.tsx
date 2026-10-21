@@ -37,10 +37,10 @@ export function HitlPopupPage(): ReactNode {
   const approveRef = useRef<HTMLButtonElement>(null);
   const rejectRef = useRef<HTMLButtonElement>(null);
 
-  const action =
-    head?.details && typeof head.details["action"] === "string"
-      ? head.details["action"]
-      : ((head as unknown as { action?: string } | undefined)?.action ?? undefined);
+  // The type is the gateway's own `actionType` on `consent.request`, and nothing else: not a key of
+  // the payload (the payload is the action's data) and not the prompt text (it embeds that data).
+  const action = head?.actionType;
+  const isMigrate = action === "extension.migrate";
 
   // Focus is placed imperatively, keyed on the action, NOT via the `autoFocus` attribute. React
   // honours `autoFocus` only at mount, and this popup does not remount between queued requests —
@@ -52,7 +52,10 @@ export function HitlPopupPage(): ReactNode {
   // Leaving it where it was is the same failure one step removed.
   useEffect(() => {
     if (head === undefined) return;
-    const target = isDestructive(action) ? rejectRef.current : approveRef.current;
+    // No `actionType` (an older installed gateway) means the type is unknown, and an unknown type
+    // is not assumed safe: focus fails closed to Reject.
+    const target =
+      action === undefined || isDestructive(action) ? rejectRef.current : approveRef.current;
     target?.focus();
   }, [action, head]);
 
@@ -87,7 +90,9 @@ export function HitlPopupPage(): ReactNode {
   return (
     <div className="p-5 space-y-4">
       <header>
-        <h2 className="text-base font-medium text-[var(--color-fg)]">{head.prompt}</h2>
+        <h2 className="text-base font-medium text-[var(--color-fg)]">
+          {isMigrate ? "Keep this connector as a signed extension?" : head.prompt}
+        </h2>
       </header>
       <StructuredPreview details={head.details} {...(action === undefined ? {} : { action })} />
       {error && (

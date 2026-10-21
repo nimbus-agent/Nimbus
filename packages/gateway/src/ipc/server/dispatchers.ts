@@ -1500,10 +1500,13 @@ export async function tryDispatchCaptureRpc(
 }
 
 /**
- * `migration.*` (Readwise unbundling spec § 7.2/§ 7.3): CLI-only — every method is in
- * `FORBIDDEN_OVER_LAN` (I5) and none is on the Tauri allowlist (I7). Only `migration.accept` asks
- * the owner, through the SAME gate-only executor the extension lifecycle approvals use, bound to
- * THIS session's consent channel, so the `extension.migrate` prompt is unicast to the caller.
+ * `migration.*` (Readwise unbundling spec § 7.2/§ 7.3): every method is in `FORBIDDEN_OVER_LAN`
+ * (I5); `migration.list` and `migration.accept` are on the Tauri allowlist (I46), `decline` and
+ * `retry` are not. Only `migration.accept` asks the owner, through the SAME gate-only executor the
+ * extension lifecycle approvals use, bound to THIS session's consent channel, so the
+ * `extension.migrate` prompt is unicast to the caller. `fromRenderer` (I46's audit field) is the
+ * connection's declared kind — the Tauri bridge declares `ui` before any renderer frame, and the
+ * renderer cannot reach `session.declareKind` — never a request field.
  */
 export async function tryDispatchMigrationRpc(
   ctx: ServerCtx,
@@ -1523,6 +1526,7 @@ export async function tryDispatchMigrationRpc(
   const out = await dispatchMigrationRpc(method, params, {
     engine,
     ...(ownerGate === undefined ? {} : { ownerGate }),
+    fromRenderer: ctx.getClientKind(clientId) === "ui",
     redactRoots: migrationRedactionRoots([
       ctx.options.dataDir,
       ctx.options.extensionsDir,

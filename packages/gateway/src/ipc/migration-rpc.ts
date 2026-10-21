@@ -1,8 +1,15 @@
 /**
- * `migration.*` (Readwise unbundling spec § 7.2, § 7.3's CLI bullet): the owner's view of, and the
- * one decision about, a bundled connector moving to its signed extension. CLI-only: every method is
- * in `FORBIDDEN_OVER_LAN` (I5) and none is on the Tauri allowlist (I7) — the desktop path is a
- * separate, later surface.
+ * `migration.*` (Readwise unbundling spec § 7.2, § 7.3): the owner's view of, and the one decision
+ * about, a bundled connector moving to its signed extension. Every method is in
+ * `FORBIDDEN_OVER_LAN` (I5). `migration.list` and `migration.accept` are renderer-callable (on the
+ * Tauri allowlist, I46): the desktop lists pending migrations and answers one by id. `decline` and
+ * `retry` are not — they stay in a terminal (`nimbus connector migrate`).
+ *
+ * I46: accept takes a migration id and NOTHING else from its params — no package, registry,
+ * permission, credential or flag. Whether it can succeed is decided by the engine's whitelist (a
+ * gateway-created row in `awaiting_approval`, the baked built-in registry and root key, the staged
+ * tree digest, the baked continuity entry), identically for every caller. `fromRenderer` is an
+ * audit field the dispatcher derives from the connection's declared kind, never from params.
  *
  *   migration.list            -> { migrations: MigrationRowView[] }
  *   migration.accept { id }   -> MigrationRowView   (one `extension.migrate` prompt, unicast to the
@@ -54,6 +61,12 @@ export interface MigrationRpcContext {
    * any pattern runs. Absent means the pattern passes alone.
    */
   readonly redactRoots?: readonly string[];
+  /**
+   * `migration.accept` only, I46's audit field: the call arrived on the desktop bridge's
+   * connection (its kind, declared once at connect time). Recorded in the prompt's payload and so
+   * in the gate's audit row; no decision reads it. Absent means false.
+   */
+  readonly fromRenderer?: boolean;
 }
 
 type Hit = { kind: "hit"; value: unknown };
@@ -107,7 +120,9 @@ async function handleAccept(
   }
   // `migrationConsentViaGate` is the ONE way the owner's gate becomes the migration consent: it
   // asks under `extension.migrate` (I2 frozen set, never delegable — I20) and nothing else.
-  const row = await ctx.engine.accept(id, migrationConsentViaGate(gate));
+  const row = await ctx.engine.accept(id, migrationConsentViaGate(gate), {
+    fromRenderer: ctx.fromRenderer === true,
+  });
   return { kind: "hit", value: toMigrationRowView(row, ctx.redactRoots) };
 }
 

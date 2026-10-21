@@ -604,8 +604,9 @@ async function handleStandup(
  * on the one that matters are two tables, not one.
  *
  * **Why `unknown` is TRUE, which looks like a hole and is not.** `session.declareKind` is called by
- * exactly one client in this repo — the MCP adapter (`packages/cli/src/mcp/adapter.ts`). The plain
- * CLI declares nothing, so `nimbus oncall` from the owner's terminal arrives as `unknown`; making
+ * two clients in this repo — the MCP adapter (`packages/cli/src/mcp/adapter.ts`, `mcp`) and the
+ * desktop's Tauri bridge (`packages/ui/src-tauri/src/gateway_bridge.rs`, `ui`, which maps like
+ * `unknown` here). The plain CLI declares nothing, so `nimbus oncall` from the owner's terminal arrives as `unknown`; making
  * that false would refuse the command's primary use. What `unknown` actually means is "reached the
  * gateway over the local socket without declaring", and the socket's access control is the
  * filesystem — the same boundary the CLI already relies on for every other method. The three kinds

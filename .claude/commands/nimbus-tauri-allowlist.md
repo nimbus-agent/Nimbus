@@ -23,28 +23,28 @@ This skill is the rule a contributor consults **before** editing the allowlist.
 
 | File | Role |
 |---|---|
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:57`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `ALLOWED_METHODS: &[&str]` — the single sorted, asserted-size array |
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:178`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `NO_TIMEOUT_METHODS` — subset that bypasses the 30 s default RPC timeout |
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:192`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `GLOBAL_BROADCAST_METHODS` — notifications that fan out across all Tauri windows |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `ALLOWED_METHODS: &[&str]` — the single sorted, asserted-size array |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `NO_TIMEOUT_METHODS` — subset that bypasses the 30 s default RPC timeout |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `GLOBAL_BROADCAST_METHODS` — notifications that fan out across all Tauri windows |
 | [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) `mod tests` | Allowlist enforcement tests: `allowlist_exact_size`, `allowlist_is_alphabetized`, `allowlist_has_no_duplicates`, `allowlist_oncall_reads_only`, `allowlist_captures_reads_only`, `allowlist_rejects_vault_and_raw_db_writes`, plus per-surface read-only guards (e.g. `allowlist_egress_read_only` — egress reads exposed, `egress.prune` blocked) |
 
 ## The Three Lists
 
 ### `ALLOWED_METHODS`
 
-Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currently 109 entries (the count grows with each renderer-exposed surface — verify the live `ALLOWED_METHODS.len()` constant in `gateway_bridge.rs` rather than trusting this number). The list is:
+Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currently 111 entries (the count grows with each renderer-exposed surface — verify the live `ALLOWED_METHODS.len()` constant in `gateway_bridge.rs` rather than trusting this number). The list is:
 
 - **Alphabetized** — enforced by `allowlist_is_alphabetized`. Insert in order; do not append at the end.
-- **Size-asserted** — `allowlist_exact_size` checks `ALLOWED_METHODS.len() == 109`. **Adding a method requires updating this constant.** Removing a method also requires updating it.
+- **Size-asserted** — `allowlist_exact_size` checks `ALLOWED_METHODS.len() == 111`. **Adding a method requires updating this constant.** Removing a method also requires updating it.
 - **Deduplicated** — `allowlist_has_no_duplicates` covers copy-paste mistakes.
 - **Free of forbidden namespaces** — `allowlist_rejects_vault_and_raw_db_writes` asserts that `vault.*`, `db.put` / `db.delete`, `config.set`, `index.rebuild`, and `index.querySql` are absent. Add to this test if you introduce a new forbidden namespace.
 
 ### `NO_TIMEOUT_METHODS`
 
-Methods that legitimately take many minutes and are tracked for liveness via streamed progress notifications instead of the default 30 s RPC timeout. Currently 6: `data.export`, `data.import`, `identity.login`, `llm.pullModel`, `updater.applyUpdate`, `workflow.run`. `workflow.run` earns its place for two reasons, not one: the handler resolves only when the run ends, AND a step can trip a HITL gate whose approval the user supplies mid-call, so the bound would double as the user's think time. The list is:
+Methods that legitimately take many minutes and are tracked for liveness via streamed progress notifications instead of the default 30 s RPC timeout. Currently 7: `data.export`, `data.import`, `identity.login`, `llm.pullModel`, `migration.accept`, `updater.applyUpdate`, `workflow.run`. `migration.accept` resolves only once the owner answers its `extension.migrate` consent prompt, so a timeout would cut off the owner's read of that prompt. `workflow.run` earns its place for two reasons, not one: the handler resolves only when the run ends, AND a step can trip a HITL gate whose approval the user supplies mid-call, so the bound would double as the user's think time. The list is:
 
 - **A subset of `ALLOWED_METHODS`** — enforced by `no_timeout_methods_are_subset_of_allowlist`.
-- **Size-asserted** — `no_timeout_methods_exact_size` checks `NO_TIMEOUT_METHODS.len() == 6`.
+- **Size-asserted** — `no_timeout_methods_exact_size` checks `NO_TIMEOUT_METHODS.len() == 7`.
 
 A new no-timeout method must (a) emit periodic progress notifications the UI polls for liveness, (b) support cancellation via a partner method (e.g. `llm.cancelPull`), and (c) appear in both lists with both size constants updated.
 
@@ -126,4 +126,4 @@ When the desktop UI needs a new IPC method:
 - [`docs/SECURITY.md`](../../docs/SECURITY.md) §"IPC Surface" — Gateway IPC trust model
 - [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) — production source of truth
 - `nimbus-ipc` skill — Gateway-side IPC method conventions; pair with this skill when adding a method that is *both* CLI-callable and renderer-callable
-- `nimbus-security-invariants` skill — the invariant triple rule (wiring + docs + test) that every live invariant follows (I1–I45)
+- `nimbus-security-invariants` skill — the invariant triple rule (wiring + docs + test) that every live invariant follows (I1–I46)

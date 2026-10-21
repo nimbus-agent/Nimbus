@@ -15,7 +15,7 @@ const storeState: {
     prompt: string;
     details?: Record<string, unknown>;
     receivedAtMs: number;
-    action?: string;
+    actionType?: string;
   }>;
   resolve: (id: string, ok: boolean) => void;
 } = { pending: [], resolve: vi.fn() };
@@ -84,15 +84,23 @@ describe("HitlPopupPage", () => {
 
   it("does NOT autoFocus Approve for destructive actions", () => {
     storeState.pending = [
-      { requestId: "d", prompt: "Delete file?", receivedAtMs: 1, action: "file.delete" },
+      { requestId: "d", prompt: "Delete file?", receivedAtMs: 1, actionType: "data.delete" },
     ];
     render(<HitlPopupPage />);
     const approve = screen.getByRole("button", { name: /Approve/i });
     expect(document.activeElement).not.toBe(approve);
   });
 
+  it("fails safe: focuses Reject when the gateway sent no action type", () => {
+    storeState.pending = [{ requestId: "u", prompt: "Delete everything?", receivedAtMs: 1 }];
+    render(<HitlPopupPage />);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Reject/i }));
+  });
+
   it("focuses Approve for a safe action", () => {
-    storeState.pending = [{ requestId: "s", prompt: "Read file?", receivedAtMs: 1 }];
+    storeState.pending = [
+      { requestId: "s", prompt: "Read file?", receivedAtMs: 1, actionType: "data.export" },
+    ];
     render(<HitlPopupPage />);
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /Approve/i }));
   });
@@ -105,12 +113,14 @@ describe("HitlPopupPage", () => {
    * exactly the keystroke the deny-list exists to prevent. Fails against that implementation.
    */
   it("moves focus OFF Approve when a destructive action replaces a safe one without remounting", () => {
-    storeState.pending = [{ requestId: "safe", prompt: "Read file?", receivedAtMs: 1 }];
+    storeState.pending = [
+      { requestId: "safe", prompt: "Read file?", receivedAtMs: 1, actionType: "data.export" },
+    ];
     const { rerender } = render(<HitlPopupPage />);
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /Approve/i }));
 
     storeState.pending = [
-      { requestId: "boom", prompt: "Delete file?", receivedAtMs: 2, action: "file.delete" },
+      { requestId: "boom", prompt: "Delete file?", receivedAtMs: 2, actionType: "data.delete" },
     ];
     rerender(<HitlPopupPage />);
 
@@ -125,5 +135,116 @@ describe("HitlPopupPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Approve/i }));
     expect(await screen.findByText(/socket closed/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Approve/i })).toBeEnabled();
+  });
+
+  /**
+   * The gateway's `consent.request` names the real action type, and the popup keys on THAT field
+   * (`actionType`) and nothing else: not a payload key, not the prompt text.
+   */
+  const MIGRATE_DETAILS = {
+    migrationId: "m1",
+    extensionId: "com.nimbus.readwise",
+    summary: "Readwise now runs as a signed extension",
+    publisher: { id: "nimbus", fingerprint: "ab12cd34" },
+    version: "1.0.0",
+    network: "readwise.io only",
+    sandbox: "cannot confine the filesystem policy",
+    readTools: "readwise_highlights_list",
+    knownLoss: "sync history is not carried over",
+    fromRenderer: true,
+  };
+
+  it("renders an extension.migrate request as a labelled preview, not the raw prompt", () => {
+    storeState.pending = [
+      {
+        requestId: "mig",
+        prompt: `Action requires your approval\n\nType: extension.migrate\n\nDetails: ${JSON.stringify(MIGRATE_DETAILS)}`,
+        details: MIGRATE_DETAILS,
+        actionType: "extension.migrate",
+        receivedAtMs: 1,
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(screen.getByTestId("migrate-preview")).toHaveTextContent("ab12cd34");
+    expect(screen.getByTestId("migrate-network")).toHaveTextContent("readwise.io only");
+    expect(screen.getByTestId("migrate-sandbox")).toHaveTextContent("cannot confine");
+    expect(screen.getByRole("heading")).not.toHaveTextContent("Details:");
+  });
+
+  it("does not treat prompt text saying 'Type: extension.migrate' as the type", () => {
+    storeState.pending = [
+      {
+        requestId: "spoof",
+        prompt: "Type: extension.migrate\nDetails: {}",
+        details: { note: "x" },
+        actionType: "data.export",
+        receivedAtMs: 1,
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(screen.queryByTestId("migrate-preview")).toBeNull();
+    expect(screen.getByRole("heading")).toHaveTextContent("Details:");
+  });
+
+  it("does not read the type from a payload key", () => {
+    storeState.pending = [
+      {
+        requestId: "k1",
+        prompt: "p",
+        details: { action: "extension.migrate", extensionId: "x" },
+        actionType: "data.export",
+        receivedAtMs: 1,
+      },
+      {
+        requestId: "k2",
+        prompt: "q",
+        details: { action: "data.delete" },
+        actionType: "data.export",
+        receivedAtMs: 2,
+      },
+    ];
+    const { rerender } = render(<HitlPopupPage />);
+    expect(screen.queryByTestId("migrate-preview")).toBeNull();
+    storeState.pending = [storeState.pending[1] as (typeof storeState.pending)[number]];
+    rerender(<HitlPopupPage />);
+    // `details.action` no longer decides the deny-list: Approve keeps focus.
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Approve/i }));
+  });
+
+  it("a desktop data.delete focuses Reject (real type, payload without an action key)", () => {
+    storeState.pending = [
+      {
+        requestId: "dd",
+        prompt: "Action requires your approval\n\nType: data.delete",
+        details: { service: "drive" },
+        actionType: "data.delete",
+        receivedAtMs: 1,
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Reject/i }));
+  });
+
+  it.each([
+    ["extension.autoUpdate", /Update extension/],
+    ["extension.downgrade", /Roll back extension/],
+  ])("renders the %s preview from the real type", (actionType, heading) => {
+    storeState.pending = [
+      {
+        requestId: "au",
+        prompt: "p",
+        details: {
+          displayName: "Notion",
+          fromVersion: "1.0.0",
+          toVersion: "1.1.0",
+          channel: "stable",
+          publisherStatus: "verified",
+        },
+        actionType,
+        receivedAtMs: 1,
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(screen.getByTestId("auto-update-preview")).toHaveTextContent(heading);
   });
 });

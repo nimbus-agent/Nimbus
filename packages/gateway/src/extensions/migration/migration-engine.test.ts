@@ -273,7 +273,7 @@ describe("evaluate", () => {
     const health = getConnectorHealth(db, LEGACY);
     expect(health.state).toBe("paused");
     expect(health.lastError).toBe(
-      `Fixture Reader moved to an extension — run \`nimbus connector migrate accept ${row.id}\` or answer it in the desktop app`,
+      `Fixture Reader moved to an extension — run \`nimbus connector migrate accept ${row.id}\` or answer it on the Marketplace page of the desktop app (Pending migrations)`,
     );
   });
 
@@ -606,7 +606,20 @@ describe("the consent payload", () => {
         "Fixture Reader's live read tools now need your approval per call and are not offered to the model unless you run `nimbus extension approve com.example.reader --model`; questions are still answered from your index.",
       knownLoss:
         "A few rare items may not carry over: items dated before 1970, or whose metadata is larger than 64 KiB.",
+      fromRenderer: false,
     });
+  });
+
+  // The audit row the executor gate actually writes is asserted over a real IPC connection in
+  // `ipc/migration-accept-kind.test.ts`; this pins the engine half and that redaction keeps it.
+  test("I46: fromRenderer records the caller's origin as given, and survives audit redaction", async () => {
+    const e = engine();
+    await e.evaluate();
+    const seen: MigrationConsentPayload[] = [];
+    await e.accept(onlyRow().id, consentThat(false, seen), { fromRenderer: true }).catch(() => {});
+    expect(seen.map((p) => p.fromRenderer)).toEqual([true]);
+    const { redactAuditPayload } = await import("../../audit/format-audit-payload.ts");
+    expect(redactAuditPayload(seen[0], 8192)).toContain('"fromRenderer":true');
   });
 
   test("on Windows the network line does not claim a host restriction, and a sandbox refusal is named", async () => {
@@ -628,7 +641,7 @@ describe("the consent payload", () => {
 
   test("the Readwise wording of the paused reason is the brief's, verbatim", () => {
     expect(awaitingApprovalReason("Readwise", "abc")).toBe(
-      "Readwise moved to an extension — run `nimbus connector migrate accept abc` or answer it in the desktop app",
+      "Readwise moved to an extension — run `nimbus connector migrate accept abc` or answer it on the Marketplace page of the desktop app (Pending migrations)",
     );
   });
 });

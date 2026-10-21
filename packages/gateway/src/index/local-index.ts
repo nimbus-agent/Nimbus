@@ -39,6 +39,7 @@ import {
   setPaused,
   upsertSchedulerRegistration,
 } from "../sync/scheduler-store.ts";
+import { statusLastError } from "../sync/status-last-error.ts";
 import type { SyncStatus } from "../sync/types.ts";
 import { buildItemListSql, type ItemListQueryParams } from "./item-list-query.ts";
 import {
@@ -347,8 +348,8 @@ export class LocalIndex {
       nextSyncAt: row.next_sync_at,
       intervalMs: row.interval_ms,
       itemCount: countItemsForService(db, row.service_id),
-      // A pause carries its reason in the health row, not the scheduler row.
-      lastError: row.error_msg ?? (status === "paused" ? (health.lastError ?? null) : null),
+      // A pause carries its reason in the health row, and it wins over a stale sync error.
+      lastError: statusLastError(status === "paused", row.error_msg, health.lastError),
       consecutiveFailures: row.consecutive_failures,
       healthState: health.state,
       healthRetryAfterMs: health.retryAfter === undefined ? null : health.retryAfter.getTime(),

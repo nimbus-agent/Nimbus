@@ -123,8 +123,8 @@ export type CreateIpcServerOptions = {
   extensionSync?: AutomationRpcExtensionSyncHandle;
   /**
    * The connector migration engine (Readwise unbundling spec § 7.2), built once by
-   * `platform/assemble.ts`, which also runs its boot `evaluate()`. Serves `migration.*` (CLI-only,
-   * LAN-forbidden). Absent means those methods are not served (tests).
+   * `platform/assemble.ts`, which also runs its boot `evaluate()`. Serves `migration.*` (LAN-forbidden;
+   * `list` and `accept` are also renderer-callable, I46). Absent means those methods are not served (tests).
    */
   migrationEngine?: Pick<MigrationEngine, "list" | "accept" | "decline" | "retry">;
   extensionsAutoUpdate?: AutoUpdateRuntimeBag;

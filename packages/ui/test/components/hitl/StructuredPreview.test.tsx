@@ -137,3 +137,59 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(screen.getByText("bar")).toBeInTheDocument();
   });
 });
+
+describe("StructuredPreview: extension.migrate", () => {
+  const details = {
+    migrationId: "m1",
+    extensionId: "com.nimbus.readwise",
+    summary: "Readwise now runs as a signed extension",
+    publisher: { id: "nimbus", fingerprint: "ab12cd34ef56" },
+    version: "1.0.0",
+    network: `readwise.io and ${"a-very-long-host.example.com, ".repeat(5)}`,
+    sandbox: "the sandbox cannot confine the filesystem policy",
+    readTools: "readwise_highlights_list",
+    knownLoss: "Highlights synced before the move stay; sync history is not carried over",
+    fromRenderer: true,
+  };
+
+  it("labels publisher, fingerprint, version, network and sandbox, in full", () => {
+    render(<StructuredPreview details={details} action="extension.migrate" />);
+    const root = screen.getByTestId("migrate-preview");
+    expect(root).toHaveTextContent("com.nimbus.readwise");
+    expect(root).toHaveTextContent("nimbus");
+    expect(root).toHaveTextContent("ab12cd34ef56");
+    expect(root).toHaveTextContent("1.0.0");
+    expect(root).toHaveTextContent("readwise.io and a-very-long-host.example.com");
+    expect(root).toHaveTextContent("cannot confine");
+    expect(root).toHaveTextContent("sync history is not carried over");
+    expect(screen.queryByRole("button", { name: /Show full/i })).toBeNull();
+    expect(root).not.toHaveTextContent("fromRenderer");
+  });
+
+  it("omits the sandbox row when the payload has none", () => {
+    const { sandbox: _s, ...rest } = details;
+    render(<StructuredPreview details={rest} action="extension.migrate" />);
+    expect(screen.queryByTestId("migrate-sandbox")).toBeNull();
+  });
+});
+
+describe("StructuredPreview: extension.migrate shows fields it does not know", () => {
+  it("renders an unlisted payload field generically, so nothing is hidden", () => {
+    render(
+      <StructuredPreview
+        details={{
+          migrationId: "m1",
+          extensionId: "com.x",
+          fromRenderer: false,
+          newGatewayField: "extra detail the owner must see",
+        }}
+        action="extension.migrate"
+      />,
+    );
+    const root = screen.getByTestId("migrate-preview");
+    expect(root).toHaveTextContent("newGatewayField");
+    expect(root).toHaveTextContent("extra detail the owner must see");
+    expect(root).not.toHaveTextContent("fromRenderer");
+    expect(root).not.toHaveTextContent("migrationId");
+  });
+});

@@ -19,6 +19,27 @@ pub struct PendingHitl {
     pub prompt: String,
     pub details: Option<Value>,
     pub received_at_ms: u64,
+    /// The HITL action type (`data.delete`, `extension.migrate`, ...) as the gateway names it.
+    /// Absent from an older gateway, hence `default`.
+    #[serde(default)]
+    pub action_type: Option<String>,
+}
+
+/// Build the record for a `consent.request` notification, or `None` when it lacks the two fields
+/// every version has sent. `actionType` is optional and must be a string.
+fn pending_hitl_from_params(params: &Value, received_at_ms: u64) -> Option<PendingHitl> {
+    let request_id = params.get("requestId")?.as_str()?.to_string();
+    let prompt = params.get("prompt")?.as_str()?.to_string();
+    Some(PendingHitl {
+        request_id,
+        prompt,
+        details: params.get("details").cloned(),
+        received_at_ms,
+        action_type: params
+            .get("actionType")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    })
 }
 
 pub struct HitlInbox {
@@ -127,6 +148,8 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "llm.pullModel",
     "llm.setDefault",
     "llm.unloadModel",
+    "migration.accept",
+    "migration.list",
     "oncall.pushedGet",
     "oncall.pushedList",
     "policy.show",
@@ -170,6 +193,40 @@ pub fn is_method_allowed(method: &str) -> bool {
     ALLOWED_METHODS.contains(&method)
 }
 
+/// The first frame the bridge writes on every gateway connection: `session.declareKind` with
+/// `ui`. The gateway records a connection's kind once (first declaration wins) and keys it by its
+/// own connection id, so every later frame on this connection — every renderer `rpc_call` — is
+/// attributed to the desktop. The renderer cannot send this itself: `session.declareKind` is not on
+/// `ALLOWED_METHODS`. I46 reads it for one audit field (`fromRenderer` on a `migration.accept`
+/// record); no gateway decision depends on it. Its reply carries an id no `rpc_call` waits on, so
+/// the read loop drops it.
+pub fn declare_kind_frame() -> Vec<u8> {
+    let mut line = json!({
+        "jsonrpc": "2.0",
+        "id": "bridge-declare-kind",
+        "method": "session.declareKind",
+        "params": { "kind": "ui" },
+    })
+    .to_string();
+    line.push('\n');
+    line.into_bytes()
+}
+
+/// Creates a connection's write channel and hands its sender to `share`, which makes it usable by
+/// `rpc_call`. The kind declaration is queued BEFORE `share` runs, so it is the first frame on the
+/// connection, ahead of any renderer call (I46's `fromRenderer` audit field). The order is
+/// load-bearing and pinned by `declare_frame_is_queued_before_the_writer_is_shared`.
+async fn open_connection_writer<F, Fut>(share: F) -> mpsc::Receiver<Vec<u8>>
+where
+    F: FnOnce(mpsc::Sender<Vec<u8>>) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(16);
+    let _ = tx.send(declare_kind_frame()).await;
+    share(tx).await;
+    rx
+}
+
 const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Allowlisted methods whose Gateway handler awaits the whole operation, so the
@@ -178,11 +235,15 @@ const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// `workflow.run` belongs here for two reasons, not one: the handler resolves only
 /// when the run ends, AND a step can trip a HITL gate whose approval the user
 /// supplies mid-call — so the bound would double as the user's think time.
+///
+/// `migration.accept` is here for the second reason alone: it resolves only after
+/// the owner answers the `extension.migrate` prompt it raises (I46).
 pub const NO_TIMEOUT_METHODS: &[&str] = &[
     "data.export",
     "data.import",
     "identity.login",
     "llm.pullModel",
+    "migration.accept",
     "updater.applyUpdate",
     "workflow.run",
 ];
@@ -248,11 +309,11 @@ pub async fn connect_and_run(app: AppHandle, state: BridgeState) {
             Ok(stream) => {
                 attempt = 0;
                 let (read_half, write_half) = stream.split();
-                let (tx, rx) = mpsc::channel::<Vec<u8>>(16);
-                {
-                    let mut w = state.write_tx.lock().await;
-                    *w = Some(tx);
-                }
+                let write_tx = state.write_tx.clone();
+                let rx = open_connection_writer(|tx| async move {
+                    *write_tx.lock().await = Some(tx);
+                })
+                .await;
                 let _ = app.emit("gateway://connection-state", "connected");
                 let pending = state.pending.clone();
                 let app_cloned = app.clone();
@@ -381,6 +442,55 @@ pub async fn rpc_call(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consent_request_keeps_the_action_type() {
+        let params = json!({
+            "requestId": "r1",
+            "prompt": "p",
+            "details": { "service": "drive" },
+            "actionType": "data.delete"
+        });
+        let rec = pending_hitl_from_params(&params, 7).expect("parses");
+        assert_eq!(rec.action_type.as_deref(), Some("data.delete"));
+        assert_eq!(rec.request_id, "r1");
+        assert_eq!(rec.received_at_ms, 7);
+    }
+
+    #[test]
+    fn consent_request_without_action_type_still_parses() {
+        let params = json!({ "requestId": "r2", "prompt": "p" });
+        let rec = pending_hitl_from_params(&params, 1).expect("older gateway still parses");
+        assert!(rec.action_type.is_none());
+        assert!(rec.details.is_none());
+    }
+
+    #[test]
+    fn consent_request_ignores_a_non_string_action_type() {
+        let params = json!({ "requestId": "r3", "prompt": "p", "actionType": 5 });
+        let rec = pending_hitl_from_params(&params, 1).expect("parses");
+        assert!(rec.action_type.is_none());
+    }
+
+    #[test]
+    fn pending_hitl_without_action_type_deserializes() {
+        let rec: PendingHitl = serde_json::from_value(json!({
+            "request_id": "r4", "prompt": "p", "details": null, "received_at_ms": 3
+        }))
+        .expect("tolerates the field being absent");
+        assert!(rec.action_type.is_none());
+    }
+
+    #[test]
+    fn pending_hitl_serializes_action_type_for_the_renderer() {
+        let rec = pending_hitl_from_params(
+            &json!({ "requestId": "r5", "prompt": "p", "actionType": "extension.migrate" }),
+            1,
+        )
+        .expect("parses");
+        let v = serde_json::to_value(&rec).expect("serializes");
+        assert_eq!(v["action_type"], "extension.migrate");
+    }
 
     #[test]
     fn allowlist_ws5a_methods() {
@@ -705,8 +815,52 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_migration_list_and_accept_only() {
+        // I46: the desktop answers a pending connector migration with `migration.accept`, which
+        // takes a migration id alone; the gateway's whitelist (built-in registry, root key, tree
+        // digest, continuity entry) decides whether it can succeed. Declining and retrying stay in
+        // a terminal, and the general install/run-grant methods stay off the list (I7).
+        assert!(is_method_allowed("migration.list"));
+        assert!(is_method_allowed("migration.accept"));
+        assert!(!is_method_allowed("migration.decline"));
+        assert!(!is_method_allowed("migration.retry"));
+        assert!(!is_method_allowed("extension.install"));
+        assert!(!is_method_allowed("extension.approveRun"));
+        // The accept awaits the owner's answer to the prompt it raises, so the 30 s bound would
+        // double as the owner's think time (the `workflow.run` reasoning).
+        assert!(is_no_timeout_method("migration.accept"));
+        assert!(!is_no_timeout_method("migration.list"));
+    }
+
+    #[test]
+    fn bridge_declares_the_ui_kind_and_the_renderer_cannot() {
+        // The gateway records a connection's kind once, first declaration wins. The bridge sends
+        // it before any renderer frame; the renderer itself cannot reach `session.declareKind`.
+        let frame: Value =
+            serde_json::from_slice(&declare_kind_frame()).expect("the frame is one JSON line");
+        assert_eq!(frame["method"], "session.declareKind");
+        assert_eq!(frame["params"]["kind"], "ui");
+        assert!(declare_kind_frame().ends_with(b"\n"));
+        assert!(!is_method_allowed("session.declareKind"));
+    }
+
+    #[tokio::test]
+    async fn declare_frame_is_queued_before_the_writer_is_shared() {
+        // The share callback stands in for the earliest possible renderer call: it sends a frame
+        // the moment it holds the sender. The declaration must still be first on the wire.
+        let renderer_frame = b"renderer\n".to_vec();
+        let sent = renderer_frame.clone();
+        let mut rx = open_connection_writer(|tx| async move {
+            tx.send(sent).await.expect("the channel is open");
+        })
+        .await;
+        assert_eq!(rx.recv().await, Some(declare_kind_frame()));
+        assert_eq!(rx.recv().await, Some(renderer_frame));
+    }
+
+    #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 109);
+        assert_eq!(ALLOWED_METHODS.len(), 111);
     }
 
     #[test]
@@ -735,11 +889,12 @@ mod tests {
     }
 
     #[test]
-    fn no_timeout_methods_contains_expected_six() {
+    fn no_timeout_methods_contains_expected_seven() {
         assert!(is_no_timeout_method("data.export"));
         assert!(is_no_timeout_method("data.import"));
         assert!(is_no_timeout_method("identity.login"));
         assert!(is_no_timeout_method("llm.pullModel"));
+        assert!(is_no_timeout_method("migration.accept"));
         assert!(is_no_timeout_method("updater.applyUpdate"));
         assert!(is_no_timeout_method("workflow.run"));
         assert!(!is_no_timeout_method("profile.list"));
@@ -748,7 +903,7 @@ mod tests {
 
     #[test]
     fn no_timeout_methods_exact_size() {
-        assert_eq!(NO_TIMEOUT_METHODS.len(), 6);
+        assert_eq!(NO_TIMEOUT_METHODS.len(), 7);
     }
 
     #[test]
@@ -812,28 +967,12 @@ fn classify_notification(app: &AppHandle, method: &str, params: Option<&Value>) 
             let Some(params) = params else {
                 return;
             };
-            let (Some(request_id), Some(prompt)) = (
-                params
-                    .get("requestId")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                params
-                    .get("prompt")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-            ) else {
-                return;
-            };
             let received_at_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            let details = params.get("details").cloned();
-            let record = PendingHitl {
-                request_id,
-                prompt,
-                details,
-                received_at_ms,
+            let Some(record) = pending_hitl_from_params(params, received_at_ms) else {
+                return;
             };
             if let Some(inbox) = app.try_state::<HitlInbox>() {
                 if inbox.push_dedup(record.clone()) {

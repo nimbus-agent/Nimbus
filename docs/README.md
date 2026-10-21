@@ -189,7 +189,7 @@ Nimbus maintains a local SQLite metadata index. Searching across 50,000 indexed 
 - **The HITL consent gate** is implemented in the executor, not the prompt. A model that generates a plan to skip confirmation produces a plan that simply does not execute.
 - **Connectors** run in sandboxed child processes. They receive only credentials for their declared service and cannot enumerate Vault keys or access other connectors. (Third-party extensions can be installed and are signature-verified, and an extension you approve runs sandboxed on first use, but it is not offered to the agent yet — see [Extensible](#extensible).)
 - **Prompt injection** is mitigated by injecting file content and API responses as typed `<tool_output>` data blocks, never as instructions.
-- **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the forty-five invariants — `I1`–`I45` — has a production wiring site *and* an enforcement test.
+- **Every authorized outbound action is ledgered.** An append-only, BLAKE3-chained egress ledger records what left the machine, and `nimbus prove` reports it. The structural rules behind all of this are enumerated in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md); each of the forty-six invariants — `I1`–`I46` — has a production wiring site *and* an enforcement test.
 
 ### True Cross-Platform
 
@@ -792,7 +792,7 @@ The complete command reference — every subcommand, flag, exit code, and the fu
 - **Connector isolation** — connectors run as sandboxed child processes (bwrap + seccomp on Linux, `sandbox-exec` on macOS, AppContainer on Windows), receive only their declared service's credentials, and cannot reach the Vault or other connectors. Third-party extension manifests are Ed25519-verified at install and on every Gateway startup. An installed extension runs only after the owner approves it to run (`nimbus extension approve`), sandboxed the same way, from a verified per-spawn copy of its install tree that is re-checked before every start (invariant I43); the owner invokes its tools with `nimbus connector call ext_<id>`, and they are offered to the model only when it was approved with `nimbus extension approve <id> --model` (each call still behind the owner's approval prompt).
 - **Full audit log** — every action, including every HITL decision, is recorded in a local BLAKE3-chained SQLite table before the action executes; `nimbus audit verify` proves the chain.
 - **Egress ledger** — every authorized outbound action is appended to an append-only, BLAKE3-chained ledger before dispatch, and a failed append aborts the action. `nimbus prove` reports what left the machine.
-- **Forty-five enumerated invariants** — `I1`–`I45`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. A static audit runs before the test suite; the runtime tests stay authoritative.
+- **Forty-six enumerated invariants** — `I1`–`I46`, each with a production wiring site, a section in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md), and an enforcement test. A static audit runs before the test suite; the runtime tests stay authoritative.
 - **Internal security audit (B1, 2026-04-25)** — 8 trust surfaces reviewed; 78 unique findings filed (0 Critical); all High and Medium items closed pre-`v0.1.0`. One Low item (`S6-F1`) closed in `v0.1.0`, and the two Tauri-specific Low items (`S4-F6`, `S4-F8`) are deferred to Phase 13 (`desktop-v0.1.0`); see [SECURITY.md](./SECURITY.md#security-audits) for the full record. A formal third-party penetration test is scheduled for Phase 12.
 
 > **Note:** Nimbus's guarantees hold at the process boundary. It is not a firewall, antivirus, or VPN application; endpoint protection (AV/EDR), network security (VPN/Firewall), and OS-level hardening are your responsibility. See [SECURITY.md](./SECURITY.md) for the full boundary definition.
@@ -902,7 +902,7 @@ nimbus/
 │   ├── README.md             # this file — the repository landing page
 │   ├── architecture.md       # subsystem design, IPC catalogue, schema reference
 │   ├── SECURITY.md           # security model + vulnerability reporting
-│   ├── SECURITY-INVARIANTS.md# I1–I45 rationale + anti-patterns
+│   ├── SECURITY-INVARIANTS.md# I1–I46 rationale + anti-patterns
 │   ├── roadmap.md            # acceptance-criteria-driven roadmap
 │   ├── CHANGELOG.md          # dated delivery log (canonical)
 │   ├── cli-reference.md      # full CLI + nimbus.toml reference

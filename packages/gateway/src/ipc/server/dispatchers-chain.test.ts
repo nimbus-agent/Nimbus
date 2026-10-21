@@ -858,8 +858,9 @@ describe("migration.* — reached through the chain, accept asks only the callin
   };
   const engine = (calls: string[]): NonNullable<CreateIpcServerOptions["migrationEngine"]> => ({
     list: () => [ROW],
-    accept: async (id, consent) => {
+    accept: async (id, consent, origin) => {
       calls.push(`accept:${id}`);
+      calls.push(`fromRenderer:${String(origin?.fromRenderer)}`);
       const ok = await consent({
         migrationId: id,
         extensionId: ROW.extensionId,
@@ -869,6 +870,7 @@ describe("migration.* — reached through the chain, accept asks only the callin
         network: "no network access",
         readTools: "r",
         knownLoss: "k",
+        fromRenderer: origin?.fromRenderer === true,
       });
       return { ...ROW, state: ok ? "approved" : "awaiting_approval", stagePath: null };
     },
@@ -913,8 +915,26 @@ describe("migration.* — reached through the chain, accept asks only the callin
     expect(out["state"]).toBe("approved");
     expect(asked.map((a) => a.clientId)).toEqual(["caller-7"]);
     expect(asked[0]?.prompt).toContain("extension.migrate");
-    expect(calls).toEqual(["accept:m-1"]);
+    expect(calls).toEqual(["accept:m-1", "fromRenderer:false"]);
   });
+
+  // I46: `fromRenderer` is an audit field, derived from the kind the CONNECTION declared once at
+  // connect time (the Tauri bridge declares `ui` before any renderer frame), never from params.
+  test.each([
+    ["ui", { id: "m-1" }, "fromRenderer:true"],
+    ["unknown", { id: "m-1" }, "fromRenderer:false"],
+    ["cli", { id: "m-1", fromRenderer: true }, "fromRenderer:false"],
+    ["ui", { id: "m-1", fromRenderer: false }, "fromRenderer:true"],
+  ] as const)(
+    "a %s session's accept (params %j) is recorded as %s",
+    async (kind, params, expected) => {
+      const calls: string[] = [];
+      const { ctx } = harness({ localIndex: freshIndex(), migrationEngine: engine(calls) });
+      const asKind: ServerCtx = { ...ctx, getClientKind: () => kind };
+      await tryDispatchPhase4Rpc(asKind, "migration.accept", params, "c1");
+      expect(calls).toEqual(["accept:m-1", expected]);
+    },
+  );
 
   test("a disconnected caller fails closed: the gate denies, nothing is approved", async () => {
     const { ctx } = harness({ localIndex: freshIndex(), migrationEngine: engine([]) });

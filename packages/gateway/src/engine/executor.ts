@@ -279,6 +279,12 @@ export function redactPayloadForConsentDisplay(value: unknown): unknown {
 export function consentDisplayPayload(action: PlannedAction): Record<string, unknown> | undefined {
   if (action.payload === undefined) return undefined;
   if (isUserMcpActionType(action.type)) return action.payload;
+  if (action.type === "extension.migrate") {
+    // `fromRenderer` is an AUDIT field (the gate's audit row records the action itself, so it keeps
+    // it). It means nothing to the owner reading the prompt, so the display copy drops it.
+    const { fromRenderer: _audit, ...shown } = action.payload;
+    return redactPayloadForConsentDisplay(shown) as Record<string, unknown>;
+  }
   return redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>;
 }
 
