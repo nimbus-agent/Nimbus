@@ -124,6 +124,20 @@ export interface MigrationConsentPayload {
   readonly sandbox?: string;
   readonly readTools: string;
   readonly knownLoss: string;
+  /**
+   * I46 audit field: whether the accept arrived on the desktop's bridge connection. It rides in the
+   * prompt's payload, so the gate's audit row for this decision records it. Audit only: no check
+   * anywhere reads it, and it never comes from a caller's params.
+   */
+  readonly fromRenderer: boolean;
+}
+
+/**
+ * Where an accept came from, as the IPC layer determined it from the CONNECTION (never a request
+ * field). Recorded, never decided on: every check in `accept` is the same for every caller.
+ */
+export interface MigrationAcceptOrigin {
+  readonly fromRenderer: boolean;
 }
 
 export type MigrationConsent = (payload: MigrationConsentPayload) => Promise<boolean>;
@@ -144,7 +158,12 @@ export interface MigrationEngine {
    * § 7.2 step 6, "the command to change their mind, which re-runs Prepare"). Approved rows stay.
    */
   retry(): Promise<void>;
-  accept(id: string, consent: MigrationConsent): Promise<MigrationRow>;
+  /** `origin` is recorded in the consent payload (I46's audit field); absent means not the renderer. */
+  accept(
+    id: string,
+    consent: MigrationConsent,
+    origin?: MigrationAcceptOrigin,
+  ): Promise<MigrationRow>;
   decline(id: string): MigrationRow;
   list(): readonly MigrationRow[];
 }
@@ -273,6 +292,7 @@ function buildConsentPayload(
   manifest: ExtensionManifest,
   platform: NodeJS.Platform,
   confineRefusal: string | null,
+  origin: MigrationAcceptOrigin,
 ): MigrationConsentPayload {
   const name = displayNameOf(entry);
   const network = networkLine(platform, entry.expectedPermissions.network);
@@ -293,6 +313,7 @@ function buildConsentPayload(
     readTools: `${name}'s live read tools now need your approval per call and are not offered to the model unless you run \`nimbus extension approve ${entry.extensionId} --model\`; questions are still answered from your index.`,
     knownLoss:
       "A few rare items may not carry over: items dated before 1970, or whose metadata is larger than 64 KiB.",
+    fromRenderer: origin.fromRenderer,
   };
 }
 
@@ -814,6 +835,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   const acceptLocked = async (
     row: MigrationRow,
     consent: MigrationConsent,
+    origin: MigrationAcceptOrigin,
   ): Promise<MigrationRow> => {
     const { entry, reg: builtinReg } = requireAcceptable(row);
     const root = requireIntactStage(row);
@@ -839,7 +861,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     }
     clearLeftoverInstall(row, entry);
     const approved = await consent(
-      buildConsentPayload(row, entry, manifest, deps.env.platform, confineRefusal),
+      buildConsentPayload(row, entry, manifest, deps.env.platform, confineRefusal, origin),
     );
     if (!approved) {
       throw new MigrationError(
@@ -919,11 +941,11 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       return retrying;
     },
 
-    async accept(id, consent) {
+    async accept(id, consent, origin = { fromRenderer: false }) {
       const row = requirePending(id);
       busy.add(row.legacyServiceId);
       try {
-        return await acceptLocked(row, consent);
+        return await acceptLocked(row, consent, origin);
       } finally {
         busy.delete(row.legacyServiceId);
       }

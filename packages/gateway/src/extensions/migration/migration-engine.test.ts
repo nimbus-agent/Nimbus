@@ -606,7 +606,18 @@ describe("the consent payload", () => {
         "Fixture Reader's live read tools now need your approval per call and are not offered to the model unless you run `nimbus extension approve com.example.reader --model`; questions are still answered from your index.",
       knownLoss:
         "A few rare items may not carry over: items dated before 1970, or whose metadata is larger than 64 KiB.",
+      fromRenderer: false,
     });
+  });
+
+  test("I46: fromRenderer records the caller's origin as given, and is the audit row's too", async () => {
+    const e = engine();
+    await e.evaluate();
+    const seen: MigrationConsentPayload[] = [];
+    await e.accept(onlyRow().id, consentThat(false, seen), { fromRenderer: true }).catch(() => {});
+    expect(seen.map((p) => p.fromRenderer)).toEqual([true]);
+    const { redactAuditPayload } = await import("../../audit/format-audit-payload.ts");
+    expect(redactAuditPayload(seen[0], 8192)).toContain('"fromRenderer":true');
   });
 
   test("on Windows the network line does not claim a host restriction, and a sandbox refusal is named", async () => {

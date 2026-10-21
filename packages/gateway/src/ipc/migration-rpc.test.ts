@@ -35,6 +35,7 @@ const PAYLOAD: MigrationConsentPayload = {
   network: "no network access",
   readTools: "r",
   knownLoss: "k",
+  fromRenderer: false,
 };
 
 interface FakeEngine {
@@ -112,6 +113,28 @@ describe("migration.* handlers", () => {
     const value = (out as { value: Record<string, unknown> }).value;
     expect(value["state"]).toBe("approved");
     expect(value).not.toHaveProperty("stagePath");
+  });
+
+  test("I46: fromRenderer reaches the engine from the context only, never from params", async () => {
+    const origins: Array<boolean | undefined> = [];
+    const e = fakeEngine({
+      accept: async (_id, _consent, origin) => {
+        origins.push(origin?.fromRenderer);
+        return { ...ROW, state: "approved", stagePath: null };
+      },
+    });
+    const gate = async (): Promise<boolean> => true;
+    await dispatchMigrationRpc(
+      "migration.accept",
+      { id: "m-1", fromRenderer: true },
+      { engine: e.ctxEngine, ownerGate: gate },
+    );
+    await dispatchMigrationRpc(
+      "migration.accept",
+      { id: "m-1", fromRenderer: false },
+      { engine: e.ctxEngine, ownerGate: gate, fromRenderer: true },
+    );
+    expect(origins).toEqual([false, true]);
   });
 
   test("accept refuses without an owner gate, before the engine is asked", async () => {

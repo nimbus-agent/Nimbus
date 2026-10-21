@@ -127,6 +127,8 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "llm.pullModel",
     "llm.setDefault",
     "llm.unloadModel",
+    "migration.accept",
+    "migration.list",
     "oncall.pushedGet",
     "oncall.pushedList",
     "policy.show",
@@ -170,6 +172,25 @@ pub fn is_method_allowed(method: &str) -> bool {
     ALLOWED_METHODS.contains(&method)
 }
 
+/// The first frame the bridge writes on every gateway connection: `session.declareKind` with
+/// `ui`. The gateway records a connection's kind once (first declaration wins) and keys it by its
+/// own connection id, so every later frame on this connection — every renderer `rpc_call` — is
+/// attributed to the desktop. The renderer cannot send this itself: `session.declareKind` is not on
+/// `ALLOWED_METHODS`. I46 reads it for one audit field (`fromRenderer` on a `migration.accept`
+/// record); no gateway decision depends on it. Its reply carries an id no `rpc_call` waits on, so
+/// the read loop drops it.
+pub fn declare_kind_frame() -> Vec<u8> {
+    let mut line = json!({
+        "jsonrpc": "2.0",
+        "id": "bridge-declare-kind",
+        "method": "session.declareKind",
+        "params": { "kind": "ui" },
+    })
+    .to_string();
+    line.push('\n');
+    line.into_bytes()
+}
+
 const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Allowlisted methods whose Gateway handler awaits the whole operation, so the
@@ -178,11 +199,15 @@ const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// `workflow.run` belongs here for two reasons, not one: the handler resolves only
 /// when the run ends, AND a step can trip a HITL gate whose approval the user
 /// supplies mid-call — so the bound would double as the user's think time.
+///
+/// `migration.accept` is here for the second reason alone: it resolves only after
+/// the owner answers the `extension.migrate` prompt it raises (I46).
 pub const NO_TIMEOUT_METHODS: &[&str] = &[
     "data.export",
     "data.import",
     "identity.login",
     "llm.pullModel",
+    "migration.accept",
     "updater.applyUpdate",
     "workflow.run",
 ];
@@ -249,6 +274,9 @@ pub async fn connect_and_run(app: AppHandle, state: BridgeState) {
                 attempt = 0;
                 let (read_half, write_half) = stream.split();
                 let (tx, rx) = mpsc::channel::<Vec<u8>>(16);
+                // Queued before `tx` is shared, so it is the first frame on the connection,
+                // ahead of any renderer call (I46's `fromRenderer` audit field).
+                let _ = tx.send(declare_kind_frame()).await;
                 {
                     let mut w = state.write_tx.lock().await;
                     *w = Some(tx);
@@ -705,8 +733,38 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_migration_list_and_accept_only() {
+        // I46: the desktop answers a pending connector migration with `migration.accept`, which
+        // takes a migration id alone; the gateway's whitelist (built-in registry, root key, tree
+        // digest, continuity entry) decides whether it can succeed. Declining and retrying stay in
+        // a terminal, and the general install/run-grant methods stay off the list (I7).
+        assert!(is_method_allowed("migration.list"));
+        assert!(is_method_allowed("migration.accept"));
+        assert!(!is_method_allowed("migration.decline"));
+        assert!(!is_method_allowed("migration.retry"));
+        assert!(!is_method_allowed("extension.install"));
+        assert!(!is_method_allowed("extension.approveRun"));
+        // The accept awaits the owner's answer to the prompt it raises, so the 30 s bound would
+        // double as the owner's think time (the `workflow.run` reasoning).
+        assert!(is_no_timeout_method("migration.accept"));
+        assert!(!is_no_timeout_method("migration.list"));
+    }
+
+    #[test]
+    fn bridge_declares_the_ui_kind_and_the_renderer_cannot() {
+        // The gateway records a connection's kind once, first declaration wins. The bridge sends
+        // it before any renderer frame; the renderer itself cannot reach `session.declareKind`.
+        let frame: Value =
+            serde_json::from_slice(&declare_kind_frame()).expect("the frame is one JSON line");
+        assert_eq!(frame["method"], "session.declareKind");
+        assert_eq!(frame["params"]["kind"], "ui");
+        assert!(declare_kind_frame().ends_with(b"\n"));
+        assert!(!is_method_allowed("session.declareKind"));
+    }
+
+    #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 109);
+        assert_eq!(ALLOWED_METHODS.len(), 111);
     }
 
     #[test]
@@ -735,11 +793,12 @@ mod tests {
     }
 
     #[test]
-    fn no_timeout_methods_contains_expected_six() {
+    fn no_timeout_methods_contains_expected_seven() {
         assert!(is_no_timeout_method("data.export"));
         assert!(is_no_timeout_method("data.import"));
         assert!(is_no_timeout_method("identity.login"));
         assert!(is_no_timeout_method("llm.pullModel"));
+        assert!(is_no_timeout_method("migration.accept"));
         assert!(is_no_timeout_method("updater.applyUpdate"));
         assert!(is_no_timeout_method("workflow.run"));
         assert!(!is_no_timeout_method("profile.list"));
@@ -748,7 +807,7 @@ mod tests {
 
     #[test]
     fn no_timeout_methods_exact_size() {
-        assert_eq!(NO_TIMEOUT_METHODS.len(), 6);
+        assert_eq!(NO_TIMEOUT_METHODS.len(), 7);
     }
 
     #[test]

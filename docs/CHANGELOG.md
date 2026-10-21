@@ -18,6 +18,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-21 — The desktop app can accept a connector migration (Readwise unbundling pilot, PR 6; invariant I46; no migration).**
+  `migration.list` and `migration.accept` join the desktop allowlist (109 → 111), so a pending connector migration can be kept from
+  the desktop as well as with `nimbus connector migrate accept <id>`. Accept takes the migration id and nothing else, and succeeds
+  only for a migration the gateway prepared itself from the built-in official registry, whose staged files still match and whose
+  access, credential mapping and item types are exactly what the release expects; it then asks once, in the desktop's own consent
+  popup. New invariant **I46** states that whitelist and its bound: a compromised desktop renderer could answer that prompt, and the
+  most it could do is re-enable Nimbus-signed code with the access the built-in connector already had. Declining and retrying stay
+  in the terminal, and `extension.install` and `extension.approveRun` stay off the desktop allowlist. `migration.accept` waits for
+  the owner's answer without the bridge's 30-second timeout. The bridge now declares its connection's kind (`ui`) when it connects,
+  so the prompt's audit row records `fromRenderer` — an audit field only, never read by a check. The desktop notice that calls
+  these methods is a later change.
+
 - **2026-10-20 — Built-in official registry and connector migration (Readwise unbundling pilot, gateway PR 5; schema V73, HITL type `extension.migrate`, static D34, no new invariant).**
   A release that moves a bundled connector out to a signed extension can now carry the official registry's URL and root key
   (`nimbus-official`, a reserved name `registry.add` refuses) and a continuity table, and move an existing user over with ONE

@@ -101,7 +101,8 @@ const FORBIDDEN_OVER_LAN = new Set([
   // run and points it at the owner's existing Vault credential in ONE `extension.migrate` approval;
   // `decline`/`retry` change whether that happens and `list` names which connectors the owner
   // configured. Each method is named explicitly — this set is a DENYLIST, so an unnamed method
-  // would be callable — and all four are CLI-only, like `extension.approveRun`.
+  // would be callable — and all four stay off the LAN. Locally, `list` and `accept` are also the
+  // desktop's (I46: accept by id alone, under the baked whitelist); `decline`/`retry` are CLI-only.
   "migration.list",
   "migration.accept",
   "migration.decline",

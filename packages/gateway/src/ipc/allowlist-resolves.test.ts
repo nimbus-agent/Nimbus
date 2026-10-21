@@ -92,6 +92,9 @@ beforeAll(async () => {
     // `captures.list` reaches `now()` (the action-expiry sweep) and `captures.get` reaches the store;
     // either stub throwing proves the capture arm resolved the name.
     captureRpcCtx: { gate: { now: t, store: { get: t, list: t } } } as never,
+    // `migration.list` reaches the engine's `list`; `migration.accept` (no id here) refuses with
+    // -32602 before reaching it. Either outcome proves the migration arm resolved the name.
+    migrationEngine: { list: t, accept: t, decline: t, retry: t } as never,
     oncallPushRpcCtx: {
       runtime: {
         config: { enabled: true },

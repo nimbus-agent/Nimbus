@@ -3100,9 +3100,10 @@ mind about a decline. An approved migration is never touched.
 1970, and items whose metadata is larger than 64 KiB, are dropped by the extension sync path. The
 prompt says this too.
 
-The four `migration.*` methods are CLI-only: refused over the LAN channel and absent from the desktop
-allowlist. `accept`, `decline` and `retry` are refused on a demo gateway (`--demo`), which never
-prepares a migration.
+All four `migration.*` methods are refused over the LAN channel. The desktop app can list pending
+migrations and accept one by its id (`migration.list` and `migration.accept`, security invariant I46);
+`decline` and `retry` are CLI-only. `accept`, `decline` and `retry` are refused on a demo gateway
+(`--demo`), which never prepares a migration.
 
 ---
 
