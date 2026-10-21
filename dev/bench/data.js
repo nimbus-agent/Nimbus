@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792521654683,
+  "lastUpdate": 1792555027645,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "faa23a8b50fe7d8e9ae293adcb7e912572a1a900",
-          "message": "feat(index): full-body store — V48 item.body, uncapped keyword search, and full bodies for the prose sources (#1023)\n\n## What\n\nLifts the 512-character cap that bounded every indexed item body, and\nmigrates the prose-bearing sources onto the new column. Includes #1024,\nwhich merged into this branch.\n\nKeyword search, `nimbus glossary` and `nimbus decisions` were all\nbounded by one clamp in `item-store.ts`. `body_preview` was the only\nbody text stored, hard-clipped at 512 chars for every item from every\nconnector — which also made `embedding/chunker.ts`'s 256-token chunking\ninert, since 512 chars ≈ 128 tokens always produced exactly one chunk.\n\nSpec: `docs/superpowers/specs/2026-08-02-full-body-store-design.md` ·\nPlan: `docs/superpowers/plans/2026-08-02-full-body-store.md`\n\n## What this actually delivers — corrected from the plan\n\nThe plan claimed \"twelve connectors\". Verified against the tree, it is\nnot twelve:\n\n| | Sources |\n|---|---|\n| **Full body @ 16 KiB (10)** | Slack, Teams, Discord, Linear, Jira,\n`github:issue`, Snyk, Obsidian, Zoom transcripts, web clips |\n| **Partial — 2,000-char cap (1)** | research briefs |\n| **Inert, still 512 (2)** | Bitbucket, `github:pr` |\n\n- **Research briefs** are capped upstream at 2,000 chars by\n`MAX_SUMMARY_CHARS` (`brief-report.ts:203`), applied at synthesis in the\nonly path that builds a `Report`. Left in place deliberately — it bounds\nthe whole report shape and sits under the 16 KiB cap. A real improvement\n(512 → 2,000), but **not** full-body indexing.\n- **Bitbucket** emits only `type: \"pr\"`, while `PROSE_HEAVY_TYPES`\ncontains `bitbucket:issue` and not `bitbucket:pr` — so its body still\nclamps to 512 with `body_complete = 0`. The substitution is correct and\nforward-compatible but inert today, and `bitbucket:issue` is dead\nconfiguration nothing emits.\n\n## Design decisions\n\n- **`body_preview` becomes a derived prefix of `body`, never written\nindependently.** One clamp site, one derivation — the two columns cannot\ndisagree.\n- **Embeddings deliberately untouched.** `embedding/pipeline.ts` keeps\nreading `body_preview`. Prose types route to OpenAI when a key is set,\nso widening that read would ship ~32× more private text off the machine.\nEgress stays flat structurally, not by a clamp someone must remember —\nenforced by a source-scanning guard over all four readers.\n- **Federation untouched.** `query-gate.ts` (invariant `I17`) keeps\nreading `body_preview` and slicing to `SNIPPET_MAX`. No peer sees more\nthan today. Also guarded.\n- **The relationship graph keeps the 512-char preview.** Widening it\nwould multiply `graph_relation` rows and change what `nimbus why` /\n`nimbus impact` return.\n- **`body_complete` stays 0 for every migrated row.** Completeness is a\nclaim a connector makes about its fetch; it cannot be inferred from\nstored text. A length heuristic would mark title-only Notion/Confluence\npages complete forever.\n\n## Load-bearing details\n\n**The migration seeds `body` from `body_preview` before rebuilding\nFTS.** FTS5 external-content tables pull columns by name, so rebuilding\nagainst a NULL `body` would silently reduce every existing row's keyword\ncoverage to its title. `runner-v48.test.ts` asserts a row indexed at V47\nis still findable by a keyword at char 400 after upgrading — verified\nduring review to genuinely fail if the statements are reordered.\n\n**Two hidden clamps would have shipped as silent no-ops.** A\n`bodyPreview:` → `body:` swap is defeated by any upstream clamp, and\nfails invisibly — tests pass, `body_complete` reports 1, bodies stay\ntruncated. **Jira** had `.slice(0, 512)` inside the `descriptionPreview`\nhelper; **Zoom** had a 280-char `clipTranscriptPreview`. Both found only\nby tracing each value to its origin before editing.\n\n**Title-derivation hazard.** Slack, Teams and Discord derived the item\ntitle from the same local holding the preview. All three now bind full\ntext to a separate local; titles verified unchanged, with Slack/Discord\ntests using a whitespace-prefix fixture that genuinely fails if full\ntext reaches the deriver.\n\n**Data-minimization fix.** `reindexConnector({ depth: \"metadata_only\"\n})` exists so a user can strip indexed bodies; it only nulled\n`body_preview` and would have left up to 16 KiB of exactly the text the\nuser asked to remove. Now clears `body`, `body_preview` and\n`body_complete` together via `dbRun` (invariant `I14`).\n\n**Agent reporting.** `nimbus decisions`' blanket \"512-character cap\nlimits recall\" note is now inaccurate rather than merely pessimistic.\nReplaced with a conditional per-brief `truncatedSources` count, computed\nby a SQL aggregate using the **same** source-filter SSoT the mining path\nuses — so the counted population is exactly the mined population.\n\n## Known-unfixed, pre-existing (not introduced here)\n\nFound while reviewing the minimization path. Both predate this branch\nand are unchanged in magnitude by it, but they live in code this PR\ntouches:\n\n1. `metadata_only` never clears `embedding_chunk.chunk_text`, which\nholds plaintext chunked from the body. Redacted text survives in full.\n2. `reindex.ts` deletes `FROM vec_items_384 WHERE rowid = <item rowid>`,\nbut `vec_rowid` is a global counter (`pipeline.ts:122`) unrelated to\n`item.rowid`. It deletes the wrong vector — leaving the redacted item\nembedded *and* corrupting an unrelated item's. Masked in tests by\nsingle-chunk fixtures where the ids coincide.\n\nDeliberately not fixed here: both deserve their own diff and review\nrather than being buried in a storage change.\n\n## Verification\n\ntypecheck ✅ · build ✅ · **16,517 tests pass / 0 fail** ✅ · 20 audits ✅ ·\nBiome 1,786 files ✅ · Docker-Linux `audit:coverage-floor` ✅ (1,130 files\nscanned, 0 baselined, baseline unratcheted)\n\n`bun run lint`, `test:ci` and `preflight` all fail inside\n`.claude/worktrees/` on an unrelated Biome path quirk (`Checked 0\nfiles`) — a pre-existing workflow hole, not caused by this branch. Gates\nwere run individually and lint verified out-of-band.\n\n## Schema\n\n**V48.** `ALLOWED_METHODS` unchanged at 103 — no new renderer surface.\nNo new security invariant: this adds no chokepoint, and the properties\nworth protecting are non-changes covered by the guards.\n\nCloses the storage half of #1005. The reporting half and #1006 stay with\nthe web-clipper workstream.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-02T16:09:01Z",
-          "tree_id": "ccd986b937caa445b0360199a1aaa5adc3ffa777",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/faa23a8b50fe7d8e9ae293adcb7e912572a1a900"
-        },
-        "date": 1785687631060,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.9979665500039,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.0654737499943,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 280.5751874499998,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c3caa735fa371ddabf072ef7792e5e351a45bf4",
+          "message": "fix(deps): MCP SDK 2.3.1 and vite 8.3.4 for today's advisories (#1710)\n\n## What\n\nThis PR upgrades the MCP TypeScript SDK v2 packages to 2.3.1 and vite to\n8.3.4, to clear advisories published on 2026-10-20.\n\n## Why\n\nSince these advisories were published, `audit:advisories` has failed the\nDependency audit on `main` and on every open PR:\n\n| Advisory | Package | Affected | Fixed in |\n| --- | --- | --- | --- |\n| GHSA-6prh-2h8m-c8cw (moderate) | `@modelcontextprotocol/client` |\n>=2.0.0 <2.3.0 | 2.3.1 |\n| GHSA-698v-4r3x-3vcv (moderate) | `vite` (launch-editor) | >=8.3.0\n<=8.3.2 | 8.3.4 |\n| GHSA-r825-w8mm-5pxw (moderate) | `vite` (launch-editor) | >=8.3.0\n<=8.3.2 | 8.3.4 |\n| GHSA-587h-7wmj-h5pm (high) | `vite` (launch-editor) | >=8.3.0 <=8.3.2\n| 8.3.4 |\n\nThe MCP advisory: the client's HTTP transports and OAuth requests\nfollowed cross-origin redirects and re-sent custom headers and request\nbodies.\n\n## Changes\n\n- `@modelcontextprotocol/client`, `@modelcontextprotocol/core` and\n`@modelcontextprotocol/server` go from 2.2.0 to 2.3.1, in both the root\ndependency pins and `overrides`. They move together because client 2.3.1\ndepends on core 2.3.1.\n- `packages/ui`: `vite` goes from `^8.3.2` to `^8.3.4`.\n- `bun.lock`: the docs site's nested `astro/vite` entry had stayed at\n8.3.2, although astro allows `^8.0.13`. It now resolves to 8.3.4.\n\n## Verification\n\n- `bun run audit:advisories` reports OK: 5 live advisories, all covered\nby accepted rows.\n- `bun install --frozen-lockfile` passes with no changes.\n- `bun run preflight:fast` passes.\n- 4084 gateway tests pass with 0 failures. They cover the connectors\n(including the lazy mesh, which uses the MCP client), the MCP server,\nand the extension runtime and extension sync E2Es.\n- The UI production build succeeds.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n- **Chores**\n  - Updated MCP tooling packages to version 2.3.1.\n  - Updated the UI development tooling to Vite version 8.3.4.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-21T03:46:29Z",
+          "tree_id": "094eabee2eab0b84ab4945c32e7f45bbb68fc865",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4c3caa735fa371ddabf072ef7792e5e351a45bf4"
+        },
+        "date": 1792555023976,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 283.6326983000014,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 280.05779165000024,
             "unit": "ms"
           }
         ]
