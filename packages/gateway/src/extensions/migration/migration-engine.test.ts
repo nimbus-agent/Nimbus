@@ -1655,7 +1655,7 @@ describe("branch coverage: refusals and failures inside accept", () => {
     expect(getMigration(db, id)?.state).toBe("failed");
   });
 
-  test("a second legacy service bound to an already installed extension is prompted, then fails and leaves nothing installed", async () => {
+  test("a second legacy service bound to an already installed extension fails before any prompt and leaves the first install alone", async () => {
     const other = { ...entry, legacyServiceId: "fixture_other" };
     const e = engine({ continuityTable: [entry, other] });
     await e.evaluate();
@@ -1664,12 +1664,20 @@ describe("branch coverage: refusals and failures inside accept", () => {
     const firstRow = rows.find((r) => r.legacyServiceId === LEGACY);
     const otherRow = rows.find((r) => r.legacyServiceId === "fixture_other");
     expect((await e.accept(firstRow?.id ?? "", consentThat(true, []))).state).toBe("approved");
+    const installedBefore = listExtensions(db).map((r) => r.id);
+    expect(installedBefore).toEqual([EXT]);
+    const grantBefore = getRunGrant(db, EXT);
+    expect(grantBefore).not.toBeNull();
     const seen: MigrationConsentPayload[] = [];
     await expect(e.accept(otherRow?.id ?? "", consentThat(true, seen))).rejects.toThrow(
-      /the run approval could not be recorded/,
+      `${EXT} already installed — remove it, then \`nimbus connector migrate retry\``,
     );
-    expect(seen).toHaveLength(1);
+    // No prompt was raised for a question that cannot succeed.
+    expect(seen).toEqual([]);
     expect(getMigration(db, otherRow?.id ?? "")?.state).toBe("failed");
-    expect(listExtensions(db)).toEqual([]);
+    // The first migration's extension and run grant survive, and it stays approved.
+    expect(listExtensions(db).map((r) => r.id)).toEqual([EXT]);
+    expect(getRunGrant(db, EXT)).toEqual(grantBefore);
+    expect(getMigration(db, firstRow?.id ?? "")?.state).toBe("approved");
   });
 });

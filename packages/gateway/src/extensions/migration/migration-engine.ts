@@ -679,13 +679,13 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
 
   /**
    * A previous accept's undo could not remove its files (M1: the rows go first, so they can never
-   * run). Left there, the next install would refuse on its destination. With NO extension row for the
-   * id, the directory is that leftover and nothing else can use it, so it is removed here — before the
+   * run). Left there, the next install would refuse on its destination. The caller has already
+   * refused an installed id, so there is no extension row for the id: the directory is that leftover
+   * and nothing else can use it, so it is removed here — before the
    * prompt, so the owner is never asked a question that cannot succeed. If it still cannot be
    * removed, the row fails with a message that names the extension and what to do, never the path.
    */
   const clearLeftoverInstall = (row: MigrationRow, entry: ContinuityEntry): void => {
-    if (listExtensions(db).some((r) => r.id === entry.extensionId)) return;
     const dir = extensionInstallDirectory(deps.extensionsDir, entry.extensionId);
     if (!existsSync(dir)) return;
     try {
@@ -831,6 +831,12 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       ),
     );
 
+    // An extension id another migration (or the owner) already installed is not ours to replace, and
+    // a later failure of this accept would undo THAT install. Refused before the prompt, with the
+    // wording prepare uses (B9); the undo below therefore only ever removes what this accept made.
+    if (listExtensions(db).some((r) => r.id === entry.extensionId)) {
+      return failAccept(row, alreadyInstalledText(entry.extensionId));
+    }
     clearLeftoverInstall(row, entry);
     const approved = await consent(
       buildConsentPayload(row, entry, manifest, deps.env.platform, confineRefusal),
