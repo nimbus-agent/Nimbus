@@ -14,6 +14,7 @@ import {
   type SchedulerStateRow,
   SqliteSchedulerStateRepository,
 } from "./scheduler-state-repository.ts";
+import { statusLastError } from "./status-last-error.ts";
 import { buildSyncCapabilities } from "./sync-capabilities.ts";
 import type {
   Syncable,
@@ -440,8 +441,7 @@ export class SyncScheduler {
       intervalMs: row.interval_ms,
       itemCount,
       // A pause carries its reason in the health row, and it wins over a stale sync error.
-      lastError:
-        status === "paused" ? (health.lastError ?? row.error_msg ?? null) : (row.error_msg ?? null),
+      lastError: statusLastError(status === "paused", row.error_msg, health.lastError),
       consecutiveFailures: row.consecutive_failures,
       healthState: health.state,
       healthRetryAfterMs: health.retryAfter === undefined ? null : health.retryAfter.getTime(),

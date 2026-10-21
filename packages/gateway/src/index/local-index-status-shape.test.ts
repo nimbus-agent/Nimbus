@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
+import { transitionHealth } from "../connectors/health.ts";
 import { LocalIndex } from "./local-index.ts";
 
 function setup(): { idx: LocalIndex; db: Database } {
@@ -60,5 +61,32 @@ describe("LocalIndex.persistedConnectorStatuses — depth + enabled shape (V21)"
     expect(s).toBeDefined();
     expect(s!.depth).toBe("metadata_only");
     expect(s!.enabled).toBe(true);
+  });
+});
+
+describe("LocalIndex.persistedConnectorStatuses: lastError on a paused service", () => {
+  function pausedWithStaleError(): { idx: LocalIndex; db: Database } {
+    const { idx, db } = setup();
+    db.run(
+      `INSERT INTO scheduler_state
+         (service_id, cursor, interval_ms, last_sync_at, next_sync_at, status, error_msg, consecutive_failures, paused)
+       VALUES (?, NULL, 60000, NULL, NULL, 'error', 'old sync failure', 1, 1)`,
+      ["readwise"],
+    );
+    return { idx, db };
+  }
+
+  test("a stated pause reason wins over a stale sync error (what connector.listStatus serves)", () => {
+    const { idx, db } = pausedWithStaleError();
+    transitionHealth(db, "readwise", { type: "paused", reason: "moving to a signed extension" });
+    expect(idx.persistedConnectorStatuses("readwise")[0]?.lastError).toBe(
+      "moving to a signed extension",
+    );
+  });
+
+  test("a pause with no stated reason keeps the sync error", () => {
+    const { idx, db } = pausedWithStaleError();
+    transitionHealth(db, "readwise", { type: "paused" });
+    expect(idx.persistedConnectorStatuses("readwise")[0]?.lastError).toBe("old sync failure");
   });
 });

@@ -52,7 +52,10 @@ export function HitlPopupPage(): ReactNode {
   // Leaving it where it was is the same failure one step removed.
   useEffect(() => {
     if (head === undefined) return;
-    const target = isDestructive(action) ? rejectRef.current : approveRef.current;
+    // No `actionType` (an older installed gateway) means the type is unknown, and an unknown type
+    // is not assumed safe: focus fails closed to Reject.
+    const target =
+      action === undefined || isDestructive(action) ? rejectRef.current : approveRef.current;
     target?.focus();
   }, [action, head]);
 

@@ -71,7 +71,7 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       };
       write(notif);
       // OBSERVATION ONLY, and additive: `consent.request` above stays unicast to the acting
-      // client, UNCHANGED — same fields, same one recipient — so consent semantics (who is
+      // client, to the same one recipient, with one additive field (`actionType`) — so consent semantics (who is
       // asked, who may answer, and what they see) are untouched.
       //
       // The broadcast below carries `{requestId, actionType}`, never `prompt`. `prompt` is built

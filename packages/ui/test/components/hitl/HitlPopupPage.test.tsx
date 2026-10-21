@@ -91,8 +91,16 @@ describe("HitlPopupPage", () => {
     expect(document.activeElement).not.toBe(approve);
   });
 
+  it("fails safe: focuses Reject when the gateway sent no action type", () => {
+    storeState.pending = [{ requestId: "u", prompt: "Delete everything?", receivedAtMs: 1 }];
+    render(<HitlPopupPage />);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Reject/i }));
+  });
+
   it("focuses Approve for a safe action", () => {
-    storeState.pending = [{ requestId: "s", prompt: "Read file?", receivedAtMs: 1 }];
+    storeState.pending = [
+      { requestId: "s", prompt: "Read file?", receivedAtMs: 1, actionType: "data.export" },
+    ];
     render(<HitlPopupPage />);
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /Approve/i }));
   });
@@ -105,7 +113,9 @@ describe("HitlPopupPage", () => {
    * exactly the keystroke the deny-list exists to prevent. Fails against that implementation.
    */
   it("moves focus OFF Approve when a destructive action replaces a safe one without remounting", () => {
-    storeState.pending = [{ requestId: "safe", prompt: "Read file?", receivedAtMs: 1 }];
+    storeState.pending = [
+      { requestId: "safe", prompt: "Read file?", receivedAtMs: 1, actionType: "data.export" },
+    ];
     const { rerender } = render(<HitlPopupPage />);
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /Approve/i }));
 
@@ -185,7 +195,13 @@ describe("HitlPopupPage", () => {
         actionType: "data.export",
         receivedAtMs: 1,
       },
-      { requestId: "k2", prompt: "q", details: { action: "data.delete" }, receivedAtMs: 2 },
+      {
+        requestId: "k2",
+        prompt: "q",
+        details: { action: "data.delete" },
+        actionType: "data.export",
+        receivedAtMs: 2,
+      },
     ];
     const { rerender } = render(<HitlPopupPage />);
     expect(screen.queryByTestId("migrate-preview")).toBeNull();
