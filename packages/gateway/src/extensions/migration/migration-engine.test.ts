@@ -610,7 +610,9 @@ describe("the consent payload", () => {
     });
   });
 
-  test("I46: fromRenderer records the caller's origin as given, and is the audit row's too", async () => {
+  // The audit row the executor gate actually writes is asserted over a real IPC connection in
+  // `ipc/migration-accept-kind.test.ts`; this pins the engine half and that redaction keeps it.
+  test("I46: fromRenderer records the caller's origin as given, and survives audit redaction", async () => {
     const e = engine();
     await e.evaluate();
     const seen: MigrationConsentPayload[] = [];

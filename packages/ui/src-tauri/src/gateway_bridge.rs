@@ -191,6 +191,21 @@ pub fn declare_kind_frame() -> Vec<u8> {
     line.into_bytes()
 }
 
+/// Creates a connection's write channel and hands its sender to `share`, which makes it usable by
+/// `rpc_call`. The kind declaration is queued BEFORE `share` runs, so it is the first frame on the
+/// connection, ahead of any renderer call (I46's `fromRenderer` audit field). The order is
+/// load-bearing and pinned by `declare_frame_is_queued_before_the_writer_is_shared`.
+async fn open_connection_writer<F, Fut>(share: F) -> mpsc::Receiver<Vec<u8>>
+where
+    F: FnOnce(mpsc::Sender<Vec<u8>>) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(16);
+    let _ = tx.send(declare_kind_frame()).await;
+    share(tx).await;
+    rx
+}
+
 const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Allowlisted methods whose Gateway handler awaits the whole operation, so the
@@ -273,14 +288,11 @@ pub async fn connect_and_run(app: AppHandle, state: BridgeState) {
             Ok(stream) => {
                 attempt = 0;
                 let (read_half, write_half) = stream.split();
-                let (tx, rx) = mpsc::channel::<Vec<u8>>(16);
-                // Queued before `tx` is shared, so it is the first frame on the connection,
-                // ahead of any renderer call (I46's `fromRenderer` audit field).
-                let _ = tx.send(declare_kind_frame()).await;
-                {
-                    let mut w = state.write_tx.lock().await;
-                    *w = Some(tx);
-                }
+                let write_tx = state.write_tx.clone();
+                let rx = open_connection_writer(|tx| async move {
+                    *write_tx.lock().await = Some(tx);
+                })
+                .await;
                 let _ = app.emit("gateway://connection-state", "connected");
                 let pending = state.pending.clone();
                 let app_cloned = app.clone();
@@ -760,6 +772,20 @@ mod tests {
         assert_eq!(frame["params"]["kind"], "ui");
         assert!(declare_kind_frame().ends_with(b"\n"));
         assert!(!is_method_allowed("session.declareKind"));
+    }
+
+    #[tokio::test]
+    async fn declare_frame_is_queued_before_the_writer_is_shared() {
+        // The share callback stands in for the earliest possible renderer call: it sends a frame
+        // the moment it holds the sender. The declaration must still be first on the wire.
+        let renderer_frame = b"renderer\n".to_vec();
+        let sent = renderer_frame.clone();
+        let mut rx = open_connection_writer(|tx| async move {
+            tx.send(sent).await.expect("the channel is open");
+        })
+        .await;
+        assert_eq!(rx.recv().await, Some(declare_kind_frame()));
+        assert_eq!(rx.recv().await, Some(renderer_frame));
     }
 
     #[test]

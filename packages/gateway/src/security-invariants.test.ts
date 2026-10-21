@@ -7421,7 +7421,7 @@ describe("I45 — a loopback HTTP listener answers only a Host header that names
  * engine, a real signed fixture registry configured as the built-in one, and a real index. The
  * fixture's legacy id is not a bundled connector (the engine skips a bundled one entirely).
  */
-describe("I46 — a renderer can cause extension code to run only through migration.accept, by id, under the baked whitelist", () => {
+describe("I46 — a renderer can create an extension run grant only through migration.accept, by id, under the baked whitelist", () => {
   const BRIDGE = "packages/ui/src-tauri/src/gateway_bridge.rs";
   const EXT = "com.example.reader";
   const LEGACY = "fixture_reader";
