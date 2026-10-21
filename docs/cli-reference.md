@@ -2915,7 +2915,7 @@ nimbus connector status github
 nimbus connector status github --stats   # Attach the 15 most recent sync-telemetry rows
 ```
 
-Output is always JSON; `--stats` is the only flag read.
+Output is always JSON; `--stats` is the only flag read. Each telemetry row carries `startedAt`, `durationMs`, `itemsUpserted`, `itemsDeleted`, `bytesTransferred`, `hadMore`, `errorMsg` and `itemsDropped` — items an extension's sync returned but the gateway refused to write (an undeclared type, a malformed or an oversized item), which is 0 for every built-in connector.
 
 ---
 
@@ -3055,6 +3055,54 @@ nimbus connector reindex confluence --depth full
 Output reports the resolved mode and the number of items affected. The depth is persisted as the connector's default and is enforced on **every** subsequent sync, not only at `reindex` time — every connector's item-writing code path is routed through a shared depth chokepoint (`upsertIndexedItemForSync`) that coerces the row to the configured depth before it is written, so a `metadata_only` or `summary` connector never accumulates full bodies between explicit reindexes.
 
 **Deepening is not retroactive.** Lowering the depth rewrites existing rows immediately (bodies are stripped or clamped in place), but **raising** it does not bring back text that was never stored: `--depth full` on a connector that has been running at `summary` or `metadata_only` reports `0` items affected and switches the setting for future syncs only. The Gateway has no copy of the discarded bodies to restore from — they have to be fetched again. To recover them, either force a fresh sync (`nimbus connector sync <name> --full`, which re-fetches from scratch rather than resuming the stored cursor) or run `nimbus index rebody --service <name>` for the connectors that support it. This asymmetry has always been in the code; it becomes visible for the first time now that depth is actually enforced between reindexes.
+
+---
+
+### `nimbus connector migrate list | accept <id> | decline <id> | retry`
+
+When a release moves a built-in connector out of the bundled set and into a signed extension from the
+official Nimbus registry, an existing user of that connector is asked once whether to keep it
+(Readwise is the first; until the release that drops it, nothing is ever migrated). The gateway checks
+at every start: if you had the connector configured (its credential is set in the Vault), it fetches
+and fully verifies the extension, stages it WITHOUT installing it, and pauses the connector's sync
+with a reason `nimbus doctor` names. If you never
+configured it, nothing happens: no download, no prompt.
+
+```bash
+nimbus connector migrate list                 # every migration, its state and the next step
+nimbus connector migrate list --json
+nimbus connector migrate accept <id>          # keep it: one approval, at a terminal
+nimbus connector migrate decline <id>         # keep it off; your items stay in the index
+nimbus connector migrate retry                # prepare failed and declined migrations again
+```
+
+**`accept <id>`** asks ONE question, under the `extension.migrate` action type: the publisher, the
+version, the key fingerprint, and the same access as before — on Windows the network line says
+"network access (Windows cannot limit this to …)", since the sandbox there cannot restrict hosts.
+That one approval installs the extension, approves it to run, and points it at your EXISTING
+credential (no re-entry). The extension then writes into the connector's existing namespace, so the
+items you already have are updated in place, never duplicated, and the connector's sync position
+carries over. Like `nimbus extension approve`, it requires a terminal on both stdin and stdout and has
+no `--yes`; `NIMBUS_SCRIPT_CONSENT_SOURCE` never answers it. The extension's live read tools are not
+offered to the model unless you later run `nimbus extension approve <extension-id> --model`. If the
+sandbox cannot confine the extension on this machine, the prompt says so: you can still accept, and
+sync stays paused with the reason and the fix until the sandbox works.
+
+**Answering no** leaves the migration `awaiting_approval` and changes nothing; the command says so and
+names `decline`. Declining is its own verb: **`decline <id>`** deletes the staged package, keeps your
+existing items, and keeps the connector off; the next start does not ask again.
+
+**`retry`** prepares again every migration that failed (offline, a registry error, a package that no
+longer matches what the release expects) AND every one you declined — it is how you change your
+mind about a decline. An approved migration is never touched.
+
+**Known loss.** A few items the built-in connector indexed may not carry over: items dated before
+1970, and items whose metadata is larger than 64 KiB, are dropped by the extension sync path. The
+prompt says this too.
+
+The four `migration.*` methods are CLI-only: refused over the LAN channel and absent from the desktop
+allowlist. `accept`, `decline` and `retry` are refused on a demo gateway (`--demo`), which never
+prepares a migration.
 
 ---
 
@@ -3983,6 +4031,7 @@ nimbus doctor
 - Notifications: `[ok]` with the backend and `content` mode when OS notifications work; `[info]` when they are off by your choice (`[notifications] enabled = false`, `NIMBUS_NOTIFICATIONS=off`, a demo gateway) or the availability probe has not finished; `[warn]` with the reason when they should work and do not (an invalid `[notifications]` section, an unavailable backend, a platform with none). Silent against a gateway too old to serve `notifications.status`. See [`nimbus notifications`](#nimbus-notifications)
 - Extensions: `[warn]` naming installed extensions that have no run approval or an approval for older code (`nimbus extension approve <id>`); silent when there are none, when the gateway reports the extension runtime off, or on a gateway that predates run approvals. A gateway from before this release does not report whether the runtime is on, so with `[extensions] runtime = false` it can still warn. An extension that had model access is named again with `add --model to keep model access`
 - Extension registries: `[warn]` naming installed extensions whose source registry is no longer configured (they keep running but get no updates; `nimbus registry add` it again, or remove them), and one `[warn]` per registry whose signed index was generated more than 30 days ago (`nimbus registry refresh <name>`; an index never expires, so a registry that stops publishing can hold back updates). Silent when no registry is configured and no installed extension came from one, and on a gateway too old to serve `registry.list`
+- Connector migration: `[warn]` for a built-in connector that moved to an extension and is waiting for your answer (`nimbus connector migrate accept <id>`, or `decline <id>`), and for one whose migration failed, with the reason (`nimbus connector migrate retry`); a quiet `[info]` (no effect on the exit code) for one you declined, naming `nimbus connector migrate retry` as the way to change your mind. Silent with no migrations and on a gateway too old to serve `migration.list`. See [`nimbus connector migrate`](#nimbus-connector-migrate-list--accept-id--decline-id--retry)
 - Per-connector health table
 - Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why. On macOS a passing line also names the full SQLite library it loaded through (`using full SQLite at <path>`), since that can be the bundled copy, `NIMBUS_SQLITE_PATH` or a Homebrew install
 

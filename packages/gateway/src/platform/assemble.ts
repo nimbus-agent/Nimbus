@@ -188,6 +188,7 @@ import type { ConnectorDispatcher } from "../engine/types.ts";
 import { execConsent } from "../exec/exec-consent-broker.ts";
 import { resolveRuntimeById } from "../exec/exec-runtimes.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
+import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import { createExtensionSlotSource } from "../extensions/extension-runtime.ts";
 import type { RegistryFetchDeps } from "../extensions/registry/registry-fetch.ts";
 import {
@@ -392,6 +393,12 @@ import { ensurePlatformDirectories } from "./dirs.ts";
 import { processEnvGet } from "./env-access.ts";
 import { createGatewayPinoLogger } from "./gateway-log-file.ts";
 import { createHostActivity, type HostActivity } from "./host-activity.ts";
+import {
+  type AssembleCompositionOptions,
+  createMigrationEngineForBoot,
+  resolveMigrationComposition,
+  startMigrationBootEvaluation,
+} from "./migration-boot.ts";
 import {
   createNotificationsRuntime,
   showIgnoringFailure,
@@ -690,6 +697,11 @@ interface SchedulerWithMeshOpts {
   extensionRuntimeEnabled: boolean;
   /** Settles once the boot-time extension verification pass has finished (or thrown). */
   extensionSpawnGate: Promise<void>;
+  /**
+   * The continuity table the spawn verifier binds a legacy connector id through — the SAME value
+   * the migration engine, the sync registrar and the credential resolver get (ruling B1).
+   */
+  continuityTable: readonly ContinuityEntry[];
 }
 
 async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
@@ -717,6 +729,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     filesystemSpawnGate,
     extensionRuntimeEnabled,
     extensionSpawnGate,
+    continuityTable,
   } = opts;
   // I41 clause (6), spec § 11.2: a demo gateway's scheduler exists (IPC and the post-sync
   // refreshers are built alongside it) but can never run a job.
@@ -957,6 +970,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
         sandboxDir: paths.sandboxDir,
         runtimeReadPaths: () => resolveRuntimeById("bun").requiredReadPaths(),
         isConnectorAllowed,
+        continuityTable,
       })
     : undefined;
   const connectorMesh = await createLazyConnectorMesh(paths, vault, {
@@ -3335,8 +3349,16 @@ export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
 export async function assemblePlatformServices(
   paths: PlatformPaths,
   customVault?: NimbusVault,
+  /**
+   * Composition-only (ruling B1): never passed by `platform/{win32,darwin,linux}.ts`, so production
+   * keeps the baked built-in registry and continuity table. A test runner passes a fixture here —
+   * the only way either reaches a real gateway.
+   */
+  composition?: AssembleCompositionOptions,
 ): Promise<PlatformServices> {
   const assemblyStartedMs = performance.now();
+  // ONE value for every consumer that binds through the continuity table or the built-in registry.
+  const migration = resolveMigrationComposition(composition);
   const sidecarStops: Array<() => void> = [];
   await ensurePlatformDirectories(paths);
   const bootPolicy = bootPolicyFor(paths);
@@ -3572,7 +3594,7 @@ export async function assemblePlatformServices(
     // The scheduler's configured-ness gate reads an approved extension's own credentials (the
     // grant's, which for a bound extension are the legacy keys). Answers nothing for an id no grant
     // carries, so it changes no built-in connector's answer.
-    extensionCredentialsFor: createExtensionCredentialsResolver(db),
+    extensionCredentialsFor: createExtensionCredentialsResolver(db, migration.continuityTable),
   };
   assignIfPresent(syncContext, "scheduleItemEmbedding", scheduleItemEmbedding);
 
@@ -3664,6 +3686,7 @@ export async function assemblePlatformServices(
     ...(dataDirRevoke === undefined ? {} : { filesystemSpawnGate: dataDirRevoke }),
     extensionRuntimeEnabled,
     extensionSpawnGate: extensionSpawnGate.promise,
+    continuityTable: migration.continuityTable,
   });
   // One `stop` per refresher that actually started. Three of the four are
   // optional (their passes are config-gated), and the repeated
@@ -3709,6 +3732,7 @@ export async function assemblePlatformServices(
       mesh: connectorMesh,
       sandbox: sandboxRunner,
       runtimeReadPaths: () => resolveRuntimeById("bun").requiredReadPaths(),
+      table: migration.continuityTable,
       logger: syncLogger,
     },
   );
@@ -3716,14 +3740,39 @@ export async function assemblePlatformServices(
 
   // Extension registries: ONE air-gap switch (the LLM router's `enforce_air_gap`), read per call from
   // the router's boot-resolved config; it does not track a later config or policy change. The SAME
-  // object reaches the `registry.*` methods and the auto-update daemon.
+  // object reaches the `registry.*` methods, the auto-update daemon and the migration engine.
   const registryFetch: Omit<RegistryFetchDeps, "db"> = {
     fetchFn: (url, init) => fetch(url, init),
     enforceAirGap: () => llmRegistry.llmRouter.enforcesAirGap(),
     now: Date.now,
     // The compiled release binary counts as production even with NODE_ENV unset (it always is).
     production: isProductionRuntime(),
+    // The SAME built-in the migration engine gets (ruling B1): the baked `BUILTIN_REGISTRY` (null
+    // until the Readwise pilot's PR 7) unless a test runner passed a fixture to this function. No
+    // env var, config key or IPC param sets it.
+    builtin: migration.builtin,
   };
+
+  // The connector migration engine (Readwise unbundling spec § 7.2): built after the extension boot
+  // gate and the sync registrar it registers through, and handed the SAME continuity table and
+  // built-in registry as the registrar, the spawn verifier and the registry fetch above. Boot
+  // evaluation is skipped when demo-rooted (I41), never awaited, and never fatal.
+  const migrationEngine = createMigrationEngineForBoot({
+    db,
+    vault,
+    dataDir: paths.dataDir,
+    extensionsDir: paths.extensionsDir,
+    registryFetch,
+    composition: migration,
+    // The SAME builder `extension.approveRun` and the spawn verifier use.
+    env: buildExtensionRunGrantEnv(connectorMesh.userMcpProtectedRoots(), paths.extensionsDir),
+    runtimeEnabled: extensionRuntimeEnabled,
+    sandbox: sandboxRunner,
+    extensionSync: extensionSyncRegistrar,
+    scheduler: syncScheduler,
+    logger: syncLogger,
+  });
+  void startMigrationBootEvaluation(migrationEngine, paths.demo === true, syncLogger);
   const autoUpdateRuntime = maybeStartAutoUpdateRuntime({
     db,
     vault,
@@ -3756,8 +3805,10 @@ export async function assemblePlatformServices(
       refresh: (id) => extensionSyncRegistrar.refresh(id),
       unregister: (id) => extensionSyncRegistrar.unregister(id),
       // Always wired, runtime on or off: items an extension synced earlier go with it either way.
-      purgeBeforeRemove: (id) => purgeExtensionIndexData({ db, vault, localIndex }, id),
+      purgeBeforeRemove: (id) =>
+        purgeExtensionIndexData({ db, vault, localIndex, table: migration.continuityTable }, id),
     },
+    migrationEngine,
     registryFetch,
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,

@@ -180,6 +180,17 @@ describe("checkLanMethodAllowed", () => {
     },
   );
 
+  test.each(["migration.list", "migration.accept", "migration.decline", "migration.retry"])(
+    "%s is not callable over LAN regardless of grant-write",
+    (method) => {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+          /not callable over LAN/,
+        );
+      }
+    },
+  );
+
   test.each(["registry.add", "registry.list", "registry.refresh", "registry.remove"])(
     "%s is not callable over LAN regardless of grant-write",
     (method) => {

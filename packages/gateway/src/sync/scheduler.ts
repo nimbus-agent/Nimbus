@@ -78,6 +78,14 @@ function syncFailureUserMessage(err: unknown): string {
   return t.length > MAX_SYNC_FAILURE_MSG ? `${t.slice(0, MAX_SYNC_FAILURE_MSG)}…` : t;
 }
 
+/** `sync_telemetry.items_dropped` for a successful run: the three `dropped` counts summed, else 0. */
+function droppedTotal(result: SyncResult): number {
+  const d = result.dropped;
+  if (d === undefined) return 0;
+  const sum = d.undeclaredType + d.malformed + d.oversized;
+  return Number.isFinite(sum) && sum > 0 ? Math.floor(sum) : 0;
+}
+
 function toRejectionError(err: unknown): Error {
   if (err instanceof Error) {
     return err;
@@ -617,6 +625,7 @@ export class SyncScheduler {
       bytesTransferred: null,
       hadMore: false,
       errorMsg: msg,
+      itemsDropped: 0,
     });
     if (failures >= 5) {
       this.sched.updateState({
@@ -681,6 +690,7 @@ export class SyncScheduler {
       bytesTransferred: bytes,
       hadMore: result.hasMore,
       errorMsg: null,
+      itemsDropped: droppedTotal(result),
     });
 
     const now = Date.now();
@@ -721,6 +731,7 @@ export class SyncScheduler {
       bytesTransferred: null,
       hadMore: false,
       errorMsg,
+      itemsDropped: 0,
     });
   }
 
@@ -832,6 +843,16 @@ export class SyncScheduler {
       result = await connector.sync(runCtx, row.cursor);
     } catch (err) {
       if (this.wasWithdrawnMidRun(job, connector)) return;
+      // A run that committed pages before the stop names the last committed page's cursor, so the
+      // next run resumes there. Only the cursor moves: the arms below are unchanged, so the run is
+      // still recorded as rate-limited / unauthenticated, never as a success. No bundled connector
+      // sets the field, and without it nothing is written here.
+      if (
+        (err instanceof RateLimitError || err instanceof UnauthenticatedError) &&
+        err.resumeCursor !== undefined
+      ) {
+        this.sched.writeCursor(job.serviceId, err.resumeCursor);
+      }
       if (err instanceof RateLimitError) {
         transitionHealth(this.db, job.serviceId, {
           type: "rate_limited",
@@ -858,7 +879,9 @@ export class SyncScheduler {
     // Consumed only on success. A rate-limited or failed run returns earlier
     // WITHOUT persisting a cursor, so its retry is still a cold start and must
     // keep the wide floor — otherwise the backfill silently narrows to 30 days
-    // and never reaches the history it was asked for.
+    // and never reaches the history it was asked for. (A rate-limited run that
+    // carried a `resumeCursor` did persist one; keeping the floor for it is
+    // harmless, since an established cursor always wins over the floor.)
     //
     // Deleting on a `hasMore: true` success is correct: `runJobRecordSyncSuccess`
     // writes `result.cursor` via `updateState` and re-queues a "continuation"

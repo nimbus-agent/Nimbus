@@ -290,6 +290,35 @@ describe("I2 — HITL frozen-set membership", () => {
     expect(src).toMatch(/ADOPT_ACTION_TYPE = "connector\.adoptLocalAuth"/);
   });
 
+  test("extension.migrate is in the I2 HITL frozen set, and the migration engine raises exactly it", async () => {
+    // The one migration prompt covers install + run grant + credential grant (Readwise unbundling
+    // spec § 7.2 step 4), so it must be a gated type in its own right, never a reuse of
+    // `extension.run` that would render as a different decision.
+    const { HITL_REQUIRED } = await import("./engine/executor.ts");
+    expect(HITL_REQUIRED.has("extension.migrate")).toBe(true);
+    const { EXTENSION_MIGRATE_ACTION_TYPE, migrationConsentViaGate } = await import(
+      "./extensions/migration/migration-engine.ts"
+    );
+    expect(EXTENSION_MIGRATE_ACTION_TYPE).toBe("extension.migrate");
+    const raised: string[] = [];
+    const consent = migrationConsentViaGate(async (a) => {
+      raised.push(a.type);
+      return false;
+    });
+    const payload = {
+      migrationId: "m",
+      extensionId: "com.example.x",
+      summary: "s",
+      publisher: { id: "p", fingerprint: "f" },
+      version: "1.0.0",
+      network: "n",
+      readTools: "r",
+      knownLoss: "k",
+    };
+    expect(await consent(payload)).toBe(false);
+    expect(raised).toEqual(["extension.migrate"]);
+  });
+
   test("extension.install is not merely listed: the IPC install REFUSES without the executor gate and installs nothing on a denial", async () => {
     // Membership alone proved nothing here for a long time: `extension.install` sat in the frozen
     // set while no code ever built an action of that type, and the only consent was a CLI-side
@@ -6138,6 +6167,7 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       "extension.install",
       "extension.run",
       "extension.autoUpdate",
+      "extension.migrate",
     ]) {
       let prompts = 0;
       let remote = 0;
@@ -6706,6 +6736,64 @@ describe("I43 — an installed extension's code runs only through the verified s
     ]);
   });
 
+  test("D34: the real tree confines the migration table, the migration grant and the extension.migrate consent, and the checker rejects strays", async () => {
+    const { checkMigrationConfinement } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(files.length).toBeGreaterThan(100);
+    // Premise: the confined names are really present in the scanned tree.
+    const named = (re: RegExp) => files.filter((f) => re.test(f.contents)).length;
+    expect(named(/\bconnector_migration\b/)).toBeGreaterThan(0);
+    expect(named(/\bapproveMigratedExtensionRun\b/)).toBeGreaterThan(0);
+    expect(named(/\bmigrationConsentViaGate\b/)).toBeGreaterThan(0);
+    expect(checkMigrationConfinement(files)).toEqual([]);
+    // Non-vacuous: the same checker flags one planted stray per clause.
+    const planted = checkMigrationConfinement([
+      {
+        relPath: "packages/gateway/src/x/a.ts",
+        contents: "db.run(\"UPDATE connector_migration SET state = 'approved'\");\n",
+      },
+      {
+        relPath: "packages/gateway/src/x/b.ts",
+        contents: "await approveMigratedExtensionRun(d, id);\n",
+      },
+      {
+        relPath: "packages/gateway/src/x/c.ts",
+        contents: 'gate({ type: "extension.migrate", payload });\n',
+      },
+    ]);
+    expect(planted.map((v) => [v.file, v.rule])).toEqual([
+      ["packages/gateway/src/x/a.ts", "migration-table-confined"],
+      ["packages/gateway/src/x/b.ts", "migration-grant-callers"],
+      ["packages/gateway/src/x/c.ts", "migration-consent-raisers"],
+    ]);
+  });
+
+  test("D34 bound: inside dispatchers.ts only tryDispatchMigrationRpc reads the engine, and only migration-rpc.ts calls accept", async () => {
+    // D34(c) exempts `dispatchers.ts` whole-file, and every dispatcher there receives the ServerCtx
+    // that carries the engine. A holder could call `accept` with a consent callback of its own, so
+    // this pins WHERE in that file the option is read, and who calls `accept` at all.
+    const src = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const reads = [...src.matchAll(/\bmigrationEngine\b/g)].map((m) => m.index ?? -1);
+    expect(reads).toHaveLength(1);
+    const fnAt = src.indexOf("export async function tryDispatchMigrationRpc(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const fnEnd = src.indexOf("\n}\n", fnAt);
+    expect(reads[0]).toBeGreaterThan(fnAt);
+    expect(reads[0]).toBeLessThan(fnEnd);
+    const acceptCallers = (await readDirFiles("packages/gateway/src"))
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) =>
+        /\bengine\.accept\(|\bmigrationEngine\??\.accept\(/.test(stripComments(f.contents)),
+      )
+      .map((f) => f.rel);
+    expect(acceptCallers).toEqual(["ipc/migration-rpc.ts"]);
+  });
+
   test("assemble: no extension spawns until the boot verification pass ends; the gate resolves in its finally", async () => {
     const src = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
     expect(src).toMatch(
@@ -6990,26 +7078,84 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const src = stripComments(
       await read("packages/gateway/src/extensions/registry/install-from-registry.ts"),
     );
-    const fnAt = src.indexOf("export async function installFromRegistry(");
-    expect(fnAt).toBeGreaterThan(-1);
-    // Bounded at the next top-level export, so a later function cannot satisfy the order checks.
-    const nextExport = src.indexOf("\nexport ", fnAt + 1);
-    const body = src.slice(fnAt, nextExport === -1 ? undefined : nextExport);
-    const resolveAt = body.indexOf("await resolveRegistryEntry(");
-    const manifestAt = body.indexOf("await fetchRegistryManifest(");
-    const shaAt = body.search(
+    // Each function's body, bounded at the next top-level export, so a later function cannot
+    // satisfy another's order checks.
+    const bodyOf = (code: string, header: string): string => {
+      const at = code.indexOf(header);
+      expect(at, header).toBeGreaterThan(-1);
+      const next = code.indexOf("\nexport ", at + 1);
+      return code.slice(at, next === -1 ? undefined : next);
+    };
+    // (1) The composition: installFromRegistry fetches-and-verifies, THEN installs that package.
+    const compose = bodyOf(src, "export async function installFromRegistry(");
+    const composeFetchAt = compose.indexOf("const pkg = await fetchVerifiedRegistryPackage(");
+    const composeInstallAt = compose.indexOf("await installVerifiedRegistryPackage(deps, pkg,");
+    expect(composeFetchAt).toBeGreaterThan(-1);
+    expect(composeInstallAt).toBeGreaterThan(composeFetchAt);
+    // (2) The fetch half: resolve through verified indexes, then the manifest, the package hash, the
+    // I16 signature and the Vault key check, ALL before a byte is written or extracted and before
+    // the verified package is handed back.
+    const fetchBody = bodyOf(src, "export async function fetchVerifiedRegistryPackage(");
+    const resolveAt = fetchBody.indexOf("await resolveRegistryEntry(");
+    const manifestAt = fetchBody.indexOf("await fetchRegistryManifest(");
+    const shaAt = fetchBody.search(
       /sha256HexEqualConstantTime\(sha256Hex\(packageBytes\), vEntry\.packageSha256\)/,
     );
-    const sigAt = body.indexOf("await verifyRegistryManifestSignature(");
-    const vaultAt = body.indexOf("await vaultPublisherKeyConflicts(");
-    const installAt = body.indexOf("await installExtensionFromLocalDirectory(");
-    for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, installAt]) {
+    const sigAt = fetchBody.indexOf("await verifyRegistryManifestSignature(");
+    const vaultAt = fetchBody.indexOf("await vaultPublisherKeyConflicts(");
+    const writeAt = fetchBody.indexOf("writeFileSync(archivePath, packageBytes)");
+    const returnAt = fetchBody.indexOf("return {");
+    for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, writeAt, returnAt]) {
       expect(at).toBeGreaterThan(-1);
     }
     expect(manifestAt).toBeGreaterThan(resolveAt);
-    expect(installAt).toBeGreaterThan(Math.max(manifestAt, shaAt, sigAt, vaultAt));
-    // The installer is handed the INDEX's publisher key (via the fetched manifest), never another.
-    expect(body).toMatch(/const \{ manifest, publisherKey \} = fetched;/);
+    expect(writeAt).toBeGreaterThan(Math.max(manifestAt, shaAt, sigAt, vaultAt));
+    expect(returnAt).toBeGreaterThan(writeAt);
+    // The package carries the INDEX's publisher key, the one the signature and Vault checks used.
+    expect(fetchBody).toMatch(/publisherKey: entry\.publisher\.key,/);
+    expect(fetchBody).toMatch(
+      /vaultPublisherKeyConflicts\(deps\.vault, entry\.publisher\.id, fetched\.publisherKey\)/,
+    );
+    // (3) The install half installs ONLY through installExtensionFromLocalDirectory, handed that
+    // index key and recorded against the SOURCE registry; the post-copy entry hash is compared to
+    // the signed index's before the source is recorded, and a mismatch undoes the install.
+    const installBody = bodyOf(src, "export async function installVerifiedRegistryPackage(");
+    const localAt = installBody.indexOf("await installExtensionFromLocalDirectory(");
+    const entryHashAt = installBody.indexOf(
+      "sha256HexEqualConstantTime(installed.entryHash, pkg.entryHash)",
+    );
+    const undoAt = installBody.indexOf("deleteExtensionById(deps.db, installed.id)");
+    const sourceAt = installBody.indexOf("setExtensionSource(deps.db, installed.id,");
+    for (const at of [localAt, entryHashAt, undoAt, sourceAt]) expect(at).toBeGreaterThan(-1);
+    expect(entryHashAt).toBeGreaterThan(localAt);
+    expect(undoAt).toBeGreaterThan(entryHashAt);
+    expect(sourceAt).toBeGreaterThan(undoAt);
+    expect(installBody).toMatch(/publisherKey: decodeBase64\(pkg\.publisherKey\),/);
+    expect(installBody).toMatch(/sourceRegistry: reg\.name,/);
+    // ...and inside it the I16 signature of the COPIED manifest is re-verified against that key
+    // before the extension row is written: the install lands only after verification.
+    const local = stripComments(
+      await read("packages/gateway/src/extensions/install-from-local.ts"),
+    );
+    const afterCopy = local.slice(
+      local.indexOf("async function completeExtensionInstallAfterCopy("),
+    );
+    const reverifyAt = afterCopy.indexOf("await verifyAndRecordSignature(options, destManifest");
+    const rowAt = afterCopy.indexOf("insertExtensionRow(options.db,");
+    expect(reverifyAt).toBeGreaterThan(-1);
+    expect(rowAt).toBeGreaterThan(reverifyAt);
+    // (4) Only two production files may name the install half (a call, an import or an alias): the
+    // composition above, and the migration engine, which rebuilds the package from a stage whose
+    // tree digest equals the one fetchVerifiedRegistryPackage verified, and requires the installed
+    // digest to equal it too.
+    const callers = (await readDirFiles("packages/gateway/src"))
+      .filter((f) => /\binstallVerifiedRegistryPackage\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(callers).toEqual([
+      "extensions/migration/migration-engine.ts",
+      "extensions/registry/install-from-registry.ts",
+    ]);
     // Resolution reads only freshly VERIFIED indexes, and refuses ambiguity.
     const resolver = stripComments(
       await read("packages/gateway/src/extensions/registry/registry-resolve.ts"),
@@ -7053,11 +7199,103 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(setSourceCallers).toEqual(["extensions/registry/install-from-registry.ts"]);
   });
 
+  test("source pin: the migration engine's accept re-digests the stage, installs with the BUILTIN registry row, then checks the installed digest", async () => {
+    // The engine is the second production caller of `installVerifiedRegistryPackage` (above). It
+    // rebuilds the package from its stage rather than refetching, so what makes that install a
+    // verified-chain install is this exact order, AFTER the owner's one `extension.migrate` answer.
+    const src = stripComments(
+      await read("packages/gateway/src/extensions/migration/migration-engine.ts"),
+    );
+    const stagedAt = src.indexOf("const installStaged = async (");
+    const startAt = src.indexOf("const acceptLocked = async (");
+    expect(stagedAt).toBeGreaterThan(-1);
+    expect(startAt).toBeGreaterThan(stagedAt);
+    // `installStaged` is the install half; `acceptLocked` is the order around it.
+    const installHalf = src.slice(stagedAt, startAt);
+    const accept = src.slice(startAt, src.indexOf("\n  return {", startAt));
+    const consentAt = accept.indexOf("const approved = await consent(");
+    const notApprovedAt = accept.indexOf('"ERR_EXTENSION_MIGRATION_NOT_APPROVED"');
+    // (1) The stage is re-digested against the row's tree_digest after the prompt, and only then
+    // is the install half called…
+    const reDigestAt = accept.indexOf("\n    requireIntactStage(row);", notApprovedAt);
+    const callAt = accept.indexOf("await installStaged(row, entry, builtinReg,");
+    // (2) …the package carries the BUILT-IN registry row (never an owner registry) and is installed
+    // through the verified install half, with the approver that exists only past the answer…
+    const regAt = installHalf.indexOf("reg: builtinRegistryRow(db, reg),");
+    const approverAt = installHalf.indexOf(
+      "const approvedByMigrationConsent: ExtensionInstallApprover = () => Promise.resolve(true);",
+    );
+    const installAt = installHalf.indexOf(
+      'await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable")',
+    );
+    // (3) …and the INSTALLED tree must carry the staged digest, in the row and in the result,
+    // before the run grant is written.
+    const installedAt = installHalf.indexOf(
+      "installedRow?.tree_digest !== row.treeDigest || installed.treeDigest !== row.treeDigest",
+    );
+    const grantAt = accept.indexOf("await approveMigratedExtensionRun(");
+    for (const at of [
+      consentAt,
+      notApprovedAt,
+      reDigestAt,
+      callAt,
+      regAt,
+      approverAt,
+      installAt,
+      installedAt,
+      grantAt,
+    ]) {
+      expect(at).toBeGreaterThan(-1);
+    }
+    expect(notApprovedAt).toBeGreaterThan(consentAt);
+    expect(reDigestAt).toBeGreaterThan(notApprovedAt);
+    expect(callAt).toBeGreaterThan(reDigestAt);
+    expect(approverAt).toBeGreaterThan(regAt);
+    expect(installAt).toBeGreaterThan(Math.max(regAt, approverAt));
+    expect(installedAt).toBeGreaterThan(installAt);
+    expect(grantAt).toBeGreaterThan(callAt);
+    // The registry handed to the install half IS the built-in config: `requireAcceptable` returns
+    // `builtin` itself, `acceptLocked` destructures it, and nothing in `acceptLocked` installs
+    // directly (a direct `install(` there would bypass the pinned order above).
+    const acceptable = src.slice(src.indexOf("const requireAcceptable = ("), stagedAt);
+    expect(acceptable).toContain("return { entry, reg: builtin };");
+    expect(accept).toContain("const { entry, reg: builtinReg } = requireAcceptable(row);");
+    expect(accept).not.toContain("await install(");
+    // The re-digest is a real digest comparison against the row, through the extension store's own
+    // digest function — not an existence check.
+    const checkAt = src.indexOf("const checkStage = (row: MigrationRow): StageCheck => {");
+    expect(checkAt).toBeGreaterThan(-1);
+    const check = src.slice(checkAt, src.indexOf("\n  };", checkAt));
+    expect(check).toContain("const live = digestOrNull(stagePath);");
+    expect(check).toContain("live !== null && live === row.treeDigest");
+    expect(src).toMatch(/return computeExtensionTreeDigest\(root\);/);
+    expect(src).toContain(
+      "const install = deps.installVerified ?? installVerifiedRegistryPackage;",
+    );
+  });
+
+  test("M3: the migration engine's test seams are never named by production code outside the engine", async () => {
+    // `installVerified` and `removeInstallTree` replace the verified install and the undo's removal.
+    // The production constructor (`platform/migration-boot.ts`) builds the deps field by field, and
+    // no other non-test gateway file may name either seam.
+    const offenders = (await readDirFiles("packages/gateway/src"))
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => f.rel !== "extensions/migration/migration-engine.ts")
+      .filter((f) => /\b(?:installVerified|removeInstallTree)\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+    const boot = stripComments(await read("packages/gateway/src/platform/migration-boot.ts"));
+    expect(boot).toMatch(/return createMigrationEngine\(\{/);
+    expect(boot).not.toMatch(/\.\.\.\s*d\b/);
+  });
+
   test("source pin: an update is detected from the source registry only, and apply re-verifies before the swap", async () => {
     const detect = stripComments(
       await read("packages/gateway/src/extensions/registry/registry-update-source.ts"),
     );
-    expect(detect).toContain("const reg = getRegistry(deps.db, name);");
+    expect(detect).toContain(
+      "const reg = resolveRegistry(deps.db, name, builtinRegistryOf(deps.fetch));",
+    );
     expect(detect).toContain("r.source.rootFingerprint === reg.rootFingerprint");
     const orch = stripComments(
       await read("packages/gateway/src/extensions/auto-update-orchestrate.ts"),
@@ -7078,13 +7316,13 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       /reverifyManifest: \(update, signal\) =>\s*reverifyUpdateManifest\(fetchDeps, opts\.vault, update, signal\),/,
     );
     expect(init).toMatch(
-      /fetchRegistryBytes\(\s*fetchDeps,\s*sourceRegistryOf\(opts\.db, update\),/,
+      /fetchRegistryBytes\(\s*fetchDeps,\s*sourceRegistryOf\(fetchDeps, update\),/,
     );
     const rvAt = init.indexOf("async function reverifyUpdateManifest(");
     expect(rvAt).toBeGreaterThan(-1);
     const rv = init.slice(rvAt, init.indexOf("export function createAutoUpdateRuntime("));
     const order = [
-      "const reg = sourceRegistryOf(fetchDeps.db, update);",
+      "const reg = sourceRegistryOf(fetchDeps, update);",
       "await fetchVerifiedIndex(fetchDeps, reg, signal);",
       "await fetchRegistryManifest(",
       "await vaultPublisherKeyConflicts(",

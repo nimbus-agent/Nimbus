@@ -97,6 +97,15 @@ const FORBIDDEN_OVER_LAN = new Set([
   "extension.credentialSet", // writes an extension's credential into the owner's Vault — CLI-only
   "extension.credentialStatus", // which of an extension's credentials are set — CLI-only, like set
   "extension.rehash", // adopts on-disk bytes as trusted — gated like an install, CLI-only
+  // Connector migration (Readwise unbundling spec § 7.2): `accept` installs signed code, grants it a
+  // run and points it at the owner's existing Vault credential in ONE `extension.migrate` approval;
+  // `decline`/`retry` change whether that happens and `list` names which connectors the owner
+  // configured. Each method is named explicitly — this set is a DENYLIST, so an unnamed method
+  // would be callable — and all four are CLI-only, like `extension.approveRun`.
+  "migration.list",
+  "migration.accept",
+  "migration.decline",
+  "migration.retry",
   "index.reembed", // T6 PR 3 — write-class index method (writes embedding_chunk + vec_items_*)
   "index.reembedCancel", // T6 PR 3 — paired cancel for the long-running reembed job
   // index.rebody is a STRONGER case than reembed: reembed only recomputes local embeddings

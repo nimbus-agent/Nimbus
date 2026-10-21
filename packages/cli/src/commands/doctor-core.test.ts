@@ -17,6 +17,7 @@ import {
   doctorPrintHealthFromSnapshot,
   doctorPrintIndexConfidence,
   doctorPrintIndexFromSnapshot,
+  doctorPrintMigrations,
   doctorPrintOncallPush,
   doctorPrintRegistries,
   doctorPrintVectorSearchFromSnapshot,
@@ -994,5 +995,74 @@ describe("doctorPrintRegistries", () => {
   it("a malformed response warns and exits 1", async () => {
     expect(await doctorPrintRegistries(byMethod(() => "garbage"))).toBe(1);
     expect(out.stdout).toContain("[warn] Extension registries: malformed registry.list response");
+  });
+});
+
+describe("doctorPrintMigrations", () => {
+  function byMethod(answer: (method: string) => unknown): Pick<IPCClient, "call"> {
+    return {
+      call: async <T>(method: string): Promise<T> => answer(method) as T,
+    };
+  }
+  const row = (state: string, error: string | null = null) => ({
+    id: "m-1",
+    legacyServiceId: "fixturewise",
+    extensionId: "com.example.fixturewise",
+    version: "1.0.0",
+    state,
+    error,
+  });
+
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("silent with no migrations, and for an approved one", async () => {
+    expect(await doctorPrintMigrations(byMethod(() => ({ migrations: [] })))).toBe(0);
+    expect(await doctorPrintMigrations(byMethod(() => ({ migrations: [row("approved")] })))).toBe(
+      0,
+    );
+    expect(out.stdout).toBe("");
+  });
+
+  it("warns about a migration awaiting approval and names accept and decline", async () => {
+    const client = byMethod(() => ({ migrations: [row("awaiting_approval")] }));
+    expect(await doctorPrintMigrations(client)).toBe(1);
+    expect(out.stdout).toContain("[warn] Connector migration: fixturewise moved out");
+    expect(out.stdout).toContain("nimbus connector migrate accept m-1 (or decline m-1)");
+  });
+
+  it("warns about a failed migration with its reason and names retry once", async () => {
+    const client = byMethod(() => ({
+      migrations: [row("failed", "offline — run `nimbus connector migrate retry`")],
+    }));
+    expect(await doctorPrintMigrations(client)).toBe(1);
+    expect(out.stdout).toContain("could not be moved to com.example.fixturewise");
+    expect(out.stdout.match(/migrate retry/g)).toHaveLength(1);
+  });
+
+  it("a declined migration is a quiet note that names retry, and does not fail doctor", async () => {
+    const client = byMethod(() => ({ migrations: [row("declined")] }));
+    expect(await doctorPrintMigrations(client)).toBe(0);
+    expect(out.stdout).toContain("[info] Connector migration: fixturewise stays off");
+    expect(out.stdout).toContain("nimbus connector migrate retry");
+  });
+
+  it("Method not found on migration.list (an older gateway) is quiet", async () => {
+    const client = byMethod(() => {
+      throw Object.assign(new Error("nope"), { code: -32601 });
+    });
+    expect(await doctorPrintMigrations(client)).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("any other failure, or a malformed response, warns and exits 1", async () => {
+    const down = byMethod(() => {
+      throw new Error("down");
+    });
+    expect(await doctorPrintMigrations(down)).toBe(1);
+    expect(out.stdout).toContain("[warn] Connector migration: status check failed (down).");
+    expect(await doctorPrintMigrations(byMethod(() => ({ migrations: [{ id: 1 }] })))).toBe(1);
+    expect(out.stdout).toContain("malformed migration.list response");
   });
 });

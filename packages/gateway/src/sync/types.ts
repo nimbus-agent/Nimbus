@@ -210,19 +210,34 @@ export function retryAfterDateFromHeader(value: string | null, fallbackSeconds: 
   return new Date(Date.now() + fb * 1000);
 }
 
+/**
+ * Optional on `RateLimitError` / `UnauthenticatedError`. A syncable that commits work page by page
+ * within one run (the extension syncable) sets `resumeCursor` to the cursor of the LAST page whose
+ * rows it committed before the stop; the scheduler persists it before its usual rate-limited /
+ * unauthenticated arm, so the next run resumes there instead of re-walking the same pages. Absent —
+ * as for every bundled connector — the stored cursor is untouched, exactly as before.
+ */
+export interface SyncStopOptions {
+  readonly resumeCursor?: string;
+}
+
 export class RateLimitError extends Error {
   readonly retryAfter: Date;
-  constructor(retryAfter: Date, message = "Rate limited") {
+  readonly resumeCursor: string | undefined;
+  constructor(retryAfter: Date, message = "Rate limited", options?: SyncStopOptions) {
     super(message);
     this.name = "RateLimitError";
     this.retryAfter = retryAfter;
+    this.resumeCursor = options?.resumeCursor;
   }
 }
 
 export class UnauthenticatedError extends Error {
-  constructor(message = "Connector authentication expired or revoked") {
+  readonly resumeCursor: string | undefined;
+  constructor(message = "Connector authentication expired or revoked", options?: SyncStopOptions) {
     super(message);
     this.name = "UnauthenticatedError";
+    this.resumeCursor = options?.resumeCursor;
   }
 }
 

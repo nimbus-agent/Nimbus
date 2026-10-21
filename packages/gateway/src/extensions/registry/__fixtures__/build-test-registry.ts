@@ -41,6 +41,13 @@ export async function buildTestRegistry(
     entryHashOverride?: string;
     /** Sign the manifests with a key other than the one they declare. */
     badManifestSignature?: boolean;
+    /** Extra manifest fields (permissions, credentials, sync, name …), merged before signing. */
+    manifestExtra?: Record<string, unknown>;
+    /**
+     * The entry file's contents (`dist/index.js`) for every version, e.g. a bundled MCP server an
+     * E2E spawns. Absent means a one-line stub that exports the version.
+     */
+    entrySource?: string;
   },
 ): Promise<TestRegistry> {
   const root = nacl.sign.keyPair.fromSeed(ROOT_SEED);
@@ -54,7 +61,7 @@ export async function buildTestRegistry(
     const pkg = join(dir, "build", v.version, "pkg");
     mkdirSync(join(pkg, "dist"), { recursive: true });
     mkdirSync(base, { recursive: true });
-    const entrySource = `export const v = "${v.version}";\n`;
+    const entrySource = opts.entrySource ?? `export const v = "${v.version}";\n`;
     writeFileSync(join(pkg, "dist", "index.js"), entrySource);
     const unsigned = {
       id: opts.id,
@@ -64,6 +71,7 @@ export async function buildTestRegistry(
       permissions: {},
       publisher: { id: publisherId, key: publisherKey },
       ...(v.dependsOn === undefined ? {} : { dependsOn: v.dependsOn }),
+      ...opts.manifestExtra,
     };
     const manifestText = JSON.stringify({
       ...unsigned,

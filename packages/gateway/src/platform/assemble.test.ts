@@ -53,9 +53,11 @@ afterAll(() => {
 });
 
 describe("assemblePlatformServices (smoke)", () => {
-  it("is an async function with arity 2 (paths, customVault?)", () => {
+  it("is an async function with arity 3 (paths, customVault?, composition?)", () => {
+    // `composition` is the test-runner-only seam of ruling B1; production passes the paths alone
+    // (pinned in `migration-boot.test.ts`).
     expect(typeof assemblePlatformServices).toBe("function");
-    expect(assemblePlatformServices).toHaveLength(2);
+    expect(assemblePlatformServices).toHaveLength(3);
     expect(assemblePlatformServices.constructor.name).toBe("AsyncFunction");
   });
 });

@@ -101,3 +101,59 @@ export function doctorRegistryLines(
   }
   return { lines, exit: lines.length > 0 ? 1 : 0 };
 }
+
+const RETRY_CMD = "`nimbus connector migrate retry`";
+
+/**
+ * `nimbus doctor`'s connector-migration lines, from a `migration.list` response (Readwise
+ * unbundling spec § 7.2): a `[warn]` (exit 1) for a migration awaiting the owner's answer and for
+ * one that failed, and a QUIET `[info]` (exit 0) for one the owner declined, naming `migrate retry`
+ * as the way to change their mind. Approved rows are silent. Throws on a malformed response; the
+ * caller turns that into a `[warn]`.
+ */
+export function doctorMigrationLines(raw: unknown): { lines: string[]; exit: number } {
+  if (!isRecord(raw) || !Array.isArray(raw["migrations"])) {
+    throw new Error("malformed migration.list response from the gateway");
+  }
+  const lines: string[] = [];
+  let exit = 0;
+  for (const m of raw["migrations"]) {
+    if (
+      !isRecord(m) ||
+      typeof m["id"] !== "string" ||
+      typeof m["legacyServiceId"] !== "string" ||
+      typeof m["extensionId"] !== "string" ||
+      typeof m["state"] !== "string"
+    ) {
+      throw new Error("malformed migration.list response from the gateway");
+    }
+    const id = stripControl(m["id"]);
+    const legacy = stripControl(m["legacyServiceId"]);
+    const ext = stripControl(m["extensionId"]);
+    switch (m["state"]) {
+      case "awaiting_approval":
+        lines.push(
+          `[warn] Connector migration: ${legacy} moved out of the built-in set to the extension ${ext}; its sync is paused until you answer — nimbus connector migrate accept ${id} (or decline ${id})`,
+        );
+        exit = 1;
+        break;
+      case "failed": {
+        const error = typeof m["error"] === "string" ? stripControl(m["error"]) : "unknown error";
+        const next = error.includes(RETRY_CMD) ? "" : ` — run ${RETRY_CMD}`;
+        lines.push(
+          `[warn] Connector migration: ${legacy} could not be moved to ${ext} and stays paused: ${error}${next}`,
+        );
+        exit = 1;
+        break;
+      }
+      case "declined":
+        lines.push(
+          `[info] Connector migration: ${legacy} stays off because moving it to ${ext} was declined (your items are kept) — run ${RETRY_CMD} to change your mind`,
+        );
+        break;
+      default:
+        break;
+    }
+  }
+  return { lines, exit };
+}
