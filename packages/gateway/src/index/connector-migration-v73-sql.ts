@@ -5,8 +5,9 @@
  *   extension (written by the migration path in a later task). `legacy_service_id` is UNIQUE: a
  *   legacy connector is migrated at most once, so the table itself is the dedup.
  * - `builtin_registry_state`: I44's anti-rollback floor for the BUILT-IN official registry, keyed by
- *   its reserved name and the root key it was recorded under (a re-pinned root starts a fresh floor, like an owner row). The built-in registry is not a row of the owner's `extension_registry`, so
- *   `registry list` stays the owner's list; only `extensions/registry/builtin-registry.ts` writes it.
+ * - `builtin_registry_state`: I44's anti-rollback floor for the BUILT-IN official registry, keyed by
+ *   its reserved name and the root key it was recorded under (a re-pinned root starts a fresh floor,
+ *   like an owner row). The built-in registry is not a row of the owner's `extension_registry`, so
  * - `sync_telemetry.items_dropped`: extension sync items a run refused, written by the scheduler
  *   on every telemetry row (`SyncResult.dropped` summed, else 0) and read back by
  *   `nimbus connector status --stats`. `NOT NULL DEFAULT 0`, so every existing row reads 0.

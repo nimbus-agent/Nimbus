@@ -7254,6 +7254,13 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(installAt).toBeGreaterThan(Math.max(regAt, approverAt));
     expect(installedAt).toBeGreaterThan(installAt);
     expect(grantAt).toBeGreaterThan(callAt);
+    // The registry handed to the install half IS the built-in config: `requireAcceptable` returns
+    // `builtin` itself, `acceptLocked` destructures it, and nothing in `acceptLocked` installs
+    // directly (a direct `install(` there would bypass the pinned order above).
+    const acceptable = src.slice(src.indexOf("const requireAcceptable = ("), stagedAt);
+    expect(acceptable).toContain("return { entry, reg: builtin };");
+    expect(accept).toContain("const { entry, reg: builtinReg } = requireAcceptable(row);");
+    expect(accept).not.toContain("await install(");
     // The re-digest is a real digest comparison against the row, through the extension store's own
     // digest function — not an existence check.
     const checkAt = src.indexOf("const checkStage = (row: MigrationRow): StageCheck => {");

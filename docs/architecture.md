@@ -2004,7 +2004,7 @@ release can carry one registry's URL and root key, `BUILTIN_REGISTRY`, which sta
 values; while it is `null` nothing references it. It is NOT a row of `extension_registry`: `registry list`/`refresh` stay the
 owner's list, and adding it to that list stays a `registry.add` decision under another name. It has a reserved name,
 `nimbus-official`, which `registry.add` and `insertRegistry` refuse outright (`ERR_REGISTRY_NAME_RESERVED`, every spelling that
-trims and lowercases to it, no URL/key exception); its own I44 sequence floor in `builtin_registry_state`; and one resolver,
+trims and lowercases to it, no URL/key exception); its own I44 sequence floor in `builtin_registry_state`, bound to the root key it was recorded under (known limit: a fetch under a different root key REPLACES that floor, where the owner path refuses a stale key, so a gateway downgrade followed by an upgrade resets it); and one resolver,
 `resolveRegistry`, which `registryTargets`, `collectRegistryUpdates` and the update-apply path use in place of `getRegistry`, with
 `recordAnyRegistryFetch` recording a verified fetch in whichever store the row came from under the same anti-rollback rule. A bare
 `extension install <id>` searches the owner's registries plus the built-in one, which is omitted when an owner registry already carries
