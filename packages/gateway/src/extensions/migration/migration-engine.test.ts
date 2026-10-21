@@ -36,10 +36,12 @@ import { createMemoryVault, openMemoryIndexDatabase } from "../../testing/bun-te
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { ContinuityEntry } from "../continuity/continuity-table.ts";
 import type { ExtensionRunGrantEnv } from "../extension-run-grants.ts";
+import { resolveExtensionManifestPath } from "../manifest.ts";
 import { buildTestRegistry } from "../registry/__fixtures__/build-test-registry.ts";
 import type { BuiltinRegistryConfig } from "../registry/builtin-registry.ts";
 import { installVerifiedRegistryPackage } from "../registry/install-from-registry.ts";
 import { getRunGrant } from "../run-grant-store.ts";
+import { computeExtensionTreeDigest } from "../tree-digest.ts";
 import {
   awaitingApprovalReason,
   createMigrationEngine,
@@ -48,7 +50,12 @@ import {
   type MigrationEngineDeps,
   pauseLegacyService,
 } from "./migration-engine.ts";
-import { getMigration, listMigrations, recordMigrationPrepared } from "./migration-store.ts";
+import {
+  finishMigration,
+  getMigration,
+  listMigrations,
+  recordMigrationPrepared,
+} from "./migration-store.ts";
 
 const EXT = "com.example.reader";
 const LEGACY = "fixture_reader";
@@ -1171,5 +1178,498 @@ describe("Task 5.4 fix round 1: no stored or thrown text names a path; a leftove
     expect(seen).toEqual([]);
     expect(getMigration(db, id)?.state).toBe("failed");
     expect(getConnectorHealth(db, LEGACY).lastError).toContain(EXT);
+  });
+});
+
+/** Runs `fn` and returns what it threw, or undefined. */
+async function thrownBy(fn: () => Promise<unknown>): Promise<Error | undefined> {
+  try {
+    await fn();
+  } catch (e) {
+    return e instanceof Error ? e : new Error(String(e));
+  }
+  return undefined;
+}
+
+/** Throws a value that is not an `Error`, as a misbehaving dependency might. */
+function throwNonError(): never {
+  const thrown: unknown = "not-an-error-object";
+  throw thrown;
+}
+
+describe("branch coverage: the pause and the consent payload", () => {
+  test("a known connector id takes its catalogue interval, and the clock defaults to now", () => {
+    pauseLegacyService(db, "github", "paused for a test");
+    expect(loadSchedulerState(db, "github")?.paused).toBe(1);
+    expect(getConnectorHealth(db, "github").lastError).toBe("paused for a test");
+  });
+
+  test("an entry with no display name and no network is described by its legacy id", async () => {
+    await buildRegistry({ ...MANIFEST_EXTRA, permissions: {} });
+    const { displayName: _name, ...nameless } = entry;
+    const table = [{ ...nameless, expectedPermissions: { network: [], read: [], write: [] } }];
+    const e = engine({ continuityTable: table });
+    await e.evaluate();
+    const row = onlyRow();
+    expect(getConnectorHealth(db, LEGACY).lastError).toBe(awaitingApprovalReason(LEGACY, row.id));
+    const seen: MigrationConsentPayload[] = [];
+    expect((await e.accept(row.id, consentThat(true, seen))).state).toBe("approved");
+    expect(seen[0]?.network).toBe("no network access");
+    expect(seen[0]?.summary).toContain(`${LEGACY} moved out of the built-in set`);
+  });
+
+  test("a decline for a row this release no longer migrates names the legacy id", async () => {
+    await engine().evaluate();
+    const row = onlyRow();
+    const declined = engine({ continuityTable: [] }).decline(row.id);
+    expect(declined.state).toBe("declined");
+    expect(getConnectorHealth(db, LEGACY).lastError).toContain(`${LEGACY} stays off`);
+  });
+});
+
+describe("branch coverage: verification against the continuity table", () => {
+  test("host and item-type lists are compared as sets, whatever their order", async () => {
+    await buildRegistry({
+      ...MANIFEST_EXTRA,
+      permissions: { network: ["b.example", "a.example", HOST] },
+      sync: { ...MANIFEST_EXTRA.sync, itemTypes: ["highlight", "book", "article"] },
+    });
+    const table = [
+      {
+        ...entry,
+        expectedPermissions: { network: [HOST, "B.example", "a.example"], read: [], write: [] },
+        itemTypes: ["article", "highlight", "book"],
+      },
+    ];
+    await engine({ continuityTable: table }).evaluate();
+    expect(onlyRow().state).toBe("awaiting_approval");
+  });
+
+  test("a different source root fingerprint is named", async () => {
+    const table = [{ ...entry, sourceRootFingerprint: "0".repeat(16) }];
+    await engine({ continuityTable: table }).evaluate();
+    expect(onlyRow().error).toContain("sourceRootFingerprint differs");
+  });
+
+  test("a different publisher key is named", async () => {
+    const table = [{ ...entry, publisherKey: Buffer.alloc(32, 7).toString("base64") }];
+    await engine({ continuityTable: table }).evaluate();
+    expect(onlyRow().error).toContain("publisherKey differs");
+  });
+
+  test("an extra filesystem read grant is named", async () => {
+    const outside = join(tmp, "outside");
+    mkdirSync(outside);
+    await buildRegistry({
+      ...MANIFEST_EXTRA,
+      permissions: { network: [HOST], filesystem: { read: [outside], write: [] } },
+    });
+    await engine().evaluate();
+    expect(onlyRow().error).toContain("permissions.read differs");
+  });
+
+  test("an extra filesystem write grant is named", async () => {
+    const outside = join(tmp, "outside");
+    mkdirSync(outside);
+    await buildRegistry({
+      ...MANIFEST_EXTRA,
+      permissions: { network: [HOST], filesystem: { read: [], write: [outside] } },
+    });
+    await engine().evaluate();
+    expect(onlyRow().error).toContain("permissions.write differs");
+  });
+
+  test("a grant that cannot be resolved is a permissions difference", async () => {
+    await buildRegistry({
+      ...MANIFEST_EXTRA,
+      permissions: { network: [HOST], filesystem: { read: [join(tmp, "missing")], write: [] } },
+    });
+    await engine().evaluate();
+    expect(onlyRow().error).toContain("permissions differs");
+  });
+
+  test("a manifest that declares no credentials differs from an entry that maps one", async () => {
+    const { credentials: _c, ...noCredentials } = MANIFEST_EXTRA;
+    await buildRegistry(noCredentials);
+    await engine().evaluate();
+    expect(onlyRow().error).toContain("credentials differs");
+  });
+
+  test("an entry that maps no credential is never migrated, and nothing is fetched", async () => {
+    await engine({ continuityTable: [{ ...entry, credentials: {} }] }).evaluate();
+    expect(listMigrations(db)).toEqual([]);
+    expect(fetches).toEqual([]);
+  });
+});
+
+describe("branch coverage: prepare and the staged tree", () => {
+  test("an id that is not a safe path segment fails the row rather than escaping the data dir", async () => {
+    await engine({ newId: () => "../escape" }).evaluate();
+    const row = onlyRow();
+    expect(row.state).toBe("failed");
+    expect(row.error).toContain("not a safe path segment");
+    expect(JSON.stringify(logs)).toContain("could not be removed");
+    expect(fetches).toEqual([]);
+  });
+
+  test("a stored row with an unsafe id has no usable stage and is failed on re-preparing", async () => {
+    recordMigrationPrepared(
+      db,
+      {
+        id: "bad id",
+        legacyServiceId: LEGACY,
+        extensionId: EXT,
+        version: "1.0.0",
+        treeDigest: "d".repeat(64),
+        stagePath: join(tmp, "elsewhere"),
+      },
+      NOW,
+    );
+    await engine().evaluate();
+    expect(onlyRow().state).toBe("failed");
+  });
+
+  test("a row whose stage path was cleared is prepared again under the same id", async () => {
+    await engine().evaluate();
+    const first = onlyRow();
+    db.run("UPDATE connector_migration SET stage_path = NULL WHERE id = ?", [first.id]);
+    await engine().evaluate();
+    const row = onlyRow();
+    expect(row.id).toBe(first.id);
+    expect(row.state).toBe("awaiting_approval");
+    expect(existsSync(row.stagePath ?? "")).toBe(true);
+  });
+
+  test("a stage path outside the migration's own directory is a tampered stage", async () => {
+    await engine().evaluate();
+    const first = onlyRow();
+    db.run("UPDATE connector_migration SET stage_path = ? WHERE id = ?", [tmp, first.id]);
+    await engine().evaluate();
+    expect(onlyRow().state).toBe("failed");
+    expect(onlyRow().error).toContain("digest");
+  });
+
+  test("a fetch that rejects with a plain value is recorded as text", async () => {
+    const base = deps().fetch;
+    await engine({ fetch: { ...base, fetchFn: async () => throwNonError() } }).evaluate();
+    const row = onlyRow();
+    expect(row.state).toBe("failed");
+    expect(row.error).not.toBeNull();
+  });
+
+  test("a row declined while its fetch was failing is neither rewritten nor paused over", async () => {
+    await engine().evaluate();
+    const row = onlyRow();
+    rmSync(stageRootOf(row.id), { recursive: true, force: true });
+    const reason = getConnectorHealth(db, LEGACY).lastError;
+    const base = deps().fetch;
+    let declinedOnce = false;
+    await engine({
+      fetch: {
+        ...base,
+        fetchFn: async () => {
+          if (!declinedOnce) {
+            declinedOnce = true;
+            finishMigration(db, row.id, "declined", null, NOW);
+          }
+          throw new Error("getaddrinfo ENOTFOUND registry.nimbus.test");
+        },
+      },
+    }).evaluate();
+    expect(declinedOnce).toBe(true);
+    expect(getMigration(db, row.id)?.state).toBe("declined");
+    expect(getMigration(db, row.id)?.error).toBeNull();
+    expect(getConnectorHealth(db, LEGACY).lastError).toBe(reason);
+  });
+
+  test("a row declined while its package was fetched leaves no stage and no new pause", async () => {
+    await engine().evaluate();
+    const row = onlyRow();
+    rmSync(stageRootOf(row.id), { recursive: true, force: true });
+    const reason = getConnectorHealth(db, LEGACY).lastError;
+    const base = deps().fetch;
+    let declinedOnce = false;
+    await engine({
+      fetch: {
+        ...base,
+        fetchFn: async (url, init) => {
+          if (!declinedOnce) {
+            declinedOnce = true;
+            finishMigration(db, row.id, "declined", null, NOW);
+          }
+          return base.fetchFn(url, init);
+        },
+      },
+    }).evaluate();
+    expect(declinedOnce).toBe(true);
+    expect(getMigration(db, row.id)?.state).toBe("declined");
+    expect(existsSync(stageRootOf(row.id))).toBe(false);
+    expect(getConnectorHealth(db, LEGACY).lastError).toBe(reason);
+  });
+});
+
+describe("branch coverage: concurrency and failures inside evaluate", () => {
+  test("evaluate leaves a legacy service alone while its accept is in flight", async () => {
+    const e = engine();
+    await e.evaluate();
+    const row = onlyRow();
+    let release: (v: boolean) => void = () => {};
+    const accepting = e.accept(row.id, () => new Promise<boolean>((r) => (release = r)));
+    const n = fetches.length;
+    await e.evaluate();
+    expect(fetches.length).toBe(n);
+    release(true);
+    expect((await accepting).state).toBe("approved");
+  });
+
+  test("an accept that starts during evaluate's Vault read wins: evaluate then prepares nothing", async () => {
+    await engine().evaluate();
+    const row = onlyRow();
+    let open: () => void = () => {};
+    let held = false;
+    const slow: NimbusVault = {
+      ...vault,
+      get: async (key) => {
+        if (held) await new Promise<void>((r) => (open = r));
+        return vault.get(key);
+      },
+    };
+    const e = engine({ vault: slow });
+    held = true;
+    const evaluating = e.evaluate();
+    let release: (v: boolean) => void = () => {};
+    const accepting = e.accept(row.id, () => new Promise<boolean>((r) => (release = r)));
+    const n = fetches.length;
+    open();
+    await evaluating;
+    expect(fetches.length).toBe(n);
+    held = false;
+    release(true);
+    expect((await accepting).state).toBe("approved");
+  });
+
+  test("a failure while evaluating one entry is logged and does not reject", async () => {
+    for (const thrower of [
+      () => {
+        throw new Error("vault locked");
+      },
+      throwNonError,
+    ]) {
+      logs.length = 0;
+      const broken: NimbusVault = { ...vault, get: async () => thrower() };
+      await engine({ vault: broken }).evaluate();
+      expect(JSON.stringify(logs)).toContain("connector migration evaluation failed");
+    }
+    expect(listMigrations(db)).toEqual([]);
+  });
+
+  test("retry waits for an evaluation in flight, and concurrent retries share one run", async () => {
+    const e = engine();
+    const evaluating = e.evaluate();
+    const retries = [e.retry(), e.retry()];
+    await Promise.all([evaluating, ...retries]);
+    expect(onlyRow().state).toBe("awaiting_approval");
+    expect(fetches).toHaveLength(3);
+  });
+});
+
+describe("branch coverage: refusals and failures inside accept", () => {
+  test("a row this release no longer migrates fails on accept", async () => {
+    await engine().evaluate();
+    const row = onlyRow();
+    await expect(
+      engine({ continuityTable: [] }).accept(row.id, consentThat(true, [])),
+    ).rejects.toThrow(/ERR_EXTENSION_MIGRATION_FAILED: this release no longer migrates/);
+    expect(getMigration(db, row.id)?.state).toBe("failed");
+  });
+
+  test("a gateway with no built-in registry refuses accept and changes nothing", async () => {
+    await engine().evaluate();
+    const row = onlyRow();
+    await expect(engine({ builtin: null }).accept(row.id, consentThat(true, []))).rejects.toThrow(
+      /ERR_EXTENSION_MIGRATION_NO_REGISTRY/,
+    );
+    expect(getMigration(db, row.id)?.state).toBe("awaiting_approval");
+  });
+
+  /**
+   * Rewrites the staged tree and re-stamps the row's digest, so the stage is still "intact": this
+   * is what a package that verified at prepare time but is unusable at accept time looks like.
+   */
+  async function prepareThenReshape(
+    reshape: (root: string, manifestPath: string | undefined) => void,
+  ): Promise<string> {
+    const e = engine();
+    await e.evaluate();
+    const row = onlyRow();
+    const root = row.stagePath ?? "";
+    reshape(root, resolveExtensionManifestPath(root));
+    db.run("UPDATE connector_migration SET tree_digest = ? WHERE id = ?", [
+      computeExtensionTreeDigest(root),
+      row.id,
+    ]);
+    const err = await thrownBy(() => e.accept(row.id, consentThat(true, [])));
+    expect(err?.message).toMatch(/^ERR_EXTENSION_MIGRATION_FAILED: /);
+    expect(getMigration(db, row.id)?.state).toBe("failed");
+    expect(listExtensions(db)).toEqual([]);
+    expect(existsSync(stageRootOf(row.id))).toBe(false);
+    return err?.message ?? "";
+  }
+
+  function editManifest(
+    manifestPath: string | undefined,
+    edit: (m: Record<string, unknown>) => void,
+  ): void {
+    if (manifestPath === undefined) throw new Error("premise: a staged manifest");
+    const m = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    edit(m);
+    writeFileSync(manifestPath, JSON.stringify(m));
+  }
+
+  test("a staged package with no manifest fails", async () => {
+    const error = await prepareThenReshape((_root, manifestPath) => {
+      if (manifestPath !== undefined) rmSync(manifestPath);
+    });
+    expect(error).toContain("the staged package has no manifest");
+  });
+
+  test("a staged manifest that does not parse fails, naming why but not where", async () => {
+    const error = await prepareThenReshape((_root, manifestPath) => {
+      if (manifestPath !== undefined) writeFileSync(manifestPath, "{ not json");
+    });
+    expect(error).toContain("the staged manifest could not be read");
+    expect(error).not.toContain(tmp);
+  });
+
+  test("a staged manifest for another extension id is a difference", async () => {
+    const error = await prepareThenReshape((_root, manifestPath) => {
+      editManifest(manifestPath, (m) => {
+        m["id"] = "com.example.other";
+      });
+    });
+    expect(error).toContain("id differs");
+  });
+
+  test("a staged manifest that widens the network grant is a difference found at accept", async () => {
+    const error = await prepareThenReshape((_root, manifestPath) => {
+      editManifest(manifestPath, (m) => {
+        m["permissions"] = { network: [HOST, "evil.example"] };
+      });
+    });
+    expect(error).toContain("permissions.network differs");
+  });
+
+  test("a staged package whose entry file is gone fails after the prompt", async () => {
+    const error = await prepareThenReshape((root) => {
+      rmSync(join(root, "dist", "index.js"));
+    });
+    expect(error).toContain("the staged package has no entry file");
+  });
+
+  test("an install that throws fails the row, whatever it throws", async () => {
+    for (const thrower of [
+      (): never => {
+        throw new Error("disk full");
+      },
+      throwNonError,
+    ]) {
+      db.run("DELETE FROM connector_migration");
+      const e = engine({ installVerified: async () => thrower() });
+      await e.evaluate();
+      const row = onlyRow();
+      await expect(e.accept(row.id, consentThat(true, []))).rejects.toThrow(
+        /the extension could not be installed/,
+      );
+      expect(getMigration(db, row.id)?.state).toBe("failed");
+    }
+  });
+
+  test("a run approval that cannot be recorded undoes the install and fails the row", async () => {
+    let broken = false;
+    const base = grantEnv();
+    const e = engine({
+      env: {
+        ...base,
+        realpath: (p) => {
+          if (broken) throw new Error("realpath unavailable");
+          return base.realpath(p);
+        },
+      },
+      installVerified: async (d, pkg, channel) => {
+        const out = await installVerifiedRegistryPackage(d, pkg, channel);
+        broken = true;
+        return out;
+      },
+    });
+    await e.evaluate();
+    const row = onlyRow();
+    await expect(e.accept(row.id, consentThat(true, []))).rejects.toThrow(
+      /the run approval could not be recorded/,
+    );
+    expect(getMigration(db, row.id)?.state).toBe("failed");
+    expect(listExtensions(db)).toEqual([]);
+    expect(getRunGrant(db, EXT)).toBeNull();
+  });
+
+  test("a row that changed while it was being approved fails and undoes the install", async () => {
+    let rowId = "";
+    const e = engine({
+      scheduler: {
+        resume: () => {
+          finishMigration(db, rowId, "declined", null, NOW);
+        },
+        syncableFor: (id) => registered.get(id),
+      },
+    });
+    await e.evaluate();
+    rowId = onlyRow().id;
+    await expect(e.accept(rowId, consentThat(true, []))).rejects.toThrow(
+      /changed while it was being approved; the install was undone/,
+    );
+    expect(listExtensions(db)).toEqual([]);
+    expect(getRunGrant(db, EXT)).toBeNull();
+  });
+
+  test("a registration failure with a plain thrown value and an unremovable tree still fails the row", async () => {
+    const e = engine({
+      removeInstallTree: () => throwNonError(),
+      scheduler: { resume: () => throwNonError(), syncableFor: (id) => registered.get(id) },
+    });
+    await e.evaluate();
+    const row = onlyRow();
+    await expect(e.accept(row.id, consentThat(true, []))).rejects.toThrow(
+      /not-an-error-object; the install was undone/,
+    );
+    expect(getMigration(db, row.id)?.state).toBe("failed");
+    expect(JSON.stringify(logs)).toContain("could not be removed from disk");
+  });
+
+  test("a leftover install that cannot be removed with a plain thrown value fails the row", async () => {
+    const e = engine({ removeInstallTree: () => throwNonError() });
+    await e.evaluate();
+    const id = onlyRow().id;
+    mkdirSync(join(tmp, "data", "extensions", EXT), { recursive: true });
+    await expect(e.accept(id, consentThat(true, []))).rejects.toThrow(
+      /ERR_EXTENSION_MIGRATION_FAILED/,
+    );
+    expect(getMigration(db, id)?.state).toBe("failed");
+  });
+
+  test("a second legacy service bound to an already installed extension is prompted, then fails and leaves nothing installed", async () => {
+    const other = { ...entry, legacyServiceId: "fixture_other" };
+    const e = engine({ continuityTable: [entry, other] });
+    await e.evaluate();
+    const rows = listMigrations(db);
+    expect(rows).toHaveLength(2);
+    const firstRow = rows.find((r) => r.legacyServiceId === LEGACY);
+    const otherRow = rows.find((r) => r.legacyServiceId === "fixture_other");
+    expect((await e.accept(firstRow?.id ?? "", consentThat(true, []))).state).toBe("approved");
+    const seen: MigrationConsentPayload[] = [];
+    await expect(e.accept(otherRow?.id ?? "", consentThat(true, seen))).rejects.toThrow(
+      /the run approval could not be recorded/,
+    );
+    expect(seen).toHaveLength(1);
+    expect(getMigration(db, otherRow?.id ?? "")?.state).toBe("failed");
+    expect(listExtensions(db)).toEqual([]);
   });
 });

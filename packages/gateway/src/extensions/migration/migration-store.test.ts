@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { openMemoryIndexDatabase } from "../../testing/bun-test-support.ts";
@@ -121,5 +121,41 @@ describe("reopenDeclinedMigration", () => {
     finishMigration(db, "m1", "approved", null, 6);
     expect(reopenDeclinedMigration(db, "m1", 7)).toBe(false);
     expect(getMigration(db, "m1")?.state).toBe("approved");
+  });
+});
+
+describe("reads", () => {
+  test("an absent row reads back undefined, and nothing is pending", () => {
+    const db = open();
+    expect(getMigration(db, "nope")).toBeUndefined();
+    expect(getMigrationByLegacyService(db, "nope")).toBeUndefined();
+    expect(pendingMigrationForExtension(db, "com.example.nope")).toBeUndefined();
+    expect(listMigrations(db)).toEqual([]);
+  });
+
+  test("only an awaiting_approval row is pending for its extension", () => {
+    const db = open();
+    recordMigrationPrepared(db, PREPARED, 1);
+    finishMigration(db, "m1", "declined", null, 2);
+    expect(pendingMigrationForExtension(db, PREPARED.extensionId)).toBeUndefined();
+    expect(getMigration(db, "m1")?.state).toBe("declined");
+  });
+
+  test("a database older than the table reads as empty and never queries it", () => {
+    const db = new Database(":memory:");
+    dbs.push(db);
+    expect(getMigration(db, "m1")).toBeUndefined();
+    expect(getMigrationByLegacyService(db, "fixture_reader")).toBeUndefined();
+    expect(pendingMigrationForExtension(db, PREPARED.extensionId)).toBeUndefined();
+    expect(listMigrations(db)).toEqual([]);
+  });
+
+  test("a row holding a state the schema forbids is refused rather than guessed at", () => {
+    const db = open();
+    recordMigrationPrepared(db, PREPARED, 1);
+    db.run("PRAGMA ignore_check_constraints = ON");
+    db.run("UPDATE connector_migration SET state = 'limbo' WHERE id = 'm1'");
+    expect(() => getMigration(db, "m1")).toThrow(/unknown state/);
+    expect(() => listMigrations(db)).toThrow(/unknown state/);
   });
 });
