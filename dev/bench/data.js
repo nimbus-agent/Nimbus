@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792595972253,
+  "lastUpdate": 1792603379289,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7bd2cdc128e4f5ab8fcdb3a8301bc8cdd6efade5",
-          "message": "fix(ipc): forbid the clip namespace over LAN — clip.pair opens the I30 pairing window (#1027)\n\n## What\n\nA paired LAN peer could mint a web-clipper bearer token without the\nmachine owner ever running `nimbus clip pair`, defeating invariant\n**I30**'s fail-closed guarantee. Found during unrelated work; live on\n`main` today.\n\nThree-line data change plus tests — no logic altered.\n\n## The chain\n\n**I30** states that clip token minting is fail-closed behind an\n**owner-opened** pairing window, opened via `nimbus clip pair`.\n\n1. `ipc/lan-rpc.ts` — `checkLanMethodAllowed` is a **denylist**: it\nthrows only when the method or its namespace appears in\n`FORBIDDEN_OVER_LAN`, then checks `WRITE_METHODS` for write permission.\nAnything in neither list is callable by any paired LAN peer.\n2. The `clip` namespace and every `clip.*` method were in **neither**\nlist.\n3. `ipc/clip-rpc.ts` `handleClipPair` calls `deps.pairing.open(label)`\nand **returns the pairing `code` in the RPC response**.\n\nSo: peer calls `clip.pair` → reads `code` from the response → `POST\n/v1/clips/pair/confirm` → receives a Vault-stored bearer token with\nclip-write access.\n\nThe HTTP confirm route correctly requires a live window to exist.\nNothing constrained **who may open one**. That is the gap: I30 gates\nminting on a window existing, and assumed only the owner could create\none.\n\n## Severity — deliberately not overstated\n\n**Low-to-moderate.** It requires an already-paired LAN peer, and LAN is\noff by default (`I6` binds `127.0.0.1`), so there is no remote\nunauthenticated path. What makes it worth fixing promptly is that it\ndefeats a *documented* invariant: I30 promises owner-gated minting and\ndid not deliver it over this path.\n\n## The fix\n\n`\"clip\"` added to `FORBIDDEN_OVER_LAN`. The gate already supports\nnamespace entries (`FORBIDDEN_OVER_LAN.has(ns)`), so one entry covers\n`clip.pair`, `clip.status`, `clip.revoke`, `clip.list` and\n`clip.delete`.\n\n**Verified nothing legitimate breaks:** the only caller of `clip.*` is\n`packages/cli/src/commands/clip.ts`, which goes through\n`IPCClient(state.socketPath)` — the local socket, not LAN. The browser\nextension only uses the bearer-authed HTTP surface (`POST /v1/clips`,\n`/v1/clips/pair/confirm`). Forbidding the namespace costs nothing.\n\n## Also documented: why `egress.prune` stays out\n\n`egress.prune` is likewise absent from both lists, and that is\n**correct**. `ipc/egress-rpc.ts:94` calls\n`ctx.requestPruneApproval(beforeTs)` and returns `{approved: false,\nprunedCount: 0}` on denial, so a LAN caller only triggers an owner\nconsent prompt — the same reasoning already recorded in-file for\n`federation.purge`.\n\nA comment now states this at the LAN-list site, so the next auditor\nneither re-derives it nor \"fixes\" it by listing the method and breaking\na legitimate flow.\n\n## Tests\n\nAdded to `ipc/lan-rpc.test.ts` and to the **I5 block** in\n`security-invariants.test.ts` — asserting both `clip.pair` and\n`clip.status` throw over LAN, so the namespace entry is proven rather\nthan a single method name.\n\n**Red-proved:** commenting out the `\"clip\"` entry makes both tests fail\nwith `Received function did not throw`; restoring it makes them pass. A\ntest that passed either way would document an intention rather than\nenforce it — which is exactly the gap this PR closes.\n\n## Verification\n\ntypecheck ✅ · `audit:invariants` ✅ · `packages/gateway/src/ipc/` 1,415\npass / 0 fail ✅ · `security-invariants.test.ts` 96 pass / 0 fail ✅\n\n`docs/SECURITY-INVARIANTS.md` is intentionally unchanged: this closes a\nsecond path into the already-documented I30 rather than adding a new\ndefence. A cross-reference there is a reasonable follow-up.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Security**\n* Restricted LAN access to local clip-management actions, including\npairing and status checks.\n* Prevented remote peers from opening pairing windows or minting clip\ntokens.\n* Confirmed unauthorized requests return the appropriate “method not\nallowed” response.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-02T19:02:44Z",
-          "tree_id": "aee5d8a6b6a584534827621d4ca429110a0614f9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7bd2cdc128e4f5ab8fcdb3a8301bc8cdd6efade5"
-        },
-        "date": 1785698035332,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 303.7920827499973,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.48510139999706,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 207.2038619000028,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fc5218ab5a99ce4083e3fcbfc68a3eb94cbc2908",
+          "message": "feat(desktop): answer the Readwise migration from the desktop (I46) (#1711)\n\n## What this does\n\nThis PR lets the owner answer a pending connector migration from the\ndesktop app, not only from the terminal. It is part 6 of the\nReadwise-unbundling pilot. PR 5 (#1709) added the gateway's migration\nengine and the `nimbus connector migrate` CLI.\n\n**Nothing changes for current users yet.** The built-in registry is\n`null` and the continuity table is empty until PR 7, so `migration.list`\nis always empty in this release. The new desktop group therefore never\nappears.\n\n### New invariant I46\nA renderer-callable method can create an extension run grant only\nthrough `migration.accept`. That method takes a migration id alone. It\nsucceeds only for a gateway-created row in `awaiting_approval` that\npasses every one of these checks:\n- its package came from the baked built-in registry, verified against\nthe baked root key;\n- its staged tree digest matches the row;\n- its resolved permissions, credential mapping and item types equal the\nbaked continuity entry.\n\nIt then raises `extension.migrate`, unicast to the accepting session.\n- **Bound:** a compromised renderer can answer that prompt. The worst it\ncan do is re-enable Nimbus-signed code with the access the owner already\ngranted the built-in connector.\n- **Known existing path:** `extension.enable` is already allowlisted. It\nonly resumes code under a grant the owner already approved, and never\ncreates or widens one.\n- The I46 row in `security-invariants.test.ts` exercises every refusal\nthrough the RPC path: an unknown id, a wrong state, digest drift,\npermission/credential/item-type drift, a registry that is not built-in,\nthe wrong root or publisher key, and an extension that is already\ninstalled.\n\n### Desktop\n- **Tauri allowlist:** gains `migration.list` and `migration.accept`\n(109 → 111). The tests assert by name that `migration.decline`,\n`migration.retry`, `extension.install` and `extension.approveRun` stay\noff it.\n- **No timeout on accept:** `migration.accept` is in\n`NO_TIMEOUT_METHODS`, because it returns only once the owner answers.\n- **\"Pending migrations\" group on the Marketplace page:**\n- \"Keep\" calls `migration.accept` with the id only, and shows a waiting\nstate while the prompt is open.\n  - A refusal shows inline, against its row.\n- A failed row shows its error and points to `nimbus connector migrate\nretry`.\n  - There is no decline or retry in the desktop.\n- **Connector tile:** now shows the reason a connector is paused.\n\n### Consent popup now receives the real action type\n- `consent.request` carries an additive `actionType`. The bridge passes\nit to the popup, and the popup keys its preview and default focus on it.\n- **This fixes a pre-existing bug.** The popup never received the type,\nso on the desktop:\n- the destructive-action rule (focus on Reject) never fired, and a\n`data.delete` prompt focused Approve;\n- the `extension.autoUpdate` and `extension.downgrade` previews never\nrendered.\n- **When the type is absent,** the popup fails safe and focuses Reject.\n- **Migration prompt preview:** `extension.migrate` renders as a\nlabelled preview showing publisher, key fingerprint, version, network\naccess, sandbox, read tools and what changes. Any other payload field\nalso shows, so nothing is hidden.\n\n### Audit\n- The desktop bridge now declares its connection kind (`ui`) as the\nfirst frame of every connection. The renderer cannot send that frame.\n- The `extension.migrate` audit row records `fromRenderer`, taken from\nthe connection's declared kind and never from params.\n- It is audit-only: no security check reads it, and it is left out of\nthe prompt text the owner sees.\n\n### Status\n`connector.listStatus` (used by the dashboard, `nimbus connector status`\nand `nimbus status`) now shows a paused connector's stated pause reason\ninstead of a stale sync error. `SyncScheduler.getStatus` uses the same\nrule, from one shared helper.\n\n## Known limits\n- If the gateway runs without a sync scheduler, `pauseConnectorSync`\nsets no health transition. A stale health error can then still win. This\nis a follow-up.\n- Accept trusts the verification done at prepare, pinned by the staged\ntree digest, and does not re-fetch the signed index. A process running\nas the same user that can write both the migration row and the staging\ndirectory is outside the bound. That is the same\ndatabase/filesystem-write bound I43 and I44 state, and I46's Bounds say\nso.\n\n## Verification\n- `bun run typecheck` and `bun run preflight:fast` pass.\n- `cargo test` in `packages/ui/src-tauri`: 50 pass.\n- `bunx vitest run` in `packages/ui`: 1062 pass.\n- Gateway (security invariants, IPC, sync, index, extensions): 5178\npass, 0 fail. This includes a real-socket test that a `ui` connection is\nrecorded with `fromRenderer: true` and an undeclared one with `false`,\neven when params claim otherwise.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Desktop users can review and accept pending connector migrations from\nthe Marketplace.\n* Migration prompts show connector details, publisher information,\npermissions, and known changes.\n* Migration actions are audited by origin and validated before\ninstallation.\n* Consent requests identify their action type for safer approval\ndecisions.\n  * Connector tiles display relevant pause reasons.\n\n* **Bug Fixes**\n* Paused connectors now prioritize health errors over stale\nsynchronization errors.\n\n* **Documentation**\n* Updated security invariant, migration behavior, and project status\ndocumentation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-21T17:12:21Z",
+          "tree_id": "446270ff360fd83043d5898d4ba071fbf99a58f4",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/fc5218ab5a99ce4083e3fcbfc68a3eb94cbc2908"
+        },
+        "date": 1792603375884,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 277.18420259999914,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 274.41837079999823,
             "unit": "ms"
           }
         ]
