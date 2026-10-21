@@ -33,9 +33,10 @@ describe("V73 migration — connector migration, built-in registry state, droppe
       ]);
       expect(columns(db, "builtin_registry_state")).toEqual([
         { cid: 0, name: "name", type: "TEXT", notnull: 0, dflt_value: null, pk: 1 },
-        { cid: 1, name: "last_sequence", type: "INTEGER", notnull: 1, dflt_value: null, pk: 0 },
-        { cid: 2, name: "last_generated_at", type: "TEXT", notnull: 0, dflt_value: null, pk: 0 },
-        { cid: 3, name: "last_fetched_at", type: "INTEGER", notnull: 0, dflt_value: null, pk: 0 },
+        { cid: 1, name: "root_key", type: "TEXT", notnull: 1, dflt_value: null, pk: 0 },
+        { cid: 2, name: "last_sequence", type: "INTEGER", notnull: 1, dflt_value: null, pk: 0 },
+        { cid: 3, name: "last_generated_at", type: "TEXT", notnull: 0, dflt_value: null, pk: 0 },
+        { cid: 4, name: "last_fetched_at", type: "INTEGER", notnull: 0, dflt_value: null, pk: 0 },
       ] as unknown as Col[]);
       expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 73 });
       expect(

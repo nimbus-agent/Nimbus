@@ -12,6 +12,7 @@ import {
   BUILTIN_REGISTRY,
   BUILTIN_REGISTRY_NAME,
   type BuiltinRegistryConfig,
+  currentRegistryFloor,
   recordAnyRegistryFetch,
   resolveRegistry,
 } from "./builtin-registry.ts";
@@ -213,6 +214,31 @@ describe("the built-in official registry", () => {
         last_fetched_at: 7,
       },
     ]);
+  });
+
+  test("a floor recorded under another root key does not apply, and a fetch under a new key re-records it", async () => {
+    await buildBuiltin();
+    const oldReg = resolveRegistry(db, BUILTIN_REGISTRY_NAME, builtin);
+    if (oldReg === undefined) throw new Error("unreachable");
+    expect(recordAnyRegistryFetch(db, oldReg, 5, "2026-10-19T00:00:00Z", 7)).toBe(true);
+    expect(currentRegistryFloor(db, oldReg)).toEqual({ lastSequence: 5 });
+
+    // A later release re-pins the built-in root; its registry restarts at a lower sequence.
+    const newKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    const rePinned = resolveRegistry(db, BUILTIN_REGISTRY_NAME, { ...builtin, rootKey: newKey });
+    expect(rePinned?.lastSequence).toBe(0);
+    if (rePinned === undefined) throw new Error("unreachable");
+    expect(currentRegistryFloor(db, rePinned)).toEqual({ lastSequence: 0 });
+    expect(recordAnyRegistryFetch(db, rePinned, 1, "2026-10-20T00:00:00Z", 9)).toBe(true);
+    expect(db.query("SELECT root_key, last_sequence FROM builtin_registry_state").all()).toEqual([
+      { root_key: newKey, last_sequence: 1 },
+    ]);
+
+    // Under the new key the floor is enforced as before: a lower sequence is refused.
+    expect(recordAnyRegistryFetch(db, rePinned, 0, "2026-10-20T01:00:00Z", 10)).toBe(false);
+    expect(currentRegistryFloor(db, rePinned)).toEqual({ lastSequence: 1 });
+    // The superseded key's floor no longer applies to a snapshot of the old registry either.
+    expect(currentRegistryFloor(db, oldReg)).toEqual({ lastSequence: 0 });
   });
 
   test("collectRegistryUpdates sees an extension sourced from the builtin registry", async () => {

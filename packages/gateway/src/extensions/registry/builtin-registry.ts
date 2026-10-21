@@ -55,20 +55,21 @@ type BuiltinStateRow = {
   last_fetched_at: number | null;
 };
 
-function readBuiltinState(db: Database): BuiltinStateRow | undefined {
+/** The stored floor, only when it was recorded under `rootKey`: a re-pinned root starts fresh. */
+function readBuiltinState(db: Database, rootKey: string): BuiltinStateRow | undefined {
   // Below V73 the table does not exist yet: no recorded fetch, so the floor is 0.
   if (readIndexedUserVersion(db) < 73) return undefined;
   const r = db
     .query(
-      "SELECT last_sequence, last_generated_at, last_fetched_at FROM builtin_registry_state WHERE name = ?",
+      "SELECT last_sequence, last_generated_at, last_fetched_at FROM builtin_registry_state WHERE name = ? AND root_key = ?",
     )
-    .get(BUILTIN_REGISTRY_NAME) as BuiltinStateRow | null;
+    .get(BUILTIN_REGISTRY_NAME, rootKey) as BuiltinStateRow | null;
   return r ?? undefined;
 }
 
 /** The built-in registry as a `RegistryRow`: URL and key from the release, sequence from V73's table. */
 export function builtinRegistryRow(db: Database, builtin: BuiltinRegistryConfig): RegistryRow {
-  const state = readBuiltinState(db);
+  const state = readBuiltinState(db, builtin.rootKey);
   return {
     name: BUILTIN_REGISTRY_NAME,
     url: builtin.url,
@@ -119,8 +120,8 @@ export function bareRegistryTargets(
  * Advances the I44 anti-rollback floor of whichever store `reg` came from, conditional in both: a
  * sequence lower than the stored one changes nothing. Returns whether a row changed. For an owner
  * row it is `recordRegistryFetch` (also conditional on the pinned key); for the built-in registry
- * it is an upsert into `builtin_registry_state`, whose key is the release's and cannot change
- * within a process.
+ * it is an upsert into `builtin_registry_state` keyed like the owner row: a floor stored under a
+ * different root key does not apply, and a fetch under a new key records a fresh floor.
  */
 export function recordAnyRegistryFetch(
   db: Database,
@@ -134,14 +135,16 @@ export function recordAnyRegistryFetch(
   }
   const r = dbRun(
     db,
-    `INSERT INTO builtin_registry_state (name, last_sequence, last_generated_at, last_fetched_at)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO builtin_registry_state (name, root_key, last_sequence, last_generated_at, last_fetched_at)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET
+       root_key = excluded.root_key,
        last_sequence = excluded.last_sequence,
        last_generated_at = excluded.last_generated_at,
        last_fetched_at = excluded.last_fetched_at
-     WHERE builtin_registry_state.last_sequence <= excluded.last_sequence`,
-    [BUILTIN_REGISTRY_NAME, sequence, generatedAt, now],
+     WHERE builtin_registry_state.root_key <> excluded.root_key
+        OR builtin_registry_state.last_sequence <= excluded.last_sequence`,
+    [BUILTIN_REGISTRY_NAME, reg.rootKey, sequence, generatedAt, now],
   );
   return r.changes > 0;
 }
@@ -151,7 +154,8 @@ export function currentRegistryFloor(
   db: Database,
   reg: RegistryRow,
 ): { lastSequence: number } | undefined {
-  if (reg.builtin === true) return { lastSequence: readBuiltinState(db)?.last_sequence ?? 0 };
+  if (reg.builtin === true)
+    return { lastSequence: readBuiltinState(db, reg.rootKey)?.last_sequence ?? 0 };
   const cur = getRegistry(db, reg.name);
   return cur?.rootKey === reg.rootKey ? cur : undefined;
 }

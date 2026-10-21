@@ -1140,7 +1140,7 @@ ALTER TABLE extension_run_grant ADD COLUMN credentials_json TEXT NOT NULL DEFAUL
 -- unbundling, gateway PR 5). Three additive changes in one step. `connector_migration` is one row per
 -- bundled connector being moved to a registry-installed extension (UNIQUE on legacy_service_id, so a
 -- legacy connector is migrated at most once). `builtin_registry_state` is I44's anti-rollback floor for
--- the BUILT-IN official registry, keyed by its reserved name `nimbus-official`; that registry is not a
+-- the BUILT-IN official registry, keyed by its reserved name `nimbus-official` and bound to the root key it was recorded under (a re-pinned root starts a fresh floor, as an owner row does); that registry is not a
 -- row of `extension_registry`, so `registry list` stays the owner's list, and only
 -- `extensions/registry/builtin-registry.ts` writes the table. `sync_telemetry.items_dropped` counts
 -- extension sync items a run refused (NOT NULL DEFAULT 0, so existing rows and inserts are unchanged).
@@ -1160,6 +1160,7 @@ CREATE TABLE connector_migration (
 CREATE UNIQUE INDEX idx_connector_migration_legacy_service ON connector_migration (legacy_service_id);
 CREATE TABLE builtin_registry_state (
     name              TEXT PRIMARY KEY,
+    root_key          TEXT NOT NULL,
     last_sequence     INTEGER NOT NULL,
     last_generated_at TEXT,
     last_fetched_at   INTEGER
