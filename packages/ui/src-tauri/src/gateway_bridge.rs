@@ -19,6 +19,27 @@ pub struct PendingHitl {
     pub prompt: String,
     pub details: Option<Value>,
     pub received_at_ms: u64,
+    /// The HITL action type (`data.delete`, `extension.migrate`, ...) as the gateway names it.
+    /// Absent from an older gateway, hence `default`.
+    #[serde(default)]
+    pub action_type: Option<String>,
+}
+
+/// Build the record for a `consent.request` notification, or `None` when it lacks the two fields
+/// every version has sent. `actionType` is optional and must be a string.
+fn pending_hitl_from_params(params: &Value, received_at_ms: u64) -> Option<PendingHitl> {
+    let request_id = params.get("requestId")?.as_str()?.to_string();
+    let prompt = params.get("prompt")?.as_str()?.to_string();
+    Some(PendingHitl {
+        request_id,
+        prompt,
+        details: params.get("details").cloned(),
+        received_at_ms,
+        action_type: params
+            .get("actionType")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    })
 }
 
 pub struct HitlInbox {
@@ -421,6 +442,55 @@ pub async fn rpc_call(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consent_request_keeps_the_action_type() {
+        let params = json!({
+            "requestId": "r1",
+            "prompt": "p",
+            "details": { "service": "drive" },
+            "actionType": "data.delete"
+        });
+        let rec = pending_hitl_from_params(&params, 7).expect("parses");
+        assert_eq!(rec.action_type.as_deref(), Some("data.delete"));
+        assert_eq!(rec.request_id, "r1");
+        assert_eq!(rec.received_at_ms, 7);
+    }
+
+    #[test]
+    fn consent_request_without_action_type_still_parses() {
+        let params = json!({ "requestId": "r2", "prompt": "p" });
+        let rec = pending_hitl_from_params(&params, 1).expect("older gateway still parses");
+        assert!(rec.action_type.is_none());
+        assert!(rec.details.is_none());
+    }
+
+    #[test]
+    fn consent_request_ignores_a_non_string_action_type() {
+        let params = json!({ "requestId": "r3", "prompt": "p", "actionType": 5 });
+        let rec = pending_hitl_from_params(&params, 1).expect("parses");
+        assert!(rec.action_type.is_none());
+    }
+
+    #[test]
+    fn pending_hitl_without_action_type_deserializes() {
+        let rec: PendingHitl = serde_json::from_value(json!({
+            "request_id": "r4", "prompt": "p", "details": null, "received_at_ms": 3
+        }))
+        .expect("tolerates the field being absent");
+        assert!(rec.action_type.is_none());
+    }
+
+    #[test]
+    fn pending_hitl_serializes_action_type_for_the_renderer() {
+        let rec = pending_hitl_from_params(
+            &json!({ "requestId": "r5", "prompt": "p", "actionType": "extension.migrate" }),
+            1,
+        )
+        .expect("parses");
+        let v = serde_json::to_value(&rec).expect("serializes");
+        assert_eq!(v["action_type"], "extension.migrate");
+    }
 
     #[test]
     fn allowlist_ws5a_methods() {
@@ -897,28 +967,12 @@ fn classify_notification(app: &AppHandle, method: &str, params: Option<&Value>) 
             let Some(params) = params else {
                 return;
             };
-            let (Some(request_id), Some(prompt)) = (
-                params
-                    .get("requestId")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                params
-                    .get("prompt")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-            ) else {
-                return;
-            };
             let received_at_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            let details = params.get("details").cloned();
-            let record = PendingHitl {
-                request_id,
-                prompt,
-                details,
-                received_at_ms,
+            let Some(record) = pending_hitl_from_params(params, received_at_ms) else {
+                return;
             };
             if let Some(inbox) = app.try_state::<HitlInbox>() {
                 if inbox.push_dedup(record.clone()) {

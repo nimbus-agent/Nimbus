@@ -167,4 +167,31 @@ describe("RootLayout", () => {
       ]),
     );
   });
+
+  it("maps action_type to actionType on a live request and on a recovered one", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_pending_hitl") {
+        return [
+          { request_id: "rec", prompt: "x", action_type: "data.delete", received_at_ms: 3 },
+          { request_id: "rec-old", prompt: "y", action_type: null, received_at_ms: 4 },
+        ];
+      }
+      return undefined;
+    });
+    renderWith();
+    await waitFor(() => expect(useNimbusStore.getState().pending).toHaveLength(2));
+    await waitFor(() => expect(listenHandlers.get("consent://request")?.length).toBeGreaterThan(0));
+    act(() => {
+      fire("consent://request", {
+        request_id: "live",
+        prompt: "p",
+        action_type: "extension.migrate",
+        received_at_ms: 5,
+      });
+    });
+    const byId = Object.fromEntries(
+      useNimbusStore.getState().pending.map((p) => [p.requestId, p.actionType]),
+    );
+    expect(byId).toEqual({ rec: "data.delete", "rec-old": undefined, live: "extension.migrate" });
+  });
 });

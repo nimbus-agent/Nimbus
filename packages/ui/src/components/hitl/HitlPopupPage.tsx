@@ -37,19 +37,10 @@ export function HitlPopupPage(): ReactNode {
   const approveRef = useRef<HTMLButtonElement>(null);
   const rejectRef = useRef<HTMLButtonElement>(null);
 
-  const action =
-    head?.details && typeof head.details["action"] === "string"
-      ? head.details["action"]
-      : ((head as unknown as { action?: string } | undefined)?.action ?? undefined);
-
-  // The renderer is never sent the action type as a field (`consent://request` is `{ request_id,
-  // prompt, details }`), only the `Type:` line of the gateway's prompt text. `extension.migrate` is
-  // recognised from that line so it gets its labelled preview; the prompt text itself embeds the
-  // payload as JSON, so its heading is replaced.
-  const isMigrate =
-    action === "extension.migrate" ||
-    (head !== undefined && /^Type: extension\.migrate$/m.test(head.prompt));
-  const previewAction = isMigrate ? "extension.migrate" : action;
+  // The type is the gateway's own `actionType` on `consent.request`, and nothing else: not a key of
+  // the payload (the payload is the action's data) and not the prompt text (it embeds that data).
+  const action = head?.actionType;
+  const isMigrate = action === "extension.migrate";
 
   // Focus is placed imperatively, keyed on the action, NOT via the `autoFocus` attribute. React
   // honours `autoFocus` only at mount, and this popup does not remount between queued requests —
@@ -100,10 +91,7 @@ export function HitlPopupPage(): ReactNode {
           {isMigrate ? "Keep this connector as a signed extension?" : head.prompt}
         </h2>
       </header>
-      <StructuredPreview
-        details={head.details}
-        {...(previewAction === undefined ? {} : { action: previewAction })}
-      />
+      <StructuredPreview details={head.details} {...(action === undefined ? {} : { action })} />
       {error && (
         <div className="text-[var(--color-error)] text-xs" role="alert">
           {error}

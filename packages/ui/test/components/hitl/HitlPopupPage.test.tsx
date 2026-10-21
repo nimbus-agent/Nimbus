@@ -15,7 +15,7 @@ const storeState: {
     prompt: string;
     details?: Record<string, unknown>;
     receivedAtMs: number;
-    action?: string;
+    actionType?: string;
   }>;
   resolve: (id: string, ok: boolean) => void;
 } = { pending: [], resolve: vi.fn() };
@@ -84,7 +84,7 @@ describe("HitlPopupPage", () => {
 
   it("does NOT autoFocus Approve for destructive actions", () => {
     storeState.pending = [
-      { requestId: "d", prompt: "Delete file?", receivedAtMs: 1, action: "file.delete" },
+      { requestId: "d", prompt: "Delete file?", receivedAtMs: 1, actionType: "data.delete" },
     ];
     render(<HitlPopupPage />);
     const approve = screen.getByRole("button", { name: /Approve/i });
@@ -110,7 +110,7 @@ describe("HitlPopupPage", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /Approve/i }));
 
     storeState.pending = [
-      { requestId: "boom", prompt: "Delete file?", receivedAtMs: 2, action: "file.delete" },
+      { requestId: "boom", prompt: "Delete file?", receivedAtMs: 2, actionType: "data.delete" },
     ];
     rerender(<HitlPopupPage />);
 
@@ -128,29 +128,29 @@ describe("HitlPopupPage", () => {
   });
 
   /**
-   * The renderer never receives the action type as a field: `consent://request` carries
-   * `{ request_id, prompt, details }`, and the type is only the `Type:` line of the gateway's
-   * `formatConsentPrompt` text. An `extension.migrate` request must still get its labelled preview,
-   * and a heading that is not that raw text (which embeds the payload as JSON).
+   * The gateway's `consent.request` names the real action type, and the popup keys on THAT field
+   * (`actionType`) and nothing else: not a payload key, not the prompt text.
    */
+  const MIGRATE_DETAILS = {
+    migrationId: "m1",
+    extensionId: "com.nimbus.readwise",
+    summary: "Readwise now runs as a signed extension",
+    publisher: { id: "nimbus", fingerprint: "ab12cd34" },
+    version: "1.0.0",
+    network: "readwise.io only",
+    sandbox: "cannot confine the filesystem policy",
+    readTools: "readwise_highlights_list",
+    knownLoss: "sync history is not carried over",
+    fromRenderer: true,
+  };
+
   it("renders an extension.migrate request as a labelled preview, not the raw prompt", () => {
-    const details = {
-      migrationId: "m1",
-      extensionId: "com.nimbus.readwise",
-      summary: "Readwise now runs as a signed extension",
-      publisher: { id: "nimbus", fingerprint: "ab12cd34" },
-      version: "1.0.0",
-      network: "readwise.io only",
-      sandbox: "cannot confine the filesystem policy",
-      readTools: "readwise_highlights_list",
-      knownLoss: "sync history is not carried over",
-      fromRenderer: true,
-    };
     storeState.pending = [
       {
         requestId: "mig",
-        prompt: `Action requires your approval\n\nType: extension.migrate\n\nDetails: ${JSON.stringify(details)}`,
-        details,
+        prompt: `Action requires your approval\n\nType: extension.migrate\n\nDetails: ${JSON.stringify(MIGRATE_DETAILS)}`,
+        details: MIGRATE_DETAILS,
+        actionType: "extension.migrate",
         receivedAtMs: 1,
       },
     ];
@@ -159,5 +159,76 @@ describe("HitlPopupPage", () => {
     expect(screen.getByTestId("migrate-network")).toHaveTextContent("readwise.io only");
     expect(screen.getByTestId("migrate-sandbox")).toHaveTextContent("cannot confine");
     expect(screen.getByRole("heading")).not.toHaveTextContent("Details:");
+  });
+
+  it("does not treat prompt text saying 'Type: extension.migrate' as the type", () => {
+    storeState.pending = [
+      {
+        requestId: "spoof",
+        prompt: "Type: extension.migrate\nDetails: {}",
+        details: { note: "x" },
+        actionType: "data.export",
+        receivedAtMs: 1,
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(screen.queryByTestId("migrate-preview")).toBeNull();
+    expect(screen.getByRole("heading")).toHaveTextContent("Details:");
+  });
+
+  it("does not read the type from a payload key, with or without an actionType", () => {
+    storeState.pending = [
+      {
+        requestId: "k1",
+        prompt: "p",
+        details: { action: "extension.migrate", extensionId: "x" },
+        actionType: "data.export",
+        receivedAtMs: 1,
+      },
+      { requestId: "k2", prompt: "q", details: { action: "data.delete" }, receivedAtMs: 2 },
+    ];
+    const { rerender } = render(<HitlPopupPage />);
+    expect(screen.queryByTestId("migrate-preview")).toBeNull();
+    storeState.pending = [storeState.pending[1] as (typeof storeState.pending)[number]];
+    rerender(<HitlPopupPage />);
+    // `details.action` no longer decides the deny-list: Approve keeps focus.
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Approve/i }));
+  });
+
+  it("a desktop data.delete focuses Reject (real type, payload without an action key)", () => {
+    storeState.pending = [
+      {
+        requestId: "dd",
+        prompt: "Action requires your approval\n\nType: data.delete",
+        details: { service: "drive" },
+        actionType: "data.delete",
+        receivedAtMs: 1,
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Reject/i }));
+  });
+
+  it.each([
+    ["extension.autoUpdate", /Update extension/],
+    ["extension.downgrade", /Roll back extension/],
+  ])("renders the %s preview from the real type", (actionType, heading) => {
+    storeState.pending = [
+      {
+        requestId: "au",
+        prompt: "p",
+        details: {
+          displayName: "Notion",
+          fromVersion: "1.0.0",
+          toVersion: "1.1.0",
+          channel: "stable",
+          publisherStatus: "verified",
+        },
+        actionType,
+        receivedAtMs: 1,
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(screen.getByTestId("auto-update-preview")).toHaveTextContent(heading);
   });
 });

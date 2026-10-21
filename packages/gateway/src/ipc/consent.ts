@@ -59,7 +59,15 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       const notif: JsonRpcNotification = {
         jsonrpc: "2.0",
         method: "consent.request",
-        params: details === undefined ? { requestId, prompt } : { requestId, prompt, details },
+        // `actionType` rides the unicast so a client can key its rendering on the real type instead
+        // of parsing it out of `prompt`. Additive: absent when the executor did not name one, and
+        // clients ignore fields they do not know. It is already broadcast in `hitl.requested`.
+        params: {
+          requestId,
+          prompt,
+          ...(details === undefined ? {} : { details }),
+          ...(actionType === undefined ? {} : { actionType }),
+        },
       };
       write(notif);
       // OBSERVATION ONLY, and additive: `consent.request` above stays unicast to the acting
