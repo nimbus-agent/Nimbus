@@ -126,4 +126,38 @@ describe("HitlPopupPage", () => {
     expect(await screen.findByText(/socket closed/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Approve/i })).toBeEnabled();
   });
+
+  /**
+   * The renderer never receives the action type as a field: `consent://request` carries
+   * `{ request_id, prompt, details }`, and the type is only the `Type:` line of the gateway's
+   * `formatConsentPrompt` text. An `extension.migrate` request must still get its labelled preview,
+   * and a heading that is not that raw text (which embeds the payload as JSON).
+   */
+  it("renders an extension.migrate request as a labelled preview, not the raw prompt", () => {
+    const details = {
+      migrationId: "m1",
+      extensionId: "com.nimbus.readwise",
+      summary: "Readwise now runs as a signed extension",
+      publisher: { id: "nimbus", fingerprint: "ab12cd34" },
+      version: "1.0.0",
+      network: "readwise.io only",
+      sandbox: "cannot confine the filesystem policy",
+      readTools: "readwise_highlights_list",
+      knownLoss: "sync history is not carried over",
+      fromRenderer: true,
+    };
+    storeState.pending = [
+      {
+        requestId: "mig",
+        prompt: `Action requires your approval\n\nType: extension.migrate\n\nDetails: ${JSON.stringify(details)}`,
+        details,
+        receivedAtMs: 1,
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(screen.getByTestId("migrate-preview")).toHaveTextContent("ab12cd34");
+    expect(screen.getByTestId("migrate-network")).toHaveTextContent("readwise.io only");
+    expect(screen.getByTestId("migrate-sandbox")).toHaveTextContent("cannot confine");
+    expect(screen.getByRole("heading")).not.toHaveTextContent("Details:");
+  });
 });

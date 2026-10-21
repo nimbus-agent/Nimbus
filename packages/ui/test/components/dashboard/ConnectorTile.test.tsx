@@ -25,6 +25,23 @@ describe("ConnectorTile", () => {
     expect(screen.getByText(/rate-limited/i)).toBeInTheDocument();
   });
 
+  it("shows why a paused connector is paused (the migration's last_error)", () => {
+    const c: ConnectorStatus = {
+      name: "readwise",
+      health: "paused",
+      lastError: "Moving to the signed Readwise extension: approve it in Marketplace",
+    };
+    render(<ConnectorTile status={c} highlighted={false} />);
+    expect(screen.getByTestId("connector-paused-reason")).toHaveTextContent(
+      /signed Readwise extension/,
+    );
+  });
+
+  it("shows no reason line for a paused connector with no lastError", () => {
+    render(<ConnectorTile status={{ name: "readwise", health: "paused" }} highlighted={false} />);
+    expect(screen.queryByTestId("connector-paused-reason")).toBeNull();
+  });
+
   it("shows 'not synced yet' when lastSyncAt is missing", () => {
     const c: ConnectorStatus = { name: "gmail", health: "healthy" };
     render(<ConnectorTile status={c} highlighted={false} />);
