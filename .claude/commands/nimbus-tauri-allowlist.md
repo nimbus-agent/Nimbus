@@ -23,9 +23,9 @@ This skill is the rule a contributor consults **before** editing the allowlist.
 
 | File | Role |
 |---|---|
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:57`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `ALLOWED_METHODS: &[&str]` — the single sorted, asserted-size array |
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:178`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `NO_TIMEOUT_METHODS` — subset that bypasses the 30 s default RPC timeout |
-| [`packages/ui/src-tauri/src/gateway_bridge.rs:192`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `GLOBAL_BROADCAST_METHODS` — notifications that fan out across all Tauri windows |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `ALLOWED_METHODS: &[&str]` — the single sorted, asserted-size array |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `NO_TIMEOUT_METHODS` — subset that bypasses the 30 s default RPC timeout |
+| [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) | `GLOBAL_BROADCAST_METHODS` — notifications that fan out across all Tauri windows |
 | [`packages/ui/src-tauri/src/gateway_bridge.rs`](../../packages/ui/src-tauri/src/gateway_bridge.rs) `mod tests` | Allowlist enforcement tests: `allowlist_exact_size`, `allowlist_is_alphabetized`, `allowlist_has_no_duplicates`, `allowlist_oncall_reads_only`, `allowlist_captures_reads_only`, `allowlist_rejects_vault_and_raw_db_writes`, plus per-surface read-only guards (e.g. `allowlist_egress_read_only` — egress reads exposed, `egress.prune` blocked) |
 
 ## The Three Lists
@@ -41,7 +41,7 @@ Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currentl
 
 ### `NO_TIMEOUT_METHODS`
 
-Methods that legitimately take many minutes and are tracked for liveness via streamed progress notifications instead of the default 30 s RPC timeout. Currently 6: `data.export`, `data.import`, `identity.login`, `llm.pullModel`, `updater.applyUpdate`, `workflow.run`. `workflow.run` earns its place for two reasons, not one: the handler resolves only when the run ends, AND a step can trip a HITL gate whose approval the user supplies mid-call, so the bound would double as the user's think time. The list is:
+Methods that legitimately take many minutes and are tracked for liveness via streamed progress notifications instead of the default 30 s RPC timeout. Currently 7: `data.export`, `data.import`, `identity.login`, `llm.pullModel`, `migration.accept`, `updater.applyUpdate`, `workflow.run`. `migration.accept` resolves only once the owner answers its `extension.migrate` consent prompt, so a timeout would cut off the owner's read of that prompt. `workflow.run` earns its place for two reasons, not one: the handler resolves only when the run ends, AND a step can trip a HITL gate whose approval the user supplies mid-call, so the bound would double as the user's think time. The list is:
 
 - **A subset of `ALLOWED_METHODS`** — enforced by `no_timeout_methods_are_subset_of_allowlist`.
 - **Size-asserted** — `no_timeout_methods_exact_size` checks `NO_TIMEOUT_METHODS.len() == 7`.

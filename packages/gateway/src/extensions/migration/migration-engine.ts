@@ -317,6 +317,9 @@ function buildConsentPayload(
   };
 }
 
+/** An accept with no stated origin did not come from the renderer (I46's audit field). */
+const NOT_FROM_RENDERER: MigrationAcceptOrigin = { fromRenderer: false };
+
 // ---- verification against the continuity table --------------------------------------------------
 
 function sameSet(a: readonly string[], b: readonly string[]): boolean {
@@ -941,11 +944,11 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       return retrying;
     },
 
-    async accept(id, consent, origin = { fromRenderer: false }) {
+    async accept(id, consent, origin) {
       const row = requirePending(id);
       busy.add(row.legacyServiceId);
       try {
-        return await acceptLocked(row, consent, origin);
+        return await acceptLocked(row, consent, origin ?? NOT_FROM_RENDERER);
       } finally {
         busy.delete(row.legacyServiceId);
       }
