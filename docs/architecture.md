@@ -2628,8 +2628,10 @@ const streamReq: JSONRPCRequest = {
 // }) -> { toolCalls: ToolCallLogReadEntry[], hasMore: boolean, nextCursor: { calledAt, id } | null }
 
 // Consent gate — Gateway emits a consent request; client surfaces it to the user
-// Gateway → Client: { method: "consent.request", params: { actionId, prompt, details } }
-// Client → Gateway: { method: "consent.respond", params: { actionId, approved: true } }
+// Gateway → Client: { method: "consent.request", params: { requestId, prompt, details?, actionType? } }
+//   (`actionType` is the HITL action type, e.g. "data.delete"; absent from an older gateway. A client keys
+//   its preview and default focus on it, and fails safe when it is absent.)
+// Client → Gateway: { method: "consent.respond", params: { requestId, approved: true } }
 
 // Phase 5 surfaces (full signatures in the nimbus-ipc skill registry):
 // agents.expert / agents.impact / agents.catchup — read-only built-in agents; emit <agent>.briefReady

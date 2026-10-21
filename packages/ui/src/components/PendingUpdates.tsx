@@ -183,7 +183,8 @@ export function PendingUpdates({
                   </span>
                   {m.state === "failed" ? (
                     <span className="text-xs text-red-600" data-testid={`migration-failed-${m.id}`}>
-                      Migration failed: {m.error ?? "unknown error"}
+                      Migration failed: {m.error ?? "unknown error"}. Run `nimbus connector migrate
+                      retry` in a terminal.
                     </span>
                   ) : (
                     <span className="text-xs text-neutral-500">

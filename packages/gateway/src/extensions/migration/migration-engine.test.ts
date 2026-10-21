@@ -273,7 +273,7 @@ describe("evaluate", () => {
     const health = getConnectorHealth(db, LEGACY);
     expect(health.state).toBe("paused");
     expect(health.lastError).toBe(
-      `Fixture Reader moved to an extension — run \`nimbus connector migrate accept ${row.id}\` or answer it in the desktop app`,
+      `Fixture Reader moved to an extension — run \`nimbus connector migrate accept ${row.id}\` or answer it on the Marketplace page of the desktop app (Pending migrations)`,
     );
   });
 
@@ -641,7 +641,7 @@ describe("the consent payload", () => {
 
   test("the Readwise wording of the paused reason is the brief's, verbatim", () => {
     expect(awaitingApprovalReason("Readwise", "abc")).toBe(
-      "Readwise moved to an extension — run `nimbus connector migrate accept abc` or answer it in the desktop app",
+      "Readwise moved to an extension — run `nimbus connector migrate accept abc` or answer it on the Marketplace page of the desktop app (Pending migrations)",
     );
   });
 });

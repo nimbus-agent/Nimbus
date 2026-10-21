@@ -223,7 +223,7 @@ const RETRY = "`nimbus connector migrate retry`";
 
 /** The paused reason while the owner's decision is pending (the brief's wording, verbatim). */
 export function awaitingApprovalReason(displayName: string, migrationId: string): string {
-  return `${displayName} moved to an extension — run \`nimbus connector migrate accept ${migrationId}\` or answer it in the desktop app`;
+  return `${displayName} moved to an extension — run \`nimbus connector migrate accept ${migrationId}\` or answer it on the Marketplace page of the desktop app (Pending migrations)`;
 }
 
 function failedReason(error: string): string {

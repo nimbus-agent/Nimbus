@@ -187,6 +187,7 @@ describe("PendingUpdates: pending migrations", () => {
     render(<PendingUpdates offline={false} />);
     const row = await screen.findByTestId("pending-migration-row-f1");
     expect(row).toHaveTextContent("digest mismatch");
+    expect(row).toHaveTextContent("nimbus connector migrate retry");
     expect(screen.queryByTestId("migration-keep-f1")).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
     expect(callMock.mock.calls.map((c) => c[0])).not.toContain("migration.decline");

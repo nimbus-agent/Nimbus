@@ -186,7 +186,7 @@ describe("HitlPopupPage", () => {
     expect(screen.getByRole("heading")).toHaveTextContent("Details:");
   });
 
-  it("does not read the type from a payload key, with or without an actionType", () => {
+  it("does not read the type from a payload key", () => {
     storeState.pending = [
       {
         requestId: "k1",

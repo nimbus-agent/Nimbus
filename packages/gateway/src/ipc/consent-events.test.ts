@@ -167,3 +167,16 @@ describe("consent.request carries the action type", () => {
     expect("actionType" in notif.params).toBe(false);
   });
 });
+
+describe("the migration prompt hides its audit-only field", () => {
+  test("fromRenderer is not in the prompt text, but stays in the action's own payload", () => {
+    const action = {
+      type: "extension.migrate",
+      payload: { extensionId: "com.x", version: "1.0.0", fromRenderer: true },
+    };
+    const prompt = formatConsentPrompt(action);
+    expect(prompt).toContain("com.x");
+    expect(prompt).not.toContain("fromRenderer");
+    expect(action.payload.fromRenderer).toBe(true);
+  });
+});
