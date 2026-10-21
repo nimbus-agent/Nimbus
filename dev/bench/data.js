@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792555027645,
+  "lastUpdate": 1792595972253,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b6cb3b5270b5e8317ff001fb27cf793898c95553",
-          "message": "chore: release main (#1025)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.18.0</summary>\n\n##\n[1.18.0](https://github.com/nimbus-agent/Nimbus/compare/v1.17.0...v1.18.0)\n(2026-08-02)\n\n\n### Features\n\n* **index:** full-body store — V48 item.body, uncapped keyword search,\nand full bodies for the prose sources\n([#1023](https://github.com/nimbus-agent/Nimbus/issues/1023))\n([faa23a8](https://github.com/nimbus-agent/Nimbus/commit/faa23a8b50fe7d8e9ae293adcb7e912572a1a900))\n\n\n### Bug Fixes\n\n* **share:** fail closed on unverified share replay\n([#1021](https://github.com/nimbus-agent/Nimbus/issues/1021))\n([e210723](https://github.com/nimbus-agent/Nimbus/commit/e210723c8885f77c9be560ff3ccb3cff90e9018e))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-02T19:35:37+03:00",
-          "tree_id": "bfac77a0712636c2716a7623d79a218ad6fc21fa",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b6cb3b5270b5e8317ff001fb27cf793898c95553"
-        },
-        "date": 1785689232892,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.4844775000045,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.37864579999297,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 280.05779165000024,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fb22b9295f4a8b5c4d0fcd484c1b38122f855475",
+          "message": "feat(extensions): built-in official registry and connector migration (#1709)\n\n## What this does\n\nThis PR adds the gateway side of moving a bundled connector's users onto\na signed extension, plus the built-in official registry the move\ninstalls from. It is part 5 of the Readwise-unbundling pilot: PR 3\n(#1705) added extension sync, and nimbus-mcp-servers#59 shipped the\nReadwise extension package.\n\n**Nothing changes for current users yet.** The built-in registry is\n`null` and the continuity table is empty in this release, so a boot does\nnothing, bare installs use only the owner's registries, and no migration\nis ever prepared. PR 7 sets the real registry root key and URL and fills\nthe table. Until then every new path is exercised by tests that inject a\nfixture registry and a fixture continuity entry through the gateway's\ncomposition options. No env var, config key or IPC parameter can supply\nthem.\n\nTwo small behaviour changes do reach current users:\n- `nimbus registry add nimbus-official` is refused\n(`ERR_REGISTRY_NAME_RESERVED`).\n- An owner-installed extension that syncs keeps its progress when a page\nis rate-limited, and its dropped-item count is recorded.\n\n### Built-in official registry\n- `resolveRegistry` returns either an owner registry or the built-in\none. Every path that resolves a source goes through it: fetch, update\nsource, resolve and auto-update.\n- The built-in registry keeps its own anti-rollback sequence in\n`builtin_registry_state`, so `nimbus registry list` stays the owner's\nlist.\n- A bare `extension install <id>` adds the built-in registry to the\ntargets, unless an owner registry already carries the same root\nfingerprint (I44).\n\n### Migration (`nimbus connector migrate list|accept|decline|retry`)\n- **Prepare:** fetches the extension from the built-in registry and\nfully verifies it, then stages it without installing. Prepare writes no\nextension row, Vault key or install audit row. It then pauses the legacy\nservice with a reason that `nimbus doctor` shows.\n- **Accept:** TTY-only. The owner answers one `extension.migrate`\nprompt, which shows the publisher, version, key fingerprint, network\naccess per OS and the sandbox state. The gateway then re-digests the\nstage, installs it, writes the run grant pointing at the existing legacy\nVault key so the token is never re-entered, registers sync under the\nlegacy index id (asserted, so items update in place), and resumes.\n- `extension.migrate` joins the I2 frozen HITL set. Delegates cannot\napprove it (I20).\n- The grant entry point lives in `approve-run.ts`, so D33(c)'s\ntwo-writer confinement is unchanged.\n- **Decline:** keeps the items. Boot never prompts again; `migrate\nretry` re-prepares.\n- **Failure:** offline, verify or permission drift all leave the service\npaused with a visible, path-free reason. Retry happens on the next boot\nor on `migrate retry`.\n- **IPC:** `migration.list|accept|decline|retry` are on the LAN\ndenylist, refused under a demo root, and off the Tauri allowlist. The\ndesktop path is PR 6.\n- **Static rule D34:** confines the `connector_migration` writers, the\ncallers of `approveMigratedExtensionRun`, and the raisers of\n`extension.migrate`.\n- **I44 source pin:** follows the install split and also pins the order\nthe engine's accept path must follow.\n\n### Carried over from earlier pilot PRs\n- **Rate limits:** an extension sync that hits `rate_limited` or\n`unauthenticated` partway through a run now keeps the cursor of the last\npage it committed, so a heavy reader no longer restarts from the same\npage every run.\n- **Dropped items:** recorded in `sync_telemetry.items_dropped` (V73)\nand shown by `nimbus connector status <id> --stats`.\n- **Install split:** registry install is split into\n`fetchVerifiedRegistryPackage` and `installVerifiedRegistryPackage`.\nBehaviour and error order are unchanged.\n\n### Schema\nV73 adds `connector_migration`, `builtin_registry_state` and\n`sync_telemetry.items_dropped`.\n\n## Known limits\n- **Items the extension path drops.** A migrated connector drops rows\nthe bundled connector indexed when their timestamp is before 1970 or\ntheir metadata is over 64 KiB, because the extension sync contract\nrefuses them. The prompt and the docs say so.\n- **Decisions left for PR 7**, all unreachable while the built-in\nregistry is null:\n  - air-gapped bare installs;\n  - rotating the built-in key;\n- a behavioural test of auto-update apply for a built-in-sourced\nextension;\n  - re-checking the publisher key at accept;\n  - an already-installed, bound extension;\n  - evaluation while `[extensions] runtime` is off.\n\n## Verification\n- `bun run preflight:fast` passes.\n- Gateway: 1431 tests pass, 0 fail. This covers security invariants,\nextensions, migration RPC, sync, extension sync and the migration E2E.\n- CLI migrate and doctor: 105 tests pass, 0 fail.\n- The migration E2E runs a real gateway with the real sandbox on\nWindows, using a fixture built-in registry and a fixture continuity\nentry. It checks that items are unchanged and that exactly one\n`sync.run` egress row is written (I29). CI is its first run on Linux and\nmacOS.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added connector migration commands: `list`, `accept`, `decline`, and\n`retry`.\n* Eligible bundled connectors are staged at startup and remain paused\npending approval.\n  * Added migration status reporting to `nimbus doctor`.\n  * Added dropped-item counts to connector sync telemetry.\n  * Added support for verified built-in official registry updates.\n* **Bug Fixes**\n* Sync resumes from the last committed page after rate-limit or\nauthentication interruptions.\n* **Documentation**\n* Documented migration workflows, restrictions, schema updates, and\nsecurity invariants.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-21T18:11:10+03:00",
+          "tree_id": "b21bf27ec686530b8e8df9826bdd7f6879906bf3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/fb22b9295f4a8b5c4d0fcd484c1b38122f855475"
+        },
+        "date": 1792595968853,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 208.48330724999906,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 207.2038619000028,
             "unit": "ms"
           }
         ]
