@@ -71,7 +71,7 @@ export async function buildTestRegistry(
       permissions: {},
       publisher: { id: publisherId, key: publisherKey },
       ...(v.dependsOn === undefined ? {} : { dependsOn: v.dependsOn }),
-      ...(opts.manifestExtra ?? {}),
+      ...opts.manifestExtra,
     };
     const manifestText = JSON.stringify({
       ...unsigned,

@@ -369,7 +369,7 @@ describe("evaluate", () => {
     await engine().evaluate();
     expect(onlyRow()).toEqual(first);
     // An intact stage is not fetched again, by this engine or a fresh one.
-    expect(fetches.length).toBe(fetchesAfterFirst);
+    expect(fetches).toHaveLength(fetchesAfterFirst);
     // Two concurrent calls fetched once: one index, one manifest, one package.
     expect(fetchesAfterFirst).toBe(3);
   });
@@ -404,7 +404,7 @@ describe("evaluate", () => {
     const n = fetches.length;
     await e.evaluate();
     expect(onlyRow().state).toBe("declined");
-    expect(fetches.length).toBe(n);
+    expect(fetches).toHaveLength(n);
   });
 });
 
@@ -694,7 +694,7 @@ describe("credentials never leak", () => {
       errors.push(String(err));
     });
     expect(seen.length).toBeGreaterThan(0);
-    expect(errors.length).toBe(2);
+    expect(errors).toHaveLength(2);
     const dump = [
       JSON.stringify(seen),
       JSON.stringify(listMigrations(db)),
@@ -860,7 +860,7 @@ describe("fix round 1: retry (B10)", () => {
     await e.evaluate();
     await engine().evaluate();
     expect(onlyRow().state).toBe("declined");
-    expect(fetches.length).toBe(n);
+    expect(fetches).toHaveLength(n);
     expect(existsSync(stageRootOf(row.id))).toBe(false);
     // The declined note names the way back.
     expect(getConnectorHealth(db, LEGACY).lastError).toContain(
@@ -901,7 +901,7 @@ describe("fix round 1: retry (B10)", () => {
     const n = fetches.length;
     await e.retry();
     expect(onlyRow()).toEqual(before);
-    expect(fetches.length).toBe(n);
+    expect(fetches).toHaveLength(n);
   });
 
   test("retry with no Vault credential prepares nothing, even for a declined row", async () => {
@@ -937,7 +937,7 @@ describe("fix round 1: a decline during evaluate's Vault read", () => {
     await e.evaluate();
     expect(declinedOnce).toBe(true);
     expect(onlyRow().state).toBe("declined");
-    expect(fetches.length).toBe(n);
+    expect(fetches).toHaveLength(n);
     expect(existsSync(stageRootOf(row.id))).toBe(false);
     expect(getConnectorHealth(db, LEGACY).lastError).toContain("was declined");
   });
@@ -1417,7 +1417,7 @@ describe("branch coverage: concurrency and failures inside evaluate", () => {
     const accepting = e.accept(row.id, () => new Promise<boolean>((r) => (release = r)));
     const n = fetches.length;
     await e.evaluate();
-    expect(fetches.length).toBe(n);
+    expect(fetches).toHaveLength(n);
     release(true);
     expect((await accepting).state).toBe("approved");
   });
@@ -1442,7 +1442,7 @@ describe("branch coverage: concurrency and failures inside evaluate", () => {
     const n = fetches.length;
     open();
     await evaluating;
-    expect(fetches.length).toBe(n);
+    expect(fetches).toHaveLength(n);
     held = false;
     release(true);
     expect((await accepting).state).toBe("approved");

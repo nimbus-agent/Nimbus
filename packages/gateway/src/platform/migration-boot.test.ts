@@ -83,9 +83,9 @@ describe("boot evaluation", () => {
   test("is skipped when demo-rooted (I41)", () => {
     let n = 0;
     const { log } = logger();
-    expect(startMigrationBootEvaluation({ evaluate: async () => void n++ }, true, log)).toBe(
-      undefined,
-    );
+    expect(
+      startMigrationBootEvaluation({ evaluate: async () => void n++ }, true, log),
+    ).toBeUndefined();
     expect(n).toBe(0);
   });
 

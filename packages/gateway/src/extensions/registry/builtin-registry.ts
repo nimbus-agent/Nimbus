@@ -153,5 +153,5 @@ export function currentRegistryFloor(
 ): { lastSequence: number } | undefined {
   if (reg.builtin === true) return { lastSequence: readBuiltinState(db)?.last_sequence ?? 0 };
   const cur = getRegistry(db, reg.name);
-  return cur === undefined || cur.rootKey !== reg.rootKey ? undefined : cur;
+  return cur?.rootKey === reg.rootKey ? cur : undefined;
 }

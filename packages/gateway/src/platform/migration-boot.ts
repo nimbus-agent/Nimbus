@@ -120,10 +120,7 @@ export function startMigrationBootEvaluation(
       "connector migration boot evaluation failed; the gateway continues",
     );
   };
-  try {
-    return engine.evaluate().catch(warn);
-  } catch (e) {
-    warn(e);
-    return Promise.resolve();
-  }
+  // An async wrapper keeps a SYNCHRONOUS throw from `evaluate` in the promise chain, so it reaches
+  // `warn` too; `evaluate` itself still starts running before this returns.
+  return (async () => engine.evaluate())().catch(warn);
 }

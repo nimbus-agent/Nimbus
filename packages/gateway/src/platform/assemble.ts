@@ -3772,7 +3772,7 @@ export async function assemblePlatformServices(
     scheduler: syncScheduler,
     logger: syncLogger,
   });
-  startMigrationBootEvaluation(migrationEngine, paths.demo === true, syncLogger);
+  void startMigrationBootEvaluation(migrationEngine, paths.demo === true, syncLogger);
   const autoUpdateRuntime = maybeStartAutoUpdateRuntime({
     db,
     vault,

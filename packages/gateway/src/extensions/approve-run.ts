@@ -253,8 +253,7 @@ function assertMigrationBinding(
   const names = sortedNames(credentials);
   const legacyNames = binding === undefined ? [] : sortedNames(binding.credentials);
   const bound =
-    binding !== undefined &&
-    binding.legacyServiceId === legacyServiceId &&
+    binding?.legacyServiceId === legacyServiceId &&
     names.length === legacyNames.length &&
     names.every((n) => credentials[n]?.vaultKey === binding.credentials[n]);
   if (!bound) {

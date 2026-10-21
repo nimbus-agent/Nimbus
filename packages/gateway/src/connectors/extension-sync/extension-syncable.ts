@@ -7,7 +7,12 @@ import {
   UnauthenticatedError,
 } from "../../sync/types.ts";
 import type { ExtensionIdentity } from "./extension-identity.ts";
-import { type ExtensionSyncRequest, parseSyncResponse } from "./sync-response.ts";
+import {
+  type ExtensionSyncRequest,
+  type ParsedSyncPage,
+  type ParsedSyncResponse,
+  parseSyncResponse,
+} from "./sync-response.ts";
 
 export interface ExtensionSyncableDeps {
   readonly identity: ExtensionIdentity;
@@ -77,16 +82,35 @@ export function createExtensionSyncable(deps: ExtensionSyncableDeps): Syncable {
   };
 }
 
+function historyFloorOf(ctx: SyncContext): number {
+  return ctx.historyFloorMs !== undefined && Number.isFinite(ctx.historyFloorMs)
+    ? ctx.historyFloorMs
+    : Date.now() - INITIAL_SYNC_DEPTH_DAYS * 86_400_000;
+}
+
+/** A rate-limited or unauthenticated response stops the run with the scheduler's own error. */
+function requirePage(
+  page: ParsedSyncResponse,
+  stop: { resumeCursor: string } | undefined,
+): ParsedSyncPage {
+  if (page.status === "rate_limited") {
+    throw new RateLimitError(
+      new Date(Date.now() + (page.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS)),
+      undefined,
+      stop,
+    );
+  }
+  if (page.status === "unauthenticated") throw new UnauthenticatedError(undefined, stop);
+  return page;
+}
+
 async function runPages(
   deps: ExtensionSyncableDeps,
   ctx: SyncContext,
   startCursor: string | null,
   t0: number,
 ): Promise<SyncResult> {
-  const historyFloorMs =
-    ctx.historyFloorMs !== undefined && Number.isFinite(ctx.historyFloorMs)
-      ? ctx.historyFloorMs
-      : Date.now() - INITIAL_SYNC_DEPTH_DAYS * 86_400_000;
+  const historyFloorMs = historyFloorOf(ctx);
   const dropped = { undeclaredType: 0, malformed: 0, oversized: 0 };
   let cursor = startCursor;
   let upserted = 0;
@@ -95,7 +119,7 @@ async function runPages(
     const raw = await deps.callSync({ cursor, depth: ctx.depth, historyFloorMs });
     // No await between this check and the writeBatch below.
     if (!deps.isLive()) throw new ExtensionSyncCancelledError(deps.identity.indexServiceId);
-    const page = parseSyncResponse(raw, {
+    const parsed = parseSyncResponse(raw, {
       indexServiceId: deps.identity.indexServiceId,
       itemTypes: deps.itemTypes,
       syncedAt: Date.now(),
@@ -105,14 +129,7 @@ async function runPages(
     // trips at the same page every run, never getting past it). On the first page there is
     // nothing committed and nothing to resume: the stored cursor stays as it was.
     const stop = pages > 1 && cursor !== null ? { resumeCursor: cursor } : undefined;
-    if (page.status === "rate_limited") {
-      throw new RateLimitError(
-        new Date(Date.now() + (page.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS)),
-        undefined,
-        stop,
-      );
-    }
-    if (page.status === "unauthenticated") throw new UnauthenticatedError(undefined, stop);
+    const page = requirePage(parsed, stop);
     ctx.writeBatch(() => {
       for (const row of page.rows) ctx.upsertItem(row);
     });

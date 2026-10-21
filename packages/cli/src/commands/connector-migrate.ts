@@ -211,8 +211,9 @@ async function runAccept(io: MigrateIo, rest: readonly string[]): Promise<void> 
     const moved = `${service} now runs as the extension ${stripControl(row.extensionId)}${version}`;
     const sync = await syncStateOf(client, row.legacyServiceId);
     if (sync.kind === "paused") {
+      const why = sync.reason === "" ? "" : `: ${sync.reason}`;
       io.log(
-        `${moved}, but sync is paused${sync.reason === "" ? "" : `: ${sync.reason}`}; your items and credential are kept. Run \`nimbus connector status ${service}\` for details.`,
+        `${moved}, but sync is paused${why}; your items and credential are kept. Run \`nimbus connector status ${service}\` for details.`,
       );
     } else if (sync.kind === "running") {
       io.log(`${moved}; its items, sync position and credential carried over.`);

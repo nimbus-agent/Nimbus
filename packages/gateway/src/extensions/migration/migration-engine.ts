@@ -211,6 +211,19 @@ function failedReason(error: string): string {
   return error.includes(RETRY) ? error : `${error} — run ${RETRY}`;
 }
 
+/** The failure text for an extension id that is already installed (prepare and accept share it). */
+function alreadyInstalledText(extensionId: string): string {
+  return `${extensionId} already installed — remove it, then ${RETRY}`;
+}
+
+/** The text a failed prepare records: the already-installed wording, else the error's own message. */
+function prepareFailureText(entry: ContinuityEntry, e: unknown): string {
+  if (e instanceof RegistryError && e.code === "ERR_REGISTRY_ALREADY_INSTALLED") {
+    return alreadyInstalledText(entry.extensionId);
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
 function declinedReason(displayName: string): string {
   return `${displayName} stays off: moving it to an extension was declined (your items are kept) — run ${RETRY} to change your mind`;
 }
@@ -475,7 +488,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     const id = existing?.id ?? newId();
     removeStage(id);
     // Prepare never installs: an approver that refuses makes that structural, not a convention.
-    const refuse: ExtensionInstallApprover = async () => false;
+    const refuse: ExtensionInstallApprover = () => Promise.resolve(false);
     let pkg: VerifiedRegistryPackage;
     try {
       pkg = await fetchVerifiedRegistryPackage(
@@ -484,13 +497,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
         stageDirFor(id),
       );
     } catch (e) {
-      const error =
-        e instanceof RegistryError && e.code === "ERR_REGISTRY_ALREADY_INSTALLED"
-          ? `${entry.extensionId} already installed — remove it, then ${RETRY}`
-          : e instanceof Error
-            ? e.message
-            : String(e);
-      markFailed(entry, id, error);
+      markFailed(entry, id, prepareFailureText(entry, e));
       return;
     }
     const drift = driftFrom(
@@ -725,10 +732,10 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     }
   };
 
-  const acceptLocked = async (
+  /** What must hold before an accept does anything: a known entry, a registry, the runtime, no bundle. */
+  const requireAcceptable = (
     row: MigrationRow,
-    consent: MigrationConsent,
-  ): Promise<MigrationRow> => {
+  ): { entry: ContinuityEntry; reg: BuiltinRegistryConfig } => {
     const entry = entryFor(row);
     if (entry === undefined) {
       return failAccept(row, "this release no longer migrates this connector");
@@ -751,9 +758,67 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
         `${row.legacyServiceId} is still a built-in connector of this gateway; nothing was changed`,
       );
     }
+    return { entry, reg: builtin };
+  };
+
+  /**
+   * Installs the verified staged package with the migration approver and checks the installed tree
+   * against the digest verified at prepare. Any failure fails the row (an install that landed but
+   * differs is undone first).
+   */
+  const installStaged = async (
+    row: MigrationRow,
+    entry: ContinuityEntry,
+    reg: BuiltinRegistryConfig,
+    staged: { root: string; manifest: ExtensionManifest; rootFingerprint: string },
+  ): Promise<Awaited<ReturnType<typeof installVerifiedRegistryPackage>>> => {
+    const { root, manifest, rootFingerprint } = staged;
+    const entryPath = resolve(root, extensionEntryRelPath(manifest));
+    if (!isStrictlyInside(root, entryPath) || !existsSync(entryPath)) {
+      return failAccept(row, "the staged package has no entry file");
+    }
+    const pkg: VerifiedRegistryPackage = {
+      id: entry.extensionId,
+      version: manifest.version,
+      sourceRoot: root,
+      manifest,
+      publisherKey: entry.publisherKey,
+      entryHash: sha256File(entryPath),
+      reg: builtinRegistryRow(db, reg),
+      rootFingerprint,
+    };
+    // The owner's `extension.migrate` answer IS the install consent (spec § 7.2 step 4: one
+    // approval covers install + run grant + credential grant). This approver exists only here,
+    // after that answer was `true`; it is never exported and never built anywhere else.
+    const approvedByMigrationConsent: ExtensionInstallApprover = () => Promise.resolve(true);
+    let installed: Awaited<ReturnType<typeof installVerifiedRegistryPackage>>;
+    try {
+      installed = await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable");
+    } catch (e) {
+      return failAccept(
+        row,
+        `the extension could not be installed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    const installedRow = listExtensions(db).find((r) => r.id === entry.extensionId);
+    if (installedRow?.tree_digest !== row.treeDigest || installed.treeDigest !== row.treeDigest) {
+      undoInstall(entry.extensionId, installed.installPath);
+      return failAccept(
+        row,
+        "the installed files differ from the verified package (tree digest mismatch); the install was undone",
+      );
+    }
+    return installed;
+  };
+
+  const acceptLocked = async (
+    row: MigrationRow,
+    consent: MigrationConsent,
+  ): Promise<MigrationRow> => {
+    const { entry, reg: builtinReg } = requireAcceptable(row);
     const root = requireIntactStage(row);
     const manifest = readStagedManifest(row, root);
-    const rootFingerprint = publisherKeyFingerprint(builtin.rootKey);
+    const rootFingerprint = publisherKeyFingerprint(builtinReg.rootKey);
     const drift = driftFrom(entry, manifest, entry.publisherKey, rootFingerprint, root, deps.env);
     if (drift !== null) return failAccept(row, driftError(entry, drift));
     const grants = resolveGrantsOrNull(manifest, root, deps.env);
@@ -779,41 +844,11 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
 
     // The prompt may have been open for a while: what is installed must be what was verified.
     requireIntactStage(row);
-    const entryPath = resolve(root, extensionEntryRelPath(manifest));
-    if (!isStrictlyInside(root, entryPath) || !existsSync(entryPath)) {
-      return failAccept(row, "the staged package has no entry file");
-    }
-    const pkg: VerifiedRegistryPackage = {
-      id: entry.extensionId,
-      version: manifest.version,
-      sourceRoot: root,
+    const installed = await installStaged(row, entry, builtinReg, {
+      root,
       manifest,
-      publisherKey: entry.publisherKey,
-      entryHash: sha256File(entryPath),
-      reg: builtinRegistryRow(db, builtin),
       rootFingerprint,
-    };
-    // The owner's `extension.migrate` answer above IS the install consent (spec § 7.2 step 4: one
-    // approval covers install + run grant + credential grant). This approver exists only here,
-    // after that answer was `true`; it is never exported and never built anywhere else.
-    const approvedByMigrationConsent: ExtensionInstallApprover = async () => true;
-    let installed: Awaited<ReturnType<typeof installVerifiedRegistryPackage>>;
-    try {
-      installed = await install(installDeps(builtin, approvedByMigrationConsent), pkg, "stable");
-    } catch (e) {
-      return failAccept(
-        row,
-        `the extension could not be installed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-    const installedRow = listExtensions(db).find((r) => r.id === entry.extensionId);
-    if (installedRow?.tree_digest !== row.treeDigest || installed.treeDigest !== row.treeDigest) {
-      undoInstall(entry.extensionId, installed.installPath);
-      return failAccept(
-        row,
-        "the installed files differ from the verified package (tree digest mismatch); the install was undone",
-      );
-    }
+    });
     try {
       await approveMigratedExtensionRun(
         {

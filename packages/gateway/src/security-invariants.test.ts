@@ -7206,25 +7206,31 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const src = stripComments(
       await read("packages/gateway/src/extensions/migration/migration-engine.ts"),
     );
+    const stagedAt = src.indexOf("const installStaged = async (");
     const startAt = src.indexOf("const acceptLocked = async (");
-    expect(startAt).toBeGreaterThan(-1);
+    expect(stagedAt).toBeGreaterThan(-1);
+    expect(startAt).toBeGreaterThan(stagedAt);
+    // `installStaged` is the install half; `acceptLocked` is the order around it.
+    const installHalf = src.slice(stagedAt, startAt);
     const accept = src.slice(startAt, src.indexOf("\n  return {", startAt));
     const consentAt = accept.indexOf("const approved = await consent(");
     const notApprovedAt = accept.indexOf('"ERR_EXTENSION_MIGRATION_NOT_APPROVED"');
-    // (1) The stage is re-digested against the row's tree_digest after the prompt…
+    // (1) The stage is re-digested against the row's tree_digest after the prompt, and only then
+    // is the install half called…
     const reDigestAt = accept.indexOf("\n    requireIntactStage(row);", notApprovedAt);
+    const callAt = accept.indexOf("await installStaged(row, entry, builtinReg,");
     // (2) …the package carries the BUILT-IN registry row (never an owner registry) and is installed
     // through the verified install half, with the approver that exists only past the answer…
-    const regAt = accept.indexOf("reg: builtinRegistryRow(db, builtin),");
-    const approverAt = accept.indexOf(
-      "const approvedByMigrationConsent: ExtensionInstallApprover = async () => true;",
+    const regAt = installHalf.indexOf("reg: builtinRegistryRow(db, reg),");
+    const approverAt = installHalf.indexOf(
+      "const approvedByMigrationConsent: ExtensionInstallApprover = () => Promise.resolve(true);",
     );
-    const installAt = accept.indexOf(
-      'await install(installDeps(builtin, approvedByMigrationConsent), pkg, "stable")',
+    const installAt = installHalf.indexOf(
+      'await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable")',
     );
     // (3) …and the INSTALLED tree must carry the staged digest, in the row and in the result,
     // before the run grant is written.
-    const installedAt = accept.indexOf(
+    const installedAt = installHalf.indexOf(
       "installedRow?.tree_digest !== row.treeDigest || installed.treeDigest !== row.treeDigest",
     );
     const grantAt = accept.indexOf("await approveMigratedExtensionRun(");
@@ -7232,6 +7238,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       consentAt,
       notApprovedAt,
       reDigestAt,
+      callAt,
       regAt,
       approverAt,
       installAt,
@@ -7242,11 +7249,11 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     }
     expect(notApprovedAt).toBeGreaterThan(consentAt);
     expect(reDigestAt).toBeGreaterThan(notApprovedAt);
-    expect(regAt).toBeGreaterThan(reDigestAt);
-    expect(approverAt).toBeGreaterThan(reDigestAt);
+    expect(callAt).toBeGreaterThan(reDigestAt);
+    expect(approverAt).toBeGreaterThan(regAt);
     expect(installAt).toBeGreaterThan(Math.max(regAt, approverAt));
     expect(installedAt).toBeGreaterThan(installAt);
-    expect(grantAt).toBeGreaterThan(installedAt);
+    expect(grantAt).toBeGreaterThan(callAt);
     // The re-digest is a real digest comparison against the row, through the extension store's own
     // digest function — not an existence check.
     const checkAt = src.indexOf("const checkStage = (row: MigrationRow): StageCheck => {");

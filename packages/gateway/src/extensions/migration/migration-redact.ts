@@ -22,21 +22,30 @@ import { homedir } from "node:os";
 export const PATH_PLACEHOLDER = "<path>";
 
 /** Path characters that may follow a root (no whitespace, no quotes, no delimiters). */
-const TAIL = String.raw`(?:[\\/][^\s'"` + "`" + String.raw`<>|]*)?`;
-const QUOTED_RE = /(['"`])([^'"`\r\n]*[\\/][^'"`\r\n]*)\1/g;
+const TAIL = String.raw`(?:[\\/][^\s'"${"`"}<>|]*)?`;
+// The body is split at its FIRST separator (the leading class excludes one), so the two classes
+// never overlap and the match is linear.
+const QUOTED_RE = /(['"`])([^'"`\r\n\\/]*[\\/][^'"`\r\n]*)\1/g;
 const FILE_URL_RE = /\bfile:\/\/[^\s'"`<>]*/gi;
 const WINDOWS_PATH_RE = /(?:\b[A-Za-z]:[\\/]|\\\\)[^\s'"`<>|]*/g;
 const POSIX_PATH_RE = /(^|[\s'"`(=,[])\/(?!\/)[^\s'"`<>)\],]*/g;
 
+/** Linear trim of trailing slashes and backslashes (a `+$` regex backtracks quadratically). */
+function trimTrailingSeparators(s: string): string {
+  let end = s.length;
+  while (end > 0 && (s[end - 1] === "/" || s[end - 1] === "\\")) end -= 1;
+  return s.slice(0, end);
+}
+
 function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 /** Every spelling of each root (both separators, no trailing separator), longest first. */
 function rootSpellings(roots: readonly string[]): string[] {
   const out = new Set<string>();
   for (const raw of roots) {
-    const r = raw.trim().replace(/[\\/]+$/, "");
+    const r = trimTrailingSeparators(raw.trim());
     // A root of one or two characters (`/`, `C:`) would eat every path: never a real root here.
     if (r.length < 3) continue;
     out.add(r);

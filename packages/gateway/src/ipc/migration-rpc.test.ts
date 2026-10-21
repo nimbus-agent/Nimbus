@@ -282,6 +282,25 @@ describe("redactMigrationPaths with the gateway's roots (fix round 1: paths with
     );
   });
 
+  test("a root given with trailing separators is still redacted, and a hostile input is linear", () => {
+    expect(redactMigrationPaths("rm /srv/my data/x ok", ["/srv/my data///"], "linux")).toBe(
+      "rm <path> ok",
+    );
+    expect(redactMigrationPaths("rm /srv/my data/x ok", ["/srv/my data/\\/\\"], "linux")).toBe(
+      "rm <path> ok",
+    );
+    const t0 = performance.now();
+    redactMigrationPaths(`'${"a".repeat(50_000)}`);
+    redactMigrationPaths("'a".repeat(20_000));
+    redactMigrationPaths("x", [`/root${"/".repeat(50_000)}`, `/r${"/\\".repeat(50_000)}`]);
+    expect(performance.now() - t0).toBeLessThan(2000);
+  });
+
+  test("a quoted span splits at its first separator and still matches whole", () => {
+    expect(redactMigrationPaths("rmdir 'a b/c d\\e f' done")).toBe("rmdir '<path>' done");
+    expect(redactMigrationPaths("say 'hello world' now")).toBe("say 'hello world' now");
+  });
+
   test("a message with no path is unchanged, roots or not", () => {
     const s = "the staged package is missing — run `nimbus connector migrate retry`";
     expect(redactMigrationPaths(s, [MAC_DATA, "/Users/jane"], "darwin")).toBe(s);
