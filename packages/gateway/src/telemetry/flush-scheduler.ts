@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Logger } from "pino";
-import { loadNimbusTelemetryFromPath } from "../config/telemetry-toml.ts";
+import { loadNimbusTelemetryFromConfigDir } from "../config/telemetry-toml.ts";
 import { collectIndexMetrics } from "../db/metrics.ts";
 
 import type { AgentLatencyRecorder } from "./agent-latency.ts";
@@ -86,7 +86,7 @@ function readOrCreateSessionId(dataDir: string): string {
 
 export function startTelemetryFlushScheduler(opts: {
   readonly dataDir: string;
-  readonly activeTomlPath: string;
+  readonly configDir: string;
   readonly getDatabase: () => Database;
   readonly gatewayVersion: string;
   readonly logger: Logger;
@@ -95,7 +95,7 @@ export function startTelemetryFlushScheduler(opts: {
   readonly agentLatencyRecorder?: AgentLatencyRecorder;
 }): TelemetryFlushHandle {
   let stopped = false;
-  const cfg0 = loadNimbusTelemetryFromPath(opts.activeTomlPath);
+  const cfg0 = loadNimbusTelemetryFromConfigDir(opts.configDir);
   const ms = Math.min(86_400_000, Math.max(60_000, cfg0.flushIntervalSeconds * 1000));
   let handle: ReturnType<typeof setInterval> | null = null;
 
@@ -112,7 +112,7 @@ export function startTelemetryFlushScheduler(opts: {
           /* ignore unreadable marker */
         }
       }
-      const cfg = loadNimbusTelemetryFromPath(opts.activeTomlPath);
+      const cfg = loadNimbusTelemetryFromConfigDir(opts.configDir);
       if (!cfg.enabled) {
         return;
       }

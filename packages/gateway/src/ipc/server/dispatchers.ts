@@ -2,11 +2,11 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import pino from "pino";
 import { buildAgentSynthesisRunner } from "../../agents/_lib/agent-synthesis-runner.ts";
+import { getLayeredConfig } from "../../config/layered-config.ts";
 import {
   loadNimbusLlmFromConfigDir,
   loadNimbusPreflightFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
-  resolveNimbusTomlForProfile,
 } from "../../config/nimbus-toml.ts";
 import { createConnectorDispatcher, meshDispatcherClient } from "../../connectors/registry.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
@@ -157,12 +157,12 @@ export async function tryDispatchLlmRpc(
     const out = await dispatchLlmRpc(method, params, {
       registry: ctx.options.llmRegistry,
       notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
-      // Only `llm.use` reads this (see `LlmRpcContext.tomlPath`'s doc) — resolved the same
-      // way `platform/assemble.ts` resolves the router's own `activeTomlPath`, so a pin
-      // written here lands in the exact file boot re-reads.
+      // Only `llm.use` reads this (see `LlmRpcContext.tomlPath`'s doc) — the layered reader's
+      // write target (the active profile file, created if absent, else `nimbus.toml`), so a
+      // pin written here lands in a file the next layered read merges.
       ...(ctx.options.configDir === undefined
         ? {}
-        : { tomlPath: resolveNimbusTomlForProfile(ctx.options.configDir) }),
+        : { tomlPath: getLayeredConfig(ctx.options.configDir).writeTargetPath() }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {

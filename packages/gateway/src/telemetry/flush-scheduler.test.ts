@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import pino from "pino";
 import { AgentLatencyRecorder } from "./agent-latency.ts";
 import {
@@ -159,7 +159,7 @@ describe("startTelemetryFlushScheduler — initial tick on start", () => {
   it("calls fetch immediately on start (initial tick fires synchronously)", async () => {
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -174,7 +174,7 @@ describe("startTelemetryFlushScheduler — initial tick on start", () => {
   it("registers an interval with the configured flush interval ms", () => {
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -208,7 +208,7 @@ describe("startTelemetryFlushScheduler — agent-invocation latency in the POSTe
     for (const ms of [100, 200, 300]) recorder.record(ms);
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -245,7 +245,7 @@ describe("startTelemetryFlushScheduler — timer-driven subsequent tick (re-arm)
   it("invokes fetch again when the captured interval callback fires", async () => {
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -288,7 +288,7 @@ describe("startTelemetryFlushScheduler — disabled telemetry marker file", () =
 
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -323,7 +323,7 @@ describe("startTelemetryFlushScheduler — cfg.enabled = false", () => {
   it("skips fetch when telemetry enabled = false in TOML", async () => {
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -356,7 +356,7 @@ describe("startTelemetryFlushScheduler — stop / shutdown", () => {
   it("stop() calls clearInterval and subsequent tick() calls are no-ops", async () => {
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -377,7 +377,7 @@ describe("startTelemetryFlushScheduler — stop / shutdown", () => {
   it("stop() is idempotent — calling twice does not throw", async () => {
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -428,7 +428,7 @@ describe("startTelemetryFlushScheduler — HTTP error response", () => {
 
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: warnLogger,
@@ -479,7 +479,7 @@ describe("startTelemetryFlushScheduler — fetch throws network error", () => {
 
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: warnLogger,
@@ -512,7 +512,7 @@ describe("startTelemetryFlushScheduler — cold start attribution", () => {
   it("includes cold_start_ms in the POST payload when provided", async () => {
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -567,7 +567,7 @@ describe("startTelemetryFlushScheduler — tick error outer catch", () => {
 
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => {
         throw new Error("synthetic db error");
       },
@@ -674,7 +674,7 @@ describe("startTelemetryFlushScheduler — corrupt session file", () => {
 
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -712,7 +712,7 @@ describe("startTelemetryFlushScheduler — valid pre-existing session file", () 
 
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -756,7 +756,7 @@ describe("startTelemetryFlushScheduler — interval clamping", () => {
 
     const handle = startTelemetryFlushScheduler({
       dataDir,
-      activeTomlPath: tomlPath,
+      configDir: dirname(tomlPath),
       getDatabase: () => db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -789,7 +789,7 @@ describe("startTelemetryFlushScheduler — interval clamping", () => {
 
     const handle = startTelemetryFlushScheduler({
       dataDir,
-      activeTomlPath: tomlPath,
+      configDir: dirname(tomlPath),
       getDatabase: () => db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -849,7 +849,7 @@ describe("startTelemetryFlushScheduler — fetch throws a non-Error value", () =
 
       const handle = startTelemetryFlushScheduler({
         dataDir: harness.dataDir,
-        activeTomlPath: harness.tomlPath,
+        configDir: dirname(harness.tomlPath),
         getDatabase: () => harness.db,
         gatewayVersion: "0.1.0-test",
         logger: warnLogger,
@@ -907,7 +907,7 @@ describe("startTelemetryFlushScheduler — outer tick catch with non-Error throw
       // Throw a non-Error value to exercise the `String(e)` branch in outer catch
       const handle = startTelemetryFlushScheduler({
         dataDir: harness.dataDir,
-        activeTomlPath: harness.tomlPath,
+        configDir: dirname(harness.tomlPath),
         getDatabase: () => {
           throw "synthetic-string-error";
         },
@@ -953,7 +953,7 @@ describe("startTelemetryFlushScheduler — disabled marker file unreadable (non-
 
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -987,7 +987,7 @@ describe("startTelemetryFlushScheduler — stop() with handle already null (seco
   it("second stop() does not call clearInterval again (handle is null)", async () => {
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,
@@ -1023,7 +1023,7 @@ describe("startTelemetryFlushScheduler — no coldStartMs (undefined spread)", (
   it("cold_start_ms defaults to 0 when coldStartMs is not provided", async () => {
     const handle = startTelemetryFlushScheduler({
       dataDir: harness.dataDir,
-      activeTomlPath: harness.tomlPath,
+      configDir: dirname(harness.tomlPath),
       getDatabase: () => harness.db,
       gatewayVersion: "0.1.0-test",
       logger: silentLogger,

@@ -15,10 +15,9 @@
  */
 import {
   DEFAULT_NIMBUS_PERSONA_TOML,
-  loadNimbusPersonaFromPath,
+  loadNimbusPersonaFromConfigDir,
   type NimbusPersonaToml,
   type PersonaIssue,
-  resolveNimbusTomlForProfile,
 } from "./nimbus-toml.ts";
 
 export type { NimbusPersonaToml, PersonaTone, PersonaVoice } from "./nimbus-toml.ts";
@@ -35,7 +34,7 @@ export function resetPersonaWarningsForTest(): void {
 
 export function resolvePersona(configDir: string, logger?: PersonaWarnLogger): NimbusPersonaToml {
   const issues: PersonaIssue[] = [];
-  const persona = loadNimbusPersonaFromPath(resolveNimbusTomlForProfile(configDir), issues);
+  const persona = loadNimbusPersonaFromConfigDir(configDir, issues);
   if (logger !== undefined) {
     for (const issue of issues) {
       const memo = `${issue.key}=${issue.value}`;

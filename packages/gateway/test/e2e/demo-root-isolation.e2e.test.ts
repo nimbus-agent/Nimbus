@@ -133,7 +133,7 @@ beforeAll(async () => {
     NIMBUS_HTTP_PORT: String(httpPort),
     NIMBUS_DEMO: "1",
     // An owner's shell may export a profile. The demo config dir holds no `nimbus.work.toml`,
-    // so `resolveNimbusTomlForProfile` must fall back to the demo `nimbus.toml` — set, not
+    // so the layered reader must fall back to the demo `nimbus.toml` — set, not
     // deleted, so the boot below proves that fallback rather than assuming it (spec § 3.2).
     NIMBUS_PROFILE: "work",
   });

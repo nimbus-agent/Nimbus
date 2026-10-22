@@ -3,10 +3,9 @@ import { resolveSelfPerson } from "../agents/_lib/self-person.ts";
 import {
   loadNimbusPagerdutyFromConfigDir,
   loadNimbusUserFromConfigDir,
-  resolveNimbusTomlForProfile,
 } from "../config/nimbus-toml.ts";
 import {
-  loadNimbusOncallPushFromPath,
+  loadNimbusOncallPushFromConfigDir,
   type NimbusOncallPushToml,
 } from "../config/oncall-push-toml.ts";
 import type { LocalIndex } from "../index/local-index.ts";
@@ -62,7 +61,7 @@ export interface OncallPushBootDeps {
 
 export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushRuntime {
   const now = deps.now ?? Date.now;
-  const config = loadNimbusOncallPushFromPath(resolveNimbusTomlForProfile(deps.configDir));
+  const config = loadNimbusOncallPushFromConfigDir(deps.configDir);
   const store = new PushStore(deps.db);
   // Spec § 4.1: reconciled at BOOT, never on the first run, so the first sync's incidents are
   // never older than enabled_at and a disable→enable cycle never backfills the gap.

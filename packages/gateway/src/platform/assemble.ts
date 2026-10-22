@@ -54,30 +54,31 @@ import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   DEFAULT_FLEET_CONFIG,
-  loadNimbusFleetFromPath,
+  loadNimbusFleetFromConfigDir,
   type NimbusFleetJobToml,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
-import { loadNimbusMcpSinkFromPath } from "../config/mcp-sink-toml.ts";
+import { initLayeredConfig } from "../config/layered-config.ts";
+import { loadNimbusMcpSinkFromConfigDir } from "../config/mcp-sink-toml.ts";
 import {
   type ConnectorsConfig,
   DEFAULT_NIMBUS_LLM_TOML,
   loadNimbusAuditFromConfigDir,
   loadNimbusAutomationFromConfigDir,
-  loadNimbusBriefsFromPath,
+  loadNimbusBriefsFromConfigDir,
   loadNimbusChatopsFromConfigDir,
   loadNimbusCodeExecutionFromConfigDir,
   loadNimbusComputerUseFromConfigDir,
   loadNimbusConnectorsFromConfigDir,
   loadNimbusDecisionsFromConfigDir,
-  loadNimbusEmbeddingFromPath,
+  loadNimbusEmbeddingFromConfigDir,
   loadNimbusExtensionsFromConfigDir,
   loadNimbusExtensionsRuntimeFromConfigDir,
   loadNimbusFederationFromConfigDir,
   loadNimbusGlossaryFromConfigDir,
   loadNimbusIdentityFromConfigDir,
   loadNimbusLanFromConfigDir,
-  loadNimbusLlmFromPath,
+  loadNimbusLlmFromConfigDir,
   loadNimbusOwnershipFromConfigDir,
   loadNimbusPagerdutyFromConfigDir,
   loadNimbusPreflightFromConfigDir,
@@ -96,13 +97,12 @@ import {
   type NimbusLlmRemoteVendor,
   type NimbusLlmToml,
   type NimbusTribalToml,
-  resolveNimbusTomlForProfile,
   type TeamCredentialConnector,
 } from "../config/nimbus-toml.ts";
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
 import { resolvePersona } from "../config/persona.ts";
 import { ProfileManager } from "../config/profiles.ts";
-import { loadNimbusSessionFromPath } from "../config/session-toml.ts";
+import { loadNimbusSessionFromConfigDir } from "../config/session-toml.ts";
 import { Config } from "../config.ts";
 import { bitbucketFetchOneUrlIsSupported } from "../connectors/bitbucket-sync.ts";
 import { createBlameIndexSyncable } from "../connectors/blame-index-sync.ts";
@@ -511,7 +511,7 @@ function createLocalIndexWithEmbeddingRuntime(
   paths: PlatformPaths,
   vault: NimbusVault,
   syncLogger: Logger,
-  activeTomlPath: string,
+  configDir: string,
   hostActivity: HostActivity,
   sidecarStops: Array<() => void>,
 ): {
@@ -519,7 +519,7 @@ function createLocalIndexWithEmbeddingRuntime(
   scheduleItemEmbedding: ((itemId: string) => void) | undefined;
   rt: EmbeddingRuntime;
 } {
-  const tomlEmbedding = loadNimbusEmbeddingFromPath(activeTomlPath);
+  const tomlEmbedding = loadNimbusEmbeddingFromConfigDir(configDir);
   // `[embedding] pause_on_battery` has parsed and defaulted to `true` since it was added and
   // nothing has ever read it — a key that lied about what it does. This is its consumer.
   //
@@ -595,7 +595,7 @@ const DEFAULT_EMBEDDING_DIMS = 384;
 function maybeAttachSessionMemoryStore(
   db: Database,
   rt: EmbeddingRuntime,
-  sessionToml: ReturnType<typeof loadNimbusSessionFromPath>,
+  sessionToml: ReturnType<typeof loadNimbusSessionFromConfigDir>,
   sidecarStops: Array<() => void>,
 ): SessionMemoryStore | undefined {
   if (readIndexedUserVersion(db) < 10) {
@@ -1889,17 +1889,17 @@ function dropUnresolvableRoutePriorityEntries(
  *  `syncLogger`, so a dropped-entry warning is never actually silent at boot. */
 export async function buildLlmRegistryFromToml(
   db: Database,
-  activeTomlPath: string,
+  configDir: string,
   vault: NimbusVault,
   logger: RouteValidationLogger = defaultRouteValidationLogger,
 ): Promise<LlmRegistry> {
-  const llmToml = loadNimbusLlmFromPath(activeTomlPath);
+  const llmToml = loadNimbusLlmFromConfigDir(configDir);
   const knownRuntimeLocalRoutes = dropUnknownRuntimeEntries(llmToml.localRoutes, logger);
   const uncollidedLocalRoutes = dropLlamacppBaseUrlCollisions(knownRuntimeLocalRoutes, logger);
   const validatedLocalRoutes = dropDuplicateRouteIds(uncollidedLocalRoutes, logger);
   warnRemoteClassifiedLocalRoutes(validatedLocalRoutes, logger);
 
-  // `local_model = ""` parses to the empty string and survives `loadNimbusLlmFromPath` (the
+  // `local_model = ""` parses to the empty string and survives `loadNimbusLlmFromConfigDir` (the
   // `[llm]` parser assigns `parseString(valRaw)` unconditionally). It then reaches
   // `makeRouteId`, which THROWS on an empty model name — and this function is called from
   // `assemblePlatformServices` with nothing between it and boot, so a one-character config typo
@@ -2797,7 +2797,7 @@ function maybeStartAuditShipper(
 // the unconditional `ipcOpts.briefsEnabled` echo. The three `httpSidecarOpts` seams are assigned on
 // the caller's own object, so the wiring order relative to the identity/chatops boots is unchanged.
 function bootBriefsIntoHttpSidecar(deps: {
-  briefsToml: ReturnType<typeof loadNimbusBriefsFromPath>;
+  briefsToml: ReturnType<typeof loadNimbusBriefsFromConfigDir>;
   llmRouter: Parameters<typeof createBriefLlm>[0];
   localIndex: LocalIndex;
   db: Database;
@@ -3217,10 +3217,9 @@ export interface FleetBootDeps {
  *
  * Four things here are load-bearing enough to say out loud:
  *
- * 1. `resolveNimbusTomlForProfile(paths.configDir)`, never a hardcoded `nimbus.toml`. The
- *    profile-BLIND predecessor of `loadNimbusAgentsFromPath` silently discarded `[agents]
- *    synthesis` set in a profile file and was deleted rather than left around to be reached for;
- *    reaching for a config-dir loader here would be making that mistake a second time.
+ * 1. `loadNimbusFleetFromConfigDir(paths.configDir)`, the layered reader, never a hardcoded
+ *    `nimbus.toml`: a `[fleet]` set in the active profile file (or a pack) must be honoured, the
+ *    way `[agents] synthesis` set in a profile file is.
  * 2. A malformed `[fleet]` block must NOT take the gateway down. The parser throws by design (an
  *    `allow_remote` with no budget is a permission the owner clearly meant to bound), and this is
  *    the caller that catches it: log loudly, name the file, construct no scheduler. The fleet is an
@@ -3247,21 +3246,21 @@ export interface FleetRuntime {
 }
 
 export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
-  const fleetToml = resolveNimbusTomlForProfile(deps.paths.configDir);
+  const fleetConfigDir = deps.paths.configDir;
   let fleet: { config: NimbusFleetToml; jobs: NimbusFleetJobToml[] } = {
     config: DEFAULT_FLEET_CONFIG,
     jobs: [],
   };
   let configError = false;
   try {
-    const loaded = loadNimbusFleetFromPath(fleetToml);
+    const loaded = loadNimbusFleetFromConfigDir(fleetConfigDir);
     validateFleetSweepJobs(loaded.jobs);
     fleet = loaded;
   } catch (err) {
     configError = true;
     deps.logger.error(
-      { err: err instanceof Error ? err.message : String(err), tomlPath: fleetToml },
-      `[fleet] config error in ${fleetToml} — fleet disabled for this process`,
+      { err: err instanceof Error ? err.message : String(err), configDir: fleetConfigDir },
+      `[fleet] config error in ${fleetConfigDir} — fleet disabled for this process`,
     );
   }
 
@@ -3354,9 +3353,16 @@ export async function assemblePlatformServices(
   const migration = resolveMigrationComposition(composition);
   const sidecarStops: Array<() => void> = [];
   await ensurePlatformDirectories(paths);
+  // Pin the profile BEFORE the first config read: every `…FromConfigDir` loader below goes
+  // through this reader, so the profile cannot change under a running gateway. An invalid
+  // profile name (env or marker) throws `InvalidProfileNameError` and stops boot.
+  const layeredConfig = initLayeredConfig(paths.configDir);
   const bootPolicy = bootPolicyFor(paths);
   // Built before `db` so a boot-marker append failure (below) has somewhere to log a warning.
   const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
+  syncLogger.info(
+    `config: profile "${layeredConfig.profile.name}" (from ${layeredConfig.profile.source})`,
+  );
   const vault = customVault ?? (await createNimbusVault(paths));
   // Ordering is load-bearing on Windows: this constructs the runner, which synchronously probes
   // the helper via `--check-caps` (creating, then deleting, a throwaway
@@ -3407,7 +3413,6 @@ export async function assemblePlatformServices(
     });
   }
   const rateLimiter = new ProviderRateLimiter();
-  const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
   // pre-S3 item E: real OS toasts. A demo-rooted gateway (I41), a platform with no backend, or an
   // invalid `[notifications]` section (logged at ERROR; never crashes boot) keep the non-delivering
   // service. The probe is kicked off here and never awaited — boot does not wait on a PowerShell
@@ -3415,7 +3420,7 @@ export async function assemblePlatformServices(
   const notificationsRuntime = createNotificationsRuntime({
     allowed: bootPolicy.osNotifications,
     platform: process.platform,
-    tomlPath: activeTomlPath,
+    configDir: paths.configDir,
     logger: syncLogger,
     fallback: createUnimplementedNotifications(syncLogger),
   });
@@ -3438,14 +3443,14 @@ export async function assemblePlatformServices(
   // with `tone = "tree"` would get silent neutral behaviour, which is the exact failure the
   // design review raised (Q2).
   resolvePersona(paths.configDir, syncLogger);
-  const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
+  const sessionToml = loadNimbusSessionFromConfigDir(paths.configDir);
   // `[llm] max_agent_depth` / `max_tool_calls_per_session` are LIVE from here on: resolved
   // once (a set, valid env var still wins) and read by `AgentCoordinator` and `gateway.ping`.
-  const bootLlmToml = loadNimbusLlmFromPath(activeTomlPath);
+  const bootLlmToml = loadNimbusLlmFromConfigDir(paths.configDir);
   setAgentLimits(resolveAgentLimits({ env: readAgentLimitEnv(), toml: bootLlmToml }));
   // AWAITED, never fire-and-forget: the registry must be fully populated before the router
   // answers anything, or a remote route could be missing from the first turn after boot.
-  const llmRegistry = await buildLlmRegistryFromToml(db, activeTomlPath, vault, {
+  const llmRegistry = await buildLlmRegistryFromToml(db, paths.configDir, vault, {
     warn: (m: string) => syncLogger.warn(m),
   });
   // `undefined` here means the Mastra engine agent is NOT CONSTRUCTED at all (gateway-main.ts),
@@ -3460,7 +3465,7 @@ export async function assemblePlatformServices(
     paths,
     vault,
     syncLogger,
-    activeTomlPath,
+    paths.configDir,
     hostActivity,
     sidecarStops,
   );
@@ -3505,7 +3510,7 @@ export async function assemblePlatformServices(
 
   // MCP capture sink (I28). Config at boot; org policy LIVE per call (I22) — an absent/undefined
   // policy result fails closed inside resolveCaptureCapability.
-  const mcpSinkLoad = loadNimbusMcpSinkFromPath(activeTomlPath);
+  const mcpSinkLoad = loadNimbusMcpSinkFromConfigDir(paths.configDir);
   if (!mcpSinkLoad.ok) {
     syncLogger.error(
       { event: "mcp_sink.config_invalid", error: mcpSinkLoad.error },
@@ -3874,7 +3879,7 @@ export async function assemblePlatformServices(
   };
 
   // Research briefs (Spine S1). Default-off; the seam stays absent unless [briefs].enabled.
-  const briefsToml = loadNimbusBriefsFromPath(activeTomlPath);
+  const briefsToml = loadNimbusBriefsFromConfigDir(paths.configDir);
   // Always set (not gated on briefsToml.enabled) so `clip.status` can always echo the real
   // enable-state — a paired user's first `nimbus clip status` should never see it silently absent.
   ipcOpts.briefsEnabled = briefsToml.enabled;
@@ -4722,7 +4727,7 @@ export async function assemblePlatformServices(
   if (bootPolicy.telemetryFlush) {
     const telemetryStop = startTelemetryFlushScheduler({
       dataDir: paths.dataDir,
-      activeTomlPath,
+      configDir: paths.configDir,
       getDatabase: () => db,
       gatewayVersion: GATEWAY_VERSION,
       logger: syncLogger,

@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { DEFAULT_LOCAL_CONTEXT_TOKENS } from "../llm/ollama-provider.ts";
 import type { LlmTaskType } from "../llm/types.ts";
 
@@ -280,15 +279,6 @@ export function parseNimbusTomlEmbeddingSection(source: string): Partial<NimbusE
     applyNimbusEmbeddingKey(out, key, valRaw);
   });
   return out;
-}
-
-export function resolveNimbusTomlForProfile(configDir: string): string {
-  const p = processEnvGet("NIMBUS_PROFILE")?.trim();
-  if (p === undefined || p === "" || p === "default") {
-    return join(configDir, "nimbus.toml");
-  }
-  const alt = join(configDir, `nimbus.${p}.toml`);
-  return existsSync(alt) ? alt : join(configDir, "nimbus.toml");
 }
 
 function parseNimbusEmbeddingLoaded(raw: string): NimbusEmbeddingToml {

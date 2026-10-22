@@ -23,9 +23,8 @@
  * on a developer's desktop. It is read at LOAD time, not at module import, so a harness that sets it
  * before booting the gateway is honoured.
  *
- * Takes a PATH, not a config dir: callers pass `resolveNimbusTomlForProfile(configDir)` so a
- * profile TOML is honoured (see `fleet-toml.ts`'s `loadNimbusFleetFromPath` for why there is no
- * `…FromConfigDir` variant).
+ * `loadNimbusNotificationsFromConfigDir` reads the layered snapshot, so the active profile is
+ * honoured; `loadNimbusNotificationsFromPath` reads one file.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { processEnvGet } from "../platform/env-access.ts";

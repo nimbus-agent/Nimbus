@@ -3,8 +3,7 @@
 import type { Database } from "bun:sqlite";
 import {
   DEFAULT_NIMBUS_AGENTS_TOML,
-  loadNimbusAgentsFromPath,
-  resolveNimbusTomlForProfile,
+  loadNimbusAgentsFromConfigDir,
 } from "../../config/nimbus-toml.ts";
 import { resolvePersona } from "../../config/persona.ts";
 import {
@@ -67,10 +66,10 @@ export function buildAgentSynthesisRunner(
   // means the move is BIDIRECTIONAL: `[agents]` now follows whole-file profile semantics, so
   // a key set only in the BASE `nimbus.toml` no longer applies while a profile file that
   // lacks an `[agents]` section is active. That matches `[llm]`/`[session]`. See design § 5.1.
-  const tomlPath =
-    deps.configDir === undefined ? undefined : resolveNimbusTomlForProfile(deps.configDir);
   const config =
-    tomlPath === undefined ? DEFAULT_NIMBUS_AGENTS_TOML : loadNimbusAgentsFromPath(tomlPath);
+    deps.configDir === undefined
+      ? DEFAULT_NIMBUS_AGENTS_TOML
+      : loadNimbusAgentsFromConfigDir(deps.configDir);
   // No logger: this runs per brief, and warning on every brief would be noise. The single
   // warning site is the boot-time resolution in `platform/assemble.ts`.
   const persona = deps.configDir === undefined ? undefined : resolvePersona(deps.configDir);

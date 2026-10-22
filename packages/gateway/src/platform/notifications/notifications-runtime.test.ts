@@ -22,7 +22,7 @@ function toml(content: string | undefined): string {
   dirs.push(dir);
   const p = join(dir, "nimbus.toml");
   if (content !== undefined) writeFileSync(p, content);
-  return p;
+  return dir;
 }
 
 type Logged = { level: string; obj: Record<string, unknown>; msg: string };
@@ -80,7 +80,7 @@ describe("createNotificationsRuntime — inactive", () => {
     const rt = createNotificationsRuntime({
       allowed: false,
       platform: "win32",
-      tomlPath: toml(undefined),
+      configDir: toml(undefined),
       logger: logger().log,
       fallback,
       envGet: noEnv,
@@ -108,7 +108,7 @@ describe("createNotificationsRuntime — inactive", () => {
     const rt = createNotificationsRuntime({
       allowed: true,
       platform: "win32",
-      tomlPath: toml('[notifications]\ncontent = "titel_only"\n'),
+      configDir: toml('[notifications]\ncontent = "titel_only"\n'),
       logger: log,
       fallback,
       envGet: noEnv,
@@ -126,7 +126,7 @@ describe("createNotificationsRuntime — inactive", () => {
     const rt = createNotificationsRuntime({
       allowed: true,
       platform: "aix",
-      tomlPath: toml(undefined),
+      configDir: toml(undefined),
       logger: logger().log,
       fallback,
       envGet: noEnv,
@@ -146,7 +146,7 @@ describe("createNotificationsRuntime — active", () => {
     const rt = createNotificationsRuntime({
       allowed: true,
       platform: "win32",
-      tomlPath: toml(undefined),
+      configDir: toml(undefined),
       logger: logger().log,
       fallback,
       envGet: noEnv,
@@ -170,7 +170,7 @@ describe("createNotificationsRuntime — active", () => {
     const rt = createNotificationsRuntime({
       allowed: true,
       platform: "win32",
-      tomlPath: toml('[notifications]\ncontent = "title_only"\n'),
+      configDir: toml('[notifications]\ncontent = "title_only"\n'),
       logger: logger().log,
       fallback,
       envGet: noEnv,
@@ -186,7 +186,7 @@ describe("createNotificationsRuntime — active", () => {
     const rt = createNotificationsRuntime({
       allowed: true,
       platform: "linux",
-      tomlPath: toml(undefined),
+      configDir: toml(undefined),
       logger: logger().log,
       fallback,
       envGet: noEnv,
@@ -203,7 +203,7 @@ describe("createNotificationsRuntime — active", () => {
     const rt = createNotificationsRuntime({
       allowed: true,
       platform: "win32",
-      tomlPath: toml(undefined),
+      configDir: toml(undefined),
       logger: logger().log,
       fallback,
       envGet: noEnv,
@@ -218,7 +218,7 @@ describe("createNotificationsRuntime — active", () => {
     const rt = createNotificationsRuntime({
       allowed: true,
       platform: "win32",
-      tomlPath: toml("[notifications]\nenabled = false\n"),
+      configDir: toml("[notifications]\nenabled = false\n"),
       logger: log,
       fallback,
       envGet: noEnv,
@@ -243,7 +243,7 @@ describe("createNotificationsRuntime — active", () => {
     const rt = createNotificationsRuntime({
       allowed: true,
       platform: "win32",
-      tomlPath: toml("[notifications]\nenabled = true\n"),
+      configDir: toml("[notifications]\nenabled = true\n"),
       logger: logger().log,
       fallback,
       envGet: (n) => (n === "NIMBUS_NOTIFICATIONS" ? "off" : undefined),
@@ -266,7 +266,7 @@ describe("createNotificationsRuntime — active", () => {
       createNotificationsRuntime({
         allowed: true,
         platform: "win32",
-        tomlPath: toml('[notifications]\ncontent = "x"\n'),
+        configDir: toml('[notifications]\ncontent = "x"\n'),
         logger: { info: boom, warn: boom, error: boom },
         fallback,
         envGet: noEnv,
