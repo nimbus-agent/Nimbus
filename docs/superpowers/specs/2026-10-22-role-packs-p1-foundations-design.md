@@ -119,15 +119,22 @@ only has to write a pack layer and call one reload.
   `[agents]`, multimodal, service configs and the `[llm]` remote check on the next call, and
   telemetry on the next tick, with no restart. PR 1 must not lose that. The reader keeps a cheap
   fingerprint of every layer file (path, size and mtime, plus the pack `active.json`). Getting the
-  current snapshot re-stats those files and rebuilds only if one changed. Each snapshot carries a
+  current snapshot re-stats those files and rebuilds only if one changed. The fingerprint uses size,
+  `mtimeMs` and `ctimeMs`, because a same-length rewrite inside one clock tick can leave size and
+  mtime unchanged. Gateway-side writers (`setPackLayer`, `llm.use`, `ProfileManager`) also
+  invalidate the cache explicitly, so their own writes never depend on timestamps. Each snapshot carries a
   monotonically increasing **version**. Boot-time consumers keep their boot values exactly as
   today, except the ones PR 3 makes reactive. A regression test pins this: it edits the user file
   mid-run and asserts that a per-call reader sees the new value without a restart.
 - **Merge rules.**
   - Scalars: the higher layer wins per key.
-  - Plain tables (`[section]`, `[connectors.github]`): merged key by key.
-  - Arrays of tables (`[[filesystem.roots]]`, `[[glossary.terms]]`, `[[fleet.job]]`): **the
-    highest layer that defines the array supplies all of it** (whole-array replacement). This
+  - Plain tables (`[section]`, `[connectors.github]`, `[glossary.terms]`, `[glossary.synonyms]`,
+    `[hitl.quorum.*]`): merged key by key. So a profile can add or override one glossary term
+    without restating the rest.
+  - Arrays of tables: **the highest layer that defines the array supplies all of it**
+    (whole-array replacement). The reader treats any `[[x]]` header generically. Today these are
+    `[[filesystem.roots]]`, `[[fleet.job]]`, `[[connectors.workday.reports]]` and
+    `[[security.allowlist]]`. This
     matters for inheritance: a profile that is a copy of the base file must not double every root.
     `[[fleet.job]]` is the one exception and **merges by `name` from PR 1 on**: a higher layer's job
     replaces a lower one with the same name, whole. Otherwise a user who already has a job would
@@ -136,18 +143,42 @@ only has to write a pack layer and call one reload.
   - `[agents] show` / `hide` (PR 5) are per-agent, not per-key: see § 5.5.
   - A key a layer does not mention never removes a lower layer's value. There is no "unset" syntax
     in v1. To restore a code default, the owner sets it explicitly.
-- **Duplicate detection** stays per file, as today (duplicate fleet job names in one file are still
-  an error).
-- **Explain.** `nimbus config explain <section.key>` (CLI) over a new CLI-only, LAN-forbidden
-  `config.explain` IPC method. It prints the effective raw value, its layer and file path, every
-  lower layer's shadowed value, and, for keys that org policy also constrains (retention, quorum,
-  capability enables), a line saying the policy may further restrict it. It explains raw values, not
+- **Per-file diagnostics survive the merge.** The scanner still runs per file before merging, and
+  the snapshot keeps each file's line-level diagnostics: duplicate keys, unterminated strings, the
+  glossary reader's `preSkipped` / dotted-key counts behind `manualSkipped`, and duplicate fleet job
+  names. Existing per-file error reporting is unchanged. PR 4 changes only what a duplicate fleet
+  job name does.
+- **One active-profile resolution.** Today the gateway reads only `NIMBUS_PROFILE`, while
+  `ProfileManager` and the CLI read only `<configDir>/.nimbus-profile`, so a gateway launched by
+  Tauri or a service manager can disagree with the marker. PR 1 gives both one order: explicit
+  argument (tests), then `NIMBUS_PROFILE` if non-empty and not `default`, then the marker, then
+  `default`. The gateway resolves it **once at boot and pins it** for the process. A later
+  `profile switch` still takes effect on restart, as today. Following the marker live would make
+  per-call readers flip to the new profile while boot-time consumers stayed on the old one: the
+  very mix PR 1 removes. `config explain` reports both the running profile and the marker, and
+  says to restart when they differ. Profile names are checked against `ProfileManager`'s slug rule
+  (`/^[a-z0-9_-]{1,32}$/i`) wherever they come from. A name that fails is refused at boot with a
+  clear error rather than turned into a path.
+- **Environment overrides are part of the answer.** Some loaders let `NIMBUS_*` variables beat the
+  file: `NIMBUS_UPDATER_URL`/`_DISABLE`, `NIMBUS_LAN_PORT`, the three telemetry variables. These
+  move into one declared table the reader and explain both use. A test fails if a config loader
+  reads a `NIMBUS_*` variable that is not in the table. Explain shows an active override as the
+  top "layer".
+- **Explain.** `nimbus config explain <path>` (CLI) over a new CLI-only, LAN-forbidden
+  `config.explain` IPC method. It accepts multi-segment paths (`connectors.github.depth`,
+  `llm.remote.openai.enabled`, `fleet.job.<name>`), unlike `config get|set`'s flat
+  `section.key` limit. It prints the effective raw value, its layer and file path (or the
+  environment variable), every lower layer's shadowed value, and, for keys that org policy also
+  constrains (retention, quorum, capability enables), a line saying the policy may further restrict
+  it. It explains raw values, not
   parsed ones. Where a section's parser rejected the value, `config.explain` says the section fell
   back to defaults, using the same parser the loader used, so explain cannot disagree with the
   loader.
 - **Writers follow the profile.** `nimbus config set|get|list|edit` target the active profile's
   file, or `nimbus.toml` with no profile. If the profile is active but has no file yet, `set`
-  creates it. `get`/`list` gain an `--effective` view that is the snapshot. `--effective` and
+  creates it. `get`/`list` gain an `--effective` view that is the snapshot, and `get --effective`
+  takes the same multi-segment paths as explain. Plain `set` stays flat, because the CLI writer
+  cannot safely edit nested tables. `--effective` and
   `config explain` need a running gateway, since the CLI cannot import the reader. Without one they
   fail with a clear message; plain `get`/`list` keep working offline as today. `init`'s filesystem-root append and the demo seed keep writing `nimbus.toml`: init runs
   before profiles matter, and demo is its own root. The CLI and gateway atomic writers stay separate
@@ -155,13 +186,26 @@ only has to write a pack layer and call one reload.
 - **Guard.** A static rule (a new `D3x` in `check-nimbus-invariants.ts`, tied to no invariant, like
   D24/D30) forbids the literal `"nimbus.toml"` and `resolveNimbusTomlForProfile` outside
   `config/layered-config.ts` and the writers, so a new loader cannot quietly bypass the reader.
+- **`config.validate` moves onto the reader** (`ipc/diagnostics-rpc.ts` hardcodes `nimbus.toml`
+  today). `nimbus config validate` then checks every active layer, not only the base file.
+- **Layer health in `diag.snapshot`.** `diag.snapshot` gains a `configLayers` block: running
+  profile, marker profile, active packs, skipped pack files with reasons, and (from PR 4) dropped
+  fleet jobs with layer, file and reason. `nimbus doctor` reads it from there, and the desktop can
+  later use the same call.
 - **Release notes** state the profile inheritance change.
 
 ### 5.2 PR 2: the pack layer
 
 - **Storage.** Pack layers are TOML fragments the gateway writes under
   `<configDir>/packs/<profile>/<pack-id>.toml` (`default` when no profile is active), plus a small
-  `active.json` per profile that lists the order. Only the gateway writes them.
+  `active.json` per profile that lists the order. Only the gateway writes them. Pack ids follow a
+  strict slug rule (`/^[a-z0-9][a-z0-9_-]{0,63}$/`), checked by `setPackLayer` and again on every
+  read. An `active.json` entry that fails the rule is never turned into a path.
+- **Broken state is skipped, never fatal.** Several things are skipped and reported at error (log,
+  `diag.snapshot`, `nimbus doctor`, `config explain`) instead of failing boot or a read:
+  - a malformed `active.json` (no packs are applied)
+  - an entry whose `<pack-id>.toml` is missing or fails the slug rule
+  - a pack file with a non-allowlisted key (below)
 - **Internal API.** `setPackLayer(profile, packId, fragment)` and `removePackLayer(profile, packId)`
   validate, write atomically, rebuild the snapshot and emit the change (PR 3). Project 1 exposes
   **no IPC or CLI method** that writes a pack layer. Project 3's `pack.install` is the only intended
@@ -205,7 +249,13 @@ only has to write a pack layer and call one reload.
 - **Which subsystems react.** Only what a v1 pack can affect:
   - **Fleet:** a small supervisor that outlives any scheduler checks the snapshot on a short
     interval. When the effective `[fleet]` / `[[fleet.job]]` changed, it waits for any in-flight
-    run (`runOnce`'s `inFlight` guard), stops the scheduler, and rebuilds it from the new snapshot. Enabling the fleet starts a
+    run (`runOnce`'s `inFlight` guard), stops the scheduler, and rebuilds it from the new snapshot.
+    The supervisor is **always** wired, even when `[fleet] enabled` is false at boot. Today
+    `assembleFleetRuntime` returns early with no scheduler in that case, so a later enable could
+    never start one. The supervisor owns the one shutdown callback on `sidecarStops`. All four
+    fleet handlers (`fleet.status`, `fleet.list`, `fleet.run`, `fleet.digest`) read the
+    supervisor's current `{scheduler, config, jobs, droppedJobs}` instead of a boot-time
+    `FleetRpcCtx`. Enabling the fleet starts a
     scheduler that boot did not build; disabling it stops the one that exists. Job state survives
     because it is keyed by job name in the database. `fleet.list` serves the current job list, not
     the boot-time one.
@@ -222,7 +272,10 @@ only has to write a pack layer and call one reload.
 - A new optional `enabled = false` on a job keeps it in the list but never schedules it.
   `fleet list` shows it as disabled, with its layer. To silence a pack job, the owner writes
   `[[fleet.job]] name = "<same>"` with `enabled = false` in their own file. The rules that a job
-  needs `agent` and `interval_seconds` are relaxed only for such a disabling stub.
+  needs `agent` and `interval_seconds` are relaxed only for such a disabling stub. **A stub is
+  always valid, even when nothing below it defines that name**, which is what happens after its
+  pack is removed. An orphan stub is inert: it is not an error and not a dropped job. `fleet list`
+  and `config explain` show it as "disables nothing".
 - **A bad job no longer kills the fleet.** Today one bad job disables the whole fleet. After this,
   every **job-level** error, in any layer, drops only that job, and the rest run. Job-level errors
   are:
@@ -252,19 +305,38 @@ only has to write a pack layer and call one reload.
     `hide` beats `show`.
   - `visible` is read from pack layers only. A `visible` key in a user file is ignored and
     `config explain` says so.
+  - Agent names are the **short** names used by `[[fleet.job]] agent` and the CLI (`decisions`,
+    `standup`). An `agents.` prefix is accepted and normalised away.
   - Unknown agent names are reported by `config explain`, not fatal.
 - **It is presentation only.** No gate, dispatcher, HTTP route, MCP tool, fleet or ChatOps path
   reads it. A test asserts that the setting has no reader outside the catalog module.
 - **Catalog metadata** lives gateway-side in `catalog/agent-catalog.ts` and
   `catalog/connector-catalog-meta.ts`:
-  - **Agents:** a `Record` total over the agent methods (so a new agent gets a compile error until
-    it has an entry, the next of the forced registration sites) with display name, one-line
-    description, category, role tags, parameter shape (derived from `AGENT_PARAM_KINDS`) and
-    surface eligibility (external, fleet).
-  - **Connectors:** a `Record` total over `CONNECTOR_SERVICE_IDS` plus the gateway-local
-    syncables, with display name, category and one-line description.
-  - **Extensions** (`ext_*`) appear with the name and description from their manifest, category
-    `extension`, and are marked as such.
+  - **Agents:** a `Record` total over the 17 brief methods, `Exclude<AgentMethod, "agents.whyPeek">`.
+    `whyPeek` is an editor hover helper, not a brief, so it is not listed. A new agent gets a
+    compile error until it has an entry, which makes the catalog the next forced registration
+    site. Each entry carries:
+    - display name, one-line description, category and role tags
+    - surface eligibility (external, fleet), derived from the existing tables
+    - **parameter descriptors**: field name, primitive kind, required or optional, a `oneOf`
+      group for mutually exclusive targets (`why`'s `ref`/`prUrl`/`itemUrl`, `expert`'s
+      `topicOrFile`/`itemUrl`, `negotiate`'s `personId`/`service`), and a label
+
+    `AGENT_PARAM_KINDS` is **not** the source. It covers only the 12 external agents, carries
+    primitives only, and is deliberately a ChatOps coercion table; it stays unchanged.
+    `agents-rpc.ts`'s validators remain the only enforcement. The descriptors are a description of
+    them, kept honest two ways:
+    - a test checks each external agent's descriptor kinds against `AGENT_PARAM_KINDS`
+    - `audit:agent-param-kinds`'s validator line-walker is extended so that every validator field
+      of all 17 agents must appear in the catalog descriptors
+  - **Connectors:** a `Record` total over `CONNECTOR_SERVICE_IDS` ∪ `GATEWAY_SYNCABLE_SERVICE_IDS`
+    (`blame`, `filesystem`, `obsidian`, `openapi`, which are not in the connector catalog today),
+    with display name, category and one-line description.
+  - **Owner-added code servers are listed at query time:**
+    - **Extensions** (`ext_*`): name and description from their manifest, category `extension`.
+    - **User MCP servers** (`mcp_*`): the name the owner registered, category `user-mcp`.
+
+    Both are marked as such, and their text is shown as data, never as catalog-authored prose.
 - **Read method.** A new `catalog.list` IPC method returns agents (with `visible`) and connectors
   (catalog data only, no connection state). It is CLI/desktop-callable and LAN-forbidden. It joins
   the Tauri allowlist in Project 4, when the desktop first uses it, not here. The CLI gets
@@ -321,11 +393,20 @@ only has to write a pack layer and call one reload.
 6. **CLI help is never filtered by visibility.**
 7. **A bad fleet job from any layer drops only that job** (a pack must not take the user's whole
    fleet down). A bad `[fleet]` table keeps today's fail-whole behaviour.
-10. **Fleet merge-by-name moves into PR 1**, so pack jobs are never erased by a user's own jobs in
-    the gap before PR 4.
-11. **`show`/`hide` resolve per agent**, with the highest user layer winning.
 8. **`catalog.list` joins the Tauri allowlist only in Project 4.**
 9. **A new static rule** confines naming `nimbus.toml` to the reader and writers.
+10. **Fleet merge-by-name moves into PR 1**, so pack jobs are never erased by a user's own jobs in
+    the gap before PR 4.
+11. **`show`/`hide` resolve per agent**, with the highest user layer winning, and use short agent
+    names.
+12. **The active profile is resolved once at boot and pinned** (env, then marker). Following the
+    marker live is deferred: it would recreate the profile mix between per-call and boot-time
+    readers. A profile switch still needs a restart, and explain says when it is pending.
+13. **The catalog owns rich parameter descriptors.** `AGENT_PARAM_KINDS` stays the ChatOps
+    coercion table, and an extended audit keeps the two honest against the validators.
+14. **The catalog lists 17 briefs, not `whyPeek`**, and includes owner-added `ext_*` and `mcp_*`
+    servers.
+15. **Glossary terms and synonyms merge key by key**, because they are plain tables.
 
 ## 9. Left to the builder
 
