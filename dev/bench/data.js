@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792685207369,
+  "lastUpdate": 1792688092382,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "166d6977ae2bce39bd4ad58d6d9b06271c79dd5e",
-          "message": "chore: release main (#1030)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.18.1</summary>\n\n##\n[1.18.1](https://github.com/nimbus-agent/Nimbus/compare/v1.18.0...v1.18.1)\n(2026-08-03)\n\n\n### Bug Fixes\n\n* **connectors:** metadata_only redaction must erase embedding chunks\nand the right vectors\n([#1026](https://github.com/nimbus-agent/Nimbus/issues/1026))\n([bae0d86](https://github.com/nimbus-agent/Nimbus/commit/bae0d86aea42d3161da828b53be69f19e8bd1614))\n* **ipc:** forbid the clip namespace over LAN — clip.pair opens the I30\npairing window\n([#1027](https://github.com/nimbus-agent/Nimbus/issues/1027))\n([7bd2cdc](https://github.com/nimbus-agent/Nimbus/commit/7bd2cdc128e4f5ab8fcdb3a8301bc8cdd6efade5))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-03T18:53:55+03:00",
-          "tree_id": "b42f841e807af92e2af8e777a6de6280580070cd",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/166d6977ae2bce39bd4ad58d6d9b06271c79dd5e"
-        },
-        "date": 1785773094446,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 302.9309774999976,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 301.4615415999888,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 196.06639325000614,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "79cfba9b180690b0788e2beb82a201f6109a6285",
+          "message": "chore(security): anchor the registry public-key gitleaks allowlist (#1715)\n\nAnchors `.gitleaks.toml` allowlist entry 9 (added in #1713), as entry 8\nalready is.\n\nAn unanchored value regex in the global `regexes` allowlist suppresses\nany finding whose secret merely **contains** one of the two public\nregistry keys, so a longer real secret that happens to include one would\ngo unreported. With `^…$`, only a finding whose captured secret is\nexactly the public key is suppressed. For `generic-api-key`, the\ncaptured secret is the bare value, so the intended suppression still\nholds.\n\nRaised by CodeRabbit on #1714, which no longer touches this file now\nthat #1713 is on `main`.\n\n**Verification:** this PR's own Gitleaks check scans full history,\nincluding the #1713/#1709 commits that carry both keys. A green check\nhere proves the anchored patterns still suppress them, and a red one\nwould mean they don't.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Registry key allowlisting now matches exact values, so longer strings\ncontaining an allowed key are no longer excluded from secret scanning.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-22T19:44:14+03:00",
+          "tree_id": "85e36f94490756b26ed6862ec9481617ef4afd21",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/79cfba9b180690b0788e2beb82a201f6109a6285"
+        },
+        "date": 1792688088369,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 282.9545847000003,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 277.727906500001,
             "unit": "ms"
           }
         ]
