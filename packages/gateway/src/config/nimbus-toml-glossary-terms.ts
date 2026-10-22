@@ -1,7 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { normalizeTerm } from "../glossary/term-normalize.ts";
+import { fallbackMessage, layeredConfigText, sectionFallbackSink } from "./layered-config.ts";
 import {
   hasUnterminatedString,
   isTableHeader,
@@ -215,18 +213,19 @@ export function parseGlossaryManualToml(raw: string): GlossaryManualConfig {
 }
 
 /**
- * Reads `<configDir>/nimbus.toml`.
+ * Reads the layered config snapshot for `configDir` (packs, base, active profile).
  *
  * Deliberately NOT built on `loadTomlSection`: every failure must surface as
  * `loaded: false` rather than as an empty-but-valid config. See the
  * `GlossaryManualConfig` docstring.
  */
 export function loadGlossaryManualFromConfigDir(configDir: string): GlossaryManualConfig {
-  const tomlPath = join(configDir, "nimbus.toml");
-  if (!existsSync(tomlPath)) return { loaded: false };
+  const text = layeredConfigText(configDir);
+  if (text === null) return { loaded: false };
   try {
-    return parseGlossaryManualToml(readFileSync(tomlPath, "utf8"));
-  } catch {
+    return parseGlossaryManualToml(text);
+  } catch (err) {
+    sectionFallbackSink(configDir, "glossary.terms")(fallbackMessage(err));
     return { loaded: false };
   }
 }

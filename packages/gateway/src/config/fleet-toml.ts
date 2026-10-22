@@ -1,5 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import {
+  fallbackMessage,
+  layeredConfigText,
+  type SectionFallbackSink,
+  sectionFallbackSink,
+} from "./layered-config.ts";
+import {
   isTableHeader,
   parseBool,
   parseIntDec,
@@ -312,29 +318,41 @@ export function parseNimbusTomlFleetJobs(source: string): NimbusFleetJobToml[] {
   return jobs;
 }
 
+export type NimbusFleetLoad = { config: NimbusFleetToml; jobs: NimbusFleetJobToml[] };
+
 /**
- * Takes a PATH, not a config dir — and there is deliberately no `…FromConfigDir` variant.
- *
- * `config/nimbus-toml.ts`'s `loadNimbusAgentsFromPath` carries the reason in its own comment: the
- * former `loadNimbusAgentsFromConfigDir` hardcoded `nimbus.toml`, was therefore profile-BLIND, and
- * silently discarded `[agents] synthesis` set in a profile TOML. That variant was DELETED rather
- * than left exported beside the profile-aware one "for someone to reach for by accident". Exporting
- * a config-dir loader here would be reaching for it.
- *
- * Callers pass `resolveNimbusTomlForProfile(configDir)`.
+ * The one `[fleet]` core. `raw === null` means no file.
  *
  * A malformed block THROWS rather than falling back to defaults. The CALLER
  * (`platform/assemble.ts`) catches, logs loudly and constructs no scheduler — so the gateway still
  * boots and the fleet is off. Crashing boot over an optional, default-off feature is
- * disproportionate; silently running a half-read config is worse.
+ * disproportionate; silently running a half-read config is worse. The refusal is recorded through
+ * `onFallback` first, so `config explain` can report it.
  */
-export function loadNimbusFleetFromPath(tomlPath: string): {
-  config: NimbusFleetToml;
-  jobs: NimbusFleetJobToml[];
-} {
-  if (!existsSync(tomlPath)) return { config: DEFAULT_FLEET_CONFIG, jobs: [] };
-  const raw = readFileSync(tomlPath, "utf8");
-  return { config: parseNimbusTomlFleet(raw), jobs: parseNimbusTomlFleetJobs(raw) };
+function loadNimbusFleetFromText(
+  raw: string | null,
+  onFallback?: SectionFallbackSink,
+): NimbusFleetLoad {
+  if (raw === null) return { config: DEFAULT_FLEET_CONFIG, jobs: [] };
+  try {
+    return { config: parseNimbusTomlFleet(raw), jobs: parseNimbusTomlFleetJobs(raw) };
+  } catch (err) {
+    onFallback?.(`refused: ${fallbackMessage(err)}`);
+    throw err;
+  }
+}
+
+/** Single-file reader (tests). Production reads `loadNimbusFleetFromConfigDir`. */
+export function loadNimbusFleetFromPath(tomlPath: string): NimbusFleetLoad {
+  return loadNimbusFleetFromText(existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : null);
+}
+
+/** `[fleet]` over the layered snapshot (packs, base, active profile). Throws like the path door. */
+export function loadNimbusFleetFromConfigDir(configDir: string): NimbusFleetLoad {
+  return loadNimbusFleetFromText(
+    layeredConfigText(configDir),
+    sectionFallbackSink(configDir, "fleet"),
+  );
 }
 
 export { parseBool };

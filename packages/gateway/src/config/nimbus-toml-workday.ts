@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { layeredConfigText } from "./layered-config.ts";
 import {
   isTableHeader,
   parseString,
@@ -110,7 +109,7 @@ export function parseNimbusWorkdayToml(
 }
 
 export function loadNimbusWorkdayFromConfigDir(configDir: string): NimbusWorkdayToml {
-  const tomlPath = join(configDir, "nimbus.toml");
-  if (!existsSync(tomlPath)) return DEFAULT_NIMBUS_WORKDAY_TOML;
-  return parseNimbusWorkdayToml(readFileSync(tomlPath, "utf8"));
+  const text = layeredConfigText(configDir);
+  if (text === null) return DEFAULT_NIMBUS_WORKDAY_TOML;
+  return parseNimbusWorkdayToml(text);
 }

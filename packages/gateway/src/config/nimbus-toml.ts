@@ -6,6 +6,12 @@ import type { LlmTaskType } from "../llm/types.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import {
+  fallbackMessage,
+  layeredConfigText,
+  type SectionFallbackSink,
+  sectionFallbackSink,
+} from "./layered-config.ts";
+import {
   parseNimbusCiServiceToml,
   parseNimbusDoraToml,
   resolveServiceTableId,
@@ -26,15 +32,55 @@ import {
 // working through `./nimbus-toml.ts` unchanged.
 export * from "./service-config-toml.ts";
 
-function loadTomlSection<T>(tomlPath: string, fallback: T, parse: (raw: string) => T): T {
-  if (!existsSync(tomlPath)) {
+/**
+ * The one core of every defaults-on-missing-or-throw section loader. `text === null` means "no
+ * file"; a throw from `parse` is reported to `onFallback` and the defaults are returned.
+ */
+function loadTomlSectionFromText<T>(
+  text: string | null,
+  fallback: T,
+  parse: (raw: string) => T,
+  onFallback?: SectionFallbackSink,
+): T {
+  if (text === null) {
     return structuredClone(fallback);
   }
   try {
-    return parse(readFileSync(tomlPath, "utf8"));
+    return parse(text);
+  } catch (err) {
+    onFallback?.(fallbackMessage(err));
+    return structuredClone(fallback);
+  }
+}
+
+/** Single-file reader: one file on disk, no layering. A read error falls back like a parse error. */
+function loadTomlSection<T>(tomlPath: string, fallback: T, parse: (raw: string) => T): T {
+  let text: string | null;
+  try {
+    text = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : null;
   } catch {
     return structuredClone(fallback);
   }
+  return loadTomlSectionFromText(text, fallback, parse);
+}
+
+/**
+ * Config-dir reader over the layered snapshot (packs, base, active profile). Same semantics as
+ * `loadTomlSection` for the same text, and a swallowed parse error is recorded as the section's
+ * fallback so `config explain` can report it.
+ */
+export function loadTomlSectionFromConfig<T>(
+  configDir: string,
+  sectionId: string,
+  fallback: T,
+  parse: (raw: string) => T,
+): T {
+  return loadTomlSectionFromText(
+    layeredConfigText(configDir),
+    fallback,
+    parse,
+    sectionFallbackSink(configDir, sectionId),
+  );
 }
 
 export type NimbusEmbeddingToml = {
@@ -245,17 +291,24 @@ export function resolveNimbusTomlForProfile(configDir: string): string {
   return existsSync(alt) ? alt : join(configDir, "nimbus.toml");
 }
 
+function parseNimbusEmbeddingLoaded(raw: string): NimbusEmbeddingToml {
+  return structuredClone({
+    ...DEFAULT_NIMBUS_EMBEDDING_TOML,
+    ...parseNimbusTomlEmbeddingSection(raw),
+  });
+}
+
 export function loadNimbusEmbeddingFromPath(tomlPath: string): NimbusEmbeddingToml {
-  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_EMBEDDING_TOML, (raw) =>
-    structuredClone({
-      ...DEFAULT_NIMBUS_EMBEDDING_TOML,
-      ...parseNimbusTomlEmbeddingSection(raw),
-    }),
-  );
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_EMBEDDING_TOML, parseNimbusEmbeddingLoaded);
 }
 
 export function loadNimbusEmbeddingFromConfigDir(configDir: string): NimbusEmbeddingToml {
-  return loadNimbusEmbeddingFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "embedding",
+    DEFAULT_NIMBUS_EMBEDDING_TOML,
+    parseNimbusEmbeddingLoaded,
+  );
 }
 
 /** One `[llm.local.<name>]` sub-table: a named local model route. Spec §3.6. */
@@ -649,13 +702,15 @@ export function parseNimbusTomlLlmSection(source: string): Partial<NimbusLlmToml
   return out;
 }
 
+function parseNimbusLlmLoaded(raw: string): NimbusLlmToml {
+  return structuredClone({
+    ...DEFAULT_NIMBUS_LLM_TOML,
+    ...parseNimbusTomlLlmSection(raw),
+  });
+}
+
 export function loadNimbusLlmFromPath(tomlPath: string): NimbusLlmToml {
-  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_LLM_TOML, (raw) =>
-    structuredClone({
-      ...DEFAULT_NIMBUS_LLM_TOML,
-      ...parseNimbusTomlLlmSection(raw),
-    }),
-  );
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_LLM_TOML, parseNimbusLlmLoaded);
 }
 
 export function loadNimbusLlmPartialFromPath(tomlPath: string): Partial<NimbusLlmToml> {
@@ -663,7 +718,7 @@ export function loadNimbusLlmPartialFromPath(tomlPath: string): Partial<NimbusLl
 }
 
 export function loadNimbusLlmFromConfigDir(configDir: string): NimbusLlmToml {
-  return loadNimbusLlmFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(configDir, "llm", DEFAULT_NIMBUS_LLM_TOML, parseNimbusLlmLoaded);
 }
 
 export type NimbusVoiceToml = {
@@ -724,17 +779,24 @@ export function parseNimbusTomlVoiceSection(source: string): Partial<NimbusVoice
   return out;
 }
 
+function parseNimbusVoiceLoaded(raw: string): NimbusVoiceToml {
+  return structuredClone({
+    ...DEFAULT_NIMBUS_VOICE_TOML,
+    ...parseNimbusTomlVoiceSection(raw),
+  });
+}
+
 export function loadNimbusVoiceFromPath(tomlPath: string): NimbusVoiceToml {
-  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_VOICE_TOML, (raw) =>
-    structuredClone({
-      ...DEFAULT_NIMBUS_VOICE_TOML,
-      ...parseNimbusTomlVoiceSection(raw),
-    }),
-  );
+  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_VOICE_TOML, parseNimbusVoiceLoaded);
 }
 
 export function loadNimbusVoiceFromConfigDir(configDir: string): NimbusVoiceToml {
-  return loadNimbusVoiceFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "voice",
+    DEFAULT_NIMBUS_VOICE_TOML,
+    parseNimbusVoiceLoaded,
+  );
 }
 
 export type NimbusUpdaterToml = {
@@ -810,7 +872,12 @@ export function loadNimbusUpdaterFromPath(tomlPath: string): NimbusUpdaterToml {
 }
 
 export function loadNimbusUpdaterFromConfigDir(configDir: string): NimbusUpdaterToml {
-  return loadNimbusUpdaterFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "updater",
+    parseNimbusUpdaterToml(""),
+    parseNimbusUpdaterToml,
+  );
 }
 
 export type NimbusLanToml = {
@@ -894,7 +961,7 @@ export function loadNimbusLanFromPath(tomlPath: string): NimbusLanToml {
 }
 
 export function loadNimbusLanFromConfigDir(configDir: string): NimbusLanToml {
-  return loadNimbusLanFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(configDir, "lan", DEFAULT_NIMBUS_LAN_TOML, parseNimbusLanToml);
 }
 
 /**
@@ -995,7 +1062,12 @@ export function loadNimbusCodeExecutionFromPath(tomlPath: string): NimbusCodeExe
 }
 
 export function loadNimbusCodeExecutionFromConfigDir(configDir: string): NimbusCodeExecutionToml {
-  return loadNimbusCodeExecutionFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "code_execution",
+    DEFAULT_NIMBUS_CODE_EXECUTION_TOML,
+    parseNimbusCodeExecutionToml,
+  );
 }
 
 export const KNOWN_CU_LANES = ["browser", "terminal", "screen"] as const;
@@ -1102,8 +1174,9 @@ export function parseNimbusComputerUseToml(
 }
 
 export function loadNimbusComputerUseFromConfigDir(configDir: string): NimbusComputerUseToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "computer_use",
     DEFAULT_NIMBUS_COMPUTER_USE_TOML,
     parseNimbusComputerUseToml,
   );
@@ -1195,8 +1268,9 @@ export function parseNimbusToolGenerationToml(
 }
 
 export function loadNimbusToolGenerationFromConfigDir(configDir: string): NimbusToolGenerationToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "tool_generation",
     DEFAULT_NIMBUS_TOOL_GENERATION_TOML,
     parseNimbusToolGenerationToml,
   );
@@ -1266,7 +1340,12 @@ export function loadNimbusFederationFromPath(tomlPath: string): NimbusFederation
 }
 
 export function loadNimbusFederationFromConfigDir(configDir: string): NimbusFederationToml {
-  return loadNimbusFederationFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "federation",
+    DEFAULT_NIMBUS_FEDERATION_TOML,
+    parseNimbusFederationToml,
+  );
 }
 
 export type NimbusAutomationToml = {
@@ -1300,7 +1379,12 @@ export function loadNimbusAutomationFromPath(tomlPath: string): NimbusAutomation
 }
 
 export function loadNimbusAutomationFromConfigDir(configDir: string): NimbusAutomationToml {
-  return loadNimbusAutomationFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "automation",
+    DEFAULT_NIMBUS_AUTOMATION_TOML,
+    parseNimbusAutomationToml,
+  );
 }
 
 export type NimbusExtensionsToml = {
@@ -1359,8 +1443,9 @@ export function parseNimbusExtensionsRuntime(raw: string): boolean {
 }
 
 export function loadNimbusExtensionsRuntimeFromConfigDir(configDir: string): boolean {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "extensions",
     DEFAULT_NIMBUS_EXTENSIONS_RUNTIME,
     parseNimbusExtensionsRuntime,
   );
@@ -1378,7 +1463,12 @@ export function loadNimbusExtensionsFromPath(tomlPath: string): NimbusExtensions
 }
 
 export function loadNimbusExtensionsFromConfigDir(configDir: string): NimbusExtensionsToml {
-  return loadNimbusExtensionsFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "extensions",
+    DEFAULT_NIMBUS_EXTENSIONS_TOML,
+    parseNimbusExtensionsToml,
+  );
 }
 
 export type NimbusAuditToml = {
@@ -1424,7 +1514,12 @@ export function loadNimbusAuditFromPath(tomlPath: string): NimbusAuditToml {
 }
 
 export function loadNimbusAuditFromConfigDir(configDir: string): NimbusAuditToml {
-  return loadNimbusAuditFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "audit",
+    DEFAULT_NIMBUS_AUDIT_TOML,
+    parseNimbusAuditToml,
+  );
 }
 
 export type NimbusSecurityToml = {
@@ -1482,7 +1577,12 @@ export function loadNimbusSecurityFromPath(tomlPath: string): NimbusSecurityToml
 }
 
 export function loadNimbusSecurityFromConfigDir(configDir: string): NimbusSecurityToml {
-  return loadNimbusSecurityFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "security",
+    DEFAULT_NIMBUS_SECURITY_TOML,
+    parseNimbusSecurityToml,
+  );
 }
 
 export type NimbusUserToml = {
@@ -1514,7 +1614,12 @@ export function loadNimbusUserFromPath(tomlPath: string): NimbusUserToml {
 }
 
 export function loadNimbusUserFromConfigDir(configDir: string): NimbusUserToml {
-  return loadNimbusUserFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "user",
+    DEFAULT_NIMBUS_USER_TOML,
+    parseNimbusUserToml,
+  );
 }
 
 export type NimbusPagerdutyToml = {
@@ -1580,19 +1685,38 @@ export function loadNimbusPagerdutyFromPath(tomlPath: string): NimbusPagerdutyTo
     );
     return structuredClone(DEFAULT_NIMBUS_PAGERDUTY_TOML);
   }
+  return loadNimbusPagerdutyFromText(raw, tomlPath);
+}
+
+/**
+ * The one `[pagerduty]` core. `text === null` means no file; a rejected section warns on stderr
+ * (naming `where`) and falls back to the defaults.
+ */
+function loadNimbusPagerdutyFromText(
+  text: string | null,
+  where: string,
+  onFallback?: SectionFallbackSink,
+): NimbusPagerdutyToml {
+  if (text === null) {
+    return structuredClone(DEFAULT_NIMBUS_PAGERDUTY_TOML);
+  }
   try {
-    return parseNimbusPagerdutyToml(raw);
+    return parseNimbusPagerdutyToml(text);
   } catch (err) {
+    onFallback?.(fallbackMessage(err));
     process.stderr.write(
-      `nimbus: [pagerduty] config in ${tomlPath} rejected, using defaults: ` +
-        `${err instanceof Error ? err.message : String(err)}\n`,
+      `nimbus: [pagerduty] config in ${where} rejected, using defaults: ${fallbackMessage(err)}\n`,
     );
     return structuredClone(DEFAULT_NIMBUS_PAGERDUTY_TOML);
   }
 }
 
 export function loadNimbusPagerdutyFromConfigDir(configDir: string): NimbusPagerdutyToml {
-  return loadNimbusPagerdutyFromPath(join(configDir, "nimbus.toml"));
+  return loadNimbusPagerdutyFromText(
+    layeredConfigText(configDir),
+    `the layered config for ${configDir}`,
+    sectionFallbackSink(configDir, "pagerduty"),
+  );
 }
 
 export type NimbusIdentityToml = {
@@ -1682,8 +1806,9 @@ export function parseNimbusIdentityToml(
 }
 
 export function loadNimbusIdentityFromConfigDir(configDir: string): NimbusIdentityToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "identity",
     DEFAULT_NIMBUS_IDENTITY_TOML,
     parseNimbusIdentityToml,
   );
@@ -1780,7 +1905,12 @@ export function loadNimbusQuorumFromPath(tomlPath: string): QuorumConfig {
 }
 
 export function loadNimbusQuorumFromConfigDir(configDir: string): QuorumConfig {
-  return loadNimbusQuorumFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig<QuorumConfig>(
+    configDir,
+    "hitl.quorum",
+    new Map(),
+    parseQuorumConfig,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1803,8 +1933,9 @@ export function parseNimbusScimToml(
 }
 
 export function loadNimbusScimFromConfigDir(configDir: string): NimbusScimToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "scim",
     DEFAULT_NIMBUS_SCIM_TOML,
     parseNimbusScimToml,
   );
@@ -1878,8 +2009,9 @@ export function parseNimbusChatopsToml(
 }
 
 export function loadNimbusChatopsFromConfigDir(configDir: string): NimbusChatopsToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "chatops",
     DEFAULT_NIMBUS_CHATOPS_TOML,
     parseNimbusChatopsToml,
   );
@@ -1942,8 +2074,9 @@ export function parsePreflightConfig(source: string): PreflightConfig {
 }
 
 export function loadNimbusPreflightFromConfigDir(configDir: string): PreflightConfig {
-  return loadTomlSection<PreflightConfig>(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig<PreflightConfig>(
+    configDir,
+    "federation.preflight",
     new Map(),
     parsePreflightConfig,
   );
@@ -2076,8 +2209,9 @@ export function parseNimbusTribalToml(
 }
 
 export function loadNimbusTribalFromConfigDir(configDir: string): NimbusTribalToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "tribal",
     DEFAULT_NIMBUS_TRIBAL_TOML,
     parseNimbusTribalToml,
   );
@@ -2121,8 +2255,9 @@ export function parseNimbusShareHttpSink(raw: string): NimbusShareHttpSink {
 }
 
 export function loadNimbusShareHttpSink(configDir: string): NimbusShareHttpSink {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "share.http_sink",
     DEFAULT_NIMBUS_SHARE_HTTP_SINK,
     parseNimbusShareHttpSink,
   );
@@ -2182,6 +2317,12 @@ export function parseNimbusBriefsToml(
 // already handles a missing file / parse error by returning the defaults).
 export function loadNimbusBriefsFromPath(tomlPath: string): NimbusBriefsToml {
   return loadTomlSection(tomlPath, DEFAULT_NIMBUS_BRIEFS_TOML, (raw) => parseNimbusBriefsToml(raw));
+}
+
+export function loadNimbusBriefsFromConfigDir(configDir: string): NimbusBriefsToml {
+  return loadTomlSectionFromConfig(configDir, "briefs", DEFAULT_NIMBUS_BRIEFS_TOML, (raw) =>
+    parseNimbusBriefsToml(raw),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2270,8 +2411,9 @@ export function parseNimbusGlossaryToml(
 }
 
 export function loadNimbusGlossaryFromConfigDir(configDir: string): NimbusGlossaryToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "glossary",
     DEFAULT_NIMBUS_GLOSSARY_TOML,
     parseNimbusGlossaryToml,
   );
@@ -2364,8 +2506,9 @@ export function parseNimbusDecisionsToml(
 }
 
 export function loadNimbusDecisionsFromConfigDir(configDir: string): NimbusDecisionsToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "decisions",
     DEFAULT_NIMBUS_DECISIONS_TOML,
     parseNimbusDecisionsToml,
   );
@@ -2495,8 +2638,9 @@ export function parseNimbusOwnershipToml(
 }
 
 export function loadNimbusOwnershipFromConfigDir(configDir: string): NimbusOwnershipToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "ownership",
     DEFAULT_NIMBUS_OWNERSHIP_TOML,
     parseNimbusOwnershipToml,
   );
@@ -2577,8 +2721,9 @@ export function parseNimbusPremortemToml(
 }
 
 export function loadNimbusPremortemFromConfigDir(configDir: string): NimbusPremortemToml {
-  return loadTomlSection(
-    join(configDir, "nimbus.toml"),
+  return loadTomlSectionFromConfig(
+    configDir,
+    "premortem",
     DEFAULT_NIMBUS_PREMORTEM_TOML,
     parseNimbusPremortemToml,
   );
@@ -2653,7 +2798,12 @@ export function loadNimbusNegotiateFromPath(tomlPath: string): NimbusNegotiateTo
 }
 
 export function loadNimbusNegotiateFromConfigDir(configDir: string): NimbusNegotiateToml {
-  return loadNimbusNegotiateFromPath(join(configDir, "nimbus.toml"));
+  return loadTomlSectionFromConfig(
+    configDir,
+    "negotiate",
+    DEFAULT_NIMBUS_NEGOTIATE_TOML,
+    parseNimbusNegotiateToml,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2780,17 +2930,32 @@ export function loadNimbusPersonaFromPath(
   );
 }
 
-/**
- * The ONE `[agents]` loader. It takes a path, not a config dir, because the path a caller
- * wants is the PROFILE-RESOLVED one (`resolveNimbusTomlForProfile`) — the former
- * `loadNimbusAgentsFromConfigDir` hardcoded `nimbus.toml` and was therefore profile-BLIND,
- * which silently discarded `[agents] synthesis` set in a profile TOML. A2 moved the sole
- * production caller (`agents/_lib/agent-synthesis-runner.ts`) onto this function and DELETED
- * the config-dir variant rather than leaving a profile-blind loader exported beside the
- * profile-aware one for someone to reach for by accident. See the design spec § 5.1.
- */
+export function loadNimbusPersonaFromConfigDir(
+  configDir: string,
+  issues?: PersonaIssue[],
+): NimbusPersonaToml {
+  return loadTomlSectionFromConfig(configDir, "persona", DEFAULT_NIMBUS_PERSONA_TOML, (raw) =>
+    parseNimbusPersonaToml(raw, DEFAULT_NIMBUS_PERSONA_TOML, issues),
+  );
+}
+
+/** Single-file `[agents]` reader; `loadNimbusAgentsFromConfigDir` is the layered one. */
 export function loadNimbusAgentsFromPath(tomlPath: string): NimbusAgentsToml {
   return loadTomlSection(tomlPath, DEFAULT_NIMBUS_AGENTS_TOML, parseNimbusAgentsToml);
+}
+
+/**
+ * `[agents]` over the layered snapshot (packs, base, active profile). An earlier config-dir
+ * variant read `nimbus.toml` alone and was deleted for being profile-blind — it silently dropped
+ * `[agents] synthesis` set in a profile TOML. Reading the layered snapshot closes that.
+ */
+export function loadNimbusAgentsFromConfigDir(configDir: string): NimbusAgentsToml {
+  return loadTomlSectionFromConfig(
+    configDir,
+    "agents",
+    DEFAULT_NIMBUS_AGENTS_TOML,
+    parseNimbusAgentsToml,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2804,9 +2969,8 @@ export function loadNimbusAgentsFromPath(tomlPath: string): NimbusAgentsToml {
 export function loadNimbusServiceConfigsFromConfigDir(
   configDir: string,
 ): Map<string, ServiceConfig> {
-  const tomlPath = join(configDir, "nimbus.toml");
-  if (!existsSync(tomlPath)) return new Map();
-  const raw = readFileSync(tomlPath, "utf8");
+  const raw = layeredConfigText(configDir);
+  if (raw === null) return new Map();
   const dora = parseNimbusDoraToml(raw);
   const ci = parseNimbusCiServiceToml(raw);
   const pagerdutyCfg = parseNimbusPagerdutyToml(raw);

@@ -1,16 +1,146 @@
 // `config explain`: where each effective value comes from. Reads the layered snapshot
 // (pack -> base -> profile) and puts a set, effective environment override on top.
 
+import { DEFAULT_OPENAPI_CONFIG, parseOpenapiToml } from "../connectors/openapi-indexer-config.ts";
+import { loadMultimodalConfig } from "../multimodal/multimodal-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import { CONFIG_ENV_OVERRIDES, isPolicyConstrainedPath } from "./config-env-overrides.ts";
-import type { LayeredConfig } from "./layered-config.ts";
+import { loadNimbusFilesystemRootsFromConfigDir } from "./filesystem-toml.ts";
+import { loadNimbusFleetFromConfigDir } from "./fleet-toml.ts";
+import { fallbackMessage, type LayeredConfig } from "./layered-config.ts";
 import {
   type EffectiveEntry,
   type EffectiveSection,
   type LayerRef,
   UNPARSED_SECTION_HEADER,
 } from "./layered-merge.ts";
+import { loadNimbusMcpSinkFromConfigDir } from "./mcp-sink-toml.ts";
+import {
+  loadNimbusAgentsFromConfigDir,
+  loadNimbusAuditFromConfigDir,
+  loadNimbusAutomationFromConfigDir,
+  loadNimbusBriefsFromConfigDir,
+  loadNimbusChatopsFromConfigDir,
+  loadNimbusCodeExecutionFromConfigDir,
+  loadNimbusComputerUseFromConfigDir,
+  loadNimbusConnectorsFromConfigDir,
+  loadNimbusDecisionsFromConfigDir,
+  loadNimbusDoraFromConfigDir,
+  loadNimbusEmbeddingFromConfigDir,
+  loadNimbusExtensionsFromConfigDir,
+  loadNimbusFederationFromConfigDir,
+  loadNimbusGlossaryFromConfigDir,
+  loadNimbusIdentityFromConfigDir,
+  loadNimbusLanFromConfigDir,
+  loadNimbusLlmFromConfigDir,
+  loadNimbusNegotiateFromConfigDir,
+  loadNimbusOwnershipFromConfigDir,
+  loadNimbusPagerdutyFromConfigDir,
+  loadNimbusPersonaFromConfigDir,
+  loadNimbusPreflightFromConfigDir,
+  loadNimbusPremortemFromConfigDir,
+  loadNimbusQuorumFromConfigDir,
+  loadNimbusScimFromConfigDir,
+  loadNimbusSecurityFromConfigDir,
+  loadNimbusServiceConfigsFromConfigDir,
+  loadNimbusShareHttpSink,
+  loadNimbusToolGenerationFromConfigDir,
+  loadNimbusTribalFromConfigDir,
+  loadNimbusUpdaterFromConfigDir,
+  loadNimbusUserFromConfigDir,
+  loadNimbusVoiceFromConfigDir,
+  loadTomlSectionFromConfig,
+} from "./nimbus-toml.ts";
+import { loadGlossaryManualFromConfigDir } from "./nimbus-toml-glossary-terms.ts";
+import { loadNimbusWorkdayFromConfigDir } from "./nimbus-toml-workday.ts";
+import { loadNimbusNotificationsFromConfigDir } from "./notifications-toml.ts";
+import { loadNimbusOncallPushFromConfigDir } from "./oncall-push-toml.ts";
+import { loadNimbusSessionFromConfigDir } from "./session-toml.ts";
+import { loadNimbusTelemetryFromConfigDir } from "./telemetry-toml.ts";
 import { parseString } from "./toml-primitives.ts";
+
+/**
+ * Each section id (unbracketed, as `sectionFallback` keys it) mapped to the config-dir loader that
+ * reads it. `probeSection` runs the loader so a swallowed or refused error is on record before
+ * `config explain` reports the section. Every id a loader passes to its fallback sink must be here.
+ */
+export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unknown>> = {
+  agents: loadNimbusAgentsFromConfigDir,
+  audit: loadNimbusAuditFromConfigDir,
+  automation: loadNimbusAutomationFromConfigDir,
+  briefs: loadNimbusBriefsFromConfigDir,
+  chatops: loadNimbusChatopsFromConfigDir,
+  "ci.service": loadNimbusServiceConfigsFromConfigDir,
+  code_execution: loadNimbusCodeExecutionFromConfigDir,
+  computer_use: loadNimbusComputerUseFromConfigDir,
+  connectors: loadNimbusConnectorsFromConfigDir,
+  "connectors.workday": loadNimbusWorkdayFromConfigDir,
+  decisions: loadNimbusDecisionsFromConfigDir,
+  embedding: loadNimbusEmbeddingFromConfigDir,
+  extensions: loadNimbusExtensionsFromConfigDir,
+  federation: loadNimbusFederationFromConfigDir,
+  "federation.preflight": loadNimbusPreflightFromConfigDir,
+  "filesystem.roots": loadNimbusFilesystemRootsFromConfigDir,
+  fleet: loadNimbusFleetFromConfigDir,
+  glossary: loadNimbusGlossaryFromConfigDir,
+  "glossary.terms": loadGlossaryManualFromConfigDir,
+  "hitl.quorum": loadNimbusQuorumFromConfigDir,
+  identity: loadNimbusIdentityFromConfigDir,
+  lan: loadNimbusLanFromConfigDir,
+  llm: loadNimbusLlmFromConfigDir,
+  mcp_sink: loadNimbusMcpSinkFromConfigDir,
+  "metrics.dora": loadNimbusDoraFromConfigDir,
+  multimodal: loadMultimodalConfig,
+  negotiate: loadNimbusNegotiateFromConfigDir,
+  notifications: (configDir) => loadNimbusNotificationsFromConfigDir(configDir),
+  "oncall.push": loadNimbusOncallPushFromConfigDir,
+  openapi: (configDir) =>
+    loadTomlSectionFromConfig(configDir, "openapi", DEFAULT_OPENAPI_CONFIG, parseOpenapiToml),
+  ownership: loadNimbusOwnershipFromConfigDir,
+  pagerduty: loadNimbusPagerdutyFromConfigDir,
+  persona: (configDir) => loadNimbusPersonaFromConfigDir(configDir),
+  premortem: loadNimbusPremortemFromConfigDir,
+  scim: loadNimbusScimFromConfigDir,
+  security: loadNimbusSecurityFromConfigDir,
+  session: loadNimbusSessionFromConfigDir,
+  "share.http_sink": loadNimbusShareHttpSink,
+  telemetry: loadNimbusTelemetryFromConfigDir,
+  tool_generation: loadNimbusToolGenerationFromConfigDir,
+  tribal: loadNimbusTribalFromConfigDir,
+  updater: loadNimbusUpdaterFromConfigDir,
+  user: loadNimbusUserFromConfigDir,
+  voice: loadNimbusVoiceFromConfigDir,
+};
+
+/**
+ * Runs `sectionId`'s own loader against `reader`'s config dir, so its fallback (if any) is
+ * recorded for the current snapshot even when nothing has loaded the section since the last edit.
+ * A loader that throws is recorded as `refused: <message>`. The loader reaches the reader through
+ * the registry (`getLayeredConfig`), so `reader` must be the registered one for its config dir.
+ */
+export function probeSection(reader: LayeredConfig, sectionId: string): string | undefined {
+  const load = SECTION_LOADERS[sectionId];
+  if (load !== undefined) {
+    try {
+      load(reader.configDir);
+    } catch (err) {
+      reader.recordSectionFallback(sectionId, `refused: ${fallbackMessage(err)}`);
+    }
+  }
+  return reader.sectionFallback(sectionId);
+}
+
+/** The `SECTION_LOADERS` id owning `path`: the longest id equal to, or a dotted prefix of, it. */
+function sectionIdForPath(path: string): string | undefined {
+  const wanted = unquote(path);
+  let best: string | undefined;
+  for (const id of Object.keys(SECTION_LOADERS)) {
+    if ((wanted === id || wanted.startsWith(`${id}.`)) && id.length > (best?.length ?? -1)) {
+      best = id;
+    }
+  }
+  return best;
+}
 
 export type ExplainSource =
   | { readonly kind: "layer"; readonly layer: LayerRef }
@@ -231,6 +361,8 @@ export function explainConfig(
   if (marker !== running) {
     notes.push(`profile switched to "${marker}" on disk; restart the gateway to apply`);
   }
+  const sectionId = path === undefined ? undefined : sectionIdForPath(path);
+  const sectionFallback = sectionId === undefined ? undefined : probeSection(reader, sectionId);
   const policyMayRestrict =
     path === undefined
       ? entries.some((e) => isPolicyConstrainedPath(e.path))
@@ -242,6 +374,7 @@ export function explainConfig(
     entries,
     ...(blocks.length > 0 ? { blocks } : {}),
     policyMayRestrict,
+    ...(sectionFallback !== undefined ? { sectionFallback } : {}),
     notes,
   };
 }

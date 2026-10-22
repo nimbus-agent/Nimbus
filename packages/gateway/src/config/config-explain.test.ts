@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { explainConfig } from "./config-explain.ts";
+import { explainConfig, probeSection, SECTION_LOADERS } from "./config-explain.ts";
 import { initLayeredConfig, resetLayeredConfigsForTests } from "./layered-config.ts";
 
 let dir: string;
@@ -162,5 +162,52 @@ describe("explainConfig", () => {
     const r = explainConfig(initLayeredConfig(dir), "a.zzz", noEnv);
     expect(r.entries).toHaveLength(0);
     expect(r.notes).toContain("no layer sets a.zzz; the code default applies");
+  });
+});
+
+describe("section fallbacks", () => {
+  test("fallback is reported right after an edit", () => {
+    const reader = initLayeredConfig(dir);
+    writeBase("[audit]\ntool_call_log_retention_days = 99999\n");
+    const r = explainConfig(reader, "audit.tool_call_log_retention_days", noEnv);
+    expect(r.sectionFallback).toBeDefined();
+    expect(r.sectionFallback).toContain("36500");
+  });
+
+  test("a loader that throws is reported as refused", () => {
+    writeBase('[notifications]\ncontent = "bogus"\n');
+    const r = explainConfig(initLayeredConfig(dir), "notifications.content", noEnv);
+    expect(r.sectionFallback?.startsWith("refused: ")).toBe(true);
+  });
+
+  test("a clean section reports no fallback", () => {
+    writeBase("[audit]\ntool_call_log_retention_days = 30\n");
+    const r = explainConfig(initLayeredConfig(dir), "audit.tool_call_log_retention_days", noEnv);
+    expect(r.sectionFallback).toBeUndefined();
+    expect(probeSection(initLayeredConfig(dir), "audit")).toBeUndefined();
+  });
+
+  test("SECTION_LOADERS has a key for every section id a loader records a fallback under", () => {
+    const sources = [
+      ...readdirSync(import.meta.dir)
+        .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+        .map((f) => join(import.meta.dir, f)),
+      join(import.meta.dir, "..", "multimodal", "multimodal-config.ts"),
+    ];
+    const idRes = [
+      /sectionFallbackSink\(\s*configDir,\s*"([^"]+)"/g,
+      /loadTomlSectionFromConfig(?:<[^>]+>)?\(\s*configDir,\s*"([^"]+)"/g,
+    ];
+    const ids = new Set<string>();
+    for (const file of sources) {
+      const text = readFileSync(file, "utf8");
+      for (const re of idRes) for (const m of text.matchAll(re)) ids.add(m[1] as string);
+    }
+    // Guard against a regex that silently matches nothing.
+    expect(ids.has("audit")).toBe(true);
+    expect(ids.has("hitl.quorum")).toBe(true);
+    expect(ids.has("fleet")).toBe(true);
+    const missing = [...ids].filter((id) => !(id in SECTION_LOADERS));
+    expect(missing).toEqual([]);
   });
 });

@@ -158,3 +158,21 @@ export function getLayeredConfig(configDir: string): LayeredConfig {
 export function resetLayeredConfigsForTests(): void {
   registry.clear();
 }
+
+/** Called with the error message when a loader swallows, logs or converts a section error. */
+export type SectionFallbackSink = (message: string) => void;
+
+/** The message of a caught value, for a section fallback record. */
+export function fallbackMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** A sink recording into the layered reader for `configDir` under `sectionId` (unbracketed). */
+export function sectionFallbackSink(configDir: string, sectionId: string): SectionFallbackSink {
+  return (message) => getLayeredConfig(configDir).recordSectionFallback(sectionId, message);
+}
+
+/** The effective (layered) config text for `configDir`; null when no user layer file exists. */
+export function layeredConfigText(configDir: string): string | null {
+  return getLayeredConfig(configDir).snapshot().text;
+}

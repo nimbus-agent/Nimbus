@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import { dirname, join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
@@ -89,6 +89,7 @@ import {
   loadNimbusToolGenerationFromConfigDir,
   loadNimbusTribalFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
+  loadTomlSectionFromConfig,
   type NimbusChatopsToml,
   type NimbusComputerUseToml,
   type NimbusLlmLocalRoute,
@@ -468,15 +469,7 @@ export function createUnimplementedNotifications(logger: Logger): NotificationSe
 }
 
 function loadOpenapiConfig(configDir: string): OpenapiConfig {
-  const path = join(configDir, "nimbus.toml");
-  if (!existsSync(path)) {
-    return DEFAULT_OPENAPI_CONFIG;
-  }
-  try {
-    return parseOpenapiToml(readFileSync(path, "utf8"));
-  } catch {
-    return DEFAULT_OPENAPI_CONFIG;
-  }
+  return loadTomlSectionFromConfig(configDir, "openapi", DEFAULT_OPENAPI_CONFIG, parseOpenapiToml);
 }
 
 type EmbeddingRuntime = ConcreteEmbeddingRuntime | null;

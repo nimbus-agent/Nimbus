@@ -1,5 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  fallbackMessage,
+  layeredConfigText,
+  type SectionFallbackSink,
+  sectionFallbackSink,
+} from "./layered-config.ts";
 
 export type NimbusSessionToml = {
   memoryTtlHours: number;
@@ -55,17 +60,34 @@ export function parseNimbusTomlSessionSection(source: string): Partial<NimbusSes
 }
 
 export function loadNimbusSessionFromPath(tomlPath: string): NimbusSessionToml {
-  if (!existsSync(tomlPath)) {
+  let raw: string | null;
+  try {
+    raw = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : null;
+  } catch {
+    return { ...DEFAULT_NIMBUS_SESSION_TOML };
+  }
+  return loadNimbusSessionFromText(raw);
+}
+
+/** The one `[session]` core: defaults on no file or a parse error. */
+function loadNimbusSessionFromText(
+  raw: string | null,
+  onFallback?: SectionFallbackSink,
+): NimbusSessionToml {
+  if (raw === null) {
     return { ...DEFAULT_NIMBUS_SESSION_TOML };
   }
   try {
-    const raw = readFileSync(tomlPath, "utf8");
     return { ...DEFAULT_NIMBUS_SESSION_TOML, ...parseNimbusTomlSessionSection(raw) };
-  } catch {
+  } catch (err) {
+    onFallback?.(fallbackMessage(err));
     return { ...DEFAULT_NIMBUS_SESSION_TOML };
   }
 }
 
 export function loadNimbusSessionFromConfigDir(configDir: string): NimbusSessionToml {
-  return loadNimbusSessionFromPath(join(configDir, "nimbus.toml"));
+  return loadNimbusSessionFromText(
+    layeredConfigText(configDir),
+    sectionFallbackSink(configDir, "session"),
+  );
 }

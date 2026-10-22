@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { fallbackMessage, layeredConfigText, sectionFallbackSink } from "./layered-config.ts";
 import { parseBool, parseString, stripComment } from "./toml-primitives.ts";
 
 export type NimbusFilesystemRootToml = {
@@ -130,14 +130,14 @@ export function parseNimbusTomlFilesystemRoots(source: string): NimbusFilesystem
 export function loadNimbusFilesystemRootsFromConfigDir(
   configDir: string,
 ): NimbusFilesystemRootToml[] {
-  const path = join(configDir, "nimbus.toml");
-  if (!existsSync(path)) {
+  const raw = layeredConfigText(configDir);
+  if (raw === null) {
     return [];
   }
   try {
-    const raw = readFileSync(path, "utf8");
     return parseNimbusTomlFilesystemRoots(raw);
-  } catch {
+  } catch (err) {
+    sectionFallbackSink(configDir, "filesystem.roots")(fallbackMessage(err));
     return [];
   }
 }

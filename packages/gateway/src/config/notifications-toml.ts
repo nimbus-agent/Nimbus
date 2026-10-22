@@ -28,8 +28,13 @@
  * `…FromConfigDir` variant).
  */
 import { existsSync, readFileSync } from "node:fs";
-
 import { processEnvGet } from "../platform/env-access.ts";
+import {
+  fallbackMessage,
+  layeredConfigText,
+  type SectionFallbackSink,
+  sectionFallbackSink,
+} from "./layered-config.ts";
 import {
   isTableHeader,
   parseBool,
@@ -131,6 +136,35 @@ export function loadNimbusNotificationsFromPath(
   tomlPath: string,
   envGet: NotificationsEnvGet = processEnvGet,
 ): NimbusNotificationsToml {
-  const raw = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
-  return parseNimbusTomlNotifications(raw, envGet);
+  const raw = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : null;
+  return loadNimbusNotificationsFromText(raw, envGet);
+}
+
+/** `[notifications]` over the layered snapshot (packs, base, active profile). */
+export function loadNimbusNotificationsFromConfigDir(
+  configDir: string,
+  envGet: NotificationsEnvGet = processEnvGet,
+): NimbusNotificationsToml {
+  return loadNimbusNotificationsFromText(
+    layeredConfigText(configDir),
+    envGet,
+    sectionFallbackSink(configDir, "notifications"),
+  );
+}
+
+/**
+ * The one `[notifications]` core. `raw === null` (no file) parses `""` so the env override still
+ * applies; a `NotificationsConfigError` is recorded through `onFallback` and rethrown.
+ */
+function loadNimbusNotificationsFromText(
+  raw: string | null,
+  envGet: NotificationsEnvGet,
+  onFallback?: SectionFallbackSink,
+): NimbusNotificationsToml {
+  try {
+    return parseNimbusTomlNotifications(raw ?? "", envGet);
+  } catch (err) {
+    onFallback?.(`refused: ${fallbackMessage(err)}`);
+    throw err;
+  }
 }
