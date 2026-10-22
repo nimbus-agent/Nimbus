@@ -48,7 +48,7 @@ export const EXTENSION_SYNC_BUDGET = {
   callTimeoutMs: 60_000,
 } as const;
 
-/** Readwise's `initialSyncDepthDays` today; the cold-start floor of an extension's first run. */
+/** The initial sync depth the bundled connector used; the cold-start floor of an extension's first run. */
 const INITIAL_SYNC_DEPTH_DAYS = 30;
 const DEFAULT_RETRY_AFTER_MS = 60_000;
 

@@ -73,7 +73,6 @@ import {
   phase3AddProtonmailMcp,
   phase3AddRaindropMcp,
   phase3AddRampMcp,
-  phase3AddReadwiseMcp,
   phase3AddStackoverflowMcp,
   phase3AddStripeMcp,
   phase3AddZendeskMcp,
@@ -127,7 +126,6 @@ export {
   phase3AddProtonmailMcp,
   phase3AddRaindropMcp,
   phase3AddRampMcp,
-  phase3AddReadwiseMcp,
   phase3AddSagemakerMcp,
   phase3AddSemgrepMcp,
   phase3AddSentryMcp,
@@ -191,7 +189,6 @@ export async function buildPhase3Servers(
   await phase3AddNetlifyMcp(vault, servers, sandboxCwd);
   await phase3AddStripeMcp(vault, servers, sandboxCwd);
   await phase3AddMercuryMcp(vault, servers, sandboxCwd);
-  await phase3AddReadwiseMcp(vault, servers, sandboxCwd);
   await phase3AddRaindropMcp(vault, servers, sandboxCwd);
   await phase3AddIntercomMcp(vault, servers, sandboxCwd);
   await phase3AddZendeskMcp(vault, servers, sandboxCwd);

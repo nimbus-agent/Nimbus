@@ -41,19 +41,6 @@ export async function phase3AddMercuryMcp(
   });
 }
 
-export async function phase3AddReadwiseMcp(
-  vault: NimbusVault,
-  servers: Record<string, ServerSpec>,
-  sandboxCwd: string,
-): Promise<void> {
-  await addSimpleTokenServer(vault, servers, sandboxCwd, {
-    serviceId: "readwise",
-    script: "readwise",
-    secretKey: "token",
-    envKey: "READWISE_TOKEN",
-  });
-}
-
 export async function phase3AddRaindropMcp(
   vault: NimbusVault,
   servers: Record<string, ServerSpec>,

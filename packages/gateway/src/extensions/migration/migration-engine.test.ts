@@ -250,11 +250,11 @@ describe("evaluate", () => {
     expect(JSON.stringify(logs)).toContain("bundled");
   });
 
-  test("the default bundled predicate is the real bundled registry: a readwise entry is skipped", async () => {
+  test("the default bundled predicate is the real bundled registry: a still-bundled entry is skipped", async () => {
     const { isBundledConnector: _p, ...rest } = deps();
     await createMigrationEngine({
       ...rest,
-      continuityTable: [{ ...entry, legacyServiceId: "readwise" }],
+      continuityTable: [{ ...entry, legacyServiceId: "mercury" }],
     }).evaluate();
     expect(listMigrations(db)).toEqual([]);
     expect(fetches).toEqual([]);

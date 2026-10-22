@@ -126,7 +126,6 @@ describe("manifestForFirstParty", () => {
       "netlify",
       "stripe",
       "mercury",
-      "readwise",
       "raindrop",
       "intercom",
       "zendesk",
