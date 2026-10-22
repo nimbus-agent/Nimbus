@@ -10,6 +10,7 @@ import { join, resolve } from "node:path";
 import { PROFILE_NAME_RE } from "../config/active-profile.ts";
 import {
   basenameSafeMessage,
+  type ConfigSnapshot,
   type PackLayerSource,
   type PackLayersRead,
   type PackLayerText,
@@ -46,6 +47,11 @@ export type PackWriteResult = {
   readonly snapshotVersion: number | null;
 };
 
+/**
+ * Refusals (allowlist, conflict, bad names, unreadable `active.json`) throw
+ * `PackLayerRefusedError`; raw filesystem I/O errors propagate unwrapped. `removePackLayer` that
+ * fails at the unlink has already delisted the pack, which is inert.
+ */
 export type PackLayerStore = PackLayerSource & {
   setPackLayer(profile: string, packId: string, fragment: string): PackWriteResult;
   removePackLayer(profile: string, packId: string): PackWriteResult & { readonly removed: boolean };
@@ -85,6 +91,29 @@ function scalarLabel(id: string): string {
   return `[${id.slice(0, dot)}] ${id.slice(dot + 1)}`;
 }
 
+const SKIP_REASON_MAX = 200;
+
+/** `refused: <first problem>` (+ a count of the rest), capped so a skip reason stays short. */
+function refusedReason(problems: readonly string[], safe: (m: string) => string): string {
+  const first = safe(problems[0] ?? "refused");
+  const more = problems.length > 1 ? ` (+${problems.length - 1} more)` : "";
+  const full = `refused: ${first}${more}`;
+  if (full.length <= SKIP_REASON_MAX) return full;
+  const keep = SKIP_REASON_MAX - 1;
+  return `${full.slice(0, keep)}…`;
+}
+
+/** The boot log lines for a snapshot's skipped packs and pack-list error (one per skip). */
+export function packSkipLogLines(
+  snapshot: Pick<ConfigSnapshot, "skippedPacks" | "packListError">,
+): string[] {
+  const lines = snapshot.skippedPacks.map((s) => `config: pack "${s.packId}" skipped: ${s.reason}`);
+  if (snapshot.packListError !== undefined) {
+    lines.push(`config: packs not applied: ${snapshot.packListError}`);
+  }
+  return lines;
+}
+
 export function createPackLayerStore(opts: {
   configDir: string;
   checkJobs?: PackJobChecker;
@@ -96,7 +125,9 @@ export function createPackLayerStore(opts: {
     opts.onChange ??
     ((profile: string): number | null => {
       const reader = peekLayeredConfig(configDir);
-      return reader !== undefined && reader.profile.name === profile
+      // PROFILE_NAME_RE is case-insensitive, so `Default` and `default` are one directory on
+      // Windows/macOS.
+      return reader !== undefined && reader.profile.name.toLowerCase() === profile.toLowerCase()
         ? reader.snapshot().version
         : null;
     });
@@ -144,7 +175,7 @@ export function createPackLayerStore(opts: {
       }
       const text = readFileSync(path, "utf8");
       const check = checkPackFragment(text, checkJobs);
-      if (!check.ok) return { reason: `refused: ${safe(check.problems.join("; "))}` };
+      if (!check.ok) return { reason: refusedReason(check.problems, safe) };
       return { text, pack: { id, scalars: check.scalars, jobNames: check.jobNames } };
     } catch (err) {
       if (isEnoent(err)) return { reason: "missing" };

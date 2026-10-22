@@ -23,6 +23,7 @@ import {
   createPackLayerStore,
   PackLayerRefusedError,
   type PackLayerStore,
+  packSkipLogLines,
 } from "./pack-layer-store.ts";
 
 const CONF = (v: string) => `[decisions]\nmin_confidence = ${v}\n`;
@@ -184,6 +185,12 @@ describe("setPackLayer", () => {
     expect(getLayeredConfig(dir).snapshot().version).toBe(before);
   });
 
+  test("the default onChange matches the running profile case-insensitively", () => {
+    const store = wired("default");
+    const r = store.setPackLayer("Default", "pm", CONF("0.5"));
+    expect(typeof r.snapshotVersion).toBe("number");
+  });
+
   test("with no reader registered, the default onChange returns null", () => {
     const store = createPackLayerStore({ configDir: dir });
     expect(store.setPackLayer("default", "pm", CONF("0.5")).snapshotVersion).toBeNull();
@@ -261,6 +268,26 @@ describe("read", () => {
     const r = store.read("../x");
     expect(r.layers).toEqual([]);
     expect(r.listError).toContain("profile");
+  });
+
+  test("a failing fragment's skip reason is its first problem plus a count, capped at 200", () => {
+    const store = wired();
+    store.setPackLayer("default", "pm", CONF("0.55"));
+    const many = "[llm]\nprefer_local = false\n[vault]\nx = 1\n[sync]\ny = 2\n";
+    writeFileSync(packFile("pm"), `${CONF("0.55")}${many}`);
+    const reason = store.read("default").skipped[0]?.reason ?? "";
+    expect(reason.startsWith("refused: ")).toBe(true);
+    expect(reason).toMatch(/\(\+\d+ more\)$/);
+    expect(reason).not.toContain("; ");
+    expect(reason.length).toBeLessThanOrEqual(200);
+    // The write side keeps the full list.
+    const err = refusal(() => store.setPackLayer("default", "pm2", many));
+    expect(err.problems.length).toBeGreaterThanOrEqual(3);
+
+    writeFileSync(packFile("pm"), `${CONF("0.55")}[${"z".repeat(400)}]\nq = 1\n`);
+    const long = store.read("default").skipped[0]?.reason ?? "";
+    expect(long.length).toBe(200);
+    expect(long.endsWith("…")).toBe(true);
   });
 
   test("a tampered file is skipped whole", () => {
@@ -359,5 +386,24 @@ describe("PackLayerRefusedError", () => {
     }
     writeActive("{");
     refusal(() => store.setPackLayer("default", "b", CONF("0.5")));
+  });
+});
+
+describe("packSkipLogLines", () => {
+  test("one line per skipped pack plus one for a list error", () => {
+    expect(packSkipLogLines({ skippedPacks: [] })).toEqual([]);
+    expect(
+      packSkipLogLines({
+        skippedPacks: [
+          { packId: "pm", reason: "missing" },
+          { packId: "x", reason: "invalid pack id" },
+        ],
+        packListError: "active.json is not valid JSON",
+      }),
+    ).toEqual([
+      'config: pack "pm" skipped: missing',
+      'config: pack "x" skipped: invalid pack id',
+      "config: packs not applied: active.json is not valid JSON",
+    ]);
   });
 });

@@ -277,6 +277,7 @@ import {
   type OwnershipRefresher,
 } from "../ownership/ownership-refresh.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
+import { createPackLayerStore, packSkipLogLines } from "../packs/pack-layer-store.ts";
 import { ensureAnchorKeypair } from "../policy/anchor-keypair.ts";
 import { connectorAllowPredicate, partitionByAllowlist } from "../policy/connector-allowlist.ts";
 import { startPurge } from "../policy/gdpr-purge.ts";
@@ -3366,13 +3367,17 @@ export async function assemblePlatformServices(
   // Pin the profile BEFORE the first config read: every `…FromConfigDir` loader below goes
   // through this reader, so the profile cannot change under a running gateway. An invalid
   // profile name (env or marker) throws `InvalidProfileNameError` and stops boot.
-  const layeredConfig = initLayeredConfig(paths.configDir);
+  const layeredConfig = initLayeredConfig(paths.configDir, {
+    packs: createPackLayerStore({ configDir: paths.configDir }),
+  });
   const bootPolicy = bootPolicyFor(paths);
   // Built before `db` so a boot-marker append failure (below) has somewhere to log a warning.
   const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
   syncLogger.info(
     `config: profile "${layeredConfig.profile.name}" (from ${layeredConfig.profile.source})`,
   );
+  // A skipped pack is never fatal, but it is reported: here, in `diag.snapshot`, and in `nimbus config explain`.
+  for (const line of packSkipLogLines(layeredConfig.snapshot())) syncLogger.error(line);
   const vault = customVault ?? (await createNimbusVault(paths));
   // Ordering is load-bearing on Windows: this constructs the runner, which synchronously probes
   // the helper via `--check-caps` (creating, then deleting, a throwaway
