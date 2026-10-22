@@ -6,8 +6,10 @@ import {
   mergeLayerDocs,
   parseLayerDoc,
   renderEffectiveDoc,
+  UNPARSED_SECTION_HEADER,
 } from "./layered-merge.ts";
 import { parseNimbusDecisionsToml } from "./nimbus-toml.ts";
+import { parseGlossaryManualToml } from "./nimbus-toml-glossary-terms.ts";
 
 function ref(kind: LayerKind, id: string): LayerRef {
   return { kind, id, path: `/virtual/${id}.toml` };
@@ -133,5 +135,67 @@ describe("layered-merge", () => {
     expect(parsed.sections).toHaveLength(1);
     expect(parsed.sections[0]?.malformed).toBe('[hitl.quorum."x]');
     expect(parsed.sections[0]?.header).toBeNull();
+  });
+
+  test("malformed block keys are not attributed to a valid section (single layer)", () => {
+    const text = render(
+      doc(base, "[multimodal\nenabled = false\n[decisions]\nmin_confidence = 0.3"),
+    );
+    const cfg = parseNimbusDecisionsToml(text);
+    expect(cfg.enabled).toBe(true);
+    expect(cfg.minConfidence).toBeCloseTo(0.3, 5);
+    expect(text).toContain(`[${UNPARSED_SECTION_HEADER}]`);
+  });
+
+  test("malformed block keys are not attributed to a valid section (two layers)", () => {
+    const text = render(
+      doc(base, "[multimodal\nenabled = false\n[decisions]\nmin_confidence = 0.3"),
+      doc(profile, "[decisions]\nmin_confidence = 0.6"),
+    );
+    const cfg = parseNimbusDecisionsToml(text);
+    expect(cfg.enabled).toBe(true);
+    expect(cfg.minConfidence).toBeCloseTo(0.6, 5);
+  });
+
+  test("no sentinel when nothing is malformed", () => {
+    expect(render(doc(base, "[decisions]\nx = 1"))).not.toContain(UNPARSED_SECTION_HEADER);
+  });
+
+  test("single-layer round trip preserves what the section parsers read", () => {
+    const original = [
+      "schema_version = 1",
+      "[decisions]",
+      "min_confidence = 0.7",
+      "max_llm_calls_per_pass = 4",
+      "[glossary.terms]",
+      'CDR = "call detail record"',
+      "[[filesystem.roots]]",
+      'path = "/a"',
+      "[[filesystem.roots]]",
+      'path = "/b"',
+      "[[fleet.job]]",
+      'name = "a"',
+      "[[fleet.job]]",
+      'name = "b"',
+      "",
+    ].join("\n");
+    const rendered = render(doc(base, original));
+    expect(parseNimbusDecisionsToml(rendered)).toEqual(parseNimbusDecisionsToml(original));
+    expect(parseGlossaryManualToml(rendered)).toEqual(parseGlossaryManualToml(original));
+  });
+
+  test("higher-layer fleet job replaces every same-named lower-layer copy", () => {
+    const text = render(
+      doc(
+        base,
+        '[[fleet.job]]\nname = "x"\ninterval_seconds = 1\n[[fleet.job]]\nname = "y"\n[[fleet.job]]\nname = "x"\ninterval_seconds = 2',
+      ),
+      doc(profile, '[[fleet.job]]\nname = "x"\ninterval_seconds = 9'),
+    );
+    const names = [...text.matchAll(/name = "(\w)"/g)].map((m) => m[1]);
+    expect(names).toEqual(["x", "y"]);
+    expect(text).toContain("interval_seconds = 9");
+    expect(text).not.toContain("interval_seconds = 1");
+    expect(text).not.toContain("interval_seconds = 2");
   });
 });

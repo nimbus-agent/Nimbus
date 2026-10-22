@@ -55,6 +55,8 @@ export type EffectiveSection = {
 
 export type EffectiveDoc = { readonly sections: readonly EffectiveSection[] };
 
+export const UNPARSED_SECTION_HEADER = "__nimbus_unparsed__";
+
 type ParsedHeader = { header: string; isArray: boolean };
 
 /** `undefined` when a line that starts with `[` is not a well-formed `[x]` / `[[x]]` header. */
@@ -199,8 +201,16 @@ function mergeFleetJobs(
     const name = fleetJobName(section);
     const at =
       name === undefined ? -1 : out.findIndex((o) => o.name === name && o.layerIndex < layerIndex);
-    if (at >= 0) out[at] = { layerIndex, name, section };
-    else out.push({ layerIndex, name, section });
+    if (at < 0) {
+      out.push({ layerIndex, name, section });
+      continue;
+    }
+    // Replace in place at the first lower-layer copy and drop the other lower-layer copies.
+    out[at] = { layerIndex, name, section };
+    for (let i = out.length - 1; i > at; i -= 1) {
+      const o = out[i];
+      if (o !== undefined && o.name === name && o.layerIndex < layerIndex) out.splice(i, 1);
+    }
   }
   return out.map((o) => blockToEffective(o.section, layers[o.layerIndex] as LayerRef, {}));
 }
@@ -260,8 +270,15 @@ export function mergeLayerDocs(docs: readonly LayerDoc[]): EffectiveDoc {
 /** Renders canonical TOML text (`\n` endings). Entry `raw` lines are emitted verbatim. */
 export function renderEffectiveDoc(doc: EffectiveDoc): string {
   const blocks: string[] = [];
+  let sentinelWritten = false;
   for (const s of doc.sections) {
     const lines: string[] = [];
+    if (s.malformed !== undefined && !sentinelWritten) {
+      // A well-formed header no parser reads: readers that only end a section on a valid header
+      // stop attributing keys to the last valid section, and `[`-closing readers orphan them.
+      blocks.push(`[${UNPARSED_SECTION_HEADER}]`);
+      sentinelWritten = true;
+    }
     if (s.malformed !== undefined) lines.push(s.malformed);
     else if (s.header !== null) lines.push(s.isArray ? `[[${s.header}]]` : `[${s.header}]`);
     for (const e of s.entries) lines.push(e.raw);
