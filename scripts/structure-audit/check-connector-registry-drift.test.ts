@@ -110,6 +110,27 @@ describe("checkConnectorRegistryDrift", () => {
   });
 });
 
+describe("UNBUNDLED_CONNECTOR_IDS exclusions", () => {
+  test("an excluded id the package still exports is not drift", () => {
+    expect(
+      checkConnectorRegistryDrift(["airflow"], registry(["airflow"]), ["monte-carlo"], CONNECTORS),
+    ).toEqual({ status: "ok" });
+  });
+
+  test("an excluded id the package no longer exports is a stale exclusion", () => {
+    const result = checkConnectorRegistryDrift(
+      ["airflow"],
+      registry(["airflow"]),
+      ["ghost"],
+      ["airflow"],
+    );
+    expect(result.status).toBe("drift");
+    if (result.status !== "drift") throw new Error("expected drift");
+    expect(result.violations.map((e) => e.connector)).toEqual(["ghost"]);
+    expect(result.violations[0]?.reason).toContain("stale");
+  });
+});
+
 describe("an entry in the relative form the generator used to emit", () => {
   // `NIMBUS_CONNECTOR_SPECIFIER=workspace` made the generator import each connector from the
   // in-repo copy, until #1347 deleted `packages/mcp-connectors` and the form with it. An entry
