@@ -185,8 +185,14 @@ describe("C7: the IPC paths bind through the composition's continuity table", ()
     const key = await installSigned(g, "com.nimbus.readwise");
     const entry = readwiseFixtureEntry(key);
     table.push(entry);
-    // Premise: the baked default does NOT bind this extension (its key is not the real one).
-    expect(entry.publisherKey).not.toBe(CONTINUITY_TABLE[0]?.publisherKey);
+    // Premise: the baked default does NOT bind this extension (its key is not the real one). The
+    // baked Readwise entry is selected by id, so a reordered table cannot change what is compared.
+    const bakedReadwise = CONTINUITY_TABLE.find(
+      (e) => e.extensionId === "com.nimbus.readwise" && e.legacyServiceId === "readwise",
+    );
+    expect(bakedReadwise).toBeDefined();
+    expect(entry.publisherKey).not.toBe(bakedReadwise?.publisherKey);
+    expect(entry.sourceRootFingerprint).not.toBe(bakedReadwise?.sourceRootFingerprint);
 
     const approved = await call(g.listenPath, {
       id: "approve",
@@ -310,7 +316,9 @@ describe("C7: the IPC paths bind through the composition's continuity table", ()
       method: "connector.remove",
       params: { serviceId: "readwise" },
     });
-    // Unbound, so `readwise` is not extension-backed: no ERR_CONNECTOR_IS_EXTENSION.
-    expect(removed.error?.message ?? "").not.toContain("ERR_CONNECTOR_IS_EXTENSION");
+    // Unbound, so `readwise` is not extension-backed: the removal runs and succeeds. Any failure —
+    // the refusal or an unrelated one — fails this test.
+    expect(removed.error).toBeUndefined();
+    expect(removed.result).toMatchObject({ ok: true, itemsDeleted: 0 });
   });
 });
