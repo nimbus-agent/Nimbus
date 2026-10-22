@@ -30,6 +30,7 @@ import {
   resolveExtensionManifestPath,
 } from "./manifest.ts";
 import { pendingMigrationForExtension } from "./migration/migration-store.ts";
+import { networkAccessLine } from "./network-access-line.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
@@ -200,6 +201,10 @@ export function buildRunConsentPayload(
           },
     treeDigest,
     network: [...grants.network],
+    // What the network grant means on THIS OS: the host list above is enforced on macOS and Linux,
+    // but the Windows sandbox cannot limit network access by host, so the list alone would overstate
+    // the confinement there. The same sentence the migration prompt shows.
+    networkAccess: networkAccessLine(env.platform, grants.network),
     read: [...grants.read],
     write: [...grants.write],
     // The runtime's own read paths, added at every spawn, read-only. Shown, never stored (spec § 11

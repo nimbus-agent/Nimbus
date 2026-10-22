@@ -515,6 +515,44 @@ describe("approveExtensionRun", () => {
     expect(redactAuditPayload(payload, 4096)).toContain(fp);
   });
 
+  test("the network line says on Windows that the host list is not enforced", () => {
+    const payloadOn = (platform: NodeJS.Platform) =>
+      buildRunConsentPayload(
+        {
+          id: "n",
+          version: "1.0.0",
+          install_path: "/x",
+          manifest_hash: "m",
+          entry_hash: "e",
+          enabled: 1,
+          installed_at: 1,
+          last_verified_at: 1,
+          tree_digest: "d",
+        },
+        {
+          id: "n",
+          version: "1.0.0",
+          updateChannel: "stable",
+          permissions: { network: ["readwise.io"], filesystem: { read: [], write: [] } },
+        },
+        "ext_n",
+        "d",
+        { network: ["readwise.io"], read: [], write: [] },
+        { platform, protectedRoots: [], runtimeReadPaths: [], realpath: (p) => p },
+        false,
+        {},
+      );
+    const win = payloadOn("win32");
+    expect(win["network"]).toEqual(["readwise.io"]);
+    expect(win["networkAccess"]).toBe("network access (Windows cannot limit this to readwise.io)");
+    expect(payloadOn("linux")["networkAccess"]).toBe("network access to readwise.io");
+    expect(payloadOn("darwin")["networkAccess"]).toBe("network access to readwise.io");
+    // The consent display shows it: no redactor drops the field.
+    expect(redactPayloadForConsentDisplay(win)).toMatchObject({
+      networkAccess: "network access (Windows cannot limit this to readwise.io)",
+    });
+  });
+
   test("an extension the startup signature pass marked is refused while enabled", async () => {
     const { db, env } = await setup();
     signatureDisabledRegistry.mark("com.example.run", "signature_failed");

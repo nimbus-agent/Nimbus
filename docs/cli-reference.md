@@ -4584,7 +4584,7 @@ nimbus extension rehash com.example.notion --yes
 
 Approve an installed extension to **run**, with the exact bytes and grants you are shown. This is a second approval, separate from the install one: install says "keep this package on disk", approve says "this code may run with these grants". It is asked through the gateway's HITL gate under action type `extension.run`.
 
-It is **TTY only and has no `--yes`**: a person must answer at a terminal, and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer it. The prompt shows the extension id and version, the publisher key fingerprint (or `unsigned`), the tree digest, the `ext_` service id the extension would run under, the resolved network hosts and read/write paths, and the read-only paths the runtime adds on its own.
+It is **TTY only and has no `--yes`**: a person must answer at a terminal, and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer it. The prompt shows the extension id and version, the publisher key fingerprint (or `unsigned`), the tree digest, the `ext_` service id the extension would run under, the resolved network hosts and read/write paths, and the read-only paths the runtime adds on its own. A `networkAccess` line says what the network grant means on this OS: "network access to …" on macOS and Linux, where the sandbox limits the extension to those hosts, and "network access (Windows cannot limit this to …)" on Windows, where it can reach any host once it has network access at all (the same wording as the migration prompt).
 
 ```bash
 nimbus extension approve com.example.notion
