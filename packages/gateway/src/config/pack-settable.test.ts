@@ -1,0 +1,140 @@
+import { describe, expect, test } from "bun:test";
+import {
+  checkPackFragment,
+  PACK_FRAGMENT_MAX_BYTES,
+  PACK_ID_RE,
+  PACK_SETTABLE_ARRAYS,
+  PACK_SETTABLE_KEYS,
+  type PackJobChecker,
+} from "./pack-settable.ts";
+
+const none: PackJobChecker = () => [];
+
+function problemsOf(text: string, checker: PackJobChecker = none): readonly string[] {
+  const r = checkPackFragment(text, checker);
+  if (r.ok) throw new Error("expected a refusal");
+  return r.problems;
+}
+
+describe("pack-settable allowlist", () => {
+  test("the allowlist is exactly the v1 set", () => {
+    expect(PACK_SETTABLE_KEYS.map((k) => `${k.section}.${k.key}`)).toEqual([
+      "fleet.enabled",
+      "fleet.min_idle_seconds",
+      "fleet.require_ac_power",
+      "fleet.retention_days",
+      "decisions.min_confidence",
+    ]);
+    expect(PACK_SETTABLE_ARRAYS.map((a) => a.header)).toEqual(["fleet.job"]);
+    for (const k of PACK_SETTABLE_KEYS) {
+      expect(k.why.length).toBeGreaterThan(0);
+      expect(k.consumer).toBe(k.section === "decisions" ? "per-call" : "reactive");
+    }
+    for (const a of PACK_SETTABLE_ARRAYS) {
+      expect(a.why.length).toBeGreaterThan(0);
+      expect(a.consumer).toBe("reactive");
+    }
+  });
+
+  test("accepts an allowlisted fragment", () => {
+    const r = checkPackFragment(
+      "[fleet]\nenabled = true\nretention_days = 7\n[decisions]\nmin_confidence = 0.7\n",
+      none,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scalars.get("fleet.enabled")).toBe(true);
+    expect(r.scalars.get("fleet.retention_days")).toBe(7);
+    expect(r.scalars.get("decisions.min_confidence")).toBe(0.7);
+  });
+
+  test("names every off-list key", () => {
+    const p = problemsOf(
+      "[decisions]\nmin_confidence = 0.7\n[llm.remote.openai]\nenabled = true\n[fleet]\nallow_remote = true\n",
+    );
+    expect(p).toContain("[llm.remote.openai] enabled is not pack-settable");
+    expect(p).toContain("[fleet] allow_remote is not pack-settable");
+  });
+
+  test("refuses a value its loader would reject or misread", () => {
+    expect(problemsOf("[fleet]\nretention_days = 0\n")).toContain(
+      "[fleet] retention_days = 0: expected an integer >= 1",
+    );
+    expect(problemsOf('[fleet]\nenabled = "yes"\n').join("\n")).toContain("expected true or false");
+    expect(problemsOf("[fleet]\nmin_idle_seconds = -1\n")).toHaveLength(1);
+    expect(problemsOf("[decisions]\nmin_confidence = 1.5\n")).toHaveLength(1);
+  });
+
+  test("refuses shapes the allowlist cannot express", () => {
+    expect(problemsOf("x = 1\n")).toHaveLength(1);
+    expect(problemsOf("[fleet\n")).toHaveLength(1);
+    expect(problemsOf("[fleet]\nenabled\n")).toHaveLength(1);
+    expect(problemsOf('[[filesystem.roots]]\npath = "x"\n')).toHaveLength(1);
+    expect(problemsOf("[fleet]\nenabled = true\nenabled = false\n")).toHaveLength(1);
+    expect(problemsOf('[[fleet.job]]\nagent = "x"\n')).toHaveLength(1);
+    expect(problemsOf("[[fleet.job]]\n")).toHaveLength(1);
+    expect(problemsOf('[[fleet.job]]\nname = ""\n')).toHaveLength(1);
+    expect(problemsOf('[[fleet.job]]\nname = "a"\nname = "b"\n')).toHaveLength(1);
+    expect(problemsOf("[llm.remote.openai]\n")).toHaveLength(1);
+    expect(problemsOf(`# ${"x".repeat(PACK_FRAGMENT_MAX_BYTES)}\n`)).toHaveLength(1);
+  });
+
+  test("reports each problem once", () => {
+    expect(problemsOf("[fleet\nenabled = true\n")).toHaveLength(1);
+    const dup = problemsOf("[fleet]\nretention_days = 0\nretention_days = 5\n");
+    expect(dup.some((p) => p.includes("expected an integer >= 1"))).toBe(true);
+    expect(dup.some((p) => p.toLowerCase().includes("twice") || p.includes("duplicate"))).toBe(
+      true,
+    );
+    let received = "";
+    const spy: PackJobChecker = (t) => {
+      received = t;
+      return [];
+    };
+    expect(problemsOf('[[fleet.job]]\nagent = "x"\n', spy)).toHaveLength(1);
+    expect(received).toBe("");
+  });
+
+  test("min_confidence must be a plain decimal", () => {
+    for (const v of ['""', "   ", "0x0", "0b0", "1e-1"]) {
+      expect(problemsOf(`[decisions]\nmin_confidence = ${v}\n`)).toHaveLength(1);
+    }
+    for (const v of ["0", "1", "0.70", "+0.5"]) {
+      expect(checkPackFragment(`[decisions]\nmin_confidence = ${v}\n`, none).ok).toBe(true);
+    }
+  });
+
+  test("a comment-only fragment is a no-op layer", () => {
+    const r = checkPackFragment("# nothing\n", none);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scalars.size).toBe(0);
+    expect(r.jobNames).toEqual([]);
+  });
+
+  test("hands every fleet job block to the job checker", () => {
+    let received = "";
+    const spy: PackJobChecker = (t) => {
+      received = t;
+      return [];
+    };
+    const r = checkPackFragment(
+      '[[fleet.job]]\nname = "a"\nagent = "x"\n[[fleet.job]]\nname = "b"\nagent = "y"\n',
+      spy,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.jobNames).toEqual(["a", "b"]);
+    expect(received.match(/\[\[fleet\.job\]\]/g)).toHaveLength(2);
+    expect(received).toContain('name = "b"');
+    expect(problemsOf('[[fleet.job]]\nname = "a"\n', () => ["job a: bad"])).toEqual(["job a: bad"]);
+  });
+});
+
+describe("PACK_ID_RE", () => {
+  test("accepts and rejects ids", () => {
+    for (const ok of ["pm", "devops-1", "a_b"]) expect(PACK_ID_RE.test(ok)).toBe(true);
+    for (const bad of ["PM", "-pm", "../x", "pm.toml", "", "a".repeat(65)]) {
+      expect(PACK_ID_RE.test(bad)).toBe(false);
+    }
+  });
+});
