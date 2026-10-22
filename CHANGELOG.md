@@ -2,6 +2,28 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.0.0](https://github.com/nimbus-agent/Nimbus/compare/v9.2.1...v10.0.0) (2026-10-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **security:** code-audit batch 1 — DNS-rebinding guard (I45), data-scoped HTTP reads, owner-only files, batched sync writes ([#1702](https://github.com/nimbus-agent/Nimbus/issues/1702))
+
+### Features
+
+* **connectors:** Readwise ships from the registry, not the binary ([#1713](https://github.com/nimbus-agent/Nimbus/issues/1713)) ([968f966](https://github.com/nimbus-agent/Nimbus/commit/968f966e4d2b5dceedbe7727d2818f630081ff1a))
+* **desktop:** answer the Readwise migration from the desktop (I46) ([#1711](https://github.com/nimbus-agent/Nimbus/issues/1711)) ([fc5218a](https://github.com/nimbus-agent/Nimbus/commit/fc5218ab5a99ce4083e3fcbfc68a3eb94cbc2908))
+* **extensions:** built-in official registry and connector migration ([#1709](https://github.com/nimbus-agent/Nimbus/issues/1709)) ([fb22b92](https://github.com/nimbus-agent/Nimbus/commit/fb22b9295f4a8b5c4d0fcd484c1b38122f855475))
+* **extensions:** extensions can sync into the index ([#1705](https://github.com/nimbus-agent/Nimbus/issues/1705)) ([61e034a](https://github.com/nimbus-agent/Nimbus/commit/61e034a57a7aade40035365f5af30332787bbac0))
+* **extensions:** owner-approved per-extension credentials ([#1703](https://github.com/nimbus-agent/Nimbus/issues/1703)) ([c5312fb](https://github.com/nimbus-agent/Nimbus/commit/c5312fb29d6f0b7d0718040e928c962d3e49be6c))
+* **security:** code-audit batch 1 — DNS-rebinding guard (I45), data-scoped HTTP reads, owner-only files, batched sync writes ([#1702](https://github.com/nimbus-agent/Nimbus/issues/1702)) ([c77258c](https://github.com/nimbus-agent/Nimbus/commit/c77258c4ae7f596682a22a2ed457891b9dc19c98))
+
+
+### Bug Fixes
+
+* **deps:** MCP SDK 2.3.1 and vite 8.3.4 for today's advisories ([#1710](https://github.com/nimbus-agent/Nimbus/issues/1710)) ([4c3caa7](https://github.com/nimbus-agent/Nimbus/commit/4c3caa735fa371ddabf072ef7792e5e351a45bf4))
+* **deps:** pin markdown-it 15.0.3 for GHSA-r7fv-28h4-cvq7 ([#1707](https://github.com/nimbus-agent/Nimbus/issues/1707)) ([538a5aa](https://github.com/nimbus-agent/Nimbus/commit/538a5aa7b7a4cc334cb1ae5d3a0993841bf19a3d))
+
 ## [9.2.1](https://github.com/nimbus-agent/Nimbus/compare/v9.2.0...v9.2.1) (2026-10-18)
 
 
