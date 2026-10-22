@@ -196,6 +196,20 @@ describe("explainConfig", () => {
     expect(r.sectionFallback).toBe("manual glossary rejected");
   });
 
+  test("an env value the loader ignores, on a path no file sets, is a note and not an entry", () => {
+    const env = (k: string): string | undefined => (k === "NIMBUS_LAN_PORT" ? "abc" : undefined);
+    const r = explainConfig(initLayeredConfig(dir), "lan.port", env);
+    expect(r.entries).toHaveLength(0);
+    expect(r.notes).toContain('NIMBUS_LAN_PORT is set to "abc" but does not override this value');
+  });
+
+  test("a quoted header beats its unquoted twin for a quoted path", () => {
+    writeBase('[a."b.c"]\nk = 1\n[a.b.c]\nk = 2\n');
+    const reader = initLayeredConfig(dir);
+    expect(explainConfig(reader, 'a."b.c".k', noEnv).entries[0]?.value).toBe("1");
+    expect(explainConfig(reader, "a.b.c.k", noEnv).entries[0]?.value).toBe("2");
+  });
+
   test("unknown path note", () => {
     writeBase("[a]\nb = 1\n");
     const r = explainConfig(initLayeredConfig(dir), "a.zzz", noEnv);
