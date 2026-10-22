@@ -66,7 +66,31 @@ export const CONFIG_ENV_OVERRIDES: readonly EnvOverride[] = [
     path: "notifications.enabled",
     effective: (raw) => (notificationsDisabledByEnv(() => raw) ? "false" : undefined),
   },
+  // The agent caps: `engine/agent-limits.ts` lets a set, in-bounds env value beat the `[llm]` key.
+  {
+    envVar: "NIMBUS_MAX_AGENT_DEPTH",
+    path: "llm.max_agent_depth",
+    effective: (raw) => boundedIntEnv(raw, 1, 10),
+  },
+  {
+    envVar: "NIMBUS_MAX_TOOL_CALLS_PER_SESSION",
+    path: "llm.max_tool_calls_per_session",
+    effective: (raw) => boundedIntEnv(raw, 1, 200),
+  },
+  // `config.ts` `parseEmbeddingsEnabled`: "0"/"false" turns embeddings off whatever the key says.
+  {
+    envVar: "NIMBUS_EMBEDDINGS",
+    path: "embedding.enabled",
+    effective: (raw) => (raw === "0" || raw === "false" ? "false" : undefined),
+  },
 ];
+
+/** `agent-limits.ts`'s env parse: blank is unset, `parseInt`, and an integer within bounds. */
+function boundedIntEnv(raw: string, min: number, max: number): string | undefined {
+  if (raw.trim() === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n >= min && n <= max ? String(n) : undefined;
+}
 
 const POLICY_CONSTRAINED_PATHS: ReadonlySet<string> = new Set([
   "audit.tool_call_log_retention_days",

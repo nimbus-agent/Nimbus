@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseEmbeddingsEnabled } from "../config.ts";
+import { type AgentLimits, readAgentLimitEnv, resolveAgentLimits } from "../engine/agent-limits.ts";
 import { processEnvDelete, processEnvSet } from "../platform/env-access.ts";
 import { CONFIG_ENV_OVERRIDES, isPolicyConstrainedPath } from "./config-env-overrides.ts";
 import { parseNimbusLanToml, parseNimbusUpdaterToml } from "./nimbus-toml.ts";
@@ -17,20 +19,52 @@ function byVar(name: string) {
 }
 
 describe("CONFIG_ENV_OVERRIDES", () => {
-  test("every NIMBUS_ variable a config loader names is declared", () => {
-    const files = readdirSync(here)
-      .filter(
-        (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "config-env-overrides.ts",
-      )
-      .map((f) => join(here, f));
-    files.push(join(here, "..", "multimodal", "multimodal-config.ts"));
+  function namedEnvVars(files: readonly string[]): Set<string> {
     const found = new Set<string>();
     for (const f of files) {
       for (const m of readFileSync(f, "utf8").matchAll(/["'`](NIMBUS_[A-Z0-9_]+)["'`]/g)) {
         if (m[1] !== undefined) found.add(m[1]);
       }
     }
-    found.delete("NIMBUS_PROFILE");
+    return found;
+  }
+
+  /**
+   * Files outside `config/` whose env reads override a config KEY: the agent caps
+   * (`[llm] max_agent_depth` / `max_tool_calls_per_session`, read by `engine/agent-limits.ts`)
+   * and `NIMBUS_EMBEDDINGS` (`[embedding] enabled`, read through `config.ts`).
+   */
+  const OVERRIDING_FILES = [
+    join(here, "..", "config.ts"),
+    join(here, "..", "engine", "agent-limits.ts"),
+    join(here, "..", "multimodal", "multimodal-config.ts"),
+  ];
+
+  /** Variables those files name that override no config key (OAuth app ids, unconfigurable knobs). */
+  const NOT_CONFIG_KEYS = new Set([
+    "NIMBUS_PROFILE",
+    // Named only in `config.ts`'s comment recording its removal.
+    "NIMBUS_AGENT_MODEL",
+    "NIMBUS_SEARCH_PRIORITY_JSON",
+    "NIMBUS_ENGINE_CONTEXT_WINDOW_ITEMS",
+    "NIMBUS_ASK_MAX_STEPS",
+    "NIMBUS_WORKDAY_TENANT",
+    "NIMBUS_WORKDAY_TENANT_HOST",
+  ]);
+
+  test("every NIMBUS_ variable a config loader names is declared", () => {
+    const files = readdirSync(here)
+      .filter(
+        (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "config-env-overrides.ts",
+      )
+      .map((f) => join(here, f));
+    const found = namedEnvVars([...files, ...OVERRIDING_FILES]);
+    for (const v of found) {
+      if (NOT_CONFIG_KEYS.has(v) || v.startsWith("NIMBUS_OAUTH_")) found.delete(v);
+    }
+    // Guard against a scan that silently reads nothing outside config/.
+    expect(found.has("NIMBUS_MAX_AGENT_DEPTH")).toBe(true);
+    expect(found.has("NIMBUS_EMBEDDINGS")).toBe(true);
     expect([...found].sort()).toEqual(CONFIG_ENV_OVERRIDES.map((e) => e.envVar).sort());
   });
 
@@ -101,6 +135,39 @@ describe("CONFIG_ENV_OVERRIDES", () => {
         expect(got).toEqual(eff === undefined ? pick(base) : conv(eff));
       }
       expect(byVar("NIMBUS_TELEMETRY_FLUSH_SECONDS").effective("10")).toBe("60");
+    });
+
+    test("NIMBUS_MAX_AGENT_DEPTH and NIMBUS_MAX_TOOL_CALLS_PER_SESSION", () => {
+      const cases: [string, keyof AgentLimits, string][] = [
+        ["NIMBUS_MAX_AGENT_DEPTH", "maxAgentDepth", "7"],
+        ["NIMBUS_MAX_AGENT_DEPTH", "maxAgentDepth", "11"],
+        ["NIMBUS_MAX_AGENT_DEPTH", "maxAgentDepth", " "],
+        ["NIMBUS_MAX_AGENT_DEPTH", "maxAgentDepth", "abc"],
+        ["NIMBUS_MAX_TOOL_CALLS_PER_SESSION", "maxToolCallsPerSession", "150"],
+        ["NIMBUS_MAX_TOOL_CALLS_PER_SESSION", "maxToolCallsPerSession", "0"],
+        ["NIMBUS_MAX_TOOL_CALLS_PER_SESSION", "maxToolCallsPerSession", "12x"],
+      ];
+      const toml = { maxAgentDepth: 5, maxToolCallsPerSession: 50 };
+      for (const [name, key, raw] of cases) {
+        const eff = byVar(name).effective(raw);
+        const env = readAgentLimitEnv((k) => (k === name ? raw : undefined));
+        const got = resolveAgentLimits({ env, toml })[key];
+        expect(got).toBe(eff === undefined ? toml[key] : Number(eff));
+      }
+      expect(byVar("NIMBUS_MAX_AGENT_DEPTH").path).toBe("llm.max_agent_depth");
+      expect(byVar("NIMBUS_MAX_TOOL_CALLS_PER_SESSION").path).toBe(
+        "llm.max_tool_calls_per_session",
+      );
+    });
+
+    test("NIMBUS_EMBEDDINGS", () => {
+      for (const raw of ["0", "false", "1", "true", "", "off"]) {
+        const eff = byVar("NIMBUS_EMBEDDINGS").effective(raw);
+        const envAllows = withEnv("NIMBUS_EMBEDDINGS", raw, () => parseEmbeddingsEnabled());
+        expect(envAllows).toBe(eff === undefined);
+      }
+      expect(byVar("NIMBUS_EMBEDDINGS").effective("0")).toBe("false");
+      expect(byVar("NIMBUS_EMBEDDINGS").path).toBe("embedding.enabled");
     });
 
     test("NIMBUS_NOTIFICATIONS", () => {

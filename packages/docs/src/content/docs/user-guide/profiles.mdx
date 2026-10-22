@@ -109,7 +109,14 @@ profile_name = "work"
 ```
 
 A profile file **inherits** from `nimbus.toml`: it overrides only the keys it
-sets, and any section it leaves out comes from `nimbus.toml`. Edit
+sets, and any section it leaves out comes from `nimbus.toml`.
+
+Because `nimbus profile create` **copies** `nimbus.toml`, a freshly created
+profile sets every key it copied, so it pins each of those values: a later edit
+to the same key in `nimbus.toml` does not reach that profile. To keep
+inheriting, trim the profile file down to the keys you want to change: a
+profile file holding only those keys inherits everything else from
+`nimbus.toml`. Edit
 `nimbus.work.toml` to change just what differs for that profile. Run
 `nimbus config edit` to open the active profile's file; `nimbus config set`
 writes to it too. `nimbus config explain <path>` shows which file a value
