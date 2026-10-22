@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792688888405,
+  "lastUpdate": 1792689290794,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "05dc9bb41262237667c569cda43bac16484bb2c9",
-          "message": "chore: release main (#1033)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.19.0</summary>\n\n##\n[1.19.0](https://github.com/nimbus-agent/Nimbus/compare/v1.18.1...v1.19.0)\n(2026-08-03)\n\n\n### Features\n\n* **cli:** nimbus index rebody, and correct the full-body-store\nconnector accounting\n([#1032](https://github.com/nimbus-agent/Nimbus/issues/1032))\n([9ab8c69](https://github.com/nimbus-agent/Nimbus/commit/9ab8c697f4aa81e843e4670a888f19d654c1c9cc))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-03T21:05:03+03:00",
-          "tree_id": "b76d26d5f4f82ffc4ca9c9727ce045fdfe54ad60",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/05dc9bb41262237667c569cda43bac16484bb2c9"
-        },
-        "date": 1785780822405,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 257.0399962500043,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 253.4031290000039,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 298.9818400500073,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "780303ecd3570d85ab5c4a73403570fd5b38aeda",
+          "message": "feat(config): layered config reader; profiles inherit from nimbus.toml (#1714)\n\nPR 1 of 5 in the role-packs Foundations project. Every gateway config\nread now goes through one layered reader. Profiles inherit from\n`nimbus.toml`, and `nimbus config explain` names the layer each value\ncame from.\n\n## Behaviour change for profile users\n\n**Inheritance.** A profile file (`nimbus.<name>.toml`) now overrides\nonly the keys it sets. A section it leaves out comes from `nimbus.toml`,\nnot from built-in defaults. Before this PR, roughly two-thirds of the\nconfig loaders ignored the active profile entirely: `[decisions]`,\n`[glossary]`, `[chatops]`, `[user]`, `[[filesystem.roots]]`,\n`[connectors.*]`, service configs and others. A profile user therefore\nran on an undesigned mix of two files. Profiles made by `nimbus profile\ncreate` are full copies of `nimbus.toml`, so they resolve the same as\nbefore.\n\n**Profile names.** A profile name outside `[a-z0-9_-]{1,32}` now stops\nthe gateway at boot, with an error naming the bad value and where it\ncame from. This applies whether the name comes from the\n`.nimbus-profile` marker or from `NIMBUS_PROFILE`. `nimbus profile\ncreate` and `nimbus profile switch` refuse such names.\n\nNeither change asks anything of a user with a valid profile name, so the\ntitle has no `!`.\n\n## What changed\n\n**The reader** (`config/layered-config.ts`, `layered-merge.ts`,\n`active-profile.ts`)\n- Layer order: code defaults → pack layers (none yet) → team baseline\n(empty slot) → `nimbus.toml` → `nimbus.<profile>.toml`.\n- Merge rules:\n  - Scalars: the higher layer wins, key by key.\n- Plain tables, including `[glossary.terms]` and `[glossary.synonyms]`:\nmerged key by key.\n- Any `[[x]]` array: supplied whole by the highest layer that defines\nit, so a copied profile does not double the base file's roots.\n  - `[[fleet.job]]`: merged by `name`.\n- Malformed table headers: fenced behind an unparsed sentinel, so their\nkeys cannot leak into another section.\n- **No parser changed.** The reader renders the merged layers back into\ncanonical TOML text, and every existing section parser reads that text\nunchanged.\n- **Freshness compares file contents.** Edits to `nimbus.toml` still\nreach the readers that load per call on their next call, as they did\nbefore. The spec planned a stat fingerprint; reading contents costs the\nsame as today's per-call read and has no same-tick blind spot.\n- **Profile resolution.** One order everywhere: `NIMBUS_PROFILE`, then\nthe `.nimbus-profile` marker, then `default`. The gateway pins its\nprofile at boot, so switching profile still takes effect on restart.\n`nimbus start` passes `NIMBUS_PROFILE` to the gateway only when the\nshell set it.\n- **Read errors.** An unreadable layer file is recorded and reported,\nnever thrown at boot. `config.validate` reports it as an error and\n`nimbus doctor` warns about it. The five loaders that used to throw on a\nread error still do.\n\n**Loaders**\n- About 40 `…FromConfigDir` loaders read the merged snapshot. Each\nloader now has one `…FromText` core shared by its file and config-dir\nentry points, and parity tests check that the two give the same result\nfor every error mode.\n- `resolveNimbusTomlForProfile` is deleted.\n- `llm.use` writes the active profile's file.\n\n**Explain and IPC**\n- New `config.explain` IPC method (CLI-only, LAN-forbidden, not on the\nTauri allowlist). For a setting it shows:\n  - the effective value\n  - its layer and file\n  - the values it shadows\n- any environment override, applied only when the loader would actually\nuse it (ten `NIMBUS_*` variables, each with a drift test against its\nloader)\n  - whether org policy can tighten it\n  - whether the section fell back to defaults\n- `config.validate` checks `schema_version` on the merged result, so a\nprofile file that holds only overrides passes.\n- `diag.snapshot` gains `configLayers`: the running profile, its source,\nthe marker, and the layer files (file names only, no paths).\n\n**CLI**\n- `nimbus config set|get|list|edit` target the active profile's file.\n- New: `get --effective <path>`, `list --effective`, `explain <path>`.\n- `nimbus doctor` warns only when a restart would actually change the\nprofile.\n\n**Static rule D35** stops gateway code outside the reader from building\na path to `nimbus.toml` or calling a `…FromPath` loader.\n\n**Docs:** architecture (Layered config section, IPC catalogue),\ncli-reference, profiles guide, CHANGELOG, SECURITY-INVARIANTS, CLAUDE.md\nand GEMINI.md.\n\n## Verification\n- `bun run preflight` (full), on Windows: every static gate is green.\n`test:ci` had 30564 pass and 8 fail, none caused by this branch:\n  - Five installer tests need `pwsh`, which is not on this shell's PATH.\n- Three are in `migration.e2e`. That file passes alone (4/4) and as part\nof the whole e2e directory on this branch (275 pass, 0 fail). The\nfailures were a flake under a 24-minute run.\n- Coverage on the new files, measured on test subsets: at least 95.7% of\nlines and 88.2% of branches. The Linux CI floor is authoritative.\n- New tests:\n  - real-socket e2e for `config.explain`\n- a profile-inheritance integration test covering every previously\nprofile-blind section\n- a test composing a real `nimbus start` spawn with the gateway's\nprofile resolution\n\n## Follow-ups (PR 2–5)\nPack layers with their allowlist and conflict rule, fleet live reload,\nthe fleet `enabled = false` stub with per-job error isolation, agent\nvisibility, and the catalog.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-22T17:01:48Z",
+          "tree_id": "f173d0dcf02d15897d1ec1ba3abb62481b2bcff1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/780303ecd3570d85ab5c4a73403570fd5b38aeda"
+        },
+        "date": 1792689287905,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 177.91054335000172,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.8313828999977,
             "unit": "ms"
           }
         ]
