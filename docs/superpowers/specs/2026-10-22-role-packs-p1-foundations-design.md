@@ -1,6 +1,6 @@
 # Role packs, Project 1: Foundations (design)
 
-**Date:** 2026-10-22 · **Status:** draft for owner review ·
+**Date:** 2026-10-22 · **Status:** approved by the owner 2026-10-22 ·
 **Parent:** `2026-10-21-role-packs-overview-design.md` (approved 2026-10-22), § 5 Project 1.
 **Branch-only:** this file never lands on `main` and is stripped before the implementation PR.
 
