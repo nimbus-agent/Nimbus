@@ -65,6 +65,57 @@ describe("ruling B1: the built-in registry and continuity table are injected, ne
     // Nothing in assemble names the baked constants directly, so no consumer can bypass it.
     expect(src).not.toMatch(/\bCONTINUITY_TABLE\b/);
     expect(src).not.toMatch(/\bBUILTIN_REGISTRY\b/);
+    // The IPC server gets the same value (C7): `extension.approveRun`, `extension.credentialSet` /
+    // `credentialStatus` and `connector.remove`'s extension-backed refusal bind through it.
+    const ipcOpts = src.match(/const ipcOpts: [^=]*= \{[\s\S]*?\n {2}\};/)?.[0] ?? "";
+    expect(ipcOpts).toMatch(/\bcontinuityTable: migration\.continuityTable,/);
+  });
+
+  test("the E2E runner never lets a table-only fixture fall back to the real built-in registry", () => {
+    // `{ builtin: null, ...fixture }`: a fixture naming `builtin` still wins; one that sets only
+    // `continuityTable` gets NO built-in, never the baked github.io one.
+    const runner = readFileSync(
+      join(import.meta.dir, "..", "..", "test", "e2e", "_fixtures", "gateway-runner.ts"),
+      "utf8",
+    );
+    expect(runner).toMatch(/migration: \{ builtin: null, \.\.\.migrationFixture \}/);
+    expect(
+      resolveMigrationComposition({ migration: { builtin: null, continuityTable: [] } }).builtin,
+    ).toBeNull();
+  });
+
+  test("the IPC server threads the composed table to every IPC binding consumer (C7)", () => {
+    const strip = (rel: string): string =>
+      readFileSync(join(import.meta.dir, "..", rel), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    const dispatchers = strip(join("ipc", "server", "dispatchers.ts"));
+    for (const callee of ["dispatchAutomationRpc", "dispatchConnectorRpc"]) {
+      const at = dispatchers.indexOf(`await ${callee}({`);
+      expect(at, callee).toBeGreaterThan(-1);
+      const args = dispatchers.slice(at, dispatchers.indexOf("});", at));
+      expect(args, callee).toMatch(/continuityTable: ctx\.options\.continuityTable/);
+    }
+    const automation = strip(join("ipc", "automation-rpc.ts"));
+    for (const callee of [
+      "approveExtensionRun",
+      "setExtensionCredential",
+      "extensionCredentialStatus",
+    ]) {
+      const at = automation.indexOf(`await ${callee}(`);
+      expect(at, callee).toBeGreaterThan(-1);
+      const args = automation.slice(at, automation.indexOf(");", at));
+      expect(args, callee).toMatch(/continuityTable/);
+    }
+    expect(automation).toMatch(/continuityTable: options\.continuityTable/);
+    const connectorRpc = strip(join("ipc", "connector-rpc.ts"));
+    expect(connectorRpc).toMatch(/\{ continuityTable \}/);
+    const removal = strip(join("ipc", "connector-rpc-handlers", "removal.ts"));
+    expect(removal).toMatch(/extensionIdBackingServiceId\(db, s, ctx\.continuityTable\)/);
+    // No IPC module names the baked constants: the composition is the only source.
+    for (const src of [dispatchers, automation, connectorRpc, removal]) {
+      expect(src).not.toMatch(/\bCONTINUITY_TABLE\b/);
+    }
   });
 });
 

@@ -5,6 +5,7 @@ import { detectLocalAuth, parseSources } from "../connectors/local-auth/detect-l
 import { defaultLocalAuthHostDeps } from "../connectors/local-auth/local-auth-host.ts";
 import type { ResolvedUserMcpRegistration } from "../connectors/user-mcp-registration.ts";
 import type { ToolExecutor } from "../engine/executor.ts";
+import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
@@ -134,6 +135,8 @@ export async function dispatchConnectorRpc(options: {
   resolveCommand?: (cmd: string) => string | null;
   /** Test seam for `connector.addMcp`: canonicalisation (production: `realpathSync.native`). */
   realpath?: (p: string) => string;
+  /** The composition's continuity table (`connector.remove`'s refusal); absent = production default. */
+  continuityTable?: readonly ContinuityEntry[];
 }): Promise<{ kind: "hit"; value: unknown } | { kind: "miss" }> {
   const {
     method,
@@ -149,6 +152,7 @@ export async function dispatchConnectorRpc(options: {
     userMcpExecutor,
     resolveCommand,
     realpath,
+    continuityTable,
   } = options;
   const rec = asRecord(params);
   const ctx = {
@@ -162,6 +166,7 @@ export async function dispatchConnectorRpc(options: {
     ...(notify === undefined ? {} : { notify }),
     ...(resolveCommand === undefined ? {} : { resolveCommand }),
     ...(realpath === undefined ? {} : { realpath }),
+    ...(continuityTable === undefined ? {} : { continuityTable }),
   };
 
   switch (method) {

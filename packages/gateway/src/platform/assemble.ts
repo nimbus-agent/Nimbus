@@ -3809,6 +3809,9 @@ export async function assemblePlatformServices(
         purgeExtensionIndexData({ db, vault, localIndex, table: migration.continuityTable }, id),
     },
     migrationEngine,
+    // The SAME table the registrar, the spawn verifier and the credential resolver get (C7):
+    // `extension.approveRun`, `extension.credentialSet` and `connector.remove` bind through it.
+    continuityTable: migration.continuityTable,
     registryFetch,
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,

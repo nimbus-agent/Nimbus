@@ -2001,6 +2001,9 @@ async function dispatchExtensionAutomationRpc(
       ...(ctx.options.extensionSync === undefined
         ? {}
         : { extensionSync: ctx.options.extensionSync }),
+      ...(ctx.options.continuityTable === undefined
+        ? {}
+        : { continuityTable: ctx.options.continuityTable }),
     });
     if (out.kind === "hit") {
       return out.value;
@@ -2116,6 +2119,9 @@ export async function tryDispatchConnectorRpc(
       notify: (m, p) => ctx.broadcastNotification(m, p),
       toolExecutor,
       ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),
+      ...(ctx.options.continuityTable === undefined
+        ? {}
+        : { continuityTable: ctx.options.continuityTable }),
     });
     if (out.kind === "hit") {
       return out.value;

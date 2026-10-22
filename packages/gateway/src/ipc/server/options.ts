@@ -11,6 +11,7 @@ import type { AskExplainRecorder } from "../../engine/ask-explain-recorder.ts";
 import type { ExecutorPolicyDep } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
+import type { ContinuityEntry } from "../../extensions/continuity/continuity-table.ts";
 import type { MigrationEngine } from "../../extensions/migration/migration-engine.ts";
 import type { RegistryFetchDeps } from "../../extensions/registry/registry-fetch.ts";
 import type { DiscoveryProvider } from "../../federation/discovery.ts";
@@ -121,6 +122,13 @@ export type CreateIpcServerOptions = {
    * purge. Absent means no extension sync host (tests).
    */
   extensionSync?: AutomationRpcExtensionSyncHandle;
+  /**
+   * The gateway composition's continuity table (`platform/migration-boot.ts`): the SAME value the
+   * sync registrar, the spawn verifier and the credential resolver get. `extension.approveRun`,
+   * `extension.credentialSet` / `credentialStatus` and `connector.remove`'s extension-backed refusal
+   * bind through it. Absent means the production default; assemble always sets it.
+   */
+  continuityTable?: readonly ContinuityEntry[];
   /**
    * The connector migration engine (Readwise unbundling spec § 7.2), built once by
    * `platform/assemble.ts`, which also runs its boot `evaluate()`. Serves `migration.*` (LAN-forbidden;

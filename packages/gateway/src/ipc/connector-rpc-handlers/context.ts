@@ -8,6 +8,7 @@ import type {
 } from "../../connectors/connector-catalog.ts";
 import type { ProbeVerdict } from "../../connectors/credential-probe.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
+import type { ContinuityEntry } from "../../extensions/continuity/continuity-table.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -92,9 +93,14 @@ export type ConnectorRpcHandlerContext = {
    */
   realpath?: (p: string) => string;
   /**
+   * The gateway composition's continuity table, which `connector.remove`'s extension-backed refusal
+   * binds through. Absent means the production default.
+   */
+  continuityTable?: readonly ContinuityEntry[];
+  /**
    * Test seam. Omitted in production, where `connector.remove` asks `extensionIdBackingServiceId`
-   * over the production continuity table. Returns the extension id that backs a connector id
-   * (refused as `ERR_CONNECTOR_IS_EXTENSION`), or `undefined`.
+   * over `continuityTable`. Returns the extension id that backs a connector id (refused as
+   * `ERR_CONNECTOR_IS_EXTENSION`), or `undefined`.
    */
   extensionBackingId?: (serviceId: string) => string | undefined;
 };
