@@ -1,16 +1,16 @@
 import { spawn } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 
 import type { IPCClient } from "../ipc-client/index.ts";
+import { cliWriteTargetPath } from "../lib/active-profile.ts";
 import type { TomlKeySource } from "../lib/nimbus-toml-config.ts";
 import {
   getTomlValueFromFile,
   listTomlKeysWithEnv,
   setTomlValueInFile,
 } from "../lib/nimbus-toml-config.ts";
-import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import { GatewayNotRunningError, withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
 function printConfigHelp(): void {
@@ -20,8 +20,11 @@ Usage:
   nimbus config validate   (requires Gateway — checks nimbus.toml in config dir)
   nimbus config list [--json]   Print known keys with file vs env source + full file body
   nimbus config get <section.key>   (e.g. telemetry.enabled) — env overrides file
-  nimbus config set <section.key> <value>
-  nimbus config edit       Open nimbus.toml in $EDITOR (default: notepad on Windows, vi elsewhere)
+  nimbus config set <section.key> <value>   Writes the ACTIVE profile file (nimbus.<name>.toml), else nimbus.toml
+  nimbus config edit       Open the active profile file in $EDITOR (default: notepad on Windows, vi elsewhere)
+  nimbus config get --effective <path>   Effective value + source across pack/base/profile/env (needs Gateway)
+  nimbus config list --effective [--json]   Every effective value with its source (needs Gateway)
+  nimbus config explain <path> [--json]   Where a value comes from, what it shadows (needs Gateway)
 `);
 }
 
@@ -207,7 +210,89 @@ export async function runConfigEdit(
  * `spawnFn` is handed to `runConfigEdit` and nothing else — the test seam that lets the `edit` route
  * be dispatched without launching a real editor. Production callers pass nothing.
  */
-export async function runConfig(args: string[], spawnFn?: SpawnFn): Promise<void> {
+/** Test seam for the Gateway-backed subcommands; production callers pass nothing. */
+export type ConfigDeps = { withIpc?: typeof withGatewayIpc };
+
+type ExplainLayerRef = { kind: string; id: string; path: string };
+type ExplainSource = { kind: "layer"; layer: ExplainLayerRef } | { kind: "env"; envVar: string };
+type ExplainEntry = {
+  path: string;
+  value: string;
+  source: ExplainSource;
+  shadowed: { source: ExplainSource; value: string }[];
+};
+/** Local copy of the gateway`s `config.explain` result (the CLI cannot import the gateway). */
+export type ExplainResult = {
+  runningProfile: string;
+  markerProfile: string;
+  layers: { layer: ExplainLayerRef; exists: boolean }[];
+  entries: ExplainEntry[];
+  blocks?: { header: string; layer: ExplainLayerRef; entries: ExplainEntry[] }[];
+  policyMayRestrict: boolean;
+  sectionFallback?: string;
+  notes: string[];
+};
+
+export const EFFECTIVE_NEEDS_GATEWAY =
+  "the effective view needs a running gateway — start it with `nimbus start`";
+
+function describeSource(src: ExplainSource): string {
+  if (src.kind === "env") return `env ${src.envVar}`;
+  const { kind, id, path } = src.layer;
+  return kind === "base" || kind === "team" ? `${kind} (${path})` : `${kind} ${id} (${path})`;
+}
+
+function printEntry(e: ExplainEntry): void {
+  console.log(`${e.path} = ${e.value}`);
+  console.log(`  from ${describeSource(e.source)}`);
+  for (const sh of e.shadowed) {
+    console.log(`  shadows ${sh.value} from ${describeSource(sh.source)}`);
+  }
+}
+
+export function printExplain(r: ExplainResult, opts: { path?: string; json?: boolean }): void {
+  if (opts.json === true) {
+    console.log(JSON.stringify(r, null, 2));
+    return;
+  }
+  if (r.entries.length === 0 && opts.path !== undefined && (r.blocks ?? []).length === 0) {
+    console.log(`${opts.path}: (not set)`);
+  }
+  for (const e of r.entries) printEntry(e);
+  for (const b of r.blocks ?? []) {
+    console.log(`${b.header} from ${describeSource({ kind: "layer", layer: b.layer })}`);
+    for (const e of b.entries) printEntry(e);
+  }
+  if (r.policyMayRestrict) console.log("org policy may further restrict this");
+  if (r.sectionFallback !== undefined) console.log(r.sectionFallback);
+  for (const n of r.notes) console.log(n);
+}
+
+async function runConfigExplainVia(
+  withIpc: typeof withGatewayIpc,
+  path: string | undefined,
+  json: boolean,
+): Promise<void> {
+  try {
+    const r = await withIpc((c) =>
+      c.call<ExplainResult>("config.explain", path === undefined ? {} : { path }),
+    );
+    printExplain(r, { ...(path === undefined ? {} : { path }), json });
+  } catch (e) {
+    if (e instanceof GatewayNotRunningError) {
+      console.log(EFFECTIVE_NEEDS_GATEWAY);
+      process.exitCode = 1;
+      return;
+    }
+    throw e;
+  }
+}
+
+export async function runConfig(
+  args: string[],
+  spawnFn?: SpawnFn,
+  deps: ConfigDeps = {},
+): Promise<void> {
   const sub = args[0];
   if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") {
     printConfigHelp();
@@ -215,15 +300,37 @@ export async function runConfig(args: string[], spawnFn?: SpawnFn): Promise<void
   }
 
   const paths = getCliPlatformPaths();
-  const tomlPath = join(paths.configDir, "nimbus.toml");
+  const withIpc = deps.withIpc ?? withGatewayIpc;
+  const effective = args.includes("--effective");
+  const json = args.includes("--json");
+  const positional = args.slice(1).filter((a) => !a.startsWith("--"));
+
+  if (sub === "explain") {
+    const path = positional[0]?.trim() ?? "";
+    if (path === "") throw new Error("Usage: nimbus config explain <path> [--json]");
+    await runConfigExplainVia(withIpc, path, json);
+    return;
+  }
+  if (effective && sub === "get") {
+    const path = positional[0]?.trim() ?? "";
+    if (path === "") throw new Error("Usage: nimbus config get --effective <path>");
+    await runConfigExplainVia(withIpc, path, json);
+    return;
+  }
+  if (effective && sub === "list") {
+    await runConfigExplainVia(withIpc, undefined, json);
+    return;
+  }
+
+  const tomlPath = cliWriteTargetPath(paths.configDir);
 
   if (sub === "validate") {
-    await withGatewayIpc((c) => runConfigValidate(c));
+    await withIpc((c) => runConfigValidate(c));
     return;
   }
 
   if (sub === "list") {
-    runConfigList(tomlPath, { json: args.includes("--json") });
+    runConfigList(tomlPath, { json });
     return;
   }
 

@@ -898,6 +898,44 @@ function isMethodNotFound(e: unknown): boolean {
   return typeof e === "object" && e !== null && "code" in e && e.code === -32601;
 }
 
+/**
+ * Profile lines from `diag.snapshot.configLayers`. The field is optional: an older gateway omits it
+ * and doctor stays silent. A marker/running mismatch is a `[warn]`; a profile with no file is
+ * `[info]` only and never changes the exit code.
+ */
+export function doctorPrintProfile(raw: unknown): number {
+  if (raw === null || typeof raw !== "object") return 0;
+  const c = raw as {
+    runningProfile?: unknown;
+    markerProfile?: unknown;
+    layers?: unknown;
+  };
+  if (typeof c.runningProfile !== "string") return 0;
+  let exit = 0;
+  const running = c.runningProfile;
+  if (typeof c.markerProfile === "string" && c.markerProfile !== running) {
+    console.log(
+      `[warn] profile: marker says "${c.markerProfile}" but the gateway runs "${running}" — restart to apply`,
+    );
+    exit = 1;
+  }
+  if (running !== "default" && Array.isArray(c.layers)) {
+    const own = (c.layers as unknown[]).find(
+      (l) =>
+        l !== null &&
+        typeof l === "object" &&
+        (l as { kind?: unknown }).kind === "profile" &&
+        (l as { id?: unknown }).id === running,
+    ) as { exists?: unknown } | undefined;
+    if (own !== undefined && own.exists === false) {
+      console.log(
+        `[info] profile "${running}" has no nimbus.${running}.toml; running on nimbus.toml alone`,
+      );
+    }
+  }
+  return exit;
+}
+
 async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   const ping = await client.call<{ uptime?: number }>("gateway.ping", {});
   const uptime = typeof ping.uptime === "number" && Number.isFinite(ping.uptime) ? ping.uptime : 0;
@@ -914,7 +952,9 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
     connectorHealth?: unknown;
     embedding?: unknown;
     vectorSearch?: unknown;
+    configLayers?: unknown;
   }>("diag.snapshot", {});
+  exit = Math.max(exit, doctorPrintProfile(snap.configLayers));
   exit = Math.max(exit, doctorPrintIndexFromSnapshot(snap));
   // A second call rather than a field on `diag.snapshot`: the health report is several GROUP BY
   // scans over `item`, and `diag.snapshot` is polled by the desktop. Paying that cost on every

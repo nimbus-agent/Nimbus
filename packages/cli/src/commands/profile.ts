@@ -3,29 +3,19 @@ import {
   existsSync,
   constants as fsConstants,
   readdirSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
+import { readProfileMarker } from "../lib/active-profile.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
 const PROFILE_MARKER = ".nimbus-profile";
 const PROFILE_PREFIX = "nimbus.";
 const PROFILE_SUFFIX = ".toml";
 
-function activeProfileName(configDir: string): string | undefined {
-  const p = join(configDir, PROFILE_MARKER);
-  if (!existsSync(p)) {
-    return undefined;
-  }
-  const raw = readFileSync(p, "utf8").trim();
-  if (raw === "" || raw === "default") {
-    return undefined;
-  }
-  return raw;
-}
+const activeProfileName = readProfileMarker;
 
 function listProfileFiles(configDir: string): string[] {
   let names: string[];

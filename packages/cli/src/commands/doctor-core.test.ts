@@ -19,6 +19,7 @@ import {
   doctorPrintIndexFromSnapshot,
   doctorPrintMigrations,
   doctorPrintOncallPush,
+  doctorPrintProfile,
   doctorPrintRegistries,
   doctorPrintVectorSearchFromSnapshot,
   healthStateMark,
@@ -1064,5 +1065,49 @@ describe("doctorPrintMigrations", () => {
     expect(out.stdout).toContain("[warn] Connector migration: status check failed (down).");
     expect(await doctorPrintMigrations(byMethod(() => ({ migrations: [{ id: 1 }] })))).toBe(1);
     expect(out.stdout).toContain("malformed migration.list response");
+  });
+});
+
+describe("doctorPrintProfile (role packs)", () => {
+  beforeEach(() => out.reset());
+  const layers = (exists: boolean) => [
+    { kind: "base", id: "base", path: "/c/nimbus.toml", exists: true },
+    { kind: "profile", id: "work", path: "/c/nimbus.work.toml", exists },
+  ];
+
+  it("is silent when an older gateway omits configLayers", () => {
+    expect(doctorPrintProfile(undefined)).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("warns when the marker and the running profile differ", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "work",
+      layers: [],
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain(
+      '[warn] profile: marker says "work" but the gateway runs "default" — restart to apply',
+    );
+  });
+
+  it("prints an info line, exit 0, when the profile has no file", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "work",
+      markerProfile: "work",
+      layers: layers(false),
+    });
+    expect(exit).toBe(0);
+    expect(out.stdout).toContain(
+      '[info] profile "work" has no nimbus.work.toml; running on nimbus.toml alone',
+    );
+  });
+
+  it("is silent when the profile file exists and the marker agrees", () => {
+    expect(
+      doctorPrintProfile({ runningProfile: "work", markerProfile: "work", layers: layers(true) }),
+    ).toBe(0);
+    expect(out.stdout).toBe("");
   });
 });

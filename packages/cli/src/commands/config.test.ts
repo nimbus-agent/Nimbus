@@ -804,3 +804,101 @@ describe("runConfigEdit — per-platform editor fallback and the real default sp
     expect((err as NodeJS.ErrnoException).code).toBe("ENOENT");
   });
 });
+
+describe("runConfig profile awareness and the effective view", () => {
+  let env: ReturnType<typeof relocateConfigEnv>;
+  beforeEach(() => {
+    out.reset();
+    process.exitCode = 0;
+    env = relocateConfigEnv();
+  });
+  afterEach(() => {
+    env.restore();
+    process.exitCode = 0;
+  });
+
+  it("set writes the active profile file and leaves nimbus.toml untouched", async () => {
+    const base = "[telemetry]\nenabled = false\n";
+    writeFileSync(join(env.configDir, "nimbus.toml"), base, "utf8");
+    writeFileSync(join(env.configDir, ".nimbus-profile"), "work\n", "utf8");
+    await runConfig(["set", "decisions.min_confidence", "0.6"]);
+    const target = join(env.configDir, "nimbus.work.toml");
+    expect(readFileSync(target, "utf8")).toContain("min_confidence");
+    expect(readFileSync(join(env.configDir, "nimbus.toml"), "utf8")).toBe(base);
+    expect(out.stdout).toContain(target);
+  });
+
+  it("plain get still refuses nested keys", async () => {
+    await expect(runConfig(["get", "llm.tasks.classification"])).rejects.toThrow(/nested table/);
+  });
+
+  it("explain renders source, shadowed value, policy line, fallback and notes", async () => {
+    const layer = { kind: "profile", id: "work", path: "/c/nimbus.work.toml" };
+    const base = { kind: "base", id: "base", path: "/c/nimbus.toml" };
+    const ipc = createMockIpcClient([
+      {
+        runningProfile: "work",
+        markerProfile: "work",
+        layers: [],
+        entries: [
+          {
+            path: "decisions.min_confidence",
+            value: "0.6",
+            source: { kind: "layer", layer },
+            shadowed: [{ source: { kind: "layer", layer: base }, value: "0.5" }],
+          },
+          {
+            path: "lan.port",
+            value: "9000",
+            source: { kind: "env", envVar: "NIMBUS_LAN_PORT" },
+            shadowed: [],
+          },
+        ],
+        policyMayRestrict: true,
+        sectionFallback: "section [decisions] fell back to defaults",
+        notes: ["a note"],
+      },
+    ]);
+    await runConfig(["explain", "decisions.min_confidence"], undefined, {
+      withIpc: (fn) => fn(ipc.client),
+    });
+    expect(ipc.calls[0]).toEqual({
+      method: "config.explain",
+      params: { path: "decisions.min_confidence" },
+    });
+    expect(out.stdout).toContain("decisions.min_confidence = 0.6");
+    expect(out.stdout).toContain("profile work (/c/nimbus.work.toml)");
+    expect(out.stdout).toContain("shadows 0.5 from base (/c/nimbus.toml)");
+    expect(out.stdout).toContain("env NIMBUS_LAN_PORT");
+    expect(out.stdout).toContain("org policy may further restrict this");
+    expect(out.stdout).toContain("section [decisions] fell back to defaults");
+    expect(out.stdout).toContain("a note");
+  });
+
+  it("--effective without a gateway explains itself and exits 1", async () => {
+    const { GatewayNotRunningError } = await import("../lib/with-gateway-ipc.ts");
+    const withIpc = (): Promise<never> => Promise.reject(new GatewayNotRunningError());
+    await runConfig(["get", "--effective", "a.b.c"], undefined, { withIpc });
+    expect(out.stdout).toContain(
+      "the effective view needs a running gateway — start it with `nimbus start`",
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("list --effective --json passes through the explain document", async () => {
+    const doc = {
+      runningProfile: "default",
+      markerProfile: "default",
+      layers: [],
+      entries: [],
+      policyMayRestrict: false,
+      notes: [],
+    };
+    const ipc = createMockIpcClient([doc]);
+    await runConfig(["list", "--effective", "--json"], undefined, {
+      withIpc: (fn) => fn(ipc.client),
+    });
+    expect(ipc.calls[0]).toEqual({ method: "config.explain", params: {} });
+    expect(JSON.parse(out.stdout)).toEqual(doc);
+  });
+});
