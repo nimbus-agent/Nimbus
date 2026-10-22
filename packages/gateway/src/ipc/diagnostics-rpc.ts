@@ -8,9 +8,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 import { listWatchers } from "../automation/watcher-store.ts";
+import { explainConfig } from "../config/config-explain.ts";
+import { getLayeredConfig } from "../config/layered-config.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { asRecord } from "../connectors/unknown-record.ts";
 import { listMigrationBackups } from "../db/backups-list.ts";
@@ -195,22 +197,57 @@ function serializeMetrics(db: Database): Record<string, unknown> {
 type DiagnosticsRpcOutcome = { kind: "hit"; value: unknown } | { kind: "miss" };
 
 function rpcConfigValidate(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
-  const p = join(ctx.configDir, "nimbus.toml");
-  if (!existsSync(p)) {
+  const userLayers = getLayeredConfig(ctx.configDir)
+    .snapshot()
+    .layers.filter((l) => l.exists && (l.layer.kind === "base" || l.layer.kind === "profile"));
+  if (userLayers.length === 0) {
     return {
       kind: "hit",
       value: { ok: false, errors: ["nimbus.toml not found"], warnings: [] },
     };
   }
-  const raw = readFileSync(p, "utf8");
   const errors: string[] = [];
   const warnings: string[] = [];
-  if (!/\bschema_version\b\s*=\s*\d+/.test(raw)) {
-    warnings.push(
-      "schema_version = <integer> is recommended in nimbus.toml; missing key uses legacy defaults",
-    );
+  for (const { layer } of userLayers) {
+    let raw: string;
+    try {
+      raw = readFileSync(layer.path, "utf8");
+    } catch {
+      continue;
+    }
+    if (!/\bschema_version\b\s*=\s*\d+/.test(raw)) {
+      warnings.push(
+        `schema_version = <integer> is recommended in ${basename(layer.path)}; missing key uses legacy defaults`,
+      );
+    }
   }
   return { kind: "hit", value: { ok: errors.length === 0, errors, warnings } };
+}
+
+function rpcConfigExplain(params: unknown, ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
+  const path = asRecord(params)?.["path"];
+  if (path !== undefined && typeof path !== "string") {
+    throw new DiagnosticsRpcError(-32602, "config.explain: path must be a string");
+  }
+  return { kind: "hit", value: explainConfig(getLayeredConfig(ctx.configDir), path) };
+}
+
+function buildConfigLayers(ctx: DiagnosticsRpcContext): unknown {
+  const reader = getLayeredConfig(ctx.configDir);
+  return {
+    runningProfile: reader.profile.name,
+    markerProfile: reader.markerProfile(),
+    layers: reader.snapshot().layers.map((l) => ({
+      kind: l.layer.kind,
+      id: l.layer.id,
+      path: l.layer.path,
+      exists: l.exists,
+    })),
+    // Pack layers and fleet-job drops arrive with the pack loader; always empty in PR 1.
+    activePacks: [] as string[],
+    skippedPacks: [] as { packId: string; reason: string }[],
+    droppedFleetJobs: [] as { name: string; file: string; reason: string }[],
+  };
 }
 
 function assertTelemetryDisablePathSafe(path: string): void {
@@ -747,6 +784,7 @@ function rpcDiagSnapshot(ctx: DiagnosticsRpcContext): DiagnosticsRpcOutcome {
             }),
       },
       sandbox: buildSandboxDiagPayload(ctx.sandboxRunner),
+      configLayers: buildConfigLayers(ctx),
     },
   };
 }
@@ -769,6 +807,8 @@ export function dispatchDiagnosticsRpc(
   switch (method) {
     case "config.validate":
       return rpcConfigValidate(ctx);
+    case "config.explain":
+      return rpcConfigExplain(params, ctx);
     case "telemetry.disableMark":
       return rpcTelemetryDisableMark(ctx);
     case "db.verify":

@@ -6,7 +6,7 @@
 // found". Boots a real gateway subprocess (`gateway-runner.ts`) and drives it with a minimal
 // JSON-RPC client — no mocks at the IPC layer.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -108,7 +108,10 @@ export class TinyIpcClient {
   }
 }
 
-export async function startRealGateway(tag: string): Promise<{
+export async function startRealGateway(
+  tag: string,
+  opts?: { configFiles?: Record<string, string>; env?: Record<string, string> },
+): Promise<{
   socketPath: string;
   stop: () => Promise<void>;
 }> {
@@ -124,6 +127,9 @@ export async function startRealGateway(tag: string): Promise<{
   };
   mkdirSync(paths.configDir, { recursive: true });
   mkdirSync(paths.dataDir, { recursive: true });
+  for (const [name, text] of Object.entries(opts?.configFiles ?? {})) {
+    writeFileSync(join(paths.configDir, name), text);
+  }
 
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
@@ -134,6 +140,7 @@ export async function startRealGateway(tag: string): Promise<{
     NIMBUS_SKIP_EMBEDDING_RUNTIME: "1",
     // Never raise a real OS toast (or probe for one) from a test-booted gateway.
     NIMBUS_NOTIFICATIONS: "off",
+    ...opts?.env,
   };
 
   const proc = Bun.spawn(["bun", RUNNER], {

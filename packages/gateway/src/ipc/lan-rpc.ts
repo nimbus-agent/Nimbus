@@ -20,6 +20,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // All three are local/CLI-only (full-method forbid) — admitting approvalRespond over the wire
   // would let a remote peer approve an outbound publish, defeating the LOCAL-owner gate (I27).
   // The reads (share.verify/list/get/pubkey) stay admitted by default-allow.
+  // Layered-config provenance: reveals which layer set which key (file paths, pack ids). Local-only.
+  // `config.validate` stays LAN-callable, unchanged.
+  "config.explain",
   "share.create",
   "share.prune",
   "share.approvalRespond",

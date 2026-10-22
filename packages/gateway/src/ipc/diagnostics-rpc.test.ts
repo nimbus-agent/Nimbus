@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { forgetLayeredConfigForTests, initLayeredConfig } from "../config/layered-config.ts";
 import { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import type { AskExplainRecord } from "../engine/ask-explain-types.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
@@ -2014,4 +2015,96 @@ describe("ask.explainLast", () => {
     const r = await dispatchDiagnosticsRpc("ask.explainLast", null, withoutRecorder as typeof ctx);
     expect(r).toEqual({ kind: "hit", value: { record: null, reason: "no_ask_since_start" } });
   });
+});
+
+describe("layered config over IPC", () => {
+  function withProfileDir(
+    files: Record<string, string>,
+    profile: string,
+    body: (dir: string) => void | Promise<void>,
+  ): Promise<void> {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-layered-"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    initLayeredConfig(dir, { explicitProfile: profile });
+    return Promise.resolve(body(dir)).finally(() => {
+      forgetLayeredConfigForTests(dir);
+      rmTmp(dir);
+    });
+  }
+
+  test("config.explain returns the profile layer", () =>
+    withProfileDir(
+      {
+        "nimbus.toml": "[decisions]\nmin_confidence = 0.3\n",
+        "nimbus.work.toml": "[decisions]\nmin_confidence = 0.6\n",
+      },
+      "work",
+      async (dir) => {
+        const r = await dispatchDiagnosticsRpc(
+          "config.explain",
+          { path: "decisions.min_confidence" },
+          makeCtx(dir),
+        );
+        const v = (r as { value: { entries: { value: string }[]; runningProfile: string } }).value;
+        expect(v.entries[0]?.value).toBe("0.6");
+        expect(v.runningProfile).toBe("work");
+      },
+    ));
+
+  test("config.explain rejects a non-string path", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "default", (dir) => {
+      expect(() => dispatchDiagnosticsRpc("config.explain", { path: 7 }, makeCtx(dir))).toThrow(
+        expect.objectContaining({ rpcCode: -32602 }),
+      );
+    }));
+
+  test("config.validate names the profile file in its warning", () =>
+    withProfileDir(
+      { "nimbus.toml": "schema_version = 1\n", "nimbus.work.toml": "[llm]\nprefer_local = true\n" },
+      "work",
+      async (dir) => {
+        const r = await dispatchDiagnosticsRpc("config.validate", null, makeCtx(dir));
+        const v = (r as { value: { ok: boolean; warnings: string[] } }).value;
+        expect(v.ok).toBe(true);
+        expect(v.warnings).toHaveLength(1);
+        expect(v.warnings[0]).toContain("nimbus.work.toml");
+      },
+    ));
+
+  test("config.validate is clean for an active profile with no file", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
+      const r = await dispatchDiagnosticsRpc("config.validate", null, makeCtx(dir));
+      const v = (r as { value: { ok: boolean; warnings: string[] } }).value;
+      expect(v.ok).toBe(true);
+      expect(v.warnings).toEqual([]);
+    }));
+
+  test("diag.snapshot carries configLayers", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        const c = (
+          r as {
+            value: {
+              configLayers: {
+                runningProfile: string;
+                markerProfile: string;
+                layers: { kind: string; exists: boolean }[];
+                activePacks: string[];
+              };
+            };
+          }
+        ).value.configLayers;
+        expect(c.runningProfile).toBe("work");
+        expect(c.markerProfile).toBe("default");
+        expect(c.layers.map((l) => [l.kind, l.exists])).toEqual([
+          ["base", true],
+          ["profile", false],
+        ]);
+        expect(c.activePacks).toEqual([]);
+      } finally {
+        db.close();
+      }
+    }));
 });

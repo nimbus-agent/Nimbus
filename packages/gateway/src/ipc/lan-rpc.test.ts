@@ -520,4 +520,18 @@ describe("user-MCP list/call over LAN (I42 — CLI-only)", () => {
       checkLanMethodAllowed("connector.listStatus", { peerId: "p", writeAllowed: false }),
     ).not.toThrow();
   });
+
+  test("config.explain is LAN-forbidden regardless of grant-write", () => {
+    for (const writeAllowed of [true, false]) {
+      expect(() => checkLanMethodAllowed("config.explain", { peerId: "p", writeAllowed })).toThrow(
+        LanError,
+      );
+    }
+  });
+
+  test("config.validate is still LAN-callable", () => {
+    expect(() =>
+      checkLanMethodAllowed("config.validate", { peerId: "p", writeAllowed: false }),
+    ).not.toThrow();
+  });
 });
