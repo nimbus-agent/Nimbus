@@ -172,7 +172,7 @@ export type ExtensionSlotSourceDeps = VerifiedExtensionDeps & {
 
 export function createExtensionSlotSource(deps: ExtensionSlotSourceDeps): ExtensionSlotSource {
   const verify = deps.verify ?? readVerifiedExtensionForSpawn;
-  // Org policy names the INDEX id (`readwise` for a bound extension, else the `ext_` id). Derived
+  // Org policy names the INDEX id (the legacy id for a bound extension, else the `ext_` id). Derived
   // from the installed manifest and the same continuity table the verifier binds with; a spawn is
   // still refused by the verifier (step 9) if that manifest was tampered with. Bound: the id is read
   // from the hash-checked on-disk manifest BEFORE verify, and an unreadable manifest falls back to

@@ -1,5 +1,5 @@
 /**
- * V72 — the credentials an approved extension runs with (Readwise unbundling, gateway PR 2). One
+ * V72 — the credentials an approved extension runs with (connector unbundling, gateway PR 2). One
  * canonical, key-sorted JSON object per grant: credential name -> `{ env, vaultKey }`, the Vault key
  * resolved at approval (a continuity binding's legacy key, else `ext.<serviceId>.<name>`). Names and
  * Vault keys only — never a value. A grant approved before V72 reads `'{}'`, which is exactly what an

@@ -3,6 +3,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
+import { UNBUNDLED_CONNECTOR_IDS } from "../packages/gateway/src/connectors/connector-catalog.ts";
+
 const REPO_ROOT = resolve(import.meta.dir, "..");
 export const CONNECTOR_PACKAGE = "@nimbus-dev/connectors";
 const OUT = join(
@@ -74,7 +76,8 @@ function connectorPackageDir(packageName: string): string {
   throw new Error(`cannot locate the ${packageName} package root`);
 }
 
-export function bundledConnectorIds(packageName: string = CONNECTOR_PACKAGE): string[] {
+/** Every connector id the package exports, including the ones the gateway no longer bundles. */
+export function exportedConnectorIds(packageName: string = CONNECTOR_PACKAGE): string[] {
   const manifest: unknown = JSON.parse(
     readFileSync(join(connectorPackageDir(packageName), "package.json"), "utf8"),
   );
@@ -90,6 +93,12 @@ export function bundledConnectorIds(packageName: string = CONNECTOR_PACKAGE): st
     .map((k) => k.slice(2))
     .filter((id) => CONNECTOR_ID_RE.test(id))
     .sort((a, b) => a.localeCompare(b));
+}
+
+/** The connectors the gateway bundles: everything the package exports, less the unbundled ones. */
+export function bundledConnectorIds(packageName: string = CONNECTOR_PACKAGE): string[] {
+  const unbundled: readonly string[] = UNBUNDLED_CONNECTOR_IDS;
+  return exportedConnectorIds(packageName).filter((id) => !unbundled.includes(id));
 }
 
 /**

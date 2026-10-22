@@ -119,7 +119,9 @@ function extensionBackedRefusal(
   id: string,
 ): ConnectorRpcError | undefined {
   const db = ctx.localIndex.getDatabase();
-  const backing = ctx.extensionBackingId ?? ((s: string) => extensionIdBackingServiceId(db, s));
+  const backing =
+    ctx.extensionBackingId ??
+    ((s: string) => extensionIdBackingServiceId(db, s, ctx.continuityTable));
   const extensionId = backing(id);
   if (extensionId === undefined) return undefined;
   return new ConnectorRpcError(

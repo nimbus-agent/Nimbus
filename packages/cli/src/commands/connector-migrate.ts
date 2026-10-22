@@ -22,6 +22,7 @@ import {
 } from "../lib/rpc-timeouts.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { stripControl } from "./captures-format.ts";
+import { namesApproveStep } from "./extension-doctor-format.ts";
 
 export const MIGRATE_USAGE =
   "Usage: nimbus connector migrate list [--json] | accept <id> | decline <id> | retry [--json]";
@@ -97,7 +98,11 @@ export function migrationNextStep(row: MigrationRowCli): string {
     case "awaiting_approval":
       return `run \`nimbus connector migrate accept ${row.id}\` to keep it, or \`nimbus connector migrate decline ${row.id}\``;
     case "failed":
-      return "run `nimbus connector migrate retry`";
+      // A stale-grant row's error already ends with the approve command; re-approving resumes the
+      // sync, so name only that step.
+      return namesApproveStep(row.error)
+        ? "approve the extension as the error above says; sync resumes after it"
+        : "run `nimbus connector migrate retry`";
     case "declined":
       return "run `nimbus connector migrate retry` to change your mind";
     default:

@@ -58,6 +58,23 @@ function actionableMigrations(data: unknown): MigrationRowUi[] {
   });
 }
 
+const MIGRATE_RETRY_CMD = "`nimbus connector migrate retry`";
+
+/**
+ * The step a failed migration row names after its error, mirroring the CLI's `migrate list` and
+ * `nimbus doctor` (`namesApproveStep` in packages/cli/src/commands/extension-doctor-format.ts). A
+ * stale-grant row's error already ends with "run `nimbus extension approve <id>` to resume sync",
+ * and re-approving resumes the sync by itself, so the error's own approve step is the only one
+ * shown; an error that already names `migrate retry` gets nothing added either. The gateway pins
+ * the approve wording (register-extension-sync.test.ts).
+ */
+function failedMigrationNextStep(error: string | null): string {
+  const namesItsOwnStep =
+    error !== null &&
+    (error.includes("`nimbus extension approve ") || error.includes(MIGRATE_RETRY_CMD));
+  return namesItsOwnStep ? "" : ` Run ${MIGRATE_RETRY_CMD} in a terminal.`;
+}
+
 interface PendingUpdatesProps {
   readonly offline: boolean;
   readonly pollIntervalMs?: number;
@@ -183,8 +200,8 @@ export function PendingUpdates({
                   </span>
                   {m.state === "failed" ? (
                     <span className="text-xs text-red-600" data-testid={`migration-failed-${m.id}`}>
-                      Migration failed: {m.error ?? "unknown error"}. Run `nimbus connector migrate
-                      retry` in a terminal.
+                      Migration failed: {m.error ?? "unknown error"}.
+                      {failedMigrationNextStep(m.error)}
                     </span>
                   ) : (
                     <span className="text-xs text-neutral-500">

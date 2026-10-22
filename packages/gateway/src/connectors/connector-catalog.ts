@@ -101,6 +101,16 @@ export const CONNECTOR_SERVICE_IDS = [
 
 export type ConnectorServiceId = (typeof CONNECTOR_SERVICE_IDS)[number];
 
+/**
+ * Connectors the `@nimbus-dev/connectors` package still exports but the gateway no longer bundles:
+ * each ships as a signed extension from the official registry. Read by the registry generator and
+ * the drift audit, which subtract it; every entry must stay a catalog id with a continuity entry.
+ */
+export const UNBUNDLED_CONNECTOR_IDS = [
+  // Ships as the signed extension com.nimbus.readwise; the npm package keeps it for standalone users.
+  "readwise",
+] as const;
+
 export const GOOGLE_CONNECTOR_SERVICES: ReadonlySet<string> = new Set([
   "google_drive",
   "gmail",
@@ -173,6 +183,8 @@ const CONNECTOR_SYNC_INTERVAL_MS: { readonly [K in ConnectorServiceId]: number }
   netlify: MIN10,
   stripe: MIN10,
   mercury: MIN10,
+  // Read by the migration engine's paused state; the bound extension syncs on its manifest's
+  // intervalSeconds instead (both 600 s).
   readwise: MIN10,
   raindrop: MIN10,
   intercom: MIN10,

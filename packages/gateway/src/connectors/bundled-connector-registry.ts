@@ -2,7 +2,7 @@
 // Re-run: bun run gen:connector-registry
 //
 // Every first-party connector entrypoint, as a lazy dynamic import. The imports are static enough
-// for the bundler to retain all 94 in the compiled gateway binary, and lazy enough that
+// for the bundler to retain all 93 in the compiled gateway binary, and lazy enough that
 // only the requested connector is ever evaluated.
 
 export const BUNDLED_CONNECTORS: Readonly<Record<string, () => Promise<unknown>>> = {
@@ -77,7 +77,6 @@ export const BUNDLED_CONNECTORS: Readonly<Record<string, () => Promise<unknown>>
   protonmail: () => import("@nimbus-dev/connectors/protonmail"),
   raindrop: () => import("@nimbus-dev/connectors/raindrop"),
   ramp: () => import("@nimbus-dev/connectors/ramp"),
-  readwise: () => import("@nimbus-dev/connectors/readwise"),
   sagemaker: () => import("@nimbus-dev/connectors/sagemaker"),
   salesforce: () => import("@nimbus-dev/connectors/salesforce"),
   semgrep: () => import("@nimbus-dev/connectors/semgrep"),

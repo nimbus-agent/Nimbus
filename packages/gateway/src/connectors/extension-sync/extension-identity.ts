@@ -16,7 +16,7 @@ import { type ExtensionRunGrantRow, listRunGrants } from "../../extensions/run-g
 /**
  * The two ids one approved extension answers to. The CODE-server id (`ext_<slug>`) keys the run
  * grant, the `mesh:ext:` slot and every `^ext_` check; the INDEX id is what the scheduler, items,
- * catalog, org policy and connector status use — the bound legacy id (`readwise`) when the
+ * catalog, org policy and connector status use — the bound legacy id (e.g. `<legacy>`) when the
  * continuity table binds this extension, else the same `ext_<slug>`.
  */
 export interface ExtensionIdentity {
@@ -118,7 +118,7 @@ function parseCredentials(json: string): ResolvedRunCredentials | undefined {
 }
 
 /**
- * Maps an INDEX id to the credentials its approved grant carries (`readwise` when bound, else the
+ * Maps an INDEX id to the credentials its approved grant carries (the legacy id when bound, else the
  * `ext_` id); `undefined` for any id no readable grant answers to, or whose stored credentials do
  * not parse. Re-read on every call, so an approval, revoke or removal is seen at once.
  */
@@ -148,7 +148,7 @@ export function createExtensionCredentialsResolver(
 /**
  * The extension that a connector id belongs to, or `undefined` for every other id: an `ext_`
  * code-server id carried by a run grant, or the INDEX id an approved extension syncs under (the
- * bound legacy id, e.g. `readwise`). `connector.remove` refuses these (plan decision 7) — removing
+ * bound legacy id, e.g. `<legacy>`). `connector.remove` refuses these (plan decision 7) — removing
  * one there would clear index rows while the mesh slot and the grant lived on. Built-in ids that the
  * table does not bind answer with no I/O beyond the grant list.
  */

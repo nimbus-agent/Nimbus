@@ -10,6 +10,9 @@
 //                                composition options (ruling B1). This RUNNER is test code; the
 //                                gateway itself never reads either from the environment, and the
 //                                production entry points pass no composition options at all.
+//                                The runner boots `builtin: null` unless the fixture names its own
+//                                builtin, so no E2E reaches the real registry host — including one
+//                                whose fixture sets only `continuityTable`.
 //   NIMBUS_E2E_SEED_LEGACY_JSON — { serviceId, items, scheduler }: the index rows and scheduler row
 //                                a bundled connector would have left, seeded AFTER assembly
 // The engine read path is bound to a deterministic stub: this harness proves the CHATOPS wiring
@@ -63,11 +66,12 @@ process.env["NIMBUS_NOTIFICATIONS"] ??= "off";
 const migrationFixture = envJson<NonNullable<AssembleCompositionOptions["migration"]>>(
   "NIMBUS_E2E_MIGRATION_FIXTURE_JSON",
 );
-const services = await assemblePlatformServices(
-  paths,
-  undefined,
-  migrationFixture === undefined ? undefined : { migration: migrationFixture },
-);
+// Unless the fixture names a built-in registry, the gateway boots with NONE, so no E2E reaches the
+// real official host (github.io) — including a fixture that sets only `continuityTable`, which
+// would otherwise fall back to the baked built-in. A test that wants one names it.
+const services = await assemblePlatformServices(paths, undefined, {
+  migration: { builtin: null, ...migrationFixture },
+});
 
 // Seed what a bundled connector leaves behind (connector-migration e2e): its index rows and its
 // scheduler row. The boot migration evaluation runs concurrently and touches only `paused` and the

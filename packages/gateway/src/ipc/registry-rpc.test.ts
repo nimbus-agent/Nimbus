@@ -59,6 +59,8 @@ const fetchBag = (over: Partial<RegistryFetchBag> = {}): RegistryFetchBag => ({
   enforceAirGap: () => false,
   now: () => NOW,
   production: false,
+  // Neutral test default: never reach the real official registry host.
+  builtin: null,
   ...over,
 });
 

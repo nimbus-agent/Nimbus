@@ -105,6 +105,17 @@ export function doctorRegistryLines(
 const RETRY_CMD = "`nimbus connector migrate retry`";
 
 /**
+ * True when a failed migration's error already names `nimbus extension approve <id>` — the
+ * gateway's re-approve suffix (`reapproveSuffix`, "... to resume sync"). That row is not fixed by
+ * `migrate retry`: re-approving the extension resumes the sync itself, so the owner is shown that
+ * one step and not two. The CLI package does not import gateway source, so this matches the
+ * command text the suffix carries.
+ */
+export function namesApproveStep(error: string | null): boolean {
+  return error?.includes("`nimbus extension approve ") === true;
+}
+
+/**
  * `nimbus doctor`'s connector-migration lines, from a `migration.list` response (Readwise
  * unbundling spec § 7.2): a `[warn]` (exit 1) for a migration awaiting the owner's answer and for
  * one that failed, and a QUIET `[info]` (exit 0) for one the owner declined, naming `migrate retry`
@@ -139,7 +150,8 @@ export function doctorMigrationLines(raw: unknown): { lines: string[]; exit: num
         break;
       case "failed": {
         const error = typeof m["error"] === "string" ? stripControl(m["error"]) : "unknown error";
-        const next = error.includes(RETRY_CMD) ? "" : ` — run ${RETRY_CMD}`;
+        const next =
+          error.includes(RETRY_CMD) || namesApproveStep(error) ? "" : ` — run ${RETRY_CMD}`;
         lines.push(
           `[warn] Connector migration: ${legacy} could not be moved to ${ext} and stays paused: ${error}${next}`,
         );
