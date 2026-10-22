@@ -930,7 +930,7 @@ export function doctorPrintProfile(raw: unknown): number {
   for (const l of layers) {
     if (typeof l.readError === "string") {
       console.log(
-        `[warn] config: could not read ${String(l.path)} (${l.readError}); the gateway runs without it`,
+        `[warn] config: could not read ${String(l.path)} (${l.readError}); that layer is ignored, and sections read through the default loader fall back to built-in defaults until it is readable`,
       );
       exit = 1;
     }

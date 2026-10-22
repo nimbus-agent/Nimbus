@@ -313,7 +313,7 @@ describe("spawnGateway — the launch it hands the child (injected spawn)", () =
     }
   });
 
-  it("hands the child the active profile and extraEnv, with the inspector variables stripped", async () => {
+  it("hands the child extraEnv, with the inspector variables stripped", async () => {
     const paths = readyPaths();
     mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(join(paths.configDir, ".nimbus-profile"), "work\n", "utf8");
@@ -322,7 +322,6 @@ describe("spawnGateway — the launch it hands the child (injected spawn)", () =
     await spawnGateway(paths, { extraEnv: { NIMBUS_HTTP_PORT: "7475" } }, fake.deps);
 
     const env = fake.spawns[0]?.options.env ?? {};
-    expect(env["NIMBUS_PROFILE"]).toBe("work");
     expect(env["NIMBUS_HTTP_PORT"]).toBe("7475");
     expect("NODE_INSPECT_RESUME_ON_START" in env).toBe(false);
     // The parent's own environment is copied, not handed over and mutated.
@@ -336,6 +335,19 @@ describe("spawnGateway — the launch it hands the child (injected spawn)", () =
     const profileFile = join(paths.configDir, ".nimbus-profile");
     for (const body of ["default\n", "   \n"]) {
       writeFileSync(profileFile, body, "utf8");
+      const fake = fakeLaunch(SOURCE_PLAN, "linux");
+      await spawnGateway(paths, {}, fake.deps);
+      expect("NIMBUS_PROFILE" in (fake.spawns[0]?.options.env ?? {})).toBe(false);
+    }
+  });
+
+  it("a marker-sourced profile is NOT put in the child's env, so the gateway reads the marker itself", async () => {
+    const paths = readyPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(join(paths.configDir, ".nimbus-profile"), "work\n", "utf8");
+    for (const shell of [undefined, "default", ""]) {
+      if (shell === undefined) delete process.env["NIMBUS_PROFILE"];
+      else process.env["NIMBUS_PROFILE"] = shell;
       const fake = fakeLaunch(SOURCE_PLAN, "linux");
       await spawnGateway(paths, {}, fake.deps);
       expect("NIMBUS_PROFILE" in (fake.spawns[0]?.options.env ?? {})).toBe(false);

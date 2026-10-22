@@ -3,7 +3,7 @@ import { closeSync, fstatSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 import type { CliPlatformPaths } from "../paths.ts";
-import { resolveCliActiveProfile } from "./active-profile.ts";
+import { resolveCliActiveProfileWithSource } from "./active-profile.ts";
 import { type GatewayLaunchPlan, resolveGatewayLaunch } from "./resolve-gateway-launch.ts";
 
 function gatewayLogBasename(): string {
@@ -86,7 +86,7 @@ function launchGateway(
 
   // The gateway's own order (NIMBUS_PROFILE, then the marker), validated here so a bad name is
   // refused with its source before anything is spawned.
-  const profile = resolveCliActiveProfile(paths.configDir);
+  const profile = resolveCliActiveProfileWithSource(paths.configDir);
 
   const logPath = join(paths.logDir, gatewayLogBasename());
   const executable = launch.cmd[0];
@@ -104,8 +104,13 @@ function launchGateway(
     );
     const childEnv: NodeJS.ProcessEnv = stripInspectorEnv(process.env);
     childEnv["NIMBUS_GATEWAY_LOG_PATH"] = logPath;
-    if (profile !== "default") {
-      childEnv["NIMBUS_PROFILE"] = profile;
+    // Only a profile chosen by NIMBUS_PROFILE travels in the env. A marker/default profile must
+    // NOT: the gateway would then record source "env", and doctor / `config explain` could never
+    // say that a later `nimbus profile switch` needs a restart. It reads the marker itself.
+    if (profile.source === "env") {
+      childEnv["NIMBUS_PROFILE"] = profile.name;
+    } else {
+      delete childEnv["NIMBUS_PROFILE"];
     }
     if (opts.extraEnv !== undefined) {
       for (const [k, v] of Object.entries(opts.extraEnv)) {

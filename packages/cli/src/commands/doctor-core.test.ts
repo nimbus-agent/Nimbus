@@ -1154,7 +1154,7 @@ describe("doctorPrintProfile (role packs)", () => {
     });
     expect(exit).toBe(1);
     expect(out.stdout).toContain(
-      "[warn] config: could not read nimbus.work.toml (EISDIR: illegal operation on a directory); the gateway runs without it",
+      "[warn] config: could not read nimbus.work.toml (EISDIR: illegal operation on a directory); that layer is ignored, and sections read through the default loader fall back to built-in defaults until it is readable",
     );
     expect(out.stdout).not.toContain("has no nimbus.work.toml");
   });

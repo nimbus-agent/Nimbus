@@ -8,6 +8,7 @@ import {
   PROFILE_NAME_RE,
   readProfileMarker,
   resolveCliActiveProfile,
+  resolveCliActiveProfileWithSource,
   tryReadProfileMarker,
 } from "./active-profile.ts";
 
@@ -25,6 +26,22 @@ describe("cli active profile", () => {
   it("defaults when nothing is set", () => {
     expect(resolveCliActiveProfile(dir, noEnv)).toBe("default");
     expect(cliWriteTargetPath(dir, noEnv)).toBe(join(dir, "nimbus.toml"));
+  });
+
+  it("reports where the profile came from", () => {
+    expect(resolveCliActiveProfileWithSource(dir, noEnv)).toEqual({
+      name: "default",
+      source: "default",
+    });
+    writeFileSync(join(dir, ".nimbus-profile"), "home\n");
+    expect(resolveCliActiveProfileWithSource(dir, noEnv)).toEqual({
+      name: "home",
+      source: "marker",
+    });
+    expect(resolveCliActiveProfileWithSource(dir, envWith("work"))).toEqual({
+      name: "work",
+      source: "env",
+    });
   });
 
   it("env wins over the marker", () => {

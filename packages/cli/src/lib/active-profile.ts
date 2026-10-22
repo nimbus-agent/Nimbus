@@ -48,19 +48,32 @@ export function tryReadProfileMarker(configDir: string): string | undefined {
   }
 }
 
+/** The active profile and where it came from (the gateway's `ProfileSource`, minus "argument"). */
+export type CliResolvedProfile = {
+  readonly name: string;
+  readonly source: "env" | "marker" | "default";
+};
+
+export function resolveCliActiveProfileWithSource(
+  configDir: string,
+  env: (k: string) => string | undefined = (k) => process.env[k],
+): CliResolvedProfile {
+  const fromEnv = env("NIMBUS_PROFILE")?.trim();
+  if (fromEnv !== undefined && fromEnv !== "" && fromEnv !== "default") {
+    return { name: checked(fromEnv, "NIMBUS_PROFILE"), source: "env" };
+  }
+  const marker = readProfileMarker(configDir);
+  if (marker !== undefined) {
+    return { name: checked(marker, PROFILE_MARKER), source: "marker" };
+  }
+  return { name: "default", source: "default" };
+}
+
 export function resolveCliActiveProfile(
   configDir: string,
   env: (k: string) => string | undefined = (k) => process.env[k],
 ): string {
-  const fromEnv = env("NIMBUS_PROFILE")?.trim();
-  if (fromEnv !== undefined && fromEnv !== "" && fromEnv !== "default") {
-    return checked(fromEnv, "NIMBUS_PROFILE");
-  }
-  const marker = readProfileMarker(configDir);
-  if (marker !== undefined) {
-    return checked(marker, PROFILE_MARKER);
-  }
-  return "default";
+  return resolveCliActiveProfileWithSource(configDir, env).name;
 }
 
 /** Where `nimbus config set|edit` writes: the active profile's file (even if missing), else nimbus.toml. */
