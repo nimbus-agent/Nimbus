@@ -11,6 +11,12 @@
  *        install + run grant (legacy Vault key) + sync registration + resume --> approved
  *   awaiting_approval --accept: any check after the prompt fails--> failed (install undone)
  *   awaiting_approval --decline-->                    declined            (items kept, still paused)
+ *   (any but approved/declined) --evaluate or accept, extension already installed, no fetch, no prompt-->
+ *        bound + current grant on the legacy credential --> approved (legacy service resumed)
+ *        bound + missing/stale grant --> failed ("run `nimbus extension approve <id>`", items kept)
+ *        not bound --> failed (not the official copy; inspect with `nimbus extension list`)
+ *   `[extensions] runtime = false`: evaluate fetches nothing and writes no row; it pauses the legacy
+ *        service with a reason naming the switch.
  *
  * `approved` and `declined` are terminal: evaluation never prepares either again. Prepare writes
  * only the staged tree and the row (plus the fetch's own anti-rollback and egress rows) — no
@@ -29,19 +35,38 @@ import { join, resolve } from "node:path";
 import { publisherKeyFingerprint, RegistryError } from "@nimbus-dev/registry-format";
 import type { Logger } from "pino";
 
-import { deleteExtensionById, listExtensions } from "../../automation/extension-store.ts";
+import {
+  deleteExtensionById,
+  type ExtensionRow,
+  listExtensions,
+} from "../../automation/extension-store.ts";
 import { BUNDLED_CONNECTORS } from "../../connectors/bundled-connector-registry.ts";
 import {
   defaultSyncIntervalMsForService,
   normalizeConnectorServiceId,
 } from "../../connectors/connector-catalog.ts";
 import { transitionHealth } from "../../connectors/health.ts";
+import { reapproveSuffix } from "../../platform/register-extension-sync.ts";
 import { setPaused, upsertSchedulerRegistration } from "../../sync/scheduler-store.ts";
+import { decodeBase64 } from "../../util/base64.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
-import { approveMigratedExtensionRun, type ExtensionRunGate } from "../approve-run.ts";
-import { CONTINUITY_TABLE, type ContinuityEntry } from "../continuity/continuity-table.ts";
+import {
+  approveMigratedExtensionRun,
+  type ExtensionRunGate,
+  readVerifiedManifest,
+} from "../approve-run.ts";
+import {
+  bindingInputFor,
+  CONTINUITY_TABLE,
+  type ContinuityEntry,
+  findContinuityBinding,
+} from "../continuity/continuity-table.ts";
 import { clearDeps } from "../dependency-store.ts";
-import { sortedNames } from "../extension-credentials.ts";
+import {
+  resolveRunCredentials,
+  serializeRunCredentials,
+  sortedNames,
+} from "../extension-credentials.ts";
 import {
   type ExtensionRunGrantEnv,
   type ResolvedRunGrants,
@@ -70,6 +95,8 @@ import {
   type VerifiedRegistryPackage,
 } from "../registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "../registry/registry-fetch.ts";
+import { vaultPublisherKeyConflicts } from "../registry/registry-manifest.ts";
+import { getRunGrant } from "../run-grant-store.ts";
 import { computeExtensionTreeDigest } from "../tree-digest.ts";
 import { migrationRedactionRoots, redactMigrationPaths } from "./migration-redact.ts";
 import {
@@ -78,6 +105,7 @@ import {
   getMigrationByLegacyService,
   listMigrations,
   type MigrationRow,
+  recordMigrationAlreadyInstalled,
   recordMigrationFailed,
   recordMigrationPrepared,
   reopenDeclinedMigration,
@@ -230,17 +258,39 @@ function failedReason(error: string): string {
   return error.includes(RETRY) ? error : `${error} — run ${RETRY}`;
 }
 
-/** The failure text for an extension id that is already installed (prepare and accept share it). */
-function alreadyInstalledText(extensionId: string): string {
-  return `${extensionId} already installed — remove it, then ${RETRY}`;
+/*
+ * An extension id that is already installed. None of these texts ever says "remove it": removing a
+ * bound extension (`nimbus extension remove`) purges every item under the legacy id and the legacy
+ * credential, so that advice would destroy exactly what the migration exists to keep.
+ */
+
+/** Installed, but not bound to this entry (another source or publisher, or it no longer verifies). */
+function notOfficialText(entry: ContinuityEntry): string {
+  const name = displayNameOf(entry);
+  return `${entry.extensionId} already installed, but not as the official ${name} extension this release moves ${name} to; your ${name} items are untouched — inspect it with \`nimbus extension list\``;
 }
 
-/** The text a failed prepare records: the already-installed wording, else the error's own message. */
+/**
+ * Installed and bound, but its run grant is missing or no longer covers the legacy credential (C10:
+ * approved before the binding existed) or the installed version (an update, ruling B39). Ends with
+ * the registrar's stale-grant hint, so the re-approval itself resumes the legacy service.
+ */
+function staleGrantText(entry: ContinuityEntry): string {
+  const name = displayNameOf(entry);
+  return `${entry.extensionId} is installed, but its run approval is missing or out of date (given before this release or before an update); your ${name} items are untouched — ${reapproveSuffix(entry.extensionId)}`;
+}
+
+/** The text a failed prepare records: an install that raced the fetch, else the error's message. */
 function prepareFailureText(entry: ContinuityEntry, e: unknown): string {
   if (e instanceof RegistryError && e.code === "ERR_REGISTRY_ALREADY_INSTALLED") {
-    return alreadyInstalledText(entry.extensionId);
+    return `${entry.extensionId} was installed while this migration was being prepared — run ${RETRY} to check it again`;
   }
   return e instanceof Error ? e.message : String(e);
+}
+
+/** C12: the runtime is off, so a migration could never be accepted. Nothing is fetched. */
+function runtimeOffReason(displayName: string): string {
+  return `${displayName} moved to an extension, and the extension runtime is off (\`[extensions] runtime = false\`) — turn it on, then run ${RETRY}`;
 }
 
 function declinedReason(displayName: string): string {
@@ -405,6 +455,13 @@ type StageCheck =
   | { readonly kind: "missing" }
   | { readonly kind: "tampered" };
 
+/** An entry's extension id as installed now (replaces ruling B9). */
+type InstalledCheck =
+  | { readonly kind: "absent" }
+  | { readonly kind: "approved"; readonly row: ExtensionRow }
+  | { readonly kind: "stale" }
+  | { readonly kind: "unbound" };
+
 const TAMPERED =
   "the staged package changed after it was verified (tree digest mismatch); it was deleted";
 const MISSING = "the staged package is missing";
@@ -486,7 +543,8 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     return true;
   };
 
-  const markFailed = (entry: ContinuityEntry, id: string, rawError: string): void => {
+  /** `asIs`: the error is already the whole paused reason (no `migrate retry` suffix added). */
+  const markFailed = (entry: ContinuityEntry, id: string, rawError: string, asIs = false): void => {
     const error = pathFree(rawError);
     removeStage(id);
     const written = recordMigrationFailed(
@@ -501,7 +559,90 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     );
     // Refused: the row reached a terminal state meanwhile (the owner declined). Never pause on its
     // behalf — that state's own reason stands.
-    if (written) pauseLegacyService(db, entry.legacyServiceId, failedReason(error), deps.now());
+    if (written) {
+      pauseLegacyService(db, entry.legacyServiceId, asIs ? error : failedReason(error), deps.now());
+    }
+  };
+
+  /**
+   * Whether the run grant of an installed, bound extension still covers what is installed now (its
+   * version and tree digest, as the sync registrar's staleness test) and maps every credential to
+   * this entry's LEGACY Vault key — re-resolved exactly as the I43 pre-spawn verifier does.
+   */
+  const grantCoversLegacy = (
+    row: ExtensionRow,
+    manifest: ExtensionManifest,
+    binding: ContinuityEntry,
+  ): boolean => {
+    const grant = getRunGrant(db, row.id);
+    if (grant === null || grant.version !== row.version || grant.tree_digest !== row.tree_digest) {
+      return false;
+    }
+    const credentials = resolveRunCredentials(manifest, grant.service_id, binding);
+    const names = sortedNames(credentials);
+    return (
+      serializeRunCredentials(credentials) === grant.credentials_json &&
+      sameSet(names, sortedNames(binding.credentials)) &&
+      names.every((n) => credentials[n]?.vaultKey === binding.credentials[n])
+    );
+  };
+
+  /**
+   * What is installed under the entry's extension id. Bound means `findContinuityBinding` — the one
+   * binding derivation, over the hash-checked installed manifest and the row's source fingerprint —
+   * resolves to THIS entry; a manifest that no longer verifies cannot be bound.
+   */
+  const checkInstalled = (entry: ContinuityEntry): InstalledCheck => {
+    const row = listExtensions(db).find((r) => r.id === entry.extensionId);
+    if (row === undefined) return { kind: "absent" };
+    let manifest: ExtensionManifest;
+    try {
+      manifest = readVerifiedManifest(row);
+    } catch {
+      return { kind: "unbound" };
+    }
+    const binding = findContinuityBinding(bindingInputFor(row, manifest), table);
+    if (
+      binding === undefined ||
+      binding.legacyServiceId !== entry.legacyServiceId ||
+      binding.extensionId !== entry.extensionId
+    ) {
+      return { kind: "unbound" };
+    }
+    return grantCoversLegacy(row, manifest, binding)
+      ? { kind: "approved", row }
+      : { kind: "stale" };
+  };
+
+  /**
+   * Evaluate's answer for an extension that is already installed, before any fetch: installed,
+   * bound and approved with the legacy credential finishes the row `approved` and resumes the
+   * legacy service with no prompt (nothing is installed or granted here); stale or unbound fails
+   * it with the way forward. Items are never touched. Returns false when nothing is installed.
+   */
+  const settleInstalled = (entry: ContinuityEntry, existing: MigrationRow | undefined): boolean => {
+    const installed = checkInstalled(entry);
+    if (installed.kind === "absent") return false;
+    const id = existing?.id ?? newId();
+    if (installed.kind === "approved") {
+      removeStage(id);
+      const written = recordMigrationAlreadyInstalled(
+        db,
+        {
+          id,
+          legacyServiceId: entry.legacyServiceId,
+          extensionId: entry.extensionId,
+          version: installed.row.version,
+          treeDigest: installed.row.tree_digest,
+        },
+        deps.now(),
+      );
+      if (written) deps.scheduler.resume(entry.legacyServiceId);
+      return true;
+    }
+    if (installed.kind === "stale") markFailed(entry, id, staleGrantText(entry), true);
+    else markFailed(entry, id, notOfficialText(entry));
+    return true;
   };
 
   const prepare = async (
@@ -594,9 +735,21 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       // Re-read under `busy`: a decline (or an accept) can land while the Vault read above awaits.
       const existing = getMigrationByLegacyService(db, entry.legacyServiceId);
       if (skips(existing)) return;
+      if (!deps.runtimeEnabled) {
+        // C12: an accept would always refuse, so fetching would only lead to a dead end. No fetch,
+        // no row; a declined row stays declined until a retry with the runtime on.
+        pauseLegacyService(
+          db,
+          entry.legacyServiceId,
+          runtimeOffReason(displayNameOf(entry)),
+          deps.now(),
+        );
+        return;
+      }
       if (existing?.state === "declined" && !reopenDeclinedMigration(db, existing.id, deps.now())) {
         return;
       }
+      if (settleInstalled(entry, existing)) return;
       if (existing?.state === "awaiting_approval" && existing.extensionId === entry.extensionId) {
         const stage = checkStage(existing);
         if (stage.kind === "intact") return;
@@ -651,11 +804,11 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   };
 
   /** Fails an accepted row: stage deleted, row `failed`, legacy service still paused, error thrown. */
-  const failAccept = (row: MigrationRow, rawError: string): never => {
+  const failAccept = (row: MigrationRow, rawError: string, asIs = false): never => {
     const error = pathFree(rawError);
     removeStage(row.id);
     finishMigration(db, row.id, "failed", error, deps.now());
-    pauseLegacyService(db, row.legacyServiceId, failedReason(error), deps.now());
+    pauseLegacyService(db, row.legacyServiceId, asIs ? error : failedReason(error), deps.now());
     throw new MigrationError("ERR_EXTENSION_MIGRATION_FAILED", error);
   };
 
@@ -835,12 +988,39 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     return installed;
   };
 
+  /**
+   * Accept for an extension that `checkInstalled` found installed, bound to this row's entry and
+   * approved with the legacy credential: the owner already answered `extension.run` for exactly that
+   * grant, so there is nothing left to ask. Writes no extension row, grant or key — it finishes the
+   * row, drops the stage and resumes the legacy service (I46 bound (0): resuming is not granting).
+   */
+  const finishInstalledAccept = (row: MigrationRow): MigrationRow => {
+    if (!finishMigration(db, row.id, "approved", null, deps.now())) {
+      throw new MigrationError(
+        "ERR_EXTENSION_MIGRATION_NOT_PENDING",
+        `migration "${row.id}" changed while it was being accepted; nothing was changed`,
+      );
+    }
+    removeStage(row.id);
+    deps.scheduler.resume(row.legacyServiceId);
+    const done = getMigration(db, row.id);
+    if (done === undefined) throw new Error("the migration row disappeared");
+    return done;
+  };
+
   const acceptLocked = async (
     row: MigrationRow,
     consent: MigrationConsent,
     origin: MigrationAcceptOrigin,
   ): Promise<MigrationRow> => {
     const { entry, reg: builtinReg } = requireAcceptable(row);
+    // Already installed (replaces ruling B9), before the stage is even looked at and before any
+    // prompt: bound and approved with the legacy credential finishes the row with nothing installed
+    // or granted here; stale or unbound fails it with the way forward, leaving the install alone.
+    const already = checkInstalled(entry);
+    if (already.kind === "approved") return finishInstalledAccept(row);
+    if (already.kind === "stale") return failAccept(row, staleGrantText(entry), true);
+    if (already.kind === "unbound") return failAccept(row, notOfficialText(entry));
     const root = requireIntactStage(row);
     const manifest = readStagedManifest(row, root);
     const rootFingerprint = publisherKeyFingerprint(builtinReg.rootKey);
@@ -856,11 +1036,26 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       ),
     );
 
-    // An extension id another migration (or the owner) already installed is not ours to replace, and
-    // a later failure of this accept would undo THAT install. Refused before the prompt, with the
-    // wording prepare uses (B9); the undo below therefore only ever removes what this accept made.
+    // C11: the fetch refused a publisher key that conflicts with the one the Vault caches, but the
+    // Vault may have learned a different key for this publisher since prepare, and the install below
+    // ends by writing the key. Refused before the prompt, with the fetch path's wording.
+    const publisherId = manifest.publisher?.id ?? "";
+    if (
+      await vaultPublisherKeyConflicts(deps.vault, publisherId, decodeBase64(entry.publisherKey))
+    ) {
+      return failAccept(
+        row,
+        `the Vault already holds a different key for publisher "${publisherId}"; refusing to replace it`,
+      );
+    }
+    // An extension id installed since the check above (the owner's own install, during the Vault
+    // read) is not ours to replace, and a later failure of this accept would undo THAT install, so
+    // the undo below only ever removes what this accept made.
     if (listExtensions(db).some((r) => r.id === entry.extensionId)) {
-      return failAccept(row, alreadyInstalledText(entry.extensionId));
+      return failAccept(
+        row,
+        `${entry.extensionId} was installed while this migration was being accepted — run ${RETRY} to check it again`,
+      );
     }
     clearLeftoverInstall(row, entry);
     const approved = await consent(

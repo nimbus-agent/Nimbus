@@ -37,10 +37,11 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { ContinuityEntry } from "../continuity/continuity-table.ts";
 import type { ExtensionRunGrantEnv } from "../extension-run-grants.ts";
 import { resolveExtensionManifestPath } from "../manifest.ts";
+import { readPublisherKey, writePublisherKey } from "../publisher-keys.ts";
 import { buildTestRegistry } from "../registry/__fixtures__/build-test-registry.ts";
 import type { BuiltinRegistryConfig } from "../registry/builtin-registry.ts";
 import { installVerifiedRegistryPackage } from "../registry/install-from-registry.ts";
-import { getRunGrant } from "../run-grant-store.ts";
+import { deleteRunGrant, getRunGrant, upsertRunGrant } from "../run-grant-store.ts";
 import { computeExtensionTreeDigest } from "../tree-digest.ts";
 import {
   awaitingApprovalReason,
@@ -54,6 +55,7 @@ import {
   finishMigration,
   getMigration,
   listMigrations,
+  recordMigrationFailed,
   recordMigrationPrepared,
 } from "./migration-store.ts";
 
@@ -341,7 +343,7 @@ describe("evaluate", () => {
     expect(onlyRow().error).toContain("sync.itemTypes");
   });
 
-  test("an extension id that is already installed -> failed, telling the owner to remove it and retry", async () => {
+  test("an extension id installed for another entry -> failed, never telling the owner to remove it", async () => {
     const e = engine();
     await e.evaluate();
     await e.accept(onlyRow().id, consentThat(true, []));
@@ -354,10 +356,13 @@ describe("evaluate", () => {
     await engine({ continuityTable: [entry, other] }).evaluate();
     const row = listMigrations(db).find((r) => r.legacyServiceId === "fixture_other");
     expect(row?.state).toBe("failed");
+    // Bound to the FIRST entry (fixture_reader), so not to this one: the not-official wording.
     expect(row?.error).toBe(
-      `${EXT} already installed — remove it, then \`nimbus connector migrate retry\``,
+      `${EXT} already installed, but not as the official Fixture Reader extension this release moves Fixture Reader to; your Fixture Reader items are untouched — inspect it with \`nimbus extension list\``,
     );
-    expect(getConnectorHealth(db, "fixture_other").lastError).toBe(row?.error ?? "");
+    expect(getConnectorHealth(db, "fixture_other").lastError).toBe(
+      `${row?.error ?? ""} — run \`nimbus connector migrate retry\``,
+    );
   });
 
   test("evaluate is idempotent", async () => {
@@ -536,11 +541,21 @@ describe("accept", () => {
     await e.evaluate();
     const row = onlyRow();
     let release: (v: boolean) => void = () => {};
-    const first = e.accept(row.id, () => new Promise<boolean>((r) => (release = r)));
+    let prompted: () => void = () => {};
+    const asked = new Promise<void>((r) => (prompted = r));
+    const first = e.accept(row.id, () => {
+      prompted();
+      return new Promise<boolean>((r) => (release = r));
+    });
     await expect(e.accept(row.id, consentThat(true, []))).rejects.toThrow(
       /ERR_EXTENSION_MIGRATION_BUSY/,
     );
     expect(() => e.decline(row.id)).toThrow(/ERR_EXTENSION_MIGRATION_BUSY/);
+    // The first accept reads the Vault (C11) before it prompts: answer only once it is prompting.
+    await asked;
+    await expect(e.accept(row.id, consentThat(true, []))).rejects.toThrow(
+      /ERR_EXTENSION_MIGRATION_BUSY/,
+    );
     release(true);
     expect((await first).state).toBe("approved");
   });
@@ -1427,10 +1442,16 @@ describe("branch coverage: concurrency and failures inside evaluate", () => {
     await e.evaluate();
     const row = onlyRow();
     let release: (v: boolean) => void = () => {};
-    const accepting = e.accept(row.id, () => new Promise<boolean>((r) => (release = r)));
+    let prompted: () => void = () => {};
+    const asked = new Promise<void>((r) => (prompted = r));
+    const accepting = e.accept(row.id, () => {
+      prompted();
+      return new Promise<boolean>((r) => (release = r));
+    });
     const n = fetches.length;
     await e.evaluate();
     expect(fetches).toHaveLength(n);
+    await asked;
     release(true);
     expect((await accepting).state).toBe("approved");
   });
@@ -1443,7 +1464,9 @@ describe("branch coverage: concurrency and failures inside evaluate", () => {
     const slow: NimbusVault = {
       ...vault,
       get: async (key) => {
-        if (held) await new Promise<void>((r) => (open = r));
+        // Only evaluate's read of the legacy credential is held; accept's publisher-key read (C11)
+        // goes through.
+        if (held && key === LEGACY_KEY) await new Promise<void>((r) => (open = r));
         return vault.get(key);
       },
     };
@@ -1451,12 +1474,18 @@ describe("branch coverage: concurrency and failures inside evaluate", () => {
     held = true;
     const evaluating = e.evaluate();
     let release: (v: boolean) => void = () => {};
-    const accepting = e.accept(row.id, () => new Promise<boolean>((r) => (release = r)));
+    let prompted: () => void = () => {};
+    const asked = new Promise<void>((r) => (prompted = r));
+    const accepting = e.accept(row.id, () => {
+      prompted();
+      return new Promise<boolean>((r) => (release = r));
+    });
     const n = fetches.length;
     open();
     await evaluating;
     expect(fetches).toHaveLength(n);
     held = false;
+    await asked;
     release(true);
     expect((await accepting).state).toBe("approved");
   });
@@ -1682,9 +1711,9 @@ describe("branch coverage: refusals and failures inside accept", () => {
     const grantBefore = getRunGrant(db, EXT);
     expect(grantBefore).not.toBeNull();
     const seen: MigrationConsentPayload[] = [];
-    await expect(e.accept(otherRow?.id ?? "", consentThat(true, seen))).rejects.toThrow(
-      `${EXT} already installed — remove it, then \`nimbus connector migrate retry\``,
-    );
+    const err = await thrownBy(() => e.accept(otherRow?.id ?? "", consentThat(true, seen)));
+    expect(err?.message).toContain(`${EXT} already installed, but not as the official`);
+    expect(err?.message).not.toContain("remove");
     // No prompt was raised for a question that cannot succeed.
     expect(seen).toEqual([]);
     expect(getMigration(db, otherRow?.id ?? "")?.state).toBe("failed");
@@ -1692,5 +1721,280 @@ describe("branch coverage: refusals and failures inside accept", () => {
     expect(listExtensions(db).map((r) => r.id)).toEqual([EXT]);
     expect(getRunGrant(db, EXT)).toEqual(grantBefore);
     expect(getMigration(db, firstRow?.id ?? "")?.state).toBe("approved");
+  });
+});
+
+describe("Task 7.4: an extension that is already installed (replaces ruling B9)", () => {
+  const APPROVE_HINT = `run \`nimbus extension approve ${EXT}\` to resume sync`;
+
+  /** The owner's existing items under the legacy id, which no branch here may touch. */
+  function seedLegacyItems(): void {
+    for (const externalId of ["201", "202"]) {
+      upsertIndexedItem(db, {
+        service: LEGACY,
+        type: "highlight",
+        externalId,
+        title: `kept ${externalId}`,
+        modifiedAt: 1,
+        syncedAt: 1,
+      });
+    }
+  }
+
+  function legacyItemCount(): number {
+    const r = db.query("SELECT COUNT(*) AS n FROM item WHERE service = ?").get(LEGACY) as {
+      n: number;
+    };
+    return r.n;
+  }
+
+  /**
+   * The extension installed and approved with the legacy credential — what the owner has after
+   * `extension install` + `extension approve` of the official package. Reached through a real
+   * accept; the migration row it leaves is then removed, as if it had never existed.
+   */
+  async function installedAndApproved(): Promise<void> {
+    const e = engine();
+    await e.evaluate();
+    await e.accept(onlyRow().id, consentThat(true, []));
+    db.run("DELETE FROM connector_migration");
+    pauseLegacyService(db, LEGACY, "seed", NOW);
+    fetches = [];
+    resumed = [];
+    refreshed = [];
+  }
+
+  /** An awaiting row for the installed extension, as a prepare before the install left it. */
+  function awaitingRow(): string {
+    recordMigrationPrepared(
+      db,
+      {
+        id: "pending-1",
+        legacyServiceId: LEGACY,
+        extensionId: EXT,
+        version: "1.0.0",
+        treeDigest: listExtensions(db).find((r) => r.id === EXT)?.tree_digest ?? "",
+        stagePath: join(stageRootOf("pending-1"), "pkg"),
+      },
+      NOW,
+    );
+    return "pending-1";
+  }
+
+  function makeGrantStale(kind: "credentials" | "digest" | "missing"): void {
+    const grant = getRunGrant(db, EXT);
+    if (grant === null) throw new Error("premise: a run grant");
+    if (kind === "missing") {
+      deleteRunGrant(db, EXT);
+      return;
+    }
+    upsertRunGrant(
+      db,
+      kind === "credentials"
+        ? {
+            ...grant,
+            // C10: an install approved before the binding existed stores the extension's own key.
+            credentials_json: `{"token":{"env":"FIXTURE_TOKEN","vaultKey":"ext.${CODE_ID}.token"}}`,
+          }
+        : { ...grant, tree_digest: "0".repeat(64) },
+    );
+  }
+
+  test("installed + bound + matching grant -> approved, resumed, no fetch, no prompt (evaluate)", async () => {
+    await installedAndApproved();
+    seedLegacyItems();
+    await engine().evaluate();
+    const row = onlyRow();
+    expect(row.state).toBe("approved");
+    expect(row.error).toBeNull();
+    expect(row.stagePath).toBeNull();
+    expect(fetches).toEqual([]);
+    expect(resumed).toEqual([LEGACY]);
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(0);
+    expect(legacyItemCount()).toBe(2);
+    // Terminal: the next evaluation leaves it alone.
+    await engine().evaluate();
+    expect(onlyRow()).toEqual(row);
+    expect(fetches).toEqual([]);
+  });
+
+  test("a failed row left by the B9 wording is finished approved by the next evaluate", async () => {
+    await installedAndApproved();
+    recordMigrationFailed(
+      db,
+      {
+        id: "old-1",
+        legacyServiceId: LEGACY,
+        extensionId: EXT,
+        error: `${EXT} already installed — remove it, then \`nimbus connector migrate retry\``,
+      },
+      NOW,
+    );
+    await engine().evaluate();
+    const row = onlyRow();
+    expect(row.id).toBe("old-1");
+    expect(row.state).toBe("approved");
+    expect(fetches).toEqual([]);
+    expect(resumed).toEqual([LEGACY]);
+  });
+
+  test("installed + bound + matching grant -> accept finishes approved with no prompt and no stage", async () => {
+    await installedAndApproved();
+    const id = awaitingRow();
+    mkdirSync(stageRootOf(id), { recursive: true });
+    const grantBefore = getRunGrant(db, EXT);
+    const seen: MigrationConsentPayload[] = [];
+    const out = await engine().accept(id, consentThat(true, seen));
+    expect(out.state).toBe("approved");
+    expect(seen).toEqual([]);
+    expect(fetches).toEqual([]);
+    expect(resumed).toEqual([LEGACY]);
+    expect(existsSync(stageRootOf(id))).toBe(false);
+    expect(getRunGrant(db, EXT)).toEqual(grantBefore);
+  });
+
+  for (const kind of ["credentials", "digest", "missing"] as const) {
+    test(`installed + bound, ${kind} grant stale -> failed naming extension approve; items untouched`, async () => {
+      await installedAndApproved();
+      seedLegacyItems();
+      makeGrantStale(kind);
+      await engine().evaluate();
+      const row = onlyRow();
+      expect(row.state).toBe("failed");
+      expect(row.error).toContain(`\`nimbus extension approve ${EXT}\``);
+      expect(row.error).not.toContain("remove");
+      expect(fetches).toEqual([]);
+      expect(resumed).toEqual([]);
+      // Ends with the stale-grant hint, so the re-approval itself resumes sync (ruling B39).
+      const health = getConnectorHealth(db, LEGACY);
+      expect(health.state).toBe("paused");
+      expect(health.lastError?.endsWith(APPROVE_HINT)).toBe(true);
+      expect(legacyItemCount()).toBe(2);
+      expect(await vault.get(LEGACY_KEY)).toBe(TOKEN);
+      expect(listExtensions(db).map((r) => r.id)).toEqual([EXT]);
+    });
+  }
+
+  test("installed + bound, stale grant -> accept fails before the prompt naming extension approve", async () => {
+    await installedAndApproved();
+    makeGrantStale("credentials");
+    const id = awaitingRow();
+    const seen: MigrationConsentPayload[] = [];
+    const err = await thrownBy(() => engine().accept(id, consentThat(true, seen)));
+    expect(err?.message).toMatch(/^ERR_EXTENSION_MIGRATION_FAILED: /);
+    expect(err?.message).toContain(`\`nimbus extension approve ${EXT}\``);
+    expect(err?.message).not.toContain("remove");
+    expect(seen).toEqual([]);
+    expect(getMigration(db, id)?.state).toBe("failed");
+    expect(getConnectorHealth(db, LEGACY).lastError?.endsWith(APPROVE_HINT)).toBe(true);
+    expect(listExtensions(db).map((r) => r.id)).toEqual([EXT]);
+  });
+
+  test("installed, not bound -> failed without 'remove it'; items untouched", async () => {
+    await installedAndApproved();
+    seedLegacyItems();
+    // Installed from another source (an owner registry with another root): not this entry's binding.
+    db.run("UPDATE extension SET source_root_fingerprint = ? WHERE id = ?", ["f".repeat(32), EXT]);
+    await engine().evaluate();
+    const row = onlyRow();
+    expect(row.state).toBe("failed");
+    expect(row.error).toContain(`${EXT} already installed`);
+    expect(row.error).toContain("`nimbus extension list`");
+    expect(row.error).not.toContain("remove");
+    expect(fetches).toEqual([]);
+    expect(resumed).toEqual([]);
+    expect(getConnectorHealth(db, LEGACY).state).toBe("paused");
+    expect(legacyItemCount()).toBe(2);
+    expect(await vault.get(LEGACY_KEY)).toBe(TOKEN);
+    expect(listExtensions(db).map((r) => r.id)).toEqual([EXT]);
+  });
+
+  test("installed with a manifest that no longer verifies is not bound", async () => {
+    await installedAndApproved();
+    db.run("UPDATE extension SET manifest_hash = ? WHERE id = ?", ["0".repeat(64), EXT]);
+    await engine().evaluate();
+    const row = onlyRow();
+    expect(row.state).toBe("failed");
+    expect(row.error).toContain("`nimbus extension list`");
+    expect(fetches).toEqual([]);
+  });
+
+  test("installed, not bound -> accept fails before the prompt without 'remove it'", async () => {
+    await installedAndApproved();
+    db.run("UPDATE extension SET source_root_fingerprint = ? WHERE id = ?", ["f".repeat(32), EXT]);
+    const id = awaitingRow();
+    const seen: MigrationConsentPayload[] = [];
+    const err = await thrownBy(() => engine().accept(id, consentThat(true, seen)));
+    expect(err?.message).toContain(`${EXT} already installed`);
+    expect(err?.message).not.toContain("remove");
+    expect(seen).toEqual([]);
+    expect(getMigration(db, id)?.state).toBe("failed");
+  });
+});
+
+describe("Task 7.4 (C11): accept re-checks the Vault's publisher key before the prompt", () => {
+  test("accept refuses a Vault publisher-key conflict before consent; Vault unchanged", async () => {
+    const e = engine();
+    await e.evaluate();
+    const id = onlyRow().id;
+    // Between prepare and accept the Vault learned a different key for publisher "nimbus".
+    const other = new Uint8Array(32).fill(5);
+    await writePublisherKey(vault, "nimbus", other);
+    const seen: MigrationConsentPayload[] = [];
+    const err = await thrownBy(() => e.accept(id, consentThat(true, seen)));
+    expect(err?.message).toBe(
+      'ERR_EXTENSION_MIGRATION_FAILED: the Vault already holds a different key for publisher "nimbus"; refusing to replace it',
+    );
+    expect(seen).toEqual([]);
+    expect(listExtensions(db)).toEqual([]);
+    expect(getRunGrant(db, EXT)).toBeNull();
+    expect(Buffer.from((await readPublisherKey(vault, "nimbus")) ?? []).equals(other)).toBe(true);
+    expect(getMigration(db, id)?.state).toBe("failed");
+  });
+
+  test("the same key already in the Vault is no conflict", async () => {
+    const e = engine();
+    await e.evaluate();
+    await writePublisherKey(vault, "nimbus", Buffer.from(entry.publisherKey, "base64"));
+    expect((await e.accept(onlyRow().id, consentThat(true, []))).state).toBe("approved");
+  });
+});
+
+describe("Task 7.4 (C12): the extension runtime is off", () => {
+  const RUNTIME_OFF =
+    "Fixture Reader moved to an extension, and the extension runtime is off (`[extensions] runtime = false`) — turn it on, then run `nimbus connector migrate retry`";
+
+  test("runtime off -> no fetch, no row, paused reason names [extensions] runtime; then runtime on + retry proceeds", async () => {
+    await engine({ runtimeEnabled: false }).evaluate();
+    expect(fetches).toEqual([]);
+    expect(listMigrations(db)).toEqual([]);
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(1);
+    const health = getConnectorHealth(db, LEGACY);
+    expect(health.state).toBe("paused");
+    expect(health.lastError).toBe(RUNTIME_OFF);
+
+    await engine({ runtimeEnabled: false }).retry();
+    expect(fetches).toEqual([]);
+    expect(listMigrations(db)).toEqual([]);
+
+    await engine().retry();
+    expect(onlyRow().state).toBe("awaiting_approval");
+    expect(fetches.length).toBeGreaterThan(0);
+  });
+
+  test("runtime off with no legacy credential pauses nothing", async () => {
+    await vault.delete(LEGACY_KEY);
+    await engine({ runtimeEnabled: false }).evaluate();
+    expect(loadSchedulerState(db, LEGACY)).toBeNull();
+  });
+
+  test("runtime off leaves a declined row's reason alone at boot", async () => {
+    const e = engine();
+    await e.evaluate();
+    e.decline(onlyRow().id);
+    const before = getConnectorHealth(db, LEGACY).lastError;
+    await engine({ runtimeEnabled: false }).evaluate();
+    expect(getConnectorHealth(db, LEGACY).lastError).toBe(before);
+    expect(onlyRow().state).toBe("declined");
   });
 });

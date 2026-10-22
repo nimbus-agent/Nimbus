@@ -76,8 +76,11 @@ export interface ExtensionSyncRegistrarDeps {
   readonly logger?: Pick<Logger, "warn">;
 }
 
-/** The owner's way back from a stale-grant pause; matched on resume, so it is one definition. */
-function reapproveSuffix(extensionId: string): string {
+/**
+ * The owner's way back from a stale-grant pause; matched on resume, so it is one definition. The
+ * migration engine ends its own stale-grant reason with it, so that re-approval resumes too.
+ */
+export function reapproveSuffix(extensionId: string): string {
   return `run \`nimbus extension approve ${extensionId}\` to resume sync`;
 }
 

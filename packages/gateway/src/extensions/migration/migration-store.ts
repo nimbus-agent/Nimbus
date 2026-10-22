@@ -147,7 +147,7 @@ function upsert(
     version: string | null;
     treeDigest: string | null;
     stagePath: string | null;
-    state: "awaiting_approval" | "failed";
+    state: "awaiting_approval" | "failed" | "approved";
     error: string | null;
   },
   now: number,
@@ -193,6 +193,27 @@ export function recordMigrationFailed(db: Database, m: FailedMigration, now: num
     { ...m, version: null, treeDigest: null, stagePath: null, state: "failed" },
     now,
   );
+}
+
+export interface AlreadyInstalledMigration {
+  id: string;
+  legacyServiceId: string;
+  extensionId: string;
+  version: string;
+  treeDigest: string | null;
+}
+
+/**
+ * The extension is already installed, bound to this legacy service and approved to run with its
+ * legacy credential (the migration engine checks all three first): the migration is done, with
+ * nothing staged. Like every write here, an `approved` or `declined` row is never touched.
+ */
+export function recordMigrationAlreadyInstalled(
+  db: Database,
+  m: AlreadyInstalledMigration,
+  now: number,
+): boolean {
+  return upsert(db, { ...m, stagePath: null, state: "approved", error: null }, now);
 }
 
 /**

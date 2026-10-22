@@ -3096,6 +3096,25 @@ existing items, and keeps the connector off; the next start does not ask again.
 longer matches what the release expects) AND every one you declined — it is how you change your
 mind about a decline. An approved migration is never touched.
 
+**Already installed.** If you installed the extension yourself (`nimbus extension install`) before
+answering, the gateway checks it before fetching anything and before any prompt. Installed from the
+official registry and approved to run with your existing credential: the migration finishes as
+approved and the connector's sync resumes, with no question asked. Installed from the official
+registry but approved before this release or before an update, or not approved at all: the migration
+fails with ``run `nimbus extension approve <extension-id>` to resume sync`` — re-approving points it at
+your existing credential and resumes the sync. Installed from another registry or another publisher
+(or a copy that no longer verifies): the migration fails, saying the installed copy is not the official
+one; inspect it with `nimbus extension list`. In none of these cases is anything removed. Do not run
+`nimbus extension remove` to "fix" a migration: it deletes every item the connector indexed and its
+credential.
+
+**Runtime off.** With `[extensions] runtime = false` nothing is fetched and no migration is recorded;
+the connector is paused with the reason "`<Name>` moved to an extension, and the extension runtime is
+off (`[extensions] runtime = false`) — turn it on, then run `nimbus connector migrate retry`", and
+`accept` is refused with `ERR_EXTENSION_MIGRATION_RUNTIME_DISABLED`. `accept` also refuses, before the
+prompt, when the Vault has learned a different key for the extension's publisher since the package was
+staged (`the Vault already holds a different key for publisher "…"; refusing to replace it`).
+
 **Known loss.** A few items the built-in connector indexed may not carry over: items dated before
 1970, and items whose metadata is larger than 64 KiB, are dropped by the extension sync path. The
 prompt says this too.
