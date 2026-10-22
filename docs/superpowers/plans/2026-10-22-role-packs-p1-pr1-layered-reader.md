@@ -55,7 +55,10 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
 **Files:**
 - Create: `packages/gateway/src/config/active-profile.ts`
 - Test: `packages/gateway/src/config/active-profile.test.ts`
-- Modify: `packages/gateway/src/config/profiles.ts` (export its slug regex as `PROFILE_NAME_RE` from `active-profile.ts` and reuse it; keep behaviour)
+- Modify: `packages/gateway/src/config/profiles.ts`
+  - export its slug regex as `PROFILE_NAME_RE` from `active-profile.ts` and reuse it
+  - replace the private `readActiveMarker()` with `readProfileMarker(this.configDir)`, so the marker is parsed in exactly one gateway place
+  - keep its public behaviour
 
 **Interfaces:**
 - Produces:
@@ -97,7 +100,7 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
   - `export type LayerKind = "pack" | "team" | "base" | "profile"`
   - `export type LayerRef = { readonly kind: LayerKind; readonly id: string; readonly path: string }`. `id` is the pack id, `"team"`, `"base"`, or the profile name.
   - `export type LayerDoc = { readonly layer: LayerRef; readonly sections: readonly DocSection[] }`
-  - `export type DocSection = { readonly header: string | null; readonly isArray: boolean; readonly lines: readonly DocLine[] }`
+  - `export type DocSection = { readonly header: string | null; readonly isArray: boolean; readonly malformed?: string; readonly lines: readonly DocLine[] }`. `malformed` holds the raw header line of a broken-header section (see the classification order below).
     - `header` is the trimmed header text without brackets (`"fleet.job"`), or `null` for keys above the first header.
     - Each `[[x]]` occurrence is its own `DocSection` with `isArray: true`.
     - Repeated `[x]` occurrences in one file stay separate entries, in order.
@@ -110,6 +113,13 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
   - `export type EffectiveDoc = { readonly sections: readonly EffectiveSection[] }`
   - `export function mergeLayerDocs(docs: readonly LayerDoc[]): EffectiveDoc`, where `docs` are ordered low → high.
   - `export function renderEffectiveDoc(doc: EffectiveDoc): string`, which renders canonical text with `\n` line endings.
+
+**Line classification order** in `parseLayerDoc`:
+1. Blank and comment-only lines are dropped. Parsers ignore them, so nothing is lost.
+2. A line whose trimmed text starts with `[` is checked **before** `hasUnterminatedString`:
+   - A well-formed `[x]` or `[[x]]` opens a section.
+   - Anything else starting with `[` (`[multimodal` with no `]`, or `[hitl.quorum."x]`) **closes the current section** and opens a section with `malformed` set and `header: null`. Today's parsers (`collectSubTableKv`, multimodal's `parseSection`) end a section on any `[` line, so the keys after a broken header must never be attributed to the section before it.
+3. Then come the unterminated and `=`-less `passthrough` lines, then `entry` lines.
 
 **Merge algorithm** (spelled out because the signatures leave it open):
 
@@ -127,6 +137,7 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
    - Plain sections render once as `[header]`, followed by their entries' `raw` lines and then their passthrough lines.
    - Each array block renders as `[[header]]` plus its lines.
    - Entry `raw` lines are emitted verbatim, so quoting, inline comments and `#` inside strings survive untouched.
+   - Malformed-header sections are **not merged**. Each renders **after every valid section**, as its raw header line followed by its lines, in layer order. A broken line in one layer therefore cannot end a valid section early and swallow a higher layer's overrides.
 
 - [ ] **Step 1: Write failing tests.** Each builds `LayerDoc`s from literal strings, runs merge and render, and asserts both the rendered text and the provenance:
   - `scalar override`: base `[decisions]\nmin_confidence = 0.3`, profile `[decisions]\nmin_confidence = 0.6`. Rendered text contains `min_confidence = 0.6` and not `0.3`. The entry's `layer.kind` is `"profile"`, and `shadowed` is `[{layer: base, valRaw: "0.3"}]`.
@@ -139,6 +150,11 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
   - `passthrough preserved`: profile has `[glossary.terms]\nFOO = "unterminated` → rendered text contains that raw line.
   - `CRLF and quoted hash survive render`: base text uses `\r\n` and has `url = "http://h/#frag" # c`. Rendered text has no `\r` and contains `url = "http://h/#frag" # c`.
   - `root keys`: `schema_version = 1` before any header in base, `schema_version = 2` in profile → rendered text starts with `schema_version = 2`.
+  - `malformed header does not swallow overrides`: base `[multimodal\nenabled = true\n[decisions]\nmin_confidence = 0.3`; profile `[decisions]\nmin_confidence = 0.6`.
+    - In the rendered text, `[decisions]` with `0.6` appears **before** the raw `[multimodal` line.
+    - `enabled = true` appears after `[multimodal`.
+    - Running `loadNimbusDecisions`'s parser over the text gives `0.6`.
+  - `unterminated quoted header is malformed, not passthrough`: `[hitl.quorum."x]` produces a section with `malformed` set.
 - [ ] **Step 2: Run** `bun test packages/gateway/src/config/layered-merge.test.ts`. Expected: FAIL.
 - [ ] **Step 3: Implement** `parseLayerDoc`, `mergeLayerDocs` and `renderEffectiveDoc` per the algorithm above.
 - [ ] **Step 4: Run** the tests. Expected: PASS.
@@ -198,14 +214,22 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
 **Interfaces:**
 - Consumes: Task 3 (`LayeredConfig`, `ConfigSnapshot`) and Task 2 types.
 - Produces:
-  - `export const CONFIG_ENV_OVERRIDES: readonly { readonly envVar: string; readonly path: string }[]` with exactly these six entries:
-    - `NIMBUS_UPDATER_URL` → `updater.url`
-    - `NIMBUS_UPDATER_DISABLE` → `updater.enabled`
-    - `NIMBUS_LAN_PORT` → `lan.port`
-    - `NIMBUS_TELEMETRY_ENABLED` → `telemetry.enabled`
-    - `NIMBUS_TELEMETRY_ENDPOINT` → `telemetry.endpoint`
-    - `NIMBUS_TELEMETRY_FLUSH_SECONDS` → `telemetry.flush_interval_seconds`
-  - `export const POLICY_CONSTRAINED_PATHS: readonly string[]`: the config paths org policy can tighten. Derive the list from `policy/policy-gate.ts`'s `LocalBaseline` (audit retention, quorum) and the capability enables that have a policy lockoff (`code_execution.enabled`, `computer_use.enabled`, `tool_generation.enabled`, `multimodal.enabled`, `fleet.enabled`, `mcp_sink.enabled`). Read the real key names from the loaders.
+  - `export type EnvOverride = { readonly envVar: string; readonly path: string; readonly effective: (raw: string) => string | undefined }`. `effective` mirrors exactly what the loader does with that variable. It returns the TOML-formatted value the loader applies, or `undefined` when the loader ignores this value.
+  - `export const CONFIG_ENV_OVERRIDES: readonly EnvOverride[]` with exactly these seven entries. Copy the conditions from the loaders named:
+
+    | Variable | Path | Applied when (`effective` returns) | Loader |
+    |---|---|---|---|
+    | `NIMBUS_UPDATER_URL` | `updater.url` | non-empty → `"<raw>"` (quoted) | `nimbus-toml.ts:794` |
+    | `NIMBUS_UPDATER_DISABLE` | `updater.enabled` | `=== "1"` → `false`, otherwise `undefined` | `:798` |
+    | `NIMBUS_LAN_PORT` | `lan.port` | `parseInt` not NaN → that number | `:884` |
+    | `NIMBUS_TELEMETRY_ENABLED` | `telemetry.enabled` | `1`/`true` → `true`, `0`/`false` → `false` (trimmed, case-insensitive), otherwise `undefined` | `telemetry-toml.ts:104` |
+    | `NIMBUS_TELEMETRY_ENDPOINT` | `telemetry.endpoint` | trimmed non-empty → quoted | `:111` |
+    | `NIMBUS_TELEMETRY_FLUSH_SECONDS` | `telemetry.flush_interval_seconds` | finite and `> 0` → clamped to `[60, 86400]` | `:115` |
+    | `NIMBUS_NOTIFICATIONS` | `notifications.enabled` | `off`/`0`/`false` (case-insensitive) → `false`, otherwise `undefined` | `notifications-toml.ts` `notificationsDisabledByEnv` |
+
+    Where a loader has a named predicate (`notificationsDisabledByEnv`), `effective` **calls** it rather than restating it.
+  - `export function isPolicyConstrainedPath(path: string): boolean`. It is true for the exact set `audit.tool_call_log_retention_days`, `fleet.retention_days`, `code_execution.enabled`, `computer_use.enabled`, `tool_generation.enabled`, `multimodal.enabled`, `fleet.enabled` and `mcp_sink.enabled`, plus any path starting `hitl.quorum.` or `connectors.` (the policy connector allowlist).
+    - **Verify each exact key against its loader before writing it.** The `[audit]` key is `tool_call_log_retention_days`, not `retention_days`, and `fleet.retention_days` is floored by `policyGate.enforced().retentionMinDays` at `assemble.ts:3279`.
   - ```ts
     export type ExplainSource =
       | { readonly kind: "layer"; readonly layer: LayerRef }
@@ -232,23 +256,35 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
     };
     ```
   - `export function explainConfig(reader: LayeredConfig, path: string | undefined, env?: (k: string) => string | undefined): ExplainResult`
-- **Path resolution.** Split `path` on `.`.
-  - If `undefined`, return every effective entry in the snapshot.
+- **Path resolution.** Split `path` on `.` **outside double quotes**, so `hitl.quorum."slack.post_message".approvers` gives three segments.
+  - If `undefined`, return every effective entry **and every array block** in `blocks`, so `list --effective` shows `[[filesystem.roots]]` and `[[fleet.job]]`.
   - Root keys match a one-segment path.
   - Otherwise, the **longest** effective plain-section header that equals a prefix of the segments is the section, and the remaining segments joined with `.` are the key. This handles `connectors.github.depth`, `llm.remote.openai.enabled` and dotted keys.
+  - Headers and path prefixes are compared **with double quotes removed from both**, so `hitl.quorum.slack.post_message.approvers` also resolves without shell-escaped quotes. If two headers tie after quote removal, the exact (quoted) match wins.
   - For array headers, `fleet.job.<name>` selects the block with that name, and `<header>` alone (e.g. `filesystem.roots`) returns every block in `blocks`.
-  - When a `CONFIG_ENV_OVERRIDES` variable is set and non-empty, the entry's `source` becomes `env` and the file value moves to the front of `shadowed`.
+  - When a `CONFIG_ENV_OVERRIDES` variable is set **and its `effective(raw)` is defined**, the entry's `source` becomes `env`, its `value` is `effective(raw)` (never the raw string), and the file value moves to the front of `shadowed`. When `effective` returns `undefined`, the file value stands and a note says `NIMBUS_X is set to "<raw>" but does not override this value`.
+  - `sectionFallback` is filled by Task 5's `probeSection`; Task 4 leaves the field unset.
   - Add a `notes` line when the running profile differs from the marker: `profile switched to "<marker>" on disk; restart the gateway to apply`.
   - Add a `notes` line for an unknown path: `no layer sets <path>; the code default applies`.
 
 - [ ] **Step 1: Write failing tests:**
-  - `config-env-overrides.test.ts` › `every NIMBUS_ variable a config loader reads is declared`. It reads every non-test `.ts` under `packages/gateway/src/config/` plus `multimodal/multimodal-config.ts`, collects `processEnvGet("NIMBUS_…")` names except `NIMBUS_PROFILE`, and expects that set to equal the `envVar` set of `CONFIG_ENV_OVERRIDES`.
+  - `config-env-overrides.test.ts`:
+    - `every NIMBUS_ variable a config loader names is declared`. It reads every non-test `.ts` under `packages/gateway/src/config/` plus `multimodal/multimodal-config.ts`, and collects **every string literal** matching `/["'`](NIMBUS_[A-Z0-9_]+)["'`]/`. That catches constants like `NOTIFICATIONS_ENV_VAR`, not only direct `processEnvGet("…")` calls. It excludes `NIMBUS_PROFILE` and expects the set to equal the `envVar` set of `CONFIG_ENV_OVERRIDES`.
+    - `effective mirrors the loaders`: for each entry, a table of raw values, each with the loader's actual result. For example:
+      - `NIMBUS_UPDATER_DISABLE=0` → `undefined`, and `parseNimbusUpdaterToml("")` keeps `enabled` at its default
+      - `NIMBUS_NOTIFICATIONS=on` → `undefined`
+      - `NIMBUS_TELEMETRY_FLUSH_SECONDS=10` → `60`
+
+      Each case asserts both the `effective` result and the loader's own output, so the two cannot drift.
   - `config-explain.test.ts`:
     - `names the winning layer and the shadowed value`: base 0.3, profile 0.6 for `decisions.min_confidence` → `source.layer.kind === "profile"`, `shadowed[0].value === "0.3"`
     - `multi-segment table path`: `connectors.github.depth`
     - `fleet job by name`: `fleet.job.a` → one block, `layer.kind` set
     - `env override is the top source`: env `NIMBUS_LAN_PORT=9999` plus file `[lan]\nport = 7475` → `source.kind === "env"`, `value === "9999"`, `shadowed[0].value === "7475"`
-    - `policy flag`: `audit.retention_days` → `policyMayRestrict === true`, and `decisions.min_confidence` → `false`
+    - `ignored env value is not a source`: `NIMBUS_UPDATER_DISABLE=0` plus file `[updater]\nenabled = true` → `source.kind === "layer"`, plus the "does not override" note
+    - `policy flag`: `audit.tool_call_log_retention_days`, `fleet.retention_days` and `hitl.quorum."x".approvers` → `policyMayRestrict === true`; `decisions.min_confidence` → `false`
+    - `quoted sub-table path`: header `[hitl.quorum."slack.post_message"]` with `approvers = 2` resolves from both `hitl.quorum."slack.post_message".approvers` and `hitl.quorum.slack.post_message.approvers`
+    - `no path lists blocks`: two `[[filesystem.roots]]` → `blocks.length === 2`
     - `marker differs note`
     - `unknown path note`
 - [ ] **Step 2: Run** both test files. Expected: FAIL.
@@ -268,16 +304,35 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
   - `config/service-config-toml.ts`
   - `config/session-toml.ts`
   - `multimodal/multimodal-config.ts`
+  - `config/fleet-toml.ts`, `config/notifications-toml.ts`, `config/mcp-sink-toml.ts`, `config/telemetry-toml.ts`, `config/oncall-push-toml.ts`: each gains a new `…FromConfigDir`
   - `platform/assemble.ts`: `loadOpenapiConfig`
-- Test: `packages/gateway/test/integration/config/profile-inheritance.test.ts` (new)
+  - `config/config-explain.ts`: `probeSection`
+- Test: `packages/gateway/test/integration/config/profile-inheritance.test.ts` (new), `packages/gateway/src/config/config-explain.test.ts` (extend)
 
 **Interfaces:**
 - Consumes: `getLayeredConfig` (Task 3).
-- Produces: `function loadTomlSectionFromConfig<T>(configDir: string, sectionHeader: string, fallback: T, parse: (raw: string) => T): T`, exported from `nimbus-toml.ts` for the sibling config modules:
-  - `text === null` → `structuredClone(fallback)`
-  - a throw → `recordSectionFallback(sectionHeader, message)` and then `structuredClone(fallback)`
-- Every `load*FromConfigDir(configDir)` keeps its **name and signature**, so its ~40 call sites do not change. Its body becomes `loadTomlSectionFromConfig(configDir, "<header>", DEFAULT…, parse…)`.
-- Loaders that do not use `loadTomlSection` today get the snapshot text from `getLayeredConfig(configDir).snapshot().text` and keep their own error behaviour: glossary manual (`loaded:false`), connectors, workday, service configs, filesystem roots, multimodal.
+- **Section ids are unbracketed** (`"audit"`, `"hitl.quorum"`), matching `DocSection.header` and `sectionFallback`. Any helper that needs the bracketed form builds it internally.
+- **One text core per loader, shared by both doors.** Each loader's existing `…FromPath` body is split into a `…FromText(text: string | null, …)` core. `null` means "no file". The core keeps **exactly** what the `FromPath` does today on a missing file and on a parse error. `…FromPath(p)` then becomes `…FromText(existsSync(p) ? readFileSync(p,"utf8") : null)`, and `…FromConfigDir(dir)` becomes `…FromText(getLayeredConfig(dir).snapshot().text)`. The two cannot diverge, because there is one body. This replaces a generic `loadTomlSectionFromConfig` for every loader whose `FromPath` does anything beyond defaults-on-error. Cases this covers, each with a test asserting the `FromConfigDir` result equals the `FromPath` result for the same text:
+  - `[fleet]` still **throws `FleetConfigError`**, which `assembleFleetRuntime` catches to refuse every job.
+  - `[notifications]` still throws `NotificationsConfigError`, and on `null` still parses `""`, so `NIMBUS_NOTIFICATIONS=off` applies with no file.
+  - `[mcp_sink]` still returns `McpSinkConfigLoad` (`{ok:false, error}` on `McpSinkConfigError`).
+  - `[telemetry]` and `[updater]` still apply their env overrides on `null`.
+  - `[pagerduty]` still writes its stderr warning on a parse error.
+  - The glossary manual reader still returns `{loaded:false}` on `null` or a throw.
+- **New `…FromConfigDir` functions** (they do not exist today):
+  - `loadNimbusFleetFromConfigDir`, `loadNimbusNotificationsFromConfigDir(configDir, envGet?)`, `loadNimbusMcpSinkFromConfigDir`, `loadNimbusTelemetryFromConfigDir`, `loadNimbusOncallPushFromConfigDir`
+  - in `nimbus-toml.ts`: `loadNimbusBriefsFromConfigDir`, `loadNimbusPersonaFromConfigDir`, `loadNimbusAgentsFromConfigDir`
+
+  Delete the comment in `fleet-toml.ts:313-330` that says a `FromConfigDir` variant is deliberately not provided: the reason it gives (profile blindness) no longer exists.
+- **Recording fallbacks.** Every core's catch that swallows, logs or converts an error calls `getLayeredConfig(dir).recordSectionFallback("<section>", message)` when it was reached through `FromConfigDir`. Pass an optional `onFallback?: (message: string) => void` into the core; `FromPath` passes none. A core that rethrows records first and then rethrows.
+- **`probeSection(reader: LayeredConfig, sectionId: string): string | undefined`** in `config-explain.ts` makes `sectionFallback` deterministic right after an edit:
+  - It runs the section's own `…FromConfigDir` loader, from a `SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unknown>>` map in the same file.
+  - It catches a throw as `refused: <message>`.
+  - It then returns `reader.sectionFallback(sectionId)`.
+  - `explainConfig` calls it for the section of the queried path.
+  - A test asserts that `SECTION_LOADERS` has a key for every section id passed to `onFallback` anywhere in `config/`. It greps the call sites' literal ids.
+- Every existing `load*FromConfigDir(configDir)` keeps its **name and signature**, so its ~40 call sites do not change.
+- `loadTomlSection`'s simple cases (defaults on missing or throw) may use a small `loadTomlSectionFromConfig(configDir, sectionId, fallback, parse)` helper. It is exported from `nimbus-toml.ts`, records the fallback, and is equivalent to a core whose only behaviour is defaults.
 - `load*FromPath` functions stay as single-file readers for tests. Task 9's static rule forbids production calls to them.
 - Loaders with no production caller (`loadNimbusEmbeddingFromConfigDir`, `loadNimbusVoiceFromConfigDir`, the session/negotiate wrappers, `loadNimbusDoraFromConfigDir`) are converted the same way, not deleted.
 
@@ -294,6 +349,8 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
     - the glossary manual terms contain both the base term and the profile's term
   - Test `no files yields defaults and glossary loaded:false`: an empty dir → `loadNimbusDecisionsFromConfigDir` deep-equals `DEFAULT_NIMBUS_DECISIONS_TOML`, and `loadGlossaryManualFromConfigDir(dir)` is `{ loaded: false }`.
   - Test `swallowed parse error is recorded`: `[audit]` with a value that today makes its parser throw (use the range error at `nimbus-toml.ts:1400`) → the loader returns defaults, and `getLayeredConfig(dir).sectionFallback("audit")` is defined.
+  - Test `door parity`: for fleet (a duplicate job name → both doors throw `FleetConfigError`), notifications (`content = "bogus"` → both throw; no file plus env `off` → both return `enabled:false`), mcp_sink (bad value → both return `ok:false`) and telemetry (no file plus `NIMBUS_TELEMETRY_ENABLED=1` → both `enabled:true`), the `FromConfigDir` result or throw equals the `FromPath` one.
+  - Test (in `config-explain.test.ts`) `fallback is reported right after an edit`: write a bad `[audit]` value and call `explainConfig(reader, "audit.tool_call_log_retention_days")` **without** calling the loader first → `sectionFallback` is defined.
 - [ ] **Step 2: Run** `bun test packages/gateway/test/integration/config/profile-inheritance.test.ts`. Expected: FAIL (the base values are read, but the profile override and term union are missing; the fallback is not recorded).
 - [ ] **Step 3: Convert the loaders** as described in Interfaces.
 - [ ] **Step 4: Run** the new test, then `bun test packages/gateway/src/config packages/gateway/src/multimodal`. All PASS. Fix existing tests that relied on reading `nimbus.toml` from a reused dir across cases by adding `resetLayeredConfigsForTests()`; do not change their assertions.
@@ -341,7 +398,7 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
 - `config.explain` params are `{ path?: string }`. A non-string `path` is a `-32602` error. The result is the `ExplainResult` from Task 4. The method is already routed, because `tryDispatchDiagnosticsRpc` matches the `config.` prefix. The e2e test proves that.
 - `config.validate` returns the same `{ ok, errors, warnings }` shape:
   - for each **existing** user-layer file, the `schema_version` warning now names the file
-  - a profile name that is active but has no file is a warning, not an error
+  - an active profile with no file is **neither a warning nor an error**. Every `config.validate` warning makes `nimbus doctor` exit 1 (`doctor-core.ts` `doctorPrintConfigValidation`), and running on base settings alone is a legitimate state. It is reported in `diag.snapshot.configLayers` instead (the profile layer has `exists: false`), and doctor prints it as an info line.
   - no user layer file at all keeps today's `ok:false` / `"nimbus.toml not found"`
 - `diag.snapshot` gains:
   ```ts
@@ -360,6 +417,7 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
   - Unit `config.explain returns the profile layer`.
   - Unit `config.explain rejects a non-string path` (code `-32602`).
   - Unit `config.validate names the profile file in its warning`.
+  - Unit `config.validate is clean for an active profile with no file` (base has `schema_version`, profile `work` has no file → `warnings` is empty).
   - Unit `diag.snapshot carries configLayers`, with `runningProfile` and `markerProfile` asserted.
   - lan-rpc `config.explain is LAN-forbidden`, plus `config.validate is still LAN-callable` (unchanged).
   - e2e `config.explain over a real socket`: `startRealGateway("config-explain", { configFiles: { "nimbus.toml": "[decisions]\nmin_confidence = 0.3\n", "nimbus.work.toml": "[decisions]\nmin_confidence = 0.6\n" }, env: { NIMBUS_PROFILE: "work" } })`, then `client.call("config.explain", { path: "decisions.min_confidence" })`. Expect `entries[0].value === "0.6"` and `runningProfile === "work"`.
@@ -375,7 +433,7 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
 - Modify:
   - `packages/cli/src/commands/config.ts`: the target path, `--effective`, the `explain` subcommand, help text
   - `packages/cli/src/commands/profile.ts`: reuse `readProfileMarker` from the new lib
-  - `packages/cli/src/commands/doctor.ts` (or wherever `nimbus doctor` renders `diag.snapshot`): one line for a marker/running mismatch
+  - `packages/cli/src/commands/doctor-core.ts`: `doctorRunGatewayRpcs` already calls `diag.snapshot`, so read its **optional** `configLayers`. An older gateway omits the field, and doctor stays silent. Add the mismatch `[warn]` line and the "profile has no file" info line. Tests go in `packages/cli/src/commands/doctor.test.ts`.
   - `packages/cli/src/commands/help.ts` if the `config` usage line lists subcommands
 - Test:
   - `packages/cli/src/lib/active-profile.test.ts` (new)
@@ -393,7 +451,7 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
   - `get --effective <path>` and `list --effective [--json]` call `config.explain` through `withGatewayIpc`. With no gateway running they print `the effective view needs a running gateway — start it with \`nimbus start\`` and exit 1.
   - `explain <path> [--json]` calls `config.explain`. It prints the value and its source (`profile work (…/nimbus.work.toml)`, `env NIMBUS_LAN_PORT`, …), each shadowed value, `org policy may further restrict this` when flagged, the section-fallback line, and the `notes`.
   - `--effective` and `explain` accept multi-segment paths, while plain `get` and `set` keep `refuseNestedKey`.
-- `nimbus doctor` prints `profile: marker says "<m>" but the gateway runs "<r>" — restart to apply` when the two differ.
+- `nimbus doctor` prints `[warn] profile: marker says "<m>" but the gateway runs "<r>" — restart to apply` when the two differ. It prints `[info] profile "<p>" has no nimbus.<p>.toml; running on nimbus.toml alone` when the profile layer does not exist. The info line does not change the exit code.
 
 - [ ] **Step 1: Write failing tests:**
   - `active-profile.test.ts`: the CLI copies of the Task 1 order and slug cases, run against a temp dir.
@@ -423,7 +481,7 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
 
 **Interfaces:**
 - **D35 (`config-reader-confined`)** applies to non-test files under `packages/gateway/src/`, with comments stripped. It raises a violation for:
-  - **(a)** the literal `/["'`]nimbus\.toml["'`]/` anywhere except `config/layered-config.ts`, `config/active-profile.ts` and `demo/seed.ts`
+  - **(a)** **building a path** to the file: a `join(`/`resolve(` call whose argument list contains the literal, matched per occurrence by `/\b(?:join|resolve)\s*\([^()]*["'`]nimbus\.toml["'`]/`. This applies everywhere except `config/layered-config.ts`, `config/active-profile.ts` and `demo/seed.ts`. A bare literal is **not** a violation: there are ~6 production prose strings that say `` `nimbus.toml` `` to users (`agents/_lib/brief-disclosures.ts`, `agents/changelog.ts`, `glossary/*`), plus `profiles.ts`'s `n !== "nimbus.toml"` list filter, and none of those reads a file.
   - **(b)** any `\bresolveNimbusTomlForProfile\b`
   - **(c)** a **call** matching `/(?<!function\s)\bload\w+FromPath\s*\(/` outside `packages/gateway/src/config/`
 
@@ -437,6 +495,8 @@ One reader per `configDir` is memoised in a module registry. Its profile is pinn
   - `D35 flags a FromPath call in production`: `loadNimbusFleetFromPath(p)` in `platform/assemble.ts` → 1
   - `D35 ignores the definition`: `export function loadNimbusFleetFromPath(p: string)` in `config/fleet-toml.ts` → 0
   - `D35 ignores nimbus.openapi.toml`
+  - `D35 ignores prose`: `"Edit \`[ci.service.<id>]\` in \`nimbus.toml\`"` in `agents/x.ts` → 0, and `n !== "nimbus.toml"` → 0
+  - `D35 catches resolve()`: `resolve(dir, "nimbus.toml")` → 1
   - `D35 is green on the repo`: run the real repo scan and expect zero D35 violations
 - [ ] **Step 2: Run** `bun test scripts/structure-audit/check-nimbus-invariants.test.ts`. Expected: FAIL.
 - [ ] **Step 3: Implement the rule.** Follow `checkMigrationConfinement`'s shape (`stripComments`, `push(rule, …)`).
