@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { FEDERATION_PARAMS } from "../fleet/fleet-sweep-support.ts";
 import { FLEET_ELIGIBILITY } from "../ipc/agents-rpc.ts";
 import { checkPackFleetJobs } from "./pack-job-check.ts";
 
@@ -30,7 +31,9 @@ describe("checkPackFleetJobs", () => {
   });
 
   test("refuses federation params, with or without sweep", () => {
-    for (const fed of ['namespace = "x"', 'namespaces = "a,b"']) {
+    // The one shared list the fleet runtime also reads, so the two cannot drift.
+    expect(FEDERATION_PARAMS).toEqual(["namespace", "namespaces"]);
+    for (const fed of FEDERATION_PARAMS.map((k) => `${k} = "x"`)) {
       for (const sweep of [[], ['sweep = "paths"', "max_subjects = 5"]]) {
         const problems = checkPackFleetJobs(
           job("fed", ['agent = "ownership"', "interval_seconds = 60", fed, ...sweep]),

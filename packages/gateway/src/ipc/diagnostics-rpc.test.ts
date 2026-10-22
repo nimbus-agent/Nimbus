@@ -98,6 +98,22 @@ function makeCtxWithIndex(dataDir: string): {
   return { ctx, db, localIndex };
 }
 
+/**
+ * Every string value in `v`, recursively (keys too). A `JSON.stringify(x)` containment check is
+ * vacuous on Windows: it escapes every backslash, so a Windows path can never match.
+ */
+function collectStrings(v: unknown, out: string[] = []): string[] {
+  if (typeof v === "string") out.push(v);
+  else if (Array.isArray(v)) for (const x of v) collectStrings(x, out);
+  else if (v !== null && typeof v === "object") {
+    for (const [k, x] of Object.entries(v)) {
+      out.push(k);
+      collectStrings(x, out);
+    }
+  }
+  return out;
+}
+
 function rmTmp(dir: string): void {
   try {
     // maxRetries: 0 / retryDelay: 0 — a pinned handle (e.g. from makeCtxWithIndex's
@@ -2166,7 +2182,7 @@ describe("layered config over IPC", () => {
         expect(skipped).toHaveLength(1);
         expect(skipped[0]?.packId).toBe("bad");
         expect(c.packListError).toBeUndefined();
-        expect(JSON.stringify(c)).not.toContain(dir);
+        for (const v of collectStrings(c)) expect(v).not.toContain(dir);
         writeFileSync(join(dir, "packs", "default", "active.json"), "{not json");
         const r2 = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
         const c2 = (
@@ -2181,7 +2197,32 @@ describe("layered config over IPC", () => {
           }
         ).value.configLayers;
         expect(typeof c2.packListError).toBe("string");
-        expect(JSON.stringify(c2)).not.toContain(dir);
+        for (const v of collectStrings(c2)) expect(v).not.toContain(dir);
+        // A hand-edited entry naming an absolute path (a username) or carrying control
+        // characters is reported by position only.
+        const pathEntry = join(dir, "Users", "alice", "Downloads", "pm.toml");
+        const ctrlEntry = "pm\u001b]0;x\u0007";
+        writeFileSync(
+          join(dir, "packs", "default", "active.json"),
+          JSON.stringify({ version: 1, packs: [pathEntry, "pm", ctrlEntry] }),
+        );
+        const r3 = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        const c3 = (
+          r3 as {
+            value: { configLayers: { activePacks: string[]; skippedPacks: unknown[] } };
+          }
+        ).value.configLayers;
+        expect(c3.activePacks).toEqual(["pm"]);
+        expect(c3.skippedPacks).toEqual([
+          { packId: "#0", reason: "invalid pack id" },
+          { packId: "#2", reason: "invalid pack id" },
+        ]);
+        for (const v of collectStrings(c3)) {
+          expect(v).not.toContain(dir);
+          expect(v).not.toContain("alice");
+          expect(v).not.toContain(ctrlEntry);
+          expect([...v].every((ch) => ch >= " " && ch !== "\u007f")).toBe(true);
+        }
       } finally {
         db.close();
       }

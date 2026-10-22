@@ -1098,6 +1098,25 @@ describe("doctorPrintProfile (role packs)", () => {
     expect(out.stdout).toContain("[warn] packs not applied: active.json is not valid JSON");
   });
 
+  it("strips control characters from pack ids, reasons and the list error", () => {
+    const esc = "\u001b[31m";
+    const exit = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "default",
+      layers: [],
+      activePacks: [`p${esc}m`],
+      skippedPacks: [{ packId: `x${esc}\u0007`, reason: "bad\r\nline\u009b" }],
+      packListError: `list\u0000${esc}err`,
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain('[warn] pack "x[31m" skipped: badline');
+    expect(out.stdout).toContain("[warn] packs not applied: list[31merr");
+    expect(out.stdout).toContain("[info] packs active: p[31mm");
+    for (const ch of ["\u001b", "\u0007", "\u0000", "\u009b", "\r"]) {
+      expect(out.stdout).not.toContain(ch);
+    }
+  });
+
   it("lists active packs as info, exit 0", () => {
     const exit = doctorPrintProfile({
       runningProfile: "default",

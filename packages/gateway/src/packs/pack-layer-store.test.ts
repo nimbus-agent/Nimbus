@@ -26,6 +26,19 @@ import {
   packSkipLogLines,
 } from "./pack-layer-store.ts";
 
+/** Every string value in `v`, recursively (keys too), so a path check cannot be defeated by escaping. */
+function collectStrings(v: unknown, out: string[] = []): string[] {
+  if (typeof v === "string") out.push(v);
+  else if (Array.isArray(v)) for (const x of v) collectStrings(x, out);
+  else if (v !== null && typeof v === "object") {
+    for (const [k, x] of Object.entries(v)) {
+      out.push(k);
+      collectStrings(x, out);
+    }
+  }
+  return out;
+}
+
 const CONF = (v: string) => `[decisions]\nmin_confidence = ${v}\n`;
 const JOB = (name: string) =>
   `[[fleet.job]]\nname = "${name}"\nagent = "standup"\ninterval_seconds = 86400\n`;
@@ -185,10 +198,11 @@ describe("setPackLayer", () => {
     expect(getLayeredConfig(dir).snapshot().version).toBe(before);
   });
 
-  test("the default onChange matches the running profile case-insensitively", () => {
+  test("the default onChange matches the running profile exactly", () => {
     const store = wired("default");
-    const r = store.setPackLayer("Default", "pm", CONF("0.5"));
-    expect(typeof r.snapshotVersion).toBe("number");
+    // On Linux `Default` is a different directory the running reader never reads.
+    expect(store.setPackLayer("Default", "pm", CONF("0.5")).snapshotVersion).toBeNull();
+    expect(typeof store.setPackLayer("default", "pm", CONF("0.5")).snapshotVersion).toBe("number");
   });
 
   test("with no reader registered, the default onChange returns null", () => {
@@ -310,12 +324,37 @@ describe("read", () => {
     writeActive(JSON.stringify({ version: 1, packs: ["../../nimbus", "PM", "pm", "pm", "ghost"] }));
     const r = store.read("default");
     expect(r.layers.map((l) => [l.id, l.path])).toEqual([["pm", packFile("pm")]]);
-    expect(r.skipped.map((s) => s.packId)).toEqual(["../../nimbus", "PM", "pm", "ghost"]);
-    expect(r.skipped[0]?.reason).toContain("invalid");
-    expect(r.skipped[1]?.reason).toContain("invalid");
+    // An entry failing the id rule is reported by its position in `packs`, never verbatim.
+    expect(r.skipped.map((s) => s.packId)).toEqual(["#0", "#1", "pm", "ghost"]);
+    expect(r.skipped[0]?.reason).toBe("invalid pack id");
+    expect(r.skipped[1]?.reason).toBe("invalid pack id");
     expect(r.skipped[2]?.reason).toContain("listed twice");
     expect(r.skipped[3]?.reason).toBe("missing");
     expect(r.layers.some((l) => l.text.includes("0.95"))).toBe(false);
+  });
+
+  test("an absolute-path or control-character entry is never echoed anywhere", () => {
+    const pathEntry = join(dir, "Users", "alice", "Downloads", "pm.toml");
+    const ctrlEntry = "pm\u001b[31mred\u0007";
+    const store = createPackLayerStore({ configDir: dir });
+    store.setPackLayer("default", "pm", CONF("0.55"));
+    writeActive(JSON.stringify({ version: 1, packs: [pathEntry, "pm", ctrlEntry] }));
+    const r = store.read("default");
+    expect(r.layers.map((l) => l.id)).toEqual(["pm"]);
+    expect(r.skipped).toEqual([
+      { packId: "#0", reason: "invalid pack id" },
+      { packId: "#2", reason: "invalid pack id" },
+    ]);
+    const strings = [
+      ...collectStrings(r.skipped),
+      ...packSkipLogLines({ skippedPacks: r.skipped }),
+    ];
+    for (const v of strings) {
+      expect(v).not.toContain(pathEntry);
+      expect(v).not.toContain("alice");
+      expect(v).not.toContain(ctrlEntry);
+      expect([...v].every((ch) => ch >= " " && ch !== "\u007f")).toBe(true);
+    }
   });
 
   test("malformed active.json applies no packs, and writes refuse", () => {

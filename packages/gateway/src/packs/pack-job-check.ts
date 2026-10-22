@@ -7,16 +7,12 @@ import {
   parseNimbusTomlFleetJobs,
 } from "../config/fleet-toml.ts";
 import type { PackJobChecker } from "../config/pack-settable.ts";
-import { validateFleetSweepJobs } from "../fleet/fleet-sweep-support.ts";
+import { FEDERATION_PARAMS, validateFleetSweepJobs } from "../fleet/fleet-sweep-support.ts";
 import { resolveFleetAgentMethod } from "../ipc/agents-rpc.ts";
-
-const FEDERATION_PARAMS = ["namespace", "namespaces"] as const;
 
 function withoutFederation(job: NimbusFleetJobToml): NimbusFleetJobToml {
   const params = Object.fromEntries(
-    Object.entries(job.params).filter(
-      ([k]) => !(FEDERATION_PARAMS as readonly string[]).includes(k),
-    ),
+    Object.entries(job.params).filter(([k]) => !FEDERATION_PARAMS.includes(k)),
   );
   return { ...job, params };
 }

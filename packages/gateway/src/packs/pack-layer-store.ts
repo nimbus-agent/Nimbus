@@ -125,9 +125,9 @@ export function createPackLayerStore(opts: {
     opts.onChange ??
     ((profile: string): number | null => {
       const reader = peekLayeredConfig(configDir);
-      // PROFILE_NAME_RE is case-insensitive, so `Default` and `default` are one directory on
-      // Windows/macOS.
-      return reader !== undefined && reader.profile.name.toLowerCase() === profile.toLowerCase()
+      // Exact match: on Linux `Default` and `default` are different directories, and the running
+      // reader never reads the other one.
+      return reader !== undefined && reader.profile.name === profile
         ? reader.snapshot().version
         : null;
     });
@@ -193,9 +193,11 @@ export function createPackLayerStore(opts: {
     const skipped: SkippedPack[] = [];
     const clean: CleanPack[] = [];
     const seen = new Set<string>();
-    for (const id of active.ids) {
+    for (const [index, id] of active.ids.entries()) {
       if (!PACK_ID_RE.test(id)) {
-        skipped.push({ packId: id, reason: "invalid pack id" });
+        // A hand-edited entry can be anything (an absolute path naming a user, control
+        // characters); it is never echoed, only its position in `packs`.
+        skipped.push({ packId: `#${index}`, reason: "invalid pack id" });
         continue;
       }
       if (seen.has(id)) {

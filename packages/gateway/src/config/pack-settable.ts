@@ -5,7 +5,11 @@
 import { type DocLine, type DocSection, parseLayerDoc } from "./layered-merge.ts";
 import { parseBool, parseIntDec, parseString } from "./toml-primitives.ts";
 
-export const PACK_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/**
+ * A pack id is also a file name (`<id>.toml`), so the Windows reserved device names are refused
+ * as whole ids; `console`, `nul1` and `com10` are ordinary names and stay accepted.
+ */
+export const PACK_ID_RE = /^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9_-]{0,63}$/;
 
 /** Bounds a tampered fragment file. Measured in UTF-8 bytes. */
 export const PACK_FRAGMENT_MAX_BYTES = 65_536;

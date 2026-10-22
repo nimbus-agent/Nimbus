@@ -95,6 +95,21 @@ describe("pack-settable allowlist", () => {
     expect(received).toBe("");
   });
 
+  test("a job block with a line that is not key = value is refused before the job checker", () => {
+    let calls = 0;
+    const spy: PackJobChecker = () => {
+      calls++;
+      return [];
+    };
+    const problems = problemsOf(
+      '[[fleet.job]]\nname = "a"\nagent = "standup"\ninterval_seconds = 60\ndesc = """\n',
+      spy,
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('[[fleet.job]] has a line that is not "key = value"');
+    expect(calls).toBe(0);
+  });
+
   test("min_confidence must be a plain decimal", () => {
     for (const v of ['""', "   ", "0x0", "0b0", "1e-1"]) {
       expect(problemsOf(`[decisions]\nmin_confidence = ${v}\n`)).toHaveLength(1);
@@ -135,6 +150,15 @@ describe("PACK_ID_RE", () => {
     for (const ok of ["pm", "devops-1", "a_b"]) expect(PACK_ID_RE.test(ok)).toBe(true);
     for (const bad of ["PM", "-pm", "../x", "pm.toml", "", "a".repeat(65)]) {
       expect(PACK_ID_RE.test(bad)).toBe(false);
+    }
+  });
+
+  test("refuses the Windows reserved device names as whole ids only", () => {
+    const reserved = ["con", "prn", "aux", "nul"];
+    for (let n = 1; n <= 9; n++) reserved.push(`com${n}`, `lpt${n}`);
+    for (const bad of reserved) expect(PACK_ID_RE.test(bad)).toBe(false);
+    for (const ok of ["console", "nul1", "com10", "lpt0", "com0", "auxiliary", "pm", "con-pm"]) {
+      expect(PACK_ID_RE.test(ok)).toBe(true);
     }
   });
 });

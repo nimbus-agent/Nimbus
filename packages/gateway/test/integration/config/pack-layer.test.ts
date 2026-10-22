@@ -12,7 +12,10 @@ import {
   peekLayeredConfig,
   resetLayeredConfigsForTests,
 } from "../../../src/config/layered-config.ts";
-import { loadNimbusDecisionsFromConfigDir } from "../../../src/config/nimbus-toml.ts";
+import {
+  DEFAULT_NIMBUS_DECISIONS_TOML,
+  loadNimbusDecisionsFromConfigDir,
+} from "../../../src/config/nimbus-toml.ts";
 import { createPackLayerStore, type PackLayerStore } from "../../../src/packs/pack-layer-store.ts";
 
 const job = (name: string, interval = 86400) =>
@@ -71,6 +74,8 @@ describe("pack layer through the real loaders", () => {
     const jobs = loadNimbusFleetFromConfigDir(dir).jobs.filter((j) => j.name === "pack-daily");
     expect(jobs).toHaveLength(1);
     expect(jobs[0]?.intervalSeconds).toBe(600);
+    // Replacing the job does not drop the rest of the pack.
+    expect(loadNimbusDecisionsFromConfigDir(dir).minConfidence).toBe(0.4);
   });
 
   test("removing the pack restores the user-only values", () => {
@@ -78,6 +83,10 @@ describe("pack layer through the real loaders", () => {
     store.setPackLayer("default", "pm", PACK);
     store.removePackLayer("default", "pm");
     expect(loadNimbusFleetFromConfigDir(dir).jobs.map((j) => j.name)).toEqual(["mine"]);
-    expect(loadNimbusDecisionsFromConfigDir(dir).minConfidence).not.toBe(0.4);
+    // The base sets no [decisions], so the code default applies again.
+    expect(loadNimbusDecisionsFromConfigDir(dir).minConfidence).toBe(
+      DEFAULT_NIMBUS_DECISIONS_TOML.minConfidence,
+    );
+    expect(DEFAULT_NIMBUS_DECISIONS_TOML.minConfidence).not.toBe(0.4);
   });
 });
