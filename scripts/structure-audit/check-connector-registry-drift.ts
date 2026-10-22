@@ -144,10 +144,9 @@ export function checkConnectorRegistryDrift(
 ): RegistryDriftCheck {
   const exported = new Set(exportedIds);
   const stale = staleExclusions(unbundledIds, new Set(packageIds));
-  if (stale.length > 0) return { status: "drift", violations: stale };
 
   if (!existsSync(registryFile)) {
-    const violations = buildViolations(exported, new Set());
+    const violations = [...stale, ...buildViolations(exported, new Set())];
     return violations.length === 0 ? { status: "ok" } : { status: "drift", violations };
   }
 
@@ -168,7 +167,7 @@ export function checkConnectorRegistryDrift(
     };
   }
 
-  const violations = buildViolations(exported, new Set(listedIds));
+  const violations = [...stale, ...buildViolations(exported, new Set(listedIds))];
   return violations.length === 0 ? { status: "ok" } : { status: "drift", violations };
 }
 

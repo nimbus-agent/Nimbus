@@ -331,7 +331,7 @@ describe("oauthProfileForService — completeness", () => {
 });
 
 describe("UNBUNDLED_CONNECTOR_IDS", () => {
-  test("readwise is not bundled and is listed with a continuity entry", () => {
+  test("readwise is listed as unbundled", () => {
     expect(UNBUNDLED_CONNECTOR_IDS).toContain("readwise");
   });
 
