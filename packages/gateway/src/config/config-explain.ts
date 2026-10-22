@@ -383,6 +383,10 @@ export function explainConfig(
     }
   }
 
+  for (const p of snap.skippedPacks) notes.push(`pack "${p.packId}" skipped: ${p.reason}`);
+  if (snap.packListError !== undefined) {
+    notes.push(`packs for profile "${reader.profile.name}" not applied: ${snap.packListError}`);
+  }
   const running = reader.profile.name;
   const marker = reader.markerProfile();
   if (restartWouldSwitch(reader.profile.source, running, marker)) {

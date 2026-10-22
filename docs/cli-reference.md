@@ -3226,6 +3226,10 @@ Show which layer supplied a config value (`code default`, `nimbus.toml`, `nimbus
 nimbus config explain llm.local_model
 ```
 
+The notes list `pack "<id>" skipped: <reason>` for each pack layer the gateway skipped, and `packs for profile "<p>" not applied: <reason>` when the profile's pack list could not be read. Reasons never contain an absolute path. No command writes a pack layer yet, so on a current install these notes do not appear.
+
+`nimbus doctor` reports the same state from `diag.snapshot`: `[warn] pack "<id>" skipped: <reason>` per skipped pack and `[warn] packs not applied: <reason>` for an unreadable pack list (each exits `1`), and `[info] packs active: <ids>` when any pack layer is applied (exit `0`). An older gateway that does not send these fields prints nothing extra.
+
 ---
 
 ### `nimbus config validate`

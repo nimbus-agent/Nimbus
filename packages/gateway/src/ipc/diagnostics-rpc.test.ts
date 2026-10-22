@@ -17,6 +17,7 @@ import type { AskExplainRecord } from "../engine/ask-explain-types.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { openMigratedDb } from "../index/migrated-db-template.ts";
+import { createPackLayerStore } from "../packs/pack-layer-store.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
 import { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
@@ -2133,6 +2134,62 @@ describe("layered config over IPC", () => {
       expect(v.ok).toBe(true);
       expect(v.warnings).toEqual([]);
     }));
+
+  test("diag.snapshot reports active and skipped packs without any path", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-packs-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), "schema_version = 1\n");
+      const store = createPackLayerStore({ configDir: dir });
+      store.setPackLayer("default", "pm", "[decisions]\nmin_confidence = 0.5\n");
+      store.setPackLayer("default", "bad", "[fleet]\nretention_days = 9\n");
+      writeFileSync(
+        join(dir, "packs", "default", "bad.toml"),
+        "[fleet]\nretention_days = 9\n[llm]\nprefer_local = false\n",
+      );
+      initLayeredConfig(dir, { packs: store });
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        const c = (
+          r as {
+            value: {
+              configLayers: {
+                activePacks: string[];
+                skippedPacks: { packId: string; reason: string }[];
+                packListError?: string;
+              };
+            };
+          }
+        ).value.configLayers;
+        expect(c.activePacks).toEqual(["pm"]);
+        const skipped = c.skippedPacks;
+        expect(skipped).toHaveLength(1);
+        expect(skipped[0]?.packId).toBe("bad");
+        expect(c.packListError).toBeUndefined();
+        expect(JSON.stringify(c)).not.toContain(dir);
+        writeFileSync(join(dir, "packs", "default", "active.json"), "{not json");
+        const r2 = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        const c2 = (
+          r2 as {
+            value: {
+              configLayers: {
+                activePacks: string[];
+                skippedPacks: { packId: string; reason: string }[];
+                packListError?: string;
+              };
+            };
+          }
+        ).value.configLayers;
+        expect(typeof c2.packListError).toBe("string");
+        expect(JSON.stringify(c2)).not.toContain(dir);
+      } finally {
+        db.close();
+      }
+    } finally {
+      forgetLayeredConfigForTests(dir);
+      rmTmp(dir);
+    }
+  });
 
   test("diag.snapshot carries configLayers", () =>
     withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {

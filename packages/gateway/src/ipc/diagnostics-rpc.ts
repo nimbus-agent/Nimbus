@@ -229,6 +229,7 @@ function rpcConfigExplain(params: unknown, ctx: DiagnosticsRpcContext): Diagnost
 
 function buildConfigLayers(ctx: DiagnosticsRpcContext): unknown {
   const reader = getLayeredConfig(ctx.configDir);
+  const snap = reader.snapshot();
   return {
     runningProfile: reader.profile.name,
     // Where the running name came from: a restart re-resolves only a marker/default profile.
@@ -236,7 +237,7 @@ function buildConfigLayers(ctx: DiagnosticsRpcContext): unknown {
     markerProfile: reader.markerProfile(),
     // BASENAMES only: diag.snapshot is LAN-callable and renderer-exposed, and an absolute config
     // path carries the username. `config.explain` (LAN-forbidden) keeps the full path.
-    layers: reader.snapshot().layers.map((l) => ({
+    layers: snap.layers.map((l) => ({
       kind: l.layer.kind,
       id: l.layer.id,
       path: basename(l.layer.path),
@@ -246,9 +247,11 @@ function buildConfigLayers(ctx: DiagnosticsRpcContext): unknown {
         ? { readError: l.readError.replaceAll(l.layer.path, basename(l.layer.path)) }
         : {}),
     })),
-    // Pack layers and fleet-job drops arrive with the pack loader; always empty in PR 1.
-    activePacks: [] as string[],
-    skippedPacks: [] as { packId: string; reason: string }[],
+    // The pack store makes every reason and the list error basename-safe, so these carry no path.
+    activePacks: [...snap.activePacks],
+    skippedPacks: snap.skippedPacks.map((p) => ({ packId: p.packId, reason: p.reason })),
+    ...(snap.packListError !== undefined ? { packListError: snap.packListError } : {}),
+    // Fleet-job drops arrive with a later change; always empty for now.
     droppedFleetJobs: [] as { name: string; file: string; reason: string }[],
   };
 }

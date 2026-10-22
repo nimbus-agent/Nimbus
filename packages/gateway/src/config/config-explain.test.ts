@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createPackLayerStore } from "../packs/pack-layer-store.ts";
 import {
   explainConfig,
   probeSection,
@@ -215,6 +216,31 @@ describe("explainConfig", () => {
     const r = explainConfig(initLayeredConfig(dir), "a.zzz", noEnv);
     expect(r.entries).toHaveLength(0);
     expect(r.notes).toContain("no layer sets a.zzz; the code default applies");
+  });
+});
+
+describe("pack notes", () => {
+  test("a skipped pack and a list error are noted with and without a path", () => {
+    const store = createPackLayerStore({ configDir: dir });
+    store.setPackLayer("default", "pm", "[decisions]\nmin_confidence = 0.5\n");
+    writeFileSync(
+      join(dir, "packs", "default", "pm.toml"),
+      "[decisions]\nmin_confidence = 0.5\n[llm]\nprefer_local = false\n",
+    );
+    const reader = initLayeredConfig(dir, { packs: store });
+    for (const p of [undefined, "decisions.min_confidence"]) {
+      const r = explainConfig(reader, p, noEnv);
+      expect(r.notes.some((n) => n.startsWith('pack "pm" skipped: ') && n.includes("[llm]"))).toBe(
+        true,
+      );
+    }
+    writeFileSync(join(dir, "packs", "default", "active.json"), "{not json");
+    for (const p of [undefined, "decisions.min_confidence"]) {
+      const r = explainConfig(reader, p, noEnv);
+      const note = r.notes.find((n) => n.startsWith('packs for profile "default" not applied: '));
+      expect(note).toBeDefined();
+      expect(note).not.toContain(dir);
+    }
   });
 });
 

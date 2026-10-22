@@ -18,6 +18,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-22 — The gateway reads pack layers (role packs, project 1, PR 2: the pack layer; no migration, no invariant, no new IPC method).**
+  The layered config reader now stacks pack-contributed TOML fragments (`<configDir>/packs/<profile>/<id>.toml`, listed in `active.json`) below `nimbus.toml`. The allowlist is `[fleet]` `enabled`/`min_idle_seconds`/`require_ac_power`/`retention_days`, `[[fleet.job]]` and `[decisions]` `min_confidence`; a fragment with any other key is skipped whole, and two packs that set the same scalar or job name conflict. No command or IPC method writes a pack layer and nothing installs one yet, so none exist until a later release does.
+  `diag.snapshot.configLayers` now carries real `activePacks`, `skippedPacks` and an optional `packListError` (basename-safe), `nimbus config explain` adds a note per skipped pack, and `nimbus doctor` warns about skipped packs and an unreadable pack list and lists the active ones.
+  Two fixes from the same change: `NIMBUS_LAN_PORT` now applies when no config file exists, and glossary terms in an unreadable profile file are no longer treated as deleted.
 - **2026-10-22 — Profiles inherit from `nimbus.toml` (role packs, project 1, PR 1: the layered config reader; static D35; no migration, no invariant).**
   Profiles now inherit from `nimbus.toml`: a profile file overrides only the keys it sets, and a section it leaves out now comes from `nimbus.toml` rather than from built-in defaults. Previously about two-thirds of settings ignored the active profile entirely; every setting now follows it.
   Layers merge in order: code defaults, pack layers (none yet), team baseline (empty slot), `nimbus.toml`, `nimbus.<profile>.toml`. The profile is pinned once at gateway boot (explicit, `NIMBUS_PROFILE`, `.nimbus-profile` marker, default) and an invalid name stops boot.
