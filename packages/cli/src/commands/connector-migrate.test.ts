@@ -260,4 +260,18 @@ describe("formatMigrationRows", () => {
     expect(lines).toHaveLength(3);
     expect(lines[2]).toContain("to change your mind");
   });
+
+  test("a stale-grant failure shows only the approve step, not migrate retry", () => {
+    const error =
+      "com.example.x is installed, but its run approval is missing or out of date; run `nimbus extension approve com.example.x` to resume sync";
+    const out = formatMigrationRows([{ ...ROW, state: "failed", error }]).join("\n");
+    expect(out).toContain("nimbus extension approve com.example.x");
+    expect(out).toContain("sync resumes after it");
+    expect(out).not.toContain("migrate retry");
+  });
+
+  test("a failure that does not name approve still names migrate retry", () => {
+    const out = formatMigrationRows([{ ...ROW, state: "failed", error: "offline" }]).join("\n");
+    expect(out).toContain("run `nimbus connector migrate retry`");
+  });
 });

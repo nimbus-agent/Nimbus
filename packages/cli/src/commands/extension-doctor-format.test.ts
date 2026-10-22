@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { doctorExtensionsLines, doctorRegistryLines } from "./extension-doctor-format.ts";
+import {
+  doctorExtensionsLines,
+  doctorMigrationLines,
+  doctorRegistryLines,
+} from "./extension-doctor-format.ts";
 
 const ext = (id: string, runState: string) => ({ id, runState });
 
@@ -172,5 +176,33 @@ describe("doctorRegistryLines", () => {
   test("malformed responses throw (the caller turns that into a [warn])", () => {
     expect(() => doctorRegistryLines("garbage", { extensions: [] })).toThrow(/registry\.list/);
     expect(() => doctorRegistryLines({ registries: [] }, "garbage")).toThrow(/extension\.list/);
+  });
+});
+
+describe("doctorMigrationLines next step", () => {
+  const row = (error: string) => ({
+    migrations: [
+      {
+        id: "m-1",
+        legacyServiceId: "readwise",
+        extensionId: "com.nimbus.readwise",
+        state: "failed",
+        error,
+      },
+    ],
+  });
+
+  test("a plain failure names migrate retry", () => {
+    const { lines, exit } = doctorMigrationLines(row("offline"));
+    expect(exit).toBe(1);
+    expect(lines[0]).toContain("offline — run `nimbus connector migrate retry`");
+  });
+
+  test("a stale-grant failure shows only the approve step", () => {
+    const err =
+      "com.nimbus.readwise is installed, but its run approval is missing or out of date; run `nimbus extension approve com.nimbus.readwise` to resume sync";
+    const { lines } = doctorMigrationLines(row(err));
+    expect(lines[0]).toContain("nimbus extension approve com.nimbus.readwise");
+    expect(lines[0]).not.toContain("migrate retry");
   });
 });
