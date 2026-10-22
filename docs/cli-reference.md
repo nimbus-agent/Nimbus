@@ -3358,7 +3358,7 @@ Named configuration profiles let you maintain separate settings (e.g. `work` vs 
 
 ### `nimbus profile create <name>`
 
-Copies `nimbus.toml` to `nimbus.<name>.toml` (or seeds a minimal file when there is no `nimbus.toml`). The name must match `[a-z0-9_-]{1,32}`; any other name is refused, because the gateway would refuse it at boot.
+Copies `nimbus.toml` to `nimbus.<name>.toml` (or seeds a minimal file when there is no `nimbus.toml`). The name must match `[a-z0-9_-]{1,32}`, case-insensitively (`Work` is valid); any other name is refused, because the gateway would refuse it at boot.
 
 A profile file overrides only the keys it sets and inherits the rest from `nimbus.toml`. A copied profile sets every key it copied, so it pins each of them: later edits to those keys in `nimbus.toml` do not reach it. A profile file containing only the keys you want to change inherits everything else.
 
@@ -3379,7 +3379,7 @@ nimbus profile list
 
 ### `nimbus profile switch <name>`
 
-Switch the active profile by writing the `.nimbus-profile` marker. Takes effect on the next Gateway restart, unless `NIMBUS_PROFILE` is set, which wins over the marker. The name must match `[a-z0-9_-]{1,32}`.
+Switch the active profile by writing the `.nimbus-profile` marker. Takes effect on the next Gateway restart, unless `NIMBUS_PROFILE` is set, which wins over the marker. The name must match `[a-z0-9_-]{1,32}`, case-insensitively.
 
 ```bash
 nimbus profile switch work
