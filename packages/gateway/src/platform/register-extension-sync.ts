@@ -84,6 +84,14 @@ export function reapproveSuffix(extensionId: string): string {
   return `run \`nimbus extension approve ${extensionId}\` to resume sync`;
 }
 
+/**
+ * The way back from a pause the migration engine takes for a bound extension the owner disabled;
+ * matched on resume like `reapproveSuffix`, so enabling the extension resumes its sync.
+ */
+export function enableSuffix(extensionId: string): string {
+  return `run \`nimbus extension enable ${extensionId}\` to resume sync`;
+}
+
 /** The paused reason after an applied update (or any change) left the run grant stale. */
 export function staleGrantPauseReason(
   extensionId: string,
@@ -209,12 +217,15 @@ export function createExtensionSyncRegistrar(
     // The policy-filtered registrar drops a blocked id silently; track only what really landed.
     if (deps.scheduler.syncableFor(indexId) !== syncable) return;
     registered.set(identity.extensionId, { indexServiceId: indexId, syncable, live });
-    // The stale-grant pause names re-approval as the way back, so a re-approval honours it. Any
-    // other pause (the owner's own, a sandbox preflight) is left for `connector resume`.
+    // The stale-grant pause names re-approval as the way back, and the migration's disabled pause
+    // names enabling, so registering after either honours it. Any other pause (the owner's own, a
+    // sandbox preflight) is left for `connector resume`.
     const health = getConnectorHealth(deps.db, indexId);
+    const reason = health.lastError ?? "";
     if (
       health.state === "paused" &&
-      health.lastError?.endsWith(reapproveSuffix(identity.extensionId)) === true
+      (reason.endsWith(reapproveSuffix(identity.extensionId)) ||
+        reason.endsWith(enableSuffix(identity.extensionId)))
     ) {
       deps.scheduler.resume(indexId);
     }

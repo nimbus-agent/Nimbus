@@ -217,6 +217,27 @@ export function recordMigrationAlreadyInstalled(
 }
 
 /**
+ * Accept's form of the same: moves a row that is `awaiting_approval` to `approved`, conditionally,
+ * recording the INSTALLED version and tree digest (what the owner's grant covers) in place of the
+ * staged ones. Returns whether the row moved.
+ */
+export function finishMigrationAlreadyInstalled(
+  db: Database,
+  id: string,
+  installed: { version: string; treeDigest: string | null },
+  now: number,
+): boolean {
+  const r = dbRun(
+    db,
+    `UPDATE connector_migration
+     SET state = 'approved', error = NULL, stage_path = NULL, version = ?, tree_digest = ?, updated_at = ?
+     WHERE id = ? AND state = 'awaiting_approval'`,
+    [installed.version, installed.treeDigest, now, id],
+  );
+  return r.changes > 0;
+}
+
+/**
  * Moves a row that is `awaiting_approval` to a final state, conditionally: a row in any other state
  * (or gone) changes nothing and `false` is returned. The stage path is cleared in every case — the
  * staged tree is deleted on approve, decline and failure alike.

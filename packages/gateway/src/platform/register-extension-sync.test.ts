@@ -276,6 +276,23 @@ describe("createExtensionSyncRegistrar", () => {
     expect(h.sched.syncableFor("readwise")).toBeDefined();
   });
 
+  test("enabling lifts the migration's disabled pause, and only that pause", () => {
+    const h = harness(seed());
+    const r = createExtensionSyncRegistrar(h.deps);
+    setExtensionEnabled(h.db, EXT_ID, false);
+    // The migration engine's pause for a bound extension the owner disabled (Task 7.4 M4).
+    h.sched.pause(
+      "readwise",
+      `${EXT_ID} is installed but disabled — run \`nimbus extension enable ${EXT_ID}\` to resume sync`,
+    );
+    r.refresh(EXT_ID);
+    expect(getConnectorHealth(h.db, "readwise").state).toBe("paused");
+    setExtensionEnabled(h.db, EXT_ID, true);
+    r.refresh(EXT_ID);
+    expect(h.sched.syncableFor("readwise")).toBeDefined();
+    expect(getConnectorHealth(h.db, "readwise").state).not.toBe("paused");
+  });
+
   test("revoke keeps items", () => {
     const h = harness(seed());
     const idx = new LocalIndex(h.db);

@@ -46,7 +46,7 @@ import {
   normalizeConnectorServiceId,
 } from "../../connectors/connector-catalog.ts";
 import { transitionHealth } from "../../connectors/health.ts";
-import { reapproveSuffix } from "../../platform/register-extension-sync.ts";
+import { enableSuffix, reapproveSuffix } from "../../platform/register-extension-sync.ts";
 import { setPaused, upsertSchedulerRegistration } from "../../sync/scheduler-store.ts";
 import { decodeBase64 } from "../../util/base64.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -101,6 +101,7 @@ import { computeExtensionTreeDigest } from "../tree-digest.ts";
 import { migrationRedactionRoots, redactMigrationPaths } from "./migration-redact.ts";
 import {
   finishMigration,
+  finishMigrationAlreadyInstalled,
   getMigration,
   getMigrationByLegacyService,
   listMigrations,
@@ -566,8 +567,9 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
 
   /**
    * Whether the run grant of an installed, bound extension still covers what is installed now (its
-   * version and tree digest, as the sync registrar's staleness test) and maps every credential to
-   * this entry's LEGACY Vault key — re-resolved exactly as the I43 pre-spawn verifier does.
+   * version and tree digest, as the sync registrar's staleness test, and the LIVE tree digest, as
+   * the I43 pre-spawn verifier's) and maps every credential to this entry's LEGACY Vault key —
+   * re-resolved exactly as that verifier does.
    */
   const grantCoversLegacy = (
     row: ExtensionRow,
@@ -575,7 +577,12 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     binding: ContinuityEntry,
   ): boolean => {
     const grant = getRunGrant(db, row.id);
-    if (grant === null || grant.version !== row.version || grant.tree_digest !== row.tree_digest) {
+    if (
+      grant === null ||
+      grant.version !== row.version ||
+      grant.tree_digest !== row.tree_digest ||
+      digestOrNull(row.install_path) !== grant.tree_digest
+    ) {
       return false;
     }
     const credentials = resolveRunCredentials(manifest, grant.service_id, binding);
@@ -615,6 +622,25 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   };
 
   /**
+   * After a row was finished `approved` for an extension already installed: resume the legacy
+   * service — unless the owner disabled the extension, which then would sync nothing. That pause
+   * names `extension enable`, and the sync registrar resumes on registering after it (as it does
+   * after a re-approval), so enabling the extension resumes the sync.
+   */
+  const resumeInstalled = (legacyServiceId: string, row: ExtensionRow): void => {
+    if (row.enabled === 1) {
+      deps.scheduler.resume(legacyServiceId);
+      return;
+    }
+    pauseLegacyService(
+      db,
+      legacyServiceId,
+      `${row.id} is installed but disabled — ${enableSuffix(row.id)}`,
+      deps.now(),
+    );
+  };
+
+  /**
    * Evaluate's answer for an extension that is already installed, before any fetch: installed,
    * bound and approved with the legacy credential finishes the row `approved` and resumes the
    * legacy service with no prompt (nothing is installed or granted here); stale or unbound fails
@@ -637,7 +663,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
         },
         deps.now(),
       );
-      if (written) deps.scheduler.resume(entry.legacyServiceId);
+      if (written) resumeInstalled(entry.legacyServiceId, installed.row);
       return true;
     }
     if (installed.kind === "stale") markFailed(entry, id, staleGrantText(entry), true);
@@ -994,18 +1020,42 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
    * grant, so there is nothing left to ask. Writes no extension row, grant or key — it finishes the
    * row, drops the stage and resumes the legacy service (I46 bound (0): resuming is not granting).
    */
-  const finishInstalledAccept = (row: MigrationRow): MigrationRow => {
-    if (!finishMigration(db, row.id, "approved", null, deps.now())) {
+  const finishInstalledAccept = (row: MigrationRow, installed: ExtensionRow): MigrationRow => {
+    // The row records what is INSTALLED (what the owner's grant covers), not what was staged.
+    if (
+      !finishMigrationAlreadyInstalled(
+        db,
+        row.id,
+        { version: installed.version, treeDigest: installed.tree_digest },
+        deps.now(),
+      )
+    ) {
       throw new MigrationError(
         "ERR_EXTENSION_MIGRATION_NOT_PENDING",
         `migration "${row.id}" changed while it was being accepted; nothing was changed`,
       );
     }
     removeStage(row.id);
-    deps.scheduler.resume(row.legacyServiceId);
+    resumeInstalled(row.legacyServiceId, installed);
     const done = getMigration(db, row.id);
     if (done === undefined) throw new Error("the migration row disappeared");
     return done;
+  };
+
+  /** C11, with the fetch path's wording: a different key cached for the publisher fails the row. */
+  const refuseVaultKeyConflict = async (
+    row: MigrationRow,
+    entry: ContinuityEntry,
+    publisherId: string,
+  ): Promise<void> => {
+    if (
+      await vaultPublisherKeyConflicts(deps.vault, publisherId, decodeBase64(entry.publisherKey))
+    ) {
+      failAccept(
+        row,
+        `the Vault already holds a different key for publisher "${publisherId}"; refusing to replace it`,
+      );
+    }
   };
 
   const acceptLocked = async (
@@ -1018,7 +1068,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     // prompt: bound and approved with the legacy credential finishes the row with nothing installed
     // or granted here; stale or unbound fails it with the way forward, leaving the install alone.
     const already = checkInstalled(entry);
-    if (already.kind === "approved") return finishInstalledAccept(row);
+    if (already.kind === "approved") return finishInstalledAccept(row, already.row);
     if (already.kind === "stale") return failAccept(row, staleGrantText(entry), true);
     if (already.kind === "unbound") return failAccept(row, notOfficialText(entry));
     const root = requireIntactStage(row);
@@ -1040,14 +1090,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     // Vault may have learned a different key for this publisher since prepare, and the install below
     // ends by writing the key. Refused before the prompt, with the fetch path's wording.
     const publisherId = manifest.publisher?.id ?? "";
-    if (
-      await vaultPublisherKeyConflicts(deps.vault, publisherId, decodeBase64(entry.publisherKey))
-    ) {
-      return failAccept(
-        row,
-        `the Vault already holds a different key for publisher "${publisherId}"; refusing to replace it`,
-      );
-    }
+    await refuseVaultKeyConflict(row, entry, publisherId);
     // An extension id installed since the check above (the owner's own install, during the Vault
     // read) is not ours to replace, and a later failure of this accept would undo THAT install, so
     // the undo below only ever removes what this accept made.
@@ -1068,8 +1111,10 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       );
     }
 
-    // The prompt may have been open for a while: what is installed must be what was verified.
+    // The prompt may have been open for a while: what is installed must be what was verified, and
+    // the Vault may have learned a different key for the publisher meanwhile (nothing installed yet).
     requireIntactStage(row);
+    await refuseVaultKeyConflict(row, entry, publisherId);
     const installed = await installStaged(row, entry, builtinReg, {
       root,
       manifest,
