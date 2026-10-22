@@ -9,7 +9,12 @@ import {
   type RegistryExtensionEntry,
   type RegistryIndex,
 } from "@nimbus-dev/registry-format";
-import { bareRegistryTargets, builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
+import {
+  BUILTIN_REGISTRY_NAME,
+  bareRegistryTargets,
+  builtinRegistryOf,
+  resolveRegistry,
+} from "./builtin-registry.ts";
 import { fetchVerifiedIndex, type RegistryFetchDeps } from "./registry-fetch.ts";
 import { listRegistries, type RegistryRow } from "./registry-store.ts";
 
@@ -86,15 +91,33 @@ function describeFailures(failures: readonly IndexFailure[]): string {
  * not under air gap).
  */
 export function registryTargets(deps: RegistryFetchDeps, name: string | undefined): RegistryRow[] {
-  const builtin = builtinRegistryOf(deps);
-  if (name === undefined) {
-    return bareRegistryTargets(deps.db, listRegistries(deps.db), builtin, deps.enforceAirGap());
-  }
-  const one = resolveRegistry(deps.db, name, builtin);
+  if (name === undefined) return bareTargets(deps).targets;
+  const one = resolveRegistry(deps.db, name, builtinRegistryOf(deps));
   if (one === undefined) {
     throw new RegistryError("ERR_REGISTRY_NOT_FOUND", `no registry named "${name}"`);
   }
   return [one];
+}
+
+/**
+ * The bare targets, and whether air gap alone kept the built-in out of them (it would have been a
+ * target otherwise). The air-gap switch is read ONCE, so the two answers cannot disagree.
+ */
+function bareTargets(deps: RegistryFetchDeps): {
+  targets: RegistryRow[];
+  builtinSkippedForAirGap: boolean;
+} {
+  const builtin = builtinRegistryOf(deps);
+  const owners = listRegistries(deps.db);
+  const airGapped = deps.enforceAirGap();
+  return {
+    targets: bareRegistryTargets(deps.db, owners, builtin, { airGapped }),
+    builtinSkippedForAirGap:
+      airGapped &&
+      bareRegistryTargets(deps.db, owners, builtin, { airGapped: false }).some(
+        (r) => r.builtin === true,
+      ),
+  };
 }
 
 export type ResolvedEntry = {
@@ -114,7 +137,8 @@ export async function resolveRegistryEntry(
   id: string,
   registryName: string | undefined,
 ): Promise<ResolvedEntry> {
-  const read = await readIndexes(deps, registryTargets(deps, registryName));
+  const bare = registryName === undefined ? bareTargets(deps) : undefined;
+  const read = await readIndexes(deps, bare?.targets ?? registryTargets(deps, registryName));
   const carrying = read.ok.filter((r) => r.index.extensions[id] !== undefined);
   if (carrying.length > 1) {
     throw new RegistryError(
@@ -144,7 +168,14 @@ export async function resolveRegistryEntry(
   const found = carrying[0];
   const entry = found?.index.extensions[id];
   if (found === undefined || entry === undefined) {
-    throw new RegistryError("ERR_REGISTRY_NOT_FOUND", `no registry carries "${id}"`);
+    // Under air gap a bare lookup never reads the built-in, so "no registry carries it" would be
+    // untrue for an official id: say which registry was not consulted, and why.
+    throw new RegistryError(
+      "ERR_REGISTRY_NOT_FOUND",
+      bare?.builtinSkippedForAirGap === true
+        ? `no configured registry carries "${id}"; the official registry ${BUILTIN_REGISTRY_NAME} was not consulted because [llm] enforce_air_gap is on`
+        : `no registry carries "${id}"`,
+    );
   }
   return { reg: found.reg, index: found.index, entry };
 }

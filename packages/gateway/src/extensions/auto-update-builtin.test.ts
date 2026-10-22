@@ -123,7 +123,11 @@ function fetchBag(cfg: BuiltinRegistryConfig): Omit<RegistryFetchDeps, "db"> {
   };
 }
 
+/** Ids `onUpdateApplied` was called with: production wires the extension sync host's refresh here. */
+let applied: string[];
+
 function runtimeFor(cfg: BuiltinRegistryConfig) {
+  applied = [];
   return createAutoUpdateRuntime({
     db,
     vault,
@@ -131,6 +135,7 @@ function runtimeFor(cfg: BuiltinRegistryConfig) {
     dataDir: join(tmp, "data"),
     fetch: fetchBag(cfg),
     intervalHours: 24,
+    onUpdateApplied: (id) => applied.push(id),
   });
 }
 
@@ -209,6 +214,10 @@ describe("auto-update of a bound extension installed from the built-in registry 
     // reserved name, never an owner row), then downloads and installs the package.
     requests = [];
     await runtime.deps.performUpgrade(cached);
+    // The applied-update hook fires once. What production does with it (pause the INDEX id with the
+    // re-approve reason) is `register-extension-sync.test.ts` "applied update pauses with the
+    // re-approve reason".
+    expect(applied).toEqual([EXT_ID]);
     expect(requests).toEqual([
       `${BUILTIN_URL}index.json`,
       `${BUILTIN_URL}extensions/${EXT_ID}/0.2.1/manifest.json`,
@@ -312,6 +321,7 @@ describe("auto-update of a bound extension installed from the built-in registry 
     );
     expect(requests).toEqual([]);
     expect(installedVersion()).toBe("0.2.0");
+    expect(applied).toEqual([]);
     // Detection under the re-pinned root offers nothing: the install's trust root is not the built-in's.
     await repinned.deps.forcePoll();
     expect(repinned.deps.cache.list()).toEqual([]);

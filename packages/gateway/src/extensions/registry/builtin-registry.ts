@@ -113,12 +113,15 @@ export function resolveRegistry(
  * be read there, and counting it would make every bare install ambiguous. Owner registries stay
  * targets whatever their transport; the fetch layer decides which of them is reachable. Plain
  * offline is NOT this case: an unreachable built-in still counts, since it might carry the id.
+ * Consequently an owner registry carrying an id the built-in also lists resolves without an
+ * ambiguity refusal under air gap, as it would on a gateway with no built-in; it never binds, since
+ * its root fingerprint is not the official one.
  */
 export function bareRegistryTargets(
   db: Database,
   owners: readonly RegistryRow[],
   builtin: BuiltinRegistryConfig | null,
-  airGapped: boolean,
+  { airGapped }: { readonly airGapped: boolean },
 ): RegistryRow[] {
   if (builtin === null || airGapped) return [...owners];
   const official = builtinRegistryRow(db, builtin);

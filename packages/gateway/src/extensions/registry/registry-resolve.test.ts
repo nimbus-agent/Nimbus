@@ -188,6 +188,29 @@ describe("bare resolution and the built-in registry under air gap (B31)", () => 
     expect(requests).toEqual([]);
   });
 
+  test("air-gapped bare install of an id no owner registry carries names the skipped built-in", async () => {
+    const official = "com.example.official-only";
+    const skipped = `no configured registry carries "${official}"; the official registry ${BUILTIN_REGISTRY_NAME} was not consulted because [llm] enforce_air_gap is on`;
+    // No owner registries at all: the most common air-gapped owner.
+    const none = airGapDeps(true);
+    expect(registryTargets(none.d, undefined)).toEqual([]);
+    const e0 = await refusal(resolveRegistryEntry(none.d, official, undefined));
+    expect(e0.code).toBe("ERR_REGISTRY_NOT_FOUND");
+    expect(e0.message).toBe(`ERR_REGISTRY_NOT_FOUND: ${skipped}`);
+    expect(none.requests).toEqual([]);
+    // An owner registry that does not carry the id: the same refusal.
+    await addRegistry("alpha");
+    const one = airGapDeps(true);
+    const e1 = await refusal(resolveRegistryEntry(one.d, official, undefined));
+    expect(e1.message).toBe(`ERR_REGISTRY_NOT_FOUND: ${skipped}`);
+    expect(one.requests).toEqual([]);
+    // Without a built-in to skip, nothing extra is claimed.
+    const e2 = await refusal(
+      resolveRegistryEntry({ ...one.d, builtin: null }, official, undefined),
+    );
+    expect(e2.message).toBe(`ERR_REGISTRY_NOT_FOUND: no registry carries "${official}"`);
+  });
+
   test("named --registry nimbus-official under air gap still refuses ERR_REGISTRY_AIR_GAP", async () => {
     await addRegistry("alpha");
     const { d, requests } = airGapDeps(true);
