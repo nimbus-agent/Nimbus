@@ -130,7 +130,7 @@ export type CreateIpcServerOptions = {
    */
   continuityTable?: readonly ContinuityEntry[];
   /**
-   * The connector migration engine (Readwise unbundling spec § 7.2), built once by
+   * The connector migration engine (connector-unbundling spec § 7.2), built once by
    * `platform/assemble.ts`, which also runs its boot `evaluate()`. Serves `migration.*` (LAN-forbidden;
    * `list` and `accept` are also renderer-callable, I46). Absent means those methods are not served (tests).
    */

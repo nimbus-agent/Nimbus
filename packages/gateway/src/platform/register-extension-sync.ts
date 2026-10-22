@@ -43,7 +43,7 @@ import type { SandboxRunner } from "./sandbox/sandbox-runner.ts";
 /**
  * Keeps the scheduler's set of extension syncables equal to what the database says may sync
  * (spec § 8.3): an ENABLED extension with a LIVE (non-stale) run grant whose installed manifest
- * declares a `sync` block, registered under its INDEX id (`readwise` when the continuity table binds
+ * declares a `sync` block, registered under its INDEX id (the legacy id when the continuity table binds
  * it, else its `ext_` id). Everything else is unregistered; items are never touched here — only
  * `extension remove` purges them ({@link purgeExtensionIndexData}).
  */
@@ -192,7 +192,7 @@ export function createExtensionSyncRegistrar(
     unregister(identity.extensionId);
     const indexId = identity.indexServiceId;
     if (deps.scheduler.syncableFor(indexId) !== undefined) {
-      // A built-in connector (the bundled `readwise`, until it is deleted) or another extension
+      // A built-in connector (a bundled legacy connector) or another extension
       // already syncs under this id. Replacing it would write two sources into one namespace.
       deps.logger?.warn(
         { extensionId: identity.extensionId, serviceId: indexId },
@@ -280,7 +280,7 @@ export interface ExtensionIndexPurgeResult {
  * deleted, since both are needed to know where the extension wrote. Purges, under the INDEX id,
  * every item, the scheduler and sync-state rows (`removeConnectorIndexData`) and the health row; and
  * deletes every credential key the extension was granted or would be granted — for a bound extension
- * that includes the legacy key (`readwise.token`), exactly as `connector remove readwise` would.
+ * that includes the legacy key (`<legacy>.token`), exactly as `connector remove <legacy>` would.
  *
  * With no grant (revoked earlier) the code-server id is the derived one, so items an earlier sync
  * wrote under it still go. A manifest that cannot be read loses the binding, so a bound extension's

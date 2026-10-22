@@ -1,5 +1,5 @@
 /**
- * V73 — Readwise unbundling, gateway PR 5. Three additive changes in one step:
+ * V73 — connector unbundling, gateway PR 5. Three additive changes in one step:
  *
  * - `connector_migration`: one row per bundled connector being moved to a registry-installed
  *   extension (written by the migration path in a later task). `legacy_service_id` is UNIQUE: a

@@ -1,6 +1,6 @@
 /**
  * The migration state machine that moves an existing user of a bundled connector to its signed
- * extension (Readwise unbundling spec § 7.2, § 7.3). One row per legacy service in
+ * extension (connector-unbundling spec § 7.2, § 7.3). One row per legacy service in
  * `connector_migration` (`migration-store.ts`):
  *
  *   (none | failed | awaiting_approval with its stage missing)

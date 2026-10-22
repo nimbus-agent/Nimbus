@@ -1,5 +1,5 @@
 /**
- * The connector migration engine's place in gateway composition (Readwise unbundling spec § 7.2).
+ * The connector migration engine's place in gateway composition (connector-unbundling spec § 7.2).
  *
  * Ruling B1: the built-in official registry and the continuity table reach a real gateway ONLY as
  * composition options a test runner passes to `assemblePlatformServices` — never an environment

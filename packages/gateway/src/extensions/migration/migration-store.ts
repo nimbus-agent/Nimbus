@@ -5,7 +5,7 @@ import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
 
 /**
  * The `connector_migration` table (V73): one row per bundled connector being moved to a signed,
- * registry-installed extension (Readwise unbundling spec § 7.2). `legacy_service_id` is UNIQUE, so
+ * registry-installed extension (connector-unbundling spec § 7.2). `legacy_service_id` is UNIQUE, so
  * the table itself is the dedup — a legacy connector has at most one migration row, ever.
  *
  * The spec's `prepared` state is folded into `awaiting_approval`: a row is written only once the

@@ -1,5 +1,5 @@
 /**
- * The built-in official registry (Readwise unbundling spec § 7.4). The release carries its URL and
+ * The built-in official registry (connector-unbundling spec § 7.4). The release carries its URL and
  * root public key; it is NOT a row of the owner's `extension_registry` — adding it to the owner's
  * list stays a `registry.add` HITL decision, and `listRegistries` / `nimbus registry list` stay the
  * owner's list. Three pieces make it usable by code paths that assumed a row:
@@ -35,7 +35,7 @@ export interface BuiltinRegistryConfig {
 }
 
 /**
- * The official registry this release trusts (Readwise unbundling pilot, gateway PR 7). The URL
+ * The official registry this release trusts (connector-unbundling pilot, gateway PR 7). The URL
  * keeps its trailing slash: `resolveRegistryResource` resolves `index.json` with `new URL(rel,
  * base)`, which drops the last path segment of a base without one. Tests that must not reach the
  * network pass `builtin: null` explicitly.

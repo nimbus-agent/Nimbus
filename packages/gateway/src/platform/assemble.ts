@@ -3713,7 +3713,7 @@ export async function assemblePlatformServices(
     extensionSpawnGate.resolve();
   }
 
-  // The extension sync host (Readwise unbundling pilot, spec § 8.3). Built only AFTER the boot
+  // The extension sync host (connector-unbundling pilot, spec § 8.3). Built only AFTER the boot
   // verification pass, so nothing it registers is something that pass just hard-disabled, and only
   // when the runtime is on and the scheduler can run (not demo-rooted, I41). Registration goes
   // through the same I22 policy filter as every other mesh-backed syncable.
@@ -3748,12 +3748,12 @@ export async function assemblePlatformServices(
     // The compiled release binary counts as production even with NODE_ENV unset (it always is).
     production: isProductionRuntime(),
     // The SAME built-in the migration engine gets (ruling B1): the baked `BUILTIN_REGISTRY` (null
-    // until the Readwise pilot's PR 7) unless a test runner passed a fixture to this function. No
+    // until the unbundling pilot's PR 7) unless a test runner passed a fixture to this function. No
     // env var, config key or IPC param sets it.
     builtin: migration.builtin,
   };
 
-  // The connector migration engine (Readwise unbundling spec § 7.2): built after the extension boot
+  // The connector migration engine (connector-unbundling spec § 7.2): built after the extension boot
   // gate and the sync registrar it registers through, and handed the SAME continuity table and
   // built-in registry as the registrar, the spawn verifier and the registry fetch above. Boot
   // evaluation is skipped when demo-rooted (I41), never awaited, and never fatal.
