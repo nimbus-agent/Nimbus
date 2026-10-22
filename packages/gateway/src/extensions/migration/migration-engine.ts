@@ -24,9 +24,9 @@
  * agreed to shows up in `nimbus extension list`.
  *
  * Every dependency that decides WHETHER a migration happens is injected — the built-in registry
- * (`BUILTIN_REGISTRY`, `null` in production until gateway PR 7), the continuity table (empty in
- * production until then) and the bundled-connector predicate — so with the production defaults
- * `evaluate()` is a no-op, and tests drive a fixture entry whose legacy id is not bundled.
+ * (`BUILTIN_REGISTRY`, baked in gateway PR 7), the continuity table (Readwise only) and the
+ * bundled-connector predicate. With the production defaults `evaluate()` acts on Readwise alone;
+ * tests drive a fixture entry whose legacy id is not bundled.
  */
 import type { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
