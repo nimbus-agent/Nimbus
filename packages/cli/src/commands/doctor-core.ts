@@ -900,40 +900,65 @@ function isMethodNotFound(e: unknown): boolean {
 
 /**
  * Profile lines from `diag.snapshot.configLayers`. The field is optional: an older gateway omits it
- * and doctor stays silent. A marker/running mismatch is a `[warn]`; a profile with no file is
- * `[info]` only and never changes the exit code.
+ * and doctor stays silent. A marker the next restart would apply is a `[warn]`, as is a layer the
+ * gateway could not read; a profile with no file is `[info]` only and never changes the exit code.
  */
 export function doctorPrintProfile(raw: unknown): number {
   if (raw === null || typeof raw !== "object") return 0;
   const c = raw as {
     runningProfile?: unknown;
+    runningProfileSource?: unknown;
     markerProfile?: unknown;
     layers?: unknown;
   };
   if (typeof c.runningProfile !== "string") return 0;
   let exit = 0;
   const running = c.runningProfile;
-  if (typeof c.markerProfile === "string" && c.markerProfile !== running) {
+  // An argument or NIMBUS_PROFILE beats the marker, so a restart would not apply it. A gateway
+  // that predates `runningProfileSource` is treated as marker-resolved.
+  const markerDecides =
+    c.runningProfileSource === undefined ||
+    c.runningProfileSource === "marker" ||
+    c.runningProfileSource === "default";
+  if (markerDecides && typeof c.markerProfile === "string" && c.markerProfile !== running) {
     console.log(
       `[warn] profile: marker says "${c.markerProfile}" but the gateway runs "${running}" — restart to apply`,
     );
     exit = 1;
   }
-  if (running !== "default" && Array.isArray(c.layers)) {
-    const own = (c.layers as unknown[]).find(
-      (l) =>
-        l !== null &&
-        typeof l === "object" &&
-        (l as { kind?: unknown }).kind === "profile" &&
-        (l as { id?: unknown }).id === running,
-    ) as { exists?: unknown } | undefined;
-    if (own !== undefined && own.exists === false) {
+  const layers = Array.isArray(c.layers) ? (c.layers as unknown[]).filter(isLayerRecord) : [];
+  for (const l of layers) {
+    if (typeof l.readError === "string") {
       console.log(
-        `[info] profile "${running}" has no nimbus.${running}.toml; running on nimbus.toml alone`,
+        `[warn] config: could not read ${String(l.path)} (${l.readError}); the gateway runs without it`,
       );
+      exit = 1;
     }
   }
+  const own = layers.find((l) => l.kind === "profile" && l.id === running);
+  if (
+    running !== "default" &&
+    own !== undefined &&
+    own.exists === false &&
+    own.readError === undefined
+  ) {
+    console.log(
+      `[info] profile "${running}" has no nimbus.${running}.toml; running on nimbus.toml alone`,
+    );
+  }
   return exit;
+}
+
+type LayerRecord = {
+  kind?: unknown;
+  id?: unknown;
+  path?: unknown;
+  exists?: unknown;
+  readError?: unknown;
+};
+
+function isLayerRecord(l: unknown): l is LayerRecord {
+  return l !== null && typeof l === "object";
 }
 
 async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {

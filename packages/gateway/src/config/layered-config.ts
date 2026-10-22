@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ResolvedProfile } from "./active-profile.ts";
-import { profileFilePath, readProfileMarker, resolveActiveProfile } from "./active-profile.ts";
+import { profileFilePath, resolveActiveProfile, tryReadProfileMarker } from "./active-profile.ts";
 import {
   type EffectiveDoc,
   type LayerDoc,
@@ -11,9 +11,16 @@ import {
   renderEffectiveDoc,
 } from "./layered-merge.ts";
 
+/** One layer of a snapshot. `readError` is a non-ENOENT read failure; the layer is then absent. */
+export type SnapshotLayer = {
+  readonly layer: LayerRef;
+  readonly exists: boolean;
+  readonly readError?: string;
+};
+
 export type ConfigSnapshot = {
   readonly version: number;
-  readonly layers: readonly { readonly layer: LayerRef; readonly exists: boolean }[];
+  readonly layers: readonly SnapshotLayer[];
   readonly doc: EffectiveDoc;
   /** Rendered effective config; null when no user layer file (base/profile) exists. */
   readonly text: string | null;
@@ -25,15 +32,21 @@ export interface PackLayerSource {
 
 export const EMPTY_PACK_LAYERS: PackLayerSource = { list: () => [] };
 
-function readOrNull(path: string): string | null {
+type LayerRead = { readonly text: string | null; readonly readError?: string };
+
+/** A layer file's text; null when absent. Any other read failure is kept as `readError`. */
+function readLayer(path: string): LayerRead {
   try {
-    return existsSync(path) ? readFileSync(path, "utf8") : null;
-  } catch {
-    return null;
+    return { text: readFileSync(path, "utf8") };
+  } catch (err) {
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { text: null };
+    }
+    return { text: null, readError: err instanceof Error ? err.message : String(err) };
   }
 }
 
-type Cached = { readonly snapshot: ConfigSnapshot; readonly contents: readonly (string | null)[] };
+type Cached = { readonly snapshot: ConfigSnapshot; readonly reads: readonly LayerRead[] };
 
 /**
  * Layered reader: pack layers, then base, then the pinned profile overlay (low to high).
@@ -68,13 +81,14 @@ export class LayeredConfig {
 
   snapshot(): ConfigSnapshot {
     const refs = this.layerRefs();
-    const contents = refs.map((r) => readOrNull(r.path));
+    const reads = refs.map((r) => readLayer(r.path));
+    const contents = reads.map((r) => r.text);
     const prev = this.cached;
     if (
       prev !== null &&
-      prev.contents.length === contents.length &&
+      prev.reads.length === reads.length &&
       prev.snapshot.layers.every((l, i) => l.layer.path === refs[i]?.path) &&
-      prev.contents.every((c, i) => c === contents[i])
+      prev.reads.every((c, i) => c.text === reads[i]?.text && c.readError === reads[i]?.readError)
     ) {
       return prev.snapshot;
     }
@@ -91,11 +105,18 @@ export class LayeredConfig {
     this.fallbacks = new Map();
     const snapshot: ConfigSnapshot = {
       version: this.version,
-      layers: refs.map((layer, i) => ({ layer, exists: contents[i] !== null })),
+      layers: refs.map((layer, i) => {
+        const readError = reads[i]?.readError;
+        return {
+          layer,
+          exists: contents[i] !== null,
+          ...(readError !== undefined ? { readError } : {}),
+        };
+      }),
       doc,
       text: hasUser ? renderEffectiveDoc(doc) : null,
     };
-    this.cached = { snapshot, contents };
+    this.cached = { snapshot, reads };
     return snapshot;
   }
 
@@ -106,9 +127,9 @@ export class LayeredConfig {
     );
   }
 
-  /** The live marker, which may differ from the pinned profile. */
+  /** The live marker, which may differ from the pinned profile; an unreadable one reads as absent. */
   markerProfile(): string {
-    return readProfileMarker(this.configDir) ?? "default";
+    return tryReadProfileMarker(this.configDir) ?? "default";
   }
 
   recordSectionFallback(header: string, message: string): void {
@@ -175,6 +196,25 @@ export function fallbackMessage(err: unknown): string {
 /** A sink recording into the layered reader for `configDir` under `sectionId` (unbracketed). */
 export function sectionFallbackSink(configDir: string, sectionId: string): SectionFallbackSink {
   return (message) => getLayeredConfig(configDir).recordSectionFallback(sectionId, message);
+}
+
+/**
+ * The first layer that exists but could not be read, as "could not read <path>: <message>";
+ * undefined when every layer read cleanly or is absent. The snapshot treats such a layer as
+ * absent, so a loader that must not run on a partial config throws this, and one that falls
+ * back records it.
+ */
+export function layerReadError(configDir: string): string | undefined {
+  for (const l of getLayeredConfig(configDir).snapshot().layers) {
+    if (l.readError !== undefined) return `could not read ${l.layer.path}: ${l.readError}`;
+  }
+  return undefined;
+}
+
+/** Throws `layerReadError` as an Error, for the loaders whose single-file reader let a read error escape. */
+export function assertLayersReadable(configDir: string): void {
+  const err = layerReadError(configDir);
+  if (err !== undefined) throw new Error(err);
 }
 
 /** The effective (layered) config text for `configDir`; null when no user layer file exists. */

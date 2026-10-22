@@ -1,5 +1,5 @@
 import { ENTRY_RE } from "../teamvault/team-vault-keys.ts";
-import { layeredConfigText } from "./layered-config.ts";
+import { assertLayersReadable, layeredConfigText } from "./layered-config.ts";
 import { isTableHeader, parseString, splitKeyValue, stripComment } from "./toml-primitives.ts";
 
 export const TEAM_CREDENTIAL_CONNECTORS = [
@@ -110,6 +110,7 @@ export function parseNimbusConnectorsToml(source: string): ConnectorsConfig {
 }
 
 export function loadNimbusConnectorsFromConfigDir(configDir: string): ConnectorsConfig {
+  assertLayersReadable(configDir);
   const text = layeredConfigText(configDir);
   if (text === null) return new Map();
   return parseNimbusConnectorsToml(text);

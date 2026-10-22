@@ -211,7 +211,11 @@ export async function runConfigEdit(
  * be dispatched without launching a real editor. Production callers pass nothing.
  */
 /** Test seam for the Gateway-backed subcommands; production callers pass nothing. */
-export type ConfigDeps = { withIpc?: typeof withGatewayIpc };
+export type ConfigDeps = {
+  withIpc?: typeof withGatewayIpc;
+  /** Environment read for the active profile (`NIMBUS_PROFILE`); defaults to `process.env`. */
+  env?: (k: string) => string | undefined;
+};
 
 type ExplainLayerRef = { kind: string; id: string; path: string };
 type ExplainSource = { kind: "layer"; layer: ExplainLayerRef } | { kind: "env"; envVar: string };
@@ -221,11 +225,13 @@ type ExplainEntry = {
   source: ExplainSource;
   shadowed: { source: ExplainSource; value: string }[];
 };
-/** Local copy of the gateway`s `config.explain` result (the CLI cannot import the gateway). */
+/** Local copy of the gateway's `config.explain` result (the CLI cannot import the gateway). */
 export type ExplainResult = {
   runningProfile: string;
+  /** "argument" | "env" | "marker" | "default"; absent from an older gateway. */
+  runningProfileSource?: string;
   markerProfile: string;
-  layers: { layer: ExplainLayerRef; exists: boolean }[];
+  layers: { layer: ExplainLayerRef; exists: boolean; readError?: string }[];
   entries: ExplainEntry[];
   blocks?: { header: string; layer: ExplainLayerRef; entries: ExplainEntry[] }[];
   policyMayRestrict: boolean;
@@ -322,12 +328,14 @@ export async function runConfig(
     return;
   }
 
-  const tomlPath = cliWriteTargetPath(paths.configDir);
-
+  // Above the write-target resolution: validate reads nothing locally, so a malformed profile
+  // name must not stop it reaching the gateway (which reports the problem itself).
   if (sub === "validate") {
     await withIpc((c) => runConfigValidate(c));
     return;
   }
+
+  const tomlPath = cliWriteTargetPath(paths.configDir, deps.env);
 
   if (sub === "list") {
     runConfigList(tomlPath, { json });

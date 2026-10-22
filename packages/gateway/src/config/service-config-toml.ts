@@ -8,7 +8,7 @@ import {
   parseDoraRepoUrn,
   type ServiceConfig,
 } from "../metrics/dora-config.ts";
-import { layeredConfigText } from "./layered-config.ts";
+import { assertLayersReadable, layeredConfigText } from "./layered-config.ts";
 import {
   isTableHeader,
   parseIntDec,
@@ -205,6 +205,7 @@ export function loadNimbusDoraFromPath(tomlPath: string): Map<string, ServiceCon
 }
 
 export function loadNimbusDoraFromConfigDir(configDir: string): Map<string, ServiceConfig> {
+  assertLayersReadable(configDir);
   const raw = layeredConfigText(configDir);
   if (raw === null) return new Map();
   return parseNimbusDoraToml(raw);

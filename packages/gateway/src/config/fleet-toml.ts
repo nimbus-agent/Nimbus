@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import {
   fallbackMessage,
   layeredConfigText,
+  layerReadError,
   type SectionFallbackSink,
   sectionFallbackSink,
 } from "./layered-config.ts";
@@ -349,6 +350,11 @@ export function loadNimbusFleetFromPath(tomlPath: string): NimbusFleetLoad {
 
 /** `[fleet]` over the layered snapshot (packs, base, active profile). Throws like the path door. */
 export function loadNimbusFleetFromConfigDir(configDir: string): NimbusFleetLoad {
+  const readError = layerReadError(configDir);
+  if (readError !== undefined) {
+    sectionFallbackSink(configDir, "fleet")(`refused: ${readError}`);
+    throw new Error(readError);
+  }
   return loadNimbusFleetFromText(
     layeredConfigText(configDir),
     sectionFallbackSink(configDir, "fleet"),

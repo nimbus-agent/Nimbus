@@ -5,8 +5,10 @@ import type { LlmTaskType } from "../llm/types.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
 import {
+  assertLayersReadable,
   fallbackMessage,
   layeredConfigText,
+  layerReadError,
   type SectionFallbackSink,
   sectionFallbackSink,
 } from "./layered-config.ts";
@@ -66,7 +68,8 @@ function loadTomlSection<T>(tomlPath: string, fallback: T, parse: (raw: string) 
 /**
  * Config-dir reader over the layered snapshot (packs, base, active profile). Same semantics as
  * `loadTomlSection` for the same text, and a swallowed parse error is recorded as the section's
- * fallback so `config explain` can report it.
+ * fallback so `config explain` can report it. A layer that exists but cannot be read falls back
+ * to the defaults, as `loadTomlSection`'s read error did, recorded with the file it names.
  */
 export function loadTomlSectionFromConfig<T>(
   configDir: string,
@@ -74,6 +77,11 @@ export function loadTomlSectionFromConfig<T>(
   fallback: T,
   parse: (raw: string) => T,
 ): T {
+  const readError = layerReadError(configDir);
+  if (readError !== undefined) {
+    sectionFallbackSink(configDir, sectionId)(readError);
+    return structuredClone(fallback);
+  }
   return loadTomlSectionFromText(
     layeredConfigText(configDir),
     fallback,
@@ -1702,6 +1710,12 @@ function loadNimbusPagerdutyFromText(
 }
 
 export function loadNimbusPagerdutyFromConfigDir(configDir: string): NimbusPagerdutyToml {
+  const readError = layerReadError(configDir);
+  if (readError !== undefined) {
+    sectionFallbackSink(configDir, "pagerduty")(readError);
+    process.stderr.write(`nimbus: [pagerduty] ${readError}, using defaults\n`);
+    return structuredClone(DEFAULT_NIMBUS_PAGERDUTY_TOML);
+  }
   return loadNimbusPagerdutyFromText(
     layeredConfigText(configDir),
     `the layered config for ${configDir}`,
@@ -2959,6 +2973,7 @@ export function loadNimbusAgentsFromConfigDir(configDir: string): NimbusAgentsTo
 export function loadNimbusServiceConfigsFromConfigDir(
   configDir: string,
 ): Map<string, ServiceConfig> {
+  assertLayersReadable(configDir);
   const raw = layeredConfigText(configDir);
   if (raw === null) return new Map();
   const dora = parseNimbusDoraToml(raw);

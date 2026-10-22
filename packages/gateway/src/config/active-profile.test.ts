@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   InvalidProfileNameError,
   profileFilePath,
+  readProfileMarker,
   resolveActiveProfile,
+  tryReadProfileMarker,
 } from "./active-profile.ts";
 
 const dirs: string[] = [];
@@ -86,6 +88,35 @@ describe("resolveActiveProfile", () => {
       expect(e).toBeInstanceOf(InvalidProfileNameError);
       expect((e as InvalidProfileNameError).source).toBe("env");
     }
+  });
+});
+
+describe("an unreadable marker (a directory)", () => {
+  function dirMarker(): string {
+    const configDir = freshDir();
+    mkdirSync(join(configDir, ".nimbus-profile"));
+    return configDir;
+  }
+
+  test("boot resolution throws a clear error naming the marker file", () => {
+    const configDir = dirMarker();
+    expect(() => resolveActiveProfile({ configDir, env: envOf({}) })).toThrow(
+      `could not read the profile marker ${join(configDir, ".nimbus-profile")}`,
+    );
+    expect(() => readProfileMarker(configDir)).toThrow(".nimbus-profile");
+  });
+
+  test("an env profile never reads the marker, so it still resolves", () => {
+    const configDir = dirMarker();
+    expect(resolveActiveProfile({ configDir, env: envOf({ NIMBUS_PROFILE: "work" }) })).toEqual({
+      name: "work",
+      source: "env",
+    });
+  });
+
+  test("the lenient read used by diag/explain treats it as absent", () => {
+    expect(tryReadProfileMarker(dirMarker())).toBeUndefined();
+    expect(tryReadProfileMarker(freshDir("home\n"))).toBe("home");
   });
 });
 

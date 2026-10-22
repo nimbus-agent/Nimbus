@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InvalidProfileNameError, resolveActiveProfile } from "./active-profile.ts";
@@ -7,6 +7,7 @@ import {
   getLayeredConfig,
   initLayeredConfig,
   LayeredConfig,
+  layerReadError,
   resetLayeredConfigsForTests,
 } from "./layered-config.ts";
 
@@ -93,6 +94,37 @@ describe("LayeredConfig", () => {
     expect(() => initLayeredConfig(dir, { explicitProfile: "home" })).toThrow();
     const same = initLayeredConfig(dir, { explicitProfile: "work" });
     expect(same.profile.name).toBe(resolveActiveProfile({ configDir: dir, explicit: "work" }).name);
+  });
+
+  test("an unreadable layer carries readError and is absent from the merge", () => {
+    write("nimbus.toml", "[decisions]\nmin_confidence = 0.3\n");
+    mkdirSync(join(dir, "nimbus.work.toml"));
+    const snap = work().snapshot();
+    const profileLayer = snap.layers.find((l) => l.layer.kind === "profile");
+    expect(profileLayer?.exists).toBe(false);
+    expect(profileLayer?.readError).toEqual(expect.any(String));
+    expect(snap.layers.find((l) => l.layer.kind === "base")?.readError).toBeUndefined();
+    expect(snap.text).toContain("0.3");
+  });
+
+  test("a missing layer has no readError", () => {
+    const snap = work().snapshot();
+    expect(snap.layers.every((l) => l.readError === undefined)).toBe(true);
+  });
+
+  test("layerReadError names the unreadable file; undefined when every layer reads", () => {
+    write(".nimbus-profile", "work");
+    write("nimbus.toml", "[decisions]\nmin_confidence = 0.3\n");
+    expect(layerReadError(dir)).toBeUndefined();
+    resetLayeredConfigsForTests();
+    mkdirSync(join(dir, "nimbus.work.toml"));
+    expect(layerReadError(dir)).toContain(`could not read ${join(dir, "nimbus.work.toml")}`);
+  });
+
+  test("markerProfile tolerates an unreadable marker", () => {
+    const cfg = work();
+    mkdirSync(join(dir, ".nimbus-profile"));
+    expect(cfg.markerProfile()).toBe("default");
   });
 
   test("section fallback is cleared on change", () => {

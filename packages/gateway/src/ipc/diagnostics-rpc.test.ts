@@ -1,6 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { forgetLayeredConfigForTests, initLayeredConfig } from "../config/layered-config.ts";
@@ -2018,6 +2026,22 @@ describe("ask.explainLast", () => {
 });
 
 describe("layered config over IPC", () => {
+  test("diag.snapshot configLayers carries a layer's readError", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
+      mkdirSync(join(dir, "nimbus.work.toml"));
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        const layers = (
+          r as { value: { configLayers: { layers: { path: string; readError?: string }[] } } }
+        ).value.configLayers.layers;
+        expect(layers[1]?.path).toBe("nimbus.work.toml");
+        expect(layers[1]?.readError).toEqual(expect.any(String));
+      } finally {
+        db.close();
+      }
+    }));
+
   function withProfileDir(
     files: Record<string, string>,
     profile: string,
@@ -2058,18 +2082,49 @@ describe("layered config over IPC", () => {
       );
     }));
 
-  test("config.validate names the profile file in its warning", () =>
+  type Validation = { ok: boolean; errors: string[]; warnings: string[] };
+  async function validate(dir: string): Promise<Validation> {
+    const r = await dispatchDiagnosticsRpc("config.validate", null, makeCtx(dir));
+    return (r as { value: Validation }).value;
+  }
+
+  test("config.validate: an overlay-only profile file inherits schema_version (no warning)", () =>
     withProfileDir(
       { "nimbus.toml": "schema_version = 1\n", "nimbus.work.toml": "[llm]\nprefer_local = true\n" },
       "work",
       async (dir) => {
-        const r = await dispatchDiagnosticsRpc("config.validate", null, makeCtx(dir));
-        const v = (r as { value: { ok: boolean; warnings: string[] } }).value;
+        const v = await validate(dir);
         expect(v.ok).toBe(true);
-        expect(v.warnings).toHaveLength(1);
-        expect(v.warnings[0]).toContain("nimbus.work.toml");
+        expect(v.warnings).toEqual([]);
       },
     ));
+
+  test("config.validate warns once, naming nimbus.toml, when the effective root lacks schema_version", () =>
+    withProfileDir(
+      { "nimbus.toml": "[llm]\nprefer_local = true\n", "nimbus.work.toml": "[decisions]\n" },
+      "work",
+      async (dir) => {
+        const v = await validate(dir);
+        expect(v.ok).toBe(true);
+        expect(v.warnings).toHaveLength(1);
+        expect(v.warnings[0]).toContain("nimbus.toml");
+        expect(v.warnings[0]).not.toContain("nimbus.work.toml");
+      },
+    ));
+
+  test("config.validate: schema_version under a section header is not a root key", () =>
+    withProfileDir({ "nimbus.toml": "[llm]\nschema_version = 1\n" }, "default", async (dir) => {
+      expect((await validate(dir)).warnings).toHaveLength(1);
+    }));
+
+  test("config.validate reports an unreadable layer as an ERROR naming the file", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
+      mkdirSync(join(dir, "nimbus.work.toml"));
+      const v = await validate(dir);
+      expect(v.ok).toBe(false);
+      expect(v.errors).toHaveLength(1);
+      expect(v.errors[0]).toContain(join(dir, "nimbus.work.toml"));
+    }));
 
   test("config.validate is clean for an active profile with no file", () =>
     withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
@@ -2089,15 +2144,20 @@ describe("layered config over IPC", () => {
             value: {
               configLayers: {
                 runningProfile: string;
+                runningProfileSource: string;
                 markerProfile: string;
-                layers: { kind: string; exists: boolean }[];
+                layers: { kind: string; path: string; exists: boolean; readError?: string }[];
                 activePacks: string[];
               };
             };
           }
         ).value.configLayers;
         expect(c.runningProfile).toBe("work");
+        expect(c.runningProfileSource).toBe("argument");
         expect(c.markerProfile).toBe("default");
+        // diag.snapshot is LAN-callable and renderer-exposed: basenames only, never a home path.
+        expect(c.layers.map((l) => l.path)).toEqual(["nimbus.toml", "nimbus.work.toml"]);
+        expect(c.layers.every((l) => l.readError === undefined)).toBe(true);
         expect(c.layers.map((l) => [l.kind, l.exists])).toEqual([
           ["base", true],
           ["profile", false],

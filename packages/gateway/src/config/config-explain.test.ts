@@ -2,8 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { explainConfig, probeSection, SECTION_LOADERS } from "./config-explain.ts";
-import { initLayeredConfig, resetLayeredConfigsForTests } from "./layered-config.ts";
+import {
+  explainConfig,
+  probeSection,
+  SECTION_ALIASES,
+  SECTION_LOADERS,
+  sectionIdForPath,
+} from "./config-explain.ts";
+import { initLayeredConfig, LayeredConfig, resetLayeredConfigsForTests } from "./layered-config.ts";
 
 let dir: string;
 
@@ -155,6 +161,39 @@ describe("explainConfig", () => {
     expect(r.runningProfile).toBe("work");
     expect(r.markerProfile).toBe("home");
     expect(r.notes).toContain('profile switched to "home" on disk; restart the gateway to apply');
+    expect(r.runningProfileSource).toBe("marker");
+  });
+
+  test("no restart note when the running profile came from NIMBUS_PROFILE or an argument", () => {
+    writeFileSync(join(dir, ".nimbus-profile"), "home\n");
+    for (const source of ["env", "argument"] as const) {
+      const reader = new LayeredConfig({ configDir: dir, profile: { name: "work", source } });
+      const r = explainConfig(reader, "a.b", noEnv);
+      expect(r.runningProfileSource).toBe(source);
+      expect(r.markerProfile).toBe("home");
+      expect(r.notes.some((n) => n.includes("restart"))).toBe(false);
+    }
+  });
+
+  test("a default-sourced profile with a marker written since boot gets the restart note", () => {
+    const reader = new LayeredConfig({
+      configDir: dir,
+      profile: { name: "default", source: "default" },
+    });
+    writeFileSync(join(dir, ".nimbus-profile"), "home\n");
+    const r = explainConfig(reader, "a.b", noEnv);
+    expect(r.notes).toContain('profile switched to "home" on disk; restart the gateway to apply');
+  });
+
+  test("glossary.synonyms.<x> reads the glossary manual loader's glossary.terms fallback", () => {
+    expect(sectionIdForPath("glossary.synonyms.foo")).toBe("glossary.terms");
+    expect(sectionIdForPath("glossary.terms.foo")).toBe("glossary.terms");
+    expect(sectionIdForPath("glossary.enabled")).toBe("glossary");
+    writeBase('[glossary.synonyms]\nfoo = "bar"\n');
+    const reader = initLayeredConfig(dir);
+    reader.recordSectionFallback("glossary.terms", "manual glossary rejected");
+    const r = explainConfig(reader, "glossary.synonyms.foo", noEnv);
+    expect(r.sectionFallback).toBe("manual glossary rejected");
   });
 
   test("unknown path note", () => {
@@ -195,8 +234,9 @@ describe("section fallbacks", () => {
       join(import.meta.dir, "..", "multimodal", "multimodal-config.ts"),
     ];
     const idRes = [
-      /sectionFallbackSink\(\s*configDir,\s*"([^"]+)"/g,
-      /loadTomlSectionFromConfig(?:<[^>]+>)?\(\s*configDir,\s*"([^"]+)"/g,
+      /sectionFallbackSink\(\s*[\w.]+,\s*"([^"]+)"/g,
+      /recordSectionFallback\(\s*"([^"]+)"/g,
+      /loadTomlSectionFromConfig(?:<[^>]+>)?\(\s*[\w.]+,\s*"([^"]+)"/g,
     ];
     const ids = new Set<string>();
     for (const file of sources) {
@@ -207,7 +247,11 @@ describe("section fallbacks", () => {
     expect(ids.has("audit")).toBe(true);
     expect(ids.has("hitl.quorum")).toBe(true);
     expect(ids.has("fleet")).toBe(true);
+    expect(ids.has("glossary.terms")).toBe(true);
     const missing = [...ids].filter((id) => !(id in SECTION_LOADERS));
     expect(missing).toEqual([]);
+    // An alias may only point at a real loader id.
+    for (const target of Object.values(SECTION_ALIASES))
+      expect(target in SECTION_LOADERS).toBe(true);
   });
 });

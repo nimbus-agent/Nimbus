@@ -1,4 +1,4 @@
-import { layeredConfigText } from "./layered-config.ts";
+import { assertLayersReadable, layeredConfigText } from "./layered-config.ts";
 import {
   isTableHeader,
   parseString,
@@ -109,6 +109,7 @@ export function parseNimbusWorkdayToml(
 }
 
 export function loadNimbusWorkdayFromConfigDir(configDir: string): NimbusWorkdayToml {
+  assertLayersReadable(configDir);
   const text = layeredConfigText(configDir);
   if (text === null) return DEFAULT_NIMBUS_WORKDAY_TOML;
   return parseNimbusWorkdayToml(text);

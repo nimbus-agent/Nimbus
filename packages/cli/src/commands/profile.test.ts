@@ -1,5 +1,13 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -67,6 +75,14 @@ describe("runProfileCreate", () => {
     const base = join(tmp, "nimbus.toml");
     expect(() => runProfileCreate(tmp, base, [])).toThrow("Usage: nimbus profile create");
     expect(() => runProfileCreate(tmp, base, ["default"])).toThrow("Usage: nimbus profile create");
+  });
+
+  it("refuses a name the gateway would refuse at boot, and writes nothing", () => {
+    const base = join(tmp, "nimbus.toml");
+    for (const bad of ["bad name!", "../evil", "a".repeat(33)]) {
+      expect(() => runProfileCreate(tmp, base, [bad])).toThrow(`Invalid profile name "${bad}"`);
+    }
+    expect(readdirSync(tmp)).toEqual([]);
   });
 
   // The minimal-file fallback is for a MISSING base (ENOENT) only: any other copy failure has to
@@ -170,6 +186,18 @@ describe("runProfileSwitch", () => {
 
   it("rejects empty name", () => {
     expect(() => runProfileSwitch(tmp, [])).toThrow("Usage: nimbus profile switch");
+  });
+
+  it("refuses a name the gateway would refuse at boot, even when a matching file exists", () => {
+    writeFileSync(join(tmp, "nimbus.bad name!.toml"), "", "utf8");
+    expect(() => runProfileSwitch(tmp, ["bad name!"])).toThrow('Invalid profile name "bad name!"');
+    expect(existsSync(join(tmp, ".nimbus-profile"))).toBe(false);
+  });
+
+  it("an unreadable marker lists as the default rather than crashing", () => {
+    mkdirSync(join(tmp, ".nimbus-profile"));
+    runProfileList(tmp);
+    expect(out.stdout).toContain("active: (default — nimbus.toml)");
   });
 });
 

@@ -4,10 +4,11 @@
 import { DEFAULT_OPENAPI_CONFIG, parseOpenapiToml } from "../connectors/openapi-indexer-config.ts";
 import { loadMultimodalConfig } from "../multimodal/multimodal-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
+import type { ProfileSource } from "./active-profile.ts";
 import { CONFIG_ENV_OVERRIDES, isPolicyConstrainedPath } from "./config-env-overrides.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "./filesystem-toml.ts";
 import { loadNimbusFleetFromConfigDir } from "./fleet-toml.ts";
-import { fallbackMessage, type LayeredConfig } from "./layered-config.ts";
+import { fallbackMessage, type LayeredConfig, type SnapshotLayer } from "./layered-config.ts";
 import {
   type EffectiveEntry,
   type EffectiveSection,
@@ -130,16 +131,27 @@ export function probeSection(reader: LayeredConfig, sectionId: string): string |
   return reader.sectionFallback(sectionId);
 }
 
-/** The `SECTION_LOADERS` id owning `path`: the longest id equal to, or a dotted prefix of, it. */
-function sectionIdForPath(path: string): string | undefined {
+/**
+ * Sections read by another section's loader, mapped to the id that loader records under:
+ * `[glossary.synonyms]` is parsed by the manual glossary loader, which records `glossary.terms`.
+ */
+export const SECTION_ALIASES: Readonly<Record<string, string>> = {
+  "glossary.synonyms": "glossary.terms",
+};
+
+/**
+ * The `SECTION_LOADERS` id owning `path`: the longest loader id or alias equal to, or a dotted
+ * prefix of, it (an alias resolves to its target).
+ */
+export function sectionIdForPath(path: string): string | undefined {
   const wanted = unquote(path);
   let best: string | undefined;
-  for (const id of Object.keys(SECTION_LOADERS)) {
+  for (const id of [...Object.keys(SECTION_LOADERS), ...Object.keys(SECTION_ALIASES)]) {
     if ((wanted === id || wanted.startsWith(`${id}.`)) && id.length > (best?.length ?? -1)) {
       best = id;
     }
   }
-  return best;
+  return best === undefined ? undefined : (SECTION_ALIASES[best] ?? best);
 }
 
 export type ExplainSource =
@@ -155,8 +167,10 @@ export type ExplainEntry = {
 
 export type ExplainResult = {
   readonly runningProfile: string;
+  /** Where the running name came from; a restart re-resolves only a marker/default profile. */
+  readonly runningProfileSource: ProfileSource;
   readonly markerProfile: string;
-  readonly layers: readonly { readonly layer: LayerRef; readonly exists: boolean }[];
+  readonly layers: readonly SnapshotLayer[];
   readonly entries: readonly ExplainEntry[];
   readonly blocks?: readonly {
     readonly header: string;
@@ -295,6 +309,19 @@ function resolvePlain(
   return undefined;
 }
 
+/**
+ * True when restarting the gateway would pick a different profile than the running one. An
+ * argument or NIMBUS_PROFILE beats the marker, so only a marker- or default-resolved profile can
+ * be changed by a new marker.
+ */
+export function restartWouldSwitch(
+  source: ProfileSource,
+  running: string,
+  marker: string,
+): boolean {
+  return (source === "marker" || source === "default") && marker !== running;
+}
+
 export function explainConfig(
   reader: LayeredConfig,
   path: string | undefined,
@@ -358,7 +385,7 @@ export function explainConfig(
 
   const running = reader.profile.name;
   const marker = reader.markerProfile();
-  if (marker !== running) {
+  if (restartWouldSwitch(reader.profile.source, running, marker)) {
     notes.push(`profile switched to "${marker}" on disk; restart the gateway to apply`);
   }
   const sectionId = path === undefined ? undefined : sectionIdForPath(path);
@@ -369,6 +396,7 @@ export function explainConfig(
       : isPolicyConstrainedPath(path) || isPolicyConstrainedPath(unquote(path));
   return {
     runningProfile: running,
+    runningProfileSource: reader.profile.source,
     markerProfile: marker,
     layers: snap.layers,
     entries,

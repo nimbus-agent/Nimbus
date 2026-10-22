@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { PROFILE_NAME_RE, readProfileMarker } from "./active-profile.ts";
+import { PROFILE_NAME_RE, tryReadProfileMarker } from "./active-profile.ts";
 
 const PROFILE_MARKER = ".nimbus-profile";
 const PROFILE_PREFIX = "nimbus.";
@@ -17,7 +17,7 @@ export class ProfileManager {
   }
 
   private readActiveMarker(): string | undefined {
-    return readProfileMarker(this.configDir);
+    return tryReadProfileMarker(this.configDir);
   }
 
   private profileTomlPath(name: string): string {

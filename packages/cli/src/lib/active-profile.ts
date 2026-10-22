@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The CLI cannot import the gateway, so this mirrors `packages/gateway/src/config/active-profile.ts`
@@ -16,17 +16,36 @@ function checked(name: string, origin: string): string {
   return name;
 }
 
-/** The profile marker's trimmed content, or undefined when absent, empty or "default". */
+/**
+ * The profile marker's trimmed content, or undefined when absent, empty or "default". A marker
+ * that exists but cannot be read throws an error naming the file, as the gateway's boot read does.
+ */
 export function readProfileMarker(configDir: string): string | undefined {
   const p = join(configDir, PROFILE_MARKER);
-  if (!existsSync(p)) {
-    return undefined;
+  let raw: string;
+  try {
+    raw = readFileSync(p, "utf8").trim();
+  } catch (e) {
+    if (e instanceof Error && (e as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw new Error(
+      `could not read the profile marker ${p}: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
-  const raw = readFileSync(p, "utf8").trim();
   if (raw === "" || raw === "default") {
     return undefined;
   }
   return raw;
+}
+
+/** `readProfileMarker` for display (`nimbus profile list`): an unreadable marker reads as absent. */
+export function tryReadProfileMarker(configDir: string): string | undefined {
+  try {
+    return readProfileMarker(configDir);
+  } catch {
+    return undefined;
+  }
 }
 
 export function resolveCliActiveProfile(

@@ -1110,4 +1110,61 @@ describe("doctorPrintProfile (role packs)", () => {
     ).toBe(0);
     expect(out.stdout).toBe("");
   });
+
+  it("does not warn when the running profile came from NIMBUS_PROFILE or an argument", () => {
+    for (const source of ["env", "argument"]) {
+      out.reset();
+      const exit = doctorPrintProfile({
+        runningProfile: "work",
+        runningProfileSource: source,
+        markerProfile: "home",
+        layers: layers(true),
+      });
+      expect(exit).toBe(0);
+      expect(out.stdout).not.toContain("restart");
+    }
+  });
+
+  it("warns when a marker-sourced profile's marker has changed since boot", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "work",
+      runningProfileSource: "marker",
+      markerProfile: "home",
+      layers: layers(true),
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain('marker says "home" but the gateway runs "work"');
+  });
+
+  it("warns, exit 1, naming a layer the gateway could not read", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "work",
+      runningProfileSource: "argument",
+      markerProfile: "work",
+      layers: [
+        { kind: "base", id: "base", path: "nimbus.toml", exists: true },
+        {
+          kind: "profile",
+          id: "work",
+          path: "nimbus.work.toml",
+          exists: false,
+          readError: "EISDIR: illegal operation on a directory",
+        },
+      ],
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain(
+      "[warn] config: could not read nimbus.work.toml (EISDIR: illegal operation on a directory); the gateway runs without it",
+    );
+    expect(out.stdout).not.toContain("has no nimbus.work.toml");
+  });
+
+  it("tolerates malformed layer entries and a non-array layers field", () => {
+    const base = { runningProfile: "work", markerProfile: "work" };
+    expect(doctorPrintProfile({ ...base, layers: [null, 7, "x", { kind: "profile" }] })).toBe(0);
+    expect(doctorPrintProfile({ ...base, layers: "nope" })).toBe(0);
+    expect(doctorPrintProfile({ runningProfile: 3 })).toBe(0);
+    expect(doctorPrintProfile("nope")).toBe(0);
+    expect(out.stdout).toBe("");
+  });
 });

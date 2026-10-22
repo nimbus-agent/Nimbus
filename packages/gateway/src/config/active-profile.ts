@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { processEnvGet } from "../platform/env-access.ts";
 
@@ -23,13 +23,36 @@ export class InvalidProfileNameError extends Error {
   }
 }
 
-/** The trimmed `.nimbus-profile` marker, or undefined when absent, empty or `default`. */
+function isEnoent(err: unknown): boolean {
+  return err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+/**
+ * The trimmed `.nimbus-profile` marker, or undefined when absent, empty or `default`.
+ * A marker that exists but cannot be read (a directory, no permission) THROWS an error naming
+ * the file: this is the boot read, and guessing "default" would run the wrong profile silently.
+ */
 export function readProfileMarker(configDir: string): string | undefined {
   const path = join(configDir, PROFILE_MARKER);
-  if (!existsSync(path)) return undefined;
-  const raw = readFileSync(path, "utf8").trim();
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8").trim();
+  } catch (err) {
+    if (isEnoent(err)) return undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`could not read the profile marker ${path}: ${message}`);
+  }
   if (raw === "" || raw === DEFAULT_PROFILE) return undefined;
   return raw;
+}
+
+/** `readProfileMarker` for display sites (diag, explain, profile lists): unreadable is absent. */
+export function tryReadProfileMarker(configDir: string): string | undefined {
+  try {
+    return readProfileMarker(configDir);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Path of a profile's overlay file; null for the default profile (no overlay). */

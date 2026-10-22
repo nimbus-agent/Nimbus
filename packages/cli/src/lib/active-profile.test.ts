@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { cliWriteTargetPath, PROFILE_NAME_RE, resolveCliActiveProfile } from "./active-profile.ts";
+import {
+  cliWriteTargetPath,
+  PROFILE_NAME_RE,
+  readProfileMarker,
+  resolveCliActiveProfile,
+  tryReadProfileMarker,
+} from "./active-profile.ts";
 
 describe("cli active profile", () => {
   let dir: string;
@@ -41,5 +47,14 @@ describe("cli active profile", () => {
     expect(() => resolveCliActiveProfile(dir, envWith("../evil"))).toThrow(/evil/);
     expect(PROFILE_NAME_RE.test("a".repeat(33))).toBe(false);
     expect(PROFILE_NAME_RE.test("Work_1-b")).toBe(true);
+  });
+
+  it("an unreadable marker throws naming the file; the display read treats it as absent", () => {
+    const marker = join(dir, ".nimbus-profile");
+    mkdirSync(marker);
+    expect(() => readProfileMarker(dir)).toThrow(`could not read the profile marker ${marker}`);
+    expect(() => resolveCliActiveProfile(dir, noEnv)).toThrow(marker);
+    expect(resolveCliActiveProfile(dir, envWith("work"))).toBe("work");
+    expect(tryReadProfileMarker(dir)).toBeUndefined();
   });
 });
