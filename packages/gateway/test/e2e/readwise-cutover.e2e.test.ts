@@ -36,9 +36,12 @@
 // spawn no extension and run everywhere.
 //
 // The Vault: on macOS and Linux it is the machine-global keychain / keyring, so a seeded
-// `readwise.token` is visible outside this test's temp dirs. Every describe records the prior
-// values of the keys it touches, clears them, and restores them afterwards. The publisher id is
-// unique per run and its cached key is evicted afterwards (as in `registry-acceptance.e2e`).
+// `readwise.token` is visible outside this test's temp dirs. Off CI, a machine whose Vault holds a
+// real (non-fixture) value there skips every describe unless NIMBUS_E2E_ALLOW_REAL_VAULT=1. Every
+// describe first records the prior values of the keys it touches and clears them, and afterwards
+// restores exactly the keys it recorded. The publisher id is unique per run and its cached key is
+// evicted afterwards (as in `registry-acceptance.e2e`). Windows' DPAPI Vault lives under each
+// run's temp `configDir`, so none of this reaches a real Vault there.
 //
 // Embeddings are skipped (NIMBUS_SKIP_EMBEDDING_RUNTIME=1).
 
@@ -71,6 +74,7 @@ import { buildTestRegistry } from "../../src/extensions/registry/__fixtures__/bu
 import type { PlatformPaths } from "../../src/platform/paths.ts";
 import { createSandboxRunner } from "../../src/platform/sandbox/sandbox-runner.ts";
 import { createNimbusVault } from "../../src/vault/factory.ts";
+import type { NimbusVault } from "../../src/vault/nimbus-vault.ts";
 
 const RUNNER = join(import.meta.dir, "_fixtures", "gateway-runner.ts");
 const REPO = resolve(import.meta.dir, "..", "..", "..", "..");
@@ -97,10 +101,55 @@ const SEEDED_ITEMS = [
 const ITEM_KEYS = SEEDED_ITEMS.map((i) => `${i.type} ${i.externalId}`).sort();
 
 function fakeToken(): string {
-  return `e2e-readwise-token-${randomUUID()}`;
+  return `${FAKE_TOKEN_PREFIX}${randomUUID()}`;
 }
 function markerOf(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+const FAKE_TOKEN_PREFIX = "e2e-readwise-token-";
+const ALLOW_REAL_VAULT = "NIMBUS_E2E_ALLOW_REAL_VAULT";
+
+/**
+ * On macOS and Linux the Vault is the machine-global keychain / keyring, so the describes below
+ * clear and later restore the REAL `readwise.token` (and the `ext.` key). On a developer's machine
+ * that holds a non-fixture value there, every describe is skipped — a killed run would lose it, and
+ * a running Nimbus would sync with the fake one meanwhile — unless the owner opts in. Never on CI:
+ * a CI keychain holds no real token, and a skip there would hide the test. Windows is unaffected:
+ * its DPAPI Vault lives under each run's temp `configDir`.
+ */
+const realVaultHeld = await (async () => {
+  if (process.platform === "win32" || IS_CI) return false;
+  const probeDir = mkdtempSync(join(tmpdir(), "nimbus-rwcut-probe-"));
+  try {
+    const vault = await createNimbusVault({
+      configDir: join(probeDir, "config"),
+      dataDir: join(probeDir, "data"),
+      logDir: join(probeDir, "logs"),
+      socketPath: join(probeDir, "gw.sock"),
+      extensionsDir: join(probeDir, "extensions"),
+      tempDir: join(probeDir, "tmp"),
+      sandboxDir: join(probeDir, "sandbox"),
+    });
+    for (const key of [LEGACY_KEY, EXT_KEY]) {
+      const value = await vault.get(key);
+      if (value !== null && !value.startsWith(FAKE_TOKEN_PREFIX)) return true;
+    }
+    return false;
+  } catch {
+    // An unreadable Vault cannot be protected or harmed here; the gateway would fail by name.
+    return false;
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+  }
+})();
+const SKIP_REAL_VAULT = realVaultHeld && process.env[ALLOW_REAL_VAULT] !== "1";
+if (SKIP_REAL_VAULT) {
+  console.warn(
+    `readwise-cutover e2e: SKIPPED -- this machine's Vault holds a real ${LEGACY_KEY} (or ` +
+      `${EXT_KEY}), which these tests would clear and replace while they run. Set ` +
+      `${ALLOW_REAL_VAULT}=1 to run them anyway; the value is restored afterwards.`,
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -482,6 +531,35 @@ type EgressRow = { sourceType: string; destination: string; method: string };
 /** The keys a describe touches in the Vault; on macOS/Linux that Vault is machine-global. */
 const TOUCHED_KEYS = [LEGACY_KEY, EXT_KEY];
 
+type HeldVault = Pick<NimbusVault, "get" | "set" | "delete">;
+
+/**
+ * Puts back exactly the keys in `held` (recorded before they were cleared): a key recorded as
+ * absent is deleted, a recorded value is written back. A key never recorded is not touched. Each
+ * key is tried; a value that could not be restored is reported by key name (never the value) and
+ * the first failure is rethrown afterwards.
+ */
+async function restoreHeldKeys(
+  vault: HeldVault,
+  held: ReadonlyMap<string, string | null>,
+): Promise<void> {
+  let firstError: unknown;
+  for (const [key, prior] of held) {
+    try {
+      await vault.delete(key);
+      if (prior !== null) await vault.set(key, prior);
+    } catch (e) {
+      if (prior !== null) {
+        console.error(
+          `readwise-cutover e2e: could NOT restore the Vault key ${key}; its earlier value is lost`,
+        );
+      }
+      firstError ??= e;
+    }
+  }
+  if (firstError !== undefined) throw firstError;
+}
+
 class Gateway {
   readonly tmp: string;
   readonly paths: PlatformPaths;
@@ -572,25 +650,32 @@ class Gateway {
     this.proc = undefined;
   }
 
-  /** Stops the gateway, restores the Vault keys and the publisher key, removes the temp dirs. */
+  /**
+   * Stops the gateway, restores ONLY the Vault keys `holdVault` recorded (a setup failure before
+   * it touches nothing), evicts the per-run publisher key and removes the temp dirs. A real value
+   * that could not be put back fails the run, naming the key.
+   */
   async dispose(): Promise<void> {
     await this.stop();
-    try {
-      const vault = await createNimbusVault(this.paths);
-      for (const key of TOUCHED_KEYS) {
-        await vault.delete(key);
-        const prior = this.priorVault.get(key);
-        if (prior !== undefined && prior !== null) await vault.set(key, prior);
+    let restoreError: unknown;
+    if (this.priorVault.size > 0) {
+      try {
+        await restoreHeldKeys(await createNimbusVault(this.paths), this.priorVault);
+      } catch (e) {
+        restoreError = e;
       }
-      await evictPublisherKey(vault, PUBLISHER_ID);
+    }
+    try {
+      await evictPublisherKey(await createNimbusVault(this.paths), PUBLISHER_ID);
     } catch {
-      /* best-effort -- the values are per-run fakes */
+      /* best-effort -- the publisher id is unique to this run */
     }
     try {
       rmSync(this.tmp, { recursive: true, force: true });
     } catch {
       /* Windows handle race; harmless */
     }
+    if (restoreError !== undefined) throw restoreError;
   }
 
   withLog(e: unknown): Error {
@@ -680,7 +765,7 @@ function legacySeed(nextSyncAt: number): string {
 // (a) Upgrade in place
 // ---------------------------------------------------------------------------------------------
 
-describe.skipIf(!sandboxAvailable)(
+describe.skipIf(!sandboxAvailable || SKIP_REAL_VAULT)(
   "(a) an upgrading Readwise user moves to the extension in place",
   () => {
     const gw = new Gateway("upgrade");
@@ -710,10 +795,11 @@ describe.skipIf(!sandboxAvailable)(
     }
 
     beforeAll(async () => {
+      // FIRST: dispose() restores only what this recorded, so a later failure loses nothing.
+      await gw.holdVault();
       const fixture = await sharedFixture();
       server = serveRegistry(fixture.registryDir);
       restoreHelper = installDefaultHelper();
-      await gw.holdVault();
       // The release the user upgrades FROM: one plain boot, so the upgrade boot has no fresh-install
       // queue of bundled syncables (see `pendingRuns` in migration.e2e).
       await gw.boot({}, false);
@@ -810,7 +896,8 @@ describe.skipIf(!sandboxAvailable)(
       // The resting cursor is stored byte for byte as the bundled connector left it.
       expect(gw.storedCursor(LEGACY)).toBe(RESTING_CURSOR);
 
-      // Catalog-id configured-ness: the run saw the credential through the extension's grant.
+      // The run used `readwise.token` (its digest is in the titles), and the catalog id reports
+      // ok / healthy.
       const status = await gw.status(LEGACY);
       expect(status).toMatchObject({ serviceId: LEGACY, status: "ok", itemCount: 3 });
       expect(status.healthState).toBe("healthy");
@@ -823,170 +910,255 @@ describe.skipIf(!sandboxAvailable)(
 // (b) Fresh install
 // ---------------------------------------------------------------------------------------------
 
-describe.skipIf(!sandboxAvailable)("(b) a fresh Readwise install binds to `readwise`", () => {
-  const gw = new Gateway("fresh");
-  const TOKEN = fakeToken();
-  let server: RegistryServer | undefined;
-  let restoreHelper: () => void = () => {};
+describe.skipIf(!sandboxAvailable || SKIP_REAL_VAULT)(
+  "(b) a fresh Readwise install binds to `readwise`",
+  () => {
+    const gw = new Gateway("fresh");
+    const TOKEN = fakeToken();
+    let server: RegistryServer | undefined;
+    let restoreHelper: () => void = () => {};
 
-  beforeAll(async () => {
-    const fixture = await sharedFixture();
-    server = serveRegistry(fixture.registryDir);
-    restoreHelper = installDefaultHelper();
-    await gw.holdVault();
-    await gw.boot({}, false);
-    await gw.stop();
-    await gw.boot(
-      {
-        NIMBUS_E2E_MIGRATION_FIXTURE_JSON: JSON.stringify(migrationFixture(fixture, server.url)),
-      },
-      true,
-    );
-  }, 300_000);
+    beforeAll(async () => {
+      // FIRST: dispose() restores only what this recorded, so a later failure loses nothing.
+      await gw.holdVault();
+      const fixture = await sharedFixture();
+      server = serveRegistry(fixture.registryDir);
+      restoreHelper = installDefaultHelper();
+      await gw.boot({}, false);
+      await gw.stop();
+      await gw.boot(
+        {
+          NIMBUS_E2E_MIGRATION_FIXTURE_JSON: JSON.stringify(migrationFixture(fixture, server.url)),
+        },
+        true,
+      );
+    }, 300_000);
 
-  afterAll(async () => {
-    await gw.dispose();
-    server?.stop();
-    restoreHelper();
-  });
-
-  test("a bare `registry.install` from the built-in registry, approved to run, binds to `readwise`", async () => {
-    expect(await gw.migrations()).toEqual([]);
-    const installed = await gw.call<{ id: string; version: string; sourceRegistry: string }>(
-      "registry.install",
-      { id: EXTENSION_ID },
-    );
-    expect(installed).toMatchObject({
-      id: EXTENSION_ID,
-      version: "1.0.0",
-      sourceRegistry: OFFICIAL,
+    afterAll(async () => {
+      await gw.dispose();
+      server?.stop();
+      restoreHelper();
     });
-    await gw.call("extension.approveRun", { id: EXTENSION_ID });
-    expect(gw.consentAsked).toEqual(["extension.install", "extension.run"]);
-    // The registrar registered the sync under the index id, not the extension's own `ext_` id.
-    expect((await gw.status(LEGACY)).serviceId).toBe(LEGACY);
-    const ownId = await gw.client.call("connector.status", { serviceId: CODE_SERVER_ID }).then(
-      () => "resolved",
-      (e: unknown) => (e instanceof Error ? e.message : String(e)),
-    );
-    expect(ownId).toContain(`Unknown connector: ${CODE_SERVER_ID}`);
-  }, 120_000);
 
-  test("`extension.credentialSet token` lands at `readwise.token`, never `ext.…`", async () => {
-    await gw.call("extension.credentialSet", { id: EXTENSION_ID, name: "token", value: TOKEN });
-    expect(await gw.vaultGet(LEGACY_KEY)).toBe(TOKEN);
-    expect(await gw.vaultGet(EXT_KEY)).toBeNull();
-    for (const p of gw.consentPrompts) expect(p).not.toContain(TOKEN);
-  }, 120_000);
+    test("a bare `registry.install` from the built-in registry, approved to run, binds to `readwise`", async () => {
+      expect(await gw.migrations()).toEqual([]);
+      const installed = await gw.call<{ id: string; version: string; sourceRegistry: string }>(
+        "registry.install",
+        { id: EXTENSION_ID },
+      );
+      expect(installed).toMatchObject({
+        id: EXTENSION_ID,
+        version: "1.0.0",
+        sourceRegistry: OFFICIAL,
+      });
+      await gw.call("extension.approveRun", { id: EXTENSION_ID });
+      expect(gw.consentAsked).toEqual(["extension.install", "extension.run"]);
+      // The registrar registered the sync under the index id, not the extension's own `ext_` id.
+      expect((await gw.status(LEGACY)).serviceId).toBe(LEGACY);
+      const ownId = await gw.client.call("connector.status", { serviceId: CODE_SERVER_ID }).then(
+        () => "resolved",
+        (e: unknown) => (e instanceof Error ? e.message : String(e)),
+      );
+      expect(ownId).toContain(`Unknown connector: ${CODE_SERVER_ID}`);
+    }, 120_000);
 
-  test("a sync indexes under `readwise` with ONE sync.run row, and `connector.status` reads configured", async () => {
-    await gw.call("connector.sync", { serviceId: LEGACY });
-    expect(await gw.syncRuns(LEGACY)).toBe(1);
-    expect(await gw.syncRuns(CODE_SERVER_ID)).toBe(0);
-    const rows = gw.items(LEGACY);
-    expect(itemKeys(rows)).toEqual(ITEM_KEYS);
-    for (const r of rows) {
-      expect(r.title).toContain(markerOf(TOKEN));
-      expect(r.title).toContain("from <none>");
-    }
-    expect(gw.items(CODE_SERVER_ID)).toEqual([]);
-    expect(gw.storedCursor(LEGACY)).toBe(RESTING_CURSOR);
-    const status = await gw.status(LEGACY);
-    expect(status).toMatchObject({ serviceId: LEGACY, status: "ok", itemCount: 3 });
-    expect(status.healthState).toBe("healthy");
-    // No migration was ever involved: the owner installed it.
-    expect(await gw.migrations()).toEqual([]);
-    expect(gw.log).not.toContain(TOKEN);
-  }, 120_000);
-});
+    test("`extension.credentialSet token` lands at `readwise.token`, never `ext.…`", async () => {
+      await gw.call("extension.credentialSet", { id: EXTENSION_ID, name: "token", value: TOKEN });
+      expect(await gw.vaultGet(LEGACY_KEY)).toBe(TOKEN);
+      expect(await gw.vaultGet(EXT_KEY)).toBeNull();
+      for (const p of gw.consentPrompts) expect(p).not.toContain(TOKEN);
+    }, 120_000);
+
+    test("a sync indexes under `readwise` with ONE sync.run row, and `connector.status` reads configured", async () => {
+      await gw.call("connector.sync", { serviceId: LEGACY });
+      expect(await gw.syncRuns(LEGACY)).toBe(1);
+      expect(await gw.syncRuns(CODE_SERVER_ID)).toBe(0);
+      const rows = gw.items(LEGACY);
+      expect(itemKeys(rows)).toEqual(ITEM_KEYS);
+      for (const r of rows) {
+        expect(r.title).toContain(markerOf(TOKEN));
+        expect(r.title).toContain("from <none>");
+      }
+      expect(gw.items(CODE_SERVER_ID)).toEqual([]);
+      expect(gw.storedCursor(LEGACY)).toBe(RESTING_CURSOR);
+      const status = await gw.status(LEGACY);
+      expect(status).toMatchObject({ serviceId: LEGACY, status: "ok", itemCount: 3 });
+      expect(status.healthState).toBe("healthy");
+      // No migration was ever involved: the owner installed it.
+      expect(await gw.migrations()).toEqual([]);
+      expect(gw.log).not.toContain(TOKEN);
+    }, 120_000);
+  },
+);
 
 // ---------------------------------------------------------------------------------------------
 // (c) Legacy items, no token
 // ---------------------------------------------------------------------------------------------
 
-describe("(c) Readwise items without `readwise.token` prepare nothing and fetch nothing", () => {
-  const gw = new Gateway("notoken");
-  let server: RegistryServer | undefined;
+describe.skipIf(SKIP_REAL_VAULT)(
+  "(c) Readwise items without `readwise.token` prepare nothing and fetch nothing",
+  () => {
+    const gw = new Gateway("notoken");
+    let server: RegistryServer | undefined;
 
-  beforeAll(async () => {
-    const fixture = await sharedFixture();
-    server = serveRegistry(fixture.registryDir);
-    await gw.holdVault();
-    await gw.boot(
-      {
-        NIMBUS_E2E_MIGRATION_FIXTURE_JSON: JSON.stringify(migrationFixture(fixture, server.url)),
-        NIMBUS_E2E_SEED_LEGACY_JSON: legacySeed(Date.now() + 3_600_000),
-      },
-      false,
-    );
-  }, 300_000);
+    beforeAll(async () => {
+      // FIRST: dispose() restores only what this recorded, so a later failure loses nothing.
+      await gw.holdVault();
+      const fixture = await sharedFixture();
+      server = serveRegistry(fixture.registryDir);
+      await gw.boot(
+        {
+          NIMBUS_E2E_MIGRATION_FIXTURE_JSON: JSON.stringify(migrationFixture(fixture, server.url)),
+          NIMBUS_E2E_SEED_LEGACY_JSON: legacySeed(Date.now() + 3_600_000),
+        },
+        false,
+      );
+    }, 300_000);
 
-  afterAll(async () => {
-    await gw.dispose();
-    server?.stop();
-  });
-
-  test("no migration row, no registry request, no registry egress row; the items are untouched", async () => {
-    // `retry` runs the same evaluation as boot and awaits it, so this is settled, not early.
-    expect(await gw.call<{ migrations: RowView[] }>("migration.retry", {})).toEqual({
-      migrations: [],
+    afterAll(async () => {
+      await gw.dispose();
+      server?.stop();
     });
-    expect(await gw.migrations()).toEqual([]);
-    expect(server?.requests).toEqual([]);
-    const rows = await gw.egress();
-    // Non-vacuous: the ledger is live (the boot marker is a row), it just holds no registry row.
-    expect(rows.some((r) => r.method === "egress.boot")).toBe(true);
-    expect(rows.filter((r) => r.sourceType === "registry")).toEqual([]);
-    expect(itemKeys(gw.items(LEGACY))).toEqual(ITEM_KEYS);
-    expect((await gw.status(LEGACY)).status).not.toBe("paused");
-    expect(await gw.installedIds()).not.toContain(EXTENSION_ID);
-  }, 120_000);
-});
+
+    test("no migration row, no registry request, no registry egress row; the items are untouched", async () => {
+      // `retry` runs the same evaluation as boot and awaits it, so this is settled, not early.
+      expect(await gw.call<{ migrations: RowView[] }>("migration.retry", {})).toEqual({
+        migrations: [],
+      });
+      expect(await gw.migrations()).toEqual([]);
+      expect(server?.requests).toEqual([]);
+      const rows = await gw.egress();
+      // Non-vacuous: the ledger is live (the boot marker is a row), it just holds no registry row.
+      expect(rows.some((r) => r.method === "egress.boot")).toBe(true);
+      expect(rows.filter((r) => r.sourceType === "registry")).toEqual([]);
+      expect(itemKeys(gw.items(LEGACY))).toEqual(ITEM_KEYS);
+      expect((await gw.status(LEGACY)).status).not.toBe("paused");
+      expect(await gw.installedIds()).not.toContain(EXTENSION_ID);
+    }, 120_000);
+  },
+);
 
 // ---------------------------------------------------------------------------------------------
 // (d) Offline: the built-in registry is unreachable (spec § 9.3)
 // ---------------------------------------------------------------------------------------------
 
-describe("(d) an unreachable built-in registry pauses `readwise` with the reason", () => {
-  const gw = new Gateway("offline");
-  const TOKEN = fakeToken();
+describe.skipIf(SKIP_REAL_VAULT)(
+  "(d) an unreachable built-in registry pauses `readwise` with the reason",
+  () => {
+    const gw = new Gateway("offline");
+    const TOKEN = fakeToken();
 
-  beforeAll(async () => {
-    const fixture = await sharedFixture();
-    await gw.holdVault();
-    await gw.boot(
-      {
-        NIMBUS_E2E_SEED_VAULT_JSON: JSON.stringify({ [LEGACY_KEY]: TOKEN }),
-        NIMBUS_E2E_MIGRATION_FIXTURE_JSON: JSON.stringify(
-          migrationFixture(fixture, await deadRegistryUrl()),
-        ),
-        NIMBUS_E2E_SEED_LEGACY_JSON: legacySeed(Date.now() + 3_600_000),
+    beforeAll(async () => {
+      // FIRST: dispose() restores only what this recorded, so a later failure loses nothing.
+      await gw.holdVault();
+      const fixture = await sharedFixture();
+      await gw.boot(
+        {
+          NIMBUS_E2E_SEED_VAULT_JSON: JSON.stringify({ [LEGACY_KEY]: TOKEN }),
+          NIMBUS_E2E_MIGRATION_FIXTURE_JSON: JSON.stringify(
+            migrationFixture(fixture, await deadRegistryUrl()),
+          ),
+          NIMBUS_E2E_SEED_LEGACY_JSON: legacySeed(Date.now() + 3_600_000),
+        },
+        false,
+      );
+    }, 300_000);
+
+    afterAll(async () => {
+      await gw.dispose();
+    });
+
+    test("the migration fails, and `connector.status readwise` shows the paused reason", async () => {
+      const row = await until(async () => {
+        const r = (await gw.migrations())[0];
+        return r?.state === "failed" ? r : undefined;
+      }, "the migration to fail").catch((e: unknown) => {
+        throw gw.withLog(e);
+      });
+      expect(row).toMatchObject({ legacyServiceId: LEGACY, extensionId: EXTENSION_ID });
+      const status = await gw.status(LEGACY);
+      expect(status.status).toBe("paused");
+      expect(row.error).toContain("ERR_REGISTRY_UNREACHABLE");
+      expect(row.error).toContain(OFFICIAL);
+      // The row's error, plus the one next step the owner has: the paused reason.
+      expect(status.lastError).toBe(`${row.error ?? ""} — run \`nimbus connector migrate retry\``);
+      expect(itemKeys(gw.items(LEGACY))).toEqual(ITEM_KEYS);
+      expect(await gw.installedIds()).not.toContain(EXTENSION_ID);
+      expect(await gw.vaultGet(LEGACY_KEY)).toBe(TOKEN);
+      expect(gw.log).not.toContain(TOKEN);
+    }, 120_000);
+  },
+);
+
+// ---------------------------------------------------------------------------------------------
+// The Vault restore itself (no gateway, no real Vault): it touches only what was recorded
+// ---------------------------------------------------------------------------------------------
+
+describe("restoreHeldKeys (the describes' Vault restore)", () => {
+  function memoryVault(initial: Record<string, string>, failSetOn?: string) {
+    const store = new Map(Object.entries(initial));
+    const vault: HeldVault = {
+      get: async (k) => store.get(k) ?? null,
+      set: async (k, v) => {
+        if (k === failSetOn) throw new Error("locked keychain");
+        store.set(k, v);
       },
-      false,
-    );
-  }, 300_000);
+      delete: async (k) => {
+        store.delete(k);
+      },
+    };
+    return { store, vault };
+  }
 
-  afterAll(async () => {
-    await gw.dispose();
+  test("restores recorded values, deletes keys recorded absent, never touches unrecorded keys", async () => {
+    const { store, vault } = memoryVault({
+      [LEGACY_KEY]: "e2e-readwise-token-seeded",
+      [EXT_KEY]: "e2e-readwise-token-leftover",
+      "other.token": "untouched",
+    });
+    await restoreHeldKeys(
+      vault,
+      new Map<string, string | null>([
+        [LEGACY_KEY, "real-before"],
+        [EXT_KEY, null],
+      ]),
+    );
+    expect(Object.fromEntries(store)).toEqual({
+      [LEGACY_KEY]: "real-before",
+      "other.token": "untouched",
+    });
   });
 
-  test("the migration fails, and `connector.status readwise` shows the paused reason", async () => {
-    const row = await until(async () => {
-      const r = (await gw.migrations())[0];
-      return r?.state === "failed" ? r : undefined;
-    }, "the migration to fail").catch((e: unknown) => {
-      throw gw.withLog(e);
-    });
-    expect(row).toMatchObject({ legacyServiceId: LEGACY, extensionId: EXTENSION_ID });
-    const status = await gw.status(LEGACY);
-    expect(status.status).toBe("paused");
-    expect(row.error).toContain("ERR_REGISTRY_UNREACHABLE");
-    expect(row.error).toContain(OFFICIAL);
-    // The row's error, plus the one next step the owner has: the paused reason.
-    expect(status.lastError).toBe(`${row.error ?? ""} — run \`nimbus connector migrate retry\``);
-    expect(itemKeys(gw.items(LEGACY))).toEqual(ITEM_KEYS);
-    expect(await gw.installedIds()).not.toContain(EXTENSION_ID);
-    expect(await gw.vaultGet(LEGACY_KEY)).toBe(TOKEN);
-    expect(gw.log).not.toContain(TOKEN);
-  }, 120_000);
+  test("with nothing recorded (setup failed before holdVault) it touches nothing", async () => {
+    const { store, vault } = memoryVault({ [LEGACY_KEY]: "real-token" });
+    await restoreHeldKeys(vault, new Map());
+    expect(Object.fromEntries(store)).toEqual({ [LEGACY_KEY]: "real-token" });
+  });
+
+  test("a value that cannot be put back is reported by key name and fails the run", async () => {
+    const { store, vault } = memoryVault({}, LEGACY_KEY);
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
+    try {
+      await expect(
+        restoreHeldKeys(
+          vault,
+          new Map<string, string | null>([
+            [LEGACY_KEY, "real-secret-value"],
+            [EXT_KEY, "real-ext-value"],
+          ]),
+        ),
+      ).rejects.toThrow("locked keychain");
+    } finally {
+      console.error = original;
+    }
+    // The other key was still restored; the report names the key, never the value.
+    expect(store.get(EXT_KEY)).toBe("real-ext-value");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain(LEGACY_KEY);
+    expect(errors[0]).not.toContain("real-secret-value");
+  });
 });
