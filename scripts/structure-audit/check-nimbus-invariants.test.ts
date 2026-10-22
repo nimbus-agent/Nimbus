@@ -13,6 +13,7 @@ import {
   checkCaptureGateImporters,
   checkCaptureTableConfinement,
   checkChatopsUnwrappedPost,
+  checkConfigReaderConfinement,
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
   checkDriverImportConfinement,
@@ -3442,5 +3443,83 @@ describe("D34 — the connector migration's table, grant entry point and consent
         file("scripts/z.ts", "migrationConsentViaGate(gate);"),
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("D35 — config reads are confined to the layered reader", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+
+  test("flags a nimbus.toml literal outside the reader", () => {
+    const v = checkConfigReaderConfinement([
+      file("packages/gateway/src/ipc/x.ts", 'const p = join(d, "nimbus.toml");'),
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["config-reader-confined"]);
+  });
+
+  test("allows the reader", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file("packages/gateway/src/config/layered-config.ts", 'const p = join(d, "nimbus.toml");'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("flags a FromPath call in production", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file("packages/gateway/src/platform/assemble.ts", "const f = loadNimbusFleetFromPath(p);"),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("ignores the definition", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file(
+          "packages/gateway/src/config/fleet-toml.ts",
+          "export function loadNimbusFleetFromPath(p: string) { return p; }",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("ignores nimbus.openapi.toml", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file("packages/gateway/src/ipc/x.ts", 'join(d, "nimbus.openapi.toml");'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("ignores prose", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file(
+          "packages/gateway/src/agents/x.ts",
+          'const m = "Edit `[ci.service.<id>]` in `nimbus.toml`";\nconst k = n !== "nimbus.toml";',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("catches resolve() and resolveNimbusTomlForProfile", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file("packages/gateway/src/ipc/x.ts", 'resolve(dir, "nimbus.toml");'),
+      ]),
+    ).toHaveLength(1);
+    expect(
+      checkConfigReaderConfinement([
+        file("packages/gateway/src/ipc/x.ts", "resolveNimbusTomlForProfile(a, b);"),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("is green on the repo", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkConfigReaderConfinement(files)).toEqual([]);
   });
 });

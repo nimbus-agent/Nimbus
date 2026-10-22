@@ -2129,6 +2129,46 @@ export function checkMigrationConfinement(files: readonly FileEntry[]): Violatio
   return out;
 }
 
+// ---- D35 (layered config reader) -----------------------------------------------------------------
+// Tied to no invariant. Config is read through the layered reader (`config/layered-config.ts`) so
+// every setting follows the active profile. Stated bound: a dynamically composed path or file name
+// evades a text scan.
+const D35_PATH_RE = /\b(?:join|resolve)\s*\([^()]*["'`]nimbus\.toml["'`]/g;
+const D35_PROFILE_RE = /\bresolveNimbusTomlForProfile\b/g;
+const D35_FROM_PATH_RE = /(?<!function\s)\bload\w+FromPath\s*\(/g;
+const D35_PATH_ALLOWED: readonly string[] = [
+  "packages/gateway/src/config/layered-config.ts",
+  "packages/gateway/src/config/active-profile.ts",
+  "packages/gateway/src/demo/seed.ts",
+];
+
+export function checkConfigReaderConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const code = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    const push = (index: number | undefined): void => {
+      const line = code.slice(0, index).split("\n").length;
+      out.push({
+        rule: "config-reader-confined",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    };
+    if (!D35_PATH_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D35_PATH_RE)) push(m.index);
+      for (const m of code.matchAll(D35_PROFILE_RE)) push(m.index);
+    }
+    if (!f.relPath.startsWith("packages/gateway/src/config/")) {
+      for (const m of code.matchAll(D35_FROM_PATH_RE)) push(m.index);
+    }
+  }
+  return out;
+}
+
 // (b) The five gate entry points are CALLED only from ipc/capture-rpc.ts and DEFINED only in
 //     capture-gate.ts. Any other mention — a call or an import (aliased or not) — is a violation, so
 //     a second door cannot be opened by importing the function under another name.
@@ -3299,6 +3339,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D33(c) a run-grant writer (upsertRunGrant/deleteRunGrant) named outside the store and the approve/revoke path — a run grant could be created or removed without the owner's extension.run approval: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkConfigReaderConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D35 config read outside the layered reader (config/layered-config.ts) — a setting would ignore the active profile: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

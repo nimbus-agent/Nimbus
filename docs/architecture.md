@@ -2487,6 +2487,10 @@ Linux backends are covered by unit tests plus a darwin-only test on the macOS CI
 
 The Gateway is designed to start in a degraded state rather than fail completely when individual connectors or extensions are unavailable. Only database failures and platform initialization failures are fatal.
 
+### Layered config
+
+Settings resolve through ONE reader per config directory (`packages/gateway/src/config/layered-config.ts`), so every setting follows the active profile. Layers, lowest to highest: code defaults, pack layers (none yet), team baseline (an empty slot), `nimbus.toml`, then `nimbus.<profile>.toml`. The profile is chosen once at gateway boot (`config/active-profile.ts`): explicit, then `NIMBUS_PROFILE`, then the `.nimbus-profile` marker, then `default`; names match `/^[a-z0-9_-]{1,32}$/i` and an invalid name stops boot. `config/layered-merge.ts` merges scalars per key and plain tables key by key (including `[glossary.terms]` and `[glossary.synonyms]`); any `[[x]]` array is replaced whole by the highest layer that defines it, except `[[fleet.job]]`, which merges by name. A malformed header is fenced behind a `[__nimbus_unparsed__]` sentinel instead of failing the merge. The reader compares file content for freshness, so an edit takes effect on the next per-call read; seven `NIMBUS_*` env overrides (`config/config-env-overrides.ts`) apply on top. `config.explain` and `nimbus config explain` report the layer each value came from. Static rule D35 keeps config reads inside the reader: it forbids building a `nimbus.toml` path, or calling `resolveNimbusTomlForProfile` or a `load*FromPath` loader, elsewhere under `packages/gateway/src/`.
+
 ### IPC Protocol
 
 All client ↔ Gateway communication uses JSON-RPC 2.0. The protocol is language-agnostic — a VS Code extension, browser extension, or mobile app over LAN can connect to the same Gateway without protocol changes.
@@ -2677,6 +2681,8 @@ const streamReq: JSONRPCRequest = {
 // team.purge        — orchestrate a GDPR subject purge across the team (privileged; HITL-gated)
 // team.auditMerged  — merged team audit-log view (read; renderer-exposed)
 // admin.status      — GatewayStatus snapshot for the admin console (read; renderer-exposed)
+// config.explain    — where one config value (or every value) came from across the layers (read; CLI-only, LAN-forbidden,
+//   absent from the Tauri allowlist; params {path?}); diag.snapshot also gains a `configLayers` field (profile + layer list)
 // Federation wire (peer ↔ peer over LanServer): federation.policy (serve signed policy),
 //   federation.auditExport (audit-log shipper), federation.purge (HITL-gated serve + signed deletion record)
 //

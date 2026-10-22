@@ -18,6 +18,10 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-22 — Profiles inherit from `nimbus.toml` (role packs, project 1, PR 1: the layered config reader; static D35; no migration, no invariant).**
+  Profiles now inherit from `nimbus.toml`: a profile file overrides only the keys it sets, and a section it leaves out now comes from `nimbus.toml` rather than from built-in defaults. Previously about two-thirds of settings ignored the active profile entirely; every setting now follows it.
+  Layers merge in order: code defaults, pack layers (none yet), team baseline (empty slot), `nimbus.toml`, `nimbus.<profile>.toml`. The profile is pinned once at gateway boot (explicit, `NIMBUS_PROFILE`, `.nimbus-profile` marker, default) and an invalid name stops boot.
+  New CLI-only, LAN-forbidden `config.explain` IPC method and `nimbus config explain`, plus `config get|list --effective`; `nimbus config set|get|list|edit` and `llm.use` target the active profile's file; `config.validate` covers each user layer; `diag.snapshot` gains `configLayers`; `nimbus doctor` flags a marker/running-profile mismatch. Static rule D35 confines config reads to `config/layered-config.ts`.
 - **2026-10-21 — The desktop app can accept a connector migration (Readwise unbundling pilot, PR 6; invariant I46; no migration).**
   `migration.list` and `migration.accept` join the desktop allowlist (109 → 111), so a pending connector migration can be kept from
   the desktop as well as with `nimbus connector migrate accept <id>`. Accept takes the migration id and nothing else, and succeeds

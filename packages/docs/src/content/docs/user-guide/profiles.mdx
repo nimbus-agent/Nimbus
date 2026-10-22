@@ -108,9 +108,12 @@ schema_version = 1
 profile_name = "work"
 ```
 
-You can then edit `nimbus.work.toml` to configure that profile's connectors,
-sync intervals, and automation settings independently. Run `nimbus config edit`
-after switching profiles to open the active profile's TOML in your editor.
+A profile file **inherits** from `nimbus.toml`: it overrides only the keys it
+sets, and any section it leaves out comes from `nimbus.toml`. Edit
+`nimbus.work.toml` to change just what differs for that profile. Run
+`nimbus config edit` to open the active profile's file; `nimbus config set`
+writes to it too. `nimbus config explain <path>` shows which file a value
+came from, and `nimbus config get --effective <path>` shows the merged value.
 
 ---
 

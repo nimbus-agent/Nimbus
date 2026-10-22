@@ -3116,7 +3116,10 @@ Read a single configuration value.
 ```bash
 nimbus config get telemetry.enabled
 nimbus config get llm.local_model
+nimbus config get --effective llm.local_model   # value after all layers (needs a running gateway)
 ```
+
+`get`, `set`, `list` and `edit` target the **active profile's** file (`nimbus.<profile>.toml`, or `nimbus.toml` on the default profile). `set` creates the profile file if it is missing. A profile file inherits from `nimbus.toml` and overrides only the keys it sets; `--effective` shows the merged value.
 
 There is no TOML key for sync cadence — per-connector intervals are set with `nimbus connector set-interval <service> <duration>`, which writes to the index, not to `nimbus.toml`.
 
@@ -3159,9 +3162,23 @@ The prose "other `NIMBUS_*` overrides" legend the human view prints is static do
 
 ---
 
+`nimbus config list --effective [--json]` prints the merged configuration across every layer instead of the raw file (needs a running gateway).
+
+---
+
+### `nimbus config explain <path> [--json]`
+
+Show which layer supplied a config value (`code default`, `nimbus.toml`, `nimbus.<profile>.toml`, or an env override) and the value each layer held. Needs a running gateway (`config.explain`, CLI-only).
+
+```bash
+nimbus config explain llm.local_model
+```
+
+---
+
 ### `nimbus config validate`
 
-Validate the current `nimbus.toml` configuration file against the schema. Exits `0` on success, `1` on error.
+Validate each existing user layer (`nimbus.toml` and the active profile's file) against the schema. Exits `0` on success, `1` on error.
 
 ```bash
 nimbus config validate
@@ -3171,7 +3188,7 @@ nimbus config validate
 
 ### `nimbus config edit`
 
-Open `nimbus.toml` in `$EDITOR`.
+Open the active profile's config file (`nimbus.toml` on the default profile) in `$EDITOR`.
 
 ```bash
 nimbus config edit
