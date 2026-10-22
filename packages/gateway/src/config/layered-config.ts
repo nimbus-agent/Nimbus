@@ -47,7 +47,36 @@ export type PackLayersRead = {
 };
 
 export interface PackLayerSource {
+  /**
+   * The profile's pack layers. Must never throw: every failure is a `skipped` entry or
+   * `listError`. A source that throws anyway is recorded as a list error, with no packs applied.
+   */
   read(profile: string): PackLayersRead;
+}
+
+const REGEXP_SPECIAL = /[.*+?^${}()|[\]\\]/g;
+const SEPARATOR_CLASS = String.raw`[\\/]`;
+const PATH_TAIL = String.raw`(?:[\\/][^\s'"\x60,;]*)?`;
+
+/**
+ * `message` with every path under `root` replaced by its basename, so a reason shown in
+ * `diag.snapshot` never carries an absolute path. Either separator matches, case-insensitively
+ * on Windows. Pass `root` already `resolve`d, so it has the form `fs` errors use.
+ */
+export function basenameSafeMessage(message: string, root: string): string {
+  const parts = root.split(/[\\/]/).filter((p, i) => p !== "" || i === 0);
+  const pattern = parts
+    .map((p) => p.replace(REGEXP_SPECIAL, String.raw`\$&`))
+    .join(SEPARATOR_CLASS);
+  const re = new RegExp(pattern + PATH_TAIL, process.platform === "win32" ? "gi" : "g");
+  return message.replace(
+    re,
+    (m) =>
+      m
+        .split(/[\\/]/)
+        .filter((p) => p !== "")
+        .pop() ?? m,
+  );
 }
 
 export const EMPTY_PACK_LAYERS: PackLayerSource = { read: () => ({ layers: [], skipped: [] }) };
@@ -120,7 +149,7 @@ export class LayeredConfig {
   }
 
   snapshot(): ConfigSnapshot {
-    const packs = this.packs.read(this.profile.name);
+    const packs = this.readPacks();
     const userRefs = this.userLayerRefs();
     const reads = userRefs.map((r) => readLayer(r.path));
     const prev = this.cached;
@@ -172,6 +201,24 @@ export class LayeredConfig {
     };
     this.cached = { snapshot, reads, packs };
     return snapshot;
+  }
+
+  /**
+   * The source's read for the pinned profile, with its arrays copied so a source that mutates
+   * them cannot alter the cached read; a throwing source becomes a list error with no packs.
+   */
+  private readPacks(): PackLayersRead {
+    try {
+      const r = this.packs.read(this.profile.name);
+      return { ...r, layers: [...r.layers], skipped: [...r.skipped] };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        layers: [],
+        skipped: [],
+        listError: `pack source failed: ${basenameSafeMessage(message, resolve(this.configDir))}`,
+      };
+    }
   }
 
   /** The pack source this reader was built with; `initLayeredConfig` compares it by identity. */

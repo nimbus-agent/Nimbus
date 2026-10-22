@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InvalidProfileNameError, resolveActiveProfile } from "./active-profile.ts";
 import {
+  basenameSafeMessage,
   getLayeredConfig,
   initLayeredConfig,
   LayeredConfig,
@@ -346,9 +347,52 @@ describe("pack layers", () => {
     expect(seen).toEqual(["work"]);
   });
 
+  test("a throwing source becomes a list error with no packs applied", () => {
+    write("nimbus.toml", "[decisions]\nmin_confidence = 0.6\n");
+    const secret = join(dir, "packs", "default", "active.json");
+    let fail = true;
+    const skipped = [{ packId: "x", reason: "r" }];
+    initLayeredConfig(dir, {
+      packs: {
+        read: () => {
+          if (fail) throw new Error(`boom at ${secret}`);
+          return { layers: [], skipped };
+        },
+      },
+    });
+    const snap = getLayeredConfig(dir).snapshot();
+    expect(snap.activePacks).toEqual([]);
+    expect(snap.skippedPacks).toEqual([]);
+    expect(snap.packListError).toBe("pack source failed: boom at active.json");
+    expect(loadNimbusDecisionsFromConfigDir(dir).minConfidence).toBe(0.6);
+    fail = false;
+    const next = getLayeredConfig(dir).snapshot();
+    expect(next.skippedPacks).toEqual([{ packId: "x", reason: "r" }]);
+    // The cached copy does not follow a source that mutates its own array.
+    skipped.push({ packId: "y", reason: "r" });
+    const after = getLayeredConfig(dir).snapshot();
+    expect(after.version).toBe(next.version + 1);
+    expect(next.skippedPacks).toHaveLength(1);
+  });
+
   test("peekLayeredConfig returns undefined before init and the reader after it", () => {
     expect(peekLayeredConfig(dir)).toBeUndefined();
     const cfg = initLayeredConfig(dir);
     expect(peekLayeredConfig(dir)).toBe(cfg);
+  });
+});
+
+describe("basenameSafeMessage", () => {
+  const root = join(tmpdir(), "nimbus-root-x");
+  test("replaces paths under the root with their basename", () => {
+    expect(basenameSafeMessage(`EISDIR, open '${join(root, "packs", "a.toml")}'`, root)).toBe(
+      "EISDIR, open 'a.toml'",
+    );
+    expect(basenameSafeMessage(`at ${root}`, root)).toBe("at nimbus-root-x");
+    expect(basenameSafeMessage("no path here", root)).toBe("no path here");
+  });
+  test("matches either separator", () => {
+    const fwd = `${root}/packs/b.toml`.split("\\").join("/");
+    expect(basenameSafeMessage(`x ${fwd} y`, root)).toBe("x b.toml y");
   });
 });
