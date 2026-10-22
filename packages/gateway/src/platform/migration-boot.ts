@@ -4,11 +4,12 @@
  * Ruling B1: the built-in official registry and the continuity table reach a real gateway ONLY as
  * composition options a test runner passes to `assemblePlatformServices` — never an environment
  * variable, a config file or an IPC parameter. Production passes none, so both stay at their baked
- * defaults (the baked `BUILTIN_REGISTRY`, and `CONTINUITY_TABLE` with its Readwise entry), so boot
- * `evaluate()` acts on Readwise. Whatever is resolved here is ONE value, handed to every consumer that binds through it: the
- * engine, the extension sync registrar, the spawn verifier, the scheduler's credential resolver,
- * `extension remove`'s purge, and the registry fetch deps (`RegistryFetchDeps.builtin`). Two tables
- * would let the engine approve a binding the registrar or the verifier then refuses.
+ * defaults (the baked `BUILTIN_REGISTRY`, and `CONTINUITY_TABLE` with its one entry), so boot
+ * `evaluate()` acts on that entry's legacy connector. Whatever is resolved here is ONE value,
+ * handed to every consumer that binds through it: the engine, the extension sync registrar, the
+ * spawn verifier, the scheduler's credential resolver, `extension remove`'s purge, and the registry
+ * fetch deps (`RegistryFetchDeps.builtin`). Two tables would let the engine approve a binding the
+ * registrar or the verifier then refuses.
  */
 import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";

@@ -114,8 +114,10 @@ export function resolveRegistry(
  * targets whatever their transport; the fetch layer decides which of them is reachable. Plain
  * offline is NOT this case: an unreachable built-in still counts, since it might carry the id.
  * Consequently an owner registry carrying an id the built-in also lists resolves without an
- * ambiguity refusal under air gap, as it would on a gateway with no built-in; it never binds, since
- * its root fingerprint is not the official one.
+ * ambiguity refusal under air gap, as it would on a gateway with no built-in. Binding keys on the
+ * source root fingerprint, not the registry name: such an owner registry under another root key
+ * never binds, while an owner-added copy of the official registry (pinned to the official root key)
+ * does.
  */
 export function bareRegistryTargets(
   db: Database,

@@ -3747,9 +3747,8 @@ export async function assemblePlatformServices(
     now: Date.now,
     // The compiled release binary counts as production even with NODE_ENV unset (it always is).
     production: isProductionRuntime(),
-    // The SAME built-in the migration engine gets (ruling B1): the baked `BUILTIN_REGISTRY` (null
-    // until the unbundling pilot's PR 7) unless a test runner passed a fixture to this function. No
-    // env var, config key or IPC param sets it.
+    // The SAME built-in the migration engine gets (ruling B1): the baked built-in registry, unless a
+    // test runner passed a fixture to this function. No env var, config key or IPC param sets it.
     builtin: migration.builtin,
   };
 
