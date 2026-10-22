@@ -3483,6 +3483,17 @@ describe("D35 — config reads are confined to the layered reader", () => {
     ).toEqual([]);
   });
 
+  test("ignores a FromPath definition outside config/", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file(
+          "packages/gateway/src/ipc/x.ts",
+          "export function loadXFromPath(p: string) { return p; }",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
   test("ignores nimbus.openapi.toml", () => {
     expect(
       checkConfigReaderConfinement([

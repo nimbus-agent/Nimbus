@@ -2132,7 +2132,8 @@ export function checkMigrationConfinement(files: readonly FileEntry[]): Violatio
 // ---- D35 (layered config reader) -----------------------------------------------------------------
 // Tied to no invariant. Config is read through the layered reader (`config/layered-config.ts`) so
 // every setting follows the active profile. Stated bound: a dynamically composed path or file name
-// evades a text scan.
+// evades a text scan, as does a nested call such as join(getDir(), "nimbus.toml") (the [^()]* match
+// cannot cross the inner parentheses).
 const D35_PATH_RE = /\b(?:join|resolve)\s*\([^()]*["'`]nimbus\.toml["'`]/g;
 const D35_PROFILE_RE = /\bresolveNimbusTomlForProfile\b/g;
 const D35_FROM_PATH_RE = /(?<!function\s)\bload\w+FromPath\s*\(/g;
