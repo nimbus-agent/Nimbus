@@ -78,7 +78,8 @@ describe("migration.* over a real socket", () => {
       try {
         await client.connect(gw.socketPath);
 
-        // Production composition: no built-in registry and an empty continuity table, so boot
+        // Runner default composition: no built-in registry (the runner passes `builtin: null`, so
+        // nothing reaches the real official host) and the production continuity table, so boot
         // evaluation prepared nothing and retry prepares nothing (ruling B1).
         const list = await client.raw("migration.list", {});
         expect(list.error).toBeUndefined();

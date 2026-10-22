@@ -34,6 +34,8 @@ const deps = (): RegistryFetchDeps => ({
   enforceAirGap: () => false,
   now: () => 1000,
   production: false,
+  // Neutral test default: never reach the real official registry host.
+  builtin: null,
 });
 
 /** A local registry folder `name` carrying ID, added to the database. Returns the folder. */

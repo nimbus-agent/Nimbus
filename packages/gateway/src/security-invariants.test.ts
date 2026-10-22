@@ -458,6 +458,7 @@ describe("I2 — HITL frozen-set membership", () => {
         enforceAirGap: () => false,
         now: () => 1,
         production: false,
+        builtin: null,
       };
       const req = { method: "registry.add", params: { name: "i2", url: tmp }, db, fetch };
       await expect(dispatchRegistryRpc(req)).rejects.toThrow(/requires the owner's HITL gate/);
@@ -6854,6 +6855,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     enforceAirGap: () => false,
     now: () => Date.now(),
     production: false,
+    builtin: null,
   };
   const roots: string[] = [];
   const dbs: Database[] = [];

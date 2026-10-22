@@ -35,12 +35,15 @@ export interface BuiltinRegistryConfig {
 }
 
 /**
- * The official registry this release trusts. `null` until gateway PR 7 of the Readwise unbundling
- * pilot bakes the real URL and root key: a test key compiled into release builds would be a trust
- * root whose private key sits in the repository. While it is `null`, nothing references a built-in
- * registry and every path behaves exactly as before it existed.
+ * The official registry this release trusts (Readwise unbundling pilot, gateway PR 7). The URL
+ * keeps its trailing slash: `resolveRegistryResource` resolves `index.json` with `new URL(rel,
+ * base)`, which drops the last path segment of a base without one. Tests that must not reach the
+ * network pass `builtin: null` explicitly.
  */
-export const BUILTIN_REGISTRY: BuiltinRegistryConfig | null = null;
+export const BUILTIN_REGISTRY: BuiltinRegistryConfig | null = {
+  url: "https://nimbus-agent.github.io/nimbus-mcp-servers/",
+  rootKey: "tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=",
+};
 
 /** The built-in config a set of deps carries: its own `builtin` when given, else the baked one. */
 export function builtinRegistryOf(deps: {

@@ -22,9 +22,10 @@ describe("ruling B1: the built-in registry and continuity table are injected, ne
     const resolved = resolveMigrationComposition(undefined);
     expect(resolved.builtin).toBe(BUILTIN_REGISTRY);
     expect(resolved.continuityTable).toBe(CONTINUITY_TABLE);
-    // And the baked defaults are what make boot evaluation a no-op in this release.
-    expect(BUILTIN_REGISTRY).toBeNull();
-    expect(CONTINUITY_TABLE).toEqual([]);
+    // And the baked defaults are the real official registry and the one Readwise binding.
+    expect(BUILTIN_REGISTRY?.url).toBe("https://nimbus-agent.github.io/nimbus-mcp-servers/");
+    expect(BUILTIN_REGISTRY?.rootKey).toBe("tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=");
+    expect(CONTINUITY_TABLE.map((e) => e.extensionId)).toEqual(["com.nimbus.readwise"]);
     expect(resolveMigrationComposition({})).toEqual(resolved);
     expect(resolveMigrationComposition({ migration: {} })).toEqual(resolved);
   });

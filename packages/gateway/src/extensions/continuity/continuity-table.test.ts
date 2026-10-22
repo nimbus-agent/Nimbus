@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import type { ExtensionRow } from "../../automation/extension-store.ts";
 import { CONNECTOR_SERVICE_IDS } from "../../connectors/connector-catalog.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../connectors/connector-secrets-manifest.ts";
 import type { ExtensionManifest } from "../manifest.ts";
+import { BUILTIN_REGISTRY } from "../registry/builtin-registry.ts";
 import {
   bindingInputFor,
   CONTINUITY_TABLE,
@@ -51,9 +55,54 @@ describe("findContinuityBinding", () => {
       findContinuityBinding({ ...good, sourceRootFingerprint: undefined }, table),
     ).toBeUndefined();
   });
-  test("production table is empty and binds nothing", () => {
-    expect(CONTINUITY_TABLE).toHaveLength(0);
+  test("production table binds exactly the official Readwise extension", () => {
+    expect(CONTINUITY_TABLE).toHaveLength(1);
+    const prod = CONTINUITY_TABLE[0] as ContinuityEntry;
+    expect(prod).toMatchObject({
+      legacyServiceId: "readwise",
+      extensionId: "com.nimbus.readwise",
+      publisherKey: "wrUu5uyn3aS2efQOEAUd1eC6H3uqX/RwzIEqQHvAZ9A=",
+      sourceRootFingerprint: "6fb9beb2cf6bdc748c72c03b30b83a9a",
+      displayName: "Readwise",
+    });
+    // Another registry's copy (a different root fingerprint) never binds.
     expect(findContinuityBinding(good)).toBeUndefined();
+    expect(
+      findContinuityBinding({
+        extensionId: prod.extensionId,
+        publisherKey: prod.publisherKey,
+        sourceRootFingerprint: prod.sourceRootFingerprint,
+      }),
+    ).toBe(prod);
+  });
+  test("entry fingerprint equals publisherKeyFingerprint(BUILTIN_REGISTRY.rootKey)", () => {
+    expect(BUILTIN_REGISTRY).not.toBeNull();
+    expect(CONTINUITY_TABLE[0]?.sourceRootFingerprint).toBe(
+      publisherKeyFingerprint(BUILTIN_REGISTRY?.rootKey ?? ""),
+    );
+  });
+  test("entry matches the published 0.2.0 manifest's permissions, credentials and item types", () => {
+    const entry = CONTINUITY_TABLE[0] as ContinuityEntry;
+    const manifest = JSON.parse(
+      readFileSync(
+        join(import.meta.dir, "__fixtures__", "com.nimbus.readwise-0.2.0.manifest.json"),
+        "utf8",
+      ),
+    ) as ExtensionManifest;
+    expect(manifest.id).toBe(entry.extensionId);
+    expect(manifest.publisher?.key).toBe(entry.publisherKey);
+    expect([...(manifest.permissions.network ?? [])].sort()).toEqual(
+      [...entry.expectedPermissions.network].sort(),
+    );
+    expect(manifest.permissions.filesystem ?? { read: [], write: [] }).toEqual({
+      read: [...entry.expectedPermissions.read],
+      write: [...entry.expectedPermissions.write],
+    });
+    expect(Object.keys(manifest.credentials ?? {}).sort()).toEqual(
+      Object.keys(entry.credentials).sort(),
+    );
+    expect([...(manifest.sync?.itemTypes ?? [])].sort()).toEqual([...entry.itemTypes].sort());
+    expect(manifest.sync?.contract).toBe("1");
   });
 });
 
@@ -84,6 +133,15 @@ describe("validateContinuityEntries", () => {
         validateContinuityEntries(set, CONNECTOR_SERVICE_IDS, CONNECTOR_VAULT_SECRET_KEYS),
       ).toEqual([]);
     }
+  });
+  test("a duplicate extensionId is refused", () => {
+    const dup = { ...READWISE, legacyServiceId: "readwise" };
+    const problems = validateContinuityEntries(
+      [READWISE, dup],
+      CONNECTOR_SERVICE_IDS,
+      CONNECTOR_VAULT_SECRET_KEYS,
+    );
+    expect(problems.join(" | ")).toContain("duplicate extensionId com.nimbus.readwise");
   });
   test("fails for a non-catalog id", () => {
     const bad = { ...READWISE, legacyServiceId: "not_a_connector" };
