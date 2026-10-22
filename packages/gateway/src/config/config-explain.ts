@@ -77,6 +77,17 @@ function toExplainEntry(header: string | null, e: EffectiveEntry): ExplainEntry 
   };
 }
 
+/** Last-wins within a key: earlier same-layer values become shadowed, newest first. */
+function collapseKey(header: string | null, same: readonly EffectiveEntry[]): ExplainEntry {
+  const last = same[same.length - 1] as EffectiveEntry;
+  const base = toExplainEntry(header, last);
+  const earlier = same
+    .slice(0, -1)
+    .reverse()
+    .map((e) => ({ source: base.source, value: e.valRaw }));
+  return { ...base, shadowed: [...earlier, ...base.shadowed] };
+}
+
 function applyEnv(entry: ExplainEntry, env: EnvGet, notes: string[]): ExplainEntry {
   for (const o of CONFIG_ENV_OVERRIDES) {
     if (unquote(o.path) !== unquote(entry.path)) continue;
@@ -98,11 +109,14 @@ function applyEnv(entry: ExplainEntry, env: EnvGet, notes: string[]): ExplainEnt
 }
 
 /** An override for a path no file sets: the env value alone is the source. */
-function envOnlyEntry(path: string, env: EnvGet): ExplainEntry | undefined {
+function envOnlyEntry(path: string, env: EnvGet, notes: string[]): ExplainEntry | undefined {
   for (const o of CONFIG_ENV_OVERRIDES) {
     if (unquote(o.path) !== unquote(path)) continue;
     const raw = env(o.envVar);
     const effective = raw === undefined ? undefined : o.effective(raw);
+    if (raw !== undefined && effective === undefined) {
+      notes.push(`${o.envVar} is set to "${raw}" but does not override this value`);
+    }
     if (effective !== undefined) {
       return {
         path: o.path,
@@ -168,11 +182,15 @@ export function explainConfig(
 
   if (path === undefined) {
     for (const s of plain) {
-      for (const e of s.entries) entries.push(applyEnv(toExplainEntry(s.header, e), env, notes));
+      const byKey = new Map<string, EffectiveEntry[]>();
+      for (const e of s.entries) byKey.set(e.key, [...(byKey.get(e.key) ?? []), e]);
+      for (const same of byKey.values()) {
+        entries.push(applyEnv(collapseKey(s.header, same), env, notes));
+      }
     }
     for (const o of CONFIG_ENV_OVERRIDES) {
       if (entries.some((e) => unquote(e.path) === o.path)) continue;
-      const only = envOnlyEntry(o.path, env);
+      const only = envOnlyEntry(o.path, env, notes);
       if (only !== undefined) entries.push(only);
     }
     for (const s of arrays) {
@@ -185,13 +203,12 @@ export function explainConfig(
     const hit = resolvePlain(plain, segs);
     if (hit !== undefined) {
       const matching = hit.section.entries.filter((e) => unquote(e.key) === unquote(hit.key));
-      const last = matching.at(-1);
-      if (last !== undefined) {
-        entries.push(applyEnv(toExplainEntry(hit.section.header, last), env, notes));
+      if (matching.length > 0) {
+        entries.push(applyEnv(collapseKey(hit.section.header, matching), env, notes));
       }
     }
     if (entries.length === 0) {
-      const only = envOnlyEntry(path, env);
+      const only = envOnlyEntry(path, env, notes);
       if (only !== undefined) entries.push(only);
     }
     for (const s of arrays) {

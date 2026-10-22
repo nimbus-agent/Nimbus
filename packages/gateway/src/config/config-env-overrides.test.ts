@@ -19,7 +19,9 @@ function byVar(name: string) {
 describe("CONFIG_ENV_OVERRIDES", () => {
   test("every NIMBUS_ variable a config loader names is declared", () => {
     const files = readdirSync(here)
-      .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+      .filter(
+        (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "config-env-overrides.ts",
+      )
       .map((f) => join(here, f));
     files.push(join(here, "..", "multimodal", "multimodal-config.ts"));
     const found = new Set<string>();

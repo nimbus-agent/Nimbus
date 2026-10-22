@@ -83,11 +83,39 @@ describe("explainConfig", () => {
     for (const p of [
       "audit.tool_call_log_retention_days",
       "fleet.retention_days",
+      "code_execution.enabled",
+      "computer_use.enabled",
+      "tool_generation.enabled",
+      "multimodal.enabled",
+      "fleet.enabled",
+      "mcp_sink.enabled",
       'hitl.quorum."x".approvers',
+      "hitl.quorum.y.approvers",
+      "connectors.github.depth",
     ]) {
       expect(explainConfig(reader, p, noEnv).policyMayRestrict).toBe(true);
     }
     expect(explainConfig(reader, "decisions.min_confidence", noEnv).policyMayRestrict).toBe(false);
+  });
+
+  test("no path lists a repeated key once, last value winning", () => {
+    writeBase("[a]\nb = 1\nb = 2\n");
+    const r = explainConfig(initLayeredConfig(dir), undefined, noEnv);
+    const hits = r.entries.filter((e) => e.path === "a.b");
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.value).toBe("2");
+    expect(hits[0]?.shadowed[0]?.value).toBe("1");
+    expect(hits[0]?.shadowed[0]?.source).toEqual(hits[0]?.source);
+  });
+
+  test("ignored env value with no file value still notes", () => {
+    writeBase("[a]\nb = 1\n");
+    const env = (k: string) => (k === "NIMBUS_UPDATER_DISABLE" ? "0" : undefined);
+    const r = explainConfig(initLayeredConfig(dir), "updater.enabled", env);
+    expect(r.entries).toHaveLength(0);
+    expect(r.notes).toContain(
+      'NIMBUS_UPDATER_DISABLE is set to "0" but does not override this value',
+    );
   });
 
   test("quoted sub-table path", () => {
