@@ -107,13 +107,20 @@ export function resolveRegistry(
  * trust root listed twice would trip I44's two-registries refusal for every official extension).
  * An owner row that predates the reserved name is replaced by the built-in, as `resolveRegistry`
  * resolves that name.
+ *
+ * Under `[llm] enforce_air_gap` (`airGapped`, the same `enforceAirGap` the fetch layer refuses
+ * remote requests by) the built-in is not a target either: it is a remote registry that can never
+ * be read there, and counting it would make every bare install ambiguous. Owner registries stay
+ * targets whatever their transport; the fetch layer decides which of them is reachable. Plain
+ * offline is NOT this case: an unreachable built-in still counts, since it might carry the id.
  */
 export function bareRegistryTargets(
   db: Database,
   owners: readonly RegistryRow[],
   builtin: BuiltinRegistryConfig | null,
+  airGapped: boolean,
 ): RegistryRow[] {
-  if (builtin === null) return [...owners];
+  if (builtin === null || airGapped) return [...owners];
   const official = builtinRegistryRow(db, builtin);
   if (owners.some((r) => r.rootFingerprint === official.rootFingerprint)) return [...owners];
   return [...owners.filter((r) => r.name !== BUILTIN_REGISTRY_NAME), official];

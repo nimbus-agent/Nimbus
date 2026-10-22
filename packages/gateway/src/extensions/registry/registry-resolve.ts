@@ -82,11 +82,14 @@ function describeFailures(failures: readonly IndexFailure[]): string {
 
 /**
  * The named registry (the reserved name resolves to the built-in registry when one is configured),
- * or, when `name` is undefined, every owner registry plus the built-in one (`bareRegistryTargets`).
+ * or, when `name` is undefined, every owner registry plus the built-in one (`bareRegistryTargets`;
+ * not under air gap).
  */
 export function registryTargets(deps: RegistryFetchDeps, name: string | undefined): RegistryRow[] {
   const builtin = builtinRegistryOf(deps);
-  if (name === undefined) return bareRegistryTargets(deps.db, listRegistries(deps.db), builtin);
+  if (name === undefined) {
+    return bareRegistryTargets(deps.db, listRegistries(deps.db), builtin, deps.enforceAirGap());
+  }
   const one = resolveRegistry(deps.db, name, builtin);
   if (one === undefined) {
     throw new RegistryError("ERR_REGISTRY_NOT_FOUND", `no registry named "${name}"`);
