@@ -95,8 +95,16 @@ Then run `bun install` and build the sandbox helper there, the same way as the P
     - a `=`-less line inside `[fleet]`
     - `[[filesystem.roots]]`
     - the same key set twice in one fragment
-    - a `[[fleet.job]]` block with no `name`
+    - a `[[fleet.job]]` block with no `name`, an empty `[[fleet.job]]` block, and `name = ""` (the fleet parser drops an empty block silently and accepts `""`, so the fragment check must refuse both itself)
+    - the same key twice inside one `[[fleet.job]]` block (the fleet parser keeps the last one silently)
+    - a bare off-list header with no keys (`"[llm.remote.openai]\n"`)
     - text over `PACK_FRAGMENT_MAX_BYTES`
+  - `reports each problem once`:
+    - a malformed header followed by keys (`"[fleet\nenabled = true\n"`) gives exactly one problem, for the header; its lines are not also reported as root keys
+    - a duplicate key whose first value was invalid still reports the duplicate (track seen keys in their own set, not via `scalars`)
+    - a `[[fleet.job]]` block with no `name` gives one problem, and the spy checker never receives that block
+  - `min_confidence must be a plain decimal`. `""`, `"   "`, `0x0`, `0b0` and `1e-1` are each refused (`Number()` reads the first four as `0`); `0`, `1`, `0.70` and `+0.5` are accepted.
+  - `a comment-only fragment is a no-op layer`. `"# nothing\n"` is `ok`, with empty `scalars` and `jobNames`. A pack may contribute no config; refusing it would make Project 3 special-case such packs.
   - `hands every fleet job block to the job checker`. A spy checker receives text that contains both `[[fleet.job]]` blocks, and its problems are returned verbatim. `jobNames` is `["a","b"]` when the checker returns `[]`.
   - `PACK_ID_RE`: accepts `pm`, `devops-1` and `a_b`; rejects `PM`, `-pm`, `../x`, `pm.toml`, `""` and 65 characters.
 
@@ -108,9 +116,10 @@ Then run `bun install` and build the sandbox helper there, the same way as the P
     - bools: `parseBool`
     - `min_idle_seconds`: `parseIntDec`, integer ≥ 0
     - `retention_days`: `parseIntDec`, integer ≥ 1
-    - `min_confidence`: `Number(valRaw.trim())`, finite and within [0,1]. It is **refused, not clamped**, because the loader clamps silently.
+    - `min_confidence`: `valRaw.trim()` must match `/^[+-]?\d+(?:\.\d+)?$/`, and then `Number(...)` must be within [0,1]. It is **refused, not clamped**, because the loader clamps silently. The pattern is stricter than TOML (no exponent); refusing more is safe.
   - A refused value's message is `"[<section>] <key> = <valRaw>: expected <expect>"`.
-  - Pass the `[[fleet.job]]` blocks to the checker as one rendered text: `"[[fleet.job]]\n"` plus each block's raw lines.
+  - A section with `malformed` set gives one problem and is skipped (`continue`), children included. Check `header` against the allowlist even when `lines` is empty.
+  - Each `[[fleet.job]]` block is checked structurally first: a non-empty `name` (after `parseString`), no passthrough lines, no key repeated. Only blocks that pass are rendered to the checker, as one text: `"[[fleet.job]]\n"` plus each block's raw lines. The checker is not called when no block passes.
   - Each `why` is one factual line. Example: `"fleet master switch; the owner's own file still overrides it"`.
 
 - [ ] **Step 5: Run the tests.** Expected: PASS.
@@ -139,12 +148,16 @@ Then run `bun install` and build the sandbox helper there, the same way as the P
   - `refuses federation params`. `namespace = "x"` and `namespaces = "a,b"` each give a problem containing `namespace/namespaces are not allowed in a pack job`, with or without `sweep`.
   - `refuses what the fleet parser refuses`. A missing `agent`, `interval_seconds = 0`, `max_subjects` without `sweep`, and a duplicate name within the text each give that parser's `FleetConfigError` message as the problem.
   - `refuses an unsupported sweep`. Use one agent/kind pair that `validateFleetSweepJobs` refuses.
+  - `one cause, one problem`:
+    - an ineligible agent with `sweep` set gives only the `is not fleet-eligible` problem, not a second `cannot sweep`
+    - `sweep` plus `namespace` gives only the pack `namespace/namespaces are not allowed` problem, not the sweep validator's federation message
+  - `collects problems across jobs`. Two jobs, each with an unsupported sweep, give two problems (`validateFleetSweepJobs` throws on its first job, so it is called per job).
 
 - [ ] **Step 2: Run them and see them fail.**
 
 - [ ] **Step 3: Implement `checkPackFleetJobs`.**
   - A `FleetConfigError` thrown by the parser becomes one problem, and checking stops there: the parser stops at its first error.
-  - Every other check runs per job and collects all of its problems.
+  - Every other check runs per job and collects all of its problems, in this order: the federation params (`namespace`/`namespaces`) on `job.params`, then eligibility via `resolveFleetAgentMethod`. Only an eligible job goes on to `validateFleetSweepJobs([copy])`, where `copy` is the job with `namespace`/`namespaces` removed from `params`; catch its `FleetConfigError` as that job's problem.
 
 - [ ] **Step 4: Run the tests and `bun run audit:boundaries`.** Expected: both PASS, with no cycle. `packs/` is imported by nothing in `config/`.
 
@@ -158,7 +171,10 @@ Then run `bun install` and build the sandbox helper there, the same way as the P
 - Modify:
   - `packages/gateway/src/config/layered-config.ts`
   - `packages/gateway/src/config/nimbus-toml-glossary-terms.ts`
-- Test: `packages/gateway/src/config/layered-config.test.ts` (extend)
+  - `packages/gateway/src/config/nimbus-toml.ts` (the `[lan]` fallback)
+- Test:
+  - `packages/gateway/src/config/layered-config.test.ts` (extend)
+  - `packages/gateway/test/integration/config/layer-read-error.test.ts` (extend)
 
 **Interfaces:**
 - Produces. These replace PR 1's `PackLayerSource.list`, which has no other implementer or caller:
@@ -172,13 +188,19 @@ Then run `bun install` and build the sandbox helper there, the same way as the P
   - `export function layeredHasUserLayer(configDir: string): boolean`
   - `export function peekLayeredConfig(configDir: string): LayeredConfig | undefined`: the registered reader, never creating one
 - Modify: `packages/gateway/src/config/nimbus-toml-glossary-terms.ts`.
-  - `loadGlossaryManualFromConfigDir` returns `{ loaded: false }` when `!layeredHasUserLayer(configDir)`.
+  - `loadGlossaryManualFromConfigDir` returns `{ loaded: false }` when `layerReadError(configDir)` is set (recording it through `sectionFallbackSink(configDir, "glossary.terms")`, as `filesystem-toml.ts` does), and when `!layeredHasUserLayer(configDir)`.
+  - The read-error half closes a hazard already on `main`: terms authored in an unreadable profile file are read as "no terms", and the sync pass deletes them.
   - **Why this is load-bearing:** `loaded: true` with zero terms makes `glossary-manual.ts`'s desired-state pass delete every authored term. Today a missing `nimbus.toml` gives `null` text and so `loaded: false`. Once a pack-only config renders, the same missing file would otherwise read as "no terms" and wipe them. Glossary is not pack-settable, so it comes from user layers only.
+- Modify: `loadNimbusLanFromPath` and `loadNimbusLanFromConfigDir` pass `parseNimbusLanToml("")` as the fallback instead of `DEFAULT_NIMBUS_LAN_TOML`, matching the updater loader. Otherwise `NIMBUS_LAN_PORT` is ignored with no file but honoured on a pack-only render: the one loader whose `null` and pack-only results differ.
+- Modify: `initLayeredConfig` throws when `opts.packs` is given and the registered reader already exists with a different pack source (for example, `getLayeredConfig` ran first). Today it returns the existing reader and silently drops `opts.packs`.
 
 - [ ] **Step 1: Write the failing tests** (a fake `PackLayerSource` that returns fixed texts):
   - `a pack layer sits below base and profile`. A pack sets `[decisions] min_confidence = 0.5`, base sets `0.6`, profile `work` sets `0.7`. The effective value is `0.7`, and the shadowed values list base then pack.
   - `pack-only config renders and glossary stays unloaded` (Review Focus 4). No base or profile file exists, and the pack sets `[decisions] min_confidence = 0.5`. `text` is non-null, `hasUserLayer` is `false`, `loadNimbusDecisionsFromConfigDir(dir).minConfidence` is `0.5`, and `loadGlossaryManualFromConfigDir(dir)` returns `{ loaded: false }`. Red-check: revert the glossary guard and this test must fail with `loaded: true`.
-  - Other loaders whose "no file" branch matters: grep every `layeredConfigText(` caller for a `=== null` branch. Confirm that for each one, reading a pack-only render rather than `null` gives the same result, given the allowlist (none of them reads a pack-settable section). Record the list in the task report.
+  - `an unreadable profile layer leaves glossary unloaded` (in `layer-read-error.test.ts`). Base readable, profile file a directory: `loadGlossaryManualFromConfigDir(dir)` is `{ loaded: false }` and `sectionFallback("glossary.terms")` names the file. Red-check it by reverting the guard.
+  - `NIMBUS_LAN_PORT applies with no config file`. With the env set and no file, `loadNimbusLanFromConfigDir(dir).port` is the env value.
+  - `init after an implicit reader refuses a pack source`. `getLayeredConfig(dir)` then `initLayeredConfig(dir, { packs })` throws.
+  - Other loaders whose "no file" branch matters: grep every `layeredConfigText(` caller for a `=== null` branch. Confirm that for each one, reading a pack-only render rather than `null` gives the same result. The plan review audited all 16 call sites at `780303ec` and found only `[lan]` differs (fixed above); re-run the grep, since the list may have moved, and record it in the task report.
   - `skips and list errors are carried on the snapshot`. A source that returns `skipped: [{packId:"bad",reason:"r"}]` and `listError: "e"` produces a snapshot with both, and `activePacks` lists only the merged ids.
   - `a pack text change rebuilds; an identical read reuses the snapshot`. The version increases only when a pack text or the skipped set changes.
   - `peekLayeredConfig` returns `undefined` before init and the reader after it.
@@ -211,8 +233,8 @@ Then run `bun install` and build the sandbox helper there, the same way as the P
   - `PROFILE_NAME_RE` (`config/active-profile.ts`)
   - `writeUtf8FileAtomicReplace(path, content)` (`config/toml-section-writer.ts`)
 - Produces:
-  - `export class PackLayerRefusedError extends Error { readonly problems: readonly string[] }`. The message joins `problems` with `"; "`.
-  - `export type PackWriteResult = { readonly path: string; readonly snapshotVersion: number | null }`. `snapshotVersion` is set only when `profile` is the running profile.
+  - `export class PackLayerRefusedError extends Error { readonly problems: readonly string[] }`. The message joins `problems` with `"; "`. **Every** refusal from `setPackLayer`/`removePackLayer` throws this class: a bad profile or id, a malformed `active.json`, a fragment problem, a conflict. Callers handle one error class.
+  - `export type PackWriteResult = { readonly path: string; readonly snapshotVersion: number | null }`. `snapshotVersion` is set only when `profile` is the running profile and something was written; a remove of an absent pack returns `null` and does not call `onChange`.
   - `export type PackLayerStore = PackLayerSource & { setPackLayer(profile: string, packId: string, fragment: string): PackWriteResult; removePackLayer(profile: string, packId: string): PackWriteResult & { readonly removed: boolean } }`
   - `export function createPackLayerStore(opts: { configDir: string; checkJobs?: PackJobChecker; onChange?: (profile: string) => number | null }): PackLayerStore`
     - `checkJobs` defaults to `checkPackFleetJobs`.
@@ -234,15 +256,18 @@ Then run `bun install` and build the sandbox helper there, the same way as the P
   - `hostile active.json entries never become paths` (Review Focus 3). Entries `"../../nimbus"`, `"PM"`, `"pm"`, `"pm"` and `"ghost"` give these skips: one invalid-id skip each for the first two, `pm` merged once plus a `listed twice` skip, and `ghost` skipped as `missing`. A filesystem spy, or a planted `../../nimbus.toml` sentinel, shows that no path built from the bad entries was read.
   - `malformed active.json applies no packs`. For non-JSON, `version: 2`, and `packs` not being a string array, `listError` is set and `layers` is empty. `setPackLayer` and `removePackLayer` then **refuse** rather than overwrite the owner's file.
   - `an unreadable or oversized pack file is skipped`. A directory at `pm.toml`, or a file over the cap, is skipped with a reason.
-  - `reasons carry no absolute path`. No `skipped[].reason` or `listError` contains `configDir`.
+  - `reasons carry no absolute path`. No `skipped[].reason` or `listError` contains `configDir`, including for a directory at `active.json` (`EISDIR`).
+  - `every refusal is a PackLayerRefusedError`. Bad id, bad profile, malformed `active.json`, fragment problem and conflict each throw that class.
+  - `remove tolerates a missing file`. Delete `pm.toml` by hand, then `removePackLayer("default","pm")` returns `removed: true` and `active.json` no longer lists it.
   - `a pack for another profile is stored but not applied`. Set on `work` while the reader runs `default`: `snapshotVersion` is `null` and the effective config is unchanged.
 
 - [ ] **Step 2: Run them and see them fail.**
 
 - [ ] **Step 3: Implement.**
+  - `createPackLayerStore` resolves `configDir` once (`resolve(opts.configDir)`), so the path it strips from `fs` error messages matches theirs on Windows. Any absolute path in a message, `active.json`'s included, is replaced by its basename.
   - **`read(profile)`:**
     - A missing `packs/<profile>/` or `active.json` gives no packs and no error.
-    - Entries are checked in list order: id rule, duplicates, then reading the file (ENOENT means `missing`; any other error gives its message with the path replaced by the basename), size cap, then `checkPackFragment`. If `profile` itself fails `PROFILE_NAME_RE`, return `listError`.
+    - Entries are checked in list order: id rule, duplicates, then `statSync` size against the cap (so an oversized file is never read into memory), then reading the file (ENOENT means `missing`; any other error gives its message with the path replaced by the basename), then `checkPackFragment`, which re-checks the byte cap on what was actually read. If `profile` itself fails `PROFILE_NAME_RE`, return `listError`.
   - **`setPackLayer` order:**
     1. Validate the profile and id.
     2. Read `active.json`, refusing on `listError`.
@@ -252,7 +277,7 @@ Then run `bun install` and build the sandbox helper there, the same way as the P
     6. Return `onChange(profile)`.
   
     A crash between the two writes leaves an unlisted file, which is inert.
-  - **`removePackLayer`:** rewrite `active.json` without the id first, then delete the file, then call `onChange`.
+  - **`removePackLayer`:** rewrite `active.json` without the id first, then delete the file (ignoring `ENOENT`), then call `onChange`.
 
 - [ ] **Step 4: Run the tests and check coverage** on `pack-layer-store.ts` (≥85% line, ≥80% branch). Expected: PASS.
 
@@ -275,7 +300,7 @@ Then run `bun install` and build the sandbox helper there, the same way as the P
   - The user adds a job named `pack-daily`. The user's job replaces the pack's (PR 1's merge by name), and there is still only one `pack-daily`.
   - `removePackLayer` puts everything back to the user-only values.
 - [ ] **Step 2: Run it and see it fail** (the store is not wired).
-- [ ] **Step 3: Implement.** Pass `{ packs: createPackLayerStore({ configDir: paths.configDir }) }` to the existing `initLayeredConfig(paths.configDir)` call, and leave the boot comment's ordering note intact.
+- [ ] **Step 3: Implement.** Pass `{ packs: createPackLayerStore({ configDir: paths.configDir }) }` to the existing `initLayeredConfig(paths.configDir)` call, and leave the boot comment's ordering note intact. Right after the existing `config: profile …` info line, take one snapshot and log at `error` one line per `skippedPacks` entry and one for `packListError` (spec § 5.2 lists the log among the four places a skip is reported). Put the line-building in a small exported helper (`packSkipLogLines(snapshot): string[]` in `pack-layer-store.ts`) and unit-test it there; reload-time logging is PR 3's.
 - [ ] **Step 4: Run the integration test, then `bun test packages/gateway/test/e2e` filtered to gateway boot** (for example, the explain-last and config e2e files). Expected: PASS, and boot works with no `packs/` dir.
 - [ ] **Step 5: Commit** `feat(config): the gateway reads pack layers`.
 
@@ -308,12 +333,12 @@ Then run `bun install` and build the sandbox helper there, the same way as the P
 - [ ] **Step 1: Write the failing tests:**
   - diag: a store with one good and one tampered pack gives `activePacks: ["pm"]` and one `skippedPacks` entry. No string in `configLayers` contains the temp dir.
   - explain: with no path and with any path, the notes include the skip line and the list-error line.
-  - doctor: `doctorPrintProfile` prints `[warn] pack "x" skipped: <reason>` and `[warn] packs not applied: <listError>`, each returning exit 1. It prints `[info] packs active: pm, devops` with exit 0. An older gateway's payload without these fields prints nothing new.
+  - doctor: `doctorPrintProfile` prints `[warn] pack "x" skipped: <reason>` and `[warn] packs not applied: <listError>`, each returning exit 1. It prints `[info] packs active: pm, devops` with exit 0. An older gateway's payload without these fields prints nothing new, and malformed values (`activePacks` not an array, a `skippedPacks` entry missing `packId` or `reason`) are filtered out the same way `isLayerRecord` filters `layers`. `[info] packs active` prints only when the filtered list is non-empty.
 - [ ] **Step 2: Run them and see them fail.**
 - [ ] **Step 3: Implement**, then update the docs:
   - architecture: one paragraph on the pack layer covering storage, the allowlist module, read-side skipping, the conflict rule and "no IPC writes it"
   - cli-reference: the new doctor lines and explain notes
-  - CHANGELOG: one entry in the file's existing style, saying the gateway now reads pack layers (none exist until a later release installs one) and that `nimbus doctor` reports skipped ones
+  - CHANGELOG: one entry in the file's existing style, saying the gateway now reads pack layers (none exist until a later release installs one) and that `nimbus doctor` reports skipped ones. Also note the two Task 3 fixes: `NIMBUS_LAN_PORT` now applies when no config file exists, and glossary terms in an unreadable profile file are no longer treated as deleted
 - [ ] **Step 4: Run the tests, `bun run audit:doc-refs` and `bun run audit:status-drift`.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(config): report active and skipped packs in diag, doctor and explain`.
 
