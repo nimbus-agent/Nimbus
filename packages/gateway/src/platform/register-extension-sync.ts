@@ -78,7 +78,9 @@ export interface ExtensionSyncRegistrarDeps {
 
 /**
  * The owner's way back from a stale-grant pause; matched on resume, so it is one definition. The
- * migration engine ends its own stale-grant reason with it, so that re-approval resumes too.
+ * migration engine ends its own stale-grant reason with it, so that re-approval resumes too. The CLI
+ * matches its "`nimbus extension approve " text (`namesApproveStep` in
+ * packages/cli/src/commands/extension-doctor-format.ts); register-extension-sync.test.ts pins it.
  */
 export function reapproveSuffix(extensionId: string): string {
   return `run \`nimbus extension approve ${extensionId}\` to resume sync`;
