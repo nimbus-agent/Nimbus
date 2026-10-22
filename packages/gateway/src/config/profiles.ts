@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PROFILE_NAME_RE, readProfileMarker } from "./active-profile.ts";
 
 const PROFILE_MARKER = ".nimbus-profile";
 const PROFILE_PREFIX = "nimbus.";
@@ -16,11 +17,7 @@ export class ProfileManager {
   }
 
   private readActiveMarker(): string | undefined {
-    const path = join(this.configDir, PROFILE_MARKER);
-    if (!existsSync(path)) return undefined;
-    const raw = readFileSync(path, "utf8").trim();
-    if (raw === "" || raw === "default") return undefined;
-    return raw;
+    return readProfileMarker(this.configDir);
   }
 
   private profileTomlPath(name: string): string {
@@ -53,7 +50,7 @@ export class ProfileManager {
   }
 
   create(name: string): void {
-    if (!/^[a-z0-9_-]{1,32}$/i.test(name) || name === "default") {
+    if (!PROFILE_NAME_RE.test(name) || name === "default") {
       throw new Error(`Invalid profile name: ${name}`);
     }
     const dest = this.profileTomlPath(name);
