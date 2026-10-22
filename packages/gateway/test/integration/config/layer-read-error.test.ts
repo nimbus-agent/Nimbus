@@ -22,6 +22,7 @@ import {
   loadNimbusPagerdutyFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
 } from "../../../src/config/nimbus-toml.ts";
+import { loadGlossaryManualFromConfigDir } from "../../../src/config/nimbus-toml-glossary-terms.ts";
 import { loadNimbusWorkdayFromConfigDir } from "../../../src/config/nimbus-toml-workday.ts";
 import { loadMultimodalConfig } from "../../../src/multimodal/multimodal-config.ts";
 
@@ -100,6 +101,20 @@ describe("loaders whose single-file reader let a read error escape", () => {
     );
     expect(loadNimbusFilesystemRootsFromConfigDir(dir)).toEqual([]);
     expect(getLayeredConfig(dir).sectionFallback("filesystem.roots")).toContain(profileFile);
+  });
+
+  test("an unreadable profile layer leaves glossary unloaded", () => {
+    // Terms authored in the unreadable profile file must not read as "no terms": `loaded: true`
+    // with zero terms makes the desired-state pass delete every authored term.
+    writeFileSync(join(dir, "nimbus.toml"), '[glossary.terms]\nSLO = "service level objective"\n');
+    expect(loadGlossaryManualFromConfigDir(dir)).toEqual({ loaded: false });
+    expect(getLayeredConfig(dir).sectionFallback("glossary.terms")).toContain(profileFile);
+    // Control: once the profile reads again, the base file's term loads.
+    rmSync(profileFile, { recursive: true });
+    expect(loadGlossaryManualFromConfigDir(dir)).toMatchObject({
+      loaded: true,
+      terms: [{ displayTerm: "SLO" }],
+    });
   });
 
   test("every loader reads normally once the layer is readable again", () => {

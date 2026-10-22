@@ -955,11 +955,14 @@ export function parseNimbusLanToml(
 }
 
 export function loadNimbusLanFromPath(tomlPath: string): NimbusLanToml {
-  return loadTomlSection(tomlPath, DEFAULT_NIMBUS_LAN_TOML, parseNimbusLanToml);
+  // The fallback goes through `parseNimbusLanToml` too, so `NIMBUS_LAN_PORT` applies whether or
+  // not a config file exists (as the updater loader does). With the bare defaults it was ignored
+  // with no file yet honoured on a pack-only render, the same install answering two ways.
+  return loadTomlSection(tomlPath, parseNimbusLanToml(""), parseNimbusLanToml);
 }
 
 export function loadNimbusLanFromConfigDir(configDir: string): NimbusLanToml {
-  return loadTomlSectionFromConfig(configDir, "lan", DEFAULT_NIMBUS_LAN_TOML, parseNimbusLanToml);
+  return loadTomlSectionFromConfig(configDir, "lan", parseNimbusLanToml(""), parseNimbusLanToml);
 }
 
 /**
