@@ -3,9 +3,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  forgetLayeredConfigForTests,
   getLayeredConfig,
   initLayeredConfig,
-  resetLayeredConfigsForTests,
 } from "../config/layered-config.ts";
 import { parseNimbusTomlLlmSection } from "../config/nimbus-toml.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
@@ -793,7 +793,6 @@ describe("llm.use", () => {
 describe("llm.use through the server dispatcher", () => {
   test("llm.use writes the active profile file and the next read sees it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "nimbus-llm-use-profile-"));
-    resetLayeredConfigsForTests();
     try {
       writeFileSync(join(dir, "nimbus.toml"), "[llm]\nprefer_local = true\n", "utf8");
       const baseBefore = readFileSync(join(dir, "nimbus.toml"));
@@ -828,7 +827,7 @@ describe("llm.use through the server dispatcher", () => {
       expect(text).toContain("[llm.tasks]");
       expect(text).toContain("ollama/llama3.2:latest");
     } finally {
-      resetLayeredConfigsForTests();
+      forgetLayeredConfigForTests(dir);
       rmSync(dir, { recursive: true, force: true });
     }
   });

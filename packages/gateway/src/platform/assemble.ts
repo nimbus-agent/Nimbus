@@ -58,7 +58,7 @@ import {
   type NimbusFleetJobToml,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
-import { initLayeredConfig } from "../config/layered-config.ts";
+import { getLayeredConfig, initLayeredConfig } from "../config/layered-config.ts";
 import { loadNimbusMcpSinkFromConfigDir } from "../config/mcp-sink-toml.ts";
 import {
   type ConnectorsConfig,
@@ -3206,7 +3206,7 @@ export interface FleetBootDeps {
 }
 
 /**
- * Reads `[fleet]` off the PROFILE-RESOLVED toml, prunes expired runs and briefs, and starts the
+ * Reads `[fleet]` off the layered config (base file plus the active profile's), prunes expired runs and briefs, and starts the
  * scheduler when — and only when — the owner both enabled the fleet and configured a job. Returns
  * the full result of assembling the fleet subsystem, not just the (optionally-undefined)
  * scheduler — the `fleet.*` IPC surface (Task 9) needs the store, the effective config and the job
@@ -3258,9 +3258,19 @@ export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
     fleet = loaded;
   } catch (err) {
     configError = true;
+    const layered = getLayeredConfig(fleetConfigDir);
+    const files = layered
+      .snapshot()
+      .layers.filter((l) => l.exists)
+      .map((l) => l.layer.path);
     deps.logger.error(
-      { err: err instanceof Error ? err.message : String(err), configDir: fleetConfigDir },
-      `[fleet] config error in ${fleetConfigDir} — fleet disabled for this process`,
+      {
+        err: err instanceof Error ? err.message : String(err),
+        configDir: fleetConfigDir,
+        profile: layered.profile.name,
+        files,
+      },
+      `[fleet] config error (profile "${layered.profile.name}"; files: ${files.join(", ") || "none"}) — fleet disabled for this process`,
     );
   }
 

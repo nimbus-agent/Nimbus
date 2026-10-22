@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveActiveProfile } from "./active-profile.ts";
+import { InvalidProfileNameError, resolveActiveProfile } from "./active-profile.ts";
 import {
   getLayeredConfig,
   initLayeredConfig,
@@ -104,5 +104,27 @@ describe("LayeredConfig", () => {
     write("nimbus.toml", "[decisions]\nmin_confidence = 0.9\n");
     cfg.snapshot();
     expect(cfg.sectionFallback("decisions")).toBeUndefined();
+  });
+});
+
+describe("initLayeredConfig with an invalid profile", () => {
+  test("throws InvalidProfileNameError naming the value and the source", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-layered-bad-"));
+    try {
+      let caught: unknown;
+      try {
+        initLayeredConfig(dir, { explicitProfile: "bad name!" });
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(InvalidProfileNameError);
+      const err = caught as InvalidProfileNameError;
+      expect(err.message).toContain("bad name!");
+      expect(err.message).toContain("argument");
+      expect(err.value).toBe("bad name!");
+      expect(err.source).toBe("argument");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

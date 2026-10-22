@@ -155,6 +155,11 @@ export function getLayeredConfig(configDir: string): LayeredConfig {
   return registry.get(resolve(configDir)) ?? initLayeredConfig(configDir);
 }
 
+/** Test-only: drop one config dir's entry, leaving every other dir's reader alone. */
+export function forgetLayeredConfigForTests(configDir: string): void {
+  registry.delete(resolve(configDir));
+}
+
 export function resetLayeredConfigsForTests(): void {
   registry.clear();
 }

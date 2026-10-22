@@ -3,9 +3,10 @@
  *
  * TWO properties this module exists to guarantee, both load-bearing:
  *
- * 1. It reads the PROFILE-RESOLVED toml, never `nimbus.toml` directly. Almost every other
- *    `loadNimbus*FromConfigDir` in the tree hardcodes `nimbus.toml` and is therefore blind to
- *    the active profile — which for a per-profile persona would defeat the entire feature.
+ * 1. It reads through the LAYERED reader (`loadNimbusPersonaFromConfigDir`: packs, base
+ *    `nimbus.toml`, then the active profile file, merged key by key), never `nimbus.toml`
+ *    directly — a direct read would be blind to the active profile, which for a per-profile
+ *    persona would defeat the entire feature.
  * 2. It resolves PER INVOCATION and caches nothing, mirroring `synthesis-llm.ts`'s per-call
  *    provider resolution. The file can change under a long-lived Gateway, and a cached read
  *    would make an edit require a restart.
