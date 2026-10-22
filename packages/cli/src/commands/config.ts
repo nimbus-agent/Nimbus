@@ -286,7 +286,9 @@ async function runConfigExplainVia(
     printExplain(r, { ...(path === undefined ? {} : { path }), json });
   } catch (e) {
     if (e instanceof GatewayNotRunningError) {
-      console.log(EFFECTIVE_NEEDS_GATEWAY);
+      // With --json, stdout is a machine contract: keep the human message off it.
+      if (json) console.error(EFFECTIVE_NEEDS_GATEWAY);
+      else console.log(EFFECTIVE_NEEDS_GATEWAY);
       process.exitCode = 1;
       return;
     }

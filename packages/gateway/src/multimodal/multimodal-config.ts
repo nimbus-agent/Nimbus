@@ -31,6 +31,7 @@
 import {
   fallbackMessage,
   layeredConfigText,
+  layerReadError,
   sectionFallbackSink,
 } from "../config/layered-config.ts";
 import { stripComment } from "../config/toml-primitives.ts";
@@ -115,6 +116,13 @@ function defaults(): MultimodalConfig {
 
 export function loadMultimodalConfig(configDir: string | undefined): MultimodalConfig {
   if (configDir === undefined) return defaults();
+  // An unreadable layer leaves only a PARTIAL merge: a profile's `enabled = false` could silently
+  // give way to the base file's `enabled = true`. Fail OFF instead, the same as untrusted TOML.
+  const readError = layerReadError(configDir);
+  if (readError !== undefined) {
+    sectionFallbackSink(configDir, "multimodal")(readError);
+    return defaults();
+  }
   const text = layeredConfigText(configDir);
   if (text === null) return defaults();
   let parsed: MultimodalConfigDraft;

@@ -962,6 +962,15 @@ describe("runConfig profile awareness and the effective view", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it("list --effective --json without a gateway keeps stdout empty for JSON consumers", async () => {
+    const { GatewayNotRunningError } = await import("../lib/with-gateway-ipc.ts");
+    const withIpc = (): Promise<never> => Promise.reject(new GatewayNotRunningError());
+    await runConfig(["list", "--effective", "--json"], undefined, { withIpc });
+    expect(out.stdout).toBe("");
+    expect(out.stderr).toContain("the effective view needs a running gateway");
+    expect(process.exitCode).toBe(1);
+  });
+
   it("list --effective --json passes through the explain document", async () => {
     const doc = {
       runningProfile: "default",

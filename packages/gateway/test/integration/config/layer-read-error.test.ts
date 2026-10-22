@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadNimbusFilesystemRootsFromConfigDir } from "../../../src/config/filesystem-toml.ts";
 import { loadNimbusFleetFromConfigDir } from "../../../src/config/fleet-toml.ts";
 import {
   getLayeredConfig,
@@ -22,6 +23,7 @@ import {
   loadNimbusServiceConfigsFromConfigDir,
 } from "../../../src/config/nimbus-toml.ts";
 import { loadNimbusWorkdayFromConfigDir } from "../../../src/config/nimbus-toml-workday.ts";
+import { loadMultimodalConfig } from "../../../src/multimodal/multimodal-config.ts";
 
 let dir: string;
 let profileFile: string;
@@ -78,6 +80,26 @@ describe("loaders whose single-file reader let a read error escape", () => {
     }
     expect(writes.join("")).toContain(`could not read ${profileFile}`);
     expect(getLayeredConfig(dir).sectionFallback("pagerduty")).toContain(profileFile);
+  });
+
+  test("multimodal fails OFF rather than reading the base file alone", () => {
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      '[multimodal]\nenabled = true\nremote_vlm = "gemini"\n',
+    );
+    const cfg = loadMultimodalConfig(dir);
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.remoteVlm).toBeNull();
+    expect(getLayeredConfig(dir).sectionFallback("multimodal")).toContain(profileFile);
+  });
+
+  test("filesystem roots index nothing rather than the base file's roots", () => {
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      `[[filesystem.roots]]\npath = "${join(dir, "src").replaceAll("\\", "/")}"\n`,
+    );
+    expect(loadNimbusFilesystemRootsFromConfigDir(dir)).toEqual([]);
+    expect(getLayeredConfig(dir).sectionFallback("filesystem.roots")).toContain(profileFile);
   });
 
   test("every loader reads normally once the layer is readable again", () => {

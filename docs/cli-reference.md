@@ -3143,7 +3143,7 @@ Cloud vendors are **not** configured this way — they need a whole `[llm.remote
 
 ### `nimbus config list`
 
-Print the config file path, then a per-key line for whichever of the three env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`) currently has a value, followed by the raw `nimbus.toml` body. A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in `nimbus.toml` — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
+Print the config file path, then a per-key line for whichever of the three env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`) currently has a value, followed by the raw body of the active profile's file (`nimbus.<profile>.toml`, or `nimbus.toml` on the default profile). A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in that file — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
 
 ```bash
 nimbus config list
@@ -3155,10 +3155,10 @@ nimbus config list --json | jq -r '.keys[] | select(.source == "env") | .envVar'
 
 | Key | Type | Notes |
 |---|---|---|
-| `path` | string | Resolved `nimbus.toml` path |
+| `path` | string | Resolved path of the active profile's file (`nimbus.toml` on the default profile) |
 | `exists` | boolean | Whether that file is present |
 | `keys` | array | `{ key, value, source: "file" \| "env", envVar: string \| null }` — `envVar` is the overriding variable, `null` for file-sourced keys |
-| `raw` | string \| null | The file body verbatim; `null` when the file is missing |
+| `raw` | string \| null | That file's body verbatim (not the merged config — use `--effective`); `null` when the file is missing |
 
 The prose "other `NIMBUS_*` overrides" legend the human view prints is static documentation, not data, and has no JSON counterpart.
 
