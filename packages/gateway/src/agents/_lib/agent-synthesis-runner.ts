@@ -3,8 +3,7 @@
 import type { Database } from "bun:sqlite";
 import {
   DEFAULT_NIMBUS_AGENTS_TOML,
-  loadNimbusAgentsFromPath,
-  resolveNimbusTomlForProfile,
+  loadNimbusAgentsFromConfigDir,
 } from "../../config/nimbus-toml.ts";
 import { resolvePersona } from "../../config/persona.ts";
 import {
@@ -60,17 +59,14 @@ export function buildAgentSynthesisRunner(
   deps: AgentSynthesisRunnerDeps,
 ): SynthesisRunner | undefined {
   if (deps.router === undefined) return undefined;
-  // A2: BOTH reads move onto the profile-resolved toml. The former
-  // `loadNimbusAgentsFromConfigDir` hardcoded `nimbus.toml`, which meant `[agents] synthesis`
-  // set in a profile file was silently ignored — a pre-existing bug, fixed here rather than
-  // shipped alongside a profile-AWARE persona, which would have been incoherent. It also
-  // means the move is BIDIRECTIONAL: `[agents]` now follows whole-file profile semantics, so
-  // a key set only in the BASE `nimbus.toml` no longer applies while a profile file that
-  // lacks an `[agents]` section is active. That matches `[llm]`/`[session]`. See design § 5.1.
-  const tomlPath =
-    deps.configDir === undefined ? undefined : resolveNimbusTomlForProfile(deps.configDir);
+  // A2: BOTH reads go through the layered reader (packs, base `nimbus.toml`, then the active
+  // profile file). A key set only in the base file applies, and the profile file overrides it key
+  // by key — so `[agents] synthesis` set in a profile is honoured, and a profile that sets other
+  // keys leaves the base file's `[agents]` values in force. See design § 5.1.
   const config =
-    tomlPath === undefined ? DEFAULT_NIMBUS_AGENTS_TOML : loadNimbusAgentsFromPath(tomlPath);
+    deps.configDir === undefined
+      ? DEFAULT_NIMBUS_AGENTS_TOML
+      : loadNimbusAgentsFromConfigDir(deps.configDir);
   // No logger: this runs per brief, and warning on every brief would be noise. The single
   // warning site is the boot-time resolution in `platform/assemble.ts`.
   const persona = deps.configDir === undefined ? undefined : resolvePersona(deps.configDir);

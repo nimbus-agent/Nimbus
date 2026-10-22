@@ -19,6 +19,7 @@ import {
   doctorPrintIndexFromSnapshot,
   doctorPrintMigrations,
   doctorPrintOncallPush,
+  doctorPrintProfile,
   doctorPrintRegistries,
   doctorPrintVectorSearchFromSnapshot,
   healthStateMark,
@@ -1064,5 +1065,106 @@ describe("doctorPrintMigrations", () => {
     expect(out.stdout).toContain("[warn] Connector migration: status check failed (down).");
     expect(await doctorPrintMigrations(byMethod(() => ({ migrations: [{ id: 1 }] })))).toBe(1);
     expect(out.stdout).toContain("malformed migration.list response");
+  });
+});
+
+describe("doctorPrintProfile (role packs)", () => {
+  beforeEach(() => out.reset());
+  const layers = (exists: boolean) => [
+    { kind: "base", id: "base", path: "/c/nimbus.toml", exists: true },
+    { kind: "profile", id: "work", path: "/c/nimbus.work.toml", exists },
+  ];
+
+  it("is silent when an older gateway omits configLayers", () => {
+    expect(doctorPrintProfile(undefined)).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("warns when the marker and the running profile differ", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "work",
+      layers: [],
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain(
+      '[warn] profile: marker says "work" but the gateway runs "default" — restart to apply',
+    );
+  });
+
+  it("prints an info line, exit 0, when the profile has no file", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "work",
+      markerProfile: "work",
+      layers: layers(false),
+    });
+    expect(exit).toBe(0);
+    expect(out.stdout).toContain(
+      '[info] profile "work" has no nimbus.work.toml; running on nimbus.toml alone',
+    );
+  });
+
+  it("is silent when the profile file exists and the marker agrees", () => {
+    expect(
+      doctorPrintProfile({ runningProfile: "work", markerProfile: "work", layers: layers(true) }),
+    ).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("does not warn when the running profile came from NIMBUS_PROFILE or an argument", () => {
+    for (const source of ["env", "argument"]) {
+      out.reset();
+      const exit = doctorPrintProfile({
+        runningProfile: "work",
+        runningProfileSource: source,
+        markerProfile: "home",
+        layers: layers(true),
+      });
+      expect(exit).toBe(0);
+      expect(out.stdout).not.toContain("restart");
+    }
+  });
+
+  it("warns when a marker-sourced profile's marker has changed since boot", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "work",
+      runningProfileSource: "marker",
+      markerProfile: "home",
+      layers: layers(true),
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain('marker says "home" but the gateway runs "work"');
+  });
+
+  it("warns, exit 1, naming a layer the gateway could not read", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "work",
+      runningProfileSource: "argument",
+      markerProfile: "work",
+      layers: [
+        { kind: "base", id: "base", path: "nimbus.toml", exists: true },
+        {
+          kind: "profile",
+          id: "work",
+          path: "nimbus.work.toml",
+          exists: false,
+          readError: "EISDIR: illegal operation on a directory",
+        },
+      ],
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain(
+      "[warn] config: could not read nimbus.work.toml (EISDIR: illegal operation on a directory); that layer is ignored, and sections read through the default loader fall back to built-in defaults until it is readable",
+    );
+    expect(out.stdout).not.toContain("has no nimbus.work.toml");
+  });
+
+  it("tolerates malformed layer entries and a non-array layers field", () => {
+    const base = { runningProfile: "work", markerProfile: "work" };
+    expect(doctorPrintProfile({ ...base, layers: [null, 7, "x", { kind: "profile" }] })).toBe(0);
+    expect(doctorPrintProfile({ ...base, layers: "nope" })).toBe(0);
+    expect(doctorPrintProfile({ runningProfile: 3 })).toBe(0);
+    expect(doctorPrintProfile("nope")).toBe(0);
+    expect(out.stdout).toBe("");
   });
 });

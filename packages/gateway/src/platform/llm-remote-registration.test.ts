@@ -39,6 +39,12 @@ function tomlWith(body: string): string {
   return p;
 }
 
+/** The config dir `tomlWith` wrote into; `buildLlmRegistryFromToml` reads by config dir. */
+function configDirWith(body: string): string {
+  tomlWith(body);
+  return dir;
+}
+
 function remoteRoutesOf(registry: {
   llmRouter: { routes: () => readonly { routeId: string; provider: { isLocal: boolean } }[] };
 }) {
@@ -56,7 +62,7 @@ describe("[llm.remote.*] registration", () => {
       const db = new Database(":memory:");
       const registry = await buildLlmRegistryFromToml(
         db,
-        tomlWith(`[llm]\n\n[llm.remote.openai]\nenabled = false\nmodel = "gpt-5"\n`),
+        configDirWith(`[llm]\n\n[llm.remote.openai]\nenabled = false\nmodel = "gpt-5"\n`),
         vaultOf(new Map([["openai.api_key", "sk-vault"]])),
       );
       expect(remoteRoutesOf(registry)).toEqual([]);
@@ -70,7 +76,9 @@ describe("[llm.remote.*] registration", () => {
     const db = new Database(":memory:");
     const registry = await buildLlmRegistryFromToml(
       db,
-      tomlWith(`[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n`),
+      configDirWith(
+        `[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n`,
+      ),
       vaultOf(new Map([["anthropic.api_key", "sk-ant"]])),
     );
     const remote = remoteRoutesOf(registry);
@@ -84,7 +92,7 @@ describe("[llm.remote.*] registration", () => {
     const db = new Database(":memory:");
     const registry = await buildLlmRegistryFromToml(
       db,
-      tomlWith(`[llm]\n\n[llm.remote.gemini]\nenabled = true\nmodel = "gemini-2.5-pro"\n`),
+      configDirWith(`[llm]\n\n[llm.remote.gemini]\nenabled = true\nmodel = "gemini-2.5-pro"\n`),
       vaultOf(new Map()),
       { warn: (m: string) => warnings.push(m) },
     );
@@ -101,7 +109,7 @@ describe("[llm.remote.*] registration", () => {
     const db = new Database(":memory:");
     const registry = await buildLlmRegistryFromToml(
       db,
-      tomlWith(
+      configDirWith(
         `[llm]\nenforce_air_gap = true\n\n[llm.remote.notavendor]\nenabled = true\nmodel = "x"\n`,
       ),
       vaultOf(new Map([["anthropic.api_key", "k"]])),
@@ -118,7 +126,9 @@ describe("[llm.remote.*] registration", () => {
     const db = new Database(":memory:");
     const registry = await buildLlmRegistryFromToml(
       db,
-      tomlWith(`[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n`),
+      configDirWith(
+        `[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n`,
+      ),
       vaultOf(store),
     );
     const route = remoteRoutesOf(registry)[0];
@@ -146,7 +156,9 @@ describe("[llm.remote.*] registration", () => {
     const db = new Database(":memory:");
     const registry = await buildLlmRegistryFromToml(
       db,
-      tomlWith(`[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n`),
+      configDirWith(
+        `[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n`,
+      ),
       vaultOf(new Map([["anthropic.api_key", "sk-ant"]])),
     );
     const route = remoteRoutesOf(registry)[0];
@@ -174,7 +186,7 @@ describe("[llm.remote.*] registration", () => {
     const db = new Database(":memory:");
     const registry = await buildLlmRegistryFromToml(
       db,
-      tomlWith(
+      configDirWith(
         `[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n\n` +
           `[llm.remote.openai]\nenabled = true\nmodel = "gpt-5"\n`,
       ),
@@ -204,7 +216,7 @@ describe("[llm.remote.*] registration", () => {
     await expect(
       buildLlmRegistryFromToml(
         db,
-        tomlWith(
+        configDirWith(
           `[llm]\n\n[llm.remote.anthropic]\nenabled = true\nmodel = "claude-sonnet-4-6"\n\n` +
             `[llm.remote.openai]\nenabled = true\nmodel = "gpt-5"\n\n` +
             `[llm.remote.gemini]\nenabled = true\nmodel = "gemini-2.5-pro"\n`,
@@ -266,7 +278,7 @@ describe("route_priority may name a [llm.remote.*] route", () => {
     const db = new Database(":memory:");
     const registry = await buildLlmRegistryFromToml(
       db,
-      tomlWith(
+      configDirWith(
         `[llm]
 route_priority = ["anthropic/claude-sonnet-4-6"]
 
@@ -294,7 +306,7 @@ model = "claude-sonnet-4-6"
     const db = new Database(":memory:");
     await buildLlmRegistryFromToml(
       db,
-      tomlWith(
+      configDirWith(
         `[llm]
 route_priority = ["gemini/gemini-2.5-flash"]
 
@@ -321,7 +333,7 @@ model = "gemini-2.5-flash"
     const db = new Database(":memory:");
     await buildLlmRegistryFromToml(
       db,
-      tomlWith(`[llm]
+      configDirWith(`[llm]
 route_priority = ["ollama/not-a-configured-model"]
 `),
       vaultOf(new Map()),

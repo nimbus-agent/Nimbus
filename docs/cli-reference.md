@@ -546,7 +546,7 @@ Built-in agents that answer team-level questions from the local relationship gra
 
 **Configuration — `[agents]`, read from the profile-resolved TOML:**
 
-`[agents]` follows the same **whole-file** profile semantics as `[llm]` and `[session]`: when a profile is active and its `nimbus.<profile>.toml` exists, that file is the ONLY one read, and the base `nimbus.toml` is not consulted for these keys. This cuts **both ways**, and both directions are real behaviour changes as of 2026-08-18. A key set in a profile TOML is now honoured, where it used to be silently ignored; and a key set ONLY in the base `nimbus.toml` no longer applies while a profile whose file lacks an `[agents]` section is active — so a user with `synthesis = "off"` in `nimbus.toml` and an `[agents]`-less `nimbus.work.toml` gets the `"local"` default under the `work` profile until they repeat the key there.
+`[agents]` follows the same profile layering as every other section: `nimbus.<profile>.toml` overrides only the keys it sets, and everything else comes from `nimbus.toml`. A user with `synthesis = "off"` in `nimbus.toml` keeps it under a profile whose file has no `[agents]` section. Switching *which* profile is active still requires a Gateway restart.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -560,7 +560,7 @@ Built-in agents that answer team-level questions from the local relationship gra
 | `tone` | `"neutral"` | `"neutral"` — a strict no-op, contributes nothing to the prompt. `"terse"` — short sentences, no preamble; says everything it would otherwise say, in fewer words. `"formal"` — complete sentences, precise wording, no contractions. `"casual"` — contractions fine, plain words over jargon. `"verbose"` — spells out reasoning and the connections between findings. An unrecognised value keeps `"neutral"` and logs a one-time warning naming the key, the rejected value, and the fallback. |
 | `voice` | `"neutral"` | `"neutral"` — a strict no-op. `"opinionated"` — states a recommendation where the evidence supports one, rather than laying out options neutrally. `"collective"` — first-person plural ("we should…") rather than an outside observer's voice. Same unrecognised-value fallback as `tone`. |
 
-`[persona]` is read from the **profile-resolved** TOML and resolved fresh on every query — editing it changes the very next response, no restart required. Profile resolution means: the active profile's `nimbus.<profile>.toml` when a profile is active **and that file exists**, otherwise the base `nimbus.toml`. Switching *which* profile is active (`nimbus profile switch`) still requires a Gateway restart, same as every other profile-scoped setting, because the active profile is fixed for the life of the Gateway process.
+`[persona]` is read from the **profile-resolved** TOML and resolved fresh on every query — editing it changes the very next response, no restart required. Profile resolution means: the active profile's `nimbus.<profile>.toml` overrides only the keys it sets, and every other key comes from `nimbus.toml`. Switching *which* profile is active (`nimbus profile switch`) still requires a Gateway restart, same as every other profile-scoped setting, because the active profile is fixed for the life of the Gateway process.
 
 Applies to **three** surfaces: `nimbus ask`, every built-in agent brief, and — because a `@nimbus <question>` mention runs through the same `runAsk` pipeline — **ChatOps replies in Slack/Teams**. That third one is worth stating plainly: an `opinionated` or `collective` voice configured for your own machine will be visible to everyone in the channel the bot answers in. It carries no new content and no new egress — only tone — and it is the owner's own configured voice on the owner's own ChatOps integration, which is why it is not scoped out: doing so would make ChatOps replies the one surface that ignores your persona. It composes with `--devil` (persona directive outermost, `--devil`'s directive innermost, closest to the question). Every `tone` and `voice` value governs register and stance, never what gets said — no persona directive may tell the model to omit content. A `terse` persona can still raise the rate at which a brief falls back to its deterministic rendering, because the honesty contract that protects every brief discards a rewrite that drops a required disclosure rather than risk losing it — that is the contract working, not a bug, and the resolved persona rides the `briefReady` notification's `synthesis` field alongside the discard reason, so a `contract_violation` under `tone = "terse"` is self-explanatory.
 
@@ -3166,7 +3166,12 @@ Read a single configuration value.
 ```bash
 nimbus config get telemetry.enabled
 nimbus config get llm.local_model
+nimbus config get --effective llm.local_model   # value after all layers (needs a running gateway)
 ```
+
+`get`, `set`, `list` and `edit` target the **active profile's** file (`nimbus.<profile>.toml`, or `nimbus.toml` on the default profile). `set` creates the profile file if it is missing. A profile file inherits from `nimbus.toml` and overrides only the keys it sets; `--effective` shows the merged value.
+
+Switching profile takes effect on the next gateway restart: the gateway pins its profile at boot, and `nimbus doctor` and `nimbus config explain` say when the marker and the running profile differ.
 
 There is no TOML key for sync cadence — per-connector intervals are set with `nimbus connector set-interval <service> <duration>`, which writes to the index, not to `nimbus.toml`.
 
@@ -3188,7 +3193,7 @@ Cloud vendors are **not** configured this way — they need a whole `[llm.remote
 
 ### `nimbus config list`
 
-Print the config file path, then a per-key line for whichever of the three env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`) currently has a value, followed by the raw `nimbus.toml` body. A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in `nimbus.toml` — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
+Print the config file path, then a per-key line for whichever of the three env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`) currently has a value, followed by the raw body of the active profile's file (`nimbus.<profile>.toml`, or `nimbus.toml` on the default profile). A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in that file — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
 
 ```bash
 nimbus config list
@@ -3200,18 +3205,32 @@ nimbus config list --json | jq -r '.keys[] | select(.source == "env") | .envVar'
 
 | Key | Type | Notes |
 |---|---|---|
-| `path` | string | Resolved `nimbus.toml` path |
+| `path` | string | Resolved path of the active profile's file (`nimbus.toml` on the default profile) |
 | `exists` | boolean | Whether that file is present |
 | `keys` | array | `{ key, value, source: "file" \| "env", envVar: string \| null }` — `envVar` is the overriding variable, `null` for file-sourced keys |
-| `raw` | string \| null | The file body verbatim; `null` when the file is missing |
+| `raw` | string \| null | That file's body verbatim (not the merged config — use `--effective`); `null` when the file is missing |
 
 The prose "other `NIMBUS_*` overrides" legend the human view prints is static documentation, not data, and has no JSON counterpart.
 
 ---
 
+`nimbus config list --effective [--json]` prints the merged configuration across every layer instead of the raw file (needs a running gateway).
+
+---
+
+### `nimbus config explain <path> [--json]`
+
+Show which layer supplied a config value (`code default`, `nimbus.toml`, `nimbus.<profile>.toml`, or an env override) and the value each layer held. Needs a running gateway (`config.explain`, CLI-only).
+
+```bash
+nimbus config explain llm.local_model
+```
+
+---
+
 ### `nimbus config validate`
 
-Validate the current `nimbus.toml` configuration file against the schema. Exits `0` on success, `1` on error.
+Validate each existing user layer (`nimbus.toml` and the active profile's file) against the schema. Exits `0` on success, `1` on error.
 
 ```bash
 nimbus config validate
@@ -3221,7 +3240,7 @@ nimbus config validate
 
 ### `nimbus config edit`
 
-Open `nimbus.toml` in `$EDITOR`.
+Open the active profile's config file (`nimbus.toml` on the default profile) in `$EDITOR`.
 
 ```bash
 nimbus config edit
@@ -3339,6 +3358,10 @@ Named configuration profiles let you maintain separate settings (e.g. `work` vs 
 
 ### `nimbus profile create <name>`
 
+Copies `nimbus.toml` to `nimbus.<name>.toml` (or seeds a minimal file when there is no `nimbus.toml`). The name must match `[a-z0-9_-]{1,32}`, case-insensitively (`Work` is valid); any other name is refused, because the gateway would refuse it at boot.
+
+A profile file overrides only the keys it sets and inherits the rest from `nimbus.toml`. A copied profile sets every key it copied, so it pins each of them: later edits to those keys in `nimbus.toml` do not reach it. A profile file containing only the keys you want to change inherits everything else.
+
 ```bash
 nimbus profile create work
 nimbus profile create personal
@@ -3356,7 +3379,7 @@ nimbus profile list
 
 ### `nimbus profile switch <name>`
 
-Switch the active profile. Takes effect on the next Gateway restart.
+Switch the active profile by writing the `.nimbus-profile` marker. Takes effect on the next Gateway restart, unless `NIMBUS_PROFILE` is set, which wins over the marker. The name must match `[a-z0-9_-]{1,32}`, case-insensitively.
 
 ```bash
 nimbus profile switch work

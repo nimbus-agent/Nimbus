@@ -51,7 +51,7 @@ export type RunConversationalAgentParams = {
    */
   devil?: boolean;
   /**
-   * Agent persona (A2). Resolved per-invocation by `runAsk` from the PROFILE-resolved toml —
+   * Agent persona (A2). Resolved per-invocation by `runAsk` from the layered config (active profile included) —
    * config, not a per-call flag, which is why it is not on `AgentInvokeContext` the way
    * `devil` is. Undefined and neutral both mean "no directive"; see `engine/persona.ts`.
    */

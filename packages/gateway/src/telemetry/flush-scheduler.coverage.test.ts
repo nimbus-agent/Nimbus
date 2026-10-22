@@ -25,7 +25,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import pino from "pino";
 
 import { parseStoredTelemetrySessionId, startTelemetryFlushScheduler } from "./flush-scheduler.ts";
@@ -65,7 +65,7 @@ function twoTicks(dataDir: string, tomlDir: string): string[] {
 
     const handle = startTelemetryFlushScheduler({
       dataDir,
-      activeTomlPath: tomlPath,
+      configDir: dirname(tomlPath),
       getDatabase: () => db,
       gatewayVersion: "0.0.0-cov",
       logger: pino({ level: "silent" }),

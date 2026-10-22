@@ -466,6 +466,18 @@ describe("assemblePlatformServices — in-process assembly", () => {
     expect(services.oncallPush.chatopsSinkState()).toBe("none");
   }, 30000);
 
+  it("an invalid profile marker stops assembly before any service is built", async () => {
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(join(paths.configDir, ".nimbus-profile"), "bad name!", "utf8");
+    await expect(assemblePlatformServices(paths, makeInMemoryVault())).rejects.toMatchObject({
+      name: "InvalidProfileNameError",
+      value: "bad name!",
+      source: "marker",
+    });
+  });
+
   it("collectSidecarsFromEnv attaches HTTP + metrics sidecars when ports are set", async () => {
     const paths = makePaths();
     const discoverFreePort = (): number => {

@@ -1,6 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import {
   DEFAULT_DEPLOY_ENVIRONMENTS,
   DEFAULT_DEPLOY_WORKFLOW_PATTERN,
@@ -10,6 +8,7 @@ import {
   parseDoraRepoUrn,
   type ServiceConfig,
 } from "../metrics/dora-config.ts";
+import { assertLayersReadable, layeredConfigText } from "./layered-config.ts";
 import {
   isTableHeader,
   parseIntDec,
@@ -206,7 +205,10 @@ export function loadNimbusDoraFromPath(tomlPath: string): Map<string, ServiceCon
 }
 
 export function loadNimbusDoraFromConfigDir(configDir: string): Map<string, ServiceConfig> {
-  return loadNimbusDoraFromPath(join(configDir, "nimbus.toml"));
+  assertLayersReadable(configDir);
+  const raw = layeredConfigText(configDir);
+  if (raw === null) return new Map();
+  return parseNimbusDoraToml(raw);
 }
 
 const CI_SERVICE_TABLE_PREFIX = "[ci.service.";

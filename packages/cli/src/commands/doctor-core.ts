@@ -898,6 +898,69 @@ function isMethodNotFound(e: unknown): boolean {
   return typeof e === "object" && e !== null && "code" in e && e.code === -32601;
 }
 
+/**
+ * Profile lines from `diag.snapshot.configLayers`. The field is optional: an older gateway omits it
+ * and doctor stays silent. A marker the next restart would apply is a `[warn]`, as is a layer the
+ * gateway could not read; a profile with no file is `[info]` only and never changes the exit code.
+ */
+export function doctorPrintProfile(raw: unknown): number {
+  if (raw === null || typeof raw !== "object") return 0;
+  const c = raw as {
+    runningProfile?: unknown;
+    runningProfileSource?: unknown;
+    markerProfile?: unknown;
+    layers?: unknown;
+  };
+  if (typeof c.runningProfile !== "string") return 0;
+  let exit = 0;
+  const running = c.runningProfile;
+  // An argument or NIMBUS_PROFILE beats the marker, so a restart would not apply it. A gateway
+  // that predates `runningProfileSource` is treated as marker-resolved.
+  const markerDecides =
+    c.runningProfileSource === undefined ||
+    c.runningProfileSource === "marker" ||
+    c.runningProfileSource === "default";
+  if (markerDecides && typeof c.markerProfile === "string" && c.markerProfile !== running) {
+    console.log(
+      `[warn] profile: marker says "${c.markerProfile}" but the gateway runs "${running}" — restart to apply`,
+    );
+    exit = 1;
+  }
+  const layers = Array.isArray(c.layers) ? (c.layers as unknown[]).filter(isLayerRecord) : [];
+  for (const l of layers) {
+    if (typeof l.readError === "string") {
+      console.log(
+        `[warn] config: could not read ${String(l.path)} (${l.readError}); that layer is ignored, and sections read through the default loader fall back to built-in defaults until it is readable`,
+      );
+      exit = 1;
+    }
+  }
+  const own = layers.find((l) => l.kind === "profile" && l.id === running);
+  if (
+    running !== "default" &&
+    own !== undefined &&
+    own.exists === false &&
+    own.readError === undefined
+  ) {
+    console.log(
+      `[info] profile "${running}" has no nimbus.${running}.toml; running on nimbus.toml alone`,
+    );
+  }
+  return exit;
+}
+
+type LayerRecord = {
+  kind?: unknown;
+  id?: unknown;
+  path?: unknown;
+  exists?: unknown;
+  readError?: unknown;
+};
+
+function isLayerRecord(l: unknown): l is LayerRecord {
+  return l !== null && typeof l === "object";
+}
+
 async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   const ping = await client.call<{ uptime?: number }>("gateway.ping", {});
   const uptime = typeof ping.uptime === "number" && Number.isFinite(ping.uptime) ? ping.uptime : 0;
@@ -914,7 +977,9 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
     connectorHealth?: unknown;
     embedding?: unknown;
     vectorSearch?: unknown;
+    configLayers?: unknown;
   }>("diag.snapshot", {});
+  exit = Math.max(exit, doctorPrintProfile(snap.configLayers));
   exit = Math.max(exit, doctorPrintIndexFromSnapshot(snap));
   // A second call rather than a field on `diag.snapshot`: the health report is several GROUP BY
   // scans over `item`, and `diag.snapshot` is polled by the desktop. Paying that cost on every

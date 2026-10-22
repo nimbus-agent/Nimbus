@@ -3,29 +3,19 @@ import {
   existsSync,
   constants as fsConstants,
   readdirSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
+import { PROFILE_NAME_RE, tryReadProfileMarker } from "../lib/active-profile.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 
 const PROFILE_MARKER = ".nimbus-profile";
 const PROFILE_PREFIX = "nimbus.";
 const PROFILE_SUFFIX = ".toml";
 
-function activeProfileName(configDir: string): string | undefined {
-  const p = join(configDir, PROFILE_MARKER);
-  if (!existsSync(p)) {
-    return undefined;
-  }
-  const raw = readFileSync(p, "utf8").trim();
-  if (raw === "" || raw === "default") {
-    return undefined;
-  }
-  return raw;
-}
+const activeProfileName = tryReadProfileMarker;
 
 function listProfileFiles(configDir: string): string[] {
   let names: string[];
@@ -55,6 +45,13 @@ Usage:
 `);
 }
 
+/** Refuses a name the gateway would refuse at boot (`PROFILE_NAME_RE`). */
+function assertProfileName(name: string): void {
+  if (!PROFILE_NAME_RE.test(name)) {
+    throw new Error(`Invalid profile name "${name}": use 1-32 letters, digits, "_" or "-".`);
+  }
+}
+
 function fsErrorCode(e: unknown): string | undefined {
   if (e !== null && typeof e === "object" && "code" in e) {
     const c = e.code;
@@ -68,6 +65,7 @@ export function runProfileCreate(configDir: string, baseToml: string, tail: stri
   if (name === "" || name === "default") {
     throw new Error("Usage: nimbus profile create <name>");
   }
+  assertProfileName(name);
   const dest = join(configDir, `${PROFILE_PREFIX}${name}${PROFILE_SUFFIX}`);
   try {
     copyFileSync(baseToml, dest, fsConstants.COPYFILE_EXCL);
@@ -110,6 +108,7 @@ export function runProfileSwitch(configDir: string, tail: string[]): void {
     console.log("Switched to default profile (nimbus.toml). Restart the Gateway.");
     return;
   }
+  assertProfileName(name);
   const dest = join(configDir, `${PROFILE_PREFIX}${name}${PROFILE_SUFFIX}`);
   if (!existsSync(dest)) {
     throw new Error(`Unknown profile file: ${dest}`);

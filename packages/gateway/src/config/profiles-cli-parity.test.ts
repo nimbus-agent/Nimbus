@@ -23,4 +23,14 @@ describe("gateway/CLI profile format parity", () => {
       expect(cli).toContain(constant);
     });
   }
+
+  test("both active-profile modules declare the same profile-name slug rule", () => {
+    const gw = readFileSync(join(import.meta.dir, "active-profile.ts"), "utf8");
+    const cliLib = readFileSync(
+      join(import.meta.dir, "..", "..", "..", "cli", "src", "lib", "active-profile.ts"),
+      "utf8",
+    );
+    expect(gw).toContain("/^[a-z0-9_-]{1,32}$/i");
+    expect(cliLib).toContain("/^[a-z0-9_-]{1,32}$/i");
+  });
 });

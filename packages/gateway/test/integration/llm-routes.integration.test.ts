@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { buildLlmRegistryFromToml } from "../../src/platform/assemble.ts";
 import type { NimbusVault } from "../../src/vault/nimbus-vault.ts";
@@ -56,7 +56,7 @@ runtime = "llamacpp"
 model = "a.gguf"
 base_url = "http://127.0.0.1:9090"
 `);
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault());
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault());
     const routes = registry.llmRouter.routes();
     expect(routes).toHaveLength(2);
     const ids = routes.map((r) => r.routeId).sort();
@@ -68,7 +68,7 @@ base_url = "http://127.0.0.1:9090"
 [llm]
 local_model = "llama3.2"
 `);
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault());
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault());
     const routes = registry.llmRouter.routes();
     expect(routes).toHaveLength(2);
     const providerIds = routes.map((r) => r.provider.providerId).sort();
@@ -87,7 +87,7 @@ runtime = "llamacpp"
 model = "b.gguf"
 `);
     const logger = capturingLogger();
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault(), logger);
     const llamacpp = registry.llmRouter
       .routes()
       .filter((r) => r.provider.providerId === "llamacpp");
@@ -112,7 +112,7 @@ model = "qwen3:8b"
 runtime = "ollama"
 model = "gemma3:12b"
 `);
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault());
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault());
     expect(registry.llmRouter.routes()).toHaveLength(2);
   });
 
@@ -127,7 +127,7 @@ runtime = "ollama"
 model = "qwen3:8b"
 `);
     const logger = capturingLogger();
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault(), logger);
     // The security-relevant key MUST survive a bad neighbour — this is the regression
     // guard for loadTomlSection's swallow-and-revert behaviour.
     expect(registry.llmRouter.enforcesAirGap()).toBe(true);
@@ -151,7 +151,7 @@ runtime = "llamacpp"
 model = "b.gguf"
 base_url = "http://127.0.0.1:8099"
 `);
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault());
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault());
     const llamacpp = registry.llmRouter
       .routes()
       .filter((r) => r.provider.providerId === "llamacpp");
@@ -174,7 +174,7 @@ model = "qwen3:8b"
 base_url = "http://192.168.1.50:11434"
 `);
     const logger = capturingLogger();
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault(), logger);
     const routes = registry.llmRouter.routes();
     expect(routes).toHaveLength(1);
     expect(routes[0]?.routeId).toBe("ollama/qwen3:8b");
@@ -198,7 +198,7 @@ runtime = "ollama"
 model = "qwen3:8b"
 `);
     const logger = capturingLogger();
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault(), logger);
     const routes = registry.llmRouter.routes();
     expect(routes).toHaveLength(1);
     expect(routes[0]?.provider.providerId).toBe("ollama");
@@ -224,7 +224,7 @@ runtime = "ollama"
 model = "qwen3:8b"
 `);
     const logger = capturingLogger();
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault(), logger);
     const routes = registry.llmRouter.routes();
     // Reclassified, not dropped: a deliberately-configured LAN box stays usable with
     // air-gap off.
@@ -247,7 +247,7 @@ local_model = "llama3.2"
 llamacpp_server_path = "http://192.168.1.50:8080"
 `);
     const logger = capturingLogger();
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault(), logger);
     const routes = registry.llmRouter.routes();
     expect(routes.find((r) => r.provider.providerId === "llamacpp")?.provider.isLocal).toBe(false);
     expect(routes.find((r) => r.provider.providerId === "ollama")?.provider.isLocal).toBe(true);
@@ -265,7 +265,7 @@ llamacpp_server_path = "http://192.168.1.50:8080"
 local_model = ""
 `);
     const logger = capturingLogger();
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault(), logger);
     const routes = registry.llmRouter.routes();
     expect(routes).toHaveLength(2);
     expect(routes.map((r) => r.routeId).sort()).toEqual(["llamacpp/llama3.2", "ollama/llama3.2"]);
@@ -280,7 +280,7 @@ local_model = ""
 local_model = "   "
 `);
     const logger = capturingLogger();
-    const registry = await buildLlmRegistryFromToml(db, tomlPath, emptyVault(), logger);
+    const registry = await buildLlmRegistryFromToml(db, dirname(tomlPath), emptyVault(), logger);
     expect(registry.llmRouter.routes()).toHaveLength(2);
     expect(logger.messages.some((m) => m.includes("local_model is empty"))).toBe(true);
   });

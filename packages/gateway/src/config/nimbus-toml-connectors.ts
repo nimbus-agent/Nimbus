@@ -1,6 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { ENTRY_RE } from "../teamvault/team-vault-keys.ts";
+import { assertLayersReadable, layeredConfigText } from "./layered-config.ts";
 import { isTableHeader, parseString, splitKeyValue, stripComment } from "./toml-primitives.ts";
 
 export const TEAM_CREDENTIAL_CONNECTORS = [
@@ -111,7 +110,8 @@ export function parseNimbusConnectorsToml(source: string): ConnectorsConfig {
 }
 
 export function loadNimbusConnectorsFromConfigDir(configDir: string): ConnectorsConfig {
-  const tomlPath = join(configDir, "nimbus.toml");
-  if (!existsSync(tomlPath)) return new Map();
-  return parseNimbusConnectorsToml(readFileSync(tomlPath, "utf8"));
+  assertLayersReadable(configDir);
+  const text = layeredConfigText(configDir);
+  if (text === null) return new Map();
+  return parseNimbusConnectorsToml(text);
 }

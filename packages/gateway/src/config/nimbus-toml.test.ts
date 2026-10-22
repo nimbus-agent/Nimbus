@@ -4,7 +4,6 @@
  * Covers:
  *  - loadTomlSection catch-arm (parse throws)
  *  - ALL embedding section helpers + parseNimbusTomlEmbeddingSection
- *  - resolveNimbusTomlForProfile (all branches)
  *  - loadNimbusEmbeddingFromPath / loadNimbusEmbeddingFromConfigDir
  *  - NIMBUS_UPDATER_URL env branch in parseNimbusUpdaterToml
  *  - NaN guard in parseNimbusLanToml NIMBUS_LAN_PORT
@@ -80,7 +79,6 @@ import {
   parseNimbusUserToml,
   parsePreflightConfig,
   parseQuorumConfig,
-  resolveNimbusTomlForProfile,
 } from "./nimbus-toml.ts";
 
 // ---------------------------------------------------------------------------
@@ -333,53 +331,6 @@ describe("loadNimbusEmbeddingFromConfigDir", () => {
   test("returns defaults when nimbus.toml missing", () => {
     const result = loadNimbusEmbeddingFromConfigDir(dir);
     expect(result).toEqual(DEFAULT_NIMBUS_EMBEDDING_TOML);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// resolveNimbusTomlForProfile
-// ---------------------------------------------------------------------------
-
-describe("resolveNimbusTomlForProfile", () => {
-  let dir: string;
-  let savedProfile: string | undefined;
-
-  beforeEach(() => {
-    dir = makeTmpDir();
-    savedProfile = process.env["NIMBUS_PROFILE"];
-  });
-
-  afterEach(() => {
-    if (savedProfile === undefined) {
-      delete process.env["NIMBUS_PROFILE"];
-    } else {
-      process.env["NIMBUS_PROFILE"] = savedProfile;
-    }
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  test("returns nimbus.toml when NIMBUS_PROFILE is unset", () => {
-    delete process.env["NIMBUS_PROFILE"];
-    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
-  });
-
-  // Anything that isn't a non-default profile name resolves to the plain nimbus.toml — including
-  // "staging", whose alt file is deliberately never created (fall-back path).
-  test.each([
-    ["an empty string", ""],
-    ["'default'", "default"],
-    ["'default' padded with whitespace", "  default  "],
-    ["a profile whose alt file does not exist", "staging"],
-  ])("returns nimbus.toml when NIMBUS_PROFILE is %s", (_label, profile) => {
-    process.env["NIMBUS_PROFILE"] = profile;
-    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.toml"));
-  });
-
-  test("returns nimbus.<profile>.toml when the alt file exists", () => {
-    process.env["NIMBUS_PROFILE"] = "work";
-    // create the alt file
-    writeToml(dir, "", "nimbus.work.toml");
-    expect(resolveNimbusTomlForProfile(dir)).toBe(join(dir, "nimbus.work.toml"));
   });
 });
 

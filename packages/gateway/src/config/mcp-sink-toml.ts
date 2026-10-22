@@ -1,11 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
-
 import {
   CAPTURE_KINDS,
   type CaptureKind,
   DEFAULT_CAPTURE_KINDS,
   isCaptureKind,
 } from "../mcp-sink/capture-types.ts";
+import {
+  fallbackMessage,
+  layeredConfigText,
+  type SectionFallbackSink,
+  sectionFallbackSink,
+} from "./layered-config.ts";
 import {
   isTableHeader,
   parseBool,
@@ -124,10 +129,26 @@ export function parseNimbusTomlMcpSink(source: string): NimbusMcpSinkToml {
 
 /** Load from disk. A bad file is a VALUE (`ok: false`), so the gateway boots with the sink off. */
 export function loadNimbusMcpSinkFromPath(tomlPath: string): McpSinkConfigLoad {
-  const raw = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
+  return loadNimbusMcpSinkFromText(existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : null);
+}
+
+/** `[mcp_sink]` over the layered snapshot (packs, base, active profile). */
+export function loadNimbusMcpSinkFromConfigDir(configDir: string): McpSinkConfigLoad {
+  return loadNimbusMcpSinkFromText(
+    layeredConfigText(configDir),
+    sectionFallbackSink(configDir, "mcp_sink"),
+  );
+}
+
+/** The one `[mcp_sink]` core. `raw === null` means no file (parsed as empty). */
+function loadNimbusMcpSinkFromText(
+  raw: string | null,
+  onFallback?: SectionFallbackSink,
+): McpSinkConfigLoad {
   try {
-    return { ok: true, config: parseNimbusTomlMcpSink(raw) };
+    return { ok: true, config: parseNimbusTomlMcpSink(raw ?? "") };
   } catch (e) {
+    onFallback?.(fallbackMessage(e));
     if (e instanceof McpSinkConfigError) return { ok: false, error: e.message };
     throw e;
   }
