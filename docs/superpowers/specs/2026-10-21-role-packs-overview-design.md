@@ -1,6 +1,6 @@
 # Role packs — programme overview
 
-**Date:** 2026-10-21 (revised 2026-10-22 after review) · **Status:** draft for owner review ·
+**Date:** 2026-10-21 (revised 2026-10-22 after review) · **Status:** approved by the owner 2026-10-22 ·
 **Scope:** the overview the five project designs point back to. Each project gets its own brainstorm
 and design document; this one fixes the shape they share.
 
