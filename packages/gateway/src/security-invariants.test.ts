@@ -458,6 +458,7 @@ describe("I2 — HITL frozen-set membership", () => {
         enforceAirGap: () => false,
         now: () => 1,
         production: false,
+        builtin: null,
       };
       const req = { method: "registry.add", params: { name: "i2", url: tmp }, db, fetch };
       await expect(dispatchRegistryRpc(req)).rejects.toThrow(/requires the owner's HITL gate/);
@@ -6854,6 +6855,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     enforceAirGap: () => false,
     now: () => Date.now(),
     production: false,
+    builtin: null,
   };
   const roots: string[] = [];
   const dbs: Database[] = [];
@@ -7735,6 +7737,46 @@ describe("I46 — a renderer can create an extension run grant only through migr
     expect(out.asked).toEqual([]);
     expect(listExtensions(db).map((r) => r.id)).toEqual([EXT]);
     expect(getMigration(db, first)?.state).toBe("approved");
+  });
+
+  /**
+   * The extension installed and approved (through a first accept), and its row put back to
+   * `awaiting_approval` — as if the owner had installed and approved it before answering.
+   */
+  async function installedThenPending(): Promise<string> {
+    const e = engineWith();
+    const id = await preparedRowId(e);
+    expect((await acceptAsRenderer(e, { id })).value?.["state"]).toBe("approved");
+    db.run("UPDATE connector_migration SET state = 'awaiting_approval' WHERE id = ?", [id]);
+    return id;
+  }
+
+  test("an installed extension bound to the entry with a current legacy grant: approved, no prompt, nothing installed or granted", async () => {
+    const id = await installedThenPending();
+    const extBefore = JSON.stringify(listExtensions(db));
+    const grantBefore = JSON.stringify(getRunGrant(db, EXT));
+    const out = await acceptAsRenderer(engineWith(), { id });
+    expect(out.error).toBeUndefined();
+    expect(out.value?.["state"]).toBe("approved");
+    expect(out.asked).toEqual([]);
+    expect(JSON.stringify(listExtensions(db))).toBe(extBefore);
+    expect(JSON.stringify(getRunGrant(db, EXT))).toBe(grantBefore);
+  });
+
+  test("an installed extension whose grant names an older tree digest is refused before the prompt", async () => {
+    const id = await installedThenPending();
+    const { upsertRunGrant } = await import("./extensions/run-grant-store.ts");
+    const grant = getRunGrant(db, EXT);
+    if (grant === null) throw new Error("premise: a run grant");
+    upsertRunGrant(db, { ...grant, tree_digest: "0".repeat(64) });
+    const grantBefore = JSON.stringify(getRunGrant(db, EXT));
+    const out = await acceptAsRenderer(engineWith(), { id });
+    expect(out.error?.message).toMatch(
+      /^ERR_EXTENSION_MIGRATION_FAILED: .*nimbus extension approve/,
+    );
+    expect(out.asked).toEqual([]);
+    expect(JSON.stringify(getRunGrant(db, EXT))).toBe(grantBefore);
+    expect(getMigration(db, id)?.state).toBe("failed");
   });
 
   /** A well-formed base64 Ed25519-sized key that is neither the fixture's root nor its publisher. */

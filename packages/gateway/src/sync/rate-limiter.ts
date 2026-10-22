@@ -45,7 +45,6 @@ export type Provider =
   | "netlify"
   | "stripe"
   | "mercury"
-  | "readwise"
   | "raindrop"
   | "intercom"
   | "zendesk"
@@ -138,7 +137,6 @@ export const DEFAULT_QUOTAS: Record<Provider, ProviderQuota> = {
   netlify: { requestsPerMinute: 60, burstSize: 10 },
   stripe: { requestsPerMinute: 60, burstSize: 10 },
   mercury: { requestsPerMinute: 60, burstSize: 10 },
-  readwise: { requestsPerMinute: 60, burstSize: 10 },
   raindrop: { requestsPerMinute: 60, burstSize: 10 },
   intercom: { requestsPerMinute: 60, burstSize: 10 },
   zendesk: { requestsPerMinute: 60, burstSize: 10 },

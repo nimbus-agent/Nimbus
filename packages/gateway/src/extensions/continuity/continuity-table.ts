@@ -29,8 +29,24 @@ export interface ContinuityEntry {
   readonly displayName?: string;
 }
 
-/** Empty in production until the cut-over PR fills it. */
-export const CONTINUITY_TABLE: readonly ContinuityEntry[] = [];
+/**
+ * The legacy bundled connectors bound to a signed extension. `sourceRootFingerprint` is a literal
+ * (pinned against `publisherKeyFingerprint(BUILTIN_REGISTRY.rootKey)` by a test) so this module
+ * does not import the registry code.
+ */
+export const CONTINUITY_TABLE: readonly ContinuityEntry[] = [
+  {
+    legacyServiceId: "readwise",
+    extensionId: "com.nimbus.readwise",
+    publisherKey: "wrUu5uyn3aS2efQOEAUd1eC6H3uqX/RwzIEqQHvAZ9A=",
+    sourceRootFingerprint: "6fb9beb2cf6bdc748c72c03b30b83a9a",
+    // audit-ignore-next-line D11-vault-key (legacy key a binding maps from, not a vault-key construction)
+    credentials: { token: "readwise.token" },
+    expectedPermissions: { network: ["readwise.io"], read: [], write: [] },
+    itemTypes: ["highlight", "book"],
+    displayName: "Readwise",
+  },
+];
 
 export type ContinuityBindingInput = {
   readonly extensionId: string;
@@ -77,7 +93,12 @@ export function validateContinuityEntries(
   vaultKeys: Readonly<Record<string, readonly string[]>>,
 ): string[] {
   const problems: string[] = [];
+  const seenExtensionIds = new Set<string>();
   for (const e of entries) {
+    if (seenExtensionIds.has(e.extensionId)) {
+      problems.push(`${e.legacyServiceId}: duplicate extensionId ${e.extensionId}`);
+    }
+    seenExtensionIds.add(e.extensionId);
     if (!catalogIds.includes(e.legacyServiceId)) {
       problems.push(`${e.legacyServiceId}: not a catalog service id`);
       continue;

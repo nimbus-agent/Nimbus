@@ -3062,11 +3062,13 @@ Output reports the resolved mode and the number of items affected. The depth is 
 
 When a release moves a built-in connector out of the bundled set and into a signed extension from the
 official Nimbus registry, an existing user of that connector is asked once whether to keep it
-(Readwise is the first; until the release that drops it, nothing is ever migrated). The gateway checks
-at every start: if you had the connector configured (its credential is set in the Vault), it fetches
-and fully verifies the extension, stages it WITHOUT installing it, and pauses the connector's sync
-with a reason `nimbus doctor` names. If you never
-configured it, nothing happens: no download, no prompt.
+(Readwise is the first, and it is live: Readwise is no longer bundled in the gateway and ships as the
+signed extension `com.nimbus.readwise`). The gateway checks at every start: if you had the connector
+configured (its credential is set in the Vault), it fetches and fully verifies the extension from the
+built-in official registry, stages it WITHOUT installing it, and pauses the connector's sync with a
+reason `nimbus doctor` names. If you never configured it, nothing happens: no download, no prompt.
+A token set later, for example from the desktop connector catalog, with no extension installed is
+picked up only at the next gateway start or `migrate retry`, which is when the migration is prepared.
 
 ```bash
 nimbus connector migrate list                 # every migration, its state and the next step
@@ -3096,9 +3098,57 @@ existing items, and keeps the connector off; the next start does not ask again.
 longer matches what the release expects) AND every one you declined — it is how you change your
 mind about a decline. An approved migration is never touched.
 
+**Already installed.** If the extension is already installed (you ran `nimbus extension install`
+yourself, or an earlier attempt got that far), the gateway checks it before fetching anything and
+before any prompt. What happens depends on what it finds:
+
+- **Official copy, approved to run with your existing credential** (the approval matches the installed
+  version and files): the migration finishes as approved and the connector's sync resumes, with no
+  question asked.
+- **Official copy, approval missing or out of date** (given before this release, or before an update):
+  the migration fails, and the row and `nimbus doctor` show only the one step,
+  ``run `nimbus extension approve <extension-id>` to resume sync``. Re-approving points the extension
+  at your existing credential and resumes the sync itself; `migrate retry` is not needed. The failed
+  row stays in `migrate list` until the next start or `retry` re-evaluates it. Add `--model` to that
+  approval if you want the model to see the extension's tools: every approval states the whole grant.
+- **Official copy, but disabled:** the migration finishes as approved and the connector stays paused
+  with ``run `nimbus extension enable <extension-id>` to resume sync``; enabling it resumes the sync.
+- **Not the official copy** (another registry, another publisher, or a copy that no longer verifies, so
+  it is not bound to the connector): the migration fails, saying it is not the official one, and
+  nothing is changed. Inspect it with `nimbus extension list`; do not remove it on the migration's
+  account.
+
+In none of these cases is anything removed. Do not run `nimbus extension remove` to "fix" a migration
+for a bound extension: it deletes every item the connector indexed and its credential.
+
+**A pause of your own can be undone.** If you ran `nimbus connector pause readwise` while a migration
+row was still failed or awaiting, a later start or `migrate retry` that finds the extension installed,
+bound and approved resumes the sync, as it does for any other settled migration. Pause it again
+afterwards if you want it off. A migration that is already approved or declined is never touched.
+
+**After an extension update, approve again.** Once migrated, Readwise updates through the official
+registry like any extension, and an applied update changes the extension's files, so the run approval
+no longer matches. Sync pauses with ``updated to <version> — run `nimbus extension approve
+com.nimbus.readwise` to resume sync`` (`nimbus doctor` names it) until you approve again; the
+extension does not run before then. This is by design: an approval covers exact bytes.
+
+**Runtime off.** With `[extensions] runtime = false` nothing is fetched and no migration is recorded;
+the connector is paused with the reason "`<Name>` moved to an extension, and the extension runtime is
+off (`[extensions] runtime = false`) — turn it on, then run `nimbus connector migrate retry`", and
+`accept` is refused with `ERR_EXTENSION_MIGRATION_RUNTIME_DISABLED`. The runtime switch is read when
+the gateway starts, so turn it on, restart, then run `retry`. `accept` also refuses, before the
+prompt, when the Vault has learned a different key for the extension's publisher since the package was
+staged (`the Vault already holds a different key for publisher "…"; refusing to replace it`).
+
 **Known loss.** A few items the built-in connector indexed may not carry over: items dated before
 1970, and items whose metadata is larger than 64 KiB, are dropped by the extension sync path. The
 prompt says this too.
+
+**Read tools.** After the move, Readwise's live read tools are the extension's: calling one with
+`nimbus connector call ext_com_nimbus_readwise ...` asks for your approval each time, and they are not
+offered to the model unless you approve with `--model`. Questions are still answered from the index.
+`nimbus connector remove readwise` is refused for the bound extension (`ERR_CONNECTOR_IS_EXTENSION`);
+`nimbus extension remove com.nimbus.readwise` is the removal path.
 
 All four `migration.*` methods are refused over the LAN channel. The desktop app can list pending
 migrations and accept one by its id (`migration.list` and `migration.accept`, security invariant I46);
@@ -4477,6 +4527,26 @@ nimbus extension install com.example.notion
 nimbus extension install com.example.notion --registry main --channel beta
 ```
 
+**The built-in official registry.** Every release carries one registry, named `nimbus-official`: its
+URL and root key are part of the release (root fingerprint `6fb9beb2cf6bdc748c72c03b30b83a9a`). It is
+not in `nimbus registry list`, and you do not add it. A bare `nimbus extension install <id>` searches
+your registries plus this one, so `nimbus extension install com.nimbus.readwise` works on a fresh
+gateway; `--registry nimbus-official` names it. The name is reserved: `nimbus registry add
+nimbus-official ...` is refused (`ERR_REGISTRY_NAME_RESERVED`), and a registry you added under that
+name before it was reserved is shadowed by the built-in one. Installing from it still asks the
+`extension.install` approval, and running the extension still needs `nimbus extension approve`.
+Two behaviours to know:
+
+- **Air gap.** With `[llm] enforce_air_gap` on, a bare install leaves the built-in registry out (it is
+  remote and can never be read there), so an id only it carries fails with `ERR_REGISTRY_NOT_FOUND`,
+  saying the official registry was not consulted because of `enforce_air_gap`. Naming it with
+  `--registry nimbus-official` is refused (`ERR_REGISTRY_UNREACHABLE`, whose message carries
+  `ERR_REGISTRY_AIR_GAP`).
+- **Plain offline is not air gap.** When the network is down the built-in registry still counts as a
+  possible carrier, so a bare install is refused rather than guessed: `ERR_REGISTRY_AMBIGUOUS` when
+  another registry of yours could be read (pass `--registry <name>` to say which), and
+  `ERR_REGISTRY_UNREACHABLE` when none could.
+
 **Installing from a registry.** If the argument is an existing path it is a local install exactly as above, and `--registry`, `--version` and `--channel` are refused with it. Otherwise it is an extension id, looked up in your registries: an id carried by more than one registry needs `--registry <name>` (`ERR_REGISTRY_AMBIGUOUS`; a registry is never chosen by priority), and so does any bare id while one of your registries cannot be read or fails verification, since it might carry the same id (the error names each failed registry as `unreachable` or `failed verification: <code>`; when no registry could be read at all, the error is the verification code itself, or `ERR_REGISTRY_UNREACHABLE`). `nimbus extension search` is not affected: it lists what it found and names the registries it could not read. An argument that can only be a path (it contains a backslash, begins with a drive letter, `.`, `~` or `/`) but does not exist reports `no such file or directory` rather than being searched for as an id. The version is the newest on the `stable` channel; `--channel beta` takes the newest across stable and beta, and `--version <v>` is exact (its channel is recorded as the source channel).
 
 The gateway fetches the manifest and package, checks both against the SHA-256 hashes the signed index lists, checks that the manifest's publisher id and key are the ones the index lists, verifies the manifest's Ed25519 signature (I16) against that key, and refuses with `ERR_REGISTRY_PUBLISHER_KEY_CONFLICT` if the Vault already holds a different key for that publisher id. Only then does the `extension.install` approval prompt appear, now also naming the registry and its root-key fingerprint. An id that is already installed is refused (`ERR_REGISTRY_ALREADY_INSTALLED`; use `nimbus extension update <id>` or remove it first). An extension that declares `dependsOn` installs only when every dependency is already installed and satisfies it; nothing is fetched transitively. `--yes` and `--publisher-key` are refused for a registry install, which is always confirmed by the owner's approval prompt (answered interactively, or through `NIMBUS_SCRIPT_CONSENT_SOURCE` for scripted use). A registry install still does not run anything: `nimbus extension approve` is a separate step.
@@ -4617,7 +4687,7 @@ With `--registry <name>` (or `--remote` to look in every added registry) the com
 
 ### `nimbus extension search <query> [--json]`
 
-Searches every added registry (`nimbus registry add`) for extensions whose id, name or publisher id contains `<query>`, case-insensitively. Each registry's freshly verified index is read concurrently; results are tagged with their registry and show the latest stable and beta versions. A registry that cannot be read does not fail the search: after the table, one line `registry <name>: <error>` is printed per such registry. The name shown is the newest version's name.
+Searches every added registry (`nimbus registry add`) for extensions whose id, name or publisher id contains `<query>`, case-insensitively. Each registry's freshly verified index is read concurrently; results are tagged with their registry and show the latest stable and beta versions. A registry that cannot be read does not fail the search: after the table, one line `registry <name>: <error>` is printed per such registry. The name shown is the newest version's name. The built-in official registry (`nimbus-official`) is not searched: it is not one of the registries you added, so `nimbus extension search readwise` finds nothing until you add a registry that carries it. Install an official extension by id instead.
 
 ```bash
 nimbus extension search notion
@@ -4742,6 +4812,7 @@ Gateway-backed commands (the gateway must be running). All four are CLI-only: re
 - `add <name> <url> [--fingerprint <fp>]` fetches the registry's index, verifies it against its OWN root key, and then asks you, under the `registry.add` approval, to pin that root key. `<name>` is `[a-z0-9][a-z0-9-]*`, at most 32 characters; `<url>` is an `https://` URL, an `http://` loopback URL (outside a production runtime: the compiled release binary, or NODE_ENV=production), or an absolute local folder path. The prompt shows the name, URL, root key fingerprint, extension count and index date. `--fingerprint` is a pin check, not a way to skip the prompt: pass the 32-hex fingerprint you got from the maintainer out of band and a mismatch refuses BEFORE you are asked (the gateway trims and lowercases it). Needs an interactive terminal; there is no `--yes` and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer the prompt. The index fetch is recorded in the egress ledger even if you then decline. A delegated approver can never answer this prompt.
 - `list [--json]` shows each registry's name, URL, fingerprint, last fetch and whether its index is stale (generated more than 30 days ago). Reads the local database only; no network.
 - `refresh [<name>] [--json]` re-fetches and re-verifies one registry, or all of them. Each result is reported separately and the exit code is `1` if any failed. A root key that changed, a bad signature or an older `sequence` than the last seen is refused and never re-pins.
+- The built-in official registry `nimbus-official` is not in this list and cannot be added, refreshed or removed here; see "The built-in official registry" under `nimbus extension install`.
 - `remove <name>` forgets the registry. Extensions already installed from it stay installed and keep running; they get no further updates, and the command names them (so does `nimbus doctor`, until you add the registry again or remove them). Needs no approval.
 
 ```bash

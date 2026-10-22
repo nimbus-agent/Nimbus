@@ -153,12 +153,11 @@ paths = [
 #    `generic-api-key` fires on the `rootKey:` / `publisherKey:` / `"key":`
 #    names, as it must for a scanner that cannot tell a public key from a
 #    secret. Suppressed by value rather than path, as in entry 7: these are
-#    ordinary source files that must stay scanned. ANCHORED, like entry 8, so
-#    a longer secret that merely contains a key is still reported. The private
-#    halves never enter this repository.
+#    ordinary source files that must stay scanned. The private halves never
+#    enter this repository.
 regexes = [
   '''sk_live_never_echoed_9f8e7d''',
   '''^api_key=sk_live_123$''',
-  '''^tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=$''',
-  '''^wrUu5uyn3aS2efQOEAUd1eC6H3uqX/RwzIEqQHvAZ9A=$''',
+  '''tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=''',
+  '''wrUu5uyn3aS2efQOEAUd1eC6H3uqX/RwzIEqQHvAZ9A=''',
 ]

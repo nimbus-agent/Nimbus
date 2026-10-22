@@ -1,5 +1,5 @@
 /**
- * `migration.*` (Readwise unbundling spec § 7.2, § 7.3): the owner's view of, and the one decision
+ * `migration.*` (connector-unbundling spec § 7.2, § 7.3): the owner's view of, and the one decision
  * about, a bundled connector moving to its signed extension. Every method is in
  * `FORBIDDEN_OVER_LAN` (I5). `migration.list` and `migration.accept` are renderer-callable (on the
  * Tauri allowlist, I46): the desktop lists pending migrations and answers one by id. `decline` and

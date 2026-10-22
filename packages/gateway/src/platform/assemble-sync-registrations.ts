@@ -72,7 +72,6 @@ import { createPrefectSyncable } from "../connectors/prefect-sync.ts";
 import { createProtonmailSyncable } from "../connectors/protonmail-sync.ts";
 import { createRaindropSyncable } from "../connectors/raindrop-sync.ts";
 import { createRampSyncable } from "../connectors/ramp-sync.ts";
-import { createReadwiseSyncable } from "../connectors/readwise-sync.ts";
 import { createSagemakerSyncable } from "../connectors/sagemaker-sync.ts";
 import { createSalesforceSyncable } from "../connectors/salesforce-sync.ts";
 import { createSemgrepSyncable } from "../connectors/semgrep-sync.ts";
@@ -401,11 +400,6 @@ export function registerConnectorMeshSyncables(
   syncScheduler.register(
     createMercurySyncable({
       ensureMercuryMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
-    }),
-  );
-  syncScheduler.register(
-    createReadwiseSyncable({
-      ensureReadwiseMcpRunning: () => connectorMesh.ensurePhase3BundleRunning(),
     }),
   );
   syncScheduler.register(

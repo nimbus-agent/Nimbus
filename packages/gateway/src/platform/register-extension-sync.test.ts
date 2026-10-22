@@ -30,6 +30,8 @@ import {
   type ExtensionSyncRegistrarDeps,
   type ExtensionSyncScheduler,
   purgeExtensionIndexData,
+  reapproveSuffix,
+  staleGrantPauseReason,
 } from "./register-extension-sync.ts";
 
 const KEY = `${"A".repeat(43)}=`;
@@ -274,6 +276,23 @@ describe("createExtensionSyncRegistrar", () => {
     setExtensionEnabled(h.db, EXT_ID, true);
     r.refresh(EXT_ID);
     expect(h.sched.syncableFor("readwise")).toBeDefined();
+  });
+
+  test("enabling lifts the migration's disabled pause, and only that pause", () => {
+    const h = harness(seed());
+    const r = createExtensionSyncRegistrar(h.deps);
+    setExtensionEnabled(h.db, EXT_ID, false);
+    // The migration engine's pause for a bound extension the owner disabled (Task 7.4 M4).
+    h.sched.pause(
+      "readwise",
+      `${EXT_ID} is installed but disabled — run \`nimbus extension enable ${EXT_ID}\` to resume sync`,
+    );
+    r.refresh(EXT_ID);
+    expect(getConnectorHealth(h.db, "readwise").state).toBe("paused");
+    setExtensionEnabled(h.db, EXT_ID, true);
+    r.refresh(EXT_ID);
+    expect(h.sched.syncableFor("readwise")).toBeDefined();
+    expect(getConnectorHealth(h.db, "readwise").state).not.toBe("paused");
   });
 
   test("revoke keeps items", () => {
@@ -633,5 +652,28 @@ describe("createExtensionSyncRegistrarForBoot", () => {
       { ...base.deps, scheduler: spy },
     ).registerAllFromDatabase();
     expect(registered).toEqual(["readwise"]);
+  });
+});
+
+describe("re-approve wording the CLI matches (ruling B41)", () => {
+  // The CLI does not import gateway source: `namesApproveStep` in
+  // packages/cli/src/commands/extension-doctor-format.ts recognises a stale-grant row by this exact
+  // literal, and `nimbus connector migrate list` and `nimbus doctor` then show only the approve
+  // step. If the suffix wording changes, change that matcher in the same commit, or both silently
+  // fall back to the double hint.
+  const CLI_APPROVE_LITERAL = "`nimbus extension approve ";
+
+  test("reapproveSuffix carries the literal, followed by the extension id", () => {
+    expect(reapproveSuffix("x")).toContain(CLI_APPROVE_LITERAL);
+    expect(reapproveSuffix("x")).toContain(`${CLI_APPROVE_LITERAL}x\``);
+  });
+
+  test("staleGrantPauseReason carries the literal for an update and for a same-version change", () => {
+    expect(staleGrantPauseReason("x", { version: "2.0.0" }, { version: "1.0.0" })).toContain(
+      CLI_APPROVE_LITERAL,
+    );
+    expect(staleGrantPauseReason("x", { version: "1.0.0" }, { version: "1.0.0" })).toContain(
+      CLI_APPROVE_LITERAL,
+    );
   });
 });

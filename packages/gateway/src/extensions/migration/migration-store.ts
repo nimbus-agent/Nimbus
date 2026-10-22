@@ -5,7 +5,7 @@ import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
 
 /**
  * The `connector_migration` table (V73): one row per bundled connector being moved to a signed,
- * registry-installed extension (Readwise unbundling spec § 7.2). `legacy_service_id` is UNIQUE, so
+ * registry-installed extension (connector-unbundling spec § 7.2). `legacy_service_id` is UNIQUE, so
  * the table itself is the dedup — a legacy connector has at most one migration row, ever.
  *
  * The spec's `prepared` state is folded into `awaiting_approval`: a row is written only once the
@@ -147,7 +147,7 @@ function upsert(
     version: string | null;
     treeDigest: string | null;
     stagePath: string | null;
-    state: "awaiting_approval" | "failed";
+    state: "awaiting_approval" | "failed" | "approved";
     error: string | null;
   },
   now: number,
@@ -193,6 +193,48 @@ export function recordMigrationFailed(db: Database, m: FailedMigration, now: num
     { ...m, version: null, treeDigest: null, stagePath: null, state: "failed" },
     now,
   );
+}
+
+export interface AlreadyInstalledMigration {
+  id: string;
+  legacyServiceId: string;
+  extensionId: string;
+  version: string;
+  treeDigest: string | null;
+}
+
+/**
+ * The extension is already installed, bound to this legacy service and approved to run with its
+ * legacy credential (the migration engine checks all three first): the migration is done, with
+ * nothing staged. Like every write here, an `approved` or `declined` row is never touched.
+ */
+export function recordMigrationAlreadyInstalled(
+  db: Database,
+  m: AlreadyInstalledMigration,
+  now: number,
+): boolean {
+  return upsert(db, { ...m, stagePath: null, state: "approved", error: null }, now);
+}
+
+/**
+ * Accept's form of the same: moves a row that is `awaiting_approval` to `approved`, conditionally,
+ * recording the INSTALLED version and tree digest (what the owner's grant covers) in place of the
+ * staged ones. Returns whether the row moved.
+ */
+export function finishMigrationAlreadyInstalled(
+  db: Database,
+  id: string,
+  installed: { version: string; treeDigest: string | null },
+  now: number,
+): boolean {
+  const r = dbRun(
+    db,
+    `UPDATE connector_migration
+     SET state = 'approved', error = NULL, stage_path = NULL, version = ?, tree_digest = ?, updated_at = ?
+     WHERE id = ? AND state = 'awaiting_approval'`,
+    [installed.version, installed.treeDigest, now, id],
+  );
+  return r.changes > 0;
 }
 
 /**

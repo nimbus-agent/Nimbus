@@ -1,5 +1,5 @@
 /**
- * The built-in official registry (Readwise unbundling spec § 7.4). The release carries its URL and
+ * The built-in official registry (connector-unbundling spec § 7.4). The release carries its URL and
  * root public key; it is NOT a row of the owner's `extension_registry` — adding it to the owner's
  * list stays a `registry.add` HITL decision, and `listRegistries` / `nimbus registry list` stay the
  * owner's list. Three pieces make it usable by code paths that assumed a row:
@@ -35,12 +35,15 @@ export interface BuiltinRegistryConfig {
 }
 
 /**
- * The official registry this release trusts. `null` until gateway PR 7 of the Readwise unbundling
- * pilot bakes the real URL and root key: a test key compiled into release builds would be a trust
- * root whose private key sits in the repository. While it is `null`, nothing references a built-in
- * registry and every path behaves exactly as before it existed.
+ * The official registry this release trusts (connector-unbundling pilot, gateway PR 7). The URL
+ * keeps its trailing slash: `resolveRegistryResource` resolves `index.json` with `new URL(rel,
+ * base)`, which drops the last path segment of a base without one. Tests that must not reach the
+ * network pass `builtin: null` explicitly.
  */
-export const BUILTIN_REGISTRY: BuiltinRegistryConfig | null = null;
+export const BUILTIN_REGISTRY: BuiltinRegistryConfig | null = {
+  url: "https://nimbus-agent.github.io/nimbus-mcp-servers/",
+  rootKey: "tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=",
+};
 
 /** The built-in config a set of deps carries: its own `builtin` when given, else the baked one. */
 export function builtinRegistryOf(deps: {
@@ -104,13 +107,25 @@ export function resolveRegistry(
  * trust root listed twice would trip I44's two-registries refusal for every official extension).
  * An owner row that predates the reserved name is replaced by the built-in, as `resolveRegistry`
  * resolves that name.
+ *
+ * Under `[llm] enforce_air_gap` (`airGapped`, the same `enforceAirGap` the fetch layer refuses
+ * remote requests by) the built-in is not a target either: it is a remote registry that can never
+ * be read there, and counting it would make every bare install ambiguous. Owner registries stay
+ * targets whatever their transport; the fetch layer decides which of them is reachable. Plain
+ * offline is NOT this case: an unreachable built-in still counts, since it might carry the id.
+ * Consequently an owner registry carrying an id the built-in also lists resolves without an
+ * ambiguity refusal under air gap, as it would on a gateway with no built-in. Binding keys on the
+ * source root fingerprint, not the registry name: such an owner registry under another root key
+ * never binds, while an owner-added copy of the official registry (pinned to the official root key)
+ * does.
  */
 export function bareRegistryTargets(
   db: Database,
   owners: readonly RegistryRow[],
   builtin: BuiltinRegistryConfig | null,
+  { airGapped }: { readonly airGapped: boolean },
 ): RegistryRow[] {
-  if (builtin === null) return [...owners];
+  if (builtin === null || airGapped) return [...owners];
   const official = builtinRegistryRow(db, builtin);
   if (owners.some((r) => r.rootFingerprint === official.rootFingerprint)) return [...owners];
   return [...owners.filter((r) => r.name !== BUILTIN_REGISTRY_NAME), official];

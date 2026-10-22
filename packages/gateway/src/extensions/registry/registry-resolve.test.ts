@@ -8,8 +8,9 @@ import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { encodeBase64 } from "../../util/base64.ts";
 import { generateEd25519Keypair } from "../../util/ed25519.ts";
 import { buildTestRegistry, resignIndex } from "./__fixtures__/build-test-registry.ts";
+import { BUILTIN_REGISTRY_NAME } from "./builtin-registry.ts";
 import type { RegistryFetchDeps } from "./registry-fetch.ts";
-import { resolveRegistryEntry } from "./registry-resolve.ts";
+import { registryTargets, resolveRegistryEntry } from "./registry-resolve.ts";
 import { insertRegistry } from "./registry-store.ts";
 
 const ID = "com.example.resolve";
@@ -34,6 +35,8 @@ const deps = (): RegistryFetchDeps => ({
   enforceAirGap: () => false,
   now: () => 1000,
   production: false,
+  // Neutral test default: never reach the real official registry host.
+  builtin: null,
 });
 
 /** A local registry folder `name` carrying ID, added to the database. Returns the folder. */
@@ -150,5 +153,89 @@ describe("resolveRegistryEntry", () => {
     expect((await refusal(resolveRegistryEntry(deps(), ID, undefined))).code).toBe(
       "ERR_REGISTRY_NOT_FOUND",
     );
+  });
+});
+
+describe("bare resolution and the built-in registry under air gap (B31)", () => {
+  /** A remote built-in on another trust root than the owner's folders; never actually fetched. */
+  const remoteBuiltin = () => ({
+    url: "https://registry.nimbus.test/",
+    rootKey: encodeBase64(generateEd25519Keypair().pubkey),
+  });
+
+  /** Deps whose every network request is counted (and refused). */
+  function airGapDeps(airGap: boolean): { d: RegistryFetchDeps; requests: string[] } {
+    const requests: string[] = [];
+    return {
+      requests,
+      d: {
+        ...deps(),
+        fetchFn: (url) => {
+          requests.push(url);
+          return Promise.reject(new Error("no network in this test"));
+        },
+        enforceAirGap: () => airGap,
+        builtin: remoteBuiltin(),
+      },
+    };
+  }
+
+  test("air-gapped bare install resolves from owner registries without the builtin", async () => {
+    await addRegistry("alpha");
+    const { d, requests } = airGapDeps(true);
+    expect(registryTargets(d, undefined).map((r) => r.name)).toEqual(["alpha"]);
+    expect((await resolveRegistryEntry(d, ID, undefined)).reg.name).toBe("alpha");
+    expect(requests).toEqual([]);
+  });
+
+  test("air-gapped bare install of an id no owner registry carries names the skipped built-in", async () => {
+    const official = "com.example.official-only";
+    const skipped = `no configured registry carries "${official}"; the official registry ${BUILTIN_REGISTRY_NAME} was not consulted because [llm] enforce_air_gap is on`;
+    // No owner registries at all: the most common air-gapped owner.
+    const none = airGapDeps(true);
+    expect(registryTargets(none.d, undefined)).toEqual([]);
+    const e0 = await refusal(resolveRegistryEntry(none.d, official, undefined));
+    expect(e0.code).toBe("ERR_REGISTRY_NOT_FOUND");
+    expect(e0.message).toBe(`ERR_REGISTRY_NOT_FOUND: ${skipped}`);
+    expect(none.requests).toEqual([]);
+    // An owner registry that does not carry the id: the same refusal.
+    await addRegistry("alpha");
+    const one = airGapDeps(true);
+    const e1 = await refusal(resolveRegistryEntry(one.d, official, undefined));
+    expect(e1.message).toBe(`ERR_REGISTRY_NOT_FOUND: ${skipped}`);
+    expect(one.requests).toEqual([]);
+    // Without a built-in to skip, nothing extra is claimed.
+    const e2 = await refusal(
+      resolveRegistryEntry({ ...one.d, builtin: null }, official, undefined),
+    );
+    expect(e2.message).toBe(`ERR_REGISTRY_NOT_FOUND: no registry carries "${official}"`);
+  });
+
+  test("named --registry nimbus-official under air gap still refuses ERR_REGISTRY_AIR_GAP", async () => {
+    await addRegistry("alpha");
+    const { d, requests } = airGapDeps(true);
+    expect(registryTargets(d, BUILTIN_REGISTRY_NAME).map((r) => r.name)).toEqual([
+      BUILTIN_REGISTRY_NAME,
+    ]);
+    const e = await refusal(resolveRegistryEntry(d, ID, BUILTIN_REGISTRY_NAME));
+    // AIR_GAP is one of the "could not be reached" codes, so the lookup's own code is UNREACHABLE;
+    // the cause it names is the air-gap refusal, and no request left the process.
+    expect(e.code).toBe("ERR_REGISTRY_UNREACHABLE");
+    expect(e.message).toContain(`${BUILTIN_REGISTRY_NAME}: unreachable (ERR_REGISTRY_AIR_GAP`);
+    expect(requests).toEqual([]);
+  });
+
+  test("offline (no air gap) bare install with an unreachable builtin is still ambiguous", async () => {
+    await addRegistry("alpha");
+    const { d, requests } = airGapDeps(false);
+    expect(registryTargets(d, undefined).map((r) => r.name)).toEqual([
+      "alpha",
+      BUILTIN_REGISTRY_NAME,
+    ]);
+    const e = await refusal(resolveRegistryEntry(d, ID, undefined));
+    expect(e.code).toBe("ERR_REGISTRY_AMBIGUOUS");
+    expect(e.message).toContain(`${BUILTIN_REGISTRY_NAME}: unreachable`);
+    expect(e.message).toContain("--registry <name>");
+    expect(requests).toEqual(["https://registry.nimbus.test/index.json"]);
   });
 });

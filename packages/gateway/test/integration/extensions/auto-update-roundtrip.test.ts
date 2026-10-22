@@ -58,6 +58,7 @@ const FETCH: Omit<RegistryFetchDeps, "db"> = {
   enforceAirGap: () => false,
   now: () => Date.now(),
   production: false,
+  builtin: null,
 };
 
 /** Fields every cached update needs that these hand-built entries do not exercise. */

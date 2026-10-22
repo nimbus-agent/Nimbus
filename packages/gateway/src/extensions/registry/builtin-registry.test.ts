@@ -20,6 +20,7 @@ import { installFromRegistry } from "./install-from-registry.ts";
 import { fetchVerifiedIndex, type RegistryFetchDeps } from "./registry-fetch.ts";
 import { registryTargets } from "./registry-resolve.ts";
 import { getExtensionSource, insertRegistry, listRegistries } from "./registry-store.ts";
+import { resolveRegistryLocation, resolveRegistryResource } from "./registry-transport.ts";
 import { collectRegistryUpdates, type InstalledRegistryRow } from "./registry-update-source.ts";
 
 const ID = "com.nimbus.readwise";
@@ -285,7 +286,7 @@ describe("the built-in official registry", () => {
     const none = await collectRegistryUpdates(
       {
         db,
-        fetch: deps(undefined),
+        fetch: deps(null),
         vault: new MockVault(),
         verifyManifestSignature: async () => {},
         now: () => 42,
@@ -296,23 +297,44 @@ describe("the built-in official registry", () => {
     expect(none.updates).toEqual([]);
   });
 
-  test("with the production default (null) a bare install's targets are the owner list", async () => {
+  test("with the baked production default a bare install's targets include the official registry", async () => {
     await buildBuiltin();
-    expect(BUILTIN_REGISTRY).toBeNull();
-    expect(resolveRegistry(db, BUILTIN_REGISTRY_NAME)).toBeUndefined();
-    expect(registryTargets(deps(undefined), undefined)).toEqual([]);
+    expect(BUILTIN_REGISTRY).toEqual({
+      url: "https://nimbus-agent.github.io/nimbus-mcp-servers/",
+      rootKey: "tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=",
+    });
+    expect(publisherKeyFingerprint(BUILTIN_REGISTRY?.rootKey ?? "")).toBe(
+      "6fb9beb2cf6bdc748c72c03b30b83a9a",
+    );
+    expect(resolveRegistry(db, BUILTIN_REGISTRY_NAME)?.url).toBe(BUILTIN_REGISTRY?.url);
+    expect(registryTargets(deps(undefined), undefined).map((r) => r.name)).toEqual([
+      BUILTIN_REGISTRY_NAME,
+    ]);
     addOwnerRegistry("community", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
-    expect(registryTargets(deps(undefined), undefined)).toEqual(listRegistries(db));
+    expect(registryTargets(deps(undefined), undefined).map((r) => r.name)).toEqual([
+      "community",
+      BUILTIN_REGISTRY_NAME,
+    ]);
+    // An explicit null is the neutral test default: the owner list alone.
     expect(registryTargets(deps(null), undefined)).toEqual(listRegistries(db));
     const e = (() => {
       try {
-        registryTargets(deps(undefined), BUILTIN_REGISTRY_NAME);
+        registryTargets(deps(null), BUILTIN_REGISTRY_NAME);
         return undefined;
       } catch (err) {
         return err;
       }
     })();
     expect((e as RegistryError).code).toBe("ERR_REGISTRY_NOT_FOUND");
+  });
+
+  test("the baked URL resolves index.json under its base path, not at the host root (C16)", () => {
+    const loc = resolveRegistryLocation(BUILTIN_REGISTRY?.url ?? "", { production: true });
+    expect(resolveRegistryResource(loc, "index.json")).toEqual({
+      kind: "remote",
+      url: "https://nimbus-agent.github.io/nimbus-mcp-servers/index.json",
+    });
+    expect(BUILTIN_REGISTRY?.url.endsWith("/")).toBe(true);
   });
 
   test("a named --registry nimbus-official resolves the builtin when one is configured", async () => {

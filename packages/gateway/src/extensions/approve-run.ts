@@ -298,7 +298,7 @@ export async function approveExtensionRun(
 }
 
 /**
- * The migration-approval entry point (Readwise unbundling spec § 7.2 step 5). The owner's ONE
+ * The migration-approval entry point (connector-unbundling spec § 7.2 step 5). The owner's ONE
  * `extension.migrate` decision covers install + run grant + credential grant, so this raises no
  * prompt of its own; it lives here, beside `approveExtensionRun`, so the run grant is still written
  * only by this file (static rule D33(c) unchanged).

@@ -43,7 +43,7 @@ import type { SandboxRunner } from "./sandbox/sandbox-runner.ts";
 /**
  * Keeps the scheduler's set of extension syncables equal to what the database says may sync
  * (spec § 8.3): an ENABLED extension with a LIVE (non-stale) run grant whose installed manifest
- * declares a `sync` block, registered under its INDEX id (`readwise` when the continuity table binds
+ * declares a `sync` block, registered under its INDEX id (the legacy id when the continuity table binds
  * it, else its `ext_` id). Everything else is unregistered; items are never touched here — only
  * `extension remove` purges them ({@link purgeExtensionIndexData}).
  */
@@ -76,9 +76,22 @@ export interface ExtensionSyncRegistrarDeps {
   readonly logger?: Pick<Logger, "warn">;
 }
 
-/** The owner's way back from a stale-grant pause; matched on resume, so it is one definition. */
-function reapproveSuffix(extensionId: string): string {
+/**
+ * The owner's way back from a stale-grant pause; matched on resume, so it is one definition. The
+ * migration engine ends its own stale-grant reason with it, so that re-approval resumes too. The CLI
+ * matches its "`nimbus extension approve " text (`namesApproveStep` in
+ * packages/cli/src/commands/extension-doctor-format.ts); register-extension-sync.test.ts pins it.
+ */
+export function reapproveSuffix(extensionId: string): string {
   return `run \`nimbus extension approve ${extensionId}\` to resume sync`;
+}
+
+/**
+ * The way back from a pause the migration engine takes for a bound extension the owner disabled;
+ * matched on resume like `reapproveSuffix`, so enabling the extension resumes its sync.
+ */
+export function enableSuffix(extensionId: string): string {
+  return `run \`nimbus extension enable ${extensionId}\` to resume sync`;
 }
 
 /** The paused reason after an applied update (or any change) left the run grant stale. */
@@ -192,7 +205,7 @@ export function createExtensionSyncRegistrar(
     unregister(identity.extensionId);
     const indexId = identity.indexServiceId;
     if (deps.scheduler.syncableFor(indexId) !== undefined) {
-      // A built-in connector (the bundled `readwise`, until it is deleted) or another extension
+      // A built-in connector (a bundled legacy connector) or another extension
       // already syncs under this id. Replacing it would write two sources into one namespace.
       deps.logger?.warn(
         { extensionId: identity.extensionId, serviceId: indexId },
@@ -206,12 +219,15 @@ export function createExtensionSyncRegistrar(
     // The policy-filtered registrar drops a blocked id silently; track only what really landed.
     if (deps.scheduler.syncableFor(indexId) !== syncable) return;
     registered.set(identity.extensionId, { indexServiceId: indexId, syncable, live });
-    // The stale-grant pause names re-approval as the way back, so a re-approval honours it. Any
-    // other pause (the owner's own, a sandbox preflight) is left for `connector resume`.
+    // The stale-grant pause names re-approval as the way back, and the migration's disabled pause
+    // names enabling, so registering after either honours it. Any other pause (the owner's own, a
+    // sandbox preflight) is left for `connector resume`.
     const health = getConnectorHealth(deps.db, indexId);
+    const reason = health.lastError ?? "";
     if (
       health.state === "paused" &&
-      health.lastError?.endsWith(reapproveSuffix(identity.extensionId)) === true
+      (reason.endsWith(reapproveSuffix(identity.extensionId)) ||
+        reason.endsWith(enableSuffix(identity.extensionId)))
     ) {
       deps.scheduler.resume(indexId);
     }
@@ -280,7 +296,7 @@ export interface ExtensionIndexPurgeResult {
  * deleted, since both are needed to know where the extension wrote. Purges, under the INDEX id,
  * every item, the scheduler and sync-state rows (`removeConnectorIndexData`) and the health row; and
  * deletes every credential key the extension was granted or would be granted — for a bound extension
- * that includes the legacy key (`readwise.token`), exactly as `connector remove readwise` would.
+ * that includes the legacy key (`<legacy>.token`), exactly as `connector remove <legacy>` would.
  *
  * With no grant (revoked earlier) the code-server id is the derived one, so items an earlier sync
  * wrote under it still go. A manifest that cannot be read loses the binding, so a bound extension's

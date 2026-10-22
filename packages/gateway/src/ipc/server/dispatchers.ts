@@ -1500,7 +1500,7 @@ export async function tryDispatchCaptureRpc(
 }
 
 /**
- * `migration.*` (Readwise unbundling spec § 7.2/§ 7.3): every method is in `FORBIDDEN_OVER_LAN`
+ * `migration.*` (connector-unbundling spec § 7.2/§ 7.3): every method is in `FORBIDDEN_OVER_LAN`
  * (I5); `migration.list` and `migration.accept` are on the Tauri allowlist (I46), `decline` and
  * `retry` are not. Only `migration.accept` asks the owner, through the SAME gate-only executor the
  * extension lifecycle approvals use, bound to THIS session's consent channel, so the
@@ -2001,6 +2001,9 @@ async function dispatchExtensionAutomationRpc(
       ...(ctx.options.extensionSync === undefined
         ? {}
         : { extensionSync: ctx.options.extensionSync }),
+      ...(ctx.options.continuityTable === undefined
+        ? {}
+        : { continuityTable: ctx.options.continuityTable }),
     });
     if (out.kind === "hit") {
       return out.value;
@@ -2116,6 +2119,9 @@ export async function tryDispatchConnectorRpc(
       notify: (m, p) => ctx.broadcastNotification(m, p),
       toolExecutor,
       ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),
+      ...(ctx.options.continuityTable === undefined
+        ? {}
+        : { continuityTable: ctx.options.continuityTable }),
     });
     if (out.kind === "hit") {
       return out.value;

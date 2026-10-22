@@ -36,6 +36,8 @@ const NO_NETWORK: Omit<RegistryFetchDeps, "db"> = {
   enforceAirGap: () => false,
   now: () => Date.now(),
   production: false,
+  // Neutral test default: never reach the real official registry host.
+  builtin: null,
 };
 
 function baseOpts(db: Database, extensionsDir: string, dataDir: string) {

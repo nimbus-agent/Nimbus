@@ -194,6 +194,24 @@ describe("PendingUpdates: pending migrations", () => {
     expect(callMock.mock.calls.map((c) => c[0])).not.toContain("migration.retry");
   });
 
+  it("a stale-grant failed row shows only the approve step, not migrate retry", async () => {
+    const error =
+      "com.example.x is installed, but its run approval is missing or out of date; run `nimbus extension approve com.example.x` to resume sync";
+    serveMigrations([migrationRow({ id: "s1", state: "failed", error })]);
+    render(<PendingUpdates offline={false} />);
+    const failed = await screen.findByTestId("migration-failed-s1");
+    expect(failed).toHaveTextContent("nimbus extension approve com.example.x");
+    expect(failed).not.toHaveTextContent("migrate retry");
+  });
+
+  it("a failed row whose error already names migrate retry does not repeat it", async () => {
+    const error = "the fetch failed — run `nimbus connector migrate retry` when back online";
+    serveMigrations([migrationRow({ id: "r1", state: "failed", error })]);
+    render(<PendingUpdates offline={false} />);
+    const failed = await screen.findByTestId("migration-failed-r1");
+    expect(failed.textContent?.split("nimbus connector migrate retry")).toHaveLength(2);
+  });
+
   it("renders nothing for migrations when there are none", async () => {
     serveMigrations([]);
     render(<PendingUpdates offline={false} />);

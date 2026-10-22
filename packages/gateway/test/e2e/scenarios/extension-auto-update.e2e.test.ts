@@ -29,6 +29,7 @@ const NO_NETWORK: Omit<RegistryFetchDeps, "db"> = {
   enforceAirGap: () => false,
   now: () => Date.now(),
   production: false,
+  builtin: null,
 };
 
 const ID = "ext-pub-1";

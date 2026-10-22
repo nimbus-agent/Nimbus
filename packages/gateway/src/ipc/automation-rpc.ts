@@ -32,6 +32,7 @@ import {
 import { deleteConnectorHealthRow } from "../connectors/health.ts";
 import { approveExtensionRun, revokeExtensionRun } from "../extensions/approve-run.ts";
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
+import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import { clearDeps, forwardDeps, reverseDeps } from "../extensions/dependency-store.ts";
 import {
   CREDENTIAL_POST_CONSENT_CODES,
@@ -155,6 +156,8 @@ interface AutomationCtx {
   /** `[extensions] runtime` and not demo-rooted; absent means the default, `true`. */
   runtimeEnabled?: boolean;
   extensionSync?: AutomationRpcExtensionSyncHandle;
+  /** The composition's continuity table; absent means the production default. */
+  continuityTable?: readonly ContinuityEntry[];
 }
 
 type AutomationHandler = (
@@ -780,6 +783,11 @@ function runGrantRpcError(e: unknown): unknown {
   return new AutomationRpcError(RUN_GRANT_POST_CONSENT.has(e.code) ? -32603 : -32602, e.message);
 }
 
+/** The composition's table for a binding call; absent leaves the callee's production default. */
+function continuityTableOf(ctx: AutomationCtx): { continuityTable?: readonly ContinuityEntry[] } {
+  return ctx.continuityTable === undefined ? {} : { continuityTable: ctx.continuityTable };
+}
+
 /**
  * Approve an installed extension to RUN (extension-runtime § 4.4): a second, separate approval from
  * install, asked under `extension.run`. The lazy mesh spawns it on first use, re-verifying first.
@@ -813,6 +821,7 @@ async function handleExtensionApproveRun(
       runtimeEnabled: ctx.runtimeEnabled ?? true,
       now: Date.now,
       modelAccess: rawModelAccess === true,
+      ...continuityTableOf(ctx),
     });
     // Registers its sync under the index id (or resumes a stale-grant pause) once the grant is live.
     ctx.extensionSync?.refresh(id);
@@ -916,7 +925,7 @@ async function handleExtensionCredentialSet(
   requireInstalledExtension(ctx, id);
   try {
     const out = await setExtensionCredential(
-      { vault, gate, readGrant: (x) => getRunGrant(ctx.db, x) },
+      { vault, gate, readGrant: (x) => getRunGrant(ctx.db, x), ...continuityTableOf(ctx) },
       { extensionId: id, name, value },
     );
     // A live `mesh:ext:` child keeps the env it was spawned with. Stopping it makes the next use
@@ -938,7 +947,7 @@ async function handleExtensionCredentialStatus(
   requireInstalledExtension(ctx, id);
   try {
     const out = await extensionCredentialStatus(
-      { vault, readGrant: (x) => getRunGrant(ctx.db, x) },
+      { vault, readGrant: (x) => getRunGrant(ctx.db, x), ...continuityTableOf(ctx) },
       id,
     );
     return { kind: "hit", value: out };
@@ -979,6 +988,7 @@ export async function dispatchAutomationRpc(options: {
   runGrantEnv?: ExtensionRunGrantEnv;
   extensionsRuntimeEnabled?: boolean;
   extensionSync?: AutomationRpcExtensionSyncHandle;
+  continuityTable?: readonly ContinuityEntry[];
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -996,6 +1006,7 @@ export async function dispatchAutomationRpc(options: {
       runtimeEnabled: options.extensionsRuntimeEnabled,
     }),
     ...(options.extensionSync !== undefined && { extensionSync: options.extensionSync }),
+    ...(options.continuityTable !== undefined && { continuityTable: options.continuityTable }),
   };
   return await handler(asRecord(options.params), ctx);
 }

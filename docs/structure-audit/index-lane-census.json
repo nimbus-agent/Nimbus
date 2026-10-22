@@ -7,7 +7,7 @@
   "sqlLiteralScopeNote": "A raw scan of packages/gateway/src/**/*.ts (minus *.test.ts) with extractSqlLiterals finds 483 SQL-shaped literals. This artifact's file set additionally excludes *-sql.ts files (an existing, repo-wide iterateSourceFiles() convention, not specific to this gate), which drops exactly 4 literals in 4 files: index/entity-metadata-v54-sql.ts, index/fleet-subjects-v63-sql.ts, index/glossary-manual-v46-sql.ts, index/unified-item-v3-sql.ts. Three are schema DDL (their only SQL-shaped text is an internal FTS-sync SELECT inside a CREATE TRIGGER body); the fourth is a one-time graph_entity migration UPDATE, already out of scope by table. None is a live read predicate reachable at runtime, so this fully explains the 483-vs-479 gap with zero effect on reads/writes/unmatchedItemReads below.",
   "counts": {
     "reads": 384,
-    "writes": 125,
+    "writes": 124,
     "unmatchedItemReads": 38,
     "totalAbsence": 10,
     "partialCoverage": 28,
@@ -3967,48 +3967,6 @@
       "line": 104
     },
     {
-      "service": "readwise",
-      "itemType": "book",
-      "metadataKeys": [
-        "book_id",
-        "title",
-        "author",
-        "category",
-        "source",
-        "num_highlights",
-        "asin",
-        "tags",
-        "document_note",
-        "source_url",
-        "highlights_url",
-        "last_highlight_at",
-        "updated_at",
-        "canonical_url"
-      ],
-      "file": "packages/gateway/src/connectors/readwise-book-mapping.ts",
-      "line": 114
-    },
-    {
-      "service": "readwise",
-      "itemType": "highlight",
-      "metadataKeys": [
-        "highlight_id",
-        "text",
-        "note",
-        "book_id",
-        "location",
-        "location_type",
-        "color",
-        "tags",
-        "source_url",
-        "highlighted_at",
-        "updated_at",
-        "canonical_url"
-      ],
-      "file": "packages/gateway/src/connectors/readwise-highlight-mapping.ts",
-      "line": 80
-    },
-    {
       "service": "sagemaker",
       "itemType": "model",
       "metadataKeys": [
@@ -4492,6 +4450,13 @@
       ],
       "file": "packages/gateway/src/connectors/_lib/gitlab/pipelines.ts",
       "line": 79
+    },
+    {
+      "service": "__UNRESOLVED__",
+      "itemType": "__UNRESOLVED__",
+      "metadataKeys": [],
+      "file": "packages/gateway/src/connectors/extension-sync/sync-response.ts",
+      "line": 104
     },
     {
       "service": "nimbus",
@@ -5031,7 +4996,7 @@
     },
     {
       "file": "packages/gateway/src/index/local-index.ts",
-      "line": 782
+      "line": 785
     },
     {
       "file": "packages/gateway/src/graph/graph-populator.ts",

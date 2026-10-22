@@ -153,7 +153,7 @@ export async function isConnectorConfigured(
   /**
    * Maps an INDEX id to the credentials an approved extension's run grant carries. When it answers
    * for `serviceId` the grant's own credentials decide (every declared one non-blank) — for a bound
-   * id (`readwise`) those are the legacy keys the manifest check below would read, and for an
+   * id (e.g. `<legacy>`) those are the legacy keys the manifest check below would read, and for an
    * unbound `ext_` id they stop the empty-manifest-list branch from answering `true` vacuously.
    */
   extensionCredentials?: (serviceId: string) => ResolvedRunCredentials | undefined,

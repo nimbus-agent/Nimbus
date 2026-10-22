@@ -1910,7 +1910,11 @@ bound legacy id (`readwise`) when the continuity table binds the extension (exte
 verified manifest's publisher key + a source root fingerprint equal to the official one), else the
 same `ext_` id. `connectors/extension-sync/extension-identity.ts` derives both, from the row, the
 installed manifest and the grant, on every read; nothing stores the binding as an authority. The
-continuity table is empty in production until the bundled Readwise connector is deleted.
+continuity table (`extensions/continuity/continuity-table.ts`) holds one entry, Readwise: legacy id
+`readwise`, extension `com.nimbus.readwise`, the publisher key `wrUu5uyn3aS2efQOEAUd1eC6H3uqX/RwzIEqQHvAZ9A=`
+and the official root fingerprint `6fb9beb2cf6bdc748c72c03b30b83a9a`, credential `token` mapped to the
+legacy Vault key `readwise.token`. `validateContinuityEntries` also refuses a second entry for the same
+extension id.
 
 **One run, many pages.** `createExtensionSyncable` (`connectors/extension-sync/extension-syncable.ts`)
 adapts the reserved `__nimbus_sync` tool (every `__nimbus_` tool is hidden from listings and refused
@@ -1951,9 +1955,10 @@ scheduler and status rows, and every granted credential key, including a bound l
 legacy id, or an `ext_` id with a grant) with `ERR_CONNECTOR_IS_EXTENSION`, since it would clear the
 index while the slot and the grant lived on; pause, resume and sync stay allowed.
 
-**Collision.** If a syncable is already registered under the index id — the bundled `readwise`
-connector, until it is deleted — the extension's sync is NOT registered and a warning is logged; a
-built-in is never replaced, and the registrar only ever unregisters what it registered itself.
+**Collision.** If a syncable is already registered under the index id, the extension's sync is NOT
+registered and a warning is logged; a built-in is never replaced, and the registrar only ever
+unregisters what it registered itself. Since the Readwise unbundling pilot's PR 7 the bundled
+`readwise` connector no longer exists in the gateway, so for `readwise` this is only a guard.
 
 **Bounds.** The extension's own requests to its granted hosts are not individually ledgered (I43);
 the gateway's limiter cannot throttle them — the page budget, call timeout, interval and the network
@@ -2000,8 +2005,10 @@ and root fingerprint; `--yes` is refused for registry installs. The recorded sou
 registries (PR 4).
 
 **Built-in official registry** (`extensions/registry/builtin-registry.ts`, Readwise unbundling gateway PR 5; schema V73). The
-release can carry one registry's URL and root key, `BUILTIN_REGISTRY`, which stays `null` until the pilot's PR 7 bakes the real
-values; while it is `null` nothing references it. It is NOT a row of `extension_registry`: `registry list`/`refresh` stay the
+release carries one registry's URL and root key, `BUILTIN_REGISTRY`, baked in by the pilot's PR 7:
+`https://nimbus-agent.github.io/nimbus-mcp-servers/` (the trailing slash is load-bearing: `index.json` is
+resolved against it) with root fingerprint `6fb9beb2cf6bdc748c72c03b30b83a9a`. It is `null` only in test
+compositions that pass `builtin: null` so nothing reaches the network. It is NOT a row of `extension_registry`: `registry list`/`refresh` stay the
 owner's list, and adding it to that list stays a `registry.add` decision under another name. It has a reserved name,
 `nimbus-official`, which `registry.add` and `insertRegistry` refuse outright (`ERR_REGISTRY_NAME_RESERVED`, every spelling that
 trims and lowercases to it, no URL/key exception); its own I44 sequence floor in `builtin_registry_state`, bound to the root key it was recorded under (known limit: a fetch under a different root key REPLACES that floor, where the owner path refuses a stale key, so a gateway downgrade followed by an upgrade resets it); and one resolver,
@@ -2011,6 +2018,15 @@ trims and lowercases to it, no URL/key exception); its own I44 sequence floor in
 its root fingerprint (the same trust root listed twice would refuse every official id as ambiguous). The config reaches these paths
 only as code: the optional `builtin` field of `RegistryFetchDeps`, defaulting to the baked value, never an env var, config key or IPC
 parameter. Its fetches are remote registry requests like any other and append the same I29 `registry` rows, under its reserved name.
+
+Three behaviours follow from it being implicit. (1) *Shadowing:* an owner row named `nimbus-official` that predates the
+reservation is shadowed by the built-in (its extensions then resolve to the built-in, and I44 refuses their updates on a
+different root); the population is expected to be about zero. (2) *Air gap:* under `[llm] enforce_air_gap`,
+`bareRegistryTargets` leaves the built-in out, since it is remote and could never be read and would make every bare id
+ambiguous; a bare id only it carries answers `ERR_REGISTRY_NOT_FOUND` naming the registry that was not consulted, and naming it
+with `--registry nimbus-official` is refused. (3) *Plain offline is not air gap:* an unreachable built-in still counts as a
+possible carrier, so a bare install is refused as ambiguous (another registry was readable) or unreachable (none was), per
+I44. `registry search` reads the owner's registries only, so it does not include the built-in.
 
 **IPC.** `registry.add|list|refresh|remove|search|info|install`, all CLI-only; the whole `registry` namespace is LAN-forbidden
 (the denylist, so this is an explicit entry), refused on a demo root, and absent from the Tauri allowlist.
@@ -2029,7 +2045,7 @@ parameter. Its fetches are remote registry requests like any other and append th
 
 **Readwise unbundling pilot, gateway PR 5** (schema V73 `connector_migration`; HITL type `extension.migrate` in the I2 frozen
 set, never delegable; static D34; no new invariant). Moves an existing user of a bundled connector to its signed extension from
-the built-in official registry with ONE owner decision. The engine is `extensions/migration/migration-engine.ts`, its store
+the built-in official registry (live for Readwise since PR 7) with ONE owner decision. The engine is `extensions/migration/migration-engine.ts`, its store
 `migration-store.ts`; the table names a legacy connector at most once (`UNIQUE legacy_service_id`).
 
 **States.** `awaiting_approval → approved | declined | failed` (the spec's `prepared` is folded into `awaiting_approval`: a row is
@@ -2069,13 +2085,33 @@ path with a space outside every known root keeps the text after its first space.
 `nimbus connector migrate` (`accept` is TTY-only with no `--yes`, as `extension approve`); `nimbus doctor` warns for pending and
 failed migrations and notes a declined one quietly.
 
-**Composition (ruling B1).** The built-in registry and the continuity table reach a gateway only through the third,
+**Composition (ruling B1).** The built-in registry and the continuity table reach a gateway through the third,
 composition-only parameter of `assemblePlatformServices` (`platform/migration-boot.ts`), which the production entry points never
-pass — so `BUILTIN_REGISTRY` stays `null`, `CONTINUITY_TABLE` stays empty and boot evaluation is a no-op in this release. The one
-resolved value goes to the engine, the sync registrar, the spawn verifier, the scheduler's credential resolver, `extension
-remove`'s purge and `RegistryFetchDeps.builtin`, so no two of them can bind a legacy id differently. Stated bound: the IPC-side
-consumers that resolve through the table on their own (`extension.approveRun`, `extension.credentialSet`, `connector.remove`'s
-backing check) keep the default, which equals the composed value in every production gateway.
+pass — so a production gateway resolves the baked `BUILTIN_REGISTRY` and the production `CONTINUITY_TABLE` (Readwise), and boot
+evaluation runs against them. Tests pass a fixture (or `builtin: null`). The one resolved value goes to the engine, the sync
+registrar, the spawn verifier, the scheduler's credential resolver, `extension remove`'s purge, `RegistryFetchDeps.builtin`
+and, since PR 7, the IPC paths that bind through the table on their own (`extension.approveRun`, `extension.credentialSet`,
+`extension.credentialStatus`, `connector.remove`'s backing check), so no two of them can bind a legacy id differently.
+
+**Unbundled connectors.** `UNBUNDLED_CONNECTOR_IDS` (`connectors/connector-catalog.ts`) lists the connectors the
+`@nimbus-dev/connectors` package still exports but the gateway no longer bundles; today `["readwise"]`. The registry generator
+and the drift audit subtract it (the audit also fails a stale entry), `BUNDLED_CONNECTORS` therefore lacks the id, and a test
+requires every entry to be a catalog id with a continuity entry. The npm package keeps its Readwise server for standalone
+users. Because the id is no longer bundled, `evaluate` considers its continuity entry: the migration applies to a gateway that
+used to run the bundled connector and still holds `readwise.token`.
+
+**Already installed (PR 7).** Before any fetch or prompt, `evaluate` and `accept` look at the extension row. Installed, bound
+(id + verified publisher key + official root fingerprint) and holding a run grant that matches the installed version and tree
+digest and maps the legacy credential: the row finishes `approved`, the stage is deleted and the legacy service resumes, with no
+prompt (a disabled extension finishes `approved` and stays paused with the `extension enable` hint). Bound but with a missing or
+stale grant: the row fails with the re-approve suffix (`reapproveSuffix`), and re-approving resumes the sync. Installed but not
+bound: it fails saying it is not the official copy. None of these removes anything. With `[extensions] runtime = false`,
+`evaluate` fetches nothing and records no row; it pauses the legacy service with a reason naming the switch. `accept` refuses
+before the prompt when the Vault already holds a different key for the publisher.
+
+**After an update.** The update daemon updates a migrated Readwise only from the built-in registry as its recorded source
+(I44), and an applied update changes the tree digest, so the run grant is stale until the owner runs `nimbus extension approve`
+again (I43 binds an approval to exact bytes). The sync registrar pauses the index id with that hint, and `nimbus doctor` names it.
 
 **Known loss.** The extension path drops items the bundled connector indexed when they are dated before 1970 or carry more than
 64 KiB of metadata (ruling B5); the prompt states it.

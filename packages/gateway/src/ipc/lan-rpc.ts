@@ -100,7 +100,7 @@ const FORBIDDEN_OVER_LAN = new Set([
   "extension.credentialSet", // writes an extension's credential into the owner's Vault — CLI-only
   "extension.credentialStatus", // which of an extension's credentials are set — CLI-only, like set
   "extension.rehash", // adopts on-disk bytes as trusted — gated like an install, CLI-only
-  // Connector migration (Readwise unbundling spec § 7.2): `accept` installs signed code, grants it a
+  // Connector migration (connector-unbundling spec § 7.2): `accept` installs signed code, grants it a
   // run and points it at the owner's existing Vault credential in ONE `extension.migrate` approval;
   // `decline`/`retry` change whether that happens and `list` names which connectors the owner
   // configured. Each method is named explicitly — this set is a DENYLIST, so an unnamed method
