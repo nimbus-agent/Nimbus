@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createRpcFixture, type RpcFixture } from "../../../test/helpers/rpc-harness.ts";
 import type { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import type { ConnectorRpcHandlerContext } from "./context.ts";
-import { handleConnectorSync } from "./lifecycle.ts";
+import {
+  emitConfigChanged,
+  handleConnectorPause,
+  handleConnectorResume,
+  handleConnectorSync,
+  pauseConnector,
+  resumeConnector,
+} from "./lifecycle.ts";
 
 let fixture: RpcFixture;
 
@@ -142,5 +149,49 @@ describe("handleConnectorSync — gateway-side syncables", () => {
       expect((e as ConnectorRpcError).rpcCode).toBe(-32602);
       expect((e as ConnectorRpcError).message).toContain("Invalid serviceId");
     }
+  });
+});
+
+/** A scheduler double that records pause/resume, standing in for SyncScheduler. */
+function makePauseScheduler(): { stub: StubScheduler; calls: string[] } {
+  const calls: string[] = [];
+  const stub = {
+    pause(id: string): void {
+      calls.push(`pause:${id}`);
+    },
+    resume(id: string): void {
+      calls.push(`resume:${id}`);
+    },
+  } as unknown as StubScheduler;
+  return { stub, calls };
+}
+
+describe("pause / resume route to the scheduler when there is one", () => {
+  test("handleConnectorPause and handleConnectorResume call the scheduler, not LocalIndex", () => {
+    const { stub, calls } = makePauseScheduler();
+    let touchedIndex = false;
+    fixture.localIndex.pauseConnectorSync = (): void => {
+      touchedIndex = true;
+    };
+    fixture.localIndex.resumeConnectorSync = (): void => {
+      touchedIndex = true;
+    };
+    expect(handleConnectorPause(buildCtx({ serviceId: "github" }, stub)).kind).toBe("hit");
+    expect(handleConnectorResume(buildCtx({ serviceId: "github" }, stub)).kind).toBe("hit");
+    expect(calls).toEqual(["pause:github", "resume:github"]);
+    expect(touchedIndex).toBe(false);
+    expect(fixture.notifications.payloadsFor("connector.configChanged")).toHaveLength(2);
+  });
+
+  test("pauseConnector and resumeConnector call the scheduler when one is given", () => {
+    const { stub, calls } = makePauseScheduler();
+    pauseConnector("github", stub, fixture.localIndex);
+    resumeConnector("github", stub, fixture.localIndex);
+    expect(calls).toEqual(["pause:github", "resume:github"]);
+  });
+
+  test("emitConfigChanged sends nothing for a service with no status row", () => {
+    emitConfigChanged(fixture.notify, fixture.localIndex, "never-registered");
+    expect(fixture.notifications.payloadsFor("connector.configChanged")).toEqual([]);
   });
 });
