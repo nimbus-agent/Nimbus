@@ -136,6 +136,8 @@ export interface AutomationRpcExtensionMeshHandle {
  */
 export interface AutomationRpcExtensionSyncHandle {
   refresh(extensionId: string): void;
+  /** The id `refresh` registered the extension's sync under; `undefined` when it holds none. */
+  syncServiceIdFor(extensionId: string): string | undefined;
   unregister(extensionId: string): void;
   purgeBeforeRemove(extensionId: string): Promise<unknown>;
 }
@@ -830,6 +832,9 @@ async function handleExtensionApproveRun(
     });
     // Registers its sync under the index id (or resumes a stale-grant pause) once the grant is live.
     ctx.extensionSync?.refresh(id);
+    // Where that sync now lives (a bound extension's is its legacy id, not `serviceId`), so the CLI
+    // can say when registration paused it. Absent when no sync was registered.
+    const syncServiceId = ctx.extensionSync?.syncServiceIdFor(id);
     // `list`/`info` now carry runState, so a connected client must hear that it moved — as it
     // already does for install/enable/disable/remove/update. An unchanged re-approval moved nothing.
     if (out.changed) {
@@ -839,7 +844,10 @@ async function handleExtensionApproveRun(
         ok: true,
       });
     }
-    return { kind: "hit", value: out };
+    return {
+      kind: "hit",
+      value: syncServiceId === undefined ? out : { ...out, syncServiceId },
+    };
   } catch (e) {
     emitGatewayEvent("extension.stateChanged", {
       extensionId: id,

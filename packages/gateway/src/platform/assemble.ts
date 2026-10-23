@@ -3899,6 +3899,7 @@ export async function assemblePlatformServices(
     extensionsRuntimeEnabled: extensionRuntimeEnabled,
     extensionSync: {
       refresh: (id) => extensionSyncRegistrar.refresh(id),
+      syncServiceIdFor: (id) => extensionSyncRegistrar.syncServiceIdFor(id),
       unregister: (id) => extensionSyncRegistrar.unregister(id),
       // Always wired, runtime on or off: items an extension synced earlier go with it either way.
       purgeBeforeRemove: (id) =>

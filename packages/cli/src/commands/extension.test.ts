@@ -2267,6 +2267,103 @@ describe("runExtensionApprove", () => {
       "Usage: nimbus extension approve <id> [--model]",
     );
   });
+
+  describe("the extension's sync status", () => {
+    const DIGEST = "ab".repeat(32);
+    const APPROVED_LINE = `x: approved to run as ext_x (tree digest ${DIGEST}; model access: off). It starts on first use: \`nimbus connector tools ext_x\`.\n`;
+    const approved = (syncServiceId?: string, changed = true): Record<string, unknown> => ({
+      id: "x",
+      serviceId: "ext_x",
+      treeDigest: DIGEST,
+      changed,
+      modelAccess: false,
+      ...(syncServiceId !== undefined && { syncServiceId }),
+    });
+
+    test("a paused sync says so, after the approval line", async () => {
+      setTty(true);
+      const { client, calls } = createMockIpcClient([
+        approved("ext_x"),
+        [{ serviceId: "ext_x", status: "paused", lastError: "sandbox helper missing" }],
+      ]);
+      await runExtensionApprove(client, ["approve", "x"], ["x"]);
+      expect(calls[1]?.method).toBe("connector.listStatus");
+      expect(out.stdout).toContain("approved to run as ext_x");
+      expect(out.stdout).toContain("sync is paused: sandbox helper missing");
+      expect(out.stdout).toBe(
+        `${APPROVED_LINE}x: approved, but sync is paused: sandbox helper missing. Run \`nimbus connector status ext_x\` for details.\n`,
+      );
+    });
+
+    test("an unchanged approval also says the sync is paused", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        approved("ext_x", false),
+        [{ serviceId: "ext_x", healthState: "paused", lastError: null }],
+      ]);
+      await runExtensionApprove(client, ["approve", "x"], ["x"]);
+      expect(out.stdout).toContain("already approved");
+      expect(out.stdout).toContain(
+        "x: approved, but sync is paused. Run `nimbus connector status ext_x` for details.",
+      );
+    });
+
+    test("a bound extension's sync is read under its index id", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        { ...approved("readwise"), serviceId: "ext_readwise" },
+        [
+          { serviceId: "ext_readwise", status: "running" },
+          { serviceId: "readwise", status: "paused", lastError: "no sandbox" },
+        ],
+      ]);
+      await runExtensionApprove(client, ["approve", "x"], ["x"]);
+      expect(out.stdout).toContain(
+        "x: approved, but sync is paused: no sandbox. Run `nimbus connector status readwise` for details.",
+      );
+    });
+
+    test("a running sync adds nothing", async () => {
+      setTty(true);
+      const { client, calls } = createMockIpcClient([
+        approved("ext_x"),
+        [{ serviceId: "ext_x", status: "ok" }],
+      ]);
+      await runExtensionApprove(client, ["approve", "x"], ["x"]);
+      expect(calls).toHaveLength(2);
+      expect(out.stdout).toBe(APPROVED_LINE);
+    });
+
+    test("no sync means no status call and the same output", async () => {
+      setTty(true);
+      const { client, calls } = createMockIpcClient([approved()]);
+      await runExtensionApprove(client, ["approve", "x"], ["x"]);
+      expect(calls).toHaveLength(1);
+      expect(out.stdout).toBe(APPROVED_LINE);
+    });
+
+    test("a failing status read adds nothing and does not fail the approval", async () => {
+      setTty(true);
+      const { client, calls } = createMockIpcClient([
+        approved("ext_x"),
+        new Error("gateway went away"),
+      ]);
+      await runExtensionApprove(client, ["approve", "x"], ["x"]);
+      expect(calls).toHaveLength(2);
+      expect(out.stdout).toBe(APPROVED_LINE);
+    });
+
+    test("the paused reason is control-stripped", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        approved("ext_x"),
+        [{ serviceId: "ext_x", status: "paused", lastError: "\u001b[31mred\u001b[0m reason" }],
+      ]);
+      await runExtensionApprove(client, ["approve", "x"], ["x"]);
+      expect(out.stdout).toContain("sync is paused: ");
+      expect(out.stdout).not.toContain("\u001b");
+    });
+  });
 });
 
 describe("runExtensionRevoke", () => {

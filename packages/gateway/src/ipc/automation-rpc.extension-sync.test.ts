@@ -38,15 +38,22 @@ function freshDb(): Database {
 function spyHandle(
   db: Database,
   id: string,
+  /** What `syncServiceIdFor` answers once `refresh` has run (before it, always undefined). */
+  syncIdAfterRefresh?: string,
 ): {
   handle: AutomationRpcExtensionSyncHandle;
   calls: string[];
 } {
   const calls: string[] = [];
+  let refreshed = false;
   return {
     calls,
     handle: {
-      refresh: (x) => calls.push(`refresh:${x}`),
+      refresh: (x) => {
+        refreshed = true;
+        calls.push(`refresh:${x}`);
+      },
+      syncServiceIdFor: () => (refreshed ? syncIdAfterRefresh : undefined),
       unregister: (x) => calls.push(`unregister:${x}`),
       purgeBeforeRemove: async (x) => {
         calls.push(`purge:${x}:grant=${String(getRunGrant(db, id) !== null)}`);
@@ -133,6 +140,45 @@ describe("extension.* handlers drive the extension sync host", () => {
     })) as { value: { changed: boolean } };
     expect(out.value.changed).toBe(true);
     expect(calls).toEqual(["refresh:rpc.sync"]);
+  });
+
+  test("approveRun reports the id the refreshed sync registered under", async () => {
+    const { db, env } = await installedAndApproved();
+    const { handle } = spyHandle(db, "rpc.sync", "readwise");
+    const out = (await dispatchAutomationRpc({
+      db,
+      extensionSync: handle,
+      method: "extension.approveRun",
+      params: { id: "rpc.sync" },
+      runGrantEnv: env,
+      ownerGate: async () => true,
+    })) as { value: Record<string, unknown> };
+    expect(out.value["serviceId"]).toBe("ext_rpc_sync");
+    expect(out.value["syncServiceId"]).toBe("readwise");
+  });
+
+  test("approveRun omits syncServiceId when nothing was registered", async () => {
+    const { db, env } = await installedAndApproved();
+    const { handle } = spyHandle(db, "rpc.sync");
+    const out = (await dispatchAutomationRpc({
+      db,
+      extensionSync: handle,
+      method: "extension.approveRun",
+      params: { id: "rpc.sync" },
+      runGrantEnv: env,
+      ownerGate: async () => true,
+    })) as { value: Record<string, unknown> };
+    expect(out.value["serviceId"]).toBe("ext_rpc_sync");
+    expect("syncServiceId" in out.value).toBe(false);
+    // And with no sync host at all.
+    const bare = (await dispatchAutomationRpc({
+      db,
+      method: "extension.approveRun",
+      params: { id: "rpc.sync" },
+      runGrantEnv: env,
+      ownerGate: async () => true,
+    })) as { value: Record<string, unknown> };
+    expect("syncServiceId" in bare.value).toBe(false);
   });
 
   test("a denied approval refreshes nothing", async () => {
@@ -257,6 +303,7 @@ describe("extension.remove purge (plan decision 7)", () => {
       params: { id: EXT_ID },
       extensionSync: {
         refresh: () => {},
+        syncServiceIdFor: () => undefined,
         unregister: () => {},
         purgeBeforeRemove: (id) =>
           purgeExtensionIndexData(
