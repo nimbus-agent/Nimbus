@@ -2,6 +2,21 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.2.0](https://github.com/nimbus-agent/Nimbus/compare/v10.1.2...v10.2.0) (2026-10-23)
+
+
+### Features
+
+* **extensions:** extension approve says when the sync it registered came up paused ([#1742](https://github.com/nimbus-agent/Nimbus/issues/1742)) ([b9ee967](https://github.com/nimbus-agent/Nimbus/commit/b9ee967e34f5e92054dc430a91a620c73c2521c4))
+
+
+### Bug Fixes
+
+* **extensions:** registering an extension's sync pauses it when the sandbox cannot confine it ([#1737](https://github.com/nimbus-agent/Nimbus/issues/1737)) ([196e675](https://github.com/nimbus-agent/Nimbus/commit/196e675827f679edb603c033f25cf1b9adee1288))
+* **health:** an unconfigured connector reads not_configured from its first run ([#1741](https://github.com/nimbus-agent/Nimbus/issues/1741)) ([0805c0f](https://github.com/nimbus-agent/Nimbus/commit/0805c0f7175fca192231e5ad6b0a23e77cc51675))
+* **index:** rebody forces a full run, and --since survives a run already in flight ([#1739](https://github.com/nimbus-agent/Nimbus/issues/1739)) ([4fb51b9](https://github.com/nimbus-agent/Nimbus/commit/4fb51b978c29008da68543fcec66e90c610062ea))
+* **sync:** skip an unconfigured connector's sync instead of probing the Vault for it ([#1735](https://github.com/nimbus-agent/Nimbus/issues/1735)) ([1aeb34e](https://github.com/nimbus-agent/Nimbus/commit/1aeb34e8ee3adc86c87e37fe2af9c22c0635af5f))
+
 ## [10.1.2](https://github.com/nimbus-agent/Nimbus/compare/v10.1.1...v10.1.2) (2026-10-23)
 
 
