@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792754060836,
+  "lastUpdate": 1792755265318,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e5dcea7daa5d778a143ab3e62c439e569c270e9e",
-          "message": "docs: document the Prometheus metrics surfaces and OpenMetrics scraping (#1054)\n\n## Why\n\nThe Gateway already exposes Prometheus text exposition on two separate\nsurfaces, and neither was documented anywhere on the docs site. That\nmakes an otherwise-shipped capability invisible: an autonomous Nimbus\nagent is scrapeable by Prometheus, Grafana Agent, or the Datadog Agent\ntoday, with no code change.\n\n## What\n\nNew `Monitoring` page (Reference sidebar, `/monitoring/`) covering both\nsurfaces:\n\n| | Index & performance | Governance |\n| --- | --- | --- |\n| Enabled by | `NIMBUS_METRICS_PORT` | `NIMBUS_HTTP_PORT` |\n| Auth | none, hard-bound to `127.0.0.1` | bearer\n(`http_api.deployment_token`), fails closed |\n| Source | `ipc/metrics-server.ts` | `status/prometheus-format.ts` |\n\nPlus suggested alerts, a Datadog Agent OpenMetrics snippet, a Prometheus\n`scrape_configs` snippet, and a local-first note making explicit what\ndoes and does not leave the machine (metadata and counts; never indexed\ncontent or credentials).\n\n## Notes\n\n- **`nimbus_hitl_pending` is partially stubbed.** `assemble.ts` builds\nit as `pendingApprovals + pendingQuorum` with the quorum term hard-coded\nto `0`, because `quorumCoordinator` exposes no pending-count accessor.\nDocumented in a caution block rather than letting the page imply a\nnumber the gauge does not deliver. Making it real is a small follow-up,\nnot in scope here.\n- The Datadog Agent snippet's option names are Datadog's schema and are\nnot verified against their current docs; the page says so and links out.\nThe Nimbus-side endpoints and metric names are read directly from\nsource.\n- Source paths are written as inline code rather than GitHub links,\nmatching the convention in `telemetry.mdx` and avoiding link rot.\n\n## Verification\n\nDocs-only. `bun run preflight:fast` passes all 24 gates, and `bun run\ndocs:build` exits 0 — 56 pages built, `/monitoring/` renders, \"All\ninternal links are valid\".\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-05T18:57:05+03:00",
-          "tree_id": "a120320e3bce541a37241e66558e10e5a684af72",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e5dcea7daa5d778a143ab3e62c439e569c270e9e"
-        },
-        "date": 1785946217836,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 303.00772345000587,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 302.7649408000019,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 263.66979734999916,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0805c0f7175fca192231e5ad6b0a23e77cc51675",
+          "message": "fix(health): an unconfigured connector reads not_configured from its first run (#1741)\n\nOn a fresh install, a connector with no credential read **healthy**\nafter its first scheduler run, and `not_configured` only from the second\nrun on.\n\n**Why:** the scheduler's skipped run fires `not_configured`, then\nrecords the run as a `sync_success` (a no-op). `not_configured` did\nnothing when the connector had no `sync_state` row yet, so the\n`sync_success` that followed created the row with `configured = 1` (the\nV56 default) and reported a healthy transition, including a\n`connector.healthChanged` → `healthy` broadcast for a connector nobody\nhad set up.\n\n**Fix (`connectors/health.ts`):** `not_configured` on a missing row now\ncreates it with `configured = 0`, silently: no history row and no event,\nbecause the visible state is `not_configured` both before and after. The\ninsert moved into `insertHealthRowIfMissing(db, id, configured)`, shared\nwith `upsertHealthRow`, which still inserts `1`. `configured` on a\nmissing row stays a no-op.\n\n**Behaviour change, intended:** `sync_success` alone no longer clears an\nunconfigured flag; configuring the connector does (the `configured`\nevent), and the next real sync then reports healthy. The existing test\nthat relied on the old order now sends `configured` first.\n\n## Tests\n- `not-configured-health.test.ts`: the row is created unconfigured with\n`depth = 'full'` and no history; `sync_success` alone does not clear the\nflag.\n- `health-events.test.ts`: `not_configured` on a missing row broadcasts\nnothing.\n- `scheduler.test.ts`: the very first run of an unconfigured connector\nreads `not_configured` and announces no healthy transition. The existing\ntest no longer needs the extra warm-up run it carried to work around\nthis.\n- Red-proven: removing the one-line insert fails 5 tests. `connectors/`\n+ `sync/` pass (4403), and `bun run preflight:fast` passes.\n\nNo migration, no invariant, no IPC change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Connectors without configuration are now correctly shown as not\nconfigured, including before their first sync.\n* A successful sync alone no longer marks an unconfigured connector as\nhealthy; it must be configured first.\n* Unconfigured connectors no longer emit a misleading healthy status\nduring their initial run.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T14:22:14+03:00",
+          "tree_id": "22a5936542a6d18e7573e69195fa48ccf7922f4a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0805c0f7175fca192231e5ad6b0a23e77cc51675"
+        },
+        "date": 1792755260947,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 228.86641680000213,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 229.5238583500002,
             "unit": "ms"
           }
         ]
