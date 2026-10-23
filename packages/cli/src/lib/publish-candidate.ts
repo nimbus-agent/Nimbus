@@ -3,7 +3,8 @@
  * `nimbus registry maintain add` so both hand `validatePublish` exactly what a registry check reads:
  * the package's own `nimbus.extension.json` bytes, the package bytes, and the publish request.
  */
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   type InspectedPackage,
   inspectPackage,
@@ -41,6 +42,25 @@ function publishRequestBytes(
 }
 
 /**
+ * `tgz`'s bytes, sized and read through ONE descriptor (no check-then-read window), refused over
+ * the package cap before any of it is read.
+ */
+function readPackageBytes(tgz: string): Buffer {
+  const fd = openSync(tgz, "r");
+  try {
+    if (fstatSync(fd).size > MAX_PACKAGE_BYTES) {
+      throw new RegistryError(
+        "ERR_REGISTRY_TOO_LARGE",
+        `package exceeds ${String(MAX_PACKAGE_BYTES)} bytes`,
+      );
+    }
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
  * Inspect the packed `tgz` (scratch files go under `work`) and build the candidate it publishes as
  * `extensions/<id>/<version>/`. Everything else is `validatePublish`'s; the two refusals here are
  * the ones it would make anyway, raised before this extracts anything: the package size cap, and an
@@ -51,16 +71,14 @@ export async function buildPublishCandidate(
   work: string,
   channel: RegistryChannel,
 ): Promise<PublishCandidate> {
-  if (statSync(tgz).size > MAX_PACKAGE_BYTES) {
-    throw new RegistryError(
-      "ERR_REGISTRY_TOO_LARGE",
-      `package exceeds ${String(MAX_PACKAGE_BYTES)} bytes`,
-    );
-  }
-  const packageBytes = readFileSync(tgz);
+  const packageBytes = readPackageBytes(tgz);
+  // Inspect a private copy of exactly the bytes read, never `tgz` again: the package published and
+  // the package inspected cannot differ.
+  const copy = join(work, "candidate.tgz");
+  writeFileSync(copy, packageBytes);
   let inner: InspectedPackage;
   try {
-    inner = await inspectPackage(tgz, work);
+    inner = await inspectPackage(copy, work);
   } catch (e) {
     if (e instanceof RegistryError) throw e;
     throw new RegistryError(
