@@ -2,6 +2,19 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.1.0](https://github.com/nimbus-agent/Nimbus/compare/v10.0.0...v10.1.0) (2026-10-23)
+
+
+### Features
+
+* **config:** layered config reader; profiles inherit from nimbus.toml ([#1714](https://github.com/nimbus-agent/Nimbus/issues/1714)) ([780303e](https://github.com/nimbus-agent/Nimbus/commit/780303ecd3570d85ab5c4a73403570fd5b38aeda))
+* **config:** pack layers under the user's config, allowlisted and conflict-checked ([#1718](https://github.com/nimbus-agent/Nimbus/issues/1718)) ([b03e5c2](https://github.com/nimbus-agent/Nimbus/commit/b03e5c2fa1ceec5856697b70a7d674dd7f0d6704))
+
+
+### Bug Fixes
+
+* **deps:** ip-address 10.7.4 for GHSA-rxp7-6hxx-x8q5 ([#1717](https://github.com/nimbus-agent/Nimbus/issues/1717)) ([7d9701f](https://github.com/nimbus-agent/Nimbus/commit/7d9701f7874f2c00fa1f2660af0ac58f8327d615))
+
 ## [10.0.0](https://github.com/nimbus-agent/Nimbus/compare/v9.2.1...v10.0.0) (2026-10-22)
 
 
