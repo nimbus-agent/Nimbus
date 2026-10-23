@@ -7,18 +7,9 @@ import { type ExtensionRow, listExtensions } from "../automation/extension-store
 import { isSameOrInside, pathApiFor } from "../util/path-overlap.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
-import { readVerifiedManifest } from "./approve-run.ts";
-import {
-  bindingInputFor,
-  CONTINUITY_TABLE,
-  type ContinuityEntry,
-  findContinuityBinding,
-} from "./continuity/continuity-table.ts";
-import {
-  type ResolvedRunCredentials,
-  resolveRunCredentials,
-  serializeRunCredentials,
-} from "./extension-credentials.ts";
+import { readVerifiedManifest, resolvedCredentialsFor } from "./approve-run.ts";
+import { CONTINUITY_TABLE, type ContinuityEntry } from "./continuity/continuity-table.ts";
+import { type ResolvedRunCredentials, serializeRunCredentials } from "./extension-credentials.ts";
 import {
   type ExtensionRunGrantEnv,
   type ResolvedRunGrants,
@@ -336,11 +327,12 @@ export async function readVerifiedExtensionForSpawn(
   // 9 — the credentials, re-resolved from the manifest verified above and the binding the row's
   // source resolves to NOW, must equal what was approved: a credential added (or re-mapped to a
   // different Vault key) after approval was never shown to the owner.
-  const binding = findContinuityBinding(
-    bindingInputFor(row, manifest),
+  const { credentials } = resolvedCredentialsFor(
+    row,
+    manifest,
+    grant.service_id,
     deps.continuityTable ?? CONTINUITY_TABLE,
   );
-  const credentials = resolveRunCredentials(manifest, grant.service_id, binding);
   if (serializeRunCredentials(credentials) !== grant.credentials_json) {
     refuse(
       "ERR_EXTENSION_RUN_CHANGED",

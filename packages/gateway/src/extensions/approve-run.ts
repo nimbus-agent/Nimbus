@@ -233,9 +233,10 @@ export function buildRunConsentPayload(
 
 /**
  * The credentials the grant carries, for `row` as it is now (its source decides the binding), and
- * the legacy connector they are bound to, if any.
+ * the legacy connector they are bound to, if any. The ONE derivation: the approval, the spawn
+ * verifier and `credentialSet`/`credentialStatus` all call it. `manifest` must be the verified one.
  */
-function resolvedCredentialsFor(
+export function resolvedCredentialsFor(
   row: ExtensionRow,
   manifest: ExtensionManifest,
   serviceId: string,
@@ -243,6 +244,30 @@ function resolvedCredentialsFor(
 ): { credentials: ResolvedRunCredentials; binding: ContinuityEntry | undefined } {
   const binding = findContinuityBinding(bindingInputFor(row, manifest), table);
   return { credentials: resolveRunCredentials(manifest, serviceId, binding), binding };
+}
+
+/**
+ * What `extensionId`'s run grant would carry if derived NOW — from the installed row, its
+ * hash-checked manifest and the binding the row's source resolves to under `table`. `undefined`
+ * when there is no installed row, no run grant, or no manifest that still matches the install:
+ * a caller must treat that as "no binding holds".
+ */
+export function currentRunCredentials(
+  db: Database,
+  extensionId: string,
+  table: readonly ContinuityEntry[] = CONTINUITY_TABLE,
+): { credentials: ResolvedRunCredentials; binding: ContinuityEntry | undefined } | undefined {
+  const row = listExtensions(db).find((r) => r.id === extensionId);
+  if (row === undefined) return undefined;
+  const grant = getRunGrant(db, extensionId);
+  if (grant === null) return undefined;
+  let manifest: ExtensionManifest;
+  try {
+    manifest = readVerifiedManifest(row);
+  } catch {
+    return undefined;
+  }
+  return resolvedCredentialsFor(row, manifest, grant.service_id, table);
 }
 
 /**

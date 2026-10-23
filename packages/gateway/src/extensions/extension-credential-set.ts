@@ -3,6 +3,7 @@ import { CONTINUITY_TABLE, type ContinuityEntry } from "./continuity/continuity-
 import {
   extensionCredentialVaultKey,
   type ResolvedRunCredentials,
+  serializeRunCredentials,
   sortedNames,
 } from "./extension-credentials.ts";
 import type { ExtensionRunGrantRow } from "./run-grant-store.ts";
@@ -28,6 +29,7 @@ export type ExtensionCredentialErrorCode =
   | "ERR_EXTENSION_CREDENTIAL_NO_GRANT"
   | "ERR_EXTENSION_CREDENTIAL_GRANT_INVALID"
   | "ERR_EXTENSION_CREDENTIAL_UNKNOWN"
+  | "ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED"
   | "ERR_EXTENSION_CREDENTIAL_NOT_APPROVED"
   | "ERR_EXTENSION_CREDENTIAL_CHANGED"
   | "ERR_EXTENSION_CREDENTIAL_WRITE_FAILED";
@@ -54,6 +56,14 @@ export type CredentialReadDeps = {
   readonly readGrant: (extensionId: string) => ExtensionRunGrantRow | null;
   /** The continuity bindings a legacy key may come from; default {@link CONTINUITY_TABLE}. */
   readonly continuityTable?: readonly ContinuityEntry[];
+  /**
+   * What the extension's run grant would carry if derived NOW (`currentRunCredentials` in
+   * `approve-run.ts`): `undefined` when the installed package cannot be read or verified. Required,
+   * so a caller that forgets it cannot skip the re-check a legacy key needs.
+   */
+  readonly liveCredentials: (
+    extensionId: string,
+  ) => { credentials: ResolvedRunCredentials; binding: ContinuityEntry | undefined } | undefined;
 };
 
 export type CredentialSetDeps = CredentialReadDeps & { readonly gate: CredentialOwnerGate };
@@ -136,6 +146,31 @@ function trustCredential(
   return undefined;
 }
 
+/**
+ * A legacy key is the binding's to give: trusted only while the installed package still binds to
+ * that connector — its verified publisher key and root fingerprint, re-derived now exactly as the
+ * spawn verifier does — and still resolves to the grant as approved. Otherwise no spawn would use
+ * the key, so writing (or probing) it through this grant is refused before the owner is asked.
+ */
+function assertLegacyBindingHolds(
+  deps: CredentialReadDeps,
+  extensionId: string,
+  row: ExtensionRunGrantRow,
+  legacyServiceId: string,
+): void {
+  const live = deps.liveCredentials(extensionId);
+  const holds =
+    live !== undefined &&
+    serializeRunCredentials(live.credentials) === row.credentials_json &&
+    live.binding?.legacyServiceId === legacyServiceId;
+  if (!holds) {
+    throw new ExtensionCredentialError(
+      "ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED",
+      `${extensionId}'s run approval reuses the ${legacyServiceId} connector's credential, but the installed package no longer binds to it; nothing was written — run \`nimbus extension approve ${extensionId}\` again`,
+    );
+  }
+}
+
 function grantCredentials(
   deps: CredentialReadDeps,
   extensionId: string,
@@ -157,6 +192,12 @@ function grantCredentials(
       vaultKey === undefined ? undefined : trustCredential(row, name, vaultKey, table);
     if (trusted === undefined) throw grantInvalid(extensionId);
     out.set(name, trusted);
+  }
+  const checked = new Set<string>();
+  for (const { reusesConnector } of out.values()) {
+    if (reusesConnector === undefined || checked.has(reusesConnector)) continue;
+    assertLegacyBindingHolds(deps, extensionId, row, reusesConnector);
+    checked.add(reusesConnector);
   }
   return out;
 }
