@@ -213,6 +213,7 @@ import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight
 import { buildFleetInvoker } from "../fleet/fleet-invoker.ts";
 import { FLEET_CAPABILITY, FleetScheduler } from "../fleet/fleet-scheduler.ts";
 import { FleetStore } from "../fleet/fleet-store.ts";
+import { type FleetLoad, FleetSupervisor } from "../fleet/fleet-supervisor.ts";
 import { buildFleetSweepEnumerate } from "../fleet/fleet-sweep-enumerators.ts";
 import { validateFleetSweepJobs } from "../fleet/fleet-sweep-support.ts";
 import { createFleetRemoteBudget } from "../fleet/fleet-synthesis-router.ts";
@@ -3204,17 +3205,20 @@ export interface FleetBootDeps {
   readonly policyGate: PolicyGate;
   readonly logger: Logger;
   readonly sidecarStops: Array<() => void>;
+  /** Test seam only: the supervisor's reload-check interval (production: `FLEET_RELOAD_CHECK_MS`). */
+  readonly checkMs?: number;
 }
 
 /**
- * Reads `[fleet]` off the layered config (base file plus the active profile's), prunes expired runs and briefs, and starts the
- * scheduler when — and only when — the owner both enabled the fleet and configured a job. Returns
- * the full result of assembling the fleet subsystem, not just the (optionally-undefined)
- * scheduler — the `fleet.*` IPC surface (Task 9) needs the store, the effective config and the job
- * list even when the scheduler itself is `undefined` (disabled by config/policy or unconfigured),
- * so `fleet.status`/`fleet.list` can report the truth without a live scheduler to ask.
- * `store`/`config`/`jobs` are ALWAYS present — pruning and reporting must not hinge on whether the
- * fleet happens to be running right now.
+ * Reads `[fleet]` off the layered config (base file plus the active profile's, plus pack layers),
+ * prunes expired runs and briefs, and hands the result to a `FleetSupervisor`, which starts the
+ * scheduler when — and only when — the owner both enabled the fleet and configured a job, and
+ * rebuilds it when the effective `[fleet]` section changes. Returns the full result of assembling
+ * the fleet subsystem, not just the (optionally-undefined) scheduler — the `fleet.*` IPC surface
+ * needs the store, the effective config and the job list even when the scheduler itself is
+ * `undefined` (disabled by config/policy or unconfigured), so `fleet.status`/`fleet.list` can report
+ * the truth without a live scheduler to ask. `scheduler`/`config`/`jobs` are GETTERS over the
+ * supervisor's current view, so they follow a reload; `store` is fixed for the process.
  *
  * Four things here are load-bearing enough to say out loud:
  *
@@ -3222,31 +3226,37 @@ export interface FleetBootDeps {
  *    `nimbus.toml`: a `[fleet]` set in the active profile file (or a pack) must be honoured, the
  *    way `[agents] synthesis` set in a profile file is.
  * 2. A malformed `[fleet]` block must NOT take the gateway down. The parser throws by design (an
- *    `allow_remote` with no budget is a permission the owner clearly meant to bound), and this is
- *    the caller that catches it: log loudly, name the file, construct no scheduler. The fleet is an
- *    optional default-off feature; the index is not. Note that the PRUNE still runs on that path —
- *    old rows exist whether or not today's config parses, and retention must not hinge on a typo.
+ *    `allow_remote` with no budget is a permission the owner clearly meant to bound), and
+ *    `loadFleet` is the caller that catches it: log loudly, name the file, construct no scheduler.
+ *    The fleet is an optional default-off feature; the index is not. Note that the boot PRUNE still
+ *    runs on that path — old rows exist whether or not today's config parses, and retention must not
+ *    hinge on a typo. `buildFleetScheduler` likewise catches a throw from construction, because the
+ *    supervisor's constructor calls it unguarded at boot.
  * 3. Retention is a policy FLOOR, applied to `config.retentionDays` BEFORE the scheduler sees it —
- *    not only to the boot prune below. The scheduler stamps each brief's `expires_at` from that
- *    same field, so flooring only the prune would leave an org-mandated 30-day brief marked to
- *    expire in 7 and deleted by the next `pruneBriefs`. `retentionMinDays` is the ORG floor alone,
- *    deliberately not `retentionDays` (which is that floor already merged with the audit log's
- *    own local window, 90 days by default).
- * 4. Called exactly ONCE per boot, from `assemblePlatformServices` below, which derives both
- *    `PlatformServices.fleetScheduler` and `ipcOpts.fleetRpcCtx` from that single call. There is no
- *    thin `bootFleetScheduler(deps): FleetScheduler | undefined` wrapper any more — a second call
- *    with the same deps would double-prune and, worse, construct and start a SECOND live scheduler
- *    ticking against the same store. `assemble-fleet.test.ts` calls this directly and reads
- *    `.scheduler` off the result, which is what production actually runs, not a parallel path.
+ *    not only to the boot prune below, and on every reload too. The scheduler stamps each brief's
+ *    `expires_at` from that same field, so flooring only the prune would leave an org-mandated
+ *    30-day brief marked to expire in 7 and deleted by the next `pruneBriefs`. `retentionMinDays`
+ *    is the ORG floor alone, deliberately not `retentionDays` (which is that floor already merged
+ *    with the audit log's own local window, 90 days by default).
+ * 4. Called exactly ONCE per boot, from `assemblePlatformServices` below, which derives
+ *    `ipcOpts.fleetRpcCtx` from that single call. The SUPERVISOR holds the live scheduler from then
+ *    on; nothing may keep a boot-time copy of it, since that copy goes stale at the first reload. A
+ *    second call with the same deps would double-prune and, worse, construct a SECOND supervisor and
+ *    a second live scheduler ticking against the same store. `assemble-fleet.test.ts` calls this
+ *    directly and reads `.scheduler` off the result, which is what production actually runs, not a
+ *    parallel path.
  */
 export interface FleetRuntime {
-  readonly scheduler: FleetScheduler | undefined;
+  readonly supervisor: FleetSupervisor;
   readonly store: FleetStore;
+  /** The supervisor's current scheduler; changes on a reload. */
+  readonly scheduler: FleetScheduler | undefined;
   readonly config: NimbusFleetToml;
   readonly jobs: readonly NimbusFleetJobToml[];
 }
 
-export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
+/** The effective `[fleet]` section, retention floored by policy. Never throws: an error is logged. */
+function loadFleet(deps: FleetBootDeps): FleetLoad {
   const fleetConfigDir = deps.paths.configDir;
   let fleet: { config: NimbusFleetToml; jobs: NimbusFleetJobToml[] } = {
     config: DEFAULT_FLEET_CONFIG,
@@ -3271,7 +3281,7 @@ export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
         profile: layered.profile.name,
         files,
       },
-      `[fleet] config error (profile "${layered.profile.name}"; files: ${files.join(", ") || "none"}) — fleet disabled for this process`,
+      `[fleet] config error (profile "${layered.profile.name}"; files: ${files.join(", ") || "none"}) — fleet disabled until the config is fixed`,
     );
   }
 
@@ -3282,71 +3292,119 @@ export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
       deps.policyGate.enforced().retentionMinDays,
     ),
   };
+  return { config, jobs: fleet.jobs, configError };
+}
+
+/**
+ * One scheduler generation, NOT started (the supervisor starts and stops it). Undefined when the
+ * fleet should not run. Never throws: the supervisor's constructor calls this unguarded at boot,
+ * and boot must not fail because of the fleet.
+ */
+function buildFleetScheduler(
+  deps: FleetBootDeps,
+  store: FleetStore,
+  load: FleetLoad,
+): FleetScheduler | undefined {
+  const { config, jobs, configError } = load;
+  if (configError || !config.enabled || jobs.length === 0) return undefined;
+  try {
+    // ONE budget per scheduler GENERATION, named so the scheduler's counter and the invoker's cap
+    // are the SAME object (I38). Constructing it inline in `invoke:` (as this once did) left
+    // `remoteCallsMade` with nothing to read, so `fleet_run.remote_calls_made` recorded 0 on every
+    // run — a column that purports to count remote model calls and always said none were made. Two
+    // instances would be the same bug wearing a getter: the scheduler would report a budget nothing
+    // ever spends against. A reload builds a new generation, and with it a new budget.
+    const remoteBudget = createFleetRemoteBudget(config.allowRemote, config.remoteCallBudget);
+
+    return new FleetScheduler({
+      store,
+      jobs,
+      config,
+      // A GETTER, not a snapshot: `runOnce` reads this on every 60-second tick, and the gateway can
+      // receive a signed policy AFTER boot (`policyGate.applyVerified`). A boolean captured here
+      // would leave a fleet running all night under a lockoff the org had already installed — the
+      // same reason the exec and computer-use deps below read `policyGate.enforced()` lazily.
+      get capabilityDisabled(): boolean {
+        return deps.policyGate.enforced().capabilitiesDisabled.has(FLEET_CAPABILITY);
+      },
+      hostActivity: deps.hostActivity,
+      // The SAME instance, narrowed to `FleetRunBudget` by the dep's type: the scheduler resets it
+      // at each run boundary (which is what makes `remote_call_budget` the PER-RUN key it is
+      // documented to be) and reads what the run had and spent, while `consume` stays the invoker's.
+      remoteBudget,
+      invoke: buildFleetInvoker({
+        db: deps.db,
+        router: deps.llmRegistry.llmRouter,
+        budget: remoteBudget,
+        index: deps.localIndex,
+        configDir: deps.paths.configDir,
+      }),
+      now: () => Date.now(),
+      // Roots and services are read FRESH per enumeration. Services use the loader agents resolve
+      // `service` against — deliberately NOT `loadServiceConfigsOrDegrade`: degrading to an empty
+      // map would report "no services are configured" for a config that is merely malformed, where
+      // a throw records the real cause on the job and backs it off.
+      enumerate: buildFleetSweepEnumerate({
+        db: deps.db,
+        roots: () => ownershipRoots(deps.paths.configDir),
+        serviceIds: () => [...loadNimbusServiceConfigsFromConfigDir(deps.paths.configDir).keys()],
+      }),
+    });
+  } catch (err) {
+    deps.logger.error({ err }, "[fleet] building the scheduler failed; the fleet is off");
+    return undefined;
+  }
+}
+
+export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
+  const snapshotVersion = (): number => getLayeredConfig(deps.paths.configDir).snapshot().version;
+  // Version FIRST, then the load: an edit landing between the two bumps the version past the one
+  // recorded here, so the supervisor's first check reloads rather than missing it.
+  const bootVersion = snapshotVersion();
+  const bootLoad = loadFleet(deps);
 
   // Prune UNCONDITIONALLY — when the fleet is disabled, and when its config did not even parse.
   // Rows written while it WAS enabled exist either way, and retention must not depend on whether
   // the owner currently has a typo in their TOML: the alternative is a machine that silently keeps
   // every fleet brief forever because of one bad line. On the unparsed path the window is
   // `DEFAULT_FLEET_CONFIG.retentionDays` floored by policy, which is the only defensible answer
-  // when the configured one is unreadable.
+  // when the configured one is unreadable. Boot only: a reload does not prune.
   //
   // `pruneRuns` FIRST: the FK cascade takes each run's briefs with it, which is what stops
   // `fleet_run` growing a row per 60-second tick forever. `pruneBriefs` then catches any brief
   // whose own `expires_at` is earlier than its run's age.
   const store = new FleetStore(deps.db);
-  store.pruneRuns(Date.now() - config.retentionDays * 86_400_000);
+  store.pruneRuns(Date.now() - bootLoad.config.retentionDays * 86_400_000);
   store.pruneBriefs(Date.now());
 
-  if (configError || !config.enabled || fleet.jobs.length === 0) {
-    return { scheduler: undefined, store, config, jobs: fleet.jobs };
-  }
-
-  // ONE budget instance, named so the scheduler's counter and the invoker's cap are the SAME
-  // object. Constructing it inline in `invoke:` (as this did) left `remoteCallsMade` with nothing
-  // to read, so `fleet_run.remote_calls_made` recorded 0 on every run — a column that purports to
-  // count remote model calls and always said none were made. Two instances would be the same bug
-  // wearing a getter: the scheduler would report a budget nothing ever spends against.
-  const remoteBudget = createFleetRemoteBudget(config.allowRemote, config.remoteCallBudget);
-
-  const scheduler = new FleetScheduler({
-    store,
-    jobs: fleet.jobs,
-    config,
-    // A GETTER, not a snapshot: `runOnce` reads this on every 60-second tick, and the gateway can
-    // receive a signed policy AFTER boot (`policyGate.applyVerified`). A boolean captured here
-    // would leave a fleet running all night under a lockoff the org had already installed — the
-    // same reason the exec and computer-use deps below read `policyGate.enforced()` lazily.
-    get capabilityDisabled(): boolean {
-      return deps.policyGate.enforced().capabilitiesDisabled.has(FLEET_CAPABILITY);
+  const supervisor = new FleetSupervisor(
+    {
+      version: snapshotVersion,
+      load: () => loadFleet(deps),
+      build: (load) => buildFleetScheduler(deps, store, load),
+      logger: deps.logger,
+      ...(deps.checkMs !== undefined ? { checkMs: deps.checkMs } : {}),
     },
-    hostActivity: deps.hostActivity,
-    // The SAME instance, narrowed to `FleetRunBudget` by the dep's type: the scheduler resets it at
-    // each run boundary (which is what makes `remote_call_budget` the PER-RUN key it is documented
-    // to be) and reads what the run had and spent, while `consume` stays the invoker's alone.
-    remoteBudget,
-    invoke: buildFleetInvoker({
-      db: deps.db,
-      router: deps.llmRegistry.llmRouter,
-      budget: remoteBudget,
-      index: deps.localIndex,
-      configDir: deps.paths.configDir,
-    }),
-    now: () => Date.now(),
-    // Roots and services are read FRESH per enumeration. Services use the loader agents resolve
-    // `service` against — deliberately NOT `loadServiceConfigsOrDegrade`: degrading to an empty map
-    // would report "no services are configured" for a config that is merely malformed, where a throw
-    // records the real cause on the job and backs it off.
-    enumerate: buildFleetSweepEnumerate({
-      db: deps.db,
-      roots: () => ownershipRoots(deps.paths.configDir),
-      serviceIds: () => [...loadNimbusServiceConfigsFromConfigDir(deps.paths.configDir).keys()],
-    }),
-  });
-  scheduler.start();
-  // Without this the 60 s interval outlives `disposeSidecars()`. `.unref()` keeps it from holding
-  // the process open but does not stop it firing during a shutdown that is still draining.
-  deps.sidecarStops.push(() => scheduler.stop());
-  return { scheduler, store, config, jobs: fleet.jobs };
+    { version: bootVersion, load: bootLoad },
+  );
+  supervisor.start();
+  // Without this the reload interval and the current scheduler's 60 s tick outlive
+  // `disposeSidecars()`. `.unref()` keeps them from holding the process open but does not stop
+  // them firing during a shutdown that is still draining.
+  deps.sidecarStops.push(() => supervisor.stop());
+  return {
+    supervisor,
+    store,
+    get scheduler(): FleetScheduler | undefined {
+      return supervisor.current().scheduler;
+    },
+    get config(): NimbusFleetToml {
+      return supervisor.current().config;
+    },
+    get jobs(): readonly NimbusFleetJobToml[] {
+      return supervisor.current().jobs;
+    },
+  };
 }
 
 export async function assemblePlatformServices(
@@ -3650,9 +3708,10 @@ export async function assemblePlatformServices(
   // no job is configured by default, so a gateway with no `[fleet]` block constructs nothing at
   // all. Built here, after the policy gate, because it reads the `agent_fleet` lockoff from it.
   //
-  // Called exactly ONCE: both `fleetScheduler` below and `ipcOpts.fleetRpcCtx` (wired further
-  // down) are derived from this single result — see `assembleFleetRuntime`'s own doc comment for
-  // why a second call would double-prune and start a second live scheduler.
+  // Called exactly ONCE: `ipcOpts.fleetRpcCtx` (wired further down) is derived from this single
+  // result, and its supervisor rebuilds the scheduler when `[fleet]` changes — see
+  // `assembleFleetRuntime`'s own doc comment for why a second call would double-prune and start a
+  // second live scheduler.
   const fleetRuntime = assembleFleetRuntime({
     db,
     paths,
@@ -3663,7 +3722,6 @@ export async function assemblePlatformServices(
     logger: syncLogger,
     sidecarStops,
   });
-  const fleetScheduler = fleetRuntime.scheduler;
 
   // Extension runtime PR 3: the kill switch (read on its own, so a bad sibling key cannot re-enable
   // it) AND not demo-rooted. One answer, handed to both the mesh and the IPC server.
@@ -4301,13 +4359,23 @@ export async function assemblePlatformServices(
   // whole namespace is LAN-forbidden (I5) and absent from the Tauri allowlist (I7): `fleet.runNow`
   // spends the machine's resources and the reads return synthesised answers over the private
   // index, neither of which a LAN peer or the renderer needs.
+  //
+  // `scheduler`/`config`/`jobs` are GETTERS over the supervisor's current view, so a handler reads
+  // the fleet as it is now, not as it was at boot; `settled` lets `fleet.runNow` wait out a reload.
   ipcOpts.fleetRpcCtx = {
-    scheduler: fleetRuntime.scheduler,
+    get scheduler(): FleetScheduler | undefined {
+      return fleetRuntime.scheduler;
+    },
     store: fleetRuntime.store,
     hostActivity,
-    config: fleetRuntime.config,
-    jobs: fleetRuntime.jobs,
+    get config(): NimbusFleetToml {
+      return fleetRuntime.config;
+    },
+    get jobs(): readonly NimbusFleetJobToml[] {
+      return fleetRuntime.jobs;
+    },
     now: () => Date.now(),
+    settled: () => fleetRuntime.supervisor.settled(),
   };
   ipcOpts.oncallPushRpcCtx = { runtime: oncallPush };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
@@ -4790,7 +4858,6 @@ export async function assemblePlatformServices(
   };
   // The members only some installs have — OMITTED when absent, never set to `undefined`
   // (`exactOptionalPropertyTypes`).
-  assignIfPresent(services, "fleetScheduler", fleetScheduler);
   assignIfPresent(services, "agentVendor", agentVendor);
   assignIfPresent(services, "sessionMemoryStore", sessionMemoryStore);
   assignIfPresent(services, "executorDelegation", federationBooted);

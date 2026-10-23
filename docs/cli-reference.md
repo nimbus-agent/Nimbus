@@ -2085,6 +2085,10 @@ Standing, owner-configured agent jobs that run on idle local hardware and leave 
 least one `[[fleet.job]]` block — both are required, and a config with `enabled = true` and no jobs
 is *enabled and not running*, which `nimbus fleet status` reports as two separate fields.
 
+Fleet config changes, from your own `nimbus.toml` (or profile file) or a pack layer, apply to a
+running gateway within about 5 seconds, with no restart; this includes owner-only keys such as
+`allow_remote`. A run in progress finishes first.
+
 Everything here is local: a fleet brief is written to SQLite and read back by you. Invariant
 **I38** pins an unattended run's synthesis to a LOCAL model unless `[fleet] allow_remote = true`
 AND the run's remaining call budget covers the call — a frontier key configured under

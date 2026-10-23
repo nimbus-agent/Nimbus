@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
+import { forgetLayeredConfigForTests } from "../config/layered-config.ts";
 import { dbRun } from "../db/write.ts";
 import type { FleetRunBudget } from "../fleet/fleet-scheduler.ts";
 import { FLEET_CAPABILITY } from "../fleet/fleet-scheduler.ts";
@@ -67,11 +68,12 @@ describe("assembleFleetRuntime", () => {
   });
   afterEach(() => {
     for (const s of stops) s();
+    forgetLayeredConfigForTests(dir);
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function deps(gate: PolicyGate): FleetBootDeps {
+  function deps(gate: PolicyGate, logger: pino.Logger = silentLogger): FleetBootDeps {
     return {
       db,
       paths: {
@@ -87,7 +89,7 @@ describe("assembleFleetRuntime", () => {
       llmRegistry: { llmRouter: undefined } as unknown as LlmRegistry,
       hostActivity: UNKNOWN_HOST_ACTIVITY,
       policyGate: gate,
-      logger: silentLogger,
+      logger,
       sidecarStops: stops,
     };
   }
@@ -222,6 +224,98 @@ interval_seconds = 3600
     } finally {
       processEnvDelete("NIMBUS_PROFILE");
     }
+  });
+
+  const ENABLED_WITH_JOB = `[fleet]\nenabled = true\n\n[[fleet.job]]\nname = "nightly"\nagent = "catchup"\ninterval_seconds = 3600\n`;
+
+  /** A logger that keeps every error-level line it is given. */
+  function recordingLogger(): { logger: pino.Logger; errors: string[] } {
+    const errors: string[] = [];
+    const logger = pino({ level: "error" }, { write: (line: string) => errors.push(line) });
+    return { logger, errors };
+  }
+
+  describe("live reload", () => {
+    test("the supervisor is wired even when the fleet is off at boot", () => {
+      const { gate } = stubGate(enforcedWith({}));
+      const before = stops.length;
+      const runtime = assembleFleetRuntime(deps(gate));
+      expect(stops).toHaveLength(before + 1);
+      expect(runtime.scheduler).toBeUndefined();
+      expect(runtime.supervisor).toBeDefined();
+    });
+
+    test("an owner edit enables the fleet without a restart", async () => {
+      const { gate } = stubGate(enforcedWith({}));
+      const runtime = assembleFleetRuntime(deps(gate));
+      expect(runtime.scheduler).toBeUndefined();
+
+      writeToml(ENABLED_WITH_JOB);
+      expect(await runtime.supervisor.check()).toBe("reloaded");
+      expect(runtime.scheduler).toBeDefined();
+      expect(runtime.jobs.map((j) => j.name)).toEqual(["nightly"]);
+    });
+
+    test("a boot config error is logged once", () => {
+      writeToml(`[fleet]\nenabled = true\nallow_remote = true\n`);
+      const { gate } = stubGate(enforcedWith({}));
+      const { logger, errors } = recordingLogger();
+      expect(assembleFleetRuntime(deps(gate, logger)).scheduler).toBeUndefined();
+      expect(errors).toHaveLength(1);
+    });
+
+    test("a reload keeps the org retention floor", async () => {
+      // Boot above the floor, so the edit below is a real change and not deep-equal to the boot load.
+      writeToml(`[fleet]\nretention_days = 60\n`);
+      const { gate } = stubGate(enforcedWith({ retentionMinDays: 30 }));
+      const runtime = assembleFleetRuntime(deps(gate));
+      expect(runtime.config.retentionDays).toBe(60);
+      writeToml(`[fleet]\nretention_days = 1\n`);
+      expect(await runtime.supervisor.check()).toBe("reloaded");
+      expect(runtime.config.retentionDays).toBe(30);
+    });
+
+    test("a broken [fleet] after boot stops the fleet, and fixing it restarts it", async () => {
+      writeToml(ENABLED_WITH_JOB);
+      const { gate } = stubGate(enforcedWith({}));
+      const runtime = assembleFleetRuntime(deps(gate));
+      expect(runtime.scheduler).toBeDefined();
+
+      writeToml(
+        ENABLED_WITH_JOB.replace("enabled = true\n", "enabled = true\nallow_remote = true\n"),
+      );
+      expect(await runtime.supervisor.check()).toBe("reloaded");
+      expect(runtime.scheduler).toBeUndefined();
+
+      writeToml(ENABLED_WITH_JOB);
+      expect(await runtime.supervisor.check()).toBe("reloaded");
+      expect(runtime.scheduler).toBeDefined();
+    });
+
+    /**
+     * The supervisor's constructor calls `build` unguarded, so the guard has to live in the build
+     * closure: a throw while constructing the scheduler must leave the fleet off, never fail boot.
+     */
+    test("a scheduler construction that throws leaves the fleet off without failing boot", () => {
+      writeToml(ENABLED_WITH_JOB);
+      const { gate } = stubGate(enforcedWith({}));
+      const { logger, errors } = recordingLogger();
+      const throwing: FleetBootDeps = {
+        ...deps(gate, logger),
+        llmRegistry: {
+          get llmRouter(): never {
+            throw new Error("router unavailable");
+          },
+        } as unknown as LlmRegistry,
+      };
+      let runtime: ReturnType<typeof assembleFleetRuntime> | undefined;
+      expect(() => {
+        runtime = assembleFleetRuntime(throwing);
+      }).not.toThrow();
+      expect(runtime?.scheduler).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("building the scheduler failed");
+    });
   });
 
   describe("retention", () => {
