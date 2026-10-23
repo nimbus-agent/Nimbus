@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792750664055,
+  "lastUpdate": 1792754060836,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c1fb8fbd3e73efb84bc8326d91faafc24f6cc34c",
-          "message": "ci(release): fail when a user-facing commit produces no release (#1052)\n\n> ⚠️ **Merging this PR cuts v1.21.0.** The last line of this description\nis a `Release-As:` trailer, which is the documented way to unstick the\nreleases that are currently stranded on `main`. **If you want the guard\nwithout the release, delete that one line before merging.**\n\n## The bug\n\nrelease-please parses every commit with the conventional-commits grammar\nand **silently skips any commit it cannot parse**, then decides from\nwhat is left. On 2026-08-05 it logged:\n\n\\\\\\\n❯ commit could not be parsed: dd98484b … feat(index): … (#1047)\n❯ error message: Error: unexpected token '(' at 155:42, valid tokens [)]\n❯ commits: 2                                        ← was 3\n✔ No user facing commits found since b561a9d… - skipping\n\\\\\\\n\nLine 155 of that 219-line message is:\n\n\\\\\\\n\\collapseWhitespace(stripHtmlTagsToSpaces(…))\\\n\\\\\\\n\nA nested call containing an ellipsis — **in prose**. Parens are balanced\n(22/22); the grammar simply rejects `(` in that position. With the\n`feat` dropped, only `docs` and `chore` remained, so release-please\nskipped. **The run reported success**, `v1.20.0` stayed latest, and\nschema V49 sat unreleased on `main` — along with the 4 ReDoS fixes from\n#1049.\n\nThis is structural, not bad luck. Squash-merge puts the **entire PR\ndescription** into the commit body (CLAUDE.md says so deliberately), so\nany prose token the grammar dislikes can cost a release, silently.\n\n## The guard\n\nIt asserts the one thing that cannot be true on a healthy run: **a\nuser-facing commit exists since the last release, yet there is neither a\nnew release nor an open release PR.**\n\nDesign notes:\n- **Subjects only.** `.commits[].commit.message | split(\"\\n\")[0]` — a\n*body* line that looks like a conventional header would otherwise\ninflate the count and fire on healthy runs.\n- **No `actions/checkout`.** This workflow has none, so the guard reads\nthe compare range through `gh api` rather than git.\n- **Fails loudly on ambiguity.** A 404 on `releases/latest` means \"first\nrelease, not my business\"; any *other* read error is fatal rather than\nsilently clean — the same discipline the phantom-release step above\nalready applies to tag lookups.\n- **Distinct from the phantom-release step.** That one recovers a\nrelease PR that merged without a tag. This one catches the opposite: no\nrelease PR is ever produced.\n\n## Red-proof\n\nRun against live repository state — a guard that cannot fire is\nworthless:\n\n| Scenario | Result |\n|---|---|\n| **Today's actual state** (1 feat since v1.20.0, no release, no PR) | ✅\n**fires**, naming #1047 |\n| docs/chore only | passes |\n| feat + open release PR | passes |\n| feat + release created | passes |\n| body line resembling a conventional header | not counted |\n\n`audit:workflow-lint` and `audit:action-sha-pins` both pass.\n\n## Follow-up not included here\n\nThe deeper fix is to stop feeding unparseable prose into commit bodies\nat all. Worth considering a PR-template note, or a check on the *title +\nbody* before merge. This PR deliberately covers only the detection half.\n\nRelease-As: 1.21.0",
-          "timestamp": "2026-08-05T18:50:50+03:00",
-          "tree_id": "c4fc28e0a76e366a36f96d7468ac88e19e8b55c7",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c1fb8fbd3e73efb84bc8326d91faafc24f6cc34c"
-        },
-        "date": 1785945581513,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 182.96385184999744,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 183.2985942499974,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 213.0591277499938,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4fb51b978c29008da68543fcec66e90c610062ea",
+          "message": "fix(index): rebody forces a full run, and --since survives a run already in flight (#1739)\n\n`nimbus index rebody` clears a connector's cursor and forces a run so\nthe connector re-walks its history. Two races with a run that is\n**already in flight** when rebody starts made that re-walk quietly\nwrong:\n\n1. **The re-walk could resume incrementally.** The in-flight run\nfinishes after rebody's `clearSchedulerCursor` and writes its own cursor\nback; the plain `forceSync` queued behind it then resumed from that\ncursor. Rebody now asks for `forceSync(service, { full: true })`, which\nclears the cursor as the forced run *starts* (the existing `full`\nmechanism), so nothing written in between can leak in.\n2. **`--since` could be eaten.** `setHistoryFloor` arms a one-shot\nfloor, and a successful run deleted it. The in-flight run never *read*\nthat floor (it started before it was armed), but its success still\ndeleted it, so the forced run cold-started from the connector's own\n30-day floor. Floors are now token objects; a run consumes only the\nfloor it read (compared by identity), so one armed mid-run survives to\nthe forced run.\n\n## Tests\n- `index-rebody-rpc.test.ts`: rebody passes `{ full: true }`; plus an\nend-to-end case against a **real** `SyncScheduler` with a run held in\nflight, asserting the forced run sees `cursor = null` and the `--since`\nfloor.\n- `scheduler.coverage.test.ts`: a floor armed during an in-flight run\nsurvives it and reaches the forced run.\n- Red-proven: reverting the one-line rebody change fails 3 tests;\nreverting the scheduler's consume-by-identity fails 2.\n- `bun run preflight:fast` passes.\n\nNo migration, no invariant, no IPC change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Rebuilding a service’s data now performs a full sync, rather than\nrelying on the previous sync position.\n* History limits are applied to the appropriate sync when a new sync\nrequest arrives while another is running. The in-progress sync no longer\nconsumes a history limit intended for the follow-up run.\n* Follow-up syncs continue from the beginning when required, helping\nensure the requested history is included.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T11:03:51Z",
+          "tree_id": "b5500481cf8a9bbd3bca8c461ccfa2891e33859b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4fb51b978c29008da68543fcec66e90c610062ea"
+        },
+        "date": 1792754056220,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 264.8499143999976,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 263.66979734999916,
             "unit": "ms"
           }
         ]
