@@ -19,12 +19,13 @@ export function pwshQuote(s: string): string {
 
 /**
  * `arg` for a command printed to the user of `platform`'s usual shell (PowerShell on Windows,
- * bash/zsh elsewhere). A plain token stays bare so the common case reads naturally.
+ * bash/zsh elsewhere). A plain token stays bare so the common case reads naturally, except one
+ * starting with `@`, which PowerShell reads as splatting or an array/hash literal (`cd @work`).
  */
 export function quoteForPrintedCommand(
   arg: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  if (/^[\w./@:=+-]+$/.test(arg)) return arg;
+  if (/^[\w./:=+-][\w./@:=+-]*$/.test(arg)) return arg;
   return platform === "win32" ? pwshQuote(arg) : bashQuote(arg);
 }

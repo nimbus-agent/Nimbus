@@ -25,6 +25,13 @@ describe("quoteForPrintedCommand", () => {
     expect(quoteForPrintedCommand(clone, "win32")).toBe(`'${clone}'`);
   });
 
+  test("a token starting with @ is quoted, so PowerShell does not read it as splatting", () => {
+    expect(quoteForPrintedCommand("@work", "win32")).toBe("'@work'");
+    expect(quoteForPrintedCommand("@work", "linux")).toBe("'@work'");
+    // An @ after the first character stays bare, as in <id>@<version>.
+    expect(quoteForPrintedCommand("acme/tool@1.0.0", "win32")).toBe("acme/tool@1.0.0");
+  });
+
   test("Windows gets PowerShell's quote escape, elsewhere bash's", () => {
     expect(quoteForPrintedCommand("O'Neil dir", "win32")).toBe("'O''Neil dir'");
     expect(quoteForPrintedCommand("O'Neil dir", "linux")).toBe(String.raw`'O'\''Neil dir'`);
