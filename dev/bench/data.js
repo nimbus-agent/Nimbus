@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792750138006,
+  "lastUpdate": 1792750664055,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ffdbe5b4e21873d0412abe5c19ae9b7d418d53de",
-          "message": "refactor(agents): route expert through the shared brief emitter (#1051)\n\nCloses the last of the follow-ups from the maintenance sweep (#1049).\n\n`emitExpertBrief` hand-rolled the exact body of `emitBriefWithSynthesis`\nwith `\"expert.\"` substituted for the method prefix — the same\nfire-and-forget `void (async () => …)()` wrapper, the same `synthesize`\ncall with the same `llm`-spread, the same `briefReady` payload shape,\nand the same `.catch` emitting `briefError`.\n\n`ExpertBrief` is already a member of the helper's `AnyBrief` union, so\nexpert was always intended to use it. It was **the last of the eleven\nbuilt-in agents still not doing so**, and SonarCloud measured the file\nat **8.0% duplication** — the highest of any gateway agent.\n\n## No behaviour change\n\nSame notification methods (`expert.briefReady` / `expert.briefError`),\nsame payload keys (`sessionId` / `brief` / `findings`), same `err\ninstanceof Error ? err.message : String(err)` coercion, and it still\nreturns `Promise<{ sessionId }>` **without awaiting the work** — the\nhelper preserves the fire-and-forget contract that the `briefReady` IPC\nnotification depends on.\n\nThe typed `runExpert` builder is untouched and stays in the agent\nmodule, which is exactly what the helper's own docstring prescribes.\n\n`synthesize` is no longer imported directly, so that import narrows to a\ntype-only import of `SynthesizerLlm`.\n\n## Verification\n\n`bun run typecheck` clean, `bun run lint` clean, and the full agents\nsuite passes: **269 tests, 0 fail** across 25 files.",
-          "timestamp": "2026-08-05T15:41:50Z",
-          "tree_id": "d1fd880b58033505044befb3acc2532369695b22",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ffdbe5b4e21873d0412abe5c19ae9b7d418d53de"
-        },
-        "date": 1785945204997,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 325.94324054999925,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.6390349500049,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 280.37318414999464,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c959164b39e893b228d250e57c974d55e86c7a89",
+          "message": "test(extensions): make extension-sync.e2e's lifecycle explicit and count per step (#1736)\n\n## What changes\n\nFollow-up parked in #1713 (Task 3.4 #6, \"E2E tests share one gateway\").\n\n`extension-sync.e2e.test.ts` is one ordered lifecycle against one\ngateway: install and approve, sync without a credential, sync with one,\nrestart, remove. Its order dependence was hidden. Install and approve\nwas \"test 1\", so a setup failure read as one failing test plus four\nconfusing ones. Later steps asserted cumulative row counts that silently\nrelied on earlier steps.\n\nIt stays one gateway, on purpose. The steps share the OS Vault key and\nthe extension id, and the restart step's point is state that persists\nacross a reboot. The header comment now says so. Within that:\n\n- Install and approve moved into `beforeAll` and are asserted there, so\na failure is reported as setup.\n- Each step asserts its own effect as a before/after delta. Absolute\ncounts remain only where the claim is about state carried across the\nrestart, with a comment. The restart step is stronger than before:\ntitles and rows must match after boot, and its own sync must add exactly\none row.\n- The no-credential step asserts only observable outcomes (no items, no\nnew `sync.run` row). It holds whether or not the scheduler skips an\nunconfigured connector's sync (#1735).\n- `afterAll` removes the temp tree with `rmDirWithRetry`, since Bun's\n`rmSync` ignores `maxRetries`. A handle that stays locked now fails\n`afterAll` visibly instead of being swallowed.\n\nTest-only.\n\n## Verification\n\n- The e2e ran locally on Windows with the real sandbox (not skipped): 4\npass, 1 skip (the CI-only precondition test). 4.55 s before and after.\n- Each delta has teeth. Skipping step 3's sync on purpose failed steps\n3–5. Skipping step 4's post-restart sync failed its delta. Both were\nreverted.\n- `bun run preflight:fast` passed.\n- Review: approved, 0 Critical / 0 Important.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Expanded end-to-end coverage of extension synchronization across\ncredential-free and credentialed syncs, restarts, and removal.\n* Added checks that track changes in sync results and accumulated state\nat each stage, making lifecycle regressions easier to detect.\n  * Improved test cleanup reliability.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T12:58:43+03:00",
+          "tree_id": "07626c6507d93b59b4cc890370fa5f56397ed625",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c959164b39e893b228d250e57c974d55e86c7a89"
+        },
+        "date": 1792750659660,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 212.65896799999828,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 213.0591277499938,
             "unit": "ms"
           }
         ]
