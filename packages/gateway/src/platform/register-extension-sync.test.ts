@@ -30,6 +30,7 @@ import {
   createExtensionSyncRegistrarForBoot,
   type ExtensionSyncRegistrarDeps,
   type ExtensionSyncScheduler,
+  NULL_EXTENSION_SYNC_REGISTRAR,
   purgeExtensionIndexData,
   reapproveSuffix,
   staleGrantPauseReason,
@@ -761,6 +762,61 @@ describe("purgeExtensionIndexData — edges", () => {
     expect(idx.calls).toEqual([CODE_ID]);
     expect(await vault.get("zeta.key")).toBeNull();
     expect(await vault.get("alpha.key")).toBeNull();
+  });
+});
+
+describe("syncServiceIdFor — the id this registrar registered the extension's sync under", () => {
+  test("a bound extension's sync is under its index id after approve", () => {
+    const h = harness(seed());
+    const r = createExtensionSyncRegistrar(h.deps);
+    r.refresh(EXT_ID);
+    expect(r.syncServiceIdFor(EXT_ID)).toBe("readwise");
+  });
+
+  test("an unbound extension's sync is under its own ext_ id", () => {
+    const h = harness(seed({ fingerprint: null }));
+    const r = createExtensionSyncRegistrar(h.deps);
+    r.refresh(EXT_ID);
+    expect(r.syncServiceIdFor(EXT_ID)).toBe(CODE_ID);
+  });
+
+  test("a manifest without a sync block has none", () => {
+    const { sync: _unused, ...noSync } = manifest();
+    const h = harness(seed(), {}, () => noSync);
+    const r = createExtensionSyncRegistrar(h.deps);
+    r.refresh(EXT_ID);
+    expect(r.syncServiceIdFor(EXT_ID)).toBeUndefined();
+  });
+
+  test("none after unregister", () => {
+    const h = harness(seed());
+    const r = createExtensionSyncRegistrar(h.deps);
+    r.refresh(EXT_ID);
+    r.unregister(EXT_ID);
+    expect(r.syncServiceIdFor(EXT_ID)).toBeUndefined();
+  });
+
+  test("none when another syncable already owns the index id", () => {
+    const h = harness(seed());
+    h.sched.register({
+      serviceId: "readwise",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      sync: async () => ({
+        cursor: null,
+        itemsUpserted: 0,
+        itemsDeleted: 0,
+        hasMore: false,
+        durationMs: 0,
+      }),
+    });
+    const r = createExtensionSyncRegistrar(h.deps);
+    r.refresh(EXT_ID);
+    expect(r.syncServiceIdFor(EXT_ID)).toBeUndefined();
+  });
+
+  test("the null registrar never has one", () => {
+    expect(NULL_EXTENSION_SYNC_REGISTRAR.syncServiceIdFor(EXT_ID)).toBeUndefined();
   });
 });
 

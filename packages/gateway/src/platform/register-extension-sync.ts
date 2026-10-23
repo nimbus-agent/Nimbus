@@ -64,6 +64,12 @@ export interface ExtensionSyncRegistrar {
   refresh(extensionId: string): void;
   /** Unregisters unconditionally — `extension remove` calls it before the row and grant go. */
   unregister(extensionId: string): void;
+  /**
+   * The service id THIS registrar registered the extension's sync under (its index id), or
+   * `undefined` when it holds no sync for it — no sync block, not live, or another syncable owns the
+   * id. `extension.approveRun` reports it so the CLI reads the right service's status.
+   */
+  syncServiceIdFor(extensionId: string): string | undefined;
 }
 
 /** What the registrar needs of the scheduler. `register` is the policy-filtered one (I22). */
@@ -264,6 +270,9 @@ export function createExtensionSyncRegistrar(
       apply(extensionId, true);
     },
     unregister,
+    syncServiceIdFor(extensionId) {
+      return registered.get(extensionId)?.indexServiceId;
+    },
   };
 }
 
@@ -272,6 +281,9 @@ export const NULL_EXTENSION_SYNC_REGISTRAR: ExtensionSyncRegistrar = {
   registerAllFromDatabase() {},
   refresh() {},
   unregister() {},
+  syncServiceIdFor() {
+    return undefined;
+  },
 };
 
 /**

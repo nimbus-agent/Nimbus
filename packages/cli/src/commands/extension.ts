@@ -23,6 +23,7 @@ import {
   type SecretInputIo,
 } from "../lib/secret-input.ts";
 import { getCliPlatformPaths } from "../paths.ts";
+import { stripControl } from "./captures-format.ts";
 import { runExtensionInfoRemote, runExtensionSearch } from "./extension-registry-cmds.ts";
 import {
   formatNetworkIsolationLine,
@@ -529,6 +530,7 @@ export async function runExtensionApprove(
     treeDigest: string;
     changed: boolean;
     modelAccess?: boolean;
+    syncServiceId?: string;
   }>("extension.approveRun", { id, modelAccess });
   const model = `model access: ${out.modelAccess === true ? "on" : "off"}`;
   console.log(
@@ -536,6 +538,43 @@ export async function runExtensionApprove(
       ? `${out.id}: approved to run as ${out.serviceId} (tree digest ${out.treeDigest}; ${model}). It starts on first use: \`nimbus connector tools ${out.serviceId}\`.`
       : `${out.id}: already approved for this code and these grants (${out.serviceId}; ${model}).`,
   );
+  if (out.syncServiceId !== undefined) {
+    const paused = await pausedSyncLine(client, out.id, out.syncServiceId);
+    if (paused !== undefined) console.log(paused);
+  }
+}
+
+/**
+ * The line to add when the sync an approval registered came up paused (e.g. no sandbox helper), or
+ * `undefined` when it did not. Best-effort: the approval already succeeded, so a failed status read
+ * adds nothing rather than failing the command.
+ */
+async function pausedSyncLine(
+  client: IPCClient,
+  extensionId: string,
+  syncServiceId: string,
+): Promise<string | undefined> {
+  let rows: unknown;
+  try {
+    rows = await client.call<unknown>("connector.listStatus", { serviceId: syncServiceId });
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(rows)) return undefined;
+  const row: unknown = rows.find(
+    (r: unknown) =>
+      typeof r === "object" &&
+      r !== null &&
+      (r as Record<string, unknown>)["serviceId"] === syncServiceId,
+  );
+  if (typeof row !== "object" || row === null) return undefined;
+  const r = row as Record<string, unknown>;
+  if (r["status"] !== "paused" && r["healthState"] !== "paused") return undefined;
+  const reason =
+    typeof r["lastError"] === "string" && r["lastError"] !== ""
+      ? `: ${stripControl(r["lastError"])}`
+      : "";
+  return `${extensionId}: approved, but sync is paused${reason}. Run \`nimbus connector status ${syncServiceId}\` for details.`;
 }
 
 /** `nimbus extension revoke <id>` — withdraw a run approval. Not gated: it only narrows. */
