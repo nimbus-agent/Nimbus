@@ -159,6 +159,8 @@ describe("registry action sign → gateway install", () => {
             enforceAirGap: () => false,
             now: () => Date.now(),
             production: false,
+            // A local test registry only: the release's built-in official registry is not under test.
+            builtin: null,
           },
           approve: async (r) => {
             asked.push(r);
