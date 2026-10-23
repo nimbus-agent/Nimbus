@@ -960,19 +960,9 @@ describe.skipIf(!sandboxAvailable || SKIP_REAL_VAULT)(
         (e: unknown) => (e instanceof Error ? e.message : String(e)),
       );
       expect(ownId).toContain(`Unknown connector: ${CODE_SERVER_ID}`);
-
-      // Registering the sync makes `readwise` due at once, so the scheduler runs it with no
-      // credential yet. Wait for THAT run to finish (it records `lastSyncAt`): a forced sync issued
-      // while it is still in flight is settled by its completion (force waiters are per service),
-      // so the run under test below would read a credential-less run. On Windows it finishes
-      // inside `approveRun`; on Linux each Vault read spawns `secret-tool`, and it was still in
-      // flight when CI issued the forced sync. Unconfigured, it appends no sync.run row (I29).
-      await until(async () => {
-        const s = await gw.status(LEGACY);
-        return s["lastSyncAt"] !== null ? s : undefined;
-      }, "the registration's first (unconfigured) run to finish").catch((e: unknown) => {
-        throw gw.withLog(e);
-      });
+      // Registering the sync makes `readwise` due at once, so the scheduler may still be running it
+      // with no credential. The forced `connector.sync` below is settled only by a run that starts
+      // after it, so that run need not be waited out. Unconfigured, it appends no sync.run row (I29).
       expect(await gw.syncRuns(LEGACY)).toBe(0);
     }, 120_000);
 

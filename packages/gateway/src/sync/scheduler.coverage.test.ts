@@ -511,6 +511,7 @@ describe("SyncScheduler — forceSync edge cases", () => {
       releaseFirst = r;
     });
     const secondRun = deferred();
+    const secondGate = deferred();
     const dup = probe("dup", async (call) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
@@ -519,6 +520,7 @@ describe("SyncScheduler — forceSync edge cases", () => {
           await firstGate;
         } else {
           secondRun.resolve();
+          await secondGate.promise;
         }
         return OK;
       } finally {
@@ -534,10 +536,18 @@ describe("SyncScheduler — forceSync edge cases", () => {
     await macrotask();
     expect(dup.calls()).toBe(1);
 
+    let secondSettled = false;
+    const secondDone = second.finally(() => {
+      secondSettled = true;
+    });
     releaseFirst();
     await within(first, "the first force request");
-    await within(second, "the second force request");
+    // The second request arrived while the first run was in flight: that run cannot settle it.
     await within(secondRun.promise, "the queued re-run");
+    await macrotask();
+    expect(secondSettled).toBe(false);
+    secondGate.resolve();
+    await within(secondDone, "the second force request");
     await sched.stop();
     expect(dup.calls()).toBe(2);
     expect(maxActive).toBe(1);
@@ -584,6 +594,200 @@ describe("SyncScheduler — forceSync edge cases", () => {
       "Unknown service",
     );
     expect(gone.calls()).toBe(0);
+    await sched.stop();
+    db.close();
+  });
+
+  /**
+   * A scheduler whose first run of `p` is a SCHEDULED one: `catchUpOnRestart` keeps the freshly
+   * registered row due now, so `start()` queues and dispatches it with no force request involved.
+   */
+  function startScheduled(db: Database, p: Probe): SyncScheduler {
+    const sched = new SyncScheduler(
+      ctxFor(db),
+      { catchUpOnRestart: true },
+      { isOnline: online, random: () => 0 },
+    );
+    sched.register(p.syncable);
+    sched.start();
+    return sched;
+  }
+
+  /** Records the call count at the moment `p` settles, and how it settled. */
+  function settleSnapshot(
+    p: Promise<void>,
+    calls: () => number,
+  ): Promise<{ calls: number; outcome: string }> {
+    return p.then(
+      () => ({ calls: calls(), outcome: "resolved" }),
+      (e: unknown) => ({ calls: calls(), outcome: e instanceof Error ? e.message : String(e) }),
+    );
+  }
+
+  test("a force request made while a scheduled run is in flight settles only after a run that started after it", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("own", async (call) => {
+      if (call === 1) await gate.promise;
+      return OK;
+    });
+    const sched = startScheduled(db, svc);
+    await within(svc.entered, "the scheduled run to start");
+
+    const forced = settleSnapshot(sched.forceSync("own"), svc.calls);
+    gate.resolve();
+    // Settled by the follow-up run (call 2), never by the scheduled run it arrived during.
+    expect(await within(forced, "the force request")).toEqual({ calls: 2, outcome: "resolved" });
+    await sched.stop();
+    db.close();
+  });
+
+  test("the forced run observes state written after the request", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    // Stands in for a credential: whatever the run reads at its entry is what it syncs with.
+    let credential = "old";
+    const seen: string[] = [];
+    const svc = probe("observe", async (call) => {
+      seen.push(credential);
+      if (call === 1) await gate.promise;
+      return OK;
+    });
+    const sched = startScheduled(db, svc);
+    await within(svc.entered, "the scheduled run to start");
+
+    // What the runs had read by the time the request settled.
+    const forced = sched.forceSync("observe").then(() => [...seen]);
+    credential = "new";
+    gate.resolve();
+    expect(await within(forced, "the force request")).toEqual(["old", "new"]);
+    await sched.stop();
+    db.close();
+  });
+
+  test("a failing scheduled run does not settle a force request made during it", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("flaky", async (call) => {
+      if (call === 1) {
+        await gate.promise;
+        throw new Error("scheduled run failed");
+      }
+      return OK;
+    });
+    const sched = startScheduled(db, svc);
+    await within(svc.entered, "the scheduled run to start");
+
+    const forced = settleSnapshot(sched.forceSync("flaky"), svc.calls);
+    gate.resolve();
+    expect(await within(forced, "the force request")).toEqual({ calls: 2, outcome: "resolved" });
+    await sched.stop();
+    db.close();
+  });
+
+  test("a failing scheduled run does not settle a force request made during it — the follow-up run's failure rejects it", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("flaky2", async (call) => {
+      if (call === 1) {
+        await gate.promise;
+        throw new Error("scheduled run failed");
+      }
+      throw new Error("forced run failed");
+    });
+    const sched = startScheduled(db, svc);
+    await within(svc.entered, "the scheduled run to start");
+
+    const forced = settleSnapshot(sched.forceSync("flaky2"), svc.calls);
+    gate.resolve();
+    expect(await within(forced, "the force request")).toEqual({
+      calls: 2,
+      outcome: "forced run failed",
+    });
+    await sched.stop();
+    db.close();
+  });
+
+  test("concurrent force requests during an in-flight run coalesce into one follow-up run", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("many", async (call) => {
+      if (call === 1) await gate.promise;
+      return OK;
+    });
+    const sched = startScheduled(db, svc);
+    await within(svc.entered, "the scheduled run to start");
+
+    const a = settleSnapshot(sched.forceSync("many"), svc.calls);
+    const b = settleSnapshot(sched.forceSync("many"), svc.calls);
+    const c = settleSnapshot(sched.forceSync("many"), svc.calls);
+    gate.resolve();
+    const settled = await within(Promise.all([a, b, c]), "the force requests");
+    expect(settled).toEqual([
+      { calls: 2, outcome: "resolved" },
+      { calls: 2, outcome: "resolved" },
+      { calls: 2, outcome: "resolved" },
+    ]);
+    await macrotask();
+    expect(svc.calls()).toBe(2);
+    await sched.stop();
+    db.close();
+  });
+
+  test("unregister rejects both the running job's waiters and a queued follow-up's waiters with 'Connector removed'", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("leaving", async () => {
+      await gate.promise;
+      return OK;
+    });
+    const sched = new SyncScheduler(ctxFor(db), {}, { isOnline: online });
+    sched.register(svc.syncable);
+
+    const running = settleSnapshot(sched.forceSync("leaving"), svc.calls);
+    await within(svc.entered, "the forced run to start");
+    const queued = settleSnapshot(sched.forceSync("leaving"), svc.calls);
+    sched.unregister("leaving");
+    // Both settle at once, before the in-flight run returns.
+    expect(await within(Promise.all([running, queued]), "unregister to reject both")).toEqual([
+      { calls: 1, outcome: "Connector removed" },
+      { calls: 1, outcome: "Connector removed" },
+    ]);
+    gate.resolve();
+    await macrotask();
+    expect(svc.calls()).toBe(1);
+    await sched.stop();
+    db.close();
+  });
+
+  test("a full force during an in-flight run starts from an empty cursor", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const entered = deferred();
+    const cursors: Array<string | null> = [];
+    const svc: Syncable = {
+      serviceId: "full",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(_ctx, cursor): Promise<SyncResult> {
+        cursors.push(cursor);
+        if (cursors.length === 1) {
+          entered.resolve();
+          await gate.promise;
+        }
+        // Every run leaves cursor X behind; the in-flight one writes it AFTER the request.
+        return { ...OK, cursor: "X" };
+      },
+    };
+    const sched = new SyncScheduler(ctxFor(db), { catchUpOnRestart: true }, { isOnline: online });
+    sched.register(svc);
+    sched.start();
+    await within(entered.promise, "the scheduled run to start");
+
+    const forced = sched.forceSync("full", { full: true });
+    gate.resolve();
+    await within(forced, "the full force request");
+    expect(cursors).toEqual([null, null]);
     await sched.stop();
     db.close();
   });

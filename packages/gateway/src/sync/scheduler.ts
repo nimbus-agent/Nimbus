@@ -44,9 +44,20 @@ const SKIP_HEALTH_STATES: ReadonlySet<ConnectorHealthState> = new Set([
 
 type JobReason = "scheduled" | "continuation" | "force";
 
+type ForceWaiter = (err?: unknown) => void;
+
+/**
+ * One unit of scheduled work. Only FORCE jobs carry `waiters`: a `forceSync` request is owned by
+ * the job queued for it, so it is settled by that job's outcome and by nothing else — a scheduled
+ * or continuation run that happens to be in flight when the request arrives never settles it.
+ */
 type Job = {
   serviceId: string;
   reason: JobReason;
+  /** The `forceSync` callers this job answers. Present on force jobs only. */
+  waiters?: ForceWaiter[];
+  /** Clear the persisted cursor right before this job loads its state (`connector.sync --full`). */
+  clearCursor?: boolean;
 };
 
 function clampBackoffBaseMs(failures: number): number {
@@ -113,6 +124,8 @@ export class SyncScheduler {
 
   private readonly connectors = new Map<string, Syncable>();
   private readonly inFlight = new Set<string>();
+  /** The job currently running per service; set and cleared alongside `inFlight`. */
+  private readonly running = new Map<string, Job>();
   private queue: Job[] = [];
   private readonly queuedServiceIds = new Set<string>();
   private runningGlobal = 0;
@@ -122,8 +135,6 @@ export class SyncScheduler {
 
   private _online = true;
   private _connectivityRecheckHandle: ReturnType<typeof setTimeout> | null = null;
-
-  private readonly forceWaiters = new Map<string, Array<(err?: unknown) => void>>();
 
   /**
    * One-shot cold-start floors (epoch ms) per service, set by an owner-initiated
@@ -264,9 +275,19 @@ export class SyncScheduler {
 
   unregister(serviceId: string): void {
     this.connectors.delete(serviceId);
+    const removed = this.queue.filter((j) => j.serviceId === serviceId);
     this.queue = this.queue.filter((j) => j.serviceId !== serviceId);
     this.rebuildQueuedServiceIds();
-    this.resolveForceWaiters(serviceId, new Error("Connector removed"));
+    // Reject at once rather than when the in-flight run returns: the queued jobs will never run,
+    // and the running one's outcome is discarded by `wasWithdrawnMidRun`.
+    const removedErr = new Error("Connector removed");
+    for (const job of removed) {
+      this.settleJob(job, removedErr);
+    }
+    const runningJob = this.running.get(serviceId);
+    if (runningJob !== undefined) {
+      this.settleJob(runningJob, removedErr);
+    }
   }
 
   setInterval(serviceId: string, intervalMs: number): void {
@@ -341,23 +362,40 @@ export class SyncScheduler {
     this.historyFloors.set(serviceId, floorMs);
   }
 
-  async forceSync(serviceId: string): Promise<void> {
+  /**
+   * Run `serviceId` now and settle when a run that STARTED AFTER this call has finished its first
+   * page.
+   *
+   * Invariants: a running job is never joined — a request made while any run of the service is in
+   * flight (scheduled, continuation or forced) gets one follow-up run, which reads the state and
+   * credentials written up to the moment it starts. Requests made while that follow-up is still
+   * queued coalesce into it. `full: true` clears the persisted cursor as that run starts, so a
+   * cursor an in-flight run writes back after the request cannot leak into it.
+   */
+  async forceSync(serviceId: string, opts?: { full?: boolean }): Promise<void> {
     if (this.syncDisabled) {
       throw new SyncDisabledError(serviceId);
     }
+    const full = opts?.full === true;
     return new Promise((resolve, reject) => {
-      const list = this.forceWaiters.get(serviceId) ?? [];
-      list.push((err?: unknown) => {
+      const waiter: ForceWaiter = (err?: unknown) => {
         if (err === undefined) {
           resolve();
         } else {
           reject(toRejectionError(err));
         }
-      });
-      this.forceWaiters.set(serviceId, list);
-      this.queue = this.queue.filter((j) => j.serviceId !== serviceId);
-      this.queue.unshift({ serviceId, reason: "force" });
-      this.rebuildQueuedServiceIds();
+      };
+      // `queue` never holds a running job (pump splices a job out before running it), so this
+      // finds a force job that has not started yet, or nothing.
+      const queuedForce = this.queue.find((j) => j.serviceId === serviceId && j.reason === "force");
+      if (queuedForce === undefined) {
+        this.queue = this.queue.filter((j) => j.serviceId !== serviceId);
+        this.queue.unshift({ serviceId, reason: "force", waiters: [waiter], clearCursor: full });
+        this.rebuildQueuedServiceIds();
+      } else {
+        queuedForce.waiters = [...(queuedForce.waiters ?? []), waiter];
+        queuedForce.clearCursor = queuedForce.clearCursor === true || full;
+      }
       this.pump();
     });
   }
@@ -582,9 +620,11 @@ export class SyncScheduler {
       this.queue.splice(idx, 1);
       this.rebuildQueuedServiceIds();
       this.inFlight.add(job.serviceId);
+      this.running.set(job.serviceId, job);
       this.runningGlobal++;
       void this.runJob(job).finally(() => {
         this.inFlight.delete(job.serviceId);
+        this.running.delete(job.serviceId);
         this.runningGlobal--;
         this.pump();
         this.tick();
@@ -592,12 +632,17 @@ export class SyncScheduler {
     }
   }
 
-  private resolveForceWaiters(serviceId: string, err?: unknown): void {
-    const waiters = this.forceWaiters.get(serviceId);
-    if (waiters === undefined) {
+  /**
+   * Settle `job`'s own force waiters with its outcome (`err` undefined = success). A job without
+   * waiters (scheduled, continuation) settles nothing. The waiters are taken before they are
+   * called, so a job settles each caller at most once (`unregister` may already have rejected them).
+   */
+  private settleJob(job: Job, err?: unknown): void {
+    const waiters = job.waiters;
+    if (waiters === undefined || waiters.length === 0) {
       return;
     }
-    this.forceWaiters.delete(serviceId);
+    job.waiters = [];
     for (const w of waiters) {
       w(err);
     }
@@ -664,11 +709,7 @@ export class SyncScheduler {
         attempt: failures,
       });
     }
-    if (job.reason === "force") {
-      this.resolveForceWaiters(job.serviceId, new Error(msg));
-    } else {
-      this.resolveForceWaiters(job.serviceId);
-    }
+    this.settleJob(job, new Error(msg));
   }
 
   private runJobRecordSyncSuccess(
@@ -717,7 +758,7 @@ export class SyncScheduler {
       this.rebuildQueuedServiceIds();
     }
 
-    this.resolveForceWaiters(job.serviceId);
+    this.settleJob(job);
     this.onConnectorSyncSuccess?.(job.serviceId, result, durationMs);
   }
 
@@ -739,26 +780,24 @@ export class SyncScheduler {
   private resolveRunJobContext(job: Job): { connector: Syncable; row: SchedulerStateRow } | null {
     const connector = this.connectors.get(job.serviceId);
     if (connector === undefined) {
-      this.resolveForceWaiters(
-        job.serviceId,
-        job.reason === "force" ? new Error("Unknown service") : undefined,
-      );
+      this.settleJob(job, new Error("Unknown service"));
       return null;
+    }
+    if (job.clearCursor === true) {
+      // `connector.sync --full`: cleared as THIS run starts — after any earlier run of the service
+      // has written its cursor back — and read back by the `loadState` just below.
+      this.sched.clearCursor(job.serviceId);
     }
     const row = this.sched.loadState(job.serviceId);
     if (row === null) {
-      this.resolveForceWaiters(
-        job.serviceId,
-        job.reason === "force" ? new Error("Missing scheduler state") : undefined,
-      );
+      this.settleJob(job, new Error("Missing scheduler state"));
       return null;
     }
+    // Only scheduled and continuation jobs reach these two, and they carry no waiters.
     if (row.paused === 1 && job.reason !== "force") {
-      this.resolveForceWaiters(job.serviceId);
       return null;
     }
     if (row.status === "error" && job.reason !== "force") {
-      this.resolveForceWaiters(job.serviceId);
       return null;
     }
     return { connector, row };
@@ -774,7 +813,7 @@ export class SyncScheduler {
         `${reason} (pausing failed: ${err instanceof Error ? err.message : String(err)})`,
       );
     }
-    this.resolveForceWaiters(job.serviceId, job.reason === "force" ? failure : undefined);
+    this.settleJob(job, failure);
   }
 
   private async runJob(job: Job): Promise<void> {
@@ -860,7 +899,7 @@ export class SyncScheduler {
           retryAfter: err.retryAfter,
         });
         this.recordAbortedSyncTelemetry(job, startedAt, err.message);
-        this.resolveForceWaiters(job.serviceId, job.reason === "force" ? err : undefined);
+        this.settleJob(job, err);
         return;
       }
       if (err instanceof UnauthenticatedError) {
@@ -870,7 +909,7 @@ export class SyncScheduler {
           `${job.serviceId} connector lost authentication. Run: nimbus connector auth ${job.serviceId}`,
         );
         this.recordAbortedSyncTelemetry(job, startedAt, err.message);
-        this.resolveForceWaiters(job.serviceId, job.reason === "force" ? err : undefined);
+        this.settleJob(job, err);
         return;
       }
       this.runJobRecordSyncFailure(job, row, startedAt, syncFailureUserMessage(err));
@@ -901,10 +940,7 @@ export class SyncScheduler {
    */
   private wasWithdrawnMidRun(job: Job, connector: Syncable): boolean {
     if (this.connectors.get(job.serviceId) === connector) return false;
-    this.resolveForceWaiters(
-      job.serviceId,
-      job.reason === "force" ? new Error("Connector removed") : undefined,
-    );
+    this.settleJob(job, new Error("Connector removed"));
     return true;
   }
 }

@@ -19,12 +19,13 @@ type StubScheduler = ConnectorRpcHandlerContext["syncScheduler"];
 
 function makeStubScheduler(): {
   stub: StubScheduler;
-  calls: { forced: string[] };
+  calls: { forced: string[]; full: boolean[] };
 } {
-  const calls = { forced: [] as string[] };
+  const calls = { forced: [] as string[], full: [] as boolean[] };
   const stub = {
-    async forceSync(id: string): Promise<void> {
+    async forceSync(id: string, opts?: { full?: boolean }): Promise<void> {
       calls.forced.push(id);
+      calls.full.push(opts?.full === true);
     },
   } as unknown as StubScheduler;
   return { stub, calls };
@@ -73,28 +74,32 @@ describe("handleConnectorSync", () => {
     expect(calls.forced).toEqual(["github"]);
   });
 
-  test("full: true triggers clearConnectorSyncCursor before scheduling", async () => {
+  // The handler clears nothing itself: a clear made before the forced run starts would be
+  // overwritten by a run already in flight. It hands `full` to the scheduler, which clears the
+  // cursor as the forced run starts.
+  test("full: true is passed to forceSync, and the handler clears no cursor itself", async () => {
     const { stub: scheduler, calls } = makeStubScheduler();
     let cleared = false;
-    const origClear = fixture.localIndex.clearConnectorSyncCursor.bind(fixture.localIndex);
-    fixture.localIndex.clearConnectorSyncCursor = (id: string): void => {
+    fixture.localIndex.clearConnectorSyncCursor = (): void => {
       cleared = true;
-      origClear(id);
     };
     const r = await handleConnectorSync(buildCtx({ serviceId: "github", full: true }, scheduler));
     expect(r.kind).toBe("hit");
-    expect(cleared).toBe(true);
+    expect(cleared).toBe(false);
     expect(calls.forced).toEqual(["github"]);
+    expect(calls.full).toEqual([true]);
   });
 
-  test("full: false does not clear the cursor", async () => {
-    const { stub: scheduler } = makeStubScheduler();
+  test("full: false (or absent) asks forceSync for no full run", async () => {
+    const { stub: scheduler, calls } = makeStubScheduler();
     let cleared = false;
     fixture.localIndex.clearConnectorSyncCursor = (): void => {
       cleared = true;
     };
     await handleConnectorSync(buildCtx({ serviceId: "github", full: false }, scheduler));
+    await handleConnectorSync(buildCtx({ serviceId: "github" }, scheduler));
     expect(cleared).toBe(false);
+    expect(calls.full).toEqual([false, false]);
   });
 });
 
