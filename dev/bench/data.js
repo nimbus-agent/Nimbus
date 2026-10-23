@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792782884146,
+  "lastUpdate": 1792783734894,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "826b76a1a5352ac226bfcd3c6a88b901d6afe33a",
-          "message": "feat(gateway): scope the HTTP API bearer tokens (#1062)\n\nGives the gateway's local HTTP bearer tokens a scope field and enforces\nit, so the agent-invocation, resolve-by-URL and fetch routes landing in\nlater PRs cannot be reached by a token minted only to clip a web page.\n\n`docs/ecosystem-roadmap.md` named the deadline: *\"a token minted to clip\na web page becomes: run any read-only agent over the whole index,\nresolve any URL, and read the pending-approval queue. Add scopes before\nthe second consumer, not the fifth.\"* This slice would have added\nconsumers five through eight, so the scopes land first.\n\nPR 1 of 4 from\n`docs/superpowers/specs/2026-08-06-http-agents-route-and-resolve-by-url-design.md`\n§ 3. Plan:\n`docs/superpowers/plans/2026-08-06-http-agents-pr1-token-scopes.md`.\n\n## What changes\n\n- The Vault map's value becomes `{token, scopes[]}`; a bare string still\nparses as the legacy form. Five scopes: `clip`, `briefs`, `agents`,\n`resolve`, `fetch`.\n- `ipc/http-route-auth.ts` — a route→auth table that is **total over the\nHTTP surface**, including the deliberately-unauthenticated routes, with\na source-scanned completeness guard.\n- Enforcement at the three sites that verify a client token: 401 for an\nunknown token, 403 `insufficient_scope` for a valid token missing the\nscope.\n- `nimbus clip pair [--scopes <a,b>]`, new `nimbus clip scopes <label>\n--set <a,b>`, and `nimbus clip status` now shows scopes.\n\n## No existing client breaks, and none gains reach\n\nA token stored in the pre-scopes bare-string form reads as exactly\n`[\"clip\",\"briefs\"]` — everything it can do today, none of what this\ndesign adds. Granting all scopes on upgrade would have been the easy\nmigration and the wrong one: it hands every token already in the wild\nthe escalation the scope work exists to prevent. New capability requires\n`nimbus clip scopes` or a re-pair.\n\n`http_api.web_clipper_tokens` is **unchanged**. The name is now\nhistorical — it backs every bearer-authed HTTP surface, not just clips —\nbut renaming it would strand every paired browser, and it sits on the\nstatically-enforced vault-key allow-list.\n\n## Properties, verified in source rather than argued\n\n- **Scopes are server-derived.** Recorded when the owner opens the\npairing window; `runClipPairConfirmRoute` reads only `code` from the\nconfirming request and mints with the window's scopes. There is no\nsyntactic path from the request to a scope.\n- **The table is the single source of truth.** Exactly two `hasScope(`\ncall sites in the gateway, both fed by `clipScopeFor(route.key)`. No\nenforcement site names a scope inline; all seven clip-kind entries have\na live gate.\n- **`route.key`, never a raw path.** A raw path misses every templated\nkey, returns null, and would wave the request through unchecked.\n- **I10 survives** — the verify loop iterates every entry with no\ndata-dependent early exit; scopes are read only after it completes.\n- **Operator input fails fast; stored data degrades closed.** `--scopes\ntelepathy` is rejected with the valid set named, rather than silently\nbecoming `clip,briefs`. `parseEntry` still drops unknown scopes\nsilently, because a stored record may come from a newer binary. That\nasymmetry is deliberate.\n- **The CLI validates nothing.** `packages/cli` cannot import gateway\nsource, so a check there would mean a second copy of the vocabulary that\ndrifts. The gateway is the sole validator.\n\n## I30\n\nRefined in place — no new invariant number. Minting now produces a\nscoped token, and `security-invariants.test.ts` gained tests that\n**fail** when the defense is reverted. The final review caught that the\ndocs had grown three normative claims while that file received only a\nsignature update: reverting `runClipPairConfirmRoute` to mint hardcoded\nscopes had left it green. Red-proved both directions.\n\n## Not in this PR\n\n`agents`, `resolve` and `fetch` are grantable but **no route consumes\nthem yet** — PRs 2–4 add those routes. One residual is recorded for PR\n2: the I30 claim that enforcement sites read scope from `clipScopeFor`\nrather than naming one inline is prose with no static confinement rule.\nNo live violation today; the rule earns its keep once PR 2 adds more\nenforcement sites.\n\n## Verification\n\n`preflight` PASSED; typecheck zero errors repo-wide; 1778 pass / 17 skip\n/ 0 fail across the affected suites; `lint:markdown` 0 issues in 87\nfiles. `audit:coverage-floor`'s real violation (`http-route-auth.ts`\nbranch 75%) was fixed with tests, never an exclusion — the two remaining\nentries are `socket-listeners.ts` and `platform/linux.ts`, neither in\nthis diff, both documented Windows false positives on a\nCI-Linux-authoritative gate.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Added scoped API bearer tokens for clips, briefs, agents, resolution,\nand fetching.\n  * Pair devices with selected scopes using `clip pair --scopes`.\n  * Update permissions without re-pairing via `clip scopes`.\n  * View granted scopes and brief availability in `clip status`.\n\n* **Bug Fixes**\n  * Invalid tokens return 401; insufficient permissions return 403.\n  * Legacy tokens retain clip and briefs access.\n\n* **Documentation**\n* Updated CLI, security, and API documentation with scope behavior and\nusage.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-06T14:21:08+03:00",
-          "tree_id": "1cbee1d27afebacf38c466203bab403ffa8120d0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/826b76a1a5352ac226bfcd3c6a88b901d6afe33a"
-        },
-        "date": 1786015781172,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 242.31446925000347,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 242.62445494999412,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 273.4677586499976,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d33a2f1db04038404d54d4b6701f1ca47b8b0bee",
+          "message": "fix(admin-console): mount views as DOM nodes instead of innerHTML (Sonar S5696) (#1749)\n\nFixes the BLOCKER SonarCloud issue `AaFn6kR9J38e2eZ9NYE9`\n(tssecurity:S5696, DOM XSS at `admin-console/src/main.ts:136`) **in\ncode**, instead of marking it false positive again. Together with #1748\nthis is part of getting `main` green.\n\n## Why fix rather than re-mark\nThe sink was `app.innerHTML = renderView(...)`, and it was safe only as\nlong as every interpolation in `render.ts`/`views.ts` remembered to call\n`esc()`. That has already failed once: `policy.version` was unescaped\nwhile an earlier Sonar finding on this same flow had been closed as a\nfalse positive (see #1201). `esc()` also never escaped `'`.\n\n## What changed\n- New `view-tree.ts`: views build a `ViewNode` tree (`h(tag, attrs,\n...children)`), and `mount()` turns it into DOM with\n`createElement`/`setAttribute`/`createTextNode`. A string child is\nalways a text node, so no server-supplied value is ever parsed as HTML,\nin any field. Tag names and attribute names are closed unions\n(`class`/`id`/`rows`/`cols`), so neither can carry an event handler or a\n`src`/`href`.\n- `render.ts`/`views.ts` return trees; `esc()` is gone. The markup is\nthe same: same tags, classes and ids, so `styles.css` and the policy\neditor's `getElementById` wiring are unchanged.\n- `main.ts` calls `mount(app, …, document)` in place of `innerHTML`. The\npackage now has no `innerHTML` anywhere.\n\n## Tests\n- The XSS tests now assert the stronger property: a markup payload (in\n`version`, `org`, a peer id, a connector id, `lastHash`) appears\nverbatim in the text content and never as an element.\n- `view-tree.test.ts` drives `mount` through a minimal fake document.\nEvery node it creates is recorded, so the test proves a payload becomes\nONE text node and no element.\n\n## Not changed: c:S5849 (`sandbox-helper/main.c`)\nThat rule flags any `cap_set_proc`, and the call it flags is\n`drop_all_caps()`, which removes `CAP_NET_ADMIN` before exec. Any change\nthat satisfies the rule would weaken that defense, so it stays as is. It\nneeds its earlier \"accepted\" triage re-applied on SonarCloud: the issue\nwas re-keyed today from `AaCHEeXpGOMqvmq55deI`.\n\n## Verification\n- `bun test packages/admin-console/src`: 15 pass / 0 fail\n- `tsc --noEmit` (admin-console) passes, `biome check` is clean, `bun\nrun build` passes and the built `dist/main.js` contains no `innerHTML`\n- `bun run preflight:fast` passed\n- `admin-console-assets` and `check-boundaries` tests: 46 pass / 0 fail\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Admin-console values containing markup-like text are displayed as text\nrather than interpreted as page elements.\n* Policy status, organization details, version information, and restart\nwarnings continue to display in the admin console.\n* Connector, audit, namespace, user, and policy views retain their\ndisplayed information and conditions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T19:13:23Z",
+          "tree_id": "e147119056d6d4b434ea26c92b42fa4c5cb861ae",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d33a2f1db04038404d54d4b6701f1ca47b8b0bee"
+        },
+        "date": 1792783730767,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 215.56528434999782,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 214.6911369999998,
             "unit": "ms"
           }
         ]
