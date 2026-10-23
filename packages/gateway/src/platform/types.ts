@@ -4,7 +4,6 @@ import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
 import type { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import type { ExecutorDelegationDep, ExecutorPolicyDep } from "../engine/executor.ts";
-import type { FleetScheduler } from "../fleet/fleet-scheduler.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { IPCServer } from "../ipc/index.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
@@ -76,12 +75,6 @@ export interface PlatformServices {
    * on-disk half of "ephemeral means ephemeral."
    */
   toolgenRegistry: ToolgenRegistry;
-  /**
-   * The overnight agent fleet's 60-second tick. ABSENT — not a disabled instance — when `[fleet]
-   * enabled` is false or no `[[fleet.job]]` is configured, which is the default on both counts, so
-   * `undefined` here means nothing was constructed rather than something is idling.
-   */
-  fleetScheduler?: FleetScheduler;
   /** Credential-aware deps for the connector write dispatcher (warehouse/BI ∪ GitOps/ML; wrapped in index.ts). */
   connectorWriteDeps: ConnectorWriteContext;
   // Owner-side delegated HITL (Slice 2, I20). Present when federation is enabled: the executor gate
