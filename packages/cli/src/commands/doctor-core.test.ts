@@ -1075,6 +1075,78 @@ describe("doctorPrintProfile (role packs)", () => {
     { kind: "profile", id: "work", path: "/c/nimbus.work.toml", exists },
   ];
 
+  it("warns per skipped pack and for a pack list error, each exit 1", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "default",
+      layers: [],
+      activePacks: [],
+      skippedPacks: [{ packId: "x", reason: "[llm] prefer_local is not pack-settable" }],
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain(
+      '[warn] pack "x" skipped: [llm] prefer_local is not pack-settable',
+    );
+    out.reset();
+    const exit2 = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "default",
+      layers: [],
+      packListError: "active.json is not valid JSON",
+    });
+    expect(exit2).toBe(1);
+    expect(out.stdout).toContain("[warn] packs not applied: active.json is not valid JSON");
+  });
+
+  it("strips control characters from pack ids, reasons and the list error", () => {
+    const esc = "\u001b[31m";
+    const exit = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "default",
+      layers: [],
+      activePacks: [`p${esc}m`],
+      skippedPacks: [{ packId: `x${esc}\u0007`, reason: "bad\r\nline\u009b" }],
+      packListError: `list\u0000${esc}err`,
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain('[warn] pack "x[31m" skipped: badline');
+    expect(out.stdout).toContain("[warn] packs not applied: list[31merr");
+    expect(out.stdout).toContain("[info] packs active: p[31mm");
+    for (const ch of ["\u001b", "\u0007", "\u0000", "\u009b", "\r"]) {
+      expect(out.stdout).not.toContain(ch);
+    }
+  });
+
+  it("lists active packs as info, exit 0", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "default",
+      layers: [],
+      activePacks: ["pm", "devops"],
+      skippedPacks: [],
+    });
+    expect(exit).toBe(0);
+    expect(out.stdout).toContain("[info] packs active: pm, devops");
+  });
+
+  it("filters malformed pack fields and prints nothing for an older payload", () => {
+    const base = { runningProfile: "default", markerProfile: "default", layers: [] };
+    expect(doctorPrintProfile(base)).toBe(0);
+    expect(out.stdout).toBe("");
+    const exit = doctorPrintProfile({
+      ...base,
+      activePacks: "pm",
+      skippedPacks: [{ packId: "x" }, { reason: "r" }, null, 3, { packId: 1, reason: "r" }],
+      packListError: 5,
+    });
+    expect(exit).toBe(0);
+    expect(out.stdout).toBe("");
+    const mixed = doctorPrintProfile({ ...base, activePacks: [1, "pm", null] });
+    expect(mixed).toBe(0);
+    expect(out.stdout).toContain("[info] packs active: pm");
+    expect(out.stdout).not.toContain("null");
+  });
+
   it("is silent when an older gateway omits configLayers", () => {
     expect(doctorPrintProfile(undefined)).toBe(0);
     expect(out.stdout).toBe("");

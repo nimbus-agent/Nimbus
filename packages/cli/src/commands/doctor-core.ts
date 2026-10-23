@@ -910,6 +910,9 @@ export function doctorPrintProfile(raw: unknown): number {
     runningProfileSource?: unknown;
     markerProfile?: unknown;
     layers?: unknown;
+    activePacks?: unknown;
+    skippedPacks?: unknown;
+    packListError?: unknown;
   };
   if (typeof c.runningProfile !== "string") return 0;
   let exit = 0;
@@ -945,6 +948,49 @@ export function doctorPrintProfile(raw: unknown): number {
     console.log(
       `[info] profile "${running}" has no nimbus.${running}.toml; running on nimbus.toml alone`,
     );
+  }
+  return Math.max(exit, doctorPrintPacks(c));
+}
+
+/**
+ * Drops C0/C1 control characters and DEL. The gateway already reports an invalid `active.json`
+ * entry by position only, but this CLI may talk to an older or another gateway, and a raw escape
+ * sequence printed to the terminal is never what the owner should see.
+ */
+function stripControlChars(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
+    out += ch;
+  }
+  return out;
+}
+
+/** Pack lines; each field is optional and filtered like `layers`, so an older gateway prints nothing. */
+function doctorPrintPacks(c: {
+  activePacks?: unknown;
+  skippedPacks?: unknown;
+  packListError?: unknown;
+}): number {
+  let exit = 0;
+  const skipped = Array.isArray(c.skippedPacks) ? (c.skippedPacks as unknown[]) : [];
+  for (const s of skipped) {
+    if (s === null || typeof s !== "object") continue;
+    const { packId, reason } = s as { packId?: unknown; reason?: unknown };
+    if (typeof packId !== "string" || typeof reason !== "string") continue;
+    console.log(`[warn] pack "${stripControlChars(packId)}" skipped: ${stripControlChars(reason)}`);
+    exit = 1;
+  }
+  if (typeof c.packListError === "string") {
+    console.log(`[warn] packs not applied: ${stripControlChars(c.packListError)}`);
+    exit = 1;
+  }
+  const active = Array.isArray(c.activePacks)
+    ? (c.activePacks as unknown[]).filter((p): p is string => typeof p === "string")
+    : [];
+  if (active.length > 0) {
+    console.log(`[info] packs active: ${active.map(stripControlChars).join(", ")}`);
   }
   return exit;
 }

@@ -77,7 +77,8 @@ export function sweepParamFor(agent: string, kind: SweepKind): SweepSubjectParam
   return sweepSupportFor(agent)?.accepts[kind] ?? null;
 }
 
-const FEDERATION_PARAMS: readonly string[] = ["namespace", "namespaces"];
+/** The job params that make a fleet job federated (a pack job may not set either). */
+export const FEDERATION_PARAMS: readonly string[] = ["namespace", "namespaces"];
 
 /**
  * Spec § 4 rules 1, 2 and 6. Called by `assembleFleetRuntime` inside the SAME try that parses the

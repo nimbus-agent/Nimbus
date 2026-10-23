@@ -22,15 +22,64 @@ export type ConfigSnapshot = {
   readonly version: number;
   readonly layers: readonly SnapshotLayer[];
   readonly doc: EffectiveDoc;
-  /** Rendered effective config; null when no user layer file (base/profile) exists. */
+  /** Rendered effective config; null only when no layer exists at all, pack layers included. */
   readonly text: string | null;
+  /** Whether a user layer file (base or profile) was read. A pack-only config has none. */
+  readonly hasUserLayer: boolean;
+  /** Ids of the pack layers merged into this snapshot, low to high. */
+  readonly activePacks: readonly string[];
+  /** Packs the source refused to hand over, with why. */
+  readonly skippedPacks: readonly SkippedPack[];
+  /** Set when the source could not list the profile's packs at all. */
+  readonly packListError?: string;
+};
+
+/** One pack layer's already-validated text, as the pack source hands it over. */
+export type PackLayerText = { readonly id: string; readonly path: string; readonly text: string };
+
+/** A pack the source skipped (whole-layer), and why. */
+export type SkippedPack = { readonly packId: string; readonly reason: string };
+
+export type PackLayersRead = {
+  readonly layers: readonly PackLayerText[];
+  readonly skipped: readonly SkippedPack[];
+  readonly listError?: string;
 };
 
 export interface PackLayerSource {
-  list(profile: string): readonly { readonly id: string; readonly path: string }[];
+  /**
+   * The profile's pack layers. Must never throw: every failure is a `skipped` entry or
+   * `listError`. A source that throws anyway is recorded as a list error, with no packs applied.
+   */
+  read(profile: string): PackLayersRead;
 }
 
-export const EMPTY_PACK_LAYERS: PackLayerSource = { list: () => [] };
+const REGEXP_SPECIAL = /[.*+?^${}()|[\]\\]/g;
+const SEPARATOR_CLASS = String.raw`[\\/]`;
+const PATH_TAIL = String.raw`(?:[\\/][^\s'"\x60,;]*)?`;
+
+/**
+ * `message` with every path under `root` replaced by its basename, so a reason shown in
+ * `diag.snapshot` never carries an absolute path. Either separator matches, case-insensitively
+ * on Windows. Pass `root` already `resolve`d, so it has the form `fs` errors use.
+ */
+export function basenameSafeMessage(message: string, root: string): string {
+  const parts = root.split(/[\\/]/).filter((p, i) => p !== "" || i === 0);
+  const pattern = parts
+    .map((p) => p.replace(REGEXP_SPECIAL, String.raw`\$&`))
+    .join(SEPARATOR_CLASS);
+  const re = new RegExp(pattern + PATH_TAIL, process.platform === "win32" ? "gi" : "g");
+  return message.replace(
+    re,
+    (m) =>
+      m
+        .split(/[\\/]/)
+        .filter((p) => p !== "")
+        .pop() ?? m,
+  );
+}
+
+export const EMPTY_PACK_LAYERS: PackLayerSource = { read: () => ({ layers: [], skipped: [] }) };
 
 type LayerRead = { readonly text: string | null; readonly readError?: string };
 
@@ -46,12 +95,32 @@ function readLayer(path: string): LayerRead {
   }
 }
 
-type Cached = { readonly snapshot: ConfigSnapshot; readonly reads: readonly LayerRead[] };
+type Cached = {
+  readonly snapshot: ConfigSnapshot;
+  readonly reads: readonly LayerRead[];
+  readonly packs: PackLayersRead;
+};
+
+/** Whether two pack reads would produce the same snapshot. */
+function samePackRead(a: PackLayersRead, b: PackLayersRead): boolean {
+  return (
+    a.layers.length === b.layers.length &&
+    a.layers.every((l, i) => {
+      const o = b.layers[i];
+      return o !== undefined && l.id === o.id && l.path === o.path && l.text === o.text;
+    }) &&
+    JSON.stringify(a.skipped) === JSON.stringify(b.skipped) &&
+    a.listError === b.listError
+  );
+}
 
 /**
  * Layered reader: pack layers, then base, then the pinned profile overlay (low to high).
- * Freshness is content-based: every call re-reads each layer file and re-merges only
- * when some file's text differs from the cached text (or a file appeared/disappeared).
+ * Pack text comes from the `PackLayerSource` (already validated there; a refused pack arrives
+ * as a skip, never as text), read once per snapshot; base and profile are read from disk here.
+ * Freshness is content-based: every call re-reads, and re-merges only when something differs
+ * from the cached read (a file's text, a file appearing/disappearing, the pack set, a pack's
+ * text, the skipped set or the list error).
  */
 export class LayeredConfig {
   readonly configDir: string;
@@ -67,11 +136,11 @@ export class LayeredConfig {
     this.packs = opts.packs ?? EMPTY_PACK_LAYERS;
   }
 
-  private layerRefs(): LayerRef[] {
-    const refs: LayerRef[] = this.packs
-      .list(this.profile.name)
-      .map((p) => ({ kind: "pack" as const, id: p.id, path: p.path }));
-    refs.push({ kind: "base", id: "base", path: join(this.configDir, "nimbus.toml") });
+  /** The user layers: base, then the profile overlay when the profile has its own file. */
+  private userLayerRefs(): LayerRef[] {
+    const refs: LayerRef[] = [
+      { kind: "base", id: "base", path: join(this.configDir, "nimbus.toml") },
+    ];
     const profilePath = profileFilePath(this.configDir, this.profile.name);
     if (profilePath !== null) {
       refs.push({ kind: "profile", id: this.profile.name, path: profilePath });
@@ -80,33 +149,43 @@ export class LayeredConfig {
   }
 
   snapshot(): ConfigSnapshot {
-    const refs = this.layerRefs();
-    const reads = refs.map((r) => readLayer(r.path));
-    const contents = reads.map((r) => r.text);
+    const packs = this.readPacks();
+    const userRefs = this.userLayerRefs();
+    const reads = userRefs.map((r) => readLayer(r.path));
     const prev = this.cached;
     if (
       prev !== null &&
+      samePackRead(prev.packs, packs) &&
       prev.reads.length === reads.length &&
-      prev.snapshot.layers.every((l, i) => l.layer.path === refs[i]?.path) &&
+      prev.snapshot.layers
+        .slice(packs.layers.length)
+        .every((l, i) => l.layer.path === userRefs[i]?.path) &&
       prev.reads.every((c, i) => c.text === reads[i]?.text && c.readError === reads[i]?.readError)
     ) {
       return prev.snapshot;
     }
+    const packRefs: LayerRef[] = packs.layers.map((p) => ({
+      kind: "pack" as const,
+      id: p.id,
+      path: p.path,
+    }));
+    const refs = [...packRefs, ...userRefs];
+    const contents: (string | null)[] = [
+      ...packs.layers.map((p) => p.text),
+      ...reads.map((r) => r.text),
+    ];
     const docs: LayerDoc[] = [];
     refs.forEach((ref, i) => {
       const text = contents[i];
       if (text !== null && text !== undefined) docs.push(parseLayerDoc(ref, text));
     });
     const doc = mergeLayerDocs(docs);
-    const hasUser = refs.some(
-      (r, i) => (r.kind === "base" || r.kind === "profile") && contents[i] !== null,
-    );
     this.version += 1;
     this.fallbacks = new Map();
     const snapshot: ConfigSnapshot = {
       version: this.version,
       layers: refs.map((layer, i) => {
-        const readError = reads[i]?.readError;
+        const readError = reads[i - packRefs.length]?.readError;
         return {
           layer,
           exists: contents[i] !== null,
@@ -114,10 +193,37 @@ export class LayeredConfig {
         };
       }),
       doc,
-      text: hasUser ? renderEffectiveDoc(doc) : null,
+      text: docs.length > 0 ? renderEffectiveDoc(doc) : null,
+      hasUserLayer: reads.some((r) => r.text !== null),
+      activePacks: packs.layers.map((p) => p.id),
+      skippedPacks: packs.skipped,
+      ...(packs.listError !== undefined ? { packListError: packs.listError } : {}),
     };
-    this.cached = { snapshot, reads };
+    this.cached = { snapshot, reads, packs };
     return snapshot;
+  }
+
+  /**
+   * The source's read for the pinned profile, with its arrays copied so a source that mutates
+   * them cannot alter the cached read; a throwing source becomes a list error with no packs.
+   */
+  private readPacks(): PackLayersRead {
+    try {
+      const r = this.packs.read(this.profile.name);
+      return { ...r, layers: [...r.layers], skipped: [...r.skipped] };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        layers: [],
+        skipped: [],
+        listError: `pack source failed: ${basenameSafeMessage(message, resolve(this.configDir))}`,
+      };
+    }
+  }
+
+  /** The pack source this reader was built with; `initLayeredConfig` compares it by identity. */
+  packSource(): PackLayerSource {
+    return this.packs;
   }
 
   /** Where a write belongs: the profile overlay (even if absent) or the base file. */
@@ -161,6 +267,13 @@ export function initLayeredConfig(
         `Layered config for ${key} already initialised with profile "${existing.profile.name}", not "${profile.name}"`,
       );
     }
+    // Returning the existing reader would silently drop `opts.packs` (for example after
+    // `getLayeredConfig` created one), and every snapshot would then miss the pack layers.
+    if (opts.packs !== undefined && existing.packSource() !== opts.packs) {
+      throw new Error(
+        `Layered config for ${key} already initialised with a different pack source; pass the pack source to the first initLayeredConfig call`,
+      );
+    }
     return existing;
   }
   const created = new LayeredConfig({
@@ -174,6 +287,11 @@ export function initLayeredConfig(
 
 export function getLayeredConfig(configDir: string): LayeredConfig {
   return registry.get(resolve(configDir)) ?? initLayeredConfig(configDir);
+}
+
+/** The registered reader for `configDir`, or undefined; never creates one. */
+export function peekLayeredConfig(configDir: string): LayeredConfig | undefined {
+  return registry.get(resolve(configDir));
 }
 
 /** Test-only: drop one config dir's entry, leaving every other dir's reader alone. */
@@ -217,7 +335,16 @@ export function assertLayersReadable(configDir: string): void {
   if (err !== undefined) throw new Error(err);
 }
 
-/** The effective (layered) config text for `configDir`; null when no user layer file exists. */
+/**
+ * The effective (layered) config text for `configDir`; null only when no layer exists at all.
+ * A pack-only config renders, so a loader whose "no file" result differs from its result on
+ * text without that section must also check `layeredHasUserLayer`.
+ */
 export function layeredConfigText(configDir: string): string | null {
   return getLayeredConfig(configDir).snapshot().text;
+}
+
+/** Whether a user layer file (base or profile) was read for `configDir`. */
+export function layeredHasUserLayer(configDir: string): boolean {
+  return getLayeredConfig(configDir).snapshot().hasUserLayer;
 }
