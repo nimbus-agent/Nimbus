@@ -97,16 +97,30 @@ describe("ruling B1: the built-in registry and continuity table are injected, ne
       expect(args, callee).toMatch(/continuityTable: ctx\.options\.continuityTable/);
     }
     const automation = strip(join("ipc", "automation-rpc.ts"));
-    for (const callee of [
-      "approveExtensionRun",
-      "setExtensionCredential",
-      "extensionCredentialStatus",
-    ]) {
+    const argsOf = (callee: string): string => {
       const at = automation.indexOf(`await ${callee}(`);
       expect(at, callee).toBeGreaterThan(-1);
-      const args = automation.slice(at, automation.indexOf(");", at));
-      expect(args, callee).toMatch(/continuityTable/);
+      return automation.slice(at, automation.indexOf(");", at));
+    };
+    expect(argsOf("approveExtensionRun")).toMatch(/\.\.\.continuityTableOf\(ctx\)/);
+    // Both credential methods take their binding lookups from ONE helper, which hands the composed
+    // table to the trust check AND to the live re-derivation of the binding.
+    for (const callee of ["setExtensionCredential", "extensionCredentialStatus"]) {
+      expect(argsOf(callee), callee).toMatch(/\.\.\.credentialReadDeps\(ctx\)/);
     }
+    const readDepsAt = automation.indexOf("function credentialReadDeps(");
+    expect(readDepsAt).toBeGreaterThan(-1);
+    const readDeps = automation.slice(readDepsAt, automation.indexOf("\n}\n", readDepsAt));
+    expect(readDeps).toMatch(/\.\.\.continuityTableOf\(ctx\)/);
+    expect(readDeps).toMatch(
+      /liveCredentials: \(x\) => currentRunCredentials\(ctx\.db, x, ctx\.continuityTable\)/,
+    );
+    // `continuityTableOf` forwards the composed table itself, never a default of its own.
+    const tableOfAt = automation.indexOf("function continuityTableOf(");
+    expect(tableOfAt).toBeGreaterThan(-1);
+    expect(automation.slice(tableOfAt, automation.indexOf("\n}\n", tableOfAt))).toMatch(
+      /ctx\.continuityTable === undefined \? \{\} : \{ continuityTable: ctx\.continuityTable \}/,
+    );
     expect(automation).toMatch(/continuityTable: options\.continuityTable/);
     const connectorRpc = strip(join("ipc", "connector-rpc.ts"));
     expect(connectorRpc).toMatch(/\{ continuityTable \}/);

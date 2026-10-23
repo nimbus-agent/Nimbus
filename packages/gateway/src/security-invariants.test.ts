@@ -6687,13 +6687,40 @@ describe("I43 — an installed extension's code runs only through the verified s
       "extensions/extension-credentials.ts",
       "extensions/extension-runtime.ts",
     ]);
-    // The verifier re-resolves the credentials from the manifest it verified and compares them
-    // with the stored grant, refusing RUN_CHANGED on any difference.
+    // The verifier re-resolves the credentials from the manifest it verified — through the ONE
+    // derivation it shares with the approval (`resolvedCredentialsFor`), called only after the
+    // manifest's hashes and publisher signature are verified — and compares them with the stored
+    // grant, refusing RUN_CHANGED on any difference.
     const ver = stripComments(await read("packages/gateway/src/extensions/verified-extension.ts"));
     expect(ver).toMatch(
+      /import \{[^}]*\bresolvedCredentialsFor\b[^}]*\} from "\.\/approve-run\.ts";/,
+    );
+    const verify = ver.slice(ver.indexOf("export async function readVerifiedExtensionForSpawn("));
+    const hashesAt = verify.indexOf("assertHashesVerified(row);");
+    const manifestAt = verify.indexOf("const manifest = readManifestTyped(row);");
+    const signatureAt = verify.indexOf(
+      "await assertPublisherSignature(row, manifest, deps.vault);",
+    );
+    const deriveAt = verify.search(
+      /const \{ credentials \} = resolvedCredentialsFor\(\s*row,\s*manifest,\s*grant\.service_id,/,
+    );
+    const compareAt = verify.search(
       /if \(serializeRunCredentials\(credentials\) !== grant\.credentials_json\) \{\s*refuse\(\s*"ERR_EXTENSION_RUN_CHANGED",/,
     );
-    expect(ver).toMatch(/findContinuityBinding\(\s*bindingInputFor\(row, manifest\),/);
+    for (const at of [hashesAt, manifestAt, signatureAt]) expect(at).toBeGreaterThan(-1);
+    expect(deriveAt).toBeGreaterThan(Math.max(hashesAt, manifestAt, signatureAt));
+    expect(compareAt).toBeGreaterThan(deriveAt);
+    expect(verify.match(/resolvedCredentialsFor\(/g) ?? []).toHaveLength(1);
+    // …and that derivation binds from the row and the manifest it is handed (the verified one).
+    const approve = stripComments(await read("packages/gateway/src/extensions/approve-run.ts"));
+    const derive = approve.slice(
+      approve.indexOf("export function resolvedCredentialsFor("),
+      approve.indexOf("export function currentRunCredentials("),
+    );
+    expect(derive).toMatch(
+      /const binding = findContinuityBinding\(bindingInputFor\(row, manifest\), table\);/,
+    );
+    expect(derive).toMatch(/resolveRunCredentials\(manifest, serviceId, binding\)/);
   });
 
   test("behavioural: a credential env name that could change what the child runs is refused at parse", async () => {
