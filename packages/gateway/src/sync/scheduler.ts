@@ -118,6 +118,37 @@ export function preflightRefusal(connector: { preflight?: () => string | null })
   }
 }
 
+/**
+ * Pause `serviceId` NOW if what is registered under it would refuse its first run — with
+ * {@link preflightRefusal}'s reason, byte for byte what that run would record — so a status read
+ * before the run already shows the pause. Returns whether it paused. Nothing registered: no pause.
+ */
+export function pauseIfPreflightRefuses(
+  s: {
+    syncableFor(serviceId: string): { preflight?: () => string | null } | undefined;
+    pause(serviceId: string, reason?: string): void;
+  },
+  serviceId: string,
+): boolean {
+  const syncable = s.syncableFor(serviceId);
+  const refusal = syncable === undefined ? null : preflightRefusal(syncable);
+  if (refusal === null) return false;
+  s.pause(serviceId, refusal);
+  return true;
+}
+
+/**
+ * Lift a pause on `serviceId` — unless what is registered under it would refuse its first run (the
+ * sandbox cannot confine the extension, or its preflight throws: fail closed); then it is paused
+ * with that refusal instead ({@link pauseIfPreflightRefuses}). For a caller about to resume.
+ */
+export function resumeOrPauseForConfinement(
+  s: Parameters<typeof pauseIfPreflightRefuses>[0] & { resume(serviceId: string): void },
+  serviceId: string,
+): void {
+  if (!pauseIfPreflightRefuses(s, serviceId)) s.resume(serviceId);
+}
+
 export class SyncDisabledError extends Error {
   constructor(serviceId: string) {
     super(`ERR_SYNC_DISABLED: syncing is disabled in this gateway, so ${serviceId} cannot sync`);

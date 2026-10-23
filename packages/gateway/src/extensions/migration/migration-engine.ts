@@ -47,7 +47,7 @@ import {
 } from "../../connectors/connector-catalog.ts";
 import { transitionHealth } from "../../connectors/health.ts";
 import { enableSuffix, reapproveSuffix } from "../../platform/register-extension-sync.ts";
-import { preflightRefusal } from "../../sync/scheduler.ts";
+import { resumeOrPauseForConfinement as resumeUnlessPreflightRefuses } from "../../sync/scheduler.ts";
 import { setPaused, upsertSchedulerRegistration } from "../../sync/scheduler-store.ts";
 import { decodeBase64 } from "../../util/base64.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -621,13 +621,13 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
    * run (the sandbox cannot confine the extension, or its preflight throws: fail closed). Then the
    * service is paused HERE with the reason that run's preflight would record, byte for byte (it
    * names `nimbus connector resume <legacy>`), so whoever reads the status right after accept — the
-   * CLI's `migrate accept` — sees the pause rather than a sync that will never run.
+   * CLI's `migrate accept` — sees the pause rather than a sync that will never run. The same
+   * decision the sync registrar takes when it lifts a re-approve / enable pause.
    */
   const resumeOrPauseForConfinement = (legacyServiceId: string): void => {
-    const syncable = deps.scheduler.syncableFor(legacyServiceId);
-    const refusal = syncable === undefined ? null : preflightRefusal(syncable);
-    if (refusal === null) deps.scheduler.resume(legacyServiceId);
-    else deps.scheduler.pause(legacyServiceId, refusal);
+    // The shared scheduler helper, imported under another name only because this closure keeps
+    // its own (callers and reviews grep for it).
+    resumeUnlessPreflightRefuses(deps.scheduler, legacyServiceId);
   };
 
   /**

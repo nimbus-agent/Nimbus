@@ -18,7 +18,8 @@ import { isExtensionRuntimeEnabled } from "../extensions/run-grant-env.ts";
 import { deleteRunGrant, upsertRunGrant } from "../extensions/run-grant-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
-import { SyncScheduler } from "../sync/scheduler.ts";
+import { preflightRefusal, SyncScheduler } from "../sync/scheduler.ts";
+import { loadSchedulerState } from "../sync/scheduler-store.ts";
 import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
 import type { Syncable, SyncRuntimeContext } from "../sync/types.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
@@ -184,10 +185,12 @@ describe("createExtensionSyncRegistrar", () => {
     createExtensionSyncRegistrar(h.deps).refresh(EXT_ID);
     expect(h.sched.syncableFor("readwise")?.serviceId).toBe("readwise");
     expect(h.sched.syncableFor(CODE_ID)).toBeUndefined();
-    await h.sched.forceSync("readwise");
-    // The mesh is addressed by the CODE-server id; the sandbox question by the spawn policy id.
-    expect(h.meshCalls).toEqual([CODE_ID]);
+    // Registering asks the sandbox once (the registration preflight), by the spawn policy id.
     expect(h.confineCalls).toEqual([`ext.${CODE_ID}`]);
+    await h.sched.forceSync("readwise");
+    // The mesh is addressed by the CODE-server id; the run asks the sandbox again.
+    expect(h.meshCalls).toEqual([CODE_ID]);
+    expect(h.confineCalls).toEqual([`ext.${CODE_ID}`, `ext.${CODE_ID}`]);
     expect(h.egress).toEqual([{ destination: "readwise", sourceType: "sync", method: "sync.run" }]);
     expect(new LocalIndex(h.db).search({ service: "readwise" })).toHaveLength(1);
   });
@@ -406,6 +409,154 @@ describe("createExtensionSyncRegistrar", () => {
   });
 });
 
+describe("createExtensionSyncRegistrar — registering applies the sandbox preflight before it answers", () => {
+  const UNCONFINABLE = "the sandbox helper is not installed";
+
+  /** The harness scheduler, with every `pause` / `resume` the registrar makes recorded. */
+  function spied(h: Harness): {
+    scheduler: ExtensionSyncScheduler;
+    resumes: string[];
+    pauses: Array<[string, string | undefined]>;
+  } {
+    const resumes: string[] = [];
+    const pauses: Array<[string, string | undefined]> = [];
+    return {
+      resumes,
+      pauses,
+      scheduler: {
+        register: (c) => h.sched.register(c),
+        unregister: (id) => h.sched.unregister(id),
+        pause: (id, reason) => {
+          pauses.push([id, reason]);
+          h.sched.pause(id, reason);
+        },
+        resume: (id) => {
+          resumes.push(id);
+          h.sched.resume(id);
+        },
+        syncableFor: (id) => h.sched.syncableFor(id),
+      },
+    };
+  }
+
+  /** The refusal the scheduler's due run would record for what is registered under `id`. */
+  function dueRunRefusal(h: Harness, id: string): string {
+    const syncable = h.sched.syncableFor(id);
+    if (syncable === undefined) throw new Error(`premise: a syncable under ${id}`);
+    const refusal = preflightRefusal(syncable);
+    if (refusal === null) throw new Error(`premise: the preflight of ${id} refuses`);
+    return refusal;
+  }
+
+  function historyReasons(db: Database, id: string): Array<string | null> {
+    return (
+      db
+        .query("SELECT reason FROM connector_health_history WHERE connector_id = ? ORDER BY rowid")
+        .all(id) as Array<{ reason: string | null }>
+    ).map((r) => r.reason);
+  }
+
+  test("approve with an unconfinable sandbox pauses at refresh, before any run", async () => {
+    const h = harness(seed(), { sandbox: { canConfine: () => UNCONFINABLE } });
+    await h.vault.set("readwise.token", "tok");
+    createExtensionSyncRegistrar(h.deps).refresh(EXT_ID);
+    const health = getConnectorHealth(h.db, "readwise");
+    expect(health.state).toBe("paused");
+    // Byte-equal to what the scheduler records when a due run's preflight refuses.
+    expect(health.lastError).toBe(dueRunRefusal(h, "readwise"));
+    expect(health.lastError).toBe(
+      `sandbox cannot confine this extension: ${UNCONFINABLE} — fix it (see \`nimbus doctor\`), then run \`nimbus connector resume readwise\``,
+    );
+    expect(loadSchedulerState(h.db, "readwise")?.paused).toBe(1);
+    expect(h.meshCalls).toEqual([]);
+    expect(h.egress).toEqual([]);
+  });
+
+  test("re-approving a stale grant while unconfinable pauses with the sandbox reason, never resuming", () => {
+    const h = harness(seed(), { sandbox: { canConfine: () => UNCONFINABLE } });
+    const spy = spied(h);
+    const r = createExtensionSyncRegistrar({ ...h.deps, scheduler: spy.scheduler });
+    updateExtensionRowVersion(h.db, EXT_ID, "1.1.0", "h2", "e2", 2, "d2");
+    r.refresh(EXT_ID);
+    expect(getConnectorHealth(h.db, "readwise").lastError).toBe(
+      staleGrantPauseReason(EXT_ID, { version: "1.1.0" }, { version: "1.0.0" }),
+    );
+    approve(h.db, "1.1.0", "d2");
+    r.refresh(EXT_ID);
+    expect(spy.resumes).toEqual([]);
+    const health = getConnectorHealth(h.db, "readwise");
+    expect(health.state).toBe("paused");
+    expect(health.lastError).toBe(dueRunRefusal(h, "readwise"));
+    expect(loadSchedulerState(h.db, "readwise")?.paused).toBe(1);
+  });
+
+  test("enable after the migration's disabled pause, while unconfinable, pauses with the sandbox reason", () => {
+    const h = harness(seed(), { sandbox: { canConfine: () => UNCONFINABLE } });
+    const spy = spied(h);
+    const r = createExtensionSyncRegistrar({ ...h.deps, scheduler: spy.scheduler });
+    setExtensionEnabled(h.db, EXT_ID, false);
+    h.sched.pause(
+      "readwise",
+      `${EXT_ID} is installed but disabled — run \`nimbus extension enable ${EXT_ID}\` to resume sync`,
+    );
+    setExtensionEnabled(h.db, EXT_ID, true);
+    r.refresh(EXT_ID);
+    expect(spy.resumes).toEqual([]);
+    const health = getConnectorHealth(h.db, "readwise");
+    expect(health.state).toBe("paused");
+    expect(health.lastError).toBe(dueRunRefusal(h, "readwise"));
+  });
+
+  test("an owner pause keeps its reason even when unconfinable", () => {
+    const h = harness(seed(), { sandbox: { canConfine: () => UNCONFINABLE } });
+    const spy = spied(h);
+    h.sched.pause("readwise", "paused by the owner");
+    createExtensionSyncRegistrar({ ...h.deps, scheduler: spy.scheduler }).refresh(EXT_ID);
+    expect(spy.pauses).toEqual([]);
+    expect(spy.resumes).toEqual([]);
+    const health = getConnectorHealth(h.db, "readwise");
+    expect(health.state).toBe("paused");
+    expect(health.lastError).toBe("paused by the owner");
+  });
+
+  test("a confinable refresh of a service that is not paused never resumes it", () => {
+    const h = harness(seed());
+    const spy = spied(h);
+    const r = createExtensionSyncRegistrar({ ...h.deps, scheduler: spy.scheduler });
+    r.refresh(EXT_ID);
+    r.refresh(EXT_ID);
+    expect(spy.resumes).toEqual([]);
+    expect(spy.pauses).toEqual([]);
+    expect(getConnectorHealth(h.db, "readwise").state).not.toBe("paused");
+    expect(historyReasons(h.db, "readwise")).not.toContain("connector resumed");
+  });
+
+  test("a throwing canConfine pauses with `preflight failed: …` (fail closed)", () => {
+    const h = harness(seed(), {
+      sandbox: {
+        canConfine: () => {
+          throw new Error("probe crashed");
+        },
+      },
+    });
+    createExtensionSyncRegistrar(h.deps).refresh(EXT_ID);
+    const health = getConnectorHealth(h.db, "readwise");
+    expect(health.state).toBe("paused");
+    expect(health.lastError).toBe("preflight failed: probe crashed");
+    expect(health.lastError).toBe(dueRunRefusal(h, "readwise"));
+  });
+
+  test("boot registerAllFromDatabase pauses an unconfinable live extension", () => {
+    const h = harness(seed(), { sandbox: { canConfine: () => UNCONFINABLE } });
+    createExtensionSyncRegistrar(h.deps).registerAllFromDatabase();
+    expect(h.sched.syncableFor("readwise")).toBeDefined();
+    const health = getConnectorHealth(h.db, "readwise");
+    expect(health.state).toBe("paused");
+    expect(health.lastError).toBe(dueRunRefusal(h, "readwise"));
+    expect(h.meshCalls).toEqual([]);
+  });
+});
+
 describe("createExtensionSyncRegistrar — edges", () => {
   test("a same-version change to the code pauses with the changed-since-approved reason", () => {
     const h = harness(seed());
@@ -441,11 +592,13 @@ describe("createExtensionSyncRegistrar — edges", () => {
     const h = harness(seed());
     await h.vault.set("readwise.token", "tok");
     createExtensionSyncRegistrar(h.deps).refresh(EXT_ID);
+    // The registration preflight asked the sandbox; the run's preflight must not get that far.
+    const confineCallsBefore = h.confineCalls.length;
     deleteRunGrant(h.db, EXT_ID);
     await h.sched.forceSync("readwise").catch(() => undefined);
     expect(h.meshCalls).toEqual([]);
     expect(h.egress).toEqual([]);
-    expect(h.confineCalls).toEqual([]);
+    expect(h.confineCalls).toHaveLength(confineCallsBefore);
     expect(getConnectorHealth(h.db, "readwise").lastError).toContain(
       "the extension no longer has a run approval",
     );
@@ -455,6 +608,7 @@ describe("createExtensionSyncRegistrar — edges", () => {
     const h = harness(seed());
     await h.vault.set("readwise.token", "tok");
     createExtensionSyncRegistrar(h.deps).refresh(EXT_ID);
+    const confineCallsBefore = h.confineCalls.length;
     upsertRunGrant(h.db, {
       extension_id: EXT_ID,
       service_id: CODE_ID,
@@ -469,7 +623,7 @@ describe("createExtensionSyncRegistrar — edges", () => {
     });
     await h.sched.forceSync("readwise").catch(() => undefined);
     expect(h.meshCalls).toEqual([]);
-    expect(h.confineCalls).toEqual([]);
+    expect(h.confineCalls).toHaveLength(confineCallsBefore);
     expect(getConnectorHealth(h.db, "readwise").lastError).toContain(
       "the run approval's stored grants are unreadable",
     );
@@ -477,11 +631,14 @@ describe("createExtensionSyncRegistrar — edges", () => {
 
   test("a grant revoked between preflight and sync is not configured: no spawn", async () => {
     const db = seed();
+    let confineCalls = 0;
     const h = harness(db, {
       sandbox: {
         canConfine: () => {
-          // The revoke lands after the preflight read the grant, before sync() re-reads it.
-          deleteRunGrant(db, EXT_ID);
+          // The 1st call is the registration preflight. On the 2nd — the run's preflight — the
+          // revoke lands after the preflight read the grant, before sync() re-reads it.
+          confineCalls += 1;
+          if (confineCalls === 2) deleteRunGrant(db, EXT_ID);
           return null;
         },
       },
@@ -489,6 +646,7 @@ describe("createExtensionSyncRegistrar — edges", () => {
     await h.vault.set("readwise.token", "tok");
     createExtensionSyncRegistrar(h.deps).refresh(EXT_ID);
     await h.sched.forceSync("readwise");
+    expect(confineCalls).toBe(2);
     expect(h.meshCalls).toEqual([]);
     expect(new LocalIndex(h.db).search({ service: "readwise" })).toHaveLength(0);
   });
