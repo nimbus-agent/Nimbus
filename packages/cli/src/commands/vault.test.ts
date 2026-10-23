@@ -277,6 +277,19 @@ describe("runVault (dispatcher)", () => {
       expect(ipc.calls).toHaveLength(0);
     });
 
+    it("reports a stopped gateway before prompting for or reading the secret", async () => {
+      setFixture({});
+      let read = false;
+      const touched = async (): Promise<string> => {
+        read = true;
+        return SECRET;
+      };
+      await expect(
+        runVault(["set", "github.pat"], io({ readHidden: touched, readStdin: touched })),
+      ).rejects.toThrow("Gateway is not running");
+      expect(read).toBe(false);
+    });
+
     it("stores nothing for a blank value or a cancelled prompt", async () => {
       for (const readHidden of [async () => "  ", async () => undefined]) {
         const ipc = connectIpc();

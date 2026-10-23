@@ -17,8 +17,8 @@ The IaC connector does not scan repositories. The sync emits a heartbeat with in
 ## Authenticate
 
 ```bash
-# Opt in
-nimbus vault set iac.enabled 1
+# Opt in (enter 1 at the prompt)
+nimbus vault set iac.enabled
 ```
 
 The connector inherits the ambient process environment, so cloud credentials come from your usual `terraform` / `pulumi` / `aws` setup (`AWS_PROFILE`, `~/.aws/credentials`, `gcloud auth`, etc.). Without `iac.enabled = "1"` in the Vault, the syncable returns a no-op.

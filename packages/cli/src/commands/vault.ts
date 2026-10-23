@@ -1,6 +1,7 @@
 import { confirm, isCancel } from "@clack/prompts";
 
 import type { IPCClient } from "../ipc-client/index.ts";
+import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import {
   assertPipedSecretCanBeApproved,
   defaultSecretInputIo,
@@ -18,6 +19,9 @@ const VAULT_SET_USAGE =
  */
 export const VAULT_SET_ARGV_DEPRECATION =
   "Warning: a value given on the command line is kept in shell history and shown in the process list. Run `nimbus vault set <key>` without it to be prompted (input is hidden), or pipe it on stdin. The value argument will be removed in a future major release.";
+
+/** `vault.set` waits on the owner's approval prompt, which the default 30s bound cuts off. */
+const VAULT_SET_IPC = { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS } as const;
 
 export async function runVaultSet(client: IPCClient, key: string, value: string): Promise<void> {
   await client.call("vault.set", { key, value });
@@ -65,11 +69,16 @@ export async function runVault(
       }
       if (value !== undefined) {
         console.warn(VAULT_SET_ARGV_DEPRECATION);
-        await withGatewayIpc((c) => runVaultSet(c, key, value));
+        await withGatewayIpc((c) => runVaultSet(c, key, value), undefined, VAULT_SET_IPC);
         return;
       }
       assertPipedSecretCanBeApproved(io);
-      await withGatewayIpc(async (c) => runVaultSet(c, key, await readSecretValue(io, key)));
+      // Read inside the connection: a stopped gateway is reported before anyone types a secret.
+      await withGatewayIpc(
+        async (c) => runVaultSet(c, key, await readSecretValue(io, key)),
+        undefined,
+        VAULT_SET_IPC,
+      );
       return;
     }
     case "get": {
