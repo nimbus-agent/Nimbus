@@ -1,6 +1,7 @@
 // packages/gateway/src/sync/connector-configured.ts
 
 import { resolveGoogleOAuthVaultKey } from "../auth/google-access-token.ts";
+import { TEAM_CREDENTIAL_SYNC_CONNECTORS } from "../config/nimbus-toml-connectors.ts";
 import { hasUsableAwsCredentials } from "../connectors/_lib/aws-cli.ts";
 import { loadGcpAuthFromVault } from "../connectors/_lib/gcp-auth.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
@@ -73,12 +74,17 @@ async function isTeamsConfigured(vault: NimbusVault): Promise<boolean> {
   );
 }
 
+/** The ids whose sync reads a team credential when pinned to one; see `isTeamEntryConfigured`. */
+const TEAM_SYNC_IDS: ReadonlySet<string> = new Set(TEAM_CREDENTIAL_SYNC_CONNECTORS);
+
 /**
- * A service pinned to `[connectors.<id>] credential = "team"` (the warehouse/BI syncables) drains
- * through the I19 team gate, which reads the pinned entry's keys through `createTeamVaultView` —
- * never the bare `<id>.*` keys. Configured = the pin names a valid entry AND that entry holds at
- * least one non-blank key of the service's manifest list (the gate itself enforces the full
- * required set at run time). A pin with no entry, an invalid entry name, or an empty entry is not
+ * A `TEAM_CREDENTIAL_SYNC_CONNECTORS` service (the six warehouse/BI syncables on
+ * `createWarehouseListSyncable`) pinned to `[connectors.<id>] credential = "team"` drains through
+ * the I19 team gate, which reads the pinned entry's keys through `createTeamVaultView` — never the
+ * bare `<id>.*` keys. Not used for argocd/flux/mlflow: their team pin covers writes only, and
+ * their sync reads the personal keys. Configured = the pin names a valid entry AND that entry
+ * holds at least one non-blank key of the service's manifest list (the gate itself enforces the
+ * full required set at run time). A pin with no entry, an invalid entry name, or an empty entry is not
  * configured; nothing here throws, so no entry or key name reaches an error.
  */
 async function isTeamEntryConfigured(
@@ -218,9 +224,11 @@ export async function isConnectorConfigured(
   extensionCredentials?: (serviceId: string) => ResolvedRunCredentials | undefined,
   /**
    * The `[connectors.<id>]` credential pin (`SyncContext.credentialFor`, the same resolver the
-   * warehouse syncables read). For a service pinned to `credential = "team"` the pinned team entry's
-   * keys decide (`isTeamEntryConfigured`), since that run never reads the bare `<id>.*` keys. Every
-   * other service, and every caller that omits this, keeps the checks below.
+   * warehouse syncables read). For a `TEAM_CREDENTIAL_SYNC_CONNECTORS` service pinned to
+   * `credential = "team"` the pinned team entry's keys decide (`isTeamEntryConfigured`), since that
+   * run never reads the bare `<id>.*` keys. Every other service (including a team-pinned
+   * argocd/flux/mlflow, whose sync reads personal keys), and every caller that omits this, keeps the
+   * checks below.
    */
   credentialFor?: SyncContext["credentialFor"],
 ): Promise<boolean> {
@@ -228,7 +236,7 @@ export async function isConnectorConfigured(
   if (extensionCreds !== undefined) {
     return credentialsConfigured(vault, extensionCreds);
   }
-  const pin = credentialFor?.(serviceId);
+  const pin = TEAM_SYNC_IDS.has(serviceId) ? credentialFor?.(serviceId) : undefined;
   if (pin?.credential === "team") {
     return isTeamEntryConfigured(vault, serviceId, pin.teamEntry);
   }

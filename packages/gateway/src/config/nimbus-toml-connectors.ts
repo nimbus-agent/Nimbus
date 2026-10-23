@@ -17,6 +17,23 @@ export const TEAM_CREDENTIAL_CONNECTORS = [
 ] as const;
 export type TeamCredentialConnector = (typeof TEAM_CREDENTIAL_CONNECTORS)[number];
 
+/**
+ * The team-credential connectors whose SYNC drains through the team credential: the ones registered
+ * on `createWarehouseListSyncable` (`connectors/warehouse-sync-transport.ts`). argocd/flux/mlflow
+ * take a team credential for their writes only; their sync reads the personal keys. The scheduler's
+ * configured-check judges a team pin by its team entry only for these ids, and
+ * `platform/assemble-sync-registrations.test.ts` keeps this list equal to the registered
+ * warehouse syncables.
+ */
+export const TEAM_CREDENTIAL_SYNC_CONNECTORS = [
+  "snowflake",
+  "tableau",
+  "looker",
+  "powerbi",
+  "montecarlo",
+  "bigeye",
+] as const satisfies readonly TeamCredentialConnector[];
+
 export interface ConnectorCredentialConfig {
   readonly credential: "personal" | "team";
   readonly teamEntry?: string;

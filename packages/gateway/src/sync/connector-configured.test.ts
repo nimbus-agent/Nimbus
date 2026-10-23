@@ -290,6 +290,35 @@ describe("isConnectorConfigured — a team-pinned warehouse connector", () => {
     expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin())).toBe(false);
   });
 
+  test("an invalid entry name is not configured, and does not throw", async () => {
+    const vault = fakeVault({ "teamvault.Bad.Entry.snowflake.account": "acct" });
+    expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin("Bad.Entry"))).toBe(
+      false,
+    );
+  });
+
+  // argocd/flux/mlflow accept `credential = "team"` for their WRITES only: their sync reads the
+  // personal keys (`ctx.getSecret`), so a team pin must not change how their sync is judged.
+  describe("a team pin on a connector whose SYNC reads personal keys (argocd)", () => {
+    const argocdTeamPin = (serviceId: string) =>
+      serviceId === "argocd"
+        ? { credential: "team" as const, teamEntry: "acme" }
+        : { credential: "personal" as const };
+
+    test("personal keys set and an empty team entry: configured", async () => {
+      const vault = fakeVault({ "argocd.url": "https://argo.example.com", "argocd.token": "t" });
+      expect(await isConnectorConfigured(vault, "argocd", undefined, argocdTeamPin)).toBe(true);
+    });
+
+    test("only the team entry populated: NOT configured", async () => {
+      const vault = fakeVault({
+        [teamVaultKey("acme", "argocd.url")]: "https://argo.example.com",
+        [teamVaultKey("acme", "argocd.token")]: "t",
+      });
+      expect(await isConnectorConfigured(vault, "argocd", undefined, argocdTeamPin)).toBe(false);
+    });
+  });
+
   test("a blank team-entry key is treated as absent", async () => {
     const vault = fakeVault({ [teamVaultKey("acme", "snowflake.account")]: "  " });
     expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin("acme"))).toBe(false);

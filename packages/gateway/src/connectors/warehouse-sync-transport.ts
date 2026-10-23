@@ -51,6 +51,17 @@ export interface WarehouseListSource {
   readonly map: (row: unknown, mapping: { readonly syncedAt: number }) => SyncUpsertRow | null;
 }
 
+/** Every syncable built by {@link createWarehouseListSyncable}, so its id set can be checked. */
+const warehouseListSyncables = new WeakSet<Syncable>();
+
+/**
+ * Whether `syncable` was built on this transport, the only sync path that reads a team credential.
+ * `TEAM_CREDENTIAL_SYNC_CONNECTORS` is pinned to the ids this answers true for.
+ */
+export function isWarehouseListSyncable(syncable: Syncable): boolean {
+  return warehouseListSyncables.has(syncable);
+}
+
 /**
  * A warehouse/BI syncable on the unified Wave-7b spawn transport. Each source's `_list` is drained
  * through {@link listConnectorItems} (personal: a service-scoped vault view; team: the I19
@@ -63,7 +74,7 @@ export function createWarehouseListSyncable(
   serviceId: string,
   sources: readonly WarehouseListSource[],
 ): Syncable {
-  return {
+  const syncable: Syncable = {
     serviceId,
     defaultIntervalMs: 10 * 60 * 1000,
     initialSyncDepthDays: 30,
@@ -89,6 +100,8 @@ export function createWarehouseListSyncable(
       };
     },
   };
+  warehouseListSyncables.add(syncable);
+  return syncable;
 }
 
 /** Opens a team-credentialed session and drains its paginated `_list` (production: drainTeamListSession). */
