@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -17,6 +17,7 @@ import type { ChatopsAgentInvokerDeps } from "../agent-runs/agent-chatops-invoke
 import { DEFAULT_ONCALL_PUSH_CONFIG } from "../config/oncall-push-toml.ts";
 import { resetPersonaWarningsForTest } from "../config/persona.ts";
 import { writeConnectorSecret } from "../connectors/connector-vault.ts";
+import { LazyConnectorMesh } from "../connectors/lazy-mesh/mesh.ts";
 import { THIS_BINARY_COVERAGE } from "../egress/egress-coverage.ts";
 import { appendEgressEntry } from "../egress/egress-ledger.ts";
 import { coverageForWindow } from "../egress/egress-verify.ts";
@@ -734,11 +735,10 @@ describe("assemblePlatformServices — in-process assembly", () => {
     }) as typeof fetch;
     try {
       // Six of these thirteen (`google_drive`/`gmail`/`google_photos`/`google_meet`/`onedrive`/
-      // `outlook`) throw a "not configured" Error straight out of their own `sync()` when
-      // unconfigured — pre-existing, unmodified connector behavior this fix does not touch — so a
-      // forced run on any of them REJECTS the `forceSync` promise. Each rejection is swallowed
-      // individually: what this test asserts is the egress ROW COUNT, not that every one of these
-      // connectors resolves cleanly against an empty Vault.
+      // `outlook`) throw a "not configured" Error out of their own `sync()` when unconfigured. The
+      // scheduler now skips an unconfigured run before `sync()`, so none should reject here; each
+      // rejection is still swallowed individually, because what this test asserts is the egress
+      // ROW COUNT and the fetch count, not how each forced run settles.
       await Promise.all(
         emptyManifestServiceIds.map((id) =>
           services?.syncScheduler.forceSync(id).catch(() => undefined),
@@ -761,6 +761,53 @@ describe("assemblePlatformServices — in-process assembly", () => {
     expect(rows).toEqual([]);
   }, 60000);
 
+  // An unconfigured connector's `sync()` used to start its MCP bundle (`ensure*Running`) before it
+  // looked for a credential: with an empty Vault every phase-3 syncable rebuilt the whole phase-3
+  // server config (~110 Vault reads, one `secret-tool` process each on Linux) on every run, for the
+  // ~90 registrations all due at once in the first catch-up wave. The scheduler now skips the run.
+  it("the first catch-up wave against an EMPTY Vault starts no connector bundle", async () => {
+    const paths = makePaths();
+    rmSync(paths.configDir, { recursive: true, force: true });
+    mkdirSync(paths.configDir, { recursive: true });
+
+    const ensureNames = Object.getOwnPropertyNames(LazyConnectorMesh.prototype).filter(
+      (name) => name.startsWith("ensure") && name.endsWith("Running"),
+    );
+    expect(ensureNames.length).toBeGreaterThan(10);
+    const started: string[] = [];
+    const spies = ensureNames.map((name) =>
+      spyOn(
+        LazyConnectorMesh.prototype as unknown as Record<string, () => Promise<void>>,
+        name,
+      ).mockImplementation(async () => {
+        started.push(name);
+      }),
+    );
+    try {
+      services = await assemblePlatformServices(paths, makeInMemoryVault());
+      const db = services.localIndex.getDatabase();
+      const registered = (
+        db.query("SELECT COUNT(*) AS c FROM scheduler_state").get() as { c: number }
+      ).c;
+      expect(registered).toBeGreaterThan(80);
+      // The wave is over once every registered service has recorded a run.
+      const pending = (): number =>
+        (
+          db
+            .query("SELECT COUNT(*) AS c FROM scheduler_state WHERE last_sync_at IS NULL")
+            .get() as { c: number }
+        ).c;
+      const deadline = Date.now() + 30_000;
+      while (pending() > 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(started).toEqual([]);
+      expect(pending()).toBe(0);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  }, 60000);
+
   // Fix 1, other half: gating must not silence the LEGITIMATE case — once one of these 13
   // actually has its real signal set, the run must still ledger exactly ONE `sync` row, the same
   // as any other configured connector. `github_actions` is picked because its own `sync()`
@@ -778,6 +825,24 @@ describe("assemblePlatformServices — in-process assembly", () => {
     // the explicit `forceSync` below and appending a SECOND row, which would make this assertion
     // flaky for a reason that has nothing to do with what it is testing.
     services.syncScheduler.pause("github_actions");
+    // Let the first catch-up wave finish before forcing. An unconfigured run is now skipped rather
+    // than started, so the wave is fast enough that `github_actions`' own catch-up run (pre-secret)
+    // can still be in flight here, and a force waiter is settled by whichever run of that service
+    // finishes next.
+    const waveDb = services.localIndex.getDatabase();
+    const waveDeadline = Date.now() + 30_000;
+    const othersPending = (): number =>
+      (
+        waveDb
+          .query(
+            "SELECT COUNT(*) AS c FROM scheduler_state WHERE last_sync_at IS NULL AND service_id != 'github_actions'",
+          )
+          .get() as { c: number }
+      ).c;
+    while (othersPending() > 0 && Date.now() < waveDeadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await new Promise((r) => setTimeout(r, 20));
 
     await writeConnectorSecret(services.vault, "github", "pat", "ghp_test_token");
     await services.syncScheduler.forceSync("github_actions");

@@ -26,6 +26,17 @@ function makeCtx(): SyncContext {
   };
 }
 
+/**
+ * A context whose Vault holds `vaultKey`. The tests below use real manifest ids (`github`, `jira`,
+ * `slack`): with an empty Vault the scheduler skips their run as unconfigured, so the error a
+ * connector throws would never be reached.
+ */
+async function makeConfiguredCtx(vaultKey: string): Promise<SyncContext> {
+  const vault = createMemoryVault();
+  await vault.set(vaultKey, "t");
+  return { ...makeCtx(), vault } as SyncContext;
+}
+
 async function forceSyncExpectReject(sched: SyncScheduler, serviceId: string): Promise<void> {
   try {
     await sched.forceSync(serviceId);
@@ -56,7 +67,7 @@ afterEach(() => {
 
 describe("RateLimitError", () => {
   test("transitions health to rate_limited after connector throws", async () => {
-    const ctx = makeCtx();
+    const ctx = await makeConfiguredCtx("github.pat");
     const retryAfter = new Date(Date.now() + 60_000);
     const c: Syncable = {
       ...okConnector("github"),
@@ -108,7 +119,7 @@ describe("RateLimitError", () => {
 
 describe("UnauthenticatedError", () => {
   test("transitions health to unauthenticated", async () => {
-    const ctx = makeCtx();
+    const ctx = await makeConfiguredCtx("jira.api_token");
     const c: Syncable = {
       ...okConnector("jira"),
       async sync(): Promise<SyncResult> {
@@ -126,7 +137,7 @@ describe("UnauthenticatedError", () => {
   });
 
   test("calls notify with connector name when unauthenticated", async () => {
-    const ctx = makeCtx();
+    const ctx = await makeConfiguredCtx("slack.bot_token");
     const notifications: Array<[string, string]> = [];
     const c: Syncable = {
       ...okConnector("slack"),

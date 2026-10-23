@@ -18,6 +18,7 @@ import {
   type Syncable,
   type SyncContext,
   type SyncResult,
+  syncNoopResult,
   UnauthenticatedError,
 } from "./types.ts";
 
@@ -1060,9 +1061,8 @@ describe("SyncScheduler — error-path + lifecycle branch coverage", () => {
       await sched.forceSync("github");
       await sched.stop();
 
-      // The connector's own sync() still runs (and, in production, still no-ops without any
-      // network call) — only the egress append is gated on configuration.
-      expect(syncCalls).toBe(1);
+      // The connector's own sync() is not run at all: the scheduler records the no-op itself.
+      expect(syncCalls).toBe(0);
       expect(rows).toHaveLength(0);
     });
 
@@ -1142,10 +1142,17 @@ describe("SyncScheduler — one-shot history floor", () => {
     };
   }
 
+  /** `jira` is a real manifest id: seed its credential so the run is not skipped as unconfigured. */
+  async function jiraContext(db: Database): Promise<SyncRuntimeContext> {
+    const ctx = testContext(db);
+    await ctx.vault.set("jira.api_token", "t");
+    return ctx;
+  }
+
   test("setHistoryFloor reaches the connector on the next run", async () => {
     const db = openMemoryIndexDatabase();
     const seen: Array<number | undefined> = [];
-    const sched = new SyncScheduler(testContext(db));
+    const sched = new SyncScheduler(await jiraContext(db));
     sched.register(recordingSyncable(seen));
 
     const floor = Date.parse("2024-01-01T00:00:00.000Z");
@@ -1159,7 +1166,7 @@ describe("SyncScheduler — one-shot history floor", () => {
   test("the floor is consumed by a successful run and not reused", async () => {
     const db = openMemoryIndexDatabase();
     const seen: Array<number | undefined> = [];
-    const sched = new SyncScheduler(testContext(db));
+    const sched = new SyncScheduler(await jiraContext(db));
     sched.register(recordingSyncable(seen));
 
     sched.setHistoryFloor("jira", 1_700_000_000_000);
@@ -1177,7 +1184,7 @@ describe("SyncScheduler — one-shot history floor", () => {
     // complete.
     const db = openMemoryIndexDatabase();
     const seen: Array<number | undefined> = [];
-    const sched = new SyncScheduler(testContext(db), {}, { random: () => 0 });
+    const sched = new SyncScheduler(await jiraContext(db), {}, { random: () => 0 });
     sched.register(
       recordingSyncable(seen, (call) => {
         if (call === 1) {
@@ -1217,7 +1224,9 @@ describe("SyncScheduler records whether a run had a credential at all (F6/F13)",
     };
   }
 
-  test("a run with no credential leaves the connector not_configured, not healthy", async () => {
+  test("a run with no credential does not call sync() and leaves the connector not_configured", async () => {
+    // The scheduler already knows the answer before `sync()`: running it anyway only made each
+    // connector re-probe the Vault (one `secret-tool` spawn per key on Linux) to reach the same no-op.
     const db = openMemoryIndexDatabase();
     const ctx = testContext(db);
     let runs = 0;
@@ -1228,8 +1237,182 @@ describe("SyncScheduler records whether a run had a credential at all (F6/F13)",
     await sleep(120);
     await sched.stop();
 
-    expect(runs).toBeGreaterThan(0);
+    expect(runs).toBe(0);
     expect(getConnectorHealth(db, "jenkins").state).toBe("not_configured");
+    expect(loadSchedulerState(db, "jenkins")?.last_sync_at).not.toBeNull();
+  });
+
+  test("the skipped run records exactly what an unconfigured no-op run recorded", async () => {
+    // Health not_configured, status ok, lastSyncAt set, one telemetry row, NO sync.run egress row,
+    // the onConnectorSyncSuccess hook, the cursor kept, and the next run at the normal interval.
+    const db = openMemoryIndexDatabase();
+    const ctx = testContext(db);
+    const egress: unknown[] = [];
+    const hooked: Array<{ id: string; result: SyncResult }> = [];
+    const sched = new SyncScheduler(
+      ctx,
+      {},
+      {
+        appendSyncEgress: (r) => egress.push(r),
+        onConnectorSyncSuccess: (id, result) => hooked.push({ id, result }),
+      },
+    );
+    let runs = 0;
+    sched.register({
+      serviceId: "jenkins",
+      defaultIntervalMs: 600_000,
+      initialSyncDepthDays: 30,
+      // What every unconfigured built-in connector's own sync() returned before this change.
+      async sync(_ctx, cursor): Promise<SyncResult> {
+        runs += 1;
+        return syncNoopResult(cursor, performance.now());
+      },
+    });
+    db.run("UPDATE scheduler_state SET cursor = 'kept' WHERE service_id = 'jenkins'");
+    const before = Date.now();
+    // Two runs: the first-ever run has no `sync_state` row yet, so the configured flag only lands
+    // from the second run on (pre-existing, unchanged here).
+    await sched.forceSync("jenkins");
+    await sched.forceSync("jenkins");
+    await sched.stop();
+
+    expect(runs).toBe(0);
+    const row = loadSchedulerState(db, "jenkins");
+    expect(row?.status).toBe("ok");
+    expect(row?.cursor).toBe("kept");
+    expect(row?.consecutive_failures).toBe(0);
+    expect(row?.last_sync_at ?? 0).toBeGreaterThanOrEqual(before);
+    expect((row?.next_sync_at ?? 0) - (row?.last_sync_at ?? 0)).toBe(600_000);
+    expect(getConnectorHealth(db, "jenkins").state).toBe("not_configured");
+    expect(egress).toEqual([]);
+    const telemetry = db
+      .query("SELECT items_upserted, had_more, error_msg FROM sync_telemetry WHERE service = ?")
+      .all("jenkins");
+    expect(telemetry).toEqual([
+      { items_upserted: 0, had_more: 0, error_msg: null },
+      { items_upserted: 0, had_more: 0, error_msg: null },
+    ]);
+    expect(hooked).toHaveLength(2);
+    expect(hooked[1]?.id).toBe("jenkins");
+    expect(hooked[1]?.result).toMatchObject({
+      cursor: "kept",
+      itemsUpserted: 0,
+      itemsDeleted: 0,
+      hasMore: false,
+    });
+  });
+
+  test("forceSync on an unconfigured service resolves without calling sync()", async () => {
+    const db = openMemoryIndexDatabase();
+    let runs = 0;
+    const sched = new SyncScheduler(testContext(db), {});
+    sched.register(syncableNamed("jenkins", () => (runs += 1)));
+    await sched.forceSync("jenkins");
+    await sched.stop();
+
+    expect(runs).toBe(0);
+  });
+
+  test("a local-only service (filesystem) and a non-manifest id still call sync() with an empty Vault", async () => {
+    // Neither has a manifest entry, so nothing in the Vault can say they are unconfigured.
+    const db = openMemoryIndexDatabase();
+    const seen: string[] = [];
+    const sched = new SyncScheduler(testContext(db), {});
+    sched.register(syncableNamed("filesystem", () => seen.push("filesystem")));
+    sched.register(syncableNamed("user_mcp_local", () => seen.push("user_mcp_local")));
+    await sched.forceSync("filesystem");
+    await sched.forceSync("user_mcp_local");
+    await sched.stop();
+
+    expect(seen).toContain("filesystem");
+    expect(seen).toContain("user_mcp_local");
+  });
+
+  test("an approved extension whose grant credentials are blank is not started; once set, it is", async () => {
+    const db = openMemoryIndexDatabase();
+    const vault = createMemoryVault();
+    const ctx: SyncRuntimeContext = {
+      ...testContext(db),
+      vault,
+      extensionCredentialsFor: (id) =>
+        id === "ext_a_b" ? { token: { env: "T", vaultKey: "ext.ext_a_b.token" } } : undefined,
+    };
+    let runs = 0;
+    const sched = new SyncScheduler(ctx, {});
+    sched.register(syncableNamed("ext_a_b", () => (runs += 1)));
+
+    await vault.set("ext.ext_a_b.token", "  ");
+    await sched.forceSync("ext_a_b");
+    expect(runs).toBe(0);
+
+    await vault.set("ext.ext_a_b.token", "secret");
+    await sched.forceSync("ext_a_b");
+    await sched.stop();
+    expect(runs).toBe(1);
+  });
+
+  describe("a warehouse connector pinned to a team credential", () => {
+    function teamPinnedContext(db: Database): SyncRuntimeContext {
+      return {
+        ...testContext(db),
+        credentialFor: (service) =>
+          service === "snowflake"
+            ? { credential: "team", teamEntry: "acme" }
+            : { credential: "personal" },
+      };
+    }
+
+    test("with the team entry's secrets set, sync() runs and one sync.run egress row is recorded", async () => {
+      const db = openMemoryIndexDatabase();
+      const ctx = teamPinnedContext(db);
+      // The bare `snowflake.*` keys stay empty: a team run never reads them.
+      await ctx.vault.set("teamvault.acme.snowflake.account", "acct");
+      const egress: Array<{ destination: string; method: string }> = [];
+      let runs = 0;
+      const sched = new SyncScheduler(ctx, {}, { appendSyncEgress: (r) => egress.push(r) });
+      sched.register(syncableNamed("snowflake", () => (runs += 1)));
+      await sched.forceSync("snowflake");
+      await sched.stop();
+
+      expect(runs).toBe(1);
+      expect(egress).toEqual([
+        expect.objectContaining({ destination: "snowflake", method: "sync.run" }),
+      ]);
+      expect(getConnectorHealth(db, "snowflake").state).toBe("healthy");
+    });
+
+    test("with an empty team entry, the run is skipped and records no egress row", async () => {
+      const db = openMemoryIndexDatabase();
+      const ctx = teamPinnedContext(db);
+      // A personal key does not count for a team-pinned service.
+      await ctx.vault.set("snowflake.account", "acct");
+      const egress: unknown[] = [];
+      let runs = 0;
+      const sched = new SyncScheduler(ctx, {}, { appendSyncEgress: (r) => egress.push(r) });
+      sched.register(syncableNamed("snowflake", () => (runs += 1)));
+      await sched.forceSync("snowflake");
+      await sched.forceSync("snowflake");
+      await sched.stop();
+
+      expect(runs).toBe(0);
+      expect(egress).toEqual([]);
+      expect(getConnectorHealth(db, "snowflake").state).toBe("not_configured");
+    });
+
+    test("a personal warehouse keeps the manifest-key check", async () => {
+      const db = openMemoryIndexDatabase();
+      const ctx = testContext(db);
+      let runs = 0;
+      const sched = new SyncScheduler(ctx, {});
+      sched.register(syncableNamed("snowflake", () => (runs += 1)));
+      await sched.forceSync("snowflake");
+      expect(runs).toBe(0);
+
+      await ctx.vault.set("snowflake.account", "acct");
+      await sched.forceSync("snowflake");
+      await sched.stop();
+      expect(runs).toBe(1);
+    });
   });
 
   test("a run WITH a credential reports healthy", async () => {
@@ -1254,10 +1437,12 @@ describe("per-service capability binding", () => {
   // first. `runJob` and `syncContextFor` are the first points that know the service.
   function ctxWithVaultSpy(db: Database): { ctx: SyncRuntimeContext; asked: string[] } {
     const asked: string[] = [];
+    // Every key answers non-blank, so the service counts as configured and its `sync()` runs:
+    // an unconfigured service's run is skipped before the syncable could read anything.
     const vault = {
       get: (key: string) => {
         asked.push(key);
-        return Promise.resolve(null);
+        return Promise.resolve("seeded");
       },
     } as unknown as SyncRuntimeContext["vault"];
     return { ctx: { ...testContext(db), vault }, asked };
