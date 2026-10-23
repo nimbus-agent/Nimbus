@@ -1301,7 +1301,9 @@ describe("LocalIndex pause / resume / setInterval / clearCursor", () => {
     idx.pauseConnectorSync("github");
     idx.resumeConnectorSync("github");
     const status = idx.persistedConnectorStatuses("github")[0];
-    expect(status?.healthState).not.toBe("paused");
+    // "healthy", not merely "not paused": a paused health state would keep a later scheduler
+    // from dispatching this connector (SKIP_HEALTH_STATES).
+    expect(status?.healthState).toBe("healthy");
     expect(status?.lastError).toBeNull();
     expect(getConnectorHealthHistory(db, "github")[0]?.reason).toBe("connector resumed");
   });
