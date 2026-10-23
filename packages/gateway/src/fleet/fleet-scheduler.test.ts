@@ -7,7 +7,12 @@ import { FLEET_V60_SQL } from "../index/fleet-v60-sql.ts";
 import type { HostActivityProbe } from "../platform/host-activity.ts";
 import type { FleetInvoker, FleetJobOutcome } from "./fleet-invoker.ts";
 import type { FleetRunBudget, FleetRunSummary } from "./fleet-scheduler.ts";
-import { DEFAULT_TICK_MS, FleetScheduler, isJobDue } from "./fleet-scheduler.ts";
+import {
+  DEFAULT_TICK_MS,
+  FleetReloadingError,
+  FleetScheduler,
+  isJobDue,
+} from "./fleet-scheduler.ts";
 import { FleetStore } from "./fleet-store.ts";
 import type { FleetSweepEnumerate, SweepSubject } from "./fleet-sweep-enumerators.ts";
 import { createFleetRemoteBudget, wrapFleetSynthesisRouter } from "./fleet-synthesis-router.ts";
@@ -1122,5 +1127,130 @@ describe("FleetScheduler.start/stop", () => {
     s.stop();
     process.off("unhandledRejection", onRejection);
     expect(rejections).toBe(0);
+  });
+});
+
+describe("FleetScheduler.retire", () => {
+  const ONE_JOB: readonly NimbusFleetJobToml[] = [JOBS[0] as NimbusFleetJobToml];
+
+  function blocking(): { invoke: FleetInvoker; release: () => void } {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    return {
+      invoke: async (job) => {
+        await gate;
+        return done(job.name);
+      },
+      release,
+    };
+  }
+
+  test("retire waits for the in-flight run", async () => {
+    const b = blocking();
+    const s = build({ probes: [AC_IDLE], invoke: b.invoke, jobs: ONE_JOB });
+    const run = s.runOnce({ force: true });
+    await sleep(5);
+    let retired = false;
+    const r = s.retire().then(() => {
+      retired = true;
+    });
+    await sleep(20);
+    expect(retired).toBe(false);
+    b.release();
+    const summary = await run;
+    await r;
+    expect(summary.jobsAttempted).toBe(1);
+    expect(retired).toBe(true);
+  });
+
+  test("a retired scheduler refuses new runs", async () => {
+    let calls = 0;
+    const s = build({
+      probes: [AC_IDLE],
+      invoke: async (job) => {
+        calls += 1;
+        return done(job.name);
+      },
+    });
+    await s.retire();
+    await expect(s.runOnce()).rejects.toBeInstanceOf(FleetReloadingError);
+    expect(calls).toBe(0);
+  });
+
+  test("retire stops the tick", async () => {
+    let calls = 0;
+    const s = build({
+      probes: [AC_IDLE],
+      tickMs: 10,
+      invoke: async (job) => {
+        calls += 1;
+        return done(job.name);
+      },
+    });
+    s.start();
+    await s.retire();
+    await sleep(50);
+    expect(calls).toBe(0);
+  });
+
+  test("retire with nothing in flight resolves at once", async () => {
+    const s = build({ probes: [AC_IDLE], invoke: async (job) => done(job.name) });
+    await expect(s.retire()).resolves.toBeUndefined();
+    expect(() => s.stop()).not.toThrow();
+  });
+
+  test("retire is idempotent", async () => {
+    const b = blocking();
+    const s = build({ probes: [AC_IDLE], invoke: b.invoke, jobs: ONE_JOB });
+    const run = s.runOnce({ force: true });
+    await sleep(5);
+    const first = s.retire();
+    const second = s.retire();
+    expect(second).toBe(first);
+    let settled = false;
+    void first.then(() => {
+      settled = true;
+    });
+    await sleep(20);
+    expect(settled).toBe(false);
+    b.release();
+    await run;
+    await first;
+    expect(settled).toBe(true);
+  });
+
+  test("retire in the same turn as runOnce still waits", async () => {
+    const b = blocking();
+    const s = build({ probes: [AC_IDLE], invoke: b.invoke, jobs: ONE_JOB });
+    const run = s.runOnce({ force: true });
+    let retired = false;
+    const r = s.retire().then(() => {
+      retired = true;
+    });
+    await sleep(20);
+    expect(retired).toBe(false);
+    b.release();
+    await run;
+    await r;
+    expect(retired).toBe(true);
+  });
+
+  test("retire swallows a failing run, which its own caller still sees", async () => {
+    const s = build({
+      probes: [AC_IDLE],
+      jobs: ONE_JOB,
+      invoke: async () => {
+        throw new Error("boom");
+      },
+    });
+    const run = s.runOnce({ force: true });
+    const outcome = run.then(
+      () => "resolved",
+      () => "rejected",
+    );
+    await expect(s.retire()).resolves.toBeUndefined();
+    expect(["resolved", "rejected"]).toContain(await outcome);
   });
 });

@@ -29,6 +29,18 @@ export class FleetDisabledError extends Error {}
  */
 export class FleetJobNotFoundError extends Error {}
 
+/**
+ * Thrown by `runOnce` on a scheduler that has been `retire()`d: its config is being replaced, so a
+ * new run belongs to the successor. Distinct from `deferred`, which means "try the same scheduler
+ * again later" — a retired one never will.
+ */
+export class FleetReloadingError extends Error {
+  constructor(message = "fleet is reloading its config; try again") {
+    super(message);
+    this.name = "FleetReloadingError";
+  }
+}
+
 export interface FleetRunSummary {
   /** `null` when no `fleet_run` row was opened — the run was refused before any work began. */
   readonly runId: string | null;
@@ -171,9 +183,16 @@ export class FleetScheduler {
    * `fleet_run`, interleaves its writes with the first, and puts two jobs on the local model at
    * once: the exact concurrency the sequential invoker exists to prevent, reintroduced one level
    * up. It is set and cleared around a single `await` in `runOnce`, so no caller can observe it
-   * half-applied, and the `finally` clears it on the throwing path too.
+   * half-applied, and the `finally` clears it on the throwing path too. `retire()` is the second
+   * reader (through `running`, which is set in the same synchronous step).
    */
   private inFlight = false;
+
+  /** The in-flight run, set synchronously with `inFlight` so a same-turn `retire()` finds it. */
+  private running: Promise<FleetRunSummary> | undefined;
+
+  private retired = false;
+  private retirePromise: Promise<void> | undefined;
 
   constructor(private readonly deps: FleetSchedulerDeps) {}
 
@@ -190,6 +209,21 @@ export class FleetScheduler {
   stop(): void {
     if (this.timer !== undefined) clearInterval(this.timer);
     this.timer = undefined;
+  }
+
+  /**
+   * Stops the tick, refuses every later `runOnce`, and resolves once any in-flight run has settled.
+   * Never rejects: a failing run's rejection belongs to the caller that started it. Idempotent —
+   * every call returns the first call's promise. `stop()` stays callable on a retired scheduler.
+   */
+  retire(): Promise<void> {
+    if (this.retirePromise !== undefined) return this.retirePromise;
+    this.retired = true;
+    this.stop();
+    this.retirePromise = (this.running?.catch(() => undefined) ?? Promise.resolve()).then(
+      () => undefined,
+    );
+    return this.retirePromise;
   }
 
   /**
@@ -217,6 +251,10 @@ export class FleetScheduler {
       throw new FleetDisabledError("fleet is disabled by org policy");
     }
 
+    // After the enabled/policy checks so their messages are unchanged, and before the job lookup and
+    // the `inFlight` check so a retired scheduler never answers `deferred`.
+    if (this.retired) throw new FleetReloadingError();
+
     const jobName = opts?.jobName;
     const jobs =
       jobName === undefined ? this.deps.jobs : this.deps.jobs.filter((j) => j.name === jobName);
@@ -242,10 +280,13 @@ export class FleetScheduler {
       };
     }
     this.inFlight = true;
+    const run = this.execute(jobs, opts?.force === true, jobName !== undefined);
+    this.running = run;
     try {
-      return await this.execute(jobs, opts?.force === true, jobName !== undefined);
+      return await run;
     } finally {
       this.inFlight = false;
+      this.running = undefined;
     }
   }
 
