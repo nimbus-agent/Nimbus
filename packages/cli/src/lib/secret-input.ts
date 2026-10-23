@@ -16,12 +16,10 @@ export interface SecretInputIo {
 /** A masked-input prompt: the typed string, or clack's cancel symbol. */
 export type PasswordPrompt = (opts: { message: string }) => Promise<string | symbol>;
 
-async function clackPassword(opts: { message: string }): Promise<string | symbol> {
-  // Loaded on use: the CLI test helpers mock `@clack/prompts` process-wide without `password`,
-  // and a static named import would fail every test file that loads this module.
-  const { password } = await import("@clack/prompts");
-  return password(opts);
-}
+// Loaded on use: the CLI test helpers mock `@clack/prompts` process-wide without `password`,
+// and a static named import would fail every test file that loads this module.
+const clackPassword: PasswordPrompt = (opts) =>
+  import("@clack/prompts").then(({ password }) => password(opts));
 
 export function defaultSecretInputIo(prompt: PasswordPrompt = clackPassword): SecretInputIo {
   return {

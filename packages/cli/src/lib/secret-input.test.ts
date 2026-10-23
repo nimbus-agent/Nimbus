@@ -83,6 +83,26 @@ describe("readSecretValue", () => {
     }
   });
 
+  test("at a terminal: the hidden prompt's answer, or a cancel that stores nothing", async () => {
+    const tty = { stdinIsTty: true, scriptConsentSource: undefined };
+    let asked = "";
+    const answer = await readSecretValue(
+      io({
+        ...tty,
+        readHidden: async (message) => {
+          asked = message;
+          return "s3cret";
+        },
+      }),
+      "k",
+    );
+    expect(answer).toBe("s3cret");
+    expect(asked).toBe("Value for k (input is hidden)");
+    await expect(
+      readSecretValue(io({ ...tty, readHidden: async () => undefined }), "k"),
+    ).rejects.toThrow("Cancelled; nothing was stored.");
+  });
+
   test("keeps inner and leading whitespace: only the shell's line ending is dropped", async () => {
     expect(await readSecretValue(io({ readStdin: async () => " a b\n" }), "k")).toBe(" a b");
   });
