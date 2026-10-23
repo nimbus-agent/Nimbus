@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.3.1](https://github.com/nimbus-agent/Nimbus/compare/v10.3.0...v10.3.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **deps:** clear main's red Security run (withdrawn braces advisory, tokio + clipboard-win) ([#1748](https://github.com/nimbus-agent/Nimbus/issues/1748)) ([baba9ce](https://github.com/nimbus-agent/Nimbus/commit/baba9cebe4bdab6efc1dbfdba4abe54fa667b669))
+
 ## [10.3.0](https://github.com/nimbus-agent/Nimbus/compare/v10.2.0...v10.3.0) (2026-10-23)
 
 
