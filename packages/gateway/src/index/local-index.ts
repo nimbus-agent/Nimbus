@@ -9,6 +9,7 @@ import {
   type QueryLatencyKind,
   recordSlowQuery,
 } from "../db/latency-ring-buffer.ts";
+import { optimizeQueryPlanner } from "../db/writable-pragmas.ts";
 import { dbRun } from "../db/write.ts";
 import type { DualVectorsOutcome } from "../embedding/embedding-readiness.ts";
 import {
@@ -38,6 +39,7 @@ import {
   setPaused,
   upsertSchedulerRegistration,
 } from "../sync/scheduler-store.ts";
+import { statusLastError } from "../sync/status-last-error.ts";
 import type { SyncStatus } from "../sync/types.ts";
 import { buildItemListSql, type ItemListQueryParams } from "./item-list-query.ts";
 import {
@@ -279,7 +281,7 @@ export interface LanPeerRow {
   last_seen_at: string | null;
 }
 
-export const CURRENT_SCHEMA_VERSION = 71;
+export const CURRENT_SCHEMA_VERSION = 73;
 
 const ALLOWED_META_KEYS = new Set<string>(["onboarding_completed"]);
 
@@ -346,7 +348,8 @@ export class LocalIndex {
       nextSyncAt: row.next_sync_at,
       intervalMs: row.interval_ms,
       itemCount: countItemsForService(db, row.service_id),
-      lastError: row.error_msg,
+      // A pause carries its reason in the health row, and it wins over a stale sync error.
+      lastError: statusLastError(status === "paused", row.error_msg, health.lastError),
       consecutiveFailures: row.consecutive_failures,
       healthState: health.state,
       healthRetryAfterMs: health.retryAfter === undefined ? null : health.retryAfter.getTime(),
@@ -435,6 +438,9 @@ export class LocalIndex {
       throw new Error(`Unknown connector: ${serviceId}`);
     }
     setPaused(this.db, serviceId, true);
+    // The no-scheduler twin of SyncScheduler.pause: without the transition a stale health
+    // last_error would outrank the scheduler row's error in the paused status.
+    transitionHealth(this.db, serviceId, { type: "paused" });
   }
 
   resumeConnectorSync(serviceId: string): void {
@@ -442,6 +448,8 @@ export class LocalIndex {
       throw new Error(`Unknown connector: ${serviceId}`);
     }
     setPaused(this.db, serviceId, false);
+    // Health "paused" is a scheduler skip state; leaving it would block a later scheduler.
+    transitionHealth(this.db, serviceId, { type: "resumed" });
   }
 
   setConnectorSyncIntervalMs(serviceId: string, intervalMs: number, now: number): void {
@@ -967,6 +975,8 @@ export class LocalIndex {
   }
 
   close(): void {
+    // Keep planner statistics current for the next run (cheap: only tables whose stats drifted).
+    optimizeQueryPlanner(this.db, "close");
     try {
       dbRun(this.db, "PRAGMA wal_checkpoint(TRUNCATE)");
     } catch {

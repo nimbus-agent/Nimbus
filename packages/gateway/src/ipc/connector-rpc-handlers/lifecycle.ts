@@ -73,12 +73,11 @@ export async function handleConnectorSync(
 ): Promise<ConnectorRpcHit> {
   const { rec, localIndex, syncScheduler } = ctx;
   const id = requireRegisteredSchedulerServiceId(rec, localIndex);
-  if (rec?.["full"] === true) {
-    localIndex.clearConnectorSyncCursor(id);
-  }
   if (syncScheduler === undefined) {
     throw new ConnectorRpcError(-32603, "Sync scheduler is not available");
   }
-  await syncScheduler.forceSync(id);
+  // `full` is applied by the scheduler as the forced run starts, not here: a run already in
+  // flight would write its cursor back over a clear made now.
+  await syncScheduler.forceSync(id, { full: rec?.["full"] === true });
   return { kind: "hit", value: { ok: true } };
 }

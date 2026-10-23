@@ -11,6 +11,8 @@ import type { AskExplainRecorder } from "../../engine/ask-explain-recorder.ts";
 import type { ExecutorPolicyDep } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts";
+import type { ContinuityEntry } from "../../extensions/continuity/continuity-table.ts";
+import type { MigrationEngine } from "../../extensions/migration/migration-engine.ts";
 import type { RegistryFetchDeps } from "../../extensions/registry/registry-fetch.ts";
 import type { DiscoveryProvider } from "../../federation/discovery.ts";
 import type { PeerPairing } from "../../federation/peer-pairing.ts";
@@ -31,6 +33,7 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { VoiceService } from "../../voice/service.ts";
 import type { StatusReaders } from "../admin-status-rpc.ts";
 import type { AgentInvokeHandler } from "../agent-invoke.ts";
+import type { AutomationRpcExtensionSyncHandle } from "../automation-rpc.ts";
 import type { CaptureRpcCtx } from "../capture-rpc.ts";
 import type { ChatopsRpcCtx } from "../chatops-rpc.ts";
 import type { ComputerRpcCtx } from "../computer-rpc.ts";
@@ -113,6 +116,25 @@ export type CreateIpcServerOptions = {
    * before the prompt. Absent means the default (`true`); assemble always sets it.
    */
   extensionsRuntimeEnabled?: boolean;
+  /**
+   * The extension sync host's lifecycle hooks (`platform/register-extension-sync.ts`), called by the
+   * `extension.*` handlers that change whether an extension may sync, and by `extension.remove`'s
+   * purge. Absent means no extension sync host (tests).
+   */
+  extensionSync?: AutomationRpcExtensionSyncHandle;
+  /**
+   * The gateway composition's continuity table (`platform/migration-boot.ts`): the SAME value the
+   * sync registrar, the spawn verifier and the credential resolver get. `extension.approveRun`,
+   * `extension.credentialSet` / `credentialStatus` and `connector.remove`'s extension-backed refusal
+   * bind through it. Absent means the production default; assemble always sets it.
+   */
+  continuityTable?: readonly ContinuityEntry[];
+  /**
+   * The connector migration engine (connector-unbundling spec § 7.2), built once by
+   * `platform/assemble.ts`, which also runs its boot `evaluate()`. Serves `migration.*` (LAN-forbidden;
+   * `list` and `accept` are also renderer-callable, I46). Absent means those methods are not served (tests).
+   */
+  migrationEngine?: Pick<MigrationEngine, "list" | "accept" | "decline" | "retry">;
   extensionsAutoUpdate?: AutoUpdateRuntimeBag;
   extensionsAutoUpdateDiag?: {
     cachedUpdatesCount: () => number;

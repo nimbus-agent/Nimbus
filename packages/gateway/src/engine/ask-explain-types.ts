@@ -68,9 +68,9 @@ export type BaseExplainRecord = {
   readonly durationMs: number;
   readonly question: string;
   /**
-   * `local` means "some client on this machine's socket". A cli/desktop split is NOT derivable:
-   * only the MCP adapter ever calls `session.declareKind`, so a plain `nimbus ask` arrives
-   * undeclared. `chatops` is a fact — gateway-main binds that path with `clientId: "chatops"`.
+   * `local` means "some client on this machine's socket". A cli/desktop split is not used here: the
+   * MCP adapter declares `mcp` and the desktop's Tauri bridge declares `ui`, but a plain
+   * `nimbus ask` arrives undeclared, and a declared kind is a client's word, not a fact. `chatops` is a fact — gateway-main binds that path with `clientId: "chatops"`.
    * Spec §4.3.
    */
   readonly source: "chatops" | "local";

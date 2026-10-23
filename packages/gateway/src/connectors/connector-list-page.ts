@@ -1,4 +1,5 @@
 import type { ConnectorToolSession } from "../teamvault/connector-session.ts";
+import { extractMcpToolText } from "./_lib/mcp-tool-result.ts";
 
 export interface ListPage {
   readonly items: unknown[];
@@ -9,15 +10,11 @@ export const DEFAULT_LIST_PAGE_SIZE = 200;
 /** Hard backstop against a misbehaving cursor that never terminates. */
 const MAX_PAGES = 1000;
 
+/** A generous per-page ceiling so the shared extractor is total here; not a tuned limit. */
+const LIST_PAGE_MAX_BYTES = 64 * 1024 * 1024;
+
 function extractMcpText(result: unknown): string {
-  if (result !== null && typeof result === "object") {
-    const content = (result as Record<string, unknown>)["content"];
-    if (Array.isArray(content) && content.length > 0) {
-      const first = content[0] as Record<string, unknown>;
-      if (typeof first["text"] === "string") return first["text"];
-    }
-  }
-  throw new Error("connector list: unexpected MCP tool result shape");
+  return extractMcpToolText(result, LIST_PAGE_MAX_BYTES);
 }
 
 export function parseMcpListPage(result: unknown): ListPage {

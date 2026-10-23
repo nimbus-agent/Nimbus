@@ -8,8 +8,9 @@ import { insertExtensionRow } from "../automation/extension-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
-import { createAutoUpdateRuntime } from "./auto-update-init.ts";
+import { createAutoUpdateRuntime, withUpdateAppliedHook } from "./auto-update-init.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
+import type { AvailableUpdate } from "./auto-update-types.ts";
 import { writePublisherKey } from "./publisher-keys.ts";
 import { buildTestRegistry, resignIndex } from "./registry/__fixtures__/build-test-registry.ts";
 import { installFromRegistry } from "./registry/install-from-registry.ts";
@@ -35,6 +36,8 @@ const NO_NETWORK: Omit<RegistryFetchDeps, "db"> = {
   enforceAirGap: () => false,
   now: () => Date.now(),
   production: false,
+  // Neutral test default: never reach the real official registry host.
+  builtin: null,
 };
 
 function baseOpts(db: Database, extensionsDir: string, dataDir: string) {
@@ -336,6 +339,7 @@ describe("auto-update-init: hasRunGrant (extension runtime PR 3)", () => {
       permissions_json: "{}",
       model_access: 0,
       approved_at: 1,
+      credentials_json: "{}",
     });
     expect(await deps.hasRunGrant?.("com.example.g")).toBe(true);
     db.close();
@@ -523,5 +527,41 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       /^signature_failed: .*ERR_REGISTRY_PUBLISHER_KEY_CONFLICT/,
     );
     expect(installedVersion()).toBe("1.0.0");
+  });
+});
+
+describe("withUpdateAppliedHook", () => {
+  const update = { id: "x.ext" } as unknown as AvailableUpdate;
+
+  it("calls the hook with the id only after the update applied", async () => {
+    const seen: string[] = [];
+    await withUpdateAppliedHook(
+      async () => {
+        seen.push("performed");
+      },
+      (id) => seen.push(`applied:${id}`),
+    )(update);
+    expect(seen).toEqual(["performed", "applied:x.ext"]);
+  });
+
+  it("never calls it when the update failed", async () => {
+    const seen: string[] = [];
+    const run = withUpdateAppliedHook(
+      async () => {
+        throw new Error("swap_failed");
+      },
+      (id) => seen.push(id),
+    );
+    await expect(run(update)).rejects.toThrow("swap_failed");
+    expect(seen).toEqual([]);
+  });
+
+  it("a throwing hook does not report a committed update as failed", async () => {
+    await withUpdateAppliedHook(
+      async () => {},
+      () => {
+        throw new Error("refresh failed");
+      },
+    )(update);
   });
 });

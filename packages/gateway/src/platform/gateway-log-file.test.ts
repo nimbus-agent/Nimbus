@@ -1,14 +1,29 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { platform, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   createGatewayPinoLogger,
   createGatewayPinoLoggerForStream,
   emergencyGatewayLog,
+  emergencyGatewayLogForPlatform,
   gatewayDailyLogPath,
   gatewayLogBasename,
+  platformDailyLogPath,
   REDACT_VALUE_PATTERNS,
   scrubRedactedValuePatterns,
 } from "./gateway-log-file.ts";
@@ -652,4 +667,59 @@ describe("err serializer", () => {
     const line = chunks.join("");
     expect(line).not.toContain("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
   });
+});
+
+describe("emergency log hardening", () => {
+  test("a labelled credential matching no token family is still scrubbed", () => {
+    const out = scrubRedactedValuePatterns(
+      "connect failed: api_key=plainsecret&x=1 password: hunter2",
+    );
+    expect(out).not.toContain("plainsecret");
+    expect(out).not.toContain("hunter2");
+    expect(out).toContain("x=1");
+  });
+
+  test("a quoted multi-word credential is redacted whole, not only its first word", () => {
+    const out = scrubRedactedValuePatterns(
+      `bad config password="correct horse battery staple" secret='two words' next`,
+    );
+    for (const w of ["correct", "horse", "battery", "staple", "two words"]) {
+      expect(out).not.toContain(w);
+    }
+    expect(out).toContain("next");
+  });
+
+  test.skipIf(platform() !== "linux")(
+    "tightens an older install's log dir and file before appending, and scrubs the stack",
+    () => {
+      const base = mkdtempSync(join(tmpdir(), "nimbus-emergency-modes-"));
+      const saved = process.env["XDG_DATA_HOME"];
+      process.env["XDG_DATA_HOME"] = base;
+      try {
+        const path = platformDailyLogPath("linux");
+        expect(path).not.toBeNull();
+        const logPath = path as string;
+        mkdirSync(dirname(logPath), { recursive: true, mode: 0o755 });
+        chmodSync(dirname(logPath), 0o755);
+        writeFileSync(logPath, "older line\n", { mode: 0o644 });
+        chmodSync(logPath, 0o644);
+        emergencyGatewayLogForPlatform(new Error("boom api_key=plainsecret"), "linux");
+        expect(statSync(dirname(logPath)).mode & 0o077).toBe(0);
+        // One descriptor for both the mode check and the read, so they observe the same file.
+        const fd = openSync(logPath, "r");
+        try {
+          expect(fstatSync(fd).mode & 0o077).toBe(0);
+          const content = readFileSync(fd, "utf8");
+          expect(content).toContain("boom");
+          expect(content).not.toContain("plainsecret");
+        } finally {
+          closeSync(fd);
+        }
+      } finally {
+        if (saved === undefined) delete process.env["XDG_DATA_HOME"];
+        else process.env["XDG_DATA_HOME"] = saved;
+        rmSync(base, { recursive: true, force: true });
+      }
+    },
+  );
 });

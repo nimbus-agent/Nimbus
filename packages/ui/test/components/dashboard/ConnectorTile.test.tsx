@@ -25,6 +25,23 @@ describe("ConnectorTile", () => {
     expect(screen.getByText(/rate-limited/i)).toBeInTheDocument();
   });
 
+  it("shows why a paused connector is paused (the migration's last_error)", () => {
+    const c: ConnectorStatus = {
+      name: "readwise",
+      health: "paused",
+      lastError: "Moving to the signed Readwise extension: approve it in Marketplace",
+    };
+    render(<ConnectorTile status={c} highlighted={false} />);
+    expect(screen.getByTestId("connector-paused-reason")).toHaveTextContent(
+      /signed Readwise extension/,
+    );
+  });
+
+  it("shows no reason line for a paused connector with no lastError", () => {
+    render(<ConnectorTile status={{ name: "readwise", health: "paused" }} highlighted={false} />);
+    expect(screen.queryByTestId("connector-paused-reason")).toBeNull();
+  });
+
   it("shows 'not synced yet' when lastSyncAt is missing", () => {
     const c: ConnectorStatus = { name: "gmail", health: "healthy" };
     render(<ConnectorTile status={c} highlighted={false} />);
@@ -69,5 +86,14 @@ describe("ConnectorTile", () => {
     const c: ConnectorStatus = { name: "my-custom-connector", health: "healthy" };
     render(<ConnectorTile status={c} highlighted={false} />);
     expect(screen.getByText("my-custom-connector")).toBeInTheDocument();
+  });
+});
+
+describe("ConnectorTile: lastError is shown only for a paused connector", () => {
+  it("hides lastError on a connector that is not paused", () => {
+    const c: ConnectorStatus = { name: "github", health: "error", lastError: "HTTP 500 from host" };
+    render(<ConnectorTile status={c} highlighted={false} />);
+    expect(screen.queryByTestId("connector-paused-reason")).toBeNull();
+    expect(screen.queryByText(/HTTP 500/)).toBeNull();
   });
 });

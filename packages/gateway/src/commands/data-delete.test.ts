@@ -145,6 +145,23 @@ describe("data delete", () => {
     expect(slackLeft.c).toBe(1);
   });
 
+  test("deleting one service never touches another whose id merely starts with it", async () => {
+    seed(idx, "github", 1);
+    seedSyncState(idx, "github");
+    seedSyncState(idx, "github:org-a");
+    seedSyncState(idx, "github_actions");
+    // `_` is a LIKE wildcard: without escaping, `google_drive` would also match `googleXdrive`.
+    seedSyncState(idx, "googleXdrive");
+    const result = await runDataDelete({ service: "github", dryRun: false, vault, index: idx });
+    expect(result.preflight.syncTokensToDelete).toBe(2);
+    const left = idx.rawDb
+      .query(`SELECT connector_id FROM sync_state ORDER BY connector_id`)
+      .all() as { connector_id: string }[];
+    expect(left.map((r) => r.connector_id)).toEqual(["github_actions", "googleXdrive"]);
+    const drive = await runDataDelete({ service: "google_drive", dryRun: true, vault, index: idx });
+    expect(drive.preflight.syncTokensToDelete).toBe(0);
+  });
+
   test("confirmed deletion with multiple vault keys removes all of them", async () => {
     seed(idx, "google", 2);
     // Three vault keys for the same service

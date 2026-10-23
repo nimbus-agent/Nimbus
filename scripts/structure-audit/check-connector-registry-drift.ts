@@ -2,7 +2,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { bundledConnectorIds } from "../gen-bundled-connector-registry.ts";
+import { UNBUNDLED_CONNECTOR_IDS } from "../../packages/gateway/src/connectors/connector-catalog.ts";
+import { bundledConnectorIds, exportedConnectorIds } from "../gen-bundled-connector-registry.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..");
 /**
@@ -97,6 +98,20 @@ function buildViolations(
   return out;
 }
 
+function staleExclusions(
+  unbundled: readonly string[],
+  packageIds: ReadonlySet<string>,
+): RegistryDriftViolation[] {
+  return unbundled
+    .filter((id) => !packageIds.has(id))
+    .map((id) => ({
+      connector: id,
+      reason:
+        `is listed in UNBUNDLED_CONNECTOR_IDS but ${CONNECTOR_PACKAGE} does not export it: the ` +
+        "exclusion is stale. Remove it from UNBUNDLED_CONNECTOR_IDS in connector-catalog.ts",
+    }));
+}
+
 /**
  * The bundled connector registry is GENERATED into a committed file. Nothing else diffs it, and
  * `test:connector-boot` structurally cannot: it boots the connectors the registry ships, so one
@@ -122,11 +137,16 @@ export function checkConnectorRegistryDrift(
   // node resolution of an installed package, which a temp directory cannot stand in for at all.
   exportedIds: readonly string[] = bundledConnectorIds(),
   registryFile: string = REGISTRY_FILE,
+  // The ids the gateway deliberately leaves out of the registry, and what the package really
+  // exports: an exclusion the package no longer exports is stale and must be removed.
+  unbundledIds: readonly string[] = UNBUNDLED_CONNECTOR_IDS,
+  packageIds: readonly string[] = exportedConnectorIds(),
 ): RegistryDriftCheck {
   const exported = new Set(exportedIds);
+  const stale = staleExclusions(unbundledIds, new Set(packageIds));
 
   if (!existsSync(registryFile)) {
-    const violations = buildViolations(exported, new Set());
+    const violations = [...stale, ...buildViolations(exported, new Set())];
     return violations.length === 0 ? { status: "ok" } : { status: "drift", violations };
   }
 
@@ -147,7 +167,7 @@ export function checkConnectorRegistryDrift(
     };
   }
 
-  const violations = buildViolations(exported, new Set(listedIds));
+  const violations = [...stale, ...buildViolations(exported, new Set(listedIds))];
   return violations.length === 0 ? { status: "ok" } : { status: "drift", violations };
 }
 

@@ -17,12 +17,14 @@ import {
   transitionHealth,
 } from "../connectors/health.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
+import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
 import { SyncScheduler } from "./scheduler.ts";
 import {
   type SchedulerStateRow,
   SqliteSchedulerStateRepository,
 } from "./scheduler-state-repository.ts";
+import { setPaused } from "./scheduler-store.ts";
 import { unboundSyncCapabilities } from "./sync-capabilities.ts";
 import type { Syncable, SyncResult, SyncRuntimeContext, SyncStatus } from "./types.ts";
 import { UnauthenticatedError } from "./types.ts";
@@ -509,6 +511,7 @@ describe("SyncScheduler — forceSync edge cases", () => {
       releaseFirst = r;
     });
     const secondRun = deferred();
+    const secondGate = deferred();
     const dup = probe("dup", async (call) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
@@ -517,6 +520,7 @@ describe("SyncScheduler — forceSync edge cases", () => {
           await firstGate;
         } else {
           secondRun.resolve();
+          await secondGate.promise;
         }
         return OK;
       } finally {
@@ -532,10 +536,18 @@ describe("SyncScheduler — forceSync edge cases", () => {
     await macrotask();
     expect(dup.calls()).toBe(1);
 
+    let secondSettled = false;
+    const secondDone = second.finally(() => {
+      secondSettled = true;
+    });
     releaseFirst();
     await within(first, "the first force request");
-    await within(second, "the second force request");
+    // The second request arrived while the first run was in flight: that run cannot settle it.
     await within(secondRun.promise, "the queued re-run");
+    await macrotask();
+    expect(secondSettled).toBe(false);
+    secondGate.resolve();
+    await within(secondDone, "the second force request");
     await sched.stop();
     expect(dup.calls()).toBe(2);
     expect(maxActive).toBe(1);
@@ -583,6 +595,390 @@ describe("SyncScheduler — forceSync edge cases", () => {
     );
     expect(gone.calls()).toBe(0);
     await sched.stop();
+    db.close();
+  });
+
+  /**
+   * A scheduler whose first run of `p` is a SCHEDULED one: `catchUpOnRestart` keeps the freshly
+   * registered row due now, so `start()` queues and dispatches it with no force request involved.
+   */
+  function startScheduled(db: Database, p: Probe): SyncScheduler {
+    const sched = new SyncScheduler(
+      ctxFor(db),
+      { catchUpOnRestart: true },
+      { isOnline: online, random: () => 0 },
+    );
+    sched.register(p.syncable);
+    sched.start();
+    return sched;
+  }
+
+  /** Records the call count at the moment `p` settles, and how it settled. */
+  function settleSnapshot(
+    p: Promise<void>,
+    calls: () => number,
+  ): Promise<{ calls: number; outcome: string }> {
+    return p.then(
+      () => ({ calls: calls(), outcome: "resolved" }),
+      (e: unknown) => ({ calls: calls(), outcome: e instanceof Error ? e.message : String(e) }),
+    );
+  }
+
+  test("a force request made while a scheduled run is in flight settles only after a run that started after it", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("own", async (call) => {
+      if (call === 1) await gate.promise;
+      return OK;
+    });
+    const sched = startScheduled(db, svc);
+    await within(svc.entered, "the scheduled run to start");
+
+    const forced = settleSnapshot(sched.forceSync("own"), svc.calls);
+    gate.resolve();
+    // Settled by the follow-up run (call 2), never by the scheduled run it arrived during.
+    expect(await within(forced, "the force request")).toEqual({ calls: 2, outcome: "resolved" });
+    await sched.stop();
+    db.close();
+  });
+
+  test("the forced run observes state written after the request", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    // Stands in for a credential: whatever the run reads at its entry is what it syncs with.
+    let credential = "old";
+    const seen: string[] = [];
+    const svc = probe("observe", async (call) => {
+      seen.push(credential);
+      if (call === 1) await gate.promise;
+      return OK;
+    });
+    const sched = startScheduled(db, svc);
+    await within(svc.entered, "the scheduled run to start");
+
+    // What the runs had read by the time the request settled.
+    const forced = sched.forceSync("observe").then(() => [...seen]);
+    credential = "new";
+    gate.resolve();
+    expect(await within(forced, "the force request")).toEqual(["old", "new"]);
+    await sched.stop();
+    db.close();
+  });
+
+  test("a failing scheduled run does not settle a force request made during it", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("flaky", async (call) => {
+      if (call === 1) {
+        await gate.promise;
+        throw new Error("scheduled run failed");
+      }
+      return OK;
+    });
+    const sched = startScheduled(db, svc);
+    await within(svc.entered, "the scheduled run to start");
+
+    const forced = settleSnapshot(sched.forceSync("flaky"), svc.calls);
+    gate.resolve();
+    expect(await within(forced, "the force request")).toEqual({ calls: 2, outcome: "resolved" });
+    await sched.stop();
+    db.close();
+  });
+
+  test("a failing scheduled run does not settle a force request made during it — the follow-up run's failure rejects it", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("flaky2", async (call) => {
+      if (call === 1) {
+        await gate.promise;
+        throw new Error("scheduled run failed");
+      }
+      throw new Error("forced run failed");
+    });
+    const sched = startScheduled(db, svc);
+    await within(svc.entered, "the scheduled run to start");
+
+    const forced = settleSnapshot(sched.forceSync("flaky2"), svc.calls);
+    gate.resolve();
+    expect(await within(forced, "the force request")).toEqual({
+      calls: 2,
+      outcome: "forced run failed",
+    });
+    await sched.stop();
+    db.close();
+  });
+
+  test("concurrent force requests during an in-flight run coalesce into one follow-up run", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("many", async (call) => {
+      if (call === 1) await gate.promise;
+      return OK;
+    });
+    const sched = startScheduled(db, svc);
+    await within(svc.entered, "the scheduled run to start");
+
+    const a = settleSnapshot(sched.forceSync("many"), svc.calls);
+    const b = settleSnapshot(sched.forceSync("many"), svc.calls);
+    const c = settleSnapshot(sched.forceSync("many"), svc.calls);
+    gate.resolve();
+    const settled = await within(Promise.all([a, b, c]), "the force requests");
+    expect(settled).toEqual([
+      { calls: 2, outcome: "resolved" },
+      { calls: 2, outcome: "resolved" },
+      { calls: 2, outcome: "resolved" },
+    ]);
+    await macrotask();
+    expect(svc.calls()).toBe(2);
+    await sched.stop();
+    db.close();
+  });
+
+  test("unregister rejects both the running job's waiters and a queued follow-up's waiters with 'Connector removed'", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("leaving", async () => {
+      await gate.promise;
+      return OK;
+    });
+    const sched = new SyncScheduler(ctxFor(db), {}, { isOnline: online });
+    sched.register(svc.syncable);
+
+    const running = settleSnapshot(sched.forceSync("leaving"), svc.calls);
+    await within(svc.entered, "the forced run to start");
+    const queued = settleSnapshot(sched.forceSync("leaving"), svc.calls);
+    sched.unregister("leaving");
+    // Both settle at once, before the in-flight run returns.
+    expect(await within(Promise.all([running, queued]), "unregister to reject both")).toEqual([
+      { calls: 1, outcome: "Connector removed" },
+      { calls: 1, outcome: "Connector removed" },
+    ]);
+    gate.resolve();
+    await macrotask();
+    expect(svc.calls()).toBe(1);
+    await sched.stop();
+    db.close();
+  });
+
+  test("a full force during an in-flight run starts from an empty cursor", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const entered = deferred();
+    const cursors: Array<string | null> = [];
+    const svc: Syncable = {
+      serviceId: "full",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(_ctx, cursor): Promise<SyncResult> {
+        cursors.push(cursor);
+        if (cursors.length === 1) {
+          entered.resolve();
+          await gate.promise;
+        }
+        // Every run leaves cursor X behind; the in-flight one writes it AFTER the request.
+        return { ...OK, cursor: "X" };
+      },
+    };
+    const sched = new SyncScheduler(ctxFor(db), { catchUpOnRestart: true }, { isOnline: online });
+    sched.register(svc);
+    sched.start();
+    await within(entered.promise, "the scheduled run to start");
+
+    const forced = sched.forceSync("full", { full: true });
+    gate.resolve();
+    await within(forced, "the full force request");
+    expect(cursors).toEqual([null, null]);
+    await sched.stop();
+    db.close();
+  });
+
+  test("a history floor armed during an in-flight run survives that run and reaches the forced run", async () => {
+    // `index.rebody --since` arms the floor and then forces a run. A run already in flight read no
+    // floor when it started, so its success must not consume the one armed after it: the forced
+    // run would then cold-start from the connector's own 30-day floor and `--since` would be lost.
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const entered = deferred();
+    const floors: Array<number | undefined> = [];
+    const cursors: Array<string | null> = [];
+    const svc: Syncable = {
+      serviceId: "floor-race",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(ctx, cursor): Promise<SyncResult> {
+        floors.push(ctx.historyFloorMs);
+        cursors.push(cursor);
+        if (floors.length === 1) {
+          entered.resolve();
+          await gate.promise;
+        }
+        return { ...OK, cursor: "X" };
+      },
+    };
+    const sched = new SyncScheduler(ctxFor(db), { catchUpOnRestart: true }, { isOnline: online });
+    sched.register(svc);
+    sched.start();
+    await within(entered.promise, "the scheduled run to start");
+
+    const floorMs = Date.now() - 400 * 86_400_000;
+    sched.setHistoryFloor("floor-race", floorMs);
+    const forced = sched.forceSync("floor-race", { full: true });
+    gate.resolve();
+    await within(forced, "the full force request");
+    expect(floors).toEqual([undefined, floorMs]);
+    expect(cursors).toEqual([null, null]);
+    await sched.stop();
+    db.close();
+  });
+
+  test("a full force whose cursor clear fails rejects instead of hanging", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const entered = deferred();
+    let calls = 0;
+    const svc: Syncable = {
+      serviceId: "clearfail",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        calls += 1;
+        if (calls === 1) {
+          entered.resolve();
+          await gate.promise;
+        }
+        return { ...OK, cursor: "X" };
+      },
+    };
+    const sched = new SyncScheduler(ctxFor(db), { catchUpOnRestart: true }, { isOnline: online });
+    sched.register(svc);
+    sched.start();
+    await within(entered.promise, "the scheduled run to start");
+    // Only the full force's `cursor = NULL` write fails (as SQLITE_FULL would); the in-flight
+    // run's own cursor write ("X") still succeeds.
+    db.run(
+      "CREATE TRIGGER fail_cursor_clear BEFORE UPDATE OF cursor ON scheduler_state WHEN NEW.cursor IS NULL BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+
+    const forced = sched.forceSync("clearfail", { full: true });
+    gate.resolve();
+    const outcome = await within(
+      forced.then(
+        () => "resolved",
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      ),
+      "the full force request to settle",
+    );
+    expect(outcome).toContain("disk full");
+    expect(calls).toBe(1);
+    await sched.stop();
+    db.close();
+  });
+
+  /** A syncable whose page N returns cursor `pN`; page 1 waits on `gate`. Records each cursor. */
+  function pagingSyncable(
+    serviceId: string,
+    gate: Promise<void>,
+    hasMore: (page: number) => boolean,
+  ): { syncable: Syncable; cursors: Array<string | null>; entered: Promise<void> } {
+    const cursors: Array<string | null> = [];
+    const entered = deferred();
+    return {
+      cursors,
+      entered: entered.promise,
+      syncable: {
+        serviceId,
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync(_ctx, cursor): Promise<SyncResult> {
+          cursors.push(cursor);
+          const page = cursors.length;
+          if (page === 1) {
+            entered.resolve();
+            await gate;
+          }
+          return { ...OK, cursor: `p${page}`, hasMore: hasMore(page) };
+        },
+      },
+    };
+  }
+
+  test("a force request during a paginating run is served next, not after the continuation chain", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    // More pages every time, up to a bound that keeps a regression finite.
+    const svc = pagingSyncable("pages", gate.promise, (page) => page < 6);
+    const sched = new SyncScheduler(ctxFor(db), { catchUpOnRestart: true }, { isOnline: online });
+    sched.register(svc.syncable);
+    sched.start();
+    await within(svc.entered, "the scheduled first page to start");
+
+    const forced = sched.forceSync("pages").then(() => [...svc.cursors]);
+    gate.resolve();
+    // The forced run is the very next one and resumes from the cursor page 1 persisted.
+    expect(await within(forced, "the force request")).toEqual([null, "p1"]);
+    await sched.stop();
+    db.close();
+  });
+
+  test("a plain then a full force request during one in-flight run share one follow-up run from an empty cursor", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = pagingSyncable("mixed", gate.promise, () => false);
+    const sched = new SyncScheduler(ctxFor(db), { catchUpOnRestart: true }, { isOnline: online });
+    sched.register(svc.syncable);
+    sched.start();
+    await within(svc.entered, "the scheduled run to start");
+
+    const plain = sched.forceSync("mixed").then(() => [...svc.cursors]);
+    const full = sched.forceSync("mixed", { full: true }).then(() => [...svc.cursors]);
+    gate.resolve();
+    const [a, b] = await within(Promise.all([plain, full]), "both force requests");
+    expect(a).toEqual([null, null]);
+    expect(b).toEqual([null, null]);
+    await macrotask();
+    expect(svc.cursors).toHaveLength(2);
+    await sched.stop();
+    db.close();
+  });
+
+  test("stop rejects a queued force request with 'Scheduler stopped' and lets the running one finish", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("halt", async (call) => {
+      if (call === 1) await gate.promise;
+      return OK;
+    });
+    const sched = new SyncScheduler(ctxFor(db), {}, { isOnline: online });
+    sched.register(svc.syncable);
+
+    const running = settleSnapshot(sched.forceSync("halt"), svc.calls);
+    await within(svc.entered, "the forced run to start");
+    const queued = settleSnapshot(sched.forceSync("halt"), svc.calls);
+    const stopped = sched.stop();
+    expect(await within(queued, "stop to reject the queued request")).toEqual({
+      calls: 1,
+      outcome: "Scheduler stopped",
+    });
+    gate.resolve();
+    expect(await within(running, "the running request")).toEqual({
+      calls: 1,
+      outcome: "resolved",
+    });
+    await within(stopped, "stop to drain");
+    expect(svc.calls()).toBe(1);
+    db.close();
+  });
+
+  test("a force request after stop rejects at once with 'Scheduler stopped'", async () => {
+    const db = openMemoryIndexDatabase();
+    const svc = probe("after");
+    const sched = new SyncScheduler(ctxFor(db), {}, { isOnline: online });
+    sched.register(svc.syncable);
+    await sched.stop();
+    await expect(within(sched.forceSync("after"), "the force request")).rejects.toThrow(
+      "Scheduler stopped",
+    );
+    expect(svc.calls()).toBe(0);
     db.close();
   });
 });
@@ -678,28 +1074,25 @@ describe("SyncScheduler — state that changes between the dispatch gate and the
     },
   ];
 
-  test("a continuation queued for a connector removed mid-run is dropped, not run, and frees its slot", async () => {
+  test("a connector removed mid-run records nothing after its run, queues no continuation, and frees its slot", async () => {
     const db = openMemoryIndexDatabase();
     let release!: () => void;
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    const firstDone = deferred();
+    const returned = deferred();
+    const succeeded: string[] = [];
     const mover = probe("mover", async () => {
       await gate;
+      returned.resolve();
       return { ...OK, hasMore: true };
     });
-    // One slot: if the dropped continuation leaked it, the re-registered connector below could
-    // never run and the final force request would time out.
+    // One slot: if the withdrawn run leaked it, the re-registered connector below could never run
+    // and the final force request would time out.
     const sched = new SyncScheduler(
       ctxFor(db),
       { maxConcurrentSyncs: 1 },
-      {
-        isOnline: online,
-        onConnectorSyncSuccess: (id) => {
-          if (id === "mover") firstDone.resolve();
-        },
-      },
+      { isOnline: online, onConnectorSyncSuccess: (id) => void succeeded.push(id) },
     );
     sched.register(mover.syncable);
     const forced = sched.forceSync("mover");
@@ -709,23 +1102,17 @@ describe("SyncScheduler — state that changes between the dispatch gate and the
       "Connector removed",
     );
 
-    // The run already in flight still finishes and, having more pages, queues a continuation. That
-    // job passes the dispatch gate (unregister keeps the state row) and only runJob finds no
-    // connector — it must be dropped, never run as a failure against an undefined connector.
+    // The run already in flight finishes with more pages. Its connector was withdrawn, so nothing
+    // after it is recorded — no telemetry, no state update, no success hook — and no continuation
+    // is queued (a removed connector's purged rows must not be written back).
     release();
-    await within(firstDone.promise, "the in-flight run to finish");
+    await within(returned.promise, "the in-flight run to return");
     await macrotask();
     expect(mover.calls()).toBe(1);
+    expect(succeeded).toEqual([]);
     expect(
-      db
-        .query(`SELECT error_msg, had_more FROM sync_telemetry WHERE service = ? ORDER BY id`)
-        .all("mover"),
-    ).toEqual([{ error_msg: null, had_more: 1 }]);
-    expect(
-      db
-        .query(`SELECT status, consecutive_failures FROM scheduler_state WHERE service_id = ?`)
-        .get("mover"),
-    ).toEqual({ status: "ok", consecutive_failures: 0 });
+      db.query(`SELECT COUNT(*) AS c FROM sync_telemetry WHERE service = ?`).get("mover"),
+    ).toEqual({ c: 0 });
 
     const again = probe("mover");
     sched.register(again.syncable);
@@ -765,4 +1152,135 @@ describe("SyncScheduler — state that changes between the dispatch gate and the
       db.close();
     });
   }
+});
+
+describe("SyncScheduler — a connector withdrawn mid-run records nothing afterwards", () => {
+  for (const outcome of ["throws unauthenticated", "returns"] as const) {
+    test(`unregister during a running sync that ${outcome}: no sync_state row, no notify, force rejected`, async () => {
+      const db = openMemoryIndexDatabase();
+      const notified: string[] = [];
+      const sched = new SyncScheduler(
+        ctxFor(db),
+        {},
+        { isOnline: online, notify: async (title) => void notified.push(title) },
+      );
+      const release = deferred();
+      const p = probe("withdrawn", async () => {
+        await release.promise;
+        if (outcome === "returns") return OK;
+        throw new UnauthenticatedError();
+      });
+      sched.register(p.syncable);
+      const forced = sched.forceSync("withdrawn").then(
+        () => "resolved",
+        (e: unknown) => (e instanceof Error ? e.message : String(e)),
+      );
+      await within(p.entered, "sync entered");
+      sched.unregister("withdrawn");
+      // What `extension remove`'s purge does next: the health row goes.
+      db.run("DELETE FROM sync_state WHERE connector_id = ?", ["withdrawn"]);
+      release.resolve();
+      expect(await within(forced, "force settled")).toBe("Connector removed");
+      await macrotask();
+      const rows = db
+        .query("SELECT COUNT(*) AS c FROM sync_state WHERE connector_id = ?")
+        .get("withdrawn") as { c: number };
+      expect(rows.c).toBe(0);
+      expect(notified).toEqual([]);
+      await sched.stop();
+      db.close();
+    });
+  }
+
+  test("unregister while the configured check's vault read is pending: no egress, no health row, no sync()", async () => {
+    const db = openMemoryIndexDatabase();
+    const base = createMemoryVault();
+    await base.set("withdrawn.token", "tok");
+    const getEntered = deferred();
+    const gate = deferred();
+    // A vault whose read parks until released, so `unregister` lands inside the configured check.
+    const vault: NimbusVault = {
+      ...base,
+      get: async (key: string) => {
+        getEntered.resolve();
+        await gate.promise;
+        return base.get(key);
+      },
+    };
+    const egress: string[] = [];
+    const sched = new SyncScheduler(
+      ctxFor(db, {
+        vault,
+        extensionCredentialsFor: (id) =>
+          id === "withdrawn" ? { token: { env: "T", vaultKey: "withdrawn.token" } } : undefined,
+      }),
+      {},
+      { isOnline: online, appendSyncEgress: (r) => void egress.push(r.method) },
+    );
+    const p = probe("withdrawn");
+    sched.register(p.syncable);
+    const forced = sched.forceSync("withdrawn").then(
+      () => "resolved",
+      (e: unknown) => (e instanceof Error ? e.message : String(e)),
+    );
+    await within(getEntered.promise, "configured check entered");
+    sched.unregister("withdrawn");
+    // What `extension remove`'s purge does next: the health row goes.
+    db.run("DELETE FROM sync_state WHERE connector_id = ?", ["withdrawn"]);
+    gate.resolve();
+    expect(await within(forced, "force settled")).toBe("Connector removed");
+    await macrotask();
+    expect(egress).toEqual([]);
+    expect(p.calls()).toBe(0);
+    const rows = db
+      .query("SELECT COUNT(*) AS c FROM sync_state WHERE connector_id = ?")
+      .get("withdrawn") as { c: number };
+    expect(rows.c).toBe(0);
+    await sched.stop();
+    db.close();
+  });
+});
+
+describe("getStatus: the pause reason", () => {
+  test("a pause with a stated reason wins over a stale sync error", async () => {
+    const db = openMemoryIndexDatabase();
+    // `readwise` is a real manifest id: seed its credential so the failing run is not skipped.
+    const vault = createMemoryVault();
+    await vault.set("readwise.token", "t");
+    const sched = new SyncScheduler(
+      ctxFor(db, { vault }),
+      {},
+      { isOnline: online, random: () => 0 },
+    );
+    sched.register(
+      probe("readwise", async () => {
+        throw new Error("old sync failure");
+      }).syncable,
+    );
+    await expect(within(sched.forceSync("readwise"), "the failing run")).rejects.toThrow();
+    expect(sched.getStatus("readwise")[0]?.lastError).toBe("old sync failure");
+    setPaused(db, "readwise", true);
+    transitionHealth(db, "readwise", { type: "paused", reason: "moving to a signed extension" });
+    const status = sched.getStatus("readwise")[0];
+    expect(status?.status).toBe("paused");
+    expect(status?.lastError).toBe("moving to a signed extension");
+    await sched.stop();
+    db.close();
+  });
+
+  test("a pause with no stated reason keeps the sync error", async () => {
+    const db = openMemoryIndexDatabase();
+    const sched = new SyncScheduler(ctxFor(db), {}, { isOnline: online, random: () => 0 });
+    sched.register(
+      probe("plain", async () => {
+        throw new Error("old sync failure");
+      }).syncable,
+    );
+    await expect(within(sched.forceSync("plain"), "the failing run")).rejects.toThrow();
+    setPaused(db, "plain", true);
+    transitionHealth(db, "plain", { type: "paused" });
+    expect(sched.getStatus("plain")[0]?.lastError).toBe("old sync failure");
+    await sched.stop();
+    db.close();
+  });
 });

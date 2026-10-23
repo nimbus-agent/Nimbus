@@ -132,7 +132,7 @@ AUTOMATION & EXTENSIONS
   nimbus test [dir]         Extension manifest contract + bun test when a test script exists
 
 CONFIG & DIAGNOSTICS
-  nimbus config validate | list [--json] | edit
+  nimbus config validate | list [--json] [--effective] | get [--effective] | set | edit | explain <path>
   nimbus profile create|list|switch|delete
   nimbus llm status [--json]   Every registered LLM route (provider/model) and its availability
   nimbus serve [--port 7474]   Start gateway with NIMBUS_HTTP_PORT (read-only HTTP sidecar)

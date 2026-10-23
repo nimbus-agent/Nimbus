@@ -16,6 +16,7 @@ interface ConsentRequestPayload {
   request_id: string;
   prompt: string;
   details?: Record<string, unknown>;
+  action_type?: string | null;
   received_at_ms: number;
 }
 
@@ -67,6 +68,7 @@ export function RootLayout() {
         receivedAtMs: p.received_at_ms,
       };
       if (p.details !== undefined) request.details = p.details;
+      if (typeof p.action_type === "string") request.actionType = p.action_type;
       enqueue(request);
     },
     [enqueue],
@@ -96,6 +98,7 @@ export function RootLayout() {
             receivedAtMs: p.received_at_ms,
           };
           if (p.details !== undefined) request.details = p.details;
+          if (typeof p.action_type === "string") request.actionType = p.action_type;
           enqueue(request);
         }
       })

@@ -180,6 +180,17 @@ describe("checkLanMethodAllowed", () => {
     },
   );
 
+  test.each(["migration.list", "migration.accept", "migration.decline", "migration.retry"])(
+    "%s is not callable over LAN regardless of grant-write",
+    (method) => {
+      for (const writeAllowed of [true, false]) {
+        expect(() => checkLanMethodAllowed(method, { peerId: "p", writeAllowed })).toThrow(
+          /not callable over LAN/,
+        );
+      }
+    },
+  );
+
   test.each(["registry.add", "registry.list", "registry.refresh", "registry.remove"])(
     "%s is not callable over LAN regardless of grant-write",
     (method) => {
@@ -225,6 +236,15 @@ describe("extension management over LAN (I5 — CLI-only)", () => {
       "extension.remove",
     ]) {
       // forbidden even with writeAllowed: true (fully forbidden, not merely write-gated)
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
+      expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: false })).toThrow(
+        LanError,
+      );
+    }
+  });
+
+  test("credentialSet/credentialStatus are forbidden over LAN regardless of grant-write", () => {
+    for (const m of ["extension.credentialSet", "extension.credentialStatus"]) {
       expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
       expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: false })).toThrow(
         LanError,
@@ -498,6 +518,20 @@ describe("user-MCP list/call over LAN (I42 — CLI-only)", () => {
   test("negative control: connector.listStatus is still LAN-callable", () => {
     expect(() =>
       checkLanMethodAllowed("connector.listStatus", { peerId: "p", writeAllowed: false }),
+    ).not.toThrow();
+  });
+
+  test("config.explain is LAN-forbidden regardless of grant-write", () => {
+    for (const writeAllowed of [true, false]) {
+      expect(() => checkLanMethodAllowed("config.explain", { peerId: "p", writeAllowed })).toThrow(
+        LanError,
+      );
+    }
+  });
+
+  test("config.validate is still LAN-callable", () => {
+    expect(() =>
+      checkLanMethodAllowed("config.validate", { peerId: "p", writeAllowed: false }),
     ).not.toThrow();
   });
 });

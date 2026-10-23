@@ -30,9 +30,21 @@ import {
   upsertWorkflowByName,
 } from "../automation/workflow-store.ts";
 import { deleteConnectorHealthRow } from "../connectors/health.ts";
-import { approveExtensionRun, revokeExtensionRun } from "../extensions/approve-run.ts";
+import {
+  approveExtensionRun,
+  currentRunCredentials,
+  revokeExtensionRun,
+} from "../extensions/approve-run.ts";
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
+import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import { clearDeps, forwardDeps, reverseDeps } from "../extensions/dependency-store.ts";
+import {
+  CREDENTIAL_POST_CONSENT_CODES,
+  type CredentialReadDeps,
+  ExtensionCredentialError,
+  extensionCredentialStatus,
+  setExtensionCredential,
+} from "../extensions/extension-credential-set.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
 import { deriveExtensionServiceId } from "../extensions/extension-service-id.ts";
 import {
@@ -117,6 +129,20 @@ export interface AutomationRpcExtensionMeshHandle {
 }
 
 /**
+ * The extension sync host's lifecycle hooks (`platform/register-extension-sync.ts`): every handler
+ * that changes whether an extension may sync calls `refresh`, and `extension.remove` unregisters and
+ * purges under the extension's INDEX id before its row and grant are deleted. Absent ⇒ no extension
+ * sync host is running (tests, or a gateway that never built one).
+ */
+export interface AutomationRpcExtensionSyncHandle {
+  refresh(extensionId: string): void;
+  /** The id `refresh` registered the extension's sync under; `undefined` when it holds none. */
+  syncServiceIdFor(extensionId: string): string | undefined;
+  unregister(extensionId: string): void;
+  purgeBeforeRemove(extensionId: string): Promise<unknown>;
+}
+
+/**
  * The local owner's HITL gate, as the executor runs it (`ToolExecutor.gate`): resolves `true` only
  * for "proceed". Built per call by the server dispatcher with the caller's own consent channel, so
  * the prompt reaches the client that asked.
@@ -136,6 +162,9 @@ interface AutomationCtx {
   runGrantEnv?: ExtensionRunGrantEnv;
   /** `[extensions] runtime` and not demo-rooted; absent means the default, `true`. */
   runtimeEnabled?: boolean;
+  extensionSync?: AutomationRpcExtensionSyncHandle;
+  /** The composition's continuity table; absent means the production default. */
+  continuityTable?: readonly ContinuityEntry[];
 }
 
 type AutomationHandler = (
@@ -270,6 +299,10 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
 
   "extension.revokeRun": async (rec, ctx) => handleExtensionRevokeRun(rec, ctx),
 
+  "extension.credentialSet": async (rec, ctx) => handleExtensionCredentialSet(rec, ctx),
+
+  "extension.credentialStatus": async (rec, ctx) => handleExtensionCredentialStatus(rec, ctx),
+
   "extension.checkForUpdates": async (rec, ctx) =>
     handleAutoUpdateRpc("extension.checkForUpdates", rec, ctx),
 
@@ -311,6 +344,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.enable": (rec, ctx) => {
     const id = requireString(rec, "id");
     const ok = setExtensionEnabled(ctx.db, id, true);
+    if (ok) ctx.extensionSync?.refresh(id);
     emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "enable", ok });
     return { kind: "hit", value: { ok } };
   },
@@ -318,6 +352,8 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.disable": async (rec, ctx) => {
     const id = requireString(rec, "id");
     const ok = setExtensionEnabled(ctx.db, id, false);
+    // Unregistered before the stop, so no scheduled sync spawns it again; items are kept.
+    if (ok) ctx.extensionSync?.refresh(id);
     if (ok && ctx.mesh !== undefined) {
       // After the row reads disabled, so a concurrent spawn's verifier already refuses, and awaited
       // so the reply means the child is gone. A stop failure never fails the disable.
@@ -348,6 +384,16 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       // With no grant (revoked earlier, or never approved) it is derived, since a revoke or an
       // earlier spawn may still have left a stage behind.
       const serviceId = extensionServiceIdForCleanup(getRunGrant(ctx.db, id)?.service_id, id);
+      // Plan decision 7: the ONE removal path for an extension-backed connector. Sync is
+      // unregistered (no new run starts) and the live client stopped (an in-flight run's next
+      // page call fails, so it cannot write items back after the purge); then items, scheduler,
+      // health and credentials go under the INDEX id — read from the row and grant, so this
+      // precedes their delete. The client is stopped again below, after the row is gone.
+      if (ctx.extensionSync !== undefined && listExtensions(ctx.db).some((r) => r.id === id)) {
+        ctx.extensionSync.unregister(id);
+        if (ctx.mesh !== undefined) await stopExtensionBestEffort(ctx.mesh, id);
+        await ctx.extensionSync.purgeBeforeRemove(id);
+      }
       const installPath = deleteExtensionById(ctx.db, id);
       if (installPath === null) {
         throw new AutomationRpcError(-32602, "Extension not found");
@@ -724,6 +770,9 @@ async function handleExtensionRehash(
     setExtensionEnabled(ctx.db, id, true);
     recoveredPendingRehashRegistry.unmark(id);
   }
+  // A new digest leaves the run grant stale: its sync is unregistered and paused for re-approval
+  // (and a crash-recovered extension re-enabled above is considered again).
+  ctx.extensionSync?.refresh(id);
   return { kind: "hit", value: { id, treeDigest, changed: true } };
 }
 
@@ -739,6 +788,11 @@ function runGrantRpcError(e: unknown): unknown {
     return new AutomationRpcError(-32602, "Extension not found");
   }
   return new AutomationRpcError(RUN_GRANT_POST_CONSENT.has(e.code) ? -32603 : -32602, e.message);
+}
+
+/** The composition's table for a binding call; absent leaves the callee's production default. */
+function continuityTableOf(ctx: AutomationCtx): { continuityTable?: readonly ContinuityEntry[] } {
+  return ctx.continuityTable === undefined ? {} : { continuityTable: ctx.continuityTable };
 }
 
 /**
@@ -774,7 +828,13 @@ async function handleExtensionApproveRun(
       runtimeEnabled: ctx.runtimeEnabled ?? true,
       now: Date.now,
       modelAccess: rawModelAccess === true,
+      ...continuityTableOf(ctx),
     });
+    // Registers its sync under the index id (or resumes a stale-grant pause) once the grant is live.
+    ctx.extensionSync?.refresh(id);
+    // Where that sync now lives (a bound extension's is its legacy id, not `serviceId`), so the CLI
+    // can say when registration paused it. Absent when no sync was registered.
+    const syncServiceId = ctx.extensionSync?.syncServiceIdFor(id);
     // `list`/`info` now carry runState, so a connected client must hear that it moved — as it
     // already does for install/enable/disable/remove/update. An unchanged re-approval moved nothing.
     if (out.changed) {
@@ -784,7 +844,10 @@ async function handleExtensionApproveRun(
         ok: true,
       });
     }
-    return { kind: "hit", value: out };
+    return {
+      kind: "hit",
+      value: syncServiceId === undefined ? out : { ...out, syncServiceId },
+    };
   } catch (e) {
     emitGatewayEvent("extension.stateChanged", {
       extensionId: id,
@@ -812,6 +875,8 @@ async function handleExtensionRevokeRun(
     );
     // After the stop, the stages go too: a later re-approval starts from nothing a previous run
     // left, and a revoked extension leaves no copy of its code in the sandbox root.
+    // Revoke stops sync and keeps items (spec § 8.3).
+    if (out.revoked) ctx.extensionSync?.refresh(id);
     if (out.revoked && mesh !== undefined && serviceId !== undefined) {
       await mesh.removeExtensionSandbox(serviceId);
     }
@@ -825,6 +890,91 @@ async function handleExtensionRevokeRun(
     return { kind: "hit", value: out };
   } catch (e) {
     throw runGrantRpcError(e);
+  }
+}
+
+function credentialRpcError(e: unknown): unknown {
+  if (!(e instanceof ExtensionCredentialError)) return e;
+  return new AutomationRpcError(
+    CREDENTIAL_POST_CONSENT_CODES.has(e.code) ? -32603 : -32602,
+    e.message,
+  );
+}
+
+/**
+ * The grant and binding lookups both credential methods share. The live derivation binds through
+ * the SAME composed table as the trust check (C7), so neither can fall back to the baked default.
+ */
+function credentialReadDeps(ctx: AutomationCtx): Omit<CredentialReadDeps, "vault"> {
+  return {
+    readGrant: (x) => getRunGrant(ctx.db, x),
+    liveCredentials: (x) => currentRunCredentials(ctx.db, x, ctx.continuityTable),
+    ...continuityTableOf(ctx),
+  };
+}
+
+function requireCredentialVault(ctx: AutomationCtx, method: string): NimbusVault {
+  if (ctx.vault === undefined) {
+    throw new AutomationRpcError(-32603, `${method} requires the Vault`);
+  }
+  return ctx.vault;
+}
+
+function requireInstalledExtension(ctx: AutomationCtx, id: string): void {
+  if (!listExtensions(ctx.db).some((r) => r.id === id)) {
+    throw new AutomationRpcError(-32602, "Extension not found");
+  }
+}
+
+/**
+ * Set one credential an approved extension declares (CLI-only, LAN-forbidden, refused in a demo
+ * root). The Vault key comes from the run grant, never from the caller; the owner is asked once,
+ * under `vault.set`. A running extension is stopped after the write, so it takes effect on its next start. The value is read here and passed straight to the Vault — it never appears in
+ * the gate payload, the response, an error message or the audit row.
+ */
+async function handleExtensionCredentialSet(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
+  const id = requireString(rec, "id");
+  const name = requireString(rec, "name");
+  const value = rec?.["value"];
+  if (typeof value !== "string") {
+    throw new AutomationRpcError(-32602, "Invalid params: 'value' must be a string");
+  }
+  const gate = ctx.ownerGate;
+  if (gate === undefined) {
+    throw new AutomationRpcError(-32603, "extension.credentialSet requires the owner's HITL gate");
+  }
+  const vault = requireCredentialVault(ctx, "extension.credentialSet");
+  requireInstalledExtension(ctx, id);
+  try {
+    const out = await setExtensionCredential(
+      { vault, gate, ...credentialReadDeps(ctx) },
+      { extensionId: id, name, value },
+    );
+    // A live `mesh:ext:` child keeps the env it was spawned with. Stopping it makes the next use
+    // re-spawn — re-verifying and reading the new value; nothing else picks the change up.
+    if (ctx.mesh !== undefined) await stopExtensionBestEffort(ctx.mesh, id);
+    return { kind: "hit", value: out };
+  } catch (e) {
+    throw credentialRpcError(e);
+  }
+}
+
+/** Which declared credentials hold a non-blank Vault value. Names only — never a value or key. */
+async function handleExtensionCredentialStatus(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
+  const id = requireString(rec, "id");
+  const vault = requireCredentialVault(ctx, "extension.credentialStatus");
+  requireInstalledExtension(ctx, id);
+  try {
+    const out = await extensionCredentialStatus({ vault, ...credentialReadDeps(ctx) }, id);
+    return { kind: "hit", value: out };
+  } catch (e) {
+    throw credentialRpcError(e);
   }
 }
 
@@ -859,6 +1009,8 @@ export async function dispatchAutomationRpc(options: {
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
   extensionsRuntimeEnabled?: boolean;
+  extensionSync?: AutomationRpcExtensionSyncHandle;
+  continuityTable?: readonly ContinuityEntry[];
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -875,6 +1027,8 @@ export async function dispatchAutomationRpc(options: {
     ...(options.extensionsRuntimeEnabled !== undefined && {
       runtimeEnabled: options.extensionsRuntimeEnabled,
     }),
+    ...(options.extensionSync !== undefined && { extensionSync: options.extensionSync }),
+    ...(options.continuityTable !== undefined && { continuityTable: options.continuityTable }),
   };
   return await handler(asRecord(options.params), ctx);
 }

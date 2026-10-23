@@ -5,6 +5,7 @@ import { detectLocalAuth, parseSources } from "../connectors/local-auth/detect-l
 import { defaultLocalAuthHostDeps } from "../connectors/local-auth/local-auth-host.ts";
 import type { ResolvedUserMcpRegistration } from "../connectors/user-mcp-registration.ts";
 import type { ToolExecutor } from "../engine/executor.ts";
+import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
@@ -28,6 +29,7 @@ import {
   handleConnectorSync,
   handleConnectorUserMcpCall,
   handleConnectorUserMcpTools,
+  refuseExtensionBackedRemoval,
   requireAddMcpPlatform,
   resolveConnectorAddMcp,
 } from "./connector-rpc-handlers/index.ts";
@@ -133,6 +135,8 @@ export async function dispatchConnectorRpc(options: {
   resolveCommand?: (cmd: string) => string | null;
   /** Test seam for `connector.addMcp`: canonicalisation (production: `realpathSync.native`). */
   realpath?: (p: string) => string;
+  /** The composition's continuity table (`connector.remove`'s refusal); absent = production default. */
+  continuityTable?: readonly ContinuityEntry[];
 }): Promise<{ kind: "hit"; value: unknown } | { kind: "miss" }> {
   const {
     method,
@@ -148,6 +152,7 @@ export async function dispatchConnectorRpc(options: {
     userMcpExecutor,
     resolveCommand,
     realpath,
+    continuityTable,
   } = options;
   const rec = asRecord(params);
   const ctx = {
@@ -161,6 +166,7 @@ export async function dispatchConnectorRpc(options: {
     ...(notify === undefined ? {} : { notify }),
     ...(resolveCommand === undefined ? {} : { resolveCommand }),
     ...(realpath === undefined ? {} : { realpath }),
+    ...(continuityTable === undefined ? {} : { continuityTable }),
   };
 
   switch (method) {
@@ -184,6 +190,8 @@ export async function dispatchConnectorRpc(options: {
       if (toolExecutor === undefined) {
         throw new ConnectorRpcError(-32603, "connector.remove requires a toolExecutor");
       }
+      // Refused BEFORE the gate: no prompt, and no audit row for a removal that cannot run.
+      refuseExtensionBackedRemoval(ctx);
       // `serviceId`, not `service`: `handleConnectorRemove` resolves the id via
       // `requireRegisteredSchedulerServiceId`, which reads `serviceId` only. The
       // gate read `service`, so this destructive action (deletes index entries,

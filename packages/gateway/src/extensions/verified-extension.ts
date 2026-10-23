@@ -7,7 +7,9 @@ import { type ExtensionRow, listExtensions } from "../automation/extension-store
 import { isSameOrInside, pathApiFor } from "../util/path-overlap.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
-import { readVerifiedManifest } from "./approve-run.ts";
+import { readVerifiedManifest, resolvedCredentialsFor } from "./approve-run.ts";
+import { CONTINUITY_TABLE, type ContinuityEntry } from "./continuity/continuity-table.ts";
+import { type ResolvedRunCredentials, serializeRunCredentials } from "./extension-credentials.ts";
 import {
   type ExtensionRunGrantEnv,
   type ResolvedRunGrants,
@@ -44,6 +46,12 @@ export interface VerifiedExtensionForSpawn {
    * digest). The runtime re-digests its per-spawn copy against it.
    */
   readonly treeDigest: string;
+  /**
+   * Freshly re-resolved from the manifest verified on THIS call (and the continuity binding its
+   * source resolves to now), equal to the stored grant's `credentials_json`. Names and Vault keys
+   * only; the runtime reads the values and hands them to the child through `extensionProcessEnv`.
+   */
+  readonly credentials: ResolvedRunCredentials;
 }
 
 export interface VerifiedExtensionDeps {
@@ -52,6 +60,11 @@ export interface VerifiedExtensionDeps {
   readonly env: ExtensionRunGrantEnv;
   /** Injected only so a test can count calls; defaults to {@link computeExtensionTreeDigest}. */
   readonly treeDigest?: (root: string) => string;
+  /**
+   * The continuity table a legacy connector id binds through; defaults to {@link CONTINUITY_TABLE}.
+   * Must be the same table the approval resolved against, or step 9 refuses.
+   */
+  readonly continuityTable?: readonly ContinuityEntry[];
 }
 
 function refuse(code: ConstructorParameters<typeof ExtensionRunGrantError>[0], msg: string): never {
@@ -311,6 +324,21 @@ export async function readVerifiedExtensionForSpawn(
       `${row.id}'s permissions no longer resolve to what was approved; approve it again`,
     );
   }
+  // 9 — the credentials, re-resolved from the manifest verified above and the binding the row's
+  // source resolves to NOW, must equal what was approved: a credential added (or re-mapped to a
+  // different Vault key) after approval was never shown to the owner.
+  const { credentials } = resolvedCredentialsFor(
+    row,
+    manifest,
+    grant.service_id,
+    deps.continuityTable ?? CONTINUITY_TABLE,
+  );
+  if (serializeRunCredentials(credentials) !== grant.credentials_json) {
+    refuse(
+      "ERR_EXTENSION_RUN_CHANGED",
+      `${row.id}'s credentials no longer resolve to what was approved; approve it again`,
+    );
+  }
   return {
     extensionId: row.id,
     serviceId: grant.service_id,
@@ -319,5 +347,6 @@ export async function readVerifiedExtensionForSpawn(
     entryPath,
     grants,
     treeDigest: rowDigest,
+    credentials,
   };
 }

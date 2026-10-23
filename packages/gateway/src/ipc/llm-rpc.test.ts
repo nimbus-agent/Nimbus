@@ -1,7 +1,12 @@
 import { describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  forgetLayeredConfigForTests,
+  getLayeredConfig,
+  initLayeredConfig,
+} from "../config/layered-config.ts";
 import { parseNimbusTomlLlmSection } from "../config/nimbus-toml.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import { RouteAvailabilityProbe } from "../llm/route-availability.ts";
@@ -9,6 +14,8 @@ import { LlmRouter } from "../llm/router.ts";
 import type { LlmModelInfo, ModelRoute } from "../llm/types.ts";
 import type { LlmRouteStatus, LlmRpcContext } from "./llm-rpc.ts";
 import { dispatchLlmRpc, LlmRpcError } from "./llm-rpc.ts";
+import type { ServerCtx } from "./server/context.ts";
+import { tryDispatchLlmRpc } from "./server/dispatchers.ts";
 
 // TEST-DATA SAFETY: every `tomlPath` below lives under a fresh `os.tmpdir()` directory,
 // never the real per-machine config dir — `llm.use` writes files, and this suite must never
@@ -780,5 +787,48 @@ describe("llm.use", () => {
     await expect(
       dispatchLlmRpc("llm.use", { task: "classification", routeId: "ollama/x" }, ctx),
     ).rejects.toThrow(LlmRpcError);
+  });
+});
+
+describe("llm.use through the server dispatcher", () => {
+  test("llm.use writes the active profile file and the next read sees it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-llm-use-profile-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), "[llm]\nprefer_local = true\n", "utf8");
+      const baseBefore = readFileSync(join(dir, "nimbus.toml"));
+      initLayeredConfig(dir, { explicitProfile: "work" });
+      expect(existsSync(join(dir, "nimbus.work.toml"))).toBe(false);
+
+      const router = new LlmRouter({
+        preferLocal: true,
+        localModel: "llama3.2:latest",
+        minReasoningParams: 0,
+        enforceAirGap: false,
+      });
+      router.registerRoute(
+        makeFakeProviderForRouter("ollama", ["llama3.2:latest"]),
+        "llama3.2:latest",
+      );
+      const ctx = {
+        options: { llmRegistry: { llmRouter: router }, configDir: dir },
+        broadcastNotification: () => {},
+      } as unknown as ServerCtx;
+
+      await tryDispatchLlmRpc(ctx, "llm.use", {
+        task: "classification",
+        routeId: "ollama/llama3.2:latest",
+      });
+
+      const profileFile = join(dir, "nimbus.work.toml");
+      expect(existsSync(profileFile)).toBe(true);
+      expect(readFileSync(profileFile, "utf8")).toContain("[llm.tasks]");
+      expect(readFileSync(join(dir, "nimbus.toml")).equals(baseBefore)).toBe(true);
+      const text = getLayeredConfig(dir).snapshot().text ?? "";
+      expect(text).toContain("[llm.tasks]");
+      expect(text).toContain("ollama/llama3.2:latest");
+    } finally {
+      forgetLayeredConfigForTests(dir);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

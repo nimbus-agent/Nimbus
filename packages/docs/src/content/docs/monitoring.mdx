@@ -44,7 +44,7 @@ These are the agent-behaviour signals: is the policy intact, is a human approval
 audit chain growing, is the data fresh.
 
 ```bash
-nimbus vault set http_api.deployment_token <token>
+nimbus vault set http_api.deployment_token   # prompts for <token> (input is hidden)
 NIMBUS_HTTP_PORT=8787 nimbus serve
 curl -H "Authorization: Bearer <token>" http://127.0.0.1:8787/metrics
 ```

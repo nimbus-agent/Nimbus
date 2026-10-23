@@ -145,6 +145,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Extension runtime § 4.4: approving an installed extension to RUN, unattended, with resolved
   // grants. A separate consent from install. Gate site: extensions/approve-run.ts.
   "extension.run",
+  // connector-unbundling spec § 7.2: the ONE owner decision that moves a bundled connector to its
+  // signed extension — install + run grant + credential grant together. Gate site:
+  // extensions/migration/migration-engine.ts (`migrationConsentViaGate`). Never delegable (I20).
+  "extension.migrate",
   // Adding a registry pins a trust root that later extension installs verify against. Gate site:
   // the `registry.add` handler in ipc/registry-rpc.ts, through the gate-only executor that
   // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).
@@ -275,6 +279,12 @@ export function redactPayloadForConsentDisplay(value: unknown): unknown {
 export function consentDisplayPayload(action: PlannedAction): Record<string, unknown> | undefined {
   if (action.payload === undefined) return undefined;
   if (isUserMcpActionType(action.type)) return action.payload;
+  if (action.type === "extension.migrate") {
+    // `fromRenderer` is an AUDIT field (the gate's audit row records the action itself, so it keeps
+    // it). It means nothing to the owner reading the prompt, so the display copy drops it.
+    const { fromRenderer: _audit, ...shown } = action.payload;
+    return redactPayloadForConsentDisplay(shown) as Record<string, unknown>;
+  }
   return redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>;
 }
 

@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { collectIndexMetrics } from "../db/metrics.ts";
 import { registerListener } from "../locality/listener-registry.ts";
+import { rejectNonLoopbackHost } from "../locality/loopback-host-guard.ts";
 
 export type MetricsServerHandle = {
   readonly port: number;
@@ -17,6 +18,8 @@ export function startMetricsServer(getDb: () => Database, port: number): Metrics
     hostname: "127.0.0.1",
     port,
     fetch(req: Request): Response {
+      const badHost = rejectNonLoopbackHost(req);
+      if (badHost !== null) return badHost;
       const url = new URL(req.url);
       if (url.pathname === "/healthz") {
         return new Response("ok\n", { status: 200 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-
+import { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./extension-env.ts";
 import { parseExtensionManifestForRegistry, parseExtensionManifestJson } from "./manifest.ts";
 
 describe("parseExtensionManifestJson", () => {
@@ -237,5 +237,93 @@ describe("parseExtensionManifestJson — dependsOn (T2 PR 4)", () => {
         }),
       ),
     ).toThrow(/semver/);
+  });
+});
+
+describe("parseExtensionManifestJson — sync + credentials", () => {
+  const base = { id: "x", version: "1.0.0" };
+  const parse = (extra: Record<string, unknown>) =>
+    parseExtensionManifestJson(JSON.stringify({ ...base, ...extra }));
+  const okSync = { contract: "1", intervalSeconds: 300, itemTypes: ["highlight"] } as const;
+
+  test("parses sync block", () => {
+    const m = parse({ sync: okSync, credentials: { token: { env: "READWISE_TOKEN" } } });
+    expect(m.sync).toEqual(okSync);
+    expect(m.credentials).toEqual({ token: { env: "READWISE_TOKEN" } });
+    expect(
+      parseExtensionManifestForRegistry(JSON.stringify({ ...base, sync: okSync })).manifest.sync,
+    ).toEqual(okSync);
+  });
+
+  test("absent blocks stay absent and legacy syncInterval is ignored", () => {
+    const m = parse({ syncInterval: 5 });
+    expect(m.sync).toBeUndefined();
+    expect(m.credentials).toBeUndefined();
+  });
+
+  test("refuses sync.contract other than 1", () => {
+    expect(() => parse({ sync: { ...okSync, contract: "2" } })).toThrow(/sync\.contract/);
+  });
+
+  test("refuses intervalSeconds < 60", () => {
+    expect(() => parse({ sync: { ...okSync, intervalSeconds: 59 } })).toThrow(/intervalSeconds/);
+    expect(() => parse({ sync: { ...okSync, intervalSeconds: 60.5 } })).toThrow(/intervalSeconds/);
+  });
+
+  test("refuses bad itemTypes and unknown sync keys", () => {
+    expect(() => parse({ sync: { ...okSync, itemTypes: [] } })).toThrow(/itemTypes/);
+    expect(() => parse({ sync: { ...okSync, itemTypes: ["Bad"] } })).toThrow(/itemTypes/);
+    expect(() => parse({ sync: { ...okSync, extra: 1 } })).toThrow(/unknown key/);
+  });
+
+  test("refuses reserved env var NODE_OPTIONS", () => {
+    for (const env of ["NODE_OPTIONS", "NIMBUS_X", "BUN_X", "PATH", "HOME", "TMPDIR", "lower"]) {
+      expect(() => parse({ credentials: { token: { env } } })).toThrow(/env/);
+    }
+  });
+
+  test("refuses dynamic-loader injection variables (LD_*, DYLD_*)", () => {
+    for (const env of [
+      "LD_PRELOAD",
+      "LD_LIBRARY_PATH",
+      "LD_AUDIT",
+      "DYLD_INSERT_LIBRARIES",
+      "DYLD_X",
+    ]) {
+      expect(() => parse({ credentials: { token: { env } } })).toThrow(/reserved/);
+    }
+  });
+
+  test("refuses Windows command-resolution variables COMSPEC and PATHEXT", () => {
+    for (const env of ["COMSPEC", "PATHEXT"]) {
+      expect(() => parse({ credentials: { token: { env } } })).toThrow(/reserved/);
+    }
+  });
+
+  test("refuses every extensionProcessEnv baseline key (a credential would overwrite it)", () => {
+    for (const env of BASELINE_KEYS) {
+      expect(() => parse({ credentials: { token: { env } } })).toThrow(/reserved/);
+    }
+    // Including the ones the older hand-written list missed.
+    for (const env of ["APPDATA", "LOCALAPPDATA", "LANG", "TZ", "BUN_INSTALL"]) {
+      expect(isExtensionBaselineEnvKey(env)).toBe(true);
+    }
+  });
+
+  test("a name merely containing a reserved fragment is still accepted", () => {
+    for (const env of ["MY_LD_TOKEN", "API_PATH", "XDYLD_KEY", "COMSPEC_TOKEN"]) {
+      expect(parse({ credentials: { token: { env } } }).credentials).toEqual({ token: { env } });
+    }
+  });
+
+  test("refuses duplicate env across credentials", () => {
+    expect(() =>
+      parse({ credentials: { a: { env: "SAME_VAR" }, b: { env: "SAME_VAR" } } }),
+    ).toThrow(/duplicate/);
+  });
+
+  test("refuses bad credential names and unknown entry keys", () => {
+    expect(() => parse({ credentials: { Bad: { env: "OK_VAR" } } })).toThrow(/credentials/);
+    expect(() => parse({ credentials: { a: { env: "OK_VAR", x: 1 } } })).toThrow(/unknown key/);
   });
 });

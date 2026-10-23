@@ -18,7 +18,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-19 — Phase 9.5 project 2, PR C: registry CI — check and sign publish pull requests (no migration, no invariant, no egress class).**
+- **2026-10-23 — Phase 9.5 project 2, PR C: registry CI — check and sign publish pull requests (no migration, no invariant, no egress class).**
   A GitHub-hosted registry repository now validates and signs publish pull requests itself. The new node24 action
   `packages/github-actions/registry-action` has two modes. `check` runs on every pull request to the default branch
   with a read-only token and no secrets, validates it against the signed `index.json` on `gh-pages` and writes a
@@ -50,7 +50,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   is untested. **Not shipped:** the `nimbus eval` score and registry-side reproducibility re-run, forges other than
   GitHub, private registries.
 
-- **2026-10-18 — Phase 9.5 project 2, PR B: publish extensions to a registry repository (no migration, no invariant, no egress class).**
+- **2026-10-23 — Phase 9.5 project 2, PR B: publish extensions to a registry repository (no migration, no invariant, no egress class).**
   `nimbus extension publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]`
   packs the extension's package file set, validates it, and opens a pull request that adds
   `extensions/<id>/<version>/{manifest.json,package.tgz,publish-request.json}` to a GitHub-hosted registry
@@ -75,6 +75,101 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   process, outside the gateway, so its `git` and `gh` traffic is not ledgered. **Not shipped:** the registry
   repository's CI (the check and sign action and `maintain init --github`) comes in the next PR, so nothing yet signs
   or merges a publish pull request; the pre-publish `nimbus eval` score is not part of this.
+
+- **2026-10-23 — Fleet config changes apply without a restart (role packs, project 1, PR 3: live reload; no migration, no invariant, no new IPC method).**
+  Fleet config changes, from the owner's file or a pack layer, now apply to a running gateway within about 5 seconds; this includes owner-only keys such as `allow_remote`, and a run in progress finishes first. A new fleet supervisor (`fleet/fleet-supervisor.ts`) checks the layered config's version every 5 seconds and rebuilds the scheduler only when the effective `[fleet]` section changed; job state is kept across a reload, and each rebuilt scheduler gets its own I38 remote budget. A `[fleet]` that stops parsing turns the fleet off until it is fixed, instead of until the next restart.
+  The `fleet.*` IPC methods read the current fleet rather than the one built at boot, and `fleet.runNow` waits for a reload in progress. `PlatformServices.fleetScheduler`, which nothing read and which would have gone stale after the first reload, is removed.
+- **2026-10-22 — The gateway reads pack layers (role packs, project 1, PR 2: the pack layer; no migration, no invariant, no new IPC method).**
+  The layered config reader now stacks pack-contributed TOML fragments (`<configDir>/packs/<profile>/<id>.toml`, listed in `active.json`) below `nimbus.toml`. The allowlist is `[fleet]` `enabled`/`min_idle_seconds`/`require_ac_power`/`retention_days`, `[[fleet.job]]` and `[decisions]` `min_confidence`; a fragment with any other key is skipped whole, and a pack write is refused when another pack sets the same scalar to a different value (compared as parsed values) or contributes a `[[fleet.job]]` with the same name. No command or IPC method writes a pack layer and nothing installs one yet, so none exist until a later release does.
+  `diag.snapshot.configLayers` now carries real `activePacks`, `skippedPacks` and an optional `packListError` (basename-safe), `nimbus config explain` adds a note per skipped pack, and `nimbus doctor` warns about skipped packs and an unreadable pack list and lists the active ones.
+  Two fixes from the same change: `NIMBUS_LAN_PORT` now applies when no config file exists, and glossary terms in an unreadable profile file are no longer treated as deleted.
+- **2026-10-22 — Profiles inherit from `nimbus.toml` (role packs, project 1, PR 1: the layered config reader; static D35; no migration, no invariant).**
+  Profiles now inherit from `nimbus.toml`: a profile file overrides only the keys it sets, and a section it leaves out now comes from `nimbus.toml` rather than from built-in defaults. Previously about two-thirds of settings ignored the active profile entirely; every setting now follows it.
+  Layers merge in order: code defaults, pack layers (none yet), team baseline (empty slot), `nimbus.toml`, `nimbus.<profile>.toml`. The profile is pinned once at gateway boot (explicit, `NIMBUS_PROFILE`, `.nimbus-profile` marker, default) and an invalid name stops boot.
+  New CLI-only, LAN-forbidden `config.explain` IPC method and `nimbus config explain`, plus `config get|list --effective`; `nimbus config set|get|list|edit` and `llm.use` target the active profile's file; `config.validate` covers each user layer; `diag.snapshot` gains `configLayers`; `nimbus doctor` flags a marker/running-profile mismatch. Static rule D35 confines config reads to `config/layered-config.ts`.
+  A profile name (from the `.nimbus-profile` marker or `NIMBUS_PROFILE`) outside `[a-z0-9_-]{1,32}` (case-insensitive) now stops the gateway at boot with an error naming it; `nimbus profile create`/`switch` refuse such names.
+- **2026-10-21 — The desktop app can accept a connector migration (Readwise unbundling pilot, PR 6; invariant I46; no migration).**
+  `migration.list` and `migration.accept` join the desktop allowlist (109 → 111), so a pending connector migration can be kept from
+  the desktop as well as with `nimbus connector migrate accept <id>`. Accept takes the migration id and nothing else, and succeeds
+  only for a migration the gateway prepared itself from the built-in official registry, whose staged files still match and whose
+  access, credential mapping and item types are exactly what the release expects; it then asks once, in the desktop's own consent
+  popup. New invariant **I46** states that whitelist and its bound: a compromised desktop renderer could answer that prompt, and the
+  most it could do is re-enable Nimbus-signed code with the access the built-in connector already had. Declining and retrying stay
+  in the terminal, and `extension.install` and `extension.approveRun` stay off the desktop allowlist. `migration.accept` waits for
+  the owner's answer without the bridge's 30-second timeout. The bridge now declares its connection's kind (`ui`) when it connects,
+  so the prompt's audit row records `fromRenderer` — an audit field only, never read by a check, and left out of the prompt text.
+  The Marketplace page gains a **Pending migrations** group: a migration awaiting your answer has a Keep button that waits while
+  the approval popup is open and shows a refusal beside its row; a failed one shows its error and points to
+  `nimbus connector migrate retry`. A paused connector's tile now shows why it is paused. `consent.request` gains an additive
+  `actionType` (older gateways omit it, older clients ignore it), and the approval popup now keys its preview and default focus on
+  that real type: a destructive request such as `data.delete` focuses Reject, and the `extension.autoUpdate` and
+  `extension.downgrade` previews render, neither of which ever happened from the desktop before. When the type is absent the popup
+  focuses Reject. `connector.listStatus` — and so `nimbus connector status`, `nimbus status` and the MCP adapter — now reports a
+  paused connector's stated pause reason instead of a stale sync error.
+
+- **2026-10-20 — Built-in official registry and connector migration (Readwise unbundling pilot, gateway PR 5; schema V73, HITL type `extension.migrate`, static D34, no new invariant).**
+  A release that moves a bundled connector out to a signed extension can now carry the official registry's URL and root key
+  (`nimbus-official`, a reserved name `registry.add` refuses) and a continuity table, and move an existing user over with ONE
+  decision. At every start the gateway checks each table entry: if the owner had the connector configured, it fetches and fully
+  verifies the extension, stages it WITHOUT installing it, and pauses the connector with a reason. `nimbus connector migrate list`
+  shows it; `nimbus connector migrate accept <id>` (a terminal on stdin and stdout, no `--yes`) asks once under
+  `extension.migrate` — publisher, version, fingerprint, the same access as before, a network line that is true per OS — and that
+  one answer installs the extension, approves it to run against the EXISTING Vault credential (no re-entry) and resumes sync into
+  the connector's existing namespace, so items are updated in place and the sync position carries over. A "no" leaves it pending;
+  `decline <id>` keeps the connector off and its items kept; `retry` prepares failed and declined migrations again (it is how a
+  decline is changed). `nimbus doctor` warns for a pending or failed migration and notes a declined one quietly. The four
+  `migration.*` methods are CLI-only (LAN-forbidden, not on the desktop allowlist; the desktop surface is a later PR). **Known
+  loss:** items the bundled connector indexed with a timestamp before 1970 or more than 64 KiB of metadata are dropped by the
+  extension path. **What a user must do:** nothing in this release — the official registry and the continuity table ship empty,
+  so nothing is migrated until the release that drops bundled Readwise. Design: `docs/architecture.md` § Connector migration.
+
+- **2026-10-20 — Extensions can sync into the index (Readwise unbundling pilot, PR 3; no migration, no new invariant).**
+  An approved extension whose manifest declares a `sync` block is registered with the sync scheduler and
+  syncs through its reserved `__nimbus_sync` tool: one scheduler run fetches up to 40 pages (60 s per call,
+  5 minutes per run), validates every item (undeclared types, malformed and oversized items are dropped and
+  counted), and appends ONE `sync.run` egress row (I29) under the id it syncs under — its `ext_` id, or a
+  legacy connector id the continuity table binds it to (empty until the bundled Readwise connector goes).
+  It never spawns or appends a row while a credential it declares is blank, and a sandbox that cannot
+  confine it pauses it with the reason. Lifecycle: boot registration runs after the extension integrity pass
+  and only with the runtime on (never on a demo gateway); approve, enable, disable, revoke and rehash re-register
+  or unregister it (revoke and disable keep items; an unregistered run is cancelled before its next page call
+  or write); an applied update pauses it with "updated to <version> —
+  run `nimbus extension approve <id>` to resume sync", lifted by the re-approval; `nimbus extension remove`
+  purges its items, scheduler and status rows and granted credentials (a bound legacy key such as
+  `readwise.token` included); and `nimbus connector remove` now refuses an extension-backed id with
+  `ERR_CONNECTOR_IS_EXTENSION`, naming `nimbus extension remove`. A built-in connector already registered
+  under the same id is never replaced. **What a user must do:** nothing — no extension declares `sync` yet.
+  Design: `docs/architecture.md` § Extension sync.
+
+- **2026-10-19 — The HTTP API's raw-row reads need a `data`-scoped client token (breaking for scripts that read them; no migration).**
+  `GET /v1/items`, `/v1/items/<id>`, `/v1/people`, `/v1/people/<id>` and `/v1/audit` were public: any local
+  process could read every indexed body, the people graph and the audit log (which carries I33 script bodies).
+  They now sit behind the labelled client-token map under a new `data` scope, answering `401` without a token,
+  `403` for a token without `data` and `404 data_disabled` when the client-token surface is not mounted. `data`
+  is not in `LEGACY_SCOPES`, so no existing token gains it: grant it with
+  `nimbus clip scopes <label> --set <scopes>,data`, or mint a token with `nimbus clip pair --label <name> --scopes
+  data`. `/v1/health`, `/v1/connectors`, `/v1/metrics/*`, `/v1/preflight/deploy` and `/v1/openapi.json` stay
+  public. **What a user must do:** a script or tool reading those five routes needs a `data` token. Audit item
+  S1, part 2.
+- **2026-10-19 — Embeddings warn when the OpenAI key comes from the environment.**
+  The embedding runtime still accepts `OPENAI_API_KEY` (unlike the LLM adapters, which dropped the env fallback in
+  `v5.0.0`), but now logs a warning naming the Vault key `openai.api_key` whenever the environment supplied it.
+  Behaviour is otherwise unchanged. Audit item P9.
+
+- **2026-10-19 — Owner-only permissions on the index, logs and config (POSIX; no migration).**
+  `nimbus.db` (and through it `-wal`/`-shm`) and the daily gateway logs are created `0600`, and the data, config, vault
+  and log directories `0700`; an existing install's looser modes are tightened at boot. Before this they followed the
+  umask (typically `0644` in `0755`), so on a multi-user Linux machine another account could read the plaintext
+  index. Backups and snapshots were already `0600`. The fatal emergency log now scrubs token-shaped values like every
+  other log line. Windows is unaffected (LocalAppData ACLs already apply). Audit items S5 and P10.
+
+- **2026-10-19 — DNS-rebinding guard on every loopback HTTP listener; invariant I45 (no migration, no new egress class).**
+  The read-only/I13 HTTP API, the Prometheus sidecar and the OAuth PKCE callback now answer HTTP 403 unless the
+  `Host` header names loopback (`localhost`, `127.0.0.0/8`, `[::1]`), checked before any routing. Binding to
+  `127.0.0.1` kept other machines out but not other web origins: a page whose DNS answer was switched to
+  `127.0.0.1` could read the no-bearer data routes (`/v1/items/<id>` with full bodies, `/v1/people`, `/v1/audit`).
+  Local processes are unaffected, and a request with no `Host` header is still served. Found by the 2026-10-19
+  code audit (`docs/audits/2026-10-19-code-audit.md`, item S1).
 
 - **2026-10-18 — Phase 9.5 project 2, PR A: registry rules move to a shared pure workspace (refactor; no migration, no invariant, no egress class).**
   A new private workspace, `packages/registry-format`, is now the single source of the signed registry index format,

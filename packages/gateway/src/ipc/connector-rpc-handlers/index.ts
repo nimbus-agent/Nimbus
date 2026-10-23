@@ -13,7 +13,11 @@ export {
   handleConnectorResume,
   handleConnectorSync,
 } from "./lifecycle.ts";
-export { handleConnectorRemove, resumePendingRemovals } from "./removal.ts";
+export {
+  handleConnectorRemove,
+  refuseExtensionBackedRemoval,
+  resumePendingRemovals,
+} from "./removal.ts";
 export {
   handleConnectorHealthHistory,
   handleConnectorListStatus,

@@ -159,3 +159,14 @@ describe("routing — local-only prose types", () => {
     expect(PROSE_HEAVY_TYPES.has("nimbus:capture")).toBe(false);
   });
 });
+
+describe("the Readwise item types", () => {
+  test("readwise highlight and book stay off PROSE_HEAVY_TYPES", () => {
+    // The extension writes the same item types the bundled connector did; routing them to a
+    // different embedding table would split one corpus across two vector spaces.
+    expect(PROSE_HEAVY_TYPES.has(routingKey("readwise", "highlight"))).toBe(false);
+    expect(PROSE_HEAVY_TYPES.has(routingKey("readwise", "book"))).toBe(false);
+    expect(isProseHeavy("readwise", "highlight")).toBe(false);
+    expect(isProseHeavy("readwise", "book")).toBe(false);
+  });
+});

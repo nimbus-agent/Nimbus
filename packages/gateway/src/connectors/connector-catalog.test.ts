@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-
+import { CONTINUITY_TABLE } from "../extensions/continuity/continuity-table.ts";
 import {
   CONNECTOR_SERVICE_IDS,
   type ConnectorServiceId,
@@ -8,6 +8,7 @@ import {
   MICROSOFT_CONNECTOR_SERVICES,
   normalizeConnectorServiceId,
   oauthProfileForService,
+  UNBUNDLED_CONNECTOR_IDS,
 } from "./connector-catalog.ts";
 
 describe("normalizeConnectorServiceId", () => {
@@ -325,6 +326,23 @@ describe("oauthProfileForService — completeness", () => {
           Array.isArray((result as ReturnType<typeof oauthProfileForService>).defaultScopes),
         ).toBe(true);
       }
+    }
+  });
+});
+
+describe("UNBUNDLED_CONNECTOR_IDS", () => {
+  test("readwise is listed as unbundled", () => {
+    expect(UNBUNDLED_CONNECTOR_IDS).toContain("readwise");
+  });
+
+  test("every entry is a catalog id with a continuity entry, so no exclusion drops a connector without an extension path", () => {
+    expect(UNBUNDLED_CONNECTOR_IDS.length).toBeGreaterThan(0);
+    for (const id of UNBUNDLED_CONNECTOR_IDS) {
+      expect(CONNECTOR_SERVICE_IDS as readonly string[], `${id} is a catalog id`).toContain(id);
+      expect(
+        CONTINUITY_TABLE.some((e) => e.legacyServiceId === id),
+        `${id} has a continuity entry`,
+      ).toBe(true);
     }
   });
 });

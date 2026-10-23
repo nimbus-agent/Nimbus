@@ -8,6 +8,7 @@ export {
   MAX_UNPACKED_BYTES,
 } from "./caps.ts";
 export { RegistryError, type RegistryErrorCode } from "./errors.ts";
+export { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./extension-env.ts";
 export {
   assertCanonicalExtensionId,
   assertPublishableExtensionId,
@@ -33,7 +34,9 @@ export {
 export { type InspectedPackage, inspectPackage } from "./inspect.ts";
 export {
   DEFAULT_EXTENSION_ENTRY,
+  type ExtensionCredentialDecls,
   type ExtensionManifest,
+  type ExtensionSyncManifest,
   extensionEntryRelPath,
   PUBLISHER_ID_RE,
   PUBLISHER_KEY_RE,

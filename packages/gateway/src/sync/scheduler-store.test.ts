@@ -183,7 +183,7 @@ describe("item counts", () => {
 });
 
 describe("sync telemetry", () => {
-  test("reads back newest-first for one service, with had_more mapped to a boolean", () => {
+  test("reads back newest-first for one service, with had_more mapped to a boolean and items_dropped kept", () => {
     insertSyncTelemetry(db, {
       service: "github",
       startedAt: 100,
@@ -193,6 +193,7 @@ describe("sync telemetry", () => {
       bytesTransferred: null,
       hadMore: false,
       errorMsg: null,
+      itemsDropped: 0,
     });
     insertSyncTelemetry(db, {
       service: "github",
@@ -203,6 +204,7 @@ describe("sync telemetry", () => {
       bytesTransferred: 4_096,
       hadMore: true,
       errorMsg: "partial",
+      itemsDropped: 3,
     });
     insertSyncTelemetry(db, {
       service: "jira",
@@ -213,6 +215,7 @@ describe("sync telemetry", () => {
       bytesTransferred: null,
       hadMore: false,
       errorMsg: null,
+      itemsDropped: 0,
     });
     expect(listRecentSyncTelemetry(db, "github", 10)).toEqual([
       {
@@ -223,6 +226,7 @@ describe("sync telemetry", () => {
         bytesTransferred: 4_096,
         hadMore: true,
         errorMsg: "partial",
+        itemsDropped: 3,
       },
       {
         startedAt: 100,
@@ -232,6 +236,7 @@ describe("sync telemetry", () => {
         bytesTransferred: null,
         hadMore: false,
         errorMsg: null,
+        itemsDropped: 0,
       },
     ]);
   });
@@ -247,6 +252,7 @@ describe("sync telemetry", () => {
         bytesTransferred: null,
         hadMore: false,
         errorMsg: null,
+        itemsDropped: 0,
       });
     }
     expect(listRecentSyncTelemetry(db, "s", 0)).toHaveLength(1);

@@ -17,4 +17,16 @@ describe("SqliteSchedulerStateRepository", () => {
     expect(row?.interval_ms).toBe(60_000);
     db.close();
   });
+
+  test("clearCursor sets a written cursor back to null", () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const repo = new SqliteSchedulerStateRepository(db);
+    repo.upsertRegistration("github", 60_000, Date.now(), false);
+    repo.writeCursor("github", "X");
+    expect(repo.loadState("github")?.cursor).toBe("X");
+    repo.clearCursor("github");
+    expect(repo.loadState("github")?.cursor).toBeNull();
+    db.close();
+  });
 });

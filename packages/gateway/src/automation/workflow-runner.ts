@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import type { Agent } from "@mastra/core/agent";
-import { formatAuditPayload } from "../audit/format-audit-payload.ts";
+import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import {
   type RunConversationalAgentParams,
@@ -47,7 +47,7 @@ function emitRunCompletedAudit(params: {
   appendAuditEntry(params.db, {
     actionType: "workflow.run.completed",
     hitlStatus: "not_required",
-    actionJson: formatAuditPayload(details),
+    actionJson: redactAuditPayload(details),
     timestamp: Date.now(),
   });
 }

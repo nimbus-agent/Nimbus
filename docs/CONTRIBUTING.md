@@ -253,7 +253,7 @@ credentials and no gateway code.
     flags that service takes (for example `--token`). The services with such a flow are the keys of
     `PAT_CONNECTOR_AUTH_HANDLERS` in `packages/gateway/src/ipc/connector-rpc-handlers/auth.ts`
     (GitHub, GitLab, Linear, Jira, Confluence, AWS, Datadog, Sentry and others).
-  - **Every other connector** is configured with `nimbus vault set <service>.<key> <value>`;
+  - **Every other connector** is configured with `nimbus vault set <service>.<key>`, which prompts for the value;
     `connector auth` fails for these. The keys are listed per service in `CONNECTOR_VAULT_SECRET_KEYS`
     (`packages/gateway/src/connectors/connector-secrets-manifest.ts`).
 

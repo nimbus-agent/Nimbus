@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { insertExtensionRow } from "../automation/extension-store.ts";
 import type { ToolExecutor } from "../engine/executor.ts";
+import { upsertRunGrant } from "../extensions/run-grant-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { createMockVault } from "../vault/mock.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -355,5 +357,55 @@ describe("dispatchConnectorRpc — connector.auth ignores a caller-supplied prob
     }
     expect(injectedRan).toBe(false);
     expect(seq).toEqual([]); // the real probe rejected; nothing was written
+  });
+});
+
+describe("dispatchConnectorRpc — an extension-backed remove is refused BEFORE the gate", () => {
+  test("ERR_CONNECTOR_IS_EXTENSION with the owner gate never called", async () => {
+    insertExtensionRow(db, {
+      id: "com.example.syncer",
+      version: "1.0.0",
+      install_path: "/nowhere",
+      manifest_hash: "h",
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    upsertRunGrant(db, {
+      extension_id: "com.example.syncer",
+      service_id: "ext_com_example_syncer",
+      version: "1.0.0",
+      tree_digest: "d",
+      permissions_json: "{}",
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: "{}",
+    });
+    localIndex.ensureConnectorSchedulerRegistration("ext_com_example_syncer", 60_000, 1);
+    let gateCalls = 0;
+    const exec = {
+      async gate(): Promise<never> {
+        gateCalls += 1;
+        throw new Error("the gate must not be asked");
+      },
+    } as unknown as ToolExecutor;
+    const err = await dispatchConnectorRpc({
+      ...baseOpts({ toolExecutor: exec }),
+      method: "connector.remove",
+      params: { serviceId: "ext_com_example_syncer" },
+    }).catch((e: unknown) => e);
+    expect((err as ConnectorRpcError).rpcCode).toBe(-32602);
+    expect((err as Error).message).toStartWith("ERR_CONNECTOR_IS_EXTENSION:");
+    expect(gateCalls).toBe(0);
+  });
+
+  test("an unbacked id still goes through the gate", async () => {
+    const { exec, calls } = makeStubExecutor({ status: "rejected", reason: "no" });
+    await dispatchConnectorRpc({
+      ...baseOpts({ toolExecutor: exec }),
+      method: "connector.remove",
+      params: { serviceId: "github" },
+    });
+    expect(calls).toHaveLength(1);
   });
 });

@@ -141,7 +141,24 @@ paths = [
 #    ships. The literal survives only in that PR's branch commits, which the
 #    PR scan reads. ANCHORED, unlike entry 7, so it matches only this exact fake
 #    value and never a longer secret that merely contains it.
+#
+# 9. The official extension registry's two PUBLIC Ed25519 keys, by VALUE: the
+#    registry root key (`tBHSfVjF…/qA=`, fingerprint 6fb9beb2…) baked into
+#    `extensions/registry/builtin-registry.ts`, and the first-party publisher
+#    key (`wrUu5uyn…9A=`) in `extensions/continuity/continuity-table.ts`, plus
+#    the tests and the fixture manifest that pin them. Both are public by
+#    design: they are served in the registry's signed `index.json` at
+#    https://nimbus-agent.github.io/nimbus-mcp-servers/ and in every published
+#    manifest, and the gateway must compile them in to verify that registry.
+#    `generic-api-key` fires on the `rootKey:` / `publisherKey:` / `"key":`
+#    names, as it must for a scanner that cannot tell a public key from a
+#    secret. Suppressed by value rather than path, as in entry 7: these are
+#    ordinary source files that must stay scanned. ANCHORED, like entry 8, so
+#    a longer secret that merely contains a key is still reported. The private
+#    halves never enter this repository.
 regexes = [
   '''sk_live_never_echoed_9f8e7d''',
   '''^api_key=sk_live_123$''',
+  '''^tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=$''',
+  '''^wrUu5uyn3aS2efQOEAUd1eC6H3uqX/RwzIEqQHvAZ9A=$''',
 ]

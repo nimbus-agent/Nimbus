@@ -41,7 +41,10 @@ const TOKEN = "surfaces-full-token-0123456789abcdef0123456789ab";
 function tokenVault(): NimbusVault {
   return createSeededTokenVault(
     JSON.stringify({
-      full: { token: TOKEN, scopes: ["clip", "briefs", "agents", "resolve", "fetch", "egress"] },
+      full: {
+        token: TOKEN,
+        scopes: ["clip", "briefs", "agents", "resolve", "fetch", "egress", "data"],
+      },
     }),
   );
 }
@@ -129,7 +132,9 @@ function seedItem(
 }
 
 async function itemIds(base: string, query: string): Promise<string[]> {
-  const res = await fetch(`${base}/v1/items${query}`);
+  const res = await fetch(`${base}/v1/items${query}`, {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
   expect(res.status).toBe(200);
   const body = (await res.json()) as { data: Array<{ id: string }> };
   return body.data.map((r) => r.id);
@@ -141,7 +146,10 @@ async function itemIds(base: string, query: string): Promise<string[]> {
 
 describe("GET /v1/items — an unparseable filter is ignored, never applied as nonsense", () => {
   test("since / sinceMs / untilMs: garbage widens to no filter; a real value filters", async () => {
-    const base = serve({}, { seed: (db) => seedItem(db, { id: "gh:1", type: "pr", title: "A" }) });
+    const base = serve(
+      { clipsVault: tokenVault() },
+      { seed: (db) => seedItem(db, { id: "gh:1", type: "pr", title: "A" }) },
+    );
     // modified_at is 1000 (1970): every real lower bound excludes it, every real upper bound
     // below 1000 excludes it — so each control below proves the parameter is otherwise live.
     expect(await itemIds(base, "?since=7d")).toEqual([]);
@@ -153,7 +161,10 @@ describe("GET /v1/items — an unparseable filter is ignored, never applied as n
   });
 
   test("type: an empty ?type= is no type filter; a named type filters", async () => {
-    const base = serve({}, { seed: (db) => seedItem(db, { id: "gh:1", type: "pr", title: "A" }) });
+    const base = serve(
+      { clipsVault: tokenVault() },
+      { seed: (db) => seedItem(db, { id: "gh:1", type: "pr", title: "A" }) },
+    );
     expect(await itemIds(base, "?type=")).toEqual(["gh:1"]);
     expect(await itemIds(base, "?type=pr")).toEqual(["gh:1"]);
     expect(await itemIds(base, "?type=issue")).toEqual([]);

@@ -26,7 +26,7 @@
  * it was displayed (see `darwin.ts`).
  */
 import {
-  loadNimbusNotificationsFromPath,
+  loadNimbusNotificationsFromConfigDir,
   type NimbusNotificationsToml,
   type NotificationContentMode,
   type NotificationsEnvGet,
@@ -87,8 +87,8 @@ export type CreateNotificationsRuntimeOptions = {
   /** `false` on a demo-rooted gateway (I41). */
   readonly allowed: boolean;
   readonly platform: NodeJS.Platform;
-  /** The PROFILE-resolved TOML path (`resolveNimbusTomlForProfile(configDir)`). */
-  readonly tomlPath: string;
+  /** The config dir; the layered reader resolves the active profile. */
+  readonly configDir: string;
   readonly logger: NotificationsRuntimeLogger;
   /** The non-delivering service used whenever the runtime is inactive. */
   readonly fallback: NotificationService;
@@ -165,7 +165,7 @@ export function createNotificationsRuntime(
 
   let config: NimbusNotificationsToml;
   try {
-    config = loadNimbusNotificationsFromPath(opts.tomlPath, envGet);
+    config = loadNimbusNotificationsFromConfigDir(opts.configDir, envGet);
   } catch (e) {
     const message = errMessage(e);
     safeLog(

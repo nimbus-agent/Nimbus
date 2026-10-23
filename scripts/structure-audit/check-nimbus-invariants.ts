@@ -30,6 +30,10 @@ export const VAULT_KEY_ALLOW_LIST = [
   // STATIC literals — the audit's literal scan genuinely sees them, so this entry is real
   // enforcement rather than documentation of a keyspace the scan cannot reach.
   "packages/gateway/src/toolgen/toolgen-keypair.ts",
+  // An extension's OWN credential keyspace, `ext.<serviceId>.<name>` (Readwise unbundling, V72).
+  // Composed dynamically like `toolgen-credentials.ts`'s, so the literal scan cannot see it; this
+  // entry documents the keyspace, and the one function that composes it lives in this file.
+  "packages/gateway/src/extensions/extension-credentials.ts",
 ];
 
 /**
@@ -1916,6 +1920,8 @@ const D33_RUN_GRANT_TABLE_RE = sqlTableReferenceRe("extension_run_grant");
 const D33_RUN_GRANT_TABLE_ALLOWED: readonly string[] = [
   "packages/gateway/src/extensions/run-grant-store.ts",
   "packages/gateway/src/index/extension-run-grant-v70-sql.ts",
+  // V72 adds `credentials_json` to the same table; DDL only.
+  "packages/gateway/src/index/extension-run-grant-credentials-v72-sql.ts",
 ];
 
 export function checkRunGrantTableConfinement(files: readonly FileEntry[]): Violation[] {
@@ -2018,6 +2024,147 @@ export function checkRunGrantWriters(files: readonly FileEntry[]): Violation[] {
           snippet: (original[line - 1] ?? "").trim(),
         });
       }
+    }
+  }
+  return out;
+}
+
+// ---- D34 (connector migration) -------------------------------------------------------------------
+// A connector migration (Readwise unbundling spec § 7.2) installs signed code, grants it a run and
+// points it at the owner's existing Vault credential behind ONE `extension.migrate` approval. Three
+// confinements keep that one approval the only way in, mirroring D33(b)/(c):
+// (a) the `connector_migration` table is named only by its store and its V73 DDL — a row in
+//     `awaiting_approval` is what `approveMigratedExtensionRun` requires, so writing one elsewhere
+//     would forge the precondition for a prompt-less grant;
+// (b) `approveMigratedExtensionRun` — the migration grant entry point, which takes no consent of
+//     its own — is named only by its definition (`approve-run.ts`) and the migration engine, which
+//     calls it only after the owner's `extension.migrate` answer;
+// (c) the `extension.migrate` consent is raised only by the engine and the RPC path:
+//     `migrationConsentViaGate` and `EXTENSION_MIGRATE_ACTION_TYPE` are named only by the engine and
+//     `ipc/migration-rpc.ts`; the `"extension.migrate"` literal only by the engine, the I2 frozen set
+//     (`engine/executor.ts`, which is what gates it) and the proposability table
+//     (`connectors/proposable-actions.ts`, which denies it); `createMigrationEngine` only by the
+//     engine and `platform/migration-boot.ts`, the one production constructor; and the
+//     `migrationEngine` option that carries the built instance only by `platform/assemble.ts` (which
+//     sets it), `ipc/server/options.ts` (which types it) and `ipc/server/dispatchers.ts` (which hands
+//     it to `ipc/migration-rpc.ts`).
+// Comments are stripped first; identifiers are matched as words after string literals are stripped
+// too (so an aliased import is caught), the literal on comment-stripped source. Test files and
+// anything outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c): a dynamically
+// composed name (`options["migration" + "Engine"]`) evades a text scan, and a second use inside an
+// allow-listed file is exempt whole-file. That matters for `dispatchers.ts`: every dispatcher there
+// receives the `ServerCtx` that carries the engine, and a caller holding it could pass `accept` a
+// consent callback of its own (`async () => true`). The rule cannot see which function in that file
+// reads the option; an I44-block test in `security-invariants.test.ts` pins that exactly one place in
+// `dispatchers.ts` does — `tryDispatchMigrationRpc` — and that `accept` is called only by
+// `ipc/migration-rpc.ts`.
+const D34_TABLE_RE = sqlTableReferenceRe("connector_migration");
+const D34_TABLE_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/migration/migration-store.ts",
+  "packages/gateway/src/index/connector-migration-v73-sql.ts",
+];
+const D34_ENGINE = "packages/gateway/src/extensions/migration/migration-engine.ts";
+const D34_IDENTIFIER_SCANS: ReadonlyArray<
+  readonly [rule: string, re: RegExp, allowed: readonly string[]]
+> = [
+  [
+    "migration-grant-callers",
+    /\bapproveMigratedExtensionRun\b/g,
+    ["packages/gateway/src/extensions/approve-run.ts", D34_ENGINE],
+  ],
+  [
+    "migration-consent-raisers",
+    /\b(?:migrationConsentViaGate|EXTENSION_MIGRATE_ACTION_TYPE)\b/g,
+    [D34_ENGINE, "packages/gateway/src/ipc/migration-rpc.ts"],
+  ],
+  [
+    "migration-consent-raisers",
+    /\bcreateMigrationEngine\b/g,
+    [D34_ENGINE, "packages/gateway/src/platform/migration-boot.ts"],
+  ],
+  [
+    "migration-consent-raisers",
+    /\bmigrationEngine\b/g,
+    [
+      "packages/gateway/src/platform/assemble.ts",
+      "packages/gateway/src/ipc/server/options.ts",
+      "packages/gateway/src/ipc/server/dispatchers.ts",
+    ],
+  ],
+];
+const D34_LITERAL_RE = /["'`]extension\.migrate["'`]/g;
+const D34_LITERAL_ALLOWED: readonly string[] = [
+  D34_ENGINE,
+  "packages/gateway/src/engine/executor.ts",
+  "packages/gateway/src/connectors/proposable-actions.ts",
+];
+
+export function checkMigrationConfinement(files: readonly FileEntry[]): Violation[] {
+  const out = checkTableConfinement(
+    files,
+    D34_TABLE_RE,
+    D34_TABLE_ALLOWED,
+    "migration-table-confined",
+  );
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    const original = f.contents.split("\n");
+    const push = (rule: string, src: string, index: number | undefined): void => {
+      const line = src.slice(0, index).split("\n").length;
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    };
+    for (const [rule, re, allowed] of D34_IDENTIFIER_SCANS) {
+      if (allowed.includes(f.relPath)) continue;
+      for (const m of code.matchAll(re)) push(rule, code, m.index);
+    }
+    if (!D34_LITERAL_ALLOWED.includes(f.relPath)) {
+      for (const m of commentFree.matchAll(D34_LITERAL_RE)) {
+        push("migration-consent-raisers", commentFree, m.index);
+      }
+    }
+  }
+  return out;
+}
+
+// ---- D35 (layered config reader) -----------------------------------------------------------------
+// Tied to no invariant. Config is read through the layered reader (`config/layered-config.ts`) so
+// every setting follows the active profile. Stated bound: a dynamically composed path or file name
+// evades a text scan, as does a nested call such as join(getDir(), "nimbus.toml") (the [^()]* match
+// cannot cross the inner parentheses).
+const D35_PATH_RE = /\b(?:join|resolve)\s*\([^()]*["'`]nimbus\.toml["'`]/g;
+const D35_PROFILE_RE = /\bresolveNimbusTomlForProfile\b/g;
+const D35_FROM_PATH_RE = /(?<!function\s)\bload\w+FromPath\s*\(/g;
+const D35_PATH_ALLOWED: readonly string[] = [
+  "packages/gateway/src/config/layered-config.ts",
+  "packages/gateway/src/config/active-profile.ts",
+  "packages/gateway/src/demo/seed.ts",
+];
+
+export function checkConfigReaderConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const code = stripComments(f.contents);
+    const original = f.contents.split("\n");
+    const push = (index: number | undefined): void => {
+      const line = code.slice(0, index).split("\n").length;
+      out.push({
+        rule: "config-reader-confined",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    };
+    if (!D35_PATH_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D35_PATH_RE)) push(m.index);
+      for (const m of code.matchAll(D35_PROFILE_RE)) push(m.index);
+    }
+    if (!f.relPath.startsWith("packages/gateway/src/config/")) {
+      for (const m of code.matchAll(D35_FROM_PATH_RE)) push(m.index);
     }
   }
   return out;
@@ -2868,6 +3015,9 @@ export const RULE_ANCHORS: readonly string[] = [
   // while scanning nothing the moment iterateSourceFiles() stopped loading mcp-sink/.
   "packages/gateway/src/mcp-sink/capture-gate.ts",
   "packages/gateway/src/extensions/approve-run.ts", // D33(b)(c) — scanned; the run-grant store's main caller
+  // D34(a)(b)(c) — anchored on the RPC path, which (a) and (b) SCAN (it names neither the table nor
+  // the grant entry point) and (c) reads then permits.
+  "packages/gateway/src/ipc/migration-rpc.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -3190,6 +3340,32 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D33(c) a run-grant writer (upsertRunGrant/deleteRunGrant) named outside the store and the approve/revoke path — a run grant could be created or removed without the owner's extension.run approval: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkConfigReaderConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D35 config read outside the layered reader (config/layered-config.ts) — a setting would ignore the active profile: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkMigrationConfinement(files);
+    const D34_LETTER: Readonly<Record<string, string>> = {
+      "migration-table-confined":
+        "(a) connector_migration reached outside extensions/migration/migration-store.ts",
+      "migration-grant-callers":
+        "(b) approveMigratedExtensionRun named outside approve-run.ts and the migration engine",
+      "migration-consent-raisers":
+        "(c) the extension.migrate consent (migrationConsentViaGate / EXTENSION_MIGRATE_ACTION_TYPE / createMigrationEngine / the migrationEngine option / the literal) named outside the engine and the RPC path",
+    };
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D34${D34_LETTER[e.rule] ?? ""} — a connector could be moved to an extension, or its grant written, without the owner's one extension.migrate approval: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

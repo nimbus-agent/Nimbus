@@ -28,8 +28,12 @@
  * being checked inline the way `enabled`/`max_frames` are — `parseSection` itself must stay total
  * and fail-off for actually malformed TOML.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  fallbackMessage,
+  layeredConfigText,
+  layerReadError,
+  sectionFallbackSink,
+} from "../config/layered-config.ts";
 import { stripComment } from "../config/toml-primitives.ts";
 import { isLoopbackBaseUrl } from "../llm/base-url-locality.ts";
 import { isRemoteVlmVendor, REMOTE_VLM_VENDORS, type RemoteVlmVendor } from "./media-types.ts";
@@ -112,12 +116,20 @@ function defaults(): MultimodalConfig {
 
 export function loadMultimodalConfig(configDir: string | undefined): MultimodalConfig {
   if (configDir === undefined) return defaults();
-  const tomlPath = join(configDir, "nimbus.toml");
-  if (!existsSync(tomlPath)) return defaults();
+  // An unreadable layer leaves only a PARTIAL merge: a profile's `enabled = false` could silently
+  // give way to the base file's `enabled = true`. Fail OFF instead, the same as untrusted TOML.
+  const readError = layerReadError(configDir);
+  if (readError !== undefined) {
+    sectionFallbackSink(configDir, "multimodal")(readError);
+    return defaults();
+  }
+  const text = layeredConfigText(configDir);
+  if (text === null) return defaults();
   let parsed: MultimodalConfigDraft;
   try {
-    parsed = parseSection(readFileSync(tomlPath, "utf8"));
-  } catch {
+    parsed = parseSection(text);
+  } catch (err) {
+    sectionFallbackSink(configDir, "multimodal")(fallbackMessage(err));
     return defaults();
   }
   // Deliberately OUTSIDE the try/catch above. `parseSection` throwing means the TOML itself could

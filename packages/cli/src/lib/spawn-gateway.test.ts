@@ -195,24 +195,6 @@ describe("spawnGateway — happy path via NIMBUS_GATEWAY_EXECUTABLE", () => {
     }
   });
 
-  it("a .nimbus-profile that exists but cannot be read (a directory) does not fail the launch", async () => {
-    // The profile is an optional hint: an unreadable one falls back to the default profile rather
-    // than leaving the user with no gateway at all.
-    const paths = makePaths(dir);
-    mkdirSync(paths.logDir, { recursive: true });
-    mkdirSync(join(paths.configDir, ".nimbus-profile"), { recursive: true });
-
-    process.env["NIMBUS_GATEWAY_EXECUTABLE"] = process.execPath;
-    const result = await spawnGateway(paths);
-    expect(result.pid).toBeGreaterThan(0);
-    expect(readFileSync(result.logPath, "utf8")).toContain("nimbus: spawning gateway");
-    try {
-      process.kill(result.pid);
-    } catch {
-      /* may have exited */
-    }
-  });
-
   it("ignores a 'default' or empty profile name", async () => {
     const paths = makePaths(dir);
     mkdirSync(paths.logDir, { recursive: true });
@@ -331,7 +313,7 @@ describe("spawnGateway — the launch it hands the child (injected spawn)", () =
     }
   });
 
-  it("hands the child the active profile and extraEnv, with the inspector variables stripped", async () => {
+  it("hands the child extraEnv, with the inspector variables stripped", async () => {
     const paths = readyPaths();
     mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(join(paths.configDir, ".nimbus-profile"), "work\n", "utf8");
@@ -340,7 +322,6 @@ describe("spawnGateway — the launch it hands the child (injected spawn)", () =
     await spawnGateway(paths, { extraEnv: { NIMBUS_HTTP_PORT: "7475" } }, fake.deps);
 
     const env = fake.spawns[0]?.options.env ?? {};
-    expect(env["NIMBUS_PROFILE"]).toBe("work");
     expect(env["NIMBUS_HTTP_PORT"]).toBe("7475");
     expect("NODE_INSPECT_RESUME_ON_START" in env).toBe(false);
     // The parent's own environment is copied, not handed over and mutated.
@@ -348,7 +329,7 @@ describe("spawnGateway — the launch it hands the child (injected spawn)", () =
     expect(process.env["NODE_INSPECT_RESUME_ON_START"]).toBe("1");
   });
 
-  it("forwards no profile for 'default', for an empty file, or for one that cannot be read", async () => {
+  it("forwards no profile for 'default' or an empty file", async () => {
     const paths = readyPaths();
     mkdirSync(paths.configDir, { recursive: true });
     const profileFile = join(paths.configDir, ".nimbus-profile");
@@ -358,12 +339,63 @@ describe("spawnGateway — the launch it hands the child (injected spawn)", () =
       await spawnGateway(paths, {}, fake.deps);
       expect("NIMBUS_PROFILE" in (fake.spawns[0]?.options.env ?? {})).toBe(false);
     }
-    rmSync(profileFile);
-    mkdirSync(profileFile);
-    const unreadable = fakeLaunch(SOURCE_PLAN, "linux");
-    await spawnGateway(paths, {}, unreadable.deps);
-    expect(unreadable.spawns).toHaveLength(1);
-    expect("NIMBUS_PROFILE" in (unreadable.spawns[0]?.options.env ?? {})).toBe(false);
+  });
+
+  it("a marker-sourced profile is NOT put in the child's env, so the gateway reads the marker itself", async () => {
+    const paths = readyPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(join(paths.configDir, ".nimbus-profile"), "work\n", "utf8");
+    for (const shell of [undefined, "default", ""]) {
+      if (shell === undefined) delete process.env["NIMBUS_PROFILE"];
+      else process.env["NIMBUS_PROFILE"] = shell;
+      const fake = fakeLaunch(SOURCE_PLAN, "linux");
+      await spawnGateway(paths, {}, fake.deps);
+      expect("NIMBUS_PROFILE" in (fake.spawns[0]?.options.env ?? {})).toBe(false);
+    }
+  });
+
+  it("NIMBUS_PROFILE in the shell beats the marker, as the gateway resolves it", async () => {
+    const paths = readyPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(join(paths.configDir, ".nimbus-profile"), "home\n", "utf8");
+    process.env["NIMBUS_PROFILE"] = "work";
+    const fake = fakeLaunch(SOURCE_PLAN, "linux");
+    await spawnGateway(paths, {}, fake.deps);
+    expect(fake.spawns[0]?.options.env?.["NIMBUS_PROFILE"]).toBe("work");
+  });
+
+  it("an invalid marker is refused in the CLI, naming the value and the marker, before any spawn", async () => {
+    const paths = readyPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(join(paths.configDir, ".nimbus-profile"), "bad name!\n", "utf8");
+    const fake = fakeLaunch(SOURCE_PLAN, "linux");
+    await expect(spawnGateway(paths, {}, fake.deps)).rejects.toThrow(
+      'Invalid profile name "bad name!" (from .nimbus-profile)',
+    );
+    expect(fake.spawns).toHaveLength(0);
+  });
+
+  it("an invalid NIMBUS_PROFILE is blamed on the env, not the marker", async () => {
+    const paths = readyPaths();
+    mkdirSync(paths.configDir, { recursive: true });
+    writeFileSync(join(paths.configDir, ".nimbus-profile"), "home\n", "utf8");
+    process.env["NIMBUS_PROFILE"] = "../evil";
+    const fake = fakeLaunch(SOURCE_PLAN, "linux");
+    await expect(spawnGateway(paths, {}, fake.deps)).rejects.toThrow(
+      'Invalid profile name "../evil" (from NIMBUS_PROFILE)',
+    );
+    expect(fake.spawns).toHaveLength(0);
+  });
+
+  it("an unreadable marker (a directory) is refused, naming the file, before any spawn", async () => {
+    const paths = readyPaths();
+    const profileFile = join(paths.configDir, ".nimbus-profile");
+    mkdirSync(profileFile, { recursive: true });
+    const fake = fakeLaunch(SOURCE_PLAN, "linux");
+    await expect(spawnGateway(paths, {}, fake.deps)).rejects.toThrow(
+      `could not read the profile marker ${profileFile}`,
+    );
+    expect(fake.spawns).toHaveLength(0);
   });
 
   it("a spawn that returns no pid rejects, and the child is never unref'd or reported", async () => {

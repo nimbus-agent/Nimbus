@@ -269,7 +269,7 @@ describe("annotate-action main()", () => {
 
   test("503 write_surface_disabled → exit 1, hint surfaced verbatim", async () => {
     const hintText =
-      "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'";
+      "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token'";
     const mock = startMockGateway(() => ({
       status: 503,
       body: { error: "write_surface_disabled", hint: hintText },
@@ -289,7 +289,7 @@ describe("annotate-action main()", () => {
 
   test("503 surface_disabled with allow-gateway-failure=true → exit 0, hint still surfaced", async () => {
     const hintText =
-      "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'";
+      "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token'";
     const mock = startMockGateway(() => ({
       status: 503,
       body: { error: "write_surface_disabled", hint: hintText },

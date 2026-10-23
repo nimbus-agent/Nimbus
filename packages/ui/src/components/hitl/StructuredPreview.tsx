@@ -265,8 +265,99 @@ function AutoUpdatePreview({
   );
 }
 
+function asText(v: unknown): string | undefined {
+  return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+function MigrateRow({
+  id,
+  label,
+  value,
+}: {
+  readonly id: string;
+  readonly label: string;
+  readonly value: string | undefined;
+}): ReactNode {
+  if (value === undefined) return null;
+  return (
+    <div className="contents" data-testid={id}>
+      <dt className="text-[var(--color-fg-muted)]">{label}</dt>
+      <dd className="text-[var(--color-fg)] break-words">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * `extension.migrate` (a bundled connector moving to its signed extension): every field is shown
+ * whole and labelled. The generic renderer cuts a string at 80 characters, and the network and
+ * known-loss lines are exactly what the owner is deciding on.
+ */
+const MIGRATE_LABELLED: readonly string[] = [
+  "summary",
+  "extensionId",
+  "version",
+  "network",
+  "sandbox",
+  "readTools",
+  "knownLoss",
+];
+
+function MigratePreview({ details }: { readonly details: Record<string, unknown> }): ReactNode {
+  const publisher = (details["publisher"] ?? {}) as Record<string, unknown>;
+  // Anything the gateway adds to the payload that this view does not label is shown generically
+  // below, so a new field can never be hidden from the owner. Only the audit-only fields and the
+  // ones rendered above (as text) are left out.
+  const shown = new Set(["migrationId", "fromRenderer"]);
+  for (const key of MIGRATE_LABELLED) {
+    if (asText(details[key]) !== undefined) shown.add(key);
+  }
+  if (asText(publisher["id"]) !== undefined && asText(publisher["fingerprint"]) !== undefined) {
+    shown.add("publisher");
+  }
+  const extras = Object.fromEntries(Object.entries(details).filter(([k]) => !shown.has(k)));
+  return (
+    <div data-testid="migrate-preview" className="flex flex-col gap-3">
+      {asText(details["summary"]) !== undefined && (
+        <p className="text-sm">{asText(details["summary"])}</p>
+      )}
+      <dl className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-1 text-sm">
+        <MigrateRow
+          id="migrate-extension"
+          label="Extension"
+          value={asText(details["extensionId"])}
+        />
+        <MigrateRow id="migrate-version" label="Version" value={asText(details["version"])} />
+        <MigrateRow id="migrate-publisher" label="Publisher" value={asText(publisher["id"])} />
+        <MigrateRow
+          id="migrate-fingerprint"
+          label="Key fingerprint"
+          value={asText(publisher["fingerprint"])}
+        />
+        <MigrateRow
+          id="migrate-network"
+          label="Network access"
+          value={asText(details["network"])}
+        />
+        <MigrateRow id="migrate-sandbox" label="Sandbox" value={asText(details["sandbox"])} />
+        <MigrateRow
+          id="migrate-read-tools"
+          label="Read tools"
+          value={asText(details["readTools"])}
+        />
+        <MigrateRow
+          id="migrate-known-loss"
+          label="What changes"
+          value={asText(details["knownLoss"])}
+        />
+      </dl>
+      {Object.keys(extras).length > 0 && <PreviewRows record={extras} depth={0} />}
+    </div>
+  );
+}
+
 export function StructuredPreview({ details, action }: Props): ReactNode {
   if (!details) return null;
+  if (action === "extension.migrate") return <MigratePreview details={details} />;
   if (action === "extension.autoUpdate") {
     return <AutoUpdatePreview payload={readAutoUpdatePayload(details)} direction="upgrade" />;
   }

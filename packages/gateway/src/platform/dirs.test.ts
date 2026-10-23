@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ensurePlatformDirectories, isWindowsNamedPipe } from "./dirs.ts";
@@ -75,6 +75,29 @@ describe("ensurePlatformDirectories — non-pipe socketPath", () => {
     // The parent directory of the socket path must be created.
     expect(existsSync(dirname(socketPath))).toBe(true);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "makes the data, log and config stores owner-only, tightening an older install's 0755",
+    async () => {
+      const base = mkdtempSync(join(TEST_TMPDIR, "dirs-owner-only-"));
+      const dataDir = join(base, "data");
+      mkdirSync(dataDir);
+      chmodSync(dataDir, 0o755);
+      const paths: PlatformPaths = {
+        configDir: join(base, "config"),
+        dataDir,
+        logDir: join(base, "data", "logs"),
+        socketPath: join(base, "run", "nimbus-gateway.sock"),
+        extensionsDir: join(base, "data", "extensions"),
+        tempDir: join(base, "temp", "nimbus"),
+        sandboxDir: join(base, "cache", "sandbox"),
+      };
+      await ensurePlatformDirectories(paths);
+      for (const d of [paths.configDir, join(paths.configDir, "vault"), dataDir, paths.logDir]) {
+        expect(statSync(d).mode & 0o077).toBe(0);
+      }
+    },
+  );
 
   it("is idempotent — calling twice does not throw", async () => {
     const base = mkdtempSync(join(TEST_TMPDIR, "dirs-idempotent-"));

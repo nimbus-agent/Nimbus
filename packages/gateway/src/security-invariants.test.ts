@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -18,6 +19,7 @@ import {
   toStandardSchema,
 } from "@mastra/core/schema";
 import { createTool } from "@mastra/core/tools";
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import {
   checkAgentEmitterImportConfinement,
   checkEgressChokepointConfinement,
@@ -26,6 +28,7 @@ import {
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { stripComments, stripStringLiterals } from "../../../scripts/structure-audit/lib.ts";
 import type { ExpertBrief } from "./agents/_lib/findings.ts";
+import { listExtensions } from "./automation/extension-store.ts";
 import { type ApiScope, LEGACY_SCOPES } from "./clips/api-scopes.ts";
 import { CLIP_TOKENS_VAULT_KEY, verifyApiToken } from "./clips/clip-token-store.ts";
 import { PairingWindowController } from "./clips/pairing-window.ts";
@@ -41,6 +44,7 @@ import {
   type ConnectorWriteContext,
   invokeConnectorWrite,
 } from "./connectors/connector-write-transport.ts";
+import { transitionHealth } from "./connectors/health.ts";
 import {
   type LazyMeshToolMap,
   mcpClientToolKey,
@@ -55,6 +59,22 @@ import { egressHead, listEgress } from "./egress/egress-verify.ts";
 import { wrapLedgeredVlm } from "./egress/vlm-egress.ts";
 import { HITL_REQUIRED } from "./engine/executor.ts";
 import { buildUserMcpAgentTools } from "./engine/user-mcp-agent-tools.ts";
+import type { ContinuityEntry } from "./extensions/continuity/continuity-table.ts";
+import { resolveExtensionManifestPath } from "./extensions/manifest.ts";
+import {
+  createMigrationEngine,
+  type MigrationEngine,
+  type MigrationEngineDeps,
+} from "./extensions/migration/migration-engine.ts";
+import {
+  finishMigration,
+  getMigration,
+  listMigrations,
+} from "./extensions/migration/migration-store.ts";
+import { buildTestRegistry } from "./extensions/registry/__fixtures__/build-test-registry.ts";
+import type { BuiltinRegistryConfig } from "./extensions/registry/builtin-registry.ts";
+import { getRunGrant } from "./extensions/run-grant-store.ts";
+import { computeExtensionTreeDigest } from "./extensions/tree-digest.ts";
 import { buildFleetInvoker } from "./fleet/fleet-invoker.ts";
 import {
   createFleetRemoteBudget,
@@ -68,10 +88,12 @@ import { ConsentCoordinatorImpl } from "./ipc/consent.ts";
 import { createStreamRegistry } from "./ipc/engine-ask-stream.ts";
 import { HttpWriteRateLimiter } from "./ipc/http-rate-limit.ts";
 import { dispatchIndexReembedRpc } from "./ipc/index-reembed-rpc.ts";
+import { dispatchMigrationRpc } from "./ipc/migration-rpc.ts";
 import { ClientKindStore } from "./ipc/server/client-kind.ts";
 import { phase4RpcSkipped, type ServerCtx } from "./ipc/server/context.ts";
 import { demoRefusal } from "./ipc/server/demo-gate.ts";
 import { tryDispatchDemoRpc } from "./ipc/server/dispatchers.ts";
+import { RpcMethodError } from "./ipc/server/rpc-error.ts";
 import { AnthropicProvider } from "./llm/anthropic-provider.ts";
 import { GeminiProvider } from "./llm/gemini-provider.ts";
 import { LlamaCppProvider } from "./llm/llamacpp-provider.ts";
@@ -96,11 +118,12 @@ import { signPolicy } from "./policy/policy-signing.ts";
 import { PolicyStore } from "./policy/policy-store.ts";
 import { ProviderRateLimiter } from "./sync/rate-limiter.ts";
 import { SyncScheduler } from "./sync/scheduler.ts";
+import { setPaused } from "./sync/scheduler-store.ts";
 import { unboundSyncCapabilities } from "./sync/sync-capabilities.ts";
 import type { SyncRuntimeContext } from "./sync/types.ts";
 import { __setSessionSpawnerForTest } from "./teamvault/connector-session.ts";
 import { spawnTeamToolAndCall, spawnTeamWriteAndCall } from "./teamvault/team-tool-spawn.ts";
-import { openMemoryIndexDatabase } from "./testing/bun-test-support.ts";
+import { createMemoryVault, openMemoryIndexDatabase } from "./testing/bun-test-support.ts";
 import { artifactDigest, canonicalArtifactBytes } from "./toolgen/toolgen-artifact.ts";
 import { sweepToolgenCredentials } from "./toolgen/toolgen-credential-sweep.ts";
 import { toolCredentialKey } from "./toolgen/toolgen-credentials.ts";
@@ -290,6 +313,36 @@ describe("I2 — HITL frozen-set membership", () => {
     expect(src).toMatch(/ADOPT_ACTION_TYPE = "connector\.adoptLocalAuth"/);
   });
 
+  test("extension.migrate is in the I2 HITL frozen set, and the migration engine raises exactly it", async () => {
+    // The one migration prompt covers install + run grant + credential grant (Readwise unbundling
+    // spec § 7.2 step 4), so it must be a gated type in its own right, never a reuse of
+    // `extension.run` that would render as a different decision.
+    const { HITL_REQUIRED } = await import("./engine/executor.ts");
+    expect(HITL_REQUIRED.has("extension.migrate")).toBe(true);
+    const { EXTENSION_MIGRATE_ACTION_TYPE, migrationConsentViaGate } = await import(
+      "./extensions/migration/migration-engine.ts"
+    );
+    expect(EXTENSION_MIGRATE_ACTION_TYPE).toBe("extension.migrate");
+    const raised: string[] = [];
+    const consent = migrationConsentViaGate(async (a) => {
+      raised.push(a.type);
+      return false;
+    });
+    const payload = {
+      migrationId: "m",
+      extensionId: "com.example.x",
+      summary: "s",
+      publisher: { id: "p", fingerprint: "f" },
+      version: "1.0.0",
+      network: "n",
+      readTools: "r",
+      knownLoss: "k",
+      fromRenderer: false,
+    };
+    expect(await consent(payload)).toBe(false);
+    expect(raised).toEqual(["extension.migrate"]);
+  });
+
   test("extension.install is not merely listed: the IPC install REFUSES without the executor gate and installs nothing on a denial", async () => {
     // Membership alone proved nothing here for a long time: `extension.install` sat in the frozen
     // set while no code ever built an action of that type, and the only consent was a CLI-side
@@ -405,6 +458,7 @@ describe("I2 — HITL frozen-set membership", () => {
         enforceAirGap: () => false,
         now: () => 1,
         production: false,
+        builtin: null,
       };
       const req = { method: "registry.add", params: { name: "i2", url: tmp }, db, fetch };
       await expect(dispatchRegistryRpc(req)).rejects.toThrow(/requires the owner's HITL gate/);
@@ -1353,9 +1407,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 109", async () => {
+  test("allowlist_exact_size assertion is 111", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*109\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*111\s*\)/);
   });
 
   // By NAME, as for every brief/verb pair: a one-for-one swap of pushedGet for pushedRetry keeps
@@ -2113,6 +2167,7 @@ code_execution=true
       permissions_json: '{"network":[],"read":[],"write":[]}',
       model_access: 1,
       approved_at: 1,
+      credentials_json: "{}",
     });
     expect(
       listPolicyGatedModelAccessibleOwnerCodeServerIds(index, allow.enforced(), () => false),
@@ -3599,6 +3654,109 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
       const src = await read("packages/gateway/src/ipc/connector-rpc-handlers/auth.ts");
       expect(src).toMatch(/method: "connector\.credentialProbe"/);
     } finally {
+      db.close();
+    }
+  });
+
+  test("behavioural: an extension sync appends ONE sync.run row per run under its index id, and none while its credential is blank", async () => {
+    const { insertExtensionRow } = await import("./automation/extension-store.ts");
+    const { upsertRunGrant } = await import("./extensions/run-grant-store.ts");
+    const { createExtensionCredentialsResolver } = await import(
+      "./connectors/extension-sync/extension-identity.ts"
+    );
+    const { createExtensionSyncRegistrar } = await import("./platform/register-extension-sync.ts");
+    const { SyncScheduler } = await import("./sync/scheduler.ts");
+    const { ProviderRateLimiter } = await import("./sync/rate-limiter.ts");
+    const { unboundSyncCapabilities } = await import("./sync/sync-capabilities.ts");
+    const { createMemoryVault, openMemoryIndexDatabase } = await import(
+      "./testing/bun-test-support.ts"
+    );
+    const pino = (await import("pino")).default;
+    const db = openMemoryIndexDatabase();
+    const vault = createMemoryVault();
+    const manifest = {
+      id: "i29.sync",
+      version: "1.0.0",
+      permissions: { network: [], filesystem: { read: [], write: [] } },
+      updateChannel: "stable" as const,
+      credentials: { token: { env: "I29_TOKEN" } },
+      sync: { contract: "1" as const, intervalSeconds: 300, itemTypes: ["note"] },
+    };
+    insertExtensionRow(db, {
+      id: "i29.sync",
+      version: "1.0.0",
+      install_path: join(tmpdir(), "i29-nowhere"),
+      manifest_hash: "h",
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+      tree_digest: "d",
+    });
+    upsertRunGrant(db, {
+      extension_id: "i29.sync",
+      service_id: "ext_i29_sync",
+      version: "1.0.0",
+      tree_digest: "d",
+      permissions_json: JSON.stringify({ network: [], read: [], write: [] }),
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: JSON.stringify({
+        token: { env: "I29_TOKEN", vaultKey: "ext.ext_i29_sync.token" },
+      }),
+    });
+    const rows: Array<{ destination: string; sourceType: string; method: string }> = [];
+    const sched = new SyncScheduler(
+      {
+        ...unboundSyncCapabilities(),
+        db,
+        vault,
+        logger: pino({ level: "silent" }),
+        rateLimiter: new ProviderRateLimiter(),
+        sandboxCwd: tmpdir(),
+        credentialFor: () => ({ credential: "personal" }),
+        runTeamList: async () => [],
+        depth: "full",
+        extensionCredentialsFor: createExtensionCredentialsResolver(db, [], () => manifest),
+      },
+      undefined,
+      { appendSyncEgress: (r) => rows.push(r) },
+    );
+    let calls = 0;
+    try {
+      createExtensionSyncRegistrar({
+        db,
+        vault,
+        scheduler: sched,
+        mesh: {
+          callExtensionSyncTool: async () => {
+            calls += 1;
+            return {
+              status: "ok",
+              items: [
+                { type: "note", externalId: `n${calls}`, title: "t", modifiedAt: 1, metadata: {} },
+              ],
+              cursor: `c${calls}`,
+              hasMore: calls === 1,
+            };
+          },
+        },
+        sandbox: { canConfine: () => null },
+        runtimeReadPaths: () => [],
+        table: [],
+        readManifest: () => manifest,
+      }).refresh("i29.sync");
+      await vault.set("ext.ext_i29_sync.token", "  ");
+      await sched.forceSync("ext_i29_sync");
+      expect({ rows: rows.length, calls }).toEqual({ rows: 0, calls: 0 });
+      await vault.set("ext.ext_i29_sync.token", "tok");
+      await sched.forceSync("ext_i29_sync");
+      // Two pages, one run, one row.
+      expect(calls).toBe(2);
+      expect(rows).toEqual([
+        { destination: "ext_i29_sync", sourceType: "sync", method: "sync.run" },
+      ]);
+    } finally {
+      await sched.stop();
       db.close();
     }
   });
@@ -6034,6 +6192,7 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       "extension.install",
       "extension.run",
       "extension.autoUpdate",
+      "extension.migrate",
     ]) {
       let prompts = 0;
       let remote = 0;
@@ -6129,6 +6288,8 @@ describe("I43 — an installed extension's code runs only through the verified s
       signed?: boolean;
       approve?: boolean;
       stage?: import("./extensions/extension-stage.ts").ExtensionStageDeps;
+      /** Declare one credential, `token` -> env `I43_TOKEN`. */
+      credential?: boolean;
     } = {},
   ) {
     const { installExtensionFromLocalDirectory } = await import(
@@ -6162,6 +6323,7 @@ describe("I43 — an installed extension's code runs only through the verified s
         network: ["api.example.com"],
         filesystem: { read: [join(root, "outside")], write: [] },
       },
+      ...(opts.credential === true ? { credentials: { token: { env: "I43_TOKEN" } } } : {}),
     };
     let publisherKeyPath: string | undefined;
     if (opts.signed === true) {
@@ -6461,6 +6623,138 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(manifestCalls[0]).toBeLessThan(src.indexOf("export type ExtensionSlotSourceDeps"));
   });
 
+  test("behavioural: a granted credential reaches the spec env with its Vault value; ungranted secrets and a stale mapping do not", async () => {
+    const { getRunGrant, upsertRunGrant } = await import("./extensions/run-grant-store.ts");
+    const { extensionProcessEnv } = await import("./extensions/spawn-env.ts");
+    const { SANDBOX_POLICY_ENV, SANDBOX_CWD_ENV } = await import(
+      "./platform/sandbox/sandbox-policy.ts"
+    );
+    const f = await installAndMaybeApprove({ credential: true });
+    const g = getRunGrant(f.db, f.id);
+    if (g === null) throw new Error("no grant");
+    const ownKey = `ext.${g.service_id}.token`;
+    expect(JSON.parse(g.credentials_json)).toEqual({
+      token: { env: "I43_TOKEN", vaultKey: ownKey },
+    });
+    await f.vault.set(ownKey, "i43-granted-value");
+    await f.vault.set("github.pat", "i43-ungranted-value");
+    const prepared = await f.source.prepareSpawn(g.service_id);
+    expect(prepared.spec.env["I43_TOKEN"]).toBe("i43-granted-value");
+    const allowed = new Set([
+      ...Object.keys(extensionProcessEnv({})),
+      SANDBOX_POLICY_ENV,
+      SANDBOX_CWD_ENV,
+      "I43_TOKEN",
+    ]);
+    expect(Object.keys(prepared.spec.env).filter((k) => !allowed.has(k))).toEqual([]);
+    expect(Object.values(prepared.spec.env)).not.toContain("i43-ungranted-value");
+    expect(JSON.stringify(prepared.spec.args)).not.toContain("i43-granted-value");
+    prepared.discard();
+    // A stored credential mapping that no longer equals the re-resolved one refuses the spawn.
+    upsertRunGrant(f.db, {
+      ...g,
+      credentials_json: JSON.stringify({ token: { env: "I43_TOKEN", vaultKey: "github.pat" } }),
+    });
+    expect(await refusalCode(f.source.prepareSpawn(g.service_id))).toBe(
+      "ERR_EXTENSION_RUN_CHANGED",
+    );
+  });
+
+  test("source pin: credential values reach the child ONLY as extensionProcessEnv's extra, read after verification", async () => {
+    const src = stripComments(await read("packages/gateway/src/extensions/extension-runtime.ts"));
+    // The spec's env is built in exactly one place, from the credential env and nothing else.
+    expect(src.match(/\benv:/g) ?? []).toHaveLength(1);
+    expect(src).toMatch(/\{ command, args, env: extensionProcessEnv\(deps\.credentialEnv\) \}/);
+    expect(src.match(/extensionProcessEnv\(/g) ?? []).toHaveLength(1);
+    // prepareSpawn reads the values for the VERIFIED credentials, after the verifier and before
+    // staging, and hands them to the spec builder.
+    const prepAt = src.indexOf("async prepareSpawn(");
+    const prep = src.slice(prepAt);
+    const readAt = prep.indexOf(
+      "const credentialEnv = await readCredentialEnv(deps.vault, verified.credentials);",
+    );
+    expect(readAt).toBeGreaterThan(prep.indexOf("await verify("));
+    expect(prep.indexOf("stageVerifiedExtension(")).toBeGreaterThan(readAt);
+    expect(prep).toMatch(/buildExtensionSpawnSpec\(staged, \{[^}]*\bcredentialEnv,\s*\}\)/);
+    // The Vault-reading helper has no other production caller.
+    const files = await readDirFiles("packages/gateway/src");
+    const readers = files
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => /\breadCredentialEnv\(/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(readers).toEqual([
+      "extensions/extension-credentials.ts",
+      "extensions/extension-runtime.ts",
+    ]);
+    // The verifier re-resolves the credentials from the manifest it verified — through the ONE
+    // derivation it shares with the approval (`resolvedCredentialsFor`), called only after the
+    // manifest's hashes and publisher signature are verified — and compares them with the stored
+    // grant, refusing RUN_CHANGED on any difference.
+    const ver = stripComments(await read("packages/gateway/src/extensions/verified-extension.ts"));
+    expect(ver).toMatch(
+      /import \{[^}]*\bresolvedCredentialsFor\b[^}]*\} from "\.\/approve-run\.ts";/,
+    );
+    const verify = ver.slice(ver.indexOf("export async function readVerifiedExtensionForSpawn("));
+    const hashesAt = verify.indexOf("assertHashesVerified(row);");
+    const manifestAt = verify.indexOf("const manifest = readManifestTyped(row);");
+    const signatureAt = verify.indexOf(
+      "await assertPublisherSignature(row, manifest, deps.vault);",
+    );
+    const deriveAt = verify.search(
+      /const \{ credentials \} = resolvedCredentialsFor\(\s*row,\s*manifest,\s*grant\.service_id,/,
+    );
+    const compareAt = verify.search(
+      /if \(serializeRunCredentials\(credentials\) !== grant\.credentials_json\) \{\s*refuse\(\s*"ERR_EXTENSION_RUN_CHANGED",/,
+    );
+    for (const at of [hashesAt, manifestAt, signatureAt]) expect(at).toBeGreaterThan(-1);
+    expect(deriveAt).toBeGreaterThan(Math.max(hashesAt, manifestAt, signatureAt));
+    expect(compareAt).toBeGreaterThan(deriveAt);
+    expect(verify.match(/resolvedCredentialsFor\(/g) ?? []).toHaveLength(1);
+    // …and that derivation binds from the row and the manifest it is handed (the verified one).
+    const approve = stripComments(await read("packages/gateway/src/extensions/approve-run.ts"));
+    const derive = approve.slice(
+      approve.indexOf("export function resolvedCredentialsFor("),
+      approve.indexOf("export function currentRunCredentials("),
+    );
+    expect(derive).toMatch(
+      /const binding = findContinuityBinding\(bindingInputFor\(row, manifest\), table\);/,
+    );
+    expect(derive).toMatch(/resolveRunCredentials\(manifest, serviceId, binding\)/);
+  });
+
+  test("behavioural: a credential env name that could change what the child runs is refused at parse", async () => {
+    const { parseExtensionManifestJson } = await import("./extensions/manifest.ts");
+    const { BASELINE_KEYS } = await import("./extensions/spawn-env.ts");
+    const reserved = [
+      "NODE_OPTIONS",
+      "BUN_X",
+      "NIMBUS_X",
+      "LD_PRELOAD",
+      "DYLD_INSERT_LIBRARIES",
+      "COMSPEC",
+      "PATHEXT",
+      ...BASELINE_KEYS,
+    ];
+    for (const env of reserved) {
+      expect(() =>
+        parseExtensionManifestJson(
+          JSON.stringify({ id: "x", version: "1.0.0", credentials: { token: { env } } }),
+        ),
+      ).toThrow(/reserved variable/);
+    }
+    // Positive control: the same manifest with an ordinary name parses, so the refusals above are
+    // about the NAME and not some other defect in the fixture.
+    const ok = parseExtensionManifestJson(
+      JSON.stringify({ id: "x", version: "1.0.0", credentials: { token: { env: "I43_TOKEN" } } }),
+    );
+    expect(ok.credentials).toEqual({ token: { env: "I43_TOKEN" } });
+    // The CALLS, not the names: removing either check from the parser fails here.
+    const src = stripComments(await read("packages/registry-format/src/manifest.ts"));
+    expect(src).toMatch(/!CREDENTIAL_ENV_RE\.test\(env\) \|\| isReservedEnv\(env\)/);
+    expect(src).toMatch(/isExtensionBaselineEnvKey\(env\)/);
+  });
+
   test("the run grant is created only behind the executor-gated extension.run approval (I2 frozen set)", () => {
     expect(HITL_REQUIRED.has("extension.run")).toBe(true);
   });
@@ -6492,6 +6786,64 @@ describe("I43 — an installed extension's code runs only through the verified s
       "packages/gateway/src/x/y.ts",
       "packages/gateway/src/x/z.ts",
     ]);
+  });
+
+  test("D34: the real tree confines the migration table, the migration grant and the extension.migrate consent, and the checker rejects strays", async () => {
+    const { checkMigrationConfinement } = await import(
+      "../../../scripts/structure-audit/check-nimbus-invariants.ts"
+    );
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(files.length).toBeGreaterThan(100);
+    // Premise: the confined names are really present in the scanned tree.
+    const named = (re: RegExp) => files.filter((f) => re.test(f.contents)).length;
+    expect(named(/\bconnector_migration\b/)).toBeGreaterThan(0);
+    expect(named(/\bapproveMigratedExtensionRun\b/)).toBeGreaterThan(0);
+    expect(named(/\bmigrationConsentViaGate\b/)).toBeGreaterThan(0);
+    expect(checkMigrationConfinement(files)).toEqual([]);
+    // Non-vacuous: the same checker flags one planted stray per clause.
+    const planted = checkMigrationConfinement([
+      {
+        relPath: "packages/gateway/src/x/a.ts",
+        contents: "db.run(\"UPDATE connector_migration SET state = 'approved'\");\n",
+      },
+      {
+        relPath: "packages/gateway/src/x/b.ts",
+        contents: "await approveMigratedExtensionRun(d, id);\n",
+      },
+      {
+        relPath: "packages/gateway/src/x/c.ts",
+        contents: 'gate({ type: "extension.migrate", payload });\n',
+      },
+    ]);
+    expect(planted.map((v) => [v.file, v.rule])).toEqual([
+      ["packages/gateway/src/x/a.ts", "migration-table-confined"],
+      ["packages/gateway/src/x/b.ts", "migration-grant-callers"],
+      ["packages/gateway/src/x/c.ts", "migration-consent-raisers"],
+    ]);
+  });
+
+  test("D34 bound: inside dispatchers.ts only tryDispatchMigrationRpc reads the engine, and only migration-rpc.ts calls accept", async () => {
+    // D34(c) exempts `dispatchers.ts` whole-file, and every dispatcher there receives the ServerCtx
+    // that carries the engine. A holder could call `accept` with a consent callback of its own, so
+    // this pins WHERE in that file the option is read, and who calls `accept` at all.
+    const src = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const reads = [...src.matchAll(/\bmigrationEngine\b/g)].map((m) => m.index ?? -1);
+    expect(reads).toHaveLength(1);
+    const fnAt = src.indexOf("export async function tryDispatchMigrationRpc(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const fnEnd = src.indexOf("\n}\n", fnAt);
+    expect(reads[0]).toBeGreaterThan(fnAt);
+    expect(reads[0]).toBeLessThan(fnEnd);
+    const acceptCallers = (await readDirFiles("packages/gateway/src"))
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) =>
+        /\bengine\.accept\(|\bmigrationEngine\??\.accept\(/.test(stripComments(f.contents)),
+      )
+      .map((f) => f.rel);
+    expect(acceptCallers).toEqual(["ipc/migration-rpc.ts"]);
   });
 
   test("assemble: no extension spawns until the boot verification pass ends; the gate resolves in its finally", async () => {
@@ -6530,6 +6882,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     enforceAirGap: () => false,
     now: () => Date.now(),
     production: false,
+    builtin: null,
   };
   const roots: string[] = [];
   const dbs: Database[] = [];
@@ -6778,26 +7131,84 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const src = stripComments(
       await read("packages/gateway/src/extensions/registry/install-from-registry.ts"),
     );
-    const fnAt = src.indexOf("export async function installFromRegistry(");
-    expect(fnAt).toBeGreaterThan(-1);
-    // Bounded at the next top-level export, so a later function cannot satisfy the order checks.
-    const nextExport = src.indexOf("\nexport ", fnAt + 1);
-    const body = src.slice(fnAt, nextExport === -1 ? undefined : nextExport);
-    const resolveAt = body.indexOf("await resolveRegistryEntry(");
-    const manifestAt = body.indexOf("await fetchRegistryManifest(");
-    const shaAt = body.search(
+    // Each function's body, bounded at the next top-level export, so a later function cannot
+    // satisfy another's order checks.
+    const bodyOf = (code: string, header: string): string => {
+      const at = code.indexOf(header);
+      expect(at, header).toBeGreaterThan(-1);
+      const next = code.indexOf("\nexport ", at + 1);
+      return code.slice(at, next === -1 ? undefined : next);
+    };
+    // (1) The composition: installFromRegistry fetches-and-verifies, THEN installs that package.
+    const compose = bodyOf(src, "export async function installFromRegistry(");
+    const composeFetchAt = compose.indexOf("const pkg = await fetchVerifiedRegistryPackage(");
+    const composeInstallAt = compose.indexOf("await installVerifiedRegistryPackage(deps, pkg,");
+    expect(composeFetchAt).toBeGreaterThan(-1);
+    expect(composeInstallAt).toBeGreaterThan(composeFetchAt);
+    // (2) The fetch half: resolve through verified indexes, then the manifest, the package hash, the
+    // I16 signature and the Vault key check, ALL before a byte is written or extracted and before
+    // the verified package is handed back.
+    const fetchBody = bodyOf(src, "export async function fetchVerifiedRegistryPackage(");
+    const resolveAt = fetchBody.indexOf("await resolveRegistryEntry(");
+    const manifestAt = fetchBody.indexOf("await fetchRegistryManifest(");
+    const shaAt = fetchBody.search(
       /sha256HexEqualConstantTime\(sha256Hex\(packageBytes\), vEntry\.packageSha256\)/,
     );
-    const sigAt = body.indexOf("await verifyRegistryManifestSignature(");
-    const vaultAt = body.indexOf("await vaultPublisherKeyConflicts(");
-    const installAt = body.indexOf("await installExtensionFromLocalDirectory(");
-    for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, installAt]) {
+    const sigAt = fetchBody.indexOf("await verifyRegistryManifestSignature(");
+    const vaultAt = fetchBody.indexOf("await vaultPublisherKeyConflicts(");
+    const writeAt = fetchBody.indexOf("writeFileSync(archivePath, packageBytes)");
+    const returnAt = fetchBody.indexOf("return {");
+    for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, writeAt, returnAt]) {
       expect(at).toBeGreaterThan(-1);
     }
     expect(manifestAt).toBeGreaterThan(resolveAt);
-    expect(installAt).toBeGreaterThan(Math.max(manifestAt, shaAt, sigAt, vaultAt));
-    // The installer is handed the INDEX's publisher key (via the fetched manifest), never another.
-    expect(body).toMatch(/const \{ manifest, publisherKey \} = fetched;/);
+    expect(writeAt).toBeGreaterThan(Math.max(manifestAt, shaAt, sigAt, vaultAt));
+    expect(returnAt).toBeGreaterThan(writeAt);
+    // The package carries the INDEX's publisher key, the one the signature and Vault checks used.
+    expect(fetchBody).toMatch(/publisherKey: entry\.publisher\.key,/);
+    expect(fetchBody).toMatch(
+      /vaultPublisherKeyConflicts\(deps\.vault, entry\.publisher\.id, fetched\.publisherKey\)/,
+    );
+    // (3) The install half installs ONLY through installExtensionFromLocalDirectory, handed that
+    // index key and recorded against the SOURCE registry; the post-copy entry hash is compared to
+    // the signed index's before the source is recorded, and a mismatch undoes the install.
+    const installBody = bodyOf(src, "export async function installVerifiedRegistryPackage(");
+    const localAt = installBody.indexOf("await installExtensionFromLocalDirectory(");
+    const entryHashAt = installBody.indexOf(
+      "sha256HexEqualConstantTime(installed.entryHash, pkg.entryHash)",
+    );
+    const undoAt = installBody.indexOf("deleteExtensionById(deps.db, installed.id)");
+    const sourceAt = installBody.indexOf("setExtensionSource(deps.db, installed.id,");
+    for (const at of [localAt, entryHashAt, undoAt, sourceAt]) expect(at).toBeGreaterThan(-1);
+    expect(entryHashAt).toBeGreaterThan(localAt);
+    expect(undoAt).toBeGreaterThan(entryHashAt);
+    expect(sourceAt).toBeGreaterThan(undoAt);
+    expect(installBody).toMatch(/publisherKey: decodeBase64\(pkg\.publisherKey\),/);
+    expect(installBody).toMatch(/sourceRegistry: reg\.name,/);
+    // ...and inside it the I16 signature of the COPIED manifest is re-verified against that key
+    // before the extension row is written: the install lands only after verification.
+    const local = stripComments(
+      await read("packages/gateway/src/extensions/install-from-local.ts"),
+    );
+    const afterCopy = local.slice(
+      local.indexOf("async function completeExtensionInstallAfterCopy("),
+    );
+    const reverifyAt = afterCopy.indexOf("await verifyAndRecordSignature(options, destManifest");
+    const rowAt = afterCopy.indexOf("insertExtensionRow(options.db,");
+    expect(reverifyAt).toBeGreaterThan(-1);
+    expect(rowAt).toBeGreaterThan(reverifyAt);
+    // (4) Only two production files may name the install half (a call, an import or an alias): the
+    // composition above, and the migration engine, which rebuilds the package from a stage whose
+    // tree digest equals the one fetchVerifiedRegistryPackage verified, and requires the installed
+    // digest to equal it too.
+    const callers = (await readDirFiles("packages/gateway/src"))
+      .filter((f) => /\binstallVerifiedRegistryPackage\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(callers).toEqual([
+      "extensions/migration/migration-engine.ts",
+      "extensions/registry/install-from-registry.ts",
+    ]);
     // Resolution reads only freshly VERIFIED indexes, and refuses ambiguity.
     const resolver = stripComments(
       await read("packages/gateway/src/extensions/registry/registry-resolve.ts"),
@@ -6841,11 +7252,103 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(setSourceCallers).toEqual(["extensions/registry/install-from-registry.ts"]);
   });
 
+  test("source pin: the migration engine's accept re-digests the stage, installs with the BUILTIN registry row, then checks the installed digest", async () => {
+    // The engine is the second production caller of `installVerifiedRegistryPackage` (above). It
+    // rebuilds the package from its stage rather than refetching, so what makes that install a
+    // verified-chain install is this exact order, AFTER the owner's one `extension.migrate` answer.
+    const src = stripComments(
+      await read("packages/gateway/src/extensions/migration/migration-engine.ts"),
+    );
+    const stagedAt = src.indexOf("const installStaged = async (");
+    const startAt = src.indexOf("const acceptLocked = async (");
+    expect(stagedAt).toBeGreaterThan(-1);
+    expect(startAt).toBeGreaterThan(stagedAt);
+    // `installStaged` is the install half; `acceptLocked` is the order around it.
+    const installHalf = src.slice(stagedAt, startAt);
+    const accept = src.slice(startAt, src.indexOf("\n  return {", startAt));
+    const consentAt = accept.indexOf("const approved = await consent(");
+    const notApprovedAt = accept.indexOf('"ERR_EXTENSION_MIGRATION_NOT_APPROVED"');
+    // (1) The stage is re-digested against the row's tree_digest after the prompt, and only then
+    // is the install half called…
+    const reDigestAt = accept.indexOf("\n    requireIntactStage(row);", notApprovedAt);
+    const callAt = accept.indexOf("await installStaged(row, entry, builtinReg,");
+    // (2) …the package carries the BUILT-IN registry row (never an owner registry) and is installed
+    // through the verified install half, with the approver that exists only past the answer…
+    const regAt = installHalf.indexOf("reg: builtinRegistryRow(db, reg),");
+    const approverAt = installHalf.indexOf(
+      "const approvedByMigrationConsent: ExtensionInstallApprover = () => Promise.resolve(true);",
+    );
+    const installAt = installHalf.indexOf(
+      'await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable")',
+    );
+    // (3) …and the INSTALLED tree must carry the staged digest, in the row and in the result,
+    // before the run grant is written.
+    const installedAt = installHalf.indexOf(
+      "installedRow?.tree_digest !== row.treeDigest || installed.treeDigest !== row.treeDigest",
+    );
+    const grantAt = accept.indexOf("await approveMigratedExtensionRun(");
+    for (const at of [
+      consentAt,
+      notApprovedAt,
+      reDigestAt,
+      callAt,
+      regAt,
+      approverAt,
+      installAt,
+      installedAt,
+      grantAt,
+    ]) {
+      expect(at).toBeGreaterThan(-1);
+    }
+    expect(notApprovedAt).toBeGreaterThan(consentAt);
+    expect(reDigestAt).toBeGreaterThan(notApprovedAt);
+    expect(callAt).toBeGreaterThan(reDigestAt);
+    expect(approverAt).toBeGreaterThan(regAt);
+    expect(installAt).toBeGreaterThan(Math.max(regAt, approverAt));
+    expect(installedAt).toBeGreaterThan(installAt);
+    expect(grantAt).toBeGreaterThan(callAt);
+    // The registry handed to the install half IS the built-in config: `requireAcceptable` returns
+    // `builtin` itself, `acceptLocked` destructures it, and nothing in `acceptLocked` installs
+    // directly (a direct `install(` there would bypass the pinned order above).
+    const acceptable = src.slice(src.indexOf("const requireAcceptable = ("), stagedAt);
+    expect(acceptable).toContain("return { entry, reg: builtin };");
+    expect(accept).toContain("const { entry, reg: builtinReg } = requireAcceptable(row);");
+    expect(accept).not.toContain("await install(");
+    // The re-digest is a real digest comparison against the row, through the extension store's own
+    // digest function — not an existence check.
+    const checkAt = src.indexOf("const checkStage = (row: MigrationRow): StageCheck => {");
+    expect(checkAt).toBeGreaterThan(-1);
+    const check = src.slice(checkAt, src.indexOf("\n  };", checkAt));
+    expect(check).toContain("const live = digestOrNull(stagePath);");
+    expect(check).toContain("live !== null && live === row.treeDigest");
+    expect(src).toMatch(/return computeExtensionTreeDigest\(root\);/);
+    expect(src).toContain(
+      "const install = deps.installVerified ?? installVerifiedRegistryPackage;",
+    );
+  });
+
+  test("M3: the migration engine's test seams are never named by production code outside the engine", async () => {
+    // `installVerified` and `removeInstallTree` replace the verified install and the undo's removal.
+    // The production constructor (`platform/migration-boot.ts`) builds the deps field by field, and
+    // no other non-test gateway file may name either seam.
+    const offenders = (await readDirFiles("packages/gateway/src"))
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => f.rel !== "extensions/migration/migration-engine.ts")
+      .filter((f) => /\b(?:installVerified|removeInstallTree)\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+    const boot = stripComments(await read("packages/gateway/src/platform/migration-boot.ts"));
+    expect(boot).toMatch(/return createMigrationEngine\(\{/);
+    expect(boot).not.toMatch(/\.\.\.\s*d\b/);
+  });
+
   test("source pin: an update is detected from the source registry only, and apply re-verifies before the swap", async () => {
     const detect = stripComments(
       await read("packages/gateway/src/extensions/registry/registry-update-source.ts"),
     );
-    expect(detect).toContain("const reg = getRegistry(deps.db, name);");
+    expect(detect).toContain(
+      "const reg = resolveRegistry(deps.db, name, builtinRegistryOf(deps.fetch));",
+    );
     expect(detect).toContain("r.source.rootFingerprint === reg.rootFingerprint");
     const orch = stripComments(
       await read("packages/gateway/src/extensions/auto-update-orchestrate.ts"),
@@ -6866,13 +7369,13 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       /reverifyManifest: \(update, signal\) =>\s*reverifyUpdateManifest\(fetchDeps, opts\.vault, update, signal\),/,
     );
     expect(init).toMatch(
-      /fetchRegistryBytes\(\s*fetchDeps,\s*sourceRegistryOf\(opts\.db, update\),/,
+      /fetchRegistryBytes\(\s*fetchDeps,\s*sourceRegistryOf\(fetchDeps, update\),/,
     );
     const rvAt = init.indexOf("async function reverifyUpdateManifest(");
     expect(rvAt).toBeGreaterThan(-1);
     const rv = init.slice(rvAt, init.indexOf("export function createAutoUpdateRuntime("));
     const order = [
-      "const reg = sourceRegistryOf(fetchDeps.db, update);",
+      "const reg = sourceRegistryOf(fetchDeps, update);",
       "await fetchVerifiedIndex(fetchDeps, reg, signal);",
       "await fetchRegistryManifest(",
       "await vaultPublisherKeyConflicts(",
@@ -6886,4 +7389,429 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       .map((f) => f.rel);
     expect(callers).toEqual(["extensions/auto-update-init.ts"]);
   });
+});
+
+describe("I45 — a loopback HTTP listener answers only a Host header that names loopback", () => {
+  test("the real read-only HTTP server refuses a rebound Host before routing and serves loopback", async () => {
+    const { startReadOnlyHttpServer } = await import("./ipc/http-server.ts");
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-i45-"));
+    const dbPath = join(dir, "nimbus.db");
+    const seed = new Database(dbPath);
+    LocalIndex.ensureSchema(seed);
+    seed.close();
+    const handle = startReadOnlyHttpServer(dbPath, 0);
+    try {
+      // `/v1/items` is what a rebound page would want; the host guard answers before routing.
+      const rebound = await fetch(`http://127.0.0.1:${handle.port}/v1/items`, {
+        headers: { host: `attacker.example:${handle.port}` },
+      });
+      expect(rebound.status).toBe(403);
+      // Positive control, so the 403 above is not "every request fails". (`/v1/items` itself now
+      // needs a `data`-scoped token, so the control uses the always-public health route.)
+      const loopback = await fetch(`http://127.0.0.1:${handle.port}/v1/health`, {
+        headers: { host: `127.0.0.1:${handle.port}` },
+      });
+      expect(loopback.status).toBe(200);
+    } finally {
+      handle.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("every production Bun.serve call site runs the guard first", async () => {
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      rel: f.rel,
+      contents: stripComments(f.contents),
+    }));
+    const serving = files.filter((f) => f.contents.includes("Bun.serve(")).map((f) => f.rel);
+    expect(serving.sort()).toEqual(["auth/pkce.ts", "ipc/http-server.ts", "ipc/metrics-server.ts"]);
+    for (const rel of serving) {
+      const src = files.find((f) => f.rel === rel)?.contents ?? "";
+      const serveAt = src.indexOf("Bun.serve(");
+      const serveBlock = src.slice(serveAt, src.indexOf("registerListener(", serveAt));
+      // POSITION and EFFECT: the handler must open with the guard and return its refusal
+      // immediately — either `const x = rejectNonLoopbackHost(req); if (x !== null) return x;`
+      // or a single `return rejectNonLoopbackHost(req) ?? …`. A call whose result is dropped, or
+      // a guard below a route, enforces nothing.
+      const handler = /fetch\(req(?::\s*Request)?\)(?::\s*[^{]+)?\s*\{\s*([\s\S]{0,240})/.exec(
+        serveBlock,
+      );
+      expect(handler, `${rel}: no fetch(req) handler found`).not.toBeNull();
+      expect(handler?.[1] ?? "").toMatch(
+        /^(?:const (\w+) = rejectNonLoopbackHost\(req\);\s*if \(\1 !== null\) return \1;|return rejectNonLoopbackHost\(req\) \?\?)/,
+      );
+    }
+  });
+});
+
+/**
+ * I46. Every behavioural test here drives the path the desktop uses — `migration.accept` through
+ * `dispatchMigrationRpc`, the handler the bridge's `rpc_call` reaches — over a REAL migration
+ * engine, a real signed fixture registry configured as the built-in one, and a real index. The
+ * fixture's legacy id is not a bundled connector (the engine skips a bundled one entirely).
+ */
+describe("I46 — a renderer can create an extension run grant only through migration.accept, by id, under the baked whitelist", () => {
+  const BRIDGE = "packages/ui/src-tauri/src/gateway_bridge.rs";
+  const EXT = "com.example.reader";
+  const LEGACY = "fixture_reader";
+  const LEGACY_KEY = "fixture_reader.token";
+  const HOST = "reader.example";
+  const BUILTIN_URL = "https://registry.nimbus.test/";
+  const NOW = Date.parse("2026-10-21T12:00:00Z");
+
+  let tmp: string;
+  let registryDir: string;
+  let builtin: BuiltinRegistryConfig;
+  let entry: ContinuityEntry;
+  let db: Database;
+  let vault: NimbusVault;
+  /** The fake scheduler's registrations: service id -> extension id. */
+  let registered: Map<string, string>;
+
+  beforeEach(async () => {
+    tmp = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-i46-")));
+    registryDir = join(tmp, "official");
+    const built = await buildTestRegistry(registryDir, {
+      id: EXT,
+      versions: [{ version: "1.0.0" }],
+      publisherId: "nimbus",
+      manifestExtra: {
+        name: "Fixture Reader",
+        permissions: { network: [HOST] },
+        credentials: { token: { env: "FIXTURE_TOKEN" } },
+        sync: { contract: "1", intervalSeconds: 600, itemTypes: ["highlight", "book"] },
+      },
+    });
+    builtin = { url: BUILTIN_URL, rootKey: built.rootKey };
+    entry = {
+      legacyServiceId: LEGACY,
+      extensionId: EXT,
+      publisherKey: built.publisherKey,
+      sourceRootFingerprint: publisherKeyFingerprint(built.rootKey),
+      credentials: { token: LEGACY_KEY },
+      expectedPermissions: { network: [HOST], read: [], write: [] },
+      itemTypes: ["highlight", "book"],
+      displayName: "Fixture Reader",
+    };
+    db = openMemoryIndexDatabase();
+    vault = createMemoryVault();
+    await vault.set(LEGACY_KEY, "I46-SECRET-TOKEN-VALUE");
+    registered = new Map();
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function engineWith(over: Partial<MigrationEngineDeps> = {}): MigrationEngine {
+    return createMigrationEngine({
+      db,
+      vault,
+      dataDir: join(tmp, "data"),
+      extensionsDir: join(tmp, "data", "extensions"),
+      fetch: {
+        fetchFn: async (url) => {
+          const u = new URL(url);
+          try {
+            return new Response(
+              readFileSync(join(registryDir, ...u.pathname.split("/").filter(Boolean))),
+            );
+          } catch {
+            return new Response("missing", { status: 404 });
+          }
+        },
+        enforceAirGap: () => false,
+        now: () => NOW,
+        production: false,
+      },
+      builtin,
+      continuityTable: [entry],
+      isBundledConnector: () => false,
+      env: {
+        platform: process.platform,
+        protectedRoots: [join(tmp, "data"), join(tmp, "config")],
+        runtimeReadPaths: [join(tmp, "bun-bin")],
+        realpath: (p) => realpathSync.native(p),
+      },
+      runtimeEnabled: true,
+      sandbox: { canConfine: () => null },
+      extensionSync: {
+        refresh: (id) => {
+          for (const [k, v] of registered) if (v === id) registered.delete(k);
+          const live = listExtensions(db).some((r) => r.id === id) && getRunGrant(db, id) !== null;
+          if (!live) return;
+          for (const e of [entry]) if (e.extensionId === id) registered.set(e.legacyServiceId, id);
+        },
+      },
+      scheduler: {
+        resume: (id) => {
+          setPaused(db, id, false);
+          transitionHealth(db, id, { type: "resumed" });
+        },
+        pause: (id, reason) => {
+          setPaused(db, id, true);
+          transitionHealth(db, id, { type: "paused", ...(reason === undefined ? {} : { reason }) });
+        },
+        syncableFor: (id) => (registered.has(id) ? {} : undefined),
+      },
+      now: () => NOW,
+      ...over,
+    });
+  }
+
+  async function preparedRowId(e: MigrationEngine = engineWith()): Promise<string> {
+    await e.evaluate();
+    const rows = listMigrations(db);
+    expect(rows.map((r) => r.state)).toEqual(["awaiting_approval"]);
+    return rows[0]?.id ?? "";
+  }
+
+  interface RendererAccept {
+    readonly asked: Array<{ type: string; payload: Record<string, unknown> }>;
+    readonly value?: Record<string, unknown>;
+    readonly error?: RpcMethodError;
+  }
+
+  /** `migration.accept` exactly as the desktop sends it, answered "yes" by the owner. */
+  async function acceptAsRenderer(
+    e: MigrationEngine,
+    params: Record<string, unknown>,
+  ): Promise<RendererAccept> {
+    const asked: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    try {
+      const out = await dispatchMigrationRpc("migration.accept", params, {
+        engine: e,
+        ownerGate: async (a) => {
+          asked.push(a);
+          return true;
+        },
+        fromRenderer: true,
+      });
+      return { asked, value: (out as { value: Record<string, unknown> }).value };
+    } catch (err) {
+      if (err instanceof RpcMethodError) return { asked, error: err };
+      throw err;
+    }
+  }
+
+  function expectRefusedBeforeThePrompt(out: RendererAccept, code: RegExp): void {
+    expect(out.error?.message).toMatch(code);
+    expect(out.asked).toEqual([]);
+    expect(listExtensions(db)).toEqual([]);
+    expect(getRunGrant(db, EXT)).toBeNull();
+  }
+
+  /** Rewrites the staged manifest and re-stamps the row's digest, so the stage still "matches". */
+  function reshapeStagedManifest(id: string, edit: (m: Record<string, unknown>) => void): void {
+    const stage = getMigration(db, id)?.stagePath ?? "";
+    const manifestPath = resolveExtensionManifestPath(stage);
+    if (manifestPath === undefined) throw new Error("premise: a staged manifest");
+    const m = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    edit(m);
+    writeFileSync(manifestPath, JSON.stringify(m));
+    db.run("UPDATE connector_migration SET tree_digest = ? WHERE id = ?", [
+      computeExtensionTreeDigest(stage),
+      id,
+    ]);
+  }
+
+  // ---- the renderer surface ------------------------------------------------------------------
+
+  test("the bridge exposes migration.list and migration.accept, and no other migration or install verb", async () => {
+    const rust = await read(BRIDGE);
+    expect(rust).toMatch(/^\s*"migration\.list",\s*$/m);
+    expect(rust).toMatch(/^\s*"migration\.accept",\s*$/m);
+    const start = rust.indexOf("pub const ALLOWED_METHODS: &[&str] = &[");
+    const list = rust.slice(start, rust.indexOf("];", start));
+    const migration = [...list.matchAll(/"(migration\.[A-Za-z]+)"/g)].map((m) => m[1]);
+    expect(migration).toEqual(["migration.accept", "migration.list"]);
+    for (const m of [
+      "migration.decline",
+      "migration.retry",
+      "extension.install",
+      "extension.approveRun",
+    ]) {
+      expect(rust).not.toMatch(new RegExp(`^\\s*"${m.replace(".", "\\.")}",\\s*$`, "m"));
+      expect(rust).toContain(`assert!(!is_method_allowed("${m}"));`);
+    }
+    expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
+    expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*111\s*\)/);
+  });
+
+  // ---- the positive control ------------------------------------------------------------------
+
+  test("a gateway-prepared row is accepted with ONE extension.migrate prompt to the caller, and the record says it came from the renderer", async () => {
+    const id = await preparedRowId();
+    const out = await acceptAsRenderer(engineWith(), { id });
+    expect(out.error).toBeUndefined();
+    expect(out.asked.map((a) => a.type)).toEqual(["extension.migrate"]);
+    expect(out.asked[0]?.payload["fromRenderer"]).toBe(true);
+    expect(out.value?.["state"]).toBe("approved");
+    expect(listExtensions(db).map((r) => r.id)).toEqual([EXT]);
+  });
+
+  test("accept reads the id and nothing else: a client cannot choose the package, the grant or the record", async () => {
+    const id = await preparedRowId();
+    const out = await acceptAsRenderer(engineWith(), {
+      id,
+      extensionId: "com.evil.other",
+      registry: "https://evil.example/",
+      permissions: { network: ["evil.example"], read: ["/"], write: ["/"] },
+      credentials: { token: "openai.api_key" },
+      fromRenderer: false,
+    });
+    expect(out.error).toBeUndefined();
+    const payload = out.asked[0]?.payload ?? {};
+    expect(payload["extensionId"]).toBe(EXT);
+    expect(JSON.stringify(payload)).not.toContain("evil");
+    // The audit field is the gateway's, not the caller's.
+    expect(payload["fromRenderer"]).toBe(true);
+    expect(getRunGrant(db, EXT)?.credentials_json).toBe(
+      `{"token":{"env":"FIXTURE_TOKEN","vaultKey":"${LEGACY_KEY}"}}`,
+    );
+  });
+
+  // ---- the whitelist ---------------------------------------------------------------------------
+
+  test("an unknown id is refused", async () => {
+    await preparedRowId();
+    const out = await acceptAsRenderer(engineWith(), { id: "not-a-migration" });
+    expectRefusedBeforeThePrompt(out, /^ERR_EXTENSION_MIGRATION_NOT_FOUND:/);
+  });
+
+  test.each(["failed", "approved", "declined"] as const)(
+    "a row in %s is refused",
+    async (state) => {
+      const id = await preparedRowId();
+      expect(finishMigration(db, id, state, state === "failed" ? "x" : null, NOW)).toBe(true);
+      const out = await acceptAsRenderer(engineWith(), { id });
+      expectRefusedBeforeThePrompt(out, /^ERR_EXTENSION_MIGRATION_NOT_PENDING:/);
+    },
+  );
+
+  test("a stage whose tree no longer matches the row's digest is refused", async () => {
+    const id = await preparedRowId();
+    const stage = getMigration(db, id)?.stagePath ?? "";
+    writeFileSync(join(stage, "dist", "index.js"), "export const pwned = 1;\n");
+    const out = await acceptAsRenderer(engineWith(), { id });
+    expectRefusedBeforeThePrompt(out, /^ERR_EXTENSION_MIGRATION_FAILED: .*digest/);
+    expect(getMigration(db, id)?.state).toBe("failed");
+  });
+
+  test.each([
+    [
+      "permissions",
+      "permissions.network",
+      (m: Record<string, unknown>) => {
+        m["permissions"] = { network: [HOST, "evil.example"] };
+      },
+    ],
+    [
+      "credential mapping",
+      "credentials",
+      (m: Record<string, unknown>) => {
+        m["credentials"] = { token: { env: "FIXTURE_TOKEN" }, other: { env: "OTHER" } };
+      },
+    ],
+    [
+      "item types",
+      "sync.itemTypes",
+      (m: Record<string, unknown>) => {
+        m["sync"] = { contract: "1", intervalSeconds: 600, itemTypes: ["highlight", "email"] };
+      },
+    ],
+  ])(
+    "a staged package whose %s differ from the continuity entry is refused, even with a matching digest",
+    async (_what, field, edit) => {
+      const id = await preparedRowId();
+      reshapeStagedManifest(id, edit);
+      const out = await acceptAsRenderer(engineWith(), { id });
+      expectRefusedBeforeThePrompt(out, new RegExp(`\\(${field.replace(".", "\\.")} differs\\)`));
+    },
+  );
+
+  test("with no baked built-in registry, accept is refused and nothing changes", async () => {
+    const id = await preparedRowId();
+    const out = await acceptAsRenderer(engineWith({ builtin: null }), { id });
+    expectRefusedBeforeThePrompt(out, /^ERR_EXTENSION_MIGRATION_NO_REGISTRY:/);
+    expect(getMigration(db, id)?.state).toBe("awaiting_approval");
+  });
+
+  test("a registry other than the baked root is refused", async () => {
+    const id = await preparedRowId();
+    const other = { url: "https://evil.example/", rootKey: built64(9) };
+    const out = await acceptAsRenderer(engineWith({ builtin: other }), { id });
+    expectRefusedBeforeThePrompt(out, /\(sourceRootFingerprint differs\)/);
+  });
+
+  test("a staged package signed for another publisher is refused", async () => {
+    const id = await preparedRowId();
+    reshapeStagedManifest(id, (m) => {
+      m["publisher"] = { id: "nimbus", key: built64(7) };
+    });
+    const out = await acceptAsRenderer(engineWith(), { id });
+    expectRefusedBeforeThePrompt(out, /\(publisherKey differs\)/);
+  });
+
+  test("an extension id that is already installed is refused, and the install is left alone", async () => {
+    const other = { ...entry, legacyServiceId: "fixture_other" };
+    const both = engineWith({ continuityTable: [entry, other] });
+    await both.evaluate();
+    const rows = listMigrations(db);
+    const first = rows.find((r) => r.legacyServiceId === LEGACY)?.id ?? "";
+    const second = rows.find((r) => r.legacyServiceId === "fixture_other")?.id ?? "";
+    expect((await acceptAsRenderer(both, { id: first })).value?.["state"]).toBe("approved");
+    const out = await acceptAsRenderer(both, { id: second });
+    expect(out.error?.message).toMatch(/already installed/);
+    expect(out.asked).toEqual([]);
+    expect(listExtensions(db).map((r) => r.id)).toEqual([EXT]);
+    expect(getMigration(db, first)?.state).toBe("approved");
+  });
+
+  /**
+   * The extension installed and approved (through a first accept), and its row put back to
+   * `awaiting_approval` — as if the owner had installed and approved it before answering.
+   */
+  async function installedThenPending(): Promise<string> {
+    const e = engineWith();
+    const id = await preparedRowId(e);
+    expect((await acceptAsRenderer(e, { id })).value?.["state"]).toBe("approved");
+    db.run("UPDATE connector_migration SET state = 'awaiting_approval' WHERE id = ?", [id]);
+    return id;
+  }
+
+  test("an installed extension bound to the entry with a current legacy grant: approved, no prompt, nothing installed or granted", async () => {
+    const id = await installedThenPending();
+    const extBefore = JSON.stringify(listExtensions(db));
+    const grantBefore = JSON.stringify(getRunGrant(db, EXT));
+    const out = await acceptAsRenderer(engineWith(), { id });
+    expect(out.error).toBeUndefined();
+    expect(out.value?.["state"]).toBe("approved");
+    expect(out.asked).toEqual([]);
+    expect(JSON.stringify(listExtensions(db))).toBe(extBefore);
+    expect(JSON.stringify(getRunGrant(db, EXT))).toBe(grantBefore);
+  });
+
+  test("an installed extension whose grant names an older tree digest is refused before the prompt", async () => {
+    const id = await installedThenPending();
+    const { upsertRunGrant } = await import("./extensions/run-grant-store.ts");
+    const grant = getRunGrant(db, EXT);
+    if (grant === null) throw new Error("premise: a run grant");
+    upsertRunGrant(db, { ...grant, tree_digest: "0".repeat(64) });
+    const grantBefore = JSON.stringify(getRunGrant(db, EXT));
+    const out = await acceptAsRenderer(engineWith(), { id });
+    expect(out.error?.message).toMatch(
+      /^ERR_EXTENSION_MIGRATION_FAILED: .*nimbus extension approve/,
+    );
+    expect(out.asked).toEqual([]);
+    expect(JSON.stringify(getRunGrant(db, EXT))).toBe(grantBefore);
+    expect(getMigration(db, id)?.state).toBe("failed");
+  });
+
+  /** A well-formed base64 Ed25519-sized key that is neither the fixture's root nor its publisher. */
+  function built64(fill: number): string {
+    return Buffer.from(new Uint8Array(32).fill(fill)).toString("base64");
+  }
 });

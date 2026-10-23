@@ -14,6 +14,7 @@ import {
   type SchedulerStateRow,
   SqliteSchedulerStateRepository,
 } from "./scheduler-state-repository.ts";
+import { statusLastError } from "./status-last-error.ts";
 import { buildSyncCapabilities } from "./sync-capabilities.ts";
 import type {
   Syncable,
@@ -23,7 +24,7 @@ import type {
   SyncSchedulerConfig,
   SyncStatus,
 } from "./types.ts";
-import { RateLimitError, UnauthenticatedError } from "./types.ts";
+import { RateLimitError, syncNoopResult, UnauthenticatedError } from "./types.ts";
 
 const DEFAULT_CONFIG: SyncSchedulerConfig = {
   maxConcurrentSyncs: 3,
@@ -43,9 +44,20 @@ const SKIP_HEALTH_STATES: ReadonlySet<ConnectorHealthState> = new Set([
 
 type JobReason = "scheduled" | "continuation" | "force";
 
+type ForceWaiter = (err?: unknown) => void;
+
+/**
+ * One unit of scheduled work. Only FORCE jobs carry `waiters`: a `forceSync` request is owned by
+ * the job queued for it, so it is settled by that job's outcome and by nothing else — a scheduled
+ * or continuation run that happens to be in flight when the request arrives never settles it.
+ */
 type Job = {
   serviceId: string;
   reason: JobReason;
+  /** The `forceSync` callers this job answers. Present on force jobs only. */
+  waiters?: ForceWaiter[];
+  /** Clear the persisted cursor right before this job loads its state (`connector.sync --full`). */
+  clearCursor?: boolean;
 };
 
 function clampBackoffBaseMs(failures: number): number {
@@ -78,11 +90,63 @@ function syncFailureUserMessage(err: unknown): string {
   return t.length > MAX_SYNC_FAILURE_MSG ? `${t.slice(0, MAX_SYNC_FAILURE_MSG)}…` : t;
 }
 
+/** `sync_telemetry.items_dropped` for a successful run: the three `dropped` counts summed, else 0. */
+function droppedTotal(result: SyncResult): number {
+  const d = result.dropped;
+  if (d === undefined) return 0;
+  const sum = d.undeclaredType + d.malformed + d.oversized;
+  return Number.isFinite(sum) && sum > 0 ? Math.floor(sum) : 0;
+}
+
 function toRejectionError(err: unknown): Error {
   if (err instanceof Error) {
     return err;
   }
   return new Error(syncFailureUserMessage(err));
+}
+
+/**
+ * Why `connector` cannot run at all right now, or `null` — exactly the reason `runJob` pauses a
+ * service with. A preflight that throws is a refusal too (fail closed). Exported so a caller that
+ * resumes a service (the migration engine's accept) can record the SAME pause before the first run.
+ */
+export function preflightRefusal(connector: { preflight?: () => string | null }): string | null {
+  try {
+    return connector.preflight?.() ?? null;
+  } catch (err) {
+    return `preflight failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+/**
+ * Pause `serviceId` NOW if what is registered under it would refuse its first run — with
+ * {@link preflightRefusal}'s reason, byte for byte what that run would record — so a status read
+ * before the run already shows the pause. Returns whether it paused. Nothing registered: no pause.
+ */
+export function pauseIfPreflightRefuses(
+  s: {
+    syncableFor(serviceId: string): { preflight?: () => string | null } | undefined;
+    pause(serviceId: string, reason?: string): void;
+  },
+  serviceId: string,
+): boolean {
+  const syncable = s.syncableFor(serviceId);
+  const refusal = syncable === undefined ? null : preflightRefusal(syncable);
+  if (refusal === null) return false;
+  s.pause(serviceId, refusal);
+  return true;
+}
+
+/**
+ * Lift a pause on `serviceId` — unless what is registered under it would refuse its first run (the
+ * sandbox cannot confine the extension, or its preflight throws: fail closed); then it is paused
+ * with that refusal instead ({@link pauseIfPreflightRefuses}). For a caller about to resume.
+ */
+export function resumeOrPauseForConfinement(
+  s: Parameters<typeof pauseIfPreflightRefuses>[0] & { resume(serviceId: string): void },
+  serviceId: string,
+): void {
+  if (!pauseIfPreflightRefuses(s, serviceId)) s.resume(serviceId);
 }
 
 export class SyncDisabledError extends Error {
@@ -104,6 +168,8 @@ export class SyncScheduler {
 
   private readonly connectors = new Map<string, Syncable>();
   private readonly inFlight = new Set<string>();
+  /** The job currently running per service; set and cleared alongside `inFlight`. */
+  private readonly running = new Map<string, Job>();
   private queue: Job[] = [];
   private readonly queuedServiceIds = new Set<string>();
   private runningGlobal = 0;
@@ -114,15 +180,16 @@ export class SyncScheduler {
   private _online = true;
   private _connectivityRecheckHandle: ReturnType<typeof setTimeout> | null = null;
 
-  private readonly forceWaiters = new Map<string, Array<(err?: unknown) => void>>();
-
   /**
    * One-shot cold-start floors (epoch ms) per service, set by an owner-initiated
    * `index.rebody --since`. In-memory ONLY: a restart drops a pending backfill
    * back to the connector's own 30-day floor, which is the safe direction —
    * the user can ask again, and nothing silently keeps re-walking history.
+   *
+   * Each value is a fresh token object, so a run can tell the floor it read from one armed while it
+   * was running (compared by identity in `consumeHistoryFloor`, never by value).
    */
-  private readonly historyFloors = new Map<string, number>();
+  private readonly historyFloors = new Map<string, { readonly floorMs: number }>();
 
   private readonly onConnectorSyncSuccess:
     | ((serviceId: string, result: SyncResult, durationMs: number) => void)
@@ -255,9 +322,19 @@ export class SyncScheduler {
 
   unregister(serviceId: string): void {
     this.connectors.delete(serviceId);
+    const removed = this.queue.filter((j) => j.serviceId === serviceId);
     this.queue = this.queue.filter((j) => j.serviceId !== serviceId);
     this.rebuildQueuedServiceIds();
-    this.resolveForceWaiters(serviceId, new Error("Connector removed"));
+    // Reject at once rather than when the in-flight run returns: the queued jobs will never run,
+    // and the running one's outcome is discarded by `wasWithdrawnMidRun`.
+    const removedErr = new Error("Connector removed");
+    for (const job of removed) {
+      this.settleJob(job, removedErr);
+    }
+    const runningJob = this.running.get(serviceId);
+    if (runningJob !== undefined) {
+      this.settleJob(runningJob, removedErr);
+    }
   }
 
   setInterval(serviceId: string, intervalMs: number): void {
@@ -294,6 +371,12 @@ export class SyncScheduler {
   }
   async stop(): Promise<void> {
     this.stopped = true;
+    // A queued job will never be pumped now: reject its force waiters instead of leaving them
+    // hanging. Running jobs are drained below and settle with their own outcome.
+    const stoppedErr = new Error("Scheduler stopped");
+    for (const job of this.queue) {
+      this.settleJob(job, stoppedErr);
+    }
     if (this.tickHandle !== null) {
       clearInterval(this.tickHandle);
       this.tickHandle = null;
@@ -307,9 +390,12 @@ export class SyncScheduler {
     }
   }
 
-  pause(serviceId: string): void {
+  pause(serviceId: string, reason?: string): void {
     this.sched.writePaused(serviceId, true);
-    transitionHealth(this.db, serviceId, { type: "paused" });
+    transitionHealth(this.db, serviceId, {
+      type: "paused",
+      ...(reason === undefined ? {} : { reason }),
+    });
   }
 
   resume(serviceId: string): void {
@@ -323,29 +409,63 @@ export class SyncScheduler {
   /**
    * Arm a one-shot cold-start floor for `serviceId`'s next run. Call it
    * immediately before `forceSync(serviceId)`; a successful run consumes it,
-   * a rate-limited or failed one keeps it for the retry.
+   * a rate-limited or failed one keeps it for the retry. A run that started
+   * before it was armed did not read it, so that run's success does not
+   * consume it: the floor still reaches the forced run queued behind it.
    */
   setHistoryFloor(serviceId: string, floorMs: number): void {
-    this.historyFloors.set(serviceId, floorMs);
+    this.historyFloors.set(serviceId, { floorMs });
   }
 
-  async forceSync(serviceId: string): Promise<void> {
+  /** Drops `serviceId`'s floor only if it is still `read`, the one the finishing run started with. */
+  private consumeHistoryFloor(
+    serviceId: string,
+    read: { readonly floorMs: number } | undefined,
+  ): void {
+    if (read !== undefined && this.historyFloors.get(serviceId) === read) {
+      this.historyFloors.delete(serviceId);
+    }
+  }
+
+  /**
+   * Run `serviceId` now and settle when a run that STARTED AFTER this call has finished its first
+   * page.
+   *
+   * Invariants: a running job is never joined — a request made while any run of the service is in
+   * flight (scheduled, continuation or forced) gets one follow-up run, which reads the state and
+   * credentials written up to the moment it starts. Requests made while that follow-up is still
+   * queued coalesce into it. `full: true` clears the persisted cursor as that run starts, so a
+   * cursor an in-flight run writes back after the request cannot leak into it.
+   */
+  async forceSync(serviceId: string, opts?: { full?: boolean }): Promise<void> {
     if (this.syncDisabled) {
       throw new SyncDisabledError(serviceId);
     }
+    if (this.stopped) {
+      // Nothing will ever pump this request: reject rather than hang.
+      throw new Error("Scheduler stopped");
+    }
+    const full = opts?.full === true;
     return new Promise((resolve, reject) => {
-      const list = this.forceWaiters.get(serviceId) ?? [];
-      list.push((err?: unknown) => {
+      const waiter: ForceWaiter = (err?: unknown) => {
         if (err === undefined) {
           resolve();
         } else {
           reject(toRejectionError(err));
         }
-      });
-      this.forceWaiters.set(serviceId, list);
-      this.queue = this.queue.filter((j) => j.serviceId !== serviceId);
-      this.queue.unshift({ serviceId, reason: "force" });
-      this.rebuildQueuedServiceIds();
+      };
+      // `queue` never holds a running job (pump splices a job out before running it), so this
+      // finds a force job that has not started yet, or nothing.
+      const queuedForce = this.queue.find((j) => j.serviceId === serviceId && j.reason === "force");
+      if (queuedForce === undefined) {
+        this.queue = this.queue.filter((j) => j.serviceId !== serviceId);
+        this.queue.unshift({ serviceId, reason: "force", waiters: [waiter], clearCursor: full });
+        this.rebuildQueuedServiceIds();
+      } else {
+        queuedForce.waiters ??= [];
+        queuedForce.waiters.push(waiter);
+        queuedForce.clearCursor = queuedForce.clearCursor === true || full;
+      }
       this.pump();
     });
   }
@@ -428,7 +548,8 @@ export class SyncScheduler {
       nextSyncAt: row.next_sync_at,
       intervalMs: row.interval_ms,
       itemCount,
-      lastError: row.error_msg,
+      // A pause carries its reason in the health row, and it wins over a stale sync error.
+      lastError: statusLastError(status === "paused", row.error_msg, health.lastError),
       consecutiveFailures: row.consecutive_failures,
       healthState: health.state,
       healthRetryAfterMs: health.retryAfter === undefined ? null : health.retryAfter.getTime(),
@@ -569,9 +690,11 @@ export class SyncScheduler {
       this.queue.splice(idx, 1);
       this.rebuildQueuedServiceIds();
       this.inFlight.add(job.serviceId);
+      this.running.set(job.serviceId, job);
       this.runningGlobal++;
       void this.runJob(job).finally(() => {
         this.inFlight.delete(job.serviceId);
+        this.running.delete(job.serviceId);
         this.runningGlobal--;
         this.pump();
         this.tick();
@@ -579,12 +702,17 @@ export class SyncScheduler {
     }
   }
 
-  private resolveForceWaiters(serviceId: string, err?: unknown): void {
-    const waiters = this.forceWaiters.get(serviceId);
-    if (waiters === undefined) {
+  /**
+   * Settle `job`'s own force waiters with its outcome (`err` undefined = success). A job without
+   * waiters (scheduled, continuation) settles nothing. The waiters are taken before they are
+   * called, so a job settles each caller at most once (`unregister` may already have rejected them).
+   */
+  private settleJob(job: Job, err?: unknown): void {
+    const waiters = job.waiters;
+    if (waiters === undefined || waiters.length === 0) {
       return;
     }
-    this.forceWaiters.delete(serviceId);
+    job.waiters = [];
     for (const w of waiters) {
       w(err);
     }
@@ -613,6 +741,7 @@ export class SyncScheduler {
       bytesTransferred: null,
       hadMore: false,
       errorMsg: msg,
+      itemsDropped: 0,
     });
     if (failures >= 5) {
       this.sched.updateState({
@@ -650,11 +779,7 @@ export class SyncScheduler {
         attempt: failures,
       });
     }
-    if (job.reason === "force") {
-      this.resolveForceWaiters(job.serviceId, new Error(msg));
-    } else {
-      this.resolveForceWaiters(job.serviceId);
-    }
+    this.settleJob(job, new Error(msg));
   }
 
   private runJobRecordSyncSuccess(
@@ -677,6 +802,7 @@ export class SyncScheduler {
       bytesTransferred: bytes,
       hadMore: result.hasMore,
       errorMsg: null,
+      itemsDropped: droppedTotal(result),
     });
 
     const now = Date.now();
@@ -697,12 +823,19 @@ export class SyncScheduler {
 
     transitionHealth(this.db, job.serviceId, { type: "sync_success" });
 
-    if (result.hasMore) {
+    // No continuation when a force job for the service is already queued: it is picked first
+    // (pump takes the queue front-first and continuations are unshifted), so queueing one would
+    // make the force request wait out the whole page chain. The force job resumes from the cursor
+    // just persisted (or clears it on purpose for `full`), and its own run queues continuations.
+    const forceQueued = this.queue.some(
+      (j) => j.serviceId === job.serviceId && j.reason === "force",
+    );
+    if (result.hasMore && !forceQueued) {
       this.queue.unshift({ serviceId: job.serviceId, reason: "continuation" });
       this.rebuildQueuedServiceIds();
     }
 
-    this.resolveForceWaiters(job.serviceId);
+    this.settleJob(job);
     this.onConnectorSyncSuccess?.(job.serviceId, result, durationMs);
   }
 
@@ -717,35 +850,55 @@ export class SyncScheduler {
       bytesTransferred: null,
       hadMore: false,
       errorMsg,
+      itemsDropped: 0,
     });
   }
 
   private resolveRunJobContext(job: Job): { connector: Syncable; row: SchedulerStateRow } | null {
     const connector = this.connectors.get(job.serviceId);
     if (connector === undefined) {
-      this.resolveForceWaiters(
-        job.serviceId,
-        job.reason === "force" ? new Error("Unknown service") : undefined,
-      );
+      this.settleJob(job, new Error("Unknown service"));
       return null;
     }
-    const row = this.sched.loadState(job.serviceId);
+    // This runs before `runJob`'s try, so a DB error here (e.g. SQLITE_FULL) must settle the job
+    // itself: unsettled, a `connector.sync` waiter would hang.
+    let row: SchedulerStateRow | null;
+    try {
+      if (job.clearCursor === true) {
+        // `connector.sync --full`: cleared as THIS run starts — after any earlier run of the
+        // service has written its cursor back — and read back by the `loadState` just below.
+        this.sched.clearCursor(job.serviceId);
+      }
+      row = this.sched.loadState(job.serviceId);
+    } catch (err) {
+      this.settleJob(job, err);
+      return null;
+    }
     if (row === null) {
-      this.resolveForceWaiters(
-        job.serviceId,
-        job.reason === "force" ? new Error("Missing scheduler state") : undefined,
-      );
+      this.settleJob(job, new Error("Missing scheduler state"));
       return null;
     }
+    // Only scheduled and continuation jobs reach these two, and they carry no waiters.
     if (row.paused === 1 && job.reason !== "force") {
-      this.resolveForceWaiters(job.serviceId);
       return null;
     }
     if (row.status === "error" && job.reason !== "force") {
-      this.resolveForceWaiters(job.serviceId);
       return null;
     }
     return { connector, row };
+  }
+
+  /** Pauses the service with `reason` and rejects force waiters; nothing else is recorded. */
+  private refuseRun(job: Job, reason: string): void {
+    let failure: Error = new Error(reason);
+    try {
+      this.pause(job.serviceId, reason);
+    } catch (err) {
+      failure = new Error(
+        `${reason} (pausing failed: ${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+    this.settleJob(job, failure);
   }
 
   private async runJob(job: Job): Promise<void> {
@@ -755,15 +908,26 @@ export class SyncScheduler {
     }
     const { connector, row } = ctx;
 
+    // A service that cannot run at all right now is paused BEFORE anything is recorded: no
+    // configured transition, no `sync.run` egress row, no success telemetry.
+    // A preflight that throws is a refusal too (fail closed): never an unhandled rejection, never
+    // a force waiter left hanging.
+    const refusal = preflightRefusal(connector);
+    if (refusal !== null) {
+      this.refuseRun(job, refusal);
+      return;
+    }
+
     const startedAt = Date.now();
+    // Read once, before the run: the success path below consumes THIS floor and no later one.
+    const floor = this.historyFloors.get(job.serviceId);
     let result: SyncResult;
     try {
-      const historyFloorMs = this.historyFloors.get(job.serviceId);
-      const runCtx: SyncContext = this.contextForService(job.serviceId, historyFloorMs);
+      const runCtx: SyncContext = this.contextForService(job.serviceId, floor?.floorMs);
       // I29 CRITICAL 1: `platform/assemble-sync-registrations.ts` registers ~90 cloud syncables
-      // with NO credential gate, and each one's `sync()` short-circuits to a network-free noop
-      // when unconfigured — so appending unconditionally here fabricated an "authorized" `sync`
-      // egress row for every registered-but-unconfigured connector's every run, on BOTH the
+      // with NO credential gate, and an unconfigured one's run makes no outbound call — so
+      // appending unconditionally here fabricated an "authorized" `sync` egress row for every
+      // registered-but-unconfigured connector's every run, on BOTH the
       // scheduled and forced paths (`forceSync` bypasses the tick-level health/enqueue gates
       // entirely, so the gate has to live here to cover it too). `isConnectorConfigured` answers
       // the same question `sync/fetch-host-boundary.ts` answers for the 5 fetch-on-miss services,
@@ -773,7 +937,18 @@ export class SyncScheduler {
       // `per-run` is the honest granularity: a sync is a paginated run, not a call. Fail-closed —
       // a throw here aborts the run rather than syncing unrecorded (falls into the `catch` below
       // as an ordinary sync failure, since it happens before any real work started).
-      const configured = await isConnectorConfigured(this.ctx.vault, job.serviceId);
+      // Taken before the Vault probe, so a skipped run's `durationMs` includes the probe it spent.
+      const t0 = performance.now();
+      const configured = await isConnectorConfigured(
+        this.ctx.vault,
+        job.serviceId,
+        this.ctx.extensionCredentialsFor,
+        this.ctx.credentialFor,
+      );
+      // The await above can yield while the service is unregistered (`extension remove`): stop
+      // before the egress row, the health transition (which would re-create a purged row) and
+      // `sync()`, settling force waiters exactly as the post-`sync()` checks do.
+      if (this.wasWithdrawnMidRun(job, connector)) return;
       if (configured) {
         this.appendSyncEgress?.({
           destination: job.serviceId,
@@ -783,21 +958,41 @@ export class SyncScheduler {
       }
       // F6/F13: the same answer, one line later, decides whether this run can honestly be
       // called a sync at all. Without it the `sync_success` below fired for the ~90 registered
-      // syncables whose `sync()` short-circuits to a network-free noop when unconfigured, so a
-      // connector nobody had set up reported `healthy` with a fresh `lastSyncAt` — which is what
+      // syncables that have nothing to sync when unconfigured, so a connector nobody had set up
+      // reported `healthy` with a fresh `lastSyncAt` — which is what
       // `getConnectorStatus` served to a model that has no prior to doubt it.
       transitionHealth(this.db, job.serviceId, {
         type: configured ? "configured" : "not_configured",
       });
-      result = await connector.sync(runCtx, row.cursor);
+      // And it decides whether `sync()` runs at all. An unconfigured connector's own `sync()`
+      // reached the same no-op, but only after starting its MCP bundle and re-reading its Vault
+      // keys: with an empty Vault each phase-3 syncable rebuilt the whole phase-3 server config
+      // (~110 Vault reads, one `secret-tool` process each on Linux) on every run, ~90 connectors
+      // per catch-up wave. The skipped run is recorded exactly as that no-op was: the success path
+      // below (status ok, `lastSyncAt`, telemetry, `onConnectorSyncSuccess`, normal interval),
+      // the `not_configured` flag above, and no `sync.run` egress row.
+      result = configured
+        ? await connector.sync(runCtx, row.cursor)
+        : syncNoopResult(row.cursor, t0);
     } catch (err) {
+      if (this.wasWithdrawnMidRun(job, connector)) return;
+      // A run that committed pages before the stop names the last committed page's cursor, so the
+      // next run resumes there. Only the cursor moves: the arms below are unchanged, so the run is
+      // still recorded as rate-limited / unauthenticated, never as a success. No bundled connector
+      // sets the field, and without it nothing is written here.
+      if (
+        (err instanceof RateLimitError || err instanceof UnauthenticatedError) &&
+        err.resumeCursor !== undefined
+      ) {
+        this.sched.writeCursor(job.serviceId, err.resumeCursor);
+      }
       if (err instanceof RateLimitError) {
         transitionHealth(this.db, job.serviceId, {
           type: "rate_limited",
           retryAfter: err.retryAfter,
         });
         this.recordAbortedSyncTelemetry(job, startedAt, err.message);
-        this.resolveForceWaiters(job.serviceId, job.reason === "force" ? err : undefined);
+        this.settleJob(job, err);
         return;
       }
       if (err instanceof UnauthenticatedError) {
@@ -807,7 +1002,7 @@ export class SyncScheduler {
           `${job.serviceId} connector lost authentication. Run: nimbus connector auth ${job.serviceId}`,
         );
         this.recordAbortedSyncTelemetry(job, startedAt, err.message);
-        this.resolveForceWaiters(job.serviceId, job.reason === "force" ? err : undefined);
+        this.settleJob(job, err);
         return;
       }
       this.runJobRecordSyncFailure(job, row, startedAt, syncFailureUserMessage(err));
@@ -817,13 +1012,32 @@ export class SyncScheduler {
     // Consumed only on success. A rate-limited or failed run returns earlier
     // WITHOUT persisting a cursor, so its retry is still a cold start and must
     // keep the wide floor — otherwise the backfill silently narrows to 30 days
-    // and never reaches the history it was asked for.
+    // and never reaches the history it was asked for. (A rate-limited run that
+    // carried a `resumeCursor` did persist one; keeping the floor for it is
+    // harmless, since an established cursor always wins over the floor.)
     //
     // Deleting on a `hasMore: true` success is correct: `runJobRecordSyncSuccess`
     // writes `result.cursor` via `updateState` and re-queues a "continuation"
     // job, and that job resumes from the persisted cursor — which bypasses the
     // cold-start override entirely. The floor has done its job by then.
-    this.historyFloors.delete(job.serviceId);
+    //
+    // Only the floor this run READ is consumed. One armed while the run was in flight
+    // (`index.rebody --since` behind a scheduled run) was never read by it, and deleting it here
+    // would send the forced run queued behind this one out at the connector's own 30-day floor.
+    if (this.wasWithdrawnMidRun(job, connector)) return;
+    this.consumeHistoryFloor(job.serviceId, floor);
     this.runJobRecordSyncSuccess(job, row, startedAt, result);
+  }
+
+  /**
+   * `true` when `connector` was unregistered (or replaced) while its `sync()` was running. Such a
+   * run records NOTHING after it — no telemetry, no health transition, no notification, no success
+   * hook — so a removed connector's purged health row is never re-inserted and its owner is never
+   * told a connector they just removed "lost authentication". Any force waiter is settled.
+   */
+  private wasWithdrawnMidRun(job: Job, connector: Syncable): boolean {
+    if (this.connectors.get(job.serviceId) === connector) return false;
+    this.settleJob(job, new Error("Connector removed"));
+    return true;
   }
 }

@@ -87,6 +87,8 @@ function deps(approve = true): InstallFromRegistryDeps {
       enforceAirGap: () => false,
       now: () => NOW,
       production: false,
+      // Neutral test default: never reach the real official registry host.
+      builtin: null,
     },
     approve: async (r: ExtensionInstallApprovalRequest) => {
       asked.push(r);

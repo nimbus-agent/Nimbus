@@ -59,6 +59,8 @@ const fetchBag = (over: Partial<RegistryFetchBag> = {}): RegistryFetchBag => ({
   enforceAirGap: () => false,
   now: () => NOW,
   production: false,
+  // Neutral test default: never reach the real official registry host.
+  builtin: null,
   ...over,
 });
 
@@ -595,5 +597,89 @@ describe("registry.install", () => {
     await expect(
       install({ id: "acme.tool", channel: "nightly" }, gateRecorder(true).gate),
     ).rejects.toThrow("ERR_INVALID_PARAMS");
+  });
+});
+
+describe("the reserved built-in registry name", () => {
+  /** A fixture built-in registry: the official root key, served from `tmp`. */
+  const builtinBag = (): RegistryFetchBag => fetchBag({ builtin: { url: tmp, rootKey: ROOT_KEY } });
+
+  test("registry add nimbus-official refused", async () => {
+    const g = gateRecorder(true);
+    let fetched = 0;
+    const bag = fetchBag({
+      builtin: { url: tmp, rootKey: ROOT_KEY },
+      fetchFn: () => {
+        fetched += 1;
+        return Promise.reject(new Error("unexpected network"));
+      },
+    });
+    // Every spelling that would reach the stored name, refused outright: no fetch, no prompt, no
+    // row, and no exception for the official URL and key themselves.
+    for (const name of [
+      "nimbus-official",
+      "  nimbus-official ",
+      "Nimbus-Official",
+      "NIMBUS-OFFICIAL",
+    ]) {
+      await expect(
+        call("registry.add", { name, url: tmp }, { gate: g.gate, fetch: bag }),
+      ).rejects.toThrow("ERR_REGISTRY_NAME_RESERVED");
+      await expect(
+        call(
+          "registry.add",
+          { name, url: "https://elsewhere.test/", fingerprint: FINGERPRINT },
+          { gate: g.gate, fetch: bag },
+        ),
+      ).rejects.toThrow("ERR_REGISTRY_NAME_RESERVED");
+    }
+    // Refused with the production default (no builtin configured) too: the name is reserved, full stop.
+    await expect(
+      call("registry.add", { name: "nimbus-official", url: tmp }, { gate: g.gate }),
+    ).rejects.toThrow("ERR_REGISTRY_NAME_RESERVED");
+    expect(g.asked).toEqual([]);
+    expect(fetched).toBe(0);
+    expect(ledgerCount()).toBe(0);
+    expect(getRegistry(db, "nimbus-official")).toBeUndefined();
+    // The store refuses it too, whoever calls it.
+    expect(() =>
+      insertRegistry(db, {
+        name: "nimbus-official",
+        url: tmp,
+        rootKey: ROOT_KEY,
+        rootFingerprint: FINGERPRINT,
+        lastSequence: 0,
+        lastGeneratedAt: "2026-10-01T00:00:00Z",
+        addedAt: 1,
+      }),
+    ).toThrow("ERR_REGISTRY_NAME_RESERVED");
+    // The official URL and root key under ANOTHER name stay the owner's HITL decision.
+    const out = await call(
+      "registry.add",
+      { name: "official", url: tmp, fingerprint: FINGERPRINT },
+      { gate: g.gate, fetch: builtinBag() },
+    );
+    expect(out).toMatchObject({
+      kind: "hit",
+      value: { name: "official", rootFingerprint: FINGERPRINT },
+    });
+    expect(g.asked).toHaveLength(1);
+  });
+
+  test("registry list does not show the builtin", async () => {
+    const empty = await call("registry.list", {}, { fetch: builtinBag() });
+    expect(empty).toEqual({ kind: "hit", value: { registries: [] } });
+    insertRegistry(db, {
+      name: "community",
+      url: "/r/community",
+      rootKey: ROOT_KEY,
+      rootFingerprint: FINGERPRINT,
+      lastSequence: 1,
+      lastGeneratedAt: "2026-10-10T00:00:00Z",
+      addedAt: 1,
+    });
+    const one = await call("registry.list", {}, { fetch: builtinBag() });
+    const value = (one as { value: { registries: Array<Record<string, unknown>> } }).value;
+    expect(value.registries.map((r) => r["name"])).toEqual(["community"]);
   });
 });

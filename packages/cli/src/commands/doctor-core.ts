@@ -6,7 +6,11 @@ import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { doctorCapturesLines, parseStatus } from "./captures-format.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
-import { doctorExtensionsLines, doctorRegistryLines } from "./extension-doctor-format.ts";
+import {
+  doctorExtensionsLines,
+  doctorMigrationLines,
+  doctorRegistryLines,
+} from "./extension-doctor-format.ts";
 import { doctorNotificationsLine, parseNotificationsStatus } from "./notifications-format.ts";
 
 const LINUX_SECRET_TOOL_HINT =
@@ -863,9 +867,144 @@ export async function doctorPrintRegistries(client: Pick<IPCClient, "call">): Pr
   }
 }
 
+/**
+ * Connector migrations (Readwise unbundling spec § 7.2): a `[warn]` (exit 1) for one awaiting the
+ * owner's answer or one that failed, a quiet `[info]` for one the owner declined. Silent with none.
+ * Quiet on an older gateway (-32601); any other failure is a `[warn]`.
+ */
+export async function doctorPrintMigrations(client: Pick<IPCClient, "call">): Promise<number> {
+  let raw: unknown;
+  try {
+    raw = await client.call<unknown>("migration.list", {});
+  } catch (e) {
+    if (isMethodNotFound(e)) return 0;
+    console.log(
+      `[warn] Connector migration: status check failed (${e instanceof Error ? e.message : String(e)}).`,
+    );
+    return 1;
+  }
+  try {
+    const { lines, exit } = doctorMigrationLines(raw);
+    for (const l of lines) console.log(l);
+    return exit;
+  } catch (e) {
+    console.log(`[warn] Connector migration: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+}
+
 /** JSON-RPC -32601: the gateway does not serve the method (an older binary). */
 function isMethodNotFound(e: unknown): boolean {
   return typeof e === "object" && e !== null && "code" in e && e.code === -32601;
+}
+
+/**
+ * Profile lines from `diag.snapshot.configLayers`. The field is optional: an older gateway omits it
+ * and doctor stays silent. A marker the next restart would apply is a `[warn]`, as is a layer the
+ * gateway could not read; a profile with no file is `[info]` only and never changes the exit code.
+ */
+export function doctorPrintProfile(raw: unknown): number {
+  if (raw === null || typeof raw !== "object") return 0;
+  const c = raw as {
+    runningProfile?: unknown;
+    runningProfileSource?: unknown;
+    markerProfile?: unknown;
+    layers?: unknown;
+    activePacks?: unknown;
+    skippedPacks?: unknown;
+    packListError?: unknown;
+  };
+  if (typeof c.runningProfile !== "string") return 0;
+  let exit = 0;
+  const running = c.runningProfile;
+  // An argument or NIMBUS_PROFILE beats the marker, so a restart would not apply it. A gateway
+  // that predates `runningProfileSource` is treated as marker-resolved.
+  const markerDecides =
+    c.runningProfileSource === undefined ||
+    c.runningProfileSource === "marker" ||
+    c.runningProfileSource === "default";
+  if (markerDecides && typeof c.markerProfile === "string" && c.markerProfile !== running) {
+    console.log(
+      `[warn] profile: marker says "${c.markerProfile}" but the gateway runs "${running}" — restart to apply`,
+    );
+    exit = 1;
+  }
+  const layers = Array.isArray(c.layers) ? (c.layers as unknown[]).filter(isLayerRecord) : [];
+  for (const l of layers) {
+    if (typeof l.readError === "string") {
+      console.log(
+        `[warn] config: could not read ${String(l.path)} (${l.readError}); that layer is ignored, and sections read through the default loader fall back to built-in defaults until it is readable`,
+      );
+      exit = 1;
+    }
+  }
+  const own = layers.find((l) => l.kind === "profile" && l.id === running);
+  if (
+    running !== "default" &&
+    own !== undefined &&
+    own.exists === false &&
+    own.readError === undefined
+  ) {
+    console.log(
+      `[info] profile "${running}" has no nimbus.${running}.toml; running on nimbus.toml alone`,
+    );
+  }
+  return Math.max(exit, doctorPrintPacks(c));
+}
+
+/**
+ * Drops C0/C1 control characters and DEL. The gateway already reports an invalid `active.json`
+ * entry by position only, but this CLI may talk to an older or another gateway, and a raw escape
+ * sequence printed to the terminal is never what the owner should see.
+ */
+function stripControlChars(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
+    out += ch;
+  }
+  return out;
+}
+
+/** Pack lines; each field is optional and filtered like `layers`, so an older gateway prints nothing. */
+function doctorPrintPacks(c: {
+  activePacks?: unknown;
+  skippedPacks?: unknown;
+  packListError?: unknown;
+}): number {
+  let exit = 0;
+  const skipped = Array.isArray(c.skippedPacks) ? (c.skippedPacks as unknown[]) : [];
+  for (const s of skipped) {
+    if (s === null || typeof s !== "object") continue;
+    const { packId, reason } = s as { packId?: unknown; reason?: unknown };
+    if (typeof packId !== "string" || typeof reason !== "string") continue;
+    console.log(`[warn] pack "${stripControlChars(packId)}" skipped: ${stripControlChars(reason)}`);
+    exit = 1;
+  }
+  if (typeof c.packListError === "string") {
+    console.log(`[warn] packs not applied: ${stripControlChars(c.packListError)}`);
+    exit = 1;
+  }
+  const active = Array.isArray(c.activePacks)
+    ? (c.activePacks as unknown[]).filter((p): p is string => typeof p === "string")
+    : [];
+  if (active.length > 0) {
+    console.log(`[info] packs active: ${active.map(stripControlChars).join(", ")}`);
+  }
+  return exit;
+}
+
+type LayerRecord = {
+  kind?: unknown;
+  id?: unknown;
+  path?: unknown;
+  exists?: unknown;
+  readError?: unknown;
+};
+
+function isLayerRecord(l: unknown): l is LayerRecord {
+  return l !== null && typeof l === "object";
 }
 
 async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
@@ -884,7 +1023,9 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
     connectorHealth?: unknown;
     embedding?: unknown;
     vectorSearch?: unknown;
+    configLayers?: unknown;
   }>("diag.snapshot", {});
+  exit = Math.max(exit, doctorPrintProfile(snap.configLayers));
   exit = Math.max(exit, doctorPrintIndexFromSnapshot(snap));
   // A second call rather than a field on `diag.snapshot`: the health report is several GROUP BY
   // scans over `item`, and `diag.snapshot` is polled by the desktop. Paying that cost on every
@@ -913,6 +1054,7 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   exit = Math.max(exit, await doctorPrintCaptures(client));
   exit = Math.max(exit, await doctorPrintExtensions(client));
   exit = Math.max(exit, await doctorPrintRegistries(client));
+  exit = Math.max(exit, await doctorPrintMigrations(client));
   // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the
   // whole gateway run, which outranks any one connector being unreachable.
   exit = Math.max(exit, doctorPrintEmbeddingFromSnapshot(snap));

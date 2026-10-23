@@ -53,7 +53,7 @@ export type HealthEvent =
   | { type: "unauthenticated" }
   | { type: "transient_error"; error: string; attempt: number }
   | { type: "persistent_error"; error: string }
-  | { type: "paused" }
+  | { type: "paused"; reason?: string }
   | { type: "resumed" }
   | { type: "reauthenticated" }
   | { type: "skipped_offline" };
@@ -111,17 +111,13 @@ function readHealthRow(db: Database, connectorId: string): SyncStateHealthRow | 
   );
 }
 
-function upsertHealthRow(
-  db: Database,
-  connectorId: string,
-  patch: {
-    health_state: string;
-    retry_after: number | null;
-    backoff_until: number | null;
-    backoff_attempt: number;
-    last_error: string | null;
-  },
-): void {
+/**
+ * Create the `sync_state` row for a connector that has none, and leave an existing one alone.
+ * `configured` is explicit because the two callers disagree: a real transition means a credential
+ * exists (1, also the V56 default), while `not_configured` on a never-observed connector must land
+ * as 0 or the same run's `sync_success` would insert the row configured and report healthy.
+ */
+function insertHealthRowIfMissing(db: Database, connectorId: string, configured: 0 | 1): void {
   // `depth` is written explicitly, and this is the ONLY `sync_state` insert
   // that runs in production for a connector whose depth was never set: it is
   // reached from `transitionHealth()`, which the scheduler calls on
@@ -137,10 +133,24 @@ function upsertHealthRow(
   // materialises a depth nobody chose.
   dbRun(
     db,
-    `INSERT OR IGNORE INTO sync_state (connector_id, last_sync_at, next_sync_token, depth)
-     VALUES (?, NULL, NULL, 'full')`,
-    [connectorId],
+    `INSERT OR IGNORE INTO sync_state (connector_id, last_sync_at, next_sync_token, depth, configured)
+     VALUES (?, NULL, NULL, 'full', ?)`,
+    [connectorId, configured],
   );
+}
+
+function upsertHealthRow(
+  db: Database,
+  connectorId: string,
+  patch: {
+    health_state: string;
+    retry_after: number | null;
+    backoff_until: number | null;
+    backoff_attempt: number;
+    last_error: string | null;
+  },
+): void {
+  insertHealthRowIfMissing(db, connectorId, 1);
   dbRun(
     db,
     `UPDATE sync_state
@@ -188,12 +198,13 @@ function appendHistory(
  * a credential does not retroactively change that. `buildSnapshot` is where the two columns
  * become the single state a consumer reads.
  *
- * History gets a row only on a CHANGE, and only when a row already exists. A connector nobody
- * has configured is skipped on EVERY scheduler tick; appending there would bury the real
- * transitions under one line per unconfigured service per tick, and with ~90 registered syncables
- * that is the whole table. No row at all means nothing has ever been observed, which
- * `buildSnapshot` already reads as `not_configured` — creating ~90 rows on a fresh install to
- * record the absence of news would be its own noise.
+ * History gets a row only on a CHANGE of an EXISTING row. A connector nobody has configured is
+ * skipped on EVERY scheduler tick; appending each time would bury the real transitions under one
+ * line per unconfigured service per tick. A `not_configured` event with no row creates the row
+ * (configured = 0) silently: the visible state is `not_configured` before and after, so there is
+ * nothing to log or announce. The row is needed because the same run's `sync_success` creates it
+ * anyway (the scheduler records a noop), and would otherwise insert it configured = 1, healthy.
+ * `configured` with no row stays a no-op: the default already reads as unconfigured.
  */
 /** Returns the state it RECORDED, or `null` when nothing changed (the no-op guard). */
 function applyConfiguredFlag(
@@ -204,7 +215,10 @@ function applyConfiguredFlag(
   nowConfigured: boolean,
   now: number,
 ): ConnectorHealthState | null {
-  if (current === null) return null;
+  if (current === null) {
+    if (!nowConfigured) insertHealthRowIfMissing(db, connectorId, 0);
+    return null;
+  }
   if ((current.configured !== 0) === nowConfigured) return null;
   dbRun(db, "UPDATE sync_state SET configured = ? WHERE connector_id = ?", [
     nowConfigured ? 1 : 0,
@@ -358,7 +372,16 @@ export function transitionHealth(
       break;
 
     case "paused":
-      reason = "connector paused";
+      // A pause with a stated reason (e.g. a sandbox that cannot confine an extension) is the
+      // one place the owner learns WHY nothing is syncing, so it lands in `last_error` too.
+      if (event.reason === undefined) {
+        // No stated reason: drop any earlier error so a status never shows a stale one under a pause.
+        lastError = null;
+        reason = "connector paused";
+      } else {
+        lastError = truncate(event.reason);
+        reason = truncate(`connector paused: ${event.reason}`);
+      }
       break;
 
     case "resumed":
@@ -401,10 +424,9 @@ export function transitionHealth(
   // commonly a `sync_success` heartbeat) is recorded above like any other transition — history is
   // unaffected — but NOT announced. "A sync ran" is already carried by the separate
   // `sync.completed` gateway event, with item counts and duration; `connector.healthChanged` is
-  // for STATE CHANGES. With ~90 registered syncables, an unconfigured connector's every no-op
-  // sync still calls `transitionHealth(..., { type: "sync_success" })` (see
-  // `sync/scheduler.ts`'s `runJob` comment on `isConnectorConfigured` gating only the egress
-  // append, never the run), so without this a fresh install's `nimbus tail` would scroll a burst
+  // for STATE CHANGES. With ~90 registered syncables, an unconfigured connector's every run —
+  // skipped by `sync/scheduler.ts`'s `runJob` without calling `sync()`, but recorded as a no-op
+  // success — still calls `transitionHealth(..., { type: "sync_success" })`, so without this a fresh install's `nimbus tail` would scroll a burst
   // of `healthy -> healthy` lines every sync interval, drowning the transitions it exists to
   // surface, and the desktop `ConnectorGrid` would `patchConnector` repeatedly with values it
   // already holds.

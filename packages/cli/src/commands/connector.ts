@@ -17,6 +17,7 @@ import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { ADD_MCP_USAGE } from "./connector-add-mcp-args.ts";
 import { runConnectorDetect } from "./connector-detect.ts";
+import { runConnectorMigrate } from "./connector-migrate.ts";
 import { runConnectorAddMcp, runConnectorCall, runConnectorTools } from "./connector-user-mcp.ts";
 
 type SyncStatus = {
@@ -40,6 +41,8 @@ type SyncTelemetryEntry = {
   bytesTransferred: number | null;
   hadMore: boolean;
   errorMsg: string | null;
+  /** Items the run returned but did not write (extension sync); 0 otherwise. */
+  itemsDropped: number;
 };
 
 type SyncStatusWithTelemetry = SyncStatus & { telemetry?: SyncTelemetryEntry[] };
@@ -1341,6 +1344,9 @@ export async function runConnector(args: string[]): Promise<void> {
     case "reindex":
       await runConnectorReindex(tail);
       return;
+    case "migrate":
+      await runConnectorMigrate(tail);
+      return;
     default:
       throw new Error(`Unknown connector subcommand: ${sub}. Try: nimbus connector help`);
   }
@@ -1365,6 +1371,10 @@ Usage:
   nimbus connector pause <service>
   nimbus connector resume <service>
   nimbus connector set-interval <service> <duration>
+  nimbus connector migrate list [--json]             Built-in connectors moving to a signed extension
+  nimbus connector migrate accept <id>               Keep it: one approval at a terminal (no --yes)
+  nimbus connector migrate decline <id>              Keep it off; items are kept
+  nimbus connector migrate retry [--json]            Prepare failed and declined migrations again
   nimbus connector remove <service> [--yes]         Irreversible; prompts unless --yes
 
 Services (examples): google_drive, gmail, google_photos, onedrive, outlook, teams, github, gitlab, linear, jira, notion, confluence, jenkins, circleci, pagerduty, kubernetes
@@ -1398,7 +1408,7 @@ CircleCI: --token (personal API token) or env NIMBUS_CIRCLECI_API_TOKEN / CIRCLE
   console.log(`Kubernetes: --kubeconfig <path> [--context <name>] or env NIMBUS_KUBECONFIG / KUBECONFIG (vault keys kubernetes.kubeconfig, optional kubernetes.context). Indexes cluster deployments.
 
 Most other token / API-key connectors (stripe, vercel, snowflake, elasticsearch, …) have no auth flow:
-store their settings with \`nimbus vault set <service>.<key> <value>\` (each write asks for approval).
+store their settings with \`nimbus vault set <service>.<key>\`, which prompts for the value (each write asks for approval).
 \`nimbus connector auth <service>\` prints the exact keys for one of them.
 
 Credentials are stored in the OS vault only (never printed here).

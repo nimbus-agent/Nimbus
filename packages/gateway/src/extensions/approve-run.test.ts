@@ -21,17 +21,24 @@ import {
 } from "../automation/extension-store.ts";
 import { redactPayloadForConsentDisplay } from "../engine/executor.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { MockVault } from "../vault/mock.ts";
 import {
   approveExtensionRun,
+  approveMigratedExtensionRun,
   buildRunConsentPayload,
+  currentRunCredentials,
   readVerifiedManifest,
   revokeExtensionRun,
 } from "./approve-run.ts";
+import type { ContinuityEntry } from "./continuity/continuity-table.ts";
+import { serializeRunCredentials } from "./extension-credentials.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
 import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
-import { getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
+import { recordMigrationPrepared } from "./migration/migration-store.ts";
+import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
+import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -45,8 +52,18 @@ type Asked = { type: string; payload: Record<string, unknown> };
  * the manifest is written, so `manifest(root)` can declare grants naming them.
  */
 async function setup(
-  opts: { id?: string; manifest?: (root: string) => Record<string, unknown> } = {},
-): Promise<{ db: Database; root: string; installPath: string; env: ExtensionRunGrantEnv }> {
+  opts: {
+    id?: string;
+    manifest?: (root: string) => Record<string, unknown>;
+    signed?: boolean;
+  } = {},
+): Promise<{
+  db: Database;
+  root: string;
+  installPath: string;
+  env: ExtensionRunGrantEnv;
+  publisherKey?: string;
+}> {
   const id = opts.id ?? "com.example.run";
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-approve-run-")));
   const db = new Database(":memory:");
@@ -57,15 +74,23 @@ async function setup(
   mkdirSync(join(root, "data"), { recursive: true });
   const src = join(root, "src");
   mkdirSync(join(src, "dist"), { recursive: true });
-  writeFileSync(
-    join(src, "nimbus.extension.json"),
-    JSON.stringify({
-      id,
-      version: "1.0.0",
-      entry: "dist/index.js",
-      ...(opts.manifest?.(root) ?? {}),
-    }),
-  );
+  const manifest: Record<string, unknown> = {
+    id,
+    version: "1.0.0",
+    entry: "dist/index.js",
+    ...(opts.manifest?.(root) ?? {}),
+  };
+  let publisherKey: string | undefined;
+  let publisherKeyPath: string | undefined;
+  if (opts.signed === true) {
+    const kp = generateEd25519Keypair();
+    publisherKey = encodeBase64(kp.pubkey);
+    manifest["publisher"] = { id: "test-pub", key: publisherKey };
+    manifest["signature"] = await signManifest(manifest, kp.privkey);
+    publisherKeyPath = join(root, "pub.key");
+    writeFileSync(publisherKeyPath, `${publisherKey}\n`);
+  }
+  writeFileSync(join(src, "nimbus.extension.json"), JSON.stringify(manifest));
   writeFileSync(join(src, "dist", "index.js"), "export {};\n");
   const extensionsDir = join(root, "data", "extensions");
   await installExtensionFromLocalDirectory({
@@ -73,6 +98,7 @@ async function setup(
     extensionsDir,
     sourcePath: src,
     approve: async () => true,
+    ...(publisherKeyPath === undefined ? {} : { vault: new MockVault(), publisherKeyPath }),
   });
   const env: ExtensionRunGrantEnv = {
     platform: process.platform,
@@ -80,7 +106,13 @@ async function setup(
     runtimeReadPaths: [join(root, "bun-bin")],
     realpath: (p) => realpathSync.native(p),
   };
-  return { db, root, installPath: join(extensionsDir, id), env };
+  return {
+    db,
+    root,
+    installPath: join(extensionsDir, id),
+    env,
+    ...(publisherKey === undefined ? {} : { publisherKey }),
+  };
 }
 
 const gateThat = (answer: boolean, seen: Asked[]) => async (a: Asked) => {
@@ -151,6 +183,7 @@ describe("approveExtensionRun", () => {
       }),
       model_access: 0,
       approved_at: 42,
+      credentials_json: "{}",
     });
   });
 
@@ -434,6 +467,7 @@ describe("approveExtensionRun", () => {
       permissions_json: "{}",
       model_access: 0,
       approved_at: 1,
+      credentials_json: "{}",
     });
     const seen: Asked[] = [];
     await expect(
@@ -474,12 +508,51 @@ describe("approveExtensionRun", () => {
       { network: [], read: [], write: [] },
       { platform: "linux", protectedRoots: [], runtimeReadPaths: [], realpath: (p) => p },
       false,
+      {},
     );
     const fp = publisherKeyFingerprint(key);
     expect(fp).toMatch(/^[0-9a-f]{32}$/);
     // Both redactors drop any field whose NAME contains "key"; `keyFingerprint` would vanish here.
     expect(JSON.stringify(redactPayloadForConsentDisplay(payload))).toContain(fp);
     expect(redactAuditPayload(payload, 4096)).toContain(fp);
+  });
+
+  test("the network line says on Windows that the host list is not enforced", () => {
+    const payloadOn = (platform: NodeJS.Platform) =>
+      buildRunConsentPayload(
+        {
+          id: "n",
+          version: "1.0.0",
+          install_path: "/x",
+          manifest_hash: "m",
+          entry_hash: "e",
+          enabled: 1,
+          installed_at: 1,
+          last_verified_at: 1,
+          tree_digest: "d",
+        },
+        {
+          id: "n",
+          version: "1.0.0",
+          updateChannel: "stable",
+          permissions: { network: ["readwise.io"], filesystem: { read: [], write: [] } },
+        },
+        "ext_n",
+        "d",
+        { network: ["readwise.io"], read: [], write: [] },
+        { platform, protectedRoots: [], runtimeReadPaths: [], realpath: (p) => p },
+        false,
+        {},
+      );
+    const win = payloadOn("win32");
+    expect(win["network"]).toEqual(["readwise.io"]);
+    expect(win["networkAccess"]).toBe("network access (Windows cannot limit this to readwise.io)");
+    expect(payloadOn("linux")["networkAccess"]).toBe("network access to readwise.io");
+    expect(payloadOn("darwin")["networkAccess"]).toBe("network access to readwise.io");
+    // The consent display shows it: no redactor drops the field.
+    expect(redactPayloadForConsentDisplay(win)).toMatchObject({
+      networkAccess: "network access (Windows cannot limit this to readwise.io)",
+    });
   });
 
   test("an extension the startup signature pass marked is refused while enabled", async () => {
@@ -559,6 +632,7 @@ describe("state that changes while the prompt is open", () => {
             permissions_json: "{}",
             model_access: 0,
             approved_at: 1,
+            credentials_json: "{}",
           });
           return true;
         },
@@ -568,6 +642,143 @@ describe("state that changes while the prompt is open", () => {
     ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
     expect(getRunGrant(db, "a.b")).toBeNull();
     expect(listRunGrants(db).map((g) => g.extension_id)).toEqual(["a.b.c"]);
+  });
+});
+
+describe("credentials", () => {
+  const credManifest =
+    (extra: Record<string, unknown> = {}) =>
+    () => ({
+      credentials: { token: { env: "X_TOKEN" } },
+      ...extra,
+    });
+
+  test("consent payload lists credential names and never a vault key", async () => {
+    const s = await setup({ id: "com.example.cred", manifest: credManifest() });
+    const seen: Asked[] = [];
+    await approveExtensionRun("com.example.cred", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 1,
+    });
+    const p = seen[0]?.payload ?? {};
+    expect(p["vaultEnv"]).toEqual([{ name: "token", env: "X_TOKEN" }]);
+    const shown = JSON.stringify(p);
+    expect(shown).not.toContain("ext.ext_com_example_cred.token");
+    expect(shown).not.toContain("vaultKey");
+    // It survives both redactors (a field NAMED "credentials" would be hidden by both).
+    expect(JSON.stringify(redactPayloadForConsentDisplay(p))).toContain("X_TOKEN");
+    expect(redactAuditPayload(p, 4096)).toContain("X_TOKEN");
+    // No sync block, no sync sentence; not bound, so no reused connector.
+    expect(p["sync"]).toBeUndefined();
+    expect(p["reusesConnector"]).toBeUndefined();
+  });
+
+  test("grant row stores credentials_json (unbound: the extension's own key)", async () => {
+    const s = await setup({ id: "com.example.cred", manifest: credManifest() });
+    await approveExtensionRun("com.example.cred", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, []),
+      runtimeEnabled: true,
+      now: () => 1,
+    });
+    expect(getRunGrant(s.db, "com.example.cred")?.credentials_json).toBe(
+      '{"token":{"env":"X_TOKEN","vaultKey":"ext.ext_com_example_cred.token"}}',
+    );
+  });
+
+  test("a continuity binding stores the legacy vault key; a fingerprint mismatch does not bind", async () => {
+    const s = await setup({ id: "com.example.cred", manifest: credManifest(), signed: true });
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'root-fp' WHERE id = ?", [
+      "com.example.cred",
+    ]);
+    const entry: ContinuityEntry = {
+      legacyServiceId: "readwise",
+      extensionId: "com.example.cred",
+      publisherKey: s.publisherKey ?? "",
+      sourceRootFingerprint: "root-fp",
+      credentials: { token: "readwise.token" },
+      expectedPermissions: { network: [], read: [], write: [] },
+      itemTypes: [],
+    };
+    const seen: Asked[] = [];
+    await approveExtensionRun("com.example.cred", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 1,
+      continuityTable: [entry],
+    });
+    expect(getRunGrant(s.db, "com.example.cred")?.credentials_json).toBe(
+      '{"token":{"env":"X_TOKEN","vaultKey":"readwise.token"}}',
+    );
+    const bound = seen[0]?.payload ?? {};
+    expect(JSON.stringify(bound)).not.toContain("readwise.token");
+    // The owner is told the extension reuses the legacy connector's credential, and the disclosure
+    // survives both redactors while naming no Vault key.
+    expect(bound["reusesConnector"]).toBe("readwise");
+    expect(redactPayloadForConsentDisplay(bound)).toMatchObject({ reusesConnector: "readwise" });
+    expect(JSON.parse(redactAuditPayload(bound, 4096))).toMatchObject({
+      reusesConnector: "readwise",
+    });
+
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'other' WHERE id = ?", [
+      "com.example.cred",
+    ]);
+    await approveExtensionRun("com.example.cred", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 2,
+      continuityTable: [entry],
+    });
+    // The resolved credentials changed, so the owner is asked again — with no reuse disclosure.
+    expect(seen).toHaveLength(2);
+    expect(seen[1]?.payload["reusesConnector"]).toBeUndefined();
+    expect(getRunGrant(s.db, "com.example.cred")?.credentials_json).toBe(
+      '{"token":{"env":"X_TOKEN","vaultKey":"ext.ext_com_example_cred.token"}}',
+    );
+  });
+
+  test("a sync block adds the local-index sentence", async () => {
+    const s = await setup({
+      id: "com.example.sync",
+      manifest: credManifest({
+        sync: { contract: "1", intervalSeconds: 3600, itemTypes: ["highlight"] },
+      }),
+    });
+    const seen: Asked[] = [];
+    await approveExtensionRun("com.example.sync", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 1,
+    });
+    expect(seen[0]?.payload["sync"]).toBe(
+      "this extension syncs into your local index (item types: highlight)",
+    );
+  });
+
+  test("an unchanged re-approval with credentials short-circuits", async () => {
+    const s = await setup({ id: "com.example.cred", manifest: credManifest() });
+    const seen: Asked[] = [];
+    const approve = () =>
+      approveExtensionRun("com.example.cred", {
+        db: s.db,
+        env: s.env,
+        gate: gateThat(true, seen),
+        runtimeEnabled: true,
+        now: () => 1,
+      });
+    await approve();
+    expect((await approve()).changed).toBe(false);
+    expect(seen).toHaveLength(1);
   });
 });
 
@@ -594,6 +805,79 @@ describe("readVerifiedManifest", () => {
       JSON.stringify({ id: "com.example.run", version: "1.0.0", entry: "dist/index.js", x: 1 }),
     );
     expect(() => readVerifiedManifest(row)).toThrow(/ERR_EXTENSION_RUN_UNVERIFIED/);
+  });
+});
+
+describe("currentRunCredentials", () => {
+  async function boundSetup(): Promise<{
+    s: Awaited<ReturnType<typeof setup>>;
+    entry: ContinuityEntry;
+  }> {
+    const s = await setup({
+      id: "com.example.cred",
+      manifest: () => ({ credentials: { token: { env: "X_TOKEN" } } }),
+      signed: true,
+    });
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'root-fp' WHERE id = ?", [
+      "com.example.cred",
+    ]);
+    const entry: ContinuityEntry = {
+      legacyServiceId: "readwise",
+      extensionId: "com.example.cred",
+      publisherKey: s.publisherKey ?? "",
+      sourceRootFingerprint: "root-fp",
+      credentials: { token: "readwise.token" },
+      expectedPermissions: { network: [], read: [], write: [] },
+      itemTypes: [],
+    };
+    await approveExtensionRun("com.example.cred", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, []),
+      runtimeEnabled: true,
+      now: () => 1,
+      continuityTable: [entry],
+    });
+    return { s, entry };
+  }
+
+  test("re-derives exactly what the approval stored, with the binding it came from", async () => {
+    const { s, entry } = await boundSetup();
+    const live = currentRunCredentials(s.db, "com.example.cred", [entry]);
+    expect(live?.binding).toBe(entry);
+    expect(live === undefined ? undefined : serializeRunCredentials(live.credentials)).toBe(
+      getRunGrant(s.db, "com.example.cred")?.credentials_json,
+    );
+  });
+
+  test("a row whose source no longer matches resolves unbound", async () => {
+    const { s, entry } = await boundSetup();
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'other' WHERE id = ?", [
+      "com.example.cred",
+    ]);
+    const live = currentRunCredentials(s.db, "com.example.cred", [entry]);
+    expect(live?.binding).toBeUndefined();
+    expect(live?.credentials["token"]?.vaultKey).toBe("ext.ext_com_example_cred.token");
+  });
+
+  // One case per guard, each from an otherwise-valid setup, so dropping any one guard fails its own.
+  // The grant table's foreign key means a grant cannot outlive its row, so "no row" is an id that
+  // was never installed, beside a valid bound install.
+  test("undefined for an extension that is not installed", async () => {
+    const { s, entry } = await boundSetup();
+    expect(currentRunCredentials(s.db, "com.example.absent", [entry])).toBeUndefined();
+  });
+
+  test("undefined for an installed row with no run grant", async () => {
+    const { s, entry } = await boundSetup();
+    deleteRunGrant(s.db, "com.example.cred");
+    expect(currentRunCredentials(s.db, "com.example.cred", [entry])).toBeUndefined();
+  });
+
+  test("undefined when the installed manifest no longer verifies", async () => {
+    const { s, entry } = await boundSetup();
+    writeFileSync(join(s.installPath, "nimbus.extension.json"), JSON.stringify({ x: 1 }));
+    expect(currentRunCredentials(s.db, "com.example.cred", [entry])).toBeUndefined();
   });
 });
 
@@ -641,5 +925,112 @@ describe("revokeExtensionRun", () => {
       throw new Error("boom");
     });
     expect(out.revoked).toBe(true);
+  });
+});
+
+describe("approveMigratedExtensionRun", () => {
+  const MIG_ID = "com.example.mig";
+
+  /** A signed, bound extension with credentials, plus its continuity entry. */
+  async function migrated(): Promise<{
+    s: Awaited<ReturnType<typeof setup>>;
+    entry: ContinuityEntry;
+    digest: string;
+  }> {
+    const s = await setup({
+      id: MIG_ID,
+      signed: true,
+      manifest: () => ({ credentials: { token: { env: "FIXTURE_TOKEN" } } }),
+    });
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'root-fp' WHERE id = ?", [MIG_ID]);
+    const entry: ContinuityEntry = {
+      legacyServiceId: "fixture_reader",
+      extensionId: MIG_ID,
+      publisherKey: s.publisherKey ?? "",
+      sourceRootFingerprint: "root-fp",
+      credentials: { token: "fixture.token" },
+      expectedPermissions: { network: [], read: [], write: [] },
+      itemTypes: [],
+    };
+    const digest = listExtensions(s.db).find((r) => r.id === MIG_ID)?.tree_digest ?? "";
+    return { s, entry, digest };
+  }
+
+  function pending(db: Database, digest: string, extensionId = MIG_ID): void {
+    recordMigrationPrepared(
+      db,
+      {
+        id: "mig-1",
+        legacyServiceId: "fixture_reader",
+        extensionId,
+        version: "1.0.0",
+        treeDigest: digest,
+        stagePath: "/stage",
+      },
+      1,
+    );
+  }
+
+  test("with a pending migration it grants the LEGACY vault key, without a prompt, model access off", async () => {
+    const { s, entry, digest } = await migrated();
+    pending(s.db, digest);
+    const out = await approveMigratedExtensionRun(
+      { db: s.db, env: s.env, runtimeEnabled: true, now: () => 7, continuityTable: [entry] },
+      MIG_ID,
+    );
+    expect(out.changed).toBe(true);
+    expect(out.modelAccess).toBe(false);
+    const grant = getRunGrant(s.db, MIG_ID);
+    expect(grant?.credentials_json).toBe(
+      '{"token":{"env":"FIXTURE_TOKEN","vaultKey":"fixture.token"}}',
+    );
+    expect(grant?.model_access).toBe(0);
+    expect(grant?.tree_digest).toBe(digest);
+  });
+
+  test("no pending migration refuses ERR_EXTENSION_RUN_NOT_MIGRATED and grants nothing", async () => {
+    const { s, entry } = await migrated();
+    await expect(
+      approveMigratedExtensionRun(
+        { db: s.db, env: s.env, runtimeEnabled: true, now: () => 7, continuityTable: [entry] },
+        MIG_ID,
+      ),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_NOT_MIGRATED/);
+    expect(listRunGrants(s.db)).toEqual([]);
+  });
+
+  test("a pending migration for a DIFFERENT tree refuses", async () => {
+    const { s, entry } = await migrated();
+    pending(s.db, "0".repeat(64));
+    await expect(
+      approveMigratedExtensionRun(
+        { db: s.db, env: s.env, runtimeEnabled: true, now: () => 7, continuityTable: [entry] },
+        MIG_ID,
+      ),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_NOT_MIGRATED/);
+    expect(listRunGrants(s.db)).toEqual([]);
+  });
+
+  test("an extension the continuity table does not bind refuses (no extension-keyspace fallback)", async () => {
+    const { s, digest } = await migrated();
+    pending(s.db, digest);
+    await expect(
+      approveMigratedExtensionRun(
+        { db: s.db, env: s.env, runtimeEnabled: true, now: () => 7, continuityTable: [] },
+        MIG_ID,
+      ),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_NOT_MIGRATED/);
+    expect(listRunGrants(s.db)).toEqual([]);
+  });
+
+  test("the runtime switch still refuses first", async () => {
+    const { s, entry, digest } = await migrated();
+    pending(s.db, digest);
+    await expect(
+      approveMigratedExtensionRun(
+        { db: s.db, env: s.env, runtimeEnabled: false, now: () => 7, continuityTable: [entry] },
+        MIG_ID,
+      ),
+    ).rejects.toThrow(/ERR_EXTENSION_RUNTIME_DISABLED/);
   });
 });

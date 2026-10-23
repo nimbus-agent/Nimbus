@@ -1,7 +1,27 @@
 import { confirm, isCancel } from "@clack/prompts";
 
 import type { IPCClient } from "../ipc-client/index.ts";
+import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import {
+  assertPipedSecretCanBeApproved,
+  defaultSecretInputIo,
+  readSecretValue,
+  type SecretInputIo,
+} from "../lib/secret-input.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+
+const VAULT_SET_USAGE =
+  "Usage: nimbus vault set <key> (the value is read from a hidden prompt, or from stdin when stdin is not a terminal)";
+
+/**
+ * Printed when the value arrives as an argument, which still works but is deprecated: there it is
+ * kept in shell history and shown in the process list. Never quotes the value.
+ */
+export const VAULT_SET_ARGV_DEPRECATION =
+  "Warning: a value given on the command line is kept in shell history and shown in the process list. Run `nimbus vault set <key>` without it to be prompted (input is hidden), or pipe it on stdin. The value argument will be removed in a future major release.";
+
+/** `vault.set` waits on the owner's approval prompt, which the default 30s bound cuts off. */
+const VAULT_SET_IPC = { requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS } as const;
 
 export async function runVaultSet(client: IPCClient, key: string, value: string): Promise<void> {
   await client.call("vault.set", { key, value });
@@ -35,16 +55,30 @@ export async function runVaultList(client: IPCClient, prefix?: string): Promise<
   }
 }
 
-export async function runVault(args: string[]): Promise<void> {
+export async function runVault(
+  args: string[],
+  io: SecretInputIo = defaultSecretInputIo(),
+): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
   switch (sub) {
     case "set": {
-      const [key, value] = rest;
-      if (key === undefined || value === undefined) {
-        throw new Error("Usage: nimbus vault set <key> <value>");
+      const [key, value, extra] = rest;
+      if (key === undefined || key.trim() === "" || extra !== undefined) {
+        throw new Error(VAULT_SET_USAGE);
       }
-      await withGatewayIpc((c) => runVaultSet(c, key, value));
+      if (value !== undefined) {
+        console.warn(VAULT_SET_ARGV_DEPRECATION);
+        await withGatewayIpc((c) => runVaultSet(c, key, value), undefined, VAULT_SET_IPC);
+        return;
+      }
+      assertPipedSecretCanBeApproved(io);
+      // Read inside the connection: a stopped gateway is reported before anyone types a secret.
+      await withGatewayIpc(
+        async (c) => runVaultSet(c, key, await readSecretValue(io, key)),
+        undefined,
+        VAULT_SET_IPC,
+      );
       return;
     }
     case "get": {

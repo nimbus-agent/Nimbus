@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "pino";
-
 import type { ConnectorServiceId } from "../connectors/connector-catalog.ts";
+import type { ResolvedRunCredentials } from "../extensions/extension-credentials.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { ProviderRateLimiter } from "./rate-limiter.ts";
 import type { SyncCapabilities } from "./sync-capabilities.ts";
@@ -16,6 +16,13 @@ import type { SyncCapabilities } from "./sync-capabilities.ts";
 export interface SyncRuntimeContext extends SyncContext {
   vault: NimbusVault;
   db: Database;
+  /**
+   * Index id -> the credentials an approved extension's run grant carries, for the scheduler's
+   * configured-ness gate. Supplied by assemble.ts unconditionally; it answers `undefined` for any
+   * id no readable grant carries, so it changes no built-in connector's answer. Optional only so
+   * tests and other constructors may omit it.
+   */
+  extensionCredentialsFor?: (serviceId: string) => ResolvedRunCredentials | undefined;
 }
 
 export interface SyncContext<S extends ConnectorServiceId = ConnectorServiceId>
@@ -131,6 +138,14 @@ export interface Syncable {
   readonly initialSyncDepthDays: number;
   sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult>;
   /**
+   * OPTIONAL. A non-null return is a reason this service cannot run AT ALL right now. The
+   * scheduler calls it FIRST in `runJob` — before the configured-ness check, the `sync.run`
+   * egress append and any health transition — and PAUSES the service with that reason. A no-op
+   * return from `sync()` instead would be recorded as a `sync_success` (overwriting the pause)
+   * after the egress row had already been appended.
+   */
+  preflight?(): string | null;
+  /**
    * Fetch and index ONE item by its web URL.
    *
    * OPTIONAL, and the optionality does real work: 62 connectors do not move, and a service that
@@ -169,6 +184,8 @@ export interface SyncResult {
   hasMore: boolean;
   durationMs: number;
   bytesTransferred?: number;
+  /** Items an extension returned that were not written, summed over the run. */
+  dropped?: { undeclaredType: number; malformed: number; oversized: number };
 }
 
 export function retryAfterDateFromHeader(value: string | null, fallbackSeconds: number): Date {
@@ -193,19 +210,34 @@ export function retryAfterDateFromHeader(value: string | null, fallbackSeconds: 
   return new Date(Date.now() + fb * 1000);
 }
 
+/**
+ * Optional on `RateLimitError` / `UnauthenticatedError`. A syncable that commits work page by page
+ * within one run (the extension syncable) sets `resumeCursor` to the cursor of the LAST page whose
+ * rows it committed before the stop; the scheduler persists it before its usual rate-limited /
+ * unauthenticated arm, so the next run resumes there instead of re-walking the same pages. Absent —
+ * as for every bundled connector — the stored cursor is untouched, exactly as before.
+ */
+export interface SyncStopOptions {
+  readonly resumeCursor?: string;
+}
+
 export class RateLimitError extends Error {
   readonly retryAfter: Date;
-  constructor(retryAfter: Date, message = "Rate limited") {
+  readonly resumeCursor: string | undefined;
+  constructor(retryAfter: Date, message = "Rate limited", options?: SyncStopOptions) {
     super(message);
     this.name = "RateLimitError";
     this.retryAfter = retryAfter;
+    this.resumeCursor = options?.resumeCursor;
   }
 }
 
 export class UnauthenticatedError extends Error {
-  constructor(message = "Connector authentication expired or revoked") {
+  readonly resumeCursor: string | undefined;
+  constructor(message = "Connector authentication expired or revoked", options?: SyncStopOptions) {
     super(message);
     this.name = "UnauthenticatedError";
+    this.resumeCursor = options?.resumeCursor;
   }
 }
 

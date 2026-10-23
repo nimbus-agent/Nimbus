@@ -1,11 +1,10 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, writeSync } from "node:fs";
+import { closeSync, fstatSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 import type { CliPlatformPaths } from "../paths.ts";
+import { resolveCliActiveProfileWithSource } from "./active-profile.ts";
 import { type GatewayLaunchPlan, resolveGatewayLaunch } from "./resolve-gateway-launch.ts";
-
-const PROFILE_FILENAME = ".nimbus-profile";
 
 function gatewayLogBasename(): string {
   const d = new Date();
@@ -13,19 +12,6 @@ function gatewayLogBasename(): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `gateway-${String(y)}-${m}-${day}.log`;
-}
-
-function readActiveProfileName(configDir: string): string | undefined {
-  const p = join(configDir, PROFILE_FILENAME);
-  if (!existsSync(p)) {
-    return undefined;
-  }
-  try {
-    const raw = readFileSync(p, "utf8").trim();
-    return raw === "" || raw === "default" ? undefined : raw;
-  } catch {
-    return undefined;
-  }
 }
 
 const BUN_INSPECTOR_ENV_KEYS: readonly string[] = [
@@ -98,6 +84,10 @@ function launchGateway(
     throw new Error(launch.message);
   }
 
+  // The gateway's own order (NIMBUS_PROFILE, then the marker), validated here so a bad name is
+  // refused with its source before anything is spawned.
+  const profile = resolveCliActiveProfileWithSource(paths.configDir);
+
   const logPath = join(paths.logDir, gatewayLogBasename());
   const executable = launch.cmd[0];
   if (executable === undefined || executable === "") {
@@ -114,9 +104,13 @@ function launchGateway(
     );
     const childEnv: NodeJS.ProcessEnv = stripInspectorEnv(process.env);
     childEnv["NIMBUS_GATEWAY_LOG_PATH"] = logPath;
-    const profile = readActiveProfileName(paths.configDir);
-    if (profile !== undefined) {
-      childEnv["NIMBUS_PROFILE"] = profile;
+    // Only a profile chosen by NIMBUS_PROFILE travels in the env. A marker/default profile must
+    // NOT: the gateway would then record source "env", and doctor / `config explain` could never
+    // say that a later `nimbus profile switch` needs a restart. It reads the marker itself.
+    if (profile.source === "env") {
+      childEnv["NIMBUS_PROFILE"] = profile.name;
+    } else {
+      delete childEnv["NIMBUS_PROFILE"];
     }
     if (opts.extraEnv !== undefined) {
       for (const [k, v] of Object.entries(opts.extraEnv)) {

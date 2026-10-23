@@ -2,11 +2,11 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import pino from "pino";
 import { buildAgentSynthesisRunner } from "../../agents/_lib/agent-synthesis-runner.ts";
+import { getLayeredConfig } from "../../config/layered-config.ts";
 import {
   loadNimbusLlmFromConfigDir,
   loadNimbusPreflightFromConfigDir,
   loadNimbusServiceConfigsFromConfigDir,
-  resolveNimbusTomlForProfile,
 } from "../../config/nimbus-toml.ts";
 import { createConnectorDispatcher, meshDispatcherClient } from "../../connectors/registry.ts";
 import { asRecord } from "../../connectors/unknown-record.ts";
@@ -14,6 +14,7 @@ import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts"
 import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import type { ExtensionRunGrantEnv } from "../../extensions/extension-run-grants.ts";
+import { migrationRedactionRoots } from "../../extensions/migration/migration-redact.ts";
 import { buildExtensionRunGrantEnv } from "../../extensions/run-grant-env.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
 import { preflightConsent } from "../../federation/preflight-consent-broker.ts";
@@ -68,6 +69,7 @@ import { dispatchLlmRpc, LlmRpcError } from "../llm-rpc.ts";
 import { dispatchLocalityRpc, LocalityRpcError } from "../locality-rpc.ts";
 import { dispatchMediaRpc } from "../media-rpc.ts";
 import { dispatchMetricsRpc, MetricsRpcError } from "../metrics-rpc.ts";
+import { dispatchMigrationRpc } from "../migration-rpc.ts";
 import { dispatchNotificationsRpc } from "../notifications-rpc.ts";
 import { dispatchOncallPushRpc, OncallPushRpcError } from "../oncall-push-rpc.ts";
 import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
@@ -155,12 +157,12 @@ export async function tryDispatchLlmRpc(
     const out = await dispatchLlmRpc(method, params, {
       registry: ctx.options.llmRegistry,
       notify: (m, p) => ctx.broadcastNotification(m, p as Record<string, unknown>),
-      // Only `llm.use` reads this (see `LlmRpcContext.tomlPath`'s doc) — resolved the same
-      // way `platform/assemble.ts` resolves the router's own `activeTomlPath`, so a pin
-      // written here lands in the exact file boot re-reads.
+      // Only `llm.use` reads this (see `LlmRpcContext.tomlPath`'s doc) — the layered reader's
+      // write target (the active profile file, created if absent, else `nimbus.toml`), so a
+      // pin written here lands in a file the next layered read merges.
       ...(ctx.options.configDir === undefined
         ? {}
-        : { tomlPath: resolveNimbusTomlForProfile(ctx.options.configDir) }),
+        : { tomlPath: getLayeredConfig(ctx.options.configDir).writeTargetPath() }),
     });
     if (out.kind === "hit") return out.value;
   } catch (e) {
@@ -1497,6 +1499,44 @@ export async function tryDispatchCaptureRpc(
   return out.kind === "hit" ? out.value : phase4RpcSkipped;
 }
 
+/**
+ * `migration.*` (connector-unbundling spec § 7.2/§ 7.3): every method is in `FORBIDDEN_OVER_LAN`
+ * (I5); `migration.list` and `migration.accept` are on the Tauri allowlist (I46), `decline` and
+ * `retry` are not. Only `migration.accept` asks the owner, through the SAME gate-only executor the
+ * extension lifecycle approvals use, bound to THIS session's consent channel, so the
+ * `extension.migrate` prompt is unicast to the caller. `fromRenderer` (I46's audit field) is the
+ * connection's declared kind — the Tauri bridge declares `ui` before any renderer frame, and the
+ * renderer cannot reach `session.declareKind` — never a request field.
+ */
+export async function tryDispatchMigrationRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+  clientId: string,
+): Promise<unknown> {
+  if (!method.startsWith("migration.")) return phase4RpcSkipped;
+  const engine = ctx.options.migrationEngine;
+  const localIndex = ctx.options.localIndex;
+  if (engine === undefined || localIndex === undefined) return phase4RpcSkipped;
+  let ownerGate: RegistryOwnerGate | undefined;
+  if (method === "migration.accept") {
+    const toolExecutor = buildExtensionGateExecutor(ctx, localIndex, clientId);
+    ownerGate = async (action) => (await toolExecutor.gate(action)) === "proceed";
+  }
+  const out = await dispatchMigrationRpc(method, params, {
+    engine,
+    ...(ownerGate === undefined ? {} : { ownerGate }),
+    fromRenderer: ctx.getClientKind(clientId) === "ui",
+    redactRoots: migrationRedactionRoots([
+      ctx.options.dataDir,
+      ctx.options.extensionsDir,
+      ctx.options.configDir,
+    ]),
+  });
+  if (out.kind === "hit") return out.value;
+  throw new RpcMethodError(-32601, `Method not found: ${method}`);
+}
+
 export async function tryDispatchShareRpc(
   ctx: ServerCtx,
   method: string,
@@ -1777,6 +1817,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchOncallPushRpc,
   tryDispatchNotificationsRpc,
   tryDispatchCaptureRpc,
+  tryDispatchMigrationRpc,
   tryDispatchMediaRpc,
   tryDispatchEgressRpc,
   tryDispatchGlossaryRpc,
@@ -1900,6 +1941,7 @@ const OWNER_GATED_EXTENSION_METHODS: ReadonlySet<string> = new Set([
   "extension.install",
   "extension.rehash",
   "extension.approveRun",
+  "extension.credentialSet",
 ]);
 
 function buildExtensionOwnerGate(
@@ -1956,6 +1998,12 @@ async function dispatchExtensionAutomationRpc(
       ...(ctx.options.extensionsRuntimeEnabled === undefined
         ? {}
         : { extensionsRuntimeEnabled: ctx.options.extensionsRuntimeEnabled }),
+      ...(ctx.options.extensionSync === undefined
+        ? {}
+        : { extensionSync: ctx.options.extensionSync }),
+      ...(ctx.options.continuityTable === undefined
+        ? {}
+        : { continuityTable: ctx.options.continuityTable }),
     });
     if (out.kind === "hit") {
       return out.value;
@@ -2071,6 +2119,9 @@ export async function tryDispatchConnectorRpc(
       notify: (m, p) => ctx.broadcastNotification(m, p),
       toolExecutor,
       ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),
+      ...(ctx.options.continuityTable === undefined
+        ? {}
+        : { continuityTable: ctx.options.continuityTable }),
     });
     if (out.kind === "hit") {
       return out.value;

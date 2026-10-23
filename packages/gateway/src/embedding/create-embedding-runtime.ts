@@ -16,6 +16,7 @@ import type { EmbeddingRuntime } from "./embedding-runtime.ts";
 import { createLazyEmbeddingRuntime } from "./lazy-scheduler.ts";
 import { LOCAL_EMBEDDING_MODEL_ID } from "./model.ts";
 import { type CreateOpenAIEmbedderOptions, createOpenAIEmbedder } from "./openai-embedder.ts";
+import { resolveOpenAIEmbeddingKey } from "./openai-key.ts";
 import type { Embedder } from "./types.ts";
 import { tryCreateEmbeddingWorkerBridge } from "./worker-bridge.ts";
 
@@ -88,11 +89,7 @@ async function tryCreateOpenAIEmbeddingRuntime(
   const openaiEmbedderFactory = deps.openaiEmbedderFactory ?? createOpenAIEmbedder;
   const lazyFactory = deps.lazyFactory ?? createLazyEmbeddingRuntime;
   const backfillGate = deps.backfillGate;
-  let apiKey = processEnvGet("OPENAI_API_KEY")?.trim() ?? "";
-  if (apiKey === "") {
-    const v = await vault.get("openai.api_key");
-    apiKey = typeof v === "string" ? v.trim() : "";
-  }
+  const apiKey = await resolveOpenAIEmbeddingKey(vault, logger);
   if (apiKey === "") {
     logger.warn("OpenAI embedding: set OPENAI_API_KEY or vault key openai.api_key");
     return null;

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import { dirname, join } from "node:path";
 import { bytesToHex } from "@noble/hashes/utils.js";
@@ -54,30 +54,31 @@ import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   DEFAULT_FLEET_CONFIG,
-  loadNimbusFleetFromPath,
+  loadNimbusFleetFromConfigDir,
   type NimbusFleetJobToml,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
-import { loadNimbusMcpSinkFromPath } from "../config/mcp-sink-toml.ts";
+import { getLayeredConfig, initLayeredConfig } from "../config/layered-config.ts";
+import { loadNimbusMcpSinkFromConfigDir } from "../config/mcp-sink-toml.ts";
 import {
   type ConnectorsConfig,
   DEFAULT_NIMBUS_LLM_TOML,
   loadNimbusAuditFromConfigDir,
   loadNimbusAutomationFromConfigDir,
-  loadNimbusBriefsFromPath,
+  loadNimbusBriefsFromConfigDir,
   loadNimbusChatopsFromConfigDir,
   loadNimbusCodeExecutionFromConfigDir,
   loadNimbusComputerUseFromConfigDir,
   loadNimbusConnectorsFromConfigDir,
   loadNimbusDecisionsFromConfigDir,
-  loadNimbusEmbeddingFromPath,
+  loadNimbusEmbeddingFromConfigDir,
   loadNimbusExtensionsFromConfigDir,
   loadNimbusExtensionsRuntimeFromConfigDir,
   loadNimbusFederationFromConfigDir,
   loadNimbusGlossaryFromConfigDir,
   loadNimbusIdentityFromConfigDir,
   loadNimbusLanFromConfigDir,
-  loadNimbusLlmFromPath,
+  loadNimbusLlmFromConfigDir,
   loadNimbusOwnershipFromConfigDir,
   loadNimbusPagerdutyFromConfigDir,
   loadNimbusPreflightFromConfigDir,
@@ -89,19 +90,19 @@ import {
   loadNimbusToolGenerationFromConfigDir,
   loadNimbusTribalFromConfigDir,
   loadNimbusUpdaterFromConfigDir,
+  loadTomlSectionFromConfig,
   type NimbusChatopsToml,
   type NimbusComputerUseToml,
   type NimbusLlmLocalRoute,
   type NimbusLlmRemoteVendor,
   type NimbusLlmToml,
   type NimbusTribalToml,
-  resolveNimbusTomlForProfile,
   type TeamCredentialConnector,
 } from "../config/nimbus-toml.ts";
 import { loadNimbusWorkdayFromConfigDir } from "../config/nimbus-toml-workday.ts";
 import { resolvePersona } from "../config/persona.ts";
 import { ProfileManager } from "../config/profiles.ts";
-import { loadNimbusSessionFromPath } from "../config/session-toml.ts";
+import { loadNimbusSessionFromConfigDir } from "../config/session-toml.ts";
 import { Config } from "../config.ts";
 import { bitbucketFetchOneUrlIsSupported } from "../connectors/bitbucket-sync.ts";
 import { createBlameIndexSyncable } from "../connectors/blame-index-sync.ts";
@@ -119,6 +120,7 @@ import {
 } from "../connectors/connector-vault.ts";
 import { createConnectorWriteDispatcher } from "../connectors/connector-write-dispatch.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
+import { createExtensionCredentialsResolver } from "../connectors/extension-sync/extension-identity.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
 import { githubFetchOneUrlIsSupported } from "../connectors/github-sync.ts";
 import { gitlabFetchOneUrlIsSupported } from "../connectors/gitlab-sync.ts";
@@ -154,7 +156,7 @@ import {
   effectiveRetentionDays,
   startToolCallLogRetention,
 } from "../db/tool-call-log-retention.ts";
-import { applyWritablePragmas } from "../db/writable-pragmas.ts";
+import { applyWritablePragmas, optimizeQueryPlanner } from "../db/writable-pragmas.ts";
 import { rebuildDecisions, runDecisionPass } from "../decisions/decision-extract.ts";
 import { createDecisionLlm, type DecisionLlm } from "../decisions/decision-llm-adapter.ts";
 import { createDecisionRefresher, type DecisionRefresher } from "../decisions/decision-refresh.ts";
@@ -187,6 +189,7 @@ import type { ConnectorDispatcher } from "../engine/types.ts";
 import { execConsent } from "../exec/exec-consent-broker.ts";
 import { resolveRuntimeById } from "../exec/exec-runtimes.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
+import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import { createExtensionSlotSource } from "../extensions/extension-runtime.ts";
 import type { RegistryFetchDeps } from "../extensions/registry/registry-fetch.ts";
 import {
@@ -210,6 +213,7 @@ import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight
 import { buildFleetInvoker } from "../fleet/fleet-invoker.ts";
 import { FLEET_CAPABILITY, FleetScheduler } from "../fleet/fleet-scheduler.ts";
 import { FleetStore } from "../fleet/fleet-store.ts";
+import { type FleetLoad, FleetSupervisor } from "../fleet/fleet-supervisor.ts";
 import { buildFleetSweepEnumerate } from "../fleet/fleet-sweep-enumerators.ts";
 import { validateFleetSweepJobs } from "../fleet/fleet-sweep-support.ts";
 import { createFleetRemoteBudget } from "../fleet/fleet-synthesis-router.ts";
@@ -234,6 +238,7 @@ import {
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
+import type { FleetRpcCtx } from "../ipc/fleet-rpc.ts";
 import {
   emitGatewayEvent,
   setGatewayEventBroadcast,
@@ -274,6 +279,7 @@ import {
   type OwnershipRefresher,
 } from "../ownership/ownership-refresh.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
+import { createPackLayerStore, packSkipLogLines } from "../packs/pack-layer-store.ts";
 import { ensureAnchorKeypair } from "../policy/anchor-keypair.ts";
 import { connectorAllowPredicate, partitionByAllowlist } from "../policy/connector-allowlist.ts";
 import { startPurge } from "../policy/gdpr-purge.ts";
@@ -392,10 +398,21 @@ import { processEnvGet } from "./env-access.ts";
 import { createGatewayPinoLogger } from "./gateway-log-file.ts";
 import { createHostActivity, type HostActivity } from "./host-activity.ts";
 import {
+  type AssembleCompositionOptions,
+  createMigrationEngineForBoot,
+  resolveMigrationComposition,
+  startMigrationBootEvaluation,
+} from "./migration-boot.ts";
+import {
   createNotificationsRuntime,
   showIgnoringFailure,
 } from "./notifications/notifications-runtime.ts";
+import { ensureOwnerOnlyFile, tightenToOwnerOnly } from "./owner-only-mode.ts";
 import type { PlatformPaths } from "./paths.ts";
+import {
+  createExtensionSyncRegistrarForBoot,
+  purgeExtensionIndexData,
+} from "./register-extension-sync.ts";
 import { registerUserMcpSyncablesFromDatabase } from "./register-user-mcp-sync.ts";
 import { isProductionRuntime } from "./runtime-layout.ts";
 import { sandboxCwdFor } from "./sandbox/sandbox-cwd.ts";
@@ -455,15 +472,7 @@ export function createUnimplementedNotifications(logger: Logger): NotificationSe
 }
 
 function loadOpenapiConfig(configDir: string): OpenapiConfig {
-  const path = join(configDir, "nimbus.toml");
-  if (!existsSync(path)) {
-    return DEFAULT_OPENAPI_CONFIG;
-  }
-  try {
-    return parseOpenapiToml(readFileSync(path, "utf8"));
-  } catch {
-    return DEFAULT_OPENAPI_CONFIG;
-  }
+  return loadTomlSectionFromConfig(configDir, "openapi", DEFAULT_OPENAPI_CONFIG, parseOpenapiToml);
 }
 
 type EmbeddingRuntime = ConcreteEmbeddingRuntime | null;
@@ -477,11 +486,17 @@ function openGatewaySqlite(
   // only works while no database is open, and without it `loadExtension` — and therefore
   // sqlite-vec — cannot work at all. No-op off darwin. See platform/sqlite-runtime.ts.
   ensureFullSqlite();
+  // Owner-only before the first open, so SQLite creates `-wal`/`-shm` with the same mode; the
+  // sidecars of an older install are tightened explicitly.
+  ensureOwnerOnlyFile(dbPath);
+  tightenToOwnerOnly(`${dbPath}-wal`);
+  tightenToOwnerOnly(`${dbPath}-shm`);
   const db = new Database(dbPath);
   // Before ensureSchema: migrations write, and this is the handle that converts
   // nimbus.db to WAL for every other connection (journal_mode is a file property).
   applyWritablePragmas(db);
   LocalIndex.ensureSchema(db, { backupDir: join(dataDir, "backups"), dbPath });
+  optimizeQueryPlanner(db);
   const stopLatency = startLatencyFlushScheduler(db);
   sidecarStops.push(() => stopLatency.stop());
   return { db, dbPath };
@@ -499,7 +514,7 @@ function createLocalIndexWithEmbeddingRuntime(
   paths: PlatformPaths,
   vault: NimbusVault,
   syncLogger: Logger,
-  activeTomlPath: string,
+  configDir: string,
   hostActivity: HostActivity,
   sidecarStops: Array<() => void>,
 ): {
@@ -507,7 +522,7 @@ function createLocalIndexWithEmbeddingRuntime(
   scheduleItemEmbedding: ((itemId: string) => void) | undefined;
   rt: EmbeddingRuntime;
 } {
-  const tomlEmbedding = loadNimbusEmbeddingFromPath(activeTomlPath);
+  const tomlEmbedding = loadNimbusEmbeddingFromConfigDir(configDir);
   // `[embedding] pause_on_battery` has parsed and defaulted to `true` since it was added and
   // nothing has ever read it — a key that lied about what it does. This is its consumer.
   //
@@ -583,7 +598,7 @@ const DEFAULT_EMBEDDING_DIMS = 384;
 function maybeAttachSessionMemoryStore(
   db: Database,
   rt: EmbeddingRuntime,
-  sessionToml: ReturnType<typeof loadNimbusSessionFromPath>,
+  sessionToml: ReturnType<typeof loadNimbusSessionFromConfigDir>,
   sidecarStops: Array<() => void>,
 ): SessionMemoryStore | undefined {
   if (readIndexedUserVersion(db) < 10) {
@@ -678,6 +693,11 @@ interface SchedulerWithMeshOpts {
   extensionRuntimeEnabled: boolean;
   /** Settles once the boot-time extension verification pass has finished (or thrown). */
   extensionSpawnGate: Promise<void>;
+  /**
+   * The continuity table the spawn verifier binds a legacy connector id through — the SAME value
+   * the migration engine, the sync registrar and the credential resolver get (ruling B1).
+   */
+  continuityTable: readonly ContinuityEntry[];
 }
 
 async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
@@ -688,6 +708,8 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   ownershipRefresher: OwnershipRefresher | undefined;
   premortemRefresher: PremortemRefresher | undefined;
   oncallPush: OncallPushRuntime;
+  /** The I22 policy-filtered `register`, for the extension sync host built after the boot gate. */
+  policyFilteredRegistrar: Pick<SyncScheduler, "register">;
 }> {
   const {
     paths,
@@ -703,6 +725,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     filesystemSpawnGate,
     extensionRuntimeEnabled,
     extensionSpawnGate,
+    continuityTable,
   } = opts;
   // I41 clause (6), spec § 11.2: a demo gateway's scheduler exists (IPC and the post-sync
   // refreshers are built alongside it) but can never run a job.
@@ -943,6 +966,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
         sandboxDir: paths.sandboxDir,
         runtimeReadPaths: () => resolveRuntimeById("bun").requiredReadPaths(),
         isConnectorAllowed,
+        continuityTable,
       })
     : undefined;
   const connectorMesh = await createLazyConnectorMesh(paths, vault, {
@@ -993,6 +1017,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     ownershipRefresher,
     premortemRefresher,
     oncallPush,
+    policyFilteredRegistrar,
   };
 }
 
@@ -1867,17 +1892,17 @@ function dropUnresolvableRoutePriorityEntries(
  *  `syncLogger`, so a dropped-entry warning is never actually silent at boot. */
 export async function buildLlmRegistryFromToml(
   db: Database,
-  activeTomlPath: string,
+  configDir: string,
   vault: NimbusVault,
   logger: RouteValidationLogger = defaultRouteValidationLogger,
 ): Promise<LlmRegistry> {
-  const llmToml = loadNimbusLlmFromPath(activeTomlPath);
+  const llmToml = loadNimbusLlmFromConfigDir(configDir);
   const knownRuntimeLocalRoutes = dropUnknownRuntimeEntries(llmToml.localRoutes, logger);
   const uncollidedLocalRoutes = dropLlamacppBaseUrlCollisions(knownRuntimeLocalRoutes, logger);
   const validatedLocalRoutes = dropDuplicateRouteIds(uncollidedLocalRoutes, logger);
   warnRemoteClassifiedLocalRoutes(validatedLocalRoutes, logger);
 
-  // `local_model = ""` parses to the empty string and survives `loadNimbusLlmFromPath` (the
+  // `local_model = ""` parses to the empty string and survives `loadNimbusLlmFromConfigDir` (the
   // `[llm]` parser assigns `parseString(valRaw)` unconditionally). It then reaches
   // `makeRouteId`, which THROWS on an empty model name — and this function is called from
   // `assemblePlatformServices` with nothing between it and boot, so a one-character config typo
@@ -2065,8 +2090,9 @@ function maybeStartAutoUpdateRuntime(deps: {
   connectorMesh: LazyConnectorMesh;
   sidecarStops: Array<() => void>;
   registryFetch: Omit<RegistryFetchDeps, "db">;
+  onUpdateApplied: (extensionId: string) => void;
 }): AutoUpdateRuntime | undefined {
-  const { db, vault, paths, connectorMesh, sidecarStops, registryFetch } = deps;
+  const { db, vault, paths, connectorMesh, sidecarStops, registryFetch, onUpdateApplied } = deps;
   let autoUpdateRuntime: AutoUpdateRuntime | undefined;
   const autoUpdateDisabled = process.env["NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE"] === "1";
   if (!autoUpdateDisabled && bootPolicyFor(paths).extensionsAutoUpdate) {
@@ -2079,6 +2105,7 @@ function maybeStartAutoUpdateRuntime(deps: {
       fetch: registryFetch,
       intervalHours: extensionsCfg.updateCheckIntervalHours,
       stopExtensionClient: (id) => connectorMesh.stopExtensionClient(id),
+      onUpdateApplied,
     });
     void autoUpdateRuntime.daemon.start();
     sidecarStops.push(() => {
@@ -2773,7 +2800,7 @@ function maybeStartAuditShipper(
 // the unconditional `ipcOpts.briefsEnabled` echo. The three `httpSidecarOpts` seams are assigned on
 // the caller's own object, so the wiring order relative to the identity/chatops boots is unchanged.
 function bootBriefsIntoHttpSidecar(deps: {
-  briefsToml: ReturnType<typeof loadNimbusBriefsFromPath>;
+  briefsToml: ReturnType<typeof loadNimbusBriefsFromConfigDir>;
   llmRouter: Parameters<typeof createBriefLlm>[0];
   localIndex: LocalIndex;
   db: Database;
@@ -3179,65 +3206,83 @@ export interface FleetBootDeps {
   readonly policyGate: PolicyGate;
   readonly logger: Logger;
   readonly sidecarStops: Array<() => void>;
+  /** Test seam only: the supervisor's reload-check interval (production: `FLEET_RELOAD_CHECK_MS`). */
+  readonly checkMs?: number;
 }
 
 /**
- * Reads `[fleet]` off the PROFILE-RESOLVED toml, prunes expired runs and briefs, and starts the
- * scheduler when — and only when — the owner both enabled the fleet and configured a job. Returns
- * the full result of assembling the fleet subsystem, not just the (optionally-undefined)
- * scheduler — the `fleet.*` IPC surface (Task 9) needs the store, the effective config and the job
- * list even when the scheduler itself is `undefined` (disabled by config/policy or unconfigured),
- * so `fleet.status`/`fleet.list` can report the truth without a live scheduler to ask.
- * `store`/`config`/`jobs` are ALWAYS present — pruning and reporting must not hinge on whether the
- * fleet happens to be running right now.
+ * Reads `[fleet]` off the layered config (base file plus the active profile's, plus pack layers),
+ * prunes expired runs and briefs, and hands the result to a `FleetSupervisor`, which starts the
+ * scheduler when — and only when — the owner both enabled the fleet and configured a job, and
+ * rebuilds it when the effective `[fleet]` section changes. Returns the full result of assembling
+ * the fleet subsystem, not just the (optionally-undefined) scheduler — the `fleet.*` IPC surface
+ * needs the store, the effective config and the job list even when the scheduler itself is
+ * `undefined` (disabled by config/policy or unconfigured), so `fleet.status`/`fleet.list` can report
+ * the truth without a live scheduler to ask. `scheduler`/`config`/`jobs` are GETTERS over the
+ * supervisor's current view, so they follow a reload; `store` is fixed for the process.
  *
  * Four things here are load-bearing enough to say out loud:
  *
- * 1. `resolveNimbusTomlForProfile(paths.configDir)`, never a hardcoded `nimbus.toml`. The
- *    profile-BLIND predecessor of `loadNimbusAgentsFromPath` silently discarded `[agents]
- *    synthesis` set in a profile file and was deleted rather than left around to be reached for;
- *    reaching for a config-dir loader here would be making that mistake a second time.
+ * 1. `loadNimbusFleetFromConfigDir(paths.configDir)`, the layered reader, never a hardcoded
+ *    `nimbus.toml`: a `[fleet]` set in the active profile file (or a pack) must be honoured, the
+ *    way `[agents] synthesis` set in a profile file is.
  * 2. A malformed `[fleet]` block must NOT take the gateway down. The parser throws by design (an
- *    `allow_remote` with no budget is a permission the owner clearly meant to bound), and this is
- *    the caller that catches it: log loudly, name the file, construct no scheduler. The fleet is an
- *    optional default-off feature; the index is not. Note that the PRUNE still runs on that path —
- *    old rows exist whether or not today's config parses, and retention must not hinge on a typo.
+ *    `allow_remote` with no budget is a permission the owner clearly meant to bound), and
+ *    `loadFleet` is the caller that catches it: log loudly, name the file, construct no scheduler.
+ *    The fleet is an optional default-off feature; the index is not. Note that the boot PRUNE still
+ *    runs on that path — old rows exist whether or not today's config parses, and retention must not
+ *    hinge on a typo. `buildFleetScheduler` likewise catches a throw from construction, because the
+ *    supervisor's constructor calls it unguarded at boot.
  * 3. Retention is a policy FLOOR, applied to `config.retentionDays` BEFORE the scheduler sees it —
- *    not only to the boot prune below. The scheduler stamps each brief's `expires_at` from that
- *    same field, so flooring only the prune would leave an org-mandated 30-day brief marked to
- *    expire in 7 and deleted by the next `pruneBriefs`. `retentionMinDays` is the ORG floor alone,
- *    deliberately not `retentionDays` (which is that floor already merged with the audit log's
- *    own local window, 90 days by default).
- * 4. Called exactly ONCE per boot, from `assemblePlatformServices` below, which derives both
- *    `PlatformServices.fleetScheduler` and `ipcOpts.fleetRpcCtx` from that single call. There is no
- *    thin `bootFleetScheduler(deps): FleetScheduler | undefined` wrapper any more — a second call
- *    with the same deps would double-prune and, worse, construct and start a SECOND live scheduler
- *    ticking against the same store. `assemble-fleet.test.ts` calls this directly and reads
- *    `.scheduler` off the result, which is what production actually runs, not a parallel path.
+ *    not only to the boot prune below, and on every reload too. The scheduler stamps each brief's
+ *    `expires_at` from that same field, so flooring only the prune would leave an org-mandated
+ *    30-day brief marked to expire in 7 and deleted by the next `pruneBriefs`. `retentionMinDays`
+ *    is the ORG floor alone, deliberately not `retentionDays` (which is that floor already merged
+ *    with the audit log's own local window, 90 days by default).
+ * 4. Called exactly ONCE per boot, from `assemblePlatformServices` below, which derives
+ *    `ipcOpts.fleetRpcCtx` from that single call. The SUPERVISOR holds the live scheduler from then
+ *    on; nothing may keep a boot-time copy of it, since that copy goes stale at the first reload. A
+ *    second call with the same deps would double-prune and, worse, construct a SECOND supervisor and
+ *    a second live scheduler ticking against the same store. `assemble-fleet.test.ts` calls this
+ *    directly and reads `.scheduler` off the result, which is what production actually runs, not a
+ *    parallel path.
  */
 export interface FleetRuntime {
-  readonly scheduler: FleetScheduler | undefined;
+  readonly supervisor: FleetSupervisor;
   readonly store: FleetStore;
+  /** The supervisor's current scheduler; changes on a reload. */
+  readonly scheduler: FleetScheduler | undefined;
   readonly config: NimbusFleetToml;
   readonly jobs: readonly NimbusFleetJobToml[];
 }
 
-export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
-  const fleetToml = resolveNimbusTomlForProfile(deps.paths.configDir);
+/** The effective `[fleet]` section, retention floored by policy. Never throws: an error is logged. */
+function loadFleet(deps: FleetBootDeps): FleetLoad {
+  const fleetConfigDir = deps.paths.configDir;
   let fleet: { config: NimbusFleetToml; jobs: NimbusFleetJobToml[] } = {
     config: DEFAULT_FLEET_CONFIG,
     jobs: [],
   };
   let configError = false;
   try {
-    const loaded = loadNimbusFleetFromPath(fleetToml);
+    const loaded = loadNimbusFleetFromConfigDir(fleetConfigDir);
     validateFleetSweepJobs(loaded.jobs);
     fleet = loaded;
   } catch (err) {
     configError = true;
+    const layered = getLayeredConfig(fleetConfigDir);
+    const files = layered
+      .snapshot()
+      .layers.filter((l) => l.exists)
+      .map((l) => l.layer.path);
     deps.logger.error(
-      { err: err instanceof Error ? err.message : String(err), tomlPath: fleetToml },
-      `[fleet] config error in ${fleetToml} — fleet disabled for this process`,
+      {
+        err: err instanceof Error ? err.message : String(err),
+        configDir: fleetConfigDir,
+        profile: layered.profile.name,
+        files,
+      },
+      `[fleet] config error (profile "${layered.profile.name}"; files: ${files.join(", ") || "none"}) — fleet disabled until the config is fixed`,
     );
   }
 
@@ -3248,83 +3293,175 @@ export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
       deps.policyGate.enforced().retentionMinDays,
     ),
   };
+  return { config, jobs: fleet.jobs, configError };
+}
+
+/**
+ * One scheduler generation, NOT started (the supervisor starts and stops it). Undefined when the
+ * fleet should not run. Never throws: the supervisor's constructor calls this unguarded at boot,
+ * and boot must not fail because of the fleet.
+ */
+function buildFleetScheduler(
+  deps: FleetBootDeps,
+  store: FleetStore,
+  load: FleetLoad,
+): FleetScheduler | undefined {
+  const { config, jobs, configError } = load;
+  if (configError || !config.enabled || jobs.length === 0) return undefined;
+  try {
+    // ONE budget per scheduler GENERATION, named so the scheduler's counter and the invoker's cap
+    // are the SAME object (I38). Constructing it inline in `invoke:` (as this once did) left
+    // `remoteCallsMade` with nothing to read, so `fleet_run.remote_calls_made` recorded 0 on every
+    // run — a column that purports to count remote model calls and always said none were made. Two
+    // instances would be the same bug wearing a getter: the scheduler would report a budget nothing
+    // ever spends against. A reload builds a new generation, and with it a new budget.
+    const remoteBudget = createFleetRemoteBudget(config.allowRemote, config.remoteCallBudget);
+
+    return new FleetScheduler({
+      store,
+      jobs,
+      config,
+      // A GETTER, not a snapshot: `runOnce` reads this on every 60-second tick, and the gateway can
+      // receive a signed policy AFTER boot (`policyGate.applyVerified`). A boolean captured here
+      // would leave a fleet running all night under a lockoff the org had already installed — the
+      // same reason the exec and computer-use deps below read `policyGate.enforced()` lazily.
+      get capabilityDisabled(): boolean {
+        return deps.policyGate.enforced().capabilitiesDisabled.has(FLEET_CAPABILITY);
+      },
+      hostActivity: deps.hostActivity,
+      // The SAME instance, narrowed to `FleetRunBudget` by the dep's type: the scheduler resets it
+      // at each run boundary (which is what makes `remote_call_budget` the PER-RUN key it is
+      // documented to be) and reads what the run had and spent, while `consume` stays the invoker's.
+      remoteBudget,
+      invoke: buildFleetInvoker({
+        db: deps.db,
+        router: deps.llmRegistry.llmRouter,
+        budget: remoteBudget,
+        index: deps.localIndex,
+        configDir: deps.paths.configDir,
+      }),
+      now: () => Date.now(),
+      // Roots and services are read FRESH per enumeration. Services use the loader agents resolve
+      // `service` against — deliberately NOT `loadServiceConfigsOrDegrade`: degrading to an empty
+      // map would report "no services are configured" for a config that is merely malformed, where
+      // a throw records the real cause on the job and backs it off.
+      enumerate: buildFleetSweepEnumerate({
+        db: deps.db,
+        roots: () => ownershipRoots(deps.paths.configDir),
+        serviceIds: () => [...loadNimbusServiceConfigsFromConfigDir(deps.paths.configDir).keys()],
+      }),
+    });
+  } catch (err) {
+    deps.logger.error({ err }, "[fleet] building the scheduler failed; the fleet is off");
+    return undefined;
+  }
+}
+
+export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
+  const snapshotVersion = (): number => getLayeredConfig(deps.paths.configDir).snapshot().version;
+  // Version FIRST, then the load: an edit landing between the two bumps the version past the one
+  // recorded here, so the supervisor's first check reloads rather than missing it.
+  const bootVersion = snapshotVersion();
+  const bootLoad = loadFleet(deps);
 
   // Prune UNCONDITIONALLY — when the fleet is disabled, and when its config did not even parse.
   // Rows written while it WAS enabled exist either way, and retention must not depend on whether
   // the owner currently has a typo in their TOML: the alternative is a machine that silently keeps
   // every fleet brief forever because of one bad line. On the unparsed path the window is
   // `DEFAULT_FLEET_CONFIG.retentionDays` floored by policy, which is the only defensible answer
-  // when the configured one is unreadable.
+  // when the configured one is unreadable. Boot only: a reload does not prune.
   //
   // `pruneRuns` FIRST: the FK cascade takes each run's briefs with it, which is what stops
   // `fleet_run` growing a row per 60-second tick forever. `pruneBriefs` then catches any brief
   // whose own `expires_at` is earlier than its run's age.
   const store = new FleetStore(deps.db);
-  store.pruneRuns(Date.now() - config.retentionDays * 86_400_000);
+  store.pruneRuns(Date.now() - bootLoad.config.retentionDays * 86_400_000);
   store.pruneBriefs(Date.now());
 
-  if (configError || !config.enabled || fleet.jobs.length === 0) {
-    return { scheduler: undefined, store, config, jobs: fleet.jobs };
-  }
-
-  // ONE budget instance, named so the scheduler's counter and the invoker's cap are the SAME
-  // object. Constructing it inline in `invoke:` (as this did) left `remoteCallsMade` with nothing
-  // to read, so `fleet_run.remote_calls_made` recorded 0 on every run — a column that purports to
-  // count remote model calls and always said none were made. Two instances would be the same bug
-  // wearing a getter: the scheduler would report a budget nothing ever spends against.
-  const remoteBudget = createFleetRemoteBudget(config.allowRemote, config.remoteCallBudget);
-
-  const scheduler = new FleetScheduler({
-    store,
-    jobs: fleet.jobs,
-    config,
-    // A GETTER, not a snapshot: `runOnce` reads this on every 60-second tick, and the gateway can
-    // receive a signed policy AFTER boot (`policyGate.applyVerified`). A boolean captured here
-    // would leave a fleet running all night under a lockoff the org had already installed — the
-    // same reason the exec and computer-use deps below read `policyGate.enforced()` lazily.
-    get capabilityDisabled(): boolean {
-      return deps.policyGate.enforced().capabilitiesDisabled.has(FLEET_CAPABILITY);
+  const supervisor = new FleetSupervisor(
+    {
+      version: snapshotVersion,
+      load: () => loadFleet(deps),
+      build: (load) => buildFleetScheduler(deps, store, load),
+      logger: deps.logger,
+      ...(deps.checkMs !== undefined ? { checkMs: deps.checkMs } : {}),
     },
-    hostActivity: deps.hostActivity,
-    // The SAME instance, narrowed to `FleetRunBudget` by the dep's type: the scheduler resets it at
-    // each run boundary (which is what makes `remote_call_budget` the PER-RUN key it is documented
-    // to be) and reads what the run had and spent, while `consume` stays the invoker's alone.
-    remoteBudget,
-    invoke: buildFleetInvoker({
-      db: deps.db,
-      router: deps.llmRegistry.llmRouter,
-      budget: remoteBudget,
-      index: deps.localIndex,
-      configDir: deps.paths.configDir,
-    }),
+    { version: bootVersion, load: bootLoad },
+  );
+  supervisor.start();
+  // Without this the reload interval and the current scheduler's 60 s tick outlive
+  // `disposeSidecars()`. `.unref()` keeps them from holding the process open but does not stop
+  // them firing during a shutdown that is still draining.
+  deps.sidecarStops.push(() => supervisor.stop());
+  return {
+    supervisor,
+    store,
+    get scheduler(): FleetScheduler | undefined {
+      return supervisor.current().scheduler;
+    },
+    get config(): NimbusFleetToml {
+      return supervisor.current().config;
+    },
+    get jobs(): readonly NimbusFleetJobToml[] {
+      return supervisor.current().jobs;
+    },
+  };
+}
+
+/**
+ * The `fleet.*` IPC context over a live fleet runtime. `scheduler`/`config`/`jobs` are GETTERS over
+ * the supervisor's current view, so a handler reads the fleet as it is now, not as it was at boot.
+ * `settled` runs a reload check rather than only awaiting one in progress: `check()` joins a
+ * pending reload, picks up an edit the timer has not polled yet, and never rejects, so
+ * `fleet.runNow` straight after a config edit runs against that edit.
+ */
+export function fleetRpcCtxFor(runtime: FleetRuntime, hostActivity: HostActivity): FleetRpcCtx {
+  return {
+    get scheduler(): FleetScheduler | undefined {
+      return runtime.scheduler;
+    },
+    store: runtime.store,
+    hostActivity,
+    get config(): NimbusFleetToml {
+      return runtime.config;
+    },
+    get jobs(): readonly NimbusFleetJobToml[] {
+      return runtime.jobs;
+    },
     now: () => Date.now(),
-    // Roots and services are read FRESH per enumeration. Services use the loader agents resolve
-    // `service` against — deliberately NOT `loadServiceConfigsOrDegrade`: degrading to an empty map
-    // would report "no services are configured" for a config that is merely malformed, where a throw
-    // records the real cause on the job and backs it off.
-    enumerate: buildFleetSweepEnumerate({
-      db: deps.db,
-      roots: () => ownershipRoots(deps.paths.configDir),
-      serviceIds: () => [...loadNimbusServiceConfigsFromConfigDir(deps.paths.configDir).keys()],
-    }),
-  });
-  scheduler.start();
-  // Without this the 60 s interval outlives `disposeSidecars()`. `.unref()` keeps it from holding
-  // the process open but does not stop it firing during a shutdown that is still draining.
-  deps.sidecarStops.push(() => scheduler.stop());
-  return { scheduler, store, config, jobs: fleet.jobs };
+    settled: () => runtime.supervisor.check().then(() => undefined),
+  };
 }
 
 export async function assemblePlatformServices(
   paths: PlatformPaths,
   customVault?: NimbusVault,
+  /**
+   * Composition-only (ruling B1): never passed by `platform/{win32,darwin,linux}.ts`, so production
+   * keeps the baked built-in registry and continuity table. A test runner passes a fixture here —
+   * the only way either reaches a real gateway.
+   */
+  composition?: AssembleCompositionOptions,
 ): Promise<PlatformServices> {
   const assemblyStartedMs = performance.now();
+  // ONE value for every consumer that binds through the continuity table or the built-in registry.
+  const migration = resolveMigrationComposition(composition);
   const sidecarStops: Array<() => void> = [];
   await ensurePlatformDirectories(paths);
+  // Pin the profile BEFORE the first config read: every `…FromConfigDir` loader below goes
+  // through this reader, so the profile cannot change under a running gateway. An invalid
+  // profile name (env or marker) throws `InvalidProfileNameError` and stops boot.
+  const layeredConfig = initLayeredConfig(paths.configDir, {
+    packs: createPackLayerStore({ configDir: paths.configDir }),
+  });
   const bootPolicy = bootPolicyFor(paths);
   // Built before `db` so a boot-marker append failure (below) has somewhere to log a warning.
   const syncLogger: Logger = createGatewayPinoLogger(paths.logDir);
+  syncLogger.info(
+    `config: profile "${layeredConfig.profile.name}" (from ${layeredConfig.profile.source})`,
+  );
+  // A skipped pack is never fatal, but it is reported: here, in `diag.snapshot`, and in `nimbus config explain`.
+  for (const line of packSkipLogLines(layeredConfig.snapshot())) syncLogger.error(line);
   const vault = customVault ?? (await createNimbusVault(paths));
   // Ordering is load-bearing on Windows: this constructs the runner, which synchronously probes
   // the helper via `--check-caps` (creating, then deleting, a throwaway
@@ -3375,7 +3512,6 @@ export async function assemblePlatformServices(
     });
   }
   const rateLimiter = new ProviderRateLimiter();
-  const activeTomlPath = resolveNimbusTomlForProfile(paths.configDir);
   // pre-S3 item E: real OS toasts. A demo-rooted gateway (I41), a platform with no backend, or an
   // invalid `[notifications]` section (logged at ERROR; never crashes boot) keep the non-delivering
   // service. The probe is kicked off here and never awaited — boot does not wait on a PowerShell
@@ -3383,7 +3519,7 @@ export async function assemblePlatformServices(
   const notificationsRuntime = createNotificationsRuntime({
     allowed: bootPolicy.osNotifications,
     platform: process.platform,
-    tomlPath: activeTomlPath,
+    configDir: paths.configDir,
     logger: syncLogger,
     fallback: createUnimplementedNotifications(syncLogger),
   });
@@ -3406,14 +3542,14 @@ export async function assemblePlatformServices(
   // with `tone = "tree"` would get silent neutral behaviour, which is the exact failure the
   // design review raised (Q2).
   resolvePersona(paths.configDir, syncLogger);
-  const sessionToml = loadNimbusSessionFromPath(activeTomlPath);
+  const sessionToml = loadNimbusSessionFromConfigDir(paths.configDir);
   // `[llm] max_agent_depth` / `max_tool_calls_per_session` are LIVE from here on: resolved
   // once (a set, valid env var still wins) and read by `AgentCoordinator` and `gateway.ping`.
-  const bootLlmToml = loadNimbusLlmFromPath(activeTomlPath);
+  const bootLlmToml = loadNimbusLlmFromConfigDir(paths.configDir);
   setAgentLimits(resolveAgentLimits({ env: readAgentLimitEnv(), toml: bootLlmToml }));
   // AWAITED, never fire-and-forget: the registry must be fully populated before the router
   // answers anything, or a remote route could be missing from the first turn after boot.
-  const llmRegistry = await buildLlmRegistryFromToml(db, activeTomlPath, vault, {
+  const llmRegistry = await buildLlmRegistryFromToml(db, paths.configDir, vault, {
     warn: (m: string) => syncLogger.warn(m),
   });
   // `undefined` here means the Mastra engine agent is NOT CONSTRUCTED at all (gateway-main.ts),
@@ -3428,7 +3564,7 @@ export async function assemblePlatformServices(
     paths,
     vault,
     syncLogger,
-    activeTomlPath,
+    paths.configDir,
     hostActivity,
     sidecarStops,
   );
@@ -3473,7 +3609,7 @@ export async function assemblePlatformServices(
 
   // MCP capture sink (I28). Config at boot; org policy LIVE per call (I22) — an absent/undefined
   // policy result fails closed inside resolveCaptureCapability.
-  const mcpSinkLoad = loadNimbusMcpSinkFromPath(activeTomlPath);
+  const mcpSinkLoad = loadNimbusMcpSinkFromConfigDir(paths.configDir);
   if (!mcpSinkLoad.ok) {
     syncLogger.error(
       { event: "mcp_sink.config_invalid", error: mcpSinkLoad.error },
@@ -3552,6 +3688,10 @@ export async function assemblePlatformServices(
     // depth; this is only the safe pass-through default for any other caller.
     depth: "full",
     ...teamCredentialExtras,
+    // The scheduler's configured-ness gate reads an approved extension's own credentials (the
+    // grant's, which for a bound extension are the legacy keys). Answers nothing for an id no grant
+    // carries, so it changes no built-in connector's answer.
+    extensionCredentialsFor: createExtensionCredentialsResolver(db, migration.continuityTable),
   };
   assignIfPresent(syncContext, "scheduleItemEmbedding", scheduleItemEmbedding);
 
@@ -3594,9 +3734,10 @@ export async function assemblePlatformServices(
   // no job is configured by default, so a gateway with no `[fleet]` block constructs nothing at
   // all. Built here, after the policy gate, because it reads the `agent_fleet` lockoff from it.
   //
-  // Called exactly ONCE: both `fleetScheduler` below and `ipcOpts.fleetRpcCtx` (wired further
-  // down) are derived from this single result — see `assembleFleetRuntime`'s own doc comment for
-  // why a second call would double-prune and start a second live scheduler.
+  // Called exactly ONCE: `ipcOpts.fleetRpcCtx` (wired further down) is derived from this single
+  // result, and its supervisor rebuilds the scheduler when `[fleet]` changes — see
+  // `assembleFleetRuntime`'s own doc comment for why a second call would double-prune and start a
+  // second live scheduler.
   const fleetRuntime = assembleFleetRuntime({
     db,
     paths,
@@ -3607,7 +3748,6 @@ export async function assemblePlatformServices(
     logger: syncLogger,
     sidecarStops,
   });
-  const fleetScheduler = fleetRuntime.scheduler;
 
   // Extension runtime PR 3: the kill switch (read on its own, so a bad sibling key cannot re-enable
   // it) AND not demo-rooted. One answer, handed to both the mesh and the IPC server.
@@ -3628,6 +3768,7 @@ export async function assemblePlatformServices(
     ownershipRefresher,
     premortemRefresher,
     oncallPush,
+    policyFilteredRegistrar,
   } = await createSchedulerWithMesh({
     paths,
     vault,
@@ -3642,6 +3783,7 @@ export async function assemblePlatformServices(
     ...(dataDirRevoke === undefined ? {} : { filesystemSpawnGate: dataDirRevoke }),
     extensionRuntimeEnabled,
     extensionSpawnGate: extensionSpawnGate.promise,
+    continuityTable: migration.continuityTable,
   });
   // One `stop` per refresher that actually started. Three of the four are
   // optional (their passes are config-gated), and the repeated
@@ -3668,16 +3810,65 @@ export async function assemblePlatformServices(
     extensionSpawnGate.resolve();
   }
 
+  // The extension sync host (connector-unbundling pilot, spec § 8.3). Built only AFTER the boot
+  // verification pass, so nothing it registers is something that pass just hard-disabled, and only
+  // when the runtime is on and the scheduler can run (not demo-rooted, I41). Registration goes
+  // through the same I22 policy filter as every other mesh-backed syncable.
+  const extensionSyncRegistrar = createExtensionSyncRegistrarForBoot(
+    { runtimeEnabled: extensionRuntimeEnabled, syncEnabled: bootPolicyFor(paths).syncScheduler },
+    {
+      db,
+      vault,
+      scheduler: {
+        register: (c, i) => policyFilteredRegistrar.register(c, i),
+        unregister: (id) => syncScheduler.unregister(id),
+        pause: (id, reason) => syncScheduler.pause(id, reason),
+        resume: (id) => syncScheduler.resume(id),
+        syncableFor: (id) => syncScheduler.syncableFor(id),
+      },
+      mesh: connectorMesh,
+      sandbox: sandboxRunner,
+      runtimeReadPaths: () => resolveRuntimeById("bun").requiredReadPaths(),
+      table: migration.continuityTable,
+      logger: syncLogger,
+    },
+  );
+  extensionSyncRegistrar.registerAllFromDatabase();
+
   // Extension registries: ONE air-gap switch (the LLM router's `enforce_air_gap`), read per call from
   // the router's boot-resolved config; it does not track a later config or policy change. The SAME
-  // object reaches the `registry.*` methods and the auto-update daemon.
+  // object reaches the `registry.*` methods, the auto-update daemon and the migration engine.
   const registryFetch: Omit<RegistryFetchDeps, "db"> = {
     fetchFn: (url, init) => fetch(url, init),
     enforceAirGap: () => llmRegistry.llmRouter.enforcesAirGap(),
     now: Date.now,
     // The compiled release binary counts as production even with NODE_ENV unset (it always is).
     production: isProductionRuntime(),
+    // The SAME built-in the migration engine gets (ruling B1): the baked built-in registry, unless a
+    // test runner passed a fixture to this function. No env var, config key or IPC param sets it.
+    builtin: migration.builtin,
   };
+
+  // The connector migration engine (connector-unbundling spec § 7.2): built after the extension boot
+  // gate and the sync registrar it registers through, and handed the SAME continuity table and
+  // built-in registry as the registrar, the spawn verifier and the registry fetch above. Boot
+  // evaluation is skipped when demo-rooted (I41), never awaited, and never fatal.
+  const migrationEngine = createMigrationEngineForBoot({
+    db,
+    vault,
+    dataDir: paths.dataDir,
+    extensionsDir: paths.extensionsDir,
+    registryFetch,
+    composition: migration,
+    // The SAME builder `extension.approveRun` and the spawn verifier use.
+    env: buildExtensionRunGrantEnv(connectorMesh.userMcpProtectedRoots(), paths.extensionsDir),
+    runtimeEnabled: extensionRuntimeEnabled,
+    sandbox: sandboxRunner,
+    extensionSync: extensionSyncRegistrar,
+    scheduler: syncScheduler,
+    logger: syncLogger,
+  });
+  void startMigrationBootEvaluation(migrationEngine, paths.demo === true, syncLogger);
   const autoUpdateRuntime = maybeStartAutoUpdateRuntime({
     db,
     vault,
@@ -3685,6 +3876,7 @@ export async function assemblePlatformServices(
     connectorMesh,
     sidecarStops,
     registryFetch,
+    onUpdateApplied: (id) => extensionSyncRegistrar.refresh(id),
   });
 
   rt?.startBackgroundJobs();
@@ -3705,6 +3897,18 @@ export async function assemblePlatformServices(
     demo: paths.demo === true,
     extensionsDir: paths.extensionsDir,
     extensionsRuntimeEnabled: extensionRuntimeEnabled,
+    extensionSync: {
+      refresh: (id) => extensionSyncRegistrar.refresh(id),
+      syncServiceIdFor: (id) => extensionSyncRegistrar.syncServiceIdFor(id),
+      unregister: (id) => extensionSyncRegistrar.unregister(id),
+      // Always wired, runtime on or off: items an extension synced earlier go with it either way.
+      purgeBeforeRemove: (id) =>
+        purgeExtensionIndexData({ db, vault, localIndex, table: migration.continuityTable }, id),
+    },
+    migrationEngine,
+    // The SAME table the registrar, the spawn verifier and the credential resolver get (C7):
+    // `extension.approveRun`, `extension.credentialSet` and `connector.remove` bind through it.
+    continuityTable: migration.continuityTable,
     registryFetch,
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,
@@ -3777,7 +3981,7 @@ export async function assemblePlatformServices(
   };
 
   // Research briefs (Spine S1). Default-off; the seam stays absent unless [briefs].enabled.
-  const briefsToml = loadNimbusBriefsFromPath(activeTomlPath);
+  const briefsToml = loadNimbusBriefsFromConfigDir(paths.configDir);
   // Always set (not gated on briefsToml.enabled) so `clip.status` can always echo the real
   // enable-state — a paired user's first `nimbus clip status` should never see it silently absent.
   ipcOpts.briefsEnabled = briefsToml.enabled;
@@ -4182,14 +4386,7 @@ export async function assemblePlatformServices(
   // whole namespace is LAN-forbidden (I5) and absent from the Tauri allowlist (I7): `fleet.runNow`
   // spends the machine's resources and the reads return synthesised answers over the private
   // index, neither of which a LAN peer or the renderer needs.
-  ipcOpts.fleetRpcCtx = {
-    scheduler: fleetRuntime.scheduler,
-    store: fleetRuntime.store,
-    hostActivity,
-    config: fleetRuntime.config,
-    jobs: fleetRuntime.jobs,
-    now: () => Date.now(),
-  };
+  ipcOpts.fleetRpcCtx = fleetRpcCtxFor(fleetRuntime, hostActivity);
   ipcOpts.oncallPushRpcCtx = { runtime: oncallPush };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };
@@ -4625,7 +4822,7 @@ export async function assemblePlatformServices(
   if (bootPolicy.telemetryFlush) {
     const telemetryStop = startTelemetryFlushScheduler({
       dataDir: paths.dataDir,
-      activeTomlPath,
+      configDir: paths.configDir,
       getDatabase: () => db,
       gatewayVersion: GATEWAY_VERSION,
       logger: syncLogger,
@@ -4671,7 +4868,6 @@ export async function assemblePlatformServices(
   };
   // The members only some installs have — OMITTED when absent, never set to `undefined`
   // (`exactOptionalPropertyTypes`).
-  assignIfPresent(services, "fleetScheduler", fleetScheduler);
   assignIfPresent(services, "agentVendor", agentVendor);
   assignIfPresent(services, "sessionMemoryStore", sessionMemoryStore);
   assignIfPresent(services, "executorDelegation", federationBooted);

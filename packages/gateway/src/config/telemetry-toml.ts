@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-
 import { processEnvGet } from "../platform/env-access.ts";
+import {
+  fallbackMessage,
+  layeredConfigText,
+  type SectionFallbackSink,
+  sectionFallbackSink,
+} from "./layered-config.ts";
 import { parseBool } from "./toml-primitives.ts";
 
 export type NimbusTelemetryToml = {
@@ -86,16 +91,38 @@ export function parseNimbusTomlTelemetrySection(source: string): Partial<NimbusT
 }
 
 export function loadNimbusTelemetryFromPath(tomlPath: string): NimbusTelemetryToml {
-  if (!existsSync(tomlPath)) {
+  let raw: string | null;
+  try {
+    raw = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : null;
+  } catch {
+    return applyTelemetryEnvOverrides({ ...DEFAULT_NIMBUS_TELEMETRY_TOML });
+  }
+  return loadNimbusTelemetryFromText(raw);
+}
+
+/** `[telemetry]` over the layered snapshot (packs, base, active profile). */
+export function loadNimbusTelemetryFromConfigDir(configDir: string): NimbusTelemetryToml {
+  return loadNimbusTelemetryFromText(
+    layeredConfigText(configDir),
+    sectionFallbackSink(configDir, "telemetry"),
+  );
+}
+
+/** The one `[telemetry]` core: env overrides apply on no file, a parse error, or a good parse. */
+function loadNimbusTelemetryFromText(
+  raw: string | null,
+  onFallback?: SectionFallbackSink,
+): NimbusTelemetryToml {
+  if (raw === null) {
     return applyTelemetryEnvOverrides({ ...DEFAULT_NIMBUS_TELEMETRY_TOML });
   }
   try {
-    const raw = readFileSync(tomlPath, "utf8");
     return applyTelemetryEnvOverrides({
       ...DEFAULT_NIMBUS_TELEMETRY_TOML,
       ...parseNimbusTomlTelemetrySection(raw),
     });
-  } catch {
+  } catch (err) {
+    onFallback?.(fallbackMessage(err));
     return applyTelemetryEnvOverrides({ ...DEFAULT_NIMBUS_TELEMETRY_TOML });
   }
 }

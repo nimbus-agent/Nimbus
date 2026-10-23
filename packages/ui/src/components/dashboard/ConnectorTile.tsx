@@ -92,6 +92,14 @@ export function ConnectorTile({ status, highlighted }: Props): ReactNode {
         {healthLabel(status.health) ??
           (status.lastSyncAt ? formatRelative(status.lastSyncAt) : "not synced yet")}
       </div>
+      {status.health === "paused" && status.lastError && (
+        <div
+          className="text-[var(--color-amber)] text-xs mt-1 break-words"
+          data-testid="connector-paused-reason"
+        >
+          {status.lastError}
+        </div>
+      )}
       {status.degradationReason && (
         <div className="text-[var(--color-amber)] text-xs mt-1 truncate">
           {status.degradationReason}

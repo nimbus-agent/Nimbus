@@ -9,8 +9,17 @@ import {
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
+import type { SecretInputIo } from "../lib/secret-input.ts";
+
 const vaultMod = await import("./vault.ts");
-const { runVault, runVaultDelete, runVaultGet, runVaultList, runVaultSet } = vaultMod;
+const {
+  runVault,
+  runVaultDelete,
+  runVaultGet,
+  runVaultList,
+  runVaultSet,
+  VAULT_SET_ARGV_DEPRECATION,
+} = vaultMod;
 
 const out = captureOutput();
 
@@ -154,9 +163,11 @@ describe("runVault (dispatcher)", () => {
     await expect(runVault([])).rejects.toThrow("Unknown vault subcommand: (none)");
   });
 
-  it("rejects vault set with missing args", async () => {
+  it("rejects vault set with no key, a blank key, or an extra argument", async () => {
     setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH } });
-    await expect(runVault(["set", "key"])).rejects.toThrow("Usage: nimbus vault set");
+    for (const args of [["set"], ["set", " "], ["set", "key", "value", "extra"]]) {
+      await expect(runVault(args)).rejects.toThrow("Usage: nimbus vault set <key>");
+    }
   });
 
   it("rejects vault get with missing key", async () => {
@@ -182,6 +193,112 @@ describe("runVault (dispatcher)", () => {
       params: { key: "github.pat", value: "ghp_test" },
     });
     expect(out.stdout).toBe("Stored.\n");
+    // The argv value still works, deprecated: the warning says why, and never quotes the value.
+    expect(out.stderr).toBe(`${VAULT_SET_ARGV_DEPRECATION}\n`);
+    expect(out.stderr).not.toContain("ghp_test");
+  });
+
+  describe("'set' without a value argument", () => {
+    const SECRET = "s3cr3t-value-do-not-leak";
+
+    function io(over: Partial<SecretInputIo> = {}): SecretInputIo {
+      return {
+        stdinIsTty: true,
+        scriptConsentSource: undefined,
+        readHidden: async () => SECRET,
+        readStdin: async () => {
+          throw new Error("stdin must not be read at a terminal");
+        },
+        ...over,
+      };
+    }
+
+    function connectIpc(): ReturnType<typeof createMockIpcClient> {
+      const ipc = createMockIpcClient([null]);
+      setFixture({
+        gatewayState: { socketPath: FAKE_SOCKET_PATH },
+        ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+      });
+      return ipc;
+    }
+
+    it("reads the value from a hidden prompt at a terminal, with no deprecation warning", async () => {
+      const ipc = connectIpc();
+      let asked = "";
+      await runVault(
+        ["set", "github.pat"],
+        io({
+          readHidden: async (message) => {
+            asked = message;
+            return SECRET;
+          },
+        }),
+      );
+      expect(asked).toBe("Value for github.pat (input is hidden)");
+      expect(ipc.calls).toEqual([
+        { method: "vault.set", params: { key: "github.pat", value: SECRET } },
+      ]);
+      expect(out.stdout).toBe("Stored.\n");
+      expect(out.stderr).toBe("");
+    });
+
+    it("reads piped stdin, dropping one trailing newline", async () => {
+      const ipc = connectIpc();
+      await runVault(
+        ["set", "github.pat"],
+        io({
+          stdinIsTty: false,
+          scriptConsentSource: "/tmp/consent.jsonl",
+          readHidden: async () => {
+            throw new Error("no hidden prompt off a terminal");
+          },
+          readStdin: async () => `${SECRET}\r\n`,
+        }),
+      );
+      expect(ipc.calls[0]?.params).toEqual({ key: "github.pat", value: SECRET });
+    });
+
+    it("refuses piped stdin without NIMBUS_SCRIPT_CONSENT_SOURCE before reading or calling", async () => {
+      const ipc = connectIpc();
+      let read = false;
+      await expect(
+        runVault(
+          ["set", "github.pat"],
+          io({
+            stdinIsTty: false,
+            readStdin: async () => {
+              read = true;
+              return SECRET;
+            },
+          }),
+        ),
+      ).rejects.toThrow(/NIMBUS_SCRIPT_CONSENT_SOURCE/);
+      expect(read).toBe(false);
+      expect(ipc.calls).toHaveLength(0);
+    });
+
+    it("reports a stopped gateway before prompting for or reading the secret", async () => {
+      setFixture({});
+      let read = false;
+      const touched = async (): Promise<string> => {
+        read = true;
+        return SECRET;
+      };
+      await expect(
+        runVault(["set", "github.pat"], io({ readHidden: touched, readStdin: touched })),
+      ).rejects.toThrow("Gateway is not running");
+      expect(read).toBe(false);
+    });
+
+    it("stores nothing for a blank value or a cancelled prompt", async () => {
+      for (const readHidden of [async () => "  ", async () => undefined]) {
+        const ipc = connectIpc();
+        await expect(runVault(["set", "github.pat"], io({ readHidden }))).rejects.toThrow(
+          /nothing was stored/,
+        );
+        expect(ipc.calls).toHaveLength(0);
+      }
+    });
   });
 
   it("routes 'get' through withIpc", async () => {

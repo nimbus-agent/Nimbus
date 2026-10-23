@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import os from "node:os";
 import pino from "pino";
 import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
 import { createMemoryIndexDb } from "../connectors/connector-sync-test-helpers.ts";
@@ -10,7 +11,12 @@ import { TICKET_META_VERSION } from "../connectors/ticket-depth.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
+import { SyncScheduler } from "../sync/scheduler.ts";
 import { loadSchedulerState, upsertSchedulerRegistration } from "../sync/scheduler-store.ts";
+import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
+import type { Syncable, SyncResult } from "../sync/types.ts";
+import { createMemoryVault } from "../testing/bun-test-support.ts";
 import {
   buildTargetServicesSql,
   cannotImproveAmong,
@@ -24,6 +30,7 @@ import {
   REBODY_IMPROVABLE_SERVICES,
   REBODY_META_TARGETS,
   resolveTargetServices,
+  unregisteredServiceWarning,
 } from "./index-rebody-rpc.ts";
 
 function freshCtx(overrides: Partial<IndexRebodyRpcContext> = {}) {
@@ -48,15 +55,26 @@ function freshCtx(overrides: Partial<IndexRebodyRpcContext> = {}) {
  * omit `setHistoryFloor` and stop covering the `--since` wiring.
  */
 function schedulerStub(
-  forceSync: (serviceId: string) => Promise<void>,
+  forceSync: (serviceId: string, opts?: { full?: boolean }) => Promise<void>,
   onFloor?: (serviceId: string, floorMs: number) => void,
+  registered: (serviceId: string) => boolean = () => true,
 ): NonNullable<IndexRebodyRpcContext["syncScheduler"]> {
   return {
     forceSync,
     setHistoryFloor: (serviceId: string, floorMs: number) => {
       onFloor?.(serviceId, floorMs);
     },
+    syncableFor: (serviceId: string) =>
+      registered(serviceId) ? ({ serviceId } as unknown as Syncable) : undefined,
   };
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
 }
 
 function seedIncomplete(db: Database, service: string, externalId: string, type = "message") {
@@ -301,8 +319,8 @@ describe("dispatchIndexRebodyRpc", () => {
     let floorArgs: { serviceId: string; floorMs: number } | undefined;
     const { ctx, db } = freshCtx({
       syncScheduler: schedulerStub(
-        async (serviceId: string) => {
-          order.push(`forceSync:${serviceId}`);
+        async (serviceId: string, opts?: { full?: boolean }) => {
+          order.push(`forceSync:${serviceId}${opts?.full === true ? ":full" : ""}`);
         },
         (serviceId, floorMs) => {
           order.push(`setHistoryFloor:${serviceId}`);
@@ -316,7 +334,7 @@ describe("dispatchIndexRebodyRpc", () => {
     await dispatchIndexRebodyRpc("index.rebody", { service: "jira", sinceDays: 365 }, ctx);
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(order).toEqual(["setHistoryFloor:jira", "forceSync:jira"]);
+    expect(order).toEqual(["setHistoryFloor:jira", "forceSync:jira:full"]);
     expect(floorArgs?.serviceId).toBe("jira");
     // 365 days back from "now", allowing for the clock moving during the run.
     const expected = before - 365 * 86_400_000;
@@ -345,6 +363,95 @@ describe("dispatchIndexRebodyRpc", () => {
     expect(floorCalls).toBe(0);
   });
 
+  test("rebody asks the scheduler for a FULL forced run", async () => {
+    // Without `full`, a run already in flight when rebody clears the cursor writes its own cursor
+    // back after the clear, and the "re-walk" silently resumes from it.
+    const calls: Array<{ serviceId: string; opts: { full?: boolean } | undefined }> = [];
+    const { ctx, db } = freshCtx({
+      syncScheduler: schedulerStub(async (serviceId, opts) => {
+        calls.push({ serviceId, opts });
+      }),
+    });
+    seedIncomplete(db, "slack", "1");
+
+    await dispatchIndexRebodyRpc("index.rebody", { service: "slack" }, ctx);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(calls).toEqual([{ serviceId: "slack", opts: { full: true } }]);
+  });
+
+  test("a run in flight when rebody starts cannot make the re-walk incremental or eat --since", async () => {
+    // A REAL scheduler: the two races live in it. `user_mcp_local` is not a manifest connector, so
+    // its `sync()` runs with an empty Vault.
+    const { ctx, db, events } = freshCtx();
+    const gate = deferred();
+    const entered = deferred();
+    const seen: Array<{ cursor: string | null; historyFloorMs: number | undefined }> = [];
+    const svc: Syncable = {
+      serviceId: "user_mcp_local",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(syncCtx, cursor): Promise<SyncResult> {
+        seen.push({ cursor, historyFloorMs: syncCtx.historyFloorMs });
+        if (seen.length === 1) {
+          entered.resolve();
+          await gate.promise;
+        }
+        // The in-flight run writes cursor X back AFTER rebody cleared it.
+        return { cursor: "X", itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
+      },
+    };
+    const sched = new SyncScheduler(
+      {
+        ...unboundSyncCapabilities(),
+        db,
+        vault: createMemoryVault(),
+        logger: pino({ level: "silent" }),
+        rateLimiter: new ProviderRateLimiter(),
+        sandboxCwd: os.tmpdir(),
+        credentialFor: () => ({ credential: "personal" }),
+        runTeamList: async () => [],
+        depth: "full",
+      },
+      { catchUpOnRestart: true },
+      { isOnline: async () => true },
+    );
+    sched.register(svc);
+    sched.start();
+    try {
+      await entered.promise;
+      seedIncomplete(db, "user_mcp_local", "1");
+
+      const before = Date.now();
+      const out = await dispatchIndexRebodyRpc(
+        "index.rebody",
+        { service: "user_mcp_local", sinceDays: 400 },
+        { ...ctx, syncScheduler: sched },
+      );
+      expect(out.kind).toBe("hit");
+      gate.resolve();
+      const deadline = Date.now() + 2_000;
+      while (
+        events.find((e) => e.method === "index.rebodyDone") === undefined &&
+        Date.now() < deadline
+      ) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      expect(seen.map((s) => s.cursor)).toEqual([null, null]);
+      expect(seen[0]?.historyFloorMs).toBeUndefined();
+      const expectedFloor = before - 400 * 86_400_000;
+      expect(seen[1]?.historyFloorMs).toBeGreaterThanOrEqual(expectedFloor);
+      expect(seen[1]?.historyFloorMs).toBeLessThanOrEqual(expectedFloor + 60_000);
+      const done = events.find((e) => e.method === "index.rebodyDone");
+      const payload = done?.params as Record<string, unknown> | undefined;
+      expect(payload?.["succeeded"]).toBe(1);
+    } finally {
+      gate.resolve();
+      await sched.stop();
+    }
+  });
+
   test("real run with a live syncScheduler that throws counts it as failed, not fatal", async () => {
     const { ctx, db, events } = freshCtx({
       syncScheduler: schedulerStub(async () => {
@@ -369,6 +476,34 @@ describe("dispatchIndexRebodyRpc", () => {
     expect(warnings?.[0]).toMatch(/watermark was already cleared/);
     expect(warnings?.[0]).toMatch(/next scheduled sync/);
     expect(events.find((e) => e.method === "index.rebodyError")).toBeUndefined();
+  });
+
+  test("a service no connector is registered for fails without a forced run, instead of waiting forever", async () => {
+    // `forceSync` deliberately waits for a service with no scheduler state to register. Rebody's
+    // targets come from item rows, which can outlive any registration, so it must not ask.
+    const calls: string[] = [];
+    const { ctx, db, events } = freshCtx({
+      syncScheduler: schedulerStub(
+        (serviceId: string) => {
+          calls.push(serviceId);
+          return new Promise<void>(() => undefined);
+        },
+        undefined,
+        (serviceId) => serviceId !== "orphan",
+      ),
+    });
+    seedIncomplete(db, "orphan", "1");
+
+    const out = await dispatchIndexRebodyRpc("index.rebody", { service: "orphan" }, ctx);
+    expect(out.kind).toBe("hit");
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(calls).toEqual([]);
+    const done = events.find((e) => e.method === "index.rebodyDone");
+    const payload = done?.params as Record<string, unknown> | undefined;
+    expect(payload?.["failed"]).toBe(1);
+    expect(payload?.["failedServices"]).toEqual(["orphan"]);
+    expect(payload?.["warnings"]).toEqual([unregisteredServiceWarning("orphan")]);
   });
 
   test("cancel aborts a real run before it processes further targets — observably fewer than all 3 targets get forceSync'd", async () => {

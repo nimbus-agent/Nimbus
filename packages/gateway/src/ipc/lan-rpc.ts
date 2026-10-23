@@ -20,6 +20,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // All three are local/CLI-only (full-method forbid) — admitting approvalRespond over the wire
   // would let a remote peer approve an outbound publish, defeating the LOCAL-owner gate (I27).
   // The reads (share.verify/list/get/pubkey) stay admitted by default-allow.
+  // Layered-config provenance: reveals which layer set which key (file paths, pack ids). Local-only.
+  // `config.validate` stays LAN-callable, unchanged.
+  "config.explain",
   "share.create",
   "share.prune",
   "share.approvalRespond",
@@ -94,7 +97,19 @@ const FORBIDDEN_OVER_LAN = new Set([
   "extension.remove",
   "extension.approveRun", // approves running third-party code unattended — CLI-only, like install
   "extension.revokeRun", // CLI-only alongside approveRun
+  "extension.credentialSet", // writes an extension's credential into the owner's Vault — CLI-only
+  "extension.credentialStatus", // which of an extension's credentials are set — CLI-only, like set
   "extension.rehash", // adopts on-disk bytes as trusted — gated like an install, CLI-only
+  // Connector migration (connector-unbundling spec § 7.2): `accept` installs signed code, grants it a
+  // run and points it at the owner's existing Vault credential in ONE `extension.migrate` approval;
+  // `decline`/`retry` change whether that happens and `list` names which connectors the owner
+  // configured. Each method is named explicitly — this set is a DENYLIST, so an unnamed method
+  // would be callable — and all four stay off the LAN. Locally, `list` and `accept` are also the
+  // desktop's (I46: accept by id alone, under the baked whitelist); `decline`/`retry` are CLI-only.
+  "migration.list",
+  "migration.accept",
+  "migration.decline",
+  "migration.retry",
   "index.reembed", // T6 PR 3 — write-class index method (writes embedding_chunk + vec_items_*)
   "index.reembedCancel", // T6 PR 3 — paired cancel for the long-running reembed job
   // index.rebody is a STRONGER case than reembed: reembed only recomputes local embeddings

@@ -182,7 +182,7 @@ bun run audit:dead-code                 # knip unused exports / orphan files (D7
 bun run audit:duplication               # jscpd token duplication (D6)
 bun run audit:exclusion-parity               # sonar.coverage.exclusions <-> local registry drift check
 bun run audit:any                       # D8 any-count print
-bun run audit:invariants                # static invariant complement D10–D33 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table, fleet and push ClientKinds, extension self-role sentinel + run-grant table + grant writers (D33(a)–(c)), toolgen brokered-fetch literal/generated-manifest/vault-key-prefix confinement, full-SQLite init before any bun:sqlite Database construction, listener-registry registration, and D25's hidden connector spawns) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
+bun run audit:invariants                # static invariant complement D10–D35 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table, fleet and push ClientKinds, extension self-role sentinel + run-grant table + grant writers (D33(a)–(c)), toolgen brokered-fetch literal/generated-manifest/vault-key-prefix confinement, full-SQLite init before any bun:sqlite Database construction, listener-registry registration, and D25's hidden connector spawns) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
 bun run audit:openapi-drift             # OpenAPI ↔ HTTP_ROUTES drift (Phase 5 T4 PR 1)
 
 bun scripts/structure-audit/count-any-usage.ts --check     # D8 CI gate (fails on regression OR reduction without --update)
@@ -403,7 +403,7 @@ nimbus deploy annotate --service <id> --sha <sha> --target-ref <ref> --env <env>
 **Vault keys for the HTTP write surface:**
 
 ```
-http_api.deployment_token   # Bearer token required for POST /v1/deployments; set via `nimbus vault set http_api.deployment_token <token>` (CLI-only). Without it, the HTTP write surface refuses all POSTs with 503 (write_surface_disabled).
+http_api.deployment_token   # Bearer token required for POST /v1/deployments; set via `nimbus vault set http_api.deployment_token`, which prompts for the value (CLI-only). Without it, the HTTP write surface refuses all POSTs with 503 (write_surface_disabled).
 ```
 
 ### Phase 5 — security audit follow-ups

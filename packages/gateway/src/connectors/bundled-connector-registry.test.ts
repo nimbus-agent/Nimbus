@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createRequire } from "node:module";
 
 import { BUNDLED_CONNECTORS } from "./bundled-connector-registry.ts";
+import { UNBUNDLED_CONNECTOR_IDS } from "./connector-catalog.ts";
 
 const CONNECTOR_PACKAGE = "@nimbus-dev/connectors";
 
@@ -29,6 +30,8 @@ function exportedIds(): string[] {
       // Lowercase letters, digits and hyphens — the shape the launcher validates. `./package.json`
       // and `./shared/connector-mode.ts` are exports, not connectors.
       .filter((id) => /^[a-z0-9-]+$/.test(id))
+      // Ids that ship as signed extensions are exported by the package but not bundled.
+      .filter((id) => !(UNBUNDLED_CONNECTOR_IDS as readonly string[]).includes(id))
       .sort((a, b) => a.localeCompare(b))
   );
 }
@@ -48,7 +51,11 @@ describe("BUNDLED_CONNECTORS", () => {
   });
 
   test("covers every connector — a shrinking registry is the drift this guards", () => {
-    expect(Object.keys(BUNDLED_CONNECTORS).length).toBeGreaterThanOrEqual(94);
+    expect(Object.keys(BUNDLED_CONNECTORS).length).toBeGreaterThanOrEqual(93);
+  });
+
+  test("readwise is not bundled: it ships as a signed extension", () => {
+    expect(Object.keys(BUNDLED_CONNECTORS)).not.toContain("readwise");
   });
 
   test("every entry is a lazy loader, not an eagerly evaluated module", () => {

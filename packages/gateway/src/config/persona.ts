@@ -3,9 +3,10 @@
  *
  * TWO properties this module exists to guarantee, both load-bearing:
  *
- * 1. It reads the PROFILE-RESOLVED toml, never `nimbus.toml` directly. Almost every other
- *    `loadNimbus*FromConfigDir` in the tree hardcodes `nimbus.toml` and is therefore blind to
- *    the active profile — which for a per-profile persona would defeat the entire feature.
+ * 1. It reads through the LAYERED reader (`loadNimbusPersonaFromConfigDir`: packs, base
+ *    `nimbus.toml`, then the active profile file, merged key by key), never `nimbus.toml`
+ *    directly — a direct read would be blind to the active profile, which for a per-profile
+ *    persona would defeat the entire feature.
  * 2. It resolves PER INVOCATION and caches nothing, mirroring `synthesis-llm.ts`'s per-call
  *    provider resolution. The file can change under a long-lived Gateway, and a cached read
  *    would make an edit require a restart.
@@ -15,10 +16,9 @@
  */
 import {
   DEFAULT_NIMBUS_PERSONA_TOML,
-  loadNimbusPersonaFromPath,
+  loadNimbusPersonaFromConfigDir,
   type NimbusPersonaToml,
   type PersonaIssue,
-  resolveNimbusTomlForProfile,
 } from "./nimbus-toml.ts";
 
 export type { NimbusPersonaToml, PersonaTone, PersonaVoice } from "./nimbus-toml.ts";
@@ -35,7 +35,7 @@ export function resetPersonaWarningsForTest(): void {
 
 export function resolvePersona(configDir: string, logger?: PersonaWarnLogger): NimbusPersonaToml {
   const issues: PersonaIssue[] = [];
-  const persona = loadNimbusPersonaFromPath(resolveNimbusTomlForProfile(configDir), issues);
+  const persona = loadNimbusPersonaFromConfigDir(configDir, issues);
   if (logger !== undefined) {
     for (const issue of issues) {
       const memo = `${issue.key}=${issue.value}`;

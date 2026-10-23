@@ -11,9 +11,8 @@ import type { SynthesisRouter } from "./synthesis-llm.ts";
  * A REAL `nimbus.toml`, written to a fresh temp directory, pinning `[agents] synthesis` to `mode`
  * — not `parseNimbusAgentsToml` called directly on an in-memory string. The whole point of this
  * file is to exercise the profile-resolved load path `buildAgentSynthesisRunner` actually calls
- * in production (`resolveNimbusTomlForProfile` + `loadNimbusAgentsFromPath`,
- * `config/nimbus-toml.ts`) — the `existsSync` + `readFileSync` + section-parse path over a real
- * file on disk — which no other test in the tree does: `nimbus-toml-agents.test.ts` covers only
+ * in production (`loadNimbusAgentsFromConfigDir`, `config/nimbus-toml.ts`) — the layered
+ * read + section-parse path over a real file on disk — which no other test in the tree does: `nimbus-toml-agents.test.ts` covers only
  * the string-parse layer, and `dispatchers.test.ts:344`'s only `[agents]`-relevant case passes no
  * `configDir` at all, so it exercises `DEFAULT_NIMBUS_AGENTS_TOML`, never a file on disk.
  */
@@ -33,7 +32,7 @@ const fakeRouter: SynthesisRouter = {
   generateMarkdown: async () => "",
 };
 
-describe("buildAgentSynthesisRunner over a REAL nimbus.toml (resolveNimbusTomlForProfile + loadNimbusAgentsFromPath)", () => {
+describe("buildAgentSynthesisRunner over a REAL nimbus.toml (loadNimbusAgentsFromConfigDir)", () => {
   test('synthesis = "off" yields no runner — the only user-facing opt-out from a now-default-on behaviour', () => {
     const configDir = writeAgentsConfigDir("off");
     const db = new Database(":memory:");

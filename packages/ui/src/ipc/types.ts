@@ -85,6 +85,8 @@ export interface HitlRequest {
   requestId: string;
   prompt: string;
   details?: Record<string, unknown>;
+  /** The gateway HITL action type (data.delete, extension.migrate, ...). Absent from an older gateway. */
+  actionType?: string;
   receivedAtMs: number;
 }
 

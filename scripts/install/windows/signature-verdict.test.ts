@@ -1,9 +1,14 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const pwsh = Bun.which("pwsh");
 const skip = !pwsh;
+
+// Every case starts a fresh pwsh, and a cold pwsh start on the Linux CI runner alone takes most
+// of bun's 5 s default (4.9 s on a passing run, then two timeouts on the next): too tight to mean
+// anything. The budget bounds a hang, not a performance claim.
+setDefaultTimeout(30_000);
 
 const INSTALL_PS1 = join(import.meta.dir, "install.ps1");
 

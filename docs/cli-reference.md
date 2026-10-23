@@ -546,7 +546,7 @@ Built-in agents that answer team-level questions from the local relationship gra
 
 **Configuration — `[agents]`, read from the profile-resolved TOML:**
 
-`[agents]` follows the same **whole-file** profile semantics as `[llm]` and `[session]`: when a profile is active and its `nimbus.<profile>.toml` exists, that file is the ONLY one read, and the base `nimbus.toml` is not consulted for these keys. This cuts **both ways**, and both directions are real behaviour changes as of 2026-08-18. A key set in a profile TOML is now honoured, where it used to be silently ignored; and a key set ONLY in the base `nimbus.toml` no longer applies while a profile whose file lacks an `[agents]` section is active — so a user with `synthesis = "off"` in `nimbus.toml` and an `[agents]`-less `nimbus.work.toml` gets the `"local"` default under the `work` profile until they repeat the key there.
+`[agents]` follows the same profile layering as every other section: `nimbus.<profile>.toml` overrides only the keys it sets, and everything else comes from `nimbus.toml`. A user with `synthesis = "off"` in `nimbus.toml` keeps it under a profile whose file has no `[agents]` section. Switching *which* profile is active still requires a Gateway restart.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -560,7 +560,7 @@ Built-in agents that answer team-level questions from the local relationship gra
 | `tone` | `"neutral"` | `"neutral"` — a strict no-op, contributes nothing to the prompt. `"terse"` — short sentences, no preamble; says everything it would otherwise say, in fewer words. `"formal"` — complete sentences, precise wording, no contractions. `"casual"` — contractions fine, plain words over jargon. `"verbose"` — spells out reasoning and the connections between findings. An unrecognised value keeps `"neutral"` and logs a one-time warning naming the key, the rejected value, and the fallback. |
 | `voice` | `"neutral"` | `"neutral"` — a strict no-op. `"opinionated"` — states a recommendation where the evidence supports one, rather than laying out options neutrally. `"collective"` — first-person plural ("we should…") rather than an outside observer's voice. Same unrecognised-value fallback as `tone`. |
 
-`[persona]` is read from the **profile-resolved** TOML and resolved fresh on every query — editing it changes the very next response, no restart required. Profile resolution means: the active profile's `nimbus.<profile>.toml` when a profile is active **and that file exists**, otherwise the base `nimbus.toml`. Switching *which* profile is active (`nimbus profile switch`) still requires a Gateway restart, same as every other profile-scoped setting, because the active profile is fixed for the life of the Gateway process.
+`[persona]` is read from the **profile-resolved** TOML and resolved fresh on every query — editing it changes the very next response, no restart required. Profile resolution means: the active profile's `nimbus.<profile>.toml` overrides only the keys it sets, and every other key comes from `nimbus.toml`. Switching *which* profile is active (`nimbus profile switch`) still requires a Gateway restart, same as every other profile-scoped setting, because the active profile is fixed for the life of the Gateway process.
 
 Applies to **three** surfaces: `nimbus ask`, every built-in agent brief, and — because a `@nimbus <question>` mention runs through the same `runAsk` pipeline — **ChatOps replies in Slack/Teams**. That third one is worth stating plainly: an `opinionated` or `collective` voice configured for your own machine will be visible to everyone in the channel the bot answers in. It carries no new content and no new egress — only tone — and it is the owner's own configured voice on the owner's own ChatOps integration, which is why it is not scoped out: doing so would make ChatOps replies the one surface that ignores your persona. It composes with `--devil` (persona directive outermost, `--devil`'s directive innermost, closest to the question). Every `tone` and `voice` value governs register and stance, never what gets said — no persona directive may tell the model to omit content. A `terse` persona can still raise the rate at which a brief falls back to its deterministic rendering, because the honesty contract that protects every brief discards a rewrite that drops a required disclosure rather than risk losing it — that is the contract working, not a bug, and the resolved persona rides the `briefReady` notification's `synthesis` field alongside the discard reason, so a `contract_violation` under `tone = "terse"` is self-explanatory.
 
@@ -1472,7 +1472,7 @@ nimbus deploy annotate \
 
 | Key | Purpose |
 |---|---|
-| `http_api.deployment_token` | Bearer token sent with every `POST /v1/deployments`. Set with `nimbus vault set http_api.deployment_token <token>`. Without it the HTTP write surface returns 503 (`write_surface_disabled`). |
+| `http_api.deployment_token` | Bearer token sent with every `POST /v1/deployments`. Set with `nimbus vault set http_api.deployment_token`, which prompts for the value. Without it the HTTP write surface returns 503 (`write_surface_disabled`). |
 
 A first-party GitHub Action wraps the endpoint for use directly in workflows — see [`packages/github-actions/annotate-action/`](../packages/github-actions/annotate-action/).
 
@@ -2084,6 +2084,10 @@ Standing, owner-configured agent jobs that run on idle local hardware and leave 
 **Shipped as PR 1 of 2 (2026-09-07); off by default.** Enable with `[fleet] enabled = true` plus at
 least one `[[fleet.job]]` block — both are required, and a config with `enabled = true` and no jobs
 is *enabled and not running*, which `nimbus fleet status` reports as two separate fields.
+
+Fleet config changes, from your own `nimbus.toml` (or profile file) or a pack layer, apply to a
+running gateway within about 5 seconds, with no restart; this includes owner-only keys such as
+`allow_remote`. A run in progress finishes first.
 
 Everything here is local: a fleet brief is written to SQLite and read back by you. Invariant
 **I38** pins an unattended run's synthesis to a LOCAL model unless `[fleet] allow_remote = true`
@@ -2764,7 +2768,7 @@ nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 
 **Credential reuse — no separate `connector auth` needed.** `github_actions` reuses the `github` credential (there is no `gitlab_ci` service — GitLab CI data comes from the `gitlab` connector, which you authenticate directly); `google_meet` rides the `google` OAuth; and the metadata-only **BigQuery / Athena / CloudWatch / SageMaker / Cloud Logging / Vertex AI** connectors reuse your `aws` / `gcp` credentials. Authenticate the underlying provider and these light up automatically.
 
-**Connectors set up with `nimbus vault set`, not `connector auth`.** The services below have no `connector auth` flow. Running `nimbus connector auth <service>` for one of them refuses and prints the exact `nimbus vault set` commands for that service. Store each setting with `nimbus vault set <key> <value>`; every write asks for your approval. Set the keys your setup uses: optional ones, such as a self-hosted base URL or a team id, can be left out. The table comes from `CONNECTOR_VAULT_SECRET_KEYS`; if it ever disagrees with what the refusal prints, the refusal is current.
+**Connectors set up with `nimbus vault set`, not `connector auth`.** The services below have no `connector auth` flow. Running `nimbus connector auth <service>` for one of them refuses and prints the exact `nimbus vault set` commands for that service. Store each setting with `nimbus vault set <key>`, which prompts for the value; every write asks for your approval. Set the keys your setup uses: optional ones, such as a self-hosted base URL or a team id, can be left out. The table comes from `CONNECTOR_VAULT_SECRET_KEYS`; if it ever disagrees with what the refusal prints, the refusal is current.
 
 | Service | Vault keys |
 | --- | --- |
@@ -2915,7 +2919,7 @@ nimbus connector status github
 nimbus connector status github --stats   # Attach the 15 most recent sync-telemetry rows
 ```
 
-Output is always JSON; `--stats` is the only flag read.
+Output is always JSON; `--stats` is the only flag read. Each telemetry row carries `startedAt`, `durationMs`, `itemsUpserted`, `itemsDeleted`, `bytesTransferred`, `hadMore`, `errorMsg` and `itemsDropped` — items an extension's sync returned but the gateway refused to write (an undeclared type, a malformed or an oversized item), which is 0 for every built-in connector.
 
 ---
 
@@ -3027,6 +3031,8 @@ The CLI asks for confirmation before it sends `connector.remove`. Declining the 
 
 `connector.remove` is also a HITL action on the Gateway side, but you are only asked once: the CLI confirmation *is* the consent decision, and the CLI answers the Gateway's consent request with it. A declined prompt never reaches the Gateway at all, and `--yes` covers both — the auto-approval is still noted on stderr (`[--yes] auto-approving HITL request: …`) so it shows up in a script's log. If the Gateway rejects the removal anyway (for example an org policy that forbids it), the command exits non-zero with the rejection reason and removes nothing.
 
+**An extension-backed id is refused.** When the id is one an approved extension syncs under — its `ext_` id, or the legacy connector id it is bound to (for example `readwise` once a Readwise extension is bound to it) — the Gateway refuses with `ERR_CONNECTOR_IS_EXTENSION` (JSON-RPC `-32602`), naming `nimbus extension remove <extension-id>`, and removes nothing. That command is the one removal path for such a connector: it also stops the extension and withdraws its approval, which `connector remove` would leave running. `nimbus connector pause`, `resume` and `sync` still work for the id.
+
 ---
 
 ### `nimbus connector reindex <name>`
@@ -3056,6 +3062,105 @@ Output reports the resolved mode and the number of items affected. The depth is 
 
 ---
 
+### `nimbus connector migrate list | accept <id> | decline <id> | retry`
+
+When a release moves a built-in connector out of the bundled set and into a signed extension from the
+official Nimbus registry, an existing user of that connector is asked once whether to keep it
+(Readwise is the first, and it is live: Readwise is no longer bundled in the gateway and ships as the
+signed extension `com.nimbus.readwise`). The gateway checks at every start: if you had the connector
+configured (its credential is set in the Vault), it fetches and fully verifies the extension from the
+built-in official registry, stages it WITHOUT installing it, and pauses the connector's sync with a
+reason `nimbus doctor` names. If you never configured it, nothing happens: no download, no prompt.
+A token set later, for example from the desktop connector catalog, with no extension installed is
+picked up only at the next gateway start or `migrate retry`, which is when the migration is prepared.
+
+```bash
+nimbus connector migrate list                 # every migration, its state and the next step
+nimbus connector migrate list --json
+nimbus connector migrate accept <id>          # keep it: one approval, at a terminal
+nimbus connector migrate decline <id>         # keep it off; your items stay in the index
+nimbus connector migrate retry                # prepare failed and declined migrations again
+```
+
+**`accept <id>`** asks ONE question, under the `extension.migrate` action type: the publisher, the
+version, the key fingerprint, and the same access as before — on Windows the network line says
+"network access (Windows cannot limit this to …)", since the sandbox there cannot restrict hosts.
+That one approval installs the extension, approves it to run, and points it at your EXISTING
+credential (no re-entry). The extension then writes into the connector's existing namespace, so the
+items you already have are updated in place, never duplicated, and the connector's sync position
+carries over. Like `nimbus extension approve`, it requires a terminal on both stdin and stdout and has
+no `--yes`; `NIMBUS_SCRIPT_CONSENT_SOURCE` never answers it. The extension's live read tools are not
+offered to the model unless you later run `nimbus extension approve <extension-id> --model`. If the
+sandbox cannot confine the extension on this machine, the prompt says so: you can still accept, and
+sync stays paused with the reason and the fix until the sandbox works.
+
+**Answering no** leaves the migration `awaiting_approval` and changes nothing; the command says so and
+names `decline`. Declining is its own verb: **`decline <id>`** deletes the staged package, keeps your
+existing items, and keeps the connector off; the next start does not ask again.
+
+**`retry`** prepares again every migration that failed (offline, a registry error, a package that no
+longer matches what the release expects) AND every one you declined — it is how you change your
+mind about a decline. An approved migration is never touched.
+
+**Already installed.** If the extension is already installed (you ran `nimbus extension install`
+yourself, or an earlier attempt got that far), the gateway checks it before fetching anything and
+before any prompt. What happens depends on what it finds:
+
+- **Official copy, approved to run with your existing credential** (the approval matches the installed
+  version and files): the migration finishes as approved and the connector's sync resumes, with no
+  question asked.
+- **Official copy, approval missing or out of date** (given before this release, or before an update):
+  the migration fails, and the row and `nimbus doctor` show only the one step,
+  ``run `nimbus extension approve <extension-id>` to resume sync``. Re-approving points the extension
+  at your existing credential and resumes the sync itself; `migrate retry` is not needed. The failed
+  row stays in `migrate list` until the next start or `retry` re-evaluates it. Add `--model` to that
+  approval if you want the model to see the extension's tools: every approval states the whole grant.
+- **Official copy, but disabled:** the migration finishes as approved and the connector stays paused
+  with ``run `nimbus extension enable <extension-id>` to resume sync``; enabling it resumes the sync.
+- **Not the official copy** (another registry, another publisher, or a copy that no longer verifies, so
+  it is not bound to the connector): the migration fails, saying it is not the official one, and
+  nothing is changed. Inspect it with `nimbus extension list`; do not remove it on the migration's
+  account.
+
+In none of these cases is anything removed. Do not run `nimbus extension remove` to "fix" a migration
+for a bound extension: it deletes every item the connector indexed and its credential.
+
+**A pause of your own can be undone.** If you ran `nimbus connector pause readwise` while a migration
+row was still failed or awaiting, a later start or `migrate retry` that finds the extension installed,
+bound and approved resumes the sync, as it does for any other settled migration. Pause it again
+afterwards if you want it off. A migration that is already approved or declined is never touched.
+
+**After an extension update, approve again.** Once migrated, Readwise updates through the official
+registry like any extension, and an applied update changes the extension's files, so the run approval
+no longer matches. Sync pauses with ``updated to <version> — run `nimbus extension approve
+com.nimbus.readwise` to resume sync`` (`nimbus doctor` names it) until you approve again; the
+extension does not run before then. This is by design: an approval covers exact bytes.
+
+**Runtime off.** With `[extensions] runtime = false` nothing is fetched and no migration is recorded;
+the connector is paused with the reason "`<Name>` moved to an extension, and the extension runtime is
+off (`[extensions] runtime = false`) — turn it on, then run `nimbus connector migrate retry`", and
+`accept` is refused with `ERR_EXTENSION_MIGRATION_RUNTIME_DISABLED`. The runtime switch is read when
+the gateway starts, so turn it on, restart, then run `retry`. `accept` also refuses, before the
+prompt, when the Vault has learned a different key for the extension's publisher since the package was
+staged (`the Vault already holds a different key for publisher "…"; refusing to replace it`).
+
+**Known loss.** A few items the built-in connector indexed may not carry over: items dated before
+1970, and items whose metadata is larger than 64 KiB, are dropped by the extension sync path. The
+prompt says this too.
+
+**Read tools.** After the move, Readwise's live read tools are the extension's: calling one with
+`nimbus connector call ext_com_nimbus_readwise ...` asks for your approval each time, and they are not
+offered to the model unless you approve with `--model`. Questions are still answered from the index.
+`nimbus connector remove readwise` is refused for the bound extension (`ERR_CONNECTOR_IS_EXTENSION`);
+`nimbus extension remove com.nimbus.readwise` is the removal path.
+
+All four `migration.*` methods are refused over the LAN channel. The desktop app can list pending
+migrations and accept one by its id (`migration.list` and `migration.accept`, security invariant I46);
+`decline` and `retry` are CLI-only. `accept`, `decline` and `retry` are refused on a demo gateway
+(`--demo`), which never prepares a migration.
+
+---
+
 ## Configuration
 
 ### `nimbus config get <key>`
@@ -3065,7 +3170,12 @@ Read a single configuration value.
 ```bash
 nimbus config get telemetry.enabled
 nimbus config get llm.local_model
+nimbus config get --effective llm.local_model   # value after all layers (needs a running gateway)
 ```
+
+`get`, `set`, `list` and `edit` target the **active profile's** file (`nimbus.<profile>.toml`, or `nimbus.toml` on the default profile). `set` creates the profile file if it is missing. A profile file inherits from `nimbus.toml` and overrides only the keys it sets; `--effective` shows the merged value.
+
+Switching profile takes effect on the next gateway restart: the gateway pins its profile at boot, and `nimbus doctor` and `nimbus config explain` say when the marker and the running profile differ.
 
 There is no TOML key for sync cadence — per-connector intervals are set with `nimbus connector set-interval <service> <duration>`, which writes to the index, not to `nimbus.toml`.
 
@@ -3087,7 +3197,7 @@ Cloud vendors are **not** configured this way — they need a whole `[llm.remote
 
 ### `nimbus config list`
 
-Print the config file path, then a per-key line for whichever of the three env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`) currently has a value, followed by the raw `nimbus.toml` body. A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in `nimbus.toml` — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
+Print the config file path, then a per-key line for whichever of the three env-overridable keys (`telemetry.enabled`, `telemetry.endpoint`, `telemetry.flush_interval_seconds`) currently has a value, followed by the raw body of the active profile's file (`nimbus.<profile>.toml`, or `nimbus.toml` on the default profile). A key is listed as `env` when its environment variable is set to a non-empty value, otherwise as `file` when it is present in that file — and is **omitted entirely** when it is neither. There is no `default` source and no line for an unset key. Every other key appears only in the raw dump; there is no per-key documentation column.
 
 ```bash
 nimbus config list
@@ -3099,18 +3209,36 @@ nimbus config list --json | jq -r '.keys[] | select(.source == "env") | .envVar'
 
 | Key | Type | Notes |
 |---|---|---|
-| `path` | string | Resolved `nimbus.toml` path |
+| `path` | string | Resolved path of the active profile's file (`nimbus.toml` on the default profile) |
 | `exists` | boolean | Whether that file is present |
 | `keys` | array | `{ key, value, source: "file" \| "env", envVar: string \| null }` — `envVar` is the overriding variable, `null` for file-sourced keys |
-| `raw` | string \| null | The file body verbatim; `null` when the file is missing |
+| `raw` | string \| null | That file's body verbatim (not the merged config — use `--effective`); `null` when the file is missing |
 
 The prose "other `NIMBUS_*` overrides" legend the human view prints is static documentation, not data, and has no JSON counterpart.
 
 ---
 
+`nimbus config list --effective [--json]` prints the merged configuration across every layer instead of the raw file (needs a running gateway).
+
+---
+
+### `nimbus config explain <path> [--json]`
+
+Show which layer supplied a config value (`code default`, `nimbus.toml`, `nimbus.<profile>.toml`, or an env override) and the value each layer held. Needs a running gateway (`config.explain`, CLI-only).
+
+```bash
+nimbus config explain llm.local_model
+```
+
+The notes list `pack "<id>" skipped: <reason>` for each pack layer the gateway skipped, and `packs for profile "<p>" not applied: <reason>` when the profile's pack list could not be read. Reasons never contain an absolute path. No command writes a pack layer yet, so on a current install these notes do not appear.
+
+`nimbus doctor` reports the same state from `diag.snapshot`: `[warn] pack "<id>" skipped: <reason>` per skipped pack and `[warn] packs not applied: <reason>` for an unreadable pack list (each exits `1`), and `[info] packs active: <ids>` when any pack layer is applied (exit `0`). An older gateway that does not send these fields prints nothing extra.
+
+---
+
 ### `nimbus config validate`
 
-Validate the current `nimbus.toml` configuration file against the schema. Exits `0` on success, `1` on error.
+Validate each existing user layer (`nimbus.toml` and the active profile's file) against the schema. Exits `0` on success, `1` on error.
 
 ```bash
 nimbus config validate
@@ -3120,7 +3248,7 @@ nimbus config validate
 
 ### `nimbus config edit`
 
-Open `nimbus.toml` in `$EDITOR`.
+Open the active profile's config file (`nimbus.toml` on the default profile) in `$EDITOR`.
 
 ```bash
 nimbus config edit
@@ -3238,6 +3366,10 @@ Named configuration profiles let you maintain separate settings (e.g. `work` vs 
 
 ### `nimbus profile create <name>`
 
+Copies `nimbus.toml` to `nimbus.<name>.toml` (or seeds a minimal file when there is no `nimbus.toml`). The name must match `[a-z0-9_-]{1,32}`, case-insensitively (`Work` is valid); any other name is refused, because the gateway would refuse it at boot.
+
+A profile file overrides only the keys it sets and inherits the rest from `nimbus.toml`. A copied profile sets every key it copied, so it pins each of them: later edits to those keys in `nimbus.toml` do not reach it. A profile file containing only the keys you want to change inherits everything else.
+
 ```bash
 nimbus profile create work
 nimbus profile create personal
@@ -3255,7 +3387,7 @@ nimbus profile list
 
 ### `nimbus profile switch <name>`
 
-Switch the active profile. Takes effect on the next Gateway restart.
+Switch the active profile by writing the `.nimbus-profile` marker. Takes effect on the next Gateway restart, unless `NIMBUS_PROFILE` is set, which wins over the marker. The name must match `[a-z0-9_-]{1,32}`, case-insensitively.
 
 ```bash
 nimbus profile switch work
@@ -3981,6 +4113,7 @@ nimbus doctor
 - Notifications: `[ok]` with the backend and `content` mode when OS notifications work; `[info]` when they are off by your choice (`[notifications] enabled = false`, `NIMBUS_NOTIFICATIONS=off`, a demo gateway) or the availability probe has not finished; `[warn]` with the reason when they should work and do not (an invalid `[notifications]` section, an unavailable backend, a platform with none). Silent against a gateway too old to serve `notifications.status`. See [`nimbus notifications`](#nimbus-notifications)
 - Extensions: `[warn]` naming installed extensions that have no run approval or an approval for older code (`nimbus extension approve <id>`); silent when there are none, when the gateway reports the extension runtime off, or on a gateway that predates run approvals. A gateway from before this release does not report whether the runtime is on, so with `[extensions] runtime = false` it can still warn. An extension that had model access is named again with `add --model to keep model access`
 - Extension registries: `[warn]` naming installed extensions whose source registry is no longer configured (they keep running but get no updates; `nimbus registry add` it again, or remove them), and one `[warn]` per registry whose signed index was generated more than 30 days ago (`nimbus registry refresh <name>`; an index never expires, so a registry that stops publishing can hold back updates). Silent when no registry is configured and no installed extension came from one, and on a gateway too old to serve `registry.list`
+- Connector migration: `[warn]` for a built-in connector that moved to an extension and is waiting for your answer (`nimbus connector migrate accept <id>`, or `decline <id>`), and for one whose migration failed, with the reason (`nimbus connector migrate retry`); a quiet `[info]` (no effect on the exit code) for one you declined, naming `nimbus connector migrate retry` as the way to change your mind. Silent with no migrations and on a gateway too old to serve `migration.list`. See [`nimbus connector migrate`](#nimbus-connector-migrate-list--accept-id--decline-id--retry)
 - Per-connector health table
 - Vector search: whether `sqlite-vec` actually loaded on the gateway's connection, and if not, why. On macOS a passing line also names the full SQLite library it loaded through (`using full SQLite at <path>`), since that can be the bundled copy, `NIMBUS_SQLITE_PATH` or a Homebrew install
 
@@ -4106,18 +4239,20 @@ nimbus serve --port 7474        # Default port: 7474
 
 **Endpoints:**
 
+The raw-row reads — `/v1/items`, `/v1/items/:id`, `/v1/people`, `/v1/people/:id` and `/v1/audit` — require a labelled client token with the `data` scope (since 2026-10-19; they were public before). Mint one with `nimbus clip pair --label <name> --scopes data` and confirm the pairing code, or add the scope to an existing token with `nimbus clip scopes <label> --set <scopes>,data`, then send `Authorization: Bearer <token>`. A missing or unknown token gets `401`, a token without `data` gets `403`. Every route also refuses a `Host` header that does not name loopback (invariant `I45`).
+
 | Endpoint | Description |
 |---|---|
-| `GET /v1/audit` | Recent audit log entries |
+| `GET /v1/audit` | Recent audit log entries (`data` scope) |
 | `GET /v1/connectors` | List connectors and health states |
 | `GET /v1/health` | Gateway health summary |
-| `GET /v1/items` | List indexed items (supports `service`, `type`, `since`, `until`, `limit` query params) |
-| `GET /v1/items/:id` | Get a single item by ID |
+| `GET /v1/items` | List indexed items (supports `service`, `type`, `since`, `until`, `limit` query params; `data` scope) |
+| `GET /v1/items/:id` | Get a single item by ID (`data` scope) |
 | `GET /v1/metrics/dora` | DORA metrics for a service (supports `service`, `since` query params) |
 | `GET /v1/metrics/stats` | One DORA-family or related operational metric as a bucketed time series, over the same service config as `/v1/metrics/dora` at a different resolution (`service`, `metric`, `window_ms`, `bucket_ms`; all positive, at most 400 buckets). Its metric set is **wider** than that route's: the same four DORA metrics plus `pr-merges` and `incidents-opened`. Buckets are disjoint, so a line between points is meaningful; an unknown service is **refused** rather than answered softly, because a series has nothing honest to place-hold |
 | `GET /v1/openapi.json` | Machine-readable OpenAPI 3.1 schema for this API |
-| `GET /v1/people` | List people graph entries |
-| `GET /v1/people/:id` | Get a single person record |
+| `GET /v1/people` | List people graph entries (`data` scope) |
+| `GET /v1/people/:id` | Get a single person record (`data` scope) |
 | `GET /v1/preflight/deploy` | Pre-deploy check: active P1 incidents, failing CI, merge conflicts |
 
 **Write endpoints** — the complete `WRITE_ROUTE_ALLOWLIST` (invariant `I13`); every write not on this list is rejected:
@@ -4400,6 +4535,26 @@ nimbus extension install com.example.notion
 nimbus extension install com.example.notion --registry main --channel beta
 ```
 
+**The built-in official registry.** Every release carries one registry, named `nimbus-official`: its
+URL and root key are part of the release (root fingerprint `6fb9beb2cf6bdc748c72c03b30b83a9a`). It is
+not in `nimbus registry list`, and you do not add it. A bare `nimbus extension install <id>` searches
+your registries plus this one, so `nimbus extension install com.nimbus.readwise` works on a fresh
+gateway; `--registry nimbus-official` names it. The name is reserved: `nimbus registry add
+nimbus-official ...` is refused (`ERR_REGISTRY_NAME_RESERVED`), and a registry you added under that
+name before it was reserved is shadowed by the built-in one. Installing from it still asks the
+`extension.install` approval, and running the extension still needs `nimbus extension approve`.
+Two behaviours to know:
+
+- **Air gap.** With `[llm] enforce_air_gap` on, a bare install leaves the built-in registry out (it is
+  remote and can never be read there), so an id only it carries fails with `ERR_REGISTRY_NOT_FOUND`,
+  saying the official registry was not consulted because of `enforce_air_gap`. Naming it with
+  `--registry nimbus-official` is refused (`ERR_REGISTRY_UNREACHABLE`, whose message carries
+  `ERR_REGISTRY_AIR_GAP`).
+- **Plain offline is not air gap.** When the network is down the built-in registry still counts as a
+  possible carrier, so a bare install is refused rather than guessed: `ERR_REGISTRY_AMBIGUOUS` when
+  another registry of yours could be read (pass `--registry <name>` to say which), and
+  `ERR_REGISTRY_UNREACHABLE` when none could.
+
 **Installing from a registry.** If the argument is an existing path it is a local install exactly as above, and `--registry`, `--version` and `--channel` are refused with it. Otherwise it is an extension id, looked up in your registries: an id carried by more than one registry needs `--registry <name>` (`ERR_REGISTRY_AMBIGUOUS`; a registry is never chosen by priority), and so does any bare id while one of your registries cannot be read or fails verification, since it might carry the same id (the error names each failed registry as `unreachable` or `failed verification: <code>`; when no registry could be read at all, the error is the verification code itself, or `ERR_REGISTRY_UNREACHABLE`). `nimbus extension search` is not affected: it lists what it found and names the registries it could not read. An argument that can only be a path (it contains a backslash, begins with a drive letter, `.`, `~` or `/`) but does not exist reports `no such file or directory` rather than being searched for as an id. The version is the newest on the `stable` channel; `--channel beta` takes the newest across stable and beta, and `--version <v>` is exact (its channel is recorded as the source channel).
 
 The gateway fetches the manifest and package, checks both against the SHA-256 hashes the signed index lists, checks that the manifest's publisher id and key are the ones the index lists, verifies the manifest's Ed25519 signature (I16) against that key, and refuses with `ERR_REGISTRY_PUBLISHER_KEY_CONFLICT` if the Vault already holds a different key for that publisher id. Only then does the `extension.install` approval prompt appear, now also naming the registry and its root-key fingerprint. An id that is already installed is refused (`ERR_REGISTRY_ALREADY_INSTALLED`; use `nimbus extension update <id>` or remove it first). An extension that declares `dependsOn` installs only when every dependency is already installed and satisfies it; nothing is fetched transitively. `--yes` and `--publisher-key` are refused for a registry install, which is always confirmed by the owner's approval prompt (answered interactively, or through `NIMBUS_SCRIPT_CONSENT_SOURCE` for scripted use). A registry install still does not run anything: `nimbus extension approve` is a separate step.
@@ -4433,7 +4588,7 @@ nimbus extension rehash com.example.notion --yes
 
 Approve an installed extension to **run**, with the exact bytes and grants you are shown. This is a second approval, separate from the install one: install says "keep this package on disk", approve says "this code may run with these grants". It is asked through the gateway's HITL gate under action type `extension.run`.
 
-It is **TTY only and has no `--yes`**: a person must answer at a terminal, and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer it. The prompt shows the extension id and version, the publisher key fingerprint (or `unsigned`), the tree digest, the `ext_` service id the extension would run under, the resolved network hosts and read/write paths, and the read-only paths the runtime adds on its own.
+It is **TTY only and has no `--yes`**: a person must answer at a terminal, and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer it. The prompt shows the extension id and version, the publisher key fingerprint (or `unsigned`), the tree digest, the `ext_` service id the extension would run under, the resolved network hosts and read/write paths, and the read-only paths the runtime adds on its own. A `networkAccess` line says what the network grant means on this OS: "network access to …" on macOS and Linux, where the sandbox limits the extension to those hosts, and "network access (Windows cannot limit this to …)" on Windows, where it can reach any host once it has network access at all (the same wording as the migration prompt).
 
 ```bash
 nimbus extension approve com.example.notion
@@ -4455,6 +4610,8 @@ After you answer, two further refusals can occur: `ERR_EXTENSION_RUN_NOT_APPROVE
 
 Approving again after an update (new version or digest) prompts again and replaces the grant, keeping the original service id.
 
+**Sync.** An extension whose manifest declares a `sync` block starts syncing into the index once approved: it is registered with the sync scheduler under its `ext_` id (or the legacy connector id it is bound to), runs on the manifest's interval, and appears in `nimbus connector list` and `status`. It never syncs while a credential it declares is unset (`nimbus extension credential set`). An update leaves the grant naming the old version, so sync stops and the connector shows paused with `updated to <version> — run nimbus extension approve <id> to resume sync`; approving again resumes it. If the sync the approval registered comes up paused anyway (for example, no sandbox helper is installed), `approve` says so on a second line — `<id>: approved, but sync is paused: <reason>. Run nimbus connector status <service> for details.` — naming the service the sync actually runs under; the approval itself still succeeded.
+
 **`--model`** also offers the extension's tools to the model in `nimbus ask` (and the desktop app), named `ext_<id>__<tool>`, for you as the local owner only — each call still raises the I42 approval prompt. Every approval states the whole grant: running `nimbus extension approve <id>` again without `--model` prompts and turns model access off — including the re-approval an update needs, so pass `--model` again then to keep it (`nimbus doctor` names those extensions). The prompt and the output both show the setting (`model access: on|off`), and `nimbus extension info` shows `model: yes|no`. An extension whose files changed since the approval, or that failed its signature check, is not offered. A signed org policy with `user_mcp_model_access = false` stops it being offered (the grant itself is kept and takes effect again if the policy is lifted).
 
 ```bash
@@ -4465,11 +4622,27 @@ nimbus extension approve com.example.notion --model
 
 ### `nimbus extension revoke <id>`
 
-Withdraw a run approval. It is not gated, since it only narrows what may happen, and it is idempotent: revoking an extension with no approval reports that and exits normally. A running extension is stopped first, then its per-spawn copies are deleted. An unknown id is refused with `Extension not found` (JSON-RPC `-32602`).
+Withdraw a run approval. It is not gated, since it only narrows what may happen, and it is idempotent: revoking an extension with no approval reports that and exits normally. A running extension is stopped first, then its per-spawn copies are deleted. Its sync stops; what it already synced stays in the index until `nimbus extension remove`. An unknown id is refused with `Extension not found` (JSON-RPC `-32602`).
 
 ```bash
 nimbus extension revoke com.example.notion
 ```
+
+---
+
+### `nimbus extension credential set <id> <name>` / `nimbus extension credential status <id>`
+
+Store a credential an approved extension declares in its manifest (`credentials`), or see which of them are set. `set` reads the value from a hidden prompt at a terminal, or from stdin when stdin is not a terminal (one trailing newline is dropped) — **never from the command line**, and a value passed as an extra argument is refused. The gateway looks up where the credential lives from the extension's run approval (`nimbus extension approve`), so you name the credential, never a Vault key, and asks you to approve the write once, under the `vault.set` action type; the prompt shows the extension id and the credential name, never the value. With stdin piped, that prompt cannot be answered at the terminal, so `set` refuses unless `NIMBUS_SCRIPT_CONSENT_SOURCE` names a consent script.
+
+```bash
+nimbus extension credential set com.example.reader token
+printf '%s' "$READER_TOKEN" | NIMBUS_SCRIPT_CONSENT_SOURCE=./consent.jsonl nimbus extension credential set com.example.reader token
+nimbus extension credential status com.example.reader
+```
+
+The credential takes effect the next time the extension starts: if it is running, `set` stops it, and its next use starts it again with the new value. `status` prints `<name>: set` or `<name>: not set` for each declared credential (a blank value counts as not set) and never prints a value.
+
+Refusals: `Extension not found` (JSON-RPC `-32602`); `ERR_EXTENSION_CREDENTIAL_NO_GRANT` (no run approval yet — run `nimbus extension approve <id>` first); `ERR_EXTENSION_CREDENTIAL_UNKNOWN` (the approval declares no credential by that name); `ERR_EXTENSION_CREDENTIAL_BLANK` (an empty or whitespace value, refused before you are asked); `ERR_EXTENSION_CREDENTIAL_GRANT_INVALID` (the stored approval is unreadable, or names a Vault key that is neither the extension's own nor the existing connector key it was approved to reuse — approve again). After you answer: `ERR_EXTENSION_CREDENTIAL_NOT_APPROVED` (you declined), `ERR_EXTENSION_CREDENTIAL_CHANGED` (the approval was revoked or replaced while the prompt was open) and `ERR_EXTENSION_CREDENTIAL_WRITE_FAILED` (the Vault refused the write); none of them writes anything. Both commands are backed by CLI-only, LAN-forbidden IPC methods; `set` is also refused in a demo root (`--demo`).
 
 ---
 
@@ -4522,7 +4695,7 @@ With `--registry <name>` (or `--remote` to look in every added registry) the com
 
 ### `nimbus extension search <query> [--json]`
 
-Searches every added registry (`nimbus registry add`) for extensions whose id, name or publisher id contains `<query>`, case-insensitively. Each registry's freshly verified index is read concurrently; results are tagged with their registry and show the latest stable and beta versions. A registry that cannot be read does not fail the search: after the table, one line `registry <name>: <error>` is printed per such registry. The name shown is the newest version's name.
+Searches every added registry (`nimbus registry add`) for extensions whose id, name or publisher id contains `<query>`, case-insensitively. Each registry's freshly verified index is read concurrently; results are tagged with their registry and show the latest stable and beta versions. A registry that cannot be read does not fail the search: after the table, one line `registry <name>: <error>` is printed per such registry. The name shown is the newest version's name. The built-in official registry (`nimbus-official`) is not searched: it is not one of the registries you added, so `nimbus extension search readwise` finds nothing until you add a registry that carries it. Install an official extension by id instead.
 
 ```bash
 nimbus extension search notion
@@ -4542,7 +4715,7 @@ nimbus extension disable nimbus-notion
 
 ### `nimbus extension remove <name> [--yes] [--force] [--json]`
 
-Uninstall an extension and remove its process. Does not delete the extension's Vault entries automatically — use `nimbus connector remove` first if the extension registered connectors.
+Uninstall an extension and remove its process. Its sync stops first, and then everything it synced is purged under the id it synced under (its `ext_` id, or the legacy connector id it is bound to): every index item, the connector's scheduler and status rows, and every credential its approval granted — for an extension bound to a legacy connector that includes the legacy key (for example `readwise.token`), exactly as `nimbus connector remove readwise` would. Revoking (`nimbus extension revoke`) or disabling it stops sync and keeps the items.
 
 If other installed extensions depend on this one, the remove is refused unless `--force` is passed. With `--force`, the removal proceeds after a warning listing the affected dependents; the startup completeness guard will hard-disable those dependents on the next Gateway start via `MissingDependencyRegistry` (T2 PR 4).
 
@@ -4680,6 +4853,7 @@ Gateway-backed commands (the gateway must be running). All four are CLI-only: re
 - `add <name> <url> [--fingerprint <fp>]` fetches the registry's index, verifies it against its OWN root key, and then asks you, under the `registry.add` approval, to pin that root key. `<name>` is `[a-z0-9][a-z0-9-]*`, at most 32 characters; `<url>` is an `https://` URL, an `http://` loopback URL (outside a production runtime: the compiled release binary, or NODE_ENV=production), or an absolute local folder path. The prompt shows the name, URL, root key fingerprint, extension count and index date. `--fingerprint` is a pin check, not a way to skip the prompt: pass the 32-hex fingerprint you got from the maintainer out of band and a mismatch refuses BEFORE you are asked (the gateway trims and lowercases it). Needs an interactive terminal; there is no `--yes` and `NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer the prompt. The index fetch is recorded in the egress ledger even if you then decline. A delegated approver can never answer this prompt.
 - `list [--json]` shows each registry's name, URL, fingerprint, last fetch and whether its index is stale (generated more than 30 days ago). Reads the local database only; no network.
 - `refresh [<name>] [--json]` re-fetches and re-verifies one registry, or all of them. Each result is reported separately and the exit code is `1` if any failed. A root key that changed, a bad signature or an older `sequence` than the last seen is refused and never re-pins.
+- The built-in official registry `nimbus-official` is not in this list and cannot be added, refreshed or removed here; see "The built-in official registry" under `nimbus extension install`.
 - `remove <name>` forgets the registry. Extensions already installed from it stay installed and keep running; they get no further updates, and the command names them (so does `nimbus doctor`, until you add the registry again or remove them). Needs no approval.
 
 ```bash
@@ -4868,7 +5042,7 @@ nimbus people link person:abc123 person:def456
 Open a browser-extension pairing session and print the one-time code **plus the gateway URL** to enter in the extension's Options page. The code expires after 2 minutes. `--label` gives the paired device a human-readable name; if omitted the gateway assigns one.
 
 `--scopes` sets what the minted token is allowed to reach. It takes a comma-separated list drawn
-from six names:
+from seven names:
 
 | Scope | Unlocks |
 |---|---|
@@ -4878,6 +5052,7 @@ from six names:
 | `resolve` | The local reads: `GET /v1/items/resolve` (resolve-by-URL), `GET /v1/items/resolve-file` (resolve a forge file coordinate to a local checkout path), `GET /v1/items/resolve-ids` (resolve item ids back to their references), and `GET /v1/services/resolve` (resolve a repo URN to the configured service that claims it — the only one of the four that reads `nimbus.toml` rather than the index) |
 | `fetch` | The targeted fetch-on-miss write: `POST /v1/items/fetch` — makes an outbound request through a configured connector, so it is a separate scope from `resolve`'s purely local reads |
 | `egress` | The egress-ledger reads: `GET /v1/egress`, `GET /v1/egress/head`, `GET /v1/egress/verify`, `GET /v1/egress/prove` |
+| `data` | The index's raw rows: `GET /v1/items`, `GET /v1/items/:id`, `GET /v1/people`, `GET /v1/people/:id`, `GET /v1/audit` (public until 2026-10-19; never granted to an older token automatically) |
 
 If `--scopes` is omitted, the minted token is granted `clip,briefs` — the two surfaces that shipped
 before scopes existed. **A client paired before this change holds exactly `clip,briefs` and gains
@@ -4983,13 +5158,19 @@ nimbus clip revoke --all
 
 ## Vault
 
-### `nimbus vault set <key> <value>`
+### `nimbus vault set <key>`
 
-Store a secret in the Vault under the given key.
+Store a secret in the Vault under the given key. At a terminal the value is read from a hidden prompt; with stdin piped it is read from stdin (one trailing newline is dropped). Every write asks for your approval, so a piped value also needs `NIMBUS_SCRIPT_CONSENT_SOURCE` to answer that prompt. A blank value or a cancelled prompt stores nothing.
 
 ```bash
-nimbus vault set github.pat ghp_xxxx
+nimbus vault set github.pat                  # prompts for the value (input is hidden)
+
+# Scripted: the consent file answers the approval, so it must exist first
+printf '%s\n' '{"approved":true}' > consent.jsonl
+printf '%s' "$TOKEN" | NIMBUS_SCRIPT_CONSENT_SOURCE=consent.jsonl nimbus vault set github.pat
 ```
+
+**Deprecated:** `nimbus vault set <key> <value>` still works, but prints a warning on stderr: a value on the command line is kept in shell history and shown in the process list. The value argument will be removed in a future major release.
 
 ---
 

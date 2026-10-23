@@ -688,6 +688,8 @@ describe("tryDispatchIndexRebodyRpc", () => {
         forceSync: async (serviceId: string) => {
           forceSyncCalls.push(serviceId);
         },
+        // Rebody re-walks only a service with a registered connector.
+        syncableFor: (serviceId: string) => (serviceId === "test-svc" ? {} : undefined),
       } as unknown as NonNullable<ServerCtx["options"]["syncScheduler"]>,
     });
     const outcome = await tryDispatchIndexRebodyRpc(ctx, "index.rebody", { service: "test-svc" });

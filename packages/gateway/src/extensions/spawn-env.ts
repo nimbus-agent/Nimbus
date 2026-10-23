@@ -1,17 +1,8 @@
-const BASELINE_KEYS = [
-  "PATH",
-  "HOME",
-  "TMPDIR",
-  "TEMP",
-  "TMP",
-  "APPDATA",
-  "LOCALAPPDATA",
-  "USERPROFILE",
-  "SYSTEMROOT",
-  "BUN_INSTALL",
-  "LANG",
-  "TZ",
-] as const;
+// The baseline key list lives in the pure registry-format workspace so the manifest parser there can
+// refuse a credential env name that would overwrite one; this module builds the env from it (I1).
+import { BASELINE_KEYS } from "@nimbus-dev/registry-format";
+
+export { BASELINE_KEYS, isExtensionBaselineEnvKey } from "@nimbus-dev/registry-format";
 
 export function extensionProcessEnv(extra: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};

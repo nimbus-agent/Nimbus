@@ -18,7 +18,7 @@ export type LlmRpcContext = {
   registry: LlmRegistry;
   notify: (method: string, params: unknown) => void;
   /**
-   * The resolved `nimbus.toml` path (`resolveNimbusTomlForProfile(configDir)`), needed only
+   * The layered reader's write target (`getLayeredConfig(configDir).writeTargetPath()`), needed only
    * by `llm.use`, which is the one handler in this file that WRITES config rather than just
    * reading the registry. Optional so every other handler's test fixture — none of which
    * needs it — stays unchanged; `handleLlmUse` throws a clear error if it is missing rather

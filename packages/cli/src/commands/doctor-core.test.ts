@@ -17,7 +17,9 @@ import {
   doctorPrintHealthFromSnapshot,
   doctorPrintIndexConfidence,
   doctorPrintIndexFromSnapshot,
+  doctorPrintMigrations,
   doctorPrintOncallPush,
+  doctorPrintProfile,
   doctorPrintRegistries,
   doctorPrintVectorSearchFromSnapshot,
   healthStateMark,
@@ -994,5 +996,247 @@ describe("doctorPrintRegistries", () => {
   it("a malformed response warns and exits 1", async () => {
     expect(await doctorPrintRegistries(byMethod(() => "garbage"))).toBe(1);
     expect(out.stdout).toContain("[warn] Extension registries: malformed registry.list response");
+  });
+});
+
+describe("doctorPrintMigrations", () => {
+  function byMethod(answer: (method: string) => unknown): Pick<IPCClient, "call"> {
+    return {
+      call: async <T>(method: string): Promise<T> => answer(method) as T,
+    };
+  }
+  const row = (state: string, error: string | null = null) => ({
+    id: "m-1",
+    legacyServiceId: "fixturewise",
+    extensionId: "com.example.fixturewise",
+    version: "1.0.0",
+    state,
+    error,
+  });
+
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("silent with no migrations, and for an approved one", async () => {
+    expect(await doctorPrintMigrations(byMethod(() => ({ migrations: [] })))).toBe(0);
+    expect(await doctorPrintMigrations(byMethod(() => ({ migrations: [row("approved")] })))).toBe(
+      0,
+    );
+    expect(out.stdout).toBe("");
+  });
+
+  it("warns about a migration awaiting approval and names accept and decline", async () => {
+    const client = byMethod(() => ({ migrations: [row("awaiting_approval")] }));
+    expect(await doctorPrintMigrations(client)).toBe(1);
+    expect(out.stdout).toContain("[warn] Connector migration: fixturewise moved out");
+    expect(out.stdout).toContain("nimbus connector migrate accept m-1 (or decline m-1)");
+  });
+
+  it("warns about a failed migration with its reason and names retry once", async () => {
+    const client = byMethod(() => ({
+      migrations: [row("failed", "offline — run `nimbus connector migrate retry`")],
+    }));
+    expect(await doctorPrintMigrations(client)).toBe(1);
+    expect(out.stdout).toContain("could not be moved to com.example.fixturewise");
+    expect(out.stdout.match(/migrate retry/g)).toHaveLength(1);
+  });
+
+  it("a declined migration is a quiet note that names retry, and does not fail doctor", async () => {
+    const client = byMethod(() => ({ migrations: [row("declined")] }));
+    expect(await doctorPrintMigrations(client)).toBe(0);
+    expect(out.stdout).toContain("[info] Connector migration: fixturewise stays off");
+    expect(out.stdout).toContain("nimbus connector migrate retry");
+  });
+
+  it("Method not found on migration.list (an older gateway) is quiet", async () => {
+    const client = byMethod(() => {
+      throw Object.assign(new Error("nope"), { code: -32601 });
+    });
+    expect(await doctorPrintMigrations(client)).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("any other failure, or a malformed response, warns and exits 1", async () => {
+    const down = byMethod(() => {
+      throw new Error("down");
+    });
+    expect(await doctorPrintMigrations(down)).toBe(1);
+    expect(out.stdout).toContain("[warn] Connector migration: status check failed (down).");
+    expect(await doctorPrintMigrations(byMethod(() => ({ migrations: [{ id: 1 }] })))).toBe(1);
+    expect(out.stdout).toContain("malformed migration.list response");
+  });
+});
+
+describe("doctorPrintProfile (role packs)", () => {
+  beforeEach(() => out.reset());
+  const layers = (exists: boolean) => [
+    { kind: "base", id: "base", path: "/c/nimbus.toml", exists: true },
+    { kind: "profile", id: "work", path: "/c/nimbus.work.toml", exists },
+  ];
+
+  it("warns per skipped pack and for a pack list error, each exit 1", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "default",
+      layers: [],
+      activePacks: [],
+      skippedPacks: [{ packId: "x", reason: "[llm] prefer_local is not pack-settable" }],
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain(
+      '[warn] pack "x" skipped: [llm] prefer_local is not pack-settable',
+    );
+    out.reset();
+    const exit2 = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "default",
+      layers: [],
+      packListError: "active.json is not valid JSON",
+    });
+    expect(exit2).toBe(1);
+    expect(out.stdout).toContain("[warn] packs not applied: active.json is not valid JSON");
+  });
+
+  it("strips control characters from pack ids, reasons and the list error", () => {
+    const esc = "\u001b[31m";
+    const exit = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "default",
+      layers: [],
+      activePacks: [`p${esc}m`],
+      skippedPacks: [{ packId: `x${esc}\u0007`, reason: "bad\r\nline\u009b" }],
+      packListError: `list\u0000${esc}err`,
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain('[warn] pack "x[31m" skipped: badline');
+    expect(out.stdout).toContain("[warn] packs not applied: list[31merr");
+    expect(out.stdout).toContain("[info] packs active: p[31mm");
+    for (const ch of ["\u001b", "\u0007", "\u0000", "\u009b", "\r"]) {
+      expect(out.stdout).not.toContain(ch);
+    }
+  });
+
+  it("lists active packs as info, exit 0", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "default",
+      layers: [],
+      activePacks: ["pm", "devops"],
+      skippedPacks: [],
+    });
+    expect(exit).toBe(0);
+    expect(out.stdout).toContain("[info] packs active: pm, devops");
+  });
+
+  it("filters malformed pack fields and prints nothing for an older payload", () => {
+    const base = { runningProfile: "default", markerProfile: "default", layers: [] };
+    expect(doctorPrintProfile(base)).toBe(0);
+    expect(out.stdout).toBe("");
+    const exit = doctorPrintProfile({
+      ...base,
+      activePacks: "pm",
+      skippedPacks: [{ packId: "x" }, { reason: "r" }, null, 3, { packId: 1, reason: "r" }],
+      packListError: 5,
+    });
+    expect(exit).toBe(0);
+    expect(out.stdout).toBe("");
+    const mixed = doctorPrintProfile({ ...base, activePacks: [1, "pm", null] });
+    expect(mixed).toBe(0);
+    expect(out.stdout).toContain("[info] packs active: pm");
+    expect(out.stdout).not.toContain("null");
+  });
+
+  it("is silent when an older gateway omits configLayers", () => {
+    expect(doctorPrintProfile(undefined)).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("warns when the marker and the running profile differ", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "default",
+      markerProfile: "work",
+      layers: [],
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain(
+      '[warn] profile: marker says "work" but the gateway runs "default" — restart to apply',
+    );
+  });
+
+  it("prints an info line, exit 0, when the profile has no file", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "work",
+      markerProfile: "work",
+      layers: layers(false),
+    });
+    expect(exit).toBe(0);
+    expect(out.stdout).toContain(
+      '[info] profile "work" has no nimbus.work.toml; running on nimbus.toml alone',
+    );
+  });
+
+  it("is silent when the profile file exists and the marker agrees", () => {
+    expect(
+      doctorPrintProfile({ runningProfile: "work", markerProfile: "work", layers: layers(true) }),
+    ).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("does not warn when the running profile came from NIMBUS_PROFILE or an argument", () => {
+    for (const source of ["env", "argument"]) {
+      out.reset();
+      const exit = doctorPrintProfile({
+        runningProfile: "work",
+        runningProfileSource: source,
+        markerProfile: "home",
+        layers: layers(true),
+      });
+      expect(exit).toBe(0);
+      expect(out.stdout).not.toContain("restart");
+    }
+  });
+
+  it("warns when a marker-sourced profile's marker has changed since boot", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "work",
+      runningProfileSource: "marker",
+      markerProfile: "home",
+      layers: layers(true),
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain('marker says "home" but the gateway runs "work"');
+  });
+
+  it("warns, exit 1, naming a layer the gateway could not read", () => {
+    const exit = doctorPrintProfile({
+      runningProfile: "work",
+      runningProfileSource: "argument",
+      markerProfile: "work",
+      layers: [
+        { kind: "base", id: "base", path: "nimbus.toml", exists: true },
+        {
+          kind: "profile",
+          id: "work",
+          path: "nimbus.work.toml",
+          exists: false,
+          readError: "EISDIR: illegal operation on a directory",
+        },
+      ],
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain(
+      "[warn] config: could not read nimbus.work.toml (EISDIR: illegal operation on a directory); that layer is ignored, and sections read through the default loader fall back to built-in defaults until it is readable",
+    );
+    expect(out.stdout).not.toContain("has no nimbus.work.toml");
+  });
+
+  it("tolerates malformed layer entries and a non-array layers field", () => {
+    const base = { runningProfile: "work", markerProfile: "work" };
+    expect(doctorPrintProfile({ ...base, layers: [null, 7, "x", { kind: "profile" }] })).toBe(0);
+    expect(doctorPrintProfile({ ...base, layers: "nope" })).toBe(0);
+    expect(doctorPrintProfile({ runningProfile: 3 })).toBe(0);
+    expect(doctorPrintProfile("nope")).toBe(0);
+    expect(out.stdout).toBe("");
   });
 });

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +10,7 @@ import { decryptVaultManifest, type VaultManifestBlob } from "../db/data-vault-c
 import { unpackBundle } from "../db/tar-bundle.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
+import { isWellFormedVaultKey } from "../vault/key-format.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 export class DataImportVersionError extends Error {
@@ -60,8 +61,54 @@ export type RunDataImportResult = {
 
 type VaultEntry = { key: string; value: string };
 
+/**
+ * Validate the decrypted vault manifest COMPLETELY before any entry is written.
+ *
+ * Decryption proves the archive was made with this passphrase, not that its contents have the
+ * expected shape. This used to be `JSON.parse(...) as VaultEntry[]`, so a malformed entry was only
+ * discovered by the vault mid-restore (after earlier keys were already written), and a non-string
+ * value reached `vault.set` unchecked. Errors name the entry index, never the key or value.
+ */
+export function parseVaultEntries(plaintext: string): VaultEntry[] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(plaintext);
+  } catch {
+    throw new Error("vault manifest is not valid JSON");
+  }
+  if (!Array.isArray(raw)) throw new Error("vault manifest is not a list of entries");
+  const seen = new Set<string>();
+  return raw.map((entry: unknown, i): VaultEntry => {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`vault manifest entry ${String(i)} is not an object`);
+    }
+    const { key, value } = entry as Record<string, unknown>;
+    if (typeof key !== "string" || typeof value !== "string") {
+      throw new Error(`vault manifest entry ${String(i)} needs a string key and value`);
+    }
+    if (!isWellFormedVaultKey(key)) {
+      throw new Error(`vault manifest entry ${String(i)} has a malformed vault key`);
+    }
+    if (seen.has(key)) throw new Error(`vault manifest entry ${String(i)} repeats an earlier key`);
+    seen.add(key);
+    return { key, value };
+  });
+}
+
 export async function runDataImport(input: RunDataImportInput): Promise<RunDataImportResult> {
   const stage = mkdtempSync(join(tmpdir(), "nimbus-import-stage-"));
+  try {
+    return await importFromStage(input, stage);
+  } finally {
+    // The unpacked bundle (index payload included) must not outlive the import.
+    rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+async function importFromStage(
+  input: RunDataImportInput,
+  stage: string,
+): Promise<RunDataImportResult> {
   await unpackBundle(input.bundlePath, stage);
 
   const manifest = JSON.parse(readFileSync(join(stage, "manifest.json"), "utf8")) as
@@ -84,7 +131,7 @@ export async function runDataImport(input: RunDataImportInput): Promise<RunDataI
     ...(input.passphrase === undefined ? {} : { passphrase: input.passphrase }),
     ...(input.recoverySeed === undefined ? {} : { seed: input.recoverySeed }),
   });
-  const entries = JSON.parse(plaintext) as VaultEntry[];
+  const entries = parseVaultEntries(plaintext);
 
   const writtenKeys: string[] = [];
   let oauthFlagged = 0;

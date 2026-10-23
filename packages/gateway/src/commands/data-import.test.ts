@@ -7,7 +7,7 @@ import { _addTestKdfProfile } from "../db/data-vault-crypto.ts";
 import { packBundle, unpackBundle } from "../db/tar-bundle.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runDataExport } from "./data-export.ts";
-import { DataImportVersionError, runDataImport } from "./data-import.ts";
+import { DataImportVersionError, parseVaultEntries, runDataImport } from "./data-import.ts";
 
 let _restoreTestKdf: () => void;
 beforeAll(() => {
@@ -207,5 +207,34 @@ describe("runDataImport — schemaVersion compatibility check", () => {
     });
     expect(result.credentialsRestored).toBe(1);
     expect(await targetVault.get("github.pat")).toBe("secret_value");
+  });
+});
+
+describe("parseVaultEntries", () => {
+  test("accepts well-formed entries", () => {
+    expect(parseVaultEntries('[{"key":"github.pat","value":"v"}]')).toEqual([
+      { key: "github.pat", value: "v" },
+    ]);
+  });
+
+  test.each([
+    ["not JSON", "{", /not valid JSON/],
+    ["not a list", '{"key":"github.pat"}', /not a list/],
+    ["a non-object entry", "[1]", /entry 0 is not an object/],
+    ["a non-string value", '[{"key":"github.pat","value":42}]', /entry 0 needs a string/],
+    ["a malformed key", '[{"key":"../evil","value":"v"}]', /entry 0 has a malformed vault key/],
+    [
+      "a repeated key",
+      '[{"key":"github.pat","value":"a"},{"key":"github.pat","value":"b"}]',
+      /entry 1 repeats/,
+    ],
+  ])("refuses %s before anything is written", (_label, text, error) => {
+    expect(() => parseVaultEntries(text)).toThrow(error);
+  });
+
+  test("an error never echoes the secret value", () => {
+    expect(() => parseVaultEntries('[{"key":"Bad Key","value":"s3cret-value"}]')).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining("s3cret-value") }),
+    );
   });
 });

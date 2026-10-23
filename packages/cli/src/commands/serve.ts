@@ -64,7 +64,11 @@ The HTTP server binds 127.0.0.1 only. Set a different port with --port or NIMBUS
       extraEnv: { NIMBUS_HTTP_PORT: String(port) },
     });
     s.stop(`Gateway started (pid ${String(pid)})`);
-    console.log(`HTTP:   http://127.0.0.1:${String(port)}/v1/items`);
+    console.log(`HTTP:   http://127.0.0.1:${String(port)}/v1/health`);
+    console.log(
+      "        /v1/items, /v1/people and /v1/audit need a client token with the `data` scope",
+    );
+    console.log("        (nimbus clip pair --label <name> --scopes data)");
     console.log(`Socket: ${paths.socketPath}`);
     console.log(`Log:    ${logPath}`);
   } catch (e) {

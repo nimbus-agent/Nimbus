@@ -1,7 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { normalizeTerm } from "../glossary/term-normalize.ts";
+import {
+  fallbackMessage,
+  layeredConfigText,
+  layeredHasUserLayer,
+  layerReadError,
+  sectionFallbackSink,
+} from "./layered-config.ts";
 import {
   hasUnterminatedString,
   isTableHeader,
@@ -215,18 +219,31 @@ export function parseGlossaryManualToml(raw: string): GlossaryManualConfig {
 }
 
 /**
- * Reads `<configDir>/nimbus.toml`.
+ * Reads the layered config snapshot for `configDir` (base, active profile; glossary is not
+ * pack-settable, so a pack layer never carries it).
  *
  * Deliberately NOT built on `loadTomlSection`: every failure must surface as
  * `loaded: false` rather than as an empty-but-valid config. See the
- * `GlossaryManualConfig` docstring.
+ * `GlossaryManualConfig` docstring. That includes an unreadable layer and a config with no user
+ * layer file (a pack-only render), neither of which may read as "no terms".
  */
 export function loadGlossaryManualFromConfigDir(configDir: string): GlossaryManualConfig {
-  const tomlPath = join(configDir, "nimbus.toml");
-  if (!existsSync(tomlPath)) return { loaded: false };
+  // A layer that exists but cannot be read is NOT "no terms": terms authored there would be
+  // deleted by the desired-state pass. Record it and stay unloaded.
+  const readError = layerReadError(configDir);
+  if (readError !== undefined) {
+    sectionFallbackSink(configDir, "glossary.terms")(readError);
+    return { loaded: false };
+  }
+  // Glossary is not pack-settable, so it comes from user layers only. A pack-only config renders
+  // non-null text, and reading it here would turn "no nimbus.toml" into "zero terms".
+  if (!layeredHasUserLayer(configDir)) return { loaded: false };
+  const text = layeredConfigText(configDir);
+  if (text === null) return { loaded: false };
   try {
-    return parseGlossaryManualToml(readFileSync(tomlPath, "utf8"));
-  } catch {
+    return parseGlossaryManualToml(text);
+  } catch (err) {
+    sectionFallbackSink(configDir, "glossary.terms")(fallbackMessage(err));
     return { loaded: false };
   }
 }

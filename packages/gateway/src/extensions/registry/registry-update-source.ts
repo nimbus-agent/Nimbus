@@ -14,13 +14,14 @@ import type {
   InstalledExtensionManifestSlice,
   VerificationStatus,
 } from "../auto-update-types.ts";
+import { builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
 import { fetchVerifiedIndex, type RegistryFetchDeps } from "./registry-fetch.ts";
 import {
   fetchRegistryManifest,
   vaultPublisherKeyConflicts,
   verifyRegistryManifestSignature,
 } from "./registry-manifest.ts";
-import { getRegistry, type RegistryRow } from "./registry-store.ts";
+import type { RegistryRow } from "./registry-store.ts";
 
 export interface InstalledRegistryRow {
   id: string;
@@ -154,7 +155,8 @@ export async function collectRegistryUpdates(
   for (const [name, group] of groupByRegistry(rows)) {
     // The CURRENT registry table: a registry removed since install yields nothing, and one whose
     // root key is no longer the one the extension was installed under is a different trust root.
-    const reg = getRegistry(deps.db, name);
+    // The reserved name resolves to the built-in registry, whose key is the release's.
+    const reg = resolveRegistry(deps.db, name, builtinRegistryOf(deps.fetch));
     if (reg === undefined) continue;
     const pinned = group.filter((r) => r.source.rootFingerprint === reg.rootFingerprint);
     if (pinned.length === 0) continue;

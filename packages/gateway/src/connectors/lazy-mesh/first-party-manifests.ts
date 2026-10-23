@@ -358,11 +358,6 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
-  readwise: baseManifest("com.nimbus.readwise", {
-    network: ["readwise.io"],
-    filesystem: { read: [], write: [] },
-  }),
-
   raindrop: baseManifest("com.nimbus.raindrop", {
     network: ["api.raindrop.io"],
     filesystem: { read: [], write: [] },

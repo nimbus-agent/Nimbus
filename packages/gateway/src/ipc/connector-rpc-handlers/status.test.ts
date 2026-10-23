@@ -129,6 +129,20 @@ describe("handleConnectorStatus", () => {
     expect(v.telemetry).toHaveLength(3);
   });
 
+  test("telemetry rows carry items_dropped as itemsDropped (0 for a row written without it)", () => {
+    registerConnector("github");
+    seedTelemetry("github", 1);
+    fixture.db.run(
+      `INSERT INTO sync_telemetry
+       (service, started_at, duration_ms, items_upserted, items_deleted, bytes_transferred, had_more, error_msg, items_dropped)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["github", 1_800_000_000_000, 100, 2, 0, null, 0, null, 4],
+    );
+    const r = handleConnectorStatus(buildCtx({ serviceId: "github", includeStats: true }));
+    const v = r.value as { telemetry: Array<{ itemsDropped: number }> };
+    expect(v.telemetry.map((t) => t.itemsDropped)).toEqual([4, 0]);
+  });
+
   test("stats: true alias attaches telemetry", () => {
     registerConnector("github");
     seedTelemetry("github", 1);

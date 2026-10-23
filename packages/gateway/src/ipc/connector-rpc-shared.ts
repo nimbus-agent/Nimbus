@@ -6,6 +6,7 @@ import {
 import { writeConnectorSecret } from "../connectors/connector-vault.ts";
 import { isGatewaySyncableServiceId } from "../connectors/gateway-syncable-ids.ts";
 import { USER_MCP_SERVICE_ID_PATTERN } from "../connectors/user-mcp-store.ts";
+import { EXTENSION_SERVICE_ID_PATTERN } from "../extensions/extension-service-id.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { stripTrailingSlashes } from "../string/strip-trailing-slashes.ts";
 import { countItemsForService } from "../sync/scheduler-store.ts";
@@ -58,7 +59,8 @@ export function requireRegisteredSchedulerServiceId(
   if (
     builtIn === null &&
     !isGatewaySyncableServiceId(id) &&
-    !USER_MCP_SERVICE_ID_PATTERN.test(id)
+    !USER_MCP_SERVICE_ID_PATTERN.test(id) &&
+    !EXTENSION_SERVICE_ID_PATTERN.test(id)
   ) {
     throw new ConnectorRpcError(-32602, "Invalid serviceId");
   }
@@ -75,7 +77,7 @@ export function resolveConnectorListFilterServiceId(raw: string): string | null 
     return builtIn;
   }
   const lower = t.toLowerCase();
-  if (USER_MCP_SERVICE_ID_PATTERN.test(lower)) {
+  if (USER_MCP_SERVICE_ID_PATTERN.test(lower) || EXTENSION_SERVICE_ID_PATTERN.test(lower)) {
     return lower;
   }
   return null;

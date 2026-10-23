@@ -10,24 +10,24 @@ import type { FetchOutcome } from "./fetch-outcome.ts";
 export type SyncUpsertRow = Parameters<SyncContext["upsertItem"]>[0];
 
 /**
- * Map each raw item and upsert the non-null results, returning the count
- * upserted. Mirrors the per-connector `upsert*` loop verbatim.
+ * Map each raw item and upsert the non-null results in ONE write batch (`ctx.writeBatch`, one
+ * transaction per page rather than several autocommits per item), returning the count upserted.
  */
 export function upsertMapped(
   ctx: SyncContext,
   items: readonly unknown[],
   map: (raw: unknown) => SyncUpsertRow | null,
 ): number {
-  let upserted = 0;
+  const rows: SyncUpsertRow[] = [];
   for (const raw of items) {
     const mapped = map(raw);
-    if (mapped === null) {
-      continue;
-    }
-    ctx.upsertItem(mapped);
-    upserted += 1;
+    if (mapped !== null) rows.push(mapped);
   }
-  return upserted;
+  if (rows.length === 0) return 0;
+  ctx.writeBatch(() => {
+    for (const row of rows) ctx.upsertItem(row);
+  });
+  return rows.length;
 }
 
 /** A page's parsed items, whether to fetch the next page, and (for cursor/token

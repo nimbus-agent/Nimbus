@@ -13,8 +13,21 @@
  * three are: it reads the record of everything this gateway sent on the owner's behalf, and a
  * token already in the wild must gain nothing. The owner grants it deliberately, in place, with
  * `nimbus clip scopes <label> --set <scopes>` — no re-pairing.
+ *
+ * `data` is the read over the index's raw rows — `GET /v1/items`, `/v1/items/<id>`, `/v1/people`,
+ * `/v1/people/<id>` and `/v1/audit`, which were PUBLIC until 2026-10-19. Absent from
+ * LEGACY_SCOPES for the same reason as `egress`: making those routes require a token would mean
+ * nothing if every token already in the wild silently gained them.
  */
-export const API_SCOPES = ["clip", "briefs", "agents", "resolve", "fetch", "egress"] as const;
+export const API_SCOPES = [
+  "clip",
+  "briefs",
+  "agents",
+  "resolve",
+  "fetch",
+  "egress",
+  "data",
+] as const;
 
 export type ApiScope = (typeof API_SCOPES)[number];
 

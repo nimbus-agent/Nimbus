@@ -12,6 +12,36 @@ export interface RegistryRow {
   lastGeneratedAt: string;
   addedAt: number;
   lastFetchedAt: number | null;
+  /**
+   * Set only on the built-in official registry's row (`builtin-registry.ts`), which is not stored
+   * here: a verified fetch of it records its sequence in `builtin_registry_state` instead.
+   */
+  builtin?: true;
+}
+
+/**
+ * The built-in official registry's reserved name. `registry.add` and `insertRegistry` refuse it
+ * outright; re-exported by `builtin-registry.ts`, which owns everything else about that registry.
+ */
+export const BUILTIN_REGISTRY_NAME = "nimbus-official";
+
+/**
+ * Whether `name` would collide with the reserved name. Stored names are compared exactly (the
+ * column has no collation), and `registry.add` trims before validating, so any spelling that trims
+ * and lowercases to the reserved name is refused — including ones the name rule would reject anyway.
+ */
+export function isReservedRegistryName(name: string): boolean {
+  return name.trim().toLowerCase() === BUILTIN_REGISTRY_NAME;
+}
+
+/** Throws `ERR_REGISTRY_NAME_RESERVED` for the built-in registry's reserved name. */
+export function assertRegistryNameNotReserved(name: string): void {
+  if (isReservedRegistryName(name)) {
+    throw new RegistryError(
+      "ERR_REGISTRY_NAME_RESERVED",
+      `"${BUILTIN_REGISTRY_NAME}" is reserved for the built-in official registry; add it under another name`,
+    );
+  }
 }
 
 export interface ExtensionSource {
@@ -60,7 +90,11 @@ export function getRegistry(db: Database, name: string): RegistryRow | undefined
   return r === null ? undefined : toRow(r);
 }
 
-export function insertRegistry(db: Database, row: Omit<RegistryRow, "lastFetchedAt">): void {
+export function insertRegistry(
+  db: Database,
+  row: Omit<RegistryRow, "lastFetchedAt" | "builtin">,
+): void {
+  assertRegistryNameNotReserved(row.name);
   const clash = db
     .query("SELECT name, url FROM extension_registry WHERE name = ? OR url = ?")
     .get(row.name, row.url) as { name: string; url: string } | null;

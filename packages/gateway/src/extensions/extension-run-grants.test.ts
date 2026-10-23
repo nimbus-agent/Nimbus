@@ -6,6 +6,7 @@ import type { SandboxPermissions } from "@nimbus-dev/registry-format";
 import {
   type ExtensionRunGrantEnv,
   extensionRunGrantProtectedRoots,
+  parseRunGrants,
   resolveExtensionRunGrants,
   serializeRunGrants,
 } from "./extension-run-grants.ts";
@@ -215,5 +216,25 @@ describe("serializeRunGrants", () => {
     const b = serializeRunGrants({ network: ["h"], read: ["/r"], write: [] });
     expect(a).toBe(b);
     expect(JSON.parse(a)).toEqual({ network: ["h"], read: ["/r"], write: [] });
+  });
+});
+
+describe("parseRunGrants", () => {
+  test("round-trips serializeRunGrants", () => {
+    const g = { network: ["a.example"], read: ["/r"], write: ["/w"] };
+    expect(parseRunGrants(serializeRunGrants(g))).toEqual(g);
+  });
+
+  test("anything but the stored shape is undefined", () => {
+    for (const bad of [
+      "",
+      "nope",
+      "[]",
+      "null",
+      '{"network":[],"read":[]}',
+      '{"network":[1],"read":[],"write":[]}',
+    ]) {
+      expect(parseRunGrants(bad), bad).toBeUndefined();
+    }
   });
 });

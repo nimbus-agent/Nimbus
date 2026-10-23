@@ -13,6 +13,7 @@ import {
   checkCaptureGateImporters,
   checkCaptureTableConfinement,
   checkChatopsUnwrappedPost,
+  checkConfigReaderConfinement,
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
   checkDriverImportConfinement,
@@ -26,6 +27,7 @@ import {
   checkGeneratedManifestConfinement,
   checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
+  checkMigrationConfinement,
   checkPushClientKindConfinement,
   checkRegistryAppenderConfinement,
   checkRemoteVlmConfinement,
@@ -248,7 +250,7 @@ describe("D11 — checkVaultKeyAllowList", () => {
 });
 
 describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
-  test("VAULT_KEY_ALLOW_LIST has exactly 12 entries", () => {
+  test("VAULT_KEY_ALLOW_LIST has exactly 13 entries", () => {
     // 9 → 10: slice 2b adds ONLY `llm/vendor-vault-keys.ts`, which owns the vendor keyspace. The
     // `<vendor>.api_key` when resolving the credential per call. 10 → 11: the toolgen credential
     // store (`toolgen-credentials.ts`) composes the DYNAMIC `toolgen.<toolId>.<hostSlug>` keyspace
@@ -259,8 +261,10 @@ describe("D11 — VAULT_KEY_ALLOW_LIST is frozen at structural entries", () => {
     // genuinely sees these, so this entry is real enforcement rather than keyspace documentation.
     // The count is frozen ON PURPOSE — a file gaining permission to construct a vault key is a
     // decision, so it must be made deliberately in a commit that also explains it, never absorbed
-    // silently.
-    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(12);
+    // silently. 12 → 13: `extensions/extension-credentials.ts` composes an extension's own DYNAMIC
+    // `ext.<serviceId>.<name>` keyspace (V72 run-grant credentials) — documentation of a keyspace
+    // the literal scan cannot see, the same footing as `toolgen-credentials.ts`.
+    expect(VAULT_KEY_ALLOW_LIST).toHaveLength(13);
   });
 });
 
@@ -3167,7 +3171,7 @@ describe("D31-listener-registry-registration — a listen site registers with th
 describe("D33(b) — extension_run_grant is named only by its store and its DDL", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
 
-  test("allows the store and the V70 SQL module", () => {
+  test("allows the store and the V70 and V72 SQL modules", () => {
     expect(
       checkRunGrantTableConfinement([
         file(
@@ -3177,6 +3181,10 @@ describe("D33(b) — extension_run_grant is named only by its store and its DDL"
         file(
           "packages/gateway/src/index/extension-run-grant-v70-sql.ts",
           "CREATE TABLE IF NOT EXISTS extension_run_grant (",
+        ),
+        file(
+          "packages/gateway/src/index/extension-run-grant-credentials-v72-sql.ts",
+          "ALTER TABLE extension_run_grant ADD COLUMN credentials_json TEXT",
         ),
       ]),
     ).toEqual([]);
@@ -3330,5 +3338,199 @@ describe("D33(a) — the __nimbus-extension role is named only by the layout and
         file("scripts/z.ts", '"__nimbus-extension"'),
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("D34 — the connector migration's table, grant entry point and consent are confined", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const ENGINE = "packages/gateway/src/extensions/migration/migration-engine.ts";
+  const RPC = "packages/gateway/src/ipc/migration-rpc.ts";
+
+  test("allows the store, the DDL, approve-run.ts, the engine, the RPC path, migration-boot.ts, the I2 set and the proposability table", () => {
+    expect(
+      checkMigrationConfinement([
+        file(
+          "packages/gateway/src/extensions/migration/migration-store.ts",
+          "UPDATE connector_migration SET state = ?",
+        ),
+        file(
+          "packages/gateway/src/index/connector-migration-v73-sql.ts",
+          "CREATE TABLE IF NOT EXISTS connector_migration (",
+        ),
+        file(
+          "packages/gateway/src/extensions/approve-run.ts",
+          "export async function approveMigratedExtensionRun() {}",
+        ),
+        file(
+          ENGINE,
+          'import { approveMigratedExtensionRun } from "../approve-run.ts";\nexport const EXTENSION_MIGRATE_ACTION_TYPE = "extension.migrate";\nexport function migrationConsentViaGate() {}\nexport function createMigrationEngine() {}',
+        ),
+        file(RPC, "engine.accept(id, migrationConsentViaGate(gate));"),
+        file("packages/gateway/src/platform/assemble.ts", "ipcOpts.migrationEngine = engine;"),
+        file("packages/gateway/src/ipc/server/options.ts", "migrationEngine?: MigrationEngine;"),
+        file(
+          "packages/gateway/src/ipc/server/dispatchers.ts",
+          "const engine = ctx.options.migrationEngine;",
+        ),
+        file(
+          "packages/gateway/src/platform/migration-boot.ts",
+          "return createMigrationEngine({});",
+        ),
+        file("packages/gateway/src/engine/executor.ts", '  "extension.migrate",'),
+        file("packages/gateway/src/connectors/proposable-actions.ts", '  "extension.migrate",'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    [
+      "a write to the table",
+      "INSERT INTO connector_migration (id) VALUES (?)",
+      "migration-table-confined",
+    ],
+    ["a read of the table", "SELECT * FROM connector_migration", "migration-table-confined"],
+    [
+      "a grant without the engine",
+      "await approveMigratedExtensionRun(deps, id);",
+      "migration-grant-callers",
+    ],
+    [
+      "an aliased grant import",
+      'import { approveMigratedExtensionRun as g } from "./x";',
+      "migration-grant-callers",
+    ],
+    [
+      "a second consent raiser",
+      "await engine.accept(id, migrationConsentViaGate(gate));",
+      "migration-consent-raisers",
+    ],
+    [
+      "the action-type constant",
+      "gate({ type: EXTENSION_MIGRATE_ACTION_TYPE, payload });",
+      "migration-consent-raisers",
+    ],
+    ["the literal", 'gate({ type: "extension.migrate", payload });', "migration-consent-raisers"],
+    ["a second engine", "createMigrationEngine(deps);", "migration-consent-raisers"],
+    [
+      "a prompt-less accept through the engine option",
+      "await ctx.options.migrationEngine.accept(id, async () => true);",
+      "migration-consent-raisers",
+    ],
+  ])("FAILS on %s from anywhere else", (_n, src, rule) => {
+    const v = checkMigrationConfinement([file("packages/gateway/src/ipc/automation-rpc.ts", src)]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe(rule);
+    expect(v[0]?.line).toBe(1);
+  });
+
+  test("the RPC path may raise the consent but never names the table or the grant entry point", () => {
+    expect(
+      checkMigrationConfinement([file(RPC, "await approveMigratedExtensionRun(d, id);")]),
+    ).toHaveLength(1);
+    expect(
+      checkMigrationConfinement([file(RPC, 'gate({ type: "extension.migrate", payload });')]),
+    ).toHaveLength(1);
+  });
+
+  test("does not match a comment, a look-alike identifier, a test file, or a non-gateway file", () => {
+    expect(
+      checkMigrationConfinement([
+        file(
+          "packages/gateway/src/x.ts",
+          '// approveMigratedExtensionRun "extension.migrate"\n/* FROM connector_migration */\nconst approveMigratedExtensionRuns = 1;\nconst t = "extension.migrated";',
+        ),
+        file("packages/gateway/src/y.test.ts", "approveMigratedExtensionRun(d, id);"),
+        file("scripts/z.ts", "migrationConsentViaGate(gate);"),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("D35 — config reads are confined to the layered reader", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+
+  test("flags a nimbus.toml literal outside the reader", () => {
+    const v = checkConfigReaderConfinement([
+      file("packages/gateway/src/ipc/x.ts", 'const p = join(d, "nimbus.toml");'),
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["config-reader-confined"]);
+  });
+
+  test("allows the reader", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file("packages/gateway/src/config/layered-config.ts", 'const p = join(d, "nimbus.toml");'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("flags a FromPath call in production", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file("packages/gateway/src/platform/assemble.ts", "const f = loadNimbusFleetFromPath(p);"),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("ignores the definition", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file(
+          "packages/gateway/src/config/fleet-toml.ts",
+          "export function loadNimbusFleetFromPath(p: string) { return p; }",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("ignores a FromPath definition outside config/", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file(
+          "packages/gateway/src/ipc/x.ts",
+          "export function loadXFromPath(p: string) { return p; }",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("ignores nimbus.openapi.toml", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file("packages/gateway/src/ipc/x.ts", 'join(d, "nimbus.openapi.toml");'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("ignores prose", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file(
+          "packages/gateway/src/agents/x.ts",
+          'const m = "Edit `[ci.service.<id>]` in `nimbus.toml`";\nconst k = n !== "nimbus.toml";',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("catches resolve() and resolveNimbusTomlForProfile", () => {
+    expect(
+      checkConfigReaderConfinement([
+        file("packages/gateway/src/ipc/x.ts", 'resolve(dir, "nimbus.toml");'),
+      ]),
+    ).toHaveLength(1);
+    expect(
+      checkConfigReaderConfinement([
+        file("packages/gateway/src/ipc/x.ts", "resolveNimbusTomlForProfile(a, b);"),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("is green on the repo", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkConfigReaderConfinement(files)).toEqual([]);
   });
 });

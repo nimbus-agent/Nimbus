@@ -4,6 +4,7 @@
  * pushed headline (the ChatOps sink, `oncall-push/push-sinks.ts`); `""` posts nothing.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { layeredConfigText } from "./layered-config.ts";
 import {
   isTableHeader,
   parseBool,
@@ -93,6 +94,16 @@ export function parseNimbusTomlOncallPush(source: string): NimbusOncallPushToml 
 }
 
 export function loadNimbusOncallPushFromPath(tomlPath: string): NimbusOncallPushToml {
-  if (!existsSync(tomlPath)) return DEFAULT_ONCALL_PUSH_CONFIG;
-  return parseNimbusTomlOncallPush(readFileSync(tomlPath, "utf8"));
+  return loadNimbusOncallPushFromText(existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : null);
+}
+
+/** `[oncall.push]` over the layered snapshot (packs, base, active profile). */
+export function loadNimbusOncallPushFromConfigDir(configDir: string): NimbusOncallPushToml {
+  return loadNimbusOncallPushFromText(layeredConfigText(configDir));
+}
+
+/** The one `[oncall.push]` core. `raw === null` means no file. */
+function loadNimbusOncallPushFromText(raw: string | null): NimbusOncallPushToml {
+  if (raw === null) return DEFAULT_ONCALL_PUSH_CONFIG;
+  return parseNimbusTomlOncallPush(raw);
 }

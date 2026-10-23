@@ -1,7 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import {
+  fallbackMessage,
+  layeredConfigText,
+  layerReadError,
+  sectionFallbackSink,
+} from "./layered-config.ts";
 import { parseBool, parseString, stripComment } from "./toml-primitives.ts";
 
 export type NimbusFilesystemRootToml = {
@@ -130,14 +135,21 @@ export function parseNimbusTomlFilesystemRoots(source: string): NimbusFilesystem
 export function loadNimbusFilesystemRootsFromConfigDir(
   configDir: string,
 ): NimbusFilesystemRootToml[] {
-  const path = join(configDir, "nimbus.toml");
-  if (!existsSync(path)) {
+  // Roots replace whole per layer, so an unreadable profile file would otherwise index the BASE
+  // file's roots in its place. Index nothing until every layer is readable.
+  const readError = layerReadError(configDir);
+  if (readError !== undefined) {
+    sectionFallbackSink(configDir, "filesystem.roots")(readError);
+    return [];
+  }
+  const raw = layeredConfigText(configDir);
+  if (raw === null) {
     return [];
   }
   try {
-    const raw = readFileSync(path, "utf8");
     return parseNimbusTomlFilesystemRoots(raw);
-  } catch {
+  } catch (err) {
+    sectionFallbackSink(configDir, "filesystem.roots")(fallbackMessage(err));
     return [];
   }
 }

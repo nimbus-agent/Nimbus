@@ -1,13 +1,23 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { forgetLayeredConfigForTests, initLayeredConfig } from "../config/layered-config.ts";
 import { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
 import type { AskExplainRecord } from "../engine/ask-explain-types.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { openMigratedDb } from "../index/migrated-db-template.ts";
+import { createPackLayerStore } from "../packs/pack-layer-store.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
 import { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
@@ -86,6 +96,22 @@ function makeCtxWithIndex(dataDir: string): {
     localIndex,
   };
   return { ctx, db, localIndex };
+}
+
+/**
+ * Every string value in `v`, recursively (keys too). A `JSON.stringify(x)` containment check is
+ * vacuous on Windows: it escapes every backslash, so a Windows path can never match.
+ */
+function collectStrings(v: unknown, out: string[] = []): string[] {
+  if (typeof v === "string") out.push(v);
+  else if (Array.isArray(v)) for (const x of v) collectStrings(x, out);
+  else if (v !== null && typeof v === "object") {
+    for (const [k, x] of Object.entries(v)) {
+      out.push(k);
+      collectStrings(x, out);
+    }
+  }
+  return out;
 }
 
 function rmTmp(dir: string): void {
@@ -2014,4 +2040,229 @@ describe("ask.explainLast", () => {
     const r = await dispatchDiagnosticsRpc("ask.explainLast", null, withoutRecorder as typeof ctx);
     expect(r).toEqual({ kind: "hit", value: { record: null, reason: "no_ask_since_start" } });
   });
+});
+
+describe("layered config over IPC", () => {
+  test("diag.snapshot configLayers carries a layer's readError", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
+      mkdirSync(join(dir, "nimbus.work.toml"));
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        const layers = (
+          r as { value: { configLayers: { layers: { path: string; readError?: string }[] } } }
+        ).value.configLayers.layers;
+        expect(layers[1]?.path).toBe("nimbus.work.toml");
+        expect(layers[1]?.readError).toEqual(expect.any(String));
+      } finally {
+        db.close();
+      }
+    }));
+
+  function withProfileDir(
+    files: Record<string, string>,
+    profile: string,
+    body: (dir: string) => void | Promise<void>,
+  ): Promise<void> {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-layered-"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    initLayeredConfig(dir, { explicitProfile: profile });
+    return Promise.resolve(body(dir)).finally(() => {
+      forgetLayeredConfigForTests(dir);
+      rmTmp(dir);
+    });
+  }
+
+  test("config.explain returns the profile layer", () =>
+    withProfileDir(
+      {
+        "nimbus.toml": "[decisions]\nmin_confidence = 0.3\n",
+        "nimbus.work.toml": "[decisions]\nmin_confidence = 0.6\n",
+      },
+      "work",
+      async (dir) => {
+        const r = await dispatchDiagnosticsRpc(
+          "config.explain",
+          { path: "decisions.min_confidence" },
+          makeCtx(dir),
+        );
+        const v = (r as { value: { entries: { value: string }[]; runningProfile: string } }).value;
+        expect(v.entries[0]?.value).toBe("0.6");
+        expect(v.runningProfile).toBe("work");
+      },
+    ));
+
+  test("config.explain rejects a non-string path", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "default", (dir) => {
+      expect(() => dispatchDiagnosticsRpc("config.explain", { path: 7 }, makeCtx(dir))).toThrow(
+        expect.objectContaining({ rpcCode: -32602 }),
+      );
+    }));
+
+  type Validation = { ok: boolean; errors: string[]; warnings: string[] };
+  async function validate(dir: string): Promise<Validation> {
+    const r = await dispatchDiagnosticsRpc("config.validate", null, makeCtx(dir));
+    return (r as { value: Validation }).value;
+  }
+
+  test("config.validate: an overlay-only profile file inherits schema_version (no warning)", () =>
+    withProfileDir(
+      { "nimbus.toml": "schema_version = 1\n", "nimbus.work.toml": "[llm]\nprefer_local = true\n" },
+      "work",
+      async (dir) => {
+        const v = await validate(dir);
+        expect(v.ok).toBe(true);
+        expect(v.warnings).toEqual([]);
+      },
+    ));
+
+  test("config.validate warns once, naming nimbus.toml, when the effective root lacks schema_version", () =>
+    withProfileDir(
+      { "nimbus.toml": "[llm]\nprefer_local = true\n", "nimbus.work.toml": "[decisions]\n" },
+      "work",
+      async (dir) => {
+        const v = await validate(dir);
+        expect(v.ok).toBe(true);
+        expect(v.warnings).toHaveLength(1);
+        expect(v.warnings[0]).toContain("nimbus.toml");
+        expect(v.warnings[0]).not.toContain("nimbus.work.toml");
+      },
+    ));
+
+  test("config.validate: schema_version under a section header is not a root key", () =>
+    withProfileDir({ "nimbus.toml": "[llm]\nschema_version = 1\n" }, "default", async (dir) => {
+      expect((await validate(dir)).warnings).toHaveLength(1);
+    }));
+
+  test("config.validate reports an unreadable layer as an ERROR naming the file", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
+      mkdirSync(join(dir, "nimbus.work.toml"));
+      const v = await validate(dir);
+      expect(v.ok).toBe(false);
+      expect(v.errors).toHaveLength(1);
+      expect(v.errors[0]).toContain(join(dir, "nimbus.work.toml"));
+    }));
+
+  test("config.validate is clean for an active profile with no file", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
+      const r = await dispatchDiagnosticsRpc("config.validate", null, makeCtx(dir));
+      const v = (r as { value: { ok: boolean; warnings: string[] } }).value;
+      expect(v.ok).toBe(true);
+      expect(v.warnings).toEqual([]);
+    }));
+
+  test("diag.snapshot reports active and skipped packs without any path", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-packs-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), "schema_version = 1\n");
+      const store = createPackLayerStore({ configDir: dir });
+      store.setPackLayer("default", "pm", "[decisions]\nmin_confidence = 0.5\n");
+      store.setPackLayer("default", "bad", "[fleet]\nretention_days = 9\n");
+      writeFileSync(
+        join(dir, "packs", "default", "bad.toml"),
+        "[fleet]\nretention_days = 9\n[llm]\nprefer_local = false\n",
+      );
+      initLayeredConfig(dir, { packs: store });
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        const c = (
+          r as {
+            value: {
+              configLayers: {
+                activePacks: string[];
+                skippedPacks: { packId: string; reason: string }[];
+                packListError?: string;
+              };
+            };
+          }
+        ).value.configLayers;
+        expect(c.activePacks).toEqual(["pm"]);
+        const skipped = c.skippedPacks;
+        expect(skipped).toHaveLength(1);
+        expect(skipped[0]?.packId).toBe("bad");
+        expect(c.packListError).toBeUndefined();
+        for (const v of collectStrings(c)) expect(v).not.toContain(dir);
+        writeFileSync(join(dir, "packs", "default", "active.json"), "{not json");
+        const r2 = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        const c2 = (
+          r2 as {
+            value: {
+              configLayers: {
+                activePacks: string[];
+                skippedPacks: { packId: string; reason: string }[];
+                packListError?: string;
+              };
+            };
+          }
+        ).value.configLayers;
+        expect(typeof c2.packListError).toBe("string");
+        for (const v of collectStrings(c2)) expect(v).not.toContain(dir);
+        // A hand-edited entry naming an absolute path (a username) or carrying control
+        // characters is reported by position only.
+        const pathEntry = join(dir, "Users", "alice", "Downloads", "pm.toml");
+        const ctrlEntry = "pm\u001b]0;x\u0007";
+        writeFileSync(
+          join(dir, "packs", "default", "active.json"),
+          JSON.stringify({ version: 1, packs: [pathEntry, "pm", ctrlEntry] }),
+        );
+        const r3 = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        const c3 = (
+          r3 as {
+            value: { configLayers: { activePacks: string[]; skippedPacks: unknown[] } };
+          }
+        ).value.configLayers;
+        expect(c3.activePacks).toEqual(["pm"]);
+        expect(c3.skippedPacks).toEqual([
+          { packId: "#0", reason: "invalid pack id" },
+          { packId: "#2", reason: "invalid pack id" },
+        ]);
+        for (const v of collectStrings(c3)) {
+          expect(v).not.toContain(dir);
+          expect(v).not.toContain("alice");
+          expect(v).not.toContain(ctrlEntry);
+          expect([...v].every((ch) => ch >= " " && ch !== "\u007f")).toBe(true);
+        }
+      } finally {
+        db.close();
+      }
+    } finally {
+      forgetLayeredConfigForTests(dir);
+      rmTmp(dir);
+    }
+  });
+
+  test("diag.snapshot carries configLayers", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const r = await dispatchDiagnosticsRpc("diag.snapshot", null, ctx);
+        const c = (
+          r as {
+            value: {
+              configLayers: {
+                runningProfile: string;
+                runningProfileSource: string;
+                markerProfile: string;
+                layers: { kind: string; path: string; exists: boolean; readError?: string }[];
+                activePacks: string[];
+              };
+            };
+          }
+        ).value.configLayers;
+        expect(c.runningProfile).toBe("work");
+        expect(c.runningProfileSource).toBe("argument");
+        expect(c.markerProfile).toBe("default");
+        // diag.snapshot is LAN-callable and renderer-exposed: basenames only, never a home path.
+        expect(c.layers.map((l) => l.path)).toEqual(["nimbus.toml", "nimbus.work.toml"]);
+        expect(c.layers.every((l) => l.readError === undefined)).toBe(true);
+        expect(c.layers.map((l) => [l.kind, l.exists])).toEqual([
+          ["base", true],
+          ["profile", false],
+        ]);
+        expect(c.activePacks).toEqual([]);
+      } finally {
+        db.close();
+      }
+    }));
 });

@@ -78,6 +78,7 @@ export function silentSyncContextExtras(): Pick<
   | "pruneBlameForFile"
   | "upsertItem"
   | "resolvePerson"
+  | "writeBatch"
 > {
   return {
     // UNBOUND by default: these throw a named error if a test reaches one without having said

@@ -156,12 +156,6 @@
       "TS2739": 1,
       "TS2741": 1
     },
-    "packages/gateway/test/integration/connectors/readwise-sync-fake-server.test.ts": {
-      "TS2314": 1,
-      "TS2552": 1,
-      "TS2739": 1,
-      "TS2741": 1
-    },
     "packages/gateway/test/integration/connectors/salesforce-sync-fake-server.test.ts": {
       "TS2739": 1,
       "TS2741": 1
