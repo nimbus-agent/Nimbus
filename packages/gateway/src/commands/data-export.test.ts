@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { memVault, newIndex } from "../../test/fixtures/data-test-helpers.ts";
@@ -233,6 +233,32 @@ describe("data export", () => {
 });
 
 describe("data export staging directory", () => {
+  // These tests count `nimbus-export-stage-*` directories, so they get a temp directory of their
+  // own: in the shared OS one, an export running concurrently elsewhere in CI (another package's
+  // suite) leaves a staging directory that looks like a leak from this one.
+  const TEMP_VARS = ["TMPDIR", "TEMP", "TMP"] as const;
+  let saved: Record<(typeof TEMP_VARS)[number], string | undefined>;
+  let privateTmp: string;
+
+  beforeEach(() => {
+    privateTmp = mkdtempSync(join(tmpdir(), "nimbus-export-isolated-"));
+    saved = { TMPDIR: process.env["TMPDIR"], TEMP: process.env["TEMP"], TMP: process.env["TMP"] };
+    for (const name of TEMP_VARS) process.env[name] = privateTmp;
+  });
+
+  afterEach(() => {
+    for (const name of TEMP_VARS) {
+      const value = saved[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    rmSync(privateTmp, { recursive: true, force: true });
+  });
+
+  test("runs against its own temp directory", () => {
+    expect(tmpdir()).toBe(privateTmp);
+  });
+
   const stageDirs = (): string[] =>
     readdirSync(tmpdir()).filter((n) => n.startsWith("nimbus-export-stage-"));
 
