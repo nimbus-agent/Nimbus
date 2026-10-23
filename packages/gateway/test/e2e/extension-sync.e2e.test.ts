@@ -22,6 +22,13 @@
 // own `ext_` id.
 //
 // Embeddings are skipped (NIMBUS_SKIP_EMBEDDING_RUNTIME=1); search runs keyword-only.
+//
+// ONE ORDERED LIFECYCLE, deliberately not split into independent files: install + approve (in
+// beforeAll) -> sync without a credential -> set the credential and sync -> restart -> remove. The
+// steps share one OS vault key (the credential set in step 3 is what the post-restart sync spawns
+// with) and one extension id, and the restart step exists to prove persisted state survives a
+// gateway restart. Each step asserts its own delta (rows/items before vs after); only the restart
+// and removal steps assert on accumulated state, and say so where they do.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -39,6 +46,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { createSandboxRunner } from "../../src/platform/sandbox/sandbox-runner.ts";
+import { rmDirWithRetry } from "../helpers/rm-dir-with-retry.ts";
 
 // --- TestIpcClient + until: the same shape as extension-runtime.e2e.test.ts ---
 
@@ -415,33 +423,33 @@ describe.skipIf(!sandboxAvailable)("an approved extension syncs into the index",
     restoreHelper = installDefaultHelper();
     for (const d of [paths.configDir, paths.dataDir]) mkdirSync(d, { recursive: true });
     await bootGateway();
+    // Setup, not a test: a failure here names the install/approve, not a later step.
+    await client.call("extension.install", { sourcePath: pkg });
+    const approved = await client.call<{ serviceId: string }>("extension.approveRun", {
+      id: EXTENSION_ID,
+    });
+    expect(approved.serviceId).toBe(SERVICE_ID);
   }, 180_000);
 
   afterAll(async () => {
     await stopGateway();
     restoreHelper();
-    try {
-      rmSync(tmp, { recursive: true, force: true });
-    } catch {
-      /* Windows handle race; harmless */
-    }
+    // Bun's rmSync ignores maxRetries, so a bare try/catch leaked the dir on a Windows handle race.
+    rmDirWithRetry(tmp);
   });
 
-  test("install and approve register the extension's sync under its index id", async () => {
-    await client.call("extension.install", { sourcePath: pkg });
-    const out = await client.call<{ serviceId: string }>("extension.approveRun", {
-      id: EXTENSION_ID,
-    });
-    expect(out.serviceId).toBe(SERVICE_ID);
-  }, 60_000);
-
-  test("with no credential set, a forced sync spawns nothing, writes nothing and appends no row", async () => {
+  test("with no credential set, a forced sync indexes nothing and appends no sync.run row", async () => {
+    // Observable outcomes only (no items, no egress row), never "a child was spawned": an
+    // approved extension with a blank credential may be spawned and find nothing, or be skipped
+    // as unconfigured; both leave the same index and ledger.
+    const rowsBefore = (await syncRows()).length;
     await forceSync();
     expect(await itemTitles()).toEqual([]);
-    expect(await syncRows()).toHaveLength(0);
+    expect((await syncRows()).length - rowsBefore).toBe(0);
   }, 60_000);
 
   test("with the credential set, one sync writes both pages under ONE sync.run row", async () => {
+    const rowsBefore = (await syncRows()).length;
     await client.call("extension.credentialSet", { id: EXTENSION_ID, name: "token", value: TOKEN });
     await forceSync();
     // The marker can only be this value's digest if the token reached the CONFINED child's env.
@@ -449,27 +457,39 @@ describe.skipIf(!sandboxAvailable)("an approved extension syncs into the index",
       `e2e-sync-page-1-${TOKEN_MARKER}`,
       `e2e-sync-page-2-${TOKEN_MARKER}`,
     ]);
-    expect(await syncRows()).toHaveLength(1);
+    expect((await syncRows()).length - rowsBefore).toBe(1);
     expect(gatewayLog).not.toContain(TOKEN);
   }, 120_000);
 
   test("after a restart the boot pass registers it again (behind the integrity gate)", async () => {
+    // The restart's claim is about ACCUMULATED state: what the previous gateway indexed and
+    // ledgered must still be there, so these two are compared across the restart, not per step.
+    const titlesBefore = await itemTitles();
+    const rowsBefore = (await syncRows()).length;
+    expect(titlesBefore).toHaveLength(2);
+    expect(rowsBefore).toBeGreaterThan(0);
+
     await stopGateway();
     await bootGateway();
+    expect(await itemTitles()).toEqual(titlesBefore);
+    expect(await syncRows()).toHaveLength(rowsBefore);
+
     // An unregistered id rejects `connector.sync` with "Unknown service"; this resolves only if
-    // the boot pass registered it.
+    // the boot pass registered it. The sync itself is a per-step delta: exactly one new row.
     await forceSync();
-    expect(await syncRows()).toHaveLength(2);
-    expect(await itemTitles()).toHaveLength(2);
+    expect((await syncRows()).length - rowsBefore).toBe(1);
+    expect(await itemTitles()).toEqual(titlesBefore);
   }, 120_000);
 
   test("connector remove refuses the extension-backed id; extension remove purges it", async () => {
+    const titlesBefore = await itemTitles();
+    expect(titlesBefore.length).toBeGreaterThan(0);
     const refusal = await client.call("connector.remove", { serviceId: SERVICE_ID }).then(
       () => "resolved",
       (e: unknown) => (e instanceof Error ? e.message : String(e)),
     );
     expect(refusal).toContain("ERR_CONNECTOR_IS_EXTENSION");
-    expect(await itemTitles()).toHaveLength(2);
+    expect(await itemTitles()).toEqual(titlesBefore);
 
     await client.call("extension.remove", { id: EXTENSION_ID });
     expect(await itemTitles()).toEqual([]);
