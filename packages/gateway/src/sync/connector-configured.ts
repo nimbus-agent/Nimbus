@@ -9,7 +9,10 @@ import {
   credentialsConfigured,
   type ResolvedRunCredentials,
 } from "../extensions/extension-credentials.ts";
+import { ENTRY_RE } from "../teamvault/team-vault-keys.ts";
+import { createTeamVaultView } from "../teamvault/team-vault-view.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import type { SyncContext } from "./types.ts";
 
 /**
  * `onedrive`/`outlook` both read this single fixed key (`getValidMicrosoftAccessToken` →
@@ -68,6 +71,31 @@ async function isTeamsConfigured(vault: NimbusVault): Promise<boolean> {
     (await hasMicrosoftOAuthVaultKey(vault)) ||
     hasAnyNonBlankKey(vault, CONNECTOR_VAULT_SECRET_KEYS.teams)
   );
+}
+
+/**
+ * A service pinned to `[connectors.<id>] credential = "team"` (the warehouse/BI syncables) drains
+ * through the I19 team gate, which reads the pinned entry's keys through `createTeamVaultView` —
+ * never the bare `<id>.*` keys. Configured = the pin names a valid entry AND that entry holds at
+ * least one non-blank key of the service's manifest list (the gate itself enforces the full
+ * required set at run time). A pin with no entry, an invalid entry name, or an empty entry is not
+ * configured; nothing here throws, so no entry or key name reaches an error.
+ */
+async function isTeamEntryConfigured(
+  vault: NimbusVault,
+  serviceId: string,
+  entry: string | undefined,
+): Promise<boolean> {
+  if (entry === undefined || !ENTRY_RE.test(entry)) {
+    return false;
+  }
+  const keys = Object.hasOwn(CONNECTOR_VAULT_SECRET_KEYS, serviceId)
+    ? (CONNECTOR_VAULT_SECRET_KEYS as Record<string, readonly string[]>)[serviceId]
+    : undefined;
+  if (keys === undefined || keys.length === 0) {
+    return false;
+  }
+  return hasAnyNonBlankKey(createTeamVaultView(vault, entry), keys);
 }
 
 /** `google_drive`/`gmail`/`google_photos`/`google_meet` each resolve via the same OAuth lookup their `sync()` uses. */
@@ -188,10 +216,21 @@ export async function isConnectorConfigured(
    * unbound `ext_` id they stop the empty-manifest-list branch from answering `true` vacuously.
    */
   extensionCredentials?: (serviceId: string) => ResolvedRunCredentials | undefined,
+  /**
+   * The `[connectors.<id>]` credential pin (`SyncContext.credentialFor`, the same resolver the
+   * warehouse syncables read). For a service pinned to `credential = "team"` the pinned team entry's
+   * keys decide (`isTeamEntryConfigured`), since that run never reads the bare `<id>.*` keys. Every
+   * other service, and every caller that omits this, keeps the checks below.
+   */
+  credentialFor?: SyncContext["credentialFor"],
 ): Promise<boolean> {
   const extensionCreds = extensionCredentials?.(serviceId);
   if (extensionCreds !== undefined) {
     return credentialsConfigured(vault, extensionCreds);
+  }
+  const pin = credentialFor?.(serviceId);
+  if (pin?.credential === "team") {
+    return isTeamEntryConfigured(vault, serviceId, pin.teamEntry);
   }
   const derivedCheck = Object.hasOwn(DERIVED_CONFIGURED_CHECKS, serviceId)
     ? DERIVED_CONFIGURED_CHECKS[serviceId]

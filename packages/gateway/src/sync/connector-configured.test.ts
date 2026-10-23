@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
+import { teamVaultKey } from "../teamvault/team-vault-keys.ts";
 import { createMockVault } from "../vault/mock.ts";
 import { isConnectorConfigured } from "./connector-configured.ts";
 
@@ -256,5 +257,61 @@ describe("isConnectorConfigured", () => {
       }
     }
     expect(stillBypassing).toEqual([]);
+  });
+});
+
+// A warehouse/BI connector pinned to `[connectors.<id>] credential = "team"` syncs through the I19
+// team gate on the team entry's keys (`teamvault.<entry>.<key>`), never the bare `<id>.*` keys. Judged
+// on the bare keys alone, a team-credentialed Snowflake read as unconfigured: its run reached the
+// warehouse with no `sync.run` egress row and a `not_configured` flag, and a scheduler that skips
+// unconfigured runs would never sync it at all.
+describe("isConnectorConfigured — a team-pinned warehouse connector", () => {
+  const teamPin = (entry?: string) => (serviceId: string) =>
+    serviceId === "snowflake"
+      ? { credential: "team" as const, ...(entry === undefined ? {} : { teamEntry: entry }) }
+      : { credential: "personal" as const };
+
+  test("is configured when its pinned team entry holds one of its keys", async () => {
+    const vault = fakeVault({ [teamVaultKey("acme", "snowflake.account")]: "acct" });
+    expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin("acme"))).toBe(true);
+  });
+
+  test("is NOT configured when the pinned team entry is empty or missing", async () => {
+    // A key under ANOTHER entry, and the bare personal key, do not count for a team pin.
+    const vault = fakeVault({
+      [teamVaultKey("other", "snowflake.account")]: "acct",
+      "snowflake.account": "personal-acct",
+    });
+    expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin("acme"))).toBe(false);
+  });
+
+  test("is NOT configured when the team pin names no entry", async () => {
+    const vault = fakeVault({ [teamVaultKey("acme", "snowflake.account")]: "acct" });
+    expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin())).toBe(false);
+  });
+
+  test("a blank team-entry key is treated as absent", async () => {
+    const vault = fakeVault({ [teamVaultKey("acme", "snowflake.account")]: "  " });
+    expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin("acme"))).toBe(false);
+  });
+
+  test("a personal warehouse keeps the manifest-key check", async () => {
+    const personal = () => ({ credential: "personal" as const });
+    expect(
+      await isConnectorConfigured(
+        fakeVault({ "snowflake.account": "acct" }),
+        "snowflake",
+        undefined,
+        personal,
+      ),
+    ).toBe(true);
+    expect(
+      await isConnectorConfigured(
+        fakeVault({ [teamVaultKey("acme", "snowflake.account")]: "acct" }),
+        "snowflake",
+        undefined,
+        personal,
+      ),
+    ).toBe(false);
   });
 });
