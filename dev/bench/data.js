@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792726979444,
+  "lastUpdate": 1792728639033,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8d663237a4ff3615e12cd6c8f106aa3c51b4f34e",
-          "message": "fix(deps): bump the brace-expansion override to 5.0.9 (GHSA-rgw5-rvv9-x895) (#1035)\n\n## What\n\n`bun audit --audit-level high` fails on `main` and on every open PR:\n\n```\nhigh: brace-expansion: DoS via unbounded intermediate arrays, bypassing the\nCVE-2026-14257 mitigation - https://github.com/advisories/GHSA-rgw5-rvv9-x895\n1 vulnerabilities (1 high)\n```\n\n`brace-expansion` was **already pinned** in `overrides` at `5.0.8`. The\nadvisory has four vulnerable ranges, and the relevant one is the fourth:\n\n| Vulnerable range | Patched |\n| --- | --- |\n| `< 1.1.18` | 1.1.18 |\n| `>= 2.0.0, < 2.1.4` | 2.1.4 |\n| `>= 3.0.0, < 3.0.6` | 3.0.6 |\n| **`>= 4.0.0, < 5.0.9`** | **5.0.9** |\n\nSo the existing pin sat one patch below the fix. One-line bump: `5.0.8`\n→ `5.0.9`.\n\n## Verification\n\n- `bun audit --audit-level high` (the exact CI invocation,\n`security.yml:67`) → **exit 0**\n- Lockfile resolves to a single `brace-expansion@5.0.9`\n- `bun run audit:override-drift` → OK\n- `bun run typecheck` → exit 0\n\nOne **low** advisory remains (`@ai-sdk/provider-utils`,\nGHSA-866g-f22w-33x8). It is pre-existing and below CI's `--audit-level\nhigh` threshold, so it is deliberately not addressed here.\n\n## Why this is its own PR\n\nIt blocks every branch, so it should land first and independently rather\nthan riding along in an unrelated change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-03T18:19:26Z",
-          "tree_id": "965c64c46a144d1cca057fa1db0a99d29a0d31df",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8d663237a4ff3615e12cd6c8f106aa3c51b4f34e"
-        },
-        "date": 1785782246300,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 359.4945590000014,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 321.0327577499993,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 231.65291555000002,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7b4a56c99c99cb07e6fa5eec87ae9b40134a928a",
+          "message": "chore(deps): drop the withdrawn sprintf-js advisory row (#1721)\n\nGitHub withdrew advisory GHSA-hp3w-g68c-fv3c (sprintf-js) on 2026-10-22\nat 19:21 UTC. `bun audit` no longer reports it, so `audit:advisories`\nnow fails on its accepted-advisory row as stale. That reds the required\n**Dependency audit** check on every PR and on `main`. This deletes the\nrow, as the gate asks.\n\n- `bun run audit:advisories`: OK (4 live advisories, 4 accepted rows).\n- `bun test scripts/structure-audit`: 1187 pass, 0 fail.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Security**\n* Updated the recorded status of a security advisory: it is no longer\nlisted among accepted advisories. This change reflects an update to\nadvisory tracking and does not, by itself, confirm that the underlying\nissue has been fixed or that affected software versions have changed.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T06:58:58+03:00",
+          "tree_id": "c2934488548ac1268b1fd206d02ecff57f467684",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7b4a56c99c99cb07e6fa5eec87ae9b40134a928a"
+        },
+        "date": 1792728635015,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 223.555136149998,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 221.34761270000163,
             "unit": "ms"
           }
         ]
