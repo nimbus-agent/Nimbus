@@ -9,7 +9,12 @@ import { recordSyncEgress } from "../egress/sync-egress.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
-import { SyncScheduler } from "./scheduler.ts";
+import {
+  pauseIfPreflightRefuses,
+  preflightRefusal,
+  resumeOrPauseForConfinement,
+  SyncScheduler,
+} from "./scheduler.ts";
 import { loadSchedulerState } from "./scheduler-store.ts";
 import { unboundSyncCapabilities } from "./sync-capabilities.ts";
 import type { SyncRuntimeContext } from "./types.ts";
@@ -1465,5 +1470,65 @@ describe("sync_telemetry.items_dropped", () => {
       expect(rows.length).toBeGreaterThan(0);
       expect(new Set(rows.map((r) => r.items_dropped))).toEqual(new Set([0]));
     }
+  });
+});
+
+describe("pauseIfPreflightRefuses / resumeOrPauseForConfinement", () => {
+  function fakeScheduler(syncable: { preflight?: () => string | null } | undefined): {
+    calls: string[];
+    s: {
+      syncableFor(id: string): { preflight?: () => string | null } | undefined;
+      pause(id: string, reason?: string): void;
+      resume(id: string): void;
+    };
+  } {
+    const calls: string[] = [];
+    return {
+      calls,
+      s: {
+        syncableFor: () => syncable,
+        pause: (id, reason) => calls.push(`pause ${id}: ${reason ?? "(none)"}`),
+        resume: (id) => calls.push(`resume ${id}`),
+      },
+    };
+  }
+
+  test("nothing registered under the id is no refusal: resume, and no pause", () => {
+    const f = fakeScheduler(undefined);
+    expect(pauseIfPreflightRefuses(f.s, "svc")).toBe(false);
+    expect(f.calls).toEqual([]);
+    resumeOrPauseForConfinement(f.s, "svc");
+    expect(f.calls).toEqual(["resume svc"]);
+  });
+
+  test("a syncable without a preflight, or one that passes, resumes", () => {
+    for (const syncable of [{}, { preflight: () => null }]) {
+      const f = fakeScheduler(syncable);
+      resumeOrPauseForConfinement(f.s, "svc");
+      expect(f.calls).toEqual(["resume svc"]);
+    }
+  });
+
+  test("a refusal pauses with it verbatim and never resumes", () => {
+    const REASON = "sandbox cannot confine this extension: no helper";
+    const syncable = { preflight: () => REASON };
+    const f = fakeScheduler(syncable);
+    expect(pauseIfPreflightRefuses(f.s, "svc")).toBe(true);
+    expect(f.calls).toEqual([`pause svc: ${REASON}`]);
+    const g = fakeScheduler(syncable);
+    resumeOrPauseForConfinement(g.s, "svc");
+    expect(g.calls).toEqual([`pause svc: ${REASON}`]);
+    // The same text the scheduler's due run records.
+    expect(preflightRefusal(syncable)).toBe(REASON);
+  });
+
+  test("a throwing preflight pauses with `preflight failed: …` (fail closed)", () => {
+    const f = fakeScheduler({
+      preflight: () => {
+        throw new Error("grant vanished");
+      },
+    });
+    resumeOrPauseForConfinement(f.s, "svc");
+    expect(f.calls).toEqual(["pause svc: preflight failed: grant vanished"]);
   });
 });

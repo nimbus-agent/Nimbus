@@ -29,7 +29,7 @@ import { getConnectorHealth, transitionHealth } from "../../connectors/health.ts
 import { upsertIndexedItem } from "../../index/item-store.ts";
 import { createExtensionSyncRegistrar } from "../../platform/register-extension-sync.ts";
 import { ProviderRateLimiter } from "../../sync/rate-limiter.ts";
-import { SyncScheduler } from "../../sync/scheduler.ts";
+import { preflightRefusal, SyncScheduler } from "../../sync/scheduler.ts";
 import { loadSchedulerState, setPaused } from "../../sync/scheduler-store.ts";
 import { unboundSyncCapabilities } from "../../sync/sync-capabilities.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../../testing/bun-test-support.ts";
@@ -2024,6 +2024,54 @@ describe("Task 7.4: an extension that is already installed (replaces ruling B9)"
     expect(resumed).toEqual([]);
     expect(pausedCalls).toEqual([[LEGACY, REASON]]);
     expect(getConnectorHealth(db, LEGACY).lastError).toBe(REASON);
+  });
+
+  test("already-installed evaluate before the registrar registers: the later registration pauses an unconfinable sync", async () => {
+    await installedAndApproved();
+    const REASON = "the sandbox helper is not installed";
+    const sched = new SyncScheduler({
+      ...unboundSyncCapabilities(),
+      db,
+      vault,
+      logger: pino({ level: "silent" }),
+      rateLimiter: new ProviderRateLimiter(),
+      sandboxCwd: os.tmpdir(),
+      credentialFor: () => ({ credential: "personal" }),
+      runTeamList: async () => [],
+      depth: "full",
+      extensionCredentialsFor: createExtensionCredentialsResolver(db, [entry]),
+    });
+    extraCleanups.push(() => sched.stop());
+    const meshCalls: string[] = [];
+    const registrar = createExtensionSyncRegistrar({
+      db,
+      vault,
+      scheduler: sched,
+      mesh: {
+        callExtensionSyncTool: async (id) => {
+          meshCalls.push(id);
+          return { status: "ok", items: [], cursor: null, hasMore: false };
+        },
+      },
+      sandbox: { canConfine: () => REASON },
+      runtimeReadPaths: () => [join(tmp, "bun-bin")],
+      table: [entry],
+    });
+    // Nothing is registered yet, so evaluate's finish has no preflight to ask and resumes.
+    await engine({ extensionSync: registrar, scheduler: sched }).evaluate();
+    expect(onlyRow().state).toBe("approved");
+    expect(sched.syncableFor(LEGACY)).toBeUndefined();
+    expect(getConnectorHealth(db, LEGACY).state).not.toBe("paused");
+
+    registrar.refresh(EXT);
+    const syncable = sched.syncableFor(LEGACY);
+    if (syncable === undefined) throw new Error("premise: registered under the legacy id");
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(1);
+    const health = getConnectorHealth(db, LEGACY);
+    expect(health.state).toBe("paused");
+    expect(health.lastError).toContain(`sandbox cannot confine this extension: ${REASON}`);
+    expect(health.lastError).toBe(preflightRefusal(syncable) ?? "premise: the preflight refuses");
+    expect(meshCalls).toEqual([]);
   });
 
   test("M1: installed files changed on disk since approval -> stale, not approved", async () => {

@@ -35,7 +35,11 @@ import {
   listRunGrants,
 } from "../extensions/run-grant-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
-import type { SyncScheduler } from "../sync/scheduler.ts";
+import {
+  pauseIfPreflightRefuses,
+  resumeOrPauseForConfinement,
+  type SyncScheduler,
+} from "../sync/scheduler.ts";
 import type { Syncable } from "../sync/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import type { SandboxRunner } from "./sandbox/sandbox-runner.ts";
@@ -46,6 +50,10 @@ import type { SandboxRunner } from "./sandbox/sandbox-runner.ts";
  * declares a `sync` block, registered under its INDEX id (the legacy id when the continuity table binds
  * it, else its `ext_` id). Everything else is unregistered; items are never touched here — only
  * `extension remove` purges them ({@link purgeExtensionIndexData}).
+ *
+ * Registering asks the syncable's preflight before it returns, so a sandbox that cannot confine the
+ * extension pauses the service at approve / enable / rehash / update / boot — with the reason its
+ * first due run would record — rather than leaving it healthy until that run.
  */
 export interface ExtensionSyncRegistrar {
   /** Boot: registers every extension that may sync. A stale grant is skipped, not re-paused. */
@@ -78,7 +86,8 @@ export interface ExtensionSyncRegistrarDeps {
 
 /**
  * The owner's way back from a stale-grant pause; matched on resume, so it is one definition. The
- * migration engine ends its own stale-grant reason with it, so that re-approval resumes too. The CLI
+ * migration engine ends its own stale-grant reason with it, so that re-approval resumes too — unless
+ * the sandbox cannot confine the extension, when re-approval pauses it with that reason instead. The CLI
  * matches its "`nimbus extension approve " text (`namesApproveStep` in
  * packages/cli/src/commands/extension-doctor-format.ts); register-extension-sync.test.ts pins it.
  */
@@ -220,17 +229,17 @@ export function createExtensionSyncRegistrar(
     if (deps.scheduler.syncableFor(indexId) !== syncable) return;
     registered.set(identity.extensionId, { indexServiceId: indexId, syncable, live });
     // The stale-grant pause names re-approval as the way back, and the migration's disabled pause
-    // names enabling, so registering after either honours it. Any other pause (the owner's own, a
-    // sandbox preflight) is left for `connector resume`.
+    // names enabling, so registering after either lifts it — unless the sandbox cannot confine the
+    // extension, when it is paused with that reason instead. Any other pause (the owner's own, the
+    // migration's awaiting-approval one, an earlier preflight pause) is left for `connector resume`.
+    // A service that is not paused is paused if its preflight refuses, and is never resumed.
     const health = getConnectorHealth(deps.db, indexId);
     const reason = health.lastError ?? "";
-    if (
-      health.state === "paused" &&
-      (reason.endsWith(reapproveSuffix(identity.extensionId)) ||
-        reason.endsWith(enableSuffix(identity.extensionId)))
-    ) {
-      deps.scheduler.resume(indexId);
-    }
+    const liftable =
+      reason.endsWith(reapproveSuffix(identity.extensionId)) ||
+      reason.endsWith(enableSuffix(identity.extensionId));
+    if (health.state !== "paused") pauseIfPreflightRefuses(deps.scheduler, indexId);
+    else if (liftable) resumeOrPauseForConfinement(deps.scheduler, indexId);
   };
 
   const apply = (extensionId: string, pauseStale: boolean): void => {
