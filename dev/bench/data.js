@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792729297462,
+  "lastUpdate": 1792732259193,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6483726e5d57fcecb9bac3a41ea4f15514a27b5a",
-          "message": "chore: release main (#1036)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.19.1</summary>\n\n##\n[1.19.1](https://github.com/nimbus-agent/Nimbus/compare/v1.19.0...v1.19.1)\n(2026-08-03)\n\n\n### Bug Fixes\n\n* **deps:** bump the brace-expansion override to 5.0.9\n(GHSA-rgw5-rvv9-x895)\n([#1035](https://github.com/nimbus-agent/Nimbus/issues/1035))\n([8d66323](https://github.com/nimbus-agent/Nimbus/commit/8d663237a4ff3615e12cd6c8f106aa3c51b4f34e))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-03T22:11:32+03:00",
-          "tree_id": "08357520bf730270b6ada598e7f1c05461616312",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6483726e5d57fcecb9bac3a41ea4f15514a27b5a"
-        },
-        "date": 1785785472206,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.5233440499982,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.95512549999984,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 285.30902410000016,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a012fed7603ed913824fc61bc73bf6fdf00ce919",
+          "message": "fix(extensions): say on Windows that a run approval's host list is not enforced (#1716)\n\n## What changes\n\n`nimbus extension approve` (the `extension.run` prompt) listed an\nextension's network grant as bare hosts, for example `[\"readwise.io\"]`.\nOn macOS and Linux that is accurate: the sandbox limits the extension to\nthose hosts. On Windows it is not: the AppContainer network grant is\nall-or-nothing, so the prompt promised a confinement the sandbox does\nnot give. The Readwise migration prompt (`extension.migrate`) already\nsaid so; the plain run prompt did not. Follow-up parked in #1713.\n\nThe run consent payload now carries a `networkAccess` line beside the\nunchanged `network` list:\n\n- Windows: `network access (Windows cannot limit this to readwise.io)`\n- macOS / Linux: `network access to readwise.io`\n- no hosts: `no network access`\n\nThe sentence lives in one helper, `networkAccessLine`\n(`extensions/network-access-line.ts`), now used by both prompts, so they\ncannot word the same grant differently. The `network` array, the stored\ngrant and the grant comparison are unchanged, so no existing approval\ngoes stale. `extension.run` is answered only at a terminal, where the\nCLI prints the whole payload, so no renderer change is needed.\n`docs/cli-reference.md` describes the line under `nimbus extension\napprove`.\n\n## Verification\n\n- New `network-access-line.test.ts` (Windows, macOS, Linux, no hosts)\nand an `approve-run.test.ts` case for the payload on all three\nplatforms, including that the consent display does not redact the field.\n- `bun test src/extensions src/ipc src/platform\nsrc/connectors/extension-sync` (gateway): 4648 pass, 0 fail.\n- `bun run preflight:fast`: passed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Extension approval and migration prompts now explain how network\naccess is handled on each platform. macOS and Linux prompts identify the\nallowed hosts; Windows prompts clarify that access cannot be restricted\nto those hosts.\n  - Prompts show “no network access” when no hosts are allowed.\n- **Documentation**\n- Updated the CLI reference to describe the platform-specific network\naccess information shown in approval prompts.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T08:00:31+03:00",
+          "tree_id": "72f51cebc34b75aa8b79034d4ae154057daa80d5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a012fed7603ed913824fc61bc73bf6fdf00ce919"
+        },
+        "date": 1792732255462,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 287.6223327000036,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 290.9907236999974,
             "unit": "ms"
           }
         ]
