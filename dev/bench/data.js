@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792755927174,
+  "lastUpdate": 1792756677023,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "624d9a53160f1e8e7bcd49ca1265617dcf0b17dc",
-          "message": "chore: release main (#1056)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.21.0</summary>\n\n##\n[1.21.0](https://github.com/nimbus-agent/Nimbus/compare/v1.20.0...v1.21.0)\n(2026-08-05)\n\n\n### Features\n\n* **tooling:** close the gap between local gates and CI\n([#1050](https://github.com/nimbus-agent/Nimbus/issues/1050))\n([0efd781](https://github.com/nimbus-agent/Nimbus/commit/0efd781af366606b6dc0ddb8e08a97027db55d5a))\n\n\n### Bug Fixes\n\n* **gateway:** make connectors spawnable from a compiled binary\n([#1055](https://github.com/nimbus-agent/Nimbus/issues/1055))\n([b3a6f15](https://github.com/nimbus-agent/Nimbus/commit/b3a6f159e9f9c4b8b0ed44262067efec42dfaba4))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-06T06:33:06+03:00",
-          "tree_id": "1ce041ed439f9b1ec454cff589197943d78af0a0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/624d9a53160f1e8e7bcd49ca1265617dcf0b17dc"
-        },
-        "date": 1785987852100,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 304.83266255000274,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 303.17210294999967,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 281.7539528499994,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "469cae88e1c44fc4d2444cef2792ec6747458698",
+          "message": "chore: release main (#1743)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.2.0</summary>\n\n##\n[10.2.0](https://github.com/nimbus-agent/Nimbus/compare/v10.1.2...v10.2.0)\n(2026-10-23)\n\n\n### Features\n\n* **extensions:** extension approve says when the sync it registered\ncame up paused\n([#1742](https://github.com/nimbus-agent/Nimbus/issues/1742))\n([b9ee967](https://github.com/nimbus-agent/Nimbus/commit/b9ee967e34f5e92054dc430a91a620c73c2521c4))\n\n\n### Bug Fixes\n\n* **extensions:** registering an extension's sync pauses it when the\nsandbox cannot confine it\n([#1737](https://github.com/nimbus-agent/Nimbus/issues/1737))\n([196e675](https://github.com/nimbus-agent/Nimbus/commit/196e675827f679edb603c033f25cf1b9adee1288))\n* **health:** an unconfigured connector reads not_configured from its\nfirst run ([#1741](https://github.com/nimbus-agent/Nimbus/issues/1741))\n([0805c0f](https://github.com/nimbus-agent/Nimbus/commit/0805c0f7175fca192231e5ad6b0a23e77cc51675))\n* **index:** rebody forces a full run, and --since survives a run\nalready in flight\n([#1739](https://github.com/nimbus-agent/Nimbus/issues/1739))\n([4fb51b9](https://github.com/nimbus-agent/Nimbus/commit/4fb51b978c29008da68543fcec66e90c610062ea))\n* **sync:** skip an unconfigured connector's sync instead of probing the\nVault for it\n([#1735](https://github.com/nimbus-agent/Nimbus/issues/1735))\n([1aeb34e](https://github.com/nimbus-agent/Nimbus/commit/1aeb34e8ee3adc86c87e37fe2af9c22c0635af5f))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-23T11:38:57Z",
+          "tree_id": "c8274728e7774481203b43ad220b31135fc55472",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/469cae88e1c44fc4d2444cef2792ec6747458698"
+        },
+        "date": 1792756673068,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 197.22463864999824,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 196.0576339999996,
             "unit": "ms"
           }
         ]
