@@ -825,10 +825,11 @@ describe("assemblePlatformServices — in-process assembly", () => {
     // the explicit `forceSync` below and appending a SECOND row, which would make this assertion
     // flaky for a reason that has nothing to do with what it is testing.
     services.syncScheduler.pause("github_actions");
-    // Let the first catch-up wave finish before forcing. An unconfigured run is now skipped rather
-    // than started, so the wave is fast enough that `github_actions`' own catch-up run (pre-secret)
-    // can still be in flight here, and a force waiter is settled by whichever run of that service
-    // finishes next.
+    // Let the first catch-up wave finish before writing the secret. `pause()` stops future ticks,
+    // but a `github_actions` catch-up run already spliced out of the queue before it can still be
+    // awaiting `isConnectorConfigured`. If `writeConnectorSecret` lands during that await, the
+    // catch-up run sees the PAT too and appends its own `sync.run` row: a second row beside the
+    // forced run's. The wave is fast now that unconfigured runs are skipped, so that window is real.
     const waveDb = services.localIndex.getDatabase();
     const waveDeadline = Date.now() + 30_000;
     const othersPending = (): number =>

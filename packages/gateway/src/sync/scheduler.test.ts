@@ -1454,7 +1454,10 @@ describe("per-service capability binding", () => {
       defaultIntervalMs: 60_000,
       initialSyncDepthDays: 30,
       async sync(ctx): Promise<SyncResult> {
-        await ctx.getSecret?.("api_token" as never);
+        // `base_url`, not the first manifest key: the scheduler's configured-check reads keys in
+        // manifest order and stops at the first non-blank one (`jira.api_token`), so only a later
+        // key proves the read came from the syncable's bound `getSecret`.
+        await ctx.getSecret?.("base_url" as never);
         return { cursor: null, itemsUpserted: 0, itemsDeleted: 0, hasMore: false, durationMs: 0 };
       },
     };
@@ -1474,8 +1477,8 @@ describe("per-service capability binding", () => {
       return asked;
     }
 
-    expect(await keysAskedDuring("jira")).toContain("jira.api_token");
-    expect(await keysAskedDuring("linear")).toContain("linear.api_token");
+    expect(await keysAskedDuring("jira")).toContain("jira.base_url");
+    expect(await keysAskedDuring("linear")).toContain("linear.base_url");
 
     // The same key NAME, bound to a different service, resolves a different vault key. That is the
     // whole property: today `ctx.vault.get("jira.api_token")` works from inside linear's syncable.
