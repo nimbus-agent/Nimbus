@@ -1,6 +1,7 @@
 // packages/gateway/src/sync/connector-configured.ts
 
 import { resolveGoogleOAuthVaultKey } from "../auth/google-access-token.ts";
+import { TEAM_CREDENTIAL_SYNC_CONNECTORS } from "../config/nimbus-toml-connectors.ts";
 import { hasUsableAwsCredentials } from "../connectors/_lib/aws-cli.ts";
 import { loadGcpAuthFromVault } from "../connectors/_lib/gcp-auth.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
@@ -9,7 +10,10 @@ import {
   credentialsConfigured,
   type ResolvedRunCredentials,
 } from "../extensions/extension-credentials.ts";
+import { ENTRY_RE } from "../teamvault/team-vault-keys.ts";
+import { createTeamVaultView } from "../teamvault/team-vault-view.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
+import type { SyncContext } from "./types.ts";
 
 /**
  * `onedrive`/`outlook` both read this single fixed key (`getValidMicrosoftAccessToken` →
@@ -47,6 +51,59 @@ async function isGithubPatConfigured(vault: NimbusVault): Promise<boolean> {
   return pat !== null && pat.trim() !== "";
 }
 
+/** Whether any one of `keys` holds a non-blank value: the manifest rule, which `teams` reuses. */
+async function hasAnyNonBlankKey(vault: NimbusVault, keys: readonly string[]): Promise<boolean> {
+  for (const key of keys) {
+    const value = await vault.get(key);
+    if (value !== null && value.trim() !== "") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * `teams` syncs with `ctx.accessToken()` -> `getValidMicrosoftAccessToken` -> the shared
+ * `microsoft.oauth` key, which its manifest entry does not list (it names only the bot keys). So it
+ * is configured by that key, OR by any of its own manifest keys as before.
+ */
+async function isTeamsConfigured(vault: NimbusVault): Promise<boolean> {
+  return (
+    (await hasMicrosoftOAuthVaultKey(vault)) ||
+    hasAnyNonBlankKey(vault, CONNECTOR_VAULT_SECRET_KEYS.teams)
+  );
+}
+
+/** The ids whose sync reads a team credential when pinned to one; see `isTeamEntryConfigured`. */
+const TEAM_SYNC_IDS: ReadonlySet<string> = new Set(TEAM_CREDENTIAL_SYNC_CONNECTORS);
+
+/**
+ * A `TEAM_CREDENTIAL_SYNC_CONNECTORS` service (the six warehouse/BI syncables on
+ * `createWarehouseListSyncable`) pinned to `[connectors.<id>] credential = "team"` drains through
+ * the I19 team gate, which reads the pinned entry's keys through `createTeamVaultView` — never the
+ * bare `<id>.*` keys. Not used for argocd/flux/mlflow: their team pin covers writes only, and
+ * their sync reads the personal keys. Configured = the pin names a valid entry AND that entry
+ * holds at least one non-blank key of the service's manifest list (the gate itself enforces the
+ * full required set at run time). A pin with no entry, an invalid entry name, or an empty entry is not
+ * configured; nothing here throws, so no entry or key name reaches an error.
+ */
+async function isTeamEntryConfigured(
+  vault: NimbusVault,
+  serviceId: string,
+  entry: string | undefined,
+): Promise<boolean> {
+  if (entry === undefined || !ENTRY_RE.test(entry)) {
+    return false;
+  }
+  const keys = Object.hasOwn(CONNECTOR_VAULT_SECRET_KEYS, serviceId)
+    ? (CONNECTOR_VAULT_SECRET_KEYS as Record<string, readonly string[]>)[serviceId]
+    : undefined;
+  if (keys === undefined || keys.length === 0) {
+    return false;
+  }
+  return hasAnyNonBlankKey(createTeamVaultView(vault, entry), keys);
+}
+
 /** `google_drive`/`gmail`/`google_photos`/`google_meet` each resolve via the same OAuth lookup their `sync()` uses. */
 function googleOAuthConfigured(
   serviceId: "google_drive" | "gmail" | "google_photos" | "google_meet",
@@ -73,6 +130,13 @@ function googleOAuthConfigured(
  *  - `athena`/`cloudwatch`/`sagemaker`: `hasUsableAwsCredentials` — the exact usable-combination
  *    formula `_lib/aws-cli.ts`'s `awsCredentialsExtra` gates its spawn on.
  *
+ * Plus ONE service whose manifest list is NOT empty but names the wrong credential for its sync:
+ *
+ *  - `teams`: `isTeamsConfigured` — `microsoft.oauth` (what `teams-sync.ts` actually reads, through
+ *    `ctx.accessToken()` → `getValidMicrosoftAccessToken`) OR any of its manifest bot keys
+ *    (`teams.bot_app_id` / `teams.bot_app_password`, which its sync never reads). Without the OAuth
+ *    half, a Teams owner signed in through Microsoft read as unconfigured.
+ *
  * Executed failure this closes (I29 Critical, follow-up to the manifest-key gate below): every one
  * of these 13 has an EMPTY manifest key list, so before this map existed the function below fell
  * through to "no signal, no gate" and returned `true` unconditionally — `sync/scheduler.ts`'s
@@ -90,6 +154,7 @@ const DERIVED_CONFIGURED_CHECKS: Readonly<
   google_meet: googleOAuthConfigured("google_meet"),
   onedrive: hasMicrosoftOAuthVaultKey,
   outlook: hasMicrosoftOAuthVaultKey,
+  teams: isTeamsConfigured,
   github_actions: isGithubPatConfigured,
   bigquery: isGcpCredentialConfigured,
   cloud_logging: isGcpCredentialConfigured,
@@ -157,10 +222,23 @@ export async function isConnectorConfigured(
    * unbound `ext_` id they stop the empty-manifest-list branch from answering `true` vacuously.
    */
   extensionCredentials?: (serviceId: string) => ResolvedRunCredentials | undefined,
+  /**
+   * The `[connectors.<id>]` credential pin (`SyncContext.credentialFor`, the same resolver the
+   * warehouse syncables read). For a `TEAM_CREDENTIAL_SYNC_CONNECTORS` service pinned to
+   * `credential = "team"` the pinned team entry's keys decide (`isTeamEntryConfigured`), since that
+   * run never reads the bare `<id>.*` keys. Every other service (including a team-pinned
+   * argocd/flux/mlflow, whose sync reads personal keys), and every caller that omits this, keeps the
+   * checks below.
+   */
+  credentialFor?: SyncContext["credentialFor"],
 ): Promise<boolean> {
   const extensionCreds = extensionCredentials?.(serviceId);
   if (extensionCreds !== undefined) {
     return credentialsConfigured(vault, extensionCreds);
+  }
+  const pin = TEAM_SYNC_IDS.has(serviceId) ? credentialFor?.(serviceId) : undefined;
+  if (pin?.credential === "team") {
+    return isTeamEntryConfigured(vault, serviceId, pin.teamEntry);
   }
   const derivedCheck = Object.hasOwn(DERIVED_CONFIGURED_CHECKS, serviceId)
     ? DERIVED_CONFIGURED_CHECKS[serviceId]
@@ -174,11 +252,5 @@ export async function isConnectorConfigured(
   if (keys === undefined || keys.length === 0) {
     return true;
   }
-  for (const key of keys) {
-    const value = await vault.get(key);
-    if (value !== null && value.trim() !== "") {
-      return true;
-    }
-  }
-  return false;
+  return hasAnyNonBlankKey(vault, keys);
 }

@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
+import { teamVaultKey } from "../teamvault/team-vault-keys.ts";
 import { createMockVault } from "../vault/mock.ts";
 import { isConnectorConfigured } from "./connector-configured.ts";
 
@@ -88,6 +89,31 @@ describe("isConnectorConfigured", () => {
         );
       });
     }
+  });
+
+  // teams-sync.ts syncs with `ctx.accessToken()` -> `getValidMicrosoftAccessToken` (the shared
+  // `microsoft.oauth` key), which its manifest does not list: the manifest names only the bot keys.
+  // Checked against the manifest alone, a Teams owner signed in through Microsoft OAuth read as
+  // unconfigured, and a scheduler that skips unconfigured runs would never sync it.
+  describe("teams — microsoft.oauth (what its sync reads) or its own bot keys", () => {
+    test("teams is configured by microsoft.oauth alone", async () => {
+      expect(await isConnectorConfigured(fakeVault({ "microsoft.oauth": "t" }), "teams")).toBe(
+        true,
+      );
+    });
+    test("teams is configured by its bot keys", async () => {
+      expect(
+        await isConnectorConfigured(
+          fakeVault({ "teams.bot_app_id": "id", "teams.bot_app_password": "pw" }),
+          "teams",
+        ),
+      ).toBe(true);
+    });
+    test("teams with neither microsoft.oauth nor a bot key is NOT configured", async () => {
+      expect(await isConnectorConfigured(fakeVault({ "microsoft.oauth": "  " }), "teams")).toBe(
+        false,
+      );
+    });
   });
 
   describe("github_actions — the same github.pat key github-actions-sync.ts reads", () => {
@@ -231,5 +257,90 @@ describe("isConnectorConfigured", () => {
       }
     }
     expect(stillBypassing).toEqual([]);
+  });
+});
+
+// A warehouse/BI connector pinned to `[connectors.<id>] credential = "team"` syncs through the I19
+// team gate on the team entry's keys (`teamvault.<entry>.<key>`), never the bare `<id>.*` keys. Judged
+// on the bare keys alone, a team-credentialed Snowflake read as unconfigured: its run reached the
+// warehouse with no `sync.run` egress row and a `not_configured` flag, and a scheduler that skips
+// unconfigured runs would never sync it at all.
+describe("isConnectorConfigured — a team-pinned warehouse connector", () => {
+  const teamPin = (entry?: string) => (serviceId: string) =>
+    serviceId === "snowflake"
+      ? { credential: "team" as const, ...(entry === undefined ? {} : { teamEntry: entry }) }
+      : { credential: "personal" as const };
+
+  test("is configured when its pinned team entry holds one of its keys", async () => {
+    const vault = fakeVault({ [teamVaultKey("acme", "snowflake.account")]: "acct" });
+    expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin("acme"))).toBe(true);
+  });
+
+  test("is NOT configured when the pinned team entry is empty or missing", async () => {
+    // A key under ANOTHER entry, and the bare personal key, do not count for a team pin.
+    const vault = fakeVault({
+      [teamVaultKey("other", "snowflake.account")]: "acct",
+      "snowflake.account": "personal-acct",
+    });
+    expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin("acme"))).toBe(false);
+  });
+
+  test("is NOT configured when the team pin names no entry", async () => {
+    const vault = fakeVault({ [teamVaultKey("acme", "snowflake.account")]: "acct" });
+    expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin())).toBe(false);
+  });
+
+  test("an invalid entry name is not configured, and does not throw", async () => {
+    const vault = fakeVault({ "teamvault.Bad.Entry.snowflake.account": "acct" });
+    expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin("Bad.Entry"))).toBe(
+      false,
+    );
+  });
+
+  // argocd/flux/mlflow accept `credential = "team"` for their WRITES only: their sync reads the
+  // personal keys (`ctx.getSecret`), so a team pin must not change how their sync is judged.
+  describe("a team pin on a connector whose SYNC reads personal keys (argocd)", () => {
+    const argocdTeamPin = (serviceId: string) =>
+      serviceId === "argocd"
+        ? { credential: "team" as const, teamEntry: "acme" }
+        : { credential: "personal" as const };
+
+    test("personal keys set and an empty team entry: configured", async () => {
+      const vault = fakeVault({ "argocd.url": "https://argo.example.com", "argocd.token": "t" });
+      expect(await isConnectorConfigured(vault, "argocd", undefined, argocdTeamPin)).toBe(true);
+    });
+
+    test("only the team entry populated: NOT configured", async () => {
+      const vault = fakeVault({
+        [teamVaultKey("acme", "argocd.url")]: "https://argo.example.com",
+        [teamVaultKey("acme", "argocd.token")]: "t",
+      });
+      expect(await isConnectorConfigured(vault, "argocd", undefined, argocdTeamPin)).toBe(false);
+    });
+  });
+
+  test("a blank team-entry key is treated as absent", async () => {
+    const vault = fakeVault({ [teamVaultKey("acme", "snowflake.account")]: "  " });
+    expect(await isConnectorConfigured(vault, "snowflake", undefined, teamPin("acme"))).toBe(false);
+  });
+
+  test("a personal warehouse keeps the manifest-key check", async () => {
+    const personal = () => ({ credential: "personal" as const });
+    expect(
+      await isConnectorConfigured(
+        fakeVault({ "snowflake.account": "acct" }),
+        "snowflake",
+        undefined,
+        personal,
+      ),
+    ).toBe(true);
+    expect(
+      await isConnectorConfigured(
+        fakeVault({ [teamVaultKey("acme", "snowflake.account")]: "acct" }),
+        "snowflake",
+        undefined,
+        personal,
+      ),
+    ).toBe(false);
   });
 });

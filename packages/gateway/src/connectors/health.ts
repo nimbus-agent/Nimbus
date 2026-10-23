@@ -410,10 +410,9 @@ export function transitionHealth(
   // commonly a `sync_success` heartbeat) is recorded above like any other transition — history is
   // unaffected — but NOT announced. "A sync ran" is already carried by the separate
   // `sync.completed` gateway event, with item counts and duration; `connector.healthChanged` is
-  // for STATE CHANGES. With ~90 registered syncables, an unconfigured connector's every no-op
-  // sync still calls `transitionHealth(..., { type: "sync_success" })` (see
-  // `sync/scheduler.ts`'s `runJob` comment on `isConnectorConfigured` gating only the egress
-  // append, never the run), so without this a fresh install's `nimbus tail` would scroll a burst
+  // for STATE CHANGES. With ~90 registered syncables, an unconfigured connector's every run —
+  // skipped by `sync/scheduler.ts`'s `runJob` without calling `sync()`, but recorded as a no-op
+  // success — still calls `transitionHealth(..., { type: "sync_success" })`, so without this a fresh install's `nimbus tail` would scroll a burst
   // of `healthy -> healthy` lines every sync interval, drowning the transitions it exists to
   // surface, and the desktop `ConnectorGrid` would `patchConnector` repeatedly with values it
   // already holds.

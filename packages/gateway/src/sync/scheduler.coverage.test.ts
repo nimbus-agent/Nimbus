@@ -1205,7 +1205,14 @@ describe("SyncScheduler — a connector withdrawn mid-run records nothing afterw
 describe("getStatus: the pause reason", () => {
   test("a pause with a stated reason wins over a stale sync error", async () => {
     const db = openMemoryIndexDatabase();
-    const sched = new SyncScheduler(ctxFor(db), {}, { isOnline: online, random: () => 0 });
+    // `readwise` is a real manifest id: seed its credential so the failing run is not skipped.
+    const vault = createMemoryVault();
+    await vault.set("readwise.token", "t");
+    const sched = new SyncScheduler(
+      ctxFor(db, { vault }),
+      {},
+      { isOnline: online, random: () => 0 },
+    );
     sched.register(
       probe("readwise", async () => {
         throw new Error("old sync failure");

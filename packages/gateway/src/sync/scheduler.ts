@@ -24,7 +24,7 @@ import type {
   SyncSchedulerConfig,
   SyncStatus,
 } from "./types.ts";
-import { RateLimitError, UnauthenticatedError } from "./types.ts";
+import { RateLimitError, syncNoopResult, UnauthenticatedError } from "./types.ts";
 
 const DEFAULT_CONFIG: SyncSchedulerConfig = {
   maxConcurrentSyncs: 3,
@@ -909,9 +909,9 @@ export class SyncScheduler {
       const historyFloorMs = this.historyFloors.get(job.serviceId);
       const runCtx: SyncContext = this.contextForService(job.serviceId, historyFloorMs);
       // I29 CRITICAL 1: `platform/assemble-sync-registrations.ts` registers ~90 cloud syncables
-      // with NO credential gate, and each one's `sync()` short-circuits to a network-free noop
-      // when unconfigured — so appending unconditionally here fabricated an "authorized" `sync`
-      // egress row for every registered-but-unconfigured connector's every run, on BOTH the
+      // with NO credential gate, and an unconfigured one's run makes no outbound call — so
+      // appending unconditionally here fabricated an "authorized" `sync` egress row for every
+      // registered-but-unconfigured connector's every run, on BOTH the
       // scheduled and forced paths (`forceSync` bypasses the tick-level health/enqueue gates
       // entirely, so the gate has to live here to cover it too). `isConnectorConfigured` answers
       // the same question `sync/fetch-host-boundary.ts` answers for the 5 fetch-on-miss services,
@@ -921,10 +921,13 @@ export class SyncScheduler {
       // `per-run` is the honest granularity: a sync is a paginated run, not a call. Fail-closed —
       // a throw here aborts the run rather than syncing unrecorded (falls into the `catch` below
       // as an ordinary sync failure, since it happens before any real work started).
+      // Taken before the Vault probe, so a skipped run's `durationMs` includes the probe it spent.
+      const t0 = performance.now();
       const configured = await isConnectorConfigured(
         this.ctx.vault,
         job.serviceId,
         this.ctx.extensionCredentialsFor,
+        this.ctx.credentialFor,
       );
       // The await above can yield while the service is unregistered (`extension remove`): stop
       // before the egress row, the health transition (which would re-create a purged row) and
@@ -939,13 +942,22 @@ export class SyncScheduler {
       }
       // F6/F13: the same answer, one line later, decides whether this run can honestly be
       // called a sync at all. Without it the `sync_success` below fired for the ~90 registered
-      // syncables whose `sync()` short-circuits to a network-free noop when unconfigured, so a
-      // connector nobody had set up reported `healthy` with a fresh `lastSyncAt` — which is what
+      // syncables that have nothing to sync when unconfigured, so a connector nobody had set up
+      // reported `healthy` with a fresh `lastSyncAt` — which is what
       // `getConnectorStatus` served to a model that has no prior to doubt it.
       transitionHealth(this.db, job.serviceId, {
         type: configured ? "configured" : "not_configured",
       });
-      result = await connector.sync(runCtx, row.cursor);
+      // And it decides whether `sync()` runs at all. An unconfigured connector's own `sync()`
+      // reached the same no-op, but only after starting its MCP bundle and re-reading its Vault
+      // keys: with an empty Vault each phase-3 syncable rebuilt the whole phase-3 server config
+      // (~110 Vault reads, one `secret-tool` process each on Linux) on every run, ~90 connectors
+      // per catch-up wave. The skipped run is recorded exactly as that no-op was: the success path
+      // below (status ok, `lastSyncAt`, telemetry, `onConnectorSyncSuccess`, normal interval),
+      // the `not_configured` flag above, and no `sync.run` egress row.
+      result = configured
+        ? await connector.sync(runCtx, row.cursor)
+        : syncNoopResult(row.cursor, t0);
     } catch (err) {
       if (this.wasWithdrawnMidRun(job, connector)) return;
       // A run that committed pages before the stop names the last committed page's cursor, so the
