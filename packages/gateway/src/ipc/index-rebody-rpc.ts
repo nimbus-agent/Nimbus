@@ -110,7 +110,7 @@ export type IndexRebodyRpcContext = {
    * `--since` the owner explicitly asked for and narrow the backfill back to
    * the connector's own 30-day floor, with nothing to show it happened.
    */
-  syncScheduler?: Pick<SyncScheduler, "forceSync" | "setHistoryFloor">;
+  syncScheduler?: Pick<SyncScheduler, "forceSync" | "setHistoryFloor" | "syncableFor">;
 };
 
 export type RebodyParams = {
@@ -314,6 +314,11 @@ export function cannotImproveAmong(pending: Record<string, number>): string[] {
  */
 export function clearedWatermarkWarning(service: string): string {
   return `${service}: forceSync failed, but its watermark was already cleared — the next scheduled sync will perform the same re-walk automatically, unprompted.`;
+}
+
+/** A target whose rows outlived every registration: there is no connector to re-walk it. */
+export function unregisteredServiceWarning(service: string): string {
+  return `${service}: no connector is registered for it, so nothing re-walked it; its rows stay as they are.`;
 }
 
 const rebodyRegistry = new LongRunningJobRegistry();
@@ -527,7 +532,7 @@ export function resolveTargetServices(p: RebodyParams, db: Database): string[] {
 }
 
 /**
- * Clear one service's cursor and force a re-walk. `true` on success.
+ * Clear one service's cursor and force a re-walk. `null` on success, else the warning to report.
  *
  * Split out of `runRebody` for cognitive complexity (Sonar S3776 scored it at
  * 17) — the loop around it is now just success/failure tallying.
@@ -541,7 +546,14 @@ async function resyncOneService(
   service: string,
   p: RebodyParams,
   ctx: IndexRebodyRpcContext,
-): Promise<boolean> {
+): Promise<string | null> {
+  // `forceSync` waits for a service with no scheduler state to register, by design. Targets come
+  // from item rows, which can outlive every registration, so an unregistered one is refused here:
+  // asking would wait forever.
+  if (ctx.syncScheduler !== undefined && ctx.syncScheduler.syncableFor(service) === undefined) {
+    ctx.logger.warn({ service }, "rebody: no connector is registered for service; skipped");
+    return unregisteredServiceWarning(service);
+  }
   // Clearing the watermark BEFORE attempting the sync is deliberate: a
   // `forceSync` rejection below (rate limit, auth) must not leave the
   // connector permanently stuck on its old cursor. The tradeoff — a failed
@@ -549,7 +561,7 @@ async function resyncOneService(
   // made visible via `clearedWatermarkWarning` rather than hidden.
   clearSchedulerCursor(ctx.db, service);
   if (ctx.syncScheduler === undefined) {
-    return true;
+    return null;
   }
   // Armed immediately before the forced run so the connector cold-starts
   // from the requested window instead of its own 30-day floor. Connectors
@@ -559,7 +571,7 @@ async function resyncOneService(
   }
   try {
     await ctx.syncScheduler.forceSync(service);
-    return true;
+    return null;
   } catch (err) {
     ctx.logger.warn(
       {
@@ -568,7 +580,7 @@ async function resyncOneService(
       },
       "rebody: forceSync failed for service; watermark stays cleared for the next scheduled tick",
     );
-    return false;
+    return clearedWatermarkWarning(service);
   }
 }
 
@@ -594,16 +606,18 @@ async function runRebody(
   let succeeded = 0;
   let failed = 0;
   const failedServices: string[] = [];
+  const warnings: string[] = [];
   for (const service of targets) {
     if (signal.aborted) {
       break;
     }
-    const resynced = await resyncOneService(service, p, ctx); // NOSONAR S9382: sequential by design - each forceSync is a full connector sync (API quota, an I29 sync egress row); the loop honours cancellation between services and reports in-order progress
-    if (resynced) {
+    const warning = await resyncOneService(service, p, ctx); // NOSONAR S9382: sequential by design - each forceSync is a full connector sync (API quota, an I29 sync egress row); the loop honours cancellation between services and reports in-order progress
+    if (warning === null) {
       succeeded += 1;
     } else {
       failed += 1;
       failedServices.push(service);
+      warnings.push(warning);
     }
     progress({ done: succeeded + failed, total: targets.length, service });
   }
@@ -620,7 +634,7 @@ async function runRebody(
     succeeded,
     failed,
     failedServices,
-    warnings: failedServices.map((s) => clearedWatermarkWarning(s)),
+    warnings,
     cannotImprove: cannotImproveAmong(pendingBefore),
     pendingBefore,
     pendingAfter,
