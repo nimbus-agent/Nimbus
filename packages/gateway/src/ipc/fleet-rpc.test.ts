@@ -5,6 +5,7 @@ import { DEFAULT_FLEET_CONFIG } from "../config/fleet-toml.ts";
 import {
   FleetDisabledError,
   FleetJobNotFoundError,
+  FleetReloadingError,
   type FleetRunSummary,
 } from "../fleet/fleet-scheduler.ts";
 import { FleetStore } from "../fleet/fleet-store.ts";
@@ -547,5 +548,127 @@ describe("fleet.digest", () => {
     await expect(
       dispatchFleetRpc("fleet.digest", {}, ctx(NOW, { store: undefined })),
     ).rejects.toThrow(FleetRpcError);
+  });
+});
+
+describe("handlers read the ctx at call time", () => {
+  const mkJob = (name: string): NimbusFleetJobToml => ({
+    name,
+    agent: "catchup",
+    intervalSeconds: 3600,
+    params: {},
+    digestMinDelta: 1,
+    sweep: null,
+  });
+
+  function liveCtx(live: { config: NimbusFleetToml; jobs: readonly NimbusFleetJobToml[] }) {
+    const db = new Database(":memory:");
+    db.run("PRAGMA foreign_keys = ON");
+    db.exec(FLEET_V60_SQL);
+    for (const stmt of FLEET_SUBJECTS_V63_SQL) db.exec(stmt);
+    return {
+      scheduler: undefined,
+      store: new FleetStore(db),
+      hostActivity: { probe: async () => ({ power: "ac", idleMs: 0, source: "measured" }) },
+      get config() {
+        return live.config;
+      },
+      get jobs() {
+        return live.jobs;
+      },
+      now: () => 1_000_000,
+    } as unknown as FleetRpcCtx;
+  }
+
+  test("fleet.list, fleet.status and fleet.digest see a swapped config and job list", async () => {
+    const live = {
+      config: { ...DEFAULT_FLEET_CONFIG, enabled: false } as NimbusFleetToml,
+      jobs: [mkJob("old_job")] as readonly NimbusFleetJobToml[],
+    };
+    const c = liveCtx(live);
+    const names = async () => {
+      const out = await dispatchFleetRpc("fleet.list", {}, c);
+      if (out.kind !== "hit") throw new Error("expected a hit");
+      return (out.value as { jobs: { name: string }[] }).jobs.map((j) => j.name);
+    };
+    const status = async () => {
+      const out = await dispatchFleetRpc("fleet.status", {}, c);
+      if (out.kind !== "hit") throw new Error("expected a hit");
+      return out.value as { enabled: boolean; jobsConfigured: number };
+    };
+    const digest = async () => {
+      const out = await dispatchFleetRpc("fleet.digest", {}, c);
+      if (out.kind !== "hit") throw new Error("expected a hit");
+      return (out.value as { markdown: string }).markdown;
+    };
+    expect(await names()).toEqual(["old_job"]);
+    expect(await status()).toMatchObject({ enabled: false, jobsConfigured: 1 });
+    expect(await digest()).toContain("old_job");
+
+    live.config = { ...DEFAULT_FLEET_CONFIG, enabled: true };
+    live.jobs = [mkJob("new_a"), mkJob("new_b")];
+    expect(await names()).toEqual(["new_a", "new_b"]);
+    expect(await status()).toMatchObject({ enabled: true, jobsConfigured: 2 });
+    const md = await digest();
+    expect(md).toContain("new_a");
+    expect(md).not.toContain("old_job");
+  });
+
+  test("runNow waits for a pending reload and runs on the scheduler that replaced the old one", async () => {
+    let release: () => void = () => undefined;
+    const pending = new Promise<void>((r) => {
+      release = r;
+    });
+    const calls: string[] = [];
+    const a: FakeScheduler = {
+      runOnce: async () => {
+        calls.push("A");
+        return COMPLETED;
+      },
+    };
+    const b: FakeScheduler = {
+      runOnce: async () => {
+        calls.push("B");
+        return COMPLETED;
+      },
+    };
+    let current: FakeScheduler = a;
+    const c = {
+      get scheduler() {
+        return current;
+      },
+      settled: () => pending,
+      config: DEFAULT_FLEET_CONFIG,
+      hostActivity: undefined,
+      now: () => 0,
+    } as unknown as FleetRpcCtx;
+    const run = dispatchFleetRpc("fleet.runNow", {}, c);
+    await Promise.resolve();
+    expect(calls).toEqual([]);
+    current = b;
+    release();
+    await run;
+    expect(calls).toEqual(["B"]);
+  });
+
+  test("runNow on a retired scheduler is a clear -32000 error", async () => {
+    const scheduler: FakeScheduler = {
+      runOnce: async () => {
+        throw new FleetReloadingError();
+      },
+    };
+    try {
+      await dispatchFleetRpc("fleet.runNow", {}, {
+        scheduler,
+        config: DEFAULT_FLEET_CONFIG,
+        hostActivity: undefined,
+        now: () => 0,
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(FleetRpcError);
+      expect((e as FleetRpcError).rpcCode).toBe(-32000);
+      expect((e as FleetRpcError).message).toBe("fleet is reloading its config; try again");
+    }
   });
 });

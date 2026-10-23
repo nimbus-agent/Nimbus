@@ -5,6 +5,7 @@ import type { FleetDigestResult } from "../fleet/fleet-digest-types.ts";
 import {
   FleetDisabledError,
   FleetJobNotFoundError,
+  FleetReloadingError,
   type FleetRunSummary,
   type FleetScheduler,
 } from "../fleet/fleet-scheduler.ts";
@@ -36,6 +37,12 @@ export class FleetRpcError extends Error {
  * `scheduler` is genuinely absent when the fleet is off. The optional typing here is what lets a
  * unit test exercise `fleet.status` with none of them wired, matching how `fleet.status` is
  * documented to behave: "reports the live probe and config without running anything".
+ *
+ * In production `scheduler`, `config` and `jobs` are live getters over the `FleetSupervisor`, so a
+ * config reload swaps them without rebuilding this ctx. A handler therefore reads them in ONE
+ * synchronous destructuring, after its last `await` and before any later one: a swap publishes in
+ * a single assignment, so a synchronous read never sees half of two generations. `settled` resolves
+ * once any in-progress reload has finished.
  */
 export interface FleetRpcCtx {
   readonly scheduler?: FleetScheduler | undefined;
@@ -44,6 +51,7 @@ export interface FleetRpcCtx {
   readonly config: NimbusFleetToml;
   readonly jobs?: readonly NimbusFleetJobToml[] | undefined;
   readonly now: () => number;
+  readonly settled?: () => Promise<void>;
 }
 
 function optInt(params: unknown, key: string): number | undefined {
@@ -129,15 +137,16 @@ export interface FleetStatusResult {
  */
 async function handleStatus(_params: unknown, ctx: FleetRpcCtx): Promise<FleetStatusResult> {
   const probe = await ctx.hostActivity.probe();
+  const { scheduler, config, jobs } = ctx;
   return {
-    enabled: ctx.config.enabled,
-    running: ctx.scheduler !== undefined,
-    allowRemote: ctx.config.allowRemote,
-    remoteCallBudget: ctx.config.remoteCallBudget,
-    minIdleSeconds: ctx.config.minIdleSeconds,
-    requireAcPower: ctx.config.requireAcPower,
-    retentionDays: ctx.config.retentionDays,
-    jobsConfigured: ctx.jobs?.length ?? 0,
+    enabled: config.enabled,
+    running: scheduler !== undefined,
+    allowRemote: config.allowRemote,
+    remoteCallBudget: config.remoteCallBudget,
+    minIdleSeconds: config.minIdleSeconds,
+    requireAcPower: config.requireAcPower,
+    retentionDays: config.retentionDays,
+    jobsConfigured: jobs?.length ?? 0,
     probe,
   };
 }
@@ -173,7 +182,8 @@ export interface FleetJobListEntry {
  * PROGRESS lives here rather than on `fleet.status`, which never reads the store.
  */
 function handleList(_params: unknown, ctx: FleetRpcCtx): { jobs: readonly FleetJobListEntry[] } {
-  const jobs = ctx.jobs ?? [];
+  const { config, jobs: ctxJobs } = ctx;
+  const jobs = ctxJobs ?? [];
   return {
     jobs: jobs.map((j) => {
       const stored = j.sweep === null ? undefined : ctx.store?.loadSweepState(j.name);
@@ -204,7 +214,7 @@ function handleList(_params: unknown, ctx: FleetRpcCtx): { jobs: readonly FleetJ
                   total === null
                     ? null
                     : Math.ceil(total / j.sweep.maxSubjects) * j.intervalSeconds * 1000 >
-                      ctx.config.retentionDays * 86_400_000,
+                      config.retentionDays * 86_400_000,
               },
       };
     }),
@@ -245,7 +255,9 @@ function handleShow(params: unknown, ctx: FleetRpcCtx): { brief: FleetBriefRow |
  * erroring via `FleetJobNotFoundError`.
  */
 async function handleRunNow(params: unknown, ctx: FleetRpcCtx): Promise<FleetRunSummary> {
-  if (ctx.scheduler === undefined) {
+  await ctx.settled?.();
+  const { scheduler } = ctx;
+  if (scheduler === undefined) {
     throw new FleetRpcError(
       -32000,
       "fleet: not running (disabled by config or policy, or no jobs configured)",
@@ -254,9 +266,10 @@ async function handleRunNow(params: unknown, ctx: FleetRpcCtx): Promise<FleetRun
   const job = optString(params, "job");
   const force = asRecord(params)?.["force"] === true;
   try {
-    return await ctx.scheduler.runOnce({ jobName: job, force });
+    return await scheduler.runOnce({ jobName: job, force });
   } catch (e) {
-    if (e instanceof FleetDisabledError) throw new FleetRpcError(-32000, e.message);
+    if (e instanceof FleetDisabledError || e instanceof FleetReloadingError)
+      throw new FleetRpcError(-32000, e.message);
     if (e instanceof FleetJobNotFoundError) throw new FleetRpcError(-32602, e.message);
     throw e;
   }
@@ -278,12 +291,13 @@ function handleDigest(params: unknown, ctx: FleetRpcCtx): FleetDigestResult {
     throw new FleetRpcError(-32602, "fleet: windowMs must be a positive integer");
   }
   const windowMs = raw ?? DEFAULT_DIGEST_WINDOW_MS;
+  const { config, jobs } = ctx;
   return buildFleetDigest({
     store,
-    jobs: ctx.jobs ?? [],
+    jobs: jobs ?? [],
     windowMs,
     now: ctx.now(),
-    retentionDays: ctx.config.retentionDays,
+    retentionDays: config.retentionDays,
   });
 }
 
