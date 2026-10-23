@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792744919935,
+  "lastUpdate": 1792745568159,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "968d7bfba1d9c8880227f585e3c0a92580f85d21",
-          "message": "docs: close six drift findings, archive 44 delivered plans/specs, and refresh the skill set (#1048)\n\nDocs-only. Three jobs: close six documented drift findings, archive the\ndelivered plans/specs, and refresh the skill set. No source file changes\n— the diff is 100% markdown.\n\n## 1. Six drift findings\n\n1. **Release version was five releases stale.** `CLAUDE.md`, `GEMINI.md`\nand `docs/roadmap.md` all said `v1.15.0` (2026-08-01); latest is\n**v1.20.0** (2026-08-04). While checking, a nuance worth recording:\nv1.20.0 was cut at `b561a9d5`, so schema **V49** (#1047) is merged to\n`main` but sits *after* that tag and is in no release yet. All three\nsurfaces now say so rather than implying the tag includes it.\n2. **`docs/roadmap.md` \"Last updated\" was 2026-08-01** — the V48\nfull-body store, Notion/Confluence bodies, the I29 completeness pass and\nV49 all landed after. The roadmap *body* already covered them; only the\nheader lied. Re-dated with the four deliveries listed.\n3. **README understated the connector count by 13.** Five sites said\n`80+` / `~80`; `CONNECTOR_VAULT_SECRET_KEYS` has **93**. Now `90+` /\n`~90`, matching CLAUDE.md. Same fix to the docs-site hero alt text.\n4. **`index.rebody` was missing from the architecture IPC catalogue.**\nIts peer `index.reembed` is catalogued in full; `index.rebody` /\n`index.rebodyCancel` plus three notifications were never added when the\nfull-body store shipped. Added with the real contract read off\n`ipc/index-rebody-rpc.ts` — params, dry-run semantics, CLI-only, and why\nit is a *stronger* LAN-forbidden case than `reembed` (it drives outbound\nthird-party traffic on the owner's quota, not just local recompute).\n5. **`docs/architecture.md` still carried the pre-#1038 I29 claim** —\n\"the record of **every authorized outbound action**\". #1038 corrected\nexactly that overclaim in `CLAUDE.md` and `docs/SECURITY-INVARIANTS.md`;\narchitecture.md was missed. This was the one finding where a doc stated\na *security* guarantee stronger than the code supports, so it is fixed\nto carry all three qualifiers: the seven `NULL_EGRESS_SINK` gate-only\nexecutors, D22-is-a-regex-on-a-literal-string (decorator / façade /\nraw-execute all pass it), and the coverage vector + boot marker as the\nmachine-readable claim.\n6. **Connector pages on the docs site were factually wrong after\n#1039/#1047.** `gmail.mdx` said the connector \"indexes message\n**metadata**\" — it now fetches `format=full` and stores a 16 KiB body.\nGmail, Outlook, Notion and Confluence all corrected, each with the\ncaveat that actually bites: Gmail's bandwidth-not-quota cost, Notion's\nnon-retried failed body fetches, Confluence's 30-day rebody window.\n\nWhile fixing (6) I found the site had **no depth documentation at all**,\ndespite V49 being a user-visible change that resets `summary` → `full`.\nAdded an **Indexing depth** section to the connectors user guide (cap\ntable, the omitting-`--depth`-lowers-you trap, the non-retroactive\ndeepening asymmetry) and pointed the four connector pages at it.\n\n## 2. Archived 44 delivered plans/specs, kept 16\n\n`docs/superpowers/` went 60 → 16 files. Rather than deleting links, this\nfollows the archival precedent already in the repo\n(`2026-07-23-org-infrastructure-program-design.md` is referenced as\n*\"archived; read via `git show 06c6a144:…`\"*). Every inbound reference\nin `docs/CHANGELOG.md` and `docs/infrastructure-roadmap.md` is rewritten\nto that form, and **all 10 pointers were verified to resolve with `git\ncat-file -e`**.\n\nDelivery was judged from the tree + `docs/CHANGELOG.md`, not from the\nplans' own checkboxes — those are unreliable here (the fully-shipped\nglossary plan still shows 109 unticked boxes).\n\nFour clusters look delivered but are **not**, and are kept:\n\n| Kept | Why |\n|---|---|\n| `agents-as-mcp-tools` (6 files) | **Not implemented.** #1022 was\ndocs-only and #1021 is an unrelated share fix.\n`packages/cli/src/mcp/adapter.ts` still registers 6 tools, none of them\nagents. |\n| `i29-*-completeness` (2 files) | Phase 1 shipped in #1038; Phase 2\n(capability removal) has not. |\n| `quality-floor-design` | States outright: *\"This is a spec, not an\nimplementation. No gate is wired by this document.\"* |\n| `launch-plan-design` (3), `launch-execution` (2), `directory-listings`\n(2) | \"Approved design, not yet planned\"; 15 open items incl. the gate\nrunbooks; ongoing submissions. |\n\n## 3. Skills — 3 updated, 1 added, 0 removed\n\n- **`nimbus-agent-patterns`** — documented 9 agents; there are 11.\n`glossary.ts` and `decisions.ts` had **zero** mentions. Added both, plus\nthe two honesty rules they established (state the recall limit per-brief\nkeyed on `body_complete = 0`, never present a full-marks scale the user\ncannot reach — `decisions` caps at 0.86).\n- **`nimbus-file-map`** — had **zero** entries for the entire S1 \"Local\nBrain\" output. Added `item-store`, `body-caps`, the V48/V49 migrations,\n`index-rebody-rpc`, the three new egress files, and the\n`why`/`glossary`/`decisions` agents.\n- **`nimbus-federation-identity`** — asserted `CURRENT_SCHEMA_VERSION =\n38` as a present-tense fact; it is 49.\n- **NEW `nimbus-index-body-depth`** — the V48/V49 subsystem had no skill\ndespite being a chokepoint with a user-visible failure mode.\n\nThe new skill also pins down the membership list that has drifted three\ntimes. The mechanism: **`PROSE_HEAVY_TYPES` has 23 members but only 14\nconnectors write a body** — membership raises the *cap*, it does not\nmean a body is stored. It teaches deriving the list over trusting a\ntable, and the grep it gives covers the object-shorthand `body,` form\n(genuinely used in `jira-sync.ts`, `linear-sync.ts`,\n`obsidian-parsing.ts`) that a `body:` grep silently misses.\n\n## Verification\n\n- `typecheck` ✅, `lint:markdown` ✅, `audit:any --check` ✅\n- **All 20 remaining fast gates run individually** ✅ — `preflight:fast`\nfail-fasts on the biome step below, so the later gates never execute\nunder it and were run one by one.\n- `docs:build` ✅ — its own link validator confirms the new\n`#indexing-depth` anchors resolve.\n- `lint (biome)` reports `Checked 0 files` and exits 1. That is the\nknown `.claude/worktrees/**` ignore artifact, not a real failure: the\ndiff contains **zero** non-markdown files, so biome has nothing in scope\neither way.\n\nCaught and fixed one self-inflicted regression: adding `*after*` to line\n8 flipped MD049's inferred emphasis style to asterisk, turning four\npre-existing `_underscore_` emphases in `CLAUDE.md`/`GEMINI.md` into\nerrors. Switched to `_after_`.\n\n## Out of scope\n\n`audit:release-staleness` is red on `main`, independently of this PR:\nthe repo pins `@nimbus-dev/sdk` 1.13.0 (npm 1.16.0) and\n`@nimbus-dev/client` 0.15.0 (npm 0.15.1), no bump PR open.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added full-body indexing for supported email, Notion, and Confluence\ncontent, including plain-text conversion, quote/signature cleanup, size\nlimits, and incomplete-content indicators.\n- Added indexing-depth options to control stored content and apply\nconsistently during synchronization.\n- Added a rebody workflow for recovering or backfilling indexed content.\n\n- **Documentation**\n- Documented connector behavior, indexing-depth modes, rebody workflows,\ncoverage of 90+ connectors, and release v1.20.0.\n- Updated architecture, roadmap, changelog, and built-in agent guidance.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-05T06:52:11+03:00",
-          "tree_id": "901971ec79e48acc50d18d129085713d9f490fa9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/968d7bfba1d9c8880227f585e3c0a92580f85d21"
-        },
-        "date": 1785902614313,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.39414934999803,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 324.24874199999977,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 284.22655040000393,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1e5cdfb0d900e72e704b70dcad01767571b280b3",
+          "message": "chore: release main (#1733)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.1.2</summary>\n\n##\n[10.1.2](https://github.com/nimbus-agent/Nimbus/compare/v10.1.1...v10.1.2)\n(2026-10-23)\n\n\n### Bug Fixes\n\n* **index:** rebody skips a service no connector is registered for\ninstead of waiting forever\n([#1730](https://github.com/nimbus-agent/Nimbus/issues/1730))\n([eb58154](https://github.com/nimbus-agent/Nimbus/commit/eb58154af68f436737539b1f3e559d58961f1d6e))\n* **sync:** connector.sync waits for a run that started after it\n([#1727](https://github.com/nimbus-agent/Nimbus/issues/1727))\n([002bc8b](https://github.com/nimbus-agent/Nimbus/commit/002bc8b94fd2bfc305f29c1cd1309465281d841f))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-23T08:42:11Z",
+          "tree_id": "ff8f8de00c7c933439947032f16ed2dd3aa849e0",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1e5cdfb0d900e72e704b70dcad01767571b280b3"
+        },
+        "date": 1792745564576,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 286.0051918500005,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 286.7798902999963,
             "unit": "ms"
           }
         ]
