@@ -446,3 +446,26 @@ describe("packSkipLogLines", () => {
     ]);
   });
 });
+
+describe("read — hand-edited pack files", () => {
+  test("control characters in a refused line never reach the skip reason", () => {
+    const store = createPackLayerStore({ configDir: dir });
+    store.setPackLayer("default", "pm", CONF("0.55"));
+    writeFileSync(packFile("pm"), "[llm\u001b[31m]\nx\u0007 = 1\n");
+    const reason = store.read("default").skipped[0]?.reason ?? "";
+    expect(reason.startsWith("refused: ")).toBe(true);
+    expect([...reason].every((ch) => ch >= " " && ch !== "\u007f")).toBe(true);
+    for (const line of packSkipLogLines({ skippedPacks: store.read("default").skipped })) {
+      expect(line).not.toContain("\u001b");
+      expect(line).not.toContain("\u0007");
+    }
+  });
+
+  test("a directory where a pack file belongs is not a regular file, on every OS", () => {
+    const store = createPackLayerStore({ configDir: dir });
+    store.setPackLayer("default", "pm", CONF("0.55"));
+    unlinkSync(packFile("pm"));
+    mkdirSync(packFile("pm"));
+    expect(store.read("default").skipped).toEqual([{ packId: "pm", reason: "not a regular file" }]);
+  });
+});

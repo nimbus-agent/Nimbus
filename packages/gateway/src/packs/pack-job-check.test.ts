@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { FEDERATION_PARAMS } from "../fleet/fleet-sweep-support.ts";
 import { FLEET_ELIGIBILITY } from "../ipc/agents-rpc.ts";
-import { checkPackFleetJobs } from "./pack-job-check.ts";
+import { checkPackFleetJobs, createPackFleetJobCheck } from "./pack-job-check.ts";
 
 function job(name: string, lines: readonly string[]): string {
   return ["[[fleet.job]]", `name = "${name}"`, ...lines, ""].join("\n");
@@ -109,5 +109,35 @@ describe("checkPackFleetJobs", () => {
     expect(problems).toHaveLength(2);
     expect(problems[0]).toContain("one");
     expect(problems[1]).toContain("two");
+  });
+
+  test("an error that is not a FleetConfigError propagates rather than becoming a problem", () => {
+    const boom = new TypeError("bug");
+    const text = job("j1", ['agent = "standup"', "interval_seconds = 60"]);
+    const parseFails = createPackFleetJobCheck({
+      parseJobs: () => {
+        throw boom;
+      },
+      validateSweeps: () => {},
+      resolveAgent: () => "agents.standup",
+    });
+    expect(() => parseFails(text)).toThrow(boom);
+    const sweepFails = createPackFleetJobCheck({
+      parseJobs: () => [
+        {
+          name: "j1",
+          agent: "standup",
+          intervalSeconds: 60,
+          params: {},
+          digestMinDelta: 0,
+          sweep: null,
+        },
+      ],
+      validateSweeps: () => {
+        throw boom;
+      },
+      resolveAgent: () => "agents.standup",
+    });
+    expect(() => sweepFails(text)).toThrow(boom);
   });
 });

@@ -17,31 +17,52 @@ function withoutFederation(job: NimbusFleetJobToml): NimbusFleetJobToml {
   return { ...job, params };
 }
 
-function problemsForJob(job: NimbusFleetJobToml): string[] {
+/** The fleet functions the check reads; injectable so a test can reach the rethrow paths. */
+export type PackJobCheckDeps = {
+  readonly parseJobs: (text: string) => NimbusFleetJobToml[];
+  readonly validateSweeps: (jobs: readonly NimbusFleetJobToml[]) => void;
+  readonly resolveAgent: (agent: string) => string | null;
+};
+
+const DEFAULT_DEPS: PackJobCheckDeps = {
+  parseJobs: parseNimbusTomlFleetJobs,
+  validateSweeps: validateFleetSweepJobs,
+  resolveAgent: resolveFleetAgentMethod,
+};
+
+/** A `FleetConfigError` becomes a problem; anything else is a bug and propagates. */
+function configProblem(err: unknown): string {
+  if (err instanceof FleetConfigError) return err.message;
+  throw err;
+}
+
+function problemsForJob(job: NimbusFleetJobToml, deps: PackJobCheckDeps): string[] {
   const problems: string[] = [];
   if (FEDERATION_PARAMS.some((k) => Object.hasOwn(job.params, k))) {
     problems.push(`[[fleet.job]] ${job.name}: namespace/namespaces are not allowed in a pack job`);
   }
-  if (resolveFleetAgentMethod(job.agent) === null) {
+  if (deps.resolveAgent(job.agent) === null) {
     problems.push(`[[fleet.job]] ${job.name}: agent "${job.agent}" is not fleet-eligible`);
     return problems;
   }
   try {
-    validateFleetSweepJobs([withoutFederation(job)]);
+    deps.validateSweeps([withoutFederation(job)]);
   } catch (err) {
-    if (!(err instanceof FleetConfigError)) throw err;
-    problems.push(err.message);
+    problems.push(configProblem(err));
   }
   return problems;
 }
 
-export const checkPackFleetJobs: PackJobChecker = (jobsText) => {
-  let jobs: NimbusFleetJobToml[];
-  try {
-    jobs = parseNimbusTomlFleetJobs(jobsText);
-  } catch (err) {
-    if (err instanceof FleetConfigError) return [err.message];
-    throw err;
-  }
-  return jobs.flatMap(problemsForJob);
-};
+export function createPackFleetJobCheck(deps: PackJobCheckDeps = DEFAULT_DEPS): PackJobChecker {
+  return (jobsText) => {
+    let jobs: NimbusFleetJobToml[];
+    try {
+      jobs = deps.parseJobs(jobsText);
+    } catch (err) {
+      return [configProblem(err)];
+    }
+    return jobs.flatMap((job) => problemsForJob(job, deps));
+  };
+}
+
+export const checkPackFleetJobs: PackJobChecker = createPackFleetJobCheck();

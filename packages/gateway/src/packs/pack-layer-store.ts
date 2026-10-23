@@ -5,7 +5,7 @@
 // a broken pack is skipped whole and reported, never fatal. The user's own config files are
 // never read or written here.
 
-import { mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { PROFILE_NAME_RE } from "../config/active-profile.ts";
 import {
@@ -73,8 +73,12 @@ type DetailedRead = PackLayersRead & {
   readonly ids: readonly string[];
 };
 
+function hasCode(err: unknown, code: string): boolean {
+  return err instanceof Error && (err as NodeJS.ErrnoException).code === code;
+}
+
 function isEnoent(err: unknown): boolean {
-  return err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT";
+  return hasCode(err, "ENOENT");
 }
 
 function errMessage(err: unknown): string {
@@ -132,7 +136,10 @@ export function createPackLayerStore(opts: {
         : null;
     });
 
-  const safe = (message: string): string => basenameSafeMessage(message, configDir);
+  // Every reason this store produces goes through here: no absolute path, and no control
+  // character from a hand-edited file reaching diag, the log or `config explain`.
+  const safe = (message: string): string =>
+    basenameSafeMessage(message, configDir).replace(/\p{Cc}/gu, " ");
   const profileDir = (profile: string): string => join(configDir, "packs", profile);
   const packPath = (profile: string, id: string): string => join(profileDir(profile), `${id}.toml`);
 
@@ -167,19 +174,26 @@ export function createPackLayerStore(opts: {
     id: string,
   ): { text: string; pack: CleanPack } | { reason: string } {
     const path = packPath(profile, id);
+    // One handle for the stat and the read, so the file checked is the file read.
+    let fd: number | undefined;
     try {
-      const st = statSync(path);
+      fd = openSync(path, "r");
+      const st = fstatSync(fd);
       if (!st.isFile()) return { reason: "not a regular file" };
       if (st.size > PACK_FRAGMENT_MAX_BYTES) {
         return { reason: `larger than ${PACK_FRAGMENT_MAX_BYTES} bytes` };
       }
-      const text = readFileSync(path, "utf8");
+      const text = readFileSync(fd, "utf8");
       const check = checkPackFragment(text, checkJobs);
       if (!check.ok) return { reason: refusedReason(check.problems, safe) };
       return { text, pack: { id, scalars: check.scalars, jobNames: check.jobNames } };
     } catch (err) {
       if (isEnoent(err)) return { reason: "missing" };
+      // Windows refuses to open a directory at all; Linux and macOS open it and fstat says so.
+      if (hasCode(err, "EISDIR")) return { reason: "not a regular file" };
       return { reason: safe(errMessage(err)) };
+    } finally {
+      if (fd !== undefined) closeSync(fd);
     }
   }
 
