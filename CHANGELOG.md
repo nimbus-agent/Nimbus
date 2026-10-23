@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.1.2](https://github.com/nimbus-agent/Nimbus/compare/v10.1.1...v10.1.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **index:** rebody skips a service no connector is registered for instead of waiting forever ([#1730](https://github.com/nimbus-agent/Nimbus/issues/1730)) ([eb58154](https://github.com/nimbus-agent/Nimbus/commit/eb58154af68f436737539b1f3e559d58961f1d6e))
+* **sync:** connector.sync waits for a run that started after it ([#1727](https://github.com/nimbus-agent/Nimbus/issues/1727)) ([002bc8b](https://github.com/nimbus-agent/Nimbus/commit/002bc8b94fd2bfc305f29c1cd1309465281d841f))
+
 ## [10.1.1](https://github.com/nimbus-agent/Nimbus/compare/v10.1.0...v10.1.1) (2026-10-23)
 
 
