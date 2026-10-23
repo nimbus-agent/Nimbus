@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792769892804,
+  "lastUpdate": 1792782884146,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "36abf192457984a42e2d4e74b984603d51fbb376",
-          "message": "fix(gateway): serve the admin console and OpenAPI doc from a compiled binary (#1058)\n\nSecond of three PRs in ecosystem cluster 1 — \"what we ship is what we\nclaim\". PR 1 (#1055, released\n1.21.0) made connectors spawnable from a compiled binary. This is the\nembedded-assets half.\nDesign: `docs/superpowers/specs/2026-08-05-ship-what-we-claim-design.md`\n§5–6. Plan:\n`docs/superpowers/plans/2026-08-06-ship-what-we-claim-pr2.md`.\n\n## What was broken\n\nTwo routes were unreachable in **every release to date**, and semantic\nmemory was off in all of them.\n\n`ipc/http-server.ts` derived the admin console's dist directory (`:337`)\nand the OpenAPI document's\npath (`:190`) by walking up from `import.meta.dir`. Inside a `bun build\n--compile` executable that\ndirectory is the read-only virtual root — `/$bunfs/root`, or\n`B:\\~BUN\\root` on Windows — so both\nwalked to paths that do not exist. `nimbus admin console` printed a URL\nthat answered HTTP 503, and\n`GET /v1/openapi.json` could not read its schema.\n\nSeparately, the `vec0` sqlite-vec sidecar was copied only by\n`packages/gateway/compile-gateway.ts`,\nwhich the release pipeline never runs. It appeared in **zero**\nworkflows. `tryLoadFromSidecar()`\nreports its absence at `log.debug` level, so a released gateway lost\nvector search without ever\nsaying so.\n\n## What changed\n\n**Embedded assets.** `ipc/embedded-assets.ts` holds four `{ type: \"file\"\n}` imports — `openapi/v1.yaml`\nplus the console's `index.html`, `main.js` and `styles.css`. No codegen\nand no generator: such an\nimport evaluates to the content-hashed bunfs path at runtime and the\nbundler substitutes the value,\nso the map is four literal import statements.\n\n**`resolveConsoleDist(baseDir)` → `resolveConsoleAsset(rel)`.** Embedded\nfiles land in a flat bunfs\nroot under content-hashed names, so a compiled binary has no directory\nto join a request path\nagainst. It answers from a three-entry map, which makes traversal\n**structurally impossible** rather\nthan rejected; `safeAssetPath` stays load-bearing on the dev path, where\nthe lookup is still a join.\n`NIMBUS_ADMIN_CONSOLE_DIST` is now explicitly a dev-tree affordance — a\ncompiled binary ignores it\nrather than re-opening that surface. The result is a three-way tagged\nunion so the route keeps its\ndistinct 503 / 404 / 200 outcomes instead of collapsing \"not built\" into\na 404.\n\n**The console build is now a prerequisite of the gateway compile** —\nwired into\n`compile-gateway.ts`, `release.yml` and\n`scripts/lib/preflight-gates.ts`.\n\n**vec0 ships.** No gateway code changed: `tryLoadFromSidecar()` already\nresolves\n`dirname(process.execPath)`. The copy moved into\n`scripts/copy-vec0-sidecar.ts`, called by\n`compile-gateway.ts` and by each `release.yml` gateway matrix leg, and\nthe sidecar now ships in the\n`.msi`, `.pkg`, `.deb`, `.rpm`, AppImage, both macOS tarballs and the\nWindows zip, with `install.sh`\nand `install.ps1` placing it beside the gateway binary.\n\n**`audit:import-meta-dir`.** Forbids\n`import.meta.{dir,dirname,path,file}` and\n`fileURLToPath(import.meta.url)` across `packages/gateway/src`. It could\nnot land in PR 1 because\nits only two violations were the two this PR removes. It ships with an\n**empty allowlist** apart\nfrom `perf/surfaces/**` (dev-tree-only bench drivers) and test files;\n`platform/runtime-layout.ts`\nis named as the rule's canonical module, not exempted from it.\n\n## Measurements taken before writing the plan\n\nEvery one against this tree; four of them changed the plan.\n\n| # | Measurement | Result |\n|---|---|---|\n| 1 | The four `{ type: \"file\" }` imports, compiled | All resolve to\ncontent-hashed bunfs paths; `existsSync` + `readFileSync` succeed; byte\ncounts match the sources |\n| 2 | The same imports under plain `bun` | Resolve to the **real\nabsolute source paths** |\n| 3 | `tsc --noEmit` over `packages/gateway` with them | `.html`/`.yaml`\ntypecheck out of the box; **`.css` fails TS2307 and `main.js` fails\nTS7016** — an ambient `.d.ts` is required, which the design did not\nmention. bun-types also declares `*.html` as `HTMLBundle`, not a path\nstring, so `index.html` needs a narrower declaration to win the wildcard\nmatch |\n| 4 | Dev-mode run with `packages/admin-console/dist` deleted | `Cannot\nfind module` — the console dist is a **hard runtime prerequisite of the\nwhole gateway module graph in dev mode too**, not only at compile time |\n| 5 | Root `prepare` + `rm -rf dist` + `bun install --frozen-lockfile`,\nwarm `node_modules` | `prepare` **still ran** and rebuilt dist |\n\nMeasurement 4 is the load-bearing one. `_test-suite.yml`'s \"Unit +\nCoverage\" and \"Integration\" jobs\nand `ci.yml`'s cross-platform `bun test packages/<pkg>/src` job all run\n**without** `bun run build`.\nWithout measurement 5's mechanism this PR would have turned every\ngateway test reaching\n`http-server.ts` red on a cache-cold checkout. Hence the root `prepare`\nscript.\n\n## Two defects found during execution, not planning\n\n- **The default deps object froze `process.env` at module load.**\n`DEFAULT_CONSOLE_ASSET_DEPS` as a\nmodule-scope `const` snapshotted `NIMBUS_ADMIN_CONSOLE_DIST` at import\ntime, while\n`http-server.test.ts` sets it per test long afterwards. The existing\n\"console not built → 503\"\ntest caught it as a 200. It is now `defaultConsoleAssetDeps()`, rebuilt\nper call, matching how\nthe previous `resolveConsoleDist` read the environment. A regression\ntest asserts the call-time\n  read specifically.\n- **Extracting the vec0 resolver moved it out of the package that\ndeclares `sqlite-vec`.** A verbatim\n`createRequire(import.meta.url)` worked inside `packages/gateway` and\nthrows\n`Cannot find package 'sqlite-vec'` from `scripts/`. Resolution now\nstarts from\n  `packages/gateway/package.json`.\n\n## Verification\n\n- `bun run preflight` — full local CI parity.\n- `bun run verify:docker --full` — the Linux-authoritative coverage\nfloor. `ipc/embedded-assets.ts`\nis new source under the per-file floor and is covered by tests, **not**\nby an exclusion entry.\n- The audit was **red-proved**: appending `const __probe =\nimport.meta.dir;` to `http-server.ts`\n  fails it with a line-anchored annotation; removing it returns exit 0.\n- Compiled-binary smoke, by hand against `dist/nimbus-gateway`: `GET\n/admin`, `GET /admin/main.js`,\n`GET /v1/openapi.json`, and the sidecar's presence beside the binary. PR\n3 turns these into\n  `install-smoke.yml` assertions.\n\n## Out of scope, deliberately\n\n- **`packages/cli/src/commands/bench.ts:31`** still derives\n`packages/gateway/src/perf/bench-runner.ts`\nfrom `import.meta.dir`. That is the same dev-tree-only class as\n`perf/surfaces/**`, so the audit\nscopes to `packages/gateway/src`. Recorded here rather than added as an\nexemption — widening the\n  audit to the CLI is its own change.\n- **PR 3** carries the `install-smoke.yml` assertions and the\ndocumentation subtraction pass.\n\n## Incidental fix\n\n`audit:connector-entrypoints` and `audit:connector-deps` shipped in PR 1\ninto the preflight manifest\nonly — no workflow invoked them, so they gated nothing on a\ncontributor's PR. All three static\naudits now run in CI's Static job.\n\n## Verified results\n\nCompiled-binary smoke — the real `startReadOnlyHttpServer` compiled into\na binary and driven over\nHTTP, so `handleAdminConsole` → `resolveConsoleAsset` ran with\n`isCompiledBinary()` true:\n\n```text\ncompiled binary: true\nPASS  console index  /admin            -> 200  ct=text/html; charset=utf-8        bytes=460\nPASS  console js     /admin/main.js    -> 200  ct=text/javascript; charset=utf-8  bytes=5896\nPASS  console css    /admin/styles.css -> 200  ct=text/css; charset=utf-8         bytes=1059\nPASS  openapi doc    /v1/openapi.json  -> 200  ct=application/json; charset=utf-8 bytes=12177\nPASS  unmapped asset /admin/nope.js    -> 404\n```\n\nThe last row is the point of the map: an unmapped name misses, with no\ndirectory to walk.\n`dist/vec0.dll` sits beside `dist/nimbus-gateway.exe` after\n`compile-gateway.ts`.\n\nCoverage floor, measured on Linux (the authoritative platform). The\nWindows preflight run reported\nfour violations; all four are in files this branch does not touch, and\nall four pass on Linux:\n\n| File | Windows | Linux |\n|---|---|---|\n| `ipc/embedded-assets.ts` | 100% / 100% | 100% / 100% |\n| `ipc/admin-console-assets.ts` | 100% / 96.97% | 100% / 96.97% |\n| `ipc/http-server.ts` | 96.47% / 92.12% | 96.47% / 92.12% |\n| `ipc/server/dispatchers.ts` | 79.89% branch ✗ | 80.07% ✓ |\n| `ipc/server/socket-listeners.ts` | 66.67% line ✗ | 91.67% ✓ |\n| `platform/linux.ts` | 82.56% / 75% ✗ | 97.67% / 90% ✓ |\n\nGate status:\n\n- `bun run preflight` (Windows, 30 gates) — green except the coverage\nfloor explained above.\n- `verify:docker --full` — static tier (25 audits incl. the new one),\n`build` and\n`test:connector-boot` all green. `test:ci` OOM-killed at exit 137: this\nmachine's `.wslconfig`\ncaps the WSL2 VM at 8 GB. The Linux numbers above came from a\ngateway-only instrumented run in\n  the same container: **12,566 tests, 0 fail**.\n- `dispatchers.ts` sits at 80.07% branch on Linux — 0.07 points above\nthe floor. Not this PR's\nfile, but it is one bad branch away from turning CI red for whoever\ntouches it next.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Compiled gateway releases now include the admin console and OpenAPI\nassets.\n* Semantic-memory support now ships with the required platform-specific\nsqlite-vec extension across installers and archives.\n* Installers place the sqlite-vec extension beside the gateway binary\nwhen available.\n\n* **Bug Fixes**\n* Improved compiled-deployment asset resolution and path traversal\nprotection.\n\n* **Chores**\n* Added automated build, packaging, and asset-path audits for release\nartifacts.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-06T06:26:14Z",
-          "tree_id": "fe3348cc7a8f64235e29d38d70126eaec6a1a817",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/36abf192457984a42e2d4e74b984603d51fbb376"
-        },
-        "date": 1785998830803,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.53372700000364,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.6294448000037,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 286.3804886499944,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "baba9cebe4bdab6efc1dbfdba4abe54fa667b669",
+          "message": "fix(deps): clear main's red Security run (withdrawn braces advisory, tokio + clipboard-win) (#1748)\n\n`main` has been red since 08:42 UTC today. This clears the two Security\nfailures. The third red, CI's Sonar gate, is not a code problem; see\nbelow.\n\n## Dependency audit: `audit:advisories` stale row\nGitHub **withdrew** GHSA-vfj7-8cjw-p6xm (`braces`) at 2026-10-23 12:53\nUTC, so `bun audit` no longer reports it and the registry's retire rule\nfails on the leftover row. The row is deleted and recorded in the\nregistry's History comment. 3 live advisories, 3 rows.\n\n## Cargo deny: `packages/ui/src-tauri/Cargo.lock`\n- `tokio` 1.53.1 → 1.54.1 (RUSTSEC-2026-0386, `AsyncFd` I/O-safety\nunsoundness; fixed in >=1.53.3)\n- `clipboard-win` 5.4.1 → 5.4.3 (5.4.1 was yanked)\n\nThese are lockfile-only changes, made with `cargo update -p tokio -p\nclipboard-win`.\n\n## Not fixed here: the SonarQube gate (Unit + Coverage)\n`new_security_rating` is E because Sonar **re-keyed** two issues at\n08:34 UTC today. The old keys had already been triaged, and Sonar\nauto-closed them and reopened identical issues under new keys. The code\ndid not change:\n- `AaFn6kR9J38e2eZ9NYE9` tssecurity:S5696\n`admin-console/src/main.ts:136`. This was previously\n`AZ6oZkIN_SG5v6lJ9_xt`, marked false positive because every\ninterpolation goes through `esc()`.\n- `AaFn6kN2J38e2eZ9NYEt` c:S5849 `sandbox-helper/main.c:494`. This was\npreviously `AaCHEeXpGOMqvmq55deI`, accepted because `drop_all_caps()`\ndrops capabilities and grants none.\n\nRe-applying those two transitions on SonarCloud turns the gate green. No\ncode change is needed.\n\n## Verification\n- `bun run audit:advisories`, `bun audit`, `bun run audit:js-licenses`:\nall pass\n- `cargo deny check` reports advisories, bans, licenses and sources ok;\n`cargo check --locked` passes\n- `bun run preflight:fast` passed, and the `scripts/structure-audit`\ntests ran 1187 pass / 0 fail\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T19:01:57Z",
+          "tree_id": "fdd24a0da9c65555664ee02f6f26d47a88c39bca",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/baba9cebe4bdab6efc1dbfdba4abe54fa667b669"
+        },
+        "date": 1792782879028,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 276.0798805000031,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 273.4677586499976,
             "unit": "ms"
           }
         ]
