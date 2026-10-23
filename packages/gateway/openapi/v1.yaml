@@ -659,4 +659,4 @@ components:
       bearerFormat: vault://http_api.deployment_token
       description: |
         Token stored under the vault key `http_api.deployment_token`.
-        Set with `nimbus vault set http_api.deployment_token <value>`.
+        Set with `nimbus vault set http_api.deployment_token`, which prompts for the value.

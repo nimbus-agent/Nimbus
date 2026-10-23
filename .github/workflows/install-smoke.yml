@@ -437,8 +437,9 @@ jobs:
           ADMIN_TOKEN="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
           echo "::add-mask::$ADMIN_TOKEN"
           printf '%s\n' '{"approved":true,"note":"install-smoke admin token"}' > "$RUNNER_TEMP/consent.jsonl"
-          NIMBUS_SCRIPT_CONSENT_SOURCE="$RUNNER_TEMP/consent.jsonl" \
-            nimbus vault set http_api.deployment_token "$ADMIN_TOKEN"
+          # The token goes in on stdin, never argv (process list); the CLI drops one trailing newline.
+          printf '%s\n' "$ADMIN_TOKEN" | NIMBUS_SCRIPT_CONSENT_SOURCE="$RUNNER_TEMP/consent.jsonl" \
+            nimbus vault set http_api.deployment_token
           code="$(curl -s -o "$RUNNER_TEMP/admin.html" -w '%{http_code}' \
             -H "Authorization: Bearer $ADMIN_TOKEN" "$API/admin" || true)"
           if [ "$code" != "200" ]; then
@@ -862,7 +863,8 @@ jobs:
           '{"approved":true,"note":"install-smoke admin token"}' |
             Set-Content -Path $consentFile -Encoding ascii
           $env:NIMBUS_SCRIPT_CONSENT_SOURCE = $consentFile
-          nimbus vault set http_api.deployment_token $adminToken
+          # The token goes in on stdin, never argv (process list); the CLI drops one trailing newline.
+          $adminToken | nimbus vault set http_api.deployment_token
           $vaultExit = $LASTEXITCODE
           Remove-Item Env:\NIMBUS_SCRIPT_CONSENT_SOURCE
           if ($vaultExit -ne 0) {

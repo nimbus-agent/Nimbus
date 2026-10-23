@@ -1472,7 +1472,7 @@ nimbus deploy annotate \
 
 | Key | Purpose |
 |---|---|
-| `http_api.deployment_token` | Bearer token sent with every `POST /v1/deployments`. Set with `nimbus vault set http_api.deployment_token <token>`. Without it the HTTP write surface returns 503 (`write_surface_disabled`). |
+| `http_api.deployment_token` | Bearer token sent with every `POST /v1/deployments`. Set with `nimbus vault set http_api.deployment_token`, which prompts for the value. Without it the HTTP write surface returns 503 (`write_surface_disabled`). |
 
 A first-party GitHub Action wraps the endpoint for use directly in workflows — see [`packages/github-actions/annotate-action/`](../packages/github-actions/annotate-action/).
 
@@ -2764,7 +2764,7 @@ nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 
 **Credential reuse — no separate `connector auth` needed.** `github_actions` reuses the `github` credential (there is no `gitlab_ci` service — GitLab CI data comes from the `gitlab` connector, which you authenticate directly); `google_meet` rides the `google` OAuth; and the metadata-only **BigQuery / Athena / CloudWatch / SageMaker / Cloud Logging / Vertex AI** connectors reuse your `aws` / `gcp` credentials. Authenticate the underlying provider and these light up automatically.
 
-**Connectors set up with `nimbus vault set`, not `connector auth`.** The services below have no `connector auth` flow. Running `nimbus connector auth <service>` for one of them refuses and prints the exact `nimbus vault set` commands for that service. Store each setting with `nimbus vault set <key> <value>`; every write asks for your approval. Set the keys your setup uses: optional ones, such as a self-hosted base URL or a team id, can be left out. The table comes from `CONNECTOR_VAULT_SECRET_KEYS`; if it ever disagrees with what the refusal prints, the refusal is current.
+**Connectors set up with `nimbus vault set`, not `connector auth`.** The services below have no `connector auth` flow. Running `nimbus connector auth <service>` for one of them refuses and prints the exact `nimbus vault set` commands for that service. Store each setting with `nimbus vault set <key>`, which prompts for the value; every write asks for your approval. Set the keys your setup uses: optional ones, such as a self-hosted base URL or a team id, can be left out. The table comes from `CONNECTOR_VAULT_SECRET_KEYS`; if it ever disagrees with what the refusal prints, the refusal is current.
 
 | Service | Vault keys |
 | --- | --- |
@@ -5119,13 +5119,19 @@ nimbus clip revoke --all
 
 ## Vault
 
-### `nimbus vault set <key> <value>`
+### `nimbus vault set <key>`
 
-Store a secret in the Vault under the given key.
+Store a secret in the Vault under the given key. At a terminal the value is read from a hidden prompt; with stdin piped it is read from stdin (one trailing newline is dropped). Every write asks for your approval, so a piped value also needs `NIMBUS_SCRIPT_CONSENT_SOURCE` to answer that prompt. A blank value or a cancelled prompt stores nothing.
 
 ```bash
-nimbus vault set github.pat ghp_xxxx
+nimbus vault set github.pat                  # prompts for the value (input is hidden)
+
+# Scripted: the consent file answers the approval, so it must exist first
+printf '%s\n' '{"approved":true}' > consent.jsonl
+printf '%s' "$TOKEN" | NIMBUS_SCRIPT_CONSENT_SOURCE=consent.jsonl nimbus vault set github.pat
 ```
+
+**Deprecated:** `nimbus vault set <key> <value>` still works, but prints a warning on stderr: a value on the command line is kept in shell history and shown in the process list. The value argument will be removed in a future major release.
 
 ---
 

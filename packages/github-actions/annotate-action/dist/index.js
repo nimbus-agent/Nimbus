@@ -190,14 +190,14 @@ function buildPayload() {
 }
 function warningFor(result, gatewayUrl) {
   if (result.status === "auth_failed") {
-    return "Nimbus Gateway rejected the bearer token (401). Confirm the GitHub secret matches the vault key " + "http_api.deployment_token configured via 'nimbus vault set http_api.deployment_token <value>'.";
+    return "Nimbus Gateway rejected the bearer token (401). Confirm the GitHub secret matches the vault key " + "http_api.deployment_token configured via 'nimbus vault set http_api.deployment_token'.";
   }
   if (result.status === "rate_limited") {
     const retry = result.retryAfter === undefined ? "" : ` Retry-After: ${result.retryAfter}s.`;
     return `Nimbus Gateway rate-limited the annotation (429).${retry}`;
   }
   if (result.status === "surface_disabled") {
-    const hint = result.hint ?? "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'";
+    const hint = result.hint ?? "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token'";
     return `Nimbus deployment write surface is disabled (503): ${hint}`;
   }
   const detail = result.body === undefined ? "" : `: ${result.body.slice(0, 200)}`;

@@ -9,7 +9,8 @@ The annotation surface is **opt-in and gated by a bearer token** stored in the N
 1. **Mint a token** on the self-hosted runner where the Gateway is running:
 
    ```bash
-   nimbus vault set http_api.deployment_token "$(openssl rand -hex 32)"
+   openssl rand -hex 32                         # copy the output
+   nimbus vault set http_api.deployment_token   # paste it at the hidden prompt
    ```
 
    Read it back so you can copy it into GitHub Repository Secrets:

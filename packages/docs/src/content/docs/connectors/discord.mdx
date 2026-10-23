@@ -15,9 +15,10 @@ The Discord connector indexes channel messages and threads from servers your bot
 ## Authenticate
 
 ```bash
-# Opt in first
-nimbus vault set discord.enabled 1
-nimbus vault set discord.bot_token <your-bot-token>
+# Opt in first (enter 1 at the prompt)
+nimbus vault set discord.enabled
+# Prompts for the bot token (input is hidden)
+nimbus vault set discord.bot_token
 nimbus connector sync discord
 ```
 

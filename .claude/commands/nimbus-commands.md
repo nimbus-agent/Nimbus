@@ -403,7 +403,7 @@ nimbus deploy annotate --service <id> --sha <sha> --target-ref <ref> --env <env>
 **Vault keys for the HTTP write surface:**
 
 ```
-http_api.deployment_token   # Bearer token required for POST /v1/deployments; set via `nimbus vault set http_api.deployment_token <token>` (CLI-only). Without it, the HTTP write surface refuses all POSTs with 503 (write_surface_disabled).
+http_api.deployment_token   # Bearer token required for POST /v1/deployments; set via `nimbus vault set http_api.deployment_token`, which prompts for the value (CLI-only). Without it, the HTTP write surface refuses all POSTs with 503 (write_surface_disabled).
 ```
 
 ### Phase 5 — security audit follow-ups

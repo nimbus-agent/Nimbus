@@ -91,7 +91,7 @@ export async function resolveEmbedder(
     if (apiKey === "") {
       throw new IndexReembedRpcError(
         -32603,
-        "openai.api_key missing in vault. Run `nimbus vault set openai.api_key <key>`.",
+        "openai.api_key missing in vault. Run `nimbus vault set openai.api_key`.",
       );
     }
     const openaiModel = model.slice("openai:".length);
@@ -148,7 +148,7 @@ export async function assertModelUsable(
     if (apiKey === "") {
       throw new IndexReembedRpcError(
         -32603,
-        "openai.api_key missing in vault. Run `nimbus vault set openai.api_key <key>`.",
+        "openai.api_key missing in vault. Run `nimbus vault set openai.api_key`.",
       );
     }
   } else if (p.model !== "Xenova/all-MiniLM-L6-v2" && p.model !== "local") {
