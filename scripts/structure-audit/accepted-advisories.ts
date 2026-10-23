@@ -68,31 +68,18 @@ export interface AcceptedAdvisory {
 export const MAX_ACCEPTANCE_DAYS = 92;
 
 export const ACCEPTED_ADVISORIES: readonly AcceptedAdvisory[] = [
-  // Two HIGH advisories that reached the npm advisory feed on 2026-10-02 with no patched release
-  // anywhere in their version graphs, so the order of preference above stops at step 3 for both.
-  // Each is reached only through tooling that never ships: markdownlint-cli2 (a root
-  // devDependency) and astro (the private docs site's build). Each row carries the reachability
+  // HIGH advisories that reached the npm advisory feed on 2026-10-02 with no patched release
+  // anywhere in their version graphs, so the order of preference above stops at step 3.
+  // Each is reached only through tooling that never ships. Each row carries the reachability
   // proof it rests on. The 30-day window is deliberately short (the cap is 92): an upstream fix is
   // most likely in the first weeks after disclosure, and the re-check should happen while one may
   // still be coming.
   //
   // History: the registry's only earlier row, `@ai-sdk/provider-utils` (GHSA-866g-f22w-33x8,
   // accepted 2026-07-29), was deleted when @mastra/core 1.64.0 met its unblocking condition (the
-  // npm alias the row named had left bun.lock), per the retire rule above.
-  {
-    ghsa: "GHSA-vfj7-8cjw-p6xm",
-    package: "braces",
-    severity: "high",
-    noFixReason:
-      "No patched braces exists. The advisory (CVE-2026-93687, CVSS 7.5, CWE-674) covers <=3.0.3, 3.0.3 is the latest release, and GitHub lists no first patched version. Moving up the chain reaches no fix either: micromatch 4.0.8 (latest) requires braces ^3.0.3; fast-glob 3.3.3 (latest) requires micromatch ^4.0.8; globby 16.2.4 (latest) requires fast-glob ^3.3.3 and micromatch ^4.0.8; and markdownlint-cli2 0.23.3 (latest, already installed) pins globby 16.2.4 and micromatch 4.0.8 exactly. A root override has nothing to point at. Checked against the npm registry on 2026-10-03.",
-    reachability:
-      "Dev tooling only; nothing that ships contains it. `bun why braces`: the sole dependent is the root devDependency markdownlint-cli2, through micromatch by three routes (directly, globby > micromatch, and globby > fast-glob > micromatch). `bun audit --production` does not report it, and no packages/* workspace depends on any package in that chain. The flaw is unbounded recursion while braces walks a deeply nested brace PATTERN. braces only expands glob patterns, never the paths or the Markdown matched against them, and markdownlint-cli2 takes patterns only from its argv and its config files (`globs`/`ignores`). `bun run lint:markdown`, locally and in docs-quality.yml, passes no globs, and .markdownlint-cli2.jsonc holds seven static globs with no brace expression in them. Worst case, a contributor commits a nested-brace glob there and crashes markdownlint in their own CI run, which costs one lint step's availability and exposes no data.",
-    unblockedBy:
-      "braces publishes a release outside <=3.0.3. A 3.x release satisfies micromatch's ^3.0.3, so a root `overrides` pin can take it the same day; a 4.x release needs micromatch to follow. markdownlint-cli2 dropping micromatch and globby would also clear it. Either way `bun audit` stops reporting it, and audit:advisories then fails on this row as stale until the row is deleted.",
-    acceptedOn: "2026-10-03",
-    recheckBy: "2026-11-02",
-    owner: "asafgolombek",
-  },
+  // npm alias the row named had left bun.lock), per the retire rule above. The `braces` row
+  // (GHSA-vfj7-8cjw-p6xm, accepted 2026-10-03, reached only through markdownlint-cli2) was deleted
+  // on 2026-10-23, the day GitHub WITHDREW the advisory and `bun audit` stopped reporting it.
   {
     ghsa: "GHSA-ch52-4w7c-c8xp",
     package: "http-cache-semantics",
