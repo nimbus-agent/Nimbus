@@ -5,16 +5,18 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
+import { forgetLayeredConfigForTests } from "../config/layered-config.ts";
 import { dbRun } from "../db/write.ts";
 import type { FleetRunBudget } from "../fleet/fleet-scheduler.ts";
 import { FLEET_CAPABILITY } from "../fleet/fleet-scheduler.ts";
 import { FleetStore } from "../fleet/fleet-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
+import { dispatchFleetRpc } from "../ipc/fleet-rpc.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import type { EnforcedPolicy, PolicyGate } from "../policy/policy-gate.ts";
 import { AI_V2_CAPABILITIES } from "../policy/types.ts";
-import { assembleFleetRuntime, type FleetBootDeps } from "./assemble.ts";
+import { assembleFleetRuntime, type FleetBootDeps, fleetRpcCtxFor } from "./assemble.ts";
 import { processEnvDelete, processEnvSet } from "./env-access.ts";
 import { UNKNOWN_HOST_ACTIVITY } from "./host-activity.ts";
 import type { PlatformPaths } from "./paths.ts";
@@ -67,11 +69,12 @@ describe("assembleFleetRuntime", () => {
   });
   afterEach(() => {
     for (const s of stops) s();
+    forgetLayeredConfigForTests(dir);
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function deps(gate: PolicyGate): FleetBootDeps {
+  function deps(gate: PolicyGate, logger: pino.Logger = silentLogger): FleetBootDeps {
     return {
       db,
       paths: {
@@ -87,7 +90,7 @@ describe("assembleFleetRuntime", () => {
       llmRegistry: { llmRouter: undefined } as unknown as LlmRegistry,
       hostActivity: UNKNOWN_HOST_ACTIVITY,
       policyGate: gate,
-      logger: silentLogger,
+      logger,
       sidecarStops: stops,
     };
   }
@@ -222,6 +225,143 @@ interval_seconds = 3600
     } finally {
       processEnvDelete("NIMBUS_PROFILE");
     }
+  });
+
+  const ENABLED_WITH_JOB = `[fleet]\nenabled = true\n\n[[fleet.job]]\nname = "nightly"\nagent = "catchup"\ninterval_seconds = 3600\n`;
+
+  /** A logger that keeps every error-level line it is given. */
+  function recordingLogger(): { logger: pino.Logger; errors: string[] } {
+    const errors: string[] = [];
+    const logger = pino({ level: "error" }, { write: (line: string) => errors.push(line) });
+    return { logger, errors };
+  }
+
+  describe("live reload", () => {
+    test("the supervisor is wired even when the fleet is off at boot", () => {
+      const { gate } = stubGate(enforcedWith({}));
+      const before = stops.length;
+      const runtime = assembleFleetRuntime(deps(gate));
+      expect(stops).toHaveLength(before + 1);
+      expect(runtime.scheduler).toBeUndefined();
+      expect(runtime.supervisor).toBeDefined();
+    });
+
+    test("an owner edit enables the fleet without a restart", async () => {
+      const { gate } = stubGate(enforcedWith({}));
+      const runtime = assembleFleetRuntime(deps(gate));
+      expect(runtime.scheduler).toBeUndefined();
+
+      writeToml(ENABLED_WITH_JOB);
+      expect(await runtime.supervisor.check()).toBe("reloaded");
+      expect(runtime.scheduler).toBeDefined();
+      expect(runtime.jobs.map((j) => j.name)).toEqual(["nightly"]);
+    });
+
+    test("a boot config error is logged once", () => {
+      writeToml(`[fleet]\nenabled = true\nallow_remote = true\n`);
+      const { gate } = stubGate(enforcedWith({}));
+      const { logger, errors } = recordingLogger();
+      expect(assembleFleetRuntime(deps(gate, logger)).scheduler).toBeUndefined();
+      expect(errors).toHaveLength(1);
+    });
+
+    test("a reload keeps the org retention floor", async () => {
+      // Boot above the floor, so the edit below is a real change and not deep-equal to the boot load.
+      writeToml(`[fleet]\nretention_days = 60\n`);
+      const { gate } = stubGate(enforcedWith({ retentionMinDays: 30 }));
+      const runtime = assembleFleetRuntime(deps(gate));
+      expect(runtime.config.retentionDays).toBe(60);
+      writeToml(`[fleet]\nretention_days = 1\n`);
+      expect(await runtime.supervisor.check()).toBe("reloaded");
+      expect(runtime.config.retentionDays).toBe(30);
+    });
+
+    test("a broken [fleet] after boot stops the fleet, and fixing it restarts it", async () => {
+      writeToml(ENABLED_WITH_JOB);
+      const { gate } = stubGate(enforcedWith({}));
+      const runtime = assembleFleetRuntime(deps(gate));
+      expect(runtime.scheduler).toBeDefined();
+
+      writeToml(
+        ENABLED_WITH_JOB.replace("enabled = true\n", "enabled = true\nallow_remote = true\n"),
+      );
+      expect(await runtime.supervisor.check()).toBe("reloaded");
+      expect(runtime.scheduler).toBeUndefined();
+
+      writeToml(ENABLED_WITH_JOB);
+      expect(await runtime.supervisor.check()).toBe("reloaded");
+      expect(runtime.scheduler).toBeDefined();
+    });
+
+    /**
+     * The reload TIMER is how the feature fires in production: nothing calls `check()` there. So
+     * this test never calls it — the edit must be picked up by the interval `assembleFleetRuntime`
+     * arms — and the sidecar stop must disarm it.
+     */
+    test("the reload timer picks up an edit without check(), and the sidecar stop disarms it", async () => {
+      const { gate } = stubGate(enforcedWith({}));
+      const runtime = assembleFleetRuntime({ ...deps(gate), checkMs: 10 });
+      expect(runtime.scheduler).toBeUndefined();
+
+      writeToml(ENABLED_WITH_JOB);
+      const deadline = Date.now() + 2_000;
+      while (runtime.scheduler === undefined && Date.now() < deadline) {
+        await Bun.sleep(10);
+      }
+      expect(runtime.scheduler).toBeDefined();
+
+      for (const s of stops.splice(0)) s();
+      const stoppedScheduler = runtime.scheduler;
+      writeToml(ENABLED_WITH_JOB.replace('name = "nightly"', 'name = "other"'));
+      await Bun.sleep(100);
+      expect(runtime.scheduler).toBe(stoppedScheduler);
+      expect(runtime.jobs.map((j) => j.name)).toEqual(["nightly"]);
+    });
+
+    /**
+     * `fleet.runNow` straight after an edit must run against that edit, not wait up to one timer
+     * interval. Seam: `fleetRpcCtxFor`, the exact ctx builder `assemblePlatformServices` installs,
+     * driven through the real `dispatchFleetRpc` — no `check()` call in the test.
+     */
+    test("fleet.runNow finds a job added a moment ago without waiting for the timer", async () => {
+      writeToml(ENABLED_WITH_JOB);
+      const { gate } = stubGate(enforcedWith({}));
+      const runtime = assembleFleetRuntime(deps(gate));
+      const ctx = fleetRpcCtxFor(runtime, UNKNOWN_HOST_ACTIVITY);
+
+      writeToml(
+        `${ENABLED_WITH_JOB}\n[[fleet.job]]\nname = "second"\nagent = "catchup"\ninterval_seconds = 3600\n`,
+      );
+      const res = await dispatchFleetRpc("fleet.runNow", { job: "second", force: true }, ctx);
+      expect(res.kind).toBe("hit");
+      expect((res as { value: { jobsAttempted: number } }).value.jobsAttempted).toBe(1);
+      expect(new FleetStore(db).loadJobState("second")?.lastAttemptAt).toBeDefined();
+    });
+
+    /**
+     * The supervisor's constructor calls `build` unguarded, so the guard has to live in the build
+     * closure: a throw while constructing the scheduler must leave the fleet off, never fail boot.
+     */
+    test("a scheduler construction that throws leaves the fleet off without failing boot", () => {
+      writeToml(ENABLED_WITH_JOB);
+      const { gate } = stubGate(enforcedWith({}));
+      const { logger, errors } = recordingLogger();
+      const throwing: FleetBootDeps = {
+        ...deps(gate, logger),
+        llmRegistry: {
+          get llmRouter(): never {
+            throw new Error("router unavailable");
+          },
+        } as unknown as LlmRegistry,
+      };
+      let runtime: ReturnType<typeof assembleFleetRuntime> | undefined;
+      expect(() => {
+        runtime = assembleFleetRuntime(throwing);
+      }).not.toThrow();
+      expect(runtime?.scheduler).toBeUndefined();
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("building the scheduler failed");
+    });
   });
 
   describe("retention", () => {
