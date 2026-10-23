@@ -1251,6 +1251,6 @@ describe("FleetScheduler.retire", () => {
       () => "rejected",
     );
     await expect(s.retire()).resolves.toBeUndefined();
-    expect(["resolved", "rejected"]).toContain(await outcome);
+    expect(await outcome).toBe("rejected");
   });
 });
