@@ -81,6 +81,7 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "../manifest.ts";
+import { networkAccessLine } from "../network-access-line.ts";
 import { isStrictlyInside } from "../path-containment.ts";
 import {
   BUILTIN_REGISTRY,
@@ -328,15 +329,6 @@ function displayNameOf(entry: ContinuityEntry): string {
   return entry.displayName ?? entry.legacyServiceId;
 }
 
-/** True per OS: on Windows the AppContainer network grant is all-or-nothing (spec § 7.2 step 4). */
-function networkLine(platform: NodeJS.Platform, hosts: readonly string[]): string {
-  if (hosts.length === 0) return "no network access";
-  const list = hosts.join(", ");
-  return platform === "win32"
-    ? `network access (Windows cannot limit this to ${list})`
-    : `network access to ${list}`;
-}
-
 function buildConsentPayload(
   row: MigrationRow,
   entry: ContinuityEntry,
@@ -346,7 +338,7 @@ function buildConsentPayload(
   origin: MigrationAcceptOrigin,
 ): MigrationConsentPayload {
   const name = displayNameOf(entry);
-  const network = networkLine(platform, entry.expectedPermissions.network);
+  const network = networkAccessLine(platform, entry.expectedPermissions.network);
   const credentialNames = sortedNames(entry.credentials).join(", ");
   return {
     migrationId: row.id,
