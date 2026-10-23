@@ -5125,6 +5125,9 @@ Store a secret in the Vault under the given key. At a terminal the value is read
 
 ```bash
 nimbus vault set github.pat                  # prompts for the value (input is hidden)
+
+# Scripted: the consent file answers the approval, so it must exist first
+printf '%s\n' '{"approved":true}' > consent.jsonl
 printf '%s' "$TOKEN" | NIMBUS_SCRIPT_CONSENT_SOURCE=consent.jsonl nimbus vault set github.pat
 ```
 

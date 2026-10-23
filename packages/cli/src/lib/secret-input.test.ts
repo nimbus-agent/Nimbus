@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   assertPipedSecretCanBeApproved,
+  defaultSecretInputIo,
   readSecretValue,
   type SecretInputIo,
   stripOneTrailingNewline,
@@ -18,6 +19,36 @@ function io(over: Partial<SecretInputIo> = {}): SecretInputIo {
     ...over,
   };
 }
+
+describe("defaultSecretInputIo", () => {
+  test("reflects the process: stdin's TTY flag and NIMBUS_SCRIPT_CONSENT_SOURCE", () => {
+    const prev = process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+    process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"] = "/tmp/c.jsonl";
+    try {
+      const d = defaultSecretInputIo();
+      expect(d.stdinIsTty).toBe(process.stdin.isTTY === true);
+      expect(d.scriptConsentSource).toBe("/tmp/c.jsonl");
+    } finally {
+      if (prev === undefined) delete process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"];
+      else process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"] = prev;
+    }
+  });
+
+  test("readHidden passes the message to the masked prompt and returns what was typed", async () => {
+    let asked = "";
+    const d = defaultSecretInputIo(async ({ message }) => {
+      asked = message;
+      return "typed";
+    });
+    expect(await d.readHidden("Value for k (input is hidden)")).toBe("typed");
+    expect(asked).toBe("Value for k (input is hidden)");
+  });
+
+  test("readHidden maps a cancelled prompt (a symbol) to undefined", async () => {
+    const d = defaultSecretInputIo(async () => Symbol("cancel"));
+    expect(await d.readHidden("m")).toBeUndefined();
+  });
+});
 
 describe("stripOneTrailingNewline", () => {
   test("drops exactly one LF or CRLF, nothing else", () => {
