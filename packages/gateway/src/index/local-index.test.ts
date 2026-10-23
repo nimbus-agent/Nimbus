@@ -6,7 +6,14 @@
  */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import os from "node:os";
 import type { NimbusItem } from "@nimbus-dev/sdk";
+import pino from "pino";
+import { getConnectorHealthHistory, transitionHealth } from "../connectors/health.ts";
+import { ProviderRateLimiter } from "../sync/rate-limiter.ts";
+import { SyncScheduler } from "../sync/scheduler.ts";
+import { unboundSyncCapabilities } from "../sync/sync-capabilities.ts";
+import { createMemoryVault } from "../testing/bun-test-support.ts";
 import { upsertIndexedItem } from "./item-store.ts";
 import type { SemanticSearchDeps } from "./local-index.ts";
 import { isAllowedMetaKey, LocalIndex } from "./local-index.ts";
@@ -1254,6 +1261,82 @@ describe("LocalIndex pause / resume / setInterval / clearCursor", () => {
     idx.pauseConnectorSync("github");
     idx.resumeConnectorSync("github");
     expect(idx.persistedConnectorStatuses("github")[0]?.status).toBe("ok");
+  });
+
+  function seedStaleErrors(idx: LocalIndex, db: Database): void {
+    transitionHealth(db, "github", { type: "persistent_error", error: "stale health error" });
+    db.run(`UPDATE scheduler_state SET error_msg = ? WHERE service_id = ?`, [
+      "scheduler error",
+      "github",
+    ]);
+    expect(idx.persistedConnectorStatuses("github")[0]?.lastError).toBe("scheduler error");
+  }
+
+  function setupWithDb(): { idx: LocalIndex; db: Database } {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const idx = new LocalIndex(db);
+    idx.ensureConnectorSchedulerRegistration("github", 60000, Date.now());
+    return { idx, db };
+  }
+
+  test("pauseConnectorSync records the paused health transition", () => {
+    const { idx, db } = setupWithDb();
+    idx.pauseConnectorSync("github");
+    expect(idx.persistedConnectorStatuses("github")[0]?.healthState).toBe("paused");
+    const latest = getConnectorHealthHistory(db, "github")[0];
+    expect(latest?.toState).toBe("paused");
+    expect(latest?.reason).toBe("connector paused");
+  });
+
+  test("a no-scheduler pause reports the scheduler row's error, not a stale health last_error", () => {
+    const { idx, db } = setupWithDb();
+    seedStaleErrors(idx, db);
+    idx.pauseConnectorSync("github");
+    expect(idx.persistedConnectorStatuses("github")[0]?.lastError).toBe("scheduler error");
+  });
+
+  test("resumeConnectorSync clears the paused health state", () => {
+    const { idx, db } = setupWithDb();
+    idx.pauseConnectorSync("github");
+    idx.resumeConnectorSync("github");
+    const status = idx.persistedConnectorStatuses("github")[0];
+    // "healthy", not merely "not paused": a paused health state would keep a later scheduler
+    // from dispatching this connector (SKIP_HEALTH_STATES).
+    expect(status?.healthState).toBe("healthy");
+    expect(status?.lastError).toBeNull();
+    expect(getConnectorHealthHistory(db, "github")[0]?.reason).toBe("connector resumed");
+  });
+
+  test("a no-scheduler pause reports what SyncScheduler.pause reports", () => {
+    const viaIndex = setupWithDb();
+    seedStaleErrors(viaIndex.idx, viaIndex.db);
+    viaIndex.idx.pauseConnectorSync("github");
+
+    const viaSched = setupWithDb();
+    seedStaleErrors(viaSched.idx, viaSched.db);
+    const sched = new SyncScheduler(
+      {
+        ...unboundSyncCapabilities(),
+        db: viaSched.db,
+        vault: createMemoryVault(),
+        logger: pino({ level: "silent" }),
+        rateLimiter: new ProviderRateLimiter(),
+        sandboxCwd: os.tmpdir(),
+        credentialFor: () => ({ credential: "personal" }),
+        runTeamList: async () => [],
+        depth: "full",
+      },
+      {},
+      { initialOnline: false },
+    );
+    sched.pause("github");
+
+    const a = viaIndex.idx.persistedConnectorStatuses("github")[0];
+    const b = viaSched.idx.persistedConnectorStatuses("github")[0];
+    expect(a?.lastError).toBe(b?.lastError ?? null);
+    expect(a?.healthState).toBe(b?.healthState ?? "");
+    expect(a?.healthState).toBe("paused");
   });
 
   test("resumeConnectorSync throws for unknown service", () => {

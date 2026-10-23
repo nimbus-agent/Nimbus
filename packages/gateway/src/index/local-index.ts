@@ -438,6 +438,9 @@ export class LocalIndex {
       throw new Error(`Unknown connector: ${serviceId}`);
     }
     setPaused(this.db, serviceId, true);
+    // The no-scheduler twin of SyncScheduler.pause: without the transition a stale health
+    // last_error would outrank the scheduler row's error in the paused status.
+    transitionHealth(this.db, serviceId, { type: "paused" });
   }
 
   resumeConnectorSync(serviceId: string): void {
@@ -445,6 +448,8 @@ export class LocalIndex {
       throw new Error(`Unknown connector: ${serviceId}`);
     }
     setPaused(this.db, serviceId, false);
+    // Health "paused" is a scheduler skip state; leaving it would block a later scheduler.
+    transitionHealth(this.db, serviceId, { type: "resumed" });
   }
 
   setConnectorSyncIntervalMs(serviceId: string, intervalMs: number, now: number): void {
