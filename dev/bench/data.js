@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792689290794,
+  "lastUpdate": 1792726979444,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e3305428ef4411d90de010015d405b54acf32db6",
-          "message": "test: stop CI hiding a Windows hang and two silently-skipped suites (#1034)\n\n## What\n\nTwo fixes for the same underlying defect: **CI reporting something it\ndid not verify.** One hides a hang behind a timeout; the other hides\nskipped tests behind a passing count. Neither is a logic bug — the\nreporting is what's wrong.\n\n## Fix 1 — a Windows hook timeout that intermittently reds `main`\n\n`preflight-deploy.e2e.test.ts` fails on `windows-2025` with `a\nbeforeEach/afterEach hook timed out for this test` at ~11.7s. It is a\nflake: the commit it failed on changed only version strings, and the\ncommit before it — which changed the schema — passed.\n\nThe mechanism is already documented in this repo\n(`test/unit/db/statement-finalization.test.ts`, issue #969):\n`runIndexedSchemaMigrations` leaves prepared statements alive → an\nunfinalized `db.prepare()` makes `db.close()` a **silent no-op** → the\ndatabase file stays pinned → Windows' recursive `rmSync` retries\ninternally on `EBUSY` and burns the hook's ~5s budget.\n\nNote the `rmSync` was *already* inside a try/catch, so this is a\n**block, not a throw** — widening the catch would not have helped.\n\n**Fix:** `maxRetries: 0, retryDelay: 0` so cleanup fails fast instead of\nconsuming the budget. A leaked temp directory is the accepted status quo\n(#972/#973 track ~536 per full gateway run), so this trades a leaked dir\nfor a hook that cannot hang. Commented at each site citing those issues,\nso it isn't \"fixed\" back into a blocking call.\n\nApplied to **26 call sites across 20 files** sharing the vulnerable\n`db.close()` + `rmSync(dir, …)` shape.\n\n**Three sibling-looking files were deliberately left alone**, with\nreasons recorded: `db/writable-pragmas.test.ts`,\n`extensions/verify-extensions.test.ts`, `ipc/share-rpc.test.ts` —\nin-memory-only databases, or a missing try/catch where adding one would\nchange failure semantics.\n\nThis does **not** fix the underlying statement-finalization problem\n(#969) — that is a much larger change across the migration runner.\n\n## Fix 2 — tests that reported as PASSING when they never ran\n\nTwo sites in `index/migrations/runner-v30.test.ts` used:\n\n```ts\nif (!tryLoadSqliteVec(db)) { return; }\n```\n\nAn early return registers as a **pass**, not a skip. The test count is\nidentical whether the code ran or not, so a green run is\nindistinguishable from a fully-exercised one. This matters because\n`sqlite-vec` genuinely does not load on macOS CI (#1029) — these\n\"passed\" there having verified nothing.\n\nConverted to `test.skipIf(!VEC_AVAILABLE)`, matching the existing\nconvention in `connectors/reindex-vector-erasure.test.ts` and the\n`search/*.test.ts` files.\n\n**Proven, not assumed:** forcing `VEC_AVAILABLE = false` moves the file\nfrom `5 pass` to `3 pass / 2 skip`, confirming the two tests now report\nas skipped rather than silently passing.\n\nA third site named in the brief — `embedding/pipeline.test.ts:145` —\nturned out to be **already correctly `describe.skipIf`-wrapped** and was\nleft untouched (verified against `origin/main`).\n\n## Verification\n\ntypecheck ✅ exit 0 · `bunx biome check --error-on-warnings` ✅ 2,674\nfiles clean · combined 22-file run ✅ 269 pass / 0 fail\n\nRelated: #1029 (macOS `sqlite-vec` — 54 vec-dependent sites silently\nskip there), #969 (statement finalization), #972/#973 (leaked temp\ndirs).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Tests**\n- Test cleanup now fails fast when temporary files remain in use,\npreventing teardown from blocking.\n  - Cleanup errors remain non-fatal where applicable.\n- SQLite vector-dependent tests now skip gracefully when the required\ncapability is unavailable.\n- Migration and trigger coverage retains explicit validation when SQLite\nvector support is present.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-03T21:05:43+03:00",
-          "tree_id": "693c231834387bf0b7b40b3f85808416b9af808e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e3305428ef4411d90de010015d405b54acf32db6"
-        },
-        "date": 1785781551694,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 325.89187350000174,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 326.2160227000015,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.8313828999977,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d9701f7874f2c00fa1f2660af0ac58f8327d615",
+          "message": "fix(deps): ip-address 10.7.4 for GHSA-rxp7-6hxx-x8q5 (#1717)\n\n## Summary\n\nThe required `Dependency audit` check went red repo-wide on 2026-10-22:\nGHSA-rxp7-6hxx-x8q5 (moderate, published today) is a quadratic-time flaw\nin `ip-address`'s `Address6` zone-identifier match, ahead of its length\nlimit, so a single long string can stall the process. It affects\n`<=10.7.3`; `10.7.4` (released 2026-10-11) fixes it. It first showed on\n#1716, which touches no dependencies.\n\n**Where it comes from:** `ip-address` is transitive only, reached\nthrough\n- `express-rate-limit` (`^10.2.0`), from `@modelcontextprotocol/sdk`;\n- `socks` (`^10.1.1`), from `imapflow`.\n\n**Fix:** both ranges already admit 10.7.4, so the single hoisted\n`bun.lock` entry moves from 10.7.3 to 10.7.4, with the registry's\nintegrity hash. No override and no `package.json` change. (`bun update\nip-address` would have added it as a root dependency and reshuffled\nunrelated entries, so the lockfile line was changed on its own.)\n\n## Test plan\n- [x] `bun install --frozen-lockfile` accepts the lockfile;\n`node_modules/ip-address` is 10.7.4.\n- [x] `audit:advisories`: OK (5 live advisories, all accounted for by 5\naccepted rows).\n- [x] `audit:override-drift`: OK.\n- [x] `preflight:fast`: passed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T06:29:06+03:00",
+          "tree_id": "0b65856f9e1a6ab9a709aaa323b9c2c7bd263090",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7d9701f7874f2c00fa1f2660af0ac58f8327d615"
+        },
+        "date": 1792726975642,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 210.47196355000668,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 231.65291555000002,
             "unit": "ms"
           }
         ]
