@@ -7522,7 +7522,11 @@ describe("I46 — a renderer can create an extension run grant only through migr
           setPaused(db, id, false);
           transitionHealth(db, id, { type: "resumed" });
         },
-        syncableFor: (id) => registered.get(id),
+        pause: (id, reason) => {
+          setPaused(db, id, true);
+          transitionHealth(db, id, { type: "paused", ...(reason === undefined ? {} : { reason }) });
+        },
+        syncableFor: (id) => (registered.has(id) ? {} : undefined),
       },
       now: () => NOW,
       ...over,
