@@ -2,6 +2,22 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.1.0](https://github.com/nimbus-agent/Nimbus/compare/v10.0.0...v10.1.0) (2026-10-23)
+
+
+### Features
+
+* **config:** layered config reader; profiles inherit from nimbus.toml ([#1714](https://github.com/nimbus-agent/Nimbus/issues/1714)) ([780303e](https://github.com/nimbus-agent/Nimbus/commit/780303ecd3570d85ab5c4a73403570fd5b38aeda))
+* **config:** pack layers under the user's config, allowlisted and conflict-checked ([#1718](https://github.com/nimbus-agent/Nimbus/issues/1718)) ([b03e5c2](https://github.com/nimbus-agent/Nimbus/commit/b03e5c2fa1ceec5856697b70a7d674dd7f0d6704))
+* **fleet:** fleet config changes apply without a restart ([#1724](https://github.com/nimbus-agent/Nimbus/issues/1724)) ([72a67fb](https://github.com/nimbus-agent/Nimbus/commit/72a67fb6c2eec81b97d31280ece6c2aa2645fc6c))
+
+
+### Bug Fixes
+
+* **cli:** vault set reads the value from a hidden prompt or stdin ([#1723](https://github.com/nimbus-agent/Nimbus/issues/1723)) ([c5cefb8](https://github.com/nimbus-agent/Nimbus/commit/c5cefb840fe42a856b1998c3930c218c4963c782))
+* **deps:** ip-address 10.7.4 for GHSA-rxp7-6hxx-x8q5 ([#1717](https://github.com/nimbus-agent/Nimbus/issues/1717)) ([7d9701f](https://github.com/nimbus-agent/Nimbus/commit/7d9701f7874f2c00fa1f2660af0ac58f8327d615))
+* **extensions:** say on Windows that a run approval's host list is not enforced ([#1716](https://github.com/nimbus-agent/Nimbus/issues/1716)) ([a012fed](https://github.com/nimbus-agent/Nimbus/commit/a012fed7603ed913824fc61bc73bf6fdf00ce919))
+
 ## [10.0.0](https://github.com/nimbus-agent/Nimbus/compare/v9.2.1...v10.0.0) (2026-10-22)
 
 
