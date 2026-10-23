@@ -30,12 +30,17 @@ import {
   upsertWorkflowByName,
 } from "../automation/workflow-store.ts";
 import { deleteConnectorHealthRow } from "../connectors/health.ts";
-import { approveExtensionRun, revokeExtensionRun } from "../extensions/approve-run.ts";
+import {
+  approveExtensionRun,
+  currentRunCredentials,
+  revokeExtensionRun,
+} from "../extensions/approve-run.ts";
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import { clearDeps, forwardDeps, reverseDeps } from "../extensions/dependency-store.ts";
 import {
   CREDENTIAL_POST_CONSENT_CODES,
+  type CredentialReadDeps,
   ExtensionCredentialError,
   extensionCredentialStatus,
   setExtensionCredential,
@@ -888,6 +893,18 @@ function credentialRpcError(e: unknown): unknown {
   );
 }
 
+/**
+ * The grant and binding lookups both credential methods share. The live derivation binds through
+ * the SAME composed table as the trust check (C7), so neither can fall back to the baked default.
+ */
+function credentialReadDeps(ctx: AutomationCtx): Omit<CredentialReadDeps, "vault"> {
+  return {
+    readGrant: (x) => getRunGrant(ctx.db, x),
+    liveCredentials: (x) => currentRunCredentials(ctx.db, x, ctx.continuityTable),
+    ...continuityTableOf(ctx),
+  };
+}
+
 function requireCredentialVault(ctx: AutomationCtx, method: string): NimbusVault {
   if (ctx.vault === undefined) {
     throw new AutomationRpcError(-32603, `${method} requires the Vault`);
@@ -925,7 +942,7 @@ async function handleExtensionCredentialSet(
   requireInstalledExtension(ctx, id);
   try {
     const out = await setExtensionCredential(
-      { vault, gate, readGrant: (x) => getRunGrant(ctx.db, x), ...continuityTableOf(ctx) },
+      { vault, gate, ...credentialReadDeps(ctx) },
       { extensionId: id, name, value },
     );
     // A live `mesh:ext:` child keeps the env it was spawned with. Stopping it makes the next use
@@ -946,10 +963,7 @@ async function handleExtensionCredentialStatus(
   const vault = requireCredentialVault(ctx, "extension.credentialStatus");
   requireInstalledExtension(ctx, id);
   try {
-    const out = await extensionCredentialStatus(
-      { vault, readGrant: (x) => getRunGrant(ctx.db, x), ...continuityTableOf(ctx) },
-      id,
-    );
+    const out = await extensionCredentialStatus({ vault, ...credentialReadDeps(ctx) }, id);
     return { kind: "hit", value: out };
   } catch (e) {
     throw credentialRpcError(e);

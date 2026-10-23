@@ -12,6 +12,7 @@ import {
   extensionCredentialStatus,
   setExtensionCredential,
 } from "./extension-credential-set.ts";
+import type { ResolvedRunCredentials } from "./extension-credentials.ts";
 import type { ExtensionRunGrantRow } from "./run-grant-store.ts";
 
 const EXT = "com.example.reader";
@@ -49,6 +50,26 @@ const TABLE: readonly ContinuityEntry[] = [
   },
 ];
 
+/** What the installed package resolves to NOW when its binding still holds: exactly `DECLARED`. */
+const LIVE_CREDENTIALS: ResolvedRunCredentials = {
+  api_secret: { env: "READER_API_SECRET", vaultKey: "legacy.reader.secret" },
+  token: { env: "READER_TOKEN", vaultKey: KEY },
+};
+
+type Live = { credentials: ResolvedRunCredentials; binding: ContinuityEntry | undefined };
+
+/** The binding holds: the live derivation equals the grant and names the `reader` entry. */
+const liveBound = (): Live | undefined => ({ credentials: LIVE_CREDENTIALS, binding: TABLE[0] });
+
+/** The binding lapsed: the live derivation falls back to the extension's own keys. */
+const liveLapsed = (): Live | undefined => ({
+  credentials: {
+    api_secret: { env: "READER_API_SECRET", vaultKey: "ext.ext_com_example_reader.api_secret" },
+    token: { env: "READER_TOKEN", vaultKey: KEY },
+  },
+  binding: undefined,
+});
+
 type GateCall = { type: string; payload: Record<string, unknown> };
 
 function recordingGate(answer: boolean): { gate: CredentialOwnerGate; calls: GateCall[] } {
@@ -71,8 +92,15 @@ function deps(
   readGrant: (id: string) => ExtensionRunGrantRow | null;
   gate: CredentialOwnerGate;
   continuityTable: readonly ContinuityEntry[];
+  liveCredentials: (id: string) => Live | undefined;
 } {
-  return { vault, readGrant: (id) => (id === EXT ? row : null), gate, continuityTable: TABLE };
+  return {
+    vault,
+    readGrant: (id) => (id === EXT ? row : null),
+    gate,
+    continuityTable: TABLE,
+    liveCredentials: liveBound,
+  };
 }
 
 async function refusal(p: Promise<unknown>): Promise<ExtensionCredentialError> {
@@ -135,14 +163,17 @@ describe("setExtensionCredential", () => {
     const { gate, calls } = recordingGate(true);
     const e1 = await refusal(
       setExtensionCredential(
-        { vault, gate, readGrant: () => row, continuityTable: TABLE },
+        { vault, gate, readGrant: () => row, continuityTable: TABLE, liveCredentials: liveBound },
         { extensionId: EXT, name: "token", value: SECRET },
       ),
     );
     expect(e1.code).toBe("ERR_EXTENSION_CREDENTIAL_GRANT_INVALID");
     expect(calls).toHaveLength(0);
     const e2 = await refusal(
-      extensionCredentialStatus({ vault, readGrant: () => row, continuityTable: TABLE }, EXT),
+      extensionCredentialStatus(
+        { vault, readGrant: () => row, continuityTable: TABLE, liveCredentials: liveBound },
+        EXT,
+      ),
     );
     expect(e2.code).toBe("ERR_EXTENSION_CREDENTIAL_GRANT_INVALID");
     expect(reads).toBe(0);
@@ -154,7 +185,13 @@ describe("setExtensionCredential", () => {
     const { gate } = recordingGate(true);
     const e = await refusal(
       setExtensionCredential(
-        { vault: new MockVault(), gate, readGrant: () => grant(DECLARED), continuityTable: other },
+        {
+          vault: new MockVault(),
+          gate,
+          readGrant: () => grant(DECLARED),
+          continuityTable: other,
+          liveCredentials: liveBound,
+        },
         { extensionId: EXT, name: "token", value: SECRET },
       ),
     );
@@ -170,7 +207,13 @@ describe("setExtensionCredential", () => {
     };
     const e = await refusal(
       setExtensionCredential(
-        { vault, gate, readGrant: () => current, continuityTable: TABLE },
+        {
+          vault,
+          gate,
+          readGrant: () => current,
+          continuityTable: TABLE,
+          liveCredentials: liveBound,
+        },
         { extensionId: EXT, name: "token", value: SECRET },
       ),
     );
@@ -296,7 +339,13 @@ describe("setExtensionCredential", () => {
     };
     const e = await refusal(
       setExtensionCredential(
-        { vault, gate, readGrant: () => current, continuityTable: TABLE },
+        {
+          vault,
+          gate,
+          readGrant: () => current,
+          continuityTable: TABLE,
+          liveCredentials: liveBound,
+        },
         { extensionId: EXT, name: "token", value: SECRET },
       ),
     );
@@ -313,7 +362,13 @@ describe("setExtensionCredential", () => {
     const { gate } = recordingGate(true);
     const e = await refusal(
       setExtensionCredential(
-        { vault, gate, readGrant: () => grant(DECLARED), continuityTable: TABLE },
+        {
+          vault,
+          gate,
+          readGrant: () => grant(DECLARED),
+          continuityTable: TABLE,
+          liveCredentials: liveBound,
+        },
         { extensionId: EXT, name: "token", value: SECRET },
       ),
     );
@@ -329,7 +384,12 @@ describe("extensionCredentialStatus", () => {
     await vault.set(KEY, SECRET);
     await vault.set("legacy.reader.secret", "   ");
     const out = await extensionCredentialStatus(
-      { vault, readGrant: () => grant(DECLARED), continuityTable: TABLE },
+      {
+        vault,
+        readGrant: () => grant(DECLARED),
+        continuityTable: TABLE,
+        liveCredentials: liveBound,
+      },
       EXT,
     );
     expect(out).toEqual({
@@ -345,7 +405,7 @@ describe("extensionCredentialStatus", () => {
 
   test("no declared credentials reports an empty list", async () => {
     const out = await extensionCredentialStatus(
-      { vault: new MockVault(), readGrant: () => grant("{}") },
+      { vault: new MockVault(), readGrant: () => grant("{}"), liveCredentials: liveBound },
       EXT,
     );
     expect(out).toEqual({ credentials: [] });
@@ -353,8 +413,137 @@ describe("extensionCredentialStatus", () => {
 
   test("no run grant is refused", async () => {
     const e = await refusal(
-      extensionCredentialStatus({ vault: new MockVault(), readGrant: () => null }, EXT),
+      extensionCredentialStatus(
+        { vault: new MockVault(), readGrant: () => null, liveCredentials: liveBound },
+        EXT,
+      ),
     );
     expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_NO_GRANT");
+  });
+});
+
+describe("a legacy key is trusted only while its binding still holds", () => {
+  const LEGACY = "legacy.reader.secret";
+
+  test("a legacy key whose binding has lapsed refuses set before prompting", async () => {
+    const { gate, calls } = recordingGate(true);
+    const d = { ...deps(grant(DECLARED), gate), liveCredentials: liveLapsed };
+    const e = await refusal(
+      setExtensionCredential(d, { extensionId: EXT, name: "api_secret", value: SECRET }),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED");
+    expect(e.message).toBe(
+      `ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED: ${EXT}'s run approval reuses the reader connector's credential, but the installed package no longer binds to it; nothing was written — run \`nimbus extension approve ${EXT}\` again`,
+    );
+    expect(calls).toHaveLength(0);
+    expect(await d.vault.get(LEGACY)).toBeNull();
+    expect(e.message).not.toContain(LEGACY);
+    expect(e.message).not.toContain(SECRET);
+  });
+
+  test("an unreadable installed manifest (liveCredentials → undefined) refuses a legacy key", async () => {
+    const { gate, calls } = recordingGate(true);
+    const d = { ...deps(grant(DECLARED), gate), liveCredentials: () => undefined };
+    const e = await refusal(
+      setExtensionCredential(d, { extensionId: EXT, name: "api_secret", value: SECRET }),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED");
+    expect(calls).toHaveLength(0);
+    expect(await d.vault.get(LEGACY)).toBeNull();
+  });
+
+  test("a live binding to a different legacy connector refuses a legacy key", async () => {
+    const { gate, calls } = recordingGate(true);
+    const elsewhere = TABLE.map((entry) => ({ ...entry, legacyServiceId: "other" }));
+    const d = {
+      ...deps(grant(DECLARED), gate),
+      liveCredentials: (): Live => ({ credentials: LIVE_CREDENTIALS, binding: elsewhere[0] }),
+    };
+    const e = await refusal(
+      setExtensionCredential(d, { extensionId: EXT, name: "api_secret", value: SECRET }),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("credentialStatus refuses a lapsed binding without reading the Vault", async () => {
+    const vault = new MockVault();
+    let reads = 0;
+    const realGet = vault.get.bind(vault);
+    vault.get = async (k) => {
+      reads += 1;
+      return realGet(k);
+    };
+    const e = await refusal(
+      extensionCredentialStatus(
+        {
+          vault,
+          readGrant: () => grant(DECLARED),
+          continuityTable: TABLE,
+          liveCredentials: liveLapsed,
+        },
+        EXT,
+      ),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED");
+    expect(e.message).toBe(
+      `ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED: ${EXT}'s run approval reuses the reader connector's credential, but the installed package no longer binds to it; nothing was read — run \`nimbus extension approve ${EXT}\` again`,
+    );
+    expect(e.message).not.toContain(LEGACY);
+    expect(reads).toBe(0);
+  });
+
+  test("a lapsed binding refuses the whole grant, so the extension's own key is refused too", async () => {
+    const { gate, calls } = recordingGate(true);
+    const d = { ...deps(grant(DECLARED), gate), liveCredentials: liveLapsed };
+    const e = await refusal(
+      setExtensionCredential(d, { extensionId: EXT, name: "token", value: SECRET }),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED");
+    expect(calls).toHaveLength(0);
+    expect(await d.vault.get(KEY)).toBeNull();
+  });
+
+  test("a binding that lapses while the prompt is open writes nothing", async () => {
+    const vault = new MockVault();
+    let live = liveBound;
+    const gate: CredentialOwnerGate = async () => {
+      live = liveLapsed;
+      return true;
+    };
+    const e = await refusal(
+      setExtensionCredential(
+        {
+          vault,
+          gate,
+          readGrant: () => grant(DECLARED),
+          continuityTable: TABLE,
+          liveCredentials: () => live(),
+        },
+        { extensionId: EXT, name: "api_secret", value: SECRET },
+      ),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_CHANGED");
+    expect(await vault.get(LEGACY)).toBeNull();
+  });
+
+  test("an own-key-only grant is unaffected when liveCredentials is undefined", async () => {
+    const vault = new MockVault();
+    const own = grant(JSON.stringify({ token: { env: "READER_TOKEN", vaultKey: KEY } }));
+    const { gate, calls } = recordingGate(true);
+    const d = {
+      vault,
+      gate,
+      readGrant: () => own,
+      continuityTable: TABLE,
+      liveCredentials: () => undefined,
+    };
+    const out = await setExtensionCredential(d, { extensionId: EXT, name: "token", value: SECRET });
+    expect(out).toEqual({ name: "token", set: true });
+    expect(calls).toHaveLength(1);
+    expect(await vault.get(KEY)).toBe(SECRET);
+    expect(await extensionCredentialStatus(d, EXT)).toEqual({
+      credentials: [{ name: "token", set: true }],
+    });
   });
 });

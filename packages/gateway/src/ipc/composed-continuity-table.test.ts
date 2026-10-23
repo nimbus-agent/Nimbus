@@ -6,7 +6,6 @@ import net from "node:net";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { insertExtensionRow } from "../automation/extension-store.ts";
 import {
   CONTINUITY_TABLE,
   type ContinuityEntry,
@@ -230,27 +229,24 @@ describe("C7: the IPC paths bind through the composition's continuity table", ()
   });
 
   test("credentialSet and credentialStatus trust a legacy key only the composition's table maps", async () => {
-    const entry: ContinuityEntry = {
+    const table: ContinuityEntry[] = [];
+    const g = await gateway(table);
+    const id = "com.example.fixturewise";
+    const key = await installSigned(g, id);
+    // Bound only through the composition's table: the installed package's verified publisher key and
+    // root fingerprint match this entry, which the baked default does not carry.
+    table.push({
       legacyServiceId: "fixturewise",
-      extensionId: "com.example.fixturewise",
-      publisherKey: "k",
+      extensionId: id,
+      publisherKey: key,
       sourceRootFingerprint: FIXTURE_FP,
       credentials: { token: "fixturewise.token" },
       expectedPermissions: { network: [], read: [], write: [] },
       itemTypes: ["highlight"],
-    };
-    const g = await gateway([entry]);
-    insertExtensionRow(g.db, {
-      id: entry.extensionId,
-      version: "1.0.0",
-      install_path: join(g.root, "nowhere"),
-      manifest_hash: "h",
-      entry_hash: "e",
-      installed_at: 1,
-      last_verified_at: 1,
     });
+    // Seeded directly, exactly as an approval under this table would write it.
     upsertRunGrant(g.db, {
-      extension_id: entry.extensionId,
+      extension_id: id,
       service_id: "ext_com_example_fixturewise",
       version: "1.0.0",
       tree_digest: "d",
@@ -263,16 +259,62 @@ describe("C7: the IPC paths bind through the composition's continuity table", ()
     const set = await call(g.listenPath, {
       id: "set",
       method: "extension.credentialSet",
-      params: { id: entry.extensionId, name: "token", value: SECRET },
+      params: { id, name: "token", value: SECRET },
     });
     expect(set.error).toBeUndefined();
     expect(await g.vault.get("fixturewise.token")).toBe(SECRET);
     const status = await call(g.listenPath, {
       id: "status",
       method: "extension.credentialStatus",
-      params: { id: entry.extensionId },
+      params: { id },
     });
     expect(status.result).toEqual({ credentials: [{ name: "token", set: true }] });
+  });
+
+  test("credentialSet/credentialStatus refuse once the installed row no longer binds", async () => {
+    const table: ContinuityEntry[] = [];
+    const g = await gateway(table);
+    const key = await installSigned(g, "com.nimbus.readwise");
+    table.push(readwiseFixtureEntry(key));
+    const approved = await call(g.listenPath, {
+      id: "approve",
+      method: "extension.approveRun",
+      params: { id: "com.nimbus.readwise" },
+    });
+    expect(approved.error).toBeUndefined();
+    expect(grantVaultKey(g.db, "com.nimbus.readwise")).toBe("readwise.token");
+
+    // The row now comes from another root: the grant still names readwise.token, but no spawn
+    // would use it, so neither method may write or probe it.
+    g.db.run("UPDATE extension SET source_root_fingerprint = ? WHERE id = ?", [
+      "another-root-fp",
+      "com.nimbus.readwise",
+    ]);
+    const set = await call(g.listenPath, {
+      id: "set",
+      method: "extension.credentialSet",
+      params: { id: "com.nimbus.readwise", name: "token", value: SECRET },
+    });
+    expect(set.error?.code).toBe(-32602);
+    expect(set.error?.message).toStartWith("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED:");
+    expect(set.error?.message).toEndWith(
+      "nothing was written — run `nimbus extension approve com.nimbus.readwise` again",
+    );
+    expect(set.error?.message).not.toContain("readwise.token");
+    expect(set.error?.message).not.toContain(SECRET);
+    expect(await g.vault.get("readwise.token")).toBeNull();
+
+    const status = await call(g.listenPath, {
+      id: "status",
+      method: "extension.credentialStatus",
+      params: { id: "com.nimbus.readwise" },
+    });
+    expect(status.error?.code).toBe(-32602);
+    expect(status.error?.message).toStartWith("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED:");
+    expect(status.error?.message).toEndWith(
+      "nothing was read — run `nimbus extension approve com.nimbus.readwise` again",
+    );
+    expect(status.error?.message).not.toContain("readwise.token");
   });
 
   test("connector.remove's extension-backed refusal is decided by the composition's table", async () => {

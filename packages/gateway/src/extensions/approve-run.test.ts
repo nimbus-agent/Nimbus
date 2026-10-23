@@ -26,15 +26,17 @@ import {
   approveExtensionRun,
   approveMigratedExtensionRun,
   buildRunConsentPayload,
+  currentRunCredentials,
   readVerifiedManifest,
   revokeExtensionRun,
 } from "./approve-run.ts";
 import type { ContinuityEntry } from "./continuity/continuity-table.ts";
+import { serializeRunCredentials } from "./extension-credentials.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
 import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
 import { recordMigrationPrepared } from "./migration/migration-store.ts";
-import { getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
+import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 
@@ -803,6 +805,79 @@ describe("readVerifiedManifest", () => {
       JSON.stringify({ id: "com.example.run", version: "1.0.0", entry: "dist/index.js", x: 1 }),
     );
     expect(() => readVerifiedManifest(row)).toThrow(/ERR_EXTENSION_RUN_UNVERIFIED/);
+  });
+});
+
+describe("currentRunCredentials", () => {
+  async function boundSetup(): Promise<{
+    s: Awaited<ReturnType<typeof setup>>;
+    entry: ContinuityEntry;
+  }> {
+    const s = await setup({
+      id: "com.example.cred",
+      manifest: () => ({ credentials: { token: { env: "X_TOKEN" } } }),
+      signed: true,
+    });
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'root-fp' WHERE id = ?", [
+      "com.example.cred",
+    ]);
+    const entry: ContinuityEntry = {
+      legacyServiceId: "readwise",
+      extensionId: "com.example.cred",
+      publisherKey: s.publisherKey ?? "",
+      sourceRootFingerprint: "root-fp",
+      credentials: { token: "readwise.token" },
+      expectedPermissions: { network: [], read: [], write: [] },
+      itemTypes: [],
+    };
+    await approveExtensionRun("com.example.cred", {
+      db: s.db,
+      env: s.env,
+      gate: gateThat(true, []),
+      runtimeEnabled: true,
+      now: () => 1,
+      continuityTable: [entry],
+    });
+    return { s, entry };
+  }
+
+  test("re-derives exactly what the approval stored, with the binding it came from", async () => {
+    const { s, entry } = await boundSetup();
+    const live = currentRunCredentials(s.db, "com.example.cred", [entry]);
+    expect(live?.binding).toBe(entry);
+    expect(live === undefined ? undefined : serializeRunCredentials(live.credentials)).toBe(
+      getRunGrant(s.db, "com.example.cred")?.credentials_json,
+    );
+  });
+
+  test("a row whose source no longer matches resolves unbound", async () => {
+    const { s, entry } = await boundSetup();
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'other' WHERE id = ?", [
+      "com.example.cred",
+    ]);
+    const live = currentRunCredentials(s.db, "com.example.cred", [entry]);
+    expect(live?.binding).toBeUndefined();
+    expect(live?.credentials["token"]?.vaultKey).toBe("ext.ext_com_example_cred.token");
+  });
+
+  // One case per guard, each from an otherwise-valid setup, so dropping any one guard fails its own.
+  // The grant table's foreign key means a grant cannot outlive its row, so "no row" is an id that
+  // was never installed, beside a valid bound install.
+  test("undefined for an extension that is not installed", async () => {
+    const { s, entry } = await boundSetup();
+    expect(currentRunCredentials(s.db, "com.example.absent", [entry])).toBeUndefined();
+  });
+
+  test("undefined for an installed row with no run grant", async () => {
+    const { s, entry } = await boundSetup();
+    deleteRunGrant(s.db, "com.example.cred");
+    expect(currentRunCredentials(s.db, "com.example.cred", [entry])).toBeUndefined();
+  });
+
+  test("undefined when the installed manifest no longer verifies", async () => {
+    const { s, entry } = await boundSetup();
+    writeFileSync(join(s.installPath, "nimbus.extension.json"), JSON.stringify({ x: 1 }));
+    expect(currentRunCredentials(s.db, "com.example.cred", [entry])).toBeUndefined();
   });
 });
 
