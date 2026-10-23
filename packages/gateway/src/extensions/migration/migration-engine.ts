@@ -625,6 +625,8 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
    * decision the sync registrar takes when it lifts a re-approve / enable pause.
    */
   const resumeOrPauseForConfinement = (legacyServiceId: string): void => {
+    // The shared scheduler helper, imported under another name only because this closure keeps
+    // its own (callers and reviews grep for it).
     resumeUnlessPreflightRefuses(deps.scheduler, legacyServiceId);
   };
 

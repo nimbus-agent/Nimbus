@@ -53,7 +53,9 @@ import type { SandboxRunner } from "./sandbox/sandbox-runner.ts";
  *
  * Registering asks the syncable's preflight before it returns, so a sandbox that cannot confine the
  * extension pauses the service at approve / enable / rehash / update / boot — with the reason its
- * first due run would record — rather than leaving it healthy until that run.
+ * first due run would record — rather than leaving it healthy until that run. A service already
+ * paused for a reason registration does not own (the owner's, the migration's awaiting-approval
+ * one, an earlier preflight's) is left as it is, without asking.
  */
 export interface ExtensionSyncRegistrar {
   /** Boot: registers every extension that may sync. A stale grant is skipped, not re-paused. */
