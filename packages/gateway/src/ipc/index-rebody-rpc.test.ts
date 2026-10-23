@@ -11,6 +11,7 @@ import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { loadSchedulerState, upsertSchedulerRegistration } from "../sync/scheduler-store.ts";
+import type { Syncable } from "../sync/types.ts";
 import {
   buildTargetServicesSql,
   cannotImproveAmong,
@@ -24,6 +25,7 @@ import {
   REBODY_IMPROVABLE_SERVICES,
   REBODY_META_TARGETS,
   resolveTargetServices,
+  unregisteredServiceWarning,
 } from "./index-rebody-rpc.ts";
 
 function freshCtx(overrides: Partial<IndexRebodyRpcContext> = {}) {
@@ -50,12 +52,15 @@ function freshCtx(overrides: Partial<IndexRebodyRpcContext> = {}) {
 function schedulerStub(
   forceSync: (serviceId: string) => Promise<void>,
   onFloor?: (serviceId: string, floorMs: number) => void,
+  registered: (serviceId: string) => boolean = () => true,
 ): NonNullable<IndexRebodyRpcContext["syncScheduler"]> {
   return {
     forceSync,
     setHistoryFloor: (serviceId: string, floorMs: number) => {
       onFloor?.(serviceId, floorMs);
     },
+    syncableFor: (serviceId: string) =>
+      registered(serviceId) ? ({ serviceId } as unknown as Syncable) : undefined,
   };
 }
 
@@ -369,6 +374,34 @@ describe("dispatchIndexRebodyRpc", () => {
     expect(warnings?.[0]).toMatch(/watermark was already cleared/);
     expect(warnings?.[0]).toMatch(/next scheduled sync/);
     expect(events.find((e) => e.method === "index.rebodyError")).toBeUndefined();
+  });
+
+  test("a service no connector is registered for fails without a forced run, instead of waiting forever", async () => {
+    // `forceSync` deliberately waits for a service with no scheduler state to register. Rebody's
+    // targets come from item rows, which can outlive any registration, so it must not ask.
+    const calls: string[] = [];
+    const { ctx, db, events } = freshCtx({
+      syncScheduler: schedulerStub(
+        (serviceId: string) => {
+          calls.push(serviceId);
+          return new Promise<void>(() => undefined);
+        },
+        undefined,
+        (serviceId) => serviceId !== "orphan",
+      ),
+    });
+    seedIncomplete(db, "orphan", "1");
+
+    const out = await dispatchIndexRebodyRpc("index.rebody", { service: "orphan" }, ctx);
+    expect(out.kind).toBe("hit");
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(calls).toEqual([]);
+    const done = events.find((e) => e.method === "index.rebodyDone");
+    const payload = done?.params as Record<string, unknown> | undefined;
+    expect(payload?.["failed"]).toBe(1);
+    expect(payload?.["failedServices"]).toEqual(["orphan"]);
+    expect(payload?.["warnings"]).toEqual([unregisteredServiceWarning("orphan")]);
   });
 
   test("cancel aborts a real run before it processes further targets — observably fewer than all 3 targets get forceSync'd", async () => {
