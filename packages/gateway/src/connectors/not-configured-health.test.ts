@@ -59,13 +59,34 @@ describe("the not_configured event", () => {
     expect(getConnectorHealth(db, "jenkins").state).toBe("not_configured");
   });
 
-  test("a later real sync clears it", () => {
-    // Self-correcting: the state describes what we last observed, so observing a working sync
-    // has to overwrite it. Without this, configuring a connector would leave it looking broken.
+  test("a later real sync clears it, once the connector is configured", () => {
+    // Self-correcting: configuring the connector clears the flag, and the next real sync
+    // reports healthy.
+    const db = freshDb();
+    transitionHealth(db, "jenkins", { type: "not_configured" });
+    transitionHealth(db, "jenkins", { type: "configured" });
+    transitionHealth(db, "jenkins", { type: "sync_success" });
+    expect(getConnectorHealth(db, "jenkins").state).toBe("healthy");
+  });
+
+  test("sync_success alone does not clear an unconfigured flag", () => {
     const db = freshDb();
     transitionHealth(db, "jenkins", { type: "not_configured" });
     transitionHealth(db, "jenkins", { type: "sync_success" });
-    expect(getConnectorHealth(db, "jenkins").state).toBe("healthy");
+    expect(getConnectorHealth(db, "jenkins").state).toBe("not_configured");
+  });
+
+  test("not_configured on a never-observed connector creates its row unconfigured, with no history", () => {
+    const db = freshDb();
+    transitionHealth(db, "jenkins", { type: "not_configured" });
+    expect(
+      db.query("SELECT configured, depth FROM sync_state WHERE connector_id = ?").get("jenkins"),
+    ).toEqual({ configured: 0, depth: "full" });
+    expect(
+      db
+        .query("SELECT COUNT(*) AS n FROM connector_health_history WHERE connector_id = ?")
+        .get("jenkins"),
+    ).toEqual({ n: 0 });
   });
 
   test("it is distinct from unauthenticated, which means a credential FAILED", () => {

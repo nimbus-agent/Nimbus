@@ -13,6 +13,13 @@ function captured(): Array<{ method: string; params: Record<string, unknown> }> 
 }
 
 describe("connector.healthChanged", () => {
+  test("not_configured on a missing row emits nothing", () => {
+    const db: Database = createMemoryIndexDb();
+    const seen = captured();
+    transitionHealth(db, "jenkins", { type: "not_configured" });
+    expect(seen).toEqual([]);
+  });
+
   test("emits the DESKTOP's field names, so ConnectorGrid can patch a row", () => {
     const db: Database = createMemoryIndexDb();
     const seen = captured();

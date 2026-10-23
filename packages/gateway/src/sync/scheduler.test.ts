@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import os from "node:os";
 import pino from "pino";
 import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
@@ -8,6 +8,7 @@ import { createUserMcpSyncable } from "../connectors/user-mcp-sync.ts";
 import { dbRun } from "../db/write.ts";
 import { recordSyncEgress } from "../egress/sync-egress.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
 import { ProviderRateLimiter } from "./rate-limiter.ts";
 import {
@@ -1209,6 +1210,8 @@ describe("SyncScheduler — one-shot history floor", () => {
 });
 
 describe("SyncScheduler records whether a run had a credential at all (F6/F13)", () => {
+  afterEach(() => setGatewayEventBroadcast(undefined));
+
   /**
    * ~90 registered syncables short-circuit to a network-free no-op when unconfigured, and the
    * scheduler recorded `sync_success` after every run regardless. So a connector nobody had set
@@ -1276,9 +1279,6 @@ describe("SyncScheduler records whether a run had a credential at all (F6/F13)",
     });
     dbRun(db, "UPDATE scheduler_state SET cursor = ? WHERE service_id = ?", ["kept", "jenkins"]);
     const before = Date.now();
-    // Two runs: the first-ever run has no `sync_state` row yet, so the configured flag only lands
-    // from the second run on (pre-existing, unchanged here).
-    await sched.forceSync("jenkins");
     await sched.forceSync("jenkins");
     await sched.stop();
 
@@ -1294,18 +1294,47 @@ describe("SyncScheduler records whether a run had a credential at all (F6/F13)",
     const telemetry = db
       .query("SELECT items_upserted, had_more, error_msg FROM sync_telemetry WHERE service = ?")
       .all("jenkins");
-    expect(telemetry).toEqual([
-      { items_upserted: 0, had_more: 0, error_msg: null },
-      { items_upserted: 0, had_more: 0, error_msg: null },
-    ]);
-    expect(hooked).toHaveLength(2);
-    expect(hooked[1]?.id).toBe("jenkins");
-    expect(hooked[1]?.result).toMatchObject({
+    expect(telemetry).toEqual([{ items_upserted: 0, had_more: 0, error_msg: null }]);
+    expect(hooked).toHaveLength(1);
+    expect(hooked[0]?.id).toBe("jenkins");
+    expect(hooked[0]?.result).toMatchObject({
       cursor: "kept",
       itemsUpserted: 0,
       itemsDeleted: 0,
       hasMore: false,
     });
+  });
+
+  test("the very first run of an unconfigured connector already reports not_configured", async () => {
+    const db = openMemoryIndexDatabase();
+    const sched = new SyncScheduler(testContext(db), {});
+    sched.register(syncableNamed("jenkins", () => undefined));
+    await sched.forceSync("jenkins");
+    await sched.stop();
+
+    expect(getConnectorHealth(db, "jenkins").state).toBe("not_configured");
+    const row = db
+      .query("SELECT configured, depth FROM sync_state WHERE connector_id = ?")
+      .get("jenkins");
+    expect(row).toEqual({ configured: 0, depth: "full" });
+  });
+
+  test("and announces no healthy transition", async () => {
+    const db = openMemoryIndexDatabase();
+    const seen: Array<{ method: string; params: Record<string, unknown> }> = [];
+    setGatewayEventBroadcast((method, params) => seen.push({ method, params }));
+    const sched = new SyncScheduler(testContext(db), {});
+    sched.register(syncableNamed("jenkins", () => undefined));
+    await sched.forceSync("jenkins");
+    await sched.stop();
+
+    const healthy = seen.filter(
+      (e) =>
+        e.method === "connector.healthChanged" &&
+        e.params["name"] === "jenkins" &&
+        e.params["health"] === "healthy",
+    );
+    expect(healthy).toEqual([]);
   });
 
   test("forceSync on an unconfigured service resolves without calling sync()", async () => {
