@@ -860,12 +860,23 @@ describe("currentRunCredentials", () => {
     expect(live?.credentials["token"]?.vaultKey).toBe("ext.ext_com_example_cred.token");
   });
 
-  test("undefined with no installed row, no run grant, or a manifest that no longer verifies", async () => {
+  // One case per guard, each from an otherwise-valid setup, so dropping any one guard fails its own.
+  // The grant table's foreign key means a grant cannot outlive its row, so "no row" is an id that
+  // was never installed, beside a valid bound install.
+  test("undefined for an extension that is not installed", async () => {
     const { s, entry } = await boundSetup();
     expect(currentRunCredentials(s.db, "com.example.absent", [entry])).toBeUndefined();
-    writeFileSync(join(s.installPath, "nimbus.extension.json"), JSON.stringify({ x: 1 }));
-    expect(currentRunCredentials(s.db, "com.example.cred", [entry])).toBeUndefined();
+  });
+
+  test("undefined for an installed row with no run grant", async () => {
+    const { s, entry } = await boundSetup();
     deleteRunGrant(s.db, "com.example.cred");
+    expect(currentRunCredentials(s.db, "com.example.cred", [entry])).toBeUndefined();
+  });
+
+  test("undefined when the installed manifest no longer verifies", async () => {
+    const { s, entry } = await boundSetup();
+    writeFileSync(join(s.installPath, "nimbus.extension.json"), JSON.stringify({ x: 1 }));
     expect(currentRunCredentials(s.db, "com.example.cred", [entry])).toBeUndefined();
   });
 });

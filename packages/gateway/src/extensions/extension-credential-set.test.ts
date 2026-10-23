@@ -486,7 +486,22 @@ describe("a legacy key is trusted only while its binding still holds", () => {
       ),
     );
     expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED");
+    expect(e.message).toBe(
+      `ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED: ${EXT}'s run approval reuses the reader connector's credential, but the installed package no longer binds to it; nothing was read — run \`nimbus extension approve ${EXT}\` again`,
+    );
+    expect(e.message).not.toContain(LEGACY);
     expect(reads).toBe(0);
+  });
+
+  test("a lapsed binding refuses the whole grant, so the extension's own key is refused too", async () => {
+    const { gate, calls } = recordingGate(true);
+    const d = { ...deps(grant(DECLARED), gate), liveCredentials: liveLapsed };
+    const e = await refusal(
+      setExtensionCredential(d, { extensionId: EXT, name: "token", value: SECRET }),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED");
+    expect(calls).toHaveLength(0);
+    expect(await d.vault.get(KEY)).toBeNull();
   });
 
   test("a binding that lapses while the prompt is open writes nothing", async () => {

@@ -146,6 +146,9 @@ function trustCredential(
   return undefined;
 }
 
+/** What the caller would have done with the key: set writes it, status reads it. */
+type CredentialUse = "written" | "read";
+
 /**
  * A legacy key is the binding's to give: trusted only while the installed package still binds to
  * that connector — its verified publisher key and root fingerprint, re-derived now exactly as the
@@ -157,6 +160,7 @@ function assertLegacyBindingHolds(
   extensionId: string,
   row: ExtensionRunGrantRow,
   legacyServiceId: string,
+  use: CredentialUse,
 ): void {
   const live = deps.liveCredentials(extensionId);
   const holds =
@@ -166,7 +170,7 @@ function assertLegacyBindingHolds(
   if (!holds) {
     throw new ExtensionCredentialError(
       "ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED",
-      `${extensionId}'s run approval reuses the ${legacyServiceId} connector's credential, but the installed package no longer binds to it; nothing was written — run \`nimbus extension approve ${extensionId}\` again`,
+      `${extensionId}'s run approval reuses the ${legacyServiceId} connector's credential, but the installed package no longer binds to it; nothing was ${use} — run \`nimbus extension approve ${extensionId}\` again`,
     );
   }
 }
@@ -174,6 +178,7 @@ function assertLegacyBindingHolds(
 function grantCredentials(
   deps: CredentialReadDeps,
   extensionId: string,
+  use: CredentialUse,
 ): ReadonlyMap<string, TrustedCredential> {
   const row = deps.readGrant(extensionId);
   if (row === null) {
@@ -196,7 +201,7 @@ function grantCredentials(
   const checked = new Set<string>();
   for (const { reusesConnector } of out.values()) {
     if (reusesConnector === undefined || checked.has(reusesConnector)) continue;
-    assertLegacyBindingHolds(deps, extensionId, row, reusesConnector);
+    assertLegacyBindingHolds(deps, extensionId, row, reusesConnector, use);
     checked.add(reusesConnector);
   }
   return out;
@@ -213,7 +218,7 @@ export async function setExtensionCredential(
       `the value for ${name} is blank`,
     );
   }
-  const declared = grantCredentials(deps, extensionId).get(name);
+  const declared = grantCredentials(deps, extensionId, "written").get(name);
   if (declared === undefined) {
     throw new ExtensionCredentialError(
       "ERR_EXTENSION_CREDENTIAL_UNKNOWN",
@@ -234,7 +239,7 @@ export async function setExtensionCredential(
   // the grant still names, which must be the one resolved before the owner was asked.
   let after: string | undefined;
   try {
-    after = grantCredentials(deps, extensionId).get(name)?.vaultKey;
+    after = grantCredentials(deps, extensionId, "written").get(name)?.vaultKey;
   } catch {
     after = undefined;
   }
@@ -262,7 +267,7 @@ export async function extensionCredentialStatus(
   extensionId: string,
 ): Promise<{ credentials: Array<{ name: string; set: boolean }> }> {
   const credentials: Array<{ name: string; set: boolean }> = [];
-  for (const [name, { vaultKey }] of grantCredentials(deps, extensionId)) {
+  for (const [name, { vaultKey }] of grantCredentials(deps, extensionId, "read")) {
     const value = await deps.vault.get(vaultKey);
     credentials.push({ name, set: value !== null && value.trim() !== "" });
   }

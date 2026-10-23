@@ -297,6 +297,9 @@ describe("C7: the IPC paths bind through the composition's continuity table", ()
     });
     expect(set.error?.code).toBe(-32602);
     expect(set.error?.message).toStartWith("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED:");
+    expect(set.error?.message).toEndWith(
+      "nothing was written — run `nimbus extension approve com.nimbus.readwise` again",
+    );
     expect(set.error?.message).not.toContain("readwise.token");
     expect(set.error?.message).not.toContain(SECRET);
     expect(await g.vault.get("readwise.token")).toBeNull();
@@ -308,6 +311,10 @@ describe("C7: the IPC paths bind through the composition's continuity table", ()
     });
     expect(status.error?.code).toBe(-32602);
     expect(status.error?.message).toStartWith("ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED:");
+    expect(status.error?.message).toEndWith(
+      "nothing was read — run `nimbus extension approve com.nimbus.readwise` again",
+    );
+    expect(status.error?.message).not.toContain("readwise.token");
   });
 
   test("connector.remove's extension-backed refusal is decided by the composition's table", async () => {
