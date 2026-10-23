@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { GatewayStatus } from "./render.ts";
 import { renderOverview, renderPolicyBanner } from "./render.ts";
+import { elementsOf, textOf } from "./view-tree.ts";
 
 const status: GatewayStatus = {
   policy: { org: "acme", version: 1, signatureValid: true, pendingRestart: false, source: "peer" },
@@ -17,53 +18,54 @@ const status: GatewayStatus = {
 };
 
 describe("render", () => {
-  test("overview shows peer + connector-blocked counts and escapes text", () => {
-    const html = renderOverview(status);
-    expect(html).toContain("1/1"); // peers reachable
-    expect(html).toContain("1 blocked"); // slack blocked by policy
-    expect(html).toContain("2"); // hitl pending
+  test("overview shows peer + connector-blocked counts", () => {
+    const text = textOf(renderOverview(status));
+    expect(text).toContain("1/1"); // peers reachable
+    expect(text).toContain("1 blocked"); // slack blocked by policy
+    expect(text).toContain("2"); // hitl pending
   });
   test("policy banner flags ungoverned", () => {
     expect(
-      renderPolicyBanner({ ...status.policy, source: "none", signatureValid: false }),
+      textOf(renderPolicyBanner({ ...status.policy, source: "none", signatureValid: false })),
     ).toContain("ungoverned");
-    expect(renderPolicyBanner(status.policy)).toContain("acme");
-  });
-  test("esc escapes HTML special chars (XSS-safety)", () => {
-    const html = renderOverview({ ...status, peers: [{ peerId: "<script>", reachable: true }] });
-    expect(html).not.toContain("<script>");
+    expect(textOf(renderPolicyBanner(status.policy))).toContain("acme");
   });
 
   /**
-   * `policy.version` is the one interpolation in this renderer that esc() did
-   * not cover, and this string is assigned to `innerHTML` in main.ts — so it was
-   * a live DOM-XSS sink. Sonar flagged exactly this flow and it was closed as a
-   * false positive on the grounds that "every dynamic value reaching innerHTML
-   * is HTML-escaped via esc()", which was true of `policy.org` beside it and not
-   * of `policy.version`.
+   * `policy.version` was once the one interpolation the old string renderer
+   * forgot to escape, and that string was assigned to `innerHTML` — a live
+   * DOM-XSS sink. Views now build a tree whose dynamic values are text children,
+   * so a payload in ANY field stays text: it shows up verbatim in the text
+   * content and never as an element.
    *
    * The cast is the point: `version` is TYPED number, but `client.ts` only
-   * shape-checks the response (`"data" in body`) and never validates the field,
-   * so the type is an assumption about a remote JSON document, not a guarantee.
+   * shape-checks the response and never validates the field.
    */
-  test("policy banner escapes version — the DOM-XSS sink, not just org", () => {
+  test("a markup payload in version stays text, never an element", () => {
     const payload = '<img src=x onerror="alert(1)">';
-    const html = renderPolicyBanner({
-      ...status.policy,
-      version: payload as unknown as number,
-    });
-    expect(html).not.toContain("<img");
-    expect(html).not.toContain('onerror="');
-    expect(html).toContain("&lt;img");
+    const tree = renderPolicyBanner({ ...status.policy, version: payload as unknown as number });
+    expect(textOf(tree)).toContain(payload);
+    expect(elementsOf(tree).map((e) => e.tag)).toEqual(["div", "b"]);
   });
 
-  test("policy banner escapes org too — the half that was already covered", () => {
-    const html = renderPolicyBanner({ ...status.policy, org: "<script>x</script>" });
-    expect(html).not.toContain("<script>");
-    expect(html).toContain("&lt;script&gt;");
+  test("a markup payload in org stays text, never an element", () => {
+    const tree = renderPolicyBanner({ ...status.policy, org: "<script>x</script>" });
+    expect(textOf(tree)).toContain("<script>x</script>");
+    expect(elementsOf(tree).map((e) => e.tag)).toEqual(["div", "b"]);
+  });
+
+  test("a markup payload in a peer id never becomes an element", () => {
+    const tree = renderOverview({ ...status, peers: [{ peerId: "<script>", reachable: true }] });
+    expect(elementsOf(tree).some((e) => (e.tag as string) === "script")).toBe(false);
   });
 
   test("a numeric version still renders as a plain number", () => {
-    expect(renderPolicyBanner({ ...status.policy, version: 7 })).toContain("v7");
+    expect(textOf(renderPolicyBanner({ ...status.policy, version: 7 }))).toContain("v7");
+  });
+
+  test("a pending restart adds the warn span", () => {
+    const tree = renderPolicyBanner({ ...status.policy, pendingRestart: true });
+    expect(textOf(tree)).toContain("restart pending");
+    expect(elementsOf(tree).some((e) => e.attrs.class === "warn")).toBe(true);
   });
 });
