@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
+import { publicKeyFromSeed, publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import type { IPCClient } from "../ipc-client/index.ts";
 import {
   decodeBase64,
@@ -24,6 +25,7 @@ import {
 } from "../lib/secret-input.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { stripControl } from "./captures-format.ts";
+import { runExtensionPublish } from "./extension-publish.ts";
 import { runExtensionInfoRemote, runExtensionSearch } from "./extension-registry-cmds.ts";
 import {
   formatNetworkIsolationLine,
@@ -767,6 +769,35 @@ function writePublisherKeypair(args: string[]): number {
   return 0;
 }
 
+/**
+ * Reconcile the manifest's `publisher` with the signing key before signing. A manifest that names a
+ * publisher id but no key gets the signing key's public half (what scaffold leaves for you to fill
+ * in); a manifest whose key differs from the signing key is refused rather than silently re-keyed.
+ * Returns the refusal message, or undefined when signing may proceed. No `publisher` changes nothing.
+ */
+function applySigningPublisherKey(
+  manifest: Record<string, unknown>,
+  priv: Uint8Array,
+): string | undefined {
+  const publisher = manifest["publisher"];
+  if (publisher === null || typeof publisher !== "object" || Array.isArray(publisher)) {
+    return undefined;
+  }
+  const entry = publisher as Record<string, unknown>;
+  const signingKey = encodeBase64(publicKeyFromSeed(priv));
+  if (entry["key"] === undefined) {
+    manifest["publisher"] = { ...entry, key: signingKey };
+    return undefined;
+  }
+  if (entry["key"] === signingKey) return undefined;
+  const manifestKey = typeof entry["key"] === "string" ? entry["key"] : "";
+  return (
+    "manifest publisher.key does not match the signing key; refusing to re-key it. " +
+    `manifest key fingerprint: ${manifestKey === "" ? "(not a string)" : publisherKeyFingerprint(manifestKey)}, ` +
+    `signing key fingerprint: ${publisherKeyFingerprint(signingKey)}`
+  );
+}
+
 export async function runExtensionSign(args: string[]): Promise<number> {
   const extDir = args[0];
   if (extDir === undefined || extDir.startsWith("--")) {
@@ -802,15 +833,30 @@ export async function runExtensionSign(args: string[]): Promise<number> {
   }
   const parsed = JSON.parse(text) as Record<string, unknown>;
   delete parsed["signature"];
+  const keyRefusal = applySigningPublisherKey(parsed, priv);
+  if (keyRefusal !== undefined) {
+    process.stderr.write(`${keyRefusal}\n`);
+    return 2;
+  }
   const sig = await signManifest(parsed, priv);
   writeFileSync(manifestPath, JSON.stringify({ ...parsed, signature: sig }, null, 2));
   return 0;
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json] | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]";
 
-async function runExtensionOffline(sub: string, rest: string[]): Promise<boolean> {
+/**
+ * Subcommands that need no gateway. `publish` gets the RAW args: `stripFlags` drops `--channel` and
+ * its value, which would silently publish a beta as stable.
+ */
+async function runExtensionOffline(sub: string, args: string[]): Promise<boolean> {
+  if (sub === "publish") {
+    const code = await runExtensionPublish(args.slice(1));
+    if (code !== 0) process.exit(code);
+    return true;
+  }
+  const rest = stripFlags(args.slice(1));
   if (sub === "keygen") {
     const code = await runExtensionKeygen(rest);
     if (code !== 0) process.exit(code);
@@ -926,11 +972,10 @@ export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number |
 
 export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
-  const rest = stripFlags(args.slice(1));
-
-  if (await runExtensionOffline(sub, rest)) {
+  if (await runExtensionOffline(sub, args)) {
     return;
   }
+  const rest = stripFlags(args.slice(1));
 
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);

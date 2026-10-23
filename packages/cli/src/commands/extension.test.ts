@@ -1,11 +1,20 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  parseExtensionManifestForRegistry,
+  publisherKeyFingerprint,
+} from "@nimbus-dev/registry-format";
 import { clearFixture, setFixture } from "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
-import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
+import {
+  decodeBase64,
+  encodeBase64,
+  generateEd25519Keypair,
+  verifyManifestSignature,
+} from "../lib/extension-signing.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import type { AvailableUpdateCli, CredentialCliIo, UpdateApplyResultCli } from "./extension.ts";
 
@@ -699,6 +708,37 @@ describe("runExtension top-level dispatcher", () => {
       await expect(runExtension(["sign"])).rejects.toThrow("process.exit(2)");
     } finally {
       process.exit = origExit;
+    }
+  });
+
+  test("publish --channel beta reaches runExtensionPublish intact", async () => {
+    // `stripFlags` would drop `--channel <v>`; an invalid value proves the flag arrived, because
+    // only runExtensionPublish itself can refuse it — before any git or network call.
+    const origExit = process.exit.bind(process);
+    const origErr = process.stderr.write.bind(process.stderr);
+    const errChunks: string[] = [];
+    process.exit = ((code?: number) => {
+      throw new Error(`process.exit(${code ?? ""})`);
+    }) as typeof process.exit;
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      errChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      await expect(
+        runExtension([
+          "publish",
+          "ext-dir",
+          "--registry-repo",
+          "acme/registry",
+          "--channel",
+          "gamma",
+        ]),
+      ).rejects.toThrow("process.exit(2)");
+      expect(errChunks.join("")).toContain("--channel must be stable or beta");
+    } finally {
+      process.exit = origExit;
+      process.stderr.write = origErr;
     }
   });
 
@@ -2123,6 +2163,93 @@ describe("runExtensionSign", () => {
     const updated = JSON.parse(rfs(manifestPath, "utf8")) as Record<string, unknown>;
     expect(updated["signature"]).not.toBe("old-signature");
     expect(typeof updated["signature"]).toBe("string");
+  });
+});
+
+describe("runExtensionSign publisher key", () => {
+  const root = mkdtempSync(join(tmpdir(), "nimbus-sign-pub-"));
+  const makeKey = (): { path: string; pub: string } => {
+    const { privkey, pubkey } = generateEd25519Keypair();
+    const path = join(root, `key-${Math.random().toString(36).slice(2)}`);
+    writeFileSync(path, encodeBase64(privkey));
+    return { path, pub: encodeBase64(pubkey) };
+  };
+  const makeExt = (manifest: Record<string, unknown>): { dir: string; manifestPath: string } => {
+    const dir = mkdtempSync(join(root, "ext-"));
+    const manifestPath = join(dir, "nimbus.extension.json");
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    return { dir, manifestPath };
+  };
+  const readManifest = (path: string): Record<string, unknown> =>
+    JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+
+  beforeEach(() => {
+    out.reset();
+  });
+
+  test("fills publisher.key from the signing key, then signs a manifest the registry parser accepts", async () => {
+    const key = makeKey();
+    const { dir, manifestPath } = makeExt({
+      id: "acme/echo",
+      version: "0.1.0",
+      publisher: { id: "acme" },
+    });
+    expect(await runExtensionSign([dir, "--key", key.path])).toBe(0);
+    const written = readManifest(manifestPath);
+    expect(written["publisher"]).toEqual({ id: "acme", key: key.pub });
+    const { manifest } = parseExtensionManifestForRegistry(readFileSync(manifestPath, "utf8"));
+    expect(manifest.publisher?.key).toBe(key.pub);
+    await verifyManifestSignature(
+      written as { publisher?: { id: string; key: string }; signature?: string },
+      decodeBase64(key.pub),
+    );
+  });
+
+  test("a matching publisher.key is left alone and signing succeeds", async () => {
+    const key = makeKey();
+    const { dir, manifestPath } = makeExt({
+      id: "acme/echo",
+      version: "0.1.0",
+      publisher: { id: "acme", key: key.pub },
+    });
+    expect(await runExtensionSign([dir, "--key", key.path])).toBe(0);
+    expect(readManifest(manifestPath)["publisher"]).toEqual({ id: "acme", key: key.pub });
+    expect(typeof readManifest(manifestPath)["signature"]).toBe("string");
+  });
+
+  test("a differing publisher.key is refused with both fingerprints and the file untouched", async () => {
+    const signing = makeKey();
+    const other = makeKey();
+    const { dir, manifestPath } = makeExt({
+      id: "acme/echo",
+      version: "0.1.0",
+      publisher: { id: "acme", key: other.pub },
+    });
+    const before = readFileSync(manifestPath, "utf8");
+    const chunks: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      chunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      expect(await runExtensionSign([dir, "--key", signing.path])).toBe(2);
+    } finally {
+      process.stderr.write = orig;
+    }
+    const msg = chunks.join("");
+    expect(msg).toContain(publisherKeyFingerprint(other.pub));
+    expect(msg).toContain(publisherKeyFingerprint(signing.pub));
+    expect(readFileSync(manifestPath, "utf8")).toBe(before);
+  });
+
+  test("a manifest with no publisher is signed as before, gaining no publisher", async () => {
+    const key = makeKey();
+    const { dir, manifestPath } = makeExt({ id: "plain.ext", version: "1.0.0" });
+    expect(await runExtensionSign([dir, "--key", key.path])).toBe(0);
+    const written = readManifest(manifestPath);
+    expect(written["publisher"]).toBeUndefined();
+    expect(typeof written["signature"]).toBe("string");
   });
 });
 

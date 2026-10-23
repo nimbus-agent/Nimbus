@@ -7,9 +7,12 @@ export {
   MAX_PACKAGE_BYTES,
   MAX_UNPACKED_BYTES,
 } from "./caps.ts";
+export { codeUnitCompare } from "./code-unit-compare.ts";
 export { RegistryError, type RegistryErrorCode } from "./errors.ts";
 export { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./extension-env.ts";
 export {
+  assertCanonicalExtensionId,
+  assertPublishableExtensionId,
   assertSafeExtensionId,
   deriveExtensionServiceId,
   EXTENSION_SERVICE_ID_PATTERN,
@@ -53,3 +56,11 @@ export {
   validateAndNormalizePermissions,
 } from "./permissions-validator.ts";
 export { emptyIndex, publicKeyFromSeed, signIndex, verifyIndexSignature } from "./sign.ts";
+export {
+  effectiveRegistryConfig,
+  type PublishCandidate,
+  type PublishVerdict,
+  parseRegistryConfig,
+  type RegistryConfig,
+  validatePublish,
+} from "./validate-publish.ts";

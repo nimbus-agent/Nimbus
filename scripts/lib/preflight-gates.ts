@@ -128,6 +128,14 @@ const FAST: readonly Gate[] = [
     cmd: ["bun", "run", "audit:windows-console"],
     tier: "fast",
   },
+  {
+    // A GitHub Action runs its committed dist/index.js; the runner never builds it. The registry
+    // action's `sign` mode is a registry's content boundary, so its bundle must be the build of
+    // its sources. Always checks the input hash; byte-compares with the exact Bun that built it.
+    name: "audit:action-dist",
+    cmd: ["bun", "run", "audit:action-dist"],
+    tier: "fast",
+  },
   { name: "audit:status-drift", cmd: ["bun", "run", "audit:status-drift"], tier: "fast" },
   { name: "audit:action-sha-pins", cmd: ["bun", "run", "audit:action-sha-pins"], tier: "fast" },
   {

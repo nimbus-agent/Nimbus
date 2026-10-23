@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -11,12 +12,22 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { parseExtensionManifestForRegistry } from "@nimbus-dev/registry-format";
 
 import "../../test/helpers/cli-mocks.ts";
 import { captureOutput } from "../../test/helpers/cli-output.ts";
 
+const { CliExit } = await import("../lib/cli-exit.ts");
 const mod = await import("./scaffold.ts");
-const { SCAFFOLD_MCP_SDK_VERSION, buildScaffoldFiles, parseScaffoldArgs, runScaffold } = mod;
+const {
+  SCAFFOLD_MCP_SDK_VERSION,
+  buildExtensionScaffoldFiles,
+  buildScaffoldFiles,
+  parseScaffoldArgs,
+  runScaffold,
+} = mod;
 
 const out = captureOutput();
 
@@ -32,19 +43,38 @@ function fileContent(files: ReturnType<typeof buildScaffoldFiles>, path: string)
 
 describe("parseScaffoldArgs", () => {
   it("accepts `mcp <name>`", () => {
-    expect(parseScaffoldArgs(["mcp", "echo"])).toEqual({
-      kind: "mcp",
+    expect(parseScaffoldArgs(["mcp", "echo"])).toEqual({ kind: "mcp", name: "echo" });
+  });
+
+  it("accepts `extension <name>` with an optional --publisher", () => {
+    expect(parseScaffoldArgs(["extension", "echo"])).toEqual({ kind: "extension", name: "echo" });
+    expect(parseScaffoldArgs(["extension", "echo", "--publisher", "acme"])).toEqual({
+      kind: "extension",
       name: "echo",
-      viaAlias: false,
+      publisher: "acme",
     });
   });
 
-  it("accepts the `extension` alias and flags it", () => {
-    expect(parseScaffoldArgs(["extension", "echo"])).toEqual({
-      kind: "mcp",
-      name: "echo",
-      viaAlias: true,
-    });
+  it("rejects a bad --publisher and stray arguments for extension", () => {
+    for (const bad of [
+      ["--publisher"],
+      ["--publisher", "Acme"],
+      ["--publisher", "a".repeat(65)],
+      ["--publisher", "acme."],
+      ["--publisher", "acme.lock"],
+      ["--x", "y"],
+      ["acme"],
+    ]) {
+      expect(() => parseScaffoldArgs(["extension", "echo", ...bad])).toThrow(
+        /scaffold extension|--publisher must match/,
+      );
+    }
+  });
+
+  it("rejects an extension name a registry could not publish", () => {
+    expect(() => parseScaffoldArgs(["extension", "_echo"])).toThrow(/scaffold extension/);
+    // An mcp server name keeps its old rule: it never becomes a registry path.
+    expect(parseScaffoldArgs(["mcp", "_echo"])).toEqual({ kind: "mcp", name: "_echo" });
   });
 
   it("rejects invalid names and missing args", () => {
@@ -60,6 +90,23 @@ describe("parseScaffoldArgs", () => {
 });
 
 describe("buildScaffoldFiles", () => {
+  it("scaffold mcp output is unchanged (pinned digest)", () => {
+    const digest = (platform: NodeJS.Platform, dir: string): string =>
+      createHash("sha256")
+        .update(JSON.stringify(buildScaffoldFiles("echo", platform, dir)))
+        .digest("hex");
+    expect(digest("linux", "/w/echo")).toBe(
+      "d0dc20f3dbf07159e9763e3d9be2a85716e7e9e7f127a58cf0092125d8b8749f",
+    );
+    expect(digest("darwin", "/w/echo")).toBe(
+      "d0dc20f3dbf07159e9763e3d9be2a85716e7e9e7f127a58cf0092125d8b8749f",
+    );
+    expect(digest("win32", "C:wecho")).toBe(
+      // cross-platform-ok
+      "0cb6177362d76e9341d82eb8674b72b0a5fdd1cfa3d4c7ad4b2e47b2c1316428",
+    );
+  });
+
   it("emits exactly the expected files", () => {
     const paths = buildScaffoldFiles("echo", "linux", "/w/echo").map((f) => f.path.join("/"));
     expect(paths).toEqual([
@@ -158,10 +205,25 @@ describe("runScaffold", () => {
     expect(readFileSync(marker, "utf8")).toBe("changed");
   });
 
-  it("the extension alias names the new command", () => {
-    runScaffold(["extension", "echo2"]);
-    expect(out.stdout).toContain("nimbus scaffold mcp");
-    expect(existsSync(join(tmpDir, "echo2", "src", "server.ts"))).toBe(true);
+  it("scaffold extension writes the extension tree", () => {
+    runScaffold(["extension", "echo2", "--publisher", "acme"]);
+    expect(out.stdout).toContain("Scaffolded extension at ./echo2/");
+    for (const p of [
+      "nimbus.extension.json",
+      "src/server.ts",
+      "src/tools.ts",
+      "src/tools.test.ts",
+    ]) {
+      expect(existsSync(join(tmpDir, "echo2", ...p.split("/")))).toBe(true);
+    }
+  });
+
+  it("scaffold refuses an id whose service id would exceed 62 characters", () => {
+    expect(() => runScaffold(["extension", "a".repeat(40), "--publisher", "b".repeat(30)])).toThrow(
+      CliExit,
+    );
+    expect(out.stderr).toContain("at most 62 characters");
+    expect(existsSync(join(tmpDir, "a".repeat(40)))).toBe(false);
   });
 
   it("propagates usage errors", () => {
@@ -227,4 +289,168 @@ describe("generated project", () => {
       }
     }
   }, 60_000);
+});
+
+describe("buildExtensionScaffoldFiles", () => {
+  const files = buildExtensionScaffoldFiles("echo", undefined, "linux", "/w/echo");
+
+  it("emits the manifest, sources, README and .gitignore", () => {
+    expect(files.map((f) => f.path.join("/"))).toEqual([
+      "nimbus.extension.json",
+      "package.json",
+      "src/server.ts",
+      "src/tools.ts",
+      "src/tools.test.ts",
+      "README.md",
+      ".gitignore",
+    ]);
+  });
+
+  it("the manifest parses under the gateway's rules", () => {
+    const { manifest } = parseExtensionManifestForRegistry(
+      fileContent(files, "nimbus.extension.json"),
+    );
+    expect(manifest.id).toBe("echo");
+    expect(manifest.version).toBe("0.1.0");
+    expect(manifest.entry).toBe("dist/index.js");
+    expect(manifest.updateChannel).toBe("stable");
+    expect(manifest.publisher).toBeUndefined();
+  });
+
+  it("--publisher namespaces the id and writes publisher.id only", () => {
+    const withPub = buildExtensionScaffoldFiles("echo", "acme", "linux", "/w/echo");
+    const raw = JSON.parse(fileContent(withPub, "nimbus.extension.json")) as Record<
+      string,
+      unknown
+    >;
+    expect(raw["id"]).toBe("acme/echo");
+    expect(raw["publisher"]).toEqual({ id: "acme" });
+    // unsigned and keyless, so the registry parser refuses it until `extension sign` fills it in
+    expect(() => parseExtensionManifestForRegistry(JSON.stringify(raw))).toThrow(/publisher/);
+  });
+
+  it("builds a single-file bundle, not a compiled binary", () => {
+    const pkg = JSON.parse(fileContent(files, "package.json")) as {
+      scripts: Record<string, string>;
+    };
+    expect(pkg.scripts["build"]).toBe(
+      "bun build src/server.ts --target=bun --outfile dist/index.js",
+    );
+    expect(pkg.scripts["build"]).not.toContain("--compile");
+  });
+
+  it("the server starts when imported, with no import.meta.main guard", () => {
+    const server = fileContent(files, "src/server.ts");
+    expect(server).not.toContain("import.meta.main");
+    expect(server).toContain("await createServer().connect(new StdioServerTransport())");
+    expect(fileContent(files, "src/tools.ts")).not.toContain("StdioServerTransport");
+  });
+
+  it("README names the publish steps; no-publisher README flags namespacing", () => {
+    const readme = fileContent(files, "README.md");
+    expect(readme).toContain("nimbus extension keygen");
+    expect(readme).toContain("nimbus extension sign .");
+    expect(readme).toContain("nimbus extension publish . --registry-repo nimbus-agent/extensions");
+    expect(readme).toContain("requires a namespaced id");
+    const withPub = buildExtensionScaffoldFiles("echo", "acme", "linux", "/w/echo");
+    expect(fileContent(withPub, "README.md")).not.toContain("requires a namespaced id");
+  });
+
+  it("refuses an id whose service id would exceed 62 characters", () => {
+    expect(() => buildExtensionScaffoldFiles("a".repeat(62), "pub", "linux", "/w/x")).toThrow(
+      /at most 62 characters/,
+    );
+    expect(() =>
+      buildExtensionScaffoldFiles("a".repeat(62), undefined, "linux", "/w/x"),
+    ).not.toThrow();
+  });
+});
+
+describe("generated extension", () => {
+  it("builds to a self-contained bundle that starts on import and lists its tool", async () => {
+    const cliRoot = resolve(import.meta.dir, "..", "..");
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-scaffold-ext-"));
+    const run = async (
+      cmd: string[],
+      stdin?: string,
+    ): Promise<{ stdout: string; stderr: string; code: number }> => {
+      const proc = Bun.spawn(cmd, {
+        cwd: dir,
+        stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+      });
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      return { stdout, stderr, code };
+    };
+    try {
+      for (const f of buildExtensionScaffoldFiles("echo", "acme", process.platform, dir)) {
+        const target = join(dir, ...f.path);
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, f.content, "utf8");
+      }
+      mkdirSync(join(dir, "node_modules", "@modelcontextprotocol"), { recursive: true });
+      symlinkSync(
+        realpathSync(installedPackageDir("@modelcontextprotocol/sdk", cliRoot)),
+        join(dir, "node_modules", "@modelcontextprotocol", "sdk"),
+        "junction",
+      );
+      symlinkSync(
+        realpathSync(installedPackageDir("zod", cliRoot)),
+        join(dir, "node_modules", "zod"),
+        "junction",
+      );
+      const tested = await run(["bun", "test"]);
+      expect(`${tested.stdout}\n${tested.stderr}`).toContain("2 pass");
+      expect(tested.code).toBe(0);
+
+      const built = await run([
+        "bun",
+        "build",
+        "src/server.ts",
+        "--target=bun",
+        "--outfile",
+        "dist/index.js",
+      ]);
+      expect(built.code).toBe(0);
+      // The runtime has no node_modules: drop them, then run the bundle as the gateway does.
+      rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+      const rpc = [
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "t", version: "0" },
+          },
+        },
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      ]
+        .map((m) => JSON.stringify(m))
+        .join("\n");
+      const ran = await run(
+        [
+          "bun",
+          "-e",
+          `await import(${JSON.stringify(pathToFileURL(join(dir, "dist", "index.js")).href)})`,
+        ],
+        `${rpc}\n`,
+      );
+      expect(ran.stdout).toContain('"name":"echo"');
+    } finally {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Windows may hold handles
+      }
+    }
+  }, 90_000);
 });

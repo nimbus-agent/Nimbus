@@ -21,10 +21,18 @@ export function safeInt(raw: unknown): number {
   return Number.isFinite(n) ? Math.trunc(n) : 0;
 }
 
-/** Read an action input from its `INPUT_<NAME>` env var (missing → ""). */
+/**
+ * The env var the runner sets for an input. Mirrors actions/toolkit `core.getInput`
+ * (`INPUT_${name.replace(/ /g, '_').toUpperCase()}`): spaces become `_`, the name is upper-cased,
+ * and hyphens are KEPT, so the input `root-key` arrives as `INPUT_ROOT-KEY`.
+ */
+export function inputEnvName(name: string): string {
+  return `INPUT_${name.replaceAll(" ", "_").toUpperCase()}`;
+}
+
+/** Read an action input from its runner env var (see `inputEnvName`; missing → ""). */
 export function getInput(name: string): string {
-  const envName = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
-  return process.env[envName] ?? "";
+  return process.env[inputEnvName(name)] ?? "";
 }
 
 /** Read a boolean action input ("true"/"1"/"yes" → true, case-insensitive). */
@@ -45,7 +53,7 @@ const STEP_SUMMARY_MAX_BYTES = 64 * 1024;
 
 /** Append markdown to the job summary file (capped), if `GITHUB_STEP_SUMMARY` is set. */
 export function writeJobSummary(md: string): void {
-  const file = process.env.GITHUB_STEP_SUMMARY;
+  const file = process.env["GITHUB_STEP_SUMMARY"];
   if (file === undefined) return;
   const safe = md.length > STEP_SUMMARY_MAX_BYTES ? md.slice(0, STEP_SUMMARY_MAX_BYTES) : md;
   appendFileSync(file, `${safe}\n`);
@@ -74,7 +82,7 @@ export function makeSetOutput(
     if (!allowedNames.has(name)) {
       throw new Error(`refusing to set unknown output: ${name}`);
     }
-    const outFile = process.env.GITHUB_OUTPUT;
+    const outFile = process.env["GITHUB_OUTPUT"];
     if (outFile === undefined) return;
     let delim: string;
     do {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { RegistryError } from "./errors.ts";
 import {
+  assertPublishableExtensionId,
   assertSafeExtensionId,
   deriveExtensionServiceId,
   EXTENSION_SERVICE_ID_PATTERN,
@@ -38,6 +39,44 @@ describe("assertSafeExtensionId", () => {
   test("slash-only or dot-slash yields empty parts and is rejected", () => {
     expect(() => assertSafeExtensionId("/")).toThrow(/invalid extension id/i);
     expect(() => assertSafeExtensionId("./")).toThrow(/invalid extension id/i);
+  });
+});
+
+describe("assertPublishableExtensionId", () => {
+  const refused = (id: string, segment: string): void => {
+    let caught: unknown;
+    try {
+      assertPublishableExtensionId(id);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(RegistryError);
+    expect((caught as RegistryError).code).toBe("ERR_REGISTRY_MANIFEST_INVALID");
+    expect((caught as RegistryError).message).toContain(`segment ${JSON.stringify(segment)}`);
+  };
+
+  for (const [id, segment] of [
+    ["acme/ec:ho", "ec:ho"],
+    ["acme/ec*ho", "ec*ho"],
+    ["acme/_echo", "_echo"],
+    ["acme/.echo", ".echo"],
+    ["acme/ec#ho", "ec#ho"],
+    ["acme/ec?ho", "ec?ho"],
+    ["acme/ec%20ho", "ec%20ho"],
+    ["acme/echo.", "echo."],
+    ["acme/echo.lock", "echo.lock"],
+    ["_acme/echo", "_acme"],
+    ["@scope/pkg", "@scope"],
+  ] as const) {
+    test(`refuses ${JSON.stringify(id)}, naming segment ${JSON.stringify(segment)}`, () => {
+      refused(id, segment);
+    });
+  }
+
+  test("accepts '.', '_' and '-' inside a segment", () => {
+    expect(() => assertPublishableExtensionId("acme-co/echo.v2_beta-1")).not.toThrow();
+    expect(() => assertPublishableExtensionId("echo")).not.toThrow();
+    expect(() => assertPublishableExtensionId("a.lockfile/x")).not.toThrow();
   });
 });
 

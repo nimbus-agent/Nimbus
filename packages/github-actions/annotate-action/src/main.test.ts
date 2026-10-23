@@ -66,7 +66,7 @@ function startMockGateway(responder: () => MockResponse): {
 function envForInputs(inputs: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(inputs)) {
-    out[`INPUT_${k.toUpperCase().replaceAll("-", "_")}`] = v;
+    out[`INPUT_${k.toUpperCase()}`] = v;
   }
   return out;
 }
@@ -447,7 +447,7 @@ describe("safe* sanitizers", () => {
 describe("getInput family (annotate)", () => {
   const touched: string[] = [];
   function setInput(name: string, value: string): void {
-    const key = `INPUT_${name.toUpperCase().replaceAll("-", "_")}`;
+    const key = `INPUT_${name.toUpperCase()}`;
     process.env[key] = value;
     touched.push(key);
   }

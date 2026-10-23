@@ -7,6 +7,7 @@ import {
   getBooleanInput,
   getInput,
   getIntInput,
+  inputEnvName,
   makeSetOutput,
   safeInt,
   safeString,
@@ -85,46 +86,46 @@ describe("scalar input helpers", () => {
   });
 
   test("getIntInput falls back when empty or non-integer", () => {
-    const saved = process.env.INPUT_TIMEOUT_MS;
+    const saved = process.env["INPUT_TIMEOUT-MS"];
     try {
-      delete process.env.INPUT_TIMEOUT_MS;
+      delete process.env["INPUT_TIMEOUT-MS"];
       expect(getIntInput("timeout-ms", 5)).toBe(5);
-      process.env.INPUT_TIMEOUT_MS = "abc";
+      process.env["INPUT_TIMEOUT-MS"] = "abc";
       expect(getIntInput("timeout-ms", 5)).toBe(5);
-      process.env.INPUT_TIMEOUT_MS = "8";
+      process.env["INPUT_TIMEOUT-MS"] = "8";
       expect(getIntInput("timeout-ms", 5)).toBe(8);
     } finally {
-      if (saved === undefined) delete process.env.INPUT_TIMEOUT_MS;
-      else process.env.INPUT_TIMEOUT_MS = saved;
+      if (saved === undefined) delete process.env["INPUT_TIMEOUT-MS"];
+      else process.env["INPUT_TIMEOUT-MS"] = saved;
     }
   });
 
   test("getInput and getBooleanInput read INPUT_* env vars", () => {
-    const savedString = process.env.INPUT_SOME_STRING;
-    const savedBool = process.env.INPUT_SOME_BOOL;
+    const savedString = process.env["INPUT_SOME-STRING"];
+    const savedBool = process.env["INPUT_SOME-BOOL"];
     try {
-      process.env.INPUT_SOME_STRING = " hello ";
+      process.env["INPUT_SOME-STRING"] = " hello ";
       expect(getInput("some-string")).toBe(" hello ");
 
-      process.env.INPUT_SOME_BOOL = "true";
+      process.env["INPUT_SOME-BOOL"] = "true";
       expect(getBooleanInput("some-bool")).toBe(true);
 
-      process.env.INPUT_SOME_BOOL = "YES";
+      process.env["INPUT_SOME-BOOL"] = "YES";
       expect(getBooleanInput("some-bool")).toBe(true);
 
-      process.env.INPUT_SOME_BOOL = "1";
+      process.env["INPUT_SOME-BOOL"] = "1";
       expect(getBooleanInput("some-bool")).toBe(true);
 
-      process.env.INPUT_SOME_BOOL = "false";
+      process.env["INPUT_SOME-BOOL"] = "false";
       expect(getBooleanInput("some-bool")).toBe(false);
 
-      delete process.env.INPUT_SOME_BOOL;
+      delete process.env["INPUT_SOME-BOOL"];
       expect(getBooleanInput("some-bool")).toBe(false);
     } finally {
-      if (savedString !== undefined) process.env.INPUT_SOME_STRING = savedString;
-      else delete process.env.INPUT_SOME_STRING;
-      if (savedBool !== undefined) process.env.INPUT_SOME_BOOL = savedBool;
-      else delete process.env.INPUT_SOME_BOOL;
+      if (savedString !== undefined) process.env["INPUT_SOME-STRING"] = savedString;
+      else delete process.env["INPUT_SOME-STRING"];
+      if (savedBool !== undefined) process.env["INPUT_SOME-BOOL"] = savedBool;
+      else delete process.env["INPUT_SOME-BOOL"];
     }
   });
 });
@@ -176,6 +177,22 @@ describe("makeSetOutput file writing", () => {
       if (saved === undefined) delete process.env.GITHUB_OUTPUT;
       else process.env.GITHUB_OUTPUT = saved;
       rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("hyphenated inputs follow the toolkit's env naming", () => {
+  test("getInput('root-key') reads INPUT_ROOT-KEY and never INPUT_ROOT_KEY", () => {
+    expect(inputEnvName("root-key")).toBe("INPUT_ROOT-KEY");
+    expect(inputEnvName("some input")).toBe("INPUT_SOME_INPUT");
+    process.env["INPUT_ROOT_KEY"] = "underscored";
+    try {
+      expect(getInput("root-key")).toBe("");
+      process.env["INPUT_ROOT-KEY"] = "hyphenated";
+      expect(getInput("root-key")).toBe("hyphenated");
+    } finally {
+      delete process.env["INPUT_ROOT_KEY"];
+      delete process.env["INPUT_ROOT-KEY"];
     }
   });
 });

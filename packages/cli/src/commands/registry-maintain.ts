@@ -3,7 +3,6 @@
  * registry folder (spec § 9). Pure CLI: no gateway, no network, no Vault. The root key is a file
  * holding base64 of the 32-byte Ed25519 seed (the format `nimbus extension keygen` writes).
  */
-import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -19,31 +18,32 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
-  assertSafeExtensionId,
   emptyIndex,
-  inspectPackage,
   isValidSemver,
-  MAX_PACKAGE_BYTES,
-  PUBLISHER_ID_RE,
-  PUBLISHER_KEY_RE,
   packExtensionDir,
+  parseRegistryConfig,
   publicKeyFromSeed,
   publisherKeyFingerprint,
-  type RegistryChannel,
+  type RegistryConfig,
   RegistryError,
   type RegistryIndex,
   signIndex,
+  validatePublish,
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
-import {
-  decodeBase64,
-  encodeBase64,
-  generateEd25519Keypair,
-  verifyManifestSignature,
-} from "../lib/extension-signing.ts";
+import { decodeBase64, encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
+import { buildPublishCandidate, DEFAULT_REGISTRY_CONFIG } from "../lib/publish-candidate.ts";
 import { readIndexFile, writeIndexAtomic } from "../lib/registry-index.ts";
+import { NIMBUS_RELEASE_COMMIT } from "../release-commit.ts";
+import { NIMBUS_VERSION } from "../version.ts";
+import { ownerNextSteps, registryReadme } from "./registry-templates/readme.ts";
+import {
+  type ActionPin,
+  registryCheckWorkflow,
+  registrySignWorkflow,
+} from "./registry-templates/workflows.ts";
 
 export interface MaintainIo {
   stdout: (s: string) => void;
@@ -55,28 +55,21 @@ const DEFAULT_IO: MaintainIo = {
   stderr: (s) => process.stderr.write(s),
 };
 
+/** What this binary knows about its own build: the release commit (undefined in a dev build). */
+export interface MaintainBuild {
+  releaseCommit: string | undefined;
+  version: string;
+}
+
+const DEFAULT_BUILD: MaintainBuild = {
+  releaseCommit: NIMBUS_RELEASE_COMMIT,
+  version: NIMBUS_VERSION,
+};
+
 const USAGE =
-  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>]\n";
+  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>]\n";
 
 class MaintainError extends Error {}
-
-function sha256Hex(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-function assertSafeId(id: string): string[] {
-  try {
-    assertSafeExtensionId(id);
-  } catch {
-    throw new MaintainError(`invalid extension id: ${JSON.stringify(id)}`);
-  }
-  // The id becomes a directory path in the registry folder, so every segment must be a plain name.
-  const parts = id.split("/");
-  if (parts.some((p) => p === "" || p === "." || p === ".." || p.includes("\\"))) {
-    throw new MaintainError(`invalid extension id: ${JSON.stringify(id)}`);
-  }
-  return parts;
-}
 
 interface ParsedArgs {
   positional: string[];
@@ -161,18 +154,139 @@ async function resign(
   return next;
 }
 
-async function maintainInit(args: string[], io: MaintainIo): Promise<void> {
-  const p = parseArgs(args, ["--key"], ["--force"]);
-  const dir = p.positional[0];
-  if (dir === undefined || p.positional.length !== 1) throw new MaintainError("init needs <dir>");
-  const force = p.flags.has("--force");
-  const keyPath = keyPathOf(p);
-  if (existsSync(join(dir, "index.json")) && !force) {
+const COMMIT_SHA_RE = /^[0-9a-f]{40}$/;
+
+/** Options that only mean something with `--github`. */
+const GITHUB_ONLY = [
+  "--action-ref",
+  "--site",
+  "--default-branch",
+  "--no-publisher-namespace",
+] as const;
+
+/**
+ * Fixed files of the gh-pages site. `.nojekyll` stops GitHub Pages' Jekyll from dropping paths
+ * that start with `_` or `.`; `.gitattributes` keeps git from rewriting the line endings of the
+ * hashed and signed bytes the site serves. The sign action builds on the previous site tree, so
+ * both survive every sign run.
+ */
+const SITE_FILES: ReadonlyArray<readonly [string, string]> = [
+  [".nojekyll", ""],
+  [".gitattributes", "* -text\n"],
+];
+
+/** Everything `init --github` will write, decided and checked before the key is generated. */
+interface GithubPlan {
+  pin: ActionPin;
+  site: string;
+  defaultBranch: string;
+  /** Main-branch files, relative to `<dir>` (`/`-separated), with their contents. */
+  mainFiles: ReadonlyArray<readonly [string, string]>;
+  configText: string;
+}
+
+function resolveActionPin(p: ParsedArgs, build: MaintainBuild): ActionPin {
+  const given = p.options.get("--action-ref");
+  const commit = given ?? build.releaseCommit;
+  if (commit === undefined) {
     throw new MaintainError(
-      `${join(dir, "index.json")} exists; refusing to overwrite without --force`,
+      "--github needs a Nimbus commit to pin the registry action to, and this build has no embedded release commit: pass --action-ref <40-hex commit SHA>",
     );
   }
-  const { privkey, pubkey } = generateEd25519Keypair();
+  if (!COMMIT_SHA_RE.test(commit)) {
+    throw new MaintainError(
+      given === undefined
+        ? `this build's embedded release commit is not a 40-hex SHA (${commit}); pass --action-ref <40-hex commit SHA>`
+        : "--action-ref must be a 40-hex lowercase commit SHA",
+    );
+  }
+  return { commit, version: build.version };
+}
+
+function isSameOrInside(child: string, parent: string): boolean {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * A conservative subset of git's ref-format rules, so the name is safe both as a branch and inside
+ * the emitted YAML: ASCII letters, digits, `.`, `_`, `-` and `/`; no leading `-` or `.`; no `..`,
+ * `//`, `/.`, trailing `/` or `.`, or `.lock` suffix.
+ */
+const BRANCH_RE = /^\w[\w./-]{0,99}$/;
+
+function resolveDefaultBranch(p: ParsedArgs): string {
+  const branch = p.options.get("--default-branch") ?? "main";
+  const unsafe =
+    !BRANCH_RE.test(branch) ||
+    branch.includes("..") ||
+    branch.includes("//") ||
+    branch.includes("/.") ||
+    branch.endsWith("/") ||
+    branch.endsWith(".") ||
+    branch.endsWith(".lock");
+  if (unsafe) {
+    throw new MaintainError(
+      "--default-branch must be a plain branch name (letters, digits, . _ - /; no leading - or ., no .., no trailing / or .)",
+    );
+  }
+  return branch;
+}
+
+function planGithubInit(
+  p: ParsedArgs,
+  dir: string,
+  keyPath: string,
+  build: MaintainBuild,
+  force: boolean,
+): GithubPlan {
+  const pin = resolveActionPin(p, build);
+  const defaultBranch = resolveDefaultBranch(p);
+  const site = p.options.get("--site") ?? `${resolve(dir)}-site`;
+  if (isSameOrInside(site, dir) || isSameOrInside(dir, site)) {
+    throw new MaintainError(
+      `--site ${site} overlaps ${dir}; the site goes to the gh-pages branch and <dir> to the main branch, so neither folder may hold the other`,
+    );
+  }
+  for (const folder of [dir, site]) {
+    if (isSameOrInside(keyPath, folder)) {
+      throw new MaintainError(
+        `the root key ${keyPath} would be inside ${folder}, which is pushed to GitHub; keep it outside the registry folders (the default is ~/.nimbus/registry-key)`,
+      );
+    }
+  }
+  if (existsSync(join(dir, "index.json"))) {
+    throw new MaintainError(
+      `${join(dir, "index.json")} exists; a --github registry's main branch never holds a signed index (it lives on gh-pages): remove it first`,
+    );
+  }
+  const requirePublisherNamespace = !p.flags.has("--no-publisher-namespace");
+  const configText = `${JSON.stringify({ format: 1, requirePublisherNamespace }, null, 2)}\n`;
+  const mainFiles: Array<readonly [string, string]> = [
+    [".github/workflows/registry-check.yml", registryCheckWorkflow(pin, defaultBranch)],
+    [".github/workflows/registry-sign.yml", registrySignWorkflow(pin, defaultBranch)],
+    ["nimbus-registry.json", configText],
+    ["README.md", registryReadme({ requirePublisherNamespace, defaultBranch })],
+    ["extensions/.gitkeep", ""],
+    // Package bytes are hashed and signed: git must never rewrite their line endings.
+    ["extensions/.gitattributes", "* -text\n"],
+  ];
+  if (!force) {
+    const targets = [
+      ...mainFiles.map(([rel]) => join(dir, ...rel.split("/"))),
+      join(site, "index.json"),
+      join(site, "nimbus-registry.json"),
+      ...SITE_FILES.map(([rel]) => join(site, rel)),
+    ];
+    const taken = targets.find((t) => existsSync(t));
+    if (taken !== undefined) {
+      throw new MaintainError(`${taken} exists; refusing to overwrite without --force`);
+    }
+  }
+  return { pin, site, defaultBranch, mainFiles, configText };
+}
+
+function writeRootKey(keyPath: string, privkey: Uint8Array, force: boolean): void {
   mkdirSync(dirname(keyPath), { recursive: true });
   try {
     writeFileSync(keyPath, `${encodeBase64(privkey)}\n`, { flag: force ? "w" : "wx", mode: 0o600 });
@@ -183,56 +297,63 @@ async function maintainInit(args: string[], io: MaintainIo): Promise<void> {
     throw e;
   }
   if (process.platform !== "win32") chmodSync(keyPath, 0o600);
-  mkdirSync(join(dir, "extensions"), { recursive: true });
+}
+
+function writeGithubRegistry(dir: string, plan: GithubPlan, index: RegistryIndex): void {
+  for (const [rel, text] of plan.mainFiles) {
+    const path = join(dir, ...rel.split("/"));
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, text);
+  }
+  mkdirSync(plan.site, { recursive: true });
+  writeIndexAtomic(plan.site, index);
+  writeFileSync(join(plan.site, "nimbus-registry.json"), plan.configText);
+  for (const [rel, text] of SITE_FILES) writeFileSync(join(plan.site, rel), text);
+}
+
+async function maintainInit(args: string[], io: MaintainIo, build: MaintainBuild): Promise<void> {
+  const p = parseArgs(
+    args,
+    ["--key", "--action-ref", "--site", "--default-branch"],
+    ["--force", "--github", "--no-publisher-namespace"],
+  );
+  const dir = p.positional[0];
+  if (dir === undefined || p.positional.length !== 1) throw new MaintainError("init needs <dir>");
+  const force = p.flags.has("--force");
+  const github = p.flags.has("--github");
+  const keyPath = keyPathOf(p);
+  let plan: GithubPlan | undefined;
+  if (github) {
+    plan = planGithubInit(p, dir, keyPath, build, force);
+  } else {
+    const stray = GITHUB_ONLY.find((o) => p.options.has(o) || p.flags.has(o));
+    if (stray !== undefined) throw new MaintainError(`${stray} needs --github`);
+    if (existsSync(join(dir, "index.json")) && !force) {
+      throw new MaintainError(
+        `${join(dir, "index.json")} exists; refusing to overwrite without --force`,
+      );
+    }
+  }
+  const { privkey, pubkey } = generateEd25519Keypair();
+  writeRootKey(keyPath, privkey, force);
   const index = await signIndex(emptyIndex(encodeBase64(pubkey)), privkey);
-  writeIndexAtomic(dir, index);
-  io.stdout(`registry initialised in ${dir} (sequence 1)\n`);
+  if (plan === undefined) {
+    mkdirSync(join(dir, "extensions"), { recursive: true });
+    writeIndexAtomic(dir, index);
+    io.stdout(`registry initialised in ${dir} (sequence 1)\n`);
+  } else {
+    writeGithubRegistry(dir, plan, index);
+    io.stdout(`registry repository written to ${dir} (push it to main)\n`);
+    io.stdout(`initial site written to ${plan.site} (sequence 1; push it as gh-pages)\n`);
+  }
   io.stdout(`root key:    ${index.rootKey}\n`);
   io.stdout(`fingerprint: ${publisherKeyFingerprint(encodeBase64(pubkey))}\n`);
   io.stdout(`key file:    ${keyPath} (keep it secret and backed up)\n`);
-}
-
-interface ValidManifest {
-  id: string;
-  idParts: string[];
-  version: string;
-  name: string;
-  publisher: { id: string; key: string };
-}
-
-async function validateManifest(m: Record<string, unknown>): Promise<ValidManifest> {
-  const id = m["id"];
-  const version = m["version"];
-  if (typeof id !== "string") throw new MaintainError("manifest has no id");
-  const idParts = assertSafeId(id);
-  if (typeof version !== "string" || !isValidSemver(version)) {
-    throw new MaintainError(`manifest version ${JSON.stringify(version)} is not strict semver`);
+  if (plan !== undefined) {
+    io.stdout(`action pin:  ${plan.pin.commit} (Nimbus v${plan.pin.version})\n`);
+    io.stdout("\n");
+    io.stdout(ownerNextSteps({ dir, site: plan.site, keyPath, defaultBranch: plan.defaultBranch }));
   }
-  const pub = m["publisher"] as { id?: unknown; key?: unknown } | undefined;
-  if (
-    pub === undefined ||
-    pub === null ||
-    typeof pub.id !== "string" ||
-    typeof pub.key !== "string" ||
-    typeof m["signature"] !== "string"
-  ) {
-    throw new MaintainError(
-      "extension is unsigned: the manifest needs `publisher` and `signature` (run `nimbus extension sign`)",
-    );
-  }
-  if (pub.id.length > 64 || !PUBLISHER_ID_RE.test(pub.id) || !PUBLISHER_KEY_RE.test(pub.key)) {
-    throw new MaintainError("manifest publisher id or key is malformed");
-  }
-  try {
-    await verifyManifestSignature(m, decodeBase64(pub.key));
-  } catch (e) {
-    throw new MaintainError(
-      `manifest signature does not verify: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-  const declaredName = m["name"];
-  const name = typeof declaredName === "string" && declaredName !== "" ? declaredName : id;
-  return { id, idParts, version, name, publisher: { id: pub.id, key: pub.key } };
 }
 
 /**
@@ -271,6 +392,13 @@ function isDirectory(path: string): boolean {
   }
 }
 
+/** `<dir>/nimbus-registry.json` when present; absent means today's rules (no namespace required). */
+function readRegistryConfig(dir: string): RegistryConfig {
+  const path = join(dir, "nimbus-registry.json");
+  if (!existsSync(path)) return DEFAULT_REGISTRY_CONFIG;
+  return parseRegistryConfig(readFileSync(path));
+}
+
 async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
   const p = parseArgs(args, ["--key", "--channel"], []);
   const [dir, source] = p.positional;
@@ -296,38 +424,28 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
     } else {
       writeFileSync(tgz, fileBytes, { flag: "wx" });
     }
-    const tgzBytes = readFileSync(tgz);
-    if (tgzBytes.length === 0 || tgzBytes.length > MAX_PACKAGE_BYTES) {
-      throw new MaintainError("package size is out of range");
-    }
-    const pkg = await inspectPackage(tgz, work);
-    const v = await validateManifest(pkg.manifest);
-
+    if (statSync(tgz).size === 0) throw new MaintainError("package size is out of range");
+    // The signed index was verified by `loadOwnedIndex` above; the validator trusts it.
+    const config = readRegistryConfig(dir);
+    const candidate = await buildPublishCandidate(tgz, work, channel);
+    const v = await validatePublish(candidate, index, config, work);
     const existing = index.extensions[v.id];
-    if (existing !== undefined && existing.publisher.key !== v.publisher.key) {
-      throw new MaintainError(
-        `${v.id} is already published under a different publisher key; key rotation is not supported`,
-      );
-    }
-    if (existing?.versions[v.version] !== undefined) {
-      throw new MaintainError(`${v.id}@${v.version} already exists in this registry`);
-    }
 
     const rel = `extensions/${v.id}/${v.version}`;
-    const destDir = join(dir, "extensions", ...v.idParts, v.version);
+    const destDir = join(dir, "extensions", ...v.id.split("/"), v.version);
     mkdirSync(destDir, { recursive: true });
-    writeFileSync(join(destDir, "manifest.json"), pkg.manifestBytes);
-    writeFileSync(join(destDir, "package.tgz"), tgzBytes);
+    writeFileSync(join(destDir, "manifest.json"), candidate.manifestBytes);
+    writeFileSync(join(destDir, "package.tgz"), candidate.packageBytes);
 
     const entry = {
-      channel: channel as RegistryChannel,
+      channel: v.channel,
       name: v.name,
       manifest: `${rel}/manifest.json`,
-      manifestSha256: sha256Hex(pkg.manifestBytes),
+      manifestSha256: v.manifestSha256,
       package: `${rel}/package.tgz`,
-      packageSha256: sha256Hex(tgzBytes),
-      packageSizeBytes: tgzBytes.length,
-      entryHash: pkg.entryHash,
+      packageSha256: v.packageSha256,
+      packageSizeBytes: v.packageSizeBytes,
+      entryHash: v.entryHash,
       publishedAt: new Date().toISOString(),
     };
     const next = await resign(dir, seed, index, {
@@ -381,9 +499,13 @@ async function maintainRemove(args: string[], io: MaintainIo): Promise<void> {
 export async function runRegistryMaintain(
   args: string[],
   io: MaintainIo = DEFAULT_IO,
+  build: MaintainBuild = DEFAULT_BUILD,
 ): Promise<number> {
   const [sub, ...rest] = args;
-  const handlers: Record<string, (a: string[], io: MaintainIo) => Promise<void>> = {
+  const handlers: Record<
+    string,
+    (a: string[], io: MaintainIo, build: MaintainBuild) => Promise<void>
+  > = {
     init: maintainInit,
     add: maintainAdd,
     remove: maintainRemove,
@@ -394,7 +516,7 @@ export async function runRegistryMaintain(
     return 2;
   }
   try {
-    await handler(rest, io);
+    await handler(rest, io, build);
     return 0;
   } catch (e) {
     if (e instanceof MaintainError || e instanceof RegistryError) {

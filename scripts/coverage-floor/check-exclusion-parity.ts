@@ -36,6 +36,7 @@ function patternToSampleRelPaths(pattern: string): string[] {
     samples.push(
       "packages/github-actions/annotate-action/src/main.ts",
       "packages/github-actions/preflight-query/src/main.ts",
+      "packages/github-actions/registry-action/src/main.ts",
     );
     return samples;
   }

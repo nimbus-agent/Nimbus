@@ -18,6 +18,64 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-23 — Phase 9.5 project 2, PR C: registry CI — check and sign publish pull requests (no migration, no invariant, no egress class).**
+  A GitHub-hosted registry repository now validates and signs publish pull requests itself. The new node24 action
+  `packages/github-actions/registry-action` has two modes. `check` runs on every pull request to the default branch
+  with a read-only token and no secrets, validates it against the signed `index.json` on `gh-pages` and writes a
+  summary for the reviewer; it is a reviewer aid, not a boundary, since a pull request can edit it. `sign` runs on a
+  push to the default branch (or by hand) behind the `registry-signing` environment's required reviewers: it refuses
+  if the `gh-pages` index does not verify, if the root-key input is not the registry's root key, if
+  `nimbus-registry.json` is missing on the default branch or loosens the last signed rules, or if an already-signed
+  version's files changed or were deleted; otherwise it re-validates every unsigned version (skipping and naming
+  failures, each with a `::warning::`), signs the index at
+  `sequence + 1` and pushes `gh-pages`. `nimbus registry maintain init <dir> --github [--action-ref <40-hex>]
+  [--site <path>] [--default-branch <name>]` writes the whole repository: the two workflows (every `uses:` SHA-pinned,
+  the registry action pinned to the commit the release was built from, which `release.yml` now embeds through
+  `packages/cli/src/release-commit.ts`), `nimbus-registry.json`, a README and a signed empty site folder for
+  `gh-pages`, and prints the owner's next steps (public repository, environment with reviewers, the
+  environment-scoped `NIMBUS_REGISTRY_ROOT_KEY` secret in bash and PowerShell forms, Pages, branch protection); a
+  development build refuses `--github` without `--action-ref`. The action's `dist/index.js` carries a header with the
+  building Bun version and an input hash, and the new `audit:action-dist` gate checks that hash everywhere and
+  byte-compares against the recorded Bun in CI. **Fixed, user-visible, in the two already-shipped actions:**
+  `packages/github-actions/shared/gha-io.ts` read hyphenated inputs under the wrong environment name
+  (`INPUT_ROOT_KEY` instead of the runner's `INPUT_ROOT-KEY`), so inputs such as `target-ref`, `gateway-url` and
+  `timeout-ms` arrived empty in the annotate and preflight-query actions and silently fell back to defaults; both
+  bundles are rebuilt. Rebuilding preflight-query also ships a source change merged earlier but never bundled: an
+  unknown verdict now maps to "warn", not "ok". No new egress class (the action runs on GitHub, outside the gateway),
+  no invariant, no migration. Owner steps are in `docs/registry-hosting.md`. **Bounds, stated:** a force-push of
+  `gh-pages` lets a later sign publish a different index at an already-used `sequence`, and the client accepts an
+  equal sequence, so the owner must protect `gh-pages` (client-side refusal is a project 3 trust-layer follow-up);
+  the registry repository must be public because `check` fetches without credentials; the sign trigger follows
+  `--default-branch`; on Windows the CLI sets no ACL on the key file; the GitHub fork fallback in `extension publish`
+  is untested. **Not shipped:** the `nimbus eval` score and registry-side reproducibility re-run, forges other than
+  GitHub, private registries.
+
+- **2026-10-23 — Phase 9.5 project 2, PR B: publish extensions to a registry repository (no migration, no invariant, no egress class).**
+  `nimbus extension publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]`
+  packs the extension's package file set, validates it, and opens a pull request that adds
+  `extensions/<id>/<version>/{manifest.json,package.tgz,publish-request.json}` to a GitHub-hosted registry
+  repository. It needs no gateway, no Vault and no token: `gh` owns GitHub authentication and Nimbus never reads it,
+  and without `gh` (or with `--no-pr`) it commits the branch locally and prints the exact `git push` and
+  `gh pr create` commands. It reads the registry's signed `index.json` from the `gh-pages` branch and verifies it
+  against its own root key before trusting it; a registry with no `gh-pages` is refused as not initialised, and a
+  `--clone` whose `origin` is not the registry is refused. Every refusal happens before any branch or file is written.
+  The rules live in one new function, `validatePublish` (`packages/registry-format/src/validate-publish.ts`): thirteen
+  checks in a fixed order (publish request, manifest, coordinates, the publisher signature, registry state, the
+  package file set and its entry inside `dist/`), shared by `extension publish`, `registry maintain add` and, in the
+  next PR, the registry's own CI. Six new refusal codes: `ERR_REGISTRY_PUBLISH_REQUEST_INVALID`,
+  `ERR_REGISTRY_NAMESPACE_REQUIRED`, `ERR_REGISTRY_SERVICE_ID_COLLISION`, `ERR_REGISTRY_VERSION_EXISTS` (also for a
+  build-metadata twin such as `1.0.0+r2`), `ERR_REGISTRY_PACKAGE_FILE_SET` and `ERR_REGISTRY_CONFIG_INVALID`.
+  Also new: `nimbus scaffold extension <name> [--publisher <id>]`, a template separate from `scaffold mcp` that builds
+  one self-contained `--target=bun` bundle into `dist/` (not `--compile`: the runtime `import()`s the entry), and
+  `nimbus extension sign` now fills a manifest's `publisher.key` from the signing key when the manifest names a
+  publisher id without one, refusing (exit 2) to re-key a manifest whose key differs. Behaviour changes:
+  `nimbus registry maintain add` now validates through `validatePublish`, so it newly refuses a build-metadata version
+  twin, a service-id collision and an entry outside `dist/`, and it reads `<dir>/nimbus-registry.json`
+  (`requirePublisherNamespace`; absent means no namespace required). No new egress class: publish runs in the CLI
+  process, outside the gateway, so its `git` and `gh` traffic is not ledgered. **Not shipped:** the registry
+  repository's CI (the check and sign action and `maintain init --github`) comes in the next PR, so nothing yet signs
+  or merges a publish pull request; the pre-publish `nimbus eval` score is not part of this.
+
 - **2026-10-23 — Fleet config changes apply without a restart (role packs, project 1, PR 3: live reload; no migration, no invariant, no new IPC method).**
   Fleet config changes, from the owner's file or a pack layer, now apply to a running gateway within about 5 seconds; this includes owner-only keys such as `allow_remote`, and a run in progress finishes first. A new fleet supervisor (`fleet/fleet-supervisor.ts`) checks the layered config's version every 5 seconds and rebuilds the scheduler only when the effective `[fleet]` section changed; job state is kept across a reload, and each rebuilt scheduler gets its own I38 remote budget. A `[fleet]` that stops parsing turns the fleet off until it is fixed, instead of until the next restart.
   The `fleet.*` IPC methods read the current fleet rather than the one built at boot, and `fleet.runNow` waits for a reload in progress. `PlatformServices.fleetScheduler`, which nothing read and which would have gone stale after the first reload, is removed.
