@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792742563470,
+  "lastUpdate": 1792743333696,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a1169d943aca41a339bb8fb1c6b32ee4f929e2fb",
-          "message": "feat(egress): make the I29 completeness claim true — coverage vector, boot marker, required sink (#1038)\n\n## What was wrong\n\n`nimbus prove \"<query>\"` printed:\n\n```\noutbound egress events during this query: 0 ✓\n```\n\nfrom a head-count delta alone — no chain verification, and no check that\nanything was being\nobserved at all. It asserted *\"nothing left this machine\"* when it meant\n*\"nothing I was built to\nwatch left, and I never checked whether I was watching anything.\"*\n\nMeanwhile `D22`'s own source comment claimed it had *\"no escape hatch,\nno 'approved wrapper'\ncarve-out\"*, while being a regex matching the literal string\n`connectors.dispatch`. Several real\npaths pass it — including `connectors/connector-write-dispatch.ts:21`, a\ndispatcher decorator\ncalling `inner.dispatch(action)`. That one is benign today, but by\nwiring, not by enforcement.\n\n## What this changes\n\nPhase 1 of the I29 remediation. Its governing principle is **truth\nbefore coverage**: every change\nmakes the *existing* claim honest.\n\n- **Frozen `source_type` union** (8 members,\n`egress/egress-source-type.ts`). A value written today\nis permanent *in the data*, and marker-exclusion depends on the set\nbeing closed.\n- **Stops counting prune tombstones.** `pruneEgress` writes\n`resultStatus: \"authorized\"`, and the\nold filter counted every authorized row — so each prune inflated the\nreported egress figure by\n  one. This corrects a user-visible number that was previously wrong.\n- **Per-process boot marker** carrying a coverage vector in the\n**hashed** `source_id`, so the\ncoverage claim is tamper-evident. Appended at `assemble.ts` startup,\nafter `ensureSchema` and\n  before anything that can emit egress.\n- **`proveWindow` reports `{ coverage, outboundEgressEvents,\nindeterminate }`.** A window with no\ncovering boot marker reports `indeterminate` — it cannot degrade into a\nreassuring zero.\n- **The executor's egress sink is required**, with a named\n`NULL_EGRESS_SINK` for the seven\ngate-only executors. Forgetting to wire a sink is now a compile error\nrather than silence.\n- **`nimbus prove` never prints a bare `0 ✓`.** Every count carries the\nscope that qualifies it,\n  and unprovable windows print `indeterminate` and exit 1.\n- **Documentation corrected** — `D22`'s comment, the `I29` section, the\nmirrored `CLAUDE.md` /\n`GEMINI.md` bullets, and the `nimbus-egress` skill now describe the\nmechanism rather than the\n  intent.\n\n## What this deliberately does NOT do\n\n**No new egress coverage.** After this branch, coverage is still `task:\nper-call` with every other\nclass `none`. LLM inference, connector sync, telemetry and the updater\nremain uninstrumented —\nthose are Phases 3–5. The coverage vector exists so no binary can claim\nmore than it observes.\n\n## Compatibility\n\n`completeness.tier` is retained additively as a deprecated shim.\n`@nimbus-dev/client@0.15.0`\nvalidates `completeness.tier === \"authorized-actions\"` and throws\notherwise, so removing it would\nhard-fail every published-client consumer (including nimbus-vscode).\n\nThe field is accurate **only** while coverage is task-only. It must be\nremoved before any phase\nraises another coverage class, or it becomes exactly the kind of false\nclaim this branch exists to\neliminate.\n\n## Verification\n\n- `typecheck` · `audit:invariants` · `audit:boundaries` — all exit 0\n- `bun test packages/gateway/src packages/cli/src` — 11743 pass / 30\nskip / 0 fail across 836 files\n- A real gateway boot against a scratch data dir wrote exactly one row:\n`source_type='boot'`,\n`source_id='model=none;peer=none;session=none;sync=none;task=per-call'`\n- Seven task reviews plus a whole-branch review; findings fixed or\nrecorded\n\n## Known follow-ups\n\n- `coverageForWindow` merges the weakest coverage across *all*\nhistorical markers, so coverage can\nnever rise after an upgrade. The fix is \"last marker ≤ `since`, plus\nmarkers in window\" — not a\nplain `since` filter, which would drop the marker of the process running\nat window start.\n- `ChatopsBootDeps.egressSink` remains optional with a `??\nNULL_EGRESS_SINK` fallback (pre-existing;\n  production always wires a real sink).\n- `formatProveResult`'s scope label needs revisiting when a later phase\nraises a second class.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n* Egress verification now reports per-source coverage and clearly\nidentifies indeterminate or unverified windows.\n  * Boot-time coverage markers improve proof accuracy.\n  * Replay reports now show steps skipped due to invalid parameters.\n\n* **Bug Fixes**\n  * Bookkeeping markers are excluded from outbound event totals.\n  * Unsafe replay parameters are skipped instead of executed.\n\n* **Documentation**\n* Updated security guidance, changelog entries, and documented egress\ncoverage limitations.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-04T15:43:57Z",
-          "tree_id": "7b6d8e18b6d535ce0056425b8316f642c8dddb6b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a1169d943aca41a339bb8fb1c6b32ee4f929e2fb"
-        },
-        "date": 1785858963238,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 328.09414115000214,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.34280459999934,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 263.85389764999854,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5b5906d59bb77870bf65b97b6f113cb64e896683",
+          "message": "fix(index): pausing or resuming without a scheduler records the health transition (#1728)\n\n## What changes\n\nFollow-up parked in #1713 (PR 6 final review, N4).\n\nWhen the gateway runs without a `SyncScheduler`, pausing and resuming a\nconnector go through `LocalIndex.pauseConnectorSync` /\n`resumeConnectorSync`. Those set the paused flag but recorded no health\ntransition, unlike `SyncScheduler.pause` / `resume`. Two effects:\n\n- **Wrong error shown while paused.** Status prefers the health row's\nerror, so a stale `health.last_error` (say, an old persistent error) was\nreported instead of the scheduler row's current one, and the health\nstate never read \"paused\".\n- **Blocked scheduler after resume.** Health stayed whatever it was, so\nonce a pause did record health \"paused\", a later resume had to record\n\"resumed\", or a scheduler would skip the connector\n(`SKIP_HEALTH_STATES`).\n\nBoth methods now record the same transitions as the scheduler path\n(`paused` / `resumed`, history reasons \"connector paused\" / \"connector\nresumed\").\n\n## Verification\n\n- New `local-index.test.ts` cases, red-first:\n  - pause records the paused transition;\n- a no-scheduler pause reports the scheduler row's error, not a stale\nhealth error;\n  - resume leaves health \"healthy\" with no error;\n- parity: the same seed paused through `SyncScheduler.pause` and through\n`LocalIndex` reports the same `lastError` and `healthState`.\n- `bun test src/index src/ipc src/sync src/security-invariants.test.ts`\n(gateway): 4431 pass, 0 fail. `bun run preflight:fast` passed.\n- Review: approved, 0 Critical / 0 Important. The resume test was\ntightened from \"not paused\" to \"healthy\" in the second commit.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T08:07:35Z",
+          "tree_id": "598ca4b30866f8bc100b97d2c6cb21e15247444c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5b5906d59bb77870bf65b97b6f113cb64e896683"
+        },
+        "date": 1792743330446,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 205.2525660999974,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 205.5594596999963,
             "unit": "ms"
           }
         ]
