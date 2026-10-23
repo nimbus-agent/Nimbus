@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:0833a01c8167f036474a990fb3fb64ef5920b35ab915bae79679995be19ec04f
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:00418c4297a6655d0e00a3423ab492f12da390cbbf4c28ce28e82399dd4be2ab
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4251,6 +4251,25 @@ class RegistryError extends Error {
     this.name = "RegistryError";
   }
 }
+// ../../registry-format/src/extension-env.ts
+var BASELINE_KEYS = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "USERPROFILE",
+  "SYSTEMROOT",
+  "BUN_INSTALL",
+  "LANG",
+  "TZ"
+];
+var BASELINE_KEY_SET = new Set(BASELINE_KEYS);
+function isExtensionBaselineEnvKey(name) {
+  return BASELINE_KEY_SET.has(name);
+}
 // ../../registry-format/src/extension-id.ts
 var MAX_EXTENSION_ID_LENGTH = 128;
 function assertSafeExtensionId(extensionId) {
@@ -4313,7 +4332,7 @@ import { createHash } from "node:crypto";
 function publisherKeyFingerprint(base64Key) {
   return createHash("sha256").update(Buffer.from(base64Key, "base64")).digest("hex").slice(0, 32);
 }
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/agents/guard-factory.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/agents/guard-factory.js
 function createBriefGuard(kind, extra, opts) {
   const requireQuery = opts?.requireQuery ?? false;
   return (x) => {
@@ -4331,7 +4350,7 @@ function createBriefGuard(kind, extra, opts) {
   };
 }
 
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/agents/brief-guards.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/agents/brief-guards.js
 var STRICT = { requireQuery: true };
 var isExpertBrief = createBriefGuard("expert", (b) => Array.isArray(b["ranked"]), STRICT);
 var isImpactBrief = createBriefGuard("impact", (b) => Array.isArray(b["affected"]), STRICT);
@@ -4345,10 +4364,10 @@ var isWhyBrief = createBriefGuard("why", (b) => Array.isArray(b["findings"]), ST
 var isGlossaryBrief = createBriefGuard("glossary", (b) => Array.isArray(b["entries"]) && Array.isArray(b["suggestions"]), STRICT);
 var isDecisionsBrief = createBriefGuard("decisions", (b) => Array.isArray(b["entries"]), STRICT);
 var isOwnershipBrief = createBriefGuard("ownership", (b) => typeof b["coverage"] === "object" && b["coverage"] !== null, STRICT);
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/contract-version.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/contract-version.js
 var CONTRACT_VERSION_PATTERN = /^[1-9][0-9]*$/;
 
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/contract-tests.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/contract-tests.js
 var PERMS = new Set(["read", "write", "delete"]);
 var HITL = new Set(["write", "delete"]);
 var ALL_BLANK = /^[\p{White_Space}\uFEFF]*$/u;
@@ -4559,7 +4578,7 @@ var ROW_DATA_TOOL_SEGMENTS = new Set([
   "export",
   "download"
 ]);
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/crypto/canonical-json.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/crypto/canonical-json.js
 class NonIntegerNumberInManifest extends Error {
   name = "NonIntegerNumberInManifest";
 }
@@ -4610,7 +4629,7 @@ function canonicalizeManifest(manifest) {
   delete clone["signature"];
   return new TextEncoder().encode(canonicalize(clone));
 }
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/crypto/verify-signature.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/crypto/verify-signature.js
 class PublisherKeyMismatch extends Error {
   name = "PublisherKeyMismatch";
 }
@@ -4655,7 +4674,7 @@ async function verifyManifestSignature(manifest, resolvedPubkey) {
   if (!ok)
     throw new SignatureInvalid;
 }
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/internal/whitespace.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/internal/whitespace.js
 var NORMATIVE_WHITESPACE = new Set([
   9,
   10,
@@ -4683,7 +4702,7 @@ var NORMATIVE_WHITESPACE = new Set([
   12288,
   65279
 ]);
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/distribution-channel.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/distribution-channel.js
 var KNOWN_CHANNELS = new Set([
   "homebrew",
   "scoop",
@@ -4693,7 +4712,7 @@ var KNOWN_CHANNELS = new Set([
   "msi",
   "pkg"
 ]);
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/item-types.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/item-types.js
 var KNOWN_ITEM_TYPES = [
   "account",
   "api_endpoint",
@@ -4765,9 +4784,9 @@ var KNOWN_ITEM_TYPES = [
   "worker"
 ];
 var KNOWN = new Set(KNOWN_ITEM_TYPES);
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/ipc/ndjson-line-reader.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/ipc/ndjson-line-reader.js
 var IPC_MAX_LINE_BYTES = 1024 * 1024;
-// ../../../node_modules/.bun/@nimbus-dev+sdk@2.0.0/node_modules/@nimbus-dev/sdk/dist/testing/sandbox-protocol.js
+// ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/testing/sandbox-protocol.js
 var NETWORK_BLOCKED_CODES = new Set([
   "ECONNREFUSED",
   "EPERM",
@@ -4950,6 +4969,79 @@ function parseDependsOn(value) {
   }
   return Object.keys(out).length === 0 ? undefined : out;
 }
+var SYNC_NAME_RE = /^[a-z][a-z0-9_]{0,31}$/;
+var CREDENTIAL_ENV_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
+var RESERVED_ENV_PREFIXES = ["NIMBUS_", "BUN_", "NODE_", "LD_", "DYLD_"];
+var RESERVED_ENV_NAMES = new Set([
+  "PATH",
+  "HOME",
+  "USERPROFILE",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "SYSTEMROOT",
+  "COMSPEC",
+  "PATHEXT"
+]);
+var MIN_SYNC_INTERVAL_SECONDS = 60;
+function asPlainObject(value, what) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`extension manifest ${what} must be an object`);
+  }
+  return value;
+}
+function rejectUnknownKeys(o, allowed, what) {
+  for (const k of Object.keys(o)) {
+    if (!allowed.includes(k)) {
+      throw new Error(`extension manifest ${what} has unknown key: ${k}`);
+    }
+  }
+}
+function parseSync(value) {
+  if (value === undefined)
+    return;
+  const o = asPlainObject(value, "sync");
+  rejectUnknownKeys(o, ["contract", "intervalSeconds", "itemTypes"], "sync");
+  if (o["contract"] !== "1") {
+    throw new Error('extension manifest sync.contract must be exactly "1"');
+  }
+  const interval = o["intervalSeconds"];
+  if (typeof interval !== "number" || !Number.isInteger(interval) || interval < MIN_SYNC_INTERVAL_SECONDS) {
+    throw new Error(`extension manifest sync.intervalSeconds must be an integer >= ${MIN_SYNC_INTERVAL_SECONDS}`);
+  }
+  const types = o["itemTypes"];
+  if (!Array.isArray(types) || types.length === 0 || !types.every((t) => typeof t === "string" && SYNC_NAME_RE.test(t))) {
+    throw new Error("extension manifest sync.itemTypes must be a non-empty array of [a-z][a-z0-9_]{0,31} names");
+  }
+  return { contract: "1", intervalSeconds: interval, itemTypes: [...types] };
+}
+function isReservedEnv(env) {
+  return RESERVED_ENV_NAMES.has(env) || isExtensionBaselineEnvKey(env) || RESERVED_ENV_PREFIXES.some((p) => env.startsWith(p));
+}
+function parseCredentials(value) {
+  if (value === undefined)
+    return;
+  const o = asPlainObject(value, "credentials");
+  const out = {};
+  const seenEnv = new Set;
+  for (const [name, entry] of Object.entries(o)) {
+    if (!SYNC_NAME_RE.test(name)) {
+      throw new Error(`extension manifest credentials name must match [a-z][a-z0-9_]{0,31}: ${name}`);
+    }
+    const e = asPlainObject(entry, `credentials.${name}`);
+    rejectUnknownKeys(e, ["env"], `credentials.${name}`);
+    const env = e["env"];
+    if (typeof env !== "string" || !CREDENTIAL_ENV_RE.test(env) || isReservedEnv(env)) {
+      throw new Error(`extension manifest credentials.${name}.env must match [A-Z][A-Z0-9_]{0,63} and not be a reserved variable`);
+    }
+    if (seenEnv.has(env)) {
+      throw new Error(`extension manifest credentials has duplicate env var: ${env}`);
+    }
+    seenEnv.add(env);
+    out[name] = { env };
+  }
+  return out;
+}
 function parseEntry(o) {
   const raw = typeof o["entry"] === "string" ? o["entry"] : o["entrypoint"];
   return typeof raw === "string" ? raw.trim().replaceAll("\\", "/") : undefined;
@@ -4970,6 +5062,18 @@ function parseManifestObject(text) {
   }
   return parsed;
 }
+function parseOptionalBlocks(o) {
+  const changelog = parseChangelog(o["changelog"]);
+  const dependsOn = parseDependsOn(o["dependsOn"]);
+  const sync = parseSync(o["sync"]);
+  const credentials = parseCredentials(o["credentials"]);
+  return {
+    ...changelog === undefined ? {} : { changelog },
+    ...dependsOn === undefined ? {} : { dependsOn },
+    ...sync === undefined ? {} : { sync },
+    ...credentials === undefined ? {} : { credentials }
+  };
+}
 function parseExtensionManifestForRegistry(text) {
   const o = parseManifestObject(text);
   const id = typeof o["id"] === "string" ? o["id"].trim() : "";
@@ -4985,8 +5089,7 @@ function parseExtensionManifestForRegistry(text) {
     throw new Error("extension manifest must have publisher and signature together, or neither");
   }
   const updateChannel = parseUpdateChannel(o["updateChannel"]);
-  const changelog = parseChangelog(o["changelog"]);
-  const dependsOn = parseDependsOn(o["dependsOn"]);
+  const blocks = parseOptionalBlocks(o);
   const isPreT2Legacy = Array.isArray(o["permissions"]);
   const permissions = validateAndNormalizePermissions(o["permissions"] === undefined ? {} : o["permissions"]);
   return {
@@ -4999,8 +5102,7 @@ function parseExtensionManifestForRegistry(text) {
       ...publisher === undefined ? {} : { publisher },
       ...signature === undefined ? {} : { signature },
       updateChannel,
-      ...changelog === undefined ? {} : { changelog },
-      ...dependsOn === undefined ? {} : { dependsOn }
+      ...blocks
     },
     isPreT2Legacy
   };
@@ -5183,7 +5285,7 @@ async function verifyRegistryIndexPinned(index, pinnedRootKey) {
 }
 // ../../registry-format/src/inspect.ts
 import { createHash as createHash2 } from "node:crypto";
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
 // ../../../node_modules/.bun/tar@7.5.22/node_modules/tar/dist/esm/index.min.js
@@ -8430,6 +8532,24 @@ function describeEntryType(type) {
 }
 var extractFailed = (detail) => new RegistryError("ERR_REGISTRY_EXTRACT_FAILED", detail);
 var manifestInvalid = (detail) => new RegistryError("ERR_REGISTRY_MANIFEST_INVALID", detail);
+function readRegularFile(path, missing, maxBytes) {
+  let fd;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    throw missing();
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile())
+      throw missing();
+    if (maxBytes !== undefined && st.size > maxBytes)
+      throw manifestInvalid("manifest is too large");
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
 async function inspectPackage(tgz, work) {
   let entries = 0;
   let declaredBytes = 0;
@@ -8467,13 +8587,7 @@ async function inspectPackage(tgz, work) {
       return type === "File" || type === "Directory";
     }
   });
-  const manifestPath = join(out, PACKAGE_MANIFEST_FILE);
-  if (!existsSync(manifestPath)) {
-    throw manifestInvalid(`package has no ${PACKAGE_MANIFEST_FILE} at its root`);
-  }
-  const manifestBytes = readFileSync(manifestPath);
-  if (manifestBytes.length > MAX_MANIFEST_BYTES)
-    throw manifestInvalid("manifest is too large");
+  const manifestBytes = readRegularFile(join(out, PACKAGE_MANIFEST_FILE), () => manifestInvalid(`package has no ${PACKAGE_MANIFEST_FILE} at its root`), MAX_MANIFEST_BYTES);
   let manifest;
   try {
     manifest = JSON.parse(manifestBytes.toString("utf8"));
@@ -8489,20 +8603,7 @@ async function inspectPackage(tgz, work) {
   const missing = () => manifestInvalid(`extension entry ${entryRel} is missing or outside the package`);
   if (!entryPath.startsWith(resolve(out) + sep))
     throw missing();
-  let fd;
-  try {
-    fd = openSync(entryPath, "r");
-  } catch {
-    throw missing();
-  }
-  let entryBytes;
-  try {
-    if (!fstatSync(fd).isFile())
-      throw missing();
-    entryBytes = readFileSync(fd);
-  } finally {
-    closeSync(fd);
-  }
+  const entryBytes = readRegularFile(entryPath, missing);
   return {
     manifestBytes,
     manifest: m,
