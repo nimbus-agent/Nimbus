@@ -47,6 +47,7 @@ import {
 } from "../../connectors/connector-catalog.ts";
 import { transitionHealth } from "../../connectors/health.ts";
 import { enableSuffix, reapproveSuffix } from "../../platform/register-extension-sync.ts";
+import { preflightRefusal } from "../../sync/scheduler.ts";
 import { setPaused, upsertSchedulerRegistration } from "../../sync/scheduler-store.ts";
 import { decodeBase64 } from "../../util/base64.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -224,12 +225,14 @@ export interface MigrationEngineDeps {
   /** The extension sync registrar (PR 3). */
   readonly extensionSync: { refresh(extensionId: string): void };
   /**
-   * The sync scheduler: `resume` clears `paused` AND transitions health; `syncableFor` is how
-   * accept checks that the extension took over the LEGACY id (never its own `ext_` id).
+   * The sync scheduler: `resume` clears `paused` AND transitions health; `pause` sets it and
+   * records the reason; `syncableFor` is how accept checks that the extension took over the LEGACY
+   * id (never its own `ext_` id), and whose `preflight` decides between the two.
    */
   readonly scheduler: {
     resume(serviceId: string): void;
-    syncableFor(serviceId: string): unknown;
+    pause(serviceId: string, reason?: string): void;
+    syncableFor(serviceId: string): { preflight?: () => string | null } | undefined;
   };
   readonly now: () => number;
   readonly newId?: () => string;
@@ -614,6 +617,20 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   };
 
   /**
+   * Resume the legacy service — unless the syncable now registered under it would refuse its first
+   * run (the sandbox cannot confine the extension, or its preflight throws: fail closed). Then the
+   * service is paused HERE with the reason that run's preflight would record, byte for byte (it
+   * names `nimbus connector resume <legacy>`), so whoever reads the status right after accept — the
+   * CLI's `migrate accept` — sees the pause rather than a sync that will never run.
+   */
+  const resumeOrPauseForConfinement = (legacyServiceId: string): void => {
+    const syncable = deps.scheduler.syncableFor(legacyServiceId);
+    const refusal = syncable === undefined ? null : preflightRefusal(syncable);
+    if (refusal === null) deps.scheduler.resume(legacyServiceId);
+    else deps.scheduler.pause(legacyServiceId, refusal);
+  };
+
+  /**
    * After a row was finished `approved` for an extension already installed: resume the legacy
    * service — unless the owner disabled the extension, which then would sync nothing. That pause
    * names `extension enable`, and the sync registrar resumes on registering after it (as it does
@@ -621,7 +638,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
    */
   const resumeInstalled = (legacyServiceId: string, row: ExtensionRow): void => {
     if (row.enabled === 1) {
-      deps.scheduler.resume(legacyServiceId);
+      resumeOrPauseForConfinement(legacyServiceId);
       return;
     }
     pauseLegacyService(
@@ -1135,7 +1152,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     // leaves the legacy service paused — never a half-approved migration.
     try {
       registerUnderLegacyId(row, entry);
-      deps.scheduler.resume(row.legacyServiceId);
+      resumeOrPauseForConfinement(row.legacyServiceId);
       if (!finishMigration(db, row.id, "approved", null, deps.now())) {
         throw new Error("the migration row changed while it was being approved");
       }

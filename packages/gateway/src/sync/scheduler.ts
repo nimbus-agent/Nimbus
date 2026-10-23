@@ -94,6 +94,19 @@ function toRejectionError(err: unknown): Error {
   return new Error(syncFailureUserMessage(err));
 }
 
+/**
+ * Why `connector` cannot run at all right now, or `null` — exactly the reason `runJob` pauses a
+ * service with. A preflight that throws is a refusal too (fail closed). Exported so a caller that
+ * resumes a service (the migration engine's accept) can record the SAME pause before the first run.
+ */
+export function preflightRefusal(connector: { preflight?: () => string | null }): string | null {
+  try {
+    return connector.preflight?.() ?? null;
+  } catch (err) {
+    return `preflight failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 export class SyncDisabledError extends Error {
   constructor(serviceId: string) {
     super(`ERR_SYNC_DISABLED: syncing is disabled in this gateway, so ${serviceId} cannot sync`);
@@ -788,12 +801,7 @@ export class SyncScheduler {
     // configured transition, no `sync.run` egress row, no success telemetry.
     // A preflight that throws is a refusal too (fail closed): never an unhandled rejection, never
     // a force waiter left hanging.
-    let refusal: string | null;
-    try {
-      refusal = connector.preflight?.() ?? null;
-    } catch (err) {
-      refusal = `preflight failed: ${err instanceof Error ? err.message : String(err)}`;
-    }
+    const refusal = preflightRefusal(connector);
     if (refusal !== null) {
       this.refuseRun(job, refusal);
       return;

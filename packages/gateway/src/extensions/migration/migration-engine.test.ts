@@ -85,6 +85,10 @@ let vault: NimbusVault;
 let offline: boolean;
 let fetches: string[];
 let resumed: string[];
+/** The fake scheduler's pauses: [service id, reason]. */
+let pausedCalls: Array<[string, string | undefined]>;
+/** What the fake registered syncable's `preflight` answers (the forced-canConfine seam). */
+let preflightAnswer: () => string | null;
 let refreshed: string[];
 let logs: unknown[];
 /** The fake scheduler's registrations: service id -> extension id. */
@@ -125,6 +129,8 @@ beforeEach(async () => {
   offline = false;
   fetches = [];
   resumed = [];
+  pausedCalls = [];
+  preflightAnswer = () => null;
   refreshed = [];
   logs = [];
   registered = new Map();
@@ -144,6 +150,17 @@ function grantEnv(platform: NodeJS.Platform = process.platform): ExtensionRunGra
     runtimeReadPaths: [join(tmp, "bun-bin")],
     realpath: (p) => realpathSync.native(p),
   };
+}
+
+/** The fake scheduler's registered syncable: only its `preflight` is read by the engine. */
+function fakeSyncableFor(id: string): { preflight: () => string | null } | undefined {
+  return registered.has(id) ? { preflight: () => preflightAnswer() } : undefined;
+}
+
+function fakePause(id: string, reason?: string): void {
+  pausedCalls.push([id, reason]);
+  setPaused(db, id, true);
+  transitionHealth(db, id, { type: "paused", ...(reason === undefined ? {} : { reason }) });
 }
 
 function deps(over: Partial<MigrationEngineDeps> = {}): MigrationEngineDeps {
@@ -192,7 +209,8 @@ function deps(over: Partial<MigrationEngineDeps> = {}): MigrationEngineDeps {
         setPaused(db, id, false);
         transitionHealth(db, id, { type: "resumed" });
       },
-      syncableFor: (id) => registered.get(id),
+      pause: fakePause,
+      syncableFor: fakeSyncableFor,
     },
     now: () => NOW,
     logger: { info: (...a: unknown[]) => logs.push(a), warn: (...a: unknown[]) => logs.push(a) },
@@ -1019,7 +1037,8 @@ describe("fix round 1: accept checks the sync took over the LEGACY id", () => {
         resume: () => {
           throw new Error("scheduler stopped");
         },
-        syncableFor: (id) => registered.get(id),
+        pause: fakePause,
+        syncableFor: fakeSyncableFor,
       },
     });
     await e.evaluate();
@@ -1047,7 +1066,8 @@ describe("Task 5.4 M1: an undone install whose files cannot be removed still fai
         resume: () => {
           throw new Error("scheduler stopped");
         },
-        syncableFor: (id) => registered.get(id),
+        pause: fakePause,
+        syncableFor: fakeSyncableFor,
       },
     });
     await e.evaluate();
@@ -1132,7 +1152,19 @@ describe("Task 5.4: a sandbox that cannot confine keeps sync paused after accept
     expect(row.state).toBe("approved");
     expect(seen[0]?.sandbox).toBe(`sync will stay paused until the sandbox is fixed: ${REASON}`);
 
-    // Accept resumed the service; the first run's preflight pauses it again, before any spawn.
+    // Accept itself records the pause BEFORE it answers, so `migrate accept`'s own
+    // `connector.listStatus` read already sees it (never "carried over").
+    expect(resumed).toEqual([]);
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(1);
+    const atAccept = getConnectorHealth(db, LEGACY);
+    expect(atAccept.state).toBe("paused");
+    expect(atAccept.lastError).toContain(`sandbox cannot confine this extension: ${REASON}`);
+    expect(atAccept.lastError).toContain(`nimbus connector resume ${LEGACY}`);
+
+    // `connector resume` before the sandbox is fixed: the first run's preflight pauses it again,
+    // before any spawn, and records byte-for-byte the reason accept recorded.
+    sched.resume(LEGACY);
+    expect(getConnectorHealth(db, LEGACY).state).not.toBe("paused");
     await sched.forceSync(LEGACY).catch(() => undefined);
     expect(meshCalls).toEqual([]);
     expect(egress).toEqual([]);
@@ -1141,6 +1173,104 @@ describe("Task 5.4: a sandbox that cannot confine keeps sync paused after accept
     expect(health.state).toBe("paused");
     expect(health.lastError).toContain(`sandbox cannot confine this extension: ${REASON}`);
     expect(health.lastError).toContain(`nimbus connector resume ${LEGACY}`);
+    expect(health.lastError).toBe(atAccept.lastError);
+  });
+
+  test("accept resumes when the registered syncable's preflight passes", async () => {
+    let preflights = 0;
+    preflightAnswer = () => {
+      preflights += 1;
+      return null;
+    };
+    const e = engine();
+    await e.evaluate();
+    const row = await e.accept(onlyRow().id, consentThat(true, []));
+    expect(row.state).toBe("approved");
+    expect(preflights).toBe(1);
+    expect(resumed).toEqual([LEGACY]);
+    expect(pausedCalls).toEqual([]);
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(0);
+  });
+
+  test("accept pauses with the preflight's reason, verbatim, instead of resuming", async () => {
+    const REASON = `sandbox cannot confine this extension: no helper — fix it (see \`nimbus doctor\`), then run \`nimbus connector resume ${LEGACY}\``;
+    preflightAnswer = () => REASON;
+    const e = engine();
+    await e.evaluate();
+    const row = await e.accept(onlyRow().id, consentThat(true, []));
+    expect(row.state).toBe("approved");
+    expect(resumed).toEqual([]);
+    expect(pausedCalls).toEqual([[LEGACY, REASON]]);
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(1);
+    expect(getConnectorHealth(db, LEGACY).lastError).toBe(REASON);
+  });
+
+  test("a preflight that throws pauses (fail closed)", async () => {
+    preflightAnswer = () => {
+      throw new Error("grant vanished");
+    };
+    const e = engine();
+    await e.evaluate();
+    const row = await e.accept(onlyRow().id, consentThat(true, []));
+    expect(row.state).toBe("approved");
+    expect(resumed).toEqual([]);
+    // The scheduler's own wording for a throwing preflight (`sync/scheduler.ts` runJob).
+    expect(pausedCalls).toEqual([[LEGACY, "preflight failed: grant vanished"]]);
+    expect(getConnectorHealth(db, LEGACY).state).toBe("paused");
+    expect(getConnectorHealth(db, LEGACY).lastError).toBe("preflight failed: grant vanished");
+  });
+
+  test("a throwing preflight: accept records exactly what the real scheduler's refusal records", async () => {
+    const sched = new SyncScheduler(
+      {
+        ...unboundSyncCapabilities(),
+        db,
+        vault,
+        logger: pino({ level: "silent" }),
+        rateLimiter: new ProviderRateLimiter(),
+        sandboxCwd: os.tmpdir(),
+        credentialFor: () => ({ credential: "personal" }),
+        runTeamList: async () => [],
+        depth: "full",
+        extensionCredentialsFor: createExtensionCredentialsResolver(db, [entry]),
+      },
+      undefined,
+      { appendSyncEgress: () => undefined },
+    );
+    extraCleanups.push(() => sched.stop());
+    let syncs = 0;
+    const e = engine({
+      scheduler: sched,
+      extensionSync: {
+        refresh: (id) => {
+          refreshed.push(id);
+          sched.unregister(LEGACY);
+          if (!listExtensions(db).some((r) => r.id === id) || getRunGrant(db, id) === null) return;
+          sched.register({
+            serviceId: LEGACY,
+            defaultIntervalMs: 600_000,
+            initialSyncDepthDays: 30,
+            preflight: () => {
+              throw new Error("grant vanished");
+            },
+            sync: async () => {
+              syncs += 1;
+              throw new Error("premise: a refused run never syncs");
+            },
+          });
+        },
+      },
+    });
+    await e.evaluate();
+    await e.accept(onlyRow().id, consentThat(true, []));
+    const atAccept = getConnectorHealth(db, LEGACY);
+    expect(atAccept.state).toBe("paused");
+    expect(atAccept.lastError).toBe("preflight failed: grant vanished");
+    sched.resume(LEGACY);
+    await sched.forceSync(LEGACY).catch(() => undefined);
+    expect(syncs).toBe(0);
+    expect(getConnectorHealth(db, LEGACY).state).toBe("paused");
+    expect(getConnectorHealth(db, LEGACY).lastError).toBe(atAccept.lastError);
   });
 });
 
@@ -1664,7 +1794,8 @@ describe("branch coverage: refusals and failures inside accept", () => {
         resume: () => {
           finishMigration(db, rowId, "declined", null, NOW);
         },
-        syncableFor: (id) => registered.get(id),
+        pause: fakePause,
+        syncableFor: fakeSyncableFor,
       },
     });
     await e.evaluate();
@@ -1679,7 +1810,11 @@ describe("branch coverage: refusals and failures inside accept", () => {
   test("a registration failure with a plain thrown value and an unremovable tree still fails the row", async () => {
     const e = engine({
       removeInstallTree: () => throwNonError(),
-      scheduler: { resume: () => throwNonError(), syncableFor: (id) => registered.get(id) },
+      scheduler: {
+        resume: () => throwNonError(),
+        pause: fakePause,
+        syncableFor: fakeSyncableFor,
+      },
     });
     await e.evaluate();
     const row = onlyRow();
@@ -1864,6 +1999,31 @@ describe("Task 7.4: an extension that is already installed (replaces ruling B9)"
     expect(resumed).toEqual([LEGACY]);
     expect(existsSync(stageRootOf(id))).toBe(false);
     expect(getRunGrant(db, EXT)).toEqual(grantBefore);
+  });
+
+  test("already-installed accept pauses with the confine reason", async () => {
+    await installedAndApproved();
+    const id = awaitingRow();
+    const REASON = `sandbox cannot confine this extension: no bwrap — fix it (see \`nimbus doctor\`), then run \`nimbus connector resume ${LEGACY}\``;
+    preflightAnswer = () => REASON;
+    const out = await engine().accept(id, consentThat(true, []));
+    expect(out.state).toBe("approved");
+    expect(resumed).toEqual([]);
+    expect(pausedCalls).toEqual([[LEGACY, REASON]]);
+    expect(loadSchedulerState(db, LEGACY)?.paused).toBe(1);
+    expect(getConnectorHealth(db, LEGACY).state).toBe("paused");
+    expect(getConnectorHealth(db, LEGACY).lastError).toBe(REASON);
+  });
+
+  test("already-installed evaluate pauses with the confine reason too", async () => {
+    await installedAndApproved();
+    const REASON = "sandbox cannot confine this extension: no helper";
+    preflightAnswer = () => REASON;
+    await engine().evaluate();
+    expect(onlyRow().state).toBe("approved");
+    expect(resumed).toEqual([]);
+    expect(pausedCalls).toEqual([[LEGACY, REASON]]);
+    expect(getConnectorHealth(db, LEGACY).lastError).toBe(REASON);
   });
 
   test("M1: installed files changed on disk since approval -> stale, not approved", async () => {
