@@ -801,12 +801,20 @@ export class SyncScheduler {
       this.settleJob(job, new Error("Unknown service"));
       return null;
     }
-    if (job.clearCursor === true) {
-      // `connector.sync --full`: cleared as THIS run starts — after any earlier run of the service
-      // has written its cursor back — and read back by the `loadState` just below.
-      this.sched.clearCursor(job.serviceId);
+    // This runs before `runJob`'s try, so a DB error here (e.g. SQLITE_FULL) must settle the job
+    // itself: unsettled, a `connector.sync` waiter would hang.
+    let row: SchedulerStateRow | null;
+    try {
+      if (job.clearCursor === true) {
+        // `connector.sync --full`: cleared as THIS run starts — after any earlier run of the
+        // service has written its cursor back — and read back by the `loadState` just below.
+        this.sched.clearCursor(job.serviceId);
+      }
+      row = this.sched.loadState(job.serviceId);
+    } catch (err) {
+      this.settleJob(job, err);
+      return null;
     }
-    const row = this.sched.loadState(job.serviceId);
     if (row === null) {
       this.settleJob(job, new Error("Missing scheduler state"));
       return null;

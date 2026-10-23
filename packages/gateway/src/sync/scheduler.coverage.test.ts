@@ -792,6 +792,49 @@ describe("SyncScheduler — forceSync edge cases", () => {
     db.close();
   });
 
+  test("a full force whose cursor clear fails rejects instead of hanging", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const entered = deferred();
+    let calls = 0;
+    const svc: Syncable = {
+      serviceId: "clearfail",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(): Promise<SyncResult> {
+        calls += 1;
+        if (calls === 1) {
+          entered.resolve();
+          await gate.promise;
+        }
+        return { ...OK, cursor: "X" };
+      },
+    };
+    const sched = new SyncScheduler(ctxFor(db), { catchUpOnRestart: true }, { isOnline: online });
+    sched.register(svc);
+    sched.start();
+    await within(entered.promise, "the scheduled run to start");
+    // Only the full force's `cursor = NULL` write fails (as SQLITE_FULL would); the in-flight
+    // run's own cursor write ("X") still succeeds.
+    db.run(
+      "CREATE TRIGGER fail_cursor_clear BEFORE UPDATE OF cursor ON scheduler_state WHEN NEW.cursor IS NULL BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+
+    const forced = sched.forceSync("clearfail", { full: true });
+    gate.resolve();
+    const outcome = await within(
+      forced.then(
+        () => "resolved",
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      ),
+      "the full force request to settle",
+    );
+    expect(outcome).toContain("disk full");
+    expect(calls).toBe(1);
+    await sched.stop();
+    db.close();
+  });
+
   /** A syncable whose page N returns cursor `pN`; page 1 waits on `gate`. Records each cursor. */
   function pagingSyncable(
     serviceId: string,
