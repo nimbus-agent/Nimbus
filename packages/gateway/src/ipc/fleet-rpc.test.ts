@@ -651,6 +651,33 @@ describe("handlers read the ctx at call time", () => {
     expect(calls).toEqual(["B"]);
   });
 
+  test("runNow refuses with the retryable reloading error when a reload outlasts the wait", async () => {
+    const calls: string[] = [];
+    const scheduler: FakeScheduler = {
+      runOnce: async () => {
+        calls.push("ran");
+        return COMPLETED;
+      },
+    };
+    const c = {
+      scheduler,
+      settled: () => new Promise<void>(() => undefined),
+      reloadWaitMs: 10,
+      config: DEFAULT_FLEET_CONFIG,
+      hostActivity: undefined,
+      now: () => 0,
+    } as unknown as FleetRpcCtx;
+    try {
+      await dispatchFleetRpc("fleet.runNow", {}, c);
+      throw new Error("expected a throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(FleetRpcError);
+      expect((e as FleetRpcError).rpcCode).toBe(-32000);
+      expect((e as FleetRpcError).message).toBe("fleet is reloading its config; try again");
+    }
+    expect(calls).toEqual([]);
+  });
+
   test("runNow on a retired scheduler is a clear -32000 error", async () => {
     const scheduler: FakeScheduler = {
       runOnce: async () => {

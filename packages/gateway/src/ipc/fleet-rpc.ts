@@ -53,6 +53,36 @@ export interface FleetRpcCtx {
   readonly jobs?: readonly NimbusFleetJobToml[] | undefined;
   readonly now: () => number;
   readonly settled?: () => Promise<void>;
+  /** Test seam: how long `fleet.runNow` waits on `settled`. Production leaves it unset. */
+  readonly reloadWaitMs?: number;
+}
+
+/**
+ * How long `fleet.runNow` waits for a reload before refusing. A reload waits for the old
+ * scheduler's in-flight run, which can take as long as the run does, so an unbounded wait could
+ * outlast the CLI's own timeout while the gateway still ran the job. Before live reload the same
+ * request returned `deferred` at once; refusing with the retryable reloading error keeps it fast.
+ * The reload itself carries on in the background.
+ */
+export const FLEET_RUN_RELOAD_WAIT_MS = 30_000;
+
+async function awaitSettled(ctx: FleetRpcCtx): Promise<void> {
+  const { settled } = ctx;
+  if (settled === undefined) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      settled(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new FleetReloadingError()),
+          ctx.reloadWaitMs ?? FLEET_RUN_RELOAD_WAIT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function optInt(params: unknown, key: string): number | undefined {
@@ -256,7 +286,12 @@ function handleShow(params: unknown, ctx: FleetRpcCtx): { brief: FleetBriefRow |
  * erroring via `FleetJobNotFoundError`.
  */
 async function handleRunNow(params: unknown, ctx: FleetRpcCtx): Promise<FleetRunSummary> {
-  await ctx.settled?.();
+  try {
+    await awaitSettled(ctx);
+  } catch (e) {
+    if (e instanceof FleetReloadingError) throw new FleetRpcError(-32000, e.message);
+    throw e;
+  }
   const { scheduler } = ctx;
   if (scheduler === undefined) {
     throw new FleetRpcError(
