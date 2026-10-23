@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792728639033,
+  "lastUpdate": 1792729297462,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a8fabdbd93fc46a1e163b56f2ce2b8635945cd00",
-          "message": "refactor(db): give escapeIdentifier a canonical home and close a third I9 gap (#1037)\n\n## What\n\n`escapeIdentifier` — the SQL identifier-quoting helper invariant **I9**\ndepends on — had no canonical home. It existed as:\n\n- a module-scope `function` in `connectors/reindex.ts`\n- an **inline arrow inside a function body** in `db/repair.ts`\n- and **not at all** in `db/write.ts`, which\n`docs/SECURITY-INVARIANTS.md:165` names as an I9 wiring site\n\nSo the invariant documentation pointed at a file that did not contain\nthe defence, and two independent copies of a security primitive sat\nwaiting to drift into a subtly-different third.\n\nNow: one `export function escapeIdentifier` in `db/write.ts`, beside\n`dbRun`/`dbExec`/`dbStmtRun`. All call sites import it. **Behaviour is\nbyte-identical** — this is a pure relocation, not a rewrite of the\nescaping.\n\nConsolidating there makes the existing doc sentence **true**, rather\nthan requiring the doc to be reworded.\n\n## A third site was fixed, not documented away\n\n`search/vec-store.ts` built `vec_items_${dims}` from a plain template\nliteral, contradicting a \"Migrated rationale\" note that claimed it used\nthe helper.\n\nThe first pass corrected the *note* to describe the gap. That was the\nwrong direction and has been reverted: the identifier now goes through\n`escapeIdentifier`, making the note true.\n\nThis matches the decision already taken in #1026, where the identical\npattern in `connectors/reindex.ts` (`vec_items_${chunk.dims}`, `dims`\nconstrained to `SUPPORTED_EMBEDDING_DIMS`, not exploitable) was routed\nthrough the helper anyway — because **I9 is unconditional**. A rule that\nbends when a given instance looks safe is not a rule, and the next\nperson to copy the pattern may not have the constraint.\n\nVerified against **real sqlite-vec SQL execution**, not just typecheck:\n`vec-store.test.ts` 19 pass with `VEC_AVAILABLE` true.\n\n## The I9 enforcement test moved with the code\n\nThe old test asserted `db/repair.ts` contained both `escapeIdentifier`\nand the `replaceAll('\"', '\"\"')` literal. After the move that literal\nlives in `db/write.ts`, so the test had to change — and the interesting\npart is *how*.\n\nIt now asserts each consumer **imports** the helper and does **not**\nre-declare a local copy. An assertion that merely found the string\n`escapeIdentifier` would pass against a file that shadowed it with its\nown version — precisely the regression this consolidation exists to\nprevent.\n\n**Both assertions red-proved:**\n- Re-adding a shadowing local in `repair.ts` → fails on the\n`not.toMatch` assertion (98 pass / 1 fail), restored → 99 pass / 0 fail\n- Reverting `vec-store.ts` to the raw template literal → 99 pass / 1\nfail, restored → 100 pass / 0 fail\n\n## Deliberately left alone\n\n**The NUL-byte guard** (`isUnsafeSqlIdentifier`, `NUL_CHAR`) stays local\nto `repair.ts`. It is a caller-specific skip policy over identifiers\npulled from a live `PRAGMA foreign_key_check` scan, not a property of\nthe escape. `reindex.ts`'s identifier source is a fixed compile-time set\nthat structurally cannot need it. One consumer is not evidence for\ngeneralising.\n\n**FTS5 phrase quoting** at `glossary-store.ts:83`, `local-index.ts:114`\nand `hybrid-internal.ts:60` uses a textually identical `replaceAll('\"',\n'\"\"')`, but quotes *values* for `MATCH` queries, not SQL identifiers.\nDifferent purpose — conflating them would be a real bug.\n\n## Verification\n\n`security-invariants.test.ts` 100 pass ✅ · search + db + connectors\n3,020 pass / 0 fail ✅ · typecheck exit 0 ✅ · `audit:invariants` exit 0 ✅\n· `biome check --error-on-warnings` clean ✅\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Security**\n- Improved protection for dynamically generated SQL identifiers across\ndatabase repair, reindexing, and vector search operations.\n- Standardized identifier escaping to prevent malformed or unsafe SQL\nvalues.\n\n- **Tests**\n- Expanded security coverage to verify consistent escaping across all\naffected operations and prevent duplicate implementations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-03T19:10:15Z",
-          "tree_id": "e1fc47d7a6f5fe89a63995849c3c9c524cfd605b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a8fabdbd93fc46a1e163b56f2ce2b8635945cd00"
-        },
-        "date": 1785784769074,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 288.85077855000236,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 285.4970440500045,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 221.34761270000163,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b03e5c2fa1ceec5856697b70a7d674dd7f0d6704",
+          "message": "feat(config): pack layers under the user's config, allowlisted and conflict-checked (#1718)\n\n## Summary\n\nThe layered config reader (#1714) now stacks **pack layers** under the\nuser's own files. A pack layer is a TOML fragment at\n`<configDir>/packs/<profile>/<pack-id>.toml`, listed in that directory's\n`active.json` (`{\"version\":1,\"packs\":[...]}`). It sits below\n`nimbus.toml`, so the user's own files always win. No pack exists until\na later release installs one.\n\n- **Allowlist** (`config/pack-settable.ts`): only `[fleet]` `enabled` /\n`min_idle_seconds` / `require_ac_power` / `retention_days`,\n`[[fleet.job]]` and `[decisions] min_confidence`.\n- Values get the same checks their loaders apply. `retention_days >= 1`\nand real booleans are required, and `min_confidence` must be a plain\ndecimal in [0, 1]; it is refused rather than clamped.\n  - Every other key, section, array or malformed line is refused.\n- **Fleet jobs** (`packs/pack-job-check.ts`): a pack job must name a\nfleet-eligible agent. It may not set `namespace` / `namespaces`, and it\nmust pass the fleet parser and the sweep rules. Each cause is reported\nonce.\n- **Store** (`packs/pack-layer-store.ts`), with `setPackLayer` /\n`removePackLayer`:\n- Refusal is whole-layer: one bad key refuses the write, and a tampered\nfile is skipped whole on read.\n- A write is refused when another pack sets the same scalar to a\ndifferent parsed value, or adds a `[[fleet.job]]` with the same name.\n- Writes are atomic: the file first, then `active.json`. Remove goes the\nother way.\n- A malformed `active.json` applies no packs, and writes then refuse\nrather than overwrite it.\n  - `nimbus.toml` and profile files are never written.\n- **Read side never fails.** The reader takes each pack's\nalready-checked text (one read per snapshot, so no gap between check and\nread). Broken pack state is skipped, never fatal.\n- An invalid `active.json` entry is reported under a synthetic\n`#<index>` id and never turned into a path.\n  - Reasons are basename-safe and capped at 200 characters.\n- **Reporting:**\n  - The gateway logs skipped packs at `error` on boot.\n- `diag.snapshot.configLayers` carries real `activePacks` /\n`skippedPacks`, plus `packListError`.\n- `config explain` adds notes for skipped packs and an unusable pack\nlist.\n- `nimbus doctor` prints `[warn] pack \"x\" skipped: …`, `[warn] packs not\napplied: …` and `[info] packs active: …`.\n\n**Two fixes found while doing this:**\n- `[glossary.terms]` loading now returns `loaded: false` when a config\nlayer is unreadable, and when no user file exists. Before, terms written\nin an unreadable profile file read as \"no terms\", and the desired-state\npass deleted them. That hazard was already on `main`.\n- `NIMBUS_LAN_PORT` now applies when no config file exists. The `[lan]`\nfallback skipped the env override.\n\n`initLayeredConfig` now throws if a reader for that directory already\nexists with a different pack source. Before, it silently dropped the\nsource.\n\n## Not in this PR\n\n- No IPC method or CLI command writes a pack layer, and there is no\n`pack.install` (Project 3).\n- No live fleet reload (PR 3), no `enabled = false` job stub (PR 4), no\n`[agents] visible` (PR 5).\n- No new HITL action type, invariant, egress class or migration.\n\n## Verification\n\n- Every new test file passes. `bun test\npackages/gateway/src/{packs,config,fleet}\npackages/gateway/test/integration/config` and the touched\ndiag/doctor/explain tests: 1356 pass, 0 fail.\n- The whole gateway e2e tree passes in one process: 286 pass, 0 fail.\n- `bun run preflight` (Windows): every static gate, `build`, `typecheck`\nand `typecheck:tests` passes. `test:ci` has 30640 pass and 11 fail, none\nfrom this branch:\n- **5 PowerShell installer tests:** `pwsh` is not on the Bash PATH on\nthis machine.\n- **6 migration / readwise-cutover e2e tests:** they fail only when run\nin the same process as `packages/cli/src`. They pass alone, and the same\nreproducer fails identically on `main` (780303ec).\n\nCoverage gates did not run locally, because the unit phase failed first.\nCI on Linux is authoritative for them.\n- Red checks: each glossary guard, and the synthetic-id fix, was\nreverted to show its test fails.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added support for configuration packs that apply beneath user\nsettings, with validation and safeguards against conflicting values.\n* Pack status is visible in diagnostics, configuration explanations, and\nhealth checks, including warnings when packs are skipped or the pack\nlist cannot be read.\n* **Bug Fixes**\n* The LAN port environment setting now applies even when no\nconfiguration file is present.\n* Glossary terms from unreadable profiles are no longer treated as\ndeleted.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T04:10:51Z",
+          "tree_id": "b369f2d9959e85758b25829adb8c2c0e18f8edff",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b03e5c2fa1ceec5856697b70a7d674dd7f0d6704"
+        },
+        "date": 1792729292819,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 286.8901200000011,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 285.30902410000016,
             "unit": "ms"
           }
         ]
