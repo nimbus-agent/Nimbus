@@ -155,12 +155,15 @@ const GITHUB_REMOTE_RE =
  * `ssh://git@github.com/<o>/<r>[.git]` and `git@github.com:<o>/<r>[.git]` all become
  * `github.com/<o>/<r>`; anything else (a local path in tests) keeps its own text. Case-insensitive.
  */
+/** A loop, not a `/+$` regex, which backtracks quadratically on a long run of slashes. */
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === "/") end--;
+  return s.slice(0, end);
+}
+
 export function normaliseRemoteUrl(url: string): string {
-  const trimmed = url
-    .trim()
-    .replaceAll("\\", "/")
-    .replace(/\/+$/, "")
-    .replace(/\.git$/i, "");
+  const trimmed = stripTrailingSlashes(url.trim().replaceAll("\\", "/")).replace(/\.git$/i, "");
   const gh = GITHUB_REMOTE_RE.exec(trimmed);
   return (gh === null ? trimmed : `github.com/${gh[1]}/${gh[2]}`).toLowerCase();
 }
@@ -330,7 +333,7 @@ function prBody(v: PublishVerdict): string {
 
 /** Quote an argument for a printed command line; plain tokens stay bare. */
 function q(arg: string): string {
-  return /^[\w./@:=+-]+$/.test(arg) ? arg : `"${arg.replaceAll('"', '\\"')}"`;
+  return /^[\w./@:=+-]+$/.test(arg) ? arg : `"${arg.replaceAll('"', String.raw`\"`)}"`;
 }
 
 function printManualSteps(

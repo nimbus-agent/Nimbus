@@ -27,7 +27,7 @@ describe("release-commit.ts", () => {
     const builds = (doc.jobs["build-cli"]?.steps ?? []).filter((s) =>
       s.name?.startsWith("Build CLI binary"),
     );
-    expect(builds.length).toBe(2);
+    expect(builds).toHaveLength(2);
     for (const step of builds) {
       expect(step.env?.["RELEASE_COMMIT"]).toBe(GITHUB_SHA_EXPRESSION);
       const code = (step.run ?? "")
@@ -54,6 +54,6 @@ describe("release-commit.ts", () => {
         expect(exitCheck).toBeLessThan(guard);
       }
     }
-    expect(builds.filter((s) => s.name?.startsWith("Build CLI binary (Windows")).length).toBe(1);
+    expect(builds.filter((s) => s.name?.startsWith("Build CLI binary (Windows"))).toHaveLength(1);
   });
 });

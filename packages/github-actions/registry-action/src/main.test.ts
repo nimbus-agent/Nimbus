@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { main, maskSecret, parseMode } from "./main.ts";
+import { main, maskSecret, parseMode, signOptions } from "./main.ts";
 
 describe("parseMode", () => {
   test("accepts check and sign", () => {
@@ -25,6 +25,20 @@ describe("maskSecret", () => {
     const out: string[] = [];
     maskSecret("AAAA=", (s) => void out.push(s));
     expect(out).toEqual(["::add-mask::AAAA=\n"]);
+  });
+});
+
+describe("signOptions", () => {
+  test("passes the default-branch input on", () => {
+    expect(signOptions("/ws", "k", "trunk")).toEqual({
+      workspace: "/ws",
+      rootKey: "k",
+      defaultBranch: "trunk",
+    });
+  });
+
+  test("an empty input leaves sign to ask origin", () => {
+    expect(signOptions("/ws", "k", "")).toEqual({ workspace: "/ws", rootKey: "k" });
   });
 });
 

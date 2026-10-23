@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  codeUnitCompare,
   effectiveRegistryConfig,
   type PublishVerdict,
   publisherKeyFingerprint,
@@ -49,7 +50,7 @@ export interface CheckDeps {
 const SHARED: CheckDeps = { validate: validatePublish, git: gitTree, io: GHA_IO, tmpdir: osTmpdir };
 
 const FILE_RE = new RegExp(
-  `^(extensions/.+)/(${CANDIDATE_FILES.join("|").replaceAll(".", "\\.")})$`,
+  `^(extensions/.+)/(${CANDIDATE_FILES.join("|").replaceAll(".", String.raw`\.`)})$`,
 );
 
 /**
@@ -80,7 +81,7 @@ function assertSinglePublish(changes: readonly gitTree.TreeChange[]): {
   }
   if (dirs.size !== 1) {
     throw new Error(
-      `a publish pull request adds exactly one extensions/<id>/<version>/; this one adds ${[...dirs].sort().join(", ")}`,
+      `a publish pull request adds exactly one extensions/<id>/<version>/; this one adds ${[...dirs].sort(codeUnitCompare).join(", ")}`,
     );
   }
   const [dir] = dirs;
@@ -104,7 +105,8 @@ const listOf = (items: readonly string[]): string =>
 
 /** The reviewer's job summary for an accepted publish. */
 function checkSummary(v: PublishVerdict): string {
-  const lines = [`## Registry publish: ${code(`${v.id}@${v.version}`)}`, ""];
+  const ref = `${v.id}@${v.version}`;
+  const lines = [`## Registry publish: ${code(ref)}`, ""];
   if (v.newId) {
     lines.push(
       `> [!WARNING]`,

@@ -7,6 +7,7 @@ export {
   MAX_PACKAGE_BYTES,
   MAX_UNPACKED_BYTES,
 } from "./caps.ts";
+export { codeUnitCompare } from "./code-unit-compare.ts";
 export { RegistryError, type RegistryErrorCode } from "./errors.ts";
 export { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./extension-env.ts";
 export {

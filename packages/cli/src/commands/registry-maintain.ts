@@ -213,7 +213,7 @@ function isSameOrInside(child: string, parent: string): boolean {
  * the emitted YAML: ASCII letters, digits, `.`, `_`, `-` and `/`; no leading `-` or `.`; no `..`,
  * `//`, `/.`, trailing `/` or `.`, or `.lock` suffix.
  */
-const BRANCH_RE = /^[A-Za-z0-9_][A-Za-z0-9._/-]{0,99}$/;
+const BRANCH_RE = /^\w[\w./-]{0,99}$/;
 
 function resolveDefaultBranch(p: ParsedArgs): string {
   const branch = p.options.get("--default-branch") ?? "main";

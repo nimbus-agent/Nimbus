@@ -347,6 +347,14 @@ describe("publish to run: scaffold → sign → publish → check → merge → 
       "GIT_CONFIG",
       "GIT_DIR",
       "GIT_WORK_TREE",
+      // The rest of the repository-location variables a git hook running the tests can set.
+      "GIT_INDEX_FILE",
+      "GIT_OBJECT_DIRECTORY",
+      "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+      "GIT_COMMON_DIR",
+      "GIT_NAMESPACE",
+      "GIT_PREFIX",
+      "GIT_CEILING_DIRECTORIES",
     ]) {
       delete env[k];
     }

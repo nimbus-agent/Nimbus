@@ -23,6 +23,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  codeUnitCompare,
   publicKeyFromSeed,
   publisherKeyFingerprint,
   RegistryError,
@@ -215,13 +216,13 @@ async function attemptSign(
   const files: SiteFile[] = [{ path: CONFIG_FILE, bytes: config.bytes }];
   const work = mkdtempSync(join(deps.tmpdir(), "nimbus-registry-sign-"));
   try {
-    for (const dir of [...dirs.keys()].filter((d) => !signedDirs.has(d)).sort()) {
+    for (const dir of [...dirs.keys()].filter((d) => !signedDirs.has(d)).sort(codeUnitCompare)) {
       const coords = splitExtensionDir(dir);
       const names = dirs.get(dir) ?? new Set<string>();
       if (coords === undefined || !sameFileSet(names)) {
         skipped.push({
           dir,
-          reason: `must hold exactly ${CANDIDATE_FILES.join(", ")}; holds ${[...names].sort().join(", ")}`,
+          reason: `must hold exactly ${CANDIDATE_FILES.join(", ")}; holds ${[...names].sort(codeUnitCompare).join(", ")}`,
         });
         continue;
       }
@@ -229,7 +230,7 @@ async function attemptSign(
       let v: Awaited<ReturnType<typeof validatePublish>>;
       try {
         // Against the signed bindings plus this run's additions, so two new dirs cannot disagree.
-        v = await deps.validate(candidate, { ...index, extensions }, config.config, work);
+        v = await deps.validate(candidate, { ...index, extensions }, config.config, work); // NOSONAR S9382: sequential by design - each version is validated against the bindings this run already added, so two new dirs cannot disagree
       } catch (e) {
         if (!(e instanceof RegistryError)) throw e;
         skipped.push({ dir, reason: e.message });
@@ -286,10 +287,15 @@ async function attemptSign(
   }
   const message =
     added.length > 0
-      ? `Sign ${added.map((a) => `${a.id}@${a.version}`).join(", ")} (sequence ${String(sequence)})`
+      ? `Sign ${added.map(versionRef).join(", ")} (sequence ${String(sequence)})`
       : `Copy ${CONFIG_FILE} from ${opts.defaultBranch}`;
   const parent = git.commitOf(PAGES_REF, { cwd });
   return { commit: commitSite(parent, files, message, cwd), added, skipped, sequence };
+}
+
+/** `<id>@<version>`. */
+function versionRef(x: { id: string; version: string }): string {
+  return `${x.id}@${x.version}`;
 }
 
 function report(io: ActionIo, a: Attempt, pushed: boolean): void {
@@ -299,7 +305,7 @@ function report(io: ActionIo, a: Attempt, pushed: boolean): void {
     lines.push("Nothing new to sign.");
   } else {
     lines.push(`Signed index sequence ${String(a.sequence)}:`, "");
-    for (const x of a.added) lines.push(`- ${code(`${x.id}@${x.version}`)} (${x.channel})`);
+    for (const x of a.added) lines.push(`- ${code(versionRef(x))} (${x.channel})`);
   }
   if (a.skipped.length > 0) {
     lines.push(

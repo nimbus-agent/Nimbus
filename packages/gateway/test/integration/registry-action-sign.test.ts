@@ -18,6 +18,7 @@ import {
 } from "@nimbus-dev/registry-format";
 import {
   git,
+  gitIsolatedEnv,
   makeExtension,
   makeRegistryRepo,
   pushMaintainer,
@@ -78,7 +79,8 @@ async function runAction(
   argv: string[] = [process.execPath, ACTION_MAIN],
 ): Promise<{ code: number; out: string }> {
   const env: Record<string, string | undefined> = {
-    ...process.env,
+    // The action runs git in `repo.workspace`; an inherited GIT_DIR would point it elsewhere.
+    ...gitIsolatedEnv(),
     INPUT_MODE: mode,
     "INPUT_ROOT-KEY": rootKey,
     GITHUB_WORKSPACE: repo.workspace,

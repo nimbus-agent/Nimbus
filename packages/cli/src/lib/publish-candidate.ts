@@ -3,14 +3,16 @@
  * `nimbus registry maintain add` so both hand `validatePublish` exactly what a registry check reads:
  * the package's own `nimbus.extension.json` bytes, the package bytes, and the publish request.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import {
   type InspectedPackage,
   inspectPackage,
+  MAX_PACKAGE_BYTES,
   type PublishCandidate,
   publisherKeyFingerprint,
   type RegistryChannel,
   type RegistryConfig,
+  RegistryError,
 } from "@nimbus-dev/registry-format";
 
 /** A registry with no `nimbus-registry.json` uses today's rules: no namespace required. */
@@ -40,15 +42,32 @@ function publishRequestBytes(
 
 /**
  * Inspect the packed `tgz` (scratch files go under `work`) and build the candidate it publishes as
- * `extensions/<id>/<version>/`. Nothing is validated here; `validatePublish` does all of that.
+ * `extensions/<id>/<version>/`. Everything else is `validatePublish`'s; the two refusals here are
+ * the ones it would make anyway, raised before this extracts anything: the package size cap, and an
+ * unreadable archive as a refusal (exit 2) rather than a raw `tar` error.
  */
 export async function buildPublishCandidate(
   tgz: string,
   work: string,
   channel: RegistryChannel,
 ): Promise<PublishCandidate> {
+  if (statSync(tgz).size > MAX_PACKAGE_BYTES) {
+    throw new RegistryError(
+      "ERR_REGISTRY_TOO_LARGE",
+      `package exceeds ${String(MAX_PACKAGE_BYTES)} bytes`,
+    );
+  }
   const packageBytes = readFileSync(tgz);
-  const inner = await inspectPackage(tgz, work);
+  let inner: InspectedPackage;
+  try {
+    inner = await inspectPackage(tgz, work);
+  } catch (e) {
+    if (e instanceof RegistryError) throw e;
+    throw new RegistryError(
+      "ERR_REGISTRY_EXTRACT_FAILED",
+      `package could not be read: ${(e as Error).message}`,
+    );
+  }
   const id = innerField(inner.manifest, "id");
   const version = innerField(inner.manifest, "version");
   return {

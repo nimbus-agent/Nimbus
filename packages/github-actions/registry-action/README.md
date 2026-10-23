@@ -18,6 +18,7 @@ Both modes read the registry from the git tree, never the working directory: an 
 | Input | Required | Description |
 | --- | --- | --- |
 | `mode` | yes | `check` or `sign`. Anything else fails. |
+| `default-branch` | no (`sign` only) | The branch publish pull requests merge into. `init --github` writes it into the sign workflow. When empty, `sign` asks for `origin`'s `HEAD`, which is `gh-pages` if that branch was pushed first to an empty repository. |
 | `root-key` | `sign` only | The registry root signing key. Pass it from an environment secret, never inline. |
 
 ## Building

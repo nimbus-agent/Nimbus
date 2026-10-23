@@ -53,9 +53,12 @@ must not change on \`${main}\`; a run that finds one changed refuses to sign any
 `;
 }
 
+/** Inside a bash single-quoted string: close the quote, an escaped quote, reopen. */
+const BASH_ESCAPED_QUOTE = String.raw`'\''`;
+
 /** `s` as a single-quoted literal, which bash and PowerShell both read verbatim. */
 function bashQuote(s: string): string {
-  return `'${s.replaceAll("'", `'\\''`)}'`;
+  return `'${s.replaceAll("'", BASH_ESCAPED_QUOTE)}'`;
 }
 function pwshQuote(s: string): string {
   return `'${s.replaceAll("'", "''")}'`;
@@ -73,7 +76,10 @@ export function ownerNextSteps(opts: {
   return `Next steps (nothing has been pushed; replace ${REPO_PLACEHOLDER} with the registry repository):
   1. Make sure the repository is public: the check workflow fetches without credentials.
   2. Push ${opts.site} as the gh-pages branch.
-  3. Create the environment "${SIGNING_ENVIRONMENT}" with required reviewers.
+  3. Create the environment "${SIGNING_ENVIRONMENT}" with required reviewers, and set its
+     deployment branches to ${opts.defaultBranch} only (Deployment branches and tags: Selected
+     branches), so a by-hand run from another branch, with its own copy of the sign workflow,
+     cannot reach the root key.
   4. Store the root key as a secret of THAT environment (--env matters: a repository-level
      secret is not gated by the environment's required reviewers):
        bash/zsh:    gh secret set ${secret} < ${bashQuote(opts.keyPath)}

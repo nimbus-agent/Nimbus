@@ -107,6 +107,9 @@ jobs:
         uses: ${actionUses(pin)}
         with:
           mode: sign
+          # Named, not read from origin's HEAD: that is gh-pages when it was pushed first to an
+          # empty repository, and a run reading it would sign nothing.
+          default-branch: ${JSON.stringify(defaultBranch)}
           root-key: \${{ secrets.${ROOT_KEY_SECRET} }}
 `;
 }

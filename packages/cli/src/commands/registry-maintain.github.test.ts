@@ -166,7 +166,7 @@ describe("registry maintain init --github", () => {
       const usesLines = workflow(dir, name)
         .text.split("\n")
         .filter((l) => /^\s*-?\s*uses:/.test(l));
-      expect(usesLines.length).toBe(2);
+      expect(usesLines).toHaveLength(2);
       for (const line of usesLines) {
         expect(line).toMatch(/uses: [^@\s]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
       }
@@ -222,6 +222,7 @@ describe("registry maintain init --github", () => {
     const action = steps(doc, "sign").find((s) => s.uses?.startsWith(REGISTRY_ACTION_PATH));
     expect(action?.with).toEqual({
       mode: "sign",
+      "default-branch": "main",
       "root-key": `\${{ secrets.${ROOT_KEY_SECRET} }}`,
     });
   });
@@ -259,24 +260,6 @@ describe("registry maintain init --github", () => {
     const pushMain = at(`push ${dir} to the repository's main branch`);
     expect(at(`Push ${site} as the gh-pages branch`)).toBeLessThan(environment);
     expect(environment).toBeLessThan(pushMain);
-    expect(at("gh secret set")).toBeLessThan(pushMain);
-    expect(at("Set GitHub Pages to serve")).toBeLessThan(pushMain);
-    expect(pushMain).toBeLessThan(at("Protect main: require pull requests"));
-  });
-
-  test("the owner pushes the default branch last, after the environment and its secret", async () => {
-    const { dir, site } = await initGithub();
-    const text = out.join("");
-    const at = (needle: string): number => {
-      const i = text.indexOf(needle);
-      expect(i).toBeGreaterThan(-1);
-      return i;
-    };
-    const pushMain = at(`push ${dir} to the repository's main branch`);
-    expect(at(`Push ${site} as the gh-pages branch`)).toBeLessThan(
-      at('Create the environment "registry-signing"'),
-    );
-    expect(at('Create the environment "registry-signing"')).toBeLessThan(pushMain);
     expect(at("gh secret set")).toBeLessThan(pushMain);
     expect(at("Set GitHub Pages to serve")).toBeLessThan(pushMain);
     expect(pushMain).toBeLessThan(at("Protect main: require pull requests"));
@@ -388,6 +371,11 @@ describe("registry maintain init --github", () => {
       push: { branches: ["release/v2"] },
       workflow_dispatch: null,
     });
+    // The sign action is told the branch too, rather than reading origin's HEAD.
+    const sign = steps(workflow(dir, "registry-sign.yml").doc, "sign").find((s) =>
+      s.uses?.startsWith(REGISTRY_ACTION_PATH),
+    );
+    expect(sign?.with?.["default-branch"]).toBe("release/v2");
     expect(lintWorkflow("registry-sign.yml", workflow(dir, "registry-sign.yml").text)).toEqual([]);
   });
 

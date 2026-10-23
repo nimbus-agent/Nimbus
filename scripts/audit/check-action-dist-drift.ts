@@ -30,7 +30,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 
@@ -234,7 +234,10 @@ export interface MainDeps extends GateEnv {
 /** `--build` writes the cwd package's `dist/index.js`; no argument checks every gated package. */
 export function main(args: readonly string[], deps: MainDeps): number {
   if (args[0] === "--build") {
-    writeFileSync(join(deps.cwd, "dist", "index.js"), buildDistText(deps.cwd, deps));
+    const text = buildDistText(deps.cwd, deps);
+    // `dist/` itself may be gone (git clean, a new action): the rebuild REBUILD points to must work.
+    mkdirSync(join(deps.cwd, "dist"), { recursive: true });
+    writeFileSync(join(deps.cwd, "dist", "index.js"), text);
     deps.log(`action-dist: wrote dist/index.js (Bun ${deps.runningVersion})`);
     return 0;
   }

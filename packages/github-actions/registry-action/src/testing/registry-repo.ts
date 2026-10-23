@@ -41,9 +41,34 @@ const IDENTITY = [
   "core.autocrlf=false",
 ];
 
+/**
+ * Variables that make git operate on a repository other than its `cwd`. A git hook running the
+ * tests (a pre-push preflight) sets them, and a child inheriting them would read or write the
+ * developer's repository instead of the temporary one.
+ */
+const GIT_LOCATION_VARS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_NAMESPACE",
+  "GIT_PREFIX",
+  "GIT_CEILING_DIRECTORIES",
+];
+
+/** `base` without `GIT_LOCATION_VARS`, for any child that runs git against a test repository. */
+export function gitIsolatedEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...base };
+  for (const k of GIT_LOCATION_VARS) delete env[k];
+  return env;
+}
+
 export function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", [...IDENTITY, ...args], {
     cwd,
+    env: gitIsolatedEnv(),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   }).toString("utf8");
@@ -249,6 +274,7 @@ export function syncMaintainer(repo: RegistryRepo, branch: string): void {
 export function originFile(repo: RegistryRepo, branch: string, path: string): Buffer {
   return execFileSync("git", ["cat-file", "blob", `${branch}:${path}`], {
     cwd: repo.origin,
+    env: gitIsolatedEnv(),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });

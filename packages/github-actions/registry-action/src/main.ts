@@ -1,6 +1,6 @@
 import { emitAnnotation, getInput, inputEnvName } from "../../shared/gha-io.ts";
 import { runCheck } from "./check.ts";
-import { runSign } from "./sign.ts";
+import { runSign, type SignOptions } from "./sign.ts";
 
 export type Mode = "check" | "sign";
 
@@ -33,6 +33,19 @@ export function maskSecret(
   }
 }
 
+/**
+ * What `sign` runs with. The `default-branch` input is passed on when set; empty (an older
+ * workflow, or none given) leaves `sign` to ask origin's HEAD, which is gh-pages when that branch
+ * was pushed first to an empty repository.
+ */
+export function signOptions(
+  workspace: string,
+  rootKey: string,
+  defaultBranch: string,
+): SignOptions {
+  return { workspace, rootKey, ...(defaultBranch !== "" && { defaultBranch }) };
+}
+
 function workspace(): string {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
@@ -47,7 +60,7 @@ export async function main(): Promise<void> {
       maskSecret(rootKey);
       // Every git child inherits this process's environment: the key must not ride along.
       delete process.env[inputEnvName("root-key")];
-      await runSign({ workspace: workspace(), rootKey });
+      await runSign(signOptions(workspace(), rootKey, getInput("default-branch")));
     }
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));

@@ -6,6 +6,14 @@ name: Nimbus CodeQL config
 queries:
   - uses: security-extended
 
+# The GitHub Actions' committed `dist/index.js` bundles are BUILD OUTPUT: their own code is the
+# `src/` CodeQL already scans, and the rest is vendored dependencies (minified `tar`, for one),
+# which the dependency audits cover. Scanning the bundle reports a library's internals as this
+# repository's code: `js/file-system-race` inside `tar`'s append path, for the registry action.
+# `audit:action-dist` keeps each bundle tied to its sources and dependencies.
+paths-ignore:
+  - packages/github-actions/*/dist/**
+
 query-filters:
   # `js/insufficient-password-hash` — pattern-matches any `createHash("sha256")`
   # whose input *could* be a credential. The only call site in this repo is
