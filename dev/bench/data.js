@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792743333696,
+  "lastUpdate": 1792744273129,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b561a9d589bde21a189155d925a39f7144ea33f5",
-          "message": "chore: release main (#1046)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.20.0</summary>\n\n##\n[1.20.0](https://github.com/nimbus-agent/Nimbus/compare/v1.19.1...v1.20.0)\n(2026-08-04)\n\n\n### Features\n\n* **connectors:** index real Notion and Confluence page bodies\n([#1039](https://github.com/nimbus-agent/Nimbus/issues/1039))\n([609409e](https://github.com/nimbus-agent/Nimbus/commit/609409ec07c6b72c9d817330a394e1b961ca27fb))\n* **egress:** make the I29 completeness claim true — coverage vector,\nboot marker, required sink\n([#1038](https://github.com/nimbus-agent/Nimbus/issues/1038))\n([a1169d9](https://github.com/nimbus-agent/Nimbus/commit/a1169d943aca41a339bb8fb1c6b32ee4f929e2fb))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-04T19:00:26+03:00",
-          "tree_id": "b559443bb512779a650c849dee6029273375e7ee",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b561a9d589bde21a189155d925a39f7144ea33f5"
-        },
-        "date": 1785859906211,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 311.03379905000037,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.31537449999814,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 205.5594596999963,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4da0e18b966ef96881b7cfb9a77f67bfffbafcae",
+          "message": "fix(extensions): re-check a legacy-key binding before storing or reading an extension credential (#1726)\n\n## What changes\n\nFollow-up parked in #1713 (Task 7.2a, Minor 3).\n\nAn extension migrated from a bundled connector (e.g.\n`com.nimbus.readwise` taking over `readwise`) can have a run grant whose\ncredential maps to the legacy Vault key (`readwise.token`). That mapping\nis valid only while the continuity binding holds: extension id +\nverified publisher key + root fingerprint. Approval and the spawn\nverifier both re-derive it. `extension.credentialSet` and\n`extension.credentialStatus` did not: they accepted the legacy key if\nany continuity-table entry for the extension id named it. If the binding\nhad lapsed (the installed package changed fingerprint, stopped\nverifying, or the table entry went away), an owner could still write\n`readwise.token` through the grant, and no spawn would ever use the\nvalue.\n\n- Approval, the spawn verifier and the credential path now share one\nderivation: `resolvedCredentialsFor` (now exported) plus\n`currentRunCredentials(db, id, table)`, which re-reads the installed\nrow, the grant and the verified manifest. The verifier's step 9 calls\nthe same function, with the same error text.\n- When a grant holds a legacy key, set and status re-derive the binding\nfirst. If it no longer matches the grant, they refuse with\n`ERR_EXTENSION_CREDENTIAL_BINDING_LAPSED` (-32602) before the prompt and\nbefore any Vault read. The message names the extension and the legacy\nconnector only, with no Vault key and no value:\n- set: \"…the installed package no longer binds to it; nothing was\nwritten — run `nimbus extension approve <id>` again\"\n- status: \"…nothing was read — run `nimbus extension approve <id>`\nagain\"\n- The dependency is required, so a new caller cannot skip the check and\nstill compile. A binding that lapses while the approval prompt is open\nstill ends in `ERR_EXTENSION_CREDENTIAL_CHANGED`, with nothing written.\n- A grant holding only the extension's own keys behaves exactly as\nbefore. In a grant holding both kinds, a lapsed binding refuses every\nname, which matches the verifier refusing the whole grant at spawn.\n- Both IPC handlers get the dependency from one\n`credentialReadDeps(ctx)`, so the composed continuity table reaches the\ntrust check and the live derivation alike.\n\n## Verification\n\n- New tests, red-first:\n- unit (`extension-credential-set.test.ts`): set refused before\nprompting when the binding lapsed; an unreadable manifest refused;\nstatus refused with 0 Vault reads; a lapse during the prompt writes\nnothing; own-key grants unaffected; a mixed grant's own key refused when\nlapsed; the exact wording of both messages;\n- `approve-run.test.ts`: one test per `currentRunCredentials`\n`undefined` branch;\n- IPC (`composed-continuity-table.test.ts`): approve, change the\nfingerprint, then set and status both refuse, and `readwise.token` stays\nempty. The older test there passed a credential through a package that\ncould not verify (the lapsed case itself) and now installs a signed\npackage.\n- `bun test src/extensions src/ipc` (gateway): 3907 pass, 32 skip, 0\nfail. `tsc` clean. `bun run preflight:fast` passed.\n- The sandbox-gated e2e case in `readwise-cutover.e2e.test.ts`, which\nsets a credential through a valid binding, skips on Windows. This PR's\nmacOS and Linux CI legs are its check.\n- Review: spec compliant, quality approved, 0 Critical / 0 Important.\nThe three Minors are fixed in the second commit and re-reviewed clean.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Credential reads and updates are now blocked when an extension’s\napproved credential binding is no longer valid, including when that\nbinding changes during approval.\n* When a binding has lapsed, credential status checks report the issue\nwithout exposing stored vault keys.\n* Extensions that use only their own credentials can still be approved\nwhen live credential details are unavailable.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T08:11:20Z",
+          "tree_id": "1307160efa58c5a324406bc249ad8d1c6537a6ce",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4da0e18b966ef96881b7cfb9a77f67bfffbafcae"
+        },
+        "date": 1792744268900,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 266.155977300001,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 266.89851064999493,
             "unit": "ms"
           }
         ]
