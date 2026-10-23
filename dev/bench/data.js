@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792755265318,
+  "lastUpdate": 1792755927174,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b3a6f159e9f9c4b8b0ed44262067efec42dfaba4",
-          "message": "fix(gateway): make connectors spawnable from a compiled binary (#1055)\n\n## The defect\n\nA released `nimbus-gateway` binary **cannot spawn a single one of the 94\nfirst-party connectors.**\n\nEvery spawn site hardcoded `command: \"bun\"` plus a path into the source\ntree:\n\n```ts\n{ command: \"bun\", args: [mcpConnectorServerScript(\"gmail\")], env: … }\n```\n\n`mcpConnectorServerScript()` resolved\n`<gateway-src>/../../../../mcp-connectors/<pkg>/src/server.ts`. A\ncompiled binary has neither `bun` on `PATH` nor that tree beside it, so\nevery connector sync fails. `wrapServerSpec()` had the same shape —\n`process.execPath` plus a path to `sandbox-wrapper.ts` — and since the\nold `index.ts` `main()` ignored `argv` entirely, a spawn attempt from a\ncompiled binary would have booted a **nested gateway** rather than\nfailing loudly.\n\nCI never caught it because nothing in `install-smoke.yml` exercises a\nconnector spawn.\n\n## The fix\n\nThe gateway executable gains two extra roles selected by `argv[2]`, and\ncarries the connector servers in its own build graph. The spawned\nconnector is still a separate process speaking MCP over stdio, so\nnon-negotiable #4 holds.\n\n| `argv[2]` | Role |\n|---|---|\n| `__nimbus-sandbox` | the sandbox wrapper, now an exported function |\n| `__nimbus-connector <id>` | one bundled connector |\n| anything else | the gateway |\n\n- **`platform/runtime-layout.ts`** is the only module that distinguishes\ncompiled from dev. `selfSpawn()` emits `[bun, index.ts, sentinel, …]` in\na dev tree and `[binary, sentinel, …]` compiled; the child sees the same\n`argv.slice(2)` either way.\n- **`index.ts` is now a thin shim** that reaches each role through a\n**dynamic** import. This is load-bearing, not tidiness: dispatching\ninside the old `index.ts` would have prevented the\n`createPlatformServices()` *call* but not module *evaluation*, and that\ngraph builds pino loggers at module scope (`connectors/registry.ts:8`,\n`engine/run-ask.ts:21`, `index/sqlite-vec-load.ts:7`) and freezes every\n`NIMBUS_*` variable at first import. `entry-graph.test.ts` asserts the\nshim's static graph is exactly one module and that the connector role\nnever reaches `db/`, `vault/` or `ipc/` — with a red-prove so the walker\ncan't pass vacuously.\n- **82 spawn sites** across `connector-spawns.ts` (31),\n`phase3-config.ts` (49) and `chatops-bot-spawn.ts` (2) now spread\n`connectorSpawn(pkg)`. **I15/D10 is untouched** — every `ServerSpec`\nstill passes through `wrapServerSpec()`; only the contents of\n`command`/`args` changed.\n\n### The connector entry contract\n\nTen connectors (`argocd`, `bigeye`, `flux`, `looker`, `mlflow`,\n`monte-carlo`, `powerbi`, `snowflake`, `tableau`, `workday`) ended with\n`if (import.meta.main) { … }`. That guard is true under `bun server.ts`\nand **false under a registry import** — measured, all ten loaded,\nstarted nothing and exited 0 in silence.\n\nThe guard could not simply be deleted: those ten are the only\nentrypoints a test can import, and their tests do\n(`snowflake/test/server-list-pagination.test.ts:3`). Removing it would\nconnect a real `StdioServerTransport` to the test runner's stdin/stdout.\nSo each now exports `startConnector()` and keeps the guard; the registry\ncalls it when present, and the other 84 start on import as before.\n\n## New gates\n\n- **`audit:connector-entrypoints`** (fast) — a `server.ts` containing\n`import.meta.main` must export `startConnector`.\n- **`audit:connector-deps`** (fast) — connector runtime dependencies\nstay within an allowlist. Connectors are bundled into the binary, so a\nnative dependency would break it silently. The union across all 94 is\npure JavaScript today.\n- **`test:connector-boot`** (full tier + the compiled-binary CI job) —\nboots **every** registry entry from the compiled binary and demands it\neither answer `initialize` or exit non-zero naming a missing variable.\n**Silence and hangs fail.**\n\n## Verification\n\n| Check | Result |\n|---|---|\n| Boot smoke, compiled binary | 94 connectors — 89 answered, 5 refused\nwithout credentials, **0 failed** (6.4 s) |\n| Boot smoke red-prove | `snowflake` reverted to the guarded form → gate\nfails with \"startup is unreachable from the registry\" |\n| Bare binary, temp dir, no source tree | answers MCP as `nimbus-github`\n|\n| Gateway role through the new shim | `ready (1.20.0) IPC\n\\\\.\\pipe\\nimbus-gateway` |\n| Test suite | 16,906 pass / 0 fail across 1,385 files |\n| `preflight:fast` | 27/27 gates |\n| `verify:docker` (Linux, CI image) | ALL GATES PASS |\n| Binary size vs `main` | 110.2 MB → 111.1 MB (**+0.8%**) |\n\nThe five refusals are the IMAP-family connectors (`apple`, `fastmail`,\n`imap`, `obsidian`, `protonmail`) throwing `Error: <VAR> is not set`\nfrom `requireProcessEnv` — correct behaviour without credentials,\nidentical in a dev tree.\n\n`release.yml` needs no change: both legs already run the exact `bun\nbuild src/index.ts --compile … --target bun` command that produces the\nverified binary.\n\n## Docs\n\n`docs/SECURITY-INVARIANTS.md` I2/I15 citations are re-anchored. The old\n`packages/gateway/src/index.ts:62` anchor pointed at `? {}` —\nmeaningless before this change — and the retired `SANDBOX_WRAPPER_PATH`\nrow is replaced rather than left to drift. One stale reference lived in\nprose, which `audit:doc-refs` does not check; it was found by a separate\nsweep.\n\n## Out of scope\n\nEmbedded assets (`/admin`, the OpenAPI document), the console build step\nand the vec0 release sidecar are PR 2. The `install-smoke.yml`\nassertions and the documentation subtraction pass are PR 3. The\n`import.meta.dir` confinement audit is deliberately deferred to PR 2,\nbecause two of its violations (`ipc/http-server.ts:190`,\n`ipc/admin-console-assets.ts:35`) only disappear there — landing it now\nwould mean shipping it with two exemptions to remember to delete.\n\nDesign: `docs/superpowers/specs/2026-08-05-ship-what-we-claim-design.md`\nPlan: `docs/superpowers/plans/2026-08-05-ship-what-we-claim-pr1.md`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-05T19:58:55Z",
-          "tree_id": "5b90fb51325cc46279952f391fa41be7c6cc35f1",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b3a6f159e9f9c4b8b0ed44262067efec42dfaba4"
-        },
-        "date": 1785960615106,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.1410850000004,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 315.13557724999845,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 229.5238583500002,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b9ee967e34f5e92054dc430a91a620c73c2521c4",
+          "message": "feat(extensions): extension approve says when the sync it registered came up paused (#1742)\n\n`nimbus extension approve <id>` registers the extension's sync (when its\nmanifest declares one), but registration can leave that sync **paused**,\nfor example when the sandbox helper is missing or a credential is unset.\nThe command still printed only \"approved to run as ext_…\", so the owner\nhad no sign that nothing would sync until they went looking in `nimbus\nconnector status`.\n\n## Change\n- **Gateway:** `ExtensionSyncRegistrar.syncServiceIdFor(id)` returns the\nid the registrar actually registered the sync under: the `ext_` id, or\nthe legacy connector id for a bound extension (Readwise → `readwise`).\nIt returns `undefined` when there is no sync block, the sync isn't live,\nor another syncable owns that id. `extension.approveRun` adds it to its\nresult as `syncServiceId`, and leaves the field out when there is none.\nThis is an additive field; the method is still CLI-only and\nLAN-forbidden.\n- **CLI:** when `syncServiceId` is present, `approve` reads\n`connector.listStatus` for that service. If the sync is paused, it\nprints a second line: `<id>: approved, but sync is paused: <reason>. Run\n\\`nimbus connector status <service>\\` for details.` The reason goes\nthrough `stripControl` (same as `connector-migrate`). The read is\nbest-effort: if the status call fails, nothing is added and the approval\nis not failed.\n- **Docs:** one sentence in `docs/cli-reference.md` § `nimbus extension\napprove`.\n\n## Tests\n- Registrar: bound → `readwise`, unbound → `ext_`, no sync block, after\nunregister, id owned by another syncable, null registrar.\n- RPC: `syncServiceId` is reported after refresh, and omitted when\nnothing is registered or there is no sync host.\n- CLI: paused (changed and unchanged approvals), a bound extension read\nunder its index id, running adds nothing, no sync means no status call,\na failed status read adds nothing, and the reason is control-stripped.\n- Red-proven: dropping the CLI print fails 4 tests; dropping the RPC\nfield fails 1. `bun run preflight:fast` passes.\n\nNo migration, no invariant, no Tauri allowlist change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Extension approval now reports when connector sync remains paused,\nincluding the affected sync service and pause reason when available.\nApproval still succeeds.\n* The status notice appears after the approval result and is omitted\nwhen sync is running or its status cannot be confirmed.\n* **Documentation**\n* Updated the CLI reference to explain paused-sync reporting and clarify\nthat a pause does not prevent approval.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-23T14:32:08+03:00",
+          "tree_id": "a1692d8bea3f2b729d125c172a549a7f6118e30c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b9ee967e34f5e92054dc430a91a620c73c2521c4"
+        },
+        "date": 1792755923501,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 288.0911900000034,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 281.7539528499994,
             "unit": "ms"
           }
         ]
