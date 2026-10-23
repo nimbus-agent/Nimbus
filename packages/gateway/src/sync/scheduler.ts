@@ -185,8 +185,11 @@ export class SyncScheduler {
    * `index.rebody --since`. In-memory ONLY: a restart drops a pending backfill
    * back to the connector's own 30-day floor, which is the safe direction —
    * the user can ask again, and nothing silently keeps re-walking history.
+   *
+   * Each value is a fresh token object, so a run can tell the floor it read from one armed while it
+   * was running (compared by identity in `consumeHistoryFloor`, never by value).
    */
-  private readonly historyFloors = new Map<string, number>();
+  private readonly historyFloors = new Map<string, { readonly floorMs: number }>();
 
   private readonly onConnectorSyncSuccess:
     | ((serviceId: string, result: SyncResult, durationMs: number) => void)
@@ -406,10 +409,22 @@ export class SyncScheduler {
   /**
    * Arm a one-shot cold-start floor for `serviceId`'s next run. Call it
    * immediately before `forceSync(serviceId)`; a successful run consumes it,
-   * a rate-limited or failed one keeps it for the retry.
+   * a rate-limited or failed one keeps it for the retry. A run that started
+   * before it was armed did not read it, so that run's success does not
+   * consume it: the floor still reaches the forced run queued behind it.
    */
   setHistoryFloor(serviceId: string, floorMs: number): void {
-    this.historyFloors.set(serviceId, floorMs);
+    this.historyFloors.set(serviceId, { floorMs });
+  }
+
+  /** Drops `serviceId`'s floor only if it is still `read`, the one the finishing run started with. */
+  private consumeHistoryFloor(
+    serviceId: string,
+    read: { readonly floorMs: number } | undefined,
+  ): void {
+    if (read !== undefined && this.historyFloors.get(serviceId) === read) {
+      this.historyFloors.delete(serviceId);
+    }
   }
 
   /**
@@ -904,10 +919,11 @@ export class SyncScheduler {
     }
 
     const startedAt = Date.now();
+    // Read once, before the run: the success path below consumes THIS floor and no later one.
+    const floor = this.historyFloors.get(job.serviceId);
     let result: SyncResult;
     try {
-      const historyFloorMs = this.historyFloors.get(job.serviceId);
-      const runCtx: SyncContext = this.contextForService(job.serviceId, historyFloorMs);
+      const runCtx: SyncContext = this.contextForService(job.serviceId, floor?.floorMs);
       // I29 CRITICAL 1: `platform/assemble-sync-registrations.ts` registers ~90 cloud syncables
       // with NO credential gate, and an unconfigured one's run makes no outbound call — so
       // appending unconditionally here fabricated an "authorized" `sync` egress row for every
@@ -1004,8 +1020,12 @@ export class SyncScheduler {
     // writes `result.cursor` via `updateState` and re-queues a "continuation"
     // job, and that job resumes from the persisted cursor — which bypasses the
     // cold-start override entirely. The floor has done its job by then.
+    //
+    // Only the floor this run READ is consumed. One armed while the run was in flight
+    // (`index.rebody --since` behind a scheduled run) was never read by it, and deleting it here
+    // would send the forced run queued behind this one out at the connector's own 30-day floor.
     if (this.wasWithdrawnMidRun(job, connector)) return;
-    this.historyFloors.delete(job.serviceId);
+    this.consumeHistoryFloor(job.serviceId, floor);
     this.runJobRecordSyncSuccess(job, row, startedAt, result);
   }
 

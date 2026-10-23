@@ -570,7 +570,9 @@ async function resyncOneService(
     ctx.syncScheduler.setHistoryFloor(service, Date.now() - p.sinceDays * 86_400_000);
   }
   try {
-    await ctx.syncScheduler.forceSync(service);
+    // `full`: a run already in flight writes its own cursor back after the clear above, and a
+    // plain force would resume from it — the "re-walk" would silently be incremental.
+    await ctx.syncScheduler.forceSync(service, { full: true });
     return null;
   } catch (err) {
     ctx.logger.warn(

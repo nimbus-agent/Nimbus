@@ -792,6 +792,45 @@ describe("SyncScheduler — forceSync edge cases", () => {
     db.close();
   });
 
+  test("a history floor armed during an in-flight run survives that run and reaches the forced run", async () => {
+    // `index.rebody --since` arms the floor and then forces a run. A run already in flight read no
+    // floor when it started, so its success must not consume the one armed after it: the forced
+    // run would then cold-start from the connector's own 30-day floor and `--since` would be lost.
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const entered = deferred();
+    const floors: Array<number | undefined> = [];
+    const cursors: Array<string | null> = [];
+    const svc: Syncable = {
+      serviceId: "floor-race",
+      defaultIntervalMs: 60_000,
+      initialSyncDepthDays: 30,
+      async sync(ctx, cursor): Promise<SyncResult> {
+        floors.push(ctx.historyFloorMs);
+        cursors.push(cursor);
+        if (floors.length === 1) {
+          entered.resolve();
+          await gate.promise;
+        }
+        return { ...OK, cursor: "X" };
+      },
+    };
+    const sched = new SyncScheduler(ctxFor(db), { catchUpOnRestart: true }, { isOnline: online });
+    sched.register(svc);
+    sched.start();
+    await within(entered.promise, "the scheduled run to start");
+
+    const floorMs = Date.now() - 400 * 86_400_000;
+    sched.setHistoryFloor("floor-race", floorMs);
+    const forced = sched.forceSync("floor-race", { full: true });
+    gate.resolve();
+    await within(forced, "the full force request");
+    expect(floors).toEqual([undefined, floorMs]);
+    expect(cursors).toEqual([null, null]);
+    await sched.stop();
+    db.close();
+  });
+
   test("a full force whose cursor clear fails rejects instead of hanging", async () => {
     const db = openMemoryIndexDatabase();
     const gate = deferred();
