@@ -238,6 +238,7 @@ import {
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
+import type { FleetRpcCtx } from "../ipc/fleet-rpc.ts";
 import {
   emitGatewayEvent,
   setGatewayEventBroadcast,
@@ -3407,6 +3408,31 @@ export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
   };
 }
 
+/**
+ * The `fleet.*` IPC context over a live fleet runtime. `scheduler`/`config`/`jobs` are GETTERS over
+ * the supervisor's current view, so a handler reads the fleet as it is now, not as it was at boot.
+ * `settled` runs a reload check rather than only awaiting one in progress: `check()` joins a
+ * pending reload, picks up an edit the timer has not polled yet, and never rejects, so
+ * `fleet.runNow` straight after a config edit runs against that edit.
+ */
+export function fleetRpcCtxFor(runtime: FleetRuntime, hostActivity: HostActivity): FleetRpcCtx {
+  return {
+    get scheduler(): FleetScheduler | undefined {
+      return runtime.scheduler;
+    },
+    store: runtime.store,
+    hostActivity,
+    get config(): NimbusFleetToml {
+      return runtime.config;
+    },
+    get jobs(): readonly NimbusFleetJobToml[] {
+      return runtime.jobs;
+    },
+    now: () => Date.now(),
+    settled: () => runtime.supervisor.check().then(() => undefined),
+  };
+}
+
 export async function assemblePlatformServices(
   paths: PlatformPaths,
   customVault?: NimbusVault,
@@ -4359,24 +4385,7 @@ export async function assemblePlatformServices(
   // whole namespace is LAN-forbidden (I5) and absent from the Tauri allowlist (I7): `fleet.runNow`
   // spends the machine's resources and the reads return synthesised answers over the private
   // index, neither of which a LAN peer or the renderer needs.
-  //
-  // `scheduler`/`config`/`jobs` are GETTERS over the supervisor's current view, so a handler reads
-  // the fleet as it is now, not as it was at boot; `settled` lets `fleet.runNow` wait out a reload.
-  ipcOpts.fleetRpcCtx = {
-    get scheduler(): FleetScheduler | undefined {
-      return fleetRuntime.scheduler;
-    },
-    store: fleetRuntime.store,
-    hostActivity,
-    get config(): NimbusFleetToml {
-      return fleetRuntime.config;
-    },
-    get jobs(): readonly NimbusFleetJobToml[] {
-      return fleetRuntime.jobs;
-    },
-    now: () => Date.now(),
-    settled: () => fleetRuntime.supervisor.settled(),
-  };
+  ipcOpts.fleetRpcCtx = fleetRpcCtxFor(fleetRuntime, hostActivity);
   ipcOpts.oncallPushRpcCtx = { runtime: oncallPush };
   // pre-S3 item E: notifications.status / notifications.test (CLI-only; LAN-forbidden, not Tauri).
   ipcOpts.notificationsRpcCtx = { runtime: notificationsRuntime };

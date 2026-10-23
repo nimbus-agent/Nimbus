@@ -185,6 +185,13 @@ describe("FleetSupervisor", () => {
     expect(h.built).toHaveLength(2);
   });
 
+  test("start() after stop() arms nothing", () => {
+    const h = harness(load());
+    h.sup.stop();
+    h.sup.start();
+    expect((h.sup as unknown as { timer: unknown }).timer).toBeUndefined();
+  });
+
   test("stop during a pending swap builds nothing", async () => {
     const d = deferred();
     const h = harness(load(), { retire: () => d.promise });

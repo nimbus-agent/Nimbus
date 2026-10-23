@@ -41,8 +41,9 @@ export class FleetRpcError extends Error {
  * In production `scheduler`, `config` and `jobs` are live getters over the `FleetSupervisor`, so a
  * config reload swaps them without rebuilding this ctx. A handler therefore reads them in ONE
  * synchronous destructuring, after its last `await` and before any later one: a swap publishes in
- * a single assignment, so a synchronous read never sees half of two generations. `settled` resolves
- * once any in-progress reload has finished.
+ * a single assignment, so a synchronous read never sees half of two generations. `settled` brings the
+ * fleet up to date with the current config before a run: it finishes any reload in progress and
+ * picks up an edit not yet polled.
  */
 export interface FleetRpcCtx {
   readonly scheduler?: FleetScheduler | undefined;

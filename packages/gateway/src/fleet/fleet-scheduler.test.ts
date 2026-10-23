@@ -1195,6 +1195,13 @@ describe("FleetScheduler.retire", () => {
     expect(calls).toBe(0);
   });
 
+  test("start() after retire() arms no tick", async () => {
+    const s = build({ probes: [AC_IDLE], tickMs: 10, invoke: async (job) => done(job.name) });
+    await s.retire();
+    s.start();
+    expect((s as unknown as { timer: unknown }).timer).toBeUndefined();
+  });
+
   test("retire with nothing in flight resolves at once", async () => {
     const s = build({ probes: [AC_IDLE], invoke: async (job) => done(job.name) });
     await expect(s.retire()).resolves.toBeUndefined();

@@ -1582,9 +1582,10 @@ empty) live in the parser; refusals that need the agent map (an agent's own enum
 rejecting the kind, a job setting BOTH `sweep` and the parameter that kind would supply, or
 `sweep` combined with `namespace`/`namespaces` on `ghost`/`conflicts` — a sweep stays local rather
 than multiplying federated calls under the owner's identity) run in
-`fleet/fleet-sweep-support.ts`'s `validateFleetSweepJobs`, called from `assembleFleetRuntime`
-inside the same try that parses, so a refusal disables the fleet with the same loud log a parse
-error gets.
+`fleet/fleet-sweep-support.ts`'s `validateFleetSweepJobs`, called from `platform/assemble.ts`'s
+`loadFleet` inside the same try that parses, so a refusal disables the fleet with the same loud log
+a parse error gets. `loadFleet` runs at boot and on every reload, so a refusal after boot turns a
+running fleet off too.
 
 **The enumerator map is TOTAL over the fleet-eligible agents.** `fleet/fleet-sweep-support.ts`'s
 `FLEET_SWEEP_SUPPORT` is one interface — `{ accepts: Partial<Record<SweepKind, SweepSubjectParam>>,

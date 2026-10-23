@@ -197,7 +197,7 @@ export class FleetScheduler {
   constructor(private readonly deps: FleetSchedulerDeps) {}
 
   start(): void {
-    if (this.timer !== undefined) return;
+    if (this.timer !== undefined || this.retired) return;
     // `unref` so a pending tick never holds the process open on its own.
     this.timer = setInterval(
       () => void this.runOnce().catch(() => undefined),
@@ -532,10 +532,11 @@ export class FleetScheduler {
     const admitted = this.admit(probe).admitted;
 
     // The run boundary. `[fleet] remote_call_budget` is PER RUN, and one instance is shared with
-    // the invoker for the process lifetime, so this is the line that makes the key mean what it
-    // says. Before `openRun`, so the row records what this run actually HAS. Safe because
-    // `runOnce`'s `inFlight` guard serialises every entry path — the tick, `--force` and a named
-    // job all reach `execute` only through it — so no reset can land mid-run.
+    // the invoker for this scheduler generation's lifetime (a config reload builds a new one), so
+    // this is the line that makes the key mean what it says. Before `openRun`, so the row records
+    // what this run actually HAS. Safe because `runOnce`'s `inFlight` guard serialises every entry
+    // path — the tick, `--force` and a named job all reach `execute` only through it — so no reset
+    // can land mid-run; across generations, `retire()` waits out the in-flight run.
     this.deps.remoteBudget.reset();
 
     const startedAt = this.deps.now();

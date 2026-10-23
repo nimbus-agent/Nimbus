@@ -6,9 +6,10 @@ import type { FleetScheduler } from "./fleet-scheduler.ts";
  * Owns the fleet's current {scheduler, config, jobs} and rebuilds the scheduler when the effective
  * `[fleet]` section changes (role-packs spec § 5.3), so a config edit applies without a restart.
  *
- * The cheap layered-snapshot `version()` is compared BEFORE `load()`: an idle gateway polls an
- * integer every tick and never re-parses or re-resolves the fleet section. A version bump that
- * leaves the fleet section deep-equal (an edit elsewhere in the file) is not a reload.
+ * The layered-snapshot `version()` is compared BEFORE `load()`. Each tick the snapshot re-reads
+ * the base, profile and pack files but re-merges only when one changed, so an idle gateway never
+ * re-parses or re-resolves the fleet section. A version bump that leaves the fleet section
+ * deep-equal (an edit elsewhere in the file) is not a reload.
  */
 
 export const FLEET_RELOAD_CHECK_MS = 5_000;

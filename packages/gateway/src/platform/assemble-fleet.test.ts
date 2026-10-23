@@ -12,10 +12,11 @@ import { FLEET_CAPABILITY } from "../fleet/fleet-scheduler.ts";
 import { FleetStore } from "../fleet/fleet-store.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
+import { dispatchFleetRpc } from "../ipc/fleet-rpc.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import type { EnforcedPolicy, PolicyGate } from "../policy/policy-gate.ts";
 import { AI_V2_CAPABILITIES } from "../policy/types.ts";
-import { assembleFleetRuntime, type FleetBootDeps } from "./assemble.ts";
+import { assembleFleetRuntime, type FleetBootDeps, fleetRpcCtxFor } from "./assemble.ts";
 import { processEnvDelete, processEnvSet } from "./env-access.ts";
 import { UNKNOWN_HOST_ACTIVITY } from "./host-activity.ts";
 import type { PlatformPaths } from "./paths.ts";
@@ -290,6 +291,51 @@ interval_seconds = 3600
       writeToml(ENABLED_WITH_JOB);
       expect(await runtime.supervisor.check()).toBe("reloaded");
       expect(runtime.scheduler).toBeDefined();
+    });
+
+    /**
+     * The reload TIMER is how the feature fires in production: nothing calls `check()` there. So
+     * this test never calls it — the edit must be picked up by the interval `assembleFleetRuntime`
+     * arms — and the sidecar stop must disarm it.
+     */
+    test("the reload timer picks up an edit without check(), and the sidecar stop disarms it", async () => {
+      const { gate } = stubGate(enforcedWith({}));
+      const runtime = assembleFleetRuntime({ ...deps(gate), checkMs: 10 });
+      expect(runtime.scheduler).toBeUndefined();
+
+      writeToml(ENABLED_WITH_JOB);
+      const deadline = Date.now() + 2_000;
+      while (runtime.scheduler === undefined && Date.now() < deadline) {
+        await Bun.sleep(10);
+      }
+      expect(runtime.scheduler).toBeDefined();
+
+      for (const s of stops.splice(0)) s();
+      const stoppedScheduler = runtime.scheduler;
+      writeToml(ENABLED_WITH_JOB.replace('name = "nightly"', 'name = "other"'));
+      await Bun.sleep(100);
+      expect(runtime.scheduler).toBe(stoppedScheduler);
+      expect(runtime.jobs.map((j) => j.name)).toEqual(["nightly"]);
+    });
+
+    /**
+     * `fleet.runNow` straight after an edit must run against that edit, not wait up to one timer
+     * interval. Seam: `fleetRpcCtxFor`, the exact ctx builder `assemblePlatformServices` installs,
+     * driven through the real `dispatchFleetRpc` — no `check()` call in the test.
+     */
+    test("fleet.runNow finds a job added a moment ago without waiting for the timer", async () => {
+      writeToml(ENABLED_WITH_JOB);
+      const { gate } = stubGate(enforcedWith({}));
+      const runtime = assembleFleetRuntime(deps(gate));
+      const ctx = fleetRpcCtxFor(runtime, UNKNOWN_HOST_ACTIVITY);
+
+      writeToml(
+        `${ENABLED_WITH_JOB}\n[[fleet.job]]\nname = "second"\nagent = "catchup"\ninterval_seconds = 3600\n`,
+      );
+      const res = await dispatchFleetRpc("fleet.runNow", { job: "second", force: true }, ctx);
+      expect(res.kind).toBe("hit");
+      expect((res as { value: { jobsAttempted: number } }).value.jobsAttempted).toBe(1);
+      expect(new FleetStore(db).loadJobState("second")?.lastAttemptAt).toBeDefined();
     });
 
     /**
