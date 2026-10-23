@@ -5,6 +5,7 @@ import pino from "pino";
 import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
 import { insertUserMcpConnector } from "../connectors/user-mcp-store.ts";
 import { createUserMcpSyncable } from "../connectors/user-mcp-sync.ts";
+import { dbRun } from "../db/write.ts";
 import { recordSyncEgress } from "../egress/sync-egress.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../testing/bun-test-support.ts";
@@ -1268,7 +1269,7 @@ describe("SyncScheduler records whether a run had a credential at all (F6/F13)",
         return syncNoopResult(cursor, performance.now());
       },
     });
-    db.run("UPDATE scheduler_state SET cursor = 'kept' WHERE service_id = 'jenkins'");
+    dbRun(db, "UPDATE scheduler_state SET cursor = ? WHERE service_id = ?", ["kept", "jenkins"]);
     const before = Date.now();
     // Two runs: the first-ever run has no `sync_state` row yet, so the configured flag only lands
     // from the second run on (pre-existing, unchanged here).
