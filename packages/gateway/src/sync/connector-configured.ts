@@ -47,6 +47,29 @@ async function isGithubPatConfigured(vault: NimbusVault): Promise<boolean> {
   return pat !== null && pat.trim() !== "";
 }
 
+/** Whether any one of `keys` holds a non-blank value: the manifest rule, which `teams` reuses. */
+async function hasAnyNonBlankKey(vault: NimbusVault, keys: readonly string[]): Promise<boolean> {
+  for (const key of keys) {
+    const value = await vault.get(key);
+    if (value !== null && value.trim() !== "") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * `teams` syncs with `ctx.accessToken()` -> `getValidMicrosoftAccessToken` -> the shared
+ * `microsoft.oauth` key, which its manifest entry does not list (it names only the bot keys). So it
+ * is configured by that key, OR by any of its own manifest keys as before.
+ */
+async function isTeamsConfigured(vault: NimbusVault): Promise<boolean> {
+  return (
+    (await hasMicrosoftOAuthVaultKey(vault)) ||
+    hasAnyNonBlankKey(vault, CONNECTOR_VAULT_SECRET_KEYS.teams)
+  );
+}
+
 /** `google_drive`/`gmail`/`google_photos`/`google_meet` each resolve via the same OAuth lookup their `sync()` uses. */
 function googleOAuthConfigured(
   serviceId: "google_drive" | "gmail" | "google_photos" | "google_meet",
@@ -73,6 +96,13 @@ function googleOAuthConfigured(
  *  - `athena`/`cloudwatch`/`sagemaker`: `hasUsableAwsCredentials` — the exact usable-combination
  *    formula `_lib/aws-cli.ts`'s `awsCredentialsExtra` gates its spawn on.
  *
+ * Plus ONE service whose manifest list is NOT empty but names the wrong credential for its sync:
+ *
+ *  - `teams`: `isTeamsConfigured` — `microsoft.oauth` (what `teams-sync.ts` actually reads, through
+ *    `ctx.accessToken()` → `getValidMicrosoftAccessToken`) OR any of its manifest bot keys
+ *    (`teams.bot_app_id` / `teams.bot_app_password`, which its sync never reads). Without the OAuth
+ *    half, a Teams owner signed in through Microsoft read as unconfigured.
+ *
  * Executed failure this closes (I29 Critical, follow-up to the manifest-key gate below): every one
  * of these 13 has an EMPTY manifest key list, so before this map existed the function below fell
  * through to "no signal, no gate" and returned `true` unconditionally — `sync/scheduler.ts`'s
@@ -90,6 +120,7 @@ const DERIVED_CONFIGURED_CHECKS: Readonly<
   google_meet: googleOAuthConfigured("google_meet"),
   onedrive: hasMicrosoftOAuthVaultKey,
   outlook: hasMicrosoftOAuthVaultKey,
+  teams: isTeamsConfigured,
   github_actions: isGithubPatConfigured,
   bigquery: isGcpCredentialConfigured,
   cloud_logging: isGcpCredentialConfigured,
@@ -174,11 +205,5 @@ export async function isConnectorConfigured(
   if (keys === undefined || keys.length === 0) {
     return true;
   }
-  for (const key of keys) {
-    const value = await vault.get(key);
-    if (value !== null && value.trim() !== "") {
-      return true;
-    }
-  }
-  return false;
+  return hasAnyNonBlankKey(vault, keys);
 }

@@ -90,6 +90,31 @@ describe("isConnectorConfigured", () => {
     }
   });
 
+  // teams-sync.ts syncs with `ctx.accessToken()` -> `getValidMicrosoftAccessToken` (the shared
+  // `microsoft.oauth` key), which its manifest does not list: the manifest names only the bot keys.
+  // Checked against the manifest alone, a Teams owner signed in through Microsoft OAuth read as
+  // unconfigured, and a scheduler that skips unconfigured runs would never sync it.
+  describe("teams — microsoft.oauth (what its sync reads) or its own bot keys", () => {
+    test("teams is configured by microsoft.oauth alone", async () => {
+      expect(await isConnectorConfigured(fakeVault({ "microsoft.oauth": "t" }), "teams")).toBe(
+        true,
+      );
+    });
+    test("teams is configured by its bot keys", async () => {
+      expect(
+        await isConnectorConfigured(
+          fakeVault({ "teams.bot_app_id": "id", "teams.bot_app_password": "pw" }),
+          "teams",
+        ),
+      ).toBe(true);
+    });
+    test("teams with neither microsoft.oauth nor a bot key is NOT configured", async () => {
+      expect(await isConnectorConfigured(fakeVault({ "microsoft.oauth": "  " }), "teams")).toBe(
+        false,
+      );
+    });
+  });
+
   describe("github_actions — the same github.pat key github-actions-sync.ts reads", () => {
     test("NOT configured against an empty vault", async () => {
       expect(await isConnectorConfigured(fakeVault({}), "github_actions")).toBe(false);
