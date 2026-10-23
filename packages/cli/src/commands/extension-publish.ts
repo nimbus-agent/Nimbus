@@ -28,6 +28,7 @@ import {
 import { buildPublishCandidate } from "../lib/publish-candidate.ts";
 import { rmDirWithRetry } from "../lib/rm-dir-with-retry.ts";
 import { type RunTool, runTool } from "../lib/run-git.ts";
+import { quoteForPrintedCommand } from "../lib/shell-quote.ts";
 
 export interface PublishDeps {
   runTool: RunTool;
@@ -331,10 +332,8 @@ function prBody(v: PublishVerdict): string {
   );
 }
 
-/** Quote an argument for a printed command line; plain tokens stay bare. */
-function q(arg: string): string {
-  return /^[\w./@:=+-]+$/.test(arg) ? arg : `"${arg.replaceAll('"', String.raw`\"`)}"`;
-}
+/** Quote an argument for a printed command line; plain tokens stay bare, nothing else expands. */
+const q = (arg: string): string => quoteForPrintedCommand(arg);
 
 function printManualSteps(
   deps: PublishDeps,

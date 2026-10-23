@@ -2,6 +2,7 @@
  * The README `nimbus registry maintain init --github` writes into a registry repository, and the
  * owner's next steps it prints once (design § 7.5, § 7.6).
  */
+import { bashQuote, pwshQuote } from "../../lib/shell-quote.ts";
 import { ROOT_KEY_SECRET, SIGNING_ENVIRONMENT } from "./workflows.ts";
 
 export function registryReadme(opts: {
@@ -51,17 +52,6 @@ The run re-validates every unsigned version, skips (and names) any that fail, si
 the next sequence number and pushes the site to \`gh-pages\`. A version that is already signed
 must not change on \`${main}\`; a run that finds one changed refuses to sign anything.
 `;
-}
-
-/** Inside a bash single-quoted string: close the quote, an escaped quote, reopen. */
-const BASH_ESCAPED_QUOTE = String.raw`'\''`;
-
-/** `s` as a single-quoted literal, which bash and PowerShell both read verbatim. */
-function bashQuote(s: string): string {
-  return `'${s.replaceAll("'", BASH_ESCAPED_QUOTE)}'`;
-}
-function pwshQuote(s: string): string {
-  return `'${s.replaceAll("'", "''")}'`;
 }
 
 const REPO_PLACEHOLDER = "<owner>/<repo>";
