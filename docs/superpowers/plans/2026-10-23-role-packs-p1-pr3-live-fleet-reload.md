@@ -31,6 +31,10 @@
 4. **Gateway shutdown during a pending swap:** no new scheduler starts after `stop()`. (Task 2 test)
 5. **A reload keeps the org retention floor:** a pack's `retention_days = 1` under a 30-day policy floor reloads as 30. (Task 4 test)
 
+## Deferred (from the plan review, 2026-10-23)
+
+- **A policy change alone does not reload the fleet.** `loadFleet` reads `policyGate.enforced().retentionMinDays` on every reload, but a reload is triggered only by a config change, because the supervisor watches the snapshot version, not the policy. A newly installed signed policy with a higher retention floor therefore reaches the fleet's `retentionDays` (and so each brief's `expires_at`) only at the next config change or restart. That is today's behaviour too (boot-only), so PR 3 does not regress it. The `agent_fleet` lockoff is unaffected, since it is already read live. Revisit if a policy-reactive hook is added; spec § 5.3 scopes reload to config.
+
 ---
 
 ### Task 1: `FleetScheduler.retire()`
@@ -41,17 +45,19 @@
 
 **Interfaces:**
 - Produces:
-  - `export class FleetReloadingError extends Error {}`
-  - `FleetScheduler.retire(): Promise<void>`: clears the timer, marks the instance retired, and resolves once any in-flight `runOnce` has settled (never rejects).
-  - After `retire()` has been called, `runOnce` throws `FleetReloadingError("fleet is reloading its config; try again")`. The check sits after the config-enabled and policy checks, so their messages are unchanged.
+  - `export class FleetReloadingError extends Error {}`, whose default message is `"fleet is reloading its config; try again"` and whose `name` is set.
+  - `FleetScheduler.retire(): Promise<void>`: clears the timer, marks the instance retired, and resolves once any in-flight `runOnce` has settled (never rejects). It is **idempotent**: the first call memoizes its promise, and every later call returns that same promise.
+  - After `retire()` has been called, `runOnce` throws `FleetReloadingError`. The check sits after the config-enabled and policy checks, so their messages are unchanged, and before the job-name lookup and the `inFlight` check, so a retired scheduler never returns `deferred`.
 
 - [ ] **Step 1: Write the failing tests**
   - `retire waits for the in-flight run`: an `invoke` that blocks on a deferred promise. Start `runOnce({ force: true })`, call `retire()`, and assert `retire()` has not resolved until the deferred is released. Then the run's summary has `jobsAttempted === 1`, and `retire()` resolves.
   - `a retired scheduler refuses new runs`: after `await retire()`, `runOnce()` rejects with `FleetReloadingError`, and `invoke` is not called again (count the calls).
   - `retire stops the tick`: `build({ tickMs: 10, ... })`, `start()`, `await retire()`, sleep 50 ms; `invoke` was never called.
   - `retire with nothing in flight resolves at once`.
+  - `retire is idempotent`: two `retire()` calls during an in-flight run return the same promise (`toBe`), and both resolve only after the run settles.
+  - `retire in the same turn as runOnce still waits`: call `runOnce({ force: true })` and `retire()` back to back with no `await` between them. `retire()` must not resolve before the run's deferred is released.
 - [ ] **Step 2: Run them and see them fail.** `bun test packages/gateway/src/fleet/fleet-scheduler.test.ts`. Expected: `retire is not a function`.
-- [ ] **Step 3: Implement.** Replace the boolean-only guard with a held promise: keep `inFlight` semantics, and also keep `private running: Promise<FleetRunSummary> | undefined` set around the `execute` await. `retire()` sets `private retired = true`, calls `stop()`, then `await this.running?.catch(() => undefined)`. Update the `inFlight` doc comment to name `retire()` as the second reader.
+- [ ] **Step 3: Implement.** Keep `inFlight` as it is, and also hold `private running: Promise<FleetRunSummary> | undefined`. Assign it **synchronously**: `const run = this.execute(...)`, then `this.running = run`, then `try { return await run } finally { inFlight = false; running = undefined }`. That way a `retire()` in the same turn finds it. `retire()` returns the memoized `private retirePromise` if set; otherwise it sets `retired = true`, calls `stop()`, and memoizes `this.running?.catch(() => undefined)` mapped to `void` (or `Promise.resolve()`). Update the `inFlight` doc comment to name `retire()` as the second reader.
 - [ ] **Step 4: Run them and see them pass,** plus the whole file.
 - [ ] **Step 5: Commit** `feat(fleet): a scheduler can be retired after its in-flight run`.
 
@@ -95,12 +101,15 @@
   }
   ```
 - `check()` algorithm. The steps are not obvious from the signature, so they are stated here:
-  1. If a reload is pending, return that pending promise.
+  1. If a reload is pending, return that pending promise. Otherwise store the promise of the steps below as the pending one, and clear it in a `finally`.
   2. Read `version()`. If it equals the last version seen, return `"unchanged"`. Otherwise record it.
   3. `next = load()`. If `Bun.deepEquals(next, this.loaded)`, return `"unchanged"`.
   4. `await old.scheduler?.retire()`. If `stop()` ran meanwhile, publish the view with `scheduler: undefined` and return.
-  5. Call `build(next)` inside a try. A throw is logged at error and gives `scheduler: undefined`. Then `start()` the new scheduler.
-  6. Publish the new view in ONE assignment, set `loaded = next`, and log at info: `[fleet] config changed; reloaded (enabled=<b>, jobs=<n>, running=<b>)`. Return `"reloaded"`.
+  5. **Catch up.** While `version()` differs from the last version seen (an edit landed during the retire), record it and `next = load()` again. The old scheduler is already retired, so build from the latest load even if it now equals `this.loaded`. Otherwise a test or a `fleet run` waiting on `settled()` would see an intermediate config.
+  6. Call `build(next)` inside a try. A throw is logged at error and gives `scheduler: undefined`. Then `start()` the new scheduler.
+  7. Publish the new view in ONE assignment, set `loaded = next`, and log at info: `[fleet] config changed; reloaded (enabled=<b>, jobs=<n>, running=<b>)`. Return `"reloaded"`.
+  - Steps 2 to 7 run inside a try/catch. An unexpected throw is logged at error, leaves the current view as it is, and returns `"unchanged"`, so the pending promise never rejects. `settled()` additionally swallows rejection. Neither `fleet run` nor the timer can surface a supervisor error as an unhandled rejection.
+  - No prune on reload: the boot prune stays boot-only, and `FleetScheduler` already prunes at the end of every run (`fleet-scheduler.ts`'s `close`).
 
 - [ ] **Step 1: Write the failing tests.** Use fakes: `version` and `load` as mutable closures, and `build` returning a real `FleetScheduler` from a small fixture, or a recording stub cast to `FleetScheduler` with `start`/`stop`/`retire` spies.
   - `boot builds and starts when enabled with jobs`; `boot builds nothing when disabled` (`current().scheduler` undefined, `build` called once and returned undefined).
@@ -115,6 +124,8 @@
   - `stop during a pending swap builds nothing`: `stop()` while `retire` is pending, then resolve it; `build` is not called again, and `current().scheduler` is undefined.
   - `a throwing build leaves the fleet off and logs`.
   - `settled waits for a pending reload`.
+  - `an edit during a pending reload is caught up`: start a reload whose `retire` is a deferred, bump the version again and make `load` return a third config, then resolve the deferred. `build` is called once, with the third config, and `current()` shows it.
+  - `an unexpected throw never rejects check or settled`: `load` throws once. `check()` resolves `"unchanged"`, the error is logged, `settled()` resolves, and the next good change still reloads.
 - [ ] **Step 2: Run them and see them fail** (`Cannot find module './fleet-supervisor.ts'`).
 - [ ] **Step 3: Implement** `fleet-supervisor.ts`, with a header comment naming spec § 5.3 and why the version check comes before the load.
 - [ ] **Step 4: Run them and see them pass.**
@@ -172,13 +183,13 @@
     - `a broken [fleet] after boot stops the fleet, and fixing it restarts it`: `allow_remote = true` with no budget.
     - Existing tests keep passing unchanged. They read `.scheduler`, now a getter.
   - In `test/integration/fleet/fleet-live-reload.test.ts` (spec § 7):
-    - Setup: a temp `configDir` and `initLayeredConfig(dir, { packs: createPackLayerStore({ configDir: dir }) })` BEFORE `assembleFleetRuntime`, with the same deps shape as `assemble-fleet.test.ts`. `forgetLayeredConfigForTests(dir)` in `afterEach`.
+    - Setup: a temp `configDir`, `const packs = createPackLayerStore({ configDir: dir })` and `initLayeredConfig(dir, { packs })` BEFORE `assembleFleetRuntime`. Every pack write in the test goes through that same `packs` instance, with the same deps shape as `assemble-fleet.test.ts`. `forgetLayeredConfigForTests(dir)` in `afterEach`.
     - `a pack that enables the fleet and adds a job runs it without a restart`:
       1. Boot with no user file; the fleet is off.
-      2. `store.setPackLayer("default", "ops", "[fleet]\nenabled = true\n\n[[fleet.job]]\nname = \"pack-nightly\"\nagent = \"catchup\"\ninterval_seconds = 3600\n")`, then `await runtime.supervisor.check()`.
+      2. `packs.setPackLayer("default", "ops", "[fleet]\nenabled = true\n\n[[fleet.job]]\nname = \"pack-nightly\"\nagent = \"catchup\"\ninterval_seconds = 3600\n")`, then `await runtime.supervisor.check()`.
       3. `runtime.scheduler` is defined, and `await runtime.scheduler.runOnce({ force: true })` gives `jobsAttempted === 1`.
       4. `new FleetStore(db).loadJobState("pack-nightly")?.lastAttemptAt` is not null. Assert the attempt, not success: the stubbed index may make the agent fail, and that is still a run.
-    - `removing the pack stops the fleet again`: `removePackLayer("default", "ops")`, `check()`; `runtime.scheduler` is undefined.
+    - `removing the pack stops the fleet again`: `packs.removePackLayer("default", "ops")`, `check()`; `runtime.scheduler` is undefined.
     - `job state survives a reload`: after a run, change only `interval_seconds` in the pack (remove, then set). The reloaded fleet's `loadJobState("pack-nightly")` keeps its `lastAttemptAt`.
     - `the user's files are untouched`: hash `nimbus.toml` before and after; with no user file, assert it still does not exist.
 - [ ] **Step 2: Run them and see them fail.**
