@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792741944396,
+  "lastUpdate": 1792742563470,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "49699333+dependabot[bot]@users.noreply.github.com",
-            "name": "dependabot[bot]",
-            "username": "dependabot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "99e42859f43ec73b356c46e903f72f2792b77d22",
-          "message": "chore(deps): bump interprocess from 2.4.2 to 2.4.3 in /packages/ui/src-tauri in the cargo-all-minor-patch group (#1041)\n\nBumps the cargo-all-minor-patch group in /packages/ui/src-tauri with 1\nupdate: [interprocess](https://github.com/kotauskas/interprocess).\n\nUpdates `interprocess` from 2.4.2 to 2.4.3\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/kotauskas/interprocess/releases\">interprocess's\nreleases</a>.</em></p>\n<blockquote>\n<h2>2.4.3</h2>\n<ul>\n<li>A few documentation improvements have been made. In particular, the\nreadme has been made nicer to look at, and those who are lost and not\nsure which IPC primitive they should choose should have a better time\nnavigating the docs thanks to a few helpful pointers. Thanks to Daniel\nMcNab for <a href=\"https://linebender.org/blog/doc-include/\">his post on\nhow to get intra-doc links to play along with <code>#![doc =\ninclude_str!(&quot;../README.md&quot;)]</code></a>!</li>\n<li>New warnings caught by nightly CI have been triaged. No changes in\nbehavior were made.</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a\nhref=\"https://github.com/kotauskas/interprocess/commit/baf96ff6394d52145203ac00e642b595d37651bc\"><code>baf96ff</code></a>\nfix: warning from eyre macro</li>\n<li><a\nhref=\"https://github.com/kotauskas/interprocess/commit/d0ad92856ea07c70ff8534152f897762301222bc\"><code>d0ad928</code></a>\nfix: redundant reference in <code>write!</code> argument</li>\n<li><a\nhref=\"https://github.com/kotauskas/interprocess/commit/adef20271400bc51d01cc95bf4f0c61834c48e95\"><code>adef202</code></a>\ndocs: some adjustments</li>\n<li>See full diff in <a\nhref=\"https://github.com/kotauskas/interprocess/compare/2.4.2...2.4.3\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\n\n[![Dependabot compatibility\nscore](https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=interprocess&package-manager=cargo&previous-version=2.4.2&new-version=2.4.3)](https://docs.github.com/en/github/managing-security-vulnerabilities/about-dependabot-security-updates#about-compatibility-scores)\n\nDependabot will resolve any conflicts with this PR as long as you don't\nalter it yourself. You can also trigger a rebase manually by commenting\n`@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits\nthat have been made to it\n- `@dependabot show <dependency name> ignore conditions` will show all\nof the ignore conditions of the specified dependency\n- `@dependabot ignore <dependency name> major version` will close this\ngroup update PR and stop Dependabot creating any more for the specific\ndependency's major version (unless you unignore this specific\ndependency's major version or upgrade to it yourself)\n- `@dependabot ignore <dependency name> minor version` will close this\ngroup update PR and stop Dependabot creating any more for the specific\ndependency's minor version (unless you unignore this specific\ndependency's minor version or upgrade to it yourself)\n- `@dependabot ignore <dependency name>` will close this group update PR\nand stop Dependabot creating any more for the specific dependency\n(unless you unignore this specific dependency or upgrade to it yourself)\n- `@dependabot unignore <dependency name>` will remove all of the ignore\nconditions of the specified dependency\n- `@dependabot unignore <dependency name> <ignore condition>` will\nremove the ignore condition of the specified dependency and ignore\nconditions\n\n\n</details>\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-04T18:06:42+03:00",
-          "tree_id": "6d9031b9571267a2390a3b43684bd0f98eb6e93e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/99e42859f43ec73b356c46e903f72f2792b77d22"
-        },
-        "date": 1785857153657,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 255.60422389999476,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 273.2890072500013,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 234.95019905000262,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "83db9195c391991ff17ad51433aa49296f400453",
+          "message": "chore: release main (#1722)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.1.0</summary>\n\n##\n[10.1.0](https://github.com/nimbus-agent/Nimbus/compare/v10.0.0...v10.1.0)\n(2026-10-23)\n\n\n### Features\n\n* **config:** layered config reader; profiles inherit from nimbus.toml\n([#1714](https://github.com/nimbus-agent/Nimbus/issues/1714))\n([780303e](https://github.com/nimbus-agent/Nimbus/commit/780303ecd3570d85ab5c4a73403570fd5b38aeda))\n* **config:** pack layers under the user's config, allowlisted and\nconflict-checked\n([#1718](https://github.com/nimbus-agent/Nimbus/issues/1718))\n([b03e5c2](https://github.com/nimbus-agent/Nimbus/commit/b03e5c2fa1ceec5856697b70a7d674dd7f0d6704))\n\n\n### Bug Fixes\n\n* **cli:** vault set reads the value from a hidden prompt or stdin\n([#1723](https://github.com/nimbus-agent/Nimbus/issues/1723))\n([c5cefb8](https://github.com/nimbus-agent/Nimbus/commit/c5cefb840fe42a856b1998c3930c218c4963c782))\n* **deps:** ip-address 10.7.4 for GHSA-rxp7-6hxx-x8q5\n([#1717](https://github.com/nimbus-agent/Nimbus/issues/1717))\n([7d9701f](https://github.com/nimbus-agent/Nimbus/commit/7d9701f7874f2c00fa1f2660af0ac58f8327d615))\n* **extensions:** say on Windows that a run approval's host list is not\nenforced ([#1716](https://github.com/nimbus-agent/Nimbus/issues/1716))\n([a012fed](https://github.com/nimbus-agent/Nimbus/commit/a012fed7603ed913824fc61bc73bf6fdf00ce919))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-23T07:52:45Z",
+          "tree_id": "37855e1e80fe3bba211844ec4a10419056d271fc",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/83db9195c391991ff17ad51433aa49296f400453"
+        },
+        "date": 1792742559042,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 262.74000749999647,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 263.85389764999854,
             "unit": "ms"
           }
         ]
