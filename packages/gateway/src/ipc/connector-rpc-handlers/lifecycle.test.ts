@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createRpcFixture, type RpcFixture } from "../../../test/helpers/rpc-harness.ts";
 import type { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import type { ConnectorRpcHandlerContext } from "./context.ts";
-import { handleConnectorSync } from "./lifecycle.ts";
+import {
+  emitConfigChanged,
+  handleConnectorPause,
+  handleConnectorResume,
+  handleConnectorSync,
+  pauseConnector,
+  resumeConnector,
+} from "./lifecycle.ts";
 
 let fixture: RpcFixture;
 
@@ -19,12 +26,13 @@ type StubScheduler = ConnectorRpcHandlerContext["syncScheduler"];
 
 function makeStubScheduler(): {
   stub: StubScheduler;
-  calls: { forced: string[] };
+  calls: { forced: string[]; full: boolean[] };
 } {
-  const calls = { forced: [] as string[] };
+  const calls = { forced: [] as string[], full: [] as boolean[] };
   const stub = {
-    async forceSync(id: string): Promise<void> {
+    async forceSync(id: string, opts?: { full?: boolean }): Promise<void> {
       calls.forced.push(id);
+      calls.full.push(opts?.full === true);
     },
   } as unknown as StubScheduler;
   return { stub, calls };
@@ -73,28 +81,32 @@ describe("handleConnectorSync", () => {
     expect(calls.forced).toEqual(["github"]);
   });
 
-  test("full: true triggers clearConnectorSyncCursor before scheduling", async () => {
+  // The handler clears nothing itself: a clear made before the forced run starts would be
+  // overwritten by a run already in flight. It hands `full` to the scheduler, which clears the
+  // cursor as the forced run starts.
+  test("full: true is passed to forceSync, and the handler clears no cursor itself", async () => {
     const { stub: scheduler, calls } = makeStubScheduler();
     let cleared = false;
-    const origClear = fixture.localIndex.clearConnectorSyncCursor.bind(fixture.localIndex);
-    fixture.localIndex.clearConnectorSyncCursor = (id: string): void => {
+    fixture.localIndex.clearConnectorSyncCursor = (): void => {
       cleared = true;
-      origClear(id);
     };
     const r = await handleConnectorSync(buildCtx({ serviceId: "github", full: true }, scheduler));
     expect(r.kind).toBe("hit");
-    expect(cleared).toBe(true);
+    expect(cleared).toBe(false);
     expect(calls.forced).toEqual(["github"]);
+    expect(calls.full).toEqual([true]);
   });
 
-  test("full: false does not clear the cursor", async () => {
-    const { stub: scheduler } = makeStubScheduler();
+  test("full: false (or absent) asks forceSync for no full run", async () => {
+    const { stub: scheduler, calls } = makeStubScheduler();
     let cleared = false;
     fixture.localIndex.clearConnectorSyncCursor = (): void => {
       cleared = true;
     };
     await handleConnectorSync(buildCtx({ serviceId: "github", full: false }, scheduler));
+    await handleConnectorSync(buildCtx({ serviceId: "github" }, scheduler));
     expect(cleared).toBe(false);
+    expect(calls.full).toEqual([false, false]);
   });
 });
 
@@ -137,5 +149,49 @@ describe("handleConnectorSync — gateway-side syncables", () => {
       expect((e as ConnectorRpcError).rpcCode).toBe(-32602);
       expect((e as ConnectorRpcError).message).toContain("Invalid serviceId");
     }
+  });
+});
+
+/** A scheduler double that records pause/resume, standing in for SyncScheduler. */
+function makePauseScheduler(): { stub: StubScheduler; calls: string[] } {
+  const calls: string[] = [];
+  const stub = {
+    pause(id: string): void {
+      calls.push(`pause:${id}`);
+    },
+    resume(id: string): void {
+      calls.push(`resume:${id}`);
+    },
+  } as unknown as StubScheduler;
+  return { stub, calls };
+}
+
+describe("pause / resume route to the scheduler when there is one", () => {
+  test("handleConnectorPause and handleConnectorResume call the scheduler, not LocalIndex", () => {
+    const { stub, calls } = makePauseScheduler();
+    let touchedIndex = false;
+    fixture.localIndex.pauseConnectorSync = (): void => {
+      touchedIndex = true;
+    };
+    fixture.localIndex.resumeConnectorSync = (): void => {
+      touchedIndex = true;
+    };
+    expect(handleConnectorPause(buildCtx({ serviceId: "github" }, stub)).kind).toBe("hit");
+    expect(handleConnectorResume(buildCtx({ serviceId: "github" }, stub)).kind).toBe("hit");
+    expect(calls).toEqual(["pause:github", "resume:github"]);
+    expect(touchedIndex).toBe(false);
+    expect(fixture.notifications.payloadsFor("connector.configChanged")).toHaveLength(2);
+  });
+
+  test("pauseConnector and resumeConnector call the scheduler when one is given", () => {
+    const { stub, calls } = makePauseScheduler();
+    pauseConnector("github", stub, fixture.localIndex);
+    resumeConnector("github", stub, fixture.localIndex);
+    expect(calls).toEqual(["pause:github", "resume:github"]);
+  });
+
+  test("emitConfigChanged sends nothing for a service with no status row", () => {
+    emitConfigChanged(fixture.notify, fixture.localIndex, "never-registered");
+    expect(fixture.notifications.payloadsFor("connector.configChanged")).toEqual([]);
   });
 });

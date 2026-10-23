@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import {
+  clearSchedulerCursor,
   countItemsForService,
   insertSyncTelemetry,
   listAllSchedulerStates,
@@ -33,6 +34,8 @@ export interface SchedulerStateRepository {
   writePaused(serviceId: string, paused: boolean): void;
   /** The cursor alone: a rate-limited / unauthenticated run's `resumeCursor`. */
   writeCursor(serviceId: string, cursor: string): void;
+  /** The cursor back to NULL: a `connector.sync --full` run starts from nothing. */
+  clearCursor(serviceId: string): void;
   updateState(params: {
     serviceId: string;
     cursor: string | null;
@@ -82,6 +85,10 @@ export class SqliteSchedulerStateRepository implements SchedulerStateRepository 
 
   writeCursor(serviceId: string, cursor: string): void {
     setSchedulerCursor(this.db, serviceId, cursor);
+  }
+
+  clearCursor(serviceId: string): void {
+    clearSchedulerCursor(this.db, serviceId);
   }
 
   updateState(params: {
