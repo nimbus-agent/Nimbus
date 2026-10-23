@@ -2,6 +2,15 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.1.1](https://github.com/nimbus-agent/Nimbus/compare/v10.1.0...v10.1.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **extensions:** migrate accept pauses a sync the sandbox cannot confine before it answers ([#1729](https://github.com/nimbus-agent/Nimbus/issues/1729)) ([17518bd](https://github.com/nimbus-agent/Nimbus/commit/17518bd441a12b97fcea2755a76ee338ee564ce9))
+* **extensions:** re-check a legacy-key binding before storing or reading an extension credential ([#1726](https://github.com/nimbus-agent/Nimbus/issues/1726)) ([4da0e18](https://github.com/nimbus-agent/Nimbus/commit/4da0e18b966ef96881b7cfb9a77f67bfffbafcae))
+* **index:** pausing or resuming without a scheduler records the health transition ([#1728](https://github.com/nimbus-agent/Nimbus/issues/1728)) ([5b5906d](https://github.com/nimbus-agent/Nimbus/commit/5b5906d59bb77870bf65b97b6f113cb64e896683))
+
 ## [10.1.0](https://github.com/nimbus-agent/Nimbus/compare/v10.0.0...v10.1.0) (2026-10-23)
 
 
