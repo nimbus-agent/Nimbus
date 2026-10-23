@@ -324,6 +324,12 @@ export class SyncScheduler {
   }
   async stop(): Promise<void> {
     this.stopped = true;
+    // A queued job will never be pumped now: reject its force waiters instead of leaving them
+    // hanging. Running jobs are drained below and settle with their own outcome.
+    const stoppedErr = new Error("Scheduler stopped");
+    for (const job of this.queue) {
+      this.settleJob(job, stoppedErr);
+    }
     if (this.tickHandle !== null) {
       clearInterval(this.tickHandle);
       this.tickHandle = null;
@@ -376,6 +382,10 @@ export class SyncScheduler {
     if (this.syncDisabled) {
       throw new SyncDisabledError(serviceId);
     }
+    if (this.stopped) {
+      // Nothing will ever pump this request: reject rather than hang.
+      throw new Error("Scheduler stopped");
+    }
     const full = opts?.full === true;
     return new Promise((resolve, reject) => {
       const waiter: ForceWaiter = (err?: unknown) => {
@@ -393,7 +403,8 @@ export class SyncScheduler {
         this.queue.unshift({ serviceId, reason: "force", waiters: [waiter], clearCursor: full });
         this.rebuildQueuedServiceIds();
       } else {
-        queuedForce.waiters = [...(queuedForce.waiters ?? []), waiter];
+        queuedForce.waiters ??= [];
+        queuedForce.waiters.push(waiter);
         queuedForce.clearCursor = queuedForce.clearCursor === true || full;
       }
       this.pump();
@@ -753,7 +764,14 @@ export class SyncScheduler {
 
     transitionHealth(this.db, job.serviceId, { type: "sync_success" });
 
-    if (result.hasMore) {
+    // No continuation when a force job for the service is already queued: it is picked first
+    // (pump takes the queue front-first and continuations are unshifted), so queueing one would
+    // make the force request wait out the whole page chain. The force job resumes from the cursor
+    // just persisted (or clears it on purpose for `full`), and its own run queues continuations.
+    const forceQueued = this.queue.some(
+      (j) => j.serviceId === job.serviceId && j.reason === "force",
+    );
+    if (result.hasMore && !forceQueued) {
       this.queue.unshift({ serviceId: job.serviceId, reason: "continuation" });
       this.rebuildQueuedServiceIds();
     }

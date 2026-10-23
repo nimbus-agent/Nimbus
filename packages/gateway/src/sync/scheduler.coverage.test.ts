@@ -791,6 +791,114 @@ describe("SyncScheduler — forceSync edge cases", () => {
     await sched.stop();
     db.close();
   });
+
+  /** A syncable whose page N returns cursor `pN`; page 1 waits on `gate`. Records each cursor. */
+  function pagingSyncable(
+    serviceId: string,
+    gate: Promise<void>,
+    hasMore: (page: number) => boolean,
+  ): { syncable: Syncable; cursors: Array<string | null>; entered: Promise<void> } {
+    const cursors: Array<string | null> = [];
+    const entered = deferred();
+    return {
+      cursors,
+      entered: entered.promise,
+      syncable: {
+        serviceId,
+        defaultIntervalMs: 60_000,
+        initialSyncDepthDays: 30,
+        async sync(_ctx, cursor): Promise<SyncResult> {
+          cursors.push(cursor);
+          const page = cursors.length;
+          if (page === 1) {
+            entered.resolve();
+            await gate;
+          }
+          return { ...OK, cursor: `p${page}`, hasMore: hasMore(page) };
+        },
+      },
+    };
+  }
+
+  test("a force request during a paginating run is served next, not after the continuation chain", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    // More pages every time, up to a bound that keeps a regression finite.
+    const svc = pagingSyncable("pages", gate.promise, (page) => page < 6);
+    const sched = new SyncScheduler(ctxFor(db), { catchUpOnRestart: true }, { isOnline: online });
+    sched.register(svc.syncable);
+    sched.start();
+    await within(svc.entered, "the scheduled first page to start");
+
+    const forced = sched.forceSync("pages").then(() => [...svc.cursors]);
+    gate.resolve();
+    // The forced run is the very next one and resumes from the cursor page 1 persisted.
+    expect(await within(forced, "the force request")).toEqual([null, "p1"]);
+    await sched.stop();
+    db.close();
+  });
+
+  test("a plain then a full force request during one in-flight run share one follow-up run from an empty cursor", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = pagingSyncable("mixed", gate.promise, () => false);
+    const sched = new SyncScheduler(ctxFor(db), { catchUpOnRestart: true }, { isOnline: online });
+    sched.register(svc.syncable);
+    sched.start();
+    await within(svc.entered, "the scheduled run to start");
+
+    const plain = sched.forceSync("mixed").then(() => [...svc.cursors]);
+    const full = sched.forceSync("mixed", { full: true }).then(() => [...svc.cursors]);
+    gate.resolve();
+    const [a, b] = await within(Promise.all([plain, full]), "both force requests");
+    expect(a).toEqual([null, null]);
+    expect(b).toEqual([null, null]);
+    await macrotask();
+    expect(svc.cursors).toHaveLength(2);
+    await sched.stop();
+    db.close();
+  });
+
+  test("stop rejects a queued force request with 'Scheduler stopped' and lets the running one finish", async () => {
+    const db = openMemoryIndexDatabase();
+    const gate = deferred();
+    const svc = probe("halt", async (call) => {
+      if (call === 1) await gate.promise;
+      return OK;
+    });
+    const sched = new SyncScheduler(ctxFor(db), {}, { isOnline: online });
+    sched.register(svc.syncable);
+
+    const running = settleSnapshot(sched.forceSync("halt"), svc.calls);
+    await within(svc.entered, "the forced run to start");
+    const queued = settleSnapshot(sched.forceSync("halt"), svc.calls);
+    const stopped = sched.stop();
+    expect(await within(queued, "stop to reject the queued request")).toEqual({
+      calls: 1,
+      outcome: "Scheduler stopped",
+    });
+    gate.resolve();
+    expect(await within(running, "the running request")).toEqual({
+      calls: 1,
+      outcome: "resolved",
+    });
+    await within(stopped, "stop to drain");
+    expect(svc.calls()).toBe(1);
+    db.close();
+  });
+
+  test("a force request after stop rejects at once with 'Scheduler stopped'", async () => {
+    const db = openMemoryIndexDatabase();
+    const svc = probe("after");
+    const sched = new SyncScheduler(ctxFor(db), {}, { isOnline: online });
+    sched.register(svc.syncable);
+    await sched.stop();
+    await expect(within(sched.forceSync("after"), "the force request")).rejects.toThrow(
+      "Scheduler stopped",
+    );
+    expect(svc.calls()).toBe(0);
+    db.close();
+  });
 });
 
 /**
