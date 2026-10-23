@@ -1,12 +1,13 @@
 // Admin console entry point: bearer-token bootstrap + sidebar routing + DOM mount.
 //
-// innerHTML is used to mount view output. This is XSS-safe ONLY because every
-// dynamic value in render.ts/views.ts is passed through esc(). Never interpolate
-// a raw user/server string into the DOM outside those pure view functions.
+// Views return ViewNode trees that `mount` builds with createElement/createTextNode,
+// so no server-supplied string is ever parsed as HTML (see view-tree.ts).
 import type { AdminClient } from "./client.ts";
 import { makeClient } from "./client.ts";
 import type { GatewayStatus } from "./render.ts";
 import { renderOverview } from "./render.ts";
+import type { ViewChild } from "./view-tree.ts";
+import { mount } from "./view-tree.ts";
 import {
   renderAudit,
   renderConnectors,
@@ -39,7 +40,7 @@ function tokenFromHash(): string | null {
   return null;
 }
 
-function renderView(route: Route, status: GatewayStatus, isAnchor: boolean): string {
+function renderView(route: Route, status: GatewayStatus, isAnchor: boolean): ViewChild[] {
   switch (route) {
     case "overview":
       return renderOverview(status);
@@ -133,7 +134,7 @@ function start(token: string): void {
     // Only the anchor may author policy. Peers render the editor read-only; the PUT
     // endpoint is the authoritative server-side gate regardless of this UI hint.
     const isAnchor = latest.policy.source === "anchor";
-    app.innerHTML = renderView(current, latest, isAnchor);
+    mount(app, renderView(current, latest, isAnchor), document);
     if (current === "policy") {
       wirePolicySave(client);
     }

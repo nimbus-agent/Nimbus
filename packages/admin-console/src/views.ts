@@ -1,68 +1,61 @@
-// Pure view functions for the admin console. Mirror render.ts: every dynamic
-// value is passed through esc() for XSS-safety. No gateway-source imports.
+// Pure view functions for the admin console. Mirror render.ts: every view
+// returns a `ViewNode` tree whose dynamic values are text children, never
+// markup (see view-tree.ts). No gateway-source imports.
 import type { GatewayStatus } from "./render.ts";
-import { esc, renderPolicyBanner } from "./render.ts";
+import { card, renderPolicyBanner } from "./render.ts";
+import type { ViewChild, ViewNode } from "./view-tree.ts";
+import { h } from "./view-tree.ts";
 
-export function renderConnectors(connectors: GatewayStatus["connectors"]): string {
-  const rows = connectors
-    .map((c) => {
-      const blocked = c.blockedByPolicy ? "blocked by policy" : "";
-      return [
-        "<tr>",
-        `<td>${esc(c.id)}</td>`,
-        `<td>${c.enabled ? "yes" : "no"}</td>`,
-        `<td>${esc(blocked)}</td>`,
-        `<td>${esc(c.health)}</td>`,
-        "</tr>",
-      ].join("");
-    })
-    .join("");
-  return [
-    "<h2>Connectors</h2>",
-    '<table class="grid">',
-    "<thead><tr><th>connector</th><th>enabled</th><th>policy</th><th>health</th></tr></thead>",
-    `<tbody>${rows}</tbody>`,
-    "</table>",
-  ].join("");
+function grid(headers: readonly string[], rows: readonly (readonly string[])[]): ViewNode {
+  return h(
+    "table",
+    { class: "grid" },
+    h("thead", {}, h("tr", {}, ...headers.map((t) => h("th", {}, t)))),
+    h("tbody", {}, ...rows.map((r) => h("tr", {}, ...r.map((cell) => h("td", {}, cell))))),
+  );
 }
 
-export function renderAudit(audit: GatewayStatus["audit"]): string {
-  return [
-    "<h2>Audit chain</h2>",
-    '<div class="cards">',
-    `<div class="card"><div class="card-v">${esc(String(audit.chainLength))}</div><div class="card-l">chain length</div></div>`,
-    `<div class="card"><div class="card-v">${esc(String(audit.appendRate1h))}</div><div class="card-l">appends / 1h</div></div>`,
-    "</div>",
-    `<p>last hash: <code>${esc(audit.lastHash)}</code></p>`,
-  ].join("");
+export function renderConnectors(connectors: GatewayStatus["connectors"]): ViewChild[] {
+  const rows = connectors.map((c) => [
+    c.id,
+    c.enabled ? "yes" : "no",
+    c.blockedByPolicy ? "blocked by policy" : "",
+    c.health,
+  ]);
+  return [h("h2", {}, "Connectors"), grid(["connector", "enabled", "policy", "health"], rows)];
 }
 
-export function renderNamespaces(namespaces: GatewayStatus["namespaces"]): string {
+export function renderAudit(audit: GatewayStatus["audit"]): ViewChild[] {
+  return [
+    h("h2", {}, "Audit chain"),
+    h(
+      "div",
+      { class: "cards" },
+      card("chain length", String(audit.chainLength)),
+      card("appends / 1h", String(audit.appendRate1h)),
+    ),
+    h("p", {}, "last hash: ", h("code", {}, audit.lastHash)),
+  ];
+}
+
+export function renderNamespaces(namespaces: GatewayStatus["namespaces"]): ViewChild[] {
   if (namespaces.length === 0) {
-    return ["<h2>Namespaces</h2>", "<p>no shared namespaces</p>"].join("");
+    return [h("h2", {}, "Namespaces"), h("p", {}, "no shared namespaces")];
   }
-  const rows = namespaces
-    .map((n) => `<tr><td>${esc(n.name)}</td><td>${esc(String(n.subscribers))}</td></tr>`)
-    .join("");
-  return [
-    "<h2>Namespaces</h2>",
-    '<table class="grid">',
-    "<thead><tr><th>namespace</th><th>subscribers</th></tr></thead>",
-    `<tbody>${rows}</tbody>`,
-    "</table>",
-  ].join("");
+  const rows = namespaces.map((n) => [n.name, String(n.subscribers)]);
+  return [h("h2", {}, "Namespaces"), grid(["namespace", "subscribers"], rows)];
 }
 
-export function renderUsers(identity: GatewayStatus["identity"]): string {
+export function renderUsers(identity: GatewayStatus["identity"]): ViewChild[] {
   const status = identity.operatorValid ? "valid ✓" : "invalid ✗";
-  const ext =
-    identity.externalId === undefined
-      ? ""
-      : `<p>external id: <code>${esc(identity.externalId)}</code></p>`;
-  return ["<h2>Users</h2>", `<p>operator: <b>${esc(status)}</b></p>`, ext].join("");
+  const out: ViewChild[] = [h("h2", {}, "Users"), h("p", {}, "operator: ", h("b", {}, status))];
+  if (identity.externalId !== undefined) {
+    out.push(h("p", {}, "external id: ", h("code", {}, identity.externalId)));
+  }
+  return out;
 }
 
-export function renderPolicy(status: GatewayStatus, opts?: { isAnchor?: boolean }): string {
+export function renderPolicy(status: GatewayStatus, opts?: { isAnchor?: boolean }): ViewChild[] {
   const p = status.policy;
   const rows = [
     ["org", p.org ?? "—"],
@@ -70,26 +63,21 @@ export function renderPolicy(status: GatewayStatus, opts?: { isAnchor?: boolean 
     ["source", p.source],
     ["signature valid", p.signatureValid ? "yes" : "no"],
     ["pending restart", p.pendingRestart ? "yes" : "no"],
-  ]
-    .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`)
-    .join("");
-  const summary = [
-    "<h2>Policy</h2>",
+  ];
+  const out: ViewChild[] = [
+    h("h2", {}, "Policy"),
     renderPolicyBanner(p),
-    '<table class="grid">',
-    "<thead><tr><th>field</th><th>value</th></tr></thead>",
-    `<tbody>${rows}</tbody>`,
-    "</table>",
+    grid(["field", "value"], rows),
   ];
   if (opts?.isAnchor === true) {
-    summary.push(
-      "<h3>Edit org policy</h3>",
-      '<textarea id="policy-editor" rows="12" cols="80"></textarea>',
-      '<div><button id="policy-save">Save policy</button></div>',
-      '<p id="policy-save-status"></p>',
+    out.push(
+      h("h3", {}, "Edit org policy"),
+      h("textarea", { id: "policy-editor", rows: "12", cols: "80" }),
+      h("div", {}, h("button", { id: "policy-save" }, "Save policy")),
+      h("p", { id: "policy-save-status" }),
     );
   } else {
-    summary.push("<p><i>read-only on this peer</i></p>");
+    out.push(h("p", {}, h("i", {}, "read-only on this peer")));
   }
-  return summary.join("");
+  return out;
 }

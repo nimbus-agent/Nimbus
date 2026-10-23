@@ -1,3 +1,6 @@
+import type { ViewChild, ViewNode } from "./view-tree.ts";
+import { h } from "./view-tree.ts";
+
 export interface PolicyState {
   org?: string;
   version?: number;
@@ -16,43 +19,49 @@ export interface GatewayStatus {
   syncFreshnessMs: number;
 }
 
-export function esc(s: string): string {
-  return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-export function renderPolicyBanner(p: PolicyState): string {
+export function renderPolicyBanner(p: PolicyState): ViewNode {
   if (p.source === "none" || !p.signatureValid) {
-    return `<div class="banner banner-warn">⚠ ungoverned — no valid org policy applied</div>`;
+    return h("div", { class: "banner banner-warn" }, "⚠ ungoverned — no valid org policy applied");
   }
-  const restart = p.pendingRestart ? ' · <span class="warn">restart pending</span>' : "";
-  // `p.version` is escaped for the same reason `p.org` beside it is: both come
-  // from the /v1/admin/status JSON, which `client.ts` shape-checks but does not
-  // validate per field — `version` is only TYPED number, never proven to be one.
-  // This string is assigned to `innerHTML` in main.ts, so an unescaped value
-  // here is a DOM-XSS sink. It was the one interpolation in this renderer that
-  // esc() did not cover; every other dynamic value goes through `card()`, which
-  // escapes. `restart` is a locally-built constant, deliberately raw HTML.
-  return `<div class="banner">policy <b>${esc(p.org ?? "")}</b> v${esc(String(p.version ?? 0))} ✓ signed${restart}</div>`;
+  // `org` and `version` come from the /v1/admin/status JSON, which `client.ts`
+  // shape-checks but does not validate per field — `version` is only TYPED
+  // number. Both are text children, so whatever they hold renders as text.
+  const restart: ViewChild[] = p.pendingRestart
+    ? [" · ", h("span", { class: "warn" }, "restart pending")]
+    : [];
+  return h(
+    "div",
+    { class: "banner" },
+    "policy ",
+    h("b", {}, p.org ?? ""),
+    ` v${String(p.version ?? 0)} ✓ signed`,
+    ...restart,
+  );
 }
 
-export function renderOverview(s: GatewayStatus): string {
+export function card(label: string, value: string): ViewNode {
+  return h(
+    "div",
+    { class: "card" },
+    h("div", { class: "card-v" }, value),
+    h("div", { class: "card-l" }, label),
+  );
+}
+
+export function renderOverview(s: GatewayStatus): ViewChild[] {
   const reachable = s.peers.filter((p) => p.reachable).length;
   const blocked = s.connectors.filter((c) => c.blockedByPolicy).length;
-  const card = (label: string, value: string) =>
-    `<div class="card"><div class="card-v">${esc(value)}</div><div class="card-l">${esc(label)}</div></div>`;
   return [
     renderPolicyBanner(s.policy),
-    `<div class="cards">`,
-    card("peers reachable", `${reachable}/${s.peers.length}`),
-    card("connectors", `${s.connectors.length} (${blocked} blocked)`),
-    card("audit chain", `${s.audit.chainLength}`),
-    card("HITL pending", `${s.hitl.pendingApprovals + s.hitl.pendingQuorum}`),
-    card("sync age", `${Math.round(s.syncFreshnessMs / 1000)}s`),
-    card("operator", s.identity.operatorValid ? "valid ✓" : "invalid ✗"),
-    `</div>`,
-  ].join("");
+    h(
+      "div",
+      { class: "cards" },
+      card("peers reachable", `${reachable}/${s.peers.length}`),
+      card("connectors", `${s.connectors.length} (${blocked} blocked)`),
+      card("audit chain", `${s.audit.chainLength}`),
+      card("HITL pending", `${s.hitl.pendingApprovals + s.hitl.pendingQuorum}`),
+      card("sync age", `${Math.round(s.syncFreshnessMs / 1000)}s`),
+      card("operator", s.identity.operatorValid ? "valid ✓" : "invalid ✗"),
+    ),
+  ];
 }
