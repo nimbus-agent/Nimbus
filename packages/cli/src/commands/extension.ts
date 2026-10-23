@@ -16,6 +16,12 @@ import {
   registerConsentPromptHandler,
 } from "../lib/interactive-ipc-handlers.ts";
 import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import {
+  assertPipedSecretCanBeApproved,
+  defaultSecretInputIo,
+  readSecretValue,
+  type SecretInputIo,
+} from "../lib/secret-input.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { runExtensionInfoRemote, runExtensionSearch } from "./extension-registry-cmds.ts";
 import {
@@ -545,46 +551,15 @@ export async function runExtensionRevoke(client: IPCClient, rest: string[]): Pro
 const CREDENTIAL_USAGE = "Usage: nimbus extension credential set <id> <name> | status <id>";
 
 /** Where `credential set` reads the secret from, and how its connection answers the gateway's prompt. */
-export interface CredentialCliIo {
-  readonly stdinIsTty: boolean;
-  /** `NIMBUS_SCRIPT_CONSENT_SOURCE`, which is the only way to answer the prompt with stdin piped. */
-  readonly scriptConsentSource: string | undefined;
-  /** A hidden prompt; `undefined` when the operator cancels. */
-  readHidden(message: string): Promise<string | undefined>;
-  readStdin(): Promise<string>;
+export interface CredentialCliIo extends SecretInputIo {
   registerConsent(client: IPCClient): void;
 }
 
 function defaultCredentialIo(): CredentialCliIo {
   return {
-    stdinIsTty: process.stdin.isTTY === true,
-    scriptConsentSource: process.env["NIMBUS_SCRIPT_CONSENT_SOURCE"],
-    readHidden: async (message) => {
-      // Loaded on use: the CLI test helpers mock `@clack/prompts` process-wide without `password`,
-      // and a static named import would fail every test file that loads this module.
-      const { password } = await import("@clack/prompts");
-      const v = await password({ message });
-      return isCancel(v) ? undefined : v;
-    },
-    readStdin: () => Bun.stdin.text(),
+    ...defaultSecretInputIo(),
     registerConsent: (client) => registerConsentFor(client, { kind: "prompt" }),
   };
-}
-
-/** One trailing line ending is the shell's (`echo`, a here-string), not part of the secret. */
-function stripOneTrailingNewline(s: string): string {
-  if (s.endsWith("\r\n")) return s.slice(0, -2);
-  if (s.endsWith("\n")) return s.slice(0, -1);
-  return s;
-}
-
-async function readCredentialValue(io: CredentialCliIo, name: string): Promise<string> {
-  if (io.stdinIsTty) {
-    const v = await io.readHidden(`Value for ${name} (input is hidden)`);
-    if (v === undefined) throw new Error("Cancelled; nothing was stored.");
-    return v;
-  }
-  return stripOneTrailingNewline(await io.readStdin());
 }
 
 /**
@@ -607,15 +582,8 @@ async function runExtensionCredentialSet(
       "nimbus extension credential set never takes the value as an argument: it is read from a hidden prompt, or from stdin when stdin is not a terminal.",
     );
   }
-  if (!io.stdinIsTty && (io.scriptConsentSource === undefined || io.scriptConsentSource === "")) {
-    throw new Error(
-      "With the value piped on stdin, the vault.set approval cannot be answered at this terminal; set NIMBUS_SCRIPT_CONSENT_SOURCE, or run it at a terminal to be prompted for the value.",
-    );
-  }
-  const value = await readCredentialValue(io, name);
-  if (value.trim() === "") {
-    throw new Error(`The value for ${name} is blank; nothing was stored.`);
-  }
+  assertPipedSecretCanBeApproved(io);
+  const value = await readSecretValue(io, name);
   io.registerConsent(client);
   const out = await client.call<{ name: string; set: boolean }>("extension.credentialSet", {
     id: id.trim(),

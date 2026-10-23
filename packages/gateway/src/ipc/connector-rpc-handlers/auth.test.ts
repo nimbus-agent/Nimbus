@@ -258,7 +258,7 @@ describe("handleConnectorAuth — a service with no auth flow refuses usefully (
       expect(err.rpcCode).toBe(-32602);
       expect(err.message).not.toContain("oauthProfileForService");
       for (const key of CONNECTOR_VAULT_SECRET_KEYS[service]) {
-        expect(err.message).toContain(`nimbus vault set ${key} <value>`);
+        expect(err.message).toContain(`nimbus vault set ${key}`);
       }
       // The refusal must happen before anything is stored.
       expect(await vault.listKeys(`${service}.`)).toEqual([]);

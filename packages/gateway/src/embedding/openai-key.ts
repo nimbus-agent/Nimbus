@@ -25,7 +25,7 @@ export async function resolveOpenAIEmbeddingKey(
   if (envKey !== "") {
     logger.warn(
       `OpenAI embedding key read from the OPENAI_API_KEY environment variable. Store it in the ` +
-        `Vault instead (nimbus vault set ${OPENAI_EMBEDDING_VAULT_KEY} <key>) and unset the variable.`,
+        `Vault instead (nimbus vault set ${OPENAI_EMBEDDING_VAULT_KEY}) and unset the variable.`,
     );
     return envKey;
   }

@@ -145,13 +145,13 @@ const MAX_REQUESTS_PER_WINDOW_CLIP = 20;
 const MAX_REQUESTS_PER_WINDOW_BRIEF_SOURCE = 60;
 
 const DEPLOY_DISABLED_HINT =
-  "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token <value>'";
+  "set http_api.deployment_token via 'nimbus vault set http_api.deployment_token'";
 const SCIM_DISABLED_HINT = "set identity.scim.bearer via 'nimbus identity scim set-token <value>'";
 
 const DEPLOY_REJECT_ACTION = "deployment.annotation_rejected";
 const SCIM_REJECT_ACTION = "scim.provision_rejected";
 const POLICY_DISABLED_HINT =
-  "policy write surface disabled — set the bearer via 'nimbus vault set http_api.deployment_token <value>'";
+  "policy write surface disabled — set the bearer via 'nimbus vault set http_api.deployment_token'";
 const POLICY_REJECT_ACTION = "policy.applied_rejected";
 const TEAMS_EVENTS_DISABLED_HINT =
   "ChatOps Teams surface disabled — enable [chatops].teams_enabled";

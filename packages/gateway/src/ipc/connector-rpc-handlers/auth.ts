@@ -909,7 +909,7 @@ export function connectorAuthUnavailableMessage(id: ConnectorServiceId): string 
   if (keys.length === 0) {
     return `${id} has no \`nimbus connector auth\` flow — it ${detail}.`;
   }
-  const commands = keys.map((k) => `  nimbus vault set ${k} <value>`).join("\n");
+  const commands = keys.map((k) => `  nimbus vault set ${k}`).join("\n");
   return (
     `${id} has no \`nimbus connector auth\` flow — it ${detail}. ` +
     "Store its settings in the Vault instead (each write asks for your approval; set the ones your setup uses):\n" +
