@@ -49,6 +49,8 @@ export type EffectiveSection = {
   readonly isArray: boolean;
   readonly malformed?: string;
   readonly blockLayer?: LayerRef;
+  /** `[[fleet.job]]` only: the lower layers whose same-named job this block replaced, low to high. Absent when none. */
+  readonly replaces?: readonly LayerRef[];
   readonly entries: readonly EffectiveEntry[];
   readonly passthrough: readonly { readonly layer: LayerRef; readonly raw: string }[];
 };
@@ -166,7 +168,7 @@ function mergePlainSections(
 function blockToEffective(
   section: DocSection,
   layer: LayerRef,
-  extra: { malformed?: string },
+  extra: { malformed?: string; replaces?: readonly LayerRef[] },
 ): EffectiveSection {
   const entries: EffectiveEntry[] = [];
   const passthrough: { layer: LayerRef; raw: string }[] = [];
@@ -178,6 +180,9 @@ function blockToEffective(
     header: section.header,
     isArray: section.isArray,
     ...(extra.malformed === undefined ? { blockLayer: layer } : { malformed: extra.malformed }),
+    ...(extra.replaces === undefined || extra.replaces.length === 0
+      ? {}
+      : { replaces: extra.replaces }),
     entries,
     passthrough,
   };
@@ -196,23 +201,52 @@ function mergeFleetJobs(
   parts: readonly Layered[],
   layers: readonly LayerRef[],
 ): EffectiveSection[] {
-  const out: { layerIndex: number; name: string | undefined; section: DocSection }[] = [];
+  type Job = {
+    layerIndex: number;
+    name: string | undefined;
+    section: DocSection;
+    /** Indices (into `layers`) of the lower layers this job replaced. */
+    replaced: readonly number[];
+  };
+  const out: Job[] = [];
   for (const { layerIndex, section } of parts) {
     const name = fleetJobName(section);
     const at =
       name === undefined ? -1 : out.findIndex((o) => o.name === name && o.layerIndex < layerIndex);
     if (at < 0) {
-      out.push({ layerIndex, name, section });
+      out.push({ layerIndex, name, section, replaced: [] });
       continue;
     }
+    const replaced: number[] = [];
+    const noteReplaced = (o: Job | undefined): void => {
+      if (o !== undefined) replaced.push(o.layerIndex, ...o.replaced);
+    };
+    noteReplaced(out[at]);
     // Replace in place at the first lower-layer copy and drop the other lower-layer copies.
-    out[at] = { layerIndex, name, section };
     for (let i = out.length - 1; i > at; i -= 1) {
       const o = out[i];
-      if (o !== undefined && o.name === name && o.layerIndex < layerIndex) out.splice(i, 1);
+      if (o !== undefined && o.name === name && o.layerIndex < layerIndex) {
+        noteReplaced(o);
+        out.splice(i, 1);
+      }
     }
+    out[at] = { layerIndex, name, section, replaced };
   }
-  return out.map((o) => blockToEffective(o.section, layers[o.layerIndex] as LayerRef, {}));
+  return out.map((o) =>
+    blockToEffective(o.section, layers[o.layerIndex] as LayerRef, {
+      replaces: replacedLayerRefs(o.replaced, layers),
+    }),
+  );
+}
+
+/** Layer refs for `indices`, low to high, one per `kind`+`id`. */
+function replacedLayerRefs(indices: readonly number[], layers: readonly LayerRef[]): LayerRef[] {
+  const refs: LayerRef[] = [];
+  for (const i of [...new Set(indices)].sort((x, y) => x - y)) {
+    const r = layers[i];
+    if (r !== undefined && !refs.some((x) => x.kind === r.kind && x.id === r.id)) refs.push(r);
+  }
+  return refs;
 }
 
 /** Merges layer documents (ordered low -> high) into one effective document with provenance. */
