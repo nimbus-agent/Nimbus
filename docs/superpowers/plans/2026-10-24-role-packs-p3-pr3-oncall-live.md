@@ -102,7 +102,11 @@ line), 5.9 and 5.10 (branch `dev/asaf/role-packs` only).
   - `a disable after enable reconciles false` (the row is deleted by the real store; here assert
     the call).
   - `a load that throws keeps the last value, logs once for that version, and does not throw`.
-    Call `isEnabled()` twice at the same version and expect one log.
+    Call `isEnabled()` twice at the same version and expect one log, with two `load` calls.
+  - `a failed load is retried silently and recovers at the same version`. The first `load` throws
+    and the second returns true at the SAME version, so `isEnabled()` becomes true, `reconcile`
+    runs once and there is still only one log. A transient read error must not pin a stale value
+    until the next config change.
   - `start polls; stop clears the timer and a later version change is not polled`. The
     implementation must not call `isEnabled` from the timer after `stop`, but a direct
     `isEnabled()` after `stop()` still answers (Review Focus 3, 4).
@@ -111,10 +115,18 @@ line), 5.9 and 5.10 (branch `dev/asaf/role-packs` only).
   FAIL (module missing).
 
 - [ ] **Step 3: Implement.**
-  - The timer's tick calls the same private `refresh()` that `isEnabled()` calls, so there is one
-    code path.
-  - Like `FleetSupervisor`, it loops while the version keeps moving during a load. Bound it to 3
-    passes, then keep the newest value.
+  - Everything is **synchronous**: `isEnabled()` and the private `refresh()` never return a
+    Promise. `loadNimbusOncallPushFromConfigDir` is synchronous, so the version cannot move during
+    a load and no re-check loop is needed. This differs from `FleetSupervisor`, which loops only
+    because it awaits `retire()`.
+  - The timer's tick calls the same `refresh()` as `isEnabled()`, so there is one code path.
+  - `refresh()` reads `version()`:
+    - an unchanged version returns the cached value;
+    - a changed one calls `load()`. On success it records the version, and calls `reconcile` only
+      when the value differs. On a throw it keeps the old value and does NOT record the version,
+      so the next tick retries. It logs only when the failing version differs from the last
+      version it logged for.
+  - The interval is `.unref()`'d. `stop()` is idempotent.
 
 - [ ] **Step 4:** the same command. Expected: PASS.
 
@@ -127,8 +139,13 @@ line), 5.9 and 5.10 (branch `dev/asaf/role-packs` only).
   - `packages/gateway/src/oncall-push/push-runtime.ts`
   - `packages/gateway/src/oncall-push/push-runner.ts` (`:47` `config`, `:179` the gate)
   - `packages/gateway/src/ipc/oncall-push-rpc.ts` (`:98`)
-  - `packages/gateway/src/platform/assemble.ts` (where `createSchedulerWithMesh` returns
-    `oncallPush`, ~`:3811`: register its stop)
+  - `packages/gateway/src/platform/assemble.ts` (add `oncallPush` to the existing
+    `pushStops(sidecarStops, [...])` list at ~`:3832`)
+  - every other implementer or caller of `OncallPushRuntime`. `git grep -n OncallPushRuntime` on
+    `main` finds `ipc/server/dispatchers-oncall-push.test.ts` (a hand-written fake),
+    `ipc/oncall-push-rpc.test.ts` (a fake), `ipc/oncall-push-rpc.contract.test.ts`,
+    `ipc/demo-rpc.ts` + `demo-rpc.test.ts`, and `demo/seed.ts` + `seed.test.ts`. Every test that
+    assembles a real runtime calls `rt.stop()` in `afterEach`, or in a `finally`.
   - `packages/gateway/src/config/pack-settable.ts` (`PACK_SETTABLE_KEYS`)
   - `packages/gateway/src/packs/bundled/devops.json`
   - every test that builds a runner or runtime config with `enabled` (compile errors find them)
@@ -161,9 +178,12 @@ line), 5.9 and 5.10 (branch `dev/asaf/role-packs` only).
     `oncall.push.enabled = true`. The existing "pm and devops install together" test still passes.
   - **`push-live-pack.integration.test.ts`** (spec § 5.9's required test). Use a temp configDir, a
     real migrated DB, one `createPackLayerStore`, and `initLayeredConfig(dir, { packs: store })`.
-    Run `assembleOncallPushRuntime({ ..., settleImmediately: true, checkMs: 60_000 })` with a
-    `resolveSelf` that yields no identity (the runner then reports `identity_unresolved` once
-    enabled, which proves the gate opened):
+    Run `assembleOncallPushRuntime({ ..., settleImmediately: true, checkMs: 60_000 })`.
+    `OncallPushBootDeps` has no `resolveSelf` seam and none is added. With an empty `person` table
+    and no `[user]` override, `resolveSelfPerson` returns null (the git and OS-username lookups
+    find no person), so once push is enabled the runner reports `identity_unresolved`, which
+    proves the gate opened. First assert `await runtime.identityResolved()` is false, so the test
+    checks its own premise rather than passing for an unrelated reason:
     - before install: `runtime.run("pagerduty")` → `skipped: "disabled"`;
     - after `installPack({ id: "devops" }, deps, approvingGate)`, with no restart: the same call
       → `skipped: "identity_unresolved"` (not `disabled`, not `not_reconciled`), and
@@ -177,11 +197,15 @@ line), 5.9 and 5.10 (branch `dev/asaf/role-packs` only).
     Build the pack deps the way `pack-install.test.ts` does. Do not drive `setPackLayer` directly
     (D36 allows it in tests, but going through `installPack` proves the real path).
   - `oncall-push-rpc.test.ts`: `oncall.pushedList` `enabled` follows `runtime.isEnabled()`.
-  - `pack-install.test.ts`: the devops install prompt has an `oncall.push.enabled` scalar row
-    whose current value and layer come from `explainConfig` (`false`, `default`). This is the first
-    pack key under a two-segment section header, so it proves `explainConfig`'s path resolution
-    handles one. If it does not, fix the resolution in `config-explain.ts` with its own test, and
-    ledger the ruling.
+  - `pack-install.test.ts`: the devops install prompt has an `oncall.push.enabled` scalar row.
+    - With no layer setting the key, `explainConfig` has no entry, so the row is
+      `{ packValue: "true", current: undefined, currentLayer: "default", userOverrides: false }`
+      and renders as `unset`.
+    - With `nimbus.toml` holding `[oncall.push]\nenabled = false`, the row reads current `false`
+      from `nimbus.toml` and is marked `(your file overrides this)`. This is the case that proves
+      `explainConfig` resolves a key under a two-segment section header.
+    - If it does not, fix the resolution in `config-explain.ts` with its own test, and ledger the
+      ruling.
 
 - [ ] **Step 2:** run those files. Expected: FAIL.
 
@@ -192,9 +216,9 @@ line), 5.9 and 5.10 (branch `dev/asaf/role-packs` only).
 
     It keeps the boot reconcile, the boot prune and the comments, and calls `start()`.
   - It passes `isEnabled` to the runner, and returns `isEnabled` and `stop`.
-  - In `assemble.ts`, right after `createSchedulerWithMesh` returns, push
-    `sidecarStops.push(() => oncallPush.stop())`, with the fleet supervisor's one-line comment on
-    why.
+  - In `assemble.ts`, add `oncallPush` to the existing `pushStops(sidecarStops, [...])` list.
+    That adds no branch, which matters because the assembler sits at its cognitive-complexity
+    limit. Add a one-line comment saying the reload timer must not outlive shutdown.
   - Grep `config.enabled`, `.config.enabled` and `enabled:` across `oncall-push/`, `ipc/`,
     `demo/` and `platform/`, and move every reader. The type change makes this a compile error,
     so `bun run typecheck` is the check.
@@ -236,19 +260,27 @@ line), 5.9 and 5.10 (branch `dev/asaf/role-packs` only).
 - Consumes: the gateway's `pack.list` result (PR 2): `{ profile, installed: [{ id, version,
   updateAvailable, bundledVersion?, versionUnknown? }], ... }`. Declare a local structural type;
   never import gateway source.
-- Produces: `async function doctorPrintPackUpdates(client: IPCClient): Promise<number>`, which
-  always returns `0`.
+- Produces: `export async function doctorPrintPackUpdates(client: Pick<IPCClient, "call">): Promise<number>`,
+  which always returns `0`. It takes `Pick<IPCClient, "call">` like `doctorPrintMigrations`, so a
+  test passes a plain `{ call }` fake.
 
 - [ ] **Step 1: Write the failing tests.**
   - `one [info] line per profile naming each pack with an update`, exact copy:
     `[info] pack updates available (profile "default"): pm 1.0.0 -> 1.1.0, devops version unknown -> 1.1.0. Re-install with: nimbus pack install <id>`.
-    Use `version unknown` when `versionUnknown`. Use `<installed> -> <bundledVersion>`, or
-    `<installed> -> a newer build` when `bundledVersion` is absent.
+    - Use `version unknown` when `versionUnknown` is set.
+    - Use `<installed> -> <bundledVersion>`, or `<installed> -> a different build` when
+      `bundledVersion` is absent. "Update available" means the digest differs, not that the
+      bundled copy is newer (PR 2's wording fix).
+    - The hint is always the literal `nimbus pack install <id>`, for one pack or several, so the
+      copy has one form.
   - `no line when no installed pack has updateAvailable`.
   - `no line and exit 0 when pack.list rejects (-32601 or any error)`.
   - `exit code unchanged`: with an update available the function returns 0, and `runDoctor`'s
     overall exit is unaffected (Review Focus 5).
-  - Every printed field passes through `stripControlChars`.
+  - Every printed field (profile, id, both versions) passes through `stripControlChars`. A test
+    feeds an ESC in `profile` and an id, and asserts no `\u001b` in the output.
+  - A malformed result (a non-array `installed`, or a row with a non-string `id`) prints nothing
+    for that row and never throws.
 - [ ] **Step 2:** `bun test packages/cli/src/commands/doctor-core.test.ts`. Expected: FAIL.
 - [ ] **Step 3: Implement** with a `client.call("pack.list", {})` wrapped in `.catch(() => undefined)`,
   as `index.health` is.
