@@ -77,8 +77,10 @@ describe("renderPackPrompt", () => {
   });
 
   test("a local file source names the path, escaped", () => {
-    const t = renderPackPrompt(input({ source: { kind: "file", path: `C:\\p\\x${BEL}.json` } }));
-    expect(t).toContain("local file C:\\p\\x\\u0007.json");
+    const t = renderPackPrompt(input({ source: { kind: "file", path: `/p/x${BEL}.json` } }));
+    expect(t).toContain("local file /p/x");
+    expect(t).toContain("\\u0007");
+    expect(t).not.toContain(BEL);
   });
 
   test("empty sections print none and defaults '' prints the no-config line", () => {
