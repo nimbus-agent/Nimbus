@@ -171,7 +171,10 @@ Next to each layer the store keeps `<id>.pack.json`:
 after a binary upgrade the old bundled manifest is gone, and `<id>.toml` holds only `defaults`, so
 without the copy the prompt could not say which suggested connectors or description changed.
 
-Write order — every crash point leaves unlisted, inert files:
+Write order — on a first install every crash point leaves unlisted, inert files. An update is
+different, because the id is already listed. A crash between the toml and the record leaves the
+new, approved `defaults` live under the old record. That state heals itself: `pack list` shows the
+old version, and the next install prompts as an update. Every write is an atomic replace.
 - install: `<id>.toml` → `<id>.pack.json` → `active.json` (listing last);
 - remove: `active.json` (delisting first) → unlink `<id>.toml` → unlink `<id>.pack.json`.
 
@@ -220,17 +223,19 @@ New HITL action type `pack.install`:
 
 Fixed order in the handler, each step refusing before the next:
 
-1. Resolve the manifest: bundled by id, or local-file text (production refusal, id-collision
-   refusal, § 5.3).
-2. `parseRolePackManifest`; refuse non-empty `members`.
+1. Resolve the manifest: bundled by id, or local-file text (production refusal, then
+   `parseRolePackManifest`, then the id-collision refusal, § 5.3). The parse comes first because a
+   file pack's id is unknown until its text is parsed.
+2. Refuse non-empty `members`.
 3. Validate content against the live gateway: `checkPackFragment` + `checkPackFleetJobs` on
    `defaults`, connector ids against the catalog, conflict check against the profile's other active
    packs, so a conflict is refused **before** the prompt with the conflicting keys named. Unknown
    visible-agent names are refused here too (catalog names: e.g. `ownership`, not `owners`). The
    store's conflict check is private today (`pack-layer-store.ts:253`) and reachable only through
    the writing `setPackLayer`, so the store grows a **non-writing**
-   `checkPackLayer(profile, packId, fragment): readonly string[]` (the same allowlist, job and
-   conflict checks, returning problems) that `setPackLayer` itself calls — one check, two callers,
+   `checkPackLayer(profile, packId, fragment)` (the same allowlist, job and conflict checks,
+   returning problems tagged `store` / `invalid` / `conflict`, so each maps to its own refusal code)
+   that `setPackLayer` itself calls — one check, two callers,
    so the dry run and the write cannot disagree. `checkPackLayer` is read-only and unconfined.
 4. Build the prompt (§ 5.6) and raise `pack.install` through the gate on the calling session.
 5. On approval, call `setPackLayer` (which re-runs the checks, closing the window between prompt
@@ -303,7 +308,8 @@ Refusal codes (the builder may rename to match neighbours, but each case gets it
 `ERR_PACK_NOT_FOUND` (no bundled pack or installed pack by that id), `ERR_PACK_ID_RESERVED`
 (a local file using a bundled id), `ERR_PACK_LOCAL_FILE_PRODUCTION`, `ERR_PACK_MEMBERS_UNSUPPORTED`,
 `ERR_PACK_CONFLICT` (scalar or job-name conflict, keys named), `ERR_PACK_INVALID` (manifest parse,
-fragment allowlist, unknown agent or connector — problems listed), and `ERR_DEMO_FORBIDDEN`. A
+fragment allowlist, unknown agent or connector — problems listed), `ERR_PACK_STORE_UNREADABLE`
+(the profile's `active.json` cannot be read; not the pack's fault), and `ERR_DEMO_FORBIDDEN`. A
 denied or timed-out approval reuses whatever `registry.add` returns for the same outcome rather
 than inventing a code.
 

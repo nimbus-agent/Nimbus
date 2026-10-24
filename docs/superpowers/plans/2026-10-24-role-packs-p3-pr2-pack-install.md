@@ -51,6 +51,9 @@ project. That project adds it.
 - **Codes:**
   - `ERR_PACK_NOT_FOUND`, `ERR_PACK_ID_RESERVED`, `ERR_PACK_LOCAL_FILE_PRODUCTION`,
     `ERR_PACK_MEMBERS_UNSUPPORTED`, `ERR_PACK_CONFLICT`, `ERR_PACK_INVALID`.
+  - `ERR_PACK_STORE_UNREADABLE`: the profile's `active.json` cannot be read or parsed. This is not the
+    pack's fault, so it gets its own code rather than `ERR_PACK_INVALID` (spec § 5.8: "each case gets
+    its own").
   - `ERR_PACK_INSTALL_NOT_APPROVED`, which mirrors `ERR_REGISTRY_ADD_NOT_APPROVED`, the code
     `registry.add` returns for the same outcome.
   - `ERR_DEMO_FORBIDDEN` (existing).
@@ -90,7 +93,14 @@ Each has its test in the owning task.
   ```ts
   setPackLayer(profile: string, packId: string, fragment: string,
                opts?: { readonly record?: string }): PackWriteResult;
-  checkPackLayer(profile: string, packId: string, fragment: string): readonly string[];
+  checkPackLayer(profile: string, packId: string, fragment: string): PackLayerCheck;
+  // The reason is what lets installPack pick ERR_PACK_STORE_UNREADABLE / ERR_PACK_INVALID /
+  // ERR_PACK_CONFLICT. A flat string[] cannot tell a conflict from a bad key.
+  export type PackLayerCheck =
+    | { readonly ok: true }
+    | { readonly ok: false; readonly reason: "store" | "invalid" | "conflict"; readonly problems: readonly string[] };
+  // PackLayerRefusedError gains `readonly reason: "store" | "invalid" | "conflict"`, so a refusal
+  // thrown by setPackLayer/removePackLayer maps to the same code.
   readPackRecord(profile: string, packId: string): string | undefined; // undefined on ENOENT or unreadable
   readPackLayerText(profile: string, packId: string): string | undefined; // the on-disk <id>.toml, raw
   // removePackLayer unchanged in signature; it now also unlinks <id>.pack.json
@@ -98,10 +108,13 @@ Each has its test in the owning task.
 
 - [ ] **Step 1: Write failing tests** (`describe("record sidecar and checkPackLayer")`):
   - `checkPackLayer returns the same problems setPackLayer would throw, and writes nothing`:
-    a conflict case, a non-allowlisted key, a bad pack id and an invalid profile. For each, the
-    profile dir has no new file.
+    a conflict case (`reason: "conflict"`), a non-allowlisted key, a bad pack id and an invalid
+    profile (all `reason: "invalid"`). For each, the profile dir has no new file, and the
+    `PackLayerRefusedError` that `setPackLayer` throws carries the same `reason` and problems.
   - `checkPackLayer reports an unreadable active.json` (Review Focus 2): write `active.json` =
-    `"{"`, and expect `["active.json is not valid JSON"]`.
+    `"{"`, and expect `{ ok: false, reason: "store", problems: ["active.json is not valid JSON"] }`.
+  - `removePackLayer with an unreadable active.json throws reason "store"`, for a listed id and an
+    unknown one alike.
   - `setPackLayer with a record writes toml, then record, then active.json`: assert all three files
     exist, and `readPackRecord` returns the record text verbatim.
   - `write order: a failure writing the record leaves the pack unlisted`: inject the failure by
@@ -117,12 +130,21 @@ Each has its test in the owning task.
   (`checkPackLayer is not a function`).
 
 - [ ] **Step 3: Implement.**
-  - `checkPackLayer` = `assertNames` problems (caught, not thrown) + the `readDetailed` `listError`
-    + `checkPackFragment` problems + `conflicts`.
+  - `checkPackLayer` returns at the first failing stage, in today's `setPackLayer` order:
+    `assertNames` problems (caught, not thrown) → `invalid`; the `readDetailed` `listError` →
+    `store`; `checkPackFragment` problems → `invalid`; `conflicts` → `conflict`.
+  - `activeIds` (used by remove) throws with `reason: "store"`.
   - `setPackLayer` calls `checkPackLayer` and throws `PackLayerRefusedError` on a non-empty result,
     so there is ONE check.
   - Record path: `<profileDir>/<id>.pack.json`. Write order: toml → record (only when given) →
-    `active.json` (only when not listed).
+    `active.json` (only when not listed). All three use `writeUtf8FileAtomicReplace`, which the store
+    already uses, so each file is either old or new and never half-written.
+  - **The crash window on an UPDATE is stated, not closed.** The id is already listed, so a failure
+    between the toml and the record leaves the new, approved `defaults` live under the old record.
+    That state heals itself: `pack list` shows the old version, and the next `pack install` sees a
+    different digest and prompts as an update. Writing the record first would not help, since it
+    gives the mirror case: new record, old toml, which then prompts as a repair. Comment this
+    beside the writes.
   - `removePackLayer` unlinks toml then record, ENOENT-tolerant, after delisting.
   - Every message keeps passing through `safe()`.
 
@@ -193,7 +215,10 @@ Each has its test in the owning task.
     - `defaults`: `[agents] visible = ["oncall", "why", "impact", "ownership", "catchup",
       "changelog", "standup"]`, `[fleet] enabled = true`, and one job `devops-changelog-nightly`,
       agent `changelog`, `interval_seconds = 86400`.
-  - If `checkPackFleetJobs` requires a param for `decisions` or `changelog`, add the minimal param
+  - Recon (2026-10-24): `checkPackFleetJobs` checks fleet eligibility, sweeps and federation params
+    only. `decisions` and `changelog` are both `eligible` and neither job sets a sweep, so neither
+    should need a param.
+  - If `checkPackFleetJobs` requires a param for `decisions` or `changelog` anyway, add the minimal param
     it names, and ledger a ruling.
 
 - [ ] **Step 2: Write failing tests:**
@@ -274,6 +299,9 @@ Each has its test in the owning task.
   - `marks a job the owner replaces`: `(replaced by your own job of this name)`.
   - `connectors read configured / not configured`, in manifest order.
   - `prints the full defaults text verbatim after the summary`: one exact block.
+  - `a suggestions-only pack (defaults "")`: Config defaults, Visible agents and Overnight jobs
+    each print `none`, and the verbatim block is replaced by the exact line
+    `This pack writes no config.`, not an empty block.
   - `closing line`, with this exact copy: `This pack changes no credentials, no network reach and no
     approvals, and your nimbus.toml is not edited. Undo it with: nimbus pack remove <id>`.
   - `escapes invisible and control characters` (Review Focus 4): a name containing `‮` renders
@@ -362,7 +390,8 @@ Each has its test in the owning task.
   ```ts
   // pack-install.ts
   export type PackErrorCode = "ERR_PACK_NOT_FOUND" | "ERR_PACK_ID_RESERVED" | "ERR_PACK_LOCAL_FILE_PRODUCTION"
-    | "ERR_PACK_MEMBERS_UNSUPPORTED" | "ERR_PACK_CONFLICT" | "ERR_PACK_INVALID" | "ERR_PACK_INSTALL_NOT_APPROVED";
+    | "ERR_PACK_MEMBERS_UNSUPPORTED" | "ERR_PACK_CONFLICT" | "ERR_PACK_INVALID" | "ERR_PACK_STORE_UNREADABLE"
+    | "ERR_PACK_INSTALL_NOT_APPROVED";
   export class PackError extends Error { constructor(readonly code: PackErrorCode, readonly detail: string); }
   export type PackRequest = { readonly id: string } | { readonly fileText: string; readonly filePath: string };
   export type PackOwnerGate = (action: { type: "pack.install"; payload: Record<string, unknown> }) => Promise<boolean>;
@@ -411,12 +440,18 @@ Each has its test in the owning task.
     **gate was never called** (call count 0) and no file was written:
     1. an unknown id → `ERR_PACK_NOT_FOUND`;
     2. a `fileText` while `isProduction()` is true → `ERR_PACK_LOCAL_FILE_PRODUCTION`;
-    3. a file pack with id `pm` → `ERR_PACK_ID_RESERVED`;
-    4. a manifest parse failure → `ERR_PACK_INVALID`;
+    3. a file manifest parse failure → `ERR_PACK_INVALID`;
+    4. a parsed file pack with id `pm` → `ERR_PACK_ID_RESERVED`;
     5. a non-empty `members` → `ERR_PACK_MEMBERS_UNSUPPORTED`;
     6. an unknown connector or agent, or a non-allowlisted key → `ERR_PACK_INVALID`;
-    7. a scalar conflict with another installed pack → `ERR_PACK_CONFLICT`, naming the key;
-    8. an unreadable `active.json` → refused with its list error (Review Focus 2).
+    7. an unreadable `active.json` → `ERR_PACK_STORE_UNREADABLE`, naming the store's list error
+       (Review Focus 2);
+    8. a scalar conflict with another installed pack → `ERR_PACK_CONFLICT`, naming the key.
+
+    Steps 3 and 4 are in this order deliberately. Spec § 5.5 lists the id-collision refusal in
+    step 1 and the parse in step 2, but a file pack's id is not known until its text is parsed. The
+    bundled path needs no parse: its manifests were parsed at module load (Task 2). Steps 6–8 map
+    `checkPackLayer`'s `reason` field: `invalid` → 6, `store` → 7, `conflict` → 8.
   - **Approval:**
     - approved → `installed`: the layer and record are written, the snapshot version advances,
       and `config explain fleet.enabled` names the pack layer;
@@ -430,12 +465,15 @@ Each has its test in the owning task.
     - a changed bundled manifest (inject a `bundled` map with v1.1.0) → `updated`, and the prompt
       shows the diff.
   - **List and show:**
-    - `listPacks`: available bundled packs, an installed pack, `updateAvailable` true against a
+    - `listPacks`: `available` holds only the bundled packs NOT installed in the active profile
+      (spec § 5.7), so installing `pm` moves it from `available` to `installed`. Also an installed
+      pack, `updateAvailable` true against a
       newer bundled map, `versionUnknown` for a listed pack without a record, and the store's
       `skipped` passed through;
     - `previewPack` with `fileText` returns the prompt and never calls a gate.
   - **Remove:** `removePack` of an installed pack restores `config explain fleet.enabled` to its
-    pre-install layer. Remove of an unknown id → `removed: false` (Review Focus 5).
+    pre-install layer. Remove of an unknown id → `removed: false` (Review Focus 5). Remove with an
+    unreadable `active.json` → `ERR_PACK_STORE_UNREADABLE` (Review Focus 2).
 
   For `pack-rpc.test.ts`:
   - param validation for each method: wrong shapes → `-32602`;
@@ -458,11 +496,15 @@ Each has its test in the owning task.
   - Scalar rows come from `explainConfig(getLayeredConfig(configDir), "<section>.<key>")`, using its
     winning entry's `source`. `userOverrides` is true when that layer kind is `base` or `profile`.
   - `userReplaces` for jobs comes from `explainConfig(...,"fleet.job")` blocks in a
-    `base`/`profile` layer with the same `name`.
+    `base`/`profile` layer with the same `name`. `explainConfig` returns them as
+    `result.blocks[]` (`{ header, layer, entries }`). Read before the install, these are exactly
+    the owner's own jobs that will shadow the pack's job of that name. Match on the block's `name`
+    entry with its value unquoted.
   - Update mode compares the record's manifest (`parsePackRecord(store.readPackRecord(...))`) with
     the new one.
   - On approval: `store.setPackLayer(profile, id, defaults, { record: serializePackRecord(...) })`.
-  - `removePack` calls `store.removePackLayer`.
+  - `removePack` calls `store.removePackLayer`. It maps a `PackLayerRefusedError` by its `reason`:
+    `store` → `ERR_PACK_STORE_UNREADABLE`, `invalid` → `ERR_PACK_INVALID`.
   - `tryDispatchPackRpc(ctx, clientId, method, params)`:
     - it skips unless the method starts with `pack.`, and requires `ctx.options.packLayerStore`
       and `configDir`, otherwise `-32603`;
@@ -533,7 +575,18 @@ Each has its test in the owning task.
     with D36 named as its static rule (so I47 does NOT join the "no static rule of its own" list).
   - Add the I47 bullet after I46 in CLAUDE.md and GEMINI.md, plus a D36 sentence in the
     "Static complement" paragraph.
-  - Update every `I1–I46` / `D10–D35` range.
+  - Update every `I1–I46` / `D10–D35` range (both dash forms, `–` and `-`). As of `e3ae39e6` they
+    are in:
+    - `CLAUDE.md`, `GEMINI.md`;
+    - `docs/SECURITY-INVARIANTS.md`, `docs/architecture.md`, `docs/README.md`;
+    - `.github/SECURITY.md`;
+    - `.coderabbit.yaml` (header comment, `I1-I46`);
+    - `.claude/commands/` `nimbus-commands.md` (`D10–D35`), `nimbus-file-map.md`,
+      `nimbus-tauri-allowlist.md` and `nimbus-tool-output-envelope.md`;
+    - the comment in `scripts/structure-audit/check-coderabbit-config.test.ts`.
+
+    Re-derive the list with `git grep -n "I1[–-]I46\|D10[–-]D35" -- . ':!docs/superpowers'` rather
+    than trusting this one, and expect it to come back empty after the edit.
   - Update CLAUDE.md/GEMINI.md line 8 `Invariants I1–I46` → `I1–I47`.
 
 - [ ] **Step 4:** `bun run audit:invariants`, `bun run audit:status-drift`, `bun run audit:doc-refs`,
@@ -571,14 +624,30 @@ Each has its test in the owning task.
   - `list prints installed and available, marks "update available"`; `--json` prints the raw result.
   - `remove prints "removed"` / `"not installed"`.
   - `an ERR_PACK_* error prints its message and exits 1`.
-  - Every gateway-sourced string printed passes through `stripControlChars`.
+  - Every gateway-sourced string printed passes through `stripControlChars`
+    (`packages/cli/src/lib/strip-control-chars.ts`).
+  - `install's consent handler is the prompt handler only`: a source pin reading `pack.ts`. It
+    asserts `registerConsentPromptHandler(` is present and that neither `withGatewayIpc(` nor
+    `registerConsentFor(` / `registerDefaultConsentHandler(` appears. The `call` DI seam hides the
+    client, so a behaviour test cannot see which handler was registered.
 
 - [ ] **Step 2:** `bun test packages/cli/src/commands/pack.test.ts`. Expected: FAIL.
 
 - [ ] **Step 3: Implement.**
   - `install` registers `registerConsentPromptHandler(client)` directly (never `registerConsentFor`,
     which honours `NIMBUS_SCRIPT_CONSENT_SOURCE`), exactly as `runExtensionApprove` does.
-  - Use `withGatewayIpc(..., paths, { requestTimeoutMs: BATCH_RPC_TIMEOUT_MS })` for install.
+  - Do **not** use `withGatewayIpc` for any `pack` verb. It calls `registerConsentFor(client,
+    { kind: "prompt" })` right after it connects (`lib/with-gateway-ipc.ts:90`), which binds the
+    `NIMBUS_SCRIPT_CONSENT_SOURCE` script handler when that variable is set. That handler is
+    already listening before `fn` runs, so it would answer the `pack.install` prompt. Instead,
+    follow `runExtension` (`commands/extension.ts:986`):
+    - `readGatewayState(paths)`; when it returns undefined, throw `GatewayNotRunningError`;
+    - `createIpcClient(state.socketPath, BATCH_RPC_TIMEOUT_MS)`, then `connect()`;
+    - `registerConsentPromptHandler(client)`;
+    - `try`/`finally` around `disconnect()`.
+
+    The read-only verbs share this connection: they raise no prompt, so the handler is inert for
+    them.
   - `docs/cli-reference.md`: a `nimbus pack` section (the four verbs, TTY-only install, that it acts
     on the active profile, and what it never changes).
   - `docs/CHANGELOG.md`: a dated entry.
