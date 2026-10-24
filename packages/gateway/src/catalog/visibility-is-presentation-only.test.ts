@@ -59,10 +59,12 @@ const RESOLVER_ALLOWED = new Set([
 ]);
 
 // `packs/pack-validate.ts` imports only the pure `normaliseAgentName` to compare a pack's agent names
-// with the catalog; it reads no visibility and gates nothing.
+// with the catalog; it reads no visibility and gates nothing. `ipc/pack-rpc.ts` imports only the
+// built-in agent names and connector ids that validation compares against, never visibility.
 const CATALOG_IMPORTERS_ALLOWED = new Set([
   "ipc/catalog-rpc.ts",
   "ipc/diagnostics-rpc.ts",
+  "ipc/pack-rpc.ts",
   "packs/pack-validate.ts",
 ]);
 

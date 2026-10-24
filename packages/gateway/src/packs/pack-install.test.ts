@@ -1,0 +1,578 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { parseRolePackManifestValue, type RolePackManifest } from "@nimbus-dev/registry-format";
+import { CATALOG_AGENT_NAMES } from "../catalog/agent-catalog.ts";
+import { builtinCatalogConnectorIds } from "../catalog/catalog-list.ts";
+import { explainConfig } from "../config/config-explain.ts";
+import {
+  getLayeredConfig,
+  initLayeredConfig,
+  resetLayeredConfigsForTests,
+} from "../config/layered-config.ts";
+import { BUNDLED_PACKS } from "./bundled-packs.ts";
+import {
+  installPack,
+  listPacks,
+  type PackDeps,
+  PackError,
+  type PackOwnerGate,
+  previewPack,
+  removePack,
+} from "./pack-install.ts";
+import {
+  createPackLayerStore,
+  PackLayerRefusedError,
+  type PackLayerStore,
+} from "./pack-layer-store.ts";
+
+let dir: string;
+let store: PackLayerStore;
+
+beforeEach(() => {
+  resetLayeredConfigsForTests();
+  dir = mkdtempSync(join(tmpdir(), "nimbus-pack-install-"));
+  store = createPackLayerStore({ configDir: dir });
+  initLayeredConfig(dir, { packs: store });
+});
+afterEach(() => {
+  resetLayeredConfigsForTests();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+function deps(over: Partial<PackDeps> = {}): PackDeps {
+  return {
+    store,
+    configDir: dir,
+    bundled: BUNDLED_PACKS,
+    isProduction: () => false,
+    isConfigured: async (id) => id === "slack",
+    connectorIds: new Set(builtinCatalogConnectorIds()),
+    agentNames: new Set(CATALOG_AGENT_NAMES),
+    now: () => new Date("2026-10-24T00:00:00.000Z"),
+    ...over,
+  };
+}
+
+type GateCall = Parameters<PackOwnerGate>[0];
+
+function gate(answer = true): { gate: PackOwnerGate; calls: GateCall[] } {
+  const calls: GateCall[] = [];
+  return {
+    calls,
+    gate: async (action) => {
+      calls.push(action);
+      return answer;
+    },
+  };
+}
+
+const profile = (): string => getLayeredConfig(dir).profile.name;
+const packDir = (): string => join(dir, "packs", profile());
+const layerFile = (id: string): string => join(packDir(), `${id}.toml`);
+const recordFile = (id: string): string => join(packDir(), `${id}.pack.json`);
+const activeFile = (): string => join(packDir(), "active.json");
+
+function fileText(over: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    schema: 1,
+    id: "mine",
+    name: "Mine",
+    version: "1.0.0",
+    description: "A local pack.",
+    roles: [],
+    suggestedConnectors: [],
+    members: [],
+    defaults: "[decisions]\nmin_confidence = 0.5\n",
+    ...over,
+  });
+}
+
+const FILE_PATH = join(tmpdir(), "mine.json");
+
+async function refusal(p: Promise<unknown>): Promise<PackError> {
+  try {
+    await p;
+  } catch (err) {
+    if (err instanceof PackError) return err;
+    throw err;
+  }
+  throw new Error("expected a PackError");
+}
+
+function pmWith(over: Partial<RolePackManifest>): RolePackManifest {
+  const pm = BUNDLED_PACKS.get("pm");
+  if (pm === undefined) throw new Error("pm missing");
+  return parseRolePackManifestValue({ ...pm, ...over });
+}
+
+describe("installPack: the fixed refusal order", () => {
+  const cases: { name: string; code: string; run: () => Promise<unknown>; detail?: RegExp }[] = [
+    {
+      name: "1 unknown bundled id",
+      code: "ERR_PACK_NOT_FOUND",
+      run: () => installPack({ id: "nope" }, deps(), gate().gate),
+    },
+    {
+      name: "2 a file in production",
+      code: "ERR_PACK_LOCAL_FILE_PRODUCTION",
+      // Also an unparseable file: production is refused before the parse.
+      run: () =>
+        installPack(
+          { fileText: "{not json", filePath: FILE_PATH },
+          deps({ isProduction: () => true }),
+          gate().gate,
+        ),
+    },
+    {
+      name: "3 a file that does not parse",
+      code: "ERR_PACK_INVALID",
+      run: () => installPack({ fileText: "{not json", filePath: FILE_PATH }, deps(), gate().gate),
+    },
+    {
+      name: "4 a file using a bundled id",
+      code: "ERR_PACK_ID_RESERVED",
+      run: () =>
+        installPack(
+          { fileText: fileText({ id: "pm", members: ["com.example.pack"] }), filePath: FILE_PATH },
+          deps(),
+          gate().gate,
+        ),
+    },
+    {
+      name: "5 non-empty members",
+      code: "ERR_PACK_MEMBERS_UNSUPPORTED",
+      run: () =>
+        installPack(
+          {
+            fileText: fileText({ members: ["com.example.pack"], suggestedConnectors: ["nope_x"] }),
+            filePath: FILE_PATH,
+          },
+          deps(),
+          gate().gate,
+        ),
+    },
+    {
+      name: "6 an unknown connector",
+      code: "ERR_PACK_INVALID",
+      detail: /suggested connector "nope_x" is not known/,
+      run: () =>
+        installPack(
+          { fileText: fileText({ suggestedConnectors: ["nope_x"] }), filePath: FILE_PATH },
+          deps(),
+          gate().gate,
+        ),
+    },
+    {
+      name: "6 an unknown agent",
+      code: "ERR_PACK_INVALID",
+      detail: /unknown agent "owners"/,
+      run: () =>
+        installPack(
+          {
+            fileText: fileText({ defaults: '[agents]\nvisible = ["owners"]\n' }),
+            filePath: FILE_PATH,
+          },
+          deps(),
+          gate().gate,
+        ),
+    },
+    {
+      name: "6 a non-allowlisted key",
+      code: "ERR_PACK_INVALID",
+      detail: /not pack-settable/,
+      run: () =>
+        installPack(
+          { fileText: fileText({ defaults: "[llm]\nprefer_local = true\n" }), filePath: FILE_PATH },
+          deps(),
+          gate().gate,
+        ),
+    },
+  ];
+  for (const c of cases) {
+    test(`${c.name} → ${c.code}, no gate call, nothing written`, async () => {
+      const g = gate();
+      const err = await refusal(c.run());
+      expect(err.code).toBe(c.code as PackError["code"]);
+      expect(err.message.startsWith(`${c.code}: `)).toBe(true);
+      if (c.detail !== undefined) expect(err.detail).toMatch(c.detail);
+      expect(g.calls).toHaveLength(0);
+      expect(existsSync(join(dir, "packs"))).toBe(false);
+    });
+  }
+
+  test("7 an unreadable active.json → ERR_PACK_STORE_UNREADABLE naming the store's error", async () => {
+    mkdirSync(packDir(), { recursive: true });
+    writeFileSync(activeFile(), "{not json");
+    const g = gate();
+    const err = await refusal(installPack({ id: "pm" }, deps(), g.gate));
+    expect(err.code).toBe("ERR_PACK_STORE_UNREADABLE");
+    expect(err.detail).toContain("active.json is not valid JSON");
+    expect(g.calls).toHaveLength(0);
+    expect(existsSync(layerFile("pm"))).toBe(false);
+  });
+
+  test("8 a scalar conflict with another pack → ERR_PACK_CONFLICT naming the key", async () => {
+    await installPack(
+      { fileText: fileText({ defaults: "[fleet]\nenabled = false\n" }), filePath: FILE_PATH },
+      deps(),
+      gate().gate,
+    );
+    const g = gate();
+    const err = await refusal(installPack({ id: "pm" }, deps(), g.gate));
+    expect(err.code).toBe("ERR_PACK_CONFLICT");
+    expect(err.detail).toContain("[fleet] enabled: pack mine sets false");
+    expect(g.calls).toHaveLength(0);
+    expect(existsSync(layerFile("pm"))).toBe(false);
+  });
+});
+
+describe("installPack: approval", () => {
+  test("approved → installed: layer and record written, snapshot advances, explain names the pack", async () => {
+    const before = getLayeredConfig(dir).snapshot().version;
+    const g = gate();
+    const r = await installPack({ id: "pm" }, deps(), g.gate);
+    expect(r).toMatchObject({ outcome: "installed", id: "pm", version: "1.0.0" });
+    expect(r.snapshotVersion).toBeGreaterThan(before);
+    expect(readFileSync(layerFile("pm"), "utf8")).toBe(BUNDLED_PACKS.get("pm")?.defaults ?? "");
+    expect(JSON.parse(readFileSync(recordFile("pm"), "utf8"))).toMatchObject({
+      digest: g.calls[0]?.payload["digest"],
+      source: { kind: "bundled" },
+      installedAt: "2026-10-24T00:00:00.000Z",
+    });
+    const entry = explainConfig(getLayeredConfig(dir), "fleet.enabled").entries[0];
+    expect(entry?.source).toMatchObject({ kind: "layer", layer: { kind: "pack", id: "pm" } });
+  });
+
+  test("denied → ERR_PACK_INSTALL_NOT_APPROVED and nothing written", async () => {
+    const g = gate(false);
+    const err = await refusal(installPack({ id: "pm" }, deps(), g.gate));
+    expect(err.code).toBe("ERR_PACK_INSTALL_NOT_APPROVED");
+    expect(g.calls).toHaveLength(1);
+    expect(existsSync(join(dir, "packs"))).toBe(false);
+  });
+
+  test("the gate payload is { packId, version, source, digest, promptText } with the full defaults", async () => {
+    const g = gate();
+    await installPack({ id: "pm" }, deps(), g.gate);
+    const call = g.calls[0];
+    expect(call?.type).toBe("pack.install");
+    expect(Object.keys(call?.payload ?? {}).sort()).toEqual(
+      ["digest", "packId", "promptText", "source", "version"].sort(),
+    );
+    expect(call?.payload).toMatchObject({ packId: "pm", version: "1.0.0", source: "bundled" });
+    expect(call?.payload["digest"]).toMatch(/^[0-9a-f]{64}$/);
+    const prompt = String(call?.payload["promptText"]);
+    expect(prompt).toContain(BUNDLED_PACKS.get("pm")?.defaults ?? "missing");
+    expect(prompt).toContain("Install role pack Product (pm)");
+    expect(prompt).toContain("slack: configured");
+    expect(prompt).toContain("jira: not configured");
+    expect(prompt).toContain("pm-decisions-nightly: decisions every 86400s");
+    expect(prompt).toContain("fleet.enabled = true, unset");
+  });
+
+  test("a local file pack's source is shown as `local file <absolute path>`", async () => {
+    const g = gate();
+    const r = await installPack({ fileText: fileText(), filePath: FILE_PATH }, deps(), g.gate);
+    expect(r.outcome).toBe("installed");
+    expect(g.calls[0]?.payload["source"]).toBe(`local file ${FILE_PATH}`);
+    expect(JSON.parse(readFileSync(recordFile("mine"), "utf8")).source).toEqual({
+      kind: "file",
+      path: FILE_PATH,
+    });
+  });
+
+  test("the owner's own file setting a key is marked, the install succeeds, the value is unchanged", async () => {
+    writeFileSync(
+      join(dir, "nimbus.toml"),
+      '[fleet]\nenabled = false\n\n[[fleet.job]]\nname = "pm-decisions-nightly"\nagent = "standup"\ninterval_seconds = 3600\n',
+    );
+    const g = gate();
+    await installPack({ id: "pm" }, deps(), g.gate);
+    const prompt = String(g.calls[0]?.payload["promptText"]);
+    expect(prompt).toContain(
+      "fleet.enabled = true, current false (nimbus.toml) (your file overrides this)",
+    );
+    expect(prompt).toContain("(replaced by your own job of this name)");
+    expect(prompt).toContain("[fleet] enabled: false");
+    const entry = explainConfig(getLayeredConfig(dir), "fleet.enabled").entries[0];
+    expect(entry?.value).toBe("false");
+    expect(entry?.source).toMatchObject({ kind: "layer", layer: { kind: "base" } });
+  });
+
+  test("invisible characters in a local pack are escaped in the prompt, never raw", async () => {
+    const g = gate();
+    await installPack(
+      { fileText: fileText({ description: "evil‮txt" }), filePath: FILE_PATH },
+      deps(),
+      g.gate,
+    );
+    const prompt = String(g.calls[0]?.payload["promptText"]);
+    expect(prompt).toContain("evil\\u202Etxt");
+    expect(prompt).not.toContain("‮");
+  });
+
+  test("a store refusal at write time (a race after the prompt) maps by reason", async () => {
+    const racing: PackLayerStore = {
+      ...store,
+      setPackLayer: () => {
+        throw new PackLayerRefusedError(["[fleet] enabled: pack x sets false"], "conflict");
+      },
+    };
+    const err = await refusal(installPack({ id: "pm" }, deps({ store: racing }), gate().gate));
+    expect(err.code).toBe("ERR_PACK_CONFLICT");
+  });
+
+  test("a non-refusal write error propagates unchanged", async () => {
+    const broken: PackLayerStore = {
+      ...store,
+      setPackLayer: () => {
+        throw new Error("disk full");
+      },
+    };
+    await expect(installPack({ id: "pm" }, deps({ store: broken }), gate().gate)).rejects.toThrow(
+      "disk full",
+    );
+  });
+});
+
+describe("installPack: re-installs", () => {
+  test("identical digest with an intact layer → already_installed, no gate call", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    const g = gate();
+    const r = await installPack({ id: "pm" }, deps(), g.gate);
+    expect(r).toEqual({
+      outcome: "already_installed",
+      id: "pm",
+      version: "1.0.0",
+      snapshotVersion: null,
+    });
+    expect(g.calls).toHaveLength(0);
+  });
+
+  test("identical digest with the layer deleted → repair, one gate call, rewritten", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    unlinkSync(layerFile("pm"));
+    const g = gate();
+    const r = await installPack({ id: "pm" }, deps(), g.gate);
+    expect(r.outcome).toBe("repaired");
+    expect(g.calls).toHaveLength(1);
+    expect(String(g.calls[0]?.payload["promptText"])).toContain("Repair role pack");
+    expect(readFileSync(layerFile("pm"), "utf8")).toBe(BUNDLED_PACKS.get("pm")?.defaults ?? "");
+  });
+
+  test("identical digest with the layer hand-edited → repair", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    writeFileSync(layerFile("pm"), "[fleet]\nenabled = false\n");
+    const g = gate();
+    expect((await installPack({ id: "pm" }, deps(), g.gate)).outcome).toBe("repaired");
+    expect(g.calls).toHaveLength(1);
+    // The winning value is this pack's own previous layer: shown, never marked as an override.
+    const prompt = String(g.calls[0]?.payload["promptText"]);
+    expect(prompt).toContain("fleet.enabled = true, current false (pack pm)\n");
+  });
+
+  test("a profile overlay setting a key is named and marked as the owner's override", async () => {
+    resetLayeredConfigsForTests();
+    store = createPackLayerStore({ configDir: dir });
+    initLayeredConfig(dir, { explicitProfile: "work", packs: store });
+    writeFileSync(join(dir, "nimbus.work.toml"), "[fleet]\nenabled = false\n");
+    const g = gate();
+    expect((await installPack({ id: "pm" }, deps(), g.gate)).outcome).toBe("installed");
+    expect(String(g.calls[0]?.payload["promptText"])).toContain(
+      "fleet.enabled = true, current false (profile work) (your file overrides this)",
+    );
+    expect(existsSync(join(dir, "packs", "work", "pm.toml"))).toBe(true);
+    expect(listPacks(deps()).profile).toBe("work");
+  });
+
+  test("identical digest but unlisted (a crash before the list write) → repair, then listed", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    writeFileSync(activeFile(), '{"version":1,"packs":[]}\n');
+    const g = gate();
+    expect((await installPack({ id: "pm" }, deps(), g.gate)).outcome).toBe("repaired");
+    expect(JSON.parse(readFileSync(activeFile(), "utf8")).packs).toEqual(["pm"]);
+  });
+
+  test("a changed bundled manifest → updated, the prompt shows the diff", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    const pm = BUNDLED_PACKS.get("pm");
+    const next = pmWith({
+      version: "1.1.0",
+      defaults: `${pm?.defaults ?? ""}\n[decisions]\nmin_confidence = 0.7\n`,
+      suggestedConnectors: ["slack", "jira", "notion"],
+    });
+    const g = gate();
+    const r = await installPack({ id: "pm" }, deps({ bundled: new Map([["pm", next]]) }), g.gate);
+    expect(r).toMatchObject({ outcome: "updated", version: "1.1.0" });
+    const prompt = String(g.calls[0]?.payload["promptText"]);
+    expect(prompt).toContain("Update role pack Product (pm) version 1.1.0");
+    expect(prompt).toContain("decisions.min_confidence = 0.7");
+    expect(prompt).toContain("removed: google_drive");
+    expect(JSON.parse(readFileSync(recordFile("pm"), "utf8")).manifest.version).toBe("1.1.0");
+  });
+
+  test("a listed pack with a missing record prompts in install mode", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    unlinkSync(recordFile("pm"));
+    const g = gate();
+    expect((await installPack({ id: "pm" }, deps(), g.gate)).outcome).toBe("installed");
+    expect(String(g.calls[0]?.payload["promptText"])).toContain("Install role pack");
+  });
+});
+
+describe("listPacks and previewPack", () => {
+  test("available holds only the bundled packs not installed; installing pm moves it", async () => {
+    const before = listPacks(deps());
+    expect(before.profile).toBe(profile());
+    expect(before.installed).toEqual([]);
+    expect(before.available.map((p) => p.id).sort()).toEqual(["devops", "pm"]);
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    const after = listPacks(deps());
+    expect(after.available.map((p) => p.id)).toEqual(["devops"]);
+    expect(after.installed).toEqual([
+      { id: "pm", name: "Product", version: "1.0.0", source: "bundled", updateAvailable: false },
+    ]);
+  });
+
+  test("updateAvailable against a newer bundled map", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    const next = pmWith({ version: "1.1.0", description: "Newer." });
+    const r = listPacks(deps({ bundled: new Map([["pm", next]]) }));
+    expect(r.installed[0]).toMatchObject({ updateAvailable: true, bundledVersion: "1.1.0" });
+  });
+
+  test("a local-file pack is listed with source file", async () => {
+    await installPack({ fileText: fileText(), filePath: FILE_PATH }, deps(), gate().gate);
+    expect(listPacks(deps()).installed[0]).toMatchObject({
+      id: "mine",
+      source: "file",
+      updateAvailable: false,
+    });
+  });
+
+  test("versionUnknown for a listed pack without a record; the store's skipped passes through", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    unlinkSync(recordFile("pm"));
+    writeFileSync(activeFile(), '{"version":1,"packs":["pm","ghost","../x"]}\n');
+    const r = listPacks(deps());
+    expect(r.installed).toEqual([
+      {
+        id: "pm",
+        name: "Product",
+        version: "unknown",
+        source: "bundled",
+        updateAvailable: true,
+        bundledVersion: "1.0.0",
+        versionUnknown: true,
+      },
+      {
+        id: "ghost",
+        name: "ghost",
+        version: "unknown",
+        source: "file",
+        updateAvailable: false,
+        versionUnknown: true,
+      },
+    ]);
+    expect(r.skipped).toEqual([
+      { packId: "ghost", reason: "missing" },
+      { packId: "#2", reason: "invalid pack id" },
+    ]);
+  });
+
+  test("an unreadable active.json is reported as listError", () => {
+    mkdirSync(packDir(), { recursive: true });
+    writeFileSync(activeFile(), "[]");
+    const r = listPacks(deps());
+    expect(r.listError).toContain("active.json");
+    expect(r.installed).toEqual([]);
+  });
+
+  test("previewPack with fileText returns the prompt and never writes", async () => {
+    const r = await previewPack({ fileText: fileText(), filePath: FILE_PATH }, deps());
+    expect(r.mode).toBe("install");
+    expect(r.prompt).toContain("Install role pack Mine (mine)");
+    expect(r.prompt).toContain("decisions.min_confidence = 0.5");
+    expect(existsSync(join(dir, "packs"))).toBe(false);
+  });
+
+  test("previewPack refuses fileText in production", async () => {
+    const err = await refusal(
+      previewPack(
+        { fileText: fileText(), filePath: FILE_PATH },
+        deps({ isProduction: () => true }),
+      ),
+    );
+    expect(err.code).toBe("ERR_PACK_LOCAL_FILE_PRODUCTION");
+  });
+
+  test("previewPack of an intact install is already_installed with the install-mode render", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    const r = await previewPack({ id: "pm" }, deps());
+    expect(r.mode).toBe("already_installed");
+    expect(r.prompt).toContain("Install role pack Product (pm)");
+  });
+
+  test("previewPack shows the update and repair modes", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    const next = pmWith({ version: "1.1.0", description: "Newer." });
+    const up = await previewPack({ id: "pm" }, deps({ bundled: new Map([["pm", next]]) }));
+    expect(up.mode).toBe("update");
+    expect(up.prompt).toContain("This update has no config changes.");
+    unlinkSync(layerFile("pm"));
+    expect((await previewPack({ id: "pm" }, deps())).mode).toBe("repair");
+  });
+});
+
+describe("removePack", () => {
+  test("restores config explain fleet.enabled to its pre-install layer", async () => {
+    writeFileSync(join(dir, "nimbus.toml"), "[decisions]\nmin_confidence = 0.4\n");
+    expect(explainConfig(getLayeredConfig(dir), "fleet.enabled").entries).toEqual([]);
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    expect(explainConfig(getLayeredConfig(dir), "fleet.enabled").entries).toHaveLength(1);
+    const r = removePack("pm", deps());
+    expect(r.removed).toBe(true);
+    expect(r.snapshotVersion).not.toBeNull();
+    expect(explainConfig(getLayeredConfig(dir), "fleet.enabled").entries).toEqual([]);
+    expect(existsSync(layerFile("pm"))).toBe(false);
+    expect(existsSync(recordFile("pm"))).toBe(false);
+  });
+
+  test("an unknown id is removed: false and touches no file", () => {
+    expect(removePack("pm", deps())).toEqual({ removed: false, snapshotVersion: null });
+    expect(existsSync(join(dir, "packs"))).toBe(false);
+  });
+
+  test("an unreadable active.json → ERR_PACK_STORE_UNREADABLE", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    writeFileSync(activeFile(), "{not json");
+    const err = await refusal(Promise.resolve().then(() => removePack("pm", deps())));
+    expect(err.code).toBe("ERR_PACK_STORE_UNREADABLE");
+    expect(existsSync(layerFile("pm"))).toBe(true);
+  });
+
+  test("an invalid id → ERR_PACK_INVALID", async () => {
+    const err = await refusal(Promise.resolve().then(() => removePack("../x", deps())));
+    expect(err.code).toBe("ERR_PACK_INVALID");
+  });
+
+  test("a non-refusal error propagates unchanged", () => {
+    const broken: PackLayerStore = {
+      ...store,
+      removePackLayer: () => {
+        throw new Error("EACCES");
+      },
+    };
+    expect(() => removePack("pm", deps({ store: broken }))).toThrow("EACCES");
+  });
+});

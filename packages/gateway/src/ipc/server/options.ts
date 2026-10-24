@@ -23,6 +23,7 @@ import type { LocalIndex } from "../../index/local-index.ts";
 import type { LlmRegistry } from "../../llm/registry.ts";
 import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import type { OwnershipRefresher } from "../../ownership/ownership-refresh.ts";
+import type { PackLayerStore } from "../../packs/pack-layer-store.ts";
 import type { SandboxRunner } from "../../platform/sandbox/sandbox-runner.ts";
 import type { PremortemRefresher } from "../../premortem/premortem-refresh.ts";
 import type { ShareFile } from "../../share/share-format.ts";
@@ -111,6 +112,11 @@ export type CreateIpcServerOptions = {
    * registry method that fetches refuses.
    */
   registryFetch?: Omit<RegistryFetchDeps, "db">;
+  /**
+   * The ONE pack-layer store `platform/assemble.ts` also hands the layered reader, so a `pack.*`
+   * write bumps the running reader's snapshot. Absent means every `pack.*` method refuses.
+   */
+  packLayerStore?: PackLayerStore;
   /**
    * `isExtensionRuntimeEnabled` as `platform/assemble.ts` resolved it (`[extensions] runtime` and
    * not demo-rooted). `false` makes `extension.approveRun` refuse `ERR_EXTENSION_RUNTIME_DISABLED`

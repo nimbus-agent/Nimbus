@@ -3487,8 +3487,11 @@ export async function assemblePlatformServices(
   // Pin the profile BEFORE the first config read: every `…FromConfigDir` loader below goes
   // through this reader, so the profile cannot change under a running gateway. An invalid
   // profile name (env or marker) throws `InvalidProfileNameError` and stops boot.
+  // ONE store: the layered reader reads through it and `pack.*` writes through it, so a pack write
+  // bumps the running reader (its `onChange`).
+  const packLayerStore = createPackLayerStore({ configDir: paths.configDir });
   const layeredConfig = initLayeredConfig(paths.configDir, {
-    packs: createPackLayerStore({ configDir: paths.configDir }),
+    packs: packLayerStore,
   });
   const bootPolicy = bootPolicyFor(paths);
   // Built before `db` so a boot-marker append failure (below) has somewhere to log a warning.
@@ -3946,6 +3949,7 @@ export async function assemblePlatformServices(
     // `extension.approveRun`, `extension.credentialSet` and `connector.remove` bind through it.
     continuityTable: migration.continuityTable,
     registryFetch,
+    packLayerStore,
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,
     connectorMesh,
