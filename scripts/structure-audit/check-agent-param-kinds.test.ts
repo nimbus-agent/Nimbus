@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { CATALOG_AGENT_NAMES } from "../../packages/gateway/src/catalog/agent-catalog.ts";
 import { AGENT_PARAM_KINDS } from "../../packages/gateway/src/ipc/agent-param-kinds.ts";
 import {
   AGENTS_RPC_PATH,
@@ -303,4 +304,10 @@ test("checkCatalogParams passes on the real tree", () => {
   // Every agent the catalog describes, not only the twelve external ones.
   expect(Object.keys(catalog)).toHaveLength(17);
   expect(checkCatalogParams(parsed, catalog)).toEqual([]);
+  // The parsed validators resolve to exactly the catalog's agents: an array `agent` is a shared
+  // validator (flattened); `[]` is one no agent uses directly.
+  const resolved = new Set(
+    Object.values(parsed).flatMap((p) => (typeof p.agent === "string" ? [p.agent] : [...p.agent])),
+  );
+  expect(resolved).toEqual(new Set(CATALOG_AGENT_NAMES));
 });

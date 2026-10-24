@@ -152,4 +152,19 @@ describe("buildCatalogList", () => {
     );
     expect(ext).toMatchObject({ serviceId: "ext_run", name: "Runner" });
   });
+
+  test("an installed unbundled connector is listed once, as an extension, never as built in", () => {
+    const { db, root } = setup();
+    addExtension(db, root, "com.nimbus.readwise", { name: "Readwise" });
+    const { connectors } = buildCatalogList({ db, snapshot: snapshotOf("") });
+    const builtinIds = connectors.filter((c) => c.kind === "builtin").map((c) => c.id);
+    expect(builtinIds).not.toContain("readwise");
+    const matches = connectors.filter((c) => /readwise/i.test(c.id));
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({
+      kind: "extension",
+      id: "com.nimbus.readwise",
+      name: "Readwise",
+    });
+  });
 });

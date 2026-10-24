@@ -56,7 +56,6 @@ AGENTS — read-only briefs over the local index
   nimbus changelog [--since 7d]      Merged PRs, deployments and incidents in one window, per service
   nimbus standup [--since 24h]       What YOU did — PRs, reviews, tickets, incidents, Slack
   nimbus oncall [--service <name>]   Your active incident, the deploy before it, and what shipped
-  nimbus catalog [agents|connectors] [--json]   List agents and connectors with descriptions
 
 AGENTS THAT NEED PAIRED PEERS — see TEAM below; these query the federation mesh
   nimbus conflicts <file>            Teammates with an open PR, ticket or branch on the same file
@@ -65,6 +64,7 @@ AGENTS THAT NEED PAIRED PEERS — see TEAM below; these query the federation mes
   nimbus preflight <ref> --namespace <ns>   Ask downstream owners to verify your candidate ref
 
 CONNECTORS & INDEX
+  nimbus catalog [agents|connectors] [--json]   List agents and connectors with descriptions
   nimbus connector …        Register connectors, OAuth, user MCP (add --mcp), sync
   nimbus people …           Cross-service people graph (list, search, get, items, link)
   nimbus watch …            List/pause/resume index watchers

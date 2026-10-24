@@ -88,6 +88,7 @@ function table(headers: readonly string[], rows: readonly (readonly string[])[])
 function agentLines(view: CatalogView): string[] {
   const notes = view.visibility["notes"];
   const summary = Array.isArray(notes) ? str(notes[0]) : "";
+  const more = Array.isArray(notes) ? notes.length - 1 : 0;
   const rows = view.agents
     .map(toAgent)
     .map((a) => [
@@ -97,7 +98,9 @@ function agentLines(view: CatalogView): string[] {
       stripControlChars(a.description),
     ]);
   return [
-    ...(summary === "" ? [] : [stripControlChars(summary), ""]),
+    ...(summary === "" ? [] : [stripControlChars(summary)]),
+    ...(more > 0 ? [`${more} more visibility note(s); see nimbus config explain agents`] : []),
+    ...(summary === "" && more <= 0 ? [] : [""]),
     ...table(["name", "shown", "category", "description"], rows),
   ];
 }

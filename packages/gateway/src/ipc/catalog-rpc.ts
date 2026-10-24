@@ -1,8 +1,9 @@
-// `catalog.list` — the catalog an owner browses (`nimbus catalog`, the desktop): the built-in
-// agents with whether each is currently visible, then every connector on this install.
+// `catalog.list` — the catalog an owner browses (`nimbus catalog`): the built-in agents with
+// whether each is currently visible, then every connector on this install.
 //
 // Presentation only: nothing reads the result to gate a call, and hiding an agent never refuses
-// one. CLI/desktop-callable, LAN-forbidden (`ipc/lan-rpc.ts`), and NOT on the Tauri allowlist.
+// one. CLI-callable today, LAN-forbidden (`ipc/lan-rpc.ts`), and NOT on the Tauri allowlist until
+// the desktop adopts it.
 
 import type { Database } from "bun:sqlite";
 import { buildCatalogList, type CatalogListResult } from "../catalog/catalog-list.ts";

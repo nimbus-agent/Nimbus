@@ -8,7 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { type ExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import type { ConfigSnapshot } from "../config/layered-config.ts";
-import { CONNECTOR_SERVICE_IDS } from "../connectors/connector-catalog.ts";
+import { CONNECTOR_SERVICE_IDS, UNBUNDLED_CONNECTOR_IDS } from "../connectors/connector-catalog.ts";
 import { GATEWAY_SYNCABLE_SERVICE_IDS } from "../connectors/gateway-syncable-ids.ts";
 import { listUserMcpConnectors } from "../connectors/user-mcp-store.ts";
 import { readVerifiedManifest } from "../extensions/approve-run.ts";
@@ -81,7 +81,13 @@ export function buildCatalogList(deps: {
     visible: visibility.visible.has(a.name),
   }));
 
-  const builtinIds: readonly string[] = [...CONNECTOR_SERVICE_IDS, ...GATEWAY_SYNCABLE_SERVICE_IDS];
+  // An unbundled connector ships as a signed extension: it is listed once, as the installed
+  // extension, never as built in.
+  const unbundled: ReadonlySet<string> = new Set(UNBUNDLED_CONNECTOR_IDS);
+  const builtinIds: readonly string[] = [
+    ...CONNECTOR_SERVICE_IDS.filter((id) => !unbundled.has(id)),
+    ...GATEWAY_SYNCABLE_SERVICE_IDS,
+  ];
   const builtins: CatalogConnector[] = [];
   for (const id of builtinIds) {
     const meta = META_BY_ID[id];

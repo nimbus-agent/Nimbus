@@ -5,29 +5,31 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { runCatalog } from "./catalog.ts";
 
+// Mirrors the gateway's `CatalogListResult` wire shape (declared here: the CLI never imports
+// gateway source).
 const RESULT = {
   agents: [
     {
       name: "catchup",
-      displayName: "Catch up",
-      description: "What changed while you were away.",
-      category: "activity",
-      roles: [],
-      visible: true,
-      surfaces: ["cli"],
-      params: [],
+      displayName: "Catch-up",
+      description: "What happened across your connected services over a window.",
+      category: "catch-up",
+      roles: ["engineer", "manager"],
+      params: [{ name: "sinceMs", kind: "number", label: "Since (ms)", required: false }],
       method: "agents.catchup",
+      surfaces: { external: true, fleet: true },
+      visible: true,
     },
     {
       name: "decisions",
       displayName: "Decisions",
-      description: "Recorded decisions.",
+      description: "Decisions recovered from messages, pages and issues.",
       category: "knowledge",
-      roles: [],
-      visible: false,
-      surfaces: ["cli"],
+      roles: ["engineer", "manager"],
       params: [],
       method: "agents.decisions",
+      surfaces: { external: true, fleet: true },
+      visible: false,
     },
   ],
   connectors: [
@@ -36,7 +38,7 @@ const RESULT = {
       id: "github",
       displayName: "GitHub",
       category: "code",
-      description: "Code hosting.",
+      description: "A code hosting and collaboration platform built on Git",
     },
     {
       kind: "extension",
@@ -46,9 +48,13 @@ const RESULT = {
       category: "extension",
     },
     { kind: "extension", id: "ext2", serviceId: null, name: null, category: "extension" },
-    { kind: "user-mcp", id: "mcp_a", name: "mine", category: "user-mcp" },
+    { kind: "user-mcp", id: "mcp_a", name: "mcp_a", category: "user-mcp" },
   ],
-  visibility: { basis: "all", packs: [], notes: ["Showing all agents (no pack)."] },
+  visibility: {
+    basis: "all",
+    packs: [],
+    notes: ["agent visibility: all agents (no active pack sets [agents] visible)"],
+  },
 };
 
 describe("runCatalog", () => {
@@ -70,8 +76,34 @@ describe("runCatalog", () => {
   test("prints hidden agents as hidden", async () => {
     await runCatalog(["agents"]);
     expect(out.stdout).toMatch(/decisions\s+hidden\s+knowledge/);
-    expect(out.stdout).toMatch(/catchup\s+shown\s+activity/);
-    expect(out.stdout.indexOf("Showing all agents")).toBeLessThan(out.stdout.indexOf("catchup"));
+    expect(out.stdout).toMatch(/catchup\s+shown\s+catch-up/);
+    expect(out.stdout.indexOf("agent visibility: all agents")).toBeLessThan(
+      out.stdout.indexOf("catchup"),
+    );
+    expect(out.stdout).not.toContain("more visibility note");
+  });
+
+  test("names how many further visibility notes there are", async () => {
+    const many = {
+      ...RESULT,
+      visibility: {
+        basis: "all",
+        packs: [],
+        notes: [
+          "agent visibility: all agents (no active pack sets [agents] visible)",
+          'agent "decisions" is hidden by base',
+          'unknown agent "standpu" in base [agents] hide',
+        ],
+      },
+    };
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: createMockIpcClient([many]).client,
+    });
+    await runCatalog(["agents"]);
+    expect(out.stdout).toContain("2 more visibility note(s); see nimbus config explain agents");
+    expect(out.stdout).not.toContain("standpu");
+    expect(out.stdout.indexOf("2 more visibility")).toBeLessThan(out.stdout.indexOf("catchup"));
   });
 
   test("--json prints only the requested half", async () => {

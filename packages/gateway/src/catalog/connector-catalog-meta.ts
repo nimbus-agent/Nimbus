@@ -2,10 +2,13 @@
 // category, and one sentence about the SERVICE (never about what Nimbus indexes from it).
 //
 // Presentation only, like `agent-catalog.ts` beside it. The record is keyed by the same id unions
-// the connector catalog and the gateway-side syncables use, so a connector added to either fails
-// the build until it is described here.
+// the connector catalog (minus the unbundled ids) and the gateway-side syncables use, so a connector
+// added to either fails the build until it is described here.
 
-import type { ConnectorServiceId } from "../connectors/connector-catalog.ts";
+import type {
+  ConnectorServiceId,
+  UNBUNDLED_CONNECTOR_IDS,
+} from "../connectors/connector-catalog.ts";
 import type { GatewaySyncableServiceId } from "../connectors/gateway-syncable-ids.ts";
 
 export type ConnectorCategory =
@@ -34,6 +37,15 @@ export type ConnectorCategory =
   | "reading"
   | "research"
   | "local";
+
+/**
+ * A connector the gateway bundles: every catalog id except the unbundled ones (each of those ships
+ * as a signed extension and is listed as an installed extension, never as built in), plus the
+ * gateway-side syncables.
+ */
+export type BuiltinConnectorId =
+  | Exclude<ConnectorServiceId, (typeof UNBUNDLED_CONNECTOR_IDS)[number]>
+  | GatewaySyncableServiceId;
 
 export type ConnectorMeta = {
   readonly displayName: string;
@@ -112,7 +124,6 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
   netlify: m("Netlify", "deploy", "A hosting and deployment platform for web sites"),
   stripe: m("Stripe", "finance", "An online payment processing platform"),
   mercury: m("Mercury", "finance", "A banking service for startups"),
-  readwise: m("Readwise", "reading", "A service that collects highlights from books and articles"),
   raindrop: m("Raindrop.io", "reading", "A bookmark manager for saving web pages"),
   intercom: m("Intercom", "support", "A customer messaging and support platform"),
   zendesk: m("Zendesk", "support", "A customer support ticketing platform"),
@@ -175,4 +186,4 @@ export const CONNECTOR_CATALOG_META = Object.freeze({
   filesystem: m("Local Files", "local", "Folders and files on this machine"),
   obsidian: m("Obsidian", "local", "A local Obsidian note vault on this machine"),
   openapi: m("OpenAPI Specs", "local", "OpenAPI specification files on this machine"),
-}) satisfies Readonly<Record<ConnectorServiceId | GatewaySyncableServiceId, ConnectorMeta>>;
+}) satisfies Readonly<Record<BuiltinConnectorId, ConnectorMeta>>;

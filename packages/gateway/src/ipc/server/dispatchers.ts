@@ -978,9 +978,9 @@ export async function tryDispatchLocalityRpc(
 }
 
 /**
- * `catalog.list` — the agent + connector catalog (`nimbus catalog`, the desktop). Presentation
- * only: nothing reads the result to gate a call. LAN-forbidden (I5, `ipc/lan-rpc.ts`) and absent
- * from the Tauri allowlist (I7).
+ * `catalog.list` — the agent + connector catalog (`nimbus catalog`). Presentation only: nothing
+ * reads the result to gate a call. CLI-callable today, LAN-forbidden (I5, `ipc/lan-rpc.ts`), and
+ * not on the Tauri allowlist (I7) until the desktop adopts it.
  */
 export async function tryDispatchCatalogRpc(
   ctx: ServerCtx,

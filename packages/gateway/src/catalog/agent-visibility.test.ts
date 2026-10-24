@@ -66,6 +66,13 @@ describe("resolveAgentVisibility", () => {
     expect(sorted(v.visible)).toEqual(["oncall", "standup"]);
   });
 
+  test("a typo in a pack list drops only that name", () => {
+    const v = resolve(pack("ops", 'visible = ["oncall", "standpu"]'));
+    expect(v.basis).toBe("packs");
+    expect(sorted(v.visible)).toEqual(["oncall"]);
+    expect(v.notes).toContain('unknown agent "standpu" in pack:ops [agents] visible');
+  });
+
   test("normalises the agents. prefix on both sides", () => {
     expect(normaliseAgentName("agents.standup")).toBe("standup");
     expect(normaliseAgentName("standup")).toBe("standup");

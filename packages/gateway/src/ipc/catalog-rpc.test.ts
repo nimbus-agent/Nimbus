@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONNECTOR_CATALOG_META } from "../catalog/connector-catalog-meta.ts";
 import { forgetLayeredConfigForTests, initLayeredConfig } from "../config/layered-config.ts";
+import { CONNECTOR_SERVICE_IDS, UNBUNDLED_CONNECTOR_IDS } from "../connectors/connector-catalog.ts";
+import { GATEWAY_SYNCABLE_SERVICE_IDS } from "../connectors/gateway-syncable-ids.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import { CatalogRpcError, dispatchCatalogRpc } from "./catalog-rpc.ts";
 
@@ -33,6 +35,13 @@ describe("dispatchCatalogRpc", () => {
     expect(out.value.agents.every((a) => a.visible)).toBe(true);
     const builtins = out.value.connectors.filter((c) => c.kind === "builtin").map((c) => c.id);
     expect([...builtins].sort()).toEqual(Object.keys(CONNECTOR_CATALOG_META).sort());
+    const unbundled: ReadonlySet<string> = new Set(UNBUNDLED_CONNECTOR_IDS);
+    const bundled = [
+      ...CONNECTOR_SERVICE_IDS.filter((id) => !unbundled.has(id)),
+      ...GATEWAY_SYNCABLE_SERVICE_IDS,
+    ].sort();
+    expect([...builtins].sort()).toEqual(bundled);
+    for (const id of UNBUNDLED_CONNECTOR_IDS) expect(builtins).not.toContain(id);
     expect(out.value.visibility.basis).toBe("all");
   });
 
