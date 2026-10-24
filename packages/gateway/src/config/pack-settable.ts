@@ -78,6 +78,14 @@ export const PACK_SETTABLE_KEYS: readonly PackSettableKey[] = [
     parse: parseNonNegInt(1),
   },
   {
+    section: "oncall.push",
+    key: "enabled",
+    consumer: "reactive",
+    why: "turns the on-call pushed brief on or off; the owner's own file still overrides it",
+    expect: "true or false",
+    parse: parseBool,
+  },
+  {
     section: "decisions",
     key: "min_confidence",
     consumer: "per-call",

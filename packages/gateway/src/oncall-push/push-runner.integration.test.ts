@@ -74,7 +74,8 @@ test("a real agents.oncall brief is stored, synthesis is NOT attempted even unde
   const runner = createOncallPushRunner({
     db,
     store,
-    config: { ...DEFAULT_ONCALL_PUSH_CONFIG, enabled: true },
+    config: DEFAULT_ONCALL_PUSH_CONFIG,
+    isEnabled: () => true,
     pagerdutyAliases: [],
     configDir,
     index: new LocalIndex(db),

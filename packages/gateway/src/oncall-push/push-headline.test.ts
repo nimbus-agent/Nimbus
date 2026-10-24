@@ -22,11 +22,24 @@ import {
   SUMMARY_ID_CAP,
 } from "./push-headline.ts";
 import type { PushDelivery } from "./push-runner.ts";
-import { assembleOncallPushRuntime } from "./push-runtime.ts";
+import {
+  assembleOncallPushRuntime as assembleRuntime,
+  type OncallPushBootDeps,
+  type OncallPushRuntime,
+} from "./push-runtime.ts";
 
 let dbs: Database[] = [];
 let roots: string[] = [];
+// Every runtime a test assembles is stopped, so its live `enabled` reader never outlives it.
+const runtimes: OncallPushRuntime[] = [];
+function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushRuntime {
+  const rt = assembleRuntime(deps);
+  runtimes.push(rt);
+  return rt;
+}
+
 afterEach(() => {
+  for (const rt of runtimes.splice(0)) rt.stop();
   for (const db of dbs) db.close();
   for (const r of roots) rmSync(r, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   dbs = [];

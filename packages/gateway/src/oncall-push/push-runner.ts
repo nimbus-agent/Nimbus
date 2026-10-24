@@ -44,7 +44,9 @@ export class PushRetryRefusedError extends Error {
 export interface OncallPushRunnerDeps {
   readonly db: Database;
   readonly store: PushStore;
-  readonly config: NimbusOncallPushToml;
+  /** Boot-time `[oncall.push]` keys; `enabled` is live and read only through `isEnabled`. */
+  readonly config: Omit<NimbusOncallPushToml, "enabled">;
+  readonly isEnabled: () => boolean;
   readonly pagerdutyAliases: readonly string[];
   readonly configDir: string;
   readonly index?: LocalIndex;
@@ -176,7 +178,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
   const retrying = new Map<string, Promise<PushedBriefRow>>();
 
   async function once(): Promise<PushRunSummary> {
-    if (!deps.config.enabled) return { selected: 0, ok: 0, failed: 0, skipped: "disabled" };
+    if (!deps.isEnabled()) return { selected: 0, ok: 0, failed: 0, skipped: "disabled" };
     const enabledAt = deps.store.enabledAt();
     if (enabledAt === null) return { selected: 0, ok: 0, failed: 0, skipped: "not_reconciled" };
     const personId = await deps.resolveSelf();

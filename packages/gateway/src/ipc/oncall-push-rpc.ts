@@ -95,7 +95,7 @@ async function handleList(params: unknown, ctx: OncallPushRpcCtx) {
     limit = raw;
   }
   return {
-    enabled: ctx.runtime.config.enabled,
+    enabled: ctx.runtime.isEnabled(),
     identity: (await ctx.runtime.identityResolved()) ? "resolved" : "unresolved",
     briefs: ctx.runtime.store
       .listWithIncident(limit)

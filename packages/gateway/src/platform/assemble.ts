@@ -3834,6 +3834,8 @@ export async function assemblePlatformServices(
     decisionsRefresher,
     ownershipRefresher,
     premortemRefresher,
+    // The live `[oncall.push] enabled` reader's timer must not outlive shutdown.
+    oncallPush,
   ]);
 
   try {

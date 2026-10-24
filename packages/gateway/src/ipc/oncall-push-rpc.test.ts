@@ -8,10 +8,19 @@ import type { OncallPushRuntime } from "../oncall-push/push-runtime.ts";
 import { PushStore } from "../oncall-push/push-store.ts";
 import { dispatchOncallPushRpc } from "./oncall-push-rpc.ts";
 
+// The runtime's boot-time config carries no `enabled`: that is read live through `isEnabled`.
+const BOOT_CONFIG: OncallPushRuntime["config"] = {
+  severities: DEFAULT_ONCALL_PUSH_CONFIG.severities,
+  chatopsNamespace: DEFAULT_ONCALL_PUSH_CONFIG.chatopsNamespace,
+  retentionDays: DEFAULT_ONCALL_PUSH_CONFIG.retentionDays,
+};
+
 let db: Database;
 let store: PushStore;
 const runtime = (over: Partial<OncallPushRuntime> = {}): OncallPushRuntime => ({
-  config: { ...DEFAULT_ONCALL_PUSH_CONFIG, enabled: true },
+  config: BOOT_CONFIG,
+  isEnabled: () => true,
+  stop: () => {},
   store,
   run: async () => ({ selected: 0, ok: 0, failed: 0 }),
   trigger: () => {},
@@ -188,7 +197,7 @@ test("service: PagerDuty fallback for an unmapped or failed row; null without an
 
 test("pushedList reports whether ChatOps can post for the configured namespace (for nimbus doctor)", async () => {
   const bound = runtime({
-    config: { ...DEFAULT_ONCALL_PUSH_CONFIG, enabled: true, chatopsNamespace: "project:pay" },
+    config: { ...BOOT_CONFIG, chatopsNamespace: "project:pay" },
     chatopsSinkState: () => "bound",
   });
   expect((await hit("oncall.pushedList", {}, bound))["chatops"]).toEqual({
@@ -196,11 +205,19 @@ test("pushedList reports whether ChatOps can post for the configured namespace (
     posting: true,
   });
   const off = runtime({
-    config: { ...DEFAULT_ONCALL_PUSH_CONFIG, enabled: true, chatopsNamespace: "project:pay" },
+    config: { ...BOOT_CONFIG, chatopsNamespace: "project:pay" },
     chatopsSinkState: () => "none",
   });
   expect((await hit("oncall.pushedList", {}, off))["chatops"]).toEqual({
     namespace: "project:pay",
     posting: false,
   });
+});
+
+test("pushedList's enabled follows runtime.isEnabled() on every call", async () => {
+  let on = false;
+  const rt = runtime({ isEnabled: () => on });
+  expect((await hit("oncall.pushedList", {}, rt))["enabled"]).toBe(false);
+  on = true;
+  expect((await hit("oncall.pushedList", {}, rt))["enabled"]).toBe(true);
 });

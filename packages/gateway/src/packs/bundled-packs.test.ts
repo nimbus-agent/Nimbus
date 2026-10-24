@@ -21,6 +21,16 @@ describe("BUNDLED_PACKS", () => {
     expect(BUNDLED_PACKS.get("pm")?.members).toEqual([]);
   });
 
+  test("devops is 1.1.0 and turns the on-call pushed brief on", () => {
+    const devops = BUNDLED_PACKS.get("devops");
+    expect(devops?.version).toBe("1.1.0");
+    const r = checkPackFragment(devops?.defaults ?? "", checkPackFleetJobs);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scalars.get("oncall.push.enabled")).toBe(true);
+    expect(r.scalars.get("fleet.enabled")).toBe(true);
+  });
+
   test("every bundled pack passes checkPackFragment with checkPackFleetJobs", () => {
     for (const m of BUNDLED_PACKS.values()) {
       const r = checkPackFragment(m.defaults, checkPackFleetJobs);

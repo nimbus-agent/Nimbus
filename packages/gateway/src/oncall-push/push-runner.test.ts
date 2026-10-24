@@ -76,7 +76,8 @@ function makeRunner(over: Partial<Parameters<typeof createOncallPushRunner>[0]> 
   const runner = createOncallPushRunner({
     db,
     store,
-    config: { ...DEFAULT_ONCALL_PUSH_CONFIG, enabled: true },
+    config: DEFAULT_ONCALL_PUSH_CONFIG,
+    isEnabled: () => true,
     pagerdutyAliases: [],
     configDir: "unused-in-unit-tests",
     resolveSelf: async () => personId,
@@ -126,7 +127,7 @@ describe("push runner", () => {
       (
         await makeRunner({
           dispatch: readyDispatch(calls),
-          config: DEFAULT_ONCALL_PUSH_CONFIG,
+          isEnabled: () => false,
         }).runner.run("pagerduty")
       ).skipped,
     ).toBe("disabled");
@@ -143,6 +144,15 @@ describe("push runner", () => {
       (await makeRunner({ dispatch: readyDispatch(calls) }).runner.run("pagerduty")).skipped,
     ).toBe("not_reconciled");
     expect(calls).toEqual([]);
+  });
+
+  test("isEnabled is read on every run, never cached at construction", async () => {
+    let on = false;
+    const calls: unknown[] = [];
+    const { runner } = makeRunner({ dispatch: readyDispatch(calls), isEnabled: () => on });
+    expect((await runner.run("pagerduty")).skipped).toBe("disabled");
+    on = true;
+    expect(await runner.run("pagerduty")).toEqual({ selected: 1, ok: 1, failed: 0 });
   });
 
   test("a SYNCHRONOUS refusal (thrown AgentsRpcError) is a failed row, not a rejection", async () => {
