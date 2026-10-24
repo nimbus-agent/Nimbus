@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:8f6053266182a9a8b4c4e3a0d3955d17b8cf185b54d5542b22d9ca57b67bef24
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:cc7eb276143e29254924a6bb7a77a27b1a84d3968b5189e351306adafce2d438
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -9394,9 +9394,10 @@ async function attemptSign(opts, seed, rootKey, deps) {
   }
   let sequence = index.sequence;
   if (added.length > 0) {
+    const { signature: _previousSignature, ...carried } = index;
     const signed = await deps.sign({
+      ...carried,
       format: 1,
-      rootKey: index.rootKey,
       sequence: index.sequence + 1,
       generatedAt: new Date().toISOString(),
       extensions

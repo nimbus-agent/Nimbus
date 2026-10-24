@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyIndexSignature } from "@nimbus-dev/registry-format";
+import { signIndex, verifyIndexSignature } from "@nimbus-dev/registry-format";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "../lib/extension-signing.ts";
 import { readIndexFile } from "../lib/registry-index.ts";
 import { runRegistryMaintain } from "./registry-maintain.ts";
@@ -99,6 +99,22 @@ describe("registry maintain", () => {
     expect(
       await runRegistryMaintain(["init", join(tmp, "reg2"), "--key", key, "--force"], io),
     ).toBe(0);
+  });
+
+  test("a re-sign keeps top-level index fields it does not manage (packs)", async () => {
+    const { dir, key } = await init();
+    const prev = readIndexFile(join(dir, "index.json"));
+    const { signature: _omit, ...unsigned } = prev;
+    const packs = { devops: { versions: { "1.0.0": { channel: "stable" } } } };
+    const seed = new Uint8Array(Buffer.from(readFileSync(key, "utf8").trim(), "base64"));
+    const withPacks = await signIndex({ ...unsigned, packs }, seed);
+    writeFileSync(join(dir, "index.json"), JSON.stringify(withPacks, null, 2));
+    const ext = await makeExtension("ext");
+    expect(await runRegistryMaintain(["add", dir, ext, "--key", key], io)).toBe(0);
+    const index = readIndexFile(join(dir, "index.json"));
+    expect(index.sequence).toBe(prev.sequence + 1);
+    expect(index.packs).toEqual(packs);
+    expect(verifyIndexSignature(index)).toBe(true);
   });
 
   test("add a dir then the index lists it with correct hashes and sequence 2", async () => {
