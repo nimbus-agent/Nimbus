@@ -681,15 +681,14 @@ describe("emergency log hardening", () => {
 
   test("labelled credentials are scrubbed exactly as the former single regex scrubbed them", () => {
     // The labelled-credential pass used to be this one regex; it is now a label scan plus a small
-    // value parser. Every input below must come out byte-identical to the regex's output.
+    // value parser. Every input below must come out byte-identical to the regex's output. The one
+    // deliberate difference, an unclosed quote, has its own test below.
     const former =
       /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s"'&,;]+)/gi;
     const inputs = [
       "api_key=plainsecret&x=1 password: hunter2",
       "API-KEY = abc; Access_Token:xyz,next",
       "apikey=a refreshtoken=b client-secret=c clientsecret='d e' passwd=f",
-      `password="unterminated value`,
-      `secret='unterminated`,
       `password=a"b secret="c d"`,
       `password=secret="a b"`,
       `password="x secret=y" tail`,
@@ -707,6 +706,15 @@ describe("emergency log hardening", () => {
     for (const input of inputs) {
       expect(scrubRedactedValuePatterns(input)).toBe(input.replace(former, "[REDACTED]"));
     }
+  });
+
+  test("an unclosed quoted credential is redacted to the end of its line (the former regex leaked it)", () => {
+    expect(scrubRedactedValuePatterns(`password="hunter2 and more`)).toBe("[REDACTED]");
+    expect(scrubRedactedValuePatterns(`x secret='abc`)).toBe("x [REDACTED]");
+    expect(scrubRedactedValuePatterns('boom password="hunter2\n    at f (a.ts:1)')).toBe(
+      "boom [REDACTED]\n    at f (a.ts:1)",
+    );
+    expect(scrubRedactedValuePatterns('api_key="k1\r\nnext')).toBe("[REDACTED]\r\nnext");
   });
 
   test("a quoted multi-word credential is redacted whole, not only its first word", () => {

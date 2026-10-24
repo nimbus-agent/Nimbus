@@ -126,14 +126,18 @@ const UNQUOTED_VALUE_END = /[\s"'&,;]/;
 
 /**
  * Where a labelled value starting at `from` ends, or `undefined` when there is none. A quoted value
- * is consumed whole (spaces included) up to its closing quote; an unclosed quote is no value, since
- * a quote cannot start an unquoted one. An unquoted value runs to the first `UNQUOTED_VALUE_END`.
+ * is consumed whole (spaces included) up to its closing quote. An UNCLOSED quote runs to the end of
+ * its line: the former regex left `password="hunter2` in plaintext, and over-redacting the rest of
+ * one line is the safe direction (a following stack trace line stays readable). An unquoted value
+ * runs to the first `UNQUOTED_VALUE_END`.
  */
 function labelledValueEnd(s: string, from: number): number | undefined {
   const quote = s[from];
   if (quote === '"' || quote === "'") {
     const close = s.indexOf(quote, from + 1);
-    return close === -1 ? undefined : close + 1;
+    if (close !== -1) return close + 1;
+    const eol = s.slice(from).search(/[\r\n]/);
+    return eol === -1 ? s.length : from + eol;
   }
   let end = from;
   while (end < s.length && !UNQUOTED_VALUE_END.test(s[end] as string)) end++;
