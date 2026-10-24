@@ -14,6 +14,9 @@ import nacl from "tweetnacl";
 import { RegistryError } from "./errors.ts";
 import { assertSafeExtensionId } from "./extension-id.ts";
 import { PUBLISHER_ID_RE } from "./manifest.ts";
+import { isValidSemver } from "./semver.ts";
+
+export { isValidSemver };
 
 function decodeBase64(s: string): Uint8Array {
   return new Uint8Array(Buffer.from(s, "base64"));
@@ -92,16 +95,6 @@ function isoTimestamp(o: Record<string, unknown>, key: string, what: string): st
   if (Number.isNaN(Date.parse(v))) throw invalid(`${what}.${key} is not a timestamp`);
   return v;
 }
-
-// Strict SemVer 2.0.0: the version is joined into a path, so no range syntax, `v` prefix or whitespace.
-const SEMVER_RE =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-
-/** Strict SemVer 2.0.0, the one rule the index and update apply share. */
-export function isValidSemver(v: string): boolean {
-  return SEMVER_RE.test(v);
-}
-
 function parseVersionEntry(raw: unknown, id: string, version: string): RegistryVersionEntry {
   const what = `extensions.${id}.versions.${version}`;
   const o = asObject(raw, what);
