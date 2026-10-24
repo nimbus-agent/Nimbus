@@ -18,6 +18,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-24 — Role packs P3, PR 3: `[oncall.push] enabled` is pack-settable and live; the DevOps pack sets it; `nimbus doctor` notes a pack update (no migration, no invariant, no egress class).**
+  `[oncall.push] enabled` joins the pack-settable keys and is read live: installing or removing a pack turns the
+  on-call push on or off without a gateway restart, and a disable followed by an enable starts a fresh window rather
+  than backfilling history. Your own `nimbus.toml` or profile file still overrides a pack. Only `enabled` is live;
+  every other `[oncall.push]` key is still read at boot and `chatops_namespace` is not pack-settable. The bundled
+  DevOps pack is now version 1.1.0 and sets `[oncall.push] enabled = true`, so an existing DevOps install shows
+  `update available` in `nimbus pack list` until it is re-installed (the re-install shows the one added key).
+  `nimbus doctor` prints an `[info]` line naming installed packs that have an update available; it never changes the
+  exit code. Not breaking: nothing a user wrote stops working.
+
 - **2026-10-24 — Role packs P3, PR 2: the PM and DevOps packs, and `nimbus pack` (invariant I47, new HITL type `pack.install`, no migration, no egress class).**
   Two packs now ship inside the gateway, `pm` and `devops`, and `nimbus pack list|show|install|remove` manages
   them on the active profile. `install` asks under the new `pack.install` approval (in the I2 frozen set) over the

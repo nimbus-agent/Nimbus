@@ -1130,11 +1130,13 @@ A brief that could not be assembled is stored as `FAILED` with its failure code 
 
 ```toml
 [oncall.push]
-enabled = false          # default off
+enabled = false          # default off; a role pack (the bundled DevOps pack, 1.1.0) may set it, and it is read live; your own file still wins
 severities = []          # [] = {"p1"} plus [pagerduty] severity_p1_aliases; a non-empty list REPLACES that set
 chatops_namespace = ""   # "" = post nothing; else the namespace whose policy notify channels get each pushed headline
 retention_days = 90      # stored briefs older than this are pruned at boot (even when disabled) and on each run
 ```
+
+**Pack-settable and live.** `enabled` is the one `[oncall.push]` key a role pack may set (the bundled DevOps pack, version 1.1.0, sets `enabled = true`). It takes effect without a gateway restart: installing or removing a pack, or editing your own `nimbus.toml`, is picked up without a restart, and a disable followed by an enable starts a fresh window rather than backfilling history. Your own `nimbus.toml` or profile file still overrides a pack, so an explicit `enabled = false` keeps push off. Every other `[oncall.push]` key (`severities`, `chatops_namespace`, `retention_days`) is read at gateway start and is not pack-settable. A DevOps pack installed before 1.1.0 shows `update available` in `nimbus pack list`; re-install it to pick the key up.
 
 **What a push never does.** It never runs synthesis — the stored brief is the deterministic render, so nothing is sent to a model. The `oncall.briefPushed` event carries only `{incidentId, status}` (an `ok`/`failed` status), never the brief. The OS notification ([`nimbus notifications`](#nimbus-notifications)) carries the incident title and id, never the brief, and is capped at three per run plus one summary. Each row records its toast outcome: `delivered`; `coalesced` into the summary; `skipped` when OS notifications are off or unavailable on this gateway (the reason points at `nimbus notifications status`); or `failed` with the reason when the notification service refused it, e.g. its rate limit. An incident with no recorded opening time is never pushed, enabling push never backfills history, and the gateway reconciles the enable moment at boot rather than trusting a timestamp from an earlier run.
 
@@ -3306,7 +3308,7 @@ Show which layer supplied a config value (`code default`, `nimbus.toml`, `nimbus
 nimbus config explain llm.local_model
 ```
 
-The notes list `pack "<id>" skipped: <reason>` for each pack layer the gateway skipped, and `packs for profile "<p>" not applied: <reason>` when the profile's pack list could not be read. Reasons never contain an absolute path. No command writes a pack layer yet, so on a current install these notes do not appear.
+The notes list `pack "<id>" skipped: <reason>` for each pack layer the gateway skipped, and `packs for profile "<p>" not applied: <reason>` when the profile's pack list could not be read. Reasons never contain an absolute path. These notes appear only when an installed pack layer is skipped or the pack list is unreadable.
 
 `nimbus doctor` reports the same state from `diag.snapshot`: `[warn] pack "<id>" skipped: <reason>` per skipped pack and `[warn] packs not applied: <reason>` for an unreadable pack list (each exits `1`), and `[info] packs active: <ids>` when any pack layer is applied (exit `0`). An older gateway that does not send these fields prints nothing extra.
 
