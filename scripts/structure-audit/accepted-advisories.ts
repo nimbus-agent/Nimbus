@@ -79,21 +79,8 @@ export const ACCEPTED_ADVISORIES: readonly AcceptedAdvisory[] = [
   // accepted 2026-07-29), was deleted when @mastra/core 1.64.0 met its unblocking condition (the
   // npm alias the row named had left bun.lock), per the retire rule above. The `braces` row
   // (GHSA-vfj7-8cjw-p6xm, accepted 2026-10-03, reached only through markdownlint-cli2) was deleted
-  // on 2026-10-23, the day GitHub WITHDREW the advisory and `bun audit` stopped reporting it.
-  {
-    ghsa: "GHSA-ch52-4w7c-c8xp",
-    package: "http-cache-semantics",
-    severity: "high",
-    noFixReason:
-      "No patched http-cache-semantics exists. The advisory (CVE-2026-93748, CVSS 7.5, CWE-524) covers <=4.2.0, 4.2.0 is the latest release, and GitHub lists no first patched version. astro 7.3.5 (latest, already installed) requires ^4.2.0, and so do the 7.4.0-beta.0 and 7.4.0-beta.1 prereleases, so neither an astro upgrade nor a root override has anything to point at. Checked against the npm registry on 2026-10-03.",
-    reachability:
-      "Build-time only, inside the private docs site; nothing that ships contains it. `bun why http-cache-semantics`: the sole dependent is astro in the private @nimbus/docs workspace. It shows up under `bun audit --production` only because astro is a runtime dependency of that workspace; gateway, cli, ui and admin-console do not depend on astro. The only importer in the installed tree is astro/dist/assets/build/remote.js, the static build's remote-image cache, which builds a CachePolicy from a `new Request(src)` it constructs itself and calls only storable() and timeToLive(). The flaw is in the max-stale branch of evaluateRequest(), which satisfiesWithoutRevalidation() also goes through: a security-zeroed shared-cache entry gets served to ANOTHER client. astro calls neither method, and there is no shared multi-user cache and no attacker-supplied request. Our pages also use only local imported images and set no image.domains or remotePatterns, so the build never enters even that path. The site ships as static files: astro.config.mjs sets no `output`, and deploy-docs.yml uploads packages/docs/dist to GitHub Pages.",
-    unblockedBy:
-      "http-cache-semantics publishes a release outside <=4.2.0. A 4.x release satisfies astro's ^4.2.0, so a root `overrides` pin can take it the same day; a 5.x release needs astro to follow. astro dropping http-cache-semantics would also clear it. Either way `bun audit` stops reporting it, and audit:advisories then fails on this row as stale until the row is deleted.",
-    acceptedOn: "2026-10-03",
-    recheckBy: "2026-11-02",
-    owner: "asafgolombek",
-  },
+  // on 2026-10-23, the day GitHub WITHDREW the advisory and `bun audit` stopped reporting it. The `http-cache-semantics` row (GHSA-ch52-4w7c-c8xp, accepted
+  // 2026-10-03) was deleted on 2026-10-24, when 4.3.0 was published and a root override took it.
   // Three LOW/MODERATE advisories surfaced on 2026-10-07, once the @modelcontextprotocol/client
   // override cleared the HIGH that had been failing `bun audit` and hiding this gate. A fourth from
   // the same batch, smol-toml GHSA-r4xh-jqrq-34v2, was fixed instead: 1.9.0 is published and a root
