@@ -65,6 +65,24 @@ describe("createLiveEnabled", () => {
     expect(h.reconciles).toEqual([]);
   });
 
+  test("a boot seed that is not yet reconciled reconciles on the first successful load even when the value is unchanged", () => {
+    const h = harness();
+    const live = createLiveEnabled(h.deps, { version: 1, enabled: false, reconciled: false });
+    h.state.value = "throw";
+    h.state.version = 2;
+    expect(live.isEnabled()).toBe(false);
+    expect(h.reconciles).toEqual([]);
+    h.state.value = false;
+    h.state.version = 3;
+    h.state.now = 7_000;
+    expect(live.isEnabled()).toBe(false);
+    expect(h.reconciles).toEqual([[false, 7_000]]);
+    // Reconciled now: an unchanged value reconciles nothing further.
+    h.state.version = 4;
+    expect(live.isEnabled()).toBe(false);
+    expect(h.reconciles).toHaveLength(1);
+  });
+
   test("a disable after enable reconciles false", () => {
     const h = harness();
     const live = createLiveEnabled(h.deps, { version: 1, enabled: true });

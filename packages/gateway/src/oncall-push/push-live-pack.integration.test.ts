@@ -134,3 +134,36 @@ test("an owner nimbus.toml unreadable at boot starts the push disabled", async (
   expect(rt.isEnabled()).toBe(false);
   expect(rt.store.enabledAt()).toBeNull();
 });
+
+/** A leftover window from an earlier enabled run, as the boot reconcile would have left it. */
+function seedWindow(enabledAt: number): void {
+  db.run("INSERT INTO oncall_push_state (id, enabled_at) VALUES (1, ?)", [enabledAt]);
+}
+
+test("a layer unreadable at boot leaves the push window intact; readable and enabled keeps it", () => {
+  seedWindow(100);
+  const tomlPath = join(dir, "nimbus.toml");
+  mkdirSync(tomlPath);
+  const rt = boot();
+  expect(rt.isEnabled()).toBe(false);
+  expect(rt.store.enabledAt()).toBe(100);
+
+  rmSync(tomlPath, { recursive: true });
+  writeFileSync(tomlPath, "[oncall.push]\nenabled = true\n");
+  nowMs = 9_000;
+  expect(rt.isEnabled()).toBe(true);
+  expect(rt.store.enabledAt()).toBe(100);
+});
+
+test("a layer unreadable at boot, then readable with enabled = false, clears the stale window", () => {
+  seedWindow(100);
+  const tomlPath = join(dir, "nimbus.toml");
+  mkdirSync(tomlPath);
+  const rt = boot();
+  expect(rt.store.enabledAt()).toBe(100);
+
+  rmSync(tomlPath, { recursive: true });
+  writeFileSync(tomlPath, "[oncall.push]\nenabled = false\n");
+  expect(rt.isEnabled()).toBe(false);
+  expect(rt.store.enabledAt()).toBeNull();
+});

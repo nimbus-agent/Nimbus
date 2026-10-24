@@ -89,7 +89,7 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
   const loaded = loadNimbusOncallPushFromConfigDir(deps.configDir);
   // The layered snapshot treats a layer it could not read as ABSENT, so an unreadable owner file
   // (`enabled = false`) would let a pack's `enabled = true` win. A partial config therefore reads
-  // as disabled at boot, and the live reader below refuses it, keeping its last value.
+  // as disabled at boot (row left as is, see below), and the live reader refuses it, keeping its last value.
   const bootReadError = layerReadError(deps.configDir);
   if (bootReadError !== undefined) {
     deps.logger.warn?.({ err: bootReadError }, "[oncall.push] config layer unreadable; disabled");
@@ -99,13 +99,16 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
   const store = new PushStore(deps.db);
   // Spec § 4.1: reconciled at BOOT, never on the first run, so the first sync's incidents are
   // never older than enabled_at and a disable→enable cycle never backfills the gap.
-  store.reconcileEnabledState(config.enabled, now());
+  // An unreadable layer SKIPS it: a transient lock must not erase the window (enabled_at) of an
+  // owner whose push is on. The live reader reconciles on its first successful load instead.
+  if (bootReadError === undefined) store.reconcileEnabledState(config.enabled, now());
   // Retention is enforced at boot REGARDLESS of `enabled`: the per-run prune only runs on a
   // PagerDuty-triggered run past its early returns, so a disabled push, an unresolved identity or
   // a connector that stopped syncing would otherwise keep rows past `retention_days` forever.
   store.pruneOlderThan(now() - config.retentionDays * DAY_MS);
 
-  // Built AFTER the boot reconcile, from the same read, so the live value and the row agree. From
+  // Built AFTER the boot reconcile, from the same read, so the live value and the row agree (unless
+  // the boot reconcile was skipped; `reconciled: false` makes the first good load do it). From
   // here on `enabled` is live (role-packs spec § 5.9): a later change is reconciled before the
   // runner can see it, so the runner never sees "enabled" without its `enabled_at` row.
   const live = createLiveEnabled(
@@ -121,7 +124,7 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
       logger: deps.logger,
       ...(deps.checkMs === undefined ? {} : { checkMs: deps.checkMs }),
     },
-    { version: bootVersion, enabled: config.enabled },
+    { version: bootVersion, enabled: config.enabled, reconciled: bootReadError === undefined },
   );
   live.start();
   const isEnabled = (): boolean => live.isEnabled();

@@ -38,9 +38,14 @@ export interface LiveEnabled {
 
 export function createLiveEnabled(
   deps: LiveEnabledDeps,
-  boot: { readonly version: number; readonly enabled: boolean },
+  /**
+   * `reconciled: false` means the boot reconcile was skipped (the config was unreadable), so the
+   * first successful load reconciles even when the value is unchanged. Defaults to true.
+   */
+  boot: { readonly version: number; readonly enabled: boolean; readonly reconciled?: boolean },
 ): LiveEnabled {
   let enabled = boot.enabled;
+  let reconciled = boot.reconciled !== false;
   let lastVersion = boot.version;
   let lastLoggedVersion: number | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -66,7 +71,7 @@ export function createLiveEnabled(
         }
         return;
       }
-      if (next !== enabled) {
+      if (next !== enabled || !reconciled) {
         // Reconcile FIRST: the runner must never see "enabled" without its reconciled row. A throw
         // leaves the old value and version so the next refresh retries (reconcile is idempotent).
         try {
@@ -82,6 +87,7 @@ export function createLiveEnabled(
           return;
         }
         enabled = next;
+        reconciled = true;
       }
       lastVersion = version;
     } catch (err) {
