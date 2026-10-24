@@ -827,9 +827,9 @@ export function isFreshIndexDatabase(db: Database): boolean {
   if (readIndexedUserVersion(db) !== 0) return false;
   const other = db
     .query(
-      `SELECT 1 FROM sqlite_master
+      String.raw`SELECT 1 FROM sqlite_master
        WHERE NOT (type = 'table' AND name = '_schema_migrations')
-         AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+         AND name NOT LIKE 'sqlite\_%' ESCAPE '\'
        LIMIT 1`,
     )
     .get();

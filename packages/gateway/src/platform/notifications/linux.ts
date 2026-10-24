@@ -75,7 +75,7 @@ export function gvariantStringLiteral(text: string): string {
     const cp = ch.codePointAt(0) ?? 0;
     if (ch === "\\") out += String.raw`\\`;
     else if (ch === "'") out += String.raw`\'`;
-    else if (cp < 0x20 || cp === 0x7f) out += `\\u${cp.toString(16).padStart(4, "0")}`;
+    else if (cp < 0x20 || cp === 0x7f) out += String.raw`\u${cp.toString(16).padStart(4, "0")}`;
     else out += ch;
   }
   return `${out}'`;

@@ -56,49 +56,14 @@ export async function buildTestRegistry(
   const publisherId = opts.publisherId ?? "acme";
   const versions: Record<string, unknown> = {};
   const entryHashes = new Map<string, string>();
-  for (const v of opts.versions) {
-    const base = join(dir, "extensions", opts.id, v.version);
-    const pkg = join(dir, "build", v.version, "pkg");
-    mkdirSync(join(pkg, "dist"), { recursive: true });
-    mkdirSync(base, { recursive: true });
-    const entrySource = opts.entrySource ?? `export const v = "${v.version}";\n`;
-    writeFileSync(join(pkg, "dist", "index.js"), entrySource);
-    const unsigned = {
-      id: opts.id,
-      name: `Test ${opts.id}`,
-      version: v.version,
-      entry: "dist/index.js",
-      permissions: {},
-      publisher: { id: publisherId, key: publisherKey },
-      ...(v.dependsOn === undefined ? {} : { dependsOn: v.dependsOn }),
-      ...opts.manifestExtra,
-    };
-    const manifestText = JSON.stringify({
-      ...unsigned,
-      signature: await signManifest(
-        unsigned,
-        opts.badManifestSignature === true ? ROOT_SEED : PUBLISHER_SEED,
-      ),
-    });
-    writeFileSync(join(pkg, "nimbus.extension.json"), manifestText);
-    writeFileSync(join(base, "manifest.json"), manifestText);
-    await tar.c(
-      { gzip: true, file: join(base, "package.tgz"), cwd: join(dir, "build", v.version) },
-      ["pkg"],
-    );
-    const tgz = await Bun.file(join(base, "package.tgz")).bytes();
-    entryHashes.set(v.version, sha(entrySource));
-    versions[v.version] = {
-      channel: v.channel ?? "stable",
-      name: `Test ${opts.id}`,
-      manifest: `extensions/${opts.id}/${v.version}/manifest.json`,
-      manifestSha256: sha(manifestText),
-      package: `extensions/${opts.id}/${v.version}/package.tgz`,
-      packageSha256: sha(tgz),
-      packageSizeBytes: tgz.byteLength,
-      entryHash: opts.entryHashOverride ?? sha(entrySource),
-      publishedAt: "2026-10-18T10:00:00Z",
-    };
+  // Each version writes only under its own directories, so they are built concurrently; the index
+  // entries are then added in the caller's order.
+  const built = await Promise.all(
+    opts.versions.map((v) => buildTestVersion(dir, opts, v, publisherId, publisherKey)),
+  );
+  for (const b of built) {
+    entryHashes.set(b.version, b.entryHash);
+    versions[b.version] = b.entry;
   }
   const unsignedIndex = {
     format: 1 as const,
@@ -137,4 +102,63 @@ export function resignIndex(path: string, index: Record<string, unknown>): void 
     ),
   );
   writeFileSync(path, JSON.stringify({ ...rest, signature: sig }));
+}
+
+type BuildTestRegistryOptions = Parameters<typeof buildTestRegistry>[1];
+
+/** One version's package, manifest and index entry, written under `dir`. */
+async function buildTestVersion(
+  dir: string,
+  opts: BuildTestRegistryOptions,
+  v: TestVersion,
+  publisherId: string,
+  publisherKey: string,
+): Promise<{ version: string; entryHash: string; entry: Record<string, unknown> }> {
+  const base = join(dir, "extensions", opts.id, v.version);
+  const pkg = join(dir, "build", v.version, "pkg");
+  mkdirSync(join(pkg, "dist"), { recursive: true });
+  mkdirSync(base, { recursive: true });
+  const entrySource =
+    opts.entrySource ??
+    `export const v = "${v.version}";
+`;
+  writeFileSync(join(pkg, "dist", "index.js"), entrySource);
+  const unsigned = {
+    id: opts.id,
+    name: `Test ${opts.id}`,
+    version: v.version,
+    entry: "dist/index.js",
+    permissions: {},
+    publisher: { id: publisherId, key: publisherKey },
+    ...(v.dependsOn === undefined ? {} : { dependsOn: v.dependsOn }),
+    ...opts.manifestExtra,
+  };
+  const manifestText = JSON.stringify({
+    ...unsigned,
+    signature: await signManifest(
+      unsigned,
+      opts.badManifestSignature === true ? ROOT_SEED : PUBLISHER_SEED,
+    ),
+  });
+  writeFileSync(join(pkg, "nimbus.extension.json"), manifestText);
+  writeFileSync(join(base, "manifest.json"), manifestText);
+  await tar.c({ gzip: true, file: join(base, "package.tgz"), cwd: join(dir, "build", v.version) }, [
+    "pkg",
+  ]);
+  const tgz = await Bun.file(join(base, "package.tgz")).bytes();
+  return {
+    version: v.version,
+    entryHash: sha(entrySource),
+    entry: {
+      channel: v.channel ?? "stable",
+      name: `Test ${opts.id}`,
+      manifest: `extensions/${opts.id}/${v.version}/manifest.json`,
+      manifestSha256: sha(manifestText),
+      package: `extensions/${opts.id}/${v.version}/package.tgz`,
+      packageSha256: sha(tgz),
+      packageSizeBytes: tgz.byteLength,
+      entryHash: opts.entryHashOverride ?? sha(entrySource),
+      publishedAt: "2026-10-18T10:00:00Z",
+    },
+  };
 }

@@ -316,7 +316,15 @@ export function registryIndexSigningBytes(
   return new TextEncoder().encode(canonicalize(rest)); // NOSONAR S1874
 }
 
-export async function verifyRegistryIndexSelf(index: RegistryIndex): Promise<void> {
+/**
+ * `Promise.try`, not `async`: nothing here awaits, but a refusal must still reach the caller as a
+ * rejection, as it always has.
+ */
+export function verifyRegistryIndexSelf(index: RegistryIndex): Promise<void> {
+  return Promise.try(() => assertRegistryIndexSelf(index));
+}
+
+function assertRegistryIndexSelf(index: RegistryIndex): void {
   let ok: boolean;
   try {
     ok = nacl.sign.detached.verify(

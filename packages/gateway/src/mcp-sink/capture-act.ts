@@ -43,7 +43,9 @@ const INVISIBLE_RE = rangesRegExp([[0x0000, 0x0009], [0x000b, 0x001f], ...FORMAT
 /** BMP as `\uXXXX`; astral as `\u{XXXXX}` (a 4-digit form would misrepresent the code point). */
 function escapeCodePoint(c: string): string {
   const cp = c.codePointAt(0) ?? 0;
-  return cp > 0xffff ? `\\u{${cp.toString(16)}}` : `\\u${cp.toString(16).padStart(4, "0")}`;
+  return cp > 0xffff
+    ? String.raw`\u{${cp.toString(16)}}`
+    : String.raw`\u${cp.toString(16).padStart(4, "0")}`;
 }
 
 function audit(
@@ -109,7 +111,7 @@ export function reconcileActionsAtBoot(
 export function classifyActionError(e: unknown): ActionErrorCode {
   const msg = e instanceof Error ? e.message : "";
   if (/ exceeded \d+ms timeout$/.test(msg)) return "ERR_ACTION_TIMEOUT";
-  if (msg === "Tool not found" || / has no execute implementation$/.test(msg))
+  if (msg === "Tool not found" || msg.endsWith(" has no execute implementation"))
     return "ERR_ACTION_TOOL_NOT_FOUND";
   return "ERR_ACTION_DISPATCH";
 }
@@ -134,7 +136,10 @@ export function formatActionConsent(
   // are escaped FIRST (before `visible` adds its own backslashes), so a quoted label cannot close
   // its quotes and fake the provenance text that follows it.
   const visibleLine = (s: string): string =>
-    visible(s.replaceAll("\\", "\\\\").replaceAll('"', '\\"')).replaceAll("\n", "\\u000a");
+    visible(s.replaceAll("\\", String.raw`\\`).replaceAll('"', String.raw`\"`)).replaceAll(
+      "\n",
+      String.raw`\u000a`,
+    );
   return [
     "Agent-proposed action — requires your approval",
     `Proposed by MCP client "${visibleLine(p.clientLabel ?? "unlabelled")}" at ${new Date(p.createdAt).toISOString()}, expires ${new Date(p.expiresAt).toISOString()}`,

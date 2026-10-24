@@ -39,7 +39,7 @@ const WRITE_ANNOTATIONS = {
 function idOf(v: unknown): string {
   const id = typeof v === "object" && v !== null ? (v as Record<string, unknown>)["id"] : undefined;
   if (typeof id !== "string") {
-    throw new Error("gateway returned no capture id");
+    throw new TypeError("gateway returned no capture id");
   }
   return id;
 }
@@ -150,7 +150,7 @@ export const CAPTURE_TOOL_SPECS: readonly CaptureToolSpec[] = [
         if (typeof decidedAt === "string") {
           const ms = Date.parse(decidedAt);
           if (Number.isNaN(ms)) {
-            throw new Error("decidedAt must be an ISO 8601 date");
+            throw new TypeError("decidedAt must be an ISO 8601 date");
           }
           payload["decidedAt"] = ms;
         }

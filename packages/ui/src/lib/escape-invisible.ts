@@ -41,7 +41,7 @@ export function showInvisible(s: string): string {
   let out = "";
   for (const ch of s) {
     const cp = ch.codePointAt(0) ?? 0;
-    out += isInvisible(cp) ? `\\u{${cp.toString(16).toUpperCase().padStart(4, "0")}}` : ch;
+    out += isInvisible(cp) ? String.raw`\u{${cp.toString(16).toUpperCase().padStart(4, "0")}}` : ch;
   }
   return out;
 }

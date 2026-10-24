@@ -69,8 +69,9 @@ async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> 
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  // Sequential by definition: a stream yields its chunks one read at a time.
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = await reader.read(); // NOSONAR S9382: a stream yields one chunk per read
     if (done) break;
     total += value.byteLength;
     if (total > maxBytes) {
@@ -116,14 +117,14 @@ function readLocal(path: string, root: string, maxBytes: number): Uint8Array {
   }
 }
 
-async function fetchRemote(
-  deps: RegistryFetchDeps,
-  regName: string,
-  meta: RegistryFetchMeta,
-  startUrl: string,
-  signal: AbortSignal | undefined,
-): Promise<Uint8Array> {
-  // One controller aborts on either the timeout or the caller's signal.
+/**
+ * One signal that aborts on either the fetch timeout or the caller's signal. `detach` removes both
+ * listeners, so a long-lived caller signal does not leak one per request.
+ */
+function linkAbortSignals(signal: AbortSignal | undefined): {
+  readonly combined: AbortSignal;
+  readonly detach: () => void;
+} {
   const controller = new AbortController();
   const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
   const abortFrom = (src: AbortSignal) => () => controller.abort(src.reason);
@@ -135,9 +136,72 @@ async function fetchRemote(
     if (signal.aborted) onCaller();
     else signal.addEventListener("abort", onCaller, { once: true });
   }
-  const combined = controller.signal;
+  return {
+    combined: controller.signal,
+    detach: () => {
+      if (signal !== undefined && onCaller !== undefined)
+        signal.removeEventListener("abort", onCaller);
+      timeout.removeEventListener("abort", onTimeout);
+    },
+  };
+}
+
+/**
+ * The next hop of a redirect answer (its body cancelled), or a refusal: too many hops, no
+ * Location, a hop to a local path, or an https registry downgrading to plain http.
+ */
+async function redirectTarget(
+  deps: RegistryFetchDeps,
+  res: Response,
+  url: string,
+  hop: number,
+): Promise<string> {
+  await res.body?.cancel();
+  if (hop >= MAX_REDIRECTS) throw unreachable("too many registry redirects");
+  const loc = res.headers.get("location");
+  if (loc === null || loc === "") throw unreachable("registry redirect without a Location");
+  const next = new URL(loc, url).href;
+  // Re-run the transport check on every hop: an https registry must not redirect to http, a
+  // non-loopback http host, or file:.
+  const nextLoc = resolveRegistryLocation(next, { production: deps.production });
+  if (nextLoc.kind !== "remote") {
+    throw new RegistryError(
+      "ERR_REGISTRY_TRANSPORT_REFUSED",
+      "registry redirected to a local path",
+    );
+  }
+  if (url.startsWith("https:") && !next.startsWith("https:")) {
+    throw new RegistryError(
+      "ERR_REGISTRY_TRANSPORT_REFUSED",
+      "an https registry redirected to a plain http location",
+    );
+  }
+  return next;
+}
+
+/** Refuses a non-redirect answer that is not 2xx (body cancelled): 404 is not-found, else unreachable. */
+async function refuseUnsuccessful(res: Response): Promise<void> {
+  if (res.status === 404) {
+    await res.body?.cancel();
+    throw new RegistryError("ERR_REGISTRY_NOT_FOUND", "registry resource not found");
+  }
+  if (res.status < 200 || res.status >= 300) {
+    await res.body?.cancel();
+    throw unreachable(`registry answered HTTP ${res.status}`);
+  }
+}
+
+async function fetchRemote(
+  deps: RegistryFetchDeps,
+  regName: string,
+  meta: RegistryFetchMeta,
+  startUrl: string,
+  signal: AbortSignal | undefined,
+): Promise<Uint8Array> {
+  const { combined, detach } = linkAbortSignals(signal);
   let url = startUrl;
   try {
+    // Sequential by definition: each hop's URL comes from the previous hop's answer.
     for (let hop = 0; ; hop++) {
       // One ledger row per outbound REQUEST, each redirect hop included; a failed append aborts
       // this hop before it is made.
@@ -149,49 +213,19 @@ async function fetchRemote(
         host: new URL(url).host,
         now: deps.now(),
       });
-      const res = await deps.fetchFn(url, { redirect: "manual", signal: combined });
+      const res = await deps.fetchFn(url, { redirect: "manual", signal: combined }); // NOSONAR S9382: each hop's URL comes from the previous answer
       if (REDIRECT_STATUSES.has(res.status)) {
-        await res.body?.cancel();
-        if (hop >= MAX_REDIRECTS) throw unreachable("too many registry redirects");
-        const loc = res.headers.get("location");
-        if (loc === null || loc === "") throw unreachable("registry redirect without a Location");
-        const next = new URL(loc, url).href;
-        // Re-run the transport check on every hop: an https registry must not redirect to http, a
-        // non-loopback http host, or file:.
-        const nextLoc = resolveRegistryLocation(next, { production: deps.production });
-        if (nextLoc.kind !== "remote") {
-          throw new RegistryError(
-            "ERR_REGISTRY_TRANSPORT_REFUSED",
-            "registry redirected to a local path",
-          );
-        }
-        if (url.startsWith("https:") && !next.startsWith("https:")) {
-          throw new RegistryError(
-            "ERR_REGISTRY_TRANSPORT_REFUSED",
-            "an https registry redirected to a plain http location",
-          );
-        }
-        url = next;
+        url = await redirectTarget(deps, res, url, hop);
         continue;
       }
-      if (res.status === 404) {
-        await res.body?.cancel();
-        throw new RegistryError("ERR_REGISTRY_NOT_FOUND", "registry resource not found");
-      }
-      if (res.status < 200 || res.status >= 300) {
-        await res.body?.cancel();
-        throw unreachable(`registry answered HTTP ${res.status}`);
-      }
+      await refuseUnsuccessful(res);
       return await readCapped(res, meta.maxBytes);
     }
   } catch (e) {
     if (e instanceof RegistryError) throw e;
     throw unreachable(e instanceof Error ? e.message : "registry request failed");
   } finally {
-    // Do not leak a listener on the caller's long-lived signal.
-    if (signal !== undefined && onCaller !== undefined)
-      signal.removeEventListener("abort", onCaller);
-    timeout.removeEventListener("abort", onTimeout);
+    detach();
   }
 }
 

@@ -132,7 +132,7 @@ export async function runCatalog(args: string[]): Promise<void> {
     return;
   }
 
-  const view = narrow(await withGatewayIpc((c) => c.call<unknown>("catalog.list", undefined)));
+  const view = narrow(await withGatewayIpc((c) => c.call<unknown>("catalog.list")));
   const wantAgents = sub !== "connectors";
   const wantConnectors = sub !== "agents";
 

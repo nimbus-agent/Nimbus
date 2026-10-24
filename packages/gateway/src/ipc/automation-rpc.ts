@@ -194,6 +194,45 @@ function declaresAffectedServiceFilter(conditionJson: string): boolean {
   return filter !== undefined && typeof filter["affectedService"] === "string";
 }
 
+/** `extension.remove` without `force`: refuses while another installed extension depends on `id`. */
+function refuseRemoveWithDependents(db: Database, id: string): void {
+  const rdeps = reverseDeps(db, id);
+  if (rdeps.length > 0) {
+    const blockers = rdeps.map((r) => ({ id: r.extensionId, range: r.range }));
+    const blockerDesc = blockers.map((b) => `${b.id} (${b.range})`).join(", ");
+    throw new AutomationRpcError(
+      -32603,
+      `reverse_dep_blocked: Cannot remove ${id}: required by ${blockerDesc}. Pass --force to override.`,
+    );
+  }
+}
+
+/**
+ * `extension.remove`, once the row and grant are gone: stops the live child, then removes its
+ * stage root, then the `ext_` health row a refused or failed spawn recorded — in that order.
+ */
+async function stopAndCleanUpRemovedExtension(
+  ctx: AutomationCtx,
+  id: string,
+  serviceId: string | undefined,
+): Promise<void> {
+  if (ctx.mesh !== undefined) {
+    await stopExtensionBestEffort(ctx.mesh, id);
+    if (serviceId !== undefined) await ctx.mesh.removeExtensionSandbox(serviceId);
+  }
+  if (serviceId !== undefined) deleteConnectorHealthRow(ctx.db, serviceId);
+}
+
+/** `extension.remove`, last: the install dir and version store. Best-effort; the row is gone. */
+function removeExtensionFiles(ctx: AutomationCtx, id: string, installPath: string): void {
+  try {
+    rmSync(installPath, { recursive: true, force: true });
+    if (ctx.extensionsDir !== undefined) removeExtensionVersionStore(ctx.extensionsDir, id);
+  } catch {
+    /* row already removed; best-effort filesystem cleanup */
+  }
+}
+
 const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "watcher.list": (_rec, ctx) => ({
     kind: "hit",
@@ -368,17 +407,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     const force = rec?.["force"] === true;
 
     try {
-      if (!force) {
-        const rdeps = reverseDeps(ctx.db, id);
-        if (rdeps.length > 0) {
-          const blockers = rdeps.map((r) => ({ id: r.extensionId, range: r.range }));
-          const blockerDesc = blockers.map((b) => `${b.id} (${b.range})`).join(", ");
-          throw new AutomationRpcError(
-            -32603,
-            `reverse_dep_blocked: Cannot remove ${id}: required by ${blockerDesc}. Pass --force to override.`,
-          );
-        }
-      }
+      if (!force) refuseRemoveWithDependents(ctx.db, id);
 
       // Read BEFORE the delete takes the grant with it: the stage root is named by its service id.
       // With no grant (revoked earlier, or never approved) it is derived, since a revoke or an
@@ -402,18 +431,8 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       // The row and grant are gone first, so no new spawn can verify; then the live child is stopped
       // and its stage root removed, and only THEN the install dir — never delete code a running
       // child still has open.
-      if (ctx.mesh !== undefined) {
-        await stopExtensionBestEffort(ctx.mesh, id);
-        if (serviceId !== undefined) await ctx.mesh.removeExtensionSandbox(serviceId);
-      }
-      // The `ext_` health row a refused or failed spawn recorded goes with the extension.
-      if (serviceId !== undefined) deleteConnectorHealthRow(ctx.db, serviceId);
-      try {
-        rmSync(installPath, { recursive: true, force: true });
-        if (ctx.extensionsDir !== undefined) removeExtensionVersionStore(ctx.extensionsDir, id);
-      } catch {
-        /* row already removed; best-effort filesystem cleanup */
-      }
+      await stopAndCleanUpRemovedExtension(ctx, id, serviceId);
+      removeExtensionFiles(ctx, id, installPath);
       emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "remove", ok: true });
       return { kind: "hit", value: { ok: true } };
     } catch (e) {

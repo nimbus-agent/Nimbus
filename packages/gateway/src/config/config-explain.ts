@@ -12,7 +12,12 @@ import {
   loadNimbusFleetFromConfigDir,
   resolveFleetJobs,
 } from "./fleet-toml.ts";
-import { fallbackMessage, type LayeredConfig, type SnapshotLayer } from "./layered-config.ts";
+import {
+  type ConfigSnapshot,
+  fallbackMessage,
+  type LayeredConfig,
+  type SnapshotLayer,
+} from "./layered-config.ts";
 import {
   type EffectiveEntry,
   type EffectiveSection,
@@ -227,7 +232,7 @@ function toExplainEntry(header: string | null, e: EffectiveEntry): ExplainEntry 
 
 /** Last-wins within a key: earlier same-layer values become shadowed, newest first. */
 function collapseKey(header: string | null, same: readonly EffectiveEntry[]): ExplainEntry {
-  const last = same[same.length - 1] as EffectiveEntry;
+  const last = same.at(-1) as EffectiveEntry;
   const base = toExplainEntry(header, last);
   const earlier = same
     .slice(0, -1)
@@ -329,6 +334,25 @@ export function restartWouldSwitch(
 const layerLabel = (l: LayerRef): string => `${l.kind} "${l.id}"`;
 
 /**
+ * Which job a path narrows the fleet notes to: `undefined` for every job (no path, or
+ * `fleet.job`), the job name for `fleet.job.<name>`, `null` for a path outside `fleet.job`.
+ */
+function fleetJobScope(path: string | undefined): string | undefined | null {
+  if (path === undefined) return undefined;
+  const wanted = unquote(path);
+  if (wanted === "fleet.job") return undefined;
+  if (!wanted.startsWith("fleet.job.")) return null;
+  return wanted.slice("fleet.job.".length);
+}
+
+function disabledJobNote(name: string, replaces: readonly LayerRef[]): string {
+  const head = `fleet job "${name}" is disabled (enabled = false); `;
+  return replaces.length === 0
+    ? `${head}it disables nothing`
+    : `${head}it disables ${replaces.map(layerLabel).join(", ")}`;
+}
+
+/**
  * Notes on `[[fleet.job]]` entries: what a stub disables, what a job replaced, what was dropped.
  * Built from the loader's own `resolveFleetJobs`, so explain cannot disagree with what ran.
  * `path` narrows it to one job (`fleet.job.<name>`); `fleet.job` or no path covers every job.
@@ -338,23 +362,13 @@ function fleetJobNotes(
   path: string | undefined,
   check: FleetJobChecker | undefined,
 ): string[] {
-  let only: string | undefined;
-  if (path !== undefined) {
-    const wanted = unquote(path);
-    if (wanted !== "fleet.job" && !wanted.startsWith("fleet.job.")) return [];
-    only = wanted === "fleet.job" ? undefined : wanted.slice("fleet.job.".length);
-  }
+  const only = fleetJobScope(path);
+  if (only === null) return [];
   const r = resolveFleetJobs(sections, check);
   const keep = (name: string | null): boolean => only === undefined || name === only;
   const notes: string[] = [];
   for (const d of r.disabled) {
-    if (!keep(d.name)) continue;
-    const head = `fleet job "${d.name}" is disabled (enabled = false); `;
-    notes.push(
-      d.origin.replaces.length === 0
-        ? `${head}it disables nothing`
-        : `${head}it disables ${d.origin.replaces.map(layerLabel).join(", ")}`,
-    );
+    if (keep(d.name)) notes.push(disabledJobNote(d.name, d.origin.replaces));
   }
   for (const j of r.jobs) {
     const origin = r.origins.get(j.name);
@@ -373,6 +387,98 @@ function isAgentsPath(path: string | undefined): boolean {
   if (path === undefined) return false;
   const wanted = unquote(path);
   return wanted === "agents" || wanted.startsWith("agents.");
+}
+
+type ExplainBlock = { header: string; layer: LayerRef; entries: ExplainEntry[] };
+type Explained = { entries: ExplainEntry[]; blocks: ExplainBlock[] };
+
+/** No path: every plain key (last-wins collapsed), env-only overrides, then every array block. */
+function explainWhole(
+  plain: readonly EffectiveSection[],
+  arrays: readonly EffectiveSection[],
+  env: EnvGet,
+  notes: string[],
+): Explained {
+  const entries: ExplainEntry[] = [];
+  const blocks: ExplainBlock[] = [];
+  for (const s of plain) {
+    const byKey = new Map<string, EffectiveEntry[]>();
+    for (const e of s.entries) byKey.set(e.key, [...(byKey.get(e.key) ?? []), e]);
+    for (const same of byKey.values()) {
+      entries.push(applyEnv(collapseKey(s.header, same), env, notes));
+    }
+  }
+  for (const o of CONFIG_ENV_OVERRIDES) {
+    if (entries.some((e) => unquote(e.path) === o.path)) continue;
+    const only = envOnlyEntry(o.path, env, notes);
+    if (only !== undefined) entries.push(only);
+  }
+  for (const s of arrays) {
+    const b = blockFor(s, env, notes);
+    if (b !== undefined) blocks.push(b);
+  }
+  return { entries, blocks };
+}
+
+/** One path: its plain key (or an env-only override), then the array blocks it names. */
+function explainPath(
+  plain: readonly EffectiveSection[],
+  arrays: readonly EffectiveSection[],
+  path: string,
+  env: EnvGet,
+  notes: string[],
+): Explained {
+  const segs = splitPath(path);
+  const wanted = unquote(segs.join("."));
+  const entries: ExplainEntry[] = [];
+  const hit = resolvePlain(plain, segs);
+  if (hit !== undefined) {
+    const matching = hit.section.entries.filter((e) => unquote(e.key) === unquote(hit.key));
+    if (matching.length > 0) {
+      entries.push(applyEnv(collapseKey(hit.section.header, matching), env, notes));
+    }
+  }
+  if (entries.length === 0) {
+    const only = envOnlyEntry(path, env, notes);
+    if (only !== undefined) entries.push(only);
+  }
+  const blocks = blocksNamedBy(arrays, wanted, env, notes);
+  if (entries.length === 0 && blocks.length === 0) {
+    notes.push(`no layer sets ${path}; the code default applies`);
+  }
+  return { entries, blocks };
+}
+
+/** The array blocks a path names: the whole header, or one block by its name. */
+function blocksNamedBy(
+  arrays: readonly EffectiveSection[],
+  wanted: string,
+  env: EnvGet,
+  notes: string[],
+): ExplainBlock[] {
+  const blocks: ExplainBlock[] = [];
+  for (const s of arrays) {
+    if (s.header === null) continue;
+    const h = unquote(s.header);
+    const whole = h === wanted;
+    const byName = wanted.startsWith(`${h}.`) && blockName(s) === wanted.slice(h.length + 1);
+    if (!whole && !byName) continue;
+    const b = blockFor(s, env, notes);
+    if (b !== undefined) blocks.push(b);
+  }
+  return blocks;
+}
+
+/** Notes on packs the snapshot skipped, and on a pack list that could not be applied. */
+function packNotes(
+  snap: Pick<ConfigSnapshot, "skippedPacks" | "packListError">,
+  profileName: string,
+): string[] {
+  const notes = snap.skippedPacks.map((p) => `pack "${p.packId}" skipped: ${p.reason}`);
+  if (snap.packListError !== undefined) {
+    notes.push(`packs for profile "${profileName}" not applied: ${snap.packListError}`);
+  }
+  return notes;
 }
 
 export function explainConfig(
@@ -395,59 +501,12 @@ export function explainConfig(
   );
   const plain = sections.filter((s) => !s.isArray);
   const arrays = sections.filter((s) => s.isArray);
-  const entries: ExplainEntry[] = [];
-  const blocks: { header: string; layer: LayerRef; entries: ExplainEntry[] }[] = [];
+  const { entries, blocks } =
+    path === undefined
+      ? explainWhole(plain, arrays, env, notes)
+      : explainPath(plain, arrays, path, env, notes);
 
-  if (path === undefined) {
-    for (const s of plain) {
-      const byKey = new Map<string, EffectiveEntry[]>();
-      for (const e of s.entries) byKey.set(e.key, [...(byKey.get(e.key) ?? []), e]);
-      for (const same of byKey.values()) {
-        entries.push(applyEnv(collapseKey(s.header, same), env, notes));
-      }
-    }
-    for (const o of CONFIG_ENV_OVERRIDES) {
-      if (entries.some((e) => unquote(e.path) === o.path)) continue;
-      const only = envOnlyEntry(o.path, env, notes);
-      if (only !== undefined) entries.push(only);
-    }
-    for (const s of arrays) {
-      const b = blockFor(s, env, notes);
-      if (b !== undefined) blocks.push(b);
-    }
-  } else {
-    const segs = splitPath(path);
-    const wanted = unquote(segs.join("."));
-    const hit = resolvePlain(plain, segs);
-    if (hit !== undefined) {
-      const matching = hit.section.entries.filter((e) => unquote(e.key) === unquote(hit.key));
-      if (matching.length > 0) {
-        entries.push(applyEnv(collapseKey(hit.section.header, matching), env, notes));
-      }
-    }
-    if (entries.length === 0) {
-      const only = envOnlyEntry(path, env, notes);
-      if (only !== undefined) entries.push(only);
-    }
-    for (const s of arrays) {
-      if (s.header === null) continue;
-      const h = unquote(s.header);
-      const whole = h === wanted;
-      const byName = wanted.startsWith(`${h}.`) && blockName(s) === wanted.slice(h.length + 1);
-      if (whole || byName) {
-        const b = blockFor(s, env, notes);
-        if (b !== undefined) blocks.push(b);
-      }
-    }
-    if (entries.length === 0 && blocks.length === 0) {
-      notes.push(`no layer sets ${path}; the code default applies`);
-    }
-  }
-
-  for (const p of snap.skippedPacks) notes.push(`pack "${p.packId}" skipped: ${p.reason}`);
-  if (snap.packListError !== undefined) {
-    notes.push(`packs for profile "${reader.profile.name}" not applied: ${snap.packListError}`);
-  }
+  notes.push(...packNotes(snap, reader.profile.name));
   notes.push(...fleetJobNotes(snap.doc.sections, path, opts.fleetJobCheck));
   if (opts.agentVisibilityNotes !== undefined && isAgentsPath(path)) {
     notes.push(...opts.agentVisibilityNotes());

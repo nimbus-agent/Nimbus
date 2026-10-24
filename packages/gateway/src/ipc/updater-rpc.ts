@@ -20,6 +20,37 @@ export interface UpdaterRpcContext {
   updater: Updater | undefined;
 }
 
+/** `updater.checkNow`: an unreachable manifest becomes `ERR_UPDATER_MANIFEST_UNREACHABLE`. */
+async function checkNow(updater: Updater): Promise<unknown> {
+  try {
+    return await updater.checkNow();
+  } catch (err) {
+    if (err instanceof ManifestFetchError) {
+      throw new UpdaterRpcError(-32603, `ERR_UPDATER_MANIFEST_UNREACHABLE: ${err.message}`);
+    }
+    throw err;
+  }
+}
+
+/** `updater.applyUpdate`: maps the unsupported-install refusal, then signature/hash failures. */
+async function applyUpdate(updater: Updater): Promise<{ jobId: string }> {
+  try {
+    await updater.applyUpdate();
+    return { jobId: Date.now().toString(36) };
+  } catch (err) {
+    // Checked BEFORE the message regex: the refusal is a typed error, and its wording must
+    // never be able to land it in the signature arm.
+    if (err instanceof UpdaterInstallUnsupportedError) {
+      throw new UpdaterRpcError(UPDATER_INSTALL_UNSUPPORTED_RPC_CODE, err.message);
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    if (/signature|hash/i.test(message)) {
+      throw new UpdaterRpcError(-32603, `ERR_UPDATER_SIGNATURE_INVALID: ${message}`);
+    }
+    throw err;
+  }
+}
+
 export async function dispatchUpdaterRpc(
   method: string,
   _params: unknown,
@@ -35,30 +66,9 @@ export async function dispatchUpdaterRpc(
     case "updater.getStatus":
       return ctx.updater.getStatus();
     case "updater.checkNow":
-      try {
-        return await ctx.updater.checkNow();
-      } catch (err) {
-        if (err instanceof ManifestFetchError) {
-          throw new UpdaterRpcError(-32603, `ERR_UPDATER_MANIFEST_UNREACHABLE: ${err.message}`);
-        }
-        throw err;
-      }
+      return checkNow(ctx.updater);
     case "updater.applyUpdate":
-      try {
-        await ctx.updater.applyUpdate();
-        return { jobId: Date.now().toString(36) };
-      } catch (err) {
-        // Checked BEFORE the message regex: the refusal is a typed error, and its wording must
-        // never be able to land it in the signature arm.
-        if (err instanceof UpdaterInstallUnsupportedError) {
-          throw new UpdaterRpcError(UPDATER_INSTALL_UNSUPPORTED_RPC_CODE, err.message);
-        }
-        const message = err instanceof Error ? err.message : String(err);
-        if (/signature|hash/i.test(message)) {
-          throw new UpdaterRpcError(-32603, `ERR_UPDATER_SIGNATURE_INVALID: ${message}`);
-        }
-        throw err;
-      }
+      return applyUpdate(ctx.updater);
     case "updater.rollback":
       return { ok: true };
     default:

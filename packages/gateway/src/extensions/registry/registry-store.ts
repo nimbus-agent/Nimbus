@@ -178,8 +178,8 @@ export function getExtensionSource(db: Database, id: string): ExtensionSource | 
     source_channel: RegistryChannel | null;
   } | null;
   if (
-    r === null ||
-    r.source_registry === null ||
+    // `== null`: a missing row (`r` null) and a NULL column both mean "no recorded source".
+    r?.source_registry == null ||
     r.source_root_fingerprint === null ||
     r.source_channel === null
   ) {

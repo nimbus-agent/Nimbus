@@ -4,6 +4,7 @@ import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs
 import { join, resolve, sep } from "node:path";
 import { extract, list } from "tar";
 import { MAX_ENTRY_COUNT, MAX_MANIFEST_BYTES, MAX_UNPACKED_BYTES } from "./caps.ts";
+import { codeUnitCompare } from "./code-unit-compare.ts";
 import { RegistryError } from "./errors.ts";
 import { rawManifestEntryRelPath } from "./manifest.ts";
 import { PACKAGE_MANIFEST_FILE } from "./package-set.ts";
@@ -117,6 +118,6 @@ export async function inspectPackage(tgz: string, work: string): Promise<Inspect
     manifestBytes,
     manifest: m,
     entryHash: createHash("sha256").update(entryBytes).digest("hex"),
-    files: files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    files: files.toSorted(codeUnitCompare),
   };
 }

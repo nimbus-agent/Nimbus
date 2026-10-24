@@ -339,6 +339,26 @@ function parseFleetJobBlock(entries: readonly FleetJobEntry[]): FleetJobBlock | 
  * stub. Returns enabled jobs and full disabled ones alike; nothing schedules from this list.
  */
 export function parseNimbusTomlFleetJobs(source: string): NimbusFleetJobToml[] {
+  const jobs: NimbusFleetJobToml[] = [];
+  const seen = new Set<string>();
+  for (const entries of fleetJobBlocks(source)) {
+    const parsed = parseFleetJobBlock(entries);
+    if (parsed === undefined) continue;
+    if ("stub" in parsed) {
+      const missing = parsed.stub.agent === null ? "agent" : "interval_seconds > 0";
+      throw new FleetConfigError(`[[fleet.job]] ${parsed.stub.name} requires ${missing}`);
+    }
+    if (seen.has(parsed.job.name)) {
+      throw new FleetConfigError(`[[fleet.job]] duplicate name: ${parsed.job.name}`);
+    }
+    seen.add(parsed.job.name);
+    jobs.push(parsed.job);
+  }
+  return jobs;
+}
+
+/** Each `[[fleet.job]]` block's key/value entries, in file order (empty blocks included). */
+function fleetJobBlocks(source: string): FleetJobEntry[][] {
   const blocks: FleetJobEntry[][] = [];
   let cur: FleetJobEntry[] | undefined;
   for (const line of source.split(/\r?\n/)) {
@@ -356,23 +376,7 @@ export function parseNimbusTomlFleetJobs(source: string): NimbusFleetJobToml[] {
     const kv = splitKeyValue(trimmed);
     if (kv !== undefined) cur.push(kv);
   }
-
-  const jobs: NimbusFleetJobToml[] = [];
-  const seen = new Set<string>();
-  for (const entries of blocks) {
-    const parsed = parseFleetJobBlock(entries);
-    if (parsed === undefined) continue;
-    if ("stub" in parsed) {
-      const missing = parsed.stub.agent === null ? "agent" : "interval_seconds > 0";
-      throw new FleetConfigError(`[[fleet.job]] ${parsed.stub.name} requires ${missing}`);
-    }
-    if (seen.has(parsed.job.name)) {
-      throw new FleetConfigError(`[[fleet.job]] duplicate name: ${parsed.job.name}`);
-    }
-    seen.add(parsed.job.name);
-    jobs.push(parsed.job);
-  }
-  return jobs;
+  return blocks;
 }
 
 export type FleetJobOrigin = { readonly layer: LayerRef; readonly replaces: readonly LayerRef[] };
@@ -397,6 +401,9 @@ export type FleetJobsResolved = {
   readonly dropped: FleetDroppedJob[];
 };
 
+/** `FleetJobsResolved` while it is being built: `origins` still writable. */
+type FleetJobsResolving = FleetJobsResolved & { origins: Map<string, FleetJobOrigin> };
+
 /**
  * Resolve each effective `[[fleet.job]]` block ON ITS OWN into scheduled, disabled or dropped, so
  * one bad job no longer takes the whole fleet down. A dropped higher-layer job does not bring back
@@ -407,10 +414,12 @@ export function resolveFleetJobs(
   sections: readonly EffectiveSection[],
   check?: FleetJobChecker,
 ): FleetJobsResolved {
-  const jobs: NimbusFleetJobToml[] = [];
-  const origins = new Map<string, FleetJobOrigin>();
-  const disabled: FleetDisabledJob[] = [];
-  const dropped: FleetDroppedJob[] = [];
+  const out: FleetJobsResolving = {
+    jobs: [],
+    origins: new Map(),
+    disabled: [],
+    dropped: [],
+  };
   const seen = new Set<string>();
   for (const s of sections) {
     const layer = s.blockLayer;
@@ -422,37 +431,56 @@ export function resolveFleetJobs(
     // when the first copy was itself dropped.
     if (name !== null) {
       if (seen.has(name)) {
-        dropped.push({ name, layer, reason: `[[fleet.job]] duplicate name: ${name}` });
+        out.dropped.push({ name, layer, reason: `[[fleet.job]] duplicate name: ${name}` });
         continue;
       }
       seen.add(name);
     }
-    let parsed: FleetJobBlock;
-    try {
-      parsed = validateJobDraft(draft);
-    } catch (err) {
-      if (!(err instanceof FleetConfigError)) throw err;
-      dropped.push({ name, layer, reason: err.message });
-      continue;
-    }
-    const origin: FleetJobOrigin = { layer, replaces: s.replaces ?? [] };
-    if ("stub" in parsed) {
-      disabled.push({ name: parsed.stub.name, agent: parsed.stub.agent, origin });
-      continue;
-    }
-    if (!parsed.enabled) {
-      disabled.push({ name: parsed.job.name, agent: parsed.job.agent, origin });
-      continue;
-    }
-    const reason = check?.(parsed.job);
-    if (reason !== undefined) {
-      dropped.push({ name: parsed.job.name, layer, reason });
-      continue;
-    }
-    jobs.push(parsed.job);
-    origins.set(parsed.job.name, origin);
+    const parsed = validateOrDrop(draft, name, layer, out.dropped);
+    if (parsed !== undefined)
+      placeJobBlock(parsed, { layer, replaces: s.replaces ?? [] }, check, out);
   }
-  return { jobs, origins, disabled, dropped };
+  return out;
+}
+
+/** A draft validated, or its `FleetConfigError` recorded in `dropped` (then `undefined`). */
+function validateOrDrop(
+  draft: FleetJobDraft,
+  name: string | null,
+  layer: LayerRef,
+  dropped: FleetDroppedJob[],
+): FleetJobBlock | undefined {
+  try {
+    return validateJobDraft(draft);
+  } catch (err) {
+    if (!(err instanceof FleetConfigError)) throw err;
+    dropped.push({ name, layer, reason: err.message });
+    return undefined;
+  }
+}
+
+/** A valid block into disabled (a stub, or `enabled = false`), dropped (by `check`) or scheduled. */
+function placeJobBlock(
+  parsed: FleetJobBlock,
+  origin: FleetJobOrigin,
+  check: FleetJobChecker | undefined,
+  out: FleetJobsResolving,
+): void {
+  if ("stub" in parsed) {
+    out.disabled.push({ name: parsed.stub.name, agent: parsed.stub.agent, origin });
+    return;
+  }
+  if (!parsed.enabled) {
+    out.disabled.push({ name: parsed.job.name, agent: parsed.job.agent, origin });
+    return;
+  }
+  const reason = check?.(parsed.job);
+  if (reason !== undefined) {
+    out.dropped.push({ name: parsed.job.name, layer: origin.layer, reason });
+    return;
+  }
+  out.jobs.push(parsed.job);
+  out.origins.set(parsed.job.name, origin);
 }
 
 export type NimbusFleetLoad = { config: NimbusFleetToml } & FleetJobsResolved;

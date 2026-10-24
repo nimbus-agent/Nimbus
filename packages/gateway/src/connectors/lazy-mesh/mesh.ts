@@ -376,18 +376,21 @@ export class LazyConnectorMesh {
     }
     // Both: the stage root every spawn now runs in, and the `ext.<serviceId>` per-policy leaf that
     // earlier builds of this branch staged into (harmless when absent).
-    for (const dir of [
+    // Two disjoint directories, each with its own never-throwing retry loop: deleted concurrently.
+    const dirs = [
       extensionStageRootFor(this.paths.sandboxDir, serviceId),
       sandboxCwdFor(this.paths.sandboxDir, `ext.${serviceId}`),
-    ]) {
-      const lastErr = await this.deleteSandboxLeaf(dir);
+    ];
+    const lastErrs = await Promise.all(dirs.map((dir) => this.deleteSandboxLeaf(dir)));
+    dirs.forEach((dir, i) => {
+      const lastErr = lastErrs[i];
       if (lastErr !== undefined) {
         this.logger?.warn(
           { serviceId, dir, err: lastErr },
           "extension sandbox directory not removed",
         );
       }
-    }
+    });
   }
 
   /**

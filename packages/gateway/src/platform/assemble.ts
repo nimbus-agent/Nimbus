@@ -3469,6 +3469,95 @@ export function fleetRpcCtxFor(runtime: FleetRuntime, hostActivity: HostActivity
   };
 }
 
+/**
+ * The MCP capture sink's boot half (I28): load `[mcp_sink]` (an invalid section is logged and the
+ * sink stays OFF), then — BEFORE the IPC server accepts a connection (spec § 9) — expire due
+ * proposals and fail any action a restart interrupted mid-consent, then apply retention.
+ */
+function bootCaptureStore(
+  db: Database,
+  configDir: string,
+  logger: Logger,
+): { mcpSinkLoad: ReturnType<typeof loadNimbusMcpSinkFromConfigDir>; captureStore: CaptureStore } {
+  const mcpSinkLoad = loadNimbusMcpSinkFromConfigDir(configDir);
+  if (!mcpSinkLoad.ok) {
+    logger.error(
+      { event: "mcp_sink.config_invalid", error: mcpSinkLoad.error },
+      "[mcp_sink] is invalid; the capture sink is OFF",
+    );
+  }
+  const captureStore = new CaptureStore(db);
+  // I28 act door: expire due proposals and fail any action a restart interrupted mid-consent,
+  // BEFORE the IPC server accepts a connection (spec § 9). Then retention, as before.
+  const actBoot = reconcileActionsAtBoot({ db, store: captureStore }, Date.now());
+  if (actBoot.expired + actBoot.interrupted > 0) {
+    logger.info({ event: "mcp_sink.act_reconcile", ...actBoot }, "act door boot reconcile");
+  }
+  captureStore.pruneFinished(Date.now() - FINISHED_RETENTION_MS);
+  return { mcpSinkLoad, captureStore };
+}
+
+type IpcBroadcaster = Pick<ReturnType<typeof createIpcServer>, "broadcast">;
+
+/**
+ * Federation's prompts reach the local owner and approvers through the live IPC broadcast; only
+ * when federation booted (`bootFederationIntoIpcOpts` returned its delegation dep).
+ */
+function bindFederationBroadcasts(
+  ipc: IpcBroadcaster,
+  federationBooted: ExecutorDelegationDep | undefined,
+): void {
+  if (federationBooted === undefined) return;
+  federationConsent.setBroadcast((method, params) =>
+    ipc.broadcast(method, asBroadcastParams(params)),
+  );
+  // I24 (Slice 6b): the inbound-preflight approval prompt reaches the local owner via the same
+  // broadcast channel; they answer with `nimbus preflight approve <id>` → federation.preflightRespond.
+  preflightConsent.setBroadcast((method, params) =>
+    ipc.broadcast(method, asBroadcastParams(params)),
+  );
+  // Quorum (I21) + delegated-approval (I20) requests reach subscribers (local owner UI / approver
+  // poll) via the same broadcast channel as consent; remote responders answer over the wire
+  // through federation.quorumRespond / federation.approvalRespond.
+  quorumCoordinator.setBroadcast((requestId) =>
+    ipc.broadcast("federation.quorumRequest", { requestId }),
+  );
+  delegatedApprovalBroker.setBroadcast((requestId, prompt) =>
+    ipc.broadcast("federation.approvalRequest", { requestId, prompt }),
+  );
+}
+
+/** ChatOps' local-owner consent leg, bound once the IPC broadcast exists; then the bot starts. */
+function bindChatopsLocalConsent(
+  ipc: IpcBroadcaster,
+  chatopsBoot: ChatopsBoot | undefined,
+  syncLogger: Logger,
+): void {
+  if (chatopsBoot === undefined) return;
+  // I20 fallback leg: when the chat-routed approval is not honored (timeout / non-owner /
+  // identity-invalid click), the executor falls back to the LOCAL owner — surfaced through the
+  // same delegated-approval broker the CLI/UI answer (`nimbus team approve`). Re-bound here so
+  // the fallback works even when chatops is enabled without federation. No subscriber /
+  // timeout → false → the gate records a fail-closed rejection.
+  delegatedApprovalBroker.setBroadcast((requestId, prompt) =>
+    ipc.broadcast("federation.approvalRequest", { requestId, prompt }),
+  );
+  chatopsBoot.bindLocalConsent(async (prompt) => {
+    const r = await delegatedApprovalBroker.request({ prompt }, CHATOPS_LOCAL_CONSENT_TIMEOUT_MS);
+    return r.kind === "answered" ? r.approved : false;
+  });
+  // Headless gateway: the bot comes up with the gateway. A failed transport start (e.g. bot
+  // tokens not yet provisioned) is logged and retryable via `nimbus chatops start`.
+  void chatopsBoot.service
+    .start()
+    .catch((err: unknown) =>
+      syncLogger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "chatops: transport start failed (provision bot tokens, then `nimbus chatops start`)",
+      ),
+    );
+}
+
 export async function assemblePlatformServices(
   paths: PlatformPaths,
   customVault?: NimbusVault,
@@ -3645,21 +3734,7 @@ export async function assemblePlatformServices(
 
   // MCP capture sink (I28). Config at boot; org policy LIVE per call (I22) — an absent/undefined
   // policy result fails closed inside resolveCaptureCapability.
-  const mcpSinkLoad = loadNimbusMcpSinkFromConfigDir(paths.configDir);
-  if (!mcpSinkLoad.ok) {
-    syncLogger.error(
-      { event: "mcp_sink.config_invalid", error: mcpSinkLoad.error },
-      "[mcp_sink] is invalid; the capture sink is OFF",
-    );
-  }
-  const captureStore = new CaptureStore(db);
-  // I28 act door: expire due proposals and fail any action a restart interrupted mid-consent,
-  // BEFORE the IPC server accepts a connection (spec § 9). Then retention, as before.
-  const actBoot = reconcileActionsAtBoot({ db, store: captureStore }, Date.now());
-  if (actBoot.expired + actBoot.interrupted > 0) {
-    syncLogger.info({ event: "mcp_sink.act_reconcile", ...actBoot }, "act door boot reconcile");
-  }
-  captureStore.pruneFinished(Date.now() - FINISHED_RETENTION_MS);
+  const { mcpSinkLoad, captureStore } = bootCaptureStore(db, paths.configDir, syncLogger);
   // Both halves read LIVE per call: a `--model` registration and the `user_mcp_model_access`
   // policy capability (I42) can change at runtime, so neither is snapshotted at boot.
   const actClassifyCtx = {
@@ -4803,25 +4878,7 @@ export async function assemblePlatformServices(
     ipc.broadcast(method, asBroadcastParams(params)),
   );
 
-  if (federationBooted) {
-    federationConsent.setBroadcast((method, params) =>
-      ipc.broadcast(method, asBroadcastParams(params)),
-    );
-    // I24 (Slice 6b): the inbound-preflight approval prompt reaches the local owner via the same
-    // broadcast channel; they answer with `nimbus preflight approve <id>` → federation.preflightRespond.
-    preflightConsent.setBroadcast((method, params) =>
-      ipc.broadcast(method, asBroadcastParams(params)),
-    );
-    // Quorum (I21) + delegated-approval (I20) requests reach subscribers (local owner UI / approver
-    // poll) via the same broadcast channel as consent; remote responders answer over the wire
-    // through federation.quorumRespond / federation.approvalRespond.
-    quorumCoordinator.setBroadcast((requestId) =>
-      ipc.broadcast("federation.quorumRequest", { requestId }),
-    );
-    delegatedApprovalBroker.setBroadcast((requestId, prompt) =>
-      ipc.broadcast("federation.approvalRequest", { requestId, prompt }),
-    );
-  }
+  bindFederationBroadcasts(ipc, federationBooted);
   // Bind the live broadcast so identity.loginProgress/Done/Error reach subscribers (see identity-boot.ts).
   identityBoot?.bindLoginNotify((method, payload) => ipc.broadcast(method, payload));
   // Same seam, same reason: the emitters are constructed during assemble, which runs before
@@ -4829,30 +4886,7 @@ export async function assemblePlatformServices(
   // harmlessly — which is also what makes unit tests that never bind safe.
   setGatewayEventBroadcast((method, params) => ipc.broadcast(method, params));
 
-  if (chatopsBoot !== undefined) {
-    // I20 fallback leg: when the chat-routed approval is not honored (timeout / non-owner /
-    // identity-invalid click), the executor falls back to the LOCAL owner — surfaced through the
-    // same delegated-approval broker the CLI/UI answer (`nimbus team approve`). Re-bound here so
-    // the fallback works even when chatops is enabled without federation. No subscriber /
-    // timeout → false → the gate records a fail-closed rejection.
-    delegatedApprovalBroker.setBroadcast((requestId, prompt) =>
-      ipc.broadcast("federation.approvalRequest", { requestId, prompt }),
-    );
-    chatopsBoot.bindLocalConsent(async (prompt) => {
-      const r = await delegatedApprovalBroker.request({ prompt }, CHATOPS_LOCAL_CONSENT_TIMEOUT_MS);
-      return r.kind === "answered" ? r.approved : false;
-    });
-    // Headless gateway: the bot comes up with the gateway. A failed transport start (e.g. bot
-    // tokens not yet provisioned) is logged and retryable via `nimbus chatops start`.
-    void chatopsBoot.service
-      .start()
-      .catch((err: unknown) =>
-        syncLogger.warn(
-          { err: err instanceof Error ? err.message : String(err) },
-          "chatops: transport start failed (provision bot tokens, then `nimbus chatops start`)",
-        ),
-      );
-  }
+  bindChatopsLocalConsent(ipc, chatopsBoot, syncLogger);
 
   if (bootPolicy.updaterStartupCheck) {
     wireUpdaterIntoIpc(paths.configDir, ipc, syncLogger, db);

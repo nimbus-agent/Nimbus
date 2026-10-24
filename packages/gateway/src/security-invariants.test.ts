@@ -6006,7 +6006,7 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     const allAccesses = src.match(/\.\s*execute\b/g) ?? [];
     const executorAccesses = src.match(/(?<![\w$.])(?:ex|executor)\s*\??\.\s*execute\b/g) ?? [];
     expect(allAccesses.length).toBeGreaterThan(0);
-    expect(executorAccesses.length).toBe(allAccesses.length);
+    expect(executorAccesses).toHaveLength(allAccesses.length);
     // Bracket access (`entry["execute"]`) and reflection (`Reflect.get(entry, "execute")`).
     expect(src).not.toMatch(/\[\s*["'`]execute["'`]\s*\]/);
     expect(src).not.toMatch(/Reflect\s*\.\s*get\s*\([^)]*["'`]execute["'`]/);

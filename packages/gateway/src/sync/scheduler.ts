@@ -901,6 +901,50 @@ export class SyncScheduler {
     this.settleJob(job, failure);
   }
 
+  /**
+   * The `catch` arm of `runJob`: a sync (or the pre-sync configured probe / egress append) threw.
+   * Rate-limited and unauthenticated runs are recorded as such; anything else as a sync failure.
+   */
+  private runJobRecordThrownSync(
+    job: Job,
+    connector: Syncable,
+    row: SchedulerStateRow,
+    startedAt: number,
+    err: unknown,
+  ): void {
+    if (this.wasWithdrawnMidRun(job, connector)) return;
+    // A run that committed pages before the stop names the last committed page's cursor, so the
+    // next run resumes there. Only the cursor moves: the arms below are unchanged, so the run is
+    // still recorded as rate-limited / unauthenticated, never as a success. No bundled connector
+    // sets the field, and without it nothing is written here.
+    if (
+      (err instanceof RateLimitError || err instanceof UnauthenticatedError) &&
+      err.resumeCursor !== undefined
+    ) {
+      this.sched.writeCursor(job.serviceId, err.resumeCursor);
+    }
+    if (err instanceof RateLimitError) {
+      transitionHealth(this.db, job.serviceId, {
+        type: "rate_limited",
+        retryAfter: err.retryAfter,
+      });
+      this.recordAbortedSyncTelemetry(job, startedAt, err.message);
+      this.settleJob(job, err);
+      return;
+    }
+    if (err instanceof UnauthenticatedError) {
+      transitionHealth(this.db, job.serviceId, { type: "unauthenticated" });
+      void this.notify?.(
+        "Nimbus connector lost authentication",
+        `${job.serviceId} connector lost authentication. Run: nimbus connector auth ${job.serviceId}`,
+      );
+      this.recordAbortedSyncTelemetry(job, startedAt, err.message);
+      this.settleJob(job, err);
+      return;
+    }
+    this.runJobRecordSyncFailure(job, row, startedAt, syncFailureUserMessage(err));
+  }
+
   private async runJob(job: Job): Promise<void> {
     const ctx = this.resolveRunJobContext(job);
     if (ctx === null) {
@@ -975,37 +1019,7 @@ export class SyncScheduler {
         ? await connector.sync(runCtx, row.cursor)
         : syncNoopResult(row.cursor, t0);
     } catch (err) {
-      if (this.wasWithdrawnMidRun(job, connector)) return;
-      // A run that committed pages before the stop names the last committed page's cursor, so the
-      // next run resumes there. Only the cursor moves: the arms below are unchanged, so the run is
-      // still recorded as rate-limited / unauthenticated, never as a success. No bundled connector
-      // sets the field, and without it nothing is written here.
-      if (
-        (err instanceof RateLimitError || err instanceof UnauthenticatedError) &&
-        err.resumeCursor !== undefined
-      ) {
-        this.sched.writeCursor(job.serviceId, err.resumeCursor);
-      }
-      if (err instanceof RateLimitError) {
-        transitionHealth(this.db, job.serviceId, {
-          type: "rate_limited",
-          retryAfter: err.retryAfter,
-        });
-        this.recordAbortedSyncTelemetry(job, startedAt, err.message);
-        this.settleJob(job, err);
-        return;
-      }
-      if (err instanceof UnauthenticatedError) {
-        transitionHealth(this.db, job.serviceId, { type: "unauthenticated" });
-        void this.notify?.(
-          "Nimbus connector lost authentication",
-          `${job.serviceId} connector lost authentication. Run: nimbus connector auth ${job.serviceId}`,
-        );
-        this.recordAbortedSyncTelemetry(job, startedAt, err.message);
-        this.settleJob(job, err);
-        return;
-      }
-      this.runJobRecordSyncFailure(job, row, startedAt, syncFailureUserMessage(err));
+      this.runJobRecordThrownSync(job, connector, row, startedAt, err);
       return;
     }
 

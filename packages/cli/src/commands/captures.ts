@@ -23,9 +23,12 @@ export const CAPTURES_USAGE =
   "       nimbus captures reject <id> [--json]\n" +
   "       nimbus captures purge <id> [--json]";
 
+type IdVerb = "show" | "revoke" | "accept" | "reject" | "purge";
+type ListArgs = { verb: "list"; state?: string; kind?: string; limit?: number; json: boolean };
+
 export type CapturesArgs =
-  | { verb: "list"; state?: string; kind?: string; limit?: number; json: boolean }
-  | { verb: "show" | "revoke" | "accept" | "reject" | "purge"; id: string; json: boolean }
+  | ListArgs
+  | { verb: IdVerb; id: string; json: boolean }
   | { verb: "acceptAll"; kind?: NativeKind | "action"; json: boolean };
 
 /** The kinds a batch accept may take. An action is never batched: each needs its own approval. */
@@ -44,28 +47,26 @@ function parseAcceptAll(flags: string[], json: boolean): CapturesArgs | undefine
   return kind === "action" || isNativeKind(kind) ? { verb: "acceptAll", kind, json } : undefined;
 }
 
-export function parseCapturesArgs(argv: string[]): CapturesArgs | undefined {
-  const json = argv.includes("--json");
-  const rest = argv.filter((a) => a !== "--json");
-  const verb = rest[0] ?? "list";
-  if (verb === "accept" && rest[1] === "--all") return parseAcceptAll(rest.slice(2), json);
-  if (
+function isIdVerb(verb: string): verb is IdVerb {
+  return (
     verb === "show" ||
     verb === "revoke" ||
     verb === "accept" ||
     verb === "reject" ||
     verb === "purge"
-  ) {
-    const id = rest[1];
-    if (id === undefined || id.startsWith("--") || rest.length !== 2) return undefined;
-    return { verb, id, json };
-  }
-  if (verb !== "list" && !verb.startsWith("--")) return undefined;
-  const flags = verb === "list" ? rest.slice(1) : rest;
-  const out: { verb: "list"; state?: string; kind?: string; limit?: number; json: boolean } = {
-    verb: "list",
-    json,
-  };
+  );
+}
+
+/** `--limit`: an integer in 1..200, else undefined (the whole parse refuses). */
+function parseLimit(v: string): number | undefined {
+  if (!/^\d+$/.test(v)) return undefined;
+  const n = Number(v);
+  return n < 1 || n > 200 ? undefined : n;
+}
+
+/** `list`'s `--flag value` pairs; an unknown flag or a missing value refuses the whole parse. */
+function parseListFlags(flags: string[], json: boolean): ListArgs | undefined {
+  const out: ListArgs = { verb: "list", json };
   for (let i = 0; i < flags.length; i += 2) {
     const k = flags[i];
     const v = flags[i + 1];
@@ -73,13 +74,26 @@ export function parseCapturesArgs(argv: string[]): CapturesArgs | undefined {
     if (k === "--state") out.state = v;
     else if (k === "--kind") out.kind = v;
     else if (k === "--limit") {
-      if (!/^\d+$/.test(v)) return undefined;
-      const n = Number(v);
-      if (n < 1 || n > 200) return undefined;
+      const n = parseLimit(v);
+      if (n === undefined) return undefined;
       out.limit = n;
     } else return undefined;
   }
   return out;
+}
+
+export function parseCapturesArgs(argv: string[]): CapturesArgs | undefined {
+  const json = argv.includes("--json");
+  const rest = argv.filter((a) => a !== "--json");
+  const verb = rest[0] ?? "list";
+  if (verb === "accept" && rest[1] === "--all") return parseAcceptAll(rest.slice(2), json);
+  if (isIdVerb(verb)) {
+    const id = rest[1];
+    if (id === undefined || id.startsWith("--") || rest.length !== 2) return undefined;
+    return { verb, id, json };
+  }
+  if (verb !== "list" && !verb.startsWith("--")) return undefined;
+  return parseListFlags(verb === "list" ? rest.slice(1) : rest, json);
 }
 
 function kindNoun(nativeRef: string): string {
@@ -237,21 +251,22 @@ async function listNativeProposals(
   c: Pick<IPCClient, "call">,
   kinds: readonly NativeKind[],
 ): Promise<{ rows: CaptureSummaryView[]; more: boolean }> {
-  let rows: CaptureSummaryView[] = [];
-  let more = false;
-  for (const kind of kinds) {
-    const raw = await c.call<unknown>("captures.list", {
-      state: "proposed",
-      kind,
-      // Oldest first BEFORE the limit: with more waiting than one run takes, the oldest go first.
-      order: "asc",
-      limit: ACCEPT_ALL_MAX,
-    });
-    // Re-filtered here, not trusted: an action row must never reach the accept loop.
-    const got = parseList(raw).filter((r) => r.state === "proposed" && r.kind === kind);
-    if (got.length >= ACCEPT_ALL_MAX) more = true;
-    rows.push(...got);
-  }
+  // Independent reads, one per kind: issued together (in kind order) and merged below.
+  const perKind = await Promise.all(
+    kinds.map(async (kind) => {
+      const raw = await c.call<unknown>("captures.list", {
+        state: "proposed",
+        kind,
+        // Oldest first BEFORE the limit: with more waiting than one run takes, the oldest go first.
+        order: "asc",
+        limit: ACCEPT_ALL_MAX,
+      });
+      // Re-filtered here, not trusted: an action row must never reach the accept loop.
+      return parseList(raw).filter((r) => r.state === "proposed" && r.kind === kind);
+    }),
+  );
+  let more = perKind.some((got) => got.length >= ACCEPT_ALL_MAX);
+  let rows = perKind.flat();
   rows.sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id));
   if (rows.length > ACCEPT_ALL_MAX) {
     more = true;
@@ -272,6 +287,44 @@ async function acceptOne(c: Pick<IPCClient, "call">, id: string): Promise<BatchR
   } catch (e) {
     return { id, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/** The batch's listing, printed before its one confirmation. */
+function printProposals(rows: CaptureSummaryView[], more: boolean, say: (s: string) => void): void {
+  say(`${String(rows.length)} agent-authored proposal(s), oldest first:\n`);
+  for (const r of rows) {
+    say(
+      `  ${r.id}  ${r.kind}  ${stripControl(r.clientLabel ?? "-")}  ${stripControl(r.title).slice(0, 60)}\n`,
+    );
+  }
+  if (more) {
+    say(
+      `More proposals are waiting than one run accepts (${String(ACCEPT_ALL_MAX)}); run it again afterwards.\n`,
+    );
+  }
+}
+
+/**
+ * Accepts the confirmed rows one at a time, oldest first — deliberately sequential, not
+ * `Promise.all`: each accept is a gateway write (and its own transaction), the run promises the
+ * oldest go first, and each row's line prints as its own accept resolves, in the listed order.
+ */
+async function acceptRows(
+  c: Pick<IPCClient, "call">,
+  rows: CaptureSummaryView[],
+  say: (s: string) => void,
+): Promise<BatchResult[]> {
+  const results: BatchResult[] = [];
+  for (const r of rows) {
+    const res = await acceptOne(c, r.id); // NOSONAR S9382: accepts run oldest first, one gateway write at a time (see acceptRows)
+    results.push(res);
+    if ("error" in res) say(`[refused] ${r.id}: ${stripControl(res.error)}\n`);
+    else
+      say(
+        `accepted ${r.id}: ${kindNoun(stripControl(res.nativeRef))} (${stripControl(res.nativeRef)})\n`,
+      );
+  }
+  return results;
 }
 
 /**
@@ -314,33 +367,14 @@ async function runAcceptAll(
     else say("No proposed decisions, terms or links to accept.\n");
     return 0;
   }
-  say(`${String(rows.length)} agent-authored proposal(s), oldest first:\n`);
-  for (const r of rows) {
-    say(
-      `  ${r.id}  ${r.kind}  ${stripControl(r.clientLabel ?? "-")}  ${stripControl(r.title).slice(0, 60)}\n`,
-    );
-  }
-  if (more) {
-    say(
-      `More proposals are waiting than one run accepts (${String(ACCEPT_ALL_MAX)}); run it again afterwards.\n`,
-    );
-  }
+  printProposals(rows, more, say);
   const answer = (
     await ask(`Accept these ${String(rows.length)} proposal(s)? [y/N] `)
   ).toLowerCase();
   if (answer !== "y" && answer !== "yes") {
     return refuse("Accepted nothing.");
   }
-  const results: BatchResult[] = [];
-  for (const r of rows) {
-    const res = await acceptOne(c, r.id);
-    results.push(res);
-    if ("error" in res) say(`[refused] ${r.id}: ${stripControl(res.error)}\n`);
-    else
-      say(
-        `accepted ${r.id}: ${kindNoun(stripControl(res.nativeRef))} (${stripControl(res.nativeRef)})\n`,
-      );
-  }
+  const results = await acceptRows(c, rows, say);
   const accepted = results.filter((r) => !("error" in r)).length;
   if (a.json) {
     sink.out(`${JSON.stringify({ accepted, total: rows.length, more, results }, undefined, 2)}\n`);
@@ -350,36 +384,46 @@ async function runAcceptAll(
   return accepted === rows.length ? 0 : 1;
 }
 
+async function runList(c: Pick<IPCClient, "call">, a: ListArgs, sink: Sink): Promise<number> {
+  const params: Record<string, unknown> = {};
+  if (a.state !== undefined) params["state"] = a.state;
+  if (a.kind !== undefined) params["kind"] = a.kind;
+  if (a.limit !== undefined) params["limit"] = a.limit;
+  const raw = await c.call<unknown>("captures.list", params);
+  sink.out(
+    a.json
+      ? `${JSON.stringify(raw, undefined, 2)}\n`
+      : formatCaptureTable(parseList(raw), Date.now()),
+  );
+  return 0;
+}
+
+async function runShow(
+  c: Pick<IPCClient, "call">,
+  a: { id: string; json: boolean },
+  sink: Sink,
+): Promise<number> {
+  const raw = await c.call<unknown>("captures.get", { id: a.id });
+  sink.out(
+    a.json ? `${JSON.stringify(raw, undefined, 2)}\n` : formatCaptureDetail(parseDetail(raw)),
+  );
+  return 0;
+}
+
+/** Fail-closed default: a caller that supplies no TTY facts cannot accept an action. */
+const NO_TTY: Tty = { stdin: false, stdout: false };
+
 export async function runCapturesWith(
   c: Pick<IPCClient, "call">,
   a: CapturesArgs,
   sink: Sink,
-  // Fail-closed default: a caller that supplies no TTY facts cannot accept an action.
-  tty: Tty = { stdin: false, stdout: false },
+  tty: Tty = NO_TTY,
   // Fail-closed default: a caller that supplies no way to ask declines every batch.
   ask: Ask = () => Promise.resolve(""),
 ): Promise<number> {
   try {
-    if (a.verb === "list") {
-      const params: Record<string, unknown> = {};
-      if (a.state !== undefined) params["state"] = a.state;
-      if (a.kind !== undefined) params["kind"] = a.kind;
-      if (a.limit !== undefined) params["limit"] = a.limit;
-      const raw = await c.call<unknown>("captures.list", params);
-      sink.out(
-        a.json
-          ? `${JSON.stringify(raw, undefined, 2)}\n`
-          : formatCaptureTable(parseList(raw), Date.now()),
-      );
-      return 0;
-    }
-    if (a.verb === "show") {
-      const raw = await c.call<unknown>("captures.get", { id: a.id });
-      sink.out(
-        a.json ? `${JSON.stringify(raw, undefined, 2)}\n` : formatCaptureDetail(parseDetail(raw)),
-      );
-      return 0;
-    }
+    if (a.verb === "list") return await runList(c, a, sink);
+    if (a.verb === "show") return await runShow(c, a, sink);
     if (a.verb === "accept") return await runAccept(c, a, sink, tty);
     if (a.verb === "acceptAll") return await runAcceptAll(c, a, sink, tty, ask);
     const raw = await c.call<unknown>(`captures.${a.verb}`, { id: a.id });

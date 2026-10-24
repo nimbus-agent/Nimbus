@@ -165,10 +165,13 @@ async function handleAdd(
   return { kind: "hit", value: summary };
 }
 
-async function handleInstall(
-  rec: Record<string, unknown> | undefined,
-  o: RegistryRpcOptions,
-): Promise<Hit> {
+/** `registry.install`'s parameters: the id, then the optional registry, version and channel. */
+function installParams(rec: Record<string, unknown> | undefined): {
+  id: string;
+  registry: string | undefined;
+  version: string | undefined;
+  channel: "stable" | "beta" | undefined;
+} {
   const id = stringParam(rec, "id");
   const registry = rec?.["registry"] === undefined ? undefined : stringParam(rec, "registry");
   const version = rec?.["version"] === undefined ? undefined : stringParam(rec, "version");
@@ -176,6 +179,16 @@ async function handleInstall(
   if (channel !== undefined && channel !== "stable" && channel !== "beta") {
     throw invalidParams("channel must be stable or beta");
   }
+  return { id, registry, version, channel };
+}
+
+/** What `registry.install` needs wired: the owner's HITL gate, the fetch bag, an extensions dir and Vault. */
+function installDeps(o: RegistryRpcOptions): {
+  ownerGate: RegistryOwnerGate;
+  fetch: RegistryFetchBag;
+  extensionsDir: string;
+  vault: NimbusVault;
+} {
   const ownerGate = o.ownerGate;
   if (ownerGate === undefined) {
     throw new RpcMethodError(-32603, "registry.install requires the owner's HITL gate");
@@ -187,12 +200,21 @@ async function handleInstall(
       "Gateway is not configured with an extensions directory and Vault",
     );
   }
+  return { ownerGate, fetch, extensionsDir: o.extensionsDir, vault: o.vault };
+}
+
+async function handleInstall(
+  rec: Record<string, unknown> | undefined,
+  o: RegistryRpcOptions,
+): Promise<Hit> {
+  const { id, registry, version, channel } = installParams(rec);
+  const { ownerGate, fetch, extensionsDir, vault } = installDeps(o);
   try {
     const installed = await installFromRegistry(
       {
         db: o.db,
-        extensionsDir: o.extensionsDir,
-        vault: o.vault,
+        extensionsDir,
+        vault,
         fetch,
         // The same HITL action as a local install; the request now also names the registry.
         approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
@@ -255,6 +277,14 @@ function handleList(o: RegistryRpcOptions): Hit {
   return { kind: "hit", value: { registries } };
 }
 
+type RefreshResult = {
+  name: string;
+  ok: boolean;
+  error?: string;
+  sequence?: number;
+  extensionCount?: number;
+};
+
 async function handleRefresh(
   rec: Record<string, unknown> | undefined,
   o: RegistryRpcOptions,
@@ -273,30 +303,27 @@ async function handleRefresh(
     }
     targets = [one];
   }
-  const results: Array<{
-    name: string;
-    ok: boolean;
-    error?: string;
-    sequence?: number;
-    extensionCount?: number;
-  }> = [];
-  for (const reg of targets) {
-    try {
-      const index = await fetchVerifiedIndex({ ...fetch, db: o.db }, reg);
-      results.push({
-        name: reg.name,
-        ok: true,
-        sequence: index.sequence,
-        extensionCount: Object.keys(index.extensions).length,
-      });
-    } catch (e) {
-      results.push({
-        name: reg.name,
-        ok: false,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
+  // Each registry is fetched, verified and recorded on its own row, so they refresh concurrently;
+  // one failing never affects another, and results keep the targets' order.
+  const results = await Promise.all(
+    targets.map(async (reg): Promise<RefreshResult> => {
+      try {
+        const index = await fetchVerifiedIndex({ ...fetch, db: o.db }, reg);
+        return {
+          name: reg.name,
+          ok: true,
+          sequence: index.sequence,
+          extensionCount: Object.keys(index.extensions).length,
+        };
+      } catch (e) {
+        return {
+          name: reg.name,
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+    }),
+  );
   return { kind: "hit", value: { results } };
 }
 

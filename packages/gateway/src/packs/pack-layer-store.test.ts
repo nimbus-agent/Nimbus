@@ -310,7 +310,7 @@ describe("read", () => {
 
     writeFileSync(packFile("pm"), `${CONF("0.55")}[${"z".repeat(400)}]\nq = 1\n`);
     const long = store.read("default").skipped[0]?.reason ?? "";
-    expect(long.length).toBe(200);
+    expect(long).toHaveLength(200);
     expect(long.endsWith("…")).toBe(true);
   });
 

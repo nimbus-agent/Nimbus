@@ -544,7 +544,7 @@ function buildRootInstallResult(
   };
 }
 
-export async function installExtensionFromLocalDirectory(options: {
+interface InstallFromLocalOptions {
   db: Database;
   extensionsDir: string;
   sourcePath: string;
@@ -564,7 +564,53 @@ export async function installExtensionFromLocalDirectory(options: {
   approve?: ExtensionInstallApprover;
   /** The path to show the owner when `sourcePath` is an archive's temporary extraction. */
   displaySourcePath?: string;
-}): Promise<InstallExtensionFromLocalResult> {
+}
+
+/** The archive install's options: the caller's, with `sourcePath` replaced by the archive path. */
+function archiveInstallOptions(
+  options: InstallFromLocalOptions,
+  archivePath: string,
+): Parameters<typeof installExtensionFromArchive>[0] {
+  return {
+    db: options.db,
+    extensionsDir: options.extensionsDir,
+    archivePath,
+    ...(options.vault !== undefined && { vault: options.vault }),
+    ...(options.publisherKeyPath !== undefined && {
+      publisherKeyPath: options.publisherKeyPath,
+    }),
+    ...(options.publisherKey !== undefined && { publisherKey: options.publisherKey }),
+    ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
+    ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
+    ...(options.approve !== undefined && { approve: options.approve }),
+  };
+}
+
+/**
+ * Asks the owner (when an approver is wired) to approve the resolved plan; throws
+ * `ExtensionInstallNotApprovedError` on a refusal. Nothing has been written yet.
+ */
+async function requireInstallApproval(
+  options: InstallFromLocalOptions,
+  manifest: ExtensionManifest,
+  plan: { nodes: readonly ResolvedNode[] },
+  sourceResolved: string,
+): Promise<void> {
+  if (options.approve === undefined) return;
+  const approved = await options.approve(
+    buildInstallApprovalRequest(manifest, plan, options.displaySourcePath ?? sourceResolved, {
+      ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
+      ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
+    }),
+  );
+  if (!approved) {
+    throw new ExtensionInstallNotApprovedError(manifest.id);
+  }
+}
+
+export async function installExtensionFromLocalDirectory(
+  options: InstallFromLocalOptions,
+): Promise<InstallExtensionFromLocalResult> {
   const sourceResolved = resolve(options.sourcePath);
   if (!existsSync(sourceResolved)) {
     throw new Error("extension source path does not exist");
@@ -575,19 +621,7 @@ export async function installExtensionFromLocalDirectory(options: {
     if (!lower.endsWith(".tar.gz") && !lower.endsWith(".tgz")) {
       throw new Error("extension source file must be a .tar.gz or .tgz archive");
     }
-    return await installExtensionFromArchive({
-      db: options.db,
-      extensionsDir: options.extensionsDir,
-      archivePath: sourceResolved,
-      ...(options.vault !== undefined && { vault: options.vault }),
-      ...(options.publisherKeyPath !== undefined && {
-        publisherKeyPath: options.publisherKeyPath,
-      }),
-      ...(options.publisherKey !== undefined && { publisherKey: options.publisherKey }),
-      ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
-      ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
-      ...(options.approve !== undefined && { approve: options.approve }),
-    });
+    return await installExtensionFromArchive(archiveInstallOptions(options, sourceResolved));
   }
   if (!st.isDirectory()) {
     throw new Error("extension source path must be a directory or .tar.gz archive");
@@ -612,17 +646,7 @@ export async function installExtensionFromLocalDirectory(options: {
     activeConstraints,
   });
 
-  if (options.approve !== undefined) {
-    const approved = await options.approve(
-      buildInstallApprovalRequest(manifest, plan, options.displaySourcePath ?? sourceResolved, {
-        ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
-        ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
-      }),
-    );
-    if (!approved) {
-      throw new ExtensionInstallNotApprovedError(manifest.id);
-    }
-  }
+  await requireInstallApproval(options, manifest, plan, sourceResolved);
 
   await installPlanNodes(options, plan, sourceResolved, manifest);
 

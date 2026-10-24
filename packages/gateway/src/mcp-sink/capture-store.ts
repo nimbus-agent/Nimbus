@@ -305,14 +305,17 @@ export class CaptureStore {
 
   /** Boot reconcile: `executing` survived a restart → `failed`, never back to `proposed`. */
   failInterruptedActions(nowMs: number): string[] {
+    // Returns the ids it failed (empty when none were executing); the UPDATE runs only when there
+    // is something to fail.
     const ids = this.interruptedActionIds();
-    if (ids.length === 0) return ids;
-    dbRun(
-      this.db,
-      `UPDATE capture SET state = 'failed', error_code = 'ERR_ACTION_INTERRUPTED', decided_at = ?
+    if (ids.length > 0) {
+      dbRun(
+        this.db,
+        `UPDATE capture SET state = 'failed', error_code = 'ERR_ACTION_INTERRUPTED', decided_at = ?
        WHERE kind = 'action' AND state = 'executing'`,
-      [nowMs],
-    );
+        [nowMs],
+      );
+    }
     return ids;
   }
 

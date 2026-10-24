@@ -94,18 +94,68 @@ export const REDACT_VALUE_PATTERNS: ReadonlyArray<RegExp> = [
   /xox[baprs]-[A-Za-z0-9-]{8,}/g,
   /AKIA[0-9A-Z]{16}/g,
   /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
-  // A credential that matches no token family above but is labelled as one, e.g. an error
-  // message quoting `api_key=plainsecret` or a URL's `?access_token=…`. The label goes too.
-  // A quoted value is consumed whole (spaces included) before the unquoted form is tried.
-  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s"'&,;]+)/gi,
 ];
+
+/**
+ * A credential that matches no token family above but is labelled as one, e.g. an error message
+ * quoting `api_key=plainsecret` or a URL's `?access_token=…`. The label goes too.
+ */
+const CREDENTIAL_LABELS: ReadonlySet<string> = new Set([
+  ...["apikey", "api_key", "api-key"],
+  ...["accesstoken", "access_token", "access-token"],
+  ...["refreshtoken", "refresh_token", "refresh-token"],
+  ...["clientsecret", "client_secret", "client-secret"],
+  ...["secret", "password", "passwd"],
+]);
+
+/** A label-shaped word (at most one `_`/`-` join) and its `=`/`:` separator. */
+const LABEL_THEN_SEPARATOR = /\b([a-z]+(?:[_-][a-z]+)?)\s*[=:]\s*/gi;
+
+/** A character that ends an unquoted labelled value. */
+const UNQUOTED_VALUE_END = /[\s"'&,;]/;
+
+/**
+ * Where a labelled value starting at `from` ends, or `undefined` when there is none. A quoted value
+ * is consumed whole (spaces included) up to its closing quote; an unclosed quote is no value, since
+ * a quote cannot start an unquoted one. An unquoted value runs to the first `UNQUOTED_VALUE_END`.
+ */
+function labelledValueEnd(s: string, from: number): number | undefined {
+  const quote = s[from];
+  if (quote === '"' || quote === "'") {
+    const close = s.indexOf(quote, from + 1);
+    return close === -1 ? undefined : close + 1;
+  }
+  let end = from;
+  while (end < s.length && !UNQUOTED_VALUE_END.test(s[end] as string)) end++;
+  return end === from ? undefined : end;
+}
+
+/** Replaces each labelled credential (label, separator and value) with `[REDACTED]`. */
+function scrubLabelledCredentials(s: string): string {
+  const re = new RegExp(LABEL_THEN_SEPARATOR);
+  let out = "";
+  let copied = 0;
+  for (let m = re.exec(s); m !== null; m = re.exec(s)) {
+    const isLabel = CREDENTIAL_LABELS.has((m[1] ?? "").toLowerCase());
+    const end = isLabel ? labelledValueEnd(s, m.index + m[0].length) : undefined;
+    if (end === undefined) {
+      // Not a credential here: a label can still start one character on, as the regex would.
+      re.lastIndex = m.index + 1;
+      continue;
+    }
+    out += `${s.slice(copied, m.index)}[REDACTED]`;
+    copied = end;
+    re.lastIndex = end;
+  }
+  return out + s.slice(copied);
+}
 
 export function scrubRedactedValuePatterns(s: string): string {
   let out = s;
   for (const re of REDACT_VALUE_PATTERNS) {
     out = out.replace(re, "[REDACTED]");
   }
-  return out;
+  return scrubLabelledCredentials(out);
 }
 
 function pinoLogFormatter(o: Record<string, unknown>): Record<string, unknown> {

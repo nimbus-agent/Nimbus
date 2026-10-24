@@ -76,7 +76,7 @@ export function bestTimingsAcrossSizes(c: GrowthCase): number[] {
 export function expectLinearGrowth(c: GrowthCase): number[] {
   const timings = bestTimingsAcrossSizes(c);
   const first = timings[0] ?? 0;
-  const last = timings[timings.length - 1] ?? 0;
+  const last = timings.at(-1) ?? 0;
   expect(last / Math.max(first, BASELINE_FLOOR_MS)).toBeLessThan(LINEAR_GROWTH_MAX_END_TO_END);
   return timings;
 }

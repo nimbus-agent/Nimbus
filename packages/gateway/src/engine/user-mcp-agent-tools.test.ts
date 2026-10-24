@@ -184,7 +184,7 @@ describe("buildUserMcpAgentTools", () => {
     const huge = (tools["mcp_notes__huge"] as { description: string }).description;
     expect(huge.startsWith(`${prefix}${open}`)).toBe(true);
     expect(huge.endsWith("z</tool_description>")).toBe(true);
-    expect(huge.length).toBe(USER_MCP_DESCRIPTION_MAX);
+    expect(huge).toHaveLength(USER_MCP_DESCRIPTION_MAX);
   });
 
   test("a forged closer in a server description cannot end the block", async () => {
@@ -210,7 +210,7 @@ describe("buildUserMcpAgentTools", () => {
       const src = fakeSource(["mcp_notes"], { mcp_notes: { mcp_notes_edge: listingTool(forged) } });
       const tools = await buildUserMcpAgentTools(src, () => undefined, wrapSpy().wrap);
       const d = (tools["mcp_notes__edge"] as { description: string }).description;
-      expect(d.length).toBe(USER_MCP_DESCRIPTION_MAX);
+      expect(d).toHaveLength(USER_MCP_DESCRIPTION_MAX);
       expect(closers(d)).toHaveLength(1);
       expect(d.endsWith("</tool_description>")).toBe(true);
       expect(d).not.toContain("SYSTEM");
@@ -551,7 +551,7 @@ describe("owner-approved extensions (ext_) on the same model path", () => {
     const huge = (tools["ext_notes__huge"] as { description: string }).description;
     expect(huge.startsWith(`${extPrefix}<tool_description server="ext_notes">`)).toBe(true);
     expect(huge.endsWith("z</tool_description>")).toBe(true);
-    expect(huge.length).toBe(USER_MCP_DESCRIPTION_MAX);
+    expect(huge).toHaveLength(USER_MCP_DESCRIPTION_MAX);
   });
 
   test("an mcp_ source keeps the user MCP prefix beside an ext_ one", async () => {

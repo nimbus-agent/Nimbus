@@ -31,11 +31,13 @@ export type RunDataDeleteResult = {
  * starts with this one — deleting `github` wiped `github_actions`'s sync state (and `_` is itself
  * a LIKE wildcard). The separator is now required and the service id is escaped.
  */
-const SYNC_STATE_FOR_SERVICE =
-  "(connector_id = ? OR connector_id LIKE ? ESCAPE '\\' OR connector_id LIKE ? ESCAPE '\\')";
+const SYNC_STATE_FOR_SERVICE = String.raw`(connector_id = ? OR connector_id LIKE ? ESCAPE '\' OR connector_id LIKE ? ESCAPE '\')`;
 
 function syncStateParams(service: string): [string, string, string] {
-  const escaped = service.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+  const escaped = service
+    .replaceAll("\\", String.raw`\\`)
+    .replaceAll("%", String.raw`\%`)
+    .replaceAll("_", String.raw`\_`);
   return [service, `${escaped}-%`, `${escaped}:%`];
 }
 

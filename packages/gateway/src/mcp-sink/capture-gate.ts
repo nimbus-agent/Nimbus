@@ -217,13 +217,22 @@ function summarize(row: CaptureRow): CaptureSummary {
 
 // ---- submit (spec § 5.1) -------------------------------------------------------------------------
 
-export async function submitCapture(
+/** Who is submitting what, once step 4 has fixed the kind: every audited refusal names these. */
+interface SubmitContext {
+  readonly deps: CaptureGateDeps;
+  readonly caller: CaptureCaller;
+  readonly kind: CaptureKind;
+  readonly clientLabel: string | null;
+}
+
+type ActionCapture = Extract<ValidatedCapture, { readonly kind: "action" }>;
+
+/** Step 1's refusals: the sink off, or an action while the act door is off. Unaudited. */
+function requireSubmitCapability(
   deps: CaptureGateDeps,
-  caller: CaptureCaller,
+  cap: CaptureCapability,
   input: unknown,
-): Promise<{ id: string; state: CaptureState; expiresAt?: number }> {
-  // 1. Capability (config + live org policy, fail-closed).
-  const cap = deps.capability();
+): void {
   if (!cap.enabled)
     refuseUnaudited(deps, "ERR_CAPTURE_DISABLED", `the capture sink is off (${cap.reason})`);
   const rawKind =
@@ -233,6 +242,107 @@ export async function submitCapture(
   if (rawKind === "action" && !cap.actionEnabled) {
     refuseUnaudited(deps, "ERR_CAPTURE_DISABLED", "the act door is off (mcp_action or kinds)");
   }
+}
+
+/** The params object, or an audited refusal (the first audited step: bounded by step 3). */
+function requireSubmitParams(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+  input: unknown,
+): Record<string, unknown> {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    refuseAudited(deps, caller, "unknown", null, "ERR_CAPTURE_INVALID", "params must be an object");
+  }
+  return input as Record<string, unknown>;
+}
+
+function refuseKindNotAllowed(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+  kindRaw: unknown,
+  clientLabel: string | null,
+): never {
+  const kindName = typeof kindRaw === "string" ? kindRaw.slice(0, 20) : "unknown";
+  refuseAudited(
+    deps,
+    caller,
+    kindName,
+    clientLabel,
+    "ERR_CAPTURE_KIND_NOT_ALLOWED",
+    `kind ${kindName} is not enabled`,
+  );
+}
+
+/** Runs one step; a `CaptureError` it throws becomes an audited refusal, anything else rethrows. */
+function auditedStep<T>(ctx: SubmitContext, step: () => T): T {
+  try {
+    return step();
+  } catch (e) {
+    if (e instanceof CaptureError)
+      refuseAudited(ctx.deps, ctx.caller, ctx.kind, ctx.clientLabel, e.code, e.message);
+    throw e;
+  }
+}
+
+/** Step 5a's refusal: the action type is not proposable now. */
+function requireProposable(
+  ctx: SubmitContext,
+  v: ActionCapture,
+  classified: ActionVerdict | undefined,
+): void {
+  const verdict = classified ?? { kind: "unknown" as const };
+  if (verdict.kind !== "proposable") {
+    refuseAudited(
+      ctx.deps,
+      ctx.caller,
+      "action",
+      ctx.clientLabel,
+      "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      `${v.payload.actionType} cannot be proposed (${verdict.kind === "denied" ? verdict.class : "unknown action type"})`,
+    );
+  }
+}
+
+/** Step 5b's refusal: the action's connector is not configured on this machine. */
+function requireConfigured(
+  ctx: SubmitContext,
+  v: ActionCapture,
+  configured: boolean | undefined,
+): void {
+  if (configured !== true) {
+    refuseAudited(
+      ctx.deps,
+      ctx.caller,
+      "action",
+      ctx.clientLabel,
+      "ERR_CAPTURE_CONNECTOR_UNCONFIGURED",
+      `${serviceOf(v.payload.actionType)} is not configured on this machine`,
+    );
+  }
+}
+
+/** Step 8's refusal: the action queue or the native-proposal queue is full. */
+function refuseQueueFull(ctx: SubmitContext, v: ValidatedCapture, cap: CaptureCapability): never {
+  refuseAudited(
+    ctx.deps,
+    ctx.caller,
+    ctx.kind,
+    ctx.clientLabel,
+    "ERR_CAPTURE_QUEUE_FULL",
+    v.kind === "action"
+      ? `${String(cap.config.actionMaxPending)} proposed actions already await the owner`
+      : `the review queue is full (${String(cap.config.maxPending)} proposals await the owner)`,
+  );
+}
+
+export async function submitCapture(
+  deps: CaptureGateDeps,
+  caller: CaptureCaller,
+  input: unknown,
+): Promise<{ id: string; state: CaptureState; expiresAt?: number }> {
+  // 1. Capability (config + live org policy, fail-closed).
+  const cap = deps.capability();
+  requireSubmitCapability(deps, cap, input);
   // 2. Client kind: only a declared `mcp` connection submits.
   if (CAPTURE_ROLE_BY_KIND[caller.kind] !== "submit") {
     refuseUnaudited(
@@ -246,57 +356,21 @@ export async function submitCapture(
   if (!deps.limiter.tryAcquire(now, cap.config.maxPerHour * ATTEMPT_MULTIPLIER)) {
     refuseUnaudited(deps, "ERR_CAPTURE_RATE_LIMITED", "too many capture attempts this hour");
   }
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    refuseAudited(deps, caller, "unknown", null, "ERR_CAPTURE_INVALID", "params must be an object");
-  }
-  const params = input as Record<string, unknown>;
+  const params = requireSubmitParams(deps, caller, input);
   const clientLabel = sanitizeClientLabel(params["clientLabel"]);
   const kindRaw = params["kind"];
-  const kindName = typeof kindRaw === "string" ? kindRaw.slice(0, 20) : "unknown";
   // 4. Kind allowed by config AND supported by this gateway version.
   if (!isCaptureKind(kindRaw) || !cap.kinds.includes(kindRaw)) {
-    refuseAudited(
-      deps,
-      caller,
-      kindName,
-      clientLabel,
-      "ERR_CAPTURE_KIND_NOT_ALLOWED",
-      `kind ${kindName} is not enabled`,
-    );
+    refuseKindNotAllowed(deps, caller, kindRaw, clientLabel);
   }
+  const ctx: SubmitContext = { deps, caller, kind: kindRaw, clientLabel };
   // 5. Whitelist rebuild, per kind.
-  let v: ValidatedCapture;
-  try {
-    v = validateCapturePayload(kindRaw, params["payload"], now);
-  } catch (e) {
-    if (e instanceof CaptureError)
-      refuseAudited(deps, caller, kindRaw, clientLabel, e.code, e.message);
-    throw e;
-  }
+  const v = auditedStep(ctx, () => validateCapturePayload(kindRaw, params["payload"], now));
   // 5a + 5b. An action must be proposable now and its connector configured. Everything after this
   //    await stays synchronous through the write, so a concurrent submit cannot slip past the caps.
   if (v.kind === "action") {
-    const verdict = deps.classifyAction?.(v.payload.actionType) ?? { kind: "unknown" as const };
-    if (verdict.kind !== "proposable") {
-      refuseAudited(
-        deps,
-        caller,
-        "action",
-        clientLabel,
-        "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
-        `${v.payload.actionType} cannot be proposed (${verdict.kind === "denied" ? verdict.class : "unknown action type"})`,
-      );
-    }
-    if ((await deps.isServiceConfigured?.(serviceOf(v.payload.actionType))) !== true) {
-      refuseAudited(
-        deps,
-        caller,
-        "action",
-        clientLabel,
-        "ERR_CAPTURE_CONNECTOR_UNCONFIGURED",
-        `${serviceOf(v.payload.actionType)} is not configured on this machine`,
-      );
-    }
+    requireProposable(ctx, v, deps.classifyAction?.(v.payload.actionType));
+    requireConfigured(ctx, v, await deps.isServiceConfigured?.(serviceOf(v.payload.actionType)));
   }
   // 6. Referenced items exist (a capture item only while live/accepted); a link's endpoints must
   //    also be graph-linkable NOW, so a proposal that can never be accepted is not queued.
@@ -312,13 +386,7 @@ export async function submitCapture(
     );
   }
   if (v.kind === "link") {
-    try {
-      resolveLinkEndpoints(deps.db, v.payload.fromItemId, v.payload.toItemId);
-    } catch (e) {
-      if (e instanceof CaptureError)
-        refuseAudited(deps, caller, kindRaw, clientLabel, e.code, e.message);
-      throw e;
-    }
+    auditedStep(ctx, () => resolveLinkEndpoints(deps.db, v.payload.fromItemId, v.payload.toItemId));
   }
   // 7. Durable hourly cap — read from the table, survives restarts.
   if (deps.store.countCreatedSince(now - HOUR_MS) >= cap.config.maxPerHour) {
@@ -333,31 +401,28 @@ export async function submitCapture(
   }
   // 8. Pending cap — proposals only; a note is never pending. Actions and native proposals are
   //    bounded separately, and an expired action never counts.
-  const proposal = v.kind !== "note";
-  if (v.kind === "action") {
-    if (deps.store.countPendingActions(now) >= cap.config.actionMaxPending) {
-      refuseAudited(
-        deps,
-        caller,
-        kindRaw,
-        clientLabel,
-        "ERR_CAPTURE_QUEUE_FULL",
-        `${String(cap.config.actionMaxPending)} proposed actions already await the owner`,
-      );
-    }
-  } else if (proposal && deps.store.countPendingNative() >= cap.config.maxPending) {
-    refuseAudited(
-      deps,
-      caller,
-      kindRaw,
-      clientLabel,
-      "ERR_CAPTURE_QUEUE_FULL",
-      `the review queue is full (${String(cap.config.maxPending)} proposals await the owner)`,
-    );
-  }
+  const queueFull =
+    v.kind === "action"
+      ? deps.store.countPendingActions(now) >= cap.config.actionMaxPending
+      : v.kind !== "note" && deps.store.countPendingNative() >= cap.config.maxPending;
+  if (queueFull) refuseQueueFull(ctx, v, cap);
 
-  // 9 + 10. One transaction: capture row, item (notes only), audit. An audit failure rolls all of it
-  //    back. A proposal gets no item, no native row and no embedding until accept (spec § 4.3).
+  // 9 + 10. One transaction: capture row, item (notes only), audit.
+  return writeSubmittedCapture(ctx, v, cap, now);
+}
+
+/**
+ * Steps 9 + 10: one transaction — capture row, item (notes only), audit. An audit failure rolls all
+ * of it back. A proposal gets no item, no native row and no embedding until accept (spec § 4.3).
+ */
+function writeSubmittedCapture(
+  ctx: SubmitContext,
+  v: ValidatedCapture,
+  cap: CaptureCapability,
+  now: number,
+): { id: string; state: CaptureState; expiresAt?: number } {
+  const { deps, caller, kind, clientLabel } = ctx;
+  const proposal = v.kind !== "note";
   const id = deps.newId();
   const itemId = proposal ? null : itemPrimaryKey(CAPTURE_ITEM_SERVICE, id);
   const payloadJson = JSON.stringify(v.payload);
@@ -367,7 +432,7 @@ export async function submitCapture(
   deps.db.transaction(() => {
     deps.store.insert({
       id,
-      kind: kindRaw,
+      kind,
       state,
       itemId,
       payloadJson,
@@ -388,7 +453,7 @@ export async function submitCapture(
         modifiedAt: now,
         syncedAt: now,
         metadata: {
-          captureKind: kindRaw,
+          captureKind: kind,
           captureId: id,
           agentAuthored: true,
           clientLabel,
@@ -402,7 +467,7 @@ export async function submitCapture(
       hitlStatus: "not_required",
       actionJson: JSON.stringify({
         captureId: id,
-        kind: kindRaw,
+        kind,
         ...(v.kind === "action" ? { actionType: v.payload.actionType } : {}),
         payloadBytes,
         clientLabel,

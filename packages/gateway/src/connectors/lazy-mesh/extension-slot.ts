@@ -224,8 +224,10 @@ export class ExtensionSlots {
 
   /** Resolves once no previous child of `serviceId` is still disconnecting. */
   private async previousChildGone(serviceId: string): Promise<void> {
+    // Sequential by design: each wait re-reads the map, since a stop that began while we waited
+    // replaces the entry and must be waited out too. There is nothing to run concurrently.
     for (let p = this.stopping.get(serviceId); p !== undefined; p = this.stopping.get(serviceId)) {
-      await p;
+      await p; // NOSONAR S9382: each wait re-reads the map; a stop begun meanwhile must be waited out too
     }
   }
 

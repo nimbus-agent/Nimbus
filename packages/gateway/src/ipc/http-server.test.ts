@@ -421,6 +421,16 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
     handle = startReadOnlyHttpServer(dbPath, 0, { clipsVault: vault });
   });
 
+  afterEach(() => {
+    handle?.stop();
+    handle = undefined;
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* non-fatal */
+    }
+  });
+
   it("the raw-row reads refuse a missing token (401) and a token without `data` (403)", async () => {
     for (const path of [
       "/v1/items",
@@ -435,16 +445,6 @@ describe("startReadOnlyHttpServer — simple read-only routes", () => {
         headers: { authorization: "Bearer tok-clip-only" },
       });
       expect(clipOnly.status).toBe(403);
-    }
-  });
-
-  afterEach(() => {
-    handle?.stop();
-    handle = undefined;
-    try {
-      rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      /* non-fatal */
     }
   });
 

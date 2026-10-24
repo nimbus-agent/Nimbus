@@ -286,13 +286,15 @@ export async function listProposableActionTypes(
 ): Promise<string[]> {
   const out: string[] = [];
   const configured = new Map<string, boolean>();
+  // Sequential on purpose: a configured-ness check is a Vault read, and on Linux each Vault read
+  // spawns a `secret-tool` process, so one check per service at once would be a process burst.
   for (const type of Object.keys(PROPOSABLE_WRITE_TOOLS)) {
     const svc = serviceOf(type);
-    if (!configured.has(svc)) configured.set(svc, await ctx.isServiceConfigured(svc));
+    if (!configured.has(svc)) configured.set(svc, await ctx.isServiceConfigured(svc)); // NOSONAR S9382: each check is a Vault read (a secret-tool spawn on Linux)
     if (configured.get(svc) === true) out.push(type);
   }
   if (ctx.userMcpModelAccessAllowed()) {
     for (const id of ctx.modelAccessServices()) out.push(`${id}.*`);
   }
-  return out.sort((a, b) => a.localeCompare(b)).slice(0, 200);
+  return out.toSorted((a, b) => a.localeCompare(b)).slice(0, 200);
 }

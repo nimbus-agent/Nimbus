@@ -5,11 +5,14 @@ export function pathApiFor(platform: NodeJS.Platform): typeof path.posix {
   return platform === "win32" ? path.win32 : path.posix;
 }
 
-/** Is `a` the same as, or inside, `b`? Case-insensitive on win32; another drive is never inside. */
-export function isSameOrInside(platform: NodeJS.Platform, a: string, b: string): boolean {
+/**
+ * Is `inner` the same as, or inside, `outer`? Case-insensitive on win32; another drive is never
+ * inside.
+ */
+export function isSameOrInside(platform: NodeJS.Platform, inner: string, outer: string): boolean {
   const api = pathApiFor(platform);
   const norm = (p: string): string => (platform === "win32" ? api.normalize(p).toLowerCase() : p);
-  const rel = api.relative(norm(b), norm(a));
+  const rel = api.relative(norm(outer), norm(inner));
   if (rel === "") return true;
   if (api.isAbsolute(rel)) return false;
   return rel !== ".." && !rel.startsWith(`..${api.sep}`);

@@ -17,12 +17,11 @@ export function extractMcpToolText(result: unknown, maxBytes: number): string {
       ? (first as Record<string, unknown>)["text"]
       : undefined;
   if (rec["isError"] === true) {
-    throw new Error(
-      `connector: MCP tool reported an error${typeof text === "string" ? `: ${text.slice(0, 200)}` : ""}`,
-    );
+    const detail = typeof text === "string" ? `: ${text.slice(0, 200)}` : "";
+    throw new Error(`connector: MCP tool reported an error${detail}`);
   }
   if (typeof text !== "string") {
-    throw new Error("connector: unexpected MCP tool result shape");
+    throw new TypeError("connector: unexpected MCP tool result shape");
   }
   if (Buffer.byteLength(text, "utf8") > maxBytes) {
     throw new Error(`connector: MCP tool result exceeds the ${String(maxBytes)}-byte cap`);

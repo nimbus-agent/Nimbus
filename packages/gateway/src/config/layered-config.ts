@@ -69,14 +69,7 @@ export function basenameSafeMessage(message: string, root: string): string {
     .map((p) => p.replace(REGEXP_SPECIAL, String.raw`\$&`))
     .join(SEPARATOR_CLASS);
   const re = new RegExp(pattern + PATH_TAIL, process.platform === "win32" ? "gi" : "g");
-  return message.replace(
-    re,
-    (m) =>
-      m
-        .split(/[\\/]/)
-        .filter((p) => p !== "")
-        .pop() ?? m,
-  );
+  return message.replace(re, (m) => m.split(/[\\/]/).findLast((p) => p !== "") ?? m);
 }
 
 export const EMPTY_PACK_LAYERS: PackLayerSource = { read: () => ({ layers: [], skipped: [] }) };
@@ -107,7 +100,7 @@ function samePackRead(a: PackLayersRead, b: PackLayersRead): boolean {
     a.layers.length === b.layers.length &&
     a.layers.every((l, i) => {
       const o = b.layers[i];
-      return o !== undefined && l.id === o.id && l.path === o.path && l.text === o.text;
+      return l.id === o?.id && l.path === o.path && l.text === o.text;
     }) &&
     JSON.stringify(a.skipped) === JSON.stringify(b.skipped) &&
     a.listError === b.listError

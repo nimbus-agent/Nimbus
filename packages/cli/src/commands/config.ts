@@ -311,16 +311,16 @@ export async function runConfig(
   const withIpc = deps.withIpc ?? withGatewayIpc;
   const effective = args.includes("--effective");
   const json = args.includes("--json");
-  const positional = args.slice(1).filter((a) => !a.startsWith("--"));
+  const firstPositional = args.slice(1).find((a) => !a.startsWith("--"));
 
   if (sub === "explain") {
-    const path = positional[0]?.trim() ?? "";
+    const path = firstPositional?.trim() ?? "";
     if (path === "") throw new Error("Usage: nimbus config explain <path> [--json]");
     await runConfigExplainVia(withIpc, path, json);
     return;
   }
   if (effective && sub === "get") {
-    const path = positional[0]?.trim() ?? "";
+    const path = firstPositional?.trim() ?? "";
     if (path === "") throw new Error("Usage: nimbus config get --effective <path>");
     await runConfigExplainVia(withIpc, path, json);
     return;

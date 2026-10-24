@@ -49,9 +49,8 @@ export interface CheckDeps {
 
 const SHARED: CheckDeps = { validate: validatePublish, git: gitTree, io: GHA_IO, tmpdir: osTmpdir };
 
-const FILE_RE = new RegExp(
-  `^(extensions/.+)/(${CANDIDATE_FILES.join("|").replaceAll(".", String.raw`\.`)})$`,
-);
+const CANDIDATE_ALTERNATION = CANDIDATE_FILES.join("|").replaceAll(".", String.raw`\.`);
+const FILE_RE = new RegExp(`^(extensions/.+)/(${CANDIDATE_ALTERNATION})$`);
 
 /**
  * The path rule: the diff only ADDS the three files of exactly one new `extensions/<id>/<version>/`.

@@ -13,11 +13,11 @@ import {
 
 describe("normalizers", () => {
   test("github: merged wins over state", () => {
-    expect(normalizeGithubPrState("closed", true)).toBe("merged");
-    expect(normalizeGithubPrState("closed", false)).toBe("closed");
-    expect(normalizeGithubPrState("open", false)).toBe("open");
-    expect(normalizeGithubPrState(undefined, false)).toBeUndefined();
-    expect(normalizeGithubPrState("draft-ish", false)).toBe("unknown");
+    expect(normalizeGithubPrState({ state: "closed", merged: true })).toBe("merged");
+    expect(normalizeGithubPrState({ state: "closed", merged: false })).toBe("closed");
+    expect(normalizeGithubPrState({ state: "open", merged: false })).toBe("open");
+    expect(normalizeGithubPrState({ state: undefined, merged: false })).toBeUndefined();
+    expect(normalizeGithubPrState({ state: "draft-ish", merged: false })).toBe("unknown");
   });
   test("bitbucket: upper-case vocabulary", () => {
     expect(normalizeBitbucketPrState("OPEN")).toBe("open");
@@ -48,7 +48,7 @@ describe("normalizers", () => {
     for (const v of ["constructor", "__proto__", "toString"]) {
       expect(normalizeBitbucketPrState(v)).toBe("unknown");
       expect(normalizeGitlabMrState(v)).toBe("unknown");
-      expect(normalizeGithubPrState(v, false)).toBe("unknown");
+      expect(normalizeGithubPrState({ state: v, merged: false })).toBe("unknown");
       expect(gitlabEventTransition(v)).toBeNull();
     }
   });

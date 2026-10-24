@@ -679,6 +679,36 @@ describe("emergency log hardening", () => {
     expect(out).toContain("x=1");
   });
 
+  test("labelled credentials are scrubbed exactly as the former single regex scrubbed them", () => {
+    // The labelled-credential pass used to be this one regex; it is now a label scan plus a small
+    // value parser. Every input below must come out byte-identical to the regex's output.
+    const former =
+      /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s"'&,;]+)/gi;
+    const inputs = [
+      "api_key=plainsecret&x=1 password: hunter2",
+      "API-KEY = abc; Access_Token:xyz,next",
+      "apikey=a refreshtoken=b client-secret=c clientsecret='d e' passwd=f",
+      `password="unterminated value`,
+      `secret='unterminated`,
+      `password=a"b secret="c d"`,
+      `password=secret="a b"`,
+      `password="x secret=y" tail`,
+      "x-secret=1 my_password=2 my-password=3 foo-api-key=4 foo_api_key=5",
+      "secret_x=1 secrets=2 password-x=3 pass-wd=4 api__key=5",
+      "password= ",
+      "password=",
+      "secret = \t value",
+      "password:: double",
+      "?access_token=abc123&refresh_token=def456",
+      `secret=""`,
+      "no credentials here",
+      "Secret=Ünïcode secret=ok",
+    ];
+    for (const input of inputs) {
+      expect(scrubRedactedValuePatterns(input)).toBe(input.replace(former, "[REDACTED]"));
+    }
+  });
+
   test("a quoted multi-word credential is redacted whole, not only its first word", () => {
     const out = scrubRedactedValuePatterns(
       `bad config password="correct horse battery staple" secret='two words' next`,
