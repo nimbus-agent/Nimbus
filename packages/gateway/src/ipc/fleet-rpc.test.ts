@@ -101,6 +101,8 @@ test("fleet.status reports running: true and the real config/jobsConfigured when
     requireAcPower: false,
     retentionDays: 3,
     jobsConfigured: 2,
+    jobsDisabled: 0,
+    droppedJobs: [],
     probe: { power: "battery", idleMs: 500, source: "measured" },
   });
 });
@@ -260,8 +262,10 @@ describe("fleet.list / fleet.briefs / fleet.show over a real store", () => {
           intervalSeconds: 3600,
           state: null,
           sweep: null,
+          layer: null,
         },
       ],
+      disabled: [],
     });
   });
 
@@ -696,6 +700,86 @@ describe("handlers read the ctx at call time", () => {
       expect(e).toBeInstanceOf(FleetRpcError);
       expect((e as FleetRpcError).rpcCode).toBe(-32000);
       expect((e as FleetRpcError).message).toBe("fleet is reloading its config; try again");
+    }
+  });
+});
+
+describe("fleet layers, disabled and dropped jobs", () => {
+  const base = { kind: "base", id: "base", path: "/cfg/nimbus.toml" } as const;
+  const pack = { kind: "pack", id: "oncall", path: "/cfg/packs/oncall.toml" } as const;
+  const job: NimbusFleetJobToml = {
+    name: "morning",
+    agent: "catchup",
+    intervalSeconds: 60,
+    params: {},
+    digestMinDelta: 1,
+    sweep: null,
+  };
+  const hostActivity = { probe: async () => ({ power: "ac", idleMs: 0, source: "measured" }) };
+
+  test("status reports disabled and dropped", async () => {
+    const out = await dispatchFleetRpc("fleet.status", {}, {
+      hostActivity,
+      config: DEFAULT_FLEET_CONFIG,
+      jobs: [job],
+      disabled: [{ name: "old", agent: null, origin: { layer: base, replaces: [] } }],
+      dropped: [{ name: "bad", layer: pack, reason: "agent required" }],
+      now: () => 0,
+    } as never);
+    if (out.kind !== "hit") throw new Error("expected a hit");
+    expect(out.value).toMatchObject({
+      jobsConfigured: 1,
+      jobsDisabled: 1,
+      droppedJobs: [{ name: "bad", layer: pack, reason: "agent required" }],
+    });
+  });
+
+  test("list carries each job's layer and the disabled jobs with what they disable", async () => {
+    const out = await dispatchFleetRpc("fleet.list", {}, {
+      hostActivity,
+      config: DEFAULT_FLEET_CONFIG,
+      jobs: [job],
+      origins: new Map([["morning", { layer: base, replaces: [pack] }]]),
+      disabled: [{ name: "noisy", agent: "janitor", origin: { layer: base, replaces: [pack] } }],
+      now: () => 0,
+    } as never);
+    if (out.kind !== "hit") throw new Error("expected a hit");
+    const v = out.value as { jobs: Array<{ layer: unknown }>; disabled: unknown };
+    expect(v.jobs[0]?.layer).toEqual(base);
+    expect(v.disabled).toEqual([
+      { name: "noisy", agent: "janitor", layer: base, disables: [pack] },
+    ]);
+  });
+
+  test("an orphan stub lists disables: []", async () => {
+    const out = await dispatchFleetRpc("fleet.list", {}, {
+      hostActivity,
+      config: DEFAULT_FLEET_CONFIG,
+      jobs: [],
+      disabled: [{ name: "ghost", agent: null, origin: { layer: base, replaces: [] } }],
+      now: () => 0,
+    } as never);
+    if (out.kind !== "hit") throw new Error("expected a hit");
+    expect((out.value as { disabled: unknown }).disabled).toEqual([
+      { name: "ghost", agent: null, layer: base, disables: [] },
+    ]);
+  });
+
+  test("runNow on a disabled job names it", async () => {
+    try {
+      await dispatchFleetRpc("fleet.runNow", { job: "noisy" }, {
+        hostActivity,
+        config: DEFAULT_FLEET_CONFIG,
+        disabled: [{ name: "noisy", agent: null, origin: { layer: base, replaces: [] } }],
+        now: () => 0,
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(FleetRpcError);
+      expect((e as FleetRpcError).rpcCode).toBe(-32602);
+      expect((e as FleetRpcError).message).toBe(
+        'fleet: job "noisy" is disabled by enabled = false in /cfg/nimbus.toml',
+      );
     }
   });
 });

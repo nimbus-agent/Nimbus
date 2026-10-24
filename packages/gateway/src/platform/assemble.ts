@@ -3455,6 +3455,15 @@ export function fleetRpcCtxFor(runtime: FleetRuntime, hostActivity: HostActivity
     get jobs(): readonly NimbusFleetJobToml[] {
       return runtime.jobs;
     },
+    get origins(): ReadonlyMap<string, FleetJobOrigin> {
+      return runtime.origins;
+    },
+    get disabled(): readonly FleetDisabledJob[] {
+      return runtime.disabled;
+    },
+    get dropped(): readonly FleetDroppedJob[] {
+      return runtime.dropped;
+    },
     now: () => Date.now(),
     settled: () => runtime.supervisor.check().then(() => undefined),
   };

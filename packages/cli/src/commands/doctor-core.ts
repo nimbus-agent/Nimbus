@@ -3,6 +3,7 @@ import { platform } from "node:os";
 import type { IPCClient } from "../ipc-client/index.ts";
 import { nimbusCommand } from "../lib/demo-hint.ts";
 import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { doctorCapturesLines, parseStatus } from "./captures-format.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
@@ -950,21 +951,6 @@ export function doctorPrintProfile(raw: unknown): number {
     );
   }
   return Math.max(exit, doctorPrintPacks(c));
-}
-
-/**
- * Drops C0/C1 control characters and DEL. The gateway already reports an invalid `active.json`
- * entry by position only, but this CLI may talk to an older or another gateway, and a raw escape
- * sequence printed to the terminal is never what the owner should see.
- */
-function stripControlChars(s: string): string {
-  let out = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
-    out += ch;
-  }
-  return out;
 }
 
 /** Pack lines; each field is optional and filtered like `layers`, so an older gateway prints nothing. */
