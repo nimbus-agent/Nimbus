@@ -264,6 +264,7 @@ async function buildPrompt(
   mode: PackPromptInput["mode"],
   prev: RolePackManifest | undefined,
   deps: PackDeps,
+  layerEdited = false,
 ): Promise<string> {
   const m = r.manifest;
   const parsed = checkPackFragment(m.defaults, checkPackFleetJobs);
@@ -284,12 +285,18 @@ async function buildPrompt(
     source: r.source,
     mode,
     ...(prev === undefined ? {} : { diff: diffPacks(prev, m) }),
+    ...(layerEdited ? { layerEdited } : {}),
     scalars: promptScalars(m.defaults, deps.configDir),
     visibleAgents,
     jobs,
     connectors,
   };
   return renderPackPrompt(input);
+}
+
+/** True when the layer file on disk is no longer the `defaults` the previous record approved. */
+function isLayerEdited(mode: Mode, profile: string, id: string, store: PackLayerStore): boolean {
+  return mode.kind === "update" && store.readPackLayerText(profile, id) !== mode.prev.defaults;
 }
 
 function sourceDisplay(s: PackSource): string {
@@ -334,6 +341,7 @@ export async function installPack(
     mode.kind,
     mode.kind === "update" ? mode.prev : undefined,
     deps,
+    isLayerEdited(mode, profile, id, deps.store),
   );
   const approved = await gate({
     type: "pack.install",
@@ -397,7 +405,9 @@ export async function previewPack(req: PackRequest, deps: PackDeps): Promise<Pac
     return { prompt, mode: "already_installed", ...installed };
   }
   const prev = mode.kind === "update" ? mode.prev : undefined;
-  return { prompt: await buildPrompt(r, mode.kind, prev, deps), mode: mode.kind, ...installed };
+  const edited = isLayerEdited(mode, profile, r.manifest.id, deps.store);
+  const prompt = await buildPrompt(r, mode.kind, prev, deps, edited);
+  return { prompt, mode: mode.kind, ...installed };
 }
 
 /** No approval: removing a pack only takes its defaults away. An unknown id is `removed: false`. */
@@ -424,7 +434,9 @@ export function listPacks(deps: PackDeps): PackListResult {
     if (PACK_ID_RE.test(id) && !ids.includes(id)) ids.push(id);
   }
   const installed = ids.map((id) => installedEntry(profile, id, deps));
-  const available = [...deps.bundled.values()]
+  // With the installed list unreadable, nothing is known about what is installed, so nothing is
+  // offered as available.
+  const available = (read.listError === undefined ? [...deps.bundled.values()] : [])
     .filter((m) => !ids.includes(m.id))
     .map((m) => ({ id: m.id, name: m.name, version: m.version, description: m.description }));
   return {

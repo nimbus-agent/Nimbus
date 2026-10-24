@@ -36,11 +36,15 @@ interface AvailablePackRow {
   readonly version: string;
   readonly description: string;
 }
+interface SkippedPackRow {
+  readonly packId: string;
+  readonly reason: string;
+}
 interface PackListResult {
   readonly profile: string;
   readonly installed: readonly InstalledPackRow[];
   readonly available: readonly AvailablePackRow[];
-  readonly skipped: number;
+  readonly skipped: readonly SkippedPackRow[];
   readonly listError?: string;
 }
 interface PackShowResult {
@@ -57,11 +61,11 @@ interface PackInstallResult {
   readonly outcome: "installed" | "updated" | "repaired" | "already_installed";
   readonly id: string;
   readonly version: string;
-  readonly snapshotVersion: number;
+  readonly snapshotVersion: number | null;
 }
 interface PackRemoveResult {
   readonly removed: boolean;
-  readonly snapshotVersion: number;
+  readonly snapshotVersion: number | null;
 }
 
 export interface PackIo {
@@ -124,13 +128,14 @@ function resolveTarget(args: readonly string[], io: PackIo): Target | undefined 
   return id === undefined ? undefined : { kind: "id", params: { id } };
 }
 
-function installedLine(p: InstalledPackRow): string {
+function installedLine(p: InstalledPackRow, skippedReason: string | undefined): string {
   const version = p.versionUnknown === true ? "version unknown" : p.version;
   let update = "";
   if (p.updateAvailable) {
     update = `  [update available${p.bundledVersion === undefined ? "" : `: ${clean(p.bundledVersion)}`}]`;
   }
-  return `  ${clean(p.id)}  ${clean(p.name)}  ${clean(version)}  (${clean(p.source)})${update}`;
+  const skipped = skippedReason === undefined ? "" : `  (skipped: ${clean(skippedReason)})`;
+  return `  ${clean(p.id)}  ${clean(p.name)}  ${clean(version)}  (${clean(p.source)})${update}${skipped}`;
 }
 
 function listLines(r: PackListResult): string[] {
@@ -140,14 +145,16 @@ function listLines(r: PackListResult): string[] {
   } else if (r.installed.length === 0) {
     lines.push("  (none)");
   }
-  for (const p of r.installed) lines.push(installedLine(p));
+  const reasons = new Map(r.skipped.map((s) => [s.packId, s.reason]));
+  for (const p of r.installed) lines.push(installedLine(p, reasons.get(p.id)));
   lines.push("", "Available:");
   if (r.available.length === 0) lines.push("  (none)");
   for (const p of r.available) {
     lines.push(`  ${clean(p.id)}  ${clean(p.name)}  ${clean(p.version)}  ${clean(p.description)}`);
   }
-  if (r.skipped > 0) {
-    lines.push("", `${String(r.skipped)} entr${r.skipped === 1 ? "y" : "ies"} skipped.`);
+  if (r.skipped.length > 0) {
+    lines.push("", "Skipped:");
+    for (const s of r.skipped) lines.push(`  ${clean(s.packId)}: ${clean(s.reason)}`);
   }
   return lines;
 }

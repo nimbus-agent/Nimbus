@@ -123,7 +123,7 @@ describe("nimbus pack list / show / remove", () => {
       { id: "old", name: "Old", version: "0.1.0", source: "file", updateAvailable: false },
     ],
     available: [{ id: "devops", name: "DevOps", version: "1.0.0", description: "Ops things" }],
-    skipped: 0,
+    skipped: [],
   };
 
   it("prints installed and available, marks update available", async () => {
@@ -161,7 +161,7 @@ describe("nimbus pack list / show / remove", () => {
     const a = harness({ reply: () => ({ removed: true, snapshotVersion: 2 }) });
     await runPackWith(["remove", "pm"], a.io, a.call);
     expect(a.stdout.join("")).toContain("removed");
-    const b = harness({ reply: () => ({ removed: false, snapshotVersion: 2 }) });
+    const b = harness({ reply: () => ({ removed: false, snapshotVersion: null }) });
     await runPackWith(["remove", "pm"], b.io, b.call);
     expect(b.stdout.join("")).toContain("not installed");
   });
@@ -301,7 +301,10 @@ describe("nimbus pack branches", () => {
           },
         ],
         available: [],
-        skipped: 1,
+        skipped: [
+          { packId: "a", reason: "missing[2J layer" },
+          { packId: "#2", reason: "invalid pack id" },
+        ],
         listError: "bad\u001b[2J json",
       }),
     });
@@ -311,19 +314,20 @@ describe("nimbus pack branches", () => {
     expect(out).toContain("[update available]");
     expect(out).toContain("(fi[2Jle)");
     expect(out).toContain("could not read the installed list: bad[2J json");
-    expect(out).toContain("1 entry skipped.");
+    expect(out).toContain("Skipped:\n  a: missing[2J layer\n  #2: invalid pack id");
+    expect(out).toContain("(skipped: missing[2J layer)");
     expect(out).not.toContain("\u001b");
     expect(out).toContain("Available:\n  (none)");
   });
 
-  it("list says (none) for an empty installed list and pluralises skipped", async () => {
+  it("list says (none) for an empty installed list and no Skipped section when none are skipped", async () => {
     const h = harness({
-      reply: () => ({ profile: "d", installed: [], available: [], skipped: 3 }),
+      reply: () => ({ profile: "d", installed: [], available: [], skipped: [] }),
     });
     await runPackWith(["list"], h.io, h.call);
     const out = h.stdout.join("");
     expect(out).toContain("Installed:\n  (none)");
-    expect(out).toContain("3 entries skipped.");
+    expect(out).not.toContain("Skipped:");
   });
 });
 

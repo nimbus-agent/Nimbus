@@ -128,6 +128,8 @@ export type PackPromptInput = {
   /** `installed` is a summary of a pack already in place (`pack show`), never a prompt. */
   readonly mode: "install" | "update" | "repair" | "installed";
   readonly diff?: PackDiff;
+  /** Update mode only: the layer file on disk differs from the previously approved defaults. */
+  readonly layerEdited?: boolean;
   readonly scalars: readonly PromptScalar[];
   readonly visibleAgents: readonly string[];
   readonly jobs: readonly {
@@ -236,6 +238,9 @@ export function renderPackPrompt(input: PackPromptInput): string {
   const out = headerLines(input);
   if (input.mode === "update") {
     if (input.diff === undefined) throw new Error("renderPackPrompt: update mode needs a diff");
+    if (input.layerEdited === true) {
+      out.push("Your edits to this pack's layer file will be replaced.", "");
+    }
     if (input.diff.metadataOnly) out.push("This update has no config changes.", "");
     out.push(...updateSections(input, input.diff));
   } else {

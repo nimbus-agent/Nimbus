@@ -24,7 +24,7 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   exact prompt `show` prints; it needs a terminal and has no `--yes`, and a delegate never approves it. A pack is
   written as a layer under the profile, so your own file and profile layers still win; the prompt marks a key your
   file already sets. A pack never changes credentials, network reach, approvals or `nimbus.toml`. Re-installing an
-  identical pack is a no-op, a damaged layer file is offered as a repair, a newer bundled version is an update with
+  identical pack is a no-op, a damaged layer file is offered as a repair, a bundled copy that differs from the installed one is an update with
   a diff, and an unreadable `active.json` refuses before any prompt. `--file <path>` installs a local pack and is
   refused in a production build. Invariant **I47**: a pack layer is written only behind that approval. `pack.*` is
   CLI-only, LAN-forbidden, refused on a `--demo` root and absent from the Tauri allowlist. The DevOps pack sets no

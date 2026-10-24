@@ -426,6 +426,31 @@ describe("installPack: re-installs", () => {
     expect(JSON.parse(readFileSync(recordFile("pm"), "utf8")).manifest.version).toBe("1.1.0");
   });
 
+  test("an update over a hand-edited layer file warns that the edits are replaced", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    writeFileSync(layerFile("pm"), "[decisions]\nmin_confidence = 0.9\n");
+    const next = pmWith({ version: "1.1.0", description: "Newer." });
+    const g = gate();
+    await installPack({ id: "pm" }, deps({ bundled: new Map([["pm", next]]) }), g.gate);
+    expect(String(g.calls[0]?.payload["promptText"])).toContain(
+      "Your edits to this pack's layer file will be replaced.",
+    );
+    // An untouched layer carries no such line.
+    const g2 = gate();
+    const next2 = pmWith({ version: "1.2.0", description: "Newer still." });
+    await installPack({ id: "pm" }, deps({ bundled: new Map([["pm", next2]]) }), g2.gate);
+    expect(String(g2.calls[0]?.payload["promptText"])).not.toContain("Your edits to this pack's");
+  });
+
+  test("previewPack of an update over a hand-edited layer warns too", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    unlinkSync(layerFile("pm"));
+    const next = pmWith({ version: "1.1.0", description: "Newer." });
+    const r = await previewPack({ id: "pm" }, deps({ bundled: new Map([["pm", next]]) }));
+    expect(r.mode).toBe("update");
+    expect(r.prompt).toContain("Your edits to this pack's layer file will be replaced.");
+  });
+
   test("a listed pack with a missing record prompts in install mode", async () => {
     await installPack({ id: "pm" }, deps(), gate().gate);
     unlinkSync(recordFile("pm"));
@@ -501,6 +526,8 @@ describe("listPacks and previewPack", () => {
     const r = listPacks(deps());
     expect(r.listError).toContain("active.json");
     expect(r.installed).toEqual([]);
+    // Installed state is unknown, so nothing may be offered as "available".
+    expect(r.available).toEqual([]);
   });
 
   test("previewPack with fileText returns the prompt and never writes", async () => {

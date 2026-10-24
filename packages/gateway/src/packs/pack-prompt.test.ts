@@ -201,6 +201,14 @@ describe("renderPackPrompt", () => {
     expect(t).toContain("no config changes");
   });
 
+  test("an update over a hand-edited layer says the edits will be replaced", () => {
+    const next = manifest({ version: "1.0.1" });
+    const base = { manifest: next, mode: "update", diff: diffPacks(manifest(), next) } as const;
+    const edited = renderPackPrompt(input({ ...base, layerEdited: true }));
+    expect(edited).toContain("Your edits to this pack's layer file will be replaced.");
+    expect(renderPackPrompt(input(base))).not.toContain("Your edits to this pack's layer file");
+  });
+
   test("update without a diff is a programming error", () => {
     expect(() => renderPackPrompt(input({ mode: "update" }))).toThrow();
   });
