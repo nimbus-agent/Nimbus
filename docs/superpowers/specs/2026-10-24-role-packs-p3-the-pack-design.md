@@ -142,7 +142,7 @@ is (`index-format.ts:125-130`). Ids use `PACK_ID_RE`. There is **no package/tarb
 is its manifest alone) and **no `publisher` key**: who may sign a pack is the trust layer's
 decision (Phase 9.5 project 3), which adds that field as a schema change when it does.
 
-It is parsed, validated and covered by the existing index signature. **Blast radius:** a malformed
+It is covered by the existing index signature. `parseRegistryIndex` already carries unknown top-level keys through unchanged (its `...o` spreads), and `registryIndexSigningBytes` canonicalises the RETURNED object, so `packs` must never be rewritten inside it: a separate never-throwing `readRegistryPacks(index)` parses it instead (plan PR 1). **Blast radius:** a malformed
 `packs` map must not break extension installs or updates. The parser validates `packs` separately
 and, on failure, drops the whole `packs` map and records why (surfaced by `nimbus registry list`),
 rather than failing the index — so a bad pack entry published to a registry can never stop an
