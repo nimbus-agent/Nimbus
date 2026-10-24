@@ -142,7 +142,7 @@ function planFor(deps: ExtensionSyncRegistrarDeps, extensionId: string): SyncPla
   const manifest = (deps.readManifest ?? readInstalledManifest)(row);
   // An extension that does not sync has nothing to pause — checked before staleness, so updating a
   // tool-only extension leaves no "resume sync" row behind.
-  if (manifest === undefined || manifest.sync === undefined) return { kind: "none" };
+  if (manifest?.sync === undefined) return { kind: "none" };
   const identity = resolveExtensionIdentity(row, manifest, grant, deps.table ?? CONTINUITY_TABLE);
   if (isStale(row, grant)) {
     return { kind: "stale", identity, reason: staleGrantPauseReason(extensionId, row, grant) };

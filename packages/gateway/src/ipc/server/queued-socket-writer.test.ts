@@ -28,7 +28,7 @@ describe("createQueuedSocketWriter", () => {
     const w = createQueuedSocketWriter(sock);
     const line = `${"x".repeat(50)}\n`;
     w.write(line);
-    expect(sock.received.length).toBe(8);
+    expect(sock.received).toHaveLength(8);
     expect(w.pendingBytes()).toBe(43);
     while (w.pendingBytes() > 0) w.flush();
     expect(decode(sock.received)).toBe(line);

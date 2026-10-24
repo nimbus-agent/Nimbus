@@ -111,6 +111,29 @@ export function parseLayerDoc(layer: LayerRef, text: string): LayerDoc {
 
 type Layered = { readonly layerIndex: number; readonly section: DocSection };
 
+type KeyLayerSlot = { layerIndex: number; entries: { valRaw: string; raw: string }[] };
+
+/** The entry list for `key` in layer `layerIndex`, created (and `key` ordered) on first sight. */
+function keyLayerEntries(
+  byKey: Map<string, KeyLayerSlot[]>,
+  keyOrder: string[],
+  key: string,
+  layerIndex: number,
+): KeyLayerSlot["entries"] {
+  let perLayer = byKey.get(key);
+  if (perLayer === undefined) {
+    perLayer = [];
+    byKey.set(key, perLayer);
+    keyOrder.push(key);
+  }
+  let slot = perLayer.find((p) => p.layerIndex === layerIndex);
+  if (slot === undefined) {
+    slot = { layerIndex, entries: [] };
+    perLayer.push(slot);
+  }
+  return slot.entries;
+}
+
 /** Builds a plain table: last-winning layer per key, with the lower layers' values as `shadowed`. */
 function mergePlainSections(
   header: string | null,
@@ -118,10 +141,7 @@ function mergePlainSections(
   layers: readonly LayerRef[],
 ): EffectiveSection {
   const keyOrder: string[] = [];
-  const byKey = new Map<
-    string,
-    { layerIndex: number; entries: { valRaw: string; raw: string }[] }[]
-  >();
+  const byKey = new Map<string, KeyLayerSlot[]>();
   const passthrough: { layer: LayerRef; raw: string }[] = [];
   for (const { layerIndex, section } of parts) {
     for (const line of section.lines) {
@@ -129,18 +149,10 @@ function mergePlainSections(
         passthrough.push({ layer: layers[layerIndex] as LayerRef, raw: line.raw });
         continue;
       }
-      let perLayer = byKey.get(line.key);
-      if (perLayer === undefined) {
-        perLayer = [];
-        byKey.set(line.key, perLayer);
-        keyOrder.push(line.key);
-      }
-      let slot = perLayer.find((p) => p.layerIndex === layerIndex);
-      if (slot === undefined) {
-        slot = { layerIndex, entries: [] };
-        perLayer.push(slot);
-      }
-      slot.entries.push({ valRaw: line.valRaw, raw: line.raw });
+      keyLayerEntries(byKey, keyOrder, line.key, layerIndex).push({
+        valRaw: line.valRaw,
+        raw: line.raw,
+      });
     }
   }
   const entries: EffectiveEntry[] = [];
@@ -306,18 +318,24 @@ export function renderEffectiveDoc(doc: EffectiveDoc): string {
   const blocks: string[] = [];
   let sentinelWritten = false;
   for (const s of doc.sections) {
-    const lines: string[] = [];
     if (s.malformed !== undefined && !sentinelWritten) {
       // A well-formed header no parser reads: readers that only end a section on a valid header
       // stop attributing keys to the last valid section, and `[`-closing readers orphan them.
       blocks.push(`[${UNPARSED_SECTION_HEADER}]`);
       sentinelWritten = true;
     }
-    if (s.malformed !== undefined) lines.push(s.malformed);
-    else if (s.header !== null) lines.push(s.isArray ? `[[${s.header}]]` : `[${s.header}]`);
-    for (const e of s.entries) lines.push(e.raw);
-    for (const p of s.passthrough) lines.push(p.raw);
+    const lines = sectionLines(s);
     if (lines.length > 0) blocks.push(lines.join("\n"));
   }
   return blocks.length === 0 ? "" : `${blocks.join("\n\n")}\n`;
+}
+
+/** One section's lines: its header (or the malformed line it came from), entries, passthrough. */
+function sectionLines(s: EffectiveSection): string[] {
+  const lines: string[] = [];
+  if (s.malformed !== undefined) lines.push(s.malformed);
+  else if (s.header !== null) lines.push(s.isArray ? `[[${s.header}]]` : `[${s.header}]`);
+  for (const e of s.entries) lines.push(e.raw);
+  for (const p of s.passthrough) lines.push(p.raw);
+  return lines;
 }

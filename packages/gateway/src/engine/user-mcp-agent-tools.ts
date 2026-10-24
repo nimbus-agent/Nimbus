@@ -113,6 +113,103 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+type Wrap = <T>(service: string, tool: string, def: T) => T;
+type OfferedBy = Map<string, { serviceId: string; tool: string }>;
+
+/** ONE server's listing, or `undefined` (warned) when it failed — its tools are not offered. */
+async function listServiceTools(
+  source: UserMcpAgentToolSource,
+  serviceId: string,
+): Promise<LazyMeshToolMap | undefined> {
+  try {
+    return await source.listTools(serviceId);
+  } catch (err) {
+    source.warn(
+      { serviceId, err: err instanceof Error ? err.message : String(err) },
+      "user MCP server listing failed; its tools are not offered this turn",
+    );
+    return undefined;
+  }
+}
+
+/**
+ * The model-facing name for one listed key, claimed in `offeredBy`, or `undefined` (warned where
+ * the owner should know) when the key is not offered.
+ */
+function claimOfferedName(
+  source: UserMcpAgentToolSource,
+  offeredBy: OfferedBy,
+  serviceId: string,
+  key: string,
+): { name: string; tool: string } | undefined {
+  const keyPrefix = `${serviceId}_`;
+  // A server's slot lists only its own `<serviceId>_<tool>` keys; anything else is not its tool.
+  if (!key.startsWith(keyPrefix)) return undefined;
+  const tool = key.slice(keyPrefix.length);
+  const name = userMcpModelToolName(serviceId, tool);
+  if (name === undefined) {
+    source.warn(
+      { serviceId, tool },
+      `user MCP tool name does not fit [A-Za-z0-9_-]{1,${USER_MCP_TOOL_NAME_MAX}}; not offered`,
+    );
+    return undefined;
+  }
+  // `<id>__<tool>` is not injective (`mcp_a` + `b__c` vs `mcp_a__b` + `c`): keep the first,
+  // never let a second server silently replace a tool the model may already be calling.
+  const existing = offeredBy.get(name);
+  if (existing !== undefined) {
+    source.warn(
+      {
+        serviceId,
+        tool,
+        offeredName: name,
+        keptServiceId: existing.serviceId,
+        keptTool: existing.tool,
+      },
+      "user MCP tool name collides with one already offered; not offered",
+    );
+    return undefined;
+  }
+  offeredBy.set(name, { serviceId, tool });
+  return { name, tool };
+}
+
+/** The offered tool for one claimed listing entry; its `execute` only ever runs the executor. */
+function buildOfferedTool(
+  executor: () => Pick<ToolExecutor, "execute"> | undefined,
+  serviceId: string,
+  name: string,
+  tool: string,
+  key: string,
+  entry: LazyMeshToolMap[string],
+) {
+  const listed: Record<string, unknown> = entry;
+  const serverDescription = typeof listed["description"] === "string" ? listed["description"] : "";
+  const inputSchema = offeredInputSchema(listed["inputSchema"]);
+  const mcpToolId = key;
+  const actionType = `${serviceId}.${tool}`;
+  return createTool({
+    id: name,
+    description: describeFor(serviceId, serverDescription),
+    inputSchema,
+    execute: async (input: unknown) => {
+      const ex = executor();
+      if (ex === undefined) return { refused: NOT_OWNER_REFUSAL };
+      // Never substitute: the owner approves exactly the input the model sent, and the
+      // executor shows a user-MCP payload UNREDACTED (`consentDisplayPayload`), so no key
+      // name can hide part of it from the prompt. `requestedBy` marks the call as the
+      // model's in that prompt; dispatch hands the tool `payload.input` only
+      // (`extractToolInput`), so it never reaches the server.
+      if (!isPlainObject(input)) return { refused: NON_OBJECT_INPUT_REFUSAL };
+      const result = await ex.execute({
+        type: actionType,
+        payload: { mcpToolId, input, requestedBy: "model" },
+      });
+      return result.status === "ok" ? result.result : { refused: result.reason };
+    },
+  });
+}
+
 export async function buildUserMcpAgentTools(
   source: UserMcpAgentToolSource,
   /** Resolved per CALL, never at build time: the owner check is the turn's, not the builder's. */
@@ -122,81 +219,22 @@ export async function buildUserMcpAgentTools(
    * a required parameter makes an unwrapped user-MCP tool a compile error (mirrors
    * `toolgen/toolgen-agent-tools.ts`'s `buildGeneratedTools`).
    */
-  wrap: <T>(service: string, tool: string, def: T) => T,
+  wrap: Wrap,
 ): Promise<ToolsInput> {
   const out: ToolsInput = {};
-  const offeredBy = new Map<string, { serviceId: string; tool: string }>();
+  const offeredBy: OfferedBy = new Map();
   for (const serviceId of source.listModelAccessibleIds()) {
-    let listing: LazyMeshToolMap | undefined;
-    try {
-      listing = await source.listTools(serviceId);
-    } catch (err) {
-      source.warn(
-        { serviceId, err: err instanceof Error ? err.message : String(err) },
-        "user MCP server listing failed; its tools are not offered this turn",
-      );
-      continue;
-    }
+    // Sequential on purpose: a listing may SPAWN that server's sandboxed slot, and the
+    // first-listed server keeps a colliding name, so listings run one at a time, in order.
+    const listing = await listServiceTools(source, serviceId); // NOSONAR S9382: a listing may spawn a sandboxed slot, and listing order decides name collisions
     if (listing === undefined) continue;
-    const keyPrefix = `${serviceId}_`;
     for (const [key, entry] of Object.entries(listing)) {
-      // A server's slot lists only its own `<serviceId>_<tool>` keys; anything else is not its tool.
-      if (!key.startsWith(keyPrefix)) continue;
-      const tool = key.slice(keyPrefix.length);
-      const name = userMcpModelToolName(serviceId, tool);
-      if (name === undefined) {
-        source.warn(
-          { serviceId, tool },
-          `user MCP tool name does not fit [A-Za-z0-9_-]{1,${USER_MCP_TOOL_NAME_MAX}}; not offered`,
-        );
-        continue;
-      }
-      // `<id>__<tool>` is not injective (`mcp_a` + `b__c` vs `mcp_a__b` + `c`): keep the first,
-      // never let a second server silently replace a tool the model may already be calling.
-      const existing = offeredBy.get(name);
-      if (existing !== undefined) {
-        source.warn(
-          {
-            serviceId,
-            tool,
-            offeredName: name,
-            keptServiceId: existing.serviceId,
-            keptTool: existing.tool,
-          },
-          "user MCP tool name collides with one already offered; not offered",
-        );
-        continue;
-      }
-      offeredBy.set(name, { serviceId, tool });
-      const listed: Record<string, unknown> = entry;
-      const serverDescription =
-        typeof listed["description"] === "string" ? listed["description"] : "";
-      const inputSchema = offeredInputSchema(listed["inputSchema"]);
-      const mcpToolId = key;
-      const actionType = `${serviceId}.${tool}`;
-      out[name] = wrap(
+      const claimed = claimOfferedName(source, offeredBy, serviceId, key);
+      if (claimed === undefined) continue;
+      out[claimed.name] = wrap(
         serviceId,
-        name,
-        createTool({
-          id: name,
-          description: describeFor(serviceId, serverDescription),
-          inputSchema,
-          execute: async (input: unknown) => {
-            const ex = executor();
-            if (ex === undefined) return { refused: NOT_OWNER_REFUSAL };
-            // Never substitute: the owner approves exactly the input the model sent, and the
-            // executor shows a user-MCP payload UNREDACTED (`consentDisplayPayload`), so no key
-            // name can hide part of it from the prompt. `requestedBy` marks the call as the
-            // model's in that prompt; dispatch hands the tool `payload.input` only
-            // (`extractToolInput`), so it never reaches the server.
-            if (!isPlainObject(input)) return { refused: NON_OBJECT_INPUT_REFUSAL };
-            const result = await ex.execute({
-              type: actionType,
-              payload: { mcpToolId, input, requestedBy: "model" },
-            });
-            return result.status === "ok" ? result.result : { refused: result.reason };
-          },
-        }),
+        claimed.name,
+        buildOfferedTool(executor, serviceId, claimed.name, claimed.tool, key, entry),
       );
     }
   }

@@ -941,12 +941,7 @@ export function doctorPrintProfile(raw: unknown): number {
     }
   }
   const own = layers.find((l) => l.kind === "profile" && l.id === running);
-  if (
-    running !== "default" &&
-    own !== undefined &&
-    own.exists === false &&
-    own.readError === undefined
-  ) {
+  if (running !== "default" && own?.exists === false && own.readError === undefined) {
     console.log(
       `[info] profile "${running}" has no nimbus.${running}.toml; running on nimbus.toml alone`,
     );

@@ -46,11 +46,14 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 type ItemVerdict = { readonly row: BodyRow } | { readonly drop: "malformed" | "oversized" };
 
-function optionalUrl(v: unknown): string | null | undefined | "bad" {
+/** A url field that is present but neither a string nor null (a sentinel no string can equal). */
+const BAD_URL: unique symbol = Symbol("bad-url");
+
+function optionalUrl(v: unknown): string | null | undefined | typeof BAD_URL {
   if (v === undefined || v === null || typeof v === "string") {
     return v;
   }
-  return "bad";
+  return BAD_URL;
 }
 
 function validateBody(o: Record<string, unknown>): Record<string, unknown> | null {
@@ -91,8 +94,8 @@ function buildRow(o: Record<string, unknown>, ctx: ParseSyncContext): ItemVerdic
     !Number.isSafeInteger(modifiedAt) ||
     modifiedAt < 0 ||
     !isPlainObject(metadata) ||
-    url === "bad" ||
-    canonicalUrl === "bad" ||
+    url === BAD_URL ||
+    canonicalUrl === BAD_URL ||
     bodyPart === null
   ) {
     return { drop: "malformed" };
@@ -117,7 +120,12 @@ function buildRow(o: Record<string, unknown>, ctx: ParseSyncContext): ItemVerdic
   return { row };
 }
 
-function parseOk(raw: Record<string, unknown>, ctx: ParseSyncContext): ParsedSyncPage {
+/** The page envelope (`items` / `cursor` / `hasMore`), validated before any item is looked at. */
+function validatePageShape(raw: Record<string, unknown>): {
+  readonly items: readonly unknown[];
+  readonly cursor: string | null;
+  readonly hasMore: boolean;
+} {
   const { items, cursor, hasMore } = raw;
   if (!Array.isArray(items)) {
     throw new ExtensionSyncResponseError("sync response: items must be an array");
@@ -132,6 +140,11 @@ function parseOk(raw: Record<string, unknown>, ctx: ParseSyncContext): ParsedSyn
     // A null/empty cursor would send the next call back to page 1 forever.
     throw new ExtensionSyncResponseError("sync response: hasMore requires a non-empty cursor");
   }
+  return { items, cursor, hasMore };
+}
+
+function parseOk(raw: Record<string, unknown>, ctx: ParseSyncContext): ParsedSyncPage {
+  const { items, cursor, hasMore } = validatePageShape(raw);
   const declared = new Set(ctx.itemTypes);
   const seen = new Set<string>();
   const rows: BodyRow[] = [];

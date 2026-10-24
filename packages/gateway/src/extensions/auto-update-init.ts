@@ -163,7 +163,7 @@ function currentSourceRegistry(
   update: AvailableUpdate,
 ): RegistryRow | undefined {
   const reg = resolveRegistry(fetchDeps.db, update.sourceRegistry, builtinRegistryOf(fetchDeps));
-  return reg !== undefined && reg.rootFingerprint === update.rootFingerprint ? reg : undefined;
+  return reg?.rootFingerprint === update.rootFingerprint ? reg : undefined;
 }
 
 /** As above, or throws `source_registry_changed: …` (its own audit phase, not a signature failure). */
@@ -354,8 +354,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
       }),
     hasPrevVersion: (id, version) =>
       Promise.try(() => {
-        const row = listExtensions(opts.db).find((r) => r.id === id);
-        if (!row) return false;
+        if (!listExtensions(opts.db).some((r) => r.id === id)) return false;
         return existsSync(prevVersionDir(opts.extensionsDir, id, version));
       }),
     hasRunGrant: (id) => Promise.try(() => getRunGrant(opts.db, id) !== null),

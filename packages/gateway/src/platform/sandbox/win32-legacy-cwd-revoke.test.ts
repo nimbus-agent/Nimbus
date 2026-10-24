@@ -506,7 +506,7 @@ describe("nodeHelperSpawn", () => {
     const child = nodeHelperSpawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"]);
     child.kill();
     const code = await child.exited;
-    expect(code === 0).toBe(false);
+    expect(code).not.toBe(0);
   });
 
   it("rejects when the executable does not exist", async () => {

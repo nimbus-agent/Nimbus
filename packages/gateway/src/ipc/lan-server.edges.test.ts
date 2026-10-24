@@ -505,7 +505,7 @@ describe("LanServer — guards below the socket protocol", () => {
         at += c.length;
       }
       const len = new DataView(all.buffer).getUint32(0, false);
-      expect(all.length).toBe(4 + len);
+      expect(all).toHaveLength(4 + len);
       const reply = openBoxFrame(all.subarray(4), hostKeypair.publicKey, client.secretKey);
       expect(JSON.parse(new TextDecoder().decode(reply))).toEqual({ id: 1, result: { ok: true } });
       expect(sock.ended).toBe(0);

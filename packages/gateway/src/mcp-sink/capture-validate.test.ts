@@ -182,7 +182,7 @@ describe("validateCapturePayload — decision", () => {
     );
     expect(v.kind).toBe("decision");
     if (v.kind !== "decision") throw new Error("kind");
-    expect(v.payload.statement.length).toBe(500);
+    expect(v.payload.statement).toHaveLength(500);
     expect(v.payload.statement).not.toContain("\u001b");
     expect(v.payload.rationale).toBe("why\nbecause");
     expect(v.payload.alternatives[1]?.length).toBe(500);
@@ -240,7 +240,7 @@ describe("validateCapturePayload — term", () => {
     if (v.kind !== "term") throw new Error("kind");
     expect(v.payload.term).toBe("Write-Ahead Logs");
     expect(v.payload.termKey).toBe("write-ahead log");
-    expect(v.payload.definition.length).toBe(2048);
+    expect(v.payload.definition).toHaveLength(2048);
     expect(v.payload.synonyms).toEqual(["WAL"]);
   });
   test.each([

@@ -285,12 +285,17 @@ function staleGrantText(entry: ContinuityEntry): string {
   return `${entry.extensionId} is installed, but its run approval is missing or out of date (given before this release or before an update); your ${name} items are untouched — ${reapproveSuffix(entry.extensionId)}`;
 }
 
+/** An error's message, or the thrown value as text. */
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 /** The text a failed prepare records: an install that raced the fetch, else the error's message. */
 function prepareFailureText(entry: ContinuityEntry, e: unknown): string {
   if (e instanceof RegistryError && e.code === "ERR_REGISTRY_ALREADY_INSTALLED") {
     return `${entry.extensionId} was installed while this migration was being prepared — run ${RETRY} to check it again`;
   }
-  return e instanceof Error ? e.message : String(e);
+  return errorText(e);
 }
 
 /** C12: the runtime is off, so a migration could never be accepted. Nothing is fetched. */
@@ -495,7 +500,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       rmSync(stageDirFor(id), { recursive: true, force: true });
     } catch (e) {
       deps.logger?.warn(
-        { migrationId: id, err: e instanceof Error ? e.message : String(e) },
+        { migrationId: id, err: errorText(e) },
         "migration staging directory could not be removed",
       );
     }
@@ -573,8 +578,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   ): boolean => {
     const grant = getRunGrant(db, row.id);
     if (
-      grant === null ||
-      grant.version !== row.version ||
+      grant?.version !== row.version ||
       grant.tree_digest !== row.tree_digest ||
       digestOrNull(row.install_path) !== grant.tree_digest
     ) {
@@ -605,8 +609,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     }
     const binding = findContinuityBinding(bindingInputFor(row, manifest), table);
     if (
-      binding === undefined ||
-      binding.legacyServiceId !== entry.legacyServiceId ||
+      binding?.legacyServiceId !== entry.legacyServiceId ||
       binding.extensionId !== entry.extensionId
     ) {
       return { kind: "unbound" };
@@ -744,6 +747,29 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
   };
 
   /**
+   * For a row already awaiting approval of THIS entry's extension: `true` when nothing more is to
+   * be done — its stage is intact (the prompt it waits on still holds), or the stage was tampered
+   * with and the row is now failed with the legacy service paused. `false` means re-prepare.
+   */
+  const settleAwaitingStage = (
+    entry: ContinuityEntry,
+    existing: MigrationRow | undefined,
+  ): boolean => {
+    if (existing?.state !== "awaiting_approval" || existing.extensionId !== entry.extensionId) {
+      return false;
+    }
+    const stage = checkStage(existing);
+    if (stage.kind === "intact") return true;
+    if (stage.kind === "tampered") {
+      removeStage(existing.id);
+      finishMigration(db, existing.id, "failed", TAMPERED, deps.now());
+      pauseLegacyService(db, entry.legacyServiceId, failedReason(TAMPERED), deps.now());
+      return true;
+    }
+    return false;
+  };
+
+  /**
    * `reopen` is `migrate retry`'s: it also re-prepares a DECLINED row (spec § 7.2 step 6, the
    * owner changing their mind). Boot evaluation never does, so a decline is never re-prompted.
    */
@@ -785,16 +811,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
         return;
       }
       if (settleInstalled(entry, existing)) return;
-      if (existing?.state === "awaiting_approval" && existing.extensionId === entry.extensionId) {
-        const stage = checkStage(existing);
-        if (stage.kind === "intact") return;
-        if (stage.kind === "tampered") {
-          removeStage(existing.id);
-          finishMigration(db, existing.id, "failed", TAMPERED, deps.now());
-          pauseLegacyService(db, entry.legacyServiceId, failedReason(TAMPERED), deps.now());
-          return;
-        }
-      }
+      if (settleAwaitingStage(entry, existing)) return;
       await prepare(entry, reg, existing);
     } finally {
       busy.delete(entry.legacyServiceId);
@@ -810,7 +827,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
         deps.logger?.warn(
           {
             legacyServiceId: entry.legacyServiceId,
-            err: e instanceof Error ? e.message : String(e),
+            err: errorText(e),
           },
           "connector migration evaluation failed",
         );
@@ -859,10 +876,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     try {
       return parseExtensionManifestJson(readFileSync(p, "utf8"));
     } catch (e) {
-      return failAccept(
-        row,
-        `the staged manifest could not be read: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      return failAccept(row, `the staged manifest could not be read: ${errorText(e)}`);
     }
   };
 
@@ -883,7 +897,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     } catch (e) {
       // The local log names the path (it never leaves the machine), so the owner can find it.
       deps.logger?.warn(
-        { extensionId, installPath, err: e instanceof Error ? e.message : String(e) },
+        { extensionId, installPath, err: errorText(e) },
         "an undone migration install could not be removed from disk; it has no row and cannot run",
       );
     }
@@ -907,7 +921,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
         {
           extensionId: entry.extensionId,
           installPath: dir,
-          err: e instanceof Error ? e.message : String(e),
+          err: errorText(e),
         },
         "a leftover migration install could not be removed",
       );
@@ -1007,10 +1021,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     try {
       installed = await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable");
     } catch (e) {
-      return failAccept(
-        row,
-        `the extension could not be installed: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      return failAccept(row, `the extension could not be installed: ${errorText(e)}`);
     }
     const installedRow = listExtensions(db).find((r) => r.id === entry.extensionId);
     if (installedRow?.tree_digest !== row.treeDigest || installed.treeDigest !== row.treeDigest) {
@@ -1142,10 +1153,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       );
     } catch (e) {
       undoInstall(entry.extensionId, installed.installPath);
-      return failAccept(
-        row,
-        `the run approval could not be recorded: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      return failAccept(row, `the run approval could not be recorded: ${errorText(e)}`);
     }
     // From here the extension is installed and granted. Any failure undoes both (the grant goes
     // with the extension row), unregisters whatever the registrar registered, fails the row and
@@ -1163,10 +1171,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       } catch {
         // Best effort: the extension's row and grant are gone, so it can never sync or spawn.
       }
-      return failAccept(
-        row,
-        `${e instanceof Error ? e.message : String(e)}; the install was undone`,
-      );
+      return failAccept(row, `${errorText(e)}; the install was undone`);
     }
     removeStage(row.id);
     const done = getMigration(db, row.id);

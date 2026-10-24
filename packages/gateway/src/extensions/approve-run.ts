@@ -170,17 +170,31 @@ export function readVerifiedManifest(row: ExtensionRow): ExtensionManifest {
  * would hide the one value that tells two publishers with the same id apart. Same name and shape as
  * the install prompt's (`install-from-local.ts`), which hit this first.
  */
+export type RunConsentSubject = {
+  readonly row: ExtensionRow;
+  readonly manifest: ExtensionManifest;
+  readonly serviceId: string;
+  readonly treeDigest: string;
+  readonly grants: ResolvedRunGrants;
+  readonly modelAccess: boolean;
+  readonly credentials: ResolvedRunCredentials;
+  readonly reusesConnector?: string | undefined;
+};
+
 export function buildRunConsentPayload(
-  row: ExtensionRow,
-  manifest: ExtensionManifest,
-  serviceId: string,
-  treeDigest: string,
-  grants: ResolvedRunGrants,
+  subject: RunConsentSubject,
   env: ExtensionRunGrantEnv,
-  modelAccess: boolean,
-  credentials: ResolvedRunCredentials,
-  reusesConnector?: string,
 ): Record<string, unknown> {
+  const {
+    row,
+    manifest,
+    serviceId,
+    treeDigest,
+    grants,
+    modelAccess,
+    credentials,
+    reusesConnector,
+  } = subject;
   let installPath = row.install_path;
   try {
     // Canonical, like every resolved grant beside it, so the prompt shows one path form.
@@ -442,15 +456,17 @@ async function approveRun(
     opts.consent === null ||
     (await opts.consent.ask(
       buildRunConsentPayload(
-        row,
-        manifest,
-        serviceId,
-        treeDigest,
-        grants,
+        {
+          row,
+          manifest,
+          serviceId,
+          treeDigest,
+          grants,
+          modelAccess,
+          credentials,
+          reusesConnector: binding?.legacyServiceId,
+        },
         deps.env,
-        modelAccess,
-        credentials,
-        binding?.legacyServiceId,
       ),
     ));
   if (!approved) {
@@ -462,8 +478,7 @@ async function approveRun(
 
   const after = listExtensions(deps.db).find((r) => r.id === row.id);
   if (
-    after === undefined ||
-    after.enabled !== 1 ||
+    after?.enabled !== 1 ||
     after.install_path !== row.install_path ||
     after.version !== row.version ||
     after.tree_digest !== treeDigest ||

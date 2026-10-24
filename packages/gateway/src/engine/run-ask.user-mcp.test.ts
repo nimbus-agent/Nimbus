@@ -111,7 +111,7 @@ describe("runAsk — user-MCP executor in the request context", () => {
     });
     expect(out.status).toBe("ok");
     expect(h.consentClientIds).toEqual(["owner-client-7"]);
-    expect(h.egress.length).toBe(1);
+    expect(h.egress).toHaveLength(1);
     expect(h.dispatched).toEqual(["mcp_notes.search"]);
     h.close();
   });

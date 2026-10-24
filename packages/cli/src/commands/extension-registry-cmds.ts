@@ -97,14 +97,11 @@ export async function runExtensionSearch(
 }
 
 function formatPermissions(p: NonNullable<InfoVersion["permissions"]>): string[] {
-  const lines = [`  network:    ${p.network.length === 0 ? "(none)" : p.network.join(", ")}`];
-  lines.push(
+  return [
+    `  network:    ${p.network.length === 0 ? "(none)" : p.network.join(", ")}`,
     `  fs read:    ${p.filesystem.read.length === 0 ? "(none)" : p.filesystem.read.join(", ")}`,
-  );
-  lines.push(
     `  fs write:   ${p.filesystem.write.length === 0 ? "(none)" : p.filesystem.write.join(", ")}`,
-  );
-  return lines;
+  ];
 }
 
 /** A registry entry's details. Returns the exit code; an ambiguous id is the gateway's error, printed. */

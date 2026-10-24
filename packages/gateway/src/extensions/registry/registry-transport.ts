@@ -20,6 +20,35 @@ function withTrailingSlash(u: URL): URL {
   return out;
 }
 
+/** A plain filesystem path. Refuses every UNC / device spelling before touching the filesystem. */
+function resolveLocalPath(raw: string): RegistryLocation {
+  if (raw.startsWith("\\\\") || raw.startsWith("//")) {
+    refuse("network (UNC) registry paths are not allowed");
+  }
+  if (raw.startsWith("\\") || raw.startsWith("/\\")) {
+    refuse("registry path must be absolute on a local drive");
+  }
+  if (!isAbsolute(raw)) refuse("a local registry path must be absolute");
+  return { kind: "local", root: resolve(raw) };
+}
+
+/** A `file:` URL: no host (an SMB connection in disguise), and an absolute, non-UNC local path. */
+function resolveFileUrl(parsed: URL): RegistryLocation {
+  if (parsed.hostname !== "" && parsed.hostname !== "localhost") {
+    refuse("file:// registry URLs must not name a host");
+  }
+  let path: string;
+  try {
+    path = fileURLToPath(parsed);
+  } catch {
+    return refuse("file:// registry URL does not name an absolute local path");
+  }
+  if (!isAbsolute(path) || path.startsWith("\\\\")) {
+    refuse("file:// registry URL does not name an absolute local path");
+  }
+  return { kind: "local", root: resolve(path) };
+}
+
 /**
  * Classifies a registry URL or path. This is the security point of the transport: a Windows UNC
  * path (`\\host\share`, `//host/share`, `\\?\UNC\...`, device paths) or a `file://<host>/` URL
@@ -33,17 +62,7 @@ export function resolveRegistryLocation(
   const raw = url.trim();
   if (raw === "") refuse("empty registry location");
 
-  if (!SCHEME_RE.test(raw)) {
-    // A plain filesystem path. Refuse every UNC / device spelling before touching the filesystem.
-    if (raw.startsWith("\\\\") || raw.startsWith("//")) {
-      refuse("network (UNC) registry paths are not allowed");
-    }
-    if (raw.startsWith("\\") || raw.startsWith("/\\")) {
-      refuse("registry path must be absolute on a local drive");
-    }
-    if (!isAbsolute(raw)) refuse("a local registry path must be absolute");
-    return { kind: "local", root: resolve(raw) };
-  }
+  if (!SCHEME_RE.test(raw)) return resolveLocalPath(raw);
 
   let parsed: URL;
   try {
@@ -61,21 +80,8 @@ export function resolveRegistryLocation(
       }
       return { kind: "remote", base: withTrailingSlash(parsed) };
     }
-    case "file:": {
-      if (parsed.hostname !== "" && parsed.hostname !== "localhost") {
-        refuse("file:// registry URLs must not name a host");
-      }
-      let path: string;
-      try {
-        path = fileURLToPath(parsed);
-      } catch {
-        return refuse("file:// registry URL does not name an absolute local path");
-      }
-      if (!isAbsolute(path) || path.startsWith("\\\\")) {
-        refuse("file:// registry URL does not name an absolute local path");
-      }
-      return { kind: "local", root: resolve(path) };
-    }
+    case "file:":
+      return resolveFileUrl(parsed);
     default:
       return refuse(`unsupported registry scheme ${parsed.protocol}`);
   }

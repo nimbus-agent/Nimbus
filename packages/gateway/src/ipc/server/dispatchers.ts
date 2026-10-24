@@ -986,33 +986,37 @@ export async function tryDispatchLocalityRpc(
  * reads the result to gate a call. CLI-callable today, LAN-forbidden (I5, `ipc/lan-rpc.ts`), and
  * not on the Tauri allowlist (I7) until the desktop adopts it.
  */
-export async function tryDispatchCatalogRpc(
+export function tryDispatchCatalogRpc(
   ctx: ServerCtx,
   method: string,
   params: unknown,
 ): Promise<unknown> {
-  if (method !== "catalog.list") {
-    return phase4RpcSkipped;
-  }
-  if (ctx.options.localIndex === undefined) {
-    throw new RpcMethodError(-32603, "catalog.list requires LocalIndex");
-  }
-  if (ctx.options.configDir === undefined) {
-    throw new RpcMethodError(-32603, "catalog.list requires configDir");
-  }
-  try {
-    const out = dispatchCatalogRpc(method, params, {
-      db: ctx.options.localIndex.getDatabase(),
-      configDir: ctx.options.configDir,
-    });
-    if (out.kind === "hit") return out.value;
-  } catch (e) {
-    if (e instanceof CatalogRpcError) {
-      throw new RpcMethodError(e.rpcCode, e.message);
+  // Synchronous work, but a Promise like every other dispatcher: `Promise.try` turns each throw
+  // below into a rejection, exactly as the `async` form did.
+  return Promise.try(() => {
+    if (method !== "catalog.list") {
+      return phase4RpcSkipped;
     }
-    throw e;
-  }
-  return phase4RpcSkipped;
+    if (ctx.options.localIndex === undefined) {
+      throw new RpcMethodError(-32603, "catalog.list requires LocalIndex");
+    }
+    if (ctx.options.configDir === undefined) {
+      throw new RpcMethodError(-32603, "catalog.list requires configDir");
+    }
+    try {
+      const out = dispatchCatalogRpc(method, params, {
+        db: ctx.options.localIndex.getDatabase(),
+        configDir: ctx.options.configDir,
+      });
+      if (out.kind === "hit") return out.value;
+    } catch (e) {
+      if (e instanceof CatalogRpcError) {
+        throw new RpcMethodError(e.rpcCode, e.message);
+      }
+      throw e;
+    }
+    return phase4RpcSkipped;
+  });
 }
 
 /**

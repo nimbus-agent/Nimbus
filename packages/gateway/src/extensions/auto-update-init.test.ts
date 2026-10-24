@@ -557,11 +557,17 @@ describe("withUpdateAppliedHook", () => {
   });
 
   it("a throwing hook does not report a committed update as failed", async () => {
-    await withUpdateAppliedHook(
-      async () => {},
-      () => {
+    const seen: string[] = [];
+    const run = withUpdateAppliedHook(
+      async () => {
+        seen.push("performed");
+      },
+      (id) => {
+        seen.push(`hook:${id}`);
         throw new Error("refresh failed");
       },
-    )(update);
+    );
+    await expect(run(update)).resolves.toBeUndefined();
+    expect(seen).toEqual(["performed", "hook:x.ext"]);
   });
 });

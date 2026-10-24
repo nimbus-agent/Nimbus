@@ -45,22 +45,16 @@ describe("parseLinkHeader", () => {
   });
 
   test("stays linear on adversarial headers", () => {
-    // SonarCloud flags LINK_VALUE_RE (`typescript:S8786`, "super-linear performance
-    // due to backtracking"). It is a FALSE POSITIVE, and the issue is marked as such
-    // in SonarCloud citing this test by name, so the annotation points at something
-    // executable rather than at a claim in a comment.
+    // `parseLinkHeader` once split each link-value with a regex SonarCloud flagged as
+    // super-linear (`typescript:S8786`). It is now a linear scan (`splitLinkValue`), and
+    // this test is what keeps it linear: any future edit that reintroduces backtracking
+    // over adversarial input fails here, not in production.
     //
     // It asserts GROWTH, not one wall-clock number. A single bounded check at a single
     // size is weak: a super-linear implementation can pass one 100 ms budget on a fast
     // machine and only bite in production. So each shape is timed at n and at 4n, and
     // the test fails if quadrupling the input costs more than MAX_GROWTH times as much.
     // Linear predicts 4x; quadratic predicts 16x or worse.
-    //
-    // Why the pattern cannot blow up: `^` gives it exactly one start position;
-    // `[^<>]*` is a negated class, so on a missing `>` it gives characters back one
-    // at a time, once, which is linear; and `\s*(.*)$` can never FAIL once `>` has
-    // matched — `.*` with the `s` flag always reaches the end — so there is no
-    // failure to backtrack into, even though `\s` and `.` overlap.
     //
     // Measured locally, 20k -> 80k: the shapes below come out at 2.80x, 3.71x, 3.33x
     // and 4.02x. A genuinely quadratic control (`\s+([.,;:])` over a whitespace run —

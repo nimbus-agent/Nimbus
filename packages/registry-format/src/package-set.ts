@@ -5,6 +5,7 @@
  */
 import { lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { codeUnitCompare } from "./code-unit-compare.ts";
 
 export const PACKAGE_MANIFEST_FILE = "nimbus.extension.json";
 const DIST_DIR = "dist";
@@ -44,5 +45,5 @@ export function listPackageFiles(dir: string): string[] {
     } else if (st.isFile()) out.push(name);
     else throw new Error(`refusing to pack a special file: ${name}`);
   }
-  return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return out.sort(codeUnitCompare);
 }

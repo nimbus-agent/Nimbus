@@ -115,36 +115,13 @@ export class LanServer {
     // arrive in between. Nothing after that decision may be parsed: a rejected session must not go
     // on to pair, say hello or dispatch.
     if (socket.data.writer.isEnding()) return;
-    const prev = socket.data.buffer;
-    if (prev.length + chunk.length > MAX_PENDING_BYTES) {
-      socket.data.writer.end();
-      return;
-    }
-    const merged = new Uint8Array(prev.length + chunk.length);
-    merged.set(prev, 0);
-    merged.set(chunk, prev.length);
-    socket.data.buffer = merged;
+    if (!this.appendChunk(socket, chunk)) return;
 
     while (socket.data.buffer.length >= 4) {
       // Re-checked every pass: the previous frame (or an await inside it) may have ended the session.
       if (socket.data.writer.isEnding()) return;
-      const view = new DataView(
-        socket.data.buffer.buffer,
-        socket.data.buffer.byteOffset,
-        socket.data.buffer.byteLength,
-      );
-      const length = view.getUint32(0, false);
-      const cap = socket.data.peerPubkey ? MAX_ENCRYPTED_FRAME : MAX_HANDSHAKE_FRAME;
-      if (length > cap) {
-        if (!socket.data.peerPubkey) {
-          this.opts.rateLimit.recordFailure(socket.data.peerIp);
-        }
-        socket.data.writer.end();
-        return;
-      }
-      if (socket.data.buffer.length < 4 + length) return;
-      const payload = socket.data.buffer.slice(4, 4 + length);
-      socket.data.buffer = socket.data.buffer.slice(4 + length);
+      const payload = this.takeFrame(socket);
+      if (payload === undefined) return;
 
       if (socket.data.peerPubkey) {
         await this.handleEncryptedMessage(socket, payload); // NOSONAR S9382: sequential by design - frames are a stream: the handshake sets the session state the next frame is read with, and a peer's RPCs (which can raise consent prompts) are answered one at a time, in order
@@ -152,6 +129,46 @@ export class LanServer {
         this.handleHandshake(socket, payload);
       }
     }
+  }
+
+  /** Appends `chunk` to the session buffer; `false` (session ended) when it would exceed the cap. */
+  private appendChunk(socket: Socket<SessionState>, chunk: Uint8Array): boolean {
+    const prev = socket.data.buffer;
+    if (prev.length + chunk.length > MAX_PENDING_BYTES) {
+      socket.data.writer.end();
+      return false;
+    }
+    const merged = new Uint8Array(prev.length + chunk.length);
+    merged.set(prev, 0);
+    merged.set(chunk, prev.length);
+    socket.data.buffer = merged;
+    return true;
+  }
+
+  /**
+   * Removes and returns the next complete frame's payload from a buffer holding at least its
+   * 4-byte length prefix. `undefined` when the frame is not complete yet, or when its declared
+   * length is over the cap — then the session is ended (and a handshake failure recorded).
+   */
+  private takeFrame(socket: Socket<SessionState>): Uint8Array | undefined {
+    const view = new DataView(
+      socket.data.buffer.buffer,
+      socket.data.buffer.byteOffset,
+      socket.data.buffer.byteLength,
+    );
+    const length = view.getUint32(0, false);
+    const cap = socket.data.peerPubkey ? MAX_ENCRYPTED_FRAME : MAX_HANDSHAKE_FRAME;
+    if (length > cap) {
+      if (!socket.data.peerPubkey) {
+        this.opts.rateLimit.recordFailure(socket.data.peerIp);
+      }
+      socket.data.writer.end();
+      return undefined;
+    }
+    if (socket.data.buffer.length < 4 + length) return undefined;
+    const payload = socket.data.buffer.slice(4, 4 + length);
+    socket.data.buffer = socket.data.buffer.slice(4 + length);
+    return payload;
   }
 
   private handleHandshake(socket: Socket<SessionState>, payload: Uint8Array): void {

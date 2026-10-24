@@ -437,7 +437,10 @@ describe.skipIf(!sandboxAvailable)("a scaffolded user MCP over a real gateway", 
 
   test("a second client connects and declares kind mcp", async () => {
     await agent.connect(paths.socketPath);
-    await agent.call("session.declareKind", { kind: "mcp" });
+    // The gateway answers with the kind it RECORDED for this connection; an unrecognised or
+    // already-declared kind would come back as something other than `mcp`.
+    const declared = await agent.call<{ kind: string }>("session.declareKind", { kind: "mcp" });
+    expect(declared).toEqual({ kind: "mcp" });
   }, 30_000);
 
   test("connector.userMcpTools lists the scaffold's echo and the added probe", async () => {

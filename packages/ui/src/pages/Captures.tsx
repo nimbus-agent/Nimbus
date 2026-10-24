@@ -67,7 +67,7 @@ export function Captures(): ReactNode {
             ))}
           </fieldset>
           <label className="flex items-center gap-1">
-            State
+            <span>State</span>
             <select
               value={state ?? ""}
               onChange={(e) => setState(isCaptureState(e.target.value) ? e.target.value : null)}

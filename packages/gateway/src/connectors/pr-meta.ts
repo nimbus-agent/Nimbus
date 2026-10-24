@@ -83,11 +83,11 @@ function lookup(
 const GITHUB_STATE: Readonly<Record<string, PrState>> = { open: "open", closed: "closed" };
 
 /** GitHub reports a merged PR as `state: "closed"` with `merged: true`. */
-export function normalizeGithubPrState(
-  state: string | undefined,
-  merged: boolean,
-): PrState | undefined {
-  return merged ? "merged" : lookup(GITHUB_STATE, state);
+export function normalizeGithubPrState(pr: {
+  readonly state: string | undefined;
+  readonly merged: boolean;
+}): PrState | undefined {
+  return pr.merged ? "merged" : lookup(GITHUB_STATE, pr.state);
 }
 
 const BITBUCKET_STATE: Readonly<Record<string, PrState>> = {

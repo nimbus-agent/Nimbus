@@ -119,7 +119,7 @@ export function extractPrMetadataForIndex(
     applyMergeCommitSha(out, pr);
   }
   return buildPrMetadata(out, {
-    state: normalizeGithubPrState(rawState, merged),
+    state: normalizeGithubPrState({ state: rawState, merged }),
     stateRaw: rawState,
     openedAtMs: canonicalEpochMs(stringField(pr, "created_at")),
     mergedAtMs: merged ? canonicalEpochMs(stringField(pr, "merged_at")) : undefined,

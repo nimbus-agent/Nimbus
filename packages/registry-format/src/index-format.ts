@@ -316,7 +316,19 @@ export function registryIndexSigningBytes(
   return new TextEncoder().encode(canonicalize(rest)); // NOSONAR S1874
 }
 
-export async function verifyRegistryIndexSelf(index: RegistryIndex): Promise<void> {
+/**
+ * Not `async`: nothing here awaits, but a refusal must still reach the caller as a rejection, as
+ * it always has. The executor's throw becomes that rejection. Not `Promise.try`: the registry
+ * action bundles this package and runs under the runner's Node, which may not have it.
+ */
+export function verifyRegistryIndexSelf(index: RegistryIndex): Promise<void> {
+  return new Promise((resolve) => {
+    assertRegistryIndexSelf(index);
+    resolve();
+  });
+}
+
+function assertRegistryIndexSelf(index: RegistryIndex): void {
   let ok: boolean;
   try {
     ok = nacl.sign.detached.verify(

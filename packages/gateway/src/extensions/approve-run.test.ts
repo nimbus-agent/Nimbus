@@ -486,29 +486,31 @@ describe("approveExtensionRun", () => {
     const key = Buffer.alloc(32, 7).toString("base64");
     const payload = buildRunConsentPayload(
       {
-        id: "p",
-        version: "1.0.0",
-        install_path: "/x",
-        manifest_hash: "m",
-        entry_hash: "e",
-        enabled: 1,
-        installed_at: 1,
-        last_verified_at: 1,
-        tree_digest: "d",
+        row: {
+          id: "p",
+          version: "1.0.0",
+          install_path: "/x",
+          manifest_hash: "m",
+          entry_hash: "e",
+          enabled: 1,
+          installed_at: 1,
+          last_verified_at: 1,
+          tree_digest: "d",
+        },
+        manifest: {
+          id: "p",
+          version: "1.0.0",
+          updateChannel: "stable",
+          permissions: { network: [], filesystem: { read: [], write: [] } },
+          publisher: { id: "pub", key },
+        },
+        serviceId: "ext_p",
+        treeDigest: "d",
+        grants: { network: [], read: [], write: [] },
+        modelAccess: false,
+        credentials: {},
       },
-      {
-        id: "p",
-        version: "1.0.0",
-        updateChannel: "stable",
-        permissions: { network: [], filesystem: { read: [], write: [] } },
-        publisher: { id: "pub", key },
-      },
-      "ext_p",
-      "d",
-      { network: [], read: [], write: [] },
       { platform: "linux", protectedRoots: [], runtimeReadPaths: [], realpath: (p) => p },
-      false,
-      {},
     );
     const fp = publisherKeyFingerprint(key);
     expect(fp).toMatch(/^[0-9a-f]{32}$/);
@@ -521,28 +523,30 @@ describe("approveExtensionRun", () => {
     const payloadOn = (platform: NodeJS.Platform) =>
       buildRunConsentPayload(
         {
-          id: "n",
-          version: "1.0.0",
-          install_path: "/x",
-          manifest_hash: "m",
-          entry_hash: "e",
-          enabled: 1,
-          installed_at: 1,
-          last_verified_at: 1,
-          tree_digest: "d",
+          row: {
+            id: "n",
+            version: "1.0.0",
+            install_path: "/x",
+            manifest_hash: "m",
+            entry_hash: "e",
+            enabled: 1,
+            installed_at: 1,
+            last_verified_at: 1,
+            tree_digest: "d",
+          },
+          manifest: {
+            id: "n",
+            version: "1.0.0",
+            updateChannel: "stable",
+            permissions: { network: ["readwise.io"], filesystem: { read: [], write: [] } },
+          },
+          serviceId: "ext_n",
+          treeDigest: "d",
+          grants: { network: ["readwise.io"], read: [], write: [] },
+          modelAccess: false,
+          credentials: {},
         },
-        {
-          id: "n",
-          version: "1.0.0",
-          updateChannel: "stable",
-          permissions: { network: ["readwise.io"], filesystem: { read: [], write: [] } },
-        },
-        "ext_n",
-        "d",
-        { network: ["readwise.io"], read: [], write: [] },
         { platform, protectedRoots: [], runtimeReadPaths: [], realpath: (p) => p },
-        false,
-        {},
       );
     const win = payloadOn("win32");
     expect(win["network"]).toEqual(["readwise.io"]);

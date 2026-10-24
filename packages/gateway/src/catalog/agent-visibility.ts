@@ -136,6 +136,13 @@ function decide(shows: readonly Names[], hides: readonly Names[]): Map<string, D
   return decisions;
 }
 
+/** Plain code-unit order (not locale order), so the overrides list is stable on every machine. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 export function resolveAgentVisibility(
   snapshot: Pick<ConfigSnapshot, "doc">,
   known: readonly string[],
@@ -159,7 +166,7 @@ export function resolveAgentVisibility(
     else visible.delete(agent);
     overrides.push({ agent, visible: d.visible, layer: d.layer });
   }
-  overrides.sort((a, b) => (a.agent < b.agent ? -1 : a.agent > b.agent ? 1 : 0));
+  overrides.sort((a, b) => compareCodeUnits(a.agent, b.agent));
   return {
     visible,
     basis: packLists.length === 0 ? "all" : "packs",

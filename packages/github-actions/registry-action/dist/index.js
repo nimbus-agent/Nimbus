@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:cc7eb276143e29254924a6bb7a77a27b1a84d3968b5189e351306adafce2d438
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:eca62c0ab932ab7cccfa61c2d059ef40ddf9f9244521d8c1b96fb59805db1f96
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5120,9 +5120,28 @@ function parseExtensionManifestForRegistry(text) {
 }
 
 // ../../registry-format/src/semver.ts
-var SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+var NUMERIC_ID_RE = /^(?:0|[1-9]\d*)$/;
+var ID_CHARS_RE = /^[0-9A-Za-z-]+$/;
+var ALL_DIGITS_RE = /^\d+$/;
+function isPrereleaseId(id) {
+  return ID_CHARS_RE.test(id) && (NUMERIC_ID_RE.test(id) || !ALL_DIGITS_RE.test(id));
+}
+function isBuildId(id) {
+  return ID_CHARS_RE.test(id);
+}
+function splitFirst(s, sep) {
+  const at = s.indexOf(sep);
+  return at === -1 ? [s, undefined] : [s.slice(0, at), s.slice(at + 1)];
+}
 function isValidSemver(v) {
-  return SEMVER_RE.test(v);
+  const [head, build] = splitFirst(v, "+");
+  if (build !== undefined && !build.split(".").every(isBuildId))
+    return false;
+  const [core, pre] = splitFirst(head, "-");
+  if (pre !== undefined && !pre.split(".").every(isPrereleaseId))
+    return false;
+  const parts = core.split(".");
+  return parts.length === 3 && parts.every((p) => NUMERIC_ID_RE.test(p));
 }
 
 // ../../registry-format/src/role-pack.ts
@@ -5292,7 +5311,13 @@ function registryIndexSigningBytes(index) {
   const { signature: _omitted, ...rest } = index;
   return new TextEncoder().encode(canonicalize(rest));
 }
-async function verifyRegistryIndexSelf(index) {
+function verifyRegistryIndexSelf(index) {
+  return new Promise((resolve) => {
+    assertRegistryIndexSelf(index);
+    resolve();
+  });
+}
+function assertRegistryIndexSelf(index) {
   let ok;
   try {
     ok = import_tweetnacl.default.sign.detached.verify(registryIndexSigningBytes(index), decodeBase642(index.signature), decodeBase642(index.rootKey));
@@ -8634,7 +8659,7 @@ async function inspectPackage(tgz, work) {
     manifestBytes,
     manifest: m,
     entryHash: createHash2("sha256").update(entryBytes).digest("hex"),
-    files: files.sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
+    files: files.toSorted(codeUnitCompare)
   };
 }
 // ../../registry-format/src/sign.ts
@@ -8654,10 +8679,12 @@ function publicKeyFromSeed(seed) {
   return new Uint8Array(Buffer.from(jwk.x, "base64url"));
 }
 var SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
-async function signIndex(unsigned, privkey) {
-  const { signature: _omitted, ...rest } = unsigned;
-  const sig = sign(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
-  return { ...rest, signature: sig.toString("base64") };
+function signIndex(unsigned, privkey) {
+  return new Promise((resolve) => {
+    const { signature: _omitted, ...rest } = unsigned;
+    const sig = sign(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
+    resolve({ ...rest, signature: sig.toString("base64") });
+  });
 }
 // ../../registry-format/src/validate-publish.ts
 import { createHash as createHash3 } from "node:crypto";
@@ -9128,7 +9155,8 @@ function code(s) {
 
 // src/check.ts
 var SHARED = { validate: validatePublish, git: exports_git_tree, io: GHA_IO, tmpdir: osTmpdir };
-var FILE_RE = new RegExp(`^(extensions/.+)/(${CANDIDATE_FILES.join("|").replaceAll(".", String.raw`\.`)})$`);
+var CANDIDATE_ALTERNATION = CANDIDATE_FILES.join("|").replaceAll(".", String.raw`\.`);
+var FILE_RE = new RegExp(`^(extensions/.+)/(${CANDIDATE_ALTERNATION})$`);
 function assertSinglePublish(changes) {
   if (changes.length === 0)
     throw new Error("the pull request changes no files");

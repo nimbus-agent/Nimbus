@@ -96,14 +96,12 @@ export function createPerformUpgrade(deps: PerformUpgradeDeps) {
       // Best-effort: once the row is updated the update IS committed, and a cleanup failure (an
       // EBUSY on Windows) must not report it as failed, skip the client stop and leave a stale
       // cache. A leftover pending dir is cleared by the next attempt's own `rm` above.
+      // The two leftovers are disjoint (a directory and its sibling archive), so they are removed
+      // concurrently; a rejection is ignored — see above.
       const removePath = deps.removePath ?? defaultRemovePath;
-      for (const leftover of [pendingDir, archivePath]) {
-        try {
-          await removePath(leftover);
-        } catch {
-          // ignored — see above
-        }
-      }
+      await Promise.allSettled(
+        [pendingDir, archivePath].map((leftover) => Promise.try(() => removePath(leftover))),
+      );
     }
     await deps.stopExtensionClient(update.id);
   };

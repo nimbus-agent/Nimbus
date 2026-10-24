@@ -214,52 +214,55 @@ export function formatCaptureTable(rows: CaptureSummaryView[], now: number): str
   return `${[head, ...lines].join("\n")}\n${rows.length === 0 ? "(no captures)\n" : ""}`;
 }
 
+function actionDetailLines(d: CaptureDetailView): string[] {
+  const lines: string[] = [];
+  if (d.expiresAt !== null) lines.push(`Expires: ${new Date(d.expiresAt).toISOString()}`);
+  if (d.outcomeRef !== null) lines.push(`Outcome: ${stripControl(d.outcomeRef)}`);
+  if (d.errorCode !== null) lines.push(`Error: ${stripControl(d.errorCode)}`);
+  return lines;
+}
+
+function nativeStatusLine(d: CaptureDetailView): string | undefined {
+  if (d.nativeStatus === "superseded") {
+    return "Superseded: a later accepted capture or the owner's own entry now owns this; revoking this capture leaves it in place.";
+  }
+  if (d.nativeStatus === "absent") return "Native row: gone (removed since it was accepted).";
+  if (d.nativeStatus === "owned") return "Native row: present and owned by this capture.";
+  return undefined;
+}
+
+function payloadEntryLines(d: CaptureDetailView, k: string, v: unknown): string[] {
+  if (d.kind === "action" && k === "input") {
+    // The owner approves this exact structure: print it whole, one stripped line at a time.
+    const json = (JSON.stringify(v, null, 2) ?? "null").split("\n");
+    return ["input:", ...json.map((line) => `  ${stripControl(line)}`)];
+  }
+  const label = d.kind === "action" && k === "summary" ? "summary (agent-written, unverified)" : k;
+  if (typeof v === "string" && /\r?\n/.test(v)) {
+    // The owner reviews text as stored: keep line structure, strip each line on its own.
+    const body = v.split(/\r?\n/).map((line) => `  ${stripControl(line.replaceAll("\t", "  "))}`);
+    return [`${stripControl(label)}:`, ...body];
+  }
+  const text = typeof v === "string" ? v : JSON.stringify(v);
+  return [`${stripControl(label)}: ${stripControl(text)}`];
+}
+
+function payloadLines(d: CaptureDetailView): string[] {
+  if (typeof d.payload !== "object" || d.payload === null) return ["(payload cleared on revoke)"];
+  return Object.entries(d.payload).flatMap(([k, v]) => payloadEntryLines(d, k, v));
+}
+
 export function formatCaptureDetail(d: CaptureDetailView): string {
   const lines = [
     `${d.id}  ${d.kind}  ${d.state}`,
     `Agent-authored — submitted by ${stripControl(d.clientLabel ?? "an unnamed MCP client")} at ${new Date(d.createdAt).toISOString()}.`,
   ];
   if (d.decidedAt !== null) lines.push(`Decided: ${new Date(d.decidedAt).toISOString()}`);
-  if (d.kind === "action") {
-    if (d.expiresAt !== null) lines.push(`Expires: ${new Date(d.expiresAt).toISOString()}`);
-    if (d.outcomeRef !== null) lines.push(`Outcome: ${stripControl(d.outcomeRef)}`);
-    if (d.errorCode !== null) lines.push(`Error: ${stripControl(d.errorCode)}`);
-  }
+  if (d.kind === "action") lines.push(...actionDetailLines(d));
   if (d.itemId !== null) lines.push(`Item: ${d.itemId}`);
-  if (d.nativeStatus === "superseded") {
-    lines.push(
-      "Superseded: a later accepted capture or the owner's own entry now owns this; revoking this capture leaves it in place.",
-    );
-  } else if (d.nativeStatus === "absent") {
-    lines.push("Native row: gone (removed since it was accepted).");
-  } else if (d.nativeStatus === "owned") {
-    lines.push("Native row: present and owned by this capture.");
-  }
-  lines.push("");
-  if (typeof d.payload !== "object" || d.payload === null) {
-    lines.push("(payload cleared on revoke)");
-  } else {
-    for (const [k, v] of Object.entries(d.payload)) {
-      if (d.kind === "action" && k === "input") {
-        // The owner approves this exact structure: print it whole, one stripped line at a time.
-        lines.push("input:");
-        for (const line of (JSON.stringify(v, null, 2) ?? "null").split("\n"))
-          lines.push(`  ${stripControl(line)}`);
-        continue;
-      }
-      const label =
-        d.kind === "action" && k === "summary" ? "summary (agent-written, unverified)" : k;
-      if (typeof v === "string" && /\r?\n/.test(v)) {
-        // The owner reviews text as stored: keep line structure, strip each line on its own.
-        lines.push(`${stripControl(label)}:`);
-        for (const line of v.split(/\r?\n/))
-          lines.push(`  ${stripControl(line.replaceAll("\t", "  "))}`);
-        continue;
-      }
-      const text = typeof v === "string" ? v : JSON.stringify(v);
-      lines.push(`${stripControl(label)}: ${stripControl(text)}`);
-    }
-  }
+  const native = nativeStatusLine(d);
+  if (native !== undefined) lines.push(native);
+  lines.push("", ...payloadLines(d));
   return `${lines.join("\n")}\n`;
 }
 
@@ -311,9 +314,8 @@ export function doctorCapturesLines(s: CaptureStatusView): { lines: string[]; ex
   if (refused.length > 0) {
     // A counter that only grows for the process lifetime: one rate-limited burst must not fail
     // `nimbus doctor` until the next restart. Reported, never an exit code.
-    lines.push(
-      `[info] MCP capture sink: refused since gateway start: ${refused.map(([k, n]) => `${k}×${String(n)}`).join(", ")}`,
-    );
+    const counts = refused.map(([k, n]) => `${k}×${String(n)}`).join(", ");
+    lines.push(`[info] MCP capture sink: refused since gateway start: ${counts}`);
   }
   if (lines.length === 0) {
     lines.push(

@@ -194,37 +194,69 @@ function checkPlainSection(
     problems.push(`[${header}] is not pack-settable`);
     return;
   }
-  for (const line of section.lines as readonly DocLine[]) {
-    if (line.kind === "passthrough") {
-      problems.push(`[${header}] has a line that is not "key = value": ${line.raw.trim()}`);
-      continue;
-    }
-    const spec = keys.find((k) => k.key === line.key);
-    const listSpec = spec === undefined ? listKeys.find((k) => k.key === line.key) : undefined;
-    if (spec === undefined && listSpec === undefined) {
-      problems.push(`[${header}] ${line.key} is not pack-settable`);
-      continue;
-    }
-    const id = `${header}.${line.key}`;
-    if (seenKeys.has(id)) problems.push(`[${header}] sets ${line.key} twice`);
-    seenKeys.add(id);
-    if (listSpec !== undefined) {
-      const items = listSpec.parse(line.valRaw);
-      if (items === undefined) {
-        problems.push(`[${header}] ${line.key} = ${line.valRaw}: expected ${listSpec.expect}`);
-      } else {
-        lists.set(id, items);
-      }
-      continue;
-    }
-    if (spec === undefined) continue;
-    const value = spec.parse(line.valRaw);
-    if (value === undefined) {
-      problems.push(`[${header}] ${line.key} = ${line.valRaw}: expected ${spec.expect}`);
-    } else {
-      scalars.set(id, value);
-    }
+  const ctx: PlainSectionCheck = { header, keys, listKeys, scalars, lists, seenKeys, problems };
+  for (const line of section.lines as readonly DocLine[]) checkPlainLine(line, ctx);
+}
+
+type PlainSectionCheck = {
+  readonly header: string;
+  readonly keys: readonly PackSettableKey[];
+  readonly listKeys: readonly PackSettableList[];
+  readonly scalars: Map<string, PackScalar>;
+  readonly lists: Map<string, readonly string[]>;
+  readonly seenKeys: Set<string>;
+  readonly problems: string[];
+};
+
+function checkPlainLine(line: DocLine, ctx: PlainSectionCheck): void {
+  const { header, problems } = ctx;
+  if (line.kind === "passthrough") {
+    problems.push(`[${header}] has a line that is not "key = value": ${line.raw.trim()}`);
+    return;
   }
+  const spec = ctx.keys.find((k) => k.key === line.key);
+  const listSpec = spec === undefined ? ctx.listKeys.find((k) => k.key === line.key) : undefined;
+  if (spec === undefined && listSpec === undefined) {
+    problems.push(`[${header}] ${line.key} is not pack-settable`);
+    return;
+  }
+  const id = `${header}.${line.key}`;
+  if (ctx.seenKeys.has(id)) problems.push(`[${header}] sets ${line.key} twice`);
+  ctx.seenKeys.add(id);
+  if (listSpec !== undefined) {
+    parseSettableValue(listSpec, line, id, ctx.lists, ctx);
+    return;
+  }
+  if (spec !== undefined) parseSettableValue(spec, line, id, ctx.scalars, ctx);
+}
+
+/** One settable value parsed into `out` under `id`, or a problem naming what was expected. */
+function parseSettableValue<T>(
+  spec: { readonly expect: string; readonly parse: (valRaw: string) => T | undefined },
+  line: { readonly key: string; readonly valRaw: string },
+  id: string,
+  out: Map<string, T>,
+  ctx: PlainSectionCheck,
+): void {
+  const value = spec.parse(line.valRaw);
+  if (value === undefined) {
+    ctx.problems.push(`[${ctx.header}] ${line.key} = ${line.valRaw}: expected ${spec.expect}`);
+  } else {
+    out.set(id, value);
+  }
+}
+
+/** An array table: refused unless pack-settable, else checked as a `[[fleet.job]]` block. */
+function checkArraySection(
+  section: DocSection,
+  header: string,
+  problems: string[],
+): JobBlock | undefined {
+  if (!PACK_SETTABLE_ARRAYS.some((a) => a.header === header)) {
+    problems.push(`[[${header}]] is not pack-settable`);
+    return undefined;
+  }
+  return checkJobBlock(section, problems);
 }
 
 export function checkPackFragment(text: string, checkJobs: PackJobChecker): PackFragmentCheck {
@@ -250,11 +282,7 @@ export function checkPackFragment(text: string, checkJobs: PackJobChecker): Pack
       continue;
     }
     if (section.isArray) {
-      if (!PACK_SETTABLE_ARRAYS.some((a) => a.header === section.header)) {
-        problems.push(`[[${section.header}]] is not pack-settable`);
-        continue;
-      }
-      const block = checkJobBlock(section, problems);
+      const block = checkArraySection(section, section.header, problems);
       if (block !== undefined) blocks.push(block);
       continue;
     }

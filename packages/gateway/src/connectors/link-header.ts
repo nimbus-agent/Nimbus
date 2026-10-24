@@ -7,14 +7,25 @@ export type LinkValue = {
   readonly params: Readonly<Record<string, string>>;
 };
 
-/** `<uri>` followed by the remaining parameter text. `s` so a folded header still matches. */
-const LINK_VALUE_RE = /^<([^<>]*)>\s*(.*)$/s;
-
 /**
  * Split on the commas that separate link-values, NOT on commas inside a URL.
  * A separating comma is always followed by the next value's `<`.
  */
 const LINK_SEPARATOR_RE = /,\s*(?=<)/;
+
+/**
+ * `<uri>` followed by the remaining parameter text (leading whitespace dropped), or null when the
+ * value does not start with `<` or the uri is not closed by `>` before any further `<`. A linear
+ * scan rather than a regex; a folded header (newlines anywhere) still matches.
+ */
+function splitLinkValue(value: string): { readonly uri: string; readonly rest: string } | null {
+  if (!value.startsWith("<")) return null;
+  const close = value.indexOf(">", 1);
+  if (close === -1) return null;
+  const uri = value.slice(1, close);
+  if (uri.includes("<")) return null;
+  return { uri, rest: value.slice(close + 1).trimStart() };
+}
 
 function parseParams(raw: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -47,10 +58,10 @@ export function parseLinkHeader(header: string | null): LinkValue[] {
   if (header === null || header.trim() === "") return [];
   const out: LinkValue[] = [];
   for (const raw of header.split(LINK_SEPARATOR_RE)) {
-    const match = LINK_VALUE_RE.exec(raw.trim());
+    const match = splitLinkValue(raw.trim());
     if (match === null) continue;
-    const url = (match[1] ?? "").trim();
-    const rest = match[2] ?? "";
+    const url = match.uri.trim();
+    const rest = match.rest;
     out.push({
       url,
       params: Object.freeze(parseParams(rest.startsWith(";") ? rest.slice(1) : rest)),

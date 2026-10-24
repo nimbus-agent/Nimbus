@@ -267,8 +267,9 @@ export async function extensionCredentialStatus(
   extensionId: string,
 ): Promise<{ credentials: Array<{ name: string; set: boolean }> }> {
   const credentials: Array<{ name: string; set: boolean }> = [];
+  // Sequential on purpose: on Linux each Vault read spawns a `secret-tool` process.
   for (const [name, { vaultKey }] of grantCredentials(deps, extensionId, "read")) {
-    const value = await deps.vault.get(vaultKey);
+    const value = await deps.vault.get(vaultKey); // NOSONAR S9382: each read spawns secret-tool on Linux
     credentials.push({ name, set: value !== null && value.trim() !== "" });
   }
   return { credentials };

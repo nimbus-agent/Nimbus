@@ -84,7 +84,7 @@ export function parseVaultEntries(plaintext: string): VaultEntry[] {
     }
     const { key, value } = entry as Record<string, unknown>;
     if (typeof key !== "string" || typeof value !== "string") {
-      throw new Error(`vault manifest entry ${String(i)} needs a string key and value`);
+      throw new TypeError(`vault manifest entry ${String(i)} needs a string key and value`);
     }
     if (!isWellFormedVaultKey(key)) {
       throw new Error(`vault manifest entry ${String(i)} has a malformed vault key`);

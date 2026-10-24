@@ -140,9 +140,7 @@ function sanitiseType(v: unknown): string | string[] | undefined {
   return undefined;
 }
 
-function copyScalarKeywords(raw: JsonObject, out: JsonObject): void {
-  const type = sanitiseType(raw["type"]);
-  if (type !== undefined) out["type"] = type;
+function copyBoundKeywords(raw: JsonObject, out: JsonObject): void {
   for (const k of NUMERIC_KEYWORDS) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
@@ -152,16 +150,17 @@ function copyScalarKeywords(raw: JsonObject, out: JsonObject): void {
     if (typeof v === "number" && Number.isInteger(v) && v >= 0) out[k] = v;
   }
   if (typeof raw["uniqueItems"] === "boolean") out["uniqueItems"] = raw["uniqueItems"];
-  // OpenAPI-style `nullable` (which @mastra/mcp's validator honours): Ajv accepts it only beside
-  // `type`, and dropping it would refuse a null the server takes.
-  if (type !== undefined && typeof raw["nullable"] === "boolean") out["nullable"] = raw["nullable"];
-  const format = raw["format"];
-  if (typeof format === "string" && KNOWN_FORMATS.has(format)) out["format"] = format;
+}
+
+function copyProseKeywords(raw: JsonObject, out: JsonObject): void {
   for (const k of PROSE_KEYWORDS) {
     const v = raw[k];
     if (typeof v === "string")
       out[k] = escapeEnvelopeClosers(v).slice(0, USER_MCP_SCHEMA_PROSE_MAX);
   }
+}
+
+function copyValueKeywords(raw: JsonObject, out: JsonObject): void {
   const values = raw["enum"];
   if (
     Array.isArray(values) &&
@@ -171,6 +170,19 @@ function copyScalarKeywords(raw: JsonObject, out: JsonObject): void {
   )
     out["enum"] = [...values];
   if ("const" in raw && isOfferableValue(raw["const"])) out["const"] = raw["const"];
+}
+
+function copyScalarKeywords(raw: JsonObject, out: JsonObject): void {
+  const type = sanitiseType(raw["type"]);
+  if (type !== undefined) out["type"] = type;
+  copyBoundKeywords(raw, out);
+  // OpenAPI-style `nullable` (which @mastra/mcp's validator honours): Ajv accepts it only beside
+  // `type`, and dropping it would refuse a null the server takes.
+  if (type !== undefined && typeof raw["nullable"] === "boolean") out["nullable"] = raw["nullable"];
+  const format = raw["format"];
+  if (typeof format === "string" && KNOWN_FORMATS.has(format)) out["format"] = format;
+  copyProseKeywords(raw, out);
+  copyValueKeywords(raw, out);
 }
 
 interface SanitisedProperties {
@@ -210,23 +222,33 @@ function sanitiseBranches(raw: unknown, depth: number, walk: Walk): unknown[] | 
   return raw.map((b) => sanitiseNode(b, depth + 1, walk));
 }
 
+/** An array-valued `items` (a tuple), spelled for the walk's dialect. */
+function copyTupleItems(
+  raw: JsonObject,
+  out: JsonObject,
+  tuple: unknown[],
+  prefixItems: unknown[] | undefined,
+  walk: Walk,
+): void {
+  // Ajv 2020 rejects an array `items`; its 2020-12 spelling is `prefixItems`.
+  if (!walk.is2020) {
+    out["items"] = tuple;
+    if (raw["additionalItems"] === false) out["additionalItems"] = false;
+  } else {
+    if (prefixItems === undefined) out["prefixItems"] = tuple;
+    // 2020-12 spells a closed tuple `items: false`. A schema-valued additionalItems stays
+    // dropped (stated bound): the tuple is left open, looser than the server's.
+    if (raw["additionalItems"] === false) out["items"] = false;
+  }
+}
+
 function copyArrayKeywords(raw: JsonObject, out: JsonObject, depth: number, walk: Walk): void {
   const prefixItems = sanitiseBranches(raw["prefixItems"], depth, walk);
   if (prefixItems !== undefined) out["prefixItems"] = prefixItems;
   const items = raw["items"];
   if (Array.isArray(items)) {
     const tuple = sanitiseBranches(items, depth, walk);
-    if (tuple === undefined) return;
-    // Ajv 2020 rejects an array `items`; its 2020-12 spelling is `prefixItems`.
-    if (!walk.is2020) {
-      out["items"] = tuple;
-      if (raw["additionalItems"] === false) out["additionalItems"] = false;
-    } else {
-      if (prefixItems === undefined) out["prefixItems"] = tuple;
-      // 2020-12 spells a closed tuple `items: false`. A schema-valued additionalItems stays
-      // dropped (stated bound): the tuple is left open, looser than the server's.
-      if (raw["additionalItems"] === false) out["items"] = false;
-    }
+    if (tuple !== undefined) copyTupleItems(raw, out, tuple, prefixItems, walk);
   } else if (isPlainObject(items) || typeof items === "boolean") {
     out["items"] = sanitiseNode(items, depth + 1, walk);
   }

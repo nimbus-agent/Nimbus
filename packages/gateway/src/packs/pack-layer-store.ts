@@ -198,6 +198,35 @@ function readText(path: string, maxBytes: number): string | undefined {
   return read.ok ? read.text : undefined;
 }
 
+function assertNames(profile: string, packId: string): void {
+  const problems = nameProblems(profile, packId);
+  if (problems.length > 0) throw new PackLayerRefusedError(problems, "invalid");
+}
+
+function conflicts(
+  packId: string,
+  scalars: ReadonlyMap<string, PackScalar>,
+  jobNames: readonly string[],
+  others: readonly CleanPack[],
+): string[] {
+  const problems: string[] = [];
+  for (const other of others) {
+    if (other.id === packId) continue;
+    for (const [key, value] of scalars) {
+      const theirs = other.scalars.get(key);
+      if (theirs !== undefined && theirs !== value) {
+        problems.push(`${scalarLabel(key)}: pack ${other.id} sets ${String(theirs)}`);
+      }
+    }
+    for (const name of jobNames) {
+      if (other.jobNames.includes(name)) {
+        problems.push(`[[fleet.job]] ${name} is also set by pack ${other.id}`);
+      }
+    }
+  }
+  return problems;
+}
+
 export function createPackLayerStore(opts: {
   configDir: string;
   checkJobs?: PackJobChecker;
@@ -216,9 +245,7 @@ export function createPackLayerStore(opts: {
       const reader = peekLayeredConfig(configDir);
       // Exact match: on Linux `Default` and `default` are different directories, and the running
       // reader never reads the other one.
-      return reader !== undefined && reader.profile.name === profile
-        ? reader.snapshot().version
-        : null;
+      return reader?.profile.name === profile ? reader.snapshot().version : null;
     });
 
   // Every reason this store produces goes through here: no absolute path, and no control
@@ -306,11 +333,6 @@ export function createPackLayerStore(opts: {
     return { layers, skipped, clean, ids: active.ids };
   }
 
-  function assertNames(profile: string, packId: string): void {
-    const problems = nameProblems(profile, packId);
-    if (problems.length > 0) throw new PackLayerRefusedError(problems, "invalid");
-  }
-
   function activeIds(profile: string): readonly string[] {
     const active = readActive(profile);
     if (!active.ok) throw new PackLayerRefusedError([active.error], "store");
@@ -341,30 +363,6 @@ export function createPackLayerStore(opts: {
       join(profileDir(profile), ACTIVE_FILE),
       `${JSON.stringify({ version: ACTIVE_VERSION, packs: ids })}\n`,
     );
-  }
-
-  function conflicts(
-    packId: string,
-    scalars: ReadonlyMap<string, PackScalar>,
-    jobNames: readonly string[],
-    others: readonly CleanPack[],
-  ): string[] {
-    const problems: string[] = [];
-    for (const other of others) {
-      if (other.id === packId) continue;
-      for (const [key, value] of scalars) {
-        const theirs = other.scalars.get(key);
-        if (theirs !== undefined && theirs !== value) {
-          problems.push(`${scalarLabel(key)}: pack ${other.id} sets ${String(theirs)}`);
-        }
-      }
-      for (const name of jobNames) {
-        if (other.jobNames.includes(name)) {
-          problems.push(`[[fleet.job]] ${name} is also set by pack ${other.id}`);
-        }
-      }
-    }
-    return problems;
   }
 
   return {

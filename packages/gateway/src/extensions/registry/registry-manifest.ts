@@ -84,8 +84,7 @@ export async function fetchRegistryManifest(
     );
   }
   if (
-    manifest.publisher === undefined ||
-    manifest.publisher.id !== entry.publisher.id ||
+    manifest.publisher?.id !== entry.publisher.id ||
     manifest.publisher.key !== entry.publisher.key
   ) {
     throw new RegistryError(

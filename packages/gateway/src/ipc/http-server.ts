@@ -1490,27 +1490,53 @@ async function tryDataScopedGet(
   const path = url.pathname;
   // A GET to a write route's path keeps its 405 from `handleGet`, never a data-scope answer.
   if (WRITE_ROUTE_ALLOWLIST.some((r) => r.endsWith(` ${path}`))) return null;
-  // One gate call per route, each naming its own ROUTE_KEY_* constant (http-read-gates.test.ts
-  // derives the scoped-route table from exactly these call sites).
-  const disabled = (): Response => json({ error: "data_disabled" }, 404);
+  return (
+    (await tryItemsDataGet(req, url, db, opts)) ?? (await tryPeopleAuditDataGet(req, url, db, opts))
+  );
+}
+
+const dataDisabled = (): Response => json({ error: "data_disabled" }, 404);
+
+// One gate call per route in the two helpers below, each naming its own ROUTE_KEY_* constant
+// (http-read-gates.test.ts derives the scoped-route table from exactly these call sites).
+
+/** `/v1/items` and `/v1/items/<id>`; `null` means "not one of these routes". */
+async function tryItemsDataGet(
+  req: Request,
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response | null> {
+  const path = url.pathname;
   if (path === "/v1/items") {
-    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_ITEMS_LIST, disabled);
+    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_ITEMS_LIST, dataDisabled);
     return gate.ok ? handleItemsList(url, db) : gate.response;
   }
   if (path.startsWith("/v1/items/")) {
-    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_ITEM_GET, disabled);
+    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_ITEM_GET, dataDisabled);
     return gate.ok ? handleItemByPath(path, db) : gate.response;
   }
+  return null;
+}
+
+/** `/v1/people`, `/v1/people/<id>` and `/v1/audit`; `null` means "not one of these routes". */
+async function tryPeopleAuditDataGet(
+  req: Request,
+  url: URL,
+  db: Database,
+  opts: ReadOnlyHttpServerOptions,
+): Promise<Response | null> {
+  const path = url.pathname;
   if (path === "/v1/people") {
-    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_PEOPLE_LIST, disabled);
+    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_PEOPLE_LIST, dataDisabled);
     return gate.ok ? handlePeopleList(db) : gate.response;
   }
   if (path.startsWith("/v1/people/")) {
-    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_PERSON_GET, disabled);
+    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_PERSON_GET, dataDisabled);
     return gate.ok ? handlePersonByPath(path, db) : gate.response;
   }
   if (path === "/v1/audit") {
-    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_AUDIT_LIST, disabled);
+    const gate = await requireScopedSurface(req, opts, ROUTE_KEY_AUDIT_LIST, dataDisabled);
     return gate.ok ? handleAudit(url, db) : gate.response;
   }
   return null;

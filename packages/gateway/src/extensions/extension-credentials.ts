@@ -76,10 +76,12 @@ export async function readCredentialEnv(
   c: ResolvedRunCredentials,
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = {};
+  // Sequential on purpose: on Linux each Vault read spawns a `secret-tool` process, and this runs
+  // before every extension spawn.
   for (const name of sortedNames(c)) {
     const v = c[name];
     if (v === undefined) continue;
-    const value = await vault.get(v.vaultKey);
+    const value = await vault.get(v.vaultKey); // NOSONAR S9382: each read spawns secret-tool on Linux; runs before every extension spawn
     if (isNonBlank(value)) env[v.env] = value;
   }
   return env;
