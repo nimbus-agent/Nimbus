@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { listCatalogAgents } from "../../packages/gateway/src/catalog/agent-catalog.ts";
 import {
   AGENT_PARAM_KINDS,
   type ParamKind,
@@ -61,18 +62,27 @@ const TYPEOF_TO_KIND: Readonly<Record<string, ParamKind>> = Object.freeze({
  *    is listed explicitly anyway — it is the one other validator name this task's brief calls out
  *    by name, and an override entry survives a future rename of the generic derivation logic that
  *    a name coincidence would not.
+ *  - `requireCatchupParams` backs BOTH `catchup` and `changelog` (`handleChangelog` reuses it), so
+ *    the generic rule's `["catchup"]` would leave `changelog`'s fields unchecked.
+ *  - `requireWhyRefParams` is `why`'s ref arm (`ref`, `line`); the generic rule would name the
+ *    nonexistent agent `whyRef`.
  */
-const VALIDATOR_AGENT_OVERRIDES: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  requireFileParam: Object.freeze(["ghost", "conflicts"]),
-  requireWhyParams: Object.freeze(["why"]),
-});
+export const VALIDATOR_AGENT_OVERRIDES: Readonly<Record<string, readonly string[]>> = Object.freeze(
+  {
+    requireFileParam: Object.freeze(["ghost", "conflicts"]),
+    requireWhyParams: Object.freeze(["why"]),
+    requireCatchupParams: Object.freeze(["catchup", "changelog"]),
+    requireWhyRefParams: Object.freeze(["why"]),
+  },
+);
 
 /**
  * `requireExpertParams` -> `["expert"]`. Returns `[]` for a validator this line-walker cannot
  * (and, per `VALIDATOR_AGENT_OVERRIDES`, does not need to) map to an agent — e.g. `requireEpicRef`,
- * `requireWhyRefParams`, or any of the four permission-internal validators (`preflight`,
- * `negotiate`, `premortem`, and `why`'s ref-only inner form) that `AGENT_PARAM_KINDS` deliberately
- * excludes. `checkAgentParamKinds` silently skips fields attributed to an unmapped agent.
+ * `requireUrlArm` or `requireForgeField`, sub-parsers whose `typeof` runs on their own parameter.
+ * `checkAgentParamKinds` silently skips fields attributed to an agent `AGENT_PARAM_KINDS` does not
+ * list (`preflight`, `negotiate`, `premortem`, `changelog`, `standup`); `checkCatalogParams` does
+ * not, since the catalog describes all seventeen.
  */
 function deriveAgentNames(validatorName: string): readonly string[] {
   const override = VALIDATOR_AGENT_OVERRIDES[validatorName];
@@ -206,7 +216,21 @@ export const VALIDATOR_FLOOR = 10;
 export type ParamKindsFinding =
   | { readonly rule: "indeterminate"; readonly detail: string }
   | { readonly rule: "missing-in-map"; readonly snippet: string; readonly detail: string }
-  | { readonly rule: "uncovered-agent"; readonly snippet: string; readonly detail: string };
+  | { readonly rule: "uncovered-agent"; readonly snippet: string; readonly detail: string }
+  | { readonly rule: "missing-in-catalog"; readonly snippet: string; readonly detail: string };
+
+function indeterminateBelowFloor(
+  parsed: Readonly<Record<string, ParsedValidator>>,
+): ParamKindsFinding[] | null {
+  const count = Object.keys(parsed).length;
+  if (count >= VALIDATOR_FLOOR) return null;
+  return [
+    {
+      rule: "indeterminate",
+      detail: `found ${count} validators (a healthy agents-rpc.ts parse finds at least ${VALIDATOR_FLOOR}) — treating this parse as indeterminate rather than reporting drift`,
+    },
+  ];
+}
 
 /**
  * Compares each parsed validator's type-checked fields against `AGENT_PARAM_KINDS`, in ONE
@@ -244,15 +268,8 @@ export type ParamKindsFinding =
 export function checkAgentParamKinds(
   parsed: Readonly<Record<string, ParsedValidator>>,
 ): ParamKindsFinding[] {
-  const validatorNames = Object.keys(parsed);
-  if (validatorNames.length < VALIDATOR_FLOOR) {
-    return [
-      {
-        rule: "indeterminate",
-        detail: `found ${validatorNames.length} validators (a healthy agents-rpc.ts parse finds at least ${VALIDATOR_FLOOR}) — treating this parse as indeterminate rather than reporting drift`,
-      },
-    ];
-  }
+  const belowFloor = indeterminateBelowFloor(parsed);
+  if (belowFloor !== null) return belowFloor;
 
   const findings: ParamKindsFinding[] = [];
   const coveredAgents = new Set<string>();
@@ -287,6 +304,53 @@ export function checkAgentParamKinds(
   return findings;
 }
 
+/** The real catalog's params, keyed by SHORT agent name — the spelling `ParsedValidator.agent` uses. */
+export function catalogParamsByAgent(): Record<
+  string,
+  readonly { name: string; kind: ParamKind }[]
+> {
+  const out: Record<string, readonly { name: string; kind: ParamKind }[]> = {};
+  for (const agent of listCatalogAgents()) out[agent.name] = agent.params;
+  return out;
+}
+
+/**
+ * The catalog's twin of `checkAgentParamKinds`, and ONE-DIRECTIONAL for the same reason: every
+ * field a validator type-checks, for every agent the walker maps — all seventeen, not only the
+ * twelve external ones — must be a same-kind param in that agent's catalog entry. A catalog param
+ * the walker cannot see checked (`namespaces`, `allowGaps`, `changedSurface`, …) is legitimate.
+ *
+ * `catalog` is keyed by short name only and no second spelling is tried, so an agent the walker
+ * derives that the catalog does not know (the bogus `whyRef` the overrides now prevent) reports
+ * every one of its fields rather than being skipped.
+ */
+export function checkCatalogParams(
+  parsed: Readonly<Record<string, ParsedValidator>>,
+  catalog: Readonly<Record<string, readonly { name: string; kind: ParamKind }[]>>,
+): ParamKindsFinding[] {
+  const belowFloor = indeterminateBelowFloor(parsed);
+  if (belowFloor !== null) return belowFloor;
+
+  const findings: ParamKindsFinding[] = [];
+  for (const validator of Object.values(parsed)) {
+    const agents = Array.isArray(validator.agent) ? validator.agent : [validator.agent];
+    for (const agent of agents) {
+      const params = Object.hasOwn(catalog, agent) ? catalog[agent] : undefined;
+      for (const [field, kind] of Object.entries(validator.fields)) {
+        const param = params?.find((p) => p.name === field);
+        if (param?.kind === kind) continue;
+        const snippet = `${agent}.${field}`;
+        const detail =
+          param === undefined
+            ? `${snippet} is type-checked as "${kind}" in agents-rpc.ts but has no catalog param in catalog/agent-catalog.ts`
+            : `${snippet} is type-checked as "${kind}" in agents-rpc.ts but the catalog declares "${param.kind}"`;
+        findings.push({ rule: "missing-in-catalog", snippet, detail });
+      }
+    }
+  }
+  return findings;
+}
+
 /**
  * Print each finding and return the process exit code. An `indeterminate` finding is a warning,
  * never a build failure — see `checkAgentParamKinds`'s doc comment for why a near-empty parse must
@@ -303,12 +367,20 @@ export function report(findings: readonly ParamKindsFinding[]): number {
     exitCode = 1;
   }
   if (exitCode === 0 && findings.length === 0) {
-    console.log("agent-param-kinds: AGENT_PARAM_KINDS matches every type-checked validator field");
+    console.log(
+      "agent-param-kinds: AGENT_PARAM_KINDS and the agent catalog match every type-checked validator field",
+    );
   }
   return exitCode;
 }
 
 if (import.meta.main) {
   const source = readFileSync(AGENTS_RPC_PATH, "utf8");
-  process.exit(report(checkAgentParamKinds(parseValidatorFields(source))));
+  const parsed = parseValidatorFields(source);
+  process.exit(
+    report([
+      ...checkAgentParamKinds(parsed),
+      ...checkCatalogParams(parsed, catalogParamsByAgent()),
+    ]),
+  );
 }

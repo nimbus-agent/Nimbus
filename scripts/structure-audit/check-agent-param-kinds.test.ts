@@ -3,10 +3,13 @@ import { readFileSync } from "node:fs";
 import { AGENT_PARAM_KINDS } from "../../packages/gateway/src/ipc/agent-param-kinds.ts";
 import {
   AGENTS_RPC_PATH,
+  catalogParamsByAgent,
   checkAgentParamKinds,
+  checkCatalogParams,
   HELPER_TO_KIND,
   type ParsedValidator,
   parseValidatorFields,
+  VALIDATOR_AGENT_OVERRIDES,
   VALIDATOR_FLOOR,
 } from "./check-agent-param-kinds.ts";
 
@@ -114,6 +117,20 @@ test("parseValidatorFields maps requireFileParam to BOTH ghost and conflicts", (
   const fileParam = parsed["requireFileParam"];
   expect(fileParam?.agent).toEqual(["ghost", "conflicts"]);
   expect(fileParam?.fields).toMatchObject({ file: "string" });
+});
+
+test("VALIDATOR_AGENT_OVERRIDES is exactly the four verified exceptions", () => {
+  // Pinned whole: an override added or dropped changes which agent a validator's fields are
+  // checked against, in both this audit and the catalog check.
+  expect(VALIDATOR_AGENT_OVERRIDES).toEqual({
+    requireFileParam: ["ghost", "conflicts"],
+    requireWhyParams: ["why"],
+    requireCatchupParams: ["catchup", "changelog"],
+    requireWhyRefParams: ["why"],
+  });
+  const parsed = parseValidatorFields(readFileSync(AGENTS_RPC_PATH, "utf8"));
+  expect(parsed["requireCatchupParams"]?.agent).toEqual(["catchup", "changelog"]);
+  expect(parsed["requireWhyRefParams"]?.agent).toBe("why");
 });
 
 test("parseValidatorFields reads the kind off agents-rpc.ts's shared field helpers", () => {
@@ -245,4 +262,45 @@ test("flags an EXTERNAL_AGENT_NAMES entry that no validator resolved to", () => 
   });
   // Every OTHER real agent is still covered by the baseline, so `why` must be the only omission.
   expect(v.filter((f) => f.rule === "uncovered-agent").map((f) => f.snippet)).toEqual(["why"]);
+});
+
+test("checkCatalogParams flags a validator field missing from the catalog", () => {
+  const parsed = fullCoverageBaseline();
+  parsed["synthetic_expert"] = {
+    agent: "expert",
+    fields: { topicOrFile: "string", bogus: "string" },
+  };
+  const v = checkCatalogParams(parsed, catalogParamsByAgent());
+  expect(v).toEqual([
+    {
+      rule: "missing-in-catalog",
+      snippet: "expert.bogus",
+      detail: expect.stringContaining("no catalog param"),
+    },
+  ]);
+});
+
+test("checkCatalogParams flags a kind mismatch and an agent the catalog does not know", () => {
+  const parsed = fullCoverageBaseline();
+  parsed["synthetic_expert"] = { agent: "expert", fields: { topicOrFile: "number" } };
+  // The shape the walker produced for `requireWhyRefParams` before its override: a bogus agent.
+  parsed["requireWhyRefParams"] = { agent: "whyRef", fields: { ref: "string" } };
+  const snippets = checkCatalogParams(parsed, catalogParamsByAgent()).map((f) =>
+    f.rule === "missing-in-catalog" ? f.snippet : f.rule,
+  );
+  expect(snippets.sort()).toEqual(["expert.topicOrFile", "whyRef.ref"]);
+});
+
+test("checkCatalogParams below VALIDATOR_FLOOR is indeterminate", () => {
+  expect(checkCatalogParams({}, catalogParamsByAgent())).toEqual([
+    { rule: "indeterminate", detail: expect.stringContaining("0 validators") },
+  ]);
+});
+
+test("checkCatalogParams passes on the real tree", () => {
+  const parsed = parseValidatorFields(readFileSync(AGENTS_RPC_PATH, "utf8"));
+  const catalog = catalogParamsByAgent();
+  // Every agent the catalog describes, not only the twelve external ones.
+  expect(Object.keys(catalog)).toHaveLength(17);
+  expect(checkCatalogParams(parsed, catalog)).toEqual([]);
 });
