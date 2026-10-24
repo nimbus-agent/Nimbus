@@ -203,6 +203,14 @@ describe("renderPackPrompt", () => {
     expect(() => renderPackPrompt(input({ mode: "update" }))).toThrow();
   });
 
+  test("installed mode heads the summary as installed, not as an install", () => {
+    const t = renderPackPrompt(input({ mode: "installed" }));
+    expect(t).toStartWith("Installed: role pack ");
+    expect(t).not.toContain("Install role pack");
+    expect(t).toContain("Config defaults:");
+    expect(t).toContain(DEFAULTS);
+  });
+
   test("repair mode states the layer no longer matches", () => {
     const t = renderPackPrompt(input({ mode: "repair" }));
     expect(t).toContain("no longer matches");

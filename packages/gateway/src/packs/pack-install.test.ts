@@ -116,92 +116,97 @@ function pmWith(over: Partial<RolePackManifest>): RolePackManifest {
 }
 
 describe("installPack: the fixed refusal order", () => {
-  const cases: { name: string; code: string; run: () => Promise<unknown>; detail?: RegExp }[] = [
+  const cases: {
+    name: string;
+    code: string;
+    run: (gate: PackOwnerGate) => Promise<unknown>;
+    detail?: RegExp;
+  }[] = [
     {
       name: "1 unknown bundled id",
       code: "ERR_PACK_NOT_FOUND",
-      run: () => installPack({ id: "nope" }, deps(), gate().gate),
+      run: (g) => installPack({ id: "nope" }, deps(), g),
     },
     {
       name: "2 a file in production",
       code: "ERR_PACK_LOCAL_FILE_PRODUCTION",
       // Also an unparseable file: production is refused before the parse.
-      run: () =>
+      run: (g) =>
         installPack(
           { fileText: "{not json", filePath: FILE_PATH },
           deps({ isProduction: () => true }),
-          gate().gate,
+          g,
         ),
     },
     {
       name: "3 a file that does not parse",
       code: "ERR_PACK_INVALID",
-      run: () => installPack({ fileText: "{not json", filePath: FILE_PATH }, deps(), gate().gate),
+      run: (g) => installPack({ fileText: "{not json", filePath: FILE_PATH }, deps(), g),
     },
     {
       name: "4 a file using a bundled id",
       code: "ERR_PACK_ID_RESERVED",
-      run: () =>
+      run: (g) =>
         installPack(
           { fileText: fileText({ id: "pm", members: ["com.example.pack"] }), filePath: FILE_PATH },
           deps(),
-          gate().gate,
+          g,
         ),
     },
     {
       name: "5 non-empty members",
       code: "ERR_PACK_MEMBERS_UNSUPPORTED",
-      run: () =>
+      run: (g) =>
         installPack(
           {
             fileText: fileText({ members: ["com.example.pack"], suggestedConnectors: ["nope_x"] }),
             filePath: FILE_PATH,
           },
           deps(),
-          gate().gate,
+          g,
         ),
     },
     {
       name: "6 an unknown connector",
       code: "ERR_PACK_INVALID",
       detail: /suggested connector "nope_x" is not known/,
-      run: () =>
+      run: (g) =>
         installPack(
           { fileText: fileText({ suggestedConnectors: ["nope_x"] }), filePath: FILE_PATH },
           deps(),
-          gate().gate,
+          g,
         ),
     },
     {
       name: "6 an unknown agent",
       code: "ERR_PACK_INVALID",
       detail: /unknown agent "owners"/,
-      run: () =>
+      run: (g) =>
         installPack(
           {
             fileText: fileText({ defaults: '[agents]\nvisible = ["owners"]\n' }),
             filePath: FILE_PATH,
           },
           deps(),
-          gate().gate,
+          g,
         ),
     },
     {
       name: "6 a non-allowlisted key",
       code: "ERR_PACK_INVALID",
       detail: /not pack-settable/,
-      run: () =>
+      run: (g) =>
         installPack(
           { fileText: fileText({ defaults: "[llm]\nprefer_local = true\n" }), filePath: FILE_PATH },
           deps(),
-          gate().gate,
+          g,
         ),
     },
   ];
   for (const c of cases) {
     test(`${c.name} → ${c.code}, no gate call, nothing written`, async () => {
       const g = gate();
-      const err = await refusal(c.run());
+      const err = await refusal(c.run(g.gate));
       expect(err.code).toBe(c.code as PackError["code"]);
       expect(err.message.startsWith(`${c.code}: `)).toBe(true);
       if (c.detail !== undefined) expect(err.detail).toMatch(c.detail);
@@ -516,11 +521,61 @@ describe("listPacks and previewPack", () => {
     expect(err.code).toBe("ERR_PACK_LOCAL_FILE_PRODUCTION");
   });
 
-  test("previewPack of an intact install is already_installed with the install-mode render", async () => {
-    await installPack({ id: "pm" }, deps(), gate().gate);
+  test("previewPack of an intact install is already_installed, headed as installed, with the record", async () => {
+    const g = gate();
+    await installPack({ id: "pm" }, deps(), g.gate);
     const r = await previewPack({ id: "pm" }, deps());
     expect(r.mode).toBe("already_installed");
-    expect(r.prompt).toContain("Install role pack Product (pm)");
+    expect(r.prompt).toStartWith("Installed: role pack Product (pm) version 1.0.0");
+    expect(r.prompt).not.toContain("Install role pack");
+    expect(r.prompt).toContain("Config defaults:");
+    expect(r.installed).toEqual({
+      version: "1.0.0",
+      source: "bundled",
+      installedAt: "2026-10-24T00:00:00.000Z",
+      digest: String(g.calls[0]?.payload["digest"]),
+    });
+  });
+
+  test("previewPack of a bundled pack not installed has no installed field", async () => {
+    const r = await previewPack({ id: "pm" }, deps());
+    expect(r.mode).toBe("install");
+    expect(r.installed).toBeUndefined();
+  });
+
+  test("previewPack { id } of an installed local-file pack renders from its record", async () => {
+    const g = gate();
+    await installPack({ fileText: fileText(), filePath: FILE_PATH }, deps(), g.gate);
+    const r = await previewPack({ id: "mine" }, deps());
+    expect(r.mode).toBe("already_installed");
+    expect(r.prompt).toStartWith("Installed: role pack Mine (mine) version 1.0.0");
+    expect(r.prompt).toContain(`Source: local file ${FILE_PATH}`);
+    expect(r.installed).toEqual({
+      version: "1.0.0",
+      source: `local file ${FILE_PATH}`,
+      installedAt: "2026-10-24T00:00:00.000Z",
+      digest: String(g.calls[0]?.payload["digest"]),
+    });
+    unlinkSync(layerFile("mine"));
+    const repair = await previewPack({ id: "mine" }, deps());
+    expect(repair.mode).toBe("repair");
+    expect(repair.prompt).toStartWith("Repair role pack Mine (mine)");
+    expect(repair.installed?.version).toBe("1.0.0");
+  });
+
+  test("previewPack { id } with neither a bundled pack nor an installed record → ERR_PACK_NOT_FOUND", async () => {
+    const err = await refusal(previewPack({ id: "ghost" }, deps()));
+    expect(err.code).toBe("ERR_PACK_NOT_FOUND");
+    expect(err.detail).toBe('no bundled or installed pack "ghost"');
+  });
+
+  test("installPack { id } of an installed local-file pack stays bundled-only", async () => {
+    await installPack({ fileText: fileText(), filePath: FILE_PATH }, deps(), gate().gate);
+    const g = gate();
+    const err = await refusal(installPack({ id: "mine" }, deps(), g.gate));
+    expect(err.code).toBe("ERR_PACK_NOT_FOUND");
+    expect(err.detail).toBe('no bundled pack "mine"; a local-file pack is installed with --file');
+    expect(g.calls).toHaveLength(0);
   });
 
   test("previewPack shows the update and repair modes", async () => {

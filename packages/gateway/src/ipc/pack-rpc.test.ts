@@ -115,7 +115,9 @@ describe("dispatchPackRpc", () => {
   test("a PackError becomes -32000 '<code>: <detail>'", async () => {
     const err = await rpcError(dispatchPackRpc("pack.install", { id: "nope" }, deps, approve));
     expect(err.rpcCode).toBe(-32000);
-    expect(err.message).toBe('ERR_PACK_NOT_FOUND: no bundled pack "nope"');
+    expect(err.message).toBe(
+      'ERR_PACK_NOT_FOUND: no bundled pack "nope"; a local-file pack is installed with --file',
+    );
   });
 
   test("any other error propagates unchanged", async () => {

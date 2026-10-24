@@ -125,7 +125,8 @@ export function diffPacks(prev: RolePackManifest, next: RolePackManifest): PackD
 export type PackPromptInput = {
   readonly manifest: RolePackManifest;
   readonly source: PackSource;
-  readonly mode: "install" | "update" | "repair";
+  /** `installed` is a summary of a pack already in place (`pack show`), never a prompt. */
+  readonly mode: "install" | "update" | "repair" | "installed";
   readonly diff?: PackDiff;
   readonly scalars: readonly PromptScalar[];
   readonly visibleAgents: readonly string[];
@@ -170,9 +171,11 @@ function fleetEnabledLine(scalars: readonly PromptScalar[]): string {
 function headerLines(i: PackPromptInput): string[] {
   const m = i.manifest;
   const src = i.source.kind === "bundled" ? "bundled" : `local file ${visibleText(i.source.path)}`;
-  const verb = { install: "Install", update: "Update", repair: "Repair" }[i.mode];
+  const title = `role pack ${visibleText(m.name)} (${visibleText(m.id)}) version ${visibleText(m.version)}`;
   const lines = [
-    `${verb} role pack ${visibleText(m.name)} (${visibleText(m.id)}) version ${visibleText(m.version)}`,
+    i.mode === "installed"
+      ? `Installed: ${title}`
+      : `${{ install: "Install", update: "Update", repair: "Repair" }[i.mode]} ${title}`,
     `Source: ${src}`,
     visibleText(m.description),
     "",

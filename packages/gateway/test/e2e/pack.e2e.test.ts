@@ -31,7 +31,9 @@ describe("pack.* over a real socket", () => {
 
         const refused = await client.raw("pack.install", { id: "nope" });
         expect(refused.error?.code).toBe(-32000);
-        expect(refused.error?.message).toBe('ERR_PACK_NOT_FOUND: no bundled pack "nope"');
+        expect(refused.error?.message).toBe(
+          'ERR_PACK_NOT_FOUND: no bundled pack "nope"; a local-file pack is installed with --file',
+        );
       } finally {
         client.disconnect();
         await gw.stop();

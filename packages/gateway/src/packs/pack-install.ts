@@ -24,7 +24,12 @@ import {
   type PromptScalar,
   renderPackPrompt,
 } from "./pack-prompt.ts";
-import { type PackSource, parsePackRecord, serializePackRecord } from "./pack-record.ts";
+import {
+  type InstalledPackRecord,
+  type PackSource,
+  parsePackRecord,
+  serializePackRecord,
+} from "./pack-record.ts";
 import { validatePackContent } from "./pack-validate.ts";
 
 export type PackErrorCode =
@@ -104,16 +109,43 @@ function activeProfile(configDir: string): string {
   return getLayeredConfig(configDir).profile.name;
 }
 
+/** The active profile's parsed record for `id`; undefined when absent or it does not verify. */
+function readRecord(
+  profile: string,
+  id: string,
+  store: PackLayerStore,
+): InstalledPackRecord | undefined {
+  const text = store.readPackRecord(profile, id);
+  return text === undefined ? undefined : parsePackRecord(text);
+}
+
+/**
+ * An id names a bundled pack. For `pack.show` only (`installedProfile` set), a non-bundled id
+ * also names the pack installed under it in that profile, read from its record. `pack.install`
+ * stays bundled-only: a local-file pack is re-installed from its file.
+ */
+function resolveId(id: string, deps: PackDeps, installedProfile: string | undefined) {
+  const bundled = deps.bundled.get(id);
+  if (bundled !== undefined) return { manifest: bundled, source: { kind: "bundled" } as const };
+  if (installedProfile === undefined) {
+    throw new PackError(
+      "ERR_PACK_NOT_FOUND",
+      `no bundled pack "${id}"; a local-file pack is installed with --file`,
+    );
+  }
+  const record = readRecord(installedProfile, id, deps.store);
+  if (record === undefined) {
+    throw new PackError("ERR_PACK_NOT_FOUND", `no bundled or installed pack "${id}"`);
+  }
+  return { manifest: record.manifest, source: record.source };
+}
+
 /** Steps 1–5 of the fixed order: which manifest, from where, and whether it may be considered. */
-function resolveRequest(req: PackRequest, deps: PackDeps): Resolved {
+function resolveRequest(req: PackRequest, deps: PackDeps, installedProfile?: string): Resolved {
   let manifest: RolePackManifest;
   let source: PackSource;
   if ("id" in req) {
-    const bundled = deps.bundled.get(req.id);
-    if (bundled === undefined)
-      throw new PackError("ERR_PACK_NOT_FOUND", `no bundled pack "${req.id}"`);
-    manifest = bundled;
-    source = { kind: "bundled" };
+    ({ manifest, source } = resolveId(req.id, deps, installedProfile));
   } else {
     if (deps.isProduction()) {
       throw new PackError(
@@ -170,8 +202,7 @@ function isListed(profile: string, id: string, store: PackLayerStore): boolean {
 
 function selectMode(r: Resolved, profile: string, store: PackLayerStore): Mode {
   const id = r.manifest.id;
-  const text = store.readPackRecord(profile, id);
-  const record = text === undefined ? undefined : parsePackRecord(text);
+  const record = readRecord(profile, id, store);
   // A listed pack whose record is missing or does not verify has no prior manifest to diff
   // against, so it prompts in install mode with the full text (spec § 5.4: "version unknown").
   if (record === undefined) return { kind: "install" };
@@ -230,7 +261,7 @@ function userJobNames(configDir: string): ReadonlySet<string> {
 
 async function buildPrompt(
   r: Resolved,
-  mode: "install" | "update" | "repair",
+  mode: PackPromptInput["mode"],
   prev: RolePackManifest | undefined,
   deps: PackDeps,
 ): Promise<string> {
@@ -266,9 +297,13 @@ function sourceDisplay(s: PackSource): string {
 }
 
 /** Resolves, checks and picks the mode: everything install does before the gate. */
-function prepare(req: PackRequest, deps: PackDeps): { r: Resolved; profile: string; mode: Mode } {
-  const r = resolveRequest(req, deps);
+function prepare(
+  req: PackRequest,
+  deps: PackDeps,
+  opts: { readonly showInstalled?: boolean } = {},
+): { r: Resolved; profile: string; mode: Mode } {
   const profile = activeProfile(deps.configDir);
+  const r = resolveRequest(req, deps, opts.showInstalled === true ? profile : undefined);
   assertInstallable(r.manifest, profile, deps);
   return { r, profile, mode: selectMode(r, profile, deps.store) };
 }
@@ -323,18 +358,46 @@ export async function installPack(
   }
 }
 
-/** What `installPack` would prompt, without raising the gate. Same refusals, same order. */
-export async function previewPack(
-  req: PackRequest,
-  deps: PackDeps,
-): Promise<{ prompt: string; mode: "install" | "update" | "repair" | "already_installed" }> {
-  const { r, mode } = prepare(req, deps);
+export type PackPreview = {
+  readonly prompt: string;
+  readonly mode: "install" | "update" | "repair" | "already_installed";
+  /** Present when the pack is listed in the active profile and its record parses. */
+  readonly installed?: {
+    readonly version: string;
+    /** `bundled` or `local file <path>`. */
+    readonly source: string;
+    readonly installedAt: string;
+    readonly digest: string;
+  };
+};
+
+/**
+ * What `installPack` would prompt, without raising the gate. Same refusals, same order, except that
+ * an id may also name a non-bundled pack installed in the active profile (rendered from its record).
+ */
+export async function previewPack(req: PackRequest, deps: PackDeps): Promise<PackPreview> {
+  const { r, profile, mode } = prepare(req, deps, { showInstalled: true });
+  const record = isListed(profile, r.manifest.id, deps.store)
+    ? readRecord(profile, r.manifest.id, deps.store)
+    : undefined;
+  const installed =
+    record === undefined
+      ? {}
+      : {
+          installed: {
+            version: record.manifest.version,
+            source: sourceDisplay(record.source),
+            installedAt: record.installedAt,
+            digest: record.digest,
+          },
+        };
   if (mode.kind === "already_installed") {
-    // Nothing would be prompted; the install-mode render is the summary of what is installed.
-    return { prompt: await buildPrompt(r, "install", undefined, deps), mode: "already_installed" };
+    // Nothing would be prompted: the summary of what is installed, headed as installed.
+    const prompt = await buildPrompt(r, "installed", undefined, deps);
+    return { prompt, mode: "already_installed", ...installed };
   }
   const prev = mode.kind === "update" ? mode.prev : undefined;
-  return { prompt: await buildPrompt(r, mode.kind, prev, deps), mode: mode.kind };
+  return { prompt: await buildPrompt(r, mode.kind, prev, deps), mode: mode.kind, ...installed };
 }
 
 /** No approval: removing a pack only takes its defaults away. An unknown id is `removed: false`. */
@@ -379,8 +442,7 @@ function installedEntry(
   deps: PackDeps,
 ): PackListResult["installed"][number] {
   const bundled = deps.bundled.get(id);
-  const text = deps.store.readPackRecord(profile, id);
-  const record = text === undefined ? undefined : parsePackRecord(text);
+  const record = readRecord(profile, id, deps.store);
   if (record === undefined) {
     // Version unknown: for a bundled id that is "update available" (spec § 5.4).
     return {
