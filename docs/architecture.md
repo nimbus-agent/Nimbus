@@ -2558,6 +2558,8 @@ Settings resolve through ONE reader per config directory (`packages/gateway/src/
 
 **Pack layers.** A pack layer is a TOML fragment at `<configDir>/packs/<profile>/<id>.toml`, listed in that profile directory's `active.json` (`{"version":1,"packs":[...]}`); it sits below `nimbus.toml` in the merge order, so the user's own files always win. `packs/pack-layer-store.ts` owns the files and `config/pack-settable.ts` is the allowlist: `[fleet]` `enabled`/`min_idle_seconds`/`require_ac_power`/`retention_days`, `[[fleet.job]]` and `[decisions]` `min_confidence`; anything else is refused. Refusal is whole-layer: one bad key refuses the whole fragment on write and skips the whole file on read. Reading never throws: a skipped pack, or an unreadable `active.json`, is recorded on the snapshot (`skippedPacks`, `packListError`) and reported with basename-safe reasons by `diag.snapshot`, `nimbus config explain` notes and `nimbus doctor`. When a pack is written (`setPackLayer`), the write is refused if another pack in the profile sets the same scalar to a different value (compared as parsed values) or contributes a `[[fleet.job]]` with the same name; equal values are accepted. The user's own files are not consulted for that check, since they override packs either way. No IPC method or CLI command writes a pack layer, and nothing installs one yet, so on a current install the pack list is empty.
 
+**Agent visibility and the catalog.** `[agents] visible` is a pack-settable list (unioned across packs); the owner's `nimbus.toml` and profile file add `show` and `hide` (`catalog/agent-visibility.ts`). The set starts as every agent, or the union of the packs' lists when any pack sets one; per agent the highest user layer that names it decides, `hide` beating `show` within a layer; `visible` in a user file is ignored and `config explain` says so; unknown names are reported, not fatal. This is presentation only: no gate, dispatcher, HTTP route, MCP tool, fleet or ChatOps path reads it, so hiding an agent never refuses a call, and the `agents-rpc.ts` validators stay the only enforcement. `catalog.list` (`ipc/catalog-rpc.ts`, `catalog/catalog-list.ts`) returns the agents with `visible`, the connectors (built-in, installed extensions, owner-registered MCP servers; owner-added text is returned raw and the CLI strips control characters) and the visibility summary. It is LAN-forbidden and not on the Tauri allowlist; `nimbus catalog` is its only client.
+
 ### IPC Protocol
 
 All client ↔ Gateway communication uses JSON-RPC 2.0. The protocol is language-agnostic — a VS Code extension, browser extension, or mobile app over LAN can connect to the same Gateway without protocol changes.
@@ -2750,6 +2752,8 @@ const streamReq: JSONRPCRequest = {
 // admin.status      — GatewayStatus snapshot for the admin console (read; renderer-exposed)
 // config.explain    — where one config value (or every value) came from across the layers (read; CLI-only, LAN-forbidden,
 //   absent from the Tauri allowlist; params {path?}); diag.snapshot also gains a `configLayers` field (profile + layer list)
+// catalog.list      — the built-in agents (with visible) and every connector on the install (read; CLI/desktop-callable,
+//   LAN-forbidden, NOT on the Tauri allowlist yet; no params)
 // Federation wire (peer ↔ peer over LanServer): federation.policy (serve signed policy),
 //   federation.auditExport (audit-log shipper), federation.purge (HITL-gated serve + signed deletion record)
 //

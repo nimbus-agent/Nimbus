@@ -552,6 +552,11 @@ Built-in agents that answer team-level questions from the local relationship gra
 |---|---|---|
 | `synthesis` | `"local"` | `"off"` never attempts a rewrite — every brief is the deterministic render, regardless of `[llm]` settings. `"local"` attempts a rewrite only when the resolved provider is local (Ollama or llama.cpp); a resolved remote provider is refused outright, so nothing egresses by construction. `"allow-remote"` additionally permits a non-local provider, appending a `model`-class `egress_ledger` row (I29) before that call. An unrecognised value falls back to `"local"`, never widening to `"allow-remote"` on a typo. |
 | `synthesis_timeout_ms` | `20000` | How long a synthesis attempt is raced against before it is abandoned as `timeout` and the deterministic render is used instead. Deliberately generous: briefs are fire-and-forget, so this does not gate a caller — it exists so a hung provider still yields a brief. The underlying provider call is not cancelled at timeout (no `AbortSignal` support), only abandoned. |
+| `show` | none | A list of agent names the catalog should show (`nimbus catalog`, desktop). Short names (`decisions`); an `agents.` prefix is accepted and ignored. Read from `nimbus.toml` and `nimbus.<profile>.toml` only. |
+| `hide` | none | A list of agent names the catalog should list as hidden. Same name rules as `show`. |
+| `visible` | none | **Set by a pack, not by you.** A pack layer may set `[agents] visible` to a list of agents; the lists of all active packs are unioned. If no pack sets it, every agent is visible. A `visible` key in your own `nimbus.toml` is ignored, and `nimbus config explain` says so. |
+
+**Agent visibility is presentation only.** It decides what `nimbus catalog` and the desktop list mark as shown or hidden, and nothing else: hiding an agent never refuses a call. `nimbus <agent>`, `agents.*` over IPC, the HTTP API, the MCP server, ChatOps and fleet jobs all answer for a hidden agent exactly as for a visible one. Precedence: the starting set is every agent, or the union of the packs' `visible` lists when any pack sets one. For each agent, the highest of your layers (`nimbus.<profile>.toml` over `nimbus.toml`) that names it decides; within one layer, `hide` beats `show`. A name that matches no agent is reported by `nimbus config explain`, not an error.
 
 **Configuration — `[persona]`, read from the profile-resolved TOML (see below):**
 
@@ -565,6 +570,19 @@ Built-in agents that answer team-level questions from the local relationship gra
 Applies to **three** surfaces: `nimbus ask`, every built-in agent brief, and — because a `@nimbus <question>` mention runs through the same `runAsk` pipeline — **ChatOps replies in Slack/Teams**. That third one is worth stating plainly: an `opinionated` or `collective` voice configured for your own machine will be visible to everyone in the channel the bot answers in. It carries no new content and no new egress — only tone — and it is the owner's own configured voice on the owner's own ChatOps integration, which is why it is not scoped out: doing so would make ChatOps replies the one surface that ignores your persona. It composes with `--devil` (persona directive outermost, `--devil`'s directive innermost, closest to the question). Every `tone` and `voice` value governs register and stance, never what gets said — no persona directive may tell the model to omit content. A `terse` persona can still raise the rate at which a brief falls back to its deterministic rendering, because the honesty contract that protects every brief discards a rewrite that drops a required disclosure rather than risk losing it — that is the contract working, not a bug, and the resolved persona rides the `briefReady` notification's `synthesis` field alongside the discard reason, so a `contract_violation` under `tone = "terse"` is self-explanatory.
 
 **Not supported:** `tool_caution` (HITL escalation levels) and `confidence_threshold` (how often the agent admits uncertainty) are not configuration keys. Both were rejected, not deferred — a knob that loosens what triggers the HITL consent gate, or one that lets the agent suppress an uncertainty admission, is prohibited on the same grounds as the consent gate itself.
+
+### `nimbus catalog`
+
+```text
+nimbus catalog [agents|connectors] [--json]
+```
+
+Lists the built-in agents and the connectors on this install, with short descriptions. Read-only; it calls `catalog.list` (CLI and desktop only, not LAN-reachable) and touches no connector.
+
+- With no subcommand it prints both lists. An unknown subcommand prints the usage and exits 1.
+- The agents table has `name`, `shown`, `category` and `description`. `shown` reads `shown` or `hidden` per the visibility rules under [Team Intelligence](#team-intelligence) (`[agents] show`/`hide`, pack `visible`); a one-line summary of where the visibility came from comes first. Hidden agents are listed, not removed, and still run.
+- The connectors table has `id`, `name` and `category`: the built-in connectors first, then extensions you installed and MCP servers you registered. Names for those two come from owner-added code, so control characters are stripped before printing, and a missing name prints `(no name)`.
+- `--json` prints the raw result: `{ agents, connectors, visibility }` with no subcommand, `{ agents, visibility }` for `agents`, `{ connectors }` for `connectors`.
 
 ### `nimbus expert`
 
