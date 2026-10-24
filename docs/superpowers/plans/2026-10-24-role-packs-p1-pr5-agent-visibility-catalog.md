@@ -255,7 +255,7 @@
   - `catalog.test.ts`, with an injected IPC fake in the style of the neighbouring command tests:
     - `prints hidden agents as hidden`.
     - `--json prints only the requested half`.
-    - `strips control characters from an extension name`: the name `"evil\u001b[2Jname"` prints as `evilname` or with the escape removed, and the output contains no `\u001b`.
+    - `strips control characters from an extension name`: the name `"evil\u001b[2Jname"` is printed, and the output contains `evil` and no `\u001b`.
     - `unknown subcommand exits 1`.
   - `catalog-list.e2e.test.ts` boots a real gateway subprocess in the style of `test/e2e/explain-last.e2e.test.ts`, with a temp configDir whose `nimbus.toml` holds `[agents]\nhide = ["decisions"]`:
     - `catalog.list routes over the real socket and reports decisions hidden`.
