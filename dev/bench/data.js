@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792836774233,
+  "lastUpdate": 1792842813079,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e898a1e9e204c8720050b44b73b37c52611690fc",
-          "message": "feat(gateway): read the ownership graph through the agents.ownership brief (#1067)\n\nPR A (#1064, `82c03d27`) derives an ownership graph from\nrecency-weighted git blame on every connector sync and writes it to\nSQLite. Nothing could read it. This PR makes it observable.\n\nDelivered as a built-in read-only agent rather than the `ownership.*`\nIPC namespace the design spec originally scoped, because the constraint\nthat motivated that split — a collision with the then-in-flight\nHTTP-agents PR 2 over `AGENTS_RPC_HANDLERS` — disappeared when #1063\nmerged. Registering in that map grants `POST /v1/agents/ownership` and\negress-ledger coverage by derivation, so one PR reaches CLI + HTTP + MCP\ninstead of CLI + Tauri.\n\n## Surface\n\n```\nagents.ownership  { path? , service? }   → { sessionId } → ownership.briefReady\nownership.refresh { }                    → { jobId }     → ownership.passDone\nnimbus owners [<path>] [--service <name>] [--json] [--refresh]\n```\n\nThree request modes, one brief: by path (file or directory, including\nthe repo root), by service, or neither for a coverage summary. Plus an\nMCP `findOwners` tool.\n\n## Four writer-side corrections\n\nThese had to land before anything read the data, because the read\nsurface would otherwise have faithfully reported a wrong number.\n\n1. **`truncated` conflated the share floor with the display cap.**\n`rankOwners` filters by `min_share` and *then* slices to\n`max_owners_per_path`, but `truncated` compared the emitted count\nagainst the total before *either* step — so it fired whenever anyone\nfell below the floor, even when the cap never bound. A file with 23\ncontributors of whom 3 clear 5% reported `truncated: true`, which a read\nsurface would render as \"showing top 3 of 23\": false twice over.\n`rankOwners` now returns `aboveFloor`, captured between the two steps,\nand `truncated` means the cap bound and nothing else.\n2. **`service` entities carried no metadata at all**, so `--service` —\nthe one lookup the whole `workspace → repo → service` bridge exists to\nserve — could not state its own truncation.\n3. **`OwnershipRefresherError`** now carries `rpcCode`, mirroring\n`DecisionRefresherError`, so a caller branches on the class rather than\nstring-matching a message.\n4. **`run()` had no production caller.** It was constructed in\n`assemble.ts` and its `stop()` registered, but never assigned into the\nIPC options. `ownership.refresh` is its first.\n\nAll three metadata sites now go through one `ownerCountsMetadata()`\nconstructor, so they agree by construction — the defect being fixed was\ntwo sites having independently drifted.\n\n## Reading rows written before this PR\n\n`parseCounts` gates `truncated` on `ownersAboveFloor` being present,\n**not** on `truncated` being present. A PR A row carries a `truncated`\nboolean whose meaning was wrong, so it is discarded rather than\nsurfaced, and the brief says the breakdown is unrecorded. `null` there\nmeans exactly one thing — *not recorded* — and never doubles as \"no\ntruncation\".\n\n## Counts and invariants\n\n| Site | Before | After |\n| --- | --- | --- |\n| `AGENTS_RPC_HANDLERS` | 12 | 13 |\n| `HTTP_AGENT_NAMES` (derived) | 10 | 11 |\n| `gateway_bridge.rs` `ALLOWED_METHODS` | 103 | 104 |\n| MCP `DEFS` / `TOOL_SPECS` | 10 / 17 | 11 / 18 |\n| `WRITE_ROUTE_ALLOWLIST` | 13 | **13 — unchanged** |\n| `CURRENT_SCHEMA_VERSION` | 51 | **51 — no migration** |\n\n- **I7** — only the read-only brief is renderer-callable.\n`ownership.refresh` is not, enforced by a named test asserting both\ndirections, because a one-for-one substitution would leave the size\nassertion green while inverting the property.\n- **I5** — `\"ownership\"` joins `FORBIDDEN_OVER_LAN`;\n`checkLanMethodAllowed` matches namespace *or* full method, so that one\nstring forbids the maintenance verb while leaving `agents.ownership`\nadmitted under `agents`.\n- **I29** — inherited via handler-map membership, no new ledger code.\nProven on all three transports: an MCP caller appends exactly one\n`source_type='mcp'` row, an HTTP caller exactly one `'http'`, a CLI\ncaller zero. Both row assertions query the ledger **unfiltered**, so a\nspurious row of another type fails them.\n\n`ownership.refresh` takes no parameters, and that is a safety property\nrather than tidiness: the pass clears every `person --owns--> service`\nedge wholesale and re-emits only what is reachable from `opts.roots`, so\na caller-supplied root list would *erase* the ownership of every service\nthe omitted roots bind, and report success.\n\n## An exhaustiveness guard, proven at compile time\n\n`synthesize.ts`'s two dispatches previously ended in a bare `return\nrenderHuddle(brief)` / `return \"agents.huddle\"`. Adding a brief kind\nwithout adding both arms compiled, ran, rendered the new brief as a\nhuddle, and mislabelled its I11 tool-output envelope — silently. Both\nnow end in `assertNeverBrief(x: never)`.\n\nVerified by deleting an arm and observing `synthesize.ts(94,27): error\nTS2345: Argument of type 'OwnershipBrief' is not assignable to parameter\nof type 'never'`. No runtime test can observe a type error, so that is\nthe evidence.\n\n## Honesty properties\n\nOwnership here is **authorship-derived** — who wrote the lines, not who\nis accountable. There is no CODEOWNERS, no reviewer data and no on-call\nrotation in the index. Every brief carries that as an unconditional gap\nnote; the conditional notes fire only when their counter shows they bit.\n\nThe renderer distinguishes \"contributors exist, none cleared the share\nfloor\" from \"nothing recorded\". Those had rendered identically, which is\nthe same class of false claim the `parseCounts` logic above exists to\nprevent.\n\n## Verification\n\n`test:ci` exit 0. `typecheck` exit 0. `lint:markdown` exit 0.\n`preflight:fast` 28/28.\n\nFull local `preflight` exits 1 on `audit:coverage-floor` from two\npre-existing files untouched here (`platform/linux.ts`,\n`ipc/server/socket-listeners.ts`) — the known Windows-only\nfalse-violation mode. Coverage was cross-verified clean inside\n`oven/bun:1.3` via `verify:docker --full`, **at an earlier commit**; the\ndelta since is a TypeScript-test-only fix plus documentation, verified\nlocally. CI on this push is the authoritative check.\n\nThat same Docker run caught the one defect on this branch that would\nhave shipped red CI: `security-invariants.test.ts` contains a text-scan\nasserting the Rust allowlist count, which the `103 → 104` bump broke.\nIts 3-line diff is required, not incidental.\n\n## Follow-ups, deliberately out of scope\n\n- `DecisionsRpcError` was verified equally dead as the\n`OwnershipRpcError` removed here (both refreshers' rejections are\nunobservable synchronously; `glossary-rpc.ts` is the real contrast,\nthrowing before `registry.start()`). Direction is to remove it, not\nre-add ours.\n- Nothing guards `COMMAND_NAMES` ↔ `COMMAND_HANDLERS` drift. Typing the\nlatter `Record<CommandName, CommandHandler>` would make drift a compile\nerror, but surfaces every existing gap at once.\n- The \"zero `egress_ledger` rows\" line in `docs/architecture.md` is also\nwrong for the glossary and decisions entries; only ownership's was\ncorrected here.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added ownership insights for files, directories, repositories, and\nconfigured services.\n* Added the `nimbus owners` command with path, service, JSON, and\nrefresh options.\n* Added ownership lookups through supported agent, MCP, HTTP, LAN, and\ndesktop interfaces.\n* Added read-only ownership refresh controls with progress, completion,\nand error notifications.\n* **Bug Fixes**\n* Improved ownership ranking and coverage reporting to distinguish\nfiltered and truncated results.\n* **Documentation**\n* Updated user guides, CLI references, architecture documentation,\nchangelog, roadmap, and security guidance.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-07T15:14:17+03:00",
-          "tree_id": "d1ccaf56b3ac133c59780f84e9f84be2949f69cb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e898a1e9e204c8720050b44b73b37c52611690fc"
-        },
-        "date": 1786105549397,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.1738808000002,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.69894214999147,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 271.7706837499991,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "17619088e67ba7174a3541e82d6753f33c4568d1",
+          "message": "test(search): bench vector and hybrid search latency at scale (#1759)\n\n## Summary\n\nAdds `packages/gateway/test/benchmark/vector-search-latency.test.ts`, a\nlatency benchmark for vector search (`vectorSearchChunks`) and\nsession-memory recall (`SessionMemoryStore.recall`) at scale: 4,000\nindexed items and 2,000 session turns.\n\nThe suite measured search quality and plain SQL item queries, but never\nvector-search latency. #1500 fixed the same quadratic defect in both\nqueries: the sqlite-vec KNN re-ran once per joined row until the query\nwas changed to `CROSS JOIN`, which is a planner hint. The `EXPLAIN QUERY\nPLAN` tests pin that keyword. This benchmark pins the number instead, so\nit also catches a different quadratic path that a plan check would not\nanticipate.\n\n- **Bounds:** a generous p95 bound of 2,000 ms by default, loose enough\nfor CI runners that are 13–18× slower than a dev machine.\n`NIMBUS_RUN_QUERY_BENCH=1` switches to a tight bound for local\nregression hunting. This is the same convention as\n`item-query-latency.test.ts`.\n- **Skips** when sqlite-vec cannot load.\n- **Inputs:** the corpus and query come from a fixed-seed generator, so\nevery run on every platform is identical.\n- **Test only.** No production code changes.\n\n## Verification\n- Proven by reverting the fix. With #1500's change undone by hand\n(`INNER JOIN` restored in `session-memory-store.ts`), recall took about\n22 s and the test failed. With the fix in place, both cases finish in\nsingle-digit milliseconds. The reverting edit was discarded and is not\nin this PR.\n- Locally: 2 pass, 0 fail, 3.2 s for the file. The per-test timeouts are\n60 s and 120 s.\n- `bun run preflight:fast` passed.\n- This commit was written on 2026-09-12 and rebased onto current `main`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Added optional performance benchmarks to track vector search and\nsession-memory recall latency across larger datasets. The benchmarks\nverify that expected results are returned and use relaxed limits unless\nexplicitly enabled.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-24T11:45:23Z",
+          "tree_id": "7f641a399dd63fea3c01654ad5b5befed5142cb9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/17619088e67ba7174a3541e82d6753f33c4568d1"
+        },
+        "date": 1792842809045,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 218.340955199999,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 217.01416494999793,
             "unit": "ms"
           }
         ]
