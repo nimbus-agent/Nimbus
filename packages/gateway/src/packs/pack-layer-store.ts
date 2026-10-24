@@ -5,7 +5,15 @@
 // a broken pack is skipped whole and reported, never fatal. The user's own config files are
 // never read or written here.
 
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, unlinkSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { PROFILE_NAME_RE } from "../config/active-profile.ts";
 import {
@@ -30,16 +38,63 @@ import { checkPackFleetJobs } from "./pack-job-check.ts";
 const ACTIVE_FILE = "active.json";
 const ACTIVE_VERSION = 1;
 
+/** A record holds a whole manifest (at most 128 KiB) plus a few fields. */
+export const PACK_RECORD_MAX_BYTES = 256 * 1024;
+
+/**
+ * `O_NONBLOCK` so opening a FIFO returns at once instead of waiting for a writer; `fstat` on the
+ * same descriptor then refuses anything that is not a regular file. Windows has no FIFOs (`0`).
+ */
+const READ_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
+
+type RegularRead =
+  | { readonly ok: true; readonly text: string }
+  | { readonly ok: false; readonly reason: "missing" | "not a regular file" | "too large" }
+  | { readonly ok: false; readonly reason: "error"; readonly err: unknown };
+
+/** Reads a regular file of at most `maxBytes` through the one descriptor that was checked. */
+function readRegularFile(path: string, maxBytes: number): RegularRead {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, READ_FLAGS);
+    const st = fstatSync(fd);
+    if (!st.isFile()) return { ok: false, reason: "not a regular file" };
+    if (st.size > maxBytes) return { ok: false, reason: "too large" };
+    return { ok: true, text: readFileSync(fd, "utf8") };
+  } catch (err) {
+    if (isEnoent(err)) return { ok: false, reason: "missing" };
+    // Windows refuses to open a directory at all; Linux and macOS open it and fstat says so.
+    if (hasCode(err, "EISDIR")) return { ok: false, reason: "not a regular file" };
+    return { ok: false, reason: "error", err };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** Why a layer was refused: the store is unreadable, the input is bad, or it clashes with a pack. */
+export type PackLayerRefusalReason = "store" | "invalid" | "conflict";
+
 /** Every refusal from `setPackLayer`/`removePackLayer`; the message joins `problems`. */
 export class PackLayerRefusedError extends Error {
   readonly problems: readonly string[];
+  readonly reason: PackLayerRefusalReason;
 
-  constructor(problems: readonly string[]) {
+  constructor(problems: readonly string[], reason: PackLayerRefusalReason) {
     super(problems.join("; "));
     this.name = "PackLayerRefusedError";
     this.problems = problems;
+    this.reason = reason;
   }
 }
+
+/** The result of `checkPackLayer`: what `setPackLayer` would refuse, without writing anything. */
+export type PackLayerCheck =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly reason: PackLayerRefusalReason;
+      readonly problems: readonly string[];
+    };
 
 export type PackWriteResult = {
   readonly path: string;
@@ -53,7 +108,19 @@ export type PackWriteResult = {
  * fails at the unlink has already delisted the pack, which is inert.
  */
 export type PackLayerStore = PackLayerSource & {
-  setPackLayer(profile: string, packId: string, fragment: string): PackWriteResult;
+  /** `opts.record` is written beside the layer as `<id>.pack.json`, between the layer and the list. */
+  setPackLayer(
+    profile: string,
+    packId: string,
+    fragment: string,
+    opts?: { readonly record?: string },
+  ): PackWriteResult;
+  /** The refusals `setPackLayer` would throw, as a value; writes nothing. */
+  checkPackLayer(profile: string, packId: string, fragment: string): PackLayerCheck;
+  /** The raw `<id>.pack.json`; undefined when absent or unreadable. */
+  readPackRecord(profile: string, packId: string): string | undefined;
+  /** The raw on-disk `<id>.toml`; undefined when absent or unreadable. */
+  readPackLayerText(profile: string, packId: string): string | undefined;
   removePackLayer(profile: string, packId: string): PackWriteResult & { readonly removed: boolean };
 };
 
@@ -118,11 +185,22 @@ export function packSkipLogLines(
   return lines;
 }
 
-function assertNames(profile: string, packId: string): void {
+function nameProblems(profile: string, packId: string): string[] {
   const problems: string[] = [];
   if (!PROFILE_NAME_RE.test(profile)) problems.push("invalid profile name");
   if (!PACK_ID_RE.test(packId)) problems.push("invalid pack id");
-  if (problems.length > 0) throw new PackLayerRefusedError(problems);
+  return problems;
+}
+
+/** The text of a regular file of at most `maxBytes`; anything else (missing, FIFO, …) is undefined. */
+function readText(path: string, maxBytes: number): string | undefined {
+  const read = readRegularFile(path, maxBytes);
+  return read.ok ? read.text : undefined;
+}
+
+function assertNames(profile: string, packId: string): void {
+  const problems = nameProblems(profile, packId);
+  if (problems.length > 0) throw new PackLayerRefusedError(problems, "invalid");
 }
 
 function conflicts(
@@ -153,9 +231,14 @@ export function createPackLayerStore(opts: {
   configDir: string;
   checkJobs?: PackJobChecker;
   onChange?: (profile: string) => number | null;
+  /** Test seam: the atomic file writer. */
+  writeFile?: (path: string, content: string) => void;
 }): PackLayerStore {
   const configDir = resolve(opts.configDir);
   const checkJobs = opts.checkJobs ?? checkPackFleetJobs;
+  const writeFile =
+    opts.writeFile ??
+    ((path: string, content: string) => writeUtf8FileAtomicReplace(path, content));
   const onChange =
     opts.onChange ??
     ((profile: string): number | null => {
@@ -172,17 +255,19 @@ export function createPackLayerStore(opts: {
   const profileDir = (profile: string): string => join(configDir, "packs", profile);
   const packPath = (profile: string, id: string): string => join(profileDir(profile), `${id}.toml`);
 
+  const recordPath = (profile: string, id: string): string =>
+    join(profileDir(profile), `${id}.pack.json`);
+
   function readActive(profile: string): ActiveList {
-    let raw: string;
-    try {
-      raw = readFileSync(join(profileDir(profile), ACTIVE_FILE), "utf8");
-    } catch (err) {
-      if (isEnoent(err)) return { ok: true, ids: [] };
-      return { ok: false, error: `could not read ${ACTIVE_FILE}: ${safe(errMessage(err))}` };
+    const read = readRegularFile(join(profileDir(profile), ACTIVE_FILE), PACK_FRAGMENT_MAX_BYTES);
+    if (!read.ok && read.reason === "missing") return { ok: true, ids: [] };
+    if (!read.ok) {
+      const why = readFailure(read, PACK_FRAGMENT_MAX_BYTES);
+      return { ok: false, error: `could not read ${ACTIVE_FILE}: ${why}` };
     }
     let doc: unknown;
     try {
-      doc = JSON.parse(raw);
+      doc = JSON.parse(read.text);
     } catch {
       return { ok: false, error: `${ACTIVE_FILE} is not valid JSON` };
     }
@@ -202,28 +287,17 @@ export function createPackLayerStore(opts: {
     profile: string,
     id: string,
   ): { text: string; pack: CleanPack } | { reason: string } {
-    const path = packPath(profile, id);
-    // One handle for the stat and the read, so the file checked is the file read.
-    let fd: number | undefined;
-    try {
-      fd = openSync(path, "r");
-      const st = fstatSync(fd);
-      if (!st.isFile()) return { reason: "not a regular file" };
-      if (st.size > PACK_FRAGMENT_MAX_BYTES) {
-        return { reason: `larger than ${PACK_FRAGMENT_MAX_BYTES} bytes` };
-      }
-      const text = readFileSync(fd, "utf8");
-      const check = checkPackFragment(text, checkJobs);
-      if (!check.ok) return { reason: refusedReason(check.problems, safe) };
-      return { text, pack: { id, scalars: check.scalars, jobNames: check.jobNames } };
-    } catch (err) {
-      if (isEnoent(err)) return { reason: "missing" };
-      // Windows refuses to open a directory at all; Linux and macOS open it and fstat says so.
-      if (hasCode(err, "EISDIR")) return { reason: "not a regular file" };
-      return { reason: safe(errMessage(err)) };
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-    }
+    const read = readRegularFile(packPath(profile, id), PACK_FRAGMENT_MAX_BYTES);
+    if (!read.ok) return { reason: readFailure(read, PACK_FRAGMENT_MAX_BYTES) };
+    const check = checkPackFragment(read.text, checkJobs);
+    if (!check.ok) return { reason: refusedReason(check.problems, safe) };
+    return { text: read.text, pack: { id, scalars: check.scalars, jobNames: check.jobNames } };
+  }
+
+  function readFailure(read: Exclude<RegularRead, { ok: true }>, maxBytes: number): string {
+    if (read.reason === "too large") return `larger than ${maxBytes} bytes`;
+    if (read.reason === "error") return safe(errMessage(read.err));
+    return read.reason;
   }
 
   function readDetailed(profile: string): DetailedRead {
@@ -261,12 +335,31 @@ export function createPackLayerStore(opts: {
 
   function activeIds(profile: string): readonly string[] {
     const active = readActive(profile);
-    if (!active.ok) throw new PackLayerRefusedError([active.error]);
+    if (!active.ok) throw new PackLayerRefusedError([active.error], "store");
     return active.ids;
   }
 
+  /** The one check, in write order. A pass carries the listed ids so the writer reads once. */
+  function check(
+    profile: string,
+    packId: string,
+    fragment: string,
+  ): PackLayerCheck & { readonly ids?: readonly string[] } {
+    const names = nameProblems(profile, packId);
+    if (names.length > 0) return { ok: false, reason: "invalid", problems: names };
+    const current = readDetailed(profile);
+    if (current.listError !== undefined) {
+      return { ok: false, reason: "store", problems: [current.listError] };
+    }
+    const parsed = checkPackFragment(fragment, checkJobs);
+    if (!parsed.ok) return { ok: false, reason: "invalid", problems: parsed.problems };
+    const clash = conflicts(packId, parsed.scalars, parsed.jobNames, current.clean);
+    if (clash.length > 0) return { ok: false, reason: "conflict", problems: clash };
+    return { ok: true, ids: current.ids };
+  }
+
   function writeActive(profile: string, ids: readonly string[]): void {
-    writeUtf8FileAtomicReplace(
+    writeFile(
       join(profileDir(profile), ACTIVE_FILE),
       `${JSON.stringify({ version: ACTIVE_VERSION, packs: ids })}\n`,
     );
@@ -282,19 +375,42 @@ export function createPackLayerStore(opts: {
       }
     },
 
-    setPackLayer(profile: string, packId: string, fragment: string): PackWriteResult {
-      assertNames(profile, packId);
-      const current = readDetailed(profile);
-      if (current.listError !== undefined) throw new PackLayerRefusedError([current.listError]);
-      const check = checkPackFragment(fragment, checkJobs);
-      if (!check.ok) throw new PackLayerRefusedError(check.problems);
-      const clash = conflicts(packId, check.scalars, check.jobNames, current.clean);
-      if (clash.length > 0) throw new PackLayerRefusedError(clash);
-      const ids = current.ids;
+    checkPackLayer(profile: string, packId: string, fragment: string): PackLayerCheck {
+      const r = check(profile, packId, fragment);
+      return r.ok ? { ok: true } : r;
+    },
+
+    readPackRecord(profile: string, packId: string): string | undefined {
+      if (nameProblems(profile, packId).length > 0) return undefined;
+      return readText(recordPath(profile, packId), PACK_RECORD_MAX_BYTES);
+    },
+
+    readPackLayerText(profile: string, packId: string): string | undefined {
+      if (nameProblems(profile, packId).length > 0) return undefined;
+      return readText(packPath(profile, packId), PACK_FRAGMENT_MAX_BYTES);
+    },
+
+    setPackLayer(
+      profile: string,
+      packId: string,
+      fragment: string,
+      opts?: { readonly record?: string },
+    ): PackWriteResult {
+      const checked = check(profile, packId, fragment);
+      if (!checked.ok) throw new PackLayerRefusedError(checked.problems, checked.reason);
+      const ids = checked.ids ?? [];
       const path = packPath(profile, packId);
       mkdirSync(profileDir(profile), { recursive: true });
-      // A crash between the two writes leaves an unlisted file, which is inert.
-      writeUtf8FileAtomicReplace(path, fragment);
+      // Order: layer, record, list. A crash before the list write leaves an unlisted file, which
+      // is inert. On an UPDATE the id is already listed, so a crash between the layer and the
+      // record leaves the new, approved defaults live under the old record. That heals itself:
+      // `pack list` shows the old version and the next install sees a different digest and
+      // prompts as an update. Writing the record first would only give the mirror case (new
+      // record, old layer), which prompts as a repair.
+      writeFile(path, fragment);
+      if (opts?.record !== undefined) {
+        writeFile(recordPath(profile, packId), opts.record);
+      }
       if (!ids.includes(packId)) writeActive(profile, [...ids, packId]);
       return { path, snapshotVersion: onChange(profile) };
     },
@@ -310,11 +426,13 @@ export function createPackLayerStore(opts: {
           ids.filter((id) => id !== packId),
         );
       let deleted = false;
-      try {
-        unlinkSync(path);
-        deleted = true;
-      } catch (err) {
-        if (!isEnoent(err)) throw err;
+      for (const file of [path, recordPath(profile, packId)]) {
+        try {
+          unlinkSync(file);
+          deleted = true;
+        } catch (err) {
+          if (!isEnoent(err)) throw err;
+        }
       }
       const removed = listed || deleted;
       return { path, snapshotVersion: removed ? onChange(profile) : null, removed };

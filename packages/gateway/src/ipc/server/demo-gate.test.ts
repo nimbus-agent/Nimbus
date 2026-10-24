@@ -61,6 +61,8 @@ describe("demoRefusal", () => {
     "registry.list",
     "registry.refresh",
     "registry.remove",
+    "pack.install",
+    "pack.remove",
     "migration.accept",
     "migration.decline",
     "migration.retry",
@@ -75,6 +77,8 @@ describe("demoRefusal", () => {
     "diag.snapshot",
     "connector.listStatus",
     "migration.list",
+    "pack.list",
+    "pack.show",
   ])("%s is allowed", (m) => {
     expect(demoRefusal(m)).toBeUndefined();
   });

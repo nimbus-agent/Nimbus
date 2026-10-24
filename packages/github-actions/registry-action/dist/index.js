@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:5d830fd0f3b8a337a71493c1eba9560845abb7c22b0f56397f6cf78c41e1a290
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:cb621d97e6c052ac913790d743560a185d78160869053e9e1898aef857a72038
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5312,7 +5312,7 @@ function registryIndexSigningBytes(index) {
   return new TextEncoder().encode(canonicalize(rest));
 }
 function verifyRegistryIndexSelf(index) {
-  return Promise.try(() => assertRegistryIndexSelf(index));
+  return new Promise((resolve) => resolve(assertRegistryIndexSelf(index)));
 }
 function assertRegistryIndexSelf(index) {
   let ok;
@@ -8677,10 +8677,10 @@ function publicKeyFromSeed(seed) {
 }
 var SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 function signIndex(unsigned, privkey) {
-  return Promise.try(() => {
+  return new Promise((resolve) => {
     const { signature: _omitted, ...rest } = unsigned;
     const sig = sign(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
-    return { ...rest, signature: sig.toString("base64") };
+    resolve({ ...rest, signature: sig.toString("base64") });
   });
 }
 // ../../registry-format/src/validate-publish.ts

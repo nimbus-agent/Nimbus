@@ -584,6 +584,27 @@ Lists the built-in agents and the connectors on this install, with short descrip
 - The connectors table has `id`, `name` and `category`: the built-in connectors first, then extensions you installed and MCP servers you registered. Names for those two come from owner-added code, so control characters are stripped before printing, and a missing name prints `(no name)`.
 - `--json` prints the raw result: `{ agents, connectors, visibility }` with no subcommand, `{ agents, visibility }` for `agents`, `{ connectors }` for `connectors`.
 
+### `nimbus pack`
+
+```text
+nimbus pack list [--json]
+nimbus pack show <id> | --file <path> [--json]
+nimbus pack install <id> | --file <path>
+nimbus pack remove <id>
+```
+
+A role pack is a curated settings layer (agent visibility, fleet jobs, defaults) for one role. The gateway must be running. All four verbs are CLI-only: refused over LAN and on a `--demo` root, and not on the Tauri allowlist. They act on the **active profile**.
+
+- `list` prints the packs installed on the active profile (marking `update available` when the bundled copy differs from the installed one, and naming any pack whose layer was skipped and why) and the bundled packs you could install (`pm`, `devops`). `--json` prints the raw result.
+- `show` prints the exact prompt `install` would ask you, plus an `Installed:` line when the pack is already installed. It changes nothing. Pack-supplied text is shown visibly escaped, never raw.
+- `install` asks under the `pack.install` approval and writes the pack as a layer under the profile. It needs a terminal on both stdin and stdout and has **no `--yes`**: it refuses `Refusing to install a pack in non-TTY mode`. Installing an identical pack again is `already installed`; a damaged or hand-edited layer file is offered as a repair. A delegate never approves it.
+- `--file <path>` installs a pack from a local file (at most 131072 bytes). A local-file pack is **refused in a production build** (`ERR_PACK_LOCAL_FILE_PRODUCTION`); only bundled packs install there.
+- `remove` deletes the pack's layer without a prompt. Removing a pack that is not installed prints `not installed` and is not an error.
+
+Errors print as `ERR_PACK_*: detail` and exit `1`; an unknown verb prints the usage and exits `2`.
+
+**What a pack never changes:** credentials (the Vault), network reach (no host or egress grant), approvals (the HITL gate and its action types) or your `nimbus.toml`. Your own file and profile layers still win over a pack, and the prompt marks a key `(your file overrides this)` when yours already sets it.
+
 ### `nimbus expert`
 
 Answer "who on my team has the most context on this?" — returns a ranked list of people drawn from indexed PR authorship, review participation, Slack thread activity, and Linear/Jira ticket assignments. Each ranking comes with a confidence score and the underlying evidence.

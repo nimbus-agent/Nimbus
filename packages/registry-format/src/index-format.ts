@@ -317,11 +317,12 @@ export function registryIndexSigningBytes(
 }
 
 /**
- * `Promise.try`, not `async`: nothing here awaits, but a refusal must still reach the caller as a
- * rejection, as it always has.
+ * Not `async`: nothing here awaits, but a refusal must still reach the caller as a rejection, as
+ * it always has. The executor's throw becomes that rejection. Not `Promise.try`: the registry
+ * action bundles this package and runs under the runner's Node, which may not have it.
  */
 export function verifyRegistryIndexSelf(index: RegistryIndex): Promise<void> {
-  return Promise.try(() => assertRegistryIndexSelf(index));
+  return new Promise((resolve) => resolve(assertRegistryIndexSelf(index)));
 }
 
 function assertRegistryIndexSelf(index: RegistryIndex): void {

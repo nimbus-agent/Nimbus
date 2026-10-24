@@ -57,14 +57,18 @@ export function emptyIndex(rootKeyB64: string): Omit<RegistryIndex, "signature">
   };
 }
 
-/** `Promise.try`, not `async`: nothing here awaits, but a bad key still rejects rather than throws. */
+/**
+ * Not `async`: nothing here awaits, but a bad key still rejects rather than throws (the executor's
+ * throw becomes the rejection). Not `Promise.try`: the registry action runs this under the
+ * runner's Node, which may not have it.
+ */
 export function signIndex(
   unsigned: Omit<RegistryIndex, "signature">,
   privkey: Uint8Array,
 ): Promise<RegistryIndex> {
-  return Promise.try(() => {
+  return new Promise((resolve) => {
     const { signature: _omitted, ...rest } = unsigned as RegistryIndex;
     const sig = sign(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
-    return { ...rest, signature: sig.toString("base64") };
+    resolve({ ...rest, signature: sig.toString("base64") });
   });
 }

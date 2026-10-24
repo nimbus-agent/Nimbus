@@ -18,6 +18,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-24 — Role packs P3, PR 2: the PM and DevOps packs, and `nimbus pack` (invariant I47, new HITL type `pack.install`, no migration, no egress class).**
+  Two packs now ship inside the gateway, `pm` and `devops`, and `nimbus pack list|show|install|remove` manages
+  them on the active profile. `install` asks under the new `pack.install` approval (in the I2 frozen set) over the
+  exact prompt `show` prints; it needs a terminal and has no `--yes`, and a delegate never approves it. A pack is
+  written as a layer under the profile, so your own file and profile layers still win; the prompt marks a key your
+  file already sets. A pack never changes credentials, network reach, approvals or `nimbus.toml`. Re-installing an
+  identical pack is a no-op, a damaged layer file is offered as a repair, a bundled copy that differs from the installed one is an update with
+  a diff, and an unreadable `active.json` refuses before any prompt. `--file <path>` installs a local pack and is
+  refused in a production build. Invariant **I47**: a pack layer is written only behind that approval. `pack.*` is
+  CLI-only, LAN-forbidden, refused on a `--demo` root and absent from the Tauri allowlist. The DevOps pack sets no
+  `[oncall.push]` key yet. Not breaking: nothing a user wrote stops working.
+
 - **2026-10-24 — Role packs P1, PR 5: an agent and connector catalog, and agent visibility (no migration, no invariant, no egress class).**
   `nimbus catalog [agents|connectors] [--json]` lists the built-in agents and the connectors on the install with short
   descriptions. Packs can set `[agents] visible` (unioned across packs) and your own `nimbus.toml` or profile file can

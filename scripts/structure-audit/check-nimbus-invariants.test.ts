@@ -28,6 +28,7 @@ import {
   checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
   checkMigrationConfinement,
+  checkPackLayerWriters,
   checkPushClientKindConfinement,
   checkRegistryAppenderConfinement,
   checkRemoteVlmConfinement,
@@ -3532,5 +3533,69 @@ describe("D35 — config reads are confined to the layered reader", () => {
       files.push({ relPath: f.relPath, contents: f.contents });
     }
     expect(checkConfigReaderConfinement(files)).toEqual([]);
+  });
+});
+
+describe("D36 — only the store and pack-install.ts name the pack-layer writers (I47)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const STORE = "packages/gateway/src/packs/pack-layer-store.ts";
+  const INSTALL = "packages/gateway/src/packs/pack-install.ts";
+
+  test("allows the store and pack-install.ts", () => {
+    expect(
+      checkPackLayerWriters([
+        file(STORE, "setPackLayer(p, i, d, o) {}\nremovePackLayer(p, i) {}"),
+        file(
+          INSTALL,
+          "deps.store.setPackLayer(p, id, d, { record });\ndeps.store.removePackLayer(p, id);",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("FAILS on setPackLayer named anywhere else", () => {
+    const v = checkPackLayerWriters([
+      file(
+        "packages/gateway/src/ipc/pack-rpc.ts",
+        "const x = 1;\nstore.setPackLayer(p, id, d, o);",
+      ),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("pack-layer-writers");
+    expect(v[0]?.line).toBe(2);
+  });
+
+  test("FAILS on removePackLayer named anywhere else, and on a destructured alias", () => {
+    expect(
+      checkPackLayerWriters([
+        file("packages/gateway/src/ipc/server/dispatchers.ts", "store.removePackLayer(p, id);"),
+      ]),
+    ).toHaveLength(1);
+    expect(
+      checkPackLayerWriters([
+        file("packages/gateway/src/x.ts", "const { setPackLayer: w } = store;\nw(p, id, d, o);"),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("does not match a comment, a string, a look-alike identifier, a test file, or a non-gateway file", () => {
+    expect(
+      checkPackLayerWriters([
+        file(
+          "packages/gateway/src/x.ts",
+          '// setPackLayer(p)\n/* removePackLayer */\nconst m = "setPackLayer";\nconst setPackLayers = 1;',
+        ),
+        file("packages/gateway/src/y.test.ts", "store.setPackLayer(p, id, d, o);"),
+        file("scripts/z.ts", "store.removePackLayer(p, id);"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("is green on the repo", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkPackLayerWriters(files)).toEqual([]);
   });
 });

@@ -71,6 +71,9 @@ const FORBIDDEN_OVER_LAN = new Set([
   // Extension registries (PR 3): `registry.add` pins a trust root behind the LOCAL owner's HITL
   // prompt, and the rest drive outbound fetches. The WHOLE namespace is CLI-only.
   "registry",
+  // Role packs: `pack.install` writes the owner's config behind the LOCAL owner's HITL prompt.
+  // The WHOLE namespace is CLI-only.
+  "pack",
   // `nimbus explain last` — the WHOLE namespace, matching exec/computer/media/fleet/toolgen.
   // The record carries the owner's question VERBATIM and the titles of items retrieved from the
   // owner's private index, so a peer asking "explain the last ask" would receive the OWNER's ask.

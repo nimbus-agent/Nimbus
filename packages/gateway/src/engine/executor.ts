@@ -153,6 +153,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // the `registry.add` handler in ipc/registry-rpc.ts, through the gate-only executor that
   // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).
   "registry.add",
+  // Role-pack install (Project 3 PR 2): applying a pack writes settings to the owner's config
+  // layer. Gate site: packs/pack-install.ts, through the gate-only executor that
+  // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).
+  "pack.install",
   "connector.addMcp",
   "data.export",
   "connector.reindex",
@@ -285,22 +289,45 @@ export function consentDisplayPayload(action: PlannedAction): Record<string, unk
     const { fromRenderer: _audit, ...shown } = action.payload;
     return redactPayloadForConsentDisplay(shown) as Record<string, unknown>;
   }
+  if (action.type === "pack.install") {
+    // `promptText` is the prompt body itself (printed by formatConsentPrompt); repeating it as
+    // structured details would show the owner the same text twice.
+    const { promptText: _prompt, ...shown } = action.payload;
+    return redactPayloadForConsentDisplay(shown) as Record<string, unknown>;
+  }
   return redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>;
 }
 
 export function formatConsentPrompt(action: PlannedAction): string {
   const lines = [`Action requires your approval`, ``, `Type: ${action.type}`];
+  if (action.type === "pack.install" && typeof action.payload?.["promptText"] === "string") {
+    // The pack prompt is a purpose-built, escaped rendering; a JSON Details line would only add noise.
+    lines.push("", action.payload["promptText"]);
+    return lines.join("\n");
+  }
   if (action.payload !== undefined && Object.keys(action.payload).length > 0) {
     lines.push("", `Details: ${JSON.stringify(consentDisplayPayload(action))}`);
   }
   return lines.join("\n");
 }
 
+function omitPromptText(payload: Record<string, unknown>): Record<string, unknown> {
+  const { promptText: _prompt, ...rest } = payload;
+  return rest;
+}
+
 function auditPayload(
   action: PlannedAction,
   extras: { hitlRejectReason?: string } | undefined,
 ): string {
-  return redactAuditPayload(extras === undefined ? { action } : { action, ...extras });
+  // The prompt text can run to many lines of pack content; the row keeps the identifying fields.
+  const audited =
+    action.type === "pack.install" && action.payload !== undefined
+      ? { ...action, payload: omitPromptText(action.payload) }
+      : action;
+  return redactAuditPayload(
+    extras === undefined ? { action: audited } : { action: audited, ...extras },
+  );
 }
 
 /**
@@ -377,9 +404,16 @@ export class ToolExecutor {
   ): Promise<"approved" | "rejected" | "fallback"> {
     // I42: a delegate never approves a user-MCP call — the LOCAL owner always answers it.
     if (this.delegation === undefined || isUserMcpActionType(action.type)) return "fallback";
-    // I20: a delegate never approves a trust root (`registry.add`) or local code (`extension.*`);
-    // only the local owner can. Structural, not left to the gate's `delegation: undefined`.
-    if (action.type === "registry.add" || action.type.startsWith("extension.")) return "fallback";
+    // I20: a delegate never approves a trust root (`registry.add`), local code (`extension.*`) or a
+    // pack install (`pack.install`, which writes the owner's config); only the local owner can.
+    // Structural, not left to the gate's `delegation: undefined`.
+    if (
+      action.type === "registry.add" ||
+      action.type === "pack.install" ||
+      action.type.startsWith("extension.")
+    ) {
+      return "fallback";
+    }
     const del = this.delegation;
     const service = serviceOf(action.type);
     const now = Date.now();

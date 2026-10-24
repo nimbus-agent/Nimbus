@@ -182,7 +182,7 @@ bun run audit:dead-code                 # knip unused exports / orphan files (D7
 bun run audit:duplication               # jscpd token duplication (D6)
 bun run audit:exclusion-parity               # sonar.coverage.exclusions <-> local registry drift check
 bun run audit:any                       # D8 any-count print
-bun run audit:invariants                # static invariant complement D10–D35 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table, fleet and push ClientKinds, extension self-role sentinel + run-grant table + grant writers (D33(a)–(c)), toolgen brokered-fetch literal/generated-manifest/vault-key-prefix confinement, full-SQLite init before any bun:sqlite Database construction, listener-registry registration, and D25's hidden connector spawns) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
+bun run audit:invariants                # static invariant complement D10–D36 (spawn rule, vault-key allow-list, SQL writes, federation/identity/team-vault gates, policy, chatops, preflight, tribal, connector writes, share, egress dispatch chokepoint, exec runConfined, computer-use actuation/driver/lane, remote-VLM constructor + media_grant table, fleet and push ClientKinds, extension self-role sentinel + run-grant table + grant writers (D33(a)–(c)), toolgen brokered-fetch literal/generated-manifest/vault-key-prefix confinement, full-SQLite init before any bun:sqlite Database construction, listener-registry registration, and D25's hidden connector spawns) — derive the range from `check-nimbus-invariants.ts`; see CLAUDE.md § Security Invariants
 bun run audit:openapi-drift             # OpenAPI ↔ HTTP_ROUTES drift (Phase 5 T4 PR 1)
 
 bun scripts/structure-audit/count-any-usage.ts --check     # D8 CI gate (fails on regression OR reduction without --update)
@@ -246,6 +246,10 @@ nimbus query --service github --type pr --since 7d --json
 nimbus query --sql "SELECT title FROM items WHERE pinned = 1" --pretty
 nimbus config get <key> / set <key> <value> / list / validate / edit
 nimbus catalog [agents|connectors] [--json]  # agents (shown/hidden per [agents] show/hide + pack visible; presentation only) and connectors
+nimbus pack list [--json]                      # bundled packs available + installed ones (active profile)
+nimbus pack show <id> | --file <path> [--json] # the exact approval prompt, no install
+nimbus pack install <id> | --file <path>       # TTY only, no --yes; HITL `pack.install`; --file refused in a production build
+nimbus pack remove <id>                        # no prompt; "not installed" is not an error
 nimbus profile create <name> / list / switch <name> / delete <name>
 nimbus diag [--json]
 nimbus diag slow-queries [--limit N] [--since <duration>]
