@@ -43,6 +43,7 @@ import { AgentsRpcError, dispatchAgentsRpc } from "../agents-rpc.ts";
 import { AuditRpcError, dispatchAuditRpc } from "../audit-rpc.ts";
 import { AutomationRpcError, dispatchAutomationRpc } from "../automation-rpc.ts";
 import { dispatchCaptureRpc } from "../capture-rpc.ts";
+import { CatalogRpcError, dispatchCatalogRpc } from "../catalog-rpc.ts";
 import { dispatchChatopsRpc } from "../chatops-rpc.ts";
 import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
@@ -977,6 +978,40 @@ export async function tryDispatchLocalityRpc(
 }
 
 /**
+ * `catalog.list` — the agent + connector catalog (`nimbus catalog`, the desktop). Presentation
+ * only: nothing reads the result to gate a call. LAN-forbidden (I5, `ipc/lan-rpc.ts`) and absent
+ * from the Tauri allowlist (I7).
+ */
+export async function tryDispatchCatalogRpc(
+  ctx: ServerCtx,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (method !== "catalog.list") {
+    return phase4RpcSkipped;
+  }
+  if (ctx.options.localIndex === undefined) {
+    throw new RpcMethodError(-32603, "catalog.list requires LocalIndex");
+  }
+  if (ctx.options.configDir === undefined) {
+    throw new RpcMethodError(-32603, "catalog.list requires configDir");
+  }
+  try {
+    const out = dispatchCatalogRpc(method, params, {
+      db: ctx.options.localIndex.getDatabase(),
+      configDir: ctx.options.configDir,
+    });
+    if (out.kind === "hit") return out.value;
+  } catch (e) {
+    if (e instanceof CatalogRpcError) {
+      throw new RpcMethodError(e.rpcCode, e.message);
+    }
+    throw e;
+  }
+  return phase4RpcSkipped;
+}
+
+/**
  * `demo.*` — I41 clause (5). Claimed ONLY by a demo-rooted gateway: on a normal gateway the
  * namespace is left unclaimed and the request falls through to `Method not found`, so the seeding
  * code path is not reachable at all rather than refused at runtime.
@@ -1804,6 +1839,7 @@ const PHASE4_PLATFORM_DISPATCHERS: ReadonlyArray<
   tryDispatchIndexDemoSymbolRpc,
   tryDispatchTourRpc,
   tryDispatchLocalityRpc,
+  tryDispatchCatalogRpc,
   tryDispatchDemoRpc,
   tryDispatchFilesystemRpc,
   tryDispatchPolicyRpc,

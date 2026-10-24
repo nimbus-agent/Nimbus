@@ -1,10 +1,11 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { forgetLayeredConfigForTests } from "../../config/layered-config.ts";
 import { ProfileManager } from "../../config/profiles.ts";
 import { appendEgressEntry } from "../../egress/egress-ledger.ts";
 import { InMemoryDiscoveryProvider } from "../../federation/discovery.ts";
@@ -49,6 +50,7 @@ import {
   tryDispatchAgentsRpc,
   tryDispatchAuditRpc,
   tryDispatchAutomationRpc,
+  tryDispatchCatalogRpc,
   tryDispatchChatopsRpc,
   tryDispatchConnectorRpc,
   tryDispatchDataRpc,
@@ -797,6 +799,33 @@ describe("tryDispatchTourRpc", () => {
   });
 });
 
+describe("tryDispatchCatalogRpc", () => {
+  test("skips other methods", async () => {
+    const { ctx } = makeCtx();
+    expect(await tryDispatchCatalogRpc(ctx, "engine.ask", {})).toBe(phase4RpcSkipped);
+  });
+  test("catalog.list without LocalIndex is -32603", async () => {
+    const { ctx } = makeCtx({ configDir: "unused" });
+    await expect(tryDispatchCatalogRpc(ctx, "catalog.list", {})).rejects.toMatchObject({
+      rpcCode: -32603,
+      message: "catalog.list requires LocalIndex",
+    });
+  });
+  test("catalog.list without configDir is -32603", async () => {
+    const { ctx } = makeCtx({ localIndex: new LocalIndex(trackedDb()) });
+    await expect(tryDispatchCatalogRpc(ctx, "catalog.list", {})).rejects.toMatchObject({
+      rpcCode: -32603,
+      message: "catalog.list requires configDir",
+    });
+  });
+  test("bad params are -32602", async () => {
+    const { ctx } = makeCtx({ localIndex: new LocalIndex(trackedDb()), configDir: tmpdir() });
+    await expect(tryDispatchCatalogRpc(ctx, "catalog.list", { x: 1 })).rejects.toMatchObject({
+      rpcCode: -32602,
+    });
+  });
+});
+
 describe("tryDispatchLocalityRpc", () => {
   test("skips other methods", async () => {
     const { ctx } = makeCtx();
@@ -1268,6 +1297,18 @@ describe("tryDispatchPhase4Rpc", () => {
     // going missing — it would still come back `phase4RpcSkipped` over a real socket.
     expect(out).not.toBe(phase4RpcSkipped);
     expect(out).toMatchObject({ db: { path: ":memory:", bytes: 0 } });
+  });
+  test("catalog.list hit through chain (returns the catalog, not a skip)", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "nimbus-catalog-chain-"));
+    try {
+      const { ctx } = makeCtx({ localIndex: new LocalIndex(trackedDb()), configDir });
+      const out = await tryDispatchPhase4Rpc(ctx, "catalog.list", {}, "c1");
+      expect(out).not.toBe(phase4RpcSkipped);
+      expect((out as { agents: unknown[] }).agents).toHaveLength(17);
+    } finally {
+      forgetLayeredConfigForTests(configDir);
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
   test("media.understand derives its egress sourceId from the server-derived clientId/kind, not a hand-built one", async () => {
     // Same shape as `tryDispatchAgentsRpc`'s equivalent test above: `tryDispatchMediaRpc` has no

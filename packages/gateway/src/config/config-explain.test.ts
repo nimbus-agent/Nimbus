@@ -301,6 +301,46 @@ describe("pack notes", () => {
   });
 });
 
+describe("agent visibility notes", () => {
+  const lines = ["agent visibility: all agents", 'agent "standup" is hidden by base:base'];
+
+  test("agents paths append the visibility notes", () => {
+    writeBase('[agents]\nhide = ["standup"]\n');
+    const reader = initLayeredConfig(dir);
+    for (const p of ["agents", "agents.hide", "agents.visible"]) {
+      let calls = 0;
+      const r = explainConfig(reader, p, noEnv, {
+        agentVisibilityNotes: () => {
+          calls += 1;
+          return lines;
+        },
+      });
+      expect(calls).toBe(1);
+      expect(r.notes.slice(-lines.length)).toEqual(lines);
+    }
+  });
+
+  test("other paths do not call agentVisibilityNotes", () => {
+    writeBase('[fleet]\nenabled = true\n[agents]\nhide = ["standup"]\n');
+    const reader = initLayeredConfig(dir);
+    const agentVisibilityNotes = (): readonly string[] => {
+      throw new Error("agentVisibilityNotes must not be called");
+    };
+    for (const p of ["fleet.enabled", "agentsx", undefined]) {
+      const r = explainConfig(reader, p, noEnv, { agentVisibilityNotes });
+      expect(r.notes.some((n) => n.startsWith("agent visibility"))).toBe(false);
+    }
+  });
+
+  test("a quoted agents path still gets the notes", () => {
+    writeBase('[agents]\nvisible = ["standup"]\n');
+    const r = explainConfig(initLayeredConfig(dir), '"agents".visible', noEnv, {
+      agentVisibilityNotes: () => lines,
+    });
+    expect(r.notes.slice(-lines.length)).toEqual(lines);
+  });
+});
+
 describe("section fallbacks", () => {
   test("fallback is reported right after an edit", () => {
     const reader = initLayeredConfig(dir);

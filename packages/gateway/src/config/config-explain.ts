@@ -369,11 +369,24 @@ function fleetJobNotes(
   return notes;
 }
 
+function isAgentsPath(path: string | undefined): boolean {
+  if (path === undefined) return false;
+  const wanted = unquote(path);
+  return wanted === "agents" || wanted.startsWith("agents.");
+}
+
 export function explainConfig(
   reader: LayeredConfig,
   path: string | undefined,
   env: EnvGet = processEnvGet,
-  opts: { readonly fleetJobCheck?: FleetJobChecker } = {},
+  opts: {
+    readonly fleetJobCheck?: FleetJobChecker;
+    /**
+     * Agent-visibility lines, injected because `config/` must not import `catalog/`. Called only
+     * for an `agents` / `agents.*` path, so a bare explain shows owners without packs nothing new.
+     */
+    readonly agentVisibilityNotes?: () => readonly string[];
+  } = {},
 ): ExplainResult {
   const snap = reader.snapshot();
   const notes: string[] = [];
@@ -436,6 +449,9 @@ export function explainConfig(
     notes.push(`packs for profile "${reader.profile.name}" not applied: ${snap.packListError}`);
   }
   notes.push(...fleetJobNotes(snap.doc.sections, path, opts.fleetJobCheck));
+  if (opts.agentVisibilityNotes !== undefined && isAgentsPath(path)) {
+    notes.push(...opts.agentVisibilityNotes());
+  }
   const running = reader.profile.name;
   const marker = reader.markerProfile();
   if (restartWouldSwitch(reader.profile.source, running, marker)) {
