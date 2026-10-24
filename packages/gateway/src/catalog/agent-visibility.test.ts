@@ -58,6 +58,7 @@ describe("resolveAgentVisibility", () => {
   test("hide beats show within one layer", () => {
     const v = resolve(base('show = ["oncall"]\nhide = ["oncall"]'));
     expect(v.visible.has("oncall")).toBe(false);
+    expect(v.overrides).toEqual([{ agent: "oncall", visible: false, layer: ref("base", "base") }]);
   });
 
   test("show adds an agent no pack listed", () => {
@@ -124,11 +125,29 @@ describe("resolveAgentVisibility", () => {
   test("a key repeated in one layer counts the lower layers once", () => {
     const v = resolve(
       pack("ops", 'visible = ["oncall"]'),
-      base('show = ["standup"]\nshow = ["standup"]'),
+      pack("data", 'visible = ["decisions"]\nvisible = ["decisions"]'),
     );
-    expect(sorted(v.visible)).toEqual(["oncall", "standup"]);
-    expect(v.packs).toEqual(["ops"]);
-    expect(v.overrides).toHaveLength(1);
+    expect(v.packs).toEqual(["ops", "data"]);
+    expect(sorted(v.visible)).toEqual(["decisions", "oncall"]);
+  });
+
+  test("a user layer repeating a key counts each layer once", () => {
+    const v = resolve(
+      base('show = ["catchup"]'),
+      profile('show = ["standup"]\nshow = ["standup"]'),
+    );
+    expect(v.overrides).toEqual([
+      { agent: "catchup", visible: true, layer: ref("base", "base") },
+      { agent: "standup", visible: true, layer: ref("profile", "work") },
+    ]);
+  });
+
+  test("the profile's hide beats the base's show", () => {
+    const v = resolve(base('show = ["decisions"]'), profile('hide = ["decisions"]'));
+    expect(v.visible.has("decisions")).toBe(false);
+    expect(v.overrides).toEqual([
+      { agent: "decisions", visible: false, layer: ref("profile", "work") },
+    ]);
   });
 
   test("describeAgentVisibility renders the summary, overrides and notes", () => {
