@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792870208616,
+  "lastUpdate": 1792870729213,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ffa42437f89bdb4b17def57b464e94eec13bce31",
-          "message": "chore: release main (#1080)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.25.0</summary>\n\n##\n[1.25.0](https://github.com/nimbus-agent/Nimbus/compare/v1.24.0...v1.25.0)\n(2026-08-08)\n\n\n### Features\n\n* **gateway:** resolve an indexed item by URL (V52 resolve_key)\n([#1070](https://github.com/nimbus-agent/Nimbus/issues/1070))\n([0a32751](https://github.com/nimbus-agent/Nimbus/commit/0a32751f6e97af93b5fc405080df14bd7a77911d))\n* **gateway:** targeted fetch-on-miss behind a derived host boundary\n([#1072](https://github.com/nimbus-agent/Nimbus/issues/1072))\n([369f9af](https://github.com/nimbus-agent/Nimbus/commit/369f9af1a81e10599dc3d9b9f6c86c43bfa95fbc))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-08T11:28:49+03:00",
-          "tree_id": "8dbe1541aa27eb6531c8fd66df4fe94d608c7312",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ffa42437f89bdb4b17def57b464e94eec13bce31"
-        },
-        "date": 1786178232109,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 247.1134937000039,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 255.21172994999506,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 284.4365396000045,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "232fa19136d896c6173b85f972fd2f312de8c0e4",
+          "message": "feat(oncall-push): a role pack can turn the pushed brief on, live (#1767)\n\nRole packs, project 3, PR 3 of 3. This closes Project 3.\n\n## What changed\n\n- **`[oncall.push] enabled` is pack-settable and live.** It joins the\npack-settable allowlist as a `reactive` key.\n- The on-call push runtime no longer reads `enabled` from its startup\nconfig. A small synchronous reader (`oncall-push/push-live-enabled.ts`)\nchecks the layered config's version on every read and on a 5 s timer.\n- When the version moves, it re-reads `[oncall.push]` and updates the\npush store before it reports the new value. The runner therefore never\nsees \"enabled\" without an `enabled_at` row, and a re-enable records a\nfresh `enabled_at`.\n- The runner, the `oncall.pushedList` RPC and startup all read through\nthis reader. A run already in progress stops at the next incident when\npush is disabled mid-run.\n  - The timer stops at gateway shutdown (it joins `pushStops`).\n- **Only `enabled` is live.** Every other `[oncall.push]` key is still\nread at startup, and `chatops_namespace` stays off the allowlist.\n- **The owner's own file still wins.** If a config layer can't be read,\na reload is refused and the last value is kept. Otherwise an unreadable\n`nimbus.toml` holding `enabled = false` would let a pack's `enabled =\ntrue` win.\n- If a layer can't be read at startup, the push starts disabled and\nleaves its store row alone. The first good read then reconciles, even if\nthe value didn't change. A brief file lock at startup therefore never\nresets the \"enabled since\" window.\n- **The DevOps pack is now 1.1.0 and sets `[oncall.push] enabled =\ntrue`.** PR 2 shipped 1.0.0 without that line, so an existing DevOps\ninstall shows \"update available\", and re-installing shows a one-line\ndiff.\n- **`nimbus doctor`** prints one `[info]` line per profile naming packs\nwith an update available. It never changes the exit code, and prints\nnothing on a gateway without `pack.list`.\n- **Docs:** `docs/architecture.md`, `docs/cli-reference.md` and a\nCHANGELOG entry. Re-enabling pushes incidents opened no further back\nthan 5 minutes before the re-enable (the existing grace).\n\n## Not breaking\n\nPush stays off by default. Nothing a user wrote stops working.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-24T22:23:58+03:00",
+          "tree_id": "01263e4a575ed1c2419441258614e6a279d54c14",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/232fa19136d896c6173b85f972fd2f312de8c0e4"
+        },
+        "date": 1792870725426,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 233.07031225000392,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 236.35490829999836,
             "unit": "ms"
           }
         ]
