@@ -1566,6 +1566,16 @@ stops parsing turns the fleet off until it is fixed. `platform/assemble.ts` buil
 once per boot, and `fleet.*` IPC handlers read the supervisor's current scheduler, config and jobs;
 `fleet.runNow` waits for a reload in progress before it runs.
 
+**Jobs resolve one by one, across layers.** Each `[[fleet.job]]` is checked on its own through
+`FleetJobChecker` (`config/fleet-toml.ts`), the seam the layered reader calls for every merged job,
+so one bad job is dropped and reported (`dropped`: name, layer, reason) while the rest run. A job
+with the same name in a higher layer replaces the lower one whole; a stub (`name` plus
+`enabled = false`) is a valid job that disables that name and records which lower layers it
+replaces (`disabled`, with `origin.replaces`; empty means "disables nothing"). A bad `[fleet]`
+table keeps the fail-whole behaviour. `enabled` is a reserved job key. `FleetRuntime` exposes
+`jobs`, `origins`, `disabled` and `dropped`; `fleet.status`/`fleet.list`, `nimbus doctor`,
+`diag.snapshot` (file basenames only) and `config explain` report them. No new IPC method.
+
 `nimbus fleet digest` reports what moved between each job's newest brief and its predecessor. It
 compares the deterministic `findings_json`, **never** the synthesised markdown — a rewrite differs
 run to run on an unchanged index — through per-agent extractors whose map is compiler-enforced total
