@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792783734894,
+  "lastUpdate": 1792826942825,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4b4bedb4e000f79d63f2cddbbda2e2d92006a51e",
-          "message": "feat(gateway): invoke read-only agents over the HTTP API, recorded in the egress ledger (#1063)\n\nSecond PR of the HTTP-agents work\n([design](docs/superpowers/specs/2026-08-06-http-agents-route-and-resolve-by-url-design.md)\n§1 + §2,\n[plan](docs/superpowers/plans/2026-08-06-http-agents-pr2-agents-over-http.md)).\nFollows #1062 (token scopes), which added the `agents` scope precisely\nso it could be *withheld* until this PR existed.\n\n## What lands\n\nThree routes, all requiring the `agents` scope:\n\n| Route | Side | Notes |\n| --- | --- | --- |\n| `POST /v1/agents/{agent}` | write (`I13`) | Body = IPC params\n**verbatim**. `202` + `{runId}`. |\n| `GET /v1/agents/runs/{id}` | bearer read | `200` running/done/failed ·\n`404` unknown · `410` expired. |\n| `GET /v1/agents` | bearer read | Derived from `AGENTS_RPC_HANDLERS`;\ncannot drift. |\n\n**Ten** agents are exposed. `agents.preflight` stays off (`I24` — an\nexternal caller must never originate a consent prompt on the owner's\nmachine). `agents.whyPeek` is also excluded, and that resolves a gap the\ndesign did not address: it is the namespace's one **synchronous** method\n— it returns its payload inline and calls `notify` never, so on a\nrun/poll contract it would create a run that can never complete and\nwould poll until the TTL turned a success into a `410`. It still ledgers\non every transport; only HTTP *invocation* excludes it.\n\n**Delivery is dependency injection, not a notification bridge.** The\nroute builds an `AgentsRpcContext` whose `notify` writes into an\nin-memory `AgentRunController`. **No agent code changed.** An HTTP\ncaller's brief is never broadcast to socket clients.\n\nRuns are in-memory and a restart drops them, deliberately — persisting\nthem would write synthesised brief text derived from the private index\ninto a new on-disk table. The contract is stated rather than implied:\n`404` means \"unknown **or** lost to a restart\", and the client's answer\nto both is to re-issue.\n\n## Egress (`I29`) — the append site did not move\n\n`dispatchAgentsRpc` already appended before dispatch. Its condition\ngeneralised from `ctx.caller?.kind === \"mcp\"` to a lookup over\n`EGRESS_BEARING_CLIENT_KINDS`, which is **total over `ClientKind`** —\nverified by temporarily adding a hypothetical sixth kind and confirming\n`tsc` fails at exactly the map, by name. A `Partial` or `Map` would have\ncompiled and served that transport's briefs unledgered.\n\n`recordMcpBriefEgress` → `recordAgentBriefEgress`, parameterised by\ntransport (`destination` is `mcp`/`http`, or `…+federation` for the\npeer-querying agents), with `D22(c)`'s regex moved in the same commit.\n\n`ClientKind` gained `\"http\"` but `RECOGNISED` deliberately did **not**:\n`http` is constructed by the gateway after it verifies a token, so it is\nthe one kind that is an observation rather than a client's claim.\n\n### `D22` gains a fourth rule\n\n> No file outside `ipc/agents-rpc.ts` may import an agent **emitter** —\n`agents/<name>.ts`, excluding `agents/_lib/`.\n\n`SECURITY-INVARIANTS.md` predicted this exact bypass in prose, naming a\nbrowser-reachable agent route as the surface that would hit it. Rule (d)\nlanded **before** that surface. It is also doing real work already:\n`buildAgentHttpInvoker` passes only because it reaches agents through\nthe dispatcher; wiring it the obvious way (`import { emitExpertBrief }`)\nfails the build.\n\n**Red-proved three times:** static import → caught; dynamic `await\nimport()` → caught (the one-character bypass a static-only rule misses);\nand an emitter re-exported through `agents/_lib/` → **`audit:invariants`\nstays green**, which is the honest demonstration that a regex cannot\nfollow re-export chains. That gap is closed by a separate assertion, not\nby pretending the regex sees it. All guards verified from three working\ndirectories — #1062 shipped a CWD-relative guard that was dead in CI.\n\n## The one `nimbus prove` blackout — intended, do not soften\n\n`parseCoverage` rejects a marker with an unknown **or** a missing key,\nso adding the `http` class breaks marker parsing in both directions.\n**Every `prove` window spanning this upgrade reports `indeterminate` on\nevery class.** That is the fail-safe: an old marker must not contribute\nunderstated-but-plausible coverage. It is the only such blackout in this\nsequence — later work changes coverage *values*, which degrade\ngracefully.\n\nThe coverage pin moves to `[\"http\",\"mcp\",\"task\"]` — **not** the\n`[\"http\",\"mcp\",\"sync\",\"task\"]` the design's §2 lists, which is the end\nstate after PR 4. `sync` has no appender until then, and raising it here\nwould be exactly the defect the vector exists to catch.\n\n## Also\n\n- **`hasScope` is now module-private**, paying #1062's parked residual\nby capability removal rather than a static rule: naming a scope inline\nat a handler no longer compiles, so `HTTP_ROUTE_AUTH` cannot become\ndecorative.\n- The busy `429` carries `Retry-After`. `checkRateLimit` already sent it\non the *other* `429` this route produces, so omitting it would have\nmeant one endpoint with two `429`s of which only one honoured the header\ncontract. The value is a small constant, not the run-expiry distance — a\nslot frees when a run *finishes* (seconds), not when it *expires* (ten\nminutes).\n- I13 allowlist 12 → 13, bumped in **three** assertion sites (two only\nrun in the full suite).\n\n## Verification\n\n`bun run preflight` green except two pre-existing **Windows-only**\ncoverage artifacts not in this diff — `socket-listeners.ts` (66.67%\nWindows / 91.67% Linux) and `platform/linux.ts` (the foreign arm on\nWindows; the exclusions file documents it as the *active* arm on the\nLinux runner). `audit:coverage-floor` is CI-Linux-authoritative, so CI\nis the check that counts for those two.\n\nNew/changed tests: run-store lifecycle (16), invoker incl. defensive\npaths (17), end-to-end over a real `Bun.serve` (12), plus\ndispatcher-level route tests and the `I29`/`D22` enforcement additions.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added HTTP access for read-only agents.\n* Added endpoints to list available agents, start runs, and poll run\nstatus.\n  * Added bearer-token authentication and `agents` scope enforcement.\n* Added clear responses for invalid requests, unavailable agents,\nexpired runs, capacity limits, and failures.\n* Added run expiration, bounded concurrency, and `Retry-After` guidance\nfor busy responses.\n* **Documentation**\n* Documented HTTP agent routes, security requirements, coverage, and\nsupported agent behavior.\n  * Added a changelog entry and implementation plan review notes.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-07T02:36:31Z",
-          "tree_id": "da2df09b79ea24ae4fa86eabf64c987e71e18e00",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4b4bedb4e000f79d63f2cddbbda2e2d92006a51e"
-        },
-        "date": 1786070879540,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 314.28211725,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 315.0933594500035,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 214.6911369999998,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a2b5dda2c1334491aadfa5604eca32bdddb725c6",
+          "message": "fix(deps): clear the 2026-10-24 advisories (zod, body-parser, undici, http-cache-semantics, fast-uri, nodemailer) (#1754)\n\n## Summary\n\nClears the advisories that turned `main`'s nightly Security run red on\n2026-10-24 (#1753). The same commit, `d33a2f1d`, passed the day before,\nso these are newly published advisories, not a regression. Both required\nchecks, `Dependency audit` and `Trivy vulnerability scan`, now fail on\nevery open PR, including #1752.\n\nEverything is fixed with root `overrides` pins inside the dependents'\nexisting semver ranges, per `accepted-advisories.ts`'s order of\npreference. No direct dependency changes.\n\n| Package | Was | Pin | Advisory | Severity | Reached through |\n|---|---|---|---|---|---|\n| zod | 4.6.5 (pinned) | 4.6.7 | GHSA-mrhx-c7xc-m3w5 | high |\n`@modelcontextprotocol/client`, `@mastra/mcp`, astro |\n| body-parser | 2.3.0 | 2.4.0 | GHSA-27r3-jxmh-p828 | high | `express` ←\n`@modelcontextprotocol/sdk`, `@mastra/core` |\n| undici | 8.11.2 | 8.12.3 | GHSA-xjj6-f33q-929c (high),\nGHSA-4qv8-2p9j-2685 and GHSA-f72v-6w45-q472 (moderate) | high | `jsdom`\n(ui dev), astro |\n| http-cache-semantics | 4.2.0 | 4.3.0 | GHSA-ch52-4w7c-c8xp | high |\nastro (docs only) |\n| fast-uri | 3.1.8 | 3.1.9 | GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr\n(moderate); GHSA-xhq7-xmqj-769h, GHSA-333x-w4r6-6crp (low) | moderate |\n`ajv` ← MCP SDK |\n| nodemailer | 10.0.14 | 10.2.1 | GHSA-m943-m63m-w62w,\nGHSA-85x2-q946-cp5h, GHSA-8c8m-p3m8-cjg8 | moderate |\n`@nimbus-dev/connectors` (optional) |\n\n`http-cache-semantics` had an accepted row (accepted 2026-10-03,\nre-check due 2026-11-02). Its unblocking condition is met: 4.3.0 is a\n4.x release that satisfies astro's `^4.2.0`. Per the retire rule, the\nrow is deleted and a line is added to the registry's history comment.\n\n## Verification\n\n- `bun audit --audit-level high` passes.\n- `audit:advisories` reports \"2 live advisories, all accounted for by 2\naccepted row(s)\". These are the existing postcss-selector-parser and\nkatex rows.\n- `audit:override-drift` and `audit:js-licenses` pass.\n- `bun run preflight:fast` passes.\n- `bun test` over `scripts/structure-audit`, `packages/cli/src/mcp`, and\ngateway `ipc`, `connectors` and `engine`, which are the code paths that\nuse zod, the MCP SDK, express and nodemailer: 9296 pass, 0 fail.\n- Every pin is a patch or minor release inside the existing declared\nranges, so it is not breaking.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-24T07:18:00Z",
+          "tree_id": "e6778d05f2cf9221e1d4841940dc9bf4f056ffd9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a2b5dda2c1334491aadfa5604eca32bdddb725c6"
+        },
+        "date": 1792826938882,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 283.58759239999637,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 282.64046849999943,
             "unit": "ms"
           }
         ]
