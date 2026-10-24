@@ -18,7 +18,7 @@ function isHidden(cp: number): boolean {
 
 function escapeCodePoint(cp: number): string {
   const hex = cp.toString(16).toUpperCase();
-  return cp > 0xffff ? `\\u{${hex}}` : `\\u${hex.padStart(4, "0")}`;
+  return cp > 0xffff ? String.raw`\u{${hex}}` : String.raw`\u${hex.padStart(4, "0")}`;
 }
 
 /** C0 controls except LF/TAB, DEL and every format-invisible range, shown as `\uXXXX` / `\u{X}`. */

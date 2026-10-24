@@ -98,6 +98,7 @@ function fileText(over: Record<string, unknown> = {}): string {
 }
 
 const FILE_PATH = join(tmpdir(), "mine.json");
+const RLO = String.fromCodePoint(0x202e);
 
 async function refusal(p: Promise<unknown>): Promise<PackError> {
   try {
@@ -314,16 +315,27 @@ describe("installPack: approval", () => {
     expect(entry?.source).toMatchObject({ kind: "layer", layer: { kind: "base" } });
   });
 
+  test("the gate payload's source escapes invisible characters, LF and TAB in the file path", async () => {
+    const g = gate();
+    const filePath = join(tmpdir(), `a${RLO}\nb\tc.json`);
+    await installPack({ fileText: fileText({}), filePath }, deps(), g.gate);
+    const source = String(g.calls[0]?.payload["source"]);
+    expect(source).toBe(`local file ${join(tmpdir(), String.raw`a\u202E\nb\tc.json`)}`);
+    expect(source).not.toContain(RLO);
+    expect(source).not.toContain("\n");
+    expect(source).not.toContain("\t");
+  });
+
   test("invisible characters in a local pack are escaped in the prompt, never raw", async () => {
     const g = gate();
     await installPack(
-      { fileText: fileText({ description: "evil‮txt" }), filePath: FILE_PATH },
+      { fileText: fileText({ description: `evil${RLO}txt` }), filePath: FILE_PATH },
       deps(),
       g.gate,
     );
     const prompt = String(g.calls[0]?.payload["promptText"]);
     expect(prompt).toContain("evil\\u202Etxt");
-    expect(prompt).not.toContain("‮");
+    expect(prompt).not.toContain(RLO);
   });
 
   test("a store refusal at write time (a race after the prompt) maps by reason", async () => {

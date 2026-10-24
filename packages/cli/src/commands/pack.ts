@@ -132,7 +132,8 @@ function installedLine(p: InstalledPackRow, skippedReason: string | undefined): 
   const version = p.versionUnknown === true ? "version unknown" : p.version;
   let update = "";
   if (p.updateAvailable) {
-    update = `  [update available${p.bundledVersion === undefined ? "" : `: ${clean(p.bundledVersion)}`}]`;
+    const target = p.bundledVersion === undefined ? "" : `: ${clean(p.bundledVersion)}`;
+    update = `  [update available${target}]`;
   }
   const skipped = skippedReason === undefined ? "" : `  (skipped: ${clean(skippedReason)})`;
   return `  ${clean(p.id)}  ${clean(p.name)}  ${clean(version)}  (${clean(p.source)})${update}${skipped}`;

@@ -23,6 +23,7 @@ import {
   type PackPromptInput,
   type PromptScalar,
   renderPackPrompt,
+  visibleText,
 } from "./pack-prompt.ts";
 import {
   type InstalledPackRecord,
@@ -276,10 +277,9 @@ async function buildPrompt(
     intervalSeconds: j.intervalSeconds,
     userReplaces: replaced.has(j.name),
   }));
-  const connectors: { id: string; configured: boolean }[] = [];
-  for (const id of m.suggestedConnectors) {
-    connectors.push({ id, configured: await deps.isConfigured(id) });
-  }
+  const connectors = await Promise.all(
+    m.suggestedConnectors.map(async (id) => ({ id, configured: await deps.isConfigured(id) })),
+  );
   const input: PackPromptInput = {
     manifest: m,
     source: r.source,
@@ -299,8 +299,16 @@ function isLayerEdited(mode: Mode, profile: string, id: string, store: PackLayer
   return mode.kind === "update" && store.readPackLayerText(profile, id) !== mode.prev.defaults;
 }
 
+/**
+ * A path is one line, so LF and TAB are escaped too (`visibleText` keeps them for multi-line
+ * prompt text). This string reaches the audit row and `pack show`, outside the escaped prompt.
+ */
 function sourceDisplay(s: PackSource): string {
-  return s.kind === "bundled" ? "bundled" : `local file ${s.path}`;
+  if (s.kind === "bundled") return "bundled";
+  const path = visibleText(s.path)
+    .replaceAll("\n", String.raw`\n`)
+    .replaceAll("\t", String.raw`\t`);
+  return `local file ${path}`;
 }
 
 /** Resolves, checks and picks the mode: everything install does before the gate. */

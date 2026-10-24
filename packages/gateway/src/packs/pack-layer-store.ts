@@ -144,6 +144,21 @@ export function packSkipLogLines(
   return lines;
 }
 
+function nameProblems(profile: string, packId: string): string[] {
+  const problems: string[] = [];
+  if (!PROFILE_NAME_RE.test(profile)) problems.push("invalid profile name");
+  if (!PACK_ID_RE.test(packId)) problems.push("invalid pack id");
+  return problems;
+}
+
+function readText(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 export function createPackLayerStore(opts: {
   configDir: string;
   checkJobs?: PackJobChecker;
@@ -264,13 +279,6 @@ export function createPackLayerStore(opts: {
     return { layers, skipped, clean, ids: active.ids };
   }
 
-  function nameProblems(profile: string, packId: string): string[] {
-    const problems: string[] = [];
-    if (!PROFILE_NAME_RE.test(profile)) problems.push("invalid profile name");
-    if (!PACK_ID_RE.test(packId)) problems.push("invalid pack id");
-    return problems;
-  }
-
   function assertNames(profile: string, packId: string): void {
     const problems = nameProblems(profile, packId);
     if (problems.length > 0) throw new PackLayerRefusedError(problems, "invalid");
@@ -299,14 +307,6 @@ export function createPackLayerStore(opts: {
     const clash = conflicts(packId, parsed.scalars, parsed.jobNames, current.clean);
     if (clash.length > 0) return { ok: false, reason: "conflict", problems: clash };
     return { ok: true, ids: current.ids };
-  }
-
-  function readText(path: string): string | undefined {
-    try {
-      return readFileSync(path, "utf8");
-    } catch {
-      return undefined;
-    }
   }
 
   function writeActive(profile: string, ids: readonly string[]): void {
