@@ -5,7 +5,15 @@
 // a broken pack is skipped whole and reported, never fatal. The user's own config files are
 // never read or written here.
 
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, unlinkSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { PROFILE_NAME_RE } from "../config/active-profile.ts";
 import {
@@ -29,6 +37,39 @@ import { checkPackFleetJobs } from "./pack-job-check.ts";
 
 const ACTIVE_FILE = "active.json";
 const ACTIVE_VERSION = 1;
+
+/** A record holds a whole manifest (at most 128 KiB) plus a few fields. */
+export const PACK_RECORD_MAX_BYTES = 256 * 1024;
+
+/**
+ * `O_NONBLOCK` so opening a FIFO returns at once instead of waiting for a writer; `fstat` on the
+ * same descriptor then refuses anything that is not a regular file. Windows has no FIFOs (`0`).
+ */
+const READ_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
+
+type RegularRead =
+  | { readonly ok: true; readonly text: string }
+  | { readonly ok: false; readonly reason: "missing" | "not a regular file" | "too large" }
+  | { readonly ok: false; readonly reason: "error"; readonly err: unknown };
+
+/** Reads a regular file of at most `maxBytes` through the one descriptor that was checked. */
+function readRegularFile(path: string, maxBytes: number): RegularRead {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, READ_FLAGS);
+    const st = fstatSync(fd);
+    if (!st.isFile()) return { ok: false, reason: "not a regular file" };
+    if (st.size > maxBytes) return { ok: false, reason: "too large" };
+    return { ok: true, text: readFileSync(fd, "utf8") };
+  } catch (err) {
+    if (isEnoent(err)) return { ok: false, reason: "missing" };
+    // Windows refuses to open a directory at all; Linux and macOS open it and fstat says so.
+    if (hasCode(err, "EISDIR")) return { ok: false, reason: "not a regular file" };
+    return { ok: false, reason: "error", err };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
 
 /** Why a layer was refused: the store is unreadable, the input is bad, or it clashes with a pack. */
 export type PackLayerRefusalReason = "store" | "invalid" | "conflict";
@@ -151,12 +192,10 @@ function nameProblems(profile: string, packId: string): string[] {
   return problems;
 }
 
-function readText(path: string): string | undefined {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return undefined;
-  }
+/** The text of a regular file of at most `maxBytes`; anything else (missing, FIFO, …) is undefined. */
+function readText(path: string, maxBytes: number): string | undefined {
+  const read = readRegularFile(path, maxBytes);
+  return read.ok ? read.text : undefined;
 }
 
 export function createPackLayerStore(opts: {
@@ -193,16 +232,15 @@ export function createPackLayerStore(opts: {
     join(profileDir(profile), `${id}.pack.json`);
 
   function readActive(profile: string): ActiveList {
-    let raw: string;
-    try {
-      raw = readFileSync(join(profileDir(profile), ACTIVE_FILE), "utf8");
-    } catch (err) {
-      if (isEnoent(err)) return { ok: true, ids: [] };
-      return { ok: false, error: `could not read ${ACTIVE_FILE}: ${safe(errMessage(err))}` };
+    const read = readRegularFile(join(profileDir(profile), ACTIVE_FILE), PACK_FRAGMENT_MAX_BYTES);
+    if (!read.ok && read.reason === "missing") return { ok: true, ids: [] };
+    if (!read.ok) {
+      const why = readFailure(read, PACK_FRAGMENT_MAX_BYTES);
+      return { ok: false, error: `could not read ${ACTIVE_FILE}: ${why}` };
     }
     let doc: unknown;
     try {
-      doc = JSON.parse(raw);
+      doc = JSON.parse(read.text);
     } catch {
       return { ok: false, error: `${ACTIVE_FILE} is not valid JSON` };
     }
@@ -222,28 +260,17 @@ export function createPackLayerStore(opts: {
     profile: string,
     id: string,
   ): { text: string; pack: CleanPack } | { reason: string } {
-    const path = packPath(profile, id);
-    // One handle for the stat and the read, so the file checked is the file read.
-    let fd: number | undefined;
-    try {
-      fd = openSync(path, "r");
-      const st = fstatSync(fd);
-      if (!st.isFile()) return { reason: "not a regular file" };
-      if (st.size > PACK_FRAGMENT_MAX_BYTES) {
-        return { reason: `larger than ${PACK_FRAGMENT_MAX_BYTES} bytes` };
-      }
-      const text = readFileSync(fd, "utf8");
-      const check = checkPackFragment(text, checkJobs);
-      if (!check.ok) return { reason: refusedReason(check.problems, safe) };
-      return { text, pack: { id, scalars: check.scalars, jobNames: check.jobNames } };
-    } catch (err) {
-      if (isEnoent(err)) return { reason: "missing" };
-      // Windows refuses to open a directory at all; Linux and macOS open it and fstat says so.
-      if (hasCode(err, "EISDIR")) return { reason: "not a regular file" };
-      return { reason: safe(errMessage(err)) };
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-    }
+    const read = readRegularFile(packPath(profile, id), PACK_FRAGMENT_MAX_BYTES);
+    if (!read.ok) return { reason: readFailure(read, PACK_FRAGMENT_MAX_BYTES) };
+    const check = checkPackFragment(read.text, checkJobs);
+    if (!check.ok) return { reason: refusedReason(check.problems, safe) };
+    return { text: read.text, pack: { id, scalars: check.scalars, jobNames: check.jobNames } };
+  }
+
+  function readFailure(read: Exclude<RegularRead, { ok: true }>, maxBytes: number): string {
+    if (read.reason === "too large") return `larger than ${maxBytes} bytes`;
+    if (read.reason === "error") return safe(errMessage(read.err));
+    return read.reason;
   }
 
   function readDetailed(profile: string): DetailedRead {
@@ -357,12 +384,12 @@ export function createPackLayerStore(opts: {
 
     readPackRecord(profile: string, packId: string): string | undefined {
       if (nameProblems(profile, packId).length > 0) return undefined;
-      return readText(recordPath(profile, packId));
+      return readText(recordPath(profile, packId), PACK_RECORD_MAX_BYTES);
     },
 
     readPackLayerText(profile: string, packId: string): string | undefined {
       if (nameProblems(profile, packId).length > 0) return undefined;
-      return readText(packPath(profile, packId));
+      return readText(packPath(profile, packId), PACK_FRAGMENT_MAX_BYTES);
     },
 
     setPackLayer(

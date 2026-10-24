@@ -23,6 +23,7 @@ import { PACK_FRAGMENT_MAX_BYTES } from "../config/pack-settable.ts";
 import { writeUtf8FileAtomicReplace } from "../config/toml-section-writer.ts";
 import {
   createPackLayerStore,
+  PACK_RECORD_MAX_BYTES,
   PackLayerRefusedError,
   type PackLayerStore,
   packSkipLogLines,
@@ -584,4 +585,48 @@ describe("record sidecar and checkPackLayer", () => {
     store.setPackLayer("default", "pm", CONF("0.55"));
     expect(existsSync(recordFile("pm"))).toBe(false);
   });
+});
+
+describe("reads only regular files", () => {
+  const recordAt = (id: string) => join(profileDir(), `${id}.pack.json`);
+
+  test("a directory at the record or layer path reads as absent", () => {
+    const store = wired();
+    mkdirSync(recordAt("pm"), { recursive: true });
+    mkdirSync(packFile("pm"), { recursive: true });
+    expect(store.readPackRecord("default", "pm")).toBeUndefined();
+    expect(store.readPackLayerText("default", "pm")).toBeUndefined();
+  });
+
+  test("an oversized record or layer reads as absent", () => {
+    const store = wired();
+    mkdirSync(profileDir(), { recursive: true });
+    writeFileSync(recordAt("pm"), "x".repeat(PACK_RECORD_MAX_BYTES + 1));
+    writeFileSync(packFile("pm"), "x".repeat(PACK_FRAGMENT_MAX_BYTES + 1));
+    expect(store.readPackRecord("default", "pm")).toBeUndefined();
+    expect(store.readPackLayerText("default", "pm")).toBeUndefined();
+  });
+
+  test("a directory as active.json is a list error, not a throw", () => {
+    const store = wired();
+    mkdirSync(activeFile(), { recursive: true });
+    expect(store.read("default").listError).toContain("active.json");
+  });
+
+  // A FIFO cannot be made on Windows. On POSIX a plain open of one waits for a writer, so a
+  // regression here hangs the run rather than failing an assertion.
+  test.skipIf(process.platform === "win32")(
+    "a FIFO at the record, layer or active.json path never blocks",
+    () => {
+      const store = wired();
+      mkdirSync(profileDir(), { recursive: true });
+      for (const p of [recordAt("pm"), packFile("pm"), activeFile()]) {
+        const made = Bun.spawnSync(["mkfifo", p]);
+        expect(made.exitCode).toBe(0);
+      }
+      expect(store.readPackRecord("default", "pm")).toBeUndefined();
+      expect(store.readPackLayerText("default", "pm")).toBeUndefined();
+      expect(store.read("default").listError).toContain("not a regular file");
+    },
+  );
 });
