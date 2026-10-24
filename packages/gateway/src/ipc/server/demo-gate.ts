@@ -27,6 +27,9 @@ const DEMO_REFUSED_METHODS: ReadonlySet<string> = new Set([
   "migration.accept",
   "migration.decline",
   "migration.retry",
+  // Installing a pack writes the owner's config layer; the demo root is read-only synthetic data.
+  "pack.install",
+  "pack.remove",
 ]);
 
 /** The refusal for `method` on a demo-rooted gateway, or `undefined` when it may proceed. */
