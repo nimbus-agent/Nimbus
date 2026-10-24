@@ -353,13 +353,20 @@ async function handleRunNow(params: unknown, ctx: FleetRpcCtx): Promise<FleetRun
     if (e instanceof FleetReloadingError) throw new FleetRpcError(-32000, e.message);
     throw e;
   }
-  const { scheduler, disabled } = ctx;
+  const { scheduler, disabled, dropped } = ctx;
   const job = optString(params, "job");
   const stub = job === undefined ? undefined : disabled?.find((d) => d.name === job);
   if (stub !== undefined) {
     throw new FleetRpcError(
       -32602,
       `fleet: job "${stub.name}" is disabled by enabled = false in ${stub.origin.layer.path}`,
+    );
+  }
+  const drop = job === undefined ? undefined : dropped?.find((d) => d.name === job);
+  if (drop !== undefined) {
+    throw new FleetRpcError(
+      -32602,
+      `fleet: job "${drop.name}" was dropped (${drop.layer.kind}:${drop.layer.id}): ${drop.reason}`,
     );
   }
   if (scheduler === undefined) {

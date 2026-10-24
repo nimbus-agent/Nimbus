@@ -960,12 +960,22 @@ function doctorPrintFleetJobs(c: { droppedFleetJobs?: unknown }): number {
   let exit = 0;
   for (const d of dropped) {
     if (d === null || typeof d !== "object") continue;
-    const { name, file, reason } = d as { name?: unknown; file?: unknown; reason?: unknown };
+    const { name, file, reason, layerKind, layerId } = d as {
+      name?: unknown;
+      file?: unknown;
+      reason?: unknown;
+      layerKind?: unknown;
+      layerId?: unknown;
+    };
     if (name !== null && typeof name !== "string") continue;
     if (typeof file !== "string" || typeof reason !== "string") continue;
     const shown = name === null ? "(unnamed)" : stripControlChars(name);
+    const layer =
+      typeof layerKind === "string" && typeof layerId === "string"
+        ? `${stripControlChars(layerKind)}:${stripControlChars(layerId)}, `
+        : "";
     console.log(
-      `[warn] fleet job "${shown}" dropped (${stripControlChars(file)}): ${stripControlChars(reason)}`,
+      `[warn] fleet job "${shown}" dropped (${layer}${stripControlChars(file)}): ${stripControlChars(reason)}`,
     );
     exit = 1;
   }

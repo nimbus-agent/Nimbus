@@ -323,7 +323,7 @@ describe("FleetSupervisor", () => {
       });
     });
 
-    test("a reload that changes drops logs the new ones", async () => {
+    test("a reload re-logs every drop in the published view", async () => {
       const h = harness(withDrops([drop("x")]));
       h.bump(withDrops([drop("x"), drop("y")]));
       expect(await h.sup.check()).toBe("reloaded");

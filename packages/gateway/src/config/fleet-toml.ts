@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import {
   fallbackMessage,
   getLayeredConfig,
-  layeredConfigText,
   layerReadError,
   type SectionFallbackSink,
   sectionFallbackSink,
@@ -182,7 +181,7 @@ type FleetJobDraft = {
 };
 
 /** One key/value line of a `[[fleet.job]]` block, from the text scanner or an `EffectiveSection`. */
-export type FleetJobEntry = { readonly key: string; readonly valRaw: string };
+type FleetJobEntry = { readonly key: string; readonly valRaw: string };
 
 /**
  * Apply one `[[fleet.job]]` key to the block being read. Nothing throws here: validation runs over
@@ -282,7 +281,7 @@ function resolveSweep(name: string, d: FleetJobDraft): FleetJobSweepToml | null 
 }
 
 /** A parsed block: a full job (enabled or not), or a disabling stub that names a job only. */
-export type FleetJobBlock =
+type FleetJobBlock =
   | { readonly job: NimbusFleetJobToml; readonly enabled: boolean }
   | { readonly stub: { readonly name: string; readonly agent: string | null } };
 
@@ -330,7 +329,7 @@ function validateJobDraft(draft: FleetJobDraft): FleetJobBlock {
 }
 
 /** One block's entries to a parsed block; `undefined` for an empty block. Throws `FleetConfigError`. */
-export function parseFleetJobBlock(entries: readonly FleetJobEntry[]): FleetJobBlock | undefined {
+function parseFleetJobBlock(entries: readonly FleetJobEntry[]): FleetJobBlock | undefined {
   const draft = readJobDraft(entries);
   return isEmptyDraft(draft) ? undefined : validateJobDraft(draft);
 }
@@ -518,9 +517,10 @@ export function loadNimbusFleetFromConfigDir(
     sectionFallbackSink(configDir, "fleet")(`refused: ${readError}`);
     throw new Error(readError);
   }
+  const snapshot = getLayeredConfig(configDir).snapshot();
   return loadNimbusFleetFromText(
-    layeredConfigText(configDir),
-    () => getLayeredConfig(configDir).snapshot().doc.sections,
+    snapshot.text,
+    () => snapshot.doc.sections,
     check,
     sectionFallbackSink(configDir, "fleet"),
   );

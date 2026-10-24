@@ -782,4 +782,22 @@ describe("fleet layers, disabled and dropped jobs", () => {
       );
     }
   });
+
+  test("runNow on a dropped job names the layer and reason, even with no scheduler", async () => {
+    try {
+      await dispatchFleetRpc("fleet.runNow", { job: "bad" }, {
+        hostActivity,
+        config: DEFAULT_FLEET_CONFIG,
+        dropped: [{ name: "bad", layer: pack, reason: "agent required" }],
+        now: () => 0,
+      } as never);
+      throw new Error("expected a throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(FleetRpcError);
+      expect((e as FleetRpcError).rpcCode).toBe(-32602);
+      expect((e as FleetRpcError).message).toBe(
+        'fleet: job "bad" was dropped (pack:oncall): agent required',
+      );
+    }
+  });
 });

@@ -1104,14 +1104,20 @@ describe("doctorPrintProfile (role packs)", () => {
     const exit = doctorPrintProfile({
       ...profileBase,
       droppedFleetJobs: [
-        { name: "nightly", file: "nimbus.ops.toml", reason: "agent is not eligible" },
+        {
+          name: "nightly",
+          layerKind: "pack",
+          layerId: "ops",
+          file: "nimbus.ops.toml",
+          reason: "agent is not eligible",
+        },
         { name: null, file: "nimbus.toml", reason: "[[fleet.job]] needs a name" },
         { name: 5, file: "x" },
       ],
     });
     expect(exit).toBe(1);
     expect(out.stdout).toContain(
-      '[warn] fleet job "nightly" dropped (nimbus.ops.toml): agent is not eligible',
+      '[warn] fleet job "nightly" dropped (pack:ops, nimbus.ops.toml): agent is not eligible',
     );
     expect(out.stdout).toContain(
       '[warn] fleet job "(unnamed)" dropped (nimbus.toml): [[fleet.job]] needs a name',

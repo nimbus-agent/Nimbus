@@ -1567,7 +1567,7 @@ once per boot, and `fleet.*` IPC handlers read the supervisor's current schedule
 `fleet.runNow` waits for a reload in progress before it runs.
 
 **Jobs resolve one by one, across layers.** Each `[[fleet.job]]` is checked on its own through
-`FleetJobChecker` (`config/fleet-toml.ts`), the seam the layered reader calls for every merged job,
+`FleetJobChecker` (`config/fleet-toml.ts`), the seam the layered reader calls for every job that would be scheduled (enabled, syntactically valid, not a duplicate),
 so one bad job is dropped and reported (`dropped`: name, layer, reason) while the rest run. A job
 with the same name in a higher layer replaces the lower one whole; a stub (`name` plus
 `enabled = false`) is a valid job that disables that name and records which lower layers it

@@ -116,6 +116,8 @@ describe("fleet job merging across layers", () => {
     expect(await runtime.supervisor.check()).toBe("reloaded");
     expect(runtime.disabled[0]?.origin.replaces).toEqual([]);
     expect(runtime.dropped).toEqual([]);
+    expect(runtime.scheduler).toBeUndefined();
+    expect(runtime.jobs).toEqual([]);
   });
 
   test("a broken user job does not stop a pack job", async () => {
