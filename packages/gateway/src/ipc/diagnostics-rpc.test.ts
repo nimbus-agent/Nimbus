@@ -2092,6 +2092,38 @@ describe("layered config over IPC", () => {
       },
     ));
 
+  test("config.explain agents.visible names an unknown pack agent", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-diag-visibility-"));
+    try {
+      writeFileSync(join(dir, "nimbus.toml"), "schema_version = 1\n");
+      initLayeredConfig(dir, {
+        packs: {
+          read: () => ({
+            layers: [
+              {
+                id: "pm",
+                path: join(dir, "pm.toml"),
+                text: '[agents]\nvisible = ["standup", "nosuch"]\n',
+              },
+            ],
+            skipped: [],
+          }),
+        },
+      });
+      const r = await dispatchDiagnosticsRpc(
+        "config.explain",
+        { path: "agents.visible" },
+        makeCtx(dir),
+      );
+      const notes = (r as { value: { notes: string[] } }).value.notes;
+      expect(notes).toContain("agent visibility: the agents listed by packs pm");
+      expect(notes.some((n) => n.startsWith('unknown agent "nosuch" in pack:pm'))).toBe(true);
+    } finally {
+      forgetLayeredConfigForTests(dir);
+      rmTmp(dir);
+    }
+  });
+
   test("config.explain rejects a non-string path", () =>
     withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "default", (dir) => {
       expect(() => dispatchDiagnosticsRpc("config.explain", { path: 7 }, makeCtx(dir))).toThrow(

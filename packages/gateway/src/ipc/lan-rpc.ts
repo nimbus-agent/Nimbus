@@ -215,6 +215,8 @@ const FORBIDDEN_OVER_LAN = new Set([
   // `nimbus wow` — a paired peer has no use for this machine's tour plan or listener list.
   "tour",
   "locality",
+  // The agent + connector catalog (`nimbus catalog`): owner presentation, local CLI/desktop only.
+  "catalog",
   // OS notifications (pre-S3 item E): a paired peer must not raise toasts on this desktop, nor learn
   // whether its owner can see them. CLI-only.
   "notifications",

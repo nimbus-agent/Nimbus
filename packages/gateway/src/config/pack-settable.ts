@@ -87,6 +87,54 @@ export const PACK_SETTABLE_KEYS: readonly PackSettableKey[] = [
   },
 ];
 
+/** A name in an `[agents]` list: a short agent name, optionally written `agents.<name>`. */
+export const AGENT_NAME_IN_LIST_RE = /^(?:agents\.)?[a-z][A-Za-z]{0,63}$/;
+
+const AGENT_LIST_MAX = 64;
+
+/**
+ * Strict parse of `["a", "b"]`. Deliberately not `parseString`, which accepts unquoted tokens.
+ * Names are returned as written; normalisation belongs to the consumer.
+ */
+export function parseAgentNameList(valRaw: string): readonly string[] | undefined {
+  const t = valRaw.trim();
+  if (!t.startsWith("[") || !t.endsWith("]")) return undefined;
+  const inner = t.slice(1, -1).trim();
+  if (inner === "" || inner.endsWith(",")) return undefined;
+  const parts = inner.split(",");
+  if (parts.length > AGENT_LIST_MAX) return undefined;
+  const names: string[] = [];
+  for (const part of parts) {
+    const p = part.trim();
+    if (p.length < 2 || !p.startsWith('"') || !p.endsWith('"')) return undefined;
+    const name = p.slice(1, -1);
+    if (!AGENT_NAME_IN_LIST_RE.test(name)) return undefined;
+    names.push(name);
+  }
+  return names;
+}
+
+export type PackSettableList = {
+  readonly section: string;
+  readonly key: string;
+  readonly consumer: PackConsumerMode;
+  readonly why: string;
+  readonly expect: string;
+  readonly parse: (valRaw: string) => readonly string[] | undefined;
+};
+
+/** List-valued keys. They never enter `scalars`, so two packs setting one is a union, not a conflict. */
+export const PACK_SETTABLE_LISTS: readonly PackSettableList[] = [
+  {
+    section: "agents",
+    key: "visible",
+    consumer: "per-call",
+    why: "which agents the catalog shows; packs union, the owner's show/hide decide per agent",
+    expect: 'a non-empty array of agent names, e.g. ["decisions", "standup"]',
+    parse: parseAgentNameList,
+  },
+];
+
 export const PACK_SETTABLE_ARRAYS: readonly {
   readonly header: "fleet.job";
   readonly consumer: "reactive";
@@ -100,6 +148,7 @@ export type PackFragmentCheck =
   | {
       readonly ok: true;
       readonly scalars: ReadonlyMap<string, PackScalar>;
+      readonly lists: ReadonlyMap<string, readonly string[]>;
       readonly jobNames: readonly string[];
     }
   | { readonly ok: false; readonly problems: readonly string[] };
@@ -135,11 +184,13 @@ function checkPlainSection(
   section: DocSection,
   header: string,
   scalars: Map<string, PackScalar>,
+  lists: Map<string, readonly string[]>,
   seenKeys: Set<string>,
   problems: string[],
 ): void {
   const keys = PACK_SETTABLE_KEYS.filter((k) => k.section === header);
-  if (keys.length === 0 && section.lines.length === 0) {
+  const listKeys = PACK_SETTABLE_LISTS.filter((k) => k.section === header);
+  if (keys.length === 0 && listKeys.length === 0 && section.lines.length === 0) {
     problems.push(`[${header}] is not pack-settable`);
     return;
   }
@@ -149,13 +200,24 @@ function checkPlainSection(
       continue;
     }
     const spec = keys.find((k) => k.key === line.key);
-    if (spec === undefined) {
+    const listSpec = spec === undefined ? listKeys.find((k) => k.key === line.key) : undefined;
+    if (spec === undefined && listSpec === undefined) {
       problems.push(`[${header}] ${line.key} is not pack-settable`);
       continue;
     }
     const id = `${header}.${line.key}`;
     if (seenKeys.has(id)) problems.push(`[${header}] sets ${line.key} twice`);
     seenKeys.add(id);
+    if (listSpec !== undefined) {
+      const items = listSpec.parse(line.valRaw);
+      if (items === undefined) {
+        problems.push(`[${header}] ${line.key} = ${line.valRaw}: expected ${listSpec.expect}`);
+      } else {
+        lists.set(id, items);
+      }
+      continue;
+    }
+    if (spec === undefined) continue;
     const value = spec.parse(line.valRaw);
     if (value === undefined) {
       problems.push(`[${header}] ${line.key} = ${line.valRaw}: expected ${spec.expect}`);
@@ -175,6 +237,7 @@ export function checkPackFragment(text: string, checkJobs: PackJobChecker): Pack
   const doc = parseLayerDoc({ kind: "pack", id: "check", path: "" }, text);
   const problems: string[] = [];
   const scalars = new Map<string, PackScalar>();
+  const lists = new Map<string, readonly string[]>();
   const seenKeys = new Set<string>();
   const blocks: JobBlock[] = [];
   for (const section of doc.sections) {
@@ -195,12 +258,12 @@ export function checkPackFragment(text: string, checkJobs: PackJobChecker): Pack
       if (block !== undefined) blocks.push(block);
       continue;
     }
-    checkPlainSection(section, section.header, scalars, seenKeys, problems);
+    checkPlainSection(section, section.header, scalars, lists, seenKeys, problems);
   }
   if (blocks.length > 0) {
     const jobsText = blocks.map((b) => `[[fleet.job]]\n${b.raw.join("\n")}\n`).join("");
     problems.push(...checkJobs(jobsText));
   }
   if (problems.length > 0) return { ok: false, problems };
-  return { ok: true, scalars, jobNames: blocks.map((b) => b.name) };
+  return { ok: true, scalars, lists, jobNames: blocks.map((b) => b.name) };
 }

@@ -4,6 +4,7 @@ export const COMMAND_NAMES = [
   "audit",
   "bench",
   "captures",
+  "catalog",
   "catchup",
   "changelog",
   "chatops",

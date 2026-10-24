@@ -18,6 +18,15 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-24 — Role packs P1, PR 5: an agent and connector catalog, and agent visibility (no migration, no invariant, no egress class).**
+  `nimbus catalog [agents|connectors] [--json]` lists the built-in agents and the connectors on the install with short
+  descriptions. Packs can set `[agents] visible` (unioned across packs) and your own `nimbus.toml` or profile file can
+  add `[agents] show` and `hide`; the highest of your layers naming an agent decides, `hide` beating `show` within a
+  layer. Visibility is presentation only: a hidden agent is listed as hidden and still answers over every surface.
+  New `catalog.list` IPC method, LAN-forbidden and not on the Tauri allowlist. Extension and user-MCP names are
+  owner-added text, so the CLI strips control characters before printing them. `config explain` reports agent
+  visibility. Not breaking: nothing a user wrote stops working.
+
 - **2026-10-24 — Role packs P1, PR 4: fleet jobs merge per job across layers (no migration, no invariant, no egress class).**
   One bad `[[fleet.job]]` no longer disables the whole fleet: each job is checked on its own, a bad one is dropped
   and reported at error level in the log, `nimbus fleet status`, `nimbus doctor` and `diag.snapshot` (file basenames

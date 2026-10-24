@@ -64,6 +64,7 @@ AGENTS THAT NEED PAIRED PEERS — see TEAM below; these query the federation mes
   nimbus preflight <ref> --namespace <ns>   Ask downstream owners to verify your candidate ref
 
 CONNECTORS & INDEX
+  nimbus catalog [agents|connectors] [--json]   List agents and connectors with descriptions
   nimbus connector …        Register connectors, OAuth, user MCP (add --mcp), sync
   nimbus people …           Cross-service people graph (list, search, get, items, link)
   nimbus watch …            List/pause/resume index watchers

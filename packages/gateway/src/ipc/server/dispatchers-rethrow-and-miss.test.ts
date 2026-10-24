@@ -51,6 +51,7 @@ import {
 import {
   tryDispatchAgentsRpc,
   tryDispatchAutomationRpc,
+  tryDispatchCatalogRpc,
   tryDispatchConnectorRpc,
   tryDispatchDemoRpc,
   tryDispatchEgressRpc,
@@ -182,6 +183,11 @@ describe("a non-domain error propagates unchanged — never remapped to an RPC c
       "locality.report",
       (boom) => ({ localIndex: deadIndex(boom) }),
       (ctx) => tryDispatchLocalityRpc(ctx, "locality.report", {}),
+    ],
+    [
+      "catalog.list",
+      (boom) => ({ localIndex: deadIndex(boom), configDir: tempDir("disp-rethrow-catalog-") }),
+      (ctx) => tryDispatchCatalogRpc(ctx, "catalog.list", {}),
     ],
     [
       "federation.* (FederationRpcError remap is the only remap)",

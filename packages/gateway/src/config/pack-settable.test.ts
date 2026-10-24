@@ -6,6 +6,7 @@ import {
   PACK_SETTABLE_ARRAYS,
   PACK_SETTABLE_KEYS,
   type PackJobChecker,
+  parseAgentNameList,
 } from "./pack-settable.ts";
 
 const none: PackJobChecker = () => [];
@@ -160,5 +161,70 @@ describe("PACK_ID_RE", () => {
     for (const ok of ["console", "nul1", "com10", "lpt0", "com0", "auxiliary", "pm", "con-pm"]) {
       expect(PACK_ID_RE.test(ok)).toBe(true);
     }
+  });
+});
+
+describe("[agents] visible", () => {
+  const VIS = (v: string) => `[agents]
+visible = ${v}
+`;
+
+  test("accepts [agents] visible with bare and prefixed names", () => {
+    const r = checkPackFragment(VIS('["decisions", "agents.standup"]'), none);
+    if (!r.ok) throw new Error(r.problems.join("; "));
+    expect(r.lists.get("agents.visible")).toEqual(["decisions", "agents.standup"]);
+    expect(r.scalars.size).toBe(0);
+  });
+
+  test("refuses an empty visible list", () => {
+    expect(problemsOf(VIS("[]"))).toContain(
+      '[agents] visible = []: expected a non-empty array of agent names, e.g. ["decisions", "standup"]',
+    );
+  });
+
+  test("refuses a non-array", () => {
+    expect(problemsOf(VIS('"decisions"')).join("\n")).toContain("[agents] visible");
+  });
+
+  test("refuses an unquoted name", () => {
+    expect(problemsOf(VIS("[decisions, standup]")).join("\n")).toContain("[agents] visible");
+  });
+
+  test("refuses a trailing comma", () => {
+    expect(problemsOf(VIS('["decisions",]')).join("\n")).toContain("[agents] visible");
+  });
+
+  test("refuses a 65-name list and accepts 64", () => {
+    const many = (n: number) => `[${Array.from({ length: n }, () => '"a"').join(", ")}]`;
+    expect(problemsOf(VIS(many(65))).join("\n")).toContain("[agents] visible");
+    expect(parseAgentNameList(many(64))?.length).toBe(64);
+  });
+
+  test("accepts whitespace inside the brackets", () => {
+    const r = checkPackFragment(VIS('[ "decisions" , "standup" ]'), none);
+    if (!r.ok) throw new Error(r.problems.join("; "));
+    expect(r.lists.get("agents.visible")).toEqual(["decisions", "standup"]);
+  });
+
+  test("refuses other [agents] keys", () => {
+    for (const key of ["synthesis", "show", "hide"]) {
+      const value = key === "synthesis" ? '"local"' : '["x"]';
+      expect(
+        problemsOf(`[agents]
+${key} = ${value}
+`),
+      ).toContain(`[agents] ${key} is not pack-settable`);
+    }
+  });
+
+  test("accepts an unknown but well-formed name", () => {
+    const r = checkPackFragment(VIS('["standpu"]'), none);
+    expect(r.ok).toBe(true);
+  });
+
+  test("refuses visible set twice", () => {
+    expect(problemsOf('[agents]\nvisible = ["a"]\nvisible = ["b"]\n').join("\n")).toContain(
+      "[agents] sets visible twice",
+    );
   });
 });

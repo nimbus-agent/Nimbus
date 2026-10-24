@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 import { listWatchers } from "../automation/watcher-store.ts";
+import { CATALOG_AGENT_NAMES } from "../catalog/agent-catalog.ts";
+import { describeAgentVisibility, resolveAgentVisibility } from "../catalog/agent-visibility.ts";
 import { explainConfig } from "../config/config-explain.ts";
 import type { FleetDroppedJob, FleetJobChecker } from "../config/fleet-toml.ts";
 import { getLayeredConfig } from "../config/layered-config.ts";
@@ -232,10 +234,13 @@ function rpcConfigExplain(params: unknown, ctx: DiagnosticsRpcContext): Diagnost
   if (path !== undefined && typeof path !== "string") {
     throw new DiagnosticsRpcError(-32602, "config.explain: path must be a string");
   }
+  const reader = getLayeredConfig(ctx.configDir);
   return {
     kind: "hit",
-    value: explainConfig(getLayeredConfig(ctx.configDir), path, undefined, {
+    value: explainConfig(reader, path, undefined, {
       ...(ctx.fleetJobCheck === undefined ? {} : { fleetJobCheck: ctx.fleetJobCheck }),
+      agentVisibilityNotes: () =>
+        describeAgentVisibility(resolveAgentVisibility(reader.snapshot(), CATALOG_AGENT_NAMES)),
     }),
   };
 }

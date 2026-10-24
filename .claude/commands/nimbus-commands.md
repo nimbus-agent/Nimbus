@@ -245,6 +245,7 @@ These are runtime CLI commands, not bun scripts.
 nimbus query --service github --type pr --since 7d --json
 nimbus query --sql "SELECT title FROM items WHERE pinned = 1" --pretty
 nimbus config get <key> / set <key> <value> / list / validate / edit
+nimbus catalog [agents|connectors] [--json]  # agents (shown/hidden per [agents] show/hide + pack visible; presentation only) and connectors
 nimbus profile create <name> / list / switch <name> / delete <name>
 nimbus diag [--json]
 nimbus diag slow-queries [--limit N] [--since <duration>]
