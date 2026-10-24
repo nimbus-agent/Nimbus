@@ -914,6 +914,7 @@ export function doctorPrintProfile(raw: unknown): number {
     activePacks?: unknown;
     skippedPacks?: unknown;
     packListError?: unknown;
+    droppedFleetJobs?: unknown;
   };
   if (typeof c.runningProfile !== "string") return 0;
   let exit = 0;
@@ -950,7 +951,25 @@ export function doctorPrintProfile(raw: unknown): number {
       `[info] profile "${running}" has no nimbus.${running}.toml; running on nimbus.toml alone`,
     );
   }
-  return Math.max(exit, doctorPrintPacks(c));
+  return Math.max(exit, doctorPrintPacks(c), doctorPrintFleetJobs(c));
+}
+
+/** One warning per fleet job the gateway dropped; silent when the field is absent (older gateway). */
+function doctorPrintFleetJobs(c: { droppedFleetJobs?: unknown }): number {
+  const dropped = Array.isArray(c.droppedFleetJobs) ? (c.droppedFleetJobs as unknown[]) : [];
+  let exit = 0;
+  for (const d of dropped) {
+    if (d === null || typeof d !== "object") continue;
+    const { name, file, reason } = d as { name?: unknown; file?: unknown; reason?: unknown };
+    if (name !== null && typeof name !== "string") continue;
+    if (typeof file !== "string" || typeof reason !== "string") continue;
+    const shown = name === null ? "(unnamed)" : stripControlChars(name);
+    console.log(
+      `[warn] fleet job "${shown}" dropped (${stripControlChars(file)}): ${stripControlChars(reason)}`,
+    );
+    exit = 1;
+  }
+  return exit;
 }
 
 /** Pack lines; each field is optional and filtered like `layers`, so an older gateway prints nothing. */

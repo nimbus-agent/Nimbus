@@ -7,7 +7,11 @@ import { processEnvGet } from "../platform/env-access.ts";
 import type { ProfileSource } from "./active-profile.ts";
 import { CONFIG_ENV_OVERRIDES, isPolicyConstrainedPath } from "./config-env-overrides.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "./filesystem-toml.ts";
-import { loadNimbusFleetFromConfigDir } from "./fleet-toml.ts";
+import {
+  type FleetJobChecker,
+  loadNimbusFleetFromConfigDir,
+  resolveFleetJobs,
+} from "./fleet-toml.ts";
 import { fallbackMessage, type LayeredConfig, type SnapshotLayer } from "./layered-config.ts";
 import {
   type EffectiveEntry,
@@ -322,10 +326,54 @@ export function restartWouldSwitch(
   return (source === "marker" || source === "default") && marker !== running;
 }
 
+const layerLabel = (l: LayerRef): string => `${l.kind} "${l.id}"`;
+
+/**
+ * Notes on `[[fleet.job]]` entries: what a stub disables, what a job replaced, what was dropped.
+ * Built from the loader's own `resolveFleetJobs`, so explain cannot disagree with what ran.
+ * `path` narrows it to one job (`fleet.job.<name>`); `fleet.job` or no path covers every job.
+ */
+function fleetJobNotes(
+  sections: readonly EffectiveSection[],
+  path: string | undefined,
+  check: FleetJobChecker | undefined,
+): string[] {
+  let only: string | undefined;
+  if (path !== undefined) {
+    const wanted = unquote(path);
+    if (wanted !== "fleet.job" && !wanted.startsWith("fleet.job.")) return [];
+    only = wanted === "fleet.job" ? undefined : wanted.slice("fleet.job.".length);
+  }
+  const r = resolveFleetJobs(sections, check);
+  const keep = (name: string | null): boolean => only === undefined || name === only;
+  const notes: string[] = [];
+  for (const d of r.disabled) {
+    if (!keep(d.name)) continue;
+    const head = `fleet job "${d.name}" is disabled (enabled = false); `;
+    notes.push(
+      d.origin.replaces.length === 0
+        ? `${head}it disables nothing`
+        : `${head}it disables ${d.origin.replaces.map(layerLabel).join(", ")}`,
+    );
+  }
+  for (const j of r.jobs) {
+    const origin = r.origins.get(j.name);
+    if (origin === undefined || origin.replaces.length === 0 || !keep(j.name)) continue;
+    notes.push(
+      `fleet job "${j.name}" from ${layerLabel(origin.layer)} replaces ${origin.replaces.map(layerLabel).join(", ")}`,
+    );
+  }
+  for (const d of r.dropped) {
+    if (keep(d.name)) notes.push(`fleet job "${d.name ?? "(unnamed)"}" is dropped: ${d.reason}`);
+  }
+  return notes;
+}
+
 export function explainConfig(
   reader: LayeredConfig,
   path: string | undefined,
   env: EnvGet = processEnvGet,
+  opts: { readonly fleetJobCheck?: FleetJobChecker } = {},
 ): ExplainResult {
   const snap = reader.snapshot();
   const notes: string[] = [];
@@ -387,6 +435,7 @@ export function explainConfig(
   if (snap.packListError !== undefined) {
     notes.push(`packs for profile "${reader.profile.name}" not applied: ${snap.packListError}`);
   }
+  notes.push(...fleetJobNotes(snap.doc.sections, path, opts.fleetJobCheck));
   const running = reader.profile.name;
   const marker = reader.markerProfile();
   if (restartWouldSwitch(reader.profile.source, running, marker)) {

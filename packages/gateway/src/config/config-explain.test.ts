@@ -64,6 +64,63 @@ describe("explainConfig", () => {
     expect(r.blocks?.[0]?.entries.map((e) => e.path)).toContain("fleet.job.agent");
   });
 
+  describe("fleet job notes", () => {
+    const base = '[[fleet.job]]\nname = "nightly"\nagent = "janitor"\ninterval_seconds = 60\n';
+    const stub = '[[fleet.job]]\nname = "nightly"\nenabled = false\n';
+
+    test("explain fleet.job.<name> says what a stub disables", () => {
+      writeBase(base);
+      writeProfile("work", stub);
+      const r = explainConfig(
+        initLayeredConfig(dir, { explicitProfile: "work" }),
+        "fleet.job.nightly",
+        noEnv,
+      );
+      expect(r.notes).toContain(
+        'fleet job "nightly" is disabled (enabled = false); it disables base "base"',
+      );
+    });
+
+    test("an orphan stub disables nothing", () => {
+      writeBase(stub);
+      const r = explainConfig(initLayeredConfig(dir), "fleet.job.nightly", noEnv);
+      expect(r.notes).toContain(
+        'fleet job "nightly" is disabled (enabled = false); it disables nothing',
+      );
+    });
+
+    test("a replacing job names the layer it replaces", () => {
+      writeBase(base);
+      writeProfile("work", base.replace("60", "120"));
+      const r = explainConfig(
+        initLayeredConfig(dir, { explicitProfile: "work" }),
+        undefined,
+        noEnv,
+      );
+      expect(r.notes).toContain('fleet job "nightly" from profile "work" replaces base "base"');
+    });
+
+    test("a dropped job names its reason", () => {
+      writeBase(base);
+      const r = explainConfig(initLayeredConfig(dir), "fleet.job", noEnv, {
+        fleetJobCheck: () => "agent is not eligible",
+      });
+      expect(r.notes).toContain('fleet job "nightly" is dropped: agent is not eligible');
+    });
+
+    test("explain without a checker still reports syntax drops", () => {
+      writeBase('[[fleet.job]]\nname = "bad"\nagent = "janitor"\n');
+      const r = explainConfig(initLayeredConfig(dir), undefined, noEnv);
+      expect(r.notes.some((n) => n.startsWith('fleet job "bad" is dropped: '))).toBe(true);
+    });
+
+    test("another job's notes are not shown for fleet.job.<name>", () => {
+      writeBase(`${base}\n${stub.replace("nightly", "other")}`);
+      const r = explainConfig(initLayeredConfig(dir), "fleet.job.nightly", noEnv);
+      expect(r.notes.some((n) => n.includes('"other"'))).toBe(false);
+    });
+  });
+
   test("env override is the top source", () => {
     writeBase("[lan]\nport = 7475\n");
     const env = (k: string) => (k === "NIMBUS_LAN_PORT" ? "9999" : undefined);

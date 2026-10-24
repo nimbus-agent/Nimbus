@@ -2188,6 +2188,12 @@ export async function tryDispatchDiagnosticsRpc(
       ...(ctx.options.agentLatencyRecorder === undefined
         ? {}
         : { agentLatencyRecorder: ctx.options.agentLatencyRecorder }),
+      ...(ctx.options.fleetDroppedJobs === undefined
+        ? {}
+        : { fleetDroppedJobs: ctx.options.fleetDroppedJobs }),
+      ...(ctx.options.fleetJobCheck === undefined
+        ? {}
+        : { fleetJobCheck: ctx.options.fleetJobCheck }),
     };
     const diagCtx =
       ctx.options.localIndex === undefined

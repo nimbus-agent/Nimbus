@@ -4755,6 +4755,10 @@ export async function assemblePlatformServices(
   // an instance nothing else ever writes to.
   const askExplainRecorder = new AskExplainRecorder();
   ipcOpts.askExplainRecorder = askExplainRecorder;
+  // Fleet job drops and the semantic check reach `diag.snapshot`/`config.explain` as closures, so
+  // `ipc/` never imports `fleet/`. The getter reads the supervisor's CURRENT drops on each call.
+  ipcOpts.fleetDroppedJobs = () => fleetRuntime.dropped;
+  ipcOpts.fleetJobCheck = checkFleetJob;
 
   if (bootPolicy.envSidecars) {
     collectSidecarsFromEnv(db, paths, sidecarStops, httpSidecarOpts);

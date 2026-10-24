@@ -3,6 +3,7 @@
 // logic here would silently bypass the floor — put runtime logic in a separate, covered module.
 
 import type { PairingWindowController } from "../../clips/pairing-window.ts";
+import type { FleetDroppedJob, FleetJobChecker } from "../../config/fleet-toml.ts";
 import type { ProfileManager } from "../../config/profiles.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
 import type { DecisionRefresher } from "../../decisions/decision-refresh.ts";
@@ -289,4 +290,8 @@ export type CreateIpcServerOptions = {
   // Telemetry agent-invocation latency (`telemetry/agent-latency.ts`): written by every socket
   // `agents.*` brief dispatch, read by `telemetry.preview`/`telemetry.getStatus`. Durations only.
   agentLatencyRecorder?: AgentLatencyRecorder;
+  // Fleet job drops and the semantic job check, forwarded to the diagnostics context (diag.snapshot,
+  // config.explain). Injected by assemble.ts so ipc/ does not import fleet/.
+  fleetDroppedJobs?: () => readonly FleetDroppedJob[];
+  fleetJobCheck?: FleetJobChecker;
 };
