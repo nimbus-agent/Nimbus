@@ -76,7 +76,8 @@ function makeRunner(over: Partial<Parameters<typeof createOncallPushRunner>[0]> 
   const runner = createOncallPushRunner({
     db,
     store,
-    config: { ...DEFAULT_ONCALL_PUSH_CONFIG, enabled: true },
+    config: DEFAULT_ONCALL_PUSH_CONFIG,
+    isEnabled: () => true,
     pagerdutyAliases: [],
     configDir: "unused-in-unit-tests",
     resolveSelf: async () => personId,
@@ -126,7 +127,7 @@ describe("push runner", () => {
       (
         await makeRunner({
           dispatch: readyDispatch(calls),
-          config: DEFAULT_ONCALL_PUSH_CONFIG,
+          isEnabled: () => false,
         }).runner.run("pagerduty")
       ).skipped,
     ).toBe("disabled");
@@ -143,6 +144,15 @@ describe("push runner", () => {
       (await makeRunner({ dispatch: readyDispatch(calls) }).runner.run("pagerduty")).skipped,
     ).toBe("not_reconciled");
     expect(calls).toEqual([]);
+  });
+
+  test("isEnabled is read on every run, never cached at construction", async () => {
+    let on = false;
+    const calls: unknown[] = [];
+    const { runner } = makeRunner({ dispatch: readyDispatch(calls), isEnabled: () => on });
+    expect((await runner.run("pagerduty")).skipped).toBe("disabled");
+    on = true;
+    expect(await runner.run("pagerduty")).toEqual({ selected: 1, ok: 1, failed: 0 });
   });
 
   test("a SYNCHRONOUS refusal (thrown AgentsRpcError) is a failed row, not a rejection", async () => {
@@ -296,6 +306,23 @@ describe("push runner", () => {
     const flaky = new FlakyStore(db);
     const { runner, delivered } = makeRunner({ store: flaky, dispatch: readyDispatch([]) });
     await expect(runner.run("pagerduty")).rejects.toThrow("disk full");
+    expect(delivered).toHaveLength(1);
+    expect(store.get(delivered[0]?.row.incidentId ?? "")).not.toBeNull();
+  });
+
+  test("a live disable mid-run stops before the next incident and still delivers the stored one", async () => {
+    seedIncident("PB");
+    const calls: unknown[] = [];
+    let reads = 0;
+    // Read 1 is the run's entry check; read 2 precedes the first incident; read 3 the second.
+    const isEnabled = () => {
+      reads += 1;
+      return reads <= 2;
+    };
+    const { runner, delivered } = makeRunner({ dispatch: readyDispatch(calls), isEnabled });
+    const summary = await runner.run("pagerduty");
+    expect(calls).toHaveLength(1);
+    expect(summary).toMatchObject({ ok: 1, failed: 0 });
     expect(delivered).toHaveLength(1);
     expect(store.get(delivered[0]?.row.incidentId ?? "")).not.toBeNull();
   });

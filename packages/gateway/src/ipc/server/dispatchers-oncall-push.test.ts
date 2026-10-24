@@ -25,12 +25,21 @@ import { RpcMethodError } from "./rpc-error.ts";
 
 type FakeRuntime = Pick<
   OncallPushRuntime,
-  "config" | "store" | "retry" | "identityResolved" | "run" | "chatopsSinkState"
+  | "config"
+  | "isEnabled"
+  | "stop"
+  | "store"
+  | "retry"
+  | "identityResolved"
+  | "run"
+  | "chatopsSinkState"
 >;
 
 function fakeRuntime(over: Partial<FakeRuntime> = {}): OncallPushRuntime {
   const base: FakeRuntime = {
-    config: { enabled: true, chatopsNamespace: "" } as OncallPushRuntime["config"],
+    config: { chatopsNamespace: "" } as OncallPushRuntime["config"],
+    isEnabled: () => true,
+    stop: () => {},
     store: {
       list: () => [],
       listWithIncident: () => [],

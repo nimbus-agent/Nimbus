@@ -894,6 +894,50 @@ export async function doctorPrintMigrations(client: Pick<IPCClient, "call">): Pr
   }
 }
 
+function packFromVersion(versionUnknown: boolean, version: unknown): string {
+  if (versionUnknown || typeof version !== "string") return "version unknown";
+  return stripControlChars(version);
+}
+
+/**
+ * Role packs: one `[info]` line naming each installed pack the bundled copy differs from. "Update
+ * available" means the digest differs, not that the bundled copy is newer, so a missing
+ * `bundledVersion` prints "a different build". Always exit 0 (a stale pack is not a fault), and
+ * silent when the gateway cannot answer `pack.list` (an older binary, or any error).
+ */
+export async function doctorPrintPackUpdates(client: Pick<IPCClient, "call">): Promise<number> {
+  const raw = await client.call<unknown>("pack.list", {}).catch(() => undefined);
+  if (raw === null || typeof raw !== "object") return 0;
+  const { profile, installed } = raw as { profile?: unknown; installed?: unknown };
+  if (typeof profile !== "string" || !Array.isArray(installed)) return 0;
+  const updates: string[] = [];
+  for (const row of installed as unknown[]) {
+    if (row === null || typeof row !== "object") continue;
+    const p = row as {
+      id?: unknown;
+      version?: unknown;
+      updateAvailable?: unknown;
+      bundledVersion?: unknown;
+      versionUnknown?: unknown;
+    };
+    if (p.updateAvailable !== true || typeof p.id !== "string") continue;
+    const from = packFromVersion(p.versionUnknown === true, p.version);
+    // An equal version means the digest differs with no version bump: "1.1.0 -> 1.1.0" would
+    // read as a no-op.
+    const to =
+      typeof p.bundledVersion === "string" && p.bundledVersion !== p.version
+        ? stripControlChars(p.bundledVersion)
+        : "a different build";
+    updates.push(`${stripControlChars(p.id)} ${from} -> ${to}`);
+  }
+  if (updates.length > 0) {
+    console.log(
+      `[info] pack updates available (profile "${stripControlChars(profile)}"): ${updates.join(", ")}. Re-install with: nimbus pack install <id>`,
+    );
+  }
+  return 0;
+}
+
 /** JSON-RPC -32601: the gateway does not serve the method (an older binary). */
 function isMethodNotFound(e: unknown): boolean {
   return typeof e === "object" && e !== null && "code" in e && e.code === -32601;
@@ -1065,6 +1109,7 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   exit = Math.max(exit, await doctorPrintExtensions(client));
   exit = Math.max(exit, await doctorPrintRegistries(client));
   exit = Math.max(exit, await doctorPrintMigrations(client));
+  exit = Math.max(exit, await doctorPrintPackUpdates(client));
   // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the
   // whole gateway run, which outranks any one connector being unreachable.
   exit = Math.max(exit, doctorPrintEmbeddingFromSnapshot(snap));

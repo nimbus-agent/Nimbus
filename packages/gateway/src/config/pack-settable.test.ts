@@ -24,6 +24,7 @@ describe("pack-settable allowlist", () => {
       "fleet.min_idle_seconds",
       "fleet.require_ac_power",
       "fleet.retention_days",
+      "oncall.push.enabled",
       "decisions.min_confidence",
     ]);
     expect(PACK_SETTABLE_ARRAYS.map((a) => a.header)).toEqual(["fleet.job"]);
@@ -47,6 +48,16 @@ describe("pack-settable allowlist", () => {
     expect(r.scalars.get("fleet.enabled")).toBe(true);
     expect(r.scalars.get("fleet.retention_days")).toBe(7);
     expect(r.scalars.get("decisions.min_confidence")).toBe(0.7);
+  });
+
+  test("[oncall.push] enabled is settable; its other keys are not", () => {
+    const r = checkPackFragment("[oncall.push]\nenabled = true\n", none);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scalars.get("oncall.push.enabled")).toBe(true);
+    expect(problemsOf('[oncall.push]\nchatops_namespace = "x"\n')).toContain(
+      "[oncall.push] chatops_namespace is not pack-settable",
+    );
   });
 
   test("names every off-list key", () => {

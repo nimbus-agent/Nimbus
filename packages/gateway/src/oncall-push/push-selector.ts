@@ -13,7 +13,7 @@ export const ENABLE_GRACE_MS = 5 * 60_000;
  * configure would make push disagree with preflight and DORA about what a P1 is.
  */
 export function resolveSeveritySet(
-  cfg: NimbusOncallPushToml,
+  cfg: Pick<NimbusOncallPushToml, "severities">,
   pagerdutyAliases: readonly string[],
 ): ReadonlySet<string> {
   if (cfg.severities.length > 0) return new Set(cfg.severities.map((s) => s.toLowerCase()));

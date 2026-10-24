@@ -44,7 +44,9 @@ export class PushRetryRefusedError extends Error {
 export interface OncallPushRunnerDeps {
   readonly db: Database;
   readonly store: PushStore;
-  readonly config: NimbusOncallPushToml;
+  /** Boot-time `[oncall.push]` keys; `enabled` is live and read only through `isEnabled`. */
+  readonly config: Omit<NimbusOncallPushToml, "enabled">;
+  readonly isEnabled: () => boolean;
   readonly pagerdutyAliases: readonly string[];
   readonly configDir: string;
   readonly index?: LocalIndex;
@@ -176,7 +178,7 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
   const retrying = new Map<string, Promise<PushedBriefRow>>();
 
   async function once(): Promise<PushRunSummary> {
-    if (!deps.config.enabled) return { selected: 0, ok: 0, failed: 0, skipped: "disabled" };
+    if (!deps.isEnabled()) return { selected: 0, ok: 0, failed: 0, skipped: "disabled" };
     const enabledAt = deps.store.enabledAt();
     if (enabledAt === null) return { selected: 0, ok: 0, failed: 0, skipped: "not_reconciled" };
     const personId = await deps.resolveSelf();
@@ -194,6 +196,8 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
       for (const incident of candidates) {
         // Defensive: a duplicate candidate within one selection would make `insert` throw on the PK.
         if (deps.store.has(incident.id)) continue;
+        // A live disable mid-run (a pack removed) stops the loop; the finally delivers what is stored.
+        if (!deps.isEnabled()) break;
         const outcome = await briefIncident(deps, incident.id); // NOSONAR S9382: one agents.oncall session at a time - the has() re-check above must see every row stored before it, and a failed insert must stop the later briefs (the finally delivers the rows already stored)
         const row = deps.store.insert(incident.id, outcome, now());
         if (row.status === "ok") ok += 1;

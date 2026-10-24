@@ -286,6 +286,28 @@ describe("installPack: approval", () => {
     expect(prompt).toContain("fleet.enabled = true, unset");
   });
 
+  test("the devops prompt shows oncall.push.enabled as unset when no layer sets it", async () => {
+    expect(explainConfig(getLayeredConfig(dir), "oncall.push.enabled").entries).toEqual([]);
+    const g = gate();
+    await installPack({ id: "devops" }, deps(), g.gate);
+    const prompt = String(g.calls[0]?.payload["promptText"]);
+    expect(prompt).toContain("oncall.push.enabled = true, unset");
+    expect(g.calls[0]?.payload).toMatchObject({ packId: "devops", version: "1.1.0" });
+  });
+
+  test("the owner's [oncall.push] enabled = false is read through the two-segment header and marked", async () => {
+    writeFileSync(join(dir, "nimbus.toml"), "[oncall.push]\nenabled = false\n");
+    const g = gate();
+    await installPack({ id: "devops" }, deps(), g.gate);
+    const prompt = String(g.calls[0]?.payload["promptText"]);
+    expect(prompt).toContain(
+      "oncall.push.enabled = true, current false (nimbus.toml) (your file overrides this)",
+    );
+    const entry = explainConfig(getLayeredConfig(dir), "oncall.push.enabled").entries[0];
+    expect(entry?.value).toBe("false");
+    expect(entry?.source).toMatchObject({ kind: "layer", layer: { kind: "base" } });
+  });
+
   test("a local file pack's source is shown as `local file <absolute path>`", async () => {
     const g = gate();
     const r = await installPack({ fileText: fileText(), filePath: FILE_PATH }, deps(), g.gate);

@@ -13,7 +13,11 @@ import { syncPagerdutyIncidentItems } from "../connectors/pagerduty-sync.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { setGatewayEventBroadcast } from "../ipc/gateway-events.ts";
 import { findPersonByCanonicalEmail } from "../people/person-store.ts";
-import { assembleOncallPushRuntime } from "./push-runtime.ts";
+import {
+  assembleOncallPushRuntime as assembleRuntime,
+  type OncallPushBootDeps,
+  type OncallPushRuntime,
+} from "./push-runtime.ts";
 import { PushStore } from "./push-store.ts";
 
 const DAY = 86_400_000;
@@ -58,14 +62,23 @@ beforeEach(() => {
   logs.length = 0;
   onLog = () => {};
 });
+// Every runtime a test assembles is stopped, so its live `enabled` reader never outlives it.
+const runtimes: OncallPushRuntime[] = [];
+function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushRuntime {
+  const rt = assembleRuntime(deps);
+  runtimes.push(rt);
+  return rt;
+}
+
 afterEach(() => {
+  for (const rt of runtimes.splice(0)) rt.stop();
   db.close();
   rmSync(configDir, { recursive: true, force: true });
 });
 
 test("no config → disabled, and the boot reconcile leaves no enabled_at", () => {
   const rt = boot();
-  expect(rt.config.enabled).toBe(false);
+  expect(rt.isEnabled()).toBe(false);
   expect(rt.store.enabledAt()).toBeNull();
 });
 
@@ -79,6 +92,53 @@ test("a disabled boot clears a prior enabled_at", () => {
   boot(1);
   writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = false\n");
   expect(boot(2).store.enabledAt()).toBeNull();
+});
+
+test("enabled is live: a nimbus.toml edit turns push on and off with no restart (role-packs § 5.9)", async () => {
+  let now = 1_000;
+  const rt = assembleOncallPushRuntime({
+    settleImmediately: true,
+    db,
+    configDir,
+    notifications: { show: () => {} },
+    logger: { error: () => {} },
+    now: () => now,
+    checkMs: 60_000,
+  });
+  expect("enabled" in rt.config).toBe(false);
+  expect((await rt.run("pagerduty")).skipped).toBe("disabled");
+
+  now = 2_000;
+  writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = true\n");
+  expect(rt.isEnabled()).toBe(true);
+  // Reconciled at the change, not at boot: the runner never sees "enabled" with no row.
+  expect(rt.store.enabledAt()).toBe(2_000);
+  expect((await rt.run("pagerduty")).skipped).toBe("identity_unresolved");
+
+  writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = false\n");
+  expect((await rt.run("pagerduty")).skipped).toBe("disabled");
+  expect(rt.store.enabledAt()).toBeNull();
+});
+
+test("the injected version decides when enabled is re-read; stop() is idempotent and freezes it", () => {
+  let version = 7;
+  const rt = assembleOncallPushRuntime({
+    settleImmediately: true,
+    db,
+    configDir,
+    notifications: { show: () => {} },
+    logger: { error: () => {} },
+    version: () => version,
+  });
+  writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = true\n");
+  expect(rt.isEnabled()).toBe(false); // the version did not move, so nothing is re-read
+  version = 8;
+  expect(rt.isEnabled()).toBe(true);
+  rt.stop();
+  rt.stop();
+  writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = false\n");
+  version = 9;
+  expect(rt.isEnabled()).toBe(true);
 });
 
 test("trigger never throws, even if the run rejects — the rejection is logged", async () => {
@@ -102,7 +162,7 @@ test("boot prunes rows past retention even when push is DISABLED; a recent row s
   seed.insert("pagerduty:NEW", failed, now - 89 * DAY);
   writeFileSync(join(configDir, "nimbus.toml"), "[oncall.push]\nenabled = false\n");
   const rt = boot(now);
-  expect(rt.config.enabled).toBe(false);
+  expect(rt.isEnabled()).toBe(false);
   expect(rt.store.get("pagerduty:OLD")).toBeNull();
   expect(rt.store.get("pagerduty:NEW")).not.toBeNull();
 });

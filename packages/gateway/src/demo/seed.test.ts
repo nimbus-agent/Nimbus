@@ -10,7 +10,11 @@ import { PR_META_VERSION } from "../connectors/pr-meta.ts";
 import { AnnotateError } from "../deployment/annotate.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { assembleOncallPushRuntime } from "../oncall-push/push-runtime.ts";
+import {
+  assembleOncallPushRuntime as assembleRuntime,
+  type OncallPushBootDeps,
+  type OncallPushRuntime,
+} from "../oncall-push/push-runtime.ts";
 import { NO_NOTIFIER_REASON } from "../oncall-push/push-sinks.ts";
 import { createUnimplementedNotifications } from "../platform/assemble.ts";
 import { buildAcmeCorpus } from "./corpus/acme.ts";
@@ -20,7 +24,16 @@ import { DEMO_SEED_MARKER, DemoSeedRefusedError, fireDemoPage, seedDemoCorpus } 
 let dbs: Database[] = [];
 let roots: string[] = [];
 
+// Every runtime a test assembles is stopped, so its live `enabled` reader never outlives it.
+const runtimes: OncallPushRuntime[] = [];
+function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushRuntime {
+  const rt = assembleRuntime(deps);
+  runtimes.push(rt);
+  return rt;
+}
+
 afterEach(() => {
+  for (const rt of runtimes.splice(0)) rt.stop();
   for (const db of dbs) db.close();
   for (const r of roots) rmSync(r, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   dbs = [];
@@ -109,7 +122,7 @@ describe("seedDemoCorpus", () => {
       logger: { error: () => {} },
       now: () => nowMs + 5_000,
     });
-    expect(rt.config.enabled).toBe(true); // writeDemoConfig enabled it
+    expect(rt.isEnabled()).toBe(true); // writeDemoConfig enabled it
     expect(rt.store.enabledAt()).toBe(nowMs + 5_000); // boot reconcile, before the page
 
     const r = await fireDemoPage(db, rt, nowMs + 10_000);
