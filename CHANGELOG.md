@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.4.0](https://github.com/nimbus-agent/Nimbus/compare/v10.3.1...v10.4.0) (2026-10-24)
+
+
+### Features
+
+* **catalog:** agent visibility and a catalog of agents and connectors ([#1757](https://github.com/nimbus-agent/Nimbus/issues/1757)) ([81ff8ec](https://github.com/nimbus-agent/Nimbus/commit/81ff8ec0a5538bbd420171ff4e05569a36f52117))
+* **fleet:** a bad fleet job drops only itself, and enabled = false disables one ([#1752](https://github.com/nimbus-agent/Nimbus/issues/1752)) ([0d932de](https://github.com/nimbus-agent/Nimbus/commit/0d932de0b276a987aadec861b347d69c6889bbe3))
+
 ## [10.3.1](https://github.com/nimbus-agent/Nimbus/compare/v10.3.0...v10.3.1) (2026-10-24)
 
 
