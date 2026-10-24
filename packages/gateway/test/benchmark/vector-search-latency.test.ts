@@ -68,7 +68,7 @@ function hashSeed(text: string): number {
 
 function p95(samples: readonly number[]): number {
   const sorted = [...samples].sort((a, b) => a - b);
-  const idx = Math.floor(sorted.length * 0.95);
+  const idx = Math.ceil(sorted.length * 0.95) - 1;
   return sorted.at(idx) ?? sorted.at(-1) ?? 0;
 }
 
