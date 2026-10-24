@@ -126,6 +126,7 @@ AUTOMATION & EXTENSIONS
   nimbus workflow …         List/save/run/delete saved workflows (agent steps)
   nimbus run <file>         Save + run workflow from JSON/YAML file
   nimbus extension …        Install/list/enable/disable/remove local extensions
+  nimbus pack list|show|install|remove …  Role packs: curated settings layers (install is owner-approved)
   nimbus registry add|list|refresh|remove …  Pin and manage extension registries
   nimbus registry maintain …  Build a signed static extension registry (init/add/remove)
   nimbus scaffold mcp <name>        Minimal, tested MCP server you can register with connector add --mcp

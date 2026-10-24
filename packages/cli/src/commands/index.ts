@@ -42,6 +42,7 @@ export { runNegotiateCommand } from "./negotiate.ts";
 export { runNotificationsCmd } from "./notifications.ts";
 export { runOncallCommand } from "./oncall.ts";
 export { runOwnersCommand } from "./owners.ts";
+export { runPack } from "./pack.ts";
 export { runPeople } from "./people.ts";
 export { runPolicy } from "./policy.ts";
 export { runPreMortemCommand } from "./pre-mortem.ts";

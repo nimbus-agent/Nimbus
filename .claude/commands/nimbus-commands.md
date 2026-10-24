@@ -246,6 +246,10 @@ nimbus query --service github --type pr --since 7d --json
 nimbus query --sql "SELECT title FROM items WHERE pinned = 1" --pretty
 nimbus config get <key> / set <key> <value> / list / validate / edit
 nimbus catalog [agents|connectors] [--json]  # agents (shown/hidden per [agents] show/hide + pack visible; presentation only) and connectors
+nimbus pack list [--json]                      # bundled packs available + installed ones (active profile)
+nimbus pack show <id> | --file <path> [--json] # the exact approval prompt, no install
+nimbus pack install <id> | --file <path>       # TTY only, no --yes; HITL `pack.install`; --file refused in a production build
+nimbus pack remove <id>                        # no prompt; "not installed" is not an error
 nimbus profile create <name> / list / switch <name> / delete <name>
 nimbus diag [--json]
 nimbus diag slow-queries [--limit N] [--since <duration>]
