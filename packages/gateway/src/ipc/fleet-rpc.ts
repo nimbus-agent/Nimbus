@@ -353,16 +353,19 @@ async function handleRunNow(params: unknown, ctx: FleetRpcCtx): Promise<FleetRun
     if (e instanceof FleetReloadingError) throw new FleetRpcError(-32000, e.message);
     throw e;
   }
-  const { scheduler, disabled, dropped } = ctx;
+  const { scheduler, jobs, disabled, dropped } = ctx;
   const job = optString(params, "job");
-  const stub = job === undefined ? undefined : disabled?.find((d) => d.name === job);
+  // A same-layer duplicate keeps its FIRST copy and drops the later one, so one name can be both
+  // scheduled and in `dropped` (or `disabled`). A scheduled name is never refused.
+  const refusable = job !== undefined && !(jobs ?? []).some((j) => j.name === job);
+  const stub = refusable ? disabled?.find((d) => d.name === job) : undefined;
   if (stub !== undefined) {
     throw new FleetRpcError(
       -32602,
       `fleet: job "${stub.name}" is disabled by enabled = false in ${stub.origin.layer.path}`,
     );
   }
-  const drop = job === undefined ? undefined : dropped?.find((d) => d.name === job);
+  const drop = refusable ? dropped?.find((d) => d.name === job) : undefined;
   if (drop !== undefined) {
     throw new FleetRpcError(
       -32602,

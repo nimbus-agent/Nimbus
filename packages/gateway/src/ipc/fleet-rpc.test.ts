@@ -800,4 +800,26 @@ describe("fleet layers, disabled and dropped jobs", () => {
       );
     }
   });
+
+  test("runNow runs a scheduled job whose later same-named duplicate was dropped", async () => {
+    // `resolveFleetJobs` keeps the FIRST copy of a same-layer duplicate and drops the later one,
+    // so one name can be both scheduled and in `dropped`. The scheduled copy must still run.
+    const calls: unknown[] = [];
+    const scheduler = {
+      runOnce: async (opts: unknown) => {
+        calls.push(opts);
+        return { jobsAttempted: 1 };
+      },
+    };
+    const job = { name: "d", agent: "catchup", intervalSeconds: 60 };
+    await dispatchFleetRpc("fleet.runNow", { job: "d" }, {
+      hostActivity,
+      config: DEFAULT_FLEET_CONFIG,
+      scheduler,
+      jobs: [job],
+      dropped: [{ name: "d", layer: base, reason: "[[fleet.job]] duplicate name: d" }],
+      now: () => 0,
+    } as never);
+    expect(calls).toEqual([{ jobName: "d", force: false }]);
+  });
 });
