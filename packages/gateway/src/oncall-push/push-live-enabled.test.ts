@@ -100,6 +100,31 @@ describe("createLiveEnabled", () => {
     expect(h.logs).toHaveLength(1);
   });
 
+  test("a reconcile that throws keeps the old value and version, logs once, and retries", () => {
+    const h = harness();
+    let failNext = true;
+    const deps: LiveEnabledDeps = {
+      ...h.deps,
+      reconcile: (enabled, nowMs) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("db locked");
+        }
+        h.reconciles.push([enabled, nowMs]);
+      },
+    };
+    const live = createLiveEnabled(deps, { version: 1, enabled: false });
+    h.state.value = true;
+    h.state.version = 2;
+    h.state.now = 4_000;
+    expect(live.isEnabled()).toBe(false);
+    expect(h.logs).toHaveLength(1);
+    expect(h.reconciles).toEqual([]);
+    expect(live.isEnabled()).toBe(true);
+    expect(h.reconciles).toEqual([[true, 4_000]]);
+    expect(h.logs).toHaveLength(1);
+  });
+
   test("start polls; stop clears the timer and a later version change is not polled", async () => {
     const h = harness(5);
     const live = createLiveEnabled(h.deps, { version: 1, enabled: false });

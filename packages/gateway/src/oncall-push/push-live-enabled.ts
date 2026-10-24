@@ -66,10 +66,24 @@ export function createLiveEnabled(
         }
         return;
       }
+      if (next !== enabled) {
+        // Reconcile FIRST: the runner must never see "enabled" without its reconciled row. A throw
+        // leaves the old value and version so the next refresh retries (reconcile is idempotent).
+        try {
+          deps.reconcile(next, deps.now());
+        } catch (err) {
+          if (lastLoggedVersion !== version) {
+            lastLoggedVersion = version;
+            deps.logger.error(
+              { err, version },
+              "[oncall.push] reconciling enabled state failed; keeping the last value",
+            );
+          }
+          return;
+        }
+        enabled = next;
+      }
       lastVersion = version;
-      if (next === enabled) return;
-      enabled = next;
-      deps.reconcile(next, deps.now());
     } catch (err) {
       deps.logger.error({ err }, "[oncall.push] live enabled refresh failed unexpectedly");
     }
