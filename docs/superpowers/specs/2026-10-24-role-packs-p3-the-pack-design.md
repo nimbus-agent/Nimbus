@@ -101,12 +101,12 @@ Schema version 1:
 |---|---|---|
 | `schema` | `1` | required; any other value is refused |
 | `id` | string | required; must match the gateway's `PACK_ID_RE` (restated in registry-format, since it imports nothing from the gateway; a test pins the two equal) |
-| `name` | string | required, 1–80 chars, display only |
+| `name` | string | required, 1–80 chars, no leading/trailing whitespace, display only |
 | `version` | string | required, semver `MAJOR.MINOR.PATCH` |
-| `description` | string | required, ≤ 500 chars |
+| `description` | string | required, 1–500 chars, no leading/trailing whitespace |
 | `roles` | string[] | optional role tags, each `^[a-z][a-z0-9-]{0,31}$`, ≤ 8 (Project 5 matches on these) |
 | `suggestedConnectors` | string[] | ordered, ≤ 32, unique, each `^[a-z0-9][a-z0-9_]{0,63}$` (`CONNECTOR_ID_SHAPE_RE`); existence is checked by the gateway against the catalog, not by the format |
-| `members` | string[] | extension ids, each through `assertSafeExtensionId` (`extension-id.ts`); the gateway refuses non-empty (`ERR_PACK_MEMBERS_UNSUPPORTED`) |
+| `members` | string[] | ≤ 32, unique, extension ids, each through `assertSafeExtensionId` (`extension-id.ts`); the gateway refuses non-empty (`ERR_PACK_MEMBERS_UNSUPPORTED`) |
 | `defaults` | string | the pack-layer TOML fragment, ≤ 65,536 bytes; the format checks only type and size, the gateway's `checkPackFragment` is the authority |
 
 **Whole-document cap:** a new `MAX_ROLE_PACK_MANIFEST_BYTES = 128 * 1024` in `caps.ts`, not the

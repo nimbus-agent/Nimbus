@@ -34,7 +34,8 @@ Each later plan is written after the previous PR merges, against real types.
   land on `main`.
 - Values (verbatim from the spec): pack id regex
   `/^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9_-]{0,63}$/`; `defaults` ≤ 65,536
-  UTF-8 bytes; whole manifest ≤ `128 * 1024` bytes; `name` 1–80 chars; `description` 1–500 chars;
+  UTF-8 bytes; whole manifest ≤ `128 * 1024` bytes; `name` 1–80 chars; `description` 1–500 chars
+  (both refused with leading/trailing whitespace, not trimmed); `members` ≤ 32;
   `roles` ≤ 8, each `/^[a-z][a-z0-9-]{0,31}$/`; `suggestedConnectors` ≤ 32, each
   `/^[a-z0-9][a-z0-9_]{0,63}$/`; canonical index manifest path `packs/<id>/<version>/manifest.json`.
 
@@ -45,7 +46,9 @@ Each later plan is written after the previous PR merges, against real types.
 2. **A manifest saved with a BOM** (Windows editors): a leading U+FEFF is stripped before
    `JSON.parse`, the way `parseRegistryIndex` does.
 3. **Duplicates and prototype keys:** the same connector, role or member twice is refused; a
-   top-level `"__proto__"` key is refused as unknown (JSON.parse makes it an own property).
+   top-level `"__proto__"` key is refused as unknown (JSON.parse makes it an own property); a
+   pre-parsed value whose prototype is not `Object.prototype`/`null`, or that would only satisfy a
+   field through an inherited property, is refused.
 4. **Absent vs empty arrays digest the same:** a manifest omitting `roles`/`members`/
    `suggestedConnectors` and one giving `[]` produce identical `rolePackDigest`.
 5. **A bad `packs` entry is contained:** `parseRegistryIndex` still parses and the signature still
@@ -75,6 +78,8 @@ Each has its test in the owning task below.
   export const MAX_ROLE_PACK_DEFAULTS_BYTES = 65_536;               // caps.ts
   export const ROLE_PACK_ID_RE: RegExp;                             // role-pack.ts
   export const CONNECTOR_ID_SHAPE_RE: RegExp;                       // role-pack.ts
+  export const ROLE_TAG_RE: RegExp;                                 // role-pack.ts, /^[a-z][a-z0-9-]{0,31}$/
+  export const MAX_ROLE_PACK_ROLES = 8, MAX_ROLE_PACK_CONNECTORS = 32, MAX_ROLE_PACK_MEMBERS = 32; // role-pack.ts
   export interface RolePackManifest {
     readonly schema: 1;
     readonly id: string;
@@ -103,17 +108,26 @@ Each has its test in the owning task below.
   - `refuses schema other than 1` — `schema: 2` and `schema: "1"` (path `schema`).
   - `refuses unknown top-level keys` — `sourceMapping: {}` (path `sourceMapping`), and the raw text
     `{"__proto__":{}, ...valid}` (path `__proto__`).
-  - `refuses a non-object document` — `[]`, `null`, `"x"`, and invalid JSON text.
+  - `refuses a non-object document` — `[]`, `null`, `"x"`, and invalid JSON text (the last must be a
+    `RegistryError`, never the native `SyntaxError`: assert `toBeInstanceOf(RegistryError)`).
+  - `refuses a non-plain or inheriting value` — `parseRolePackManifestValue(Object.create({ defaults: "x" }))`
+    with the other fields as own properties is refused (path `manifest`), and a `class` instance is
+    refused.
   - `id rules` — refuses `""`, `"PM"`, `"-pm"`, `"con"`, `"lpt1"`, `"a".repeat(65)`; accepts
     `"a".repeat(64)` and `"pm_2-x"`.
-  - `name rules` — refuses `""`, `"   "`, `"x".repeat(81)`; accepts `"x".repeat(80)`.
+  - `name rules` — refuses `""`, `"   "`, `" DevOps"`, `"DevOps "`, `"x".repeat(81)`; accepts
+    `"x".repeat(80)` and `"Dev Ops"`.
   - `version must be strict semver` — refuses `"1.0"`, `"v1.0.0"`, `" 1.0.0"`; accepts `"1.2.3-beta.1"`.
-  - `description rules` — refuses `""`, `"x".repeat(501)`; accepts `"x".repeat(500)`.
+  - `description rules` — refuses `""`, `"x".repeat(501)`, `"text
+"`; accepts `"x".repeat(500)` and an
+    inner newline (`"a
+b"`).
   - `roles rules` — refuses 9 entries, `"Dev"`, `"1dev"`, a duplicate (path `roles[1]`).
   - `suggestedConnectors rules` — refuses 33 entries, `"Slack"`, `"a/b"`, `"a b"`, a duplicate
     (path `suggestedConnectors[1]`); accepts `"google_drive"`.
   - `members are shape-checked, not refused` — `["com.nimbus.readwise"]` parses (the gateway, not the
-    format, refuses non-empty); `["../evil"]` and a duplicate are refused (path `members[0]` / `[1]`).
+    format, refuses non-empty); `["../evil"]` and a duplicate are refused (path `members[0]` / `[1]`),
+    each as a `RegistryError`, and 33 entries are refused (path `members`).
   - `defaults byte cap counts UTF-8 bytes` (Review Focus 1) — `"é".repeat(30_000)` parses;
     `"é".repeat(33_000)` is refused (path `defaults`); a non-string `defaults` is refused.
   - `whole-document cap` — text longer than `MAX_ROLE_PACK_MANIFEST_BYTES` UTF-8 bytes is refused
@@ -144,13 +158,19 @@ Each has its test in the owning task below.
     against the cap, strips one leading U+FEFF, `JSON.parse`s, then delegates to
     `parseRolePackManifestValue`. The value parser checks the allowed key set
     (`schema id name version description roles suggestedConnectors members defaults`) with
-    `Object.keys`, then each field in table order; array fields check count first, then each
-    element and uniqueness, reporting `field[i]`. `members` elements go through
-    `assertSafeExtensionId`, its message appended. The returned object is built fresh from the
+    `Object.keys`, then each field in table order; array fields check count first (`field:
+    exceeds maximum of N entries`), then each element's type and shape (`field[i]: ...`), then
+    uniqueness against a `Set` (`field[i]: duplicate entry "x"`, so a duplicate reports the SECOND
+    index). Every throw is a `RegistryError`: `JSON.parse` is wrapped (`manifest: not valid JSON:
+    <message>`), and `assertSafeExtensionId` (which throws a plain `Error`) is wrapped as
+    `members[i]: <its message>`. Before the key check, the value must be a non-array object whose
+    prototype is `Object.prototype` or `null` (`manifest: must be a plain JSON object`), and every
+    field is read only after `Object.hasOwn(o, key)`, so an inherited property is never read. The returned object is built fresh from the
     checked fields (never a spread of the input), with the absent→default normalisation, so the
     digest sees only known keys. `rolePackDigest` is
     `createHash("sha256").update(canonicalize(m)).digest("hex")`.
-  - `index.ts`: export the two caps, the two regexes, the type, and the three functions.
+  - `index.ts`: export the two caps, the three regexes, the three count caps, the type, and the
+    three functions.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -228,7 +248,9 @@ Each has its test in the owning task below.
   `parseExtensionEntry` / `parseVersionEntry` (same helpers, same `...o` carry-through, paths
   prefixed `packs.`). `readRegistryPacks` reads `index.packs`; `undefined` → `{ packs: {} }`; it
   wraps the whole map's parse in one `try`, and on a `RegistryError` returns
-  `{ packs: {}, invalid: err.detail }` (any other error is rethrown — that is a bug, not data).
+  `{ packs: {}, invalid: err.detail }`, matching with `err instanceof RegistryError` (any other error
+  is rethrown — that is a bug, not data). `null`, `[]` and primitives are not `undefined`: they reach
+  `asObject` and come back as `invalid: "packs must be an object"`.
   Export the new types and function from `index.ts`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -257,3 +279,12 @@ Each has its test in the owning task below.
   `feat(registry-format): role-pack manifest format and registry packs entry`. Body: what it adds,
   that nothing consumes it yet (PR 2 does), that `parseRegistryIndex` is deliberately untouched
   because the signature covers its returned object, and the attribution line.
+
+## Plan review (2026-10-24, `…-pr1-pack-format-review.md`)
+
+Accepted: wrap `JSON.parse` and `assertSafeExtensionId` so only `RegistryError` escapes (1.1, 1.2);
+plain-object prototype check plus own-property reads (1.3); `null`/`[]` packs reported as invalid
+(1.4); export `ROLE_TAG_RE` (2.1); refuse surrounding whitespace in `name`/`description` rather
+than trim, so the digest never hides a typo (2.2); `members` ≤ 32 (2.3); the duplicate-path rule
+(3.1). Already in the plan: semver via `isValidSemver` (2.4), the canonical-path check (3.2), the
+size bounds (3.3), the gateway parity test and its expected red (3.4). Nothing rejected.
