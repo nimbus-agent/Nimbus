@@ -2,6 +2,15 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.3.1](https://github.com/nimbus-agent/Nimbus/compare/v10.3.0...v10.3.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **admin-console:** mount views as DOM nodes instead of innerHTML (Sonar S5696) ([#1749](https://github.com/nimbus-agent/Nimbus/issues/1749)) ([d33a2f1](https://github.com/nimbus-agent/Nimbus/commit/d33a2f1db04038404d54d4b6701f1ca47b8b0bee))
+* **deps:** clear main's red Security run (withdrawn braces advisory, tokio + clipboard-win) ([#1748](https://github.com/nimbus-agent/Nimbus/issues/1748)) ([baba9ce](https://github.com/nimbus-agent/Nimbus/commit/baba9cebe4bdab6efc1dbfdba4abe54fa667b669))
+* **deps:** clear the 2026-10-24 advisories (zod, body-parser, undici, http-cache-semantics, fast-uri, nodemailer) ([#1754](https://github.com/nimbus-agent/Nimbus/issues/1754)) ([a2b5dda](https://github.com/nimbus-agent/Nimbus/commit/a2b5dda2c1334491aadfa5604eca32bdddb725c6))
+
 ## [10.3.0](https://github.com/nimbus-agent/Nimbus/compare/v10.2.0...v10.3.0) (2026-10-23)
 
 
