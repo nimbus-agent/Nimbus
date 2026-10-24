@@ -182,7 +182,7 @@ describe("profile inheritance through every config-dir loader", () => {
 });
 
 describe("door parity: …FromConfigDir equals …FromPath for the same text", () => {
-  test("fleet: a duplicate job name throws FleetConfigError through both doors", () => {
+  test("fleet: a duplicate job name drops the later copy through both doors", () => {
     writeBase(
       [
         "[fleet]",
@@ -198,6 +198,18 @@ describe("door parity: …FromConfigDir equals …FromPath for the same text", (
         "",
       ].join("\n"),
     );
+    // A job-level error drops only that job; it no longer throws or records a section fallback.
+    const viaPath = loadNimbusFleetFromPath(basePath());
+    expect(viaPath.jobs.map((j) => j.name)).toEqual(["nightly"]);
+    expect(viaPath.dropped.map((d) => d.reason)).toEqual(["[[fleet.job]] duplicate name: nightly"]);
+    expect(outcome(() => loadNimbusFleetFromConfigDir(dir))).toEqual(
+      outcome(() => loadNimbusFleetFromPath(basePath())),
+    );
+    expect(getLayeredConfig(dir).sectionFallback("fleet")).toBeUndefined();
+  });
+
+  test("fleet: a bad [fleet] table still throws FleetConfigError through both doors", () => {
+    writeBase("[fleet]\nallow_remote = true\n");
     expect(() => loadNimbusFleetFromPath(basePath())).toThrow(FleetConfigError);
     expect(() => loadNimbusFleetFromConfigDir(dir)).toThrow(FleetConfigError);
     expect(outcome(() => loadNimbusFleetFromConfigDir(dir))).toEqual(

@@ -71,12 +71,28 @@ describe("[[fleet.job]] refusals", () => {
     expect(e.message).toBe("[[fleet.job]] requires name");
   });
 
-  test("a digest_min_delta refusal written before name says the block is unnamed", () => {
+  test("a digest_min_delta refusal written before name still names the job", () => {
+    // Validation runs over the whole block, so key order no longer decides whether a name is known.
     const e = refusal(() =>
       parseNimbusTomlFleetJobs('[[fleet.job]]\ndigest_min_delta = 0\nname = "nightly"\n'),
     );
-    expect(e.message).toContain("[[fleet.job]] (unnamed) digest_min_delta must be >= 1 (got 0)");
-    expect(e.message).not.toContain("nightly");
+    expect(e.message).toContain("[[fleet.job]] nightly digest_min_delta must be >= 1 (got 0)");
+  });
+
+  test("a stub with an agent but no interval is refused by the interval reason", () => {
+    const e = refusal(() =>
+      parseNimbusTomlFleetJobs('[[fleet.job]]\nname = "s"\nagent = "standup"\nenabled = false\n'),
+    );
+    expect(e.message).toBe("[[fleet.job]] s requires interval_seconds > 0");
+  });
+
+  test("a disabled job's present-but-bad interval is still refused", () => {
+    const e = refusal(() =>
+      parseNimbusTomlFleetJobs(
+        '[[fleet.job]]\nname = "s"\ninterval_seconds = 0\nenabled = false\n',
+      ),
+    );
+    expect(e.message).toBe("[[fleet.job]] s requires interval_seconds > 0");
   });
 
   test("a malformed interval is treated as missing and refused", () => {
@@ -134,6 +150,9 @@ describe("loadNimbusFleetFromPath", () => {
     expect(loadNimbusFleetFromPath(join(dir, "nimbus.toml"))).toEqual({
       config: DEFAULT_FLEET_CONFIG,
       jobs: [],
+      origins: new Map(),
+      disabled: [],
+      dropped: [],
     });
   });
 
