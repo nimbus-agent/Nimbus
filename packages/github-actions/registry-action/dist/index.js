@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:4e1bb9bef2e63d7f3a08f470f0b387592d60579ef0f3a415294fe522d37ac037
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:8f6053266182a9a8b4c4e3a0d3955d17b8cf185b54d5542b22d9ca57b67bef24
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4240,6 +4240,7 @@ var MAX_MANIFEST_BYTES = 64 * 1024;
 var MAX_PACKAGE_BYTES = 50 * 1024 * 1024;
 var MAX_UNPACKED_BYTES = 200 * 1024 * 1024;
 var MAX_ENTRY_COUNT = 5000;
+var MAX_ROLE_PACK_MANIFEST_BYTES = 128 * 1024;
 // ../../registry-format/src/code-unit-compare.ts
 function codeUnitCompare(a, b) {
   if (a < b) {
@@ -5118,6 +5119,25 @@ function parseExtensionManifestForRegistry(text) {
   };
 }
 
+// ../../registry-format/src/semver.ts
+var SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+function isValidSemver(v) {
+  return SEMVER_RE.test(v);
+}
+
+// ../../registry-format/src/role-pack.ts
+var ALLOWED_KEYS = new Set([
+  "schema",
+  "id",
+  "name",
+  "version",
+  "description",
+  "roles",
+  "suggestedConnectors",
+  "members",
+  "defaults"
+]);
+
 // ../../registry-format/src/index-format.ts
 function decodeBase642(s) {
   return new Uint8Array(Buffer.from(s, "base64"));
@@ -5158,10 +5178,6 @@ function isoTimestamp(o, key, what) {
   if (Number.isNaN(Date.parse(v)))
     throw invalid(`${what}.${key} is not a timestamp`);
   return v;
-}
-var SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-function isValidSemver(v) {
-  return SEMVER_RE.test(v);
 }
 function parseVersionEntry(raw, id, version) {
   const what = `extensions.${id}.versions.${version}`;
@@ -8647,7 +8663,7 @@ async function signIndex(unsigned, privkey) {
 import { createHash as createHash3 } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
-var import_semver2 = __toESM(require_semver2(), 1);
+var import_semver4 = __toESM(require_semver2(), 1);
 var MAX_SMALL_JSON_BYTES = 4096;
 var PUBLISH_REQUEST_KEYS = ["id", "version", "channel", "publisherFingerprint"];
 var CONFIG_KEYS = ["format", "requirePublisherNamespace"];
@@ -8792,7 +8808,7 @@ function assertRegistryState(m, publisher, serviceId, signed) {
     if (existing.publisher.id !== publisher.id || existing.publisher.key !== publisher.key) {
       throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", `${m.id} is bound to publisher ${existing.publisher.id} with a different key`);
     }
-    const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver2.default.compare(v, m.version) === 0);
+    const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver4.default.compare(v, m.version) === 0);
     if (taken !== undefined) {
       throw new RegistryError("ERR_REGISTRY_VERSION_EXISTS", `${m.id}@${m.version} is already in the index (as ${taken})`);
     }
