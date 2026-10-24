@@ -34,11 +34,12 @@ Today the desktop has none of this:
   `AuditFeed`.
 - **Briefs:** none rendered except `components/oncall/BriefDetail.tsx:48-50`, which puts
   `briefMarkdown` in a `<pre>`. There is no markdown dependency and no `dangerouslySetInnerHTML`.
-- **CSP** (`src-tauri/tauri.conf.json:28`):
+- **CSP** (`packages/ui/src-tauri/tauri.conf.json:28`):
   `default-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:* http://localhost:*; object-src 'none'; base-uri 'self'; frame-ancestors 'none'`.
   There is no `style-src`, so inline `<style>` and `style=""` attributes from HTML are blocked;
   React's style props are CSSOM writes and are not blocked.
-- **Tauri allowlist:** `src-tauri/src/gateway_bridge.rs:78`, 111 methods, size asserted at `:863`.
+- **Tauri allowlist:** `packages/ui/src-tauri/src/gateway_bridge.rs:78`, 111 methods, size asserted
+  at `:863`.
   - **Agents:** 15 `agents.*` entries, including `agents.preflight` and `agents.premortem`. Missing:
     `agents.oncall`, `agents.standup`, `agents.changelog`.
   - **Not listed:** no `pack.*`, no `catalog.*`. `fleet.*` is excluded by a test
@@ -49,10 +50,29 @@ Today the desktop has none of this:
   - `catalog.list`: agents with `visible`, `params` (`CatalogParam`: name, kind, label, required,
     oneOf) and `surfaces`, plus `visibility.basis` / `packs`.
   - `pack.list`: `PackListResult`.
-  - `fleet.briefs { limit?, jobId?, subjectKey? }`, returning `FleetBriefRow` (`agentMethod`,
-    `briefMarkdown`, `createdAt`, …).
-  - `fleet.show { id }`.
-  - `oncall.pushedList` / `oncall.pushedGet` (already on the allowlist).
+  - `fleet.briefs { limit?, jobId?, subjectKey? }`, returning `FleetBriefRow` (`id`, `jobId`,
+    `subjectKey`, `agentMethod`, `briefMarkdown`, `createdAt`, …). `subject_key` is
+    `TEXT NOT NULL` (V63): a config-named job writes `subjectKey = jobId`
+    (`fleet-scheduler.ts:329`), a sweep writes the subject's key (`:400`). No row is ever null, and
+    `optString` (`fleet-rpc.ts:114`) refuses a non-string `subjectKey` with `-32602`.
+  - `fleet.show { id }`, returning `{ brief: FleetBriefRow | null }`.
+  - `oncall.pushedList` / `oncall.pushedGet` (already on the allowlist). The list's
+    `PushedBriefSummary` carries `title`, `service`, `status` and `createdAt` but **no markdown**;
+    only `pushedGet` returns `briefMarkdown`. The On-call page selects a brief by `?id=`.
+- **Polling hook:** `hooks/useIpcQuery.ts` re-runs on an interval and on `visibilitychange` only.
+  It has no window `focus` listener, and focusing a window that was merely behind another does not
+  fire `visibilitychange`.
+- **No URL opener:** nothing in `packages/ui/src` imports a Tauri opener, and
+  `packages/ui/src-tauri/capabilities/default.json` grants no `shell:allow-open` / `opener:*`
+  permission (it has `shell:allow-spawn` and a scoped `shell:allow-execute` for `nimbus start`).
+- **Sidebar container:** a fixed `w-[150px]` flex column with no `overflow-y-auto`.
+- **Federation in briefs:** `huddle` always fans out to paired peers (with no `namespaces` it uses
+  every known namespace, `agents/huddle.ts:95-110`); `ghost` always calls `fanOutExpertise`
+  (`agents/ghost.ts:53`) and fans out queries only for the namespaces given; `conflicts` fans out
+  only for the namespaces given. With no paired peer, none of them sends anything.
+- **Notification ordering:** `emitBriefWithSynthesis` starts the brief before it returns
+  `{ sessionId }` (`agents/_lib/emit-brief.ts:57-75`), so a fast or synchronously failing brief can
+  emit `<agent>.briefReady` / `briefError` before the caller's `call()` resolves.
 - **Change events:** there is no gateway event when the pack set or layered config changes
   (`ipc/gateway-events.ts` has 6 kinds). The fleet supervisor polls the snapshot version instead.
 - **Tests:** vitest + Testing Library under `packages/ui/test/**`, with the IPC mock at
@@ -110,6 +130,10 @@ Add, all read-only:
 - Removing them shrinks what a compromised renderer can trigger.
 - `fleet.runNow`, `fleet.digest`, `fleet.status` and `fleet.list` stay off.
 
+`agents.whyPeek` **stays** (my call). Nothing in the UI calls it today either, but the reason for
+removing the other two is their side effects, not disuse: `whyPeek` is a synchronous read with
+none. Pruning unused reads is a separate allowlist audit, not this project.
+
 The `allowlist_excludes_fleet_namespace` test becomes "only `fleet.briefs` and `fleet.show`". Add a
 test that no `pack.*` method other than `pack.list` is allowed. The size assertion moves
 111 → 116 (+7 −2), and the enumeration is re-derived wherever docs list it (the
@@ -152,15 +176,26 @@ visible by two packs appears in both sections.
 - **A card shows:**
   - the agent's `displayName` and one-line description (from the catalog);
   - the newest stored result:
-    - for `oncall`, the newest `oncall.pushedList` brief;
-    - for other agents, the newest `fleet.briefs` row for that agent's method from any job, with a
-      null `subjectKey` (a sweep's per-subject brief is not a general answer) and a non-null
-      `briefMarkdown`;
-    - **gateway change (my call):** `fleet.briefs` gains an optional `agentMethod` filter and an
-      optional `subjectKey: null` match, so the card asks for exactly one row (`limit: 1`)
-      instead of filtering 500 rows in the renderer;
-  - its age ("3 h ago") and the first lines of the rendered markdown, clipped, with "Open" going to
-    the full stored brief;
+    - for `oncall`, the newest `oncall.pushedList` entry, shown as its `title` and `service`
+      (the list carries no markdown, and the card does not make a second `pushedGet` call
+      just for a preview — my call). "Open" goes to `/oncall?id=<incidentId>`;
+    - for other agents, the newest `fleet.briefs` row for that agent's method from any job that is
+      **not a sweep** (a sweep's per-subject brief is not a general answer) and has a non-null
+      `briefMarkdown`, shown as the first lines of the rendered markdown, clipped. "Open" goes to
+      `/briefs/stored/<id>` (§ 5.5);
+    - **gateway change (my call):** `fleet.briefs` gains three optional filters, so the card asks
+      for exactly one row (`limit: 1`) instead of filtering 500 rows in the renderer:
+      - `agentMethod: string`: `agent_method = ?`;
+      - `nonSweep: boolean`: when `true`, `subject_key = job_id`. This is how a config-named job's
+        row is told from a sweep's (V63 made `subject_key` `NOT NULL` and backfilled it with
+        `job_id`; there is no null to match). Bound: a sweep subject whose key happened to equal
+        its own job's name would pass; subject keys are `<kind>:…` and a job named like one is the
+        only way to get there;
+      - `withMarkdown: boolean`: when `true`, `brief_markdown IS NOT NULL`.
+      
+      Each is validated like the existing params (a wrong type is `-32602`); `false` means no
+      filter. The CLI does not use them;
+  - its age ("3 h ago");
   - with nothing stored: `No stored brief yet.` and **Run**, which opens the brief page for that
     agent. It does not run inline, because the form may need input.
 - An agent that requires parameters (e.g. `impact`) shows only **Run**: a stored fleet brief is
@@ -173,8 +208,11 @@ The sidebar keeps its static entries.
 - Under it, one group per active pack lists that pack's visible agents, each linking to
   `/briefs/<agent>`.
 - With no pack, only **Briefs** is added.
+- The sidebar gets `overflow-y-auto`: both bundled packs add 10 agent links, two group headers and
+  Briefs to today's 8 entries, which overflows a small window. Collapsible pack groups are deferred until a third pack exists. Long labels
+  truncate with an ellipsis and keep the full name in `title`.
 
-### 5.5 Brief pages (`/briefs`, `/briefs/:agent`)
+### 5.5 Brief pages (`/briefs`, `/briefs/:agent`, `/briefs/stored/:id`)
 
 - **`/briefs`:** every read-only built-in agent from `catalog.list`, grouped by `category`. It
   excludes `preflight`, `premortem` and `whyPeek` (no catalog entry; an internal shape), and
@@ -186,13 +224,19 @@ The sidebar keeps its static entries.
   - **`oneOf` groups** render as a segmented choice of arms, and the chosen arm's fields are
     required when the arm's `armRequired` or the group's `required` says so.
   - **Run** calls `agents.<name>` with the filled params only. Empty optional fields are omitted.
-  - **Federation fields are not offered (my call).** The `namespace` and `namespaces` parameters
-    make the gateway call paired peers, so the desktop form omits them and briefs run against the
-    local index only. Bound: the gateway still accepts them from any allowlisted caller, so this is
-    a UI choice, not enforcement.
-  - **The call is asynchronous.** It returns `{ sessionId }`, and the page then waits for the
-    matching `<agent>.briefReady` (render `brief`) or `<agent>.briefError` (show its message)
-    notification.
+  - **Federation fields are not offered (my call).** The form omits `namespace` and `namespaces`,
+    so the desktop never names which peers' namespaces to ask. This does **not** make every brief
+    local: `huddle` with no `namespaces` asks every known namespace, and `ghost` always asks paired
+    peers for expertise (§ 2). Those two stay on `/briefs` (it is the same act as `nimbus huddle` /
+    `nimbus ghost`, behind the same click), and their form shows one fixed line: `Asks your paired
+    peers.` With no paired peer they send nothing. `conflicts` without `namespaces` is local. Bound:
+    the gateway still accepts both fields from any allowlisted caller, so the omission is a UI
+    choice, not enforcement.
+  - **The call is asynchronous, and fails in two places.**
+    - The `agents.<name>` call itself can reject (bad params are `-32602`, a refusal is another
+      code). The page shows that message beside the form, and the run never enters the store.
+    - Otherwise it returns `{ sessionId }`, and the page waits for the matching
+      `<agent>.briefReady` (render `brief`) or `<agent>.briefError` (show its `error`).
     - The wait has its own deadline: 10 minutes, **my call**. Past it the page shows "still
       running — check back", and a late result is still accepted.
   - While waiting, the page shows elapsed time and a disabled Run button.
@@ -204,6 +248,15 @@ The sidebar keeps its static entries.
       state. An older run that completes later is kept but not shown over it.
     - The store is in memory only (never persisted) and holds at most the last 5 results per
       agent.
+    - **The store subscribes before any call.** One listener for every `*.briefReady` /
+      `*.briefError` is registered when the app starts. A notification whose `sessionId` is not
+      yet known is buffered (bounded: 20 entries, dropped after 60 s), and when `call()` resolves
+      with that `sessionId` the buffered result is applied at once. Without this, a brief that
+      finishes or fails before `call()` resolves (§ 2) leaves the page waiting forever.
+- **`/briefs/stored/:id`:** calls `fleet.show { id }` and renders `briefMarkdown` with the agent's
+  display name, the job and the time. `{ brief: null }` (pruned or unknown) shows `This stored
+  brief is no longer available.` with a link to the agent's page. A stored brief with null
+  markdown shows `This run produced no text.` It never runs anything.
 - An unknown or excluded `:agent` shows "not available here" with the CLI command. It never calls
   the gateway.
 
@@ -212,17 +265,22 @@ The sidebar keeps its static entries.
 A renderer that turns brief markdown into React elements, under these constraints:
 - **No `innerHTML`:** no `dangerouslySetInnerHTML`, no HTML string sink.
 - **Raw HTML in the markdown is not rendered:** it is shown as text, or dropped.
-- **Links never navigate the webview.**
-  - `http(s)` links open in the system browser through the existing Tauri opener path, if one
-    exists. Otherwise they render as plain text showing the URL. Other schemes always render as
-    text.
+- **Links never navigate the webview, and nothing opens a browser (my call).** There is no opener
+  path today and no capability grants one (§ 2), so every link renders as its text followed by the
+  URL as plain, selectable text, never an `<a href>`. Opening `http(s)` links in the system browser
+  would add `shell:allow-open` or the opener plugin to `capabilities/default.json`, a capability
+  widening that is deferred to its own change.
 - **Images are not loaded.** Show the alt text.
 - **Supported markdown:** headings, paragraphs, emphasis, inline code, fenced code, lists,
   blockquotes, tables and horizontal rules.
 - **The CSP is unchanged:** styling comes from Tailwind classes, not inline style.
 
-Library vs. hand-written is the **builder's call**. If a dependency is added, it goes through the
-repo's dependency-safety pre-flight (`nimbus-commands` skill), and the reason goes in the PR. The
+**Parser (my call): `marked`'s lexer only.** `marked` has no runtime dependencies; the renderer
+calls `marked.lexer(text)` and maps the token tree to React elements itself, and never calls
+`marked.parse` (which produces HTML). An `html` token renders as text. This keeps one small
+dependency and no HTML string anywhere, where `react-markdown` pulls in the unified/micromark tree
+and a hand-written parser would own table and list edge cases. The dependency goes through the
+repo's dependency-safety pre-flight (`nimbus-commands` skill), with the reason in the PR. The
 existing on-call `BriefDetail` and the stored-brief view use the same renderer.
 
 ### 5.7 Live switching
@@ -231,6 +289,11 @@ There is no change event. **My call:** the app re-reads `pack.list` (and `catalo
 window regains focus, and every 15 s while visible, through the existing `useIpcQuery` polling hook.
 An install in the terminal therefore shows up when the user switches back to the app. A new gateway
 event kind is not worth it for this.
+
+`useIpcQuery` listens only to `visibilitychange` today, which does not fire when a window that was
+merely behind the terminal is focused (§ 2). It gains an opt-in `refetchOnFocus` option that adds a
+`window` `focus` listener (removed on cleanup), used by the pack and catalog queries. It is opt-in
+so the hook's other callers do not start refetching on every focus.
 
 ### 5.8 Demo gateway
 
@@ -245,17 +308,27 @@ nothing changes in the demo gate.
 - **Running a brief from the desktop** is the same act as running it from the CLI. The `ui`
   ClientKind is non-egress-bearing, a remote synthesis is ledgered at the provider (I29), and I31
   still governs the content. Nothing runs without a click.
+- **Federation:** `huddle` and `ghost` reach paired peers from the desktop exactly as from the CLI
+  (both are already on the allowlist). The form says so before Run; the desktop never supplies
+  `namespace(s)`.
+- **No new Tauri capability:** links are text, so `capabilities/default.json` is unchanged.
 - **Stored briefs:** fleet briefs are local SQLite text that any renderer able to call `agents.*`
   could already regenerate, so exposing reads adds little.
-- **No invariant changes** beyond the I7 enumeration. No new HITL type, migration or egress class. The one gateway change besides `visibleAgents` is a read filter on `fleet.briefs`.
+- **No invariant changes** beyond the I7 enumeration. No new HITL type, migration or egress class.
+  The one gateway change besides `visibleAgents` is three read filters on `fleet.briefs`.
 
 ## 7. Done when
 
 - Installing the `pm` pack in the terminal, then focusing the app, shows a Product section with
   Decisions, Glossary and Catch-up cards, and a Product group in the sidebar, with no restart.
   Removing it removes both.
-- The Decisions card shows the newest non-subject fleet brief for `agents.decisions` (the `pm-decisions-nightly` job writes one) when one exists.
-- With `devops` installed, the on-call card shows the newest pushed brief.
+- The Decisions card shows the newest non-sweep fleet brief for `agents.decisions` (the
+  `pm-decisions-nightly` job writes one) when one exists, and "Open" shows it in full at
+  `/briefs/stored/<id>`.
+- With `devops` installed, the on-call card shows the newest pushed brief's title and service, and
+  "Open" goes to `/oncall?id=<incidentId>`.
+- Focusing the app (not only un-minimising it) after a terminal `pack install` refreshes it.
+- A brief whose notification arrives before its `call()` resolves still shows its result.
 - Every read-only built-in brief runs from `/briefs/<agent>` with a form that enforces its required
   parameters, and renders as formatted markdown.
 - `preflight` and `premortem` are not on the allowlist and not on the brief index.
@@ -267,17 +340,25 @@ nothing changes in the demo gate.
 2. `agents.preflight` and `agents.premortem` are **removed** from the allowlist.
 3. `pack.list` rows gain `visibleAgents`. A pack section shows only the ones the catalog reports
    visible, so the owner's own `[agents]` settings win.
-4. Live switching is a refresh on focus plus a 15 s poll, with no new event.
+4. Live switching is a refresh on focus plus a 15 s poll, with no new event; `useIpcQuery` gains an
+   opt-in `refetchOnFocus`.
 5. A card for an agent with required parameters never shows a stored brief. Other cards show the
-   newest non-subject fleet brief for that agent from any job, through a new `agentMethod` filter
-   on `fleet.briefs`.
-6. Brief results live in an in-memory app store keyed by `sessionId` (5 per agent). The page shows
-   the latest requested run, with a 10-minute wait deadline.
-7. The desktop form omits the federation `namespace` / `namespaces` fields.
+   newest non-sweep fleet brief with text for that agent from any job, through new `agentMethod`,
+   `nonSweep` (`subject_key = job_id`) and `withMarkdown` filters on `fleet.briefs`.
+6. Brief results live in an in-memory app store keyed by `sessionId` (5 per agent), subscribed at
+   app start with a small buffer for early notifications. The page shows the latest requested run,
+   with a 10-minute wait deadline.
+7. The desktop form omits the federation `namespace` / `namespaces` fields. `huddle` and `ghost`
+   stay on `/briefs` with an `Asks your paired peers.` line.
+8. Stored fleet briefs open at `/briefs/stored/:id`; the on-call card opens `/oncall?id=…` and shows
+   title and service, not a markdown preview.
+9. Links render as plain text; no opener capability is added.
+10. The markdown parser is `marked`'s lexer, rendered to React by our own code.
+11. `agents.whyPeek` stays on the allowlist.
 
 ## 9. Left to the builder
 
-- Library vs. hand-written renderer, within § 5.6.
+- How the React renderer maps each `marked` token, within § 5.6.
 - Exact card and form layout, and Tailwind styling.
 - The duration control for `sinceMs`.
 - Whether `/briefs` and the pack sections share a component.
