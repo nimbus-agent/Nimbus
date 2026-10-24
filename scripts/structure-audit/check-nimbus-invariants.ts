@@ -2029,6 +2029,43 @@ export function checkRunGrantWriters(files: readonly FileEntry[]): Violation[] {
   return out;
 }
 
+// ---- D36 (role-pack layer writers, I47) ----------------------------------------------------------
+// A role-pack layer changes the owner's effective config, so I47 lets `packs/pack-install.ts` write
+// one only after the LOCAL owner approved `pack.install` over the pack's exact `defaults` text. The
+// store's write half — `setPackLayer` and `removePackLayer` — is named only by its definition
+// (`packs/pack-layer-store.ts`) and that one gate module. Any other mention — a call, a destructured
+// alias, an import of a re-export — is a violation. Comments and string literals are stripped
+// first; test files and anything outside packages/gateway/src/ are not scanned. Stated bound, as
+// D33(c): a dynamically composed call (`store["set" + "PackLayer"]`) evades a text scan, and a
+// second call inside an allow-listed file is exempt whole-file; capability confinement (only the
+// gate module is ever handed the store's write half in production) is the real defense.
+const D36_WRITER_RE = /\b(?:setPackLayer|removePackLayer)\b/g;
+const D36_WRITER_ALLOWED: readonly string[] = [
+  "packages/gateway/src/packs/pack-layer-store.ts",
+  "packages/gateway/src/packs/pack-install.ts",
+];
+
+export function checkPackLayerWriters(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    if (D36_WRITER_ALLOWED.includes(f.relPath)) continue;
+    const code = stripStringLiterals(stripComments(f.contents));
+    const original = f.contents.split("\n");
+    for (const m of code.matchAll(D36_WRITER_RE)) {
+      const line = code.slice(0, m.index).split("\n").length;
+      out.push({
+        rule: "pack-layer-writers",
+        file: f.relPath,
+        line,
+        snippet: (original[line - 1] ?? "").trim(),
+      });
+    }
+  }
+  return out;
+}
+
 // ---- D34 (connector migration) -------------------------------------------------------------------
 // A connector migration (Readwise unbundling spec § 7.2) installs signed code, grants it a run and
 // points it at the owner's existing Vault credential behind ONE `extension.migrate` approval. Three
@@ -3018,6 +3055,9 @@ export const RULE_ANCHORS: readonly string[] = [
   // D34(a)(b)(c) — anchored on the RPC path, which (a) and (b) SCAN (it names neither the table nor
   // the grant entry point) and (c) reads then permits.
   "packages/gateway/src/ipc/migration-rpc.ts",
+  // D36 — anchored on the pack RPC, which the rule SCANS (it is not allow-listed) and which sits
+  // one call from the store's write half without naming it.
+  "packages/gateway/src/ipc/pack-rpc.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -3340,6 +3380,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D33(c) a run-grant writer (upsertRunGrant/deleteRunGrant) named outside the store and the approve/revoke path — a run grant could be created or removed without the owner's extension.run approval: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkPackLayerWriters(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D36 a pack-layer writer (setPackLayer/removePackLayer) named outside packs/pack-layer-store.ts and packs/pack-install.ts — a role pack could change the owner's config without the owner's pack.install approval (I47): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
