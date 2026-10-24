@@ -53,7 +53,7 @@
 **Interfaces:**
 - Produces:
   - `export const AGENT_NAME_IN_LIST_RE = /^(?:agents\.)?[a-z][A-Za-z]{0,63}$/`.
-  - `export function parseAgentNameList(valRaw: string): readonly string[] | undefined`. It is strict: a `[`…`]` array of 1..64 double-quoted strings, each matching `AGENT_NAME_IN_LIST_RE`, comma-separated, with no trailing comma. Anything else returns `undefined`. Names are returned as written; normalisation is Task 2's job.
+  - `export function parseAgentNameList(valRaw: string): readonly string[] | undefined`. It is strict, and it does NOT use `parseString`, which accepts unquoted tokens. The trimmed value must start with `[` and end with `]`. The inner text must be non-empty and must not end with `,` (after trimming). Splitting it on `,` must give 1..64 parts. Each trimmed part must start and end with `"` and have length ≥ 2, and its inner text must match `AGENT_NAME_IN_LIST_RE`. Whitespace around brackets, commas and elements is allowed (`[ "decisions" , "standup" ]`). Anything else returns `undefined`. Names are returned as written; normalisation is Task 2's job.
   - `export type PackSettableList = { section; key; consumer: PackConsumerMode; why; expect; parse: (valRaw: string) => readonly string[] | undefined }`.
   - `export const PACK_SETTABLE_LISTS: readonly PackSettableList[]`, holding one entry: `{ section: "agents", key: "visible", consumer: "per-call", why: "which agents the catalog shows; packs union, the owner's show/hide decide per agent", expect: 'a non-empty array of agent names, e.g. ["decisions", "standup"]', parse: parseAgentNameList }`.
   - `PackFragmentCheck`'s ok arm gains `readonly lists: ReadonlyMap<string, readonly string[]>`, keyed `"agents.visible"`. `checkPackFragment` accepts a list key in a plain section. List keys never enter `scalars`, so the store's `conflicts()` never compares them; that is the union rule.
@@ -61,7 +61,8 @@
 - [ ] **Step 1: Write the failing tests** in `pack-settable.test.ts`:
   - `accepts [agents] visible with bare and prefixed names`: `[agents]\nvisible = ["decisions", "agents.standup"]\n` gives `ok: true` and `lists.get("agents.visible")` equal to `["decisions", "agents.standup"]`.
   - `refuses an empty visible list`: the problem includes `[agents] visible = []: expected a non-empty array of agent names`.
-  - `refuses a non-array, an unquoted name, a trailing comma and a 65-name list`, one assertion each, with the problem naming `[agents] visible`.
+  - `refuses a non-array, an unquoted name, a trailing comma and a 65-name list`, one assertion each, with the problem naming `[agents] visible`. Unquoted means `[decisions, standup]`; trailing comma means `["decisions",]`.
+  - `accepts whitespace inside the brackets`: `[ "decisions" , "standup" ]` gives `["decisions", "standup"]`.
   - `refuses other [agents] keys`: `synthesis = "local"` gives `[agents] synthesis is not pack-settable`; `show = ["x"]` and `hide = ["x"]` give the same shape.
   - `accepts an unknown but well-formed name` (`"standpu"`).
   - In `pack-layer-store.test.ts`: `two packs may both set [agents] visible`. Packs `ops` (`["oncall"]`) and `data` (`["decisions"]`) are both written, with no `PackLayerRefusedError`.
@@ -83,11 +84,11 @@
   - `export type AgentVisibilityOverride = { readonly agent: string; readonly visible: boolean; readonly layer: LayerRef }`.
   - `export type AgentVisibility = { readonly visible: ReadonlySet<string>; readonly basis: "all" | "packs"; readonly packs: readonly string[]; readonly overrides: readonly AgentVisibilityOverride[]; readonly notes: readonly string[] }`. `packs` lists the ids of the packs that set `visible`, low to high. `overrides` holds the agents a user layer decided, sorted by agent.
   - `export function resolveAgentVisibility(snapshot: Pick<ConfigSnapshot, "doc">, known: readonly string[]): AgentVisibility`.
-  - `export function describeAgentVisibility(v: AgentVisibility): readonly string[]`. Its first line is either `agent visibility: all agents (no active pack sets [agents] visible)` or `agent visibility: the agents listed by packs <id>, <id>`. Then one line per override, `agent "<name>" is shown by <kind>:<id>` or `agent "<name>" is hidden by <kind>:<id>`. Then `notes`.
-- Algorithm: find the non-array `agents` section in `snapshot.doc.sections`. For each of `visible`/`show`/`hide`, the per-layer values are `[...entry.shadowed, last winner entry]`, already ordered low to high. For `visible`, keep the `kind === "pack"` values and note every `base`/`profile` value. For `show`/`hide`, keep only `base` and `profile`, ranked profile above base. Normalise every name, drop unknown names with a note, and dedupe. Then build the set: all `known` names, or the union of pack lists. Apply each agent's decision from its highest naming user layer, where within a layer `hide` beats `show`.
+  - `export function describeAgentVisibility(v: AgentVisibility): readonly string[]`. Its first line is either `agent visibility: all agents (no active pack sets [agents] visible)` or `agent visibility: the agents listed by packs <id>, <id>`. The word is always `packs`, even for one pack. Then one line per override, `agent "<name>" is shown by <kind>:<id>` or `agent "<name>" is hidden by <kind>:<id>`. Then `notes`.
+- Algorithm: find the non-array `agents` section in `snapshot.doc.sections`. When there is none, return every `known` name visible, with `basis: "all"`, no packs, no overrides and no notes. For each of `visible`/`show`/`hide`, take the LAST entry with that key. A layer that repeats a key yields several winner entries, each carrying the same `shadowed`, so iterating all of them would count the lower layers twice. The per-layer values are that entry's `shadowed` plus the entry itself, already ordered low to high, one per layer. A user-layer value goes through `parseStringArray` inside `try`/`catch`. It throws `TypeError` on a non-array, which becomes the "not an array" note and never escapes the resolver. For `visible`, keep the `kind === "pack"` values and note every `base`/`profile` value. For `show`/`hide`, keep only `base` and `profile`, ranked profile above base. Normalise every name, drop unknown names with a note, and dedupe. Then build the set: all `known` names, or the union of pack lists. Apply each agent's decision from its highest naming user layer, where within a layer `hide` beats `show`.
 - Note texts, verbatim:
   - `[agents] visible in <kind>:<id> is ignored: only packs set it; use show and hide`
-  - `unknown agent "<name>" in <kind>:<id> [agents] <key>`
+  - `unknown agent "<name>" in <kind>:<id> [agents] <key>`. `<name>` is the NORMALISED name, so `"agents.standpu"` and `"standpu"` give the same note.
   - `[agents] <key> in <kind>:<id> is not an array of agent names; ignored`
 
 - [ ] **Step 1: Write the failing tests.** Build snapshots with `mergeLayerDocs`/`parseLayerDoc` over pack, base and profile refs, using `known = ["catchup", "decisions", "oncall", "standup"]`:
@@ -100,7 +101,9 @@
   - `normalises the agents. prefix on both sides`.
   - `a user-file visible is ignored and noted`: the set is unchanged, and the note text matches verbatim.
   - `an unknown name is dropped and noted; the rest applies`.
-  - `a malformed show is ignored and noted` (`show = "decisions"`).
+  - `a malformed show is ignored and noted` (`show = "decisions"` and `hide = 42`; the resolver does not throw).
+  - `no [agents] section: every agent visible, no notes`.
+  - `a key repeated in one layer counts the lower layers once`: pack `ops` sets `visible = ["oncall"]`, and base sets `show = ["standup"]` twice on two lines. The result is `{oncall, standup}`, with `packs: ["ops"]` (not `["ops", "ops"]`).
   - `describeAgentVisibility renders the summary, overrides and notes` (exact lines).
 - [ ] **Step 2: Run and see them fail:** `bun test packages/gateway/src/catalog/agent-visibility.test.ts`.
 - [ ] **Step 3: Implement** to the interface above.
@@ -120,7 +123,7 @@
   - `export type BriefMethod = Exclude<AgentMethod, "agents.whyPeek">`.
   - `export type AgentCategory = "catch-up" | "code" | "knowledge" | "operations" | "people"`.
   - `export type AgentRoleTag = "engineer" | "manager" | "on-call" | "data"`.
-  - `export type CatalogParam = { readonly name: string; readonly kind: ParamKind; readonly label: string; readonly required: boolean; readonly oneOf?: { readonly group: string; readonly arm: string; readonly required: boolean } }`. Members sharing a `group` are mutually exclusive. Members sharing `group` AND `arm` go together, like the forge triple. `required` on the param is `false` for every group member; the group's own `required` says whether one arm must be given.
+  - `export type CatalogParam = { readonly name: string; readonly kind: ParamKind; readonly label: string; readonly required: boolean; readonly oneOf?: { readonly group: string; readonly arm: string; readonly required: boolean; readonly armRequired: boolean } }`. Members sharing a `group` are mutually exclusive. Members sharing `group` AND `arm` go together, like the forge triple. `required` on the param is `false` for every group member. The group's own `required` says whether one arm must be given. `armRequired` says whether this member must be present once its arm is chosen. It is `true` for `why.ref`, `false` for `why.line`, and `true` for each of the forge triple's three fields.
   - `export type AgentCatalogEntry = { readonly displayName: string; readonly description: string; readonly category: AgentCategory; readonly roles: readonly AgentRoleTag[]; readonly params: readonly CatalogParam[] }`.
   - `export const AGENT_CATALOG = Object.freeze({ … }) satisfies Readonly<Record<BriefMethod, AgentCatalogEntry>>`.
   - `export type CatalogAgent = AgentCatalogEntry & { readonly name: string; readonly method: BriefMethod; readonly surfaces: { readonly external: boolean; readonly fleet: boolean } }`.
@@ -145,14 +148,15 @@
 - Wording: each `description` is one sentence of at most 120 characters, saying what the brief reports from the local index. It never promises a section the brief discloses as a gap. Use the agent's doc comment in `agents/<name>.ts` as the source.
 - Audit extension:
   - `VALIDATOR_AGENT_OVERRIDES` gains `requireCatchupParams: ["catchup", "changelog"]` and `requireWhyRefParams: ["why"]`. The existing `AGENT_PARAM_KINDS` check is unaffected (`changelog` is not in that map, and `why.ref`/`why.line` already match).
-  - New `export function checkCatalogParams(parsed, catalog: Readonly<Record<string, readonly { name: string; kind: ParamKind }[]>>): ParamKindsFinding[]`, with rule `missing-in-catalog`. Every field a validator type-checks, for EVERY agent the walker maps (all 17, not only the 12 external ones), must appear in that agent's catalog params with the same kind. It is one-directional, like `checkAgentParamKinds`, and below `VALIDATOR_FLOOR` it is `indeterminate`.
+  - New `export function checkCatalogParams(parsed, catalog: Readonly<Record<string, readonly { name: string; kind: ParamKind }[]>>): ParamKindsFinding[]`, with rule `missing-in-catalog`. `catalog` is keyed by SHORT name only, matching `ParsedValidator.agent`. The script builds it from `listCatalogAgents()` (`name` → `params`), and does not look up a second spelling. Every field a validator type-checks, for EVERY agent the walker maps (all 17, not only the 12 external ones), must appear in that agent's catalog params with the same kind. It is one-directional, like `checkAgentParamKinds`, and below `VALIDATOR_FLOOR` it is `indeterminate`.
   - `ParamKindsFinding` gains the `missing-in-catalog` arm. `import.meta.main` reports both checks.
 
 - [ ] **Step 1: Write the failing tests** in `agent-catalog.test.ts`:
   - `covers exactly the 17 brief methods`: the keys equal `Object.keys(FLEET_ELIGIBILITY)` minus `agents.whyPeek`, with length 17.
   - `every external agent's descriptors agree with AGENT_PARAM_KINDS`: for each agent in `AGENT_PARAM_KINDS`, every field there is a catalog param with the same kind.
   - `surfaces derive from the existing tables`: `standup` gives `{ external: false, fleet: true }`; `decisions` gives `{ external: true, fleet: true }`; `preflight` gives `{ external: false, fleet: false }`.
-  - `oneOf groups are well formed`: every group has at least two arms, and no group member is `required: true`.
+  - `oneOf groups are well formed`: every group has at least two arms, no group member is `required: true`, every arm has at least one `armRequired: true` member, and all members of one group agree on the group's `required`.
+  - `why's ref arm requires ref but not line`.
   - `display names and descriptions are short and single-line` (≤ 40 and ≤ 120 characters, no `\n`).
   - In `check-agent-param-kinds.test.ts`:
     - `checkCatalogParams flags a validator field missing from the catalog` (a synthetic parsed validator with a `bogus` field).
@@ -184,7 +188,7 @@
     - `| { kind: "extension"; id: string; serviceId: string | null; name: string | null; category: "extension" }`
     - `| { kind: "user-mcp"; id: string; name: string; category: "user-mcp" }`
   - `export type CatalogListResult = { readonly agents: readonly (CatalogAgent & { readonly visible: boolean })[]; readonly connectors: readonly CatalogConnector[]; readonly visibility: { readonly basis: "all" | "packs"; readonly packs: readonly string[]; readonly notes: readonly string[] } }`. `notes` is `describeAgentVisibility`'s output.
-  - `export function buildCatalogList(deps: { readonly db: Database; readonly snapshot: () => Pick<ConfigSnapshot, "doc"> }): CatalogListResult`. Builtins come first, sorted by id, then extensions, then user MCP servers, each sorted by id. An extension's `name` is the verified manifest's `name`, cut to 200 characters, and `null` when absent or when `readVerifiedManifest` throws. `serviceId` comes from the extension's run grant, or is `null`. A user MCP entry's `name` is its `service_id`. Strings are returned raw; terminal stripping is the CLI's job (Task 6).
+  - `export function buildCatalogList(deps: { readonly db: Database; readonly snapshot: () => Pick<ConfigSnapshot, "doc"> }): CatalogListResult`. Builtins come first, then extensions, then user MCP servers. Each group is sorted by id with `codeUnitCompare` (never a bare `.sort()` or `localeCompare`). An extension's `name` is the verified manifest's `name`, trimmed and cut to 200 characters. It is `null` when absent, when empty after trimming, or when `readVerifiedManifest` throws. `serviceId` comes from the extension's run grant, or is `null`. A user MCP entry's `name` is its `service_id`. Strings are returned raw; terminal stripping is the CLI's job (Task 6).
 
 - [ ] **Step 1: Write the failing tests:**
   - `connector meta covers every catalog and gateway-syncable id`: the keys equal the union of the two arrays, with no extras.
@@ -193,6 +197,7 @@
     - `lists every agent with visible from the snapshot`: a snapshot whose base hides `decisions` leaves `decisions` listed with `visible: false`, and the agent count is 17.
     - `lists builtins, then extensions, then user MCP servers`.
     - `an extension whose manifest fails verification is listed with name null` (manifest bytes changed after install).
+    - `an extension whose manifest name is blank is listed with name null` (`"name": "  "`).
     - `an approved extension carries its run grant's service id`.
 - [ ] **Step 2: Run and see them fail:** `bun test packages/gateway/src/catalog`.
 - [ ] **Step 3: Implement.**
@@ -211,13 +216,13 @@
 - Produces:
   - `export class CatalogRpcError extends Error { readonly rpcCode: number }`.
   - `export function dispatchCatalogRpc(method: string, params: unknown, ctx: { readonly db: Database; readonly configDir: string }): { kind: "hit"; value: CatalogListResult } | { kind: "skip" }`. Only `catalog.list` is served. `params` must be `undefined`, `null` or `{}`; anything else raises `-32602`, `catalog.list takes no params`.
-  - `tryDispatchCatalogRpc` throws `-32603`, `catalog.list requires LocalIndex`, when `localIndex` is absent, mirroring `tryDispatchLocalityRpc`.
-  - `explainConfig`'s `opts` gains `readonly agentVisibilityNotes?: () => readonly string[]`. It is called only when the path is `agents` or starts with `agents.`, and its lines are appended to `notes` after the fleet notes. `diagnostics-rpc.ts` supplies it as `() => describeAgentVisibility(resolveAgentVisibility(reader.snapshot(), CATALOG_AGENT_NAMES))`. Import `catalog/` directly here (ipc may import catalog). Then confirm `bun run audit:boundaries` and the circular-dependency check still pass.
+  - `tryDispatchCatalogRpc` throws `-32603` with `catalog.list requires LocalIndex` when `localIndex` is absent, mirroring `tryDispatchLocalityRpc`. It throws `-32603` with `catalog.list requires configDir` when `ctx.options.configDir` is `undefined`, since that option is optional in `ipc/server/options.ts`.
+  - `explainConfig`'s `opts` gains `readonly agentVisibilityNotes?: () => readonly string[]`. It is called only when the path, compared through the file's existing `unquote`, is `agents` or starts with `agents.`. Its lines are appended to `notes` after the fleet notes. A bare `config explain` (no path) does NOT call it, so owners without packs see no new line. `diagnostics-rpc.ts` supplies it as `() => describeAgentVisibility(resolveAgentVisibility(reader.snapshot(), CATALOG_AGENT_NAMES))`. Import `catalog/` directly here (ipc may import catalog). Then confirm `bun run audit:boundaries` and the circular-dependency check still pass.
 - The guard test (`visibility-is-presentation-only.test.ts`) scans every non-test `.ts` file under `packages/gateway/src`:
   - (a) `resolveAgentVisibility` is named only in `catalog/agent-visibility.ts`, `catalog/catalog-list.ts` and `ipc/diagnostics-rpc.ts`.
   - (b) No file under `ipc/agents-rpc.ts`, `ipc/http-*.ts`, `fleet/`, `chatops/`, `agent-runs/`, `engine/` or `mcp-sink/` imports from `catalog/`.
   - (c) `parseNimbusAgentsToml` returns exactly the keys `synthesis` and `synthesisTimeoutMs` (a `Object.keys` pin), so the `[agents]` loader never starts reading `show`/`hide`/`visible`.
-  - It must be red-proven: add a temporary `resolveAgentVisibility` reference to `ipc/agents-rpc.ts`, see the test fail, then revert.
+  - It must be red-proven, in this order: write the test, then add a temporary real import of `resolveAgentVisibility` from `../catalog/agent-visibility.ts` to `ipc/agents-rpc.ts` (an import, not a comment), see (a) and (b) fail, revert it, and see green.
 
 - [ ] **Step 1: Write the failing tests:**
   - `catalog-rpc.test.ts`:
@@ -228,7 +233,9 @@
   - `lan-rpc.test.ts`: `catalog.list is LAN-forbidden`.
   - `config-explain.test.ts`:
     - `agents paths append the visibility notes`.
-    - `other paths do not call agentVisibilityNotes` (the callback throws if called).
+    - `other paths do not call agentVisibilityNotes`, covering `fleet.enabled` and a bare explain with no path (the callback throws if called).
+    - `a quoted agents path still gets the notes` (`"agents".visible`).
+  - `catalog-rpc.test.ts` or the dispatcher test: `catalog.list without configDir is -32603`.
   - `diagnostics-rpc.test.ts`: `config.explain agents.visible names an unknown pack agent`.
   - The guard test, as above.
 - [ ] **Step 2: Run and see them fail:** `bun test packages/gateway/src/ipc/catalog-rpc.test.ts packages/gateway/src/ipc/lan-rpc.test.ts packages/gateway/src/config/config-explain.test.ts packages/gateway/src/ipc/diagnostics-rpc.test.ts packages/gateway/src/catalog`.
@@ -240,14 +247,14 @@
 
 **Files:**
 - Create: `packages/cli/src/commands/catalog.ts`, `packages/cli/src/commands/catalog.test.ts`, `packages/gateway/test/e2e/catalog-list.e2e.test.ts`
-- Modify: `packages/cli/src/index.ts` (`COMMAND_HANDLERS`), `packages/cli/src/commands/help.ts`, `docs/cli-reference.md`, `docs/architecture.md` (§ Layered config and the IPC method catalogue), `docs/CHANGELOG.md`, and any `[agents]` configuration reference that documents `synthesis` (grep for it)
+- Modify: `packages/cli/src/index.ts` (`COMMAND_HANDLERS`), `packages/cli/src/commands/registry.ts` (`"catalog"` in `COMMAND_NAMES`, in alphabetical order; `registry.test.ts` fails on a handler missing from it), `packages/cli/src/commands/index.ts` (`export { runCatalog } from "./catalog.ts"`), `packages/cli/src/commands/help.ts`, `docs/cli-reference.md`, `docs/architecture.md` (§ Layered config and the IPC method catalogue), `docs/CHANGELOG.md`, and any `[agents]` configuration reference that documents `synthesis` (grep for it)
 
 **Interfaces:**
 - Consumes: `catalog.list` (Task 5) over the CLI's IPC client, mirroring an existing read command such as `stats.ts`. Also `stripControlChars` (`packages/cli/src/lib/strip-control-chars.ts`).
 - Produces: `nimbus catalog [agents|connectors] [--json]`.
   - With no subcommand it prints both lists. An unknown subcommand prints the usage and exits 1.
-  - `--json` prints the raw `CatalogListResult`, filtered to the half that was asked for.
-  - The agents table has the columns `name`, `shown`, `category` and `description`. A hidden agent shows `hidden`, and the visibility summary line comes first.
+  - `--json` prints the raw result. With no subcommand it prints `{ agents, connectors, visibility }`, `agents` prints `{ agents, visibility }`, and `connectors` prints `{ connectors }`.
+  - The agents table has the columns `name`, `shown`, `category` and `description`. The `shown` column reads `shown` for a visible agent and `hidden` for a hidden one. The visibility summary line comes first.
   - The connectors table has `id`, `name` and `category`, with owner-added servers after the builtins. Every extension and user MCP string goes through `stripControlChars` before printing, and an absent name prints `(no name)`.
   - The help line reads `nimbus catalog [agents|connectors] [--json]   List agents and connectors with descriptions`. Help is not filtered.
 
@@ -260,6 +267,7 @@
   - `catalog-list.e2e.test.ts` boots a real gateway subprocess in the style of `test/e2e/explain-last.e2e.test.ts`, with a temp configDir whose `nimbus.toml` holds `[agents]\nhide = ["decisions"]`:
     - `catalog.list routes over the real socket and reports decisions hidden`.
     - `a hidden agent still answers`: `agents.decisions` returns a `sessionId`.
+    - Both run inside `try`/`finally`, which disconnects the client and then stops the gateway, as the existing e2e fixtures do. A lingering named-pipe handle on Windows otherwise outlives the test.
 - [ ] **Step 2: Run and see them fail:** `bun test packages/cli/src/commands/catalog.test.ts packages/gateway/test/e2e/catalog-list.e2e.test.ts`.
 - [ ] **Step 3: Implement the command and write the docs:**
   - `cli-reference.md`: a `nimbus catalog` section, plus `[agents] show`/`hide`/pack `visible` under the agents configuration, including the per-agent precedence rule and that visibility never refuses a call.
