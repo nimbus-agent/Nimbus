@@ -552,11 +552,11 @@ Built-in agents that answer team-level questions from the local relationship gra
 |---|---|---|
 | `synthesis` | `"local"` | `"off"` never attempts a rewrite — every brief is the deterministic render, regardless of `[llm]` settings. `"local"` attempts a rewrite only when the resolved provider is local (Ollama or llama.cpp); a resolved remote provider is refused outright, so nothing egresses by construction. `"allow-remote"` additionally permits a non-local provider, appending a `model`-class `egress_ledger` row (I29) before that call. An unrecognised value falls back to `"local"`, never widening to `"allow-remote"` on a typo. |
 | `synthesis_timeout_ms` | `20000` | How long a synthesis attempt is raced against before it is abandoned as `timeout` and the deterministic render is used instead. Deliberately generous: briefs are fire-and-forget, so this does not gate a caller — it exists so a hung provider still yields a brief. The underlying provider call is not cancelled at timeout (no `AbortSignal` support), only abandoned. |
-| `show` | none | A list of agent names the catalog should show (`nimbus catalog`, desktop). Short names (`decisions`); an `agents.` prefix is accepted and ignored. Read from `nimbus.toml` and `nimbus.<profile>.toml` only. |
+| `show` | none | A list of agent names the catalog should show (`nimbus catalog`). Short names (`decisions`); an `agents.` prefix is accepted and ignored. Read from `nimbus.toml` and `nimbus.<profile>.toml` only. |
 | `hide` | none | A list of agent names the catalog should list as hidden. Same name rules as `show`. |
 | `visible` | none | **Set by a pack, not by you.** A pack layer may set `[agents] visible` to a list of agents; the lists of all active packs are unioned. If no pack sets it, every agent is visible. A `visible` key in your own `nimbus.toml` is ignored, and `nimbus config explain` says so. |
 
-**Agent visibility is presentation only.** It decides what `nimbus catalog` and the desktop list mark as shown or hidden, and nothing else: hiding an agent never refuses a call. `nimbus <agent>`, `agents.*` over IPC, the HTTP API, the MCP server, ChatOps and fleet jobs all answer for a hidden agent exactly as for a visible one. Precedence: the starting set is every agent, or the union of the packs' `visible` lists when any pack sets one. For each agent, the highest of your layers (`nimbus.<profile>.toml` over `nimbus.toml`) that names it decides; within one layer, `hide` beats `show`. A name that matches no agent is reported by `nimbus config explain`, not an error.
+**Agent visibility is presentation only.** It decides what `nimbus catalog` marks as shown or hidden, and nothing else: hiding an agent never refuses a call. `nimbus <agent>`, `agents.*` over IPC, the HTTP API, the MCP server, ChatOps and fleet jobs all answer for a hidden agent exactly as for a visible one. Precedence: the starting set is every agent, or the union of the packs' `visible` lists when any pack sets one. For each agent, the highest of your layers (`nimbus.<profile>.toml` over `nimbus.toml`) that names it decides; within one layer, `hide` beats `show`. A name that matches no agent is reported by `nimbus config explain`, not an error.
 
 **Configuration — `[persona]`, read from the profile-resolved TOML (see below):**
 
@@ -577,7 +577,7 @@ Applies to **three** surfaces: `nimbus ask`, every built-in agent brief, and —
 nimbus catalog [agents|connectors] [--json]
 ```
 
-Lists the built-in agents and the connectors on this install, with short descriptions. Read-only; it calls `catalog.list` (CLI and desktop only, not LAN-reachable) and touches no connector.
+Lists the built-in agents and the connectors on this install, with short descriptions. Read-only; it calls `catalog.list` (CLI-only today and LAN-forbidden; it joins the desktop allowlist in a later release) and touches no connector.
 
 - With no subcommand it prints both lists. An unknown subcommand prints the usage and exits 1.
 - The agents table has `name`, `shown`, `category` and `description`. `shown` reads `shown` or `hidden` per the visibility rules under [Team Intelligence](#team-intelligence) (`[agents] show`/`hide`, pack `visible`); a one-line summary of where the visibility came from comes first. Hidden agents are listed, not removed, and still run.

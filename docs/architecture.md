@@ -2752,7 +2752,7 @@ const streamReq: JSONRPCRequest = {
 // admin.status      — GatewayStatus snapshot for the admin console (read; renderer-exposed)
 // config.explain    — where one config value (or every value) came from across the layers (read; CLI-only, LAN-forbidden,
 //   absent from the Tauri allowlist; params {path?}); diag.snapshot also gains a `configLayers` field (profile + layer list)
-// catalog.list      — the built-in agents (with visible) and every connector on the install (read; CLI/desktop-callable,
+// catalog.list      — the built-in agents (with visible) and every connector on the install (read; CLI-callable,
 //   LAN-forbidden, NOT on the Tauri allowlist yet; no params)
 // Federation wire (peer ↔ peer over LanServer): federation.policy (serve signed policy),
 //   federation.auditExport (audit-log shipper), federation.purge (HITL-gated serve + signed deletion record)

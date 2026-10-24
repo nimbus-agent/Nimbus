@@ -88,6 +88,12 @@ describe("runCatalog", () => {
     expect(Object.keys(c)).toEqual(["connectors"]);
   });
 
+  test("--json with no subcommand prints agents, connectors and visibility", async () => {
+    await runCatalog(["--json"]);
+    const r = JSON.parse(out.stdout) as Record<string, unknown>;
+    expect(Object.keys(r).sort()).toEqual(["agents", "connectors", "visibility"]);
+  });
+
   test("strips control characters from an extension name", async () => {
     await runCatalog(["connectors"]);
     expect(out.stdout).toContain("evil");

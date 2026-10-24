@@ -45,6 +45,11 @@ describe("catalog.list over a real socket", () => {
       const client = new TinyIpcClient();
       try {
         await client.connect(gw.socketPath);
+        const list = await client.call<{ agents: { name: string; visible: boolean }[] }>(
+          "catalog.list",
+          null,
+        );
+        expect(list.agents.find((a) => a.name === "decisions")?.visible).toBe(false);
         const r = await client.call<{ sessionId: string }>("agents.decisions", {});
         expect(typeof r.sessionId).toBe("string");
       } finally {
