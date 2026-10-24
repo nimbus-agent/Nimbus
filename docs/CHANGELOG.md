@@ -20,8 +20,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 - **2026-10-24 — Role packs P3, PR 3: `[oncall.push] enabled` is pack-settable and live; the DevOps pack sets it; `nimbus doctor` notes a pack update (no migration, no invariant, no egress class).**
   `[oncall.push] enabled` joins the pack-settable keys and is read live: installing or removing a pack turns the
-  on-call push on or off without a gateway restart, and a disable followed by an enable starts a fresh window rather
-  than backfilling history. Your own `nimbus.toml` or profile file still overrides a pack. Only `enabled` is live;
+  on-call push on or off without a gateway restart, and a disable followed by an enable does not backfill the gap
+  (incidents opened while it was off are pushed only if they opened no further back than 5 minutes before the
+  re-enable). A config layer that exists but cannot be read keeps the last value (and starts disabled at boot), so
+  an unreadable `nimbus.toml` cannot let a pack override your own `enabled = false`. A live disable also stops a run
+  already in progress before its next incident. Your own `nimbus.toml` or profile file still overrides a pack. Only `enabled` is live;
   every other `[oncall.push]` key is still read at boot and `chatops_namespace` is not pack-settable. The bundled
   DevOps pack is now version 1.1.0 and sets `[oncall.push] enabled = true`, so an existing DevOps install shows
   `update available` in `nimbus pack list` until it is re-installed (the re-install shows the one added key).

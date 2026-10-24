@@ -3,7 +3,7 @@
 // layer store feeding the real layered config, and the real push runtime over a migrated DB.
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CATALOG_AGENT_NAMES } from "../catalog/agent-catalog.ts";
@@ -104,8 +104,33 @@ test("installing and removing the DevOps pack turns the push on and off with no 
 test("the owner's own enabled = false wins over the pack", async () => {
   writeFileSync(join(dir, "nimbus.toml"), "[oncall.push]\nenabled = false\n");
   const rt = boot();
+  expect(rt.isEnabled()).toBe(false);
   await installPack({ id: "devops" }, packDeps(), approve);
   expect((await rt.run("pagerduty")).skipped).toBe("disabled");
+  expect(rt.isEnabled()).toBe(false);
+  expect(rt.store.enabledAt()).toBeNull();
+});
+
+test("an unreadable owner nimbus.toml does not let the pack's enabled = true win", async () => {
+  const tomlPath = join(dir, "nimbus.toml");
+  writeFileSync(tomlPath, "[oncall.push]\nenabled = false\n");
+  const rt = boot();
+  await installPack({ id: "devops" }, packDeps(), approve);
+  expect(rt.isEnabled()).toBe(false);
+
+  // A directory of that name: readFileSync fails with EISDIR (not ENOENT) on every OS, so the
+  // layered snapshot drops the owner layer as "absent" and only the pack's `enabled = true` is left.
+  rmSync(tomlPath);
+  mkdirSync(tomlPath);
+  expect(rt.isEnabled()).toBe(false);
+  expect((await rt.run("pagerduty")).skipped).toBe("disabled");
+  expect(rt.store.enabledAt()).toBeNull();
+});
+
+test("an owner nimbus.toml unreadable at boot starts the push disabled", async () => {
+  mkdirSync(join(dir, "nimbus.toml"));
+  await installPack({ id: "devops" }, packDeps(), approve);
+  const rt = boot();
   expect(rt.isEnabled()).toBe(false);
   expect(rt.store.enabledAt()).toBeNull();
 });

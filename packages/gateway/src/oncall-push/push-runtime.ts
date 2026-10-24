@@ -1,6 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { resolveSelfPerson } from "../agents/_lib/self-person.ts";
-import { getLayeredConfig } from "../config/layered-config.ts";
+import {
+  assertLayersReadable,
+  getLayeredConfig,
+  layerReadError,
+} from "../config/layered-config.ts";
 import {
   loadNimbusPagerdutyFromConfigDir,
   loadNimbusUserFromConfigDir,
@@ -26,7 +30,10 @@ export interface OncallPushRuntime {
   readonly config: Omit<NimbusOncallPushToml, "enabled">;
   /** Live `[oncall.push] enabled`: re-read when the layered config's version moves. */
   isEnabled(): boolean;
-  /** Stops the live reader's timer. Idempotent; `platform/assemble.ts` calls it at shutdown. */
+  /**
+   * Stops the live reader's timer and freezes `isEnabled()` at its last value (no further
+   * reloads). Idempotent; `platform/assemble.ts` calls it at shutdown.
+   */
   stop(): void;
   readonly store: PushStore;
   run(serviceId: string): Promise<PushRunSummary>;
@@ -79,7 +86,16 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
   // Read BEFORE the config: a change landing between the two reads then shows as a newer version
   // on the first refresh and is re-read, rather than being stamped as already seen.
   const bootVersion = version();
-  const config = loadNimbusOncallPushFromConfigDir(deps.configDir);
+  const loaded = loadNimbusOncallPushFromConfigDir(deps.configDir);
+  // The layered snapshot treats a layer it could not read as ABSENT, so an unreadable owner file
+  // (`enabled = false`) would let a pack's `enabled = true` win. A partial config therefore reads
+  // as disabled at boot, and the live reader below refuses it, keeping its last value.
+  const bootReadError = layerReadError(deps.configDir);
+  if (bootReadError !== undefined) {
+    deps.logger.warn?.({ err: bootReadError }, "[oncall.push] config layer unreadable; disabled");
+  }
+  const config: NimbusOncallPushToml =
+    bootReadError === undefined ? loaded : { ...loaded, enabled: false };
   const store = new PushStore(deps.db);
   // Spec § 4.1: reconciled at BOOT, never on the first run, so the first sync's incidents are
   // never older than enabled_at and a disable→enable cycle never backfills the gap.
@@ -95,7 +111,11 @@ export function assembleOncallPushRuntime(deps: OncallPushBootDeps): OncallPushR
   const live = createLiveEnabled(
     {
       version,
-      load: () => loadNimbusOncallPushFromConfigDir(deps.configDir).enabled,
+      load: () => {
+        // Refuse a partial config (the throw keeps the last value and logs once per version).
+        assertLayersReadable(deps.configDir);
+        return loadNimbusOncallPushFromConfigDir(deps.configDir).enabled;
+      },
       reconcile: (e, t) => store.reconcileEnabledState(e, t),
       now,
       logger: deps.logger,

@@ -1334,6 +1334,16 @@ describe("doctorPrintPackUpdates", () => {
     expect(out.stdout).toContain("pm 1.0.0 -> a different build.");
   });
 
+  it("says a different build when the bundled version equals the installed one", async () => {
+    const client = byMethod(() => ({
+      profile: "default",
+      installed: [pack("pm", "1.1.0", { updateAvailable: true, bundledVersion: "1.1.0" })],
+    }));
+    await doctorPrintPackUpdates(client);
+    expect(out.stdout).toContain("pm 1.1.0 -> a different build.");
+    expect(out.stdout).not.toContain("1.1.0 -> 1.1.0");
+  });
+
   it("says version unknown when the row's version is not a string", async () => {
     const client = byMethod(() => ({
       profile: "default",

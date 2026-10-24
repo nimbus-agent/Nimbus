@@ -310,6 +310,23 @@ describe("push runner", () => {
     expect(store.get(delivered[0]?.row.incidentId ?? "")).not.toBeNull();
   });
 
+  test("a live disable mid-run stops before the next incident and still delivers the stored one", async () => {
+    seedIncident("PB");
+    const calls: unknown[] = [];
+    let reads = 0;
+    // Read 1 is the run's entry check; read 2 precedes the first incident; read 3 the second.
+    const isEnabled = () => {
+      reads += 1;
+      return reads <= 2;
+    };
+    const { runner, delivered } = makeRunner({ dispatch: readyDispatch(calls), isEnabled });
+    const summary = await runner.run("pagerduty");
+    expect(calls).toHaveLength(1);
+    expect(summary).toMatchObject({ ok: 1, failed: 0 });
+    expect(delivered).toHaveLength(1);
+    expect(store.get(delivered[0]?.row.incidentId ?? "")).not.toBeNull();
+  });
+
   test("dispatch returning no usable sessionId is a failed 'no_session' row (null, non-object, empty string, missing key)", async () => {
     for (const bad of [null, "s1", { sessionId: "" }, { other: 1 }, { sessionId: 7 }]) {
       store.pruneOlderThan(Number.MAX_SAFE_INTEGER);

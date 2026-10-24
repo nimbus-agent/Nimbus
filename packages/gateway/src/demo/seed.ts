@@ -152,8 +152,9 @@ function writeDemoConfig(
     "git_aware = true\n" +
     serviceBlocks +
     // The page `demo.firePage` fires is briefed by the on-call push path. `[user] me_person_id`
-    // above is Sam, the paging incident's assignee; `enabled_at` is stamped by the boot reconcile
-    // when `nimbus demo` restarts the gateway after seeding, so it precedes the page.
+    // above is Sam, the paging incident's assignee; `enabled_at` is stamped by the first
+    // reconcile: the pre-restart demo gateway's live reader picks the file up within ~5 s, and
+    // the boot reconcile at the restart keeps that earlier stamp, so it precedes the page.
     "\n[oncall.push]\n" +
     "enabled = true\n";
   writeFileSync(join(configDir, "nimbus.toml"), toml);

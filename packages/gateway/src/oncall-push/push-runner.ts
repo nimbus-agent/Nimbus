@@ -196,6 +196,8 @@ export function createOncallPushRunner(deps: OncallPushRunnerDeps): OncallPushRu
       for (const incident of candidates) {
         // Defensive: a duplicate candidate within one selection would make `insert` throw on the PK.
         if (deps.store.has(incident.id)) continue;
+        // A live disable mid-run (a pack removed) stops the loop; the finally delivers what is stored.
+        if (!deps.isEnabled()) break;
         const outcome = await briefIncident(deps, incident.id); // NOSONAR S9382: one agents.oncall session at a time - the has() re-check above must see every row stored before it, and a failed insert must stop the later briefs (the finally delivers the rows already stored)
         const row = deps.store.insert(incident.id, outcome, now());
         if (row.status === "ok") ok += 1;

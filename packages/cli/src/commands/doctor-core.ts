@@ -922,8 +922,10 @@ export async function doctorPrintPackUpdates(client: Pick<IPCClient, "call">): P
     };
     if (p.updateAvailable !== true || typeof p.id !== "string") continue;
     const from = packFromVersion(p.versionUnknown === true, p.version);
+    // An equal version means the digest differs with no version bump: "1.1.0 -> 1.1.0" would
+    // read as a no-op.
     const to =
-      typeof p.bundledVersion === "string"
+      typeof p.bundledVersion === "string" && p.bundledVersion !== p.version
         ? stripControlChars(p.bundledVersion)
         : "a different build";
     updates.push(`${stripControlChars(p.id)} ${from} -> ${to}`);
