@@ -39,6 +39,7 @@ import {
   type RegistryRepo,
   ROOT_KEY_INPUT,
   ROOT_PUBLIC_KEY,
+  ROOT_SEED,
   syncMaintainer,
   write,
   writePublish,
@@ -164,6 +165,27 @@ describe("runSign", () => {
     expect(new TextDecoder().decode(originFile(repo, "gh-pages", ".gitattributes"))).toBe(
       "* -text\n",
     );
+  });
+
+  test("keeps top-level index fields it does not manage (packs) across a sign run", async () => {
+    syncMaintainer(repo, "gh-pages");
+    const prev = originIndex(repo);
+    const { signature: _omit, ...unsigned } = prev;
+    const packs = { devops: { versions: { "1.0.0": { channel: "stable" } } } };
+    const withPacks = await signIndex({ ...unsigned, packs }, ROOT_SEED);
+    write(
+      repo.maintainer,
+      "index.json",
+      `${JSON.stringify(withPacks, null, 2)}
+`,
+    );
+    pushMaintainer(repo, "gh-pages", "add packs");
+    await mergePublish();
+    await sign();
+    const index = originIndex(repo);
+    expect(index.sequence).toBe(prev.sequence + 1);
+    expect(index.packs).toEqual(packs);
+    await expect(verifyRegistryIndexPinned(index, ROOT_PUBLIC_KEY)).resolves.toBeUndefined();
   });
 
   test("a later publish to an indexed id appends a version at sequence + 1", async () => {

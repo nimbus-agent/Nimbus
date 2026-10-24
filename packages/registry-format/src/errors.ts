@@ -26,7 +26,8 @@ export type RegistryErrorCode =
   | "ERR_REGISTRY_SERVICE_ID_COLLISION"
   | "ERR_REGISTRY_VERSION_EXISTS"
   | "ERR_REGISTRY_PACKAGE_FILE_SET"
-  | "ERR_REGISTRY_CONFIG_INVALID";
+  | "ERR_REGISTRY_CONFIG_INVALID"
+  | "ERR_REGISTRY_ROLE_PACK_INVALID";
 
 /** A registry refusal. The code leads the message, so a CLI shows it; `detail` is the rest. */
 export class RegistryError extends Error {

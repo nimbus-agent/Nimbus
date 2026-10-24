@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import nacl from "tweetnacl";
 
+import { MAX_ROLE_PACK_MANIFEST_BYTES } from "./caps.ts";
 import {
   MAX_INDEX_BYTES,
   parseRegistryIndex,
   type RegistryIndex,
+  readRegistryPacks,
   registryIndexSigningBytes,
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
@@ -336,5 +338,122 @@ describe("registry index parser refusals", () => {
       signature: encodeBase64(nacl.sign.detached(registryIndexSigningBytes(idx), other.secretKey)),
     };
     await expect(verifyRegistryIndexSelf(forged)).rejects.toThrow("ERR_REGISTRY_SIGNATURE_INVALID");
+  });
+});
+
+describe("readRegistryPacks", () => {
+  type Json = Record<string, unknown>;
+
+  function packVersion(id: string, v: string): Json {
+    return {
+      channel: "stable",
+      manifest: `packs/${id}/${v}/manifest.json`,
+      manifestSha256: h("a"),
+      manifestSizeBytes: 900,
+      publishedAt: "2026-10-24T00:00:00Z",
+    };
+  }
+
+  const validPacks = (): Json => ({
+    devops: { versions: { "1.0.0": packVersion("devops", "1.0.0") } },
+  });
+
+  /** A parsed, signed index carrying `packs` (omitted when undefined). */
+  function indexWith(packs: unknown): RegistryIndex {
+    const idx = packs === undefined ? unsigned : { ...unsigned, packs };
+    return parseRegistryIndex(enc(sign(idx)));
+  }
+
+  /** `packs` with the devops 1.0.0 version entry edited by `edit`. */
+  function withPackVersion(edit: (v: Json) => void): Json {
+    const packs = validPacks();
+    edit(((packs["devops"] as Json)["versions"] as Json)["1.0.0"] as Json);
+    return packs;
+  }
+
+  function expectDropped(packs: unknown, fragment: string): void {
+    const read = readRegistryPacks(indexWith(packs));
+    expect(read.packs).toEqual({});
+    expect(read.invalid).toContain(fragment);
+  }
+
+  test("an index without packs reads as empty", () => {
+    expect(readRegistryPacks(indexWith(undefined))).toEqual({ packs: {} });
+  });
+
+  test("a valid packs map parses and the index verifies", async () => {
+    const idx = indexWith(validPacks());
+    await expect(verifyRegistryIndexSelf(idx)).resolves.toBeUndefined();
+    const read = readRegistryPacks(idx);
+    expect(read.invalid).toBeUndefined();
+    expect(read.packs["devops"]?.versions["1.0.0"]?.manifestSizeBytes).toBe(900);
+  });
+
+  test("packs is covered by the signature", async () => {
+    const signed = sign({ ...unsigned, packs: validPacks() }) as unknown as Json;
+    const tampered = structuredClone(signed);
+    ((((tampered["packs"] as Json)["devops"] as Json)["versions"] as Json)["1.0.0"] as Json)[
+      "manifestSha256"
+    ] = h("f");
+    await expect(verifyRegistryIndexSelf(parseRegistryIndex(enc(tampered)))).rejects.toThrow(
+      "ERR_REGISTRY_SIGNATURE_INVALID",
+    );
+  });
+
+  test("a malformed entry drops the whole map, not the index", async () => {
+    const packs = {
+      ...validPacks(),
+      pm: {
+        versions: { "1.0.0": { ...packVersion("pm", "1.0.0"), manifest: "packs/pm/1.0.0/x.json" } },
+      },
+    };
+    const idx = indexWith(packs);
+    expect(Object.keys(idx.extensions)).toEqual(["acme/deploy"]);
+    await expect(verifyRegistryIndexSelf(idx)).resolves.toBeUndefined();
+    const read = readRegistryPacks(idx);
+    expect(read.packs).toEqual({});
+    expect(read.invalid).toContain("not canonical");
+  });
+
+  test("refusals each drop the map with a reason", () => {
+    expectDropped([], "packs must be an object");
+    expectDropped(null, "packs must be an object");
+    expectDropped({ PM: validPacks()["devops"] }, "PM");
+    expectDropped({ devops: { versions: {} } }, "has no versions");
+    expectDropped({ devops: {} }, "missing key: versions");
+    expectDropped({ devops: { versions: { "1.0": packVersion("devops", "1.0") } } }, "non-semver");
+    expectDropped(
+      withPackVersion((v) => {
+        v["channel"] = "nightly";
+      }),
+      "channel",
+    );
+    // No 1.5: canonicalize refuses non-integers, so no signed index can carry one.
+    for (const size of [0, MAX_ROLE_PACK_MANIFEST_BYTES + 1, "900"]) {
+      expectDropped(
+        withPackVersion((v) => {
+          v["manifestSizeBytes"] = size;
+        }),
+        "manifestSizeBytes",
+      );
+    }
+    expectDropped(
+      withPackVersion((v) => {
+        v["manifestSha256"] = "abc";
+      }),
+      "manifestSha256",
+    );
+    expectDropped(
+      withPackVersion((v) => {
+        delete v["publishedAt"];
+      }),
+      "publishedAt",
+    );
+  });
+
+  test("unknown keys inside an entry are tolerated", () => {
+    const packs = validPacks();
+    (packs["devops"] as Json)["publisher"] = { id: "nimbus" };
+    expect(readRegistryPacks(indexWith(packs)).packs["devops"]).toBeDefined();
   });
 });

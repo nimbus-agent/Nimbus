@@ -140,10 +140,13 @@ async function resign(
   prev: RegistryIndex,
   extensions: RegistryIndex["extensions"],
 ): Promise<RegistryIndex> {
+  // Carry every field this command does not manage (e.g. `packs`) through: rebuilding the index
+  // from a fixed field list would drop them under a signature that still verifies.
+  const { signature: _previousSignature, ...carried } = prev;
   const next = await signIndex(
     {
+      ...carried,
       format: 1,
-      rootKey: prev.rootKey,
       sequence: prev.sequence + 1,
       generatedAt: new Date().toISOString(),
       extensions,

@@ -5,6 +5,8 @@ export {
   MAX_ENTRY_COUNT,
   MAX_MANIFEST_BYTES,
   MAX_PACKAGE_BYTES,
+  MAX_ROLE_PACK_DEFAULTS_BYTES,
+  MAX_ROLE_PACK_MANIFEST_BYTES,
   MAX_UNPACKED_BYTES,
 } from "./caps.ts";
 export { codeUnitCompare } from "./code-unit-compare.ts";
@@ -27,7 +29,11 @@ export {
   type RegistryChannel,
   type RegistryExtensionEntry,
   type RegistryIndex,
+  type RegistryPackEntry,
+  type RegistryPacksRead,
+  type RegistryPackVersionEntry,
   type RegistryVersionEntry,
+  readRegistryPacks,
   registryIndexSigningBytes,
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
@@ -55,6 +61,18 @@ export {
   type SandboxPermissions,
   validateAndNormalizePermissions,
 } from "./permissions-validator.ts";
+export {
+  CONNECTOR_ID_SHAPE_RE,
+  MAX_ROLE_PACK_CONNECTORS,
+  MAX_ROLE_PACK_MEMBERS,
+  MAX_ROLE_PACK_ROLES,
+  parseRolePackManifest,
+  parseRolePackManifestValue,
+  ROLE_PACK_ID_RE,
+  ROLE_TAG_RE,
+  type RolePackManifest,
+  rolePackDigest,
+} from "./role-pack.ts";
 export { emptyIndex, publicKeyFromSeed, signIndex, verifyIndexSignature } from "./sign.ts";
 export {
   effectiveRegistryConfig,

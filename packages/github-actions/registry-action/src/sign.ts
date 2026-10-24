@@ -267,10 +267,13 @@ async function attemptSign(
 
   let sequence = index.sequence;
   if (added.length > 0) {
+    // Carry every field this action does not manage (e.g. `packs`) through: rebuilding the index
+    // from a fixed field list would drop them under a signature that still verifies.
+    const { signature: _previousSignature, ...carried } = index;
     const signed = await deps.sign(
       {
+        ...carried,
         format: 1,
-        rootKey: index.rootKey,
         sequence: index.sequence + 1,
         generatedAt: new Date().toISOString(),
         extensions,
