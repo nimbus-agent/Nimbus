@@ -125,6 +125,16 @@ describe("setPackLayer", () => {
     expect(existsSync(join(dir, "packs"))).toBe(false);
   });
 
+  test("two packs may both set [agents] visible", () => {
+    const store = wired();
+    store.setPackLayer("default", "ops", '[agents]\nvisible = ["oncall"]\n');
+    expect(() =>
+      store.setPackLayer("default", "data", '[agents]\nvisible = ["decisions"]\n'),
+    ).not.toThrow();
+    expect(existsSync(packFile("ops"))).toBe(true);
+    expect(existsSync(packFile("data"))).toBe(true);
+  });
+
   test("refuses conflicting scalars and job names, even when the user's file sets the key", () => {
     writeFileSync(join(dir, "nimbus.toml"), "[fleet]\nretention_days = 30\n");
     const store = wired();
