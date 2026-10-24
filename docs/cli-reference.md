@@ -2312,7 +2312,7 @@ removing the stub resumes the job where it left off.
 
 `nimbus fleet list` shows the layer each job came from (`layer=<kind>:<id>`) and lists stubs:
 
-```
+```text
 morning-catchup  agent=catchup  interval=86400s  last success=never  consecutive failures=0  layer=pack:ops
 pack-nightly  disabled (enabled = false, layer=base:base)  disables pack:ops
 old-job  disabled (enabled = false, layer=base:base)  disables nothing
