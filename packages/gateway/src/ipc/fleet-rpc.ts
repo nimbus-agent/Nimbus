@@ -1,4 +1,12 @@
-import type { NimbusFleetJobToml, NimbusFleetToml, SweepKind } from "../config/fleet-toml.ts";
+import type {
+  FleetDisabledJob,
+  FleetDroppedJob,
+  FleetJobOrigin,
+  NimbusFleetJobToml,
+  NimbusFleetToml,
+  SweepKind,
+} from "../config/fleet-toml.ts";
+import type { LayerKind, LayerRef } from "../config/layered-merge.ts";
 import { asRecord } from "../connectors/unknown-record.ts";
 import { buildFleetDigest } from "../fleet/fleet-digest.ts";
 import type { FleetDigestResult } from "../fleet/fleet-digest-types.ts";
@@ -38,7 +46,7 @@ export class FleetRpcError extends Error {
  * unit test exercise `fleet.status` with none of them wired, matching how `fleet.status` is
  * documented to behave: "reports the live probe and config without running anything".
  *
- * In production `scheduler`, `config` and `jobs` are live getters over the `FleetSupervisor`, so a
+ * In production `scheduler`, `config`, `jobs`, `origins`, `disabled` and `dropped` are live getters over the `FleetSupervisor`, so a
  * config reload swaps them without rebuilding this ctx. A handler therefore reads them in ONE
  * synchronous destructuring, after its last `await` and before any later one: a swap publishes in
  * a single assignment, so a synchronous read never sees half of two generations. `settled` brings the
@@ -51,6 +59,12 @@ export interface FleetRpcCtx {
   readonly hostActivity: HostActivity;
   readonly config: NimbusFleetToml;
   readonly jobs?: readonly NimbusFleetJobToml[] | undefined;
+  /** Which layer each scheduled job came from; absent in a ctx that never resolved layers. */
+  readonly origins?: ReadonlyMap<string, FleetJobOrigin> | undefined;
+  /** Jobs an `enabled = false` stub turned off. They are not in `jobs`. */
+  readonly disabled?: readonly FleetDisabledJob[] | undefined;
+  /** Jobs dropped for a job-level error; the rest of the fleet still runs. */
+  readonly dropped?: readonly FleetDroppedJob[] | undefined;
   readonly now: () => number;
   readonly settled?: () => Promise<void>;
   /** Test seam: how long `fleet.runNow` waits on `settled`. Production leaves it unset. */
@@ -145,6 +159,16 @@ function optLimit(params: unknown, key: string): number | undefined {
   return Math.min(v, MAX_BRIEFS_LIMIT);
 }
 
+export type FleetLayerWire = {
+  readonly kind: LayerKind;
+  readonly id: string;
+  readonly path: string;
+};
+
+function layerWire(l: LayerRef): FleetLayerWire {
+  return { kind: l.kind, id: l.id, path: l.path };
+}
+
 export interface FleetStatusResult {
   readonly enabled: boolean;
   /** Whether a live `FleetScheduler` is actually ticking — distinct from `enabled`: a config with
@@ -156,6 +180,13 @@ export interface FleetStatusResult {
   readonly requireAcPower: boolean;
   readonly retentionDays: number;
   readonly jobsConfigured: number;
+  /** Jobs turned off by an `enabled = false` stub in a higher layer. */
+  readonly jobsDisabled: number;
+  readonly droppedJobs: readonly {
+    readonly name: string | null;
+    readonly layer: FleetLayerWire;
+    readonly reason: string;
+  }[];
   readonly probe: HostActivityProbe;
 }
 
@@ -168,7 +199,7 @@ export interface FleetStatusResult {
  */
 async function handleStatus(_params: unknown, ctx: FleetRpcCtx): Promise<FleetStatusResult> {
   const probe = await ctx.hostActivity.probe();
-  const { scheduler, config, jobs } = ctx;
+  const { scheduler, config, jobs, disabled, dropped } = ctx;
   return {
     enabled: config.enabled,
     running: scheduler !== undefined,
@@ -178,6 +209,12 @@ async function handleStatus(_params: unknown, ctx: FleetRpcCtx): Promise<FleetSt
     requireAcPower: config.requireAcPower,
     retentionDays: config.retentionDays,
     jobsConfigured: jobs?.length ?? 0,
+    jobsDisabled: disabled?.length ?? 0,
+    droppedJobs: (dropped ?? []).map((d) => ({
+      name: d.name,
+      layer: layerWire(d.layer),
+      reason: d.reason,
+    })),
     probe,
   };
 }
@@ -206,14 +243,27 @@ export interface FleetJobListEntry {
   readonly state: FleetJobState | null;
   /** `null` for a config-named job (`sweep` unset in `[[fleet.job]]`); otherwise its sweep config plus the last enumeration's state. */
   readonly sweep: FleetJobSweepListEntry | null;
+  /** Null only in a ctx with no `origins`. */
+  readonly layer: FleetLayerWire | null;
+}
+
+export interface FleetDisabledListEntry {
+  readonly name: string;
+  readonly agent: string | null;
+  readonly layer: FleetLayerWire;
+  /** The lower layers' definitions this stub replaces; empty means it disables nothing. */
+  readonly disables: readonly FleetLayerWire[];
 }
 
 /**
  * Lists every CONFIGURED job (from `[[fleet.job]]`), not just ones that have already run. Sweep
  * PROGRESS lives here rather than on `fleet.status`, which never reads the store.
  */
-function handleList(_params: unknown, ctx: FleetRpcCtx): { jobs: readonly FleetJobListEntry[] } {
-  const { config, jobs: ctxJobs } = ctx;
+function handleList(
+  _params: unknown,
+  ctx: FleetRpcCtx,
+): { jobs: readonly FleetJobListEntry[]; disabled: readonly FleetDisabledListEntry[] } {
+  const { config, jobs: ctxJobs, origins, disabled } = ctx;
   const jobs = ctxJobs ?? [];
   return {
     jobs: jobs.map((j) => {
@@ -230,6 +280,7 @@ function handleList(_params: unknown, ctx: FleetRpcCtx): { jobs: readonly FleetJ
         name: j.name,
         agent: j.agent,
         intervalSeconds: j.intervalSeconds,
+        layer: origins === undefined ? null : layerFor(origins.get(j.name)),
         state: ctx.store?.loadJobState(j.name) ?? null,
         sweep:
           j.sweep === null
@@ -249,7 +300,17 @@ function handleList(_params: unknown, ctx: FleetRpcCtx): { jobs: readonly FleetJ
               },
       };
     }),
+    disabled: (disabled ?? []).map((d) => ({
+      name: d.name,
+      agent: d.agent,
+      layer: layerWire(d.origin.layer),
+      disables: d.origin.replaces.map(layerWire),
+    })),
   };
+}
+
+function layerFor(origin: FleetJobOrigin | undefined): FleetLayerWire | null {
+  return origin === undefined ? null : layerWire(origin.layer);
 }
 
 function handleBriefs(params: unknown, ctx: FleetRpcCtx): { briefs: readonly FleetBriefRow[] } {
@@ -292,14 +353,31 @@ async function handleRunNow(params: unknown, ctx: FleetRpcCtx): Promise<FleetRun
     if (e instanceof FleetReloadingError) throw new FleetRpcError(-32000, e.message);
     throw e;
   }
-  const { scheduler } = ctx;
+  const { scheduler, jobs, disabled, dropped } = ctx;
+  const job = optString(params, "job");
+  // A same-layer duplicate keeps its FIRST copy and drops the later one, so one name can be both
+  // scheduled and in `dropped` (or `disabled`). A scheduled name is never refused.
+  const refusable = job !== undefined && !(jobs ?? []).some((j) => j.name === job);
+  const stub = refusable ? disabled?.find((d) => d.name === job) : undefined;
+  if (stub !== undefined) {
+    throw new FleetRpcError(
+      -32602,
+      `fleet: job "${stub.name}" is disabled by enabled = false in ${stub.origin.layer.path}`,
+    );
+  }
+  const drop = refusable ? dropped?.find((d) => d.name === job) : undefined;
+  if (drop !== undefined) {
+    throw new FleetRpcError(
+      -32602,
+      `fleet: job "${drop.name}" was dropped (${drop.layer.kind}:${drop.layer.id}): ${drop.reason}`,
+    );
+  }
   if (scheduler === undefined) {
     throw new FleetRpcError(
       -32000,
       "fleet: not running (disabled by config or policy, or no jobs configured)",
     );
   }
-  const job = optString(params, "job");
   const force = asRecord(params)?.["force"] === true;
   try {
     return await scheduler.runOnce({ jobName: job, force });

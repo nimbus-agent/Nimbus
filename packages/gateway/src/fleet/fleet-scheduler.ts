@@ -348,7 +348,7 @@ export class FleetScheduler {
   ): SweepSubject[] | null {
     const param = sweepParamFor(job.agent, sweep.kind);
     if (param === null) {
-      // Unreachable after `validateFleetSweepJobs`; recorded rather than thrown so a config that
+      // Unreachable after `checkFleetJob`; recorded rather than thrown so a config that
       // bypassed validation fails one job, not the run.
       this.deps.store.recordJobFailure(
         job.name,

@@ -768,3 +768,144 @@ describe("nimbus fleet digest", () => {
     expect(code).toBe(FLEET_EXIT_CODES.ok);
   });
 });
+
+describe("fleet layers, disabled and dropped jobs", () => {
+  const listClient = (r: unknown): FleetIpc => ({ call: async () => r });
+  const job = { name: "morning", agent: "catchup", intervalSeconds: 60, state: null };
+
+  test("list prints the layer and a disabled line", async () => {
+    const s = sinkSpy();
+    await runFleetCommand(
+      listClient({
+        jobs: [{ ...job, layer: { kind: "base", id: "base", path: "/c/n.toml" } }],
+        disabled: [
+          {
+            name: "noisy",
+            agent: null,
+            layer: { kind: "base", id: "base", path: "/c/n.toml" },
+            disables: [
+              { kind: "pack", id: "oncall", path: "/p" },
+              { kind: "team", id: "team", path: "/t" },
+            ],
+          },
+        ],
+      }),
+      { sub: "list", json: false },
+      s.sink,
+    );
+    const text = s.out.join("");
+    expect(text).toContain("consecutive failures=0  layer=base:base");
+    expect(text).toContain(
+      "noisy  disabled (enabled = false, layer=base:base)  disables pack:oncall, team:team\n",
+    );
+  });
+
+  test("list prints disables nothing for an orphan stub", async () => {
+    const s = sinkSpy();
+    await runFleetCommand(
+      listClient({
+        jobs: [],
+        disabled: [
+          {
+            name: "ghost",
+            agent: null,
+            layer: { kind: "base", id: "base", path: "/p" },
+            disables: [],
+          },
+        ],
+      }),
+      { sub: "list", json: false },
+      s.sink,
+    );
+    expect(s.out.join("")).toBe(
+      "ghost  disabled (enabled = false, layer=base:base)  disables nothing\n",
+    );
+  });
+
+  test("status prints each dropped job", async () => {
+    const s = sinkSpy();
+    await runFleetCommand(
+      listClient({
+        enabled: true,
+        running: true,
+        allowRemote: false,
+        remoteCallBudget: 0,
+        minIdleSeconds: 1,
+        requireAcPower: true,
+        retentionDays: 1,
+        jobsConfigured: 1,
+        jobsDisabled: 2,
+        droppedJobs: [
+          {
+            name: "bad",
+            layer: { kind: "pack", id: "oncall", path: "/p/o.toml" },
+            reason: "agent required",
+          },
+          { name: null, layer: { kind: "base", id: "base", path: "/b.toml" }, reason: "no name" },
+        ],
+        probe: { power: "ac", idleMs: 0, source: "measured" },
+      }),
+      { sub: "status", json: false },
+      s.sink,
+    );
+    const text = s.out.join("");
+    expect(text).toContain("  jobs disabled:      2");
+    expect(text).toContain("  [error] job bad dropped (pack:oncall, /p/o.toml): agent required");
+    expect(text).toContain("  [error] job (unnamed) dropped (base:base, /b.toml): no name");
+  });
+
+  test("an older gateway's response without the new fields still renders", async () => {
+    const s1 = sinkSpy();
+    await runFleetCommand(listClient({ jobs: [job] }), { sub: "list", json: false }, s1.sink);
+    expect(s1.out.join("")).not.toContain("layer=");
+    const s2 = sinkSpy();
+    await runFleetCommand(
+      listClient({
+        enabled: true,
+        running: true,
+        allowRemote: false,
+        remoteCallBudget: 0,
+        minIdleSeconds: 1,
+        requireAcPower: true,
+        retentionDays: 1,
+        jobsConfigured: 0,
+        probe: { power: "ac", idleMs: 0, source: "measured" },
+      }),
+      { sub: "status", json: false },
+      s2.sink,
+    );
+    expect(s2.out.join("")).not.toContain("jobs disabled");
+    expect(s2.out.join("")).not.toContain("[error]");
+  });
+
+  test("control characters in a job name are stripped", async () => {
+    const s = sinkSpy();
+    await runFleetCommand(
+      listClient({
+        jobs: [
+          {
+            ...job,
+            name: "mor\u001b[2Jning",
+            layer: { kind: "base", id: "ba\u0007se", path: "/p" },
+          },
+        ],
+        disabled: [
+          {
+            name: "no\u001bisy",
+            agent: null,
+            layer: { kind: "base", id: "base", path: "/p" },
+            disables: [],
+          },
+        ],
+      }),
+      { sub: "list", json: false },
+      s.sink,
+    );
+    const text = s.out.join("");
+    expect(text).toContain("mor[2Jning  agent=");
+    expect(text).toContain("layer=base:base");
+    expect(text).toContain("noisy  disabled");
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("\u0007");
+  });
+});

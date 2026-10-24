@@ -198,4 +198,39 @@ describe("layered-merge", () => {
     expect(text).not.toContain("interval_seconds = 1");
     expect(text).not.toContain("interval_seconds = 2");
   });
+
+  describe("fleet job replaces", () => {
+    const pack = ref("pack", "ops");
+    const job = (): string => ["[[fleet.job]]", 'name = "nightly"'].join("\n");
+    const twice = [job(), job()].join("\n");
+    const nightly = (merged: ReturnType<typeof mergeLayerDocs>) =>
+      merged.sections.filter((s) => s.header === "fleet.job");
+
+    test("a user job replacing a pack job records the pack layer", () => {
+      const merged = mergeLayerDocs([doc(pack, job()), doc(base, job())]);
+      expect(nightly(merged)[0]?.replaces).toEqual([pack]);
+    });
+
+    test("a profile job replacing base and pack records both, low to high", () => {
+      const merged = mergeLayerDocs([doc(pack, job()), doc(base, job()), doc(profile, job())]);
+      expect(nightly(merged)).toHaveLength(1);
+      expect(nightly(merged)[0]?.replaces).toEqual([pack, base]);
+    });
+
+    test("two lower copies in one layer are recorded once", () => {
+      const merged = mergeLayerDocs([doc(pack, twice), doc(base, job())]);
+      expect(nightly(merged)[0]?.replaces).toEqual([pack]);
+    });
+
+    test("an unreplaced job has no replaces field", () => {
+      const merged = mergeLayerDocs([doc(pack, job())]);
+      expect(nightly(merged)[0]?.replaces).toBeUndefined();
+    });
+
+    test("a same-layer duplicate replaces nothing", () => {
+      const merged = mergeLayerDocs([doc(base, twice)]);
+      expect(nightly(merged)).toHaveLength(2);
+      expect(nightly(merged)[1]?.replaces).toBeUndefined();
+    });
+  });
 });

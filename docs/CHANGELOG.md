@@ -18,6 +18,15 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-24 — Role packs P1, PR 4: fleet jobs merge per job across layers (no migration, no invariant, no egress class).**
+  One bad `[[fleet.job]]` no longer disables the whole fleet: each job is checked on its own, a bad one is dropped
+  and reported at error level in the log, `nimbus fleet status`, `nimbus doctor` and `diag.snapshot` (file basenames
+  only), and the others keep running. A job with the same name in a higher layer replaces the lower one whole, and
+  `enabled = false` (a stub: name plus `enabled = false`, valid with nothing below it) silences a job, including one a
+  pack defines, on a running gateway with no restart; `nimbus fleet list` shows each job's layer and lists stubs
+  ("disables nothing" when orphaned). `enabled` is now a reserved job key and is no longer passed to the agent as a
+  param. A bad `[fleet]` table still turns the fleet off. Not breaking: nothing a user wrote stops working.
+
 - **2026-10-23 — Phase 9.5 project 2, PR C: registry CI — check and sign publish pull requests (no migration, no invariant, no egress class).**
   A GitHub-hosted registry repository now validates and signs publish pull requests itself. The new node24 action
   `packages/github-actions/registry-action` has two modes. `check` runs on every pull request to the default branch

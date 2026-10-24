@@ -1098,6 +1098,51 @@ describe("doctorPrintProfile (role packs)", () => {
     expect(out.stdout).toContain("[warn] packs not applied: active.json is not valid JSON");
   });
 
+  const profileBase = { runningProfile: "default", markerProfile: "default", layers: [] };
+
+  it("doctor warns per dropped fleet job and exits 1", () => {
+    const exit = doctorPrintProfile({
+      ...profileBase,
+      droppedFleetJobs: [
+        {
+          name: "nightly",
+          layerKind: "pack",
+          layerId: "ops",
+          file: "nimbus.ops.toml",
+          reason: "agent is not eligible",
+        },
+        { name: null, file: "nimbus.toml", reason: "[[fleet.job]] needs a name" },
+        { name: 5, file: "x" },
+      ],
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain(
+      '[warn] fleet job "nightly" dropped (pack:ops, nimbus.ops.toml): agent is not eligible',
+    );
+    expect(out.stdout).toContain(
+      '[warn] fleet job "(unnamed)" dropped (nimbus.toml): [[fleet.job]] needs a name',
+    );
+  });
+
+  it("doctor is silent without the field", () => {
+    expect(doctorPrintProfile(profileBase)).toBe(0);
+    expect(out.stdout).not.toContain("fleet job");
+  });
+
+  it("doctor strips control characters from a dropped job", () => {
+    const exit = doctorPrintProfile({
+      ...profileBase,
+      droppedFleetJobs: [
+        { name: "n\u001b[31m", file: "f\u0007.toml", reason: "bad\r\nline\u009b" },
+      ],
+    });
+    expect(exit).toBe(1);
+    expect(out.stdout).toContain('[warn] fleet job "n[31m" dropped (f.toml): badline');
+    for (const ch of ["\u001b", "\u0007", "\u009b", "\r"]) {
+      expect(out.stdout).not.toContain(ch);
+    }
+  });
+
   it("strips control characters from pack ids, reasons and the list error", () => {
     const esc = "\u001b[31m";
     const exit = doctorPrintProfile({

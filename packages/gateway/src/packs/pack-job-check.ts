@@ -53,6 +53,11 @@ function problemsForJob(job: NimbusFleetJobToml, deps: PackJobCheckDeps): string
   return problems;
 }
 
+/**
+ * Uses the STRICT job parser: a pack ships whole jobs, so a disabling stub (`enabled = false` with
+ * no agent or interval) is refused here, while a full pack job with `enabled = false` is checked
+ * like any other.
+ */
 export function createPackFleetJobCheck(deps: PackJobCheckDeps = DEFAULT_DEPS): PackJobChecker {
   return (jobsText) => {
     let jobs: NimbusFleetJobToml[];

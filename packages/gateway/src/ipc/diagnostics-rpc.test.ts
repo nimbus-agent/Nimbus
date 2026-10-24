@@ -2232,6 +2232,52 @@ describe("layered config over IPC", () => {
     }
   });
 
+  test("configLayers.droppedFleetJobs carries basenames only", () =>
+    withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
+      const { ctx, db } = makeCtxWithIndex(dir);
+      try {
+        const abs = join(tmpdir(), "someone-private", "nimbus.ops.toml");
+        const withDrops: DiagnosticsRpcContext = {
+          ...ctx,
+          fleetDroppedJobs: () => [
+            {
+              name: "nightly",
+              layer: { kind: "pack", id: "ops", path: abs },
+              reason: `bad job in ${abs}: agent is not eligible`,
+            },
+          ],
+        };
+        const r = await dispatchDiagnosticsRpc("diag.snapshot", null, withDrops);
+        const c = (
+          r as {
+            value: {
+              configLayers: {
+                droppedFleetJobs: {
+                  name: string | null;
+                  layerKind: string;
+                  layerId: string;
+                  file: string;
+                  reason: string;
+                }[];
+              };
+            };
+          }
+        ).value.configLayers;
+        expect(c.droppedFleetJobs).toEqual([
+          {
+            name: "nightly",
+            layerKind: "pack",
+            layerId: "ops",
+            file: "nimbus.ops.toml",
+            reason: "bad job in nimbus.ops.toml: agent is not eligible",
+          },
+        ]);
+        expect(JSON.stringify(c.droppedFleetJobs)).not.toContain("someone-private");
+      } finally {
+        db.close();
+      }
+    }));
+
   test("diag.snapshot carries configLayers", () =>
     withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "work", async (dir) => {
       const { ctx, db } = makeCtxWithIndex(dir);

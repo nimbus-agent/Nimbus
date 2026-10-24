@@ -1,11 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import {
   fallbackMessage,
-  layeredConfigText,
+  getLayeredConfig,
   layerReadError,
   type SectionFallbackSink,
   sectionFallbackSink,
 } from "./layered-config.ts";
+import {
+  type EffectiveSection,
+  type LayerRef,
+  mergeLayerDocs,
+  parseLayerDoc,
+} from "./layered-merge.ts";
 import {
   isTableHeader,
   parseBool,
@@ -74,6 +80,7 @@ const JOB_RESERVED = new Set([
   "name",
   "agent",
   "interval_seconds",
+  "enabled",
   "digest_min_delta",
   "sweep",
   "max_subjects",
@@ -158,11 +165,14 @@ export function parseNimbusTomlFleet(source: string): NimbusFleetToml {
   return config;
 }
 
-/** One `[[fleet.job]]` block as it accumulates, before `flush` validates it into a job. */
+/** One `[[fleet.job]]` block as read, before `validateJobDraft` turns it into a job. */
 type FleetJobDraft = {
   name?: string;
   agent?: string;
   intervalSeconds?: number;
+  /** Set when `interval_seconds` is present at all, readable or not. */
+  intervalRaw?: string;
+  enabledRaw?: string;
   params: Record<string, FleetJobParamValue>;
   digestMinDelta?: number;
   sweep?: string;
@@ -170,10 +180,12 @@ type FleetJobDraft = {
   pathPrefix?: string;
 };
 
+/** One key/value line of a `[[fleet.job]]` block, from the text scanner or an `EffectiveSection`. */
+type FleetJobEntry = { readonly key: string; readonly valRaw: string };
+
 /**
- * Apply one `[[fleet.job]]` key to the block being accumulated. A malformed value is ignored and
- * left for `flush` to refuse as missing; `digest_min_delta` is the one key that throws on a value
- * it CAN read but must not accept.
+ * Apply one `[[fleet.job]]` key to the block being read. Nothing throws here: validation runs over
+ * the whole block in `validateJobDraft`, so every refusal can name the job whatever the key order.
  */
 function applyJobKey(cur: FleetJobDraft, key: string, valRaw: string): void {
   if (key === "name") {
@@ -185,30 +197,18 @@ function applyJobKey(cur: FleetJobDraft, key: string, valRaw: string): void {
     return;
   }
   if (key === "interval_seconds") {
+    cur.intervalRaw = valRaw;
     const n = parseIntDec(valRaw);
     if (n !== undefined) cur.intervalSeconds = n;
     return;
   }
+  if (key === "enabled") {
+    cur.enabledRaw = valRaw;
+    return;
+  }
   if (key === "digest_min_delta") {
     const n = parseIntDec(valRaw);
-    if (n === undefined) return;
-    // Refused below 1, and NOT for `retention_days`' reason. A zero admits every metric whose
-    // absolute delta is >= 0 — that is, every metric, including ones that did not move — so it
-    // turns the threshold inside out and reports MORE than no threshold at all. There is no
-    // reading of it that means what someone writing it would intend.
-    if (n < 1) {
-      // Named the same way every sibling refusal in this parser does (`${name} requires agent`,
-      // `${name} requires interval_seconds > 0`): `cur.name` is whatever has been parsed so far in
-      // THIS block, so it is present whenever `name` precedes `digest_min_delta` in the file — the
-      // ordinary case, and the one every example in this repo's own docs uses. A
-      // `digest_min_delta` line written before `name` still throws, just without a name to show;
-      // that is a parser-order limitation, not a silent bug.
-      throw new FleetConfigError(
-        `[[fleet.job]] ${cur.name ?? "(unnamed)"} digest_min_delta must be >= 1 ` +
-          `(got ${String(n)}); a zero would report every metric, including unchanged ones`,
-      );
-    }
-    cur.digestMinDelta = n;
+    if (n !== undefined) cur.digestMinDelta = n;
     return;
   }
   if (key === "sweep") {
@@ -228,6 +228,17 @@ function applyJobKey(cur: FleetJobDraft, key: string, valRaw: string): void {
     const n = parseIntDec(valRaw);
     cur.params[camel(key)] = n ?? parseString(valRaw);
   }
+}
+
+function readJobDraft(entries: readonly FleetJobEntry[]): FleetJobDraft {
+  const draft: FleetJobDraft = { params: {} };
+  for (const e of entries) applyJobKey(draft, e.key, e.valRaw);
+  return draft;
+}
+
+/** A block with nothing in it is not a job (today's rule: no name, agent or interval). */
+function isEmptyDraft(d: FleetJobDraft): boolean {
+  return d.name === undefined && d.agent === undefined && d.intervalSeconds === undefined;
 }
 
 /**
@@ -269,94 +280,248 @@ function resolveSweep(name: string, d: FleetJobDraft): FleetJobSweepToml | null 
   return { kind, maxSubjects: n, pathPrefix: d.pathPrefix ?? null };
 }
 
-export function parseNimbusTomlFleetJobs(source: string): NimbusFleetJobToml[] {
-  const jobs: NimbusFleetJobToml[] = [];
-  const seen = new Set<string>();
-  let cur: FleetJobDraft | undefined;
+/** A parsed block: a full job (enabled or not), or a disabling stub that names a job only. */
+type FleetJobBlock =
+  | { readonly job: NimbusFleetJobToml; readonly enabled: boolean }
+  | { readonly stub: { readonly name: string; readonly agent: string | null } };
 
-  const flush = (): void => {
-    if (cur === undefined) return;
-    const draft = cur;
-    cur = undefined;
-    const { name, agent, intervalSeconds, params, digestMinDelta } = draft;
-    // A block with nothing in it is not a job; an INCOMPLETE one is a job the owner meant to
-    // configure. Refuse the second rather than dropping it (they would believe it runs) or
-    // defaulting it (a schedule they did not choose).
-    if (name === undefined && agent === undefined && intervalSeconds === undefined) return;
-    if (name === undefined) throw new FleetConfigError("[[fleet.job]] requires name");
-    if (agent === undefined) throw new FleetConfigError(`[[fleet.job]] ${name} requires agent`);
-    if (intervalSeconds === undefined || intervalSeconds <= 0) {
-      throw new FleetConfigError(`[[fleet.job]] ${name} requires interval_seconds > 0`);
+/**
+ * Validate a non-empty draft. An INCOMPLETE enabled block is a job the owner meant to configure, so
+ * it is refused rather than defaulted (a schedule they did not choose). `enabled = false` relaxes
+ * only `agent` and `interval_seconds`: every other field that is present is still checked.
+ */
+function validateJobDraft(draft: FleetJobDraft): FleetJobBlock {
+  const { name, agent, intervalSeconds, params, digestMinDelta } = draft;
+  if (name === undefined) throw new FleetConfigError("[[fleet.job]] requires name");
+  let enabled = true;
+  if (draft.enabledRaw !== undefined) {
+    const b = parseBool(draft.enabledRaw);
+    if (b === undefined) {
+      throw new FleetConfigError(`[[fleet.job]] ${name} enabled must be true or false`);
     }
-    if (seen.has(name)) {
-      throw new FleetConfigError(`[[fleet.job]] duplicate name: ${name}`);
-    }
-    seen.add(name);
-    jobs.push({
-      name,
-      agent,
-      intervalSeconds,
-      params,
-      digestMinDelta: digestMinDelta ?? 1,
-      sweep: resolveSweep(name, draft),
-    });
+    enabled = b;
+  }
+  // A zero admits every metric whose absolute delta is >= 0 — that is, every metric, including ones
+  // that did not move — so it turns the threshold inside out and reports MORE than no threshold at
+  // all. A malformed value still falls through to the default, as it always has.
+  if (digestMinDelta !== undefined && digestMinDelta < 1) {
+    throw new FleetConfigError(
+      `[[fleet.job]] ${name} digest_min_delta must be >= 1 ` +
+        `(got ${String(digestMinDelta)}); a zero would report every metric, including unchanged ones`,
+    );
+  }
+  if (agent === undefined && enabled) {
+    throw new FleetConfigError(`[[fleet.job]] ${name} requires agent`);
+  }
+  const intervalBad =
+    draft.intervalRaw !== undefined && (intervalSeconds === undefined || intervalSeconds <= 0);
+  if (intervalBad || (intervalSeconds === undefined && enabled)) {
+    throw new FleetConfigError(`[[fleet.job]] ${name} requires interval_seconds > 0`);
+  }
+  const sweep = resolveSweep(name, draft);
+  if (agent === undefined || intervalSeconds === undefined) {
+    return { stub: { name, agent: agent ?? null } };
+  }
+  return {
+    job: { name, agent, intervalSeconds, params, digestMinDelta: digestMinDelta ?? 1, sweep },
+    enabled,
   };
+}
 
+/** One block's entries to a parsed block; `undefined` for an empty block. Throws `FleetConfigError`. */
+function parseFleetJobBlock(entries: readonly FleetJobEntry[]): FleetJobBlock | undefined {
+  const draft = readJobDraft(entries);
+  return isEmptyDraft(draft) ? undefined : validateJobDraft(draft);
+}
+
+/**
+ * The STRICT reader, for the pack check: throws on the first block error, a duplicate name or a
+ * stub. Returns enabled jobs and full disabled ones alike; nothing schedules from this list.
+ */
+export function parseNimbusTomlFleetJobs(source: string): NimbusFleetJobToml[] {
+  const blocks: FleetJobEntry[][] = [];
+  let cur: FleetJobEntry[] | undefined;
   for (const line of source.split(/\r?\n/)) {
     const trimmed = stripComment(line).trim();
     if (trimmed === "") continue;
     if (isTableHeader(trimmed)) {
-      flush();
-      if (trimmed === "[[fleet.job]]") cur = { params: {} };
+      cur = undefined;
+      if (trimmed === "[[fleet.job]]") {
+        cur = [];
+        blocks.push(cur);
+      }
       continue;
     }
     if (cur === undefined) continue;
     const kv = splitKeyValue(trimmed);
-    if (kv === undefined) continue;
-    applyJobKey(cur, kv.key, kv.valRaw);
+    if (kv !== undefined) cur.push(kv);
   }
-  flush();
+
+  const jobs: NimbusFleetJobToml[] = [];
+  const seen = new Set<string>();
+  for (const entries of blocks) {
+    const parsed = parseFleetJobBlock(entries);
+    if (parsed === undefined) continue;
+    if ("stub" in parsed) {
+      const missing = parsed.stub.agent === null ? "agent" : "interval_seconds > 0";
+      throw new FleetConfigError(`[[fleet.job]] ${parsed.stub.name} requires ${missing}`);
+    }
+    if (seen.has(parsed.job.name)) {
+      throw new FleetConfigError(`[[fleet.job]] duplicate name: ${parsed.job.name}`);
+    }
+    seen.add(parsed.job.name);
+    jobs.push(parsed.job);
+  }
   return jobs;
 }
 
-export type NimbusFleetLoad = { config: NimbusFleetToml; jobs: NimbusFleetJobToml[] };
+export type FleetJobOrigin = { readonly layer: LayerRef; readonly replaces: readonly LayerRef[] };
+export type FleetDisabledJob = {
+  readonly name: string;
+  readonly agent: string | null;
+  readonly origin: FleetJobOrigin;
+};
+export type FleetDroppedJob = {
+  readonly name: string | null;
+  readonly layer: LayerRef;
+  readonly reason: string;
+};
+/** The check config/ cannot do itself (agent eligibility, sweep support). A reason string drops the job. */
+export type FleetJobChecker = (job: NimbusFleetJobToml) => string | undefined;
+export type FleetJobsResolved = {
+  /** Enabled and valid: what the scheduler runs. */
+  readonly jobs: NimbusFleetJobToml[];
+  /** One per entry in `jobs`. */
+  readonly origins: ReadonlyMap<string, FleetJobOrigin>;
+  readonly disabled: FleetDisabledJob[];
+  readonly dropped: FleetDroppedJob[];
+};
+
+/**
+ * Resolve each effective `[[fleet.job]]` block ON ITS OWN into scheduled, disabled or dropped, so
+ * one bad job no longer takes the whole fleet down. A dropped higher-layer job does not bring back
+ * the lower one it replaced: the merge already removed it, and an override the owner wrote is not
+ * silently swapped for the one they meant to replace.
+ */
+export function resolveFleetJobs(
+  sections: readonly EffectiveSection[],
+  check?: FleetJobChecker,
+): FleetJobsResolved {
+  const jobs: NimbusFleetJobToml[] = [];
+  const origins = new Map<string, FleetJobOrigin>();
+  const disabled: FleetDisabledJob[] = [];
+  const dropped: FleetDroppedJob[] = [];
+  const seen = new Set<string>();
+  for (const s of sections) {
+    const layer = s.blockLayer;
+    if (!s.isArray || s.header !== "fleet.job" || layer === undefined) continue;
+    const draft = readJobDraft(s.entries);
+    if (isEmptyDraft(draft)) continue;
+    const name = draft.name ?? null;
+    // After the merge only same-layer copies can share a name, so the LATER one is dropped even
+    // when the first copy was itself dropped.
+    if (name !== null) {
+      if (seen.has(name)) {
+        dropped.push({ name, layer, reason: `[[fleet.job]] duplicate name: ${name}` });
+        continue;
+      }
+      seen.add(name);
+    }
+    let parsed: FleetJobBlock;
+    try {
+      parsed = validateJobDraft(draft);
+    } catch (err) {
+      if (!(err instanceof FleetConfigError)) throw err;
+      dropped.push({ name, layer, reason: err.message });
+      continue;
+    }
+    const origin: FleetJobOrigin = { layer, replaces: s.replaces ?? [] };
+    if ("stub" in parsed) {
+      disabled.push({ name: parsed.stub.name, agent: parsed.stub.agent, origin });
+      continue;
+    }
+    if (!parsed.enabled) {
+      disabled.push({ name: parsed.job.name, agent: parsed.job.agent, origin });
+      continue;
+    }
+    const reason = check?.(parsed.job);
+    if (reason !== undefined) {
+      dropped.push({ name: parsed.job.name, layer, reason });
+      continue;
+    }
+    jobs.push(parsed.job);
+    origins.set(parsed.job.name, origin);
+  }
+  return { jobs, origins, disabled, dropped };
+}
+
+export type NimbusFleetLoad = { config: NimbusFleetToml } & FleetJobsResolved;
 
 /**
  * The one `[fleet]` core. `raw === null` means no file.
  *
- * A malformed block THROWS rather than falling back to defaults. The CALLER
+ * A malformed `[fleet]` TABLE throws rather than falling back to defaults. The CALLER
  * (`platform/assemble.ts`) catches, logs loudly and constructs no scheduler — so the gateway still
  * boots and the fleet is off. Crashing boot over an optional, default-off feature is
  * disproportionate; silently running a half-read config is worse. The refusal is recorded through
- * `onFallback` first, so `config explain` can report it.
+ * `onFallback` first, so `config explain` can report it. A bad JOB drops only itself, into
+ * `dropped`, through `resolveFleetJobs`.
  */
 function loadNimbusFleetFromText(
   raw: string | null,
+  sections: () => readonly EffectiveSection[],
+  check: FleetJobChecker | undefined,
   onFallback?: SectionFallbackSink,
 ): NimbusFleetLoad {
-  if (raw === null) return { config: DEFAULT_FLEET_CONFIG, jobs: [] };
+  if (raw === null) {
+    return {
+      config: DEFAULT_FLEET_CONFIG,
+      jobs: [],
+      origins: new Map(),
+      disabled: [],
+      dropped: [],
+    };
+  }
+  let config: NimbusFleetToml;
   try {
-    return { config: parseNimbusTomlFleet(raw), jobs: parseNimbusTomlFleetJobs(raw) };
+    config = parseNimbusTomlFleet(raw);
   } catch (err) {
     onFallback?.(`refused: ${fallbackMessage(err)}`);
     throw err;
   }
+  return { config, ...resolveFleetJobs(sections(), check) };
 }
 
 /** Single-file reader (tests). Production reads `loadNimbusFleetFromConfigDir`. */
-export function loadNimbusFleetFromPath(tomlPath: string): NimbusFleetLoad {
-  return loadNimbusFleetFromText(existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : null);
+export function loadNimbusFleetFromPath(
+  tomlPath: string,
+  check?: FleetJobChecker,
+): NimbusFleetLoad {
+  const text = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : null;
+  return loadNimbusFleetFromText(
+    text,
+    () =>
+      mergeLayerDocs([parseLayerDoc({ kind: "base", id: "base", path: tomlPath }, text ?? "")])
+        .sections,
+    check,
+  );
 }
 
 /** `[fleet]` over the layered snapshot (packs, base, active profile). Throws like the path door. */
-export function loadNimbusFleetFromConfigDir(configDir: string): NimbusFleetLoad {
+export function loadNimbusFleetFromConfigDir(
+  configDir: string,
+  check?: FleetJobChecker,
+): NimbusFleetLoad {
   const readError = layerReadError(configDir);
   if (readError !== undefined) {
     sectionFallbackSink(configDir, "fleet")(`refused: ${readError}`);
     throw new Error(readError);
   }
+  const snapshot = getLayeredConfig(configDir).snapshot();
   return loadNimbusFleetFromText(
-    layeredConfigText(configDir),
+    snapshot.text,
+    () => snapshot.doc.sections,
+    check,
     sectionFallbackSink(configDir, "fleet"),
   );
 }

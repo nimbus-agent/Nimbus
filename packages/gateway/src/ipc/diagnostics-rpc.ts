@@ -5,6 +5,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 import { listWatchers } from "../automation/watcher-store.ts";
 import { explainConfig } from "../config/config-explain.ts";
+import type { FleetDroppedJob, FleetJobChecker } from "../config/fleet-toml.ts";
 import { getLayeredConfig } from "../config/layered-config.ts";
 import { getAllConnectorHealth } from "../connectors/health.ts";
 import { asRecord } from "../connectors/unknown-record.ts";
@@ -76,6 +77,13 @@ export type DiagnosticsRpcContext = {
    * preview shows what would be sent. Absent (a test context) reports `0`/`0`.
    */
   readonly agentLatencyRecorder?: AgentLatencyRecorder;
+  /**
+   * The running fleet's current job drops, for `diag.snapshot` and `nimbus doctor`. Injected from
+   * `platform/assemble.ts` so `ipc/` never imports `fleet/`. Absent reports none.
+   */
+  readonly fleetDroppedJobs?: () => readonly FleetDroppedJob[];
+  /** The semantic job check (`fleet/fleet-job-check.ts`), so `config.explain` agrees with the fleet. */
+  readonly fleetJobCheck?: FleetJobChecker;
 };
 
 /** The recorder's percentiles as `buildTelemetryPreview` params; empty when none is wired. */
@@ -224,7 +232,12 @@ function rpcConfigExplain(params: unknown, ctx: DiagnosticsRpcContext): Diagnost
   if (path !== undefined && typeof path !== "string") {
     throw new DiagnosticsRpcError(-32602, "config.explain: path must be a string");
   }
-  return { kind: "hit", value: explainConfig(getLayeredConfig(ctx.configDir), path) };
+  return {
+    kind: "hit",
+    value: explainConfig(getLayeredConfig(ctx.configDir), path, undefined, {
+      ...(ctx.fleetJobCheck === undefined ? {} : { fleetJobCheck: ctx.fleetJobCheck }),
+    }),
+  };
 }
 
 function buildConfigLayers(ctx: DiagnosticsRpcContext): unknown {
@@ -251,8 +264,15 @@ function buildConfigLayers(ctx: DiagnosticsRpcContext): unknown {
     activePacks: [...snap.activePacks],
     skippedPacks: snap.skippedPacks.map((p) => ({ packId: p.packId, reason: p.reason })),
     ...(snap.packListError !== undefined ? { packListError: snap.packListError } : {}),
-    // Fleet-job drops arrive with a later change; always empty for now.
-    droppedFleetJobs: [] as { name: string; file: string; reason: string }[],
+    // What the RUNNING fleet used. Basenames only, and a path quoted inside a reason is cut to its
+    // basename too, the same rule as `readError` above.
+    droppedFleetJobs: (ctx.fleetDroppedJobs?.() ?? []).map((d) => ({
+      name: d.name,
+      layerKind: d.layer.kind,
+      layerId: d.layer.id,
+      file: basename(d.layer.path),
+      reason: d.reason.replaceAll(d.layer.path, basename(d.layer.path)),
+    })),
   };
 }
 

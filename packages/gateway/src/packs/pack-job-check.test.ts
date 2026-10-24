@@ -60,6 +60,17 @@ describe("checkPackFleetJobs", () => {
     });
   });
 
+  test("a pack stub is refused", () => {
+    expect(checkPackFleetJobs(job("nightly", ["enabled = false"]))).toEqual([
+      "[[fleet.job]] nightly requires agent",
+    ]);
+  });
+
+  test("a full pack job with enabled = false is accepted", () => {
+    const text = job("off", ['agent = "standup"', "interval_seconds = 60", "enabled = false"]);
+    expect(checkPackFleetJobs(text)).toEqual([]);
+  });
+
   test("refuses an unsupported sweep", () => {
     const problems = checkPackFleetJobs(
       job("s", [

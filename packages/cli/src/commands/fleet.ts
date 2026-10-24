@@ -1,6 +1,7 @@
 import { jsonRpcErrorCode } from "@nimbus-dev/client";
 import { parseDurationToMs } from "../lib/parse-duration.ts";
 import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 /**
@@ -173,6 +174,12 @@ interface FleetJobStateShape {
   readonly lastError: string | null;
 }
 
+interface FleetLayerShape {
+  readonly kind: string;
+  readonly id: string;
+  readonly path: string;
+}
+
 interface FleetStatusResultShape {
   readonly enabled: boolean;
   readonly running: boolean;
@@ -182,6 +189,13 @@ interface FleetStatusResultShape {
   readonly requireAcPower: boolean;
   readonly retentionDays: number;
   readonly jobsConfigured: number;
+  /** Optional: an older gateway omits it (and `droppedJobs`); both are read with `== null`. */
+  readonly jobsDisabled?: number;
+  readonly droppedJobs?: readonly {
+    readonly name: string | null;
+    readonly layer: FleetLayerShape;
+    readonly reason: string;
+  }[];
   readonly probe: {
     readonly power: string;
     readonly idleMs: number | null;
@@ -212,6 +226,15 @@ interface FleetJobListEntryShape {
    * non-optional invites deleting that check as "redundant" when it is the version-skew guard.
    */
   readonly sweep?: FleetJobSweepListEntryShape | null;
+  /** Optional for the same version-skew reason as `sweep`; read with `== null`. */
+  readonly layer?: FleetLayerShape | null;
+}
+
+interface FleetDisabledListEntryShape {
+  readonly name: string;
+  readonly agent: string | null;
+  readonly layer: FleetLayerShape;
+  readonly disables: readonly FleetLayerShape[];
 }
 
 interface FleetBriefSummaryShape {
@@ -282,22 +305,32 @@ const defaultSink: OutcomeSink = {
   err: (s) => void process.stderr.write(s),
 };
 
+function layerLabel(l: FleetLayerShape): string {
+  return `${stripControlChars(l.kind)}:${stripControlChars(l.id)}`;
+}
+
 async function runStatus(c: FleetIpc, json: boolean, sink: OutcomeSink): Promise<number> {
   const r = (await c.call("fleet.status", {})) as FleetStatusResultShape;
   if (json) {
     sink.out(`${JSON.stringify(r)}\n`);
     return FLEET_EXIT_CODES.ok;
   }
+  const dropped = (r.droppedJobs ?? []).map(
+    (d) =>
+      `  [error] job ${stripControlChars(d.name ?? "(unnamed)")} dropped (${layerLabel(d.layer)}, ${stripControlChars(d.layer.path)}): ${stripControlChars(d.reason)}`,
+  );
   sink.out(
     `${[
       `fleet: ${r.enabled ? "enabled" : "disabled"} (${r.running ? "running" : "not running"})`,
       `  jobs configured:    ${r.jobsConfigured}`,
+      ...(r.jobsDisabled == null ? [] : [`  jobs disabled:      ${r.jobsDisabled}`]),
       `  requires AC power:  ${r.requireAcPower}`,
       `  min idle seconds:   ${r.minIdleSeconds}`,
       `  allow remote:       ${r.allowRemote} (budget ${r.remoteCallBudget})`,
       `  retention days:     ${r.retentionDays}`,
       `  host power:         ${r.probe.power}`,
       `  host idle ms:       ${r.probe.idleMs ?? "unknown"}`,
+      ...dropped,
     ].join("\n")}\n`,
   );
   return FLEET_EXIT_CODES.ok;
@@ -318,12 +351,16 @@ function sweepColumn(sweep: FleetJobListEntryShape["sweep"]): string {
 }
 
 async function runList(c: FleetIpc, json: boolean, sink: OutcomeSink): Promise<number> {
-  const r = (await c.call("fleet.list", {})) as { jobs: readonly FleetJobListEntryShape[] };
+  const r = (await c.call("fleet.list", {})) as {
+    jobs: readonly FleetJobListEntryShape[];
+    disabled?: readonly FleetDisabledListEntryShape[];
+  };
   if (json) {
     sink.out(`${JSON.stringify(r)}\n`);
     return FLEET_EXIT_CODES.ok;
   }
-  if (r.jobs.length === 0) {
+  const disabled = r.disabled ?? [];
+  if (r.jobs.length === 0 && disabled.length === 0) {
     sink.out("no fleet jobs configured\n");
     return FLEET_EXIT_CODES.ok;
   }
@@ -331,8 +368,15 @@ async function runList(c: FleetIpc, json: boolean, sink: OutcomeSink): Promise<n
     const last =
       j.state?.lastSuccessAt != null ? new Date(j.state.lastSuccessAt).toISOString() : "never";
     const failures = j.state?.consecutiveFailures ?? 0;
+    const layer = j.layer == null ? "" : `  layer=${layerLabel(j.layer)}`;
     sink.out(
-      `${j.name}  agent=${j.agent}  interval=${j.intervalSeconds}s  last success=${last}  consecutive failures=${failures}${sweepColumn(j.sweep)}\n`,
+      `${stripControlChars(j.name)}  agent=${stripControlChars(j.agent)}  interval=${j.intervalSeconds}s  last success=${last}  consecutive failures=${failures}${sweepColumn(j.sweep)}${layer}\n`,
+    );
+  }
+  for (const d of disabled) {
+    const disables = d.disables.length === 0 ? "nothing" : d.disables.map(layerLabel).join(", ");
+    sink.out(
+      `${stripControlChars(d.name)}  disabled (enabled = false, layer=${layerLabel(d.layer)})  disables ${disables}\n`,
     );
   }
   return FLEET_EXIT_CODES.ok;

@@ -2273,16 +2273,53 @@ interval_seconds = 86400
 digest_min_delta = 1          # DEFAULT 1; a metric must move by at least this much to be reported
                                # as "changed" rather than "unchanged within threshold" — values
                                # below 1 are REFUSED (a 0 would report every no-op fluctuation)
+enabled          = true       # DEFAULT true; `false` turns this job off (see "Disabling a job" below)
 # any other key becomes a param passed to the agent, camel-cased on the way, e.g.:
 since_ms         = 86400000   # -> sinceMs, which `agents.catchup` reads
 ```
 
 Refusals are loud rather than silent, on purpose. `allow_remote = true` with no budget is
 **refused** — an unbounded overnight remote grant must not be expressible. A `[[fleet.job]]` block
-missing `name`, `agent` or a positive `interval_seconds`, or repeating a `name`, is **refused**
-rather than dropped (dropping it silently would leave the owner believing a job runs) and rather
-than defaulted (a daily schedule they never chose). A malformed `[fleet]` config does not crash
-boot: the gateway logs loudly, constructs no scheduler, and comes up with the fleet off.
+missing `name`, `agent` or a positive `interval_seconds`, or repeating a `name`, is never
+defaulted (a daily schedule they never chose): it is **dropped loudly** (see below). A malformed
+`[fleet]` config does not crash boot: the gateway logs loudly, constructs no scheduler, and comes
+up with the fleet off.
+
+**A bad job drops only itself.** A bad `[[fleet.job]]` (missing `agent` or `interval_seconds`, an
+ineligible agent, a bad `sweep`, `digest_min_delta` below 1, a duplicate name within one file — the
+later entry is dropped) no longer disables the whole fleet: that job is dropped, every other job
+keeps running, and the drop is reported at error level in the gateway log, in `nimbus fleet status`
+and in `nimbus doctor`, naming its layer and file. A dropped higher-layer job never brings a
+lower layer's job of the same name back. A bad `[fleet]` TABLE (for example `allow_remote = true`
+with no budget) still turns the fleet off.
+
+#### Disabling a job (`enabled`) and layered jobs
+
+`enabled` is a reserved job key (it is not passed to the agent as a param); it defaults to `true`.
+A job from a higher layer (your `nimbus.toml` over a pack) with the same `name` replaces the lower
+one **whole**, not field by field. A **stub** (`name` plus `enabled = false`) silences that name:
+
+```toml
+[[fleet.job]]
+name    = "pack-nightly"   # a job a pack defines
+enabled = false
+```
+
+`agent` and `interval_seconds` are required only for a job that is enabled; a stub is always valid,
+even when nothing below it defines that name (an orphan stub is inert: not an error, not a dropped
+job). It takes effect on a running gateway within about 5 seconds, and job state is kept, so
+removing the stub resumes the job where it left off.
+
+`nimbus fleet list` shows the layer each job came from (`layer=<kind>:<id>`) and lists stubs:
+
+```text
+morning-catchup  agent=catchup  interval=86400s  last success=never  consecutive failures=0  layer=pack:ops
+pack-nightly  disabled (enabled = false, layer=base:base)  disables pack:ops
+old-job  disabled (enabled = false, layer=base:base)  disables nothing
+```
+
+`nimbus fleet status` adds a `jobs disabled:` count and one line per dropped job, for example
+`[error] job mine dropped (<layer>, <file>): <reason>`. `--json` carries the same data.
 
 #### Sweep jobs (`sweep`, `max_subjects`, `path_prefix`)
 

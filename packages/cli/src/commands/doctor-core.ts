@@ -3,6 +3,7 @@ import { platform } from "node:os";
 import type { IPCClient } from "../ipc-client/index.ts";
 import { nimbusCommand } from "../lib/demo-hint.ts";
 import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { doctorCapturesLines, parseStatus } from "./captures-format.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
@@ -913,6 +914,7 @@ export function doctorPrintProfile(raw: unknown): number {
     activePacks?: unknown;
     skippedPacks?: unknown;
     packListError?: unknown;
+    droppedFleetJobs?: unknown;
   };
   if (typeof c.runningProfile !== "string") return 0;
   let exit = 0;
@@ -949,22 +951,35 @@ export function doctorPrintProfile(raw: unknown): number {
       `[info] profile "${running}" has no nimbus.${running}.toml; running on nimbus.toml alone`,
     );
   }
-  return Math.max(exit, doctorPrintPacks(c));
+  return Math.max(exit, doctorPrintPacks(c), doctorPrintFleetJobs(c));
 }
 
-/**
- * Drops C0/C1 control characters and DEL. The gateway already reports an invalid `active.json`
- * entry by position only, but this CLI may talk to an older or another gateway, and a raw escape
- * sequence printed to the terminal is never what the owner should see.
- */
-function stripControlChars(s: string): string {
-  let out = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
-    out += ch;
+/** One warning per fleet job the gateway dropped; silent when the field is absent (older gateway). */
+function doctorPrintFleetJobs(c: { droppedFleetJobs?: unknown }): number {
+  const dropped = Array.isArray(c.droppedFleetJobs) ? (c.droppedFleetJobs as unknown[]) : [];
+  let exit = 0;
+  for (const d of dropped) {
+    if (d === null || typeof d !== "object") continue;
+    const { name, file, reason, layerKind, layerId } = d as {
+      name?: unknown;
+      file?: unknown;
+      reason?: unknown;
+      layerKind?: unknown;
+      layerId?: unknown;
+    };
+    if (name !== null && typeof name !== "string") continue;
+    if (typeof file !== "string" || typeof reason !== "string") continue;
+    const shown = name === null ? "(unnamed)" : stripControlChars(name);
+    const layer =
+      typeof layerKind === "string" && typeof layerId === "string"
+        ? `${stripControlChars(layerKind)}:${stripControlChars(layerId)}, `
+        : "";
+    console.log(
+      `[warn] fleet job "${shown}" dropped (${layer}${stripControlChars(file)}): ${stripControlChars(reason)}`,
+    );
+    exit = 1;
   }
-  return out;
+  return exit;
 }
 
 /** Pack lines; each field is optional and filtered like `layers`, so an older gateway prints nothing. */

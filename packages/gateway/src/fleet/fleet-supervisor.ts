@@ -1,5 +1,11 @@
 import type { Logger } from "pino";
-import type { NimbusFleetJobToml, NimbusFleetToml } from "../config/fleet-toml.ts";
+import type {
+  FleetDisabledJob,
+  FleetDroppedJob,
+  FleetJobOrigin,
+  NimbusFleetJobToml,
+  NimbusFleetToml,
+} from "../config/fleet-toml.ts";
 import type { FleetScheduler } from "./fleet-scheduler.ts";
 
 /**
@@ -18,6 +24,11 @@ export type FleetLoad = {
   /** Retention already floored by policy. */
   readonly config: NimbusFleetToml;
   readonly jobs: readonly NimbusFleetJobToml[];
+  /** One per entry in `jobs`. Empty on `configError`, as are `disabled` and `dropped`. */
+  readonly origins: ReadonlyMap<string, FleetJobOrigin>;
+  readonly disabled: readonly FleetDisabledJob[];
+  /** Logged by the supervisor when it publishes a view, never by the loader. */
+  readonly dropped: readonly FleetDroppedJob[];
   /** The loader logged it; the fleet is off. */
   readonly configError: boolean;
 };
@@ -26,7 +37,22 @@ export type FleetView = {
   readonly scheduler: FleetScheduler | undefined;
   readonly config: NimbusFleetToml;
   readonly jobs: readonly NimbusFleetJobToml[];
+  readonly origins: ReadonlyMap<string, FleetJobOrigin>;
+  readonly disabled: readonly FleetDisabledJob[];
+  readonly dropped: readonly FleetDroppedJob[];
 };
+
+/** The view a load publishes. */
+function viewOf(scheduler: FleetScheduler | undefined, load: FleetLoad): FleetView {
+  return {
+    scheduler,
+    config: load.config,
+    jobs: load.jobs,
+    origins: load.origins,
+    disabled: load.disabled,
+    dropped: load.dropped,
+  };
+}
 
 export interface FleetSupervisorDeps {
   /** The layered snapshot's version. */
@@ -57,7 +83,8 @@ export class FleetSupervisor {
     this.loaded = boot.load;
     const scheduler = deps.build(boot.load);
     scheduler?.start();
-    this.view = { scheduler, config: boot.load.config, jobs: boot.load.jobs };
+    this.view = viewOf(scheduler, boot.load);
+    this.logDropped(boot.load);
   }
 
   current(): FleetView {
@@ -98,6 +125,25 @@ export class FleetSupervisor {
     }
   }
 
+  /**
+   * Once per PUBLISHED view (boot and each reload), so a drop is reported when it starts mattering
+   * and an edit elsewhere in the file, which is not a reload, does not repeat it.
+   */
+  private logDropped(load: FleetLoad): void {
+    for (const d of load.dropped) {
+      this.deps.logger.error(
+        {
+          job: d.name,
+          layer: d.layer.kind,
+          layerId: d.layer.id,
+          file: d.layer.path,
+          reason: d.reason,
+        },
+        `[fleet] job "${d.name ?? "(unnamed)"}" dropped (${d.layer.kind} ${d.layer.id}, ${d.layer.path}): ${d.reason}`,
+      );
+    }
+  }
+
   /** Never rejects. */
   private async reload(): Promise<"unchanged" | "reloaded"> {
     if (this.stopped) return "unchanged";
@@ -114,7 +160,7 @@ export class FleetSupervisor {
       oldRetired = old !== undefined;
       await old?.retire();
       if (this.stopped) {
-        this.view = { scheduler: undefined, config: next.config, jobs: next.jobs };
+        this.view = viewOf(undefined, next);
         return "unchanged";
       }
 
@@ -132,8 +178,9 @@ export class FleetSupervisor {
         this.deps.logger.error({ err }, "[fleet] building the scheduler failed; the fleet is off");
       }
       scheduler?.start();
-      this.view = { scheduler, config: next.config, jobs: next.jobs };
+      this.view = viewOf(scheduler, next);
       this.loaded = next;
+      this.logDropped(next);
       this.deps.logger.info(
         `[fleet] config changed; reloaded (enabled=${next.config.enabled}, jobs=${next.jobs.length}, running=${scheduler !== undefined})`,
       );
@@ -141,7 +188,7 @@ export class FleetSupervisor {
     } catch (err) {
       this.deps.logger.error({ err }, "[fleet] reload failed unexpectedly");
       if (oldRetired) {
-        this.view = { scheduler: undefined, config: this.view.config, jobs: this.view.jobs };
+        this.view = { ...this.view, scheduler: undefined };
       }
       return "unchanged";
     }
