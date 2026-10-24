@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792848049573,
+  "lastUpdate": 1792864738969,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0a32751f6e97af93b5fc405080df14bd7a77911d",
-          "message": "feat(gateway): resolve an indexed item by URL (V52 resolve_key) (#1070)\n\nGives the gateway a resolve-by-URL read, so a browser panel can ask \"is\nthis page already in my index?\" and get a straight answer. This is step\n3 of the four-PR sequence in\n`docs/superpowers/specs/2026-08-06-http-agents-route-and-resolve-by-url-design.md`;\nstep 4 (targeted fetch-on-miss) follows in a stacked PR rather than\nriding along, because a schema migration with a row-wise backfill and a\nnew outbound-request surface with its own security gate are different\nrisk classes.\n\n## What ships\n\n- **Schema V52** — a derived, indexed `item.resolve_key` holding\n`canonicalizeUrl(canonical_url ?? url)`, NULL when both are absent, plus\n`idx_item_resolve_key`. Backfilled row-wise inside the migration, so a\nresolve read never silently misses the pre-existing index.\n- **`GET /v1/items/resolve?url=`** — a bearer read under the `resolve`\ntoken scope, mounted ahead of the unauthenticated GET table.\n- **A bounded matching ladder** — exact key, then all query params\ndropped, then up to three trimmed trailing path segments. A non-unique\nmatch answers `ambiguous` with at most five candidates (over the cap:\n`truncated: true` and no list) rather than guessing.\n- Metadata only, never a body. That is deliberate: a body response would\nreach the `metadata_only` redaction path, which carries two unfixed\nprivacy defects, and this change has no business re-deciding that.\n\n## Corrections to the design doc, verified against source\n\nThe design was wrong in four places. All four are corrected in the spec\nin this PR, with `Corrected 2026-08-07:` markers.\n\n1. **The migration is V52, not V50.** V50 is a retired permanent no-op\nand V51 is the ownership graph (#1064). Also bumps\n`CURRENT_SCHEMA_VERSION` — without that the step exists but never runs,\nbecause `runIndexedSchemaMigrations` early-returns once `user_version >=\ntarget`.\n2. **The write site is `upsertIndexedItem`, not\n`upsertIndexedItemForSync`.** The latter is a depth-applying wrapper;\n`clips/clip-ingest.ts`, `briefs/brief-save.ts`,\n`glossary/glossary-project.ts` and `local-index.ts` all reach the writer\ndirectly. Deriving in the wrapper would have left **every web clip**\nunresolvable — the primary consumer's primary case.\n3. **Self-hosted GitLab is reachable**, via `gitlab.api_base` (not\n`base_url`). Relevant to step 4: a host map built by scanning for\n`*.base_url` silently misses it.\n4. **`canonicalizeUrl` never throws** — it returns unparseable input\nverbatim. So the route parses with `new URL()` and rejects non-`http(s)`\nschemes *before* canonicalizing; otherwise a non-URL string would match\na row whose stored key is that same string. Tested with a planted\npoisoned row.\n\n## A second `item` writer, found by whole-branch review\n\n`deployment/annotate.ts` writes `item` with its own column list and\nnever set `resolve_key`. So a deploy annotation was unresolvable, and\nresolving its `workflow_url` fell to the trim rung and could return\n**the repository** for a build URL. It now derives the key identically\nto `upsertIndexedItem`, in both the INSERT and the `ON CONFLICT DO\nUPDATE` (an INSERT-only fix would leave a stale key when a run is\nre-annotated with a corrected URL).\n\nThe docs that claimed a \"single SQL write site\" are corrected to name\nboth writers. The surviving claim — every *connector* write funnels\nthrough `upsertIndexedItem` — is true.\n\n**Known, bounded consequence:** two deployment *jobs* in one CI run\nshare a run-level `workflow_url`, so they now produce two rows with the\nsame `resolve_key` and that URL answers `ambiguous` rather than one\nitem. That is the designed response to a non-unique match, not a\nregression, but it is a resolve-quality edge specific to job-granular\nannotations.\n\n## Migration cost\n\nThe V52 backfill drops `item_fts_update` around the row-wise walk and\nrecreates it from the shared `ITEM_FTS_UPDATE_TRIGGER_SQL` constant,\ninside the same transaction. That trigger is `AFTER UPDATE ON item` with\nno `OF <column>` list, so without this every `resolve_key` write\nre-tokenized a body up to 16 KiB — roughly a million FTS operations on a\n500k-item index, for a column FTS does not index. V48 established the\npattern. Sharing one constant means the recreated trigger cannot drift\nfrom the schema's.\n\n## Egress\n\nResolve appends **no** egress-ledger row, and `THIS_BINARY_COVERAGE` is\nunchanged — no coverage class moves in this PR. The narrowing is stated\nin the `http` class comment and mirrored in `nimbus prove`'s label, so\nthe claim is recorded where it is made, not only where it is rendered.\nStep 4's targeted fetch is what raises `sync` to `per-run`.\n\n## For already-paired clients\n\n`LEGACY_SCOPES` is `[\"clip\",\"briefs\"]`, so every browser paired today\nlacks `resolve` and gets `403\n{\"error\":\"insufficient_scope\",\"required\":\"resolve\",\"granted\":[...]}` —\nstructurally distinct from `401 {\"error\":\"unauthorized\"}`, so a client\ncan tell \"re-pair for a wider scope\" from \"this token is invalid\".\n`nimbus clip pair --scopes` and `nimbus clip scopes <label> --set` are\nboth documented; `docs/cli-reference.md` previously told users `resolve`\nhad no consumer, which would have stopped them granting the scope this\nroute requires.\n\n## Deliberately not done\n\nNo OpenAPI entry. `openapi/v1.yaml` documents the public read surface\nplus the `/v1/deployments` carve-out; **all four** bearer-gated route\nfamilies (`/v1/clips`, `/v1/clips/related`, `/v1/briefs/*`,\n`/v1/agents/*`) are absent, and there is no doc-to-route drift test.\nAdding resolve alone would make it the only documented gated route and\nimply the others do not exist. Documenting that surface is a real gap\nand its own change.\n\n## Verification\n\n`preflight` green except `audit:coverage-floor`, which is\nCI-Linux-authoritative and fails on Windows against two PAL-gated files\nnot in this diff. Verified green on Linux in Docker `oven/bun:1.3` at\nthis HEAD: exit 0, `coverage-floor: ok (0 baselined files; 1166 source\nfiles scanned)`; every diffed file clears the 85% line / 80% branch\nfloors. `lint:markdown`, `audit:doc-refs` (671 refs) and lychee all\nclean over the whole branch.\n\nMigration atomicity is test-proven (a poison trigger mid-backfill leaves\n`user_version` at 51), the multi-chunk backfill test was red-proved\nagainst the earlier pagination bug it exists to catch, and the FTS\ntrigger's recreation is pinned by a `sqlite_master` assertion.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-07T13:01:33Z",
-          "tree_id": "56b7211f3e0f37aeb32df4eac5c206dccc8b4472",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0a32751f6e97af93b5fc405080df14bd7a77911d"
-        },
-        "date": 1786108400237,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.8235730000022,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 324.71867525001073,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 263.60498299999637,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a7db19aa4e3b7201946065ff2fdeb4cac5813b81",
+          "message": "feat(packs): install and remove role packs behind the owner's pack.install approval (#1764)\n\nRole packs, project 3, PR 2 of 3.\n\n## What ships\n\n- **`nimbus pack list | show | install | remove`**, backed by the\nCLI-only IPC methods `pack.list`, `pack.show`, `pack.install` and\n`pack.remove`. Each acts on the active profile.\n  - `install` is TTY-only and has no `--yes`.\n- `show --file <path>` previews a local pack without asking for\napproval.\n  - A local-file pack is refused in a production build.\n- **Two bundled packs**, `pm` and `devops`, embedded in the compiled\nbinary. A compiled probe confirmed both load.\n- **One owner approval per install, through the new HITL action type\n`pack.install`.** The prompt shows:\n- every config default with its current value and source layer, and\n`(your file overrides this)` where the owner's own file wins;\n- the visible agents, and the overnight jobs, marking any the owner\nalready replaces;\n- the suggested connectors, each shown as configured or not configured;\n  - the exact `defaults` text that will be written, escaped.\n\n  Re-installing works three ways:\n- a changed pack is an **update** that shows only the diff, then the\nfull new text;\n- an identical pack whose layer file was deleted or edited is a\n**repair**;\n- an identical pack whose layer file is intact is \"already installed\",\nwith no prompt.\n- **Refusals come before the prompt, in a fixed order**, each with its\nown code: `ERR_PACK_NOT_FOUND`, `ERR_PACK_LOCAL_FILE_PRODUCTION`,\n`ERR_PACK_INVALID`, `ERR_PACK_ID_RESERVED`,\n`ERR_PACK_MEMBERS_UNSUPPORTED`, `ERR_PACK_STORE_UNREADABLE` and\n`ERR_PACK_CONFLICT`. A denied approval is\n`ERR_PACK_INSTALL_NOT_APPROVED` and writes nothing.\n- **A record file `<id>.pack.json` sits next to each layer.** The store\nalso gains `checkPackLayer`, a non-writing check that `setPackLayer`\nitself calls, so the dry run and the write cannot disagree. `nimbus pack\nlist` reports skipped (broken) layers.\n\n## Security\n\n- **New invariant I47:** a role-pack layer is written only by\n`packs/pack-install.ts`, and only after the local owner approved\n`pack.install` over a prompt that showed the exact `defaults` bytes.\n- `pack.install` is in the I2 frozen set, and a delegate can never\napprove it (I20).\n- It is refused on a demo gateway (I41), the whole `pack` namespace is\nLAN-forbidden, and it is not on the Tauri allowlist.\n  - It runs gate-only with `NULL_EGRESS_SINK` (I29).\n- The audit row carries the pack id, version, source and digest, never\nthe prompt text.\n- The CLI registers the prompt handler directly, so\n`NIMBUS_SCRIPT_CONSENT_SOURCE` cannot answer the approval.\n- **New static rule D36:** only `packs/pack-layer-store.ts` and\n`packs/pack-install.ts` may name `setPackLayer` or `removePackLayer`.\n- **Ceilings** are now I1–I47 and D10–D36 on every doc surface.\n`pack.install` joins the I28 proposability table as denied, so there are\nnow 143 HITL types: 29 proposable and 114 denied.\n\n## Not in this PR\n\n- **PR 3** makes `[oncall.push] enabled` settable and live from a pack,\nadds that line to the DevOps pack, and adds the `nimbus doctor` `[info]`\nline for an available update.\n- **Deferred:** the spec's `nimbus registry list` note for a dropped\n`packs` map. `registry.list` reads only the database, so the note would\nneed a schema migration, and no registry publishes packs before the\ntrust-layer project.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus pack` commands to list and preview role packs, install\nthem with owner approval, and remove them from the active profile.\nRemoving a pack does not require approval.\n* Added bundled Product and DevOps packs with curated settings. Pack\nsettings layer beneath user and profile settings and do not change\ncredentials, network grants, or approvals.\n* Pack installation requires an interactive terminal and is unavailable\nover LAN or in demo mode. Local-file packs are unavailable in production\nbuilds.\n* **Documentation**\n* Updated CLI and security references with pack management details and\nthe latest invariant coverage.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-24T17:50:46Z",
+          "tree_id": "c4caad051812cc0fc169adbab517458a05f1735c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a7db19aa4e3b7201946065ff2fdeb4cac5813b81"
+        },
+        "date": 1792864735639,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 212.91737325000105,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 212.99893959999682,
             "unit": "ms"
           }
         ]
