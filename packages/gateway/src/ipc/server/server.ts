@@ -23,6 +23,7 @@ import {
   automationRpcSkipped,
   connectorRpcSkipped,
   diagnosticsRpcSkipped,
+  packRpcSkipped,
   peopleRpcSkipped,
   phase4RpcSkipped,
   registryRpcSkipped,
@@ -34,6 +35,7 @@ import {
   tryDispatchAutomationRpc,
   tryDispatchConnectorRpc,
   tryDispatchDiagnosticsRpc,
+  tryDispatchPackRpc,
   tryDispatchPeopleRpc,
   tryDispatchPhase4Rpc,
   tryDispatchRegistryRpc,
@@ -186,6 +188,9 @@ export function createIpcServer(
 
     const registryOutcome = await tryDispatchRegistryRpc(ctx, clientId, method, params);
     if (registryOutcome !== registryRpcSkipped) return registryOutcome;
+
+    const packOutcome = await tryDispatchPackRpc(ctx, clientId, method, params);
+    if (packOutcome !== packRpcSkipped) return packOutcome;
 
     const connectorOutcome = await tryDispatchConnectorRpc(ctx, method, params, clientId);
     if (connectorOutcome !== connectorRpcSkipped) return connectorOutcome;

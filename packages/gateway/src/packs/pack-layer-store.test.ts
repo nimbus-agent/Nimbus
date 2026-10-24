@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -19,8 +20,10 @@ import {
 } from "../config/layered-config.ts";
 import { loadNimbusDecisionsFromConfigDir } from "../config/nimbus-toml.ts";
 import { PACK_FRAGMENT_MAX_BYTES } from "../config/pack-settable.ts";
+import { writeUtf8FileAtomicReplace } from "../config/toml-section-writer.ts";
 import {
   createPackLayerStore,
+  PACK_RECORD_MAX_BYTES,
   PackLayerRefusedError,
   type PackLayerStore,
   packSkipLogLines,
@@ -478,4 +481,152 @@ describe("read — hand-edited pack files", () => {
     mkdirSync(packFile("pm"));
     expect(store.read("default").skipped).toEqual([{ packId: "pm", reason: "not a regular file" }]);
   });
+});
+
+describe("record sidecar and checkPackLayer", () => {
+  const recordFile = (id: string, profile = "default") =>
+    join(profileDir(profile), `${id}.pack.json`);
+
+  test("checkPackLayer returns the same problems setPackLayer would throw, and writes nothing", () => {
+    const store = wired();
+    store.setPackLayer("default", "a", CONF("0.7"));
+    const before = readdirSync(profileDir());
+    const cases: Array<{
+      profile: string;
+      id: string;
+      fragment: string;
+      reason: "invalid" | "conflict";
+    }> = [
+      { profile: "default", id: "b", fragment: CONF("0.8"), reason: "conflict" },
+      { profile: "default", id: "c", fragment: "[fleet]\nbogus = 1\n", reason: "invalid" },
+      { profile: "default", id: "Bad Id", fragment: CONF("0.7"), reason: "invalid" },
+      { profile: "bad/profile", id: "d", fragment: CONF("0.7"), reason: "invalid" },
+    ];
+    for (const c of cases) {
+      const check = store.checkPackLayer(c.profile, c.id, c.fragment);
+      expect(check.ok).toBe(false);
+      if (check.ok) continue;
+      expect(check.reason).toBe(c.reason);
+      const err = refusal(() => store.setPackLayer(c.profile, c.id, c.fragment));
+      expect(err.reason).toBe(c.reason);
+      expect(err.problems).toEqual(check.problems);
+    }
+    expect(readdirSync(profileDir()).sort()).toEqual(before.sort());
+    expect(store.checkPackLayer("default", "ok", CONF("0.7"))).toEqual({ ok: true });
+  });
+
+  test("checkPackLayer reports an unreadable active.json", () => {
+    const store = wired();
+    writeActive("{");
+    expect(store.checkPackLayer("default", "pm", CONF("0.5"))).toEqual({
+      ok: false,
+      reason: "store",
+      problems: ["active.json is not valid JSON"],
+    });
+    expect(refusal(() => store.setPackLayer("default", "pm", CONF("0.5"))).reason).toBe("store");
+  });
+
+  test('removePackLayer with an unreadable active.json throws reason "store"', () => {
+    const store = wired();
+    writeActive("{");
+    expect(refusal(() => store.removePackLayer("default", "pm")).reason).toBe("store");
+    expect(refusal(() => store.removePackLayer("default", "nope")).reason).toBe("store");
+  });
+
+  test("setPackLayer with a record writes toml, then record, then active.json", () => {
+    const store = wired();
+    store.setPackLayer("default", "pm", CONF("0.55"), { record: '{"v":1}\n' });
+    expect(existsSync(packFile("pm"))).toBe(true);
+    expect(existsSync(recordFile("pm"))).toBe(true);
+    expect(readActive()).toEqual({ version: 1, packs: ["pm"] });
+    expect(store.readPackRecord("default", "pm")).toBe('{"v":1}\n');
+  });
+
+  test("write order: a failure writing the record leaves the pack unlisted", () => {
+    // The real writer replaces even a directory, so the failure is injected at the writer.
+    const store = createPackLayerStore({
+      configDir: dir,
+      writeFile: (path, content) => {
+        if (path.endsWith(".pack.json")) throw new Error("disk full");
+        writeUtf8FileAtomicReplace(path, content);
+      },
+    });
+    expect(() => store.setPackLayer("default", "pm", CONF("0.55"), { record: "{}" })).toThrow();
+    expect(existsSync(activeFile())).toBe(false);
+  });
+
+  test("removePackLayer deletes the record too, delisting first", () => {
+    const store = wired();
+    store.setPackLayer("default", "pm", CONF("0.55"), { record: "{}" });
+    const r = store.removePackLayer("default", "pm");
+    expect(r.removed).toBe(true);
+    expect(existsSync(packFile("pm"))).toBe(false);
+    expect(existsSync(recordFile("pm"))).toBe(false);
+    expect(readActive()).toEqual({ version: 1, packs: [] });
+  });
+
+  test("removePackLayer on an id that is not installed returns removed false and touches nothing", () => {
+    const store = wired();
+    const r = store.removePackLayer("default", "ghost");
+    expect(r.removed).toBe(false);
+    expect(existsSync(activeFile())).toBe(false);
+  });
+
+  test("readPackLayerText returns the raw on-disk text, undefined when absent", () => {
+    const store = wired();
+    expect(store.readPackLayerText("default", "pm")).toBeUndefined();
+    expect(store.readPackRecord("default", "pm")).toBeUndefined();
+    store.setPackLayer("default", "pm", CONF("0.55"));
+    expect(store.readPackLayerText("default", "pm")).toBe(CONF("0.55"));
+  });
+
+  test("setPackLayer without opts.record writes no record", () => {
+    const store = wired();
+    store.setPackLayer("default", "pm", CONF("0.55"));
+    expect(existsSync(recordFile("pm"))).toBe(false);
+  });
+});
+
+describe("reads only regular files", () => {
+  const recordAt = (id: string) => join(profileDir(), `${id}.pack.json`);
+
+  test("a directory at the record or layer path reads as absent", () => {
+    const store = wired();
+    mkdirSync(recordAt("pm"), { recursive: true });
+    mkdirSync(packFile("pm"), { recursive: true });
+    expect(store.readPackRecord("default", "pm")).toBeUndefined();
+    expect(store.readPackLayerText("default", "pm")).toBeUndefined();
+  });
+
+  test("an oversized record or layer reads as absent", () => {
+    const store = wired();
+    mkdirSync(profileDir(), { recursive: true });
+    writeFileSync(recordAt("pm"), "x".repeat(PACK_RECORD_MAX_BYTES + 1));
+    writeFileSync(packFile("pm"), "x".repeat(PACK_FRAGMENT_MAX_BYTES + 1));
+    expect(store.readPackRecord("default", "pm")).toBeUndefined();
+    expect(store.readPackLayerText("default", "pm")).toBeUndefined();
+  });
+
+  test("a directory as active.json is a list error, not a throw", () => {
+    const store = wired();
+    mkdirSync(activeFile(), { recursive: true });
+    expect(store.read("default").listError).toContain("active.json");
+  });
+
+  // A FIFO cannot be made on Windows. On POSIX a plain open of one waits for a writer, so a
+  // regression here hangs the run rather than failing an assertion.
+  test.skipIf(process.platform === "win32")(
+    "a FIFO at the record, layer or active.json path never blocks",
+    () => {
+      const store = wired();
+      mkdirSync(profileDir(), { recursive: true });
+      for (const p of [recordAt("pm"), packFile("pm"), activeFile()]) {
+        const made = Bun.spawnSync(["mkfifo", p]);
+        expect(made.exitCode).toBe(0);
+      }
+      expect(store.readPackRecord("default", "pm")).toBeUndefined();
+      expect(store.readPackLayerText("default", "pm")).toBeUndefined();
+      expect(store.read("default").listError).toContain("not a regular file");
+    },
+  );
 });

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "id": "devops",
+  "name": "DevOps",
+  "version": "1.0.0",
+  "description": "On-call and delivery: incidents, what changed, and who owns it.",
+  "roles": ["devops", "sre"],
+  "suggestedConnectors": ["pagerduty", "github", "github_actions", "slack", "sentry"],
+  "members": [],
+  "defaults": "[agents]\nvisible = [\"oncall\", \"why\", \"impact\", \"ownership\", \"catchup\", \"changelog\", \"standup\"]\n\n[fleet]\nenabled = true\n\n[[fleet.job]]\nname = \"devops-changelog-nightly\"\nagent = \"changelog\"\ninterval_seconds = 86400\n"
+}

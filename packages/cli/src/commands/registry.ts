@@ -43,6 +43,7 @@ export const COMMAND_NAMES = [
   "negotiate",
   "notifications",
   "owners",
+  "pack",
   "people",
   "policy",
   "pre-mortem",

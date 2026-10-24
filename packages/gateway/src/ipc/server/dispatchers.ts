@@ -36,6 +36,8 @@ import {
 import { runMediaPass } from "../../multimodal/media-pass.ts";
 import { MULTIMODAL_CAPABILITY, type RemoteVlmVendor } from "../../multimodal/media-types.ts";
 import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
+import type { PackOwnerGate } from "../../packs/pack-install.ts";
+import { isConnectorConfigured } from "../../sync/connector-configured.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
 import { buildStatus } from "../admin-status-rpc.ts";
@@ -74,6 +76,7 @@ import { dispatchMigrationRpc } from "../migration-rpc.ts";
 import { dispatchNotificationsRpc } from "../notifications-rpc.ts";
 import { dispatchOncallPushRpc, OncallPushRpcError } from "../oncall-push-rpc.ts";
 import { dispatchOwnershipRpc } from "../ownership-rpc.ts";
+import { buildPackDeps, dispatchPackRpc } from "../pack-rpc.ts";
 import { dispatchPeopleRpc, PeopleRpcError } from "../people-rpc.ts";
 import { dispatchPolicyRpc, PolicyRpcError } from "../policy-rpc.ts";
 import { dispatchPreflightRpc, PreflightRpcError } from "../preflight-rpc.ts";
@@ -98,6 +101,7 @@ import {
   deploymentRpcSkipped,
   diagnosticsRpcSkipped,
   metricsRpcSkipped,
+  packRpcSkipped,
   peopleRpcSkipped,
   phase4RpcSkipped,
   preflightRpcSkipped,
@@ -2282,6 +2286,44 @@ export async function tryDispatchRegistryRpc(
       : { extensionsDir: ctx.options.extensionsDir }),
     vault: ctx.options.vault,
   });
+  if (out.kind === "hit") {
+    return out.value;
+  }
+  throw new RpcMethodError(-32601, `Method not found: ${method}`);
+}
+
+/**
+ * `pack.*` (CLI-only). Only `pack.install` asks the owner, through the same gate-only executor as
+ * `registry.add` (a local config-layer write, no connector dispatch, so no egress row). This file
+ * calls the install module only, never the store's write half.
+ */
+export async function tryDispatchPackRpc(
+  ctx: ServerCtx,
+  clientId: string,
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!method.startsWith("pack.")) {
+    return packRpcSkipped;
+  }
+  const store = ctx.options.packLayerStore;
+  const configDir = ctx.options.configDir;
+  if (store === undefined || configDir === undefined) {
+    throw new RpcMethodError(-32603, "pack.* needs the pack-layer store and configDir");
+  }
+  const vault = ctx.options.vault;
+  const deps = buildPackDeps({
+    store,
+    configDir,
+    isConfigured: (serviceId) => isConnectorConfigured(vault, serviceId),
+  });
+  let ownerGate: PackOwnerGate | undefined;
+  const localIndex = ctx.options.localIndex;
+  if (method === "pack.install" && localIndex !== undefined) {
+    const toolExecutor = buildExtensionGateExecutor(ctx, localIndex, clientId);
+    ownerGate = async (action) => (await toolExecutor.gate(action)) === "proceed";
+  }
+  const out = await dispatchPackRpc(method, params, deps, ownerGate);
   if (out.kind === "hit") {
     return out.value;
   }
