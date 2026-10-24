@@ -105,9 +105,13 @@ Schema version 1:
 | `version` | string | required, semver `MAJOR.MINOR.PATCH` |
 | `description` | string | required, ≤ 500 chars |
 | `roles` | string[] | optional role tags, each `^[a-z][a-z0-9-]{0,31}$`, ≤ 8 (Project 5 matches on these) |
-| `suggestedConnectors` | string[] | ordered, ≤ 32, each a connector-id shape; existence is checked by the gateway against the catalog, not by the format |
-| `members` | string[] | extension ids; the format validates the shape, the gateway refuses non-empty (`ERR_PACK_MEMBERS_UNSUPPORTED`) |
+| `suggestedConnectors` | string[] | ordered, ≤ 32, unique, each `^[a-z0-9][a-z0-9_]{0,63}$` (`CONNECTOR_ID_SHAPE_RE`); existence is checked by the gateway against the catalog, not by the format |
+| `members` | string[] | extension ids, each through `assertSafeExtensionId` (`extension-id.ts`); the gateway refuses non-empty (`ERR_PACK_MEMBERS_UNSUPPORTED`) |
 | `defaults` | string | the pack-layer TOML fragment, ≤ 65,536 bytes; the format checks only type and size, the gateway's `checkPackFragment` is the authority |
+
+**Whole-document cap:** a new `MAX_ROLE_PACK_MANIFEST_BYTES = 128 * 1024` in `caps.ts`, not the
+extension `MAX_MANIFEST_BYTES` (64 KiB): `defaults` alone may be 64 KiB, and JSON escaping of its
+newlines and quotes plus the other fields would push a valid pack past 64 KiB.
 
 **Unknown top-level keys are refused** at schema 1. Project 2 (`sourceMapping`) and Project 4
 (`desktop`) add their fields when they ship, with the consumers that read them; accepting them now
@@ -120,8 +124,10 @@ fields, so there is one source for each.
 
 Exports: `parseRolePackManifest(text: string): RolePackManifest` (throws the package's existing
 error type with a field path), the `RolePackManifest` type, and `rolePackDigest(m: RolePackManifest)`
-— the SHA-256 hex (the package's existing hash) of the package's `canonicalize` output over the
-**whole parsed manifest**. Digesting the parsed object, not the text, gives a bundled pack (a static
+— the SHA-256 hex (the package's existing hash) of `canonicalize` (from `@nimbus-dev/sdk`, as
+`index-format.ts` already imports it) over the **whole parsed manifest**. It takes the parsed
+object only, never raw text: a text overload would give a pretty-printed file a different digest
+from the same pack as a static import. Digesting the parsed object, not the text, gives a bundled pack (a static
 JSON import, already an object) and a local file (text, parsed first) the same digest for the same
 content, and whitespace or key order never counts as a change. A change to `description` alone does
 count, and is handled in § 5.4.
@@ -159,19 +165,33 @@ index with `packs` verifies.
 
 ### 5.4 Installed record and updates
 
-Next to each layer the store keeps `<id>.pack.json`: `{ id, version, digest, source:
-"bundled" | "file", installedAt }`. The record and the layer are written in one store operation;
-`active.json` stays the single "is it active" authority, written last (Project 1's order). A
-listed pack with a missing or unreadable record is reported in `pack list` as `version unknown`
-and treated as "update available" for a bundled id.
+Next to each layer the store keeps `<id>.pack.json`:
+`{ manifest, digest, source: { kind: "bundled" } | { kind: "file", path }, installedAt }`, where
+`manifest` is the **whole installed manifest**. Keeping it is what makes an update diff possible:
+after a binary upgrade the old bundled manifest is gone, and `<id>.toml` holds only `defaults`, so
+without the copy the prompt could not say which suggested connectors or description changed.
+
+Write order — every crash point leaves unlisted, inert files:
+- install: `<id>.toml` → `<id>.pack.json` → `active.json` (listing last);
+- remove: `active.json` (delisting first) → unlink `<id>.toml` → unlink `<id>.pack.json`.
+
+`active.json` stays the single "is it active" authority. A listed pack with a missing or
+unreadable record is reported in `pack list` as `version unknown` and treated as "update
+available" for a bundled id.
 
 `pack list` / `pack show` compare a bundled pack's installed record with the bundled manifest: a
-different digest is **update available** (shown with both versions). `nimbus doctor` warns once per
-profile with an update available. Re-running `nimbus pack install <id>` on an installed pack is the
+different digest is **update available** (shown with both versions). `nimbus doctor` reports it as
+`[info]` once per profile and does not change its exit code — an update is the owner's choice, not
+a fault; a skipped or broken pack layer keeps its existing failing severity. Re-running `nimbus pack install <id>` on an installed pack is the
 update: the prompt shows only the difference — scalars added/removed/changed, visible agents
 added/removed, fleet jobs added/removed/changed by name, suggested connectors added/removed — and
-an approval replaces the layer and record. An identical digest is a no-op with "already installed",
-no prompt. A different digest whose `defaults` text is byte-identical (only display fields such as
+an approval replaces the layer and record. Keys the owner's own file overrides are marked
+`(your file overrides this)` in the diff exactly as on a first install, so an update never looks
+like it will change a setting the owner pins. An identical digest **and** an on-disk `<id>.toml`
+byte-equal to the manifest's `defaults` is a no-op with "already installed", no prompt. An
+identical digest with a missing or different `<id>.toml` (hand-edited, deleted) prompts as a
+**repair**, showing the full text to be written; there is no `--force` flag, and
+`pack remove` + `pack install` remains the explicit reset. A different digest whose `defaults` text is byte-identical (only display fields such as
 `description` or `suggestedConnectors` changed) still prompts, with the config sections reading
 `no change`: the record is only ever rewritten after an approval, so there is one write path.
 
@@ -188,8 +208,15 @@ New HITL action type `pack.install`:
 - displayed by its own branch in `formatConsentPrompt` (`engine/executor.ts`, as
   `extension.migrate` has at `:281`), **not** the generic `Details: <JSON>` line: the generic path
   runs `redactPayloadForConsentDisplay`, whose substring name matching would blank config-key
-  names, and cannot render § 5.6;
-- refused on a demo-rooted gateway (`ERR_DEMO_FORBIDDEN`, `ipc/server/demo-gate.ts`), I41.
+  names, and cannot render § 5.6. `packs/pack-install.ts` renders the § 5.6 text and passes it as
+  `action.payload.promptText`; the `pack.install` branch prints that string and nothing else. The
+  branch keys on `action.type === "pack.install"` (I3), so no other action type can supply its own
+  prompt text this way. The CLI's consent handler already prints `params.prompt` as given, so it
+  needs no change beyond rendering multi-line text;
+- refused on a demo-rooted gateway (`ERR_DEMO_FORBIDDEN`), I41: `pack.install` and `pack.remove`
+  join the explicit `DEMO_REFUSED_METHODS` set in `ipc/server/demo-gate.ts` (it has no `pack.`
+  prefix rule, so an unlisted method would pass), with cases in `demo-gate.test.ts`; `pack.list`
+  and `pack.show` stay allowed so a demo user can inspect the bundled packs.
 
 Fixed order in the handler, each step refusing before the next:
 
@@ -237,8 +264,12 @@ even when empty (`none`):
 - **Visible agents** — the names the pack adds.
 - **Overnight jobs** — each job's name, agent, interval, and `(replaced by your own job of this
   name)` where applicable; plus whether `[fleet] enabled` ends up true.
-- **Suggested connectors** — in order, marked `connected` / `not connected`. Display only; the pack
-  connects nothing.
+- **Suggested connectors** — in order, marked `configured` / `not configured`, decided by the
+  existing `isConnectorConfigured` (`sync/connector-configured.ts`, the same signal the sync
+  scheduler uses), so the pack RPC options need its dependencies passed in. "Configured", not
+  "connected": it means credentials are present, not that the last sync was healthy. Display only;
+  the pack connects nothing, and a pack whose suggested connectors are all unconfigured installs
+  normally (a test pins this).
 - A fixed closing line: the pack changes no credentials, no network reach and no approvals, and
   your `nimbus.toml` is not edited; `nimbus pack remove <id>` undoes it.
 
@@ -252,7 +283,10 @@ agent strings, since a local-file pack is author-controlled text.
 - `pack.list` — per active profile: installed packs (id, name, version, source, update state) and
   the bundled packs not installed. Reports the store's `skippedPacks` / `packListError` so a broken
   layer is visible.
-- `pack.show { id }` — the manifest summary plus, when installed, the installed record.
+- `pack.show { id } | { fileText }` — the manifest summary plus, when installed, the installed
+  record. The `fileText` form (`nimbus pack show --file <path>`) parses and validates a local pack
+  and shows what install would prompt, without raising the gate, so a pack author can check one
+  before installing; it is refused in a production runtime like `install --file`.
 
 All four are CLI-only in this project: the whole `pack` namespace joins `FORBIDDEN_OVER_LAN`, and
 none is on the Tauri allowlist (Project 4 decides that). Each needs both the handler and the outer
@@ -260,10 +294,22 @@ routing entry in `ipc/server/dispatchers.ts`, proven by an e2e test over a real 
 
 ### 5.8 CLI
 
-`nimbus pack list [--json]`, `nimbus pack show <id> [--json]`,
+`nimbus pack list [--json]`, `nimbus pack show <id> | --file <path> [--json]`,
 `nimbus pack install <id> | --file <path>`, `nimbus pack remove <id>`. All act on the active profile
 (Project 1's rule; no `--profile` flag in this project). `install` is TTY-only with no `--yes`,
 matching `extension approve` and `captures accept`; stated as a CLI-side guard, not gateway-enforced.
+
+Refusal codes (the builder may rename to match neighbours, but each case gets its own):
+`ERR_PACK_NOT_FOUND` (no bundled pack or installed pack by that id), `ERR_PACK_ID_RESERVED`
+(a local file using a bundled id), `ERR_PACK_LOCAL_FILE_PRODUCTION`, `ERR_PACK_MEMBERS_UNSUPPORTED`,
+`ERR_PACK_CONFLICT` (scalar or job-name conflict, keys named), `ERR_PACK_INVALID` (manifest parse,
+fragment allowlist, unknown agent or connector — problems listed), and `ERR_DEMO_FORBIDDEN`. A
+denied or timed-out approval reuses whatever `registry.add` returns for the same outcome rather
+than inventing a code.
+
+Agent names in `[agents] visible` are validated after `normaliseAgentName`
+(`catalog/agent-visibility.ts`): `parseAgentNameList` returns names as written, so `agents.oncall`
+and `oncall` both validate, against `CATALOG_AGENT_NAMES`.
 
 ### 5.9 `[oncall.push] enabled` becomes pack-settable and live
 
@@ -280,7 +326,10 @@ store would leave the runner disabled after an install, or still pushing after a
   change, re-reads `[oncall.push]` and calls `reconcileEnabledState(enabled, now)`, preserving the
   existing "enabling never backfills history" rule (a re-enable records a fresh `enabled_at`);
 - every reader of `OncallPushRuntime.config.enabled` moves to the accessor (grep them; the frozen
-  field may keep the other keys).
+  field may keep the other keys);
+- the watcher's timer registers its stop on `sidecarStops`, as the fleet supervisor does
+  (`platform/assemble.ts`, `deps.sidecarStops.push(() => supervisor.stop())`), so it never
+  outlives gateway shutdown.
 
 Only `enabled` is live in this project; the other `[oncall.push]` keys keep their boot-time read,
 and `chatops_namespace` stays off the allowlist. A test installs and removes a pack carrying
@@ -349,6 +398,26 @@ param kind.
   publishedAt), with no publisher key; a malformed `packs` map is dropped, never failing the
   index, so it cannot block extension updates.
 - The `members` refusal is permanent and applies to every caller until Phase 9.5 project 3.
+
+- The installed record holds the whole installed manifest (for update diffs).
+- `nimbus doctor` reports an available update as `[info]`, exit code unchanged.
+- No `--force`: identical digest with a damaged layer file prompts as a repair.
+- `pack show --file` previews a local pack without raising the gate.
+- The prompt marks suggested connectors `configured` / `not configured` (credentials present), not
+  "connected".
+
+**Design review (2026-10-24, `…-p3-the-pack-design-review.md`)** — 4 mismatches, 10 improvements,
+5 questions. Accepted: demo-gate set membership, the 128 KiB manifest cap, connector-id and
+extension-id shape checks, the full manifest in the record, the remove/install write order, the
+configured-status source, override marks in update diffs, a refusal-code list, `sidecarStops` for
+the on-call watcher, the prompt-text hand-off, doctor `[info]`, no `--force` (with repair added),
+`pack show --file`, and a test that unconfigured suggestions still install. Already fixed by the
+builder check: the on-call runner's stale config, the generic prompt, the missing dry-run. Not
+taken: a `string` overload on `rolePackDigest` (it would make text and object digests differ);
+`checkPackLayer` throwing instead of returning problems (kept returning, so the install handler
+can list every problem before the prompt); and the review's proposed index-entry type with
+`publisher` and `name` (the entry mirrors the real extension entry instead; the publisher key is
+the trust layer's, and `name` lives in the manifest).
 
 **Builder check (2026-10-24)** found four code facts the first draft got wrong, all corrected
 above: the agent is `ownership`, not `owners`; `[oncall.push] enabled` is read by the runner
