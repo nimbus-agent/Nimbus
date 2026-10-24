@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792864738969,
+  "lastUpdate": 1792870208616,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "369f9af1a81e10599dc3d9b9f6c86c43bfa95fbc",
-          "message": "feat(gateway): targeted fetch-on-miss behind a derived host boundary (#1072)\n\nCompletes the resolve-by-URL story from #1070. When `GET\n/v1/items/resolve` answers `not_indexed`, a client can now ask the\ngateway to fetch that one item from the provider and index it — so the\nnext resolve hits. This is step 4 of the design in\n`docs/superpowers/specs/2026-08-06-http-agents-route-and-resolve-by-url-design.md`,\nstacked on #1070 rather than merged with it because a schema migration\nand a new outbound-request surface are different risk classes.\n\n## What ships\n\n- **`POST /v1/items/fetch`** — an explicit `I13` **write** on\n`WRITE_ROUTE_ALLOWLIST` (13→14) at the 8 KiB control-plane cap, behind\nthe `fetch` token scope. Every outcome returns 200 with a named status;\nonly a malformed body is 4xx, because a miss is a legitimate answer to a\nwell-formed request.\n- **`Syncable.fetchOne?`** on github, gitlab, bitbucket, jenkins and\njira. Optional does real work: the other ~62 connectors do not move, and\na service that omits it makes the route answer `no_targeted_fetch`\nrather than pretending.\n- **`sync/targeted-fetch.ts`** — the chokepoint. Parse → scheme → host\nboundary → `https:` pin → syncable lookup → `fetchOne` presence → egress\nappend → bounded rate limit → canonicalize-and-retry → `fetchOne`.\n- Each `fetchOne` writes through `upsertIndexedItemForSync`, so\n`resolve_key` lands with the same write and the item is resolvable the\ninstant it arrives.\n\n## The host boundary is the security property, and it is derived\n\nA URL is fetchable only when its host maps to a **configured**\nconnector: static SaaS hosts for github/gitlab/bitbucket, union the host\nof each service's Vault-stored origin secret (`jenkins.base_url`,\n`jira.base_url`, and **`gitlab.api_base`** — note GitLab uses\n`api_base`, which is why the map names each service's key explicitly\ninstead of scanning for `*.base_url`). Absent credentials, a service is\nnot in the map at all, so \"unknown host\" and \"not configured\" collapse\ninto the same fail-closed answer.\n\nExact host matching, port included. No wildcard, no suffix match, and\ndeliberately **no first-segment guessing fallback** — unlike\n`agents/impact.ts`'s `HOST_TO_SERVICE`, whose `?? hostFirstSegment`\nwould resolve `github.evil.example` to `\"github\"`. That is acceptable as\na hint inside a brief and unacceptable as a gate on an outbound request\ncarrying the user's credentials.\n\nA host claimed by two **different** services is refused for both.\nWithout that, `jira.base_url` mistakenly set to `https://github.com`\nwould make `github.com` resolve to `\"jira\"` and send the Jira token to\nGitHub.\n\nThe gateway re-derives `{service, kind, externalId}` server-side and\nfetches via that connector's API using its stored credential — it never\ndereferences the supplied URL. The map is derived **per request**, not\ncached: a revoked credential stops authorising on the very next call.\n\n## The `https:` pin\n\nThe boundary keys on host only, so it cannot distinguish\n`http://github.com/…` from `https://`. An `http:` URL is rejected unless\nthe resolved service's **own configured origin** is itself `http:` — a\nLAN Jenkins legitimately may be — compared origin-exact\n(scheme+host+port). Without this, a caller-supplied `http:` URL would\nsend a PAT in cleartext.\n\n## Egress: `sync` rises to `per-run`, with both appenders landed and two\nexclusions\n\n`THIS_BINARY_COVERAGE.sync` goes `none` → `per-run`, backed by two real\nappenders: the scheduler's sync-run boundary and the targeted fetch.\n`per-run` is the honest granularity — a scheduled sync is a paginated\nrun making many upstream calls and appends one row; a targeted fetch\nappends one for its one call.\n\nTwo exclusions, because **over-claiming is as much a defect as\nunder-claiming**:\n\n- **Local-only indexers** (`filesystem`, `blame`, `openapi`, `obsidian`)\nappend nothing. They make no outbound request, so recording one would be\na fabricated event. Same reasoning as the existing `NULL_EGRESS_SINK`.\n- **Unconfigured connectors** append nothing. ~90 cloud syncables are\nregistered unconditionally and short-circuit to `syncNoopResult` without\ntouching the network when they have no credentials. Left ungated, a\nconnector-less install recorded roughly 29,000 fabricated \"outbound\negress\" events per day and `nimbus prove` could never print 0. Verified:\nan empty-Vault real assembly force-syncing the registered set now\nappends **0** rows and makes **0** network calls, while a configured\nconnector still appends exactly **1** per run.\n\n`destination` is always the service id, never a caller-supplied URL.\n`nimbus prove`'s label reads \"**configured** connector sync runs and\ntargeted fetch-on-miss calls\", because an unqualified zero read broader\nthan the appender covers.\n\nAlso: an abandoned rate-limit wait used to starve the scheduler —\n`acquire` holds the per-provider mutex for its whole wait, so N\nabandoned callers serialised a legitimate acquirer behind all N\n(measured: 12 abandoned turned a 106 ms acquire into 1366 ms). A new\nnon-blocking `ProviderRateLimiter.tryAcquire` is polled on a bounded\nbackoff instead; `acquire` itself is byte-identical.\n\n## Not HITL-gated, deliberately\n\nThe owner already authorised continuous sync of that service with those\ncredentials; fetching one already-in-scope item is strictly less than\nwhat runs on a timer. It is bounded instead by the `fetch` scope, the\nderived host boundary, and the provider rate limiter. HITL was rejected\non the same ground as `agents.preflight`: an external caller should not\noriginate a consent prompt on the owner's machine.\n\n## Stated bounds, not silent gaps\n\n- **Jira** supports `<base>/browse/<KEY>-<N>` and a\n`selectedIssue=<KEY>-<N>` deep link; every other shape returns\n`unsupported_url`. Jira's URL shapes vary too much across Cloud and\nServer to support blind, and declining explicitly is what that arm is\nfor. A board-initiated fetch indexes the issue under its canonical\n`/browse/` key, so re-opening a panel on the same board URL misses and\nre-fetches (bounded by the rate limiter).\n- **Jira Server behind a context path**\n(`https://jira.example.com/jira/browse/ABC-1`) cannot be fetched.\n- **The configured-check is any-key-present.** 51 gated services list\nmultiple keys, and a non-credential key alone satisfies it — `jenkins`\nwith only a `base_url`, `discord` with only `.enabled`, `sentry` with\nonly `org_slug`, `aws` with only `profile`. Such a service appends one\nrow per run without making a request. Recorded in\n`connector-configured.ts` as a known bound.\n- **A self-hosted service no longer claims its SaaS host**, which\nremoves some ambiguity refusals: with self-hosted GitLab plus a\nmis-pasted `jira.base_url = https://gitlab.com`, that host was\npreviously refused for both and now resolves to `jira`. Bounded to\n`/browse/KEY-N` shapes and requires a misconfiguration, but it is a\nweaker collision posture than before.\n\n## For already-paired clients\n\n`LEGACY_SCOPES` is `[\"clip\",\"briefs\"]`, so every browser paired today\nlacks `fetch` and receives `403\n{\"error\":\"insufficient_scope\",\"required\":\"fetch\",\"granted\":[…]}` —\nstructurally distinct from `401 {\"error\":\"unauthorized\"}`, so a client\ncan tell \"re-pair for a wider scope\" from \"this token is invalid\".\n`nimbus clip pair --scopes` and `nimbus clip scopes <label> --set` are\nboth documented.\n\n## Verification\n\n6565+ tests pass; `audit:invariants` (D22) exits 0; `typecheck` and\n`typecheck:tests` clean; `lint:markdown`, `audit:doc-refs`, lychee and\n`audit:status-drift` all clean over the whole branch. Full `preflight`\ngreen except `audit:coverage-floor`, which is CI-Linux-authoritative and\nfails on Windows against two PAL-gated files outside this diff.\n\nVerified on Linux in Docker `oven/bun:1.3` at this HEAD: exit 0,\n`coverage-floor: ok (0 baselined files; 1176 source files scanned)`.\n`sync/targeted-fetch.ts` and `egress/sync-egress.ts` measure 100%/100%;\n`sync/connector-configured.ts` 100%/100%; `_lib/aws-cli.ts`\n98.55%/97.83% after the `hasUsableAwsCredentials` extraction. No file in\nthe diff violates either floor.\n\nThe security-relevant behaviours are proved by execution rather than\nasserted: `fetchOne` is never reached for a host the boundary did not\nclaim; an `http:` URL for an https-configured service is refused; an\nempty-Vault assembly appends zero rows; and each connector's stored\n`resolve_key` equals the caller's URL under a fixture whose API response\nURL deliberately diverges.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-08T05:21:28Z",
-          "tree_id": "b5e589a0bb0c258955718ceaca6c26001657eb09",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/369f9af1a81e10599dc3d9b9f6c86c43bfa95fbc"
-        },
-        "date": 1786167188593,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 324.94901874999925,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.4803712500034,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 212.99893959999682,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ac5ec831af3491c21d4330f1f6a630c9fbd870bc",
+          "message": "refactor: clear the SonarCloud backlog on main (113 issues) (#1765)\n\nClears every open SonarCloud issue on `main`: 113 code smells across 73\nfiles, of which 29 are S3776 cognitive complexity. The quality gate was\nalready green, so this is backlog, not a gate fix. The fixes are in the\ncode; nothing was excluded on the board.\n\n## How\n\n- **Security gates were split by phase, not by metric.** Each gate is\nnow a sequence of named steps, and every step still runs in its original\norder; no check was moved, merged or reordered. Each pin in\n`security-invariants.test.ts` still finds its expressions where it looks\nfor them. The affected gates:\n  - **I28:** `submitCapture`.\n  - **I44:** `registry-fetch.ts` (the transport and the redirect chain).\n  - **I43:** `install-from-local.ts`.\n- **I46:** `migration-engine.ts`. `acceptLocked` deliberately keeps the\nconsent and digest steps in its own body.\n  - **I29:** `sync/scheduler.ts`. Only the `catch` arm moved.\n- **Regex rewrites (S5843/S8786):**\n- **Link header (`connectors/link-header.ts`):** the regex is now a\nlinear scan.\n- **Log scrubber (`platform/gateway-log-file.ts`):** the\nlabelled-credential regex is now a label set plus a small scanner. A new\noracle test compares it with the old regex.\n- **Semver (`registry-format/src/semver.ts`):** the regex is now a small\nparser, with a new `semver.test.ts`.\n\nEach was checked against the old regex by fuzzing: 200k, 300k and 2.4M\ninputs, with 0 mismatches.\n- **Await-in-loop (S9382):** independent loops now use `Promise.all`.\nThese include the registry refresh, the `captures --all` listing, the\nmesh sandbox cleanup and the test-registry fixture.\n- **Loops that are sequential on purpose** now carry a trailing `//\nNOSONAR S9382: <reason>`, the convention already used in the CLI. There\nare 8 sites:\n  - Vault reads, which spawn `secret-tool` on Linux.\n- User-MCP tool listing, where order decides tool-name collisions and a\nlisting can spawn a slot.\n  - The extension-slot stop wait.\n  - Owner accepts, oldest first.\n- Stream reads, and redirect hops where each hop needs the previous\nanswer.\n- **API reshapes:**\n- `buildRunConsentPayload` now takes a `RunConsentSubject` object\ninstead of 9 positional parameters (S107).\n- `normalizeGithubPrState` now takes `{ state, merged }` instead of a\nboolean selector (S2301).\n- **Mechanical fixes:** `String.raw`, `TypeError` for type checks,\noptional chains, `toSorted`/`findLast`/`.at`, `toHaveLength`, and real\nassertions in the two assertion-less tests.\n\n## One behaviour change\n\n`extension-sync/sync-response.ts` used the literal string `\"bad\"` as an\ninternal \"malformed URL\" sentinel. As a result, an extension item whose\n`url` was exactly `\"bad\"` was silently dropped. It is now a `unique\nsymbol`, so that item is accepted like any other string.\n\n## Verification\n\n- `bun run preflight:fast` passes, including `typecheck:tests`,\n`audit:invariants` and `audit:action-dist`. The registry-action `dist/`\nwas rebuilt with the pinned Bun.\n- `bun test packages/gateway/src packages/cli/src\npackages/registry-format/src`: 25,646 pass, 0 fail.\n- `security-invariants.test.ts`: 350 pass.\n- UI vitest passed for `Captures` and `escape-invisible`.\n- Run in CI only, not locally on Windows:\n  - `test/e2e/user-mcp.e2e.test.ts`, where only an assertion was added.\n- `platform/sandbox/win32-legacy-cwd-revoke.test.ts`, where one matcher\nchanged.\n  - `platform/assemble.test.ts`.\n- The Sonar board only re-analyses `main`, so the count can only be\nconfirmed after merge.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added a CLI option to accept all listed capture proposals after\nconfirmation.\n* **Bug Fixes**\n* Improved log redaction for labeled credentials, including quoted\nvalues that contain spaces.\n* Corrected profile diagnostics so a missing non-default profile layer\nis reported when applicable.\n* Tightened semantic-version validation to reject malformed version\nstrings and accept valid prerelease and build metadata.\n* **Refactor**\n* Updated internal command and configuration handling while preserving\nexisting behavior in most areas.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-24T19:19:26Z",
+          "tree_id": "700394a1acae0cc5569a0ed7a68cdf1816cebcef",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ac5ec831af3491c21d4330f1f6a630c9fbd870bc"
+        },
+        "date": 1792870203977,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 281.2445109000011,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 284.4365396000045,
             "unit": "ms"
           }
         ]
