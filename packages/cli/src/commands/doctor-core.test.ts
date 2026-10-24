@@ -19,6 +19,7 @@ import {
   doctorPrintIndexFromSnapshot,
   doctorPrintMigrations,
   doctorPrintOncallPush,
+  doctorPrintPackUpdates,
   doctorPrintProfile,
   doctorPrintRegistries,
   doctorPrintVectorSearchFromSnapshot,
@@ -1282,6 +1283,95 @@ describe("doctorPrintProfile (role packs)", () => {
     expect(doctorPrintProfile({ ...base, layers: "nope" })).toBe(0);
     expect(doctorPrintProfile({ runningProfile: 3 })).toBe(0);
     expect(doctorPrintProfile("nope")).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+});
+
+describe("doctorPrintPackUpdates", () => {
+  function byMethod(answer: (method: string) => unknown): Pick<IPCClient, "call"> {
+    return {
+      call: async <T>(method: string): Promise<T> => answer(method) as T,
+    };
+  }
+  const pack = (id: string, version: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    name: id,
+    version,
+    source: "bundled",
+    updateAvailable: false,
+    ...extra,
+  });
+
+  beforeEach(() => {
+    out.reset();
+  });
+
+  it("one [info] line per profile naming each pack with an update", async () => {
+    const client = byMethod(() => ({
+      profile: "default",
+      installed: [
+        pack("pm", "1.0.0", { updateAvailable: true, bundledVersion: "1.1.0" }),
+        pack("devops", "1.0.0", {
+          updateAvailable: true,
+          versionUnknown: true,
+          bundledVersion: "1.1.0",
+        }),
+        pack("other", "2.0.0"),
+      ],
+    }));
+    expect(await doctorPrintPackUpdates(client)).toBe(0);
+    expect(out.stdout).toBe(
+      '[info] pack updates available (profile "default"): pm 1.0.0 -> 1.1.0, devops version unknown -> 1.1.0. Re-install with: nimbus pack install <id>\n',
+    );
+  });
+
+  it("says a different build when the bundled version is absent", async () => {
+    const client = byMethod(() => ({
+      profile: "default",
+      installed: [pack("pm", "1.0.0", { updateAvailable: true })],
+    }));
+    expect(await doctorPrintPackUpdates(client)).toBe(0);
+    expect(out.stdout).toContain("pm 1.0.0 -> a different build.");
+  });
+
+  it("no line when no installed pack has updateAvailable", async () => {
+    const client = byMethod(() => ({ profile: "default", installed: [pack("pm", "1.0.0")] }));
+    expect(await doctorPrintPackUpdates(client)).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("no line and exit 0 when pack.list rejects", async () => {
+    const notFound = byMethod(() => {
+      throw Object.assign(new Error("Method not found"), { code: -32601 });
+    });
+    expect(await doctorPrintPackUpdates(notFound)).toBe(0);
+    const down = byMethod(() => {
+      throw new Error("down");
+    });
+    expect(await doctorPrintPackUpdates(down)).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
+  it("strips control characters from every printed field", async () => {
+    const client = byMethod(() => ({
+      profile: "pro\u001bfile",
+      installed: [
+        pack("i\u001bd", "1.\u001b0.0", { updateAvailable: true, bundledVersion: "1.\u001b1.0" }),
+      ],
+    }));
+    await doctorPrintPackUpdates(client);
+    expect(out.stdout).toContain("[info] pack updates available");
+    expect(out.stdout).not.toContain("\u001b");
+  });
+
+  it("prints nothing for a malformed result and never throws", async () => {
+    expect(await doctorPrintPackUpdates(byMethod(() => "garbage"))).toBe(0);
+    expect(await doctorPrintPackUpdates(byMethod(() => ({ installed: "x" })))).toBe(0);
+    const rows = byMethod(() => ({
+      profile: "default",
+      installed: [{ id: 7, version: "1", updateAvailable: true }, null],
+    }));
+    expect(await doctorPrintPackUpdates(rows)).toBe(0);
     expect(out.stdout).toBe("");
   });
 });
