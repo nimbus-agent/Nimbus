@@ -1334,6 +1334,20 @@ describe("doctorPrintPackUpdates", () => {
     expect(out.stdout).toContain("pm 1.0.0 -> a different build.");
   });
 
+  it("says version unknown when the row's version is not a string", async () => {
+    const client = byMethod(() => ({
+      profile: "default",
+      installed: [{ id: "pm", version: 3, updateAvailable: true, bundledVersion: "1.1.0" }],
+    }));
+    expect(await doctorPrintPackUpdates(client)).toBe(0);
+    expect(out.stdout).toContain("pm version unknown -> 1.1.0.");
+  });
+
+  it("prints nothing for a null pack.list result", async () => {
+    expect(await doctorPrintPackUpdates(byMethod(() => null))).toBe(0);
+    expect(out.stdout).toBe("");
+  });
+
   it("no line when no installed pack has updateAvailable", async () => {
     const client = byMethod(() => ({ profile: "default", installed: [pack("pm", "1.0.0")] }));
     expect(await doctorPrintPackUpdates(client)).toBe(0);

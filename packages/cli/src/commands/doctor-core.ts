@@ -894,6 +894,11 @@ export async function doctorPrintMigrations(client: Pick<IPCClient, "call">): Pr
   }
 }
 
+function packFromVersion(versionUnknown: boolean, version: unknown): string {
+  if (versionUnknown || typeof version !== "string") return "version unknown";
+  return stripControlChars(version);
+}
+
 /**
  * Role packs: one `[info]` line naming each installed pack the bundled copy differs from. "Update
  * available" means the digest differs, not that the bundled copy is newer, so a missing
@@ -916,12 +921,7 @@ export async function doctorPrintPackUpdates(client: Pick<IPCClient, "call">): P
       versionUnknown?: unknown;
     };
     if (p.updateAvailable !== true || typeof p.id !== "string") continue;
-    const from =
-      p.versionUnknown === true
-        ? "version unknown"
-        : typeof p.version === "string"
-          ? stripControlChars(p.version)
-          : "version unknown";
+    const from = packFromVersion(p.versionUnknown === true, p.version);
     const to =
       typeof p.bundledVersion === "string"
         ? stripControlChars(p.bundledVersion)
