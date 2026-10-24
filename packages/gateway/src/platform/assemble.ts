@@ -54,8 +54,12 @@ import { startCuSnapshotRetention } from "../computer-use/cu-snapshot-retention.
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
 import {
   DEFAULT_FLEET_CONFIG,
+  type FleetDisabledJob,
+  type FleetDroppedJob,
+  type FleetJobOrigin,
   loadNimbusFleetFromConfigDir,
   type NimbusFleetJobToml,
+  type NimbusFleetLoad,
   type NimbusFleetToml,
 } from "../config/fleet-toml.ts";
 import { getLayeredConfig, initLayeredConfig } from "../config/layered-config.ts";
@@ -211,11 +215,11 @@ import { NamespaceStore } from "../federation/namespace-store.ts";
 import { preflightConsent } from "../federation/preflight-consent-broker.ts";
 import { appendPreflightAudit, defaultRunCommand } from "../federation/preflight-gate.ts";
 import { buildFleetInvoker } from "../fleet/fleet-invoker.ts";
+import { checkFleetJob } from "../fleet/fleet-job-check.ts";
 import { FLEET_CAPABILITY, FleetScheduler } from "../fleet/fleet-scheduler.ts";
 import { FleetStore } from "../fleet/fleet-store.ts";
 import { type FleetLoad, FleetSupervisor } from "../fleet/fleet-supervisor.ts";
 import { buildFleetSweepEnumerate } from "../fleet/fleet-sweep-enumerators.ts";
-import { validateFleetSweepJobs } from "../fleet/fleet-sweep-support.ts";
 import { createFleetRemoteBudget } from "../fleet/fleet-synthesis-router.ts";
 import type { ConsolidatorLlm } from "../glossary/glossary-consolidate.ts";
 import { rebuildGlossary, runGlossaryPass } from "../glossary/glossary-extract.ts";
@@ -3226,9 +3230,12 @@ export interface FleetBootDeps {
  * 1. `loadNimbusFleetFromConfigDir(paths.configDir)`, the layered reader, never a hardcoded
  *    `nimbus.toml`: a `[fleet]` set in the active profile file (or a pack) must be honoured, the
  *    way `[agents] synthesis` set in a profile file is.
- * 2. A malformed `[fleet]` block must NOT take the gateway down. The parser throws by design (an
+ * 2. A malformed `[fleet]` TABLE must NOT take the gateway down. The parser throws by design (an
  *    `allow_remote` with no budget is a permission the owner clearly meant to bound), and
  *    `loadFleet` is the caller that catches it: log loudly, name the file, construct no scheduler.
+ *    A bad JOB (an ineligible agent, a sweep the agent cannot do, a missing key) drops only that
+ *    job: the loader returns it in `dropped`, `checkFleetJob` supplies the semantic half of the
+ *    check, and the supervisor logs each drop at error with its layer and file.
  *    The fleet is an optional default-off feature; the index is not. Note that the boot PRUNE still
  *    runs on that path — old rows exist whether or not today's config parses, and retention must not
  *    hinge on a typo. `buildFleetScheduler` likewise catches a throw from construction, because the
@@ -3254,20 +3261,24 @@ export interface FleetRuntime {
   readonly scheduler: FleetScheduler | undefined;
   readonly config: NimbusFleetToml;
   readonly jobs: readonly NimbusFleetJobToml[];
+  readonly origins: ReadonlyMap<string, FleetJobOrigin>;
+  readonly disabled: readonly FleetDisabledJob[];
+  readonly dropped: readonly FleetDroppedJob[];
 }
 
 /** The effective `[fleet]` section, retention floored by policy. Never throws: an error is logged. */
 function loadFleet(deps: FleetBootDeps): FleetLoad {
   const fleetConfigDir = deps.paths.configDir;
-  let fleet: { config: NimbusFleetToml; jobs: NimbusFleetJobToml[] } = {
+  let fleet: NimbusFleetLoad = {
     config: DEFAULT_FLEET_CONFIG,
     jobs: [],
+    origins: new Map(),
+    disabled: [],
+    dropped: [],
   };
   let configError = false;
   try {
-    const loaded = loadNimbusFleetFromConfigDir(fleetConfigDir);
-    validateFleetSweepJobs(loaded.jobs);
-    fleet = loaded;
+    fleet = loadNimbusFleetFromConfigDir(fleetConfigDir, checkFleetJob);
   } catch (err) {
     configError = true;
     const layered = getLayeredConfig(fleetConfigDir);
@@ -3293,7 +3304,14 @@ function loadFleet(deps: FleetBootDeps): FleetLoad {
       deps.policyGate.enforced().retentionMinDays,
     ),
   };
-  return { config, jobs: fleet.jobs, configError };
+  return {
+    config,
+    jobs: fleet.jobs,
+    origins: fleet.origins,
+    disabled: fleet.disabled,
+    dropped: fleet.dropped,
+    configError,
+  };
 }
 
 /**
@@ -3404,6 +3422,15 @@ export function assembleFleetRuntime(deps: FleetBootDeps): FleetRuntime {
     },
     get jobs(): readonly NimbusFleetJobToml[] {
       return supervisor.current().jobs;
+    },
+    get origins(): ReadonlyMap<string, FleetJobOrigin> {
+      return supervisor.current().origins;
+    },
+    get disabled(): readonly FleetDisabledJob[] {
+      return supervisor.current().disabled;
+    },
+    get dropped(): readonly FleetDroppedJob[] {
+      return supervisor.current().dropped;
     },
   };
 }

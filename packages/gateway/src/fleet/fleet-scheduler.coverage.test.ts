@@ -13,7 +13,7 @@ import { createFleetRemoteBudget } from "./fleet-synthesis-router.ts";
 
 /**
  * The two sweep-enumeration failures `fleet-scheduler.test.ts` does not reach: a sweep job whose
- * agent cannot sweep the configured kind (a config that bypassed `validateFleetSweepJobs`), and an
+ * agent cannot sweep the configured kind (a config that bypassed `checkFleetJob`), and an
  * enumerator that throws something other than an `Error`. Both must fail ONLY that job — recorded
  * with its reason, backed off — while the rest of the run proceeds.
  */

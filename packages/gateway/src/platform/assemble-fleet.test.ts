@@ -172,6 +172,48 @@ interval_seconds = 3600
     expect(assembleFleetRuntime(deps(gate)).scheduler).toBeUndefined();
   });
 
+  test("one bad user job no longer disables the fleet", () => {
+    writeToml(
+      `[fleet]
+enabled = true
+
+[[fleet.job]]
+name = "nightly"
+agent = "catchup"
+interval_seconds = 3600
+
+[[fleet.job]]
+name = "bad"
+agent = "preflight"
+interval_seconds = 3600
+`,
+    );
+    const { gate } = stubGate(enforcedWith({}));
+    const runtime = assembleFleetRuntime(deps(gate));
+    expect(runtime.scheduler).toBeDefined();
+    expect(runtime.jobs.map((j) => j.name)).toEqual(["nightly"]);
+    expect(runtime.dropped.map((d) => [d.name, d.reason])).toEqual([
+      ["bad", `[[fleet.job]] bad agent "preflight" is not fleet-eligible`],
+    ]);
+    expect(runtime.origins.get("nightly")?.layer.kind).toBe("base");
+  });
+
+  test("a stub that silences the only job builds no scheduler", () => {
+    writeToml(`[fleet]
+enabled = true
+
+[[fleet.job]]
+name = "nightly"
+enabled = false
+`);
+    const { gate } = stubGate(enforcedWith({}));
+    const runtime = assembleFleetRuntime(deps(gate));
+    expect(runtime.scheduler).toBeUndefined();
+    expect(runtime.jobs).toEqual([]);
+    expect(runtime.disabled.map((d) => d.name)).toEqual(["nightly"]);
+    expect(runtime.dropped).toEqual([]);
+  });
+
   /**
    * The parser THROWS on `allow_remote` without a budget, by design. This is the caller that has
    * to survive it: the fleet is optional and default-off, the index is not, and taking gateway

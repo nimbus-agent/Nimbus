@@ -81,31 +81,36 @@ export function sweepParamFor(agent: string, kind: SweepKind): SweepSubjectParam
 export const FEDERATION_PARAMS: readonly string[] = ["namespace", "namespaces"];
 
 /**
- * Spec § 4 rules 1, 2 and 6. Called by `assembleFleetRuntime` inside the SAME try that parses the
- * config, so a refusal disables the fleet with the loud log a parse error already gets.
+ * Spec § 4 rules 1, 2 and 6 for ONE job: the reason it cannot run, or `undefined`. The fleet
+ * runtime drops a job with a reason (`checkFleetJob`); a pack fragment's check reports it.
  */
+export function fleetSweepProblem(job: NimbusFleetJobToml): string | undefined {
+  if (job.sweep === null) return undefined;
+  const { kind } = job.sweep;
+  const param = sweepParamFor(job.agent, kind);
+  if (param === null) {
+    const reason = sweepSupportFor(job.agent)?.reason;
+    return (
+      `[[fleet.job]] ${job.name} agent "${job.agent}" cannot sweep "${kind}"` +
+      (reason === null || reason === undefined ? "" : `: ${reason}`)
+    );
+  }
+  if (Object.hasOwn(job.params, param)) {
+    return `[[fleet.job]] ${job.name} sets ${param} and sweep = "${kind}"; the sweep supplies ${param}`;
+  }
+  if (FEDERATION_PARAMS.some((k) => Object.hasOwn(job.params, k))) {
+    return (
+      `[[fleet.job]] ${job.name} combines sweep with namespace/namespaces; a sweep stays local ` +
+      `(it would multiply federated calls under the owner's identity)`
+    );
+  }
+  return undefined;
+}
+
+/** `fleetSweepProblem` over a list, throwing the first problem (the pack-fragment check's shape). */
 export function validateFleetSweepJobs(jobs: readonly NimbusFleetJobToml[]): void {
   for (const job of jobs) {
-    if (job.sweep === null) continue;
-    const { kind } = job.sweep;
-    const param = sweepParamFor(job.agent, kind);
-    if (param === null) {
-      const reason = sweepSupportFor(job.agent)?.reason;
-      throw new FleetConfigError(
-        `[[fleet.job]] ${job.name} agent "${job.agent}" cannot sweep "${kind}"` +
-          (reason === null || reason === undefined ? "" : `: ${reason}`),
-      );
-    }
-    if (Object.hasOwn(job.params, param)) {
-      throw new FleetConfigError(
-        `[[fleet.job]] ${job.name} sets ${param} and sweep = "${kind}"; the sweep supplies ${param}`,
-      );
-    }
-    if (FEDERATION_PARAMS.some((k) => Object.hasOwn(job.params, k))) {
-      throw new FleetConfigError(
-        `[[fleet.job]] ${job.name} combines sweep with namespace/namespaces; a sweep stays local ` +
-          `(it would multiply federated calls under the owner's identity)`,
-      );
-    }
+    const problem = fleetSweepProblem(job);
+    if (problem !== undefined) throw new FleetConfigError(problem);
   }
 }

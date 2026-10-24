@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Logger } from "pino";
-import { DEFAULT_FLEET_CONFIG, type NimbusFleetJobToml } from "../config/fleet-toml.ts";
+import {
+  DEFAULT_FLEET_CONFIG,
+  type FleetDroppedJob,
+  type NimbusFleetJobToml,
+} from "../config/fleet-toml.ts";
+import type { LayerRef } from "../config/layered-merge.ts";
 import type { FleetScheduler } from "./fleet-scheduler.ts";
 import { type FleetLoad, FleetSupervisor } from "./fleet-supervisor.ts";
 
@@ -16,12 +23,28 @@ const job = (name: string): NimbusFleetJobToml => ({
 const load = (over: Partial<FleetLoad["config"]> = {}, jobs: string[] = ["a"]): FleetLoad => ({
   config: { ...DEFAULT_FLEET_CONFIG, enabled: true, ...over },
   jobs: jobs.map(job),
+  origins: new Map(),
+  disabled: [],
+  dropped: [],
   configError: false,
 });
 const disabled = (): FleetLoad => ({
   config: { ...DEFAULT_FLEET_CONFIG },
   jobs: [],
+  origins: new Map(),
+  disabled: [],
+  dropped: [],
   configError: false,
+});
+const BASE: LayerRef = { kind: "base", id: "base", path: join(tmpdir(), "nimbus.toml") };
+const drop = (name: string | null, reason = "bad"): FleetDroppedJob => ({
+  name,
+  layer: BASE,
+  reason,
+});
+const withDrops = (dropped: FleetDroppedJob[], jobs: string[] = ["a"]): FleetLoad => ({
+  ...load({}, jobs),
+  dropped,
 });
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -278,5 +301,61 @@ describe("FleetSupervisor", () => {
     expect(h.errors).toHaveLength(1);
     expect(h.sup.current().scheduler).toBeUndefined();
     expect(h.sup.current().jobs.map((j) => j.name)).toEqual(["a"]);
+  });
+  describe("dropped jobs", () => {
+    const dropLines = (errors: unknown[]): string[] =>
+      errors
+        .map((e) => (e as unknown[])[1])
+        .filter((m): m is string => typeof m === "string" && m.includes("dropped"));
+
+    test("boot logs each dropped job once", () => {
+      const h = harness(withDrops([drop("x", "reason x"), drop(null, "reason y")]));
+      expect(dropLines(h.errors)).toEqual([
+        `[fleet] job "x" dropped (base base, ${BASE.path}): reason x`,
+        `[fleet] job "(unnamed)" dropped (base base, ${BASE.path}): reason y`,
+      ]);
+      expect((h.errors[0] as unknown[])[0]).toEqual({
+        job: "x",
+        layer: "base",
+        layerId: "base",
+        file: BASE.path,
+        reason: "reason x",
+      });
+    });
+
+    test("a reload that changes drops logs the new ones", async () => {
+      const h = harness(withDrops([drop("x")]));
+      h.bump(withDrops([drop("x"), drop("y")]));
+      expect(await h.sup.check()).toBe("reloaded");
+      expect(dropLines(h.errors)).toEqual([
+        `[fleet] job "x" dropped (base base, ${BASE.path}): bad`,
+        `[fleet] job "x" dropped (base base, ${BASE.path}): bad`,
+        `[fleet] job "y" dropped (base base, ${BASE.path}): bad`,
+      ]);
+    });
+
+    test("an unrelated edit does not re-log drops", async () => {
+      const h = harness(withDrops([drop("x")]));
+      const before = h.errors.length;
+      h.bump(withDrops([drop("x")]));
+      expect(await h.sup.check()).toBe("unchanged");
+      expect(h.errors).toHaveLength(before);
+    });
+
+    test("current() carries disabled and dropped", async () => {
+      const origin = { layer: BASE, replaces: [] };
+      const h = harness(load());
+      expect(h.sup.current().dropped).toEqual([]);
+      expect(h.sup.current().disabled).toEqual([]);
+      h.bump({
+        ...withDrops([drop("x")]),
+        origins: new Map([["a", origin]]),
+        disabled: [{ name: "off", agent: "catchup", origin }],
+      });
+      expect(await h.sup.check()).toBe("reloaded");
+      expect(h.sup.current().dropped.map((d) => d.name)).toEqual(["x"]);
+      expect(h.sup.current().disabled.map((d) => d.name)).toEqual(["off"]);
+      expect(h.sup.current().origins.get("a")).toEqual(origin);
+    });
   });
 });
