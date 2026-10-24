@@ -322,7 +322,10 @@ export function registryIndexSigningBytes(
  * action bundles this package and runs under the runner's Node, which may not have it.
  */
 export function verifyRegistryIndexSelf(index: RegistryIndex): Promise<void> {
-  return new Promise((resolve) => resolve(assertRegistryIndexSelf(index)));
+  return new Promise((resolve) => {
+    assertRegistryIndexSelf(index);
+    resolve();
+  });
 }
 
 function assertRegistryIndexSelf(index: RegistryIndex): void {

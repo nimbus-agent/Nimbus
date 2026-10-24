@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:cb621d97e6c052ac913790d743560a185d78160869053e9e1898aef857a72038
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:eca62c0ab932ab7cccfa61c2d059ef40ddf9f9244521d8c1b96fb59805db1f96
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5312,7 +5312,10 @@ function registryIndexSigningBytes(index) {
   return new TextEncoder().encode(canonicalize(rest));
 }
 function verifyRegistryIndexSelf(index) {
-  return new Promise((resolve) => resolve(assertRegistryIndexSelf(index)));
+  return new Promise((resolve) => {
+    assertRegistryIndexSelf(index);
+    resolve();
+  });
 }
 function assertRegistryIndexSelf(index) {
   let ok;

@@ -57,9 +57,13 @@ export async function buildTestRegistry(
   const versions: Record<string, unknown> = {};
   const entryHashes = new Map<string, string>();
   // Each version writes only under its own directories, so they are built concurrently; the index
-  // entries are then added in the caller's order.
+  // entries are then added in the caller's order. A version listed twice is built once, from its
+  // LAST entry (what the old sequential loop left on disk), so two builds never share one path.
+  const lastByVersion = new Map(opts.versions.map((v) => [v.version, v]));
   const built = await Promise.all(
-    opts.versions.map((v) => buildTestVersion(dir, opts, v, publisherId, publisherKey)),
+    [...lastByVersion.values()].map((v) =>
+      buildTestVersion(dir, opts, v, publisherId, publisherKey),
+    ),
   );
   for (const b of built) {
     entryHashes.set(b.version, b.entryHash);

@@ -506,8 +506,10 @@ export function explainConfig(
       ? explainWhole(plain, arrays, env, notes)
       : explainPath(plain, arrays, path, env, notes);
 
-  notes.push(...packNotes(snap, reader.profile.name));
-  notes.push(...fleetJobNotes(snap.doc.sections, path, opts.fleetJobCheck));
+  notes.push(
+    ...packNotes(snap, reader.profile.name),
+    ...fleetJobNotes(snap.doc.sections, path, opts.fleetJobCheck),
+  );
   if (opts.agentVisibilityNotes !== undefined && isAgentsPath(path)) {
     notes.push(...opts.agentVisibilityNotes());
   }

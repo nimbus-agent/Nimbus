@@ -101,11 +101,21 @@ export const REDACT_VALUE_PATTERNS: ReadonlyArray<RegExp> = [
  * quoting `api_key=plainsecret` or a URL's `?access_token=…`. The label goes too.
  */
 const CREDENTIAL_LABELS: ReadonlySet<string> = new Set([
-  ...["apikey", "api_key", "api-key"],
-  ...["accesstoken", "access_token", "access-token"],
-  ...["refreshtoken", "refresh_token", "refresh-token"],
-  ...["clientsecret", "client_secret", "client-secret"],
-  ...["secret", "password", "passwd"],
+  "apikey",
+  "api_key",
+  "api-key",
+  "accesstoken",
+  "access_token",
+  "access-token",
+  "refreshtoken",
+  "refresh_token",
+  "refresh-token",
+  "clientsecret",
+  "client_secret",
+  "client-secret",
+  "secret",
+  "password",
+  "passwd",
 ]);
 
 /** A label-shaped word (at most one `_`/`-` join) and its `=`/`:` separator. */
