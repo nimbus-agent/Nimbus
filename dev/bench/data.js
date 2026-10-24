@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792829986648,
+  "lastUpdate": 1792830505552,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "672901010c8d3595020d236597eab3e1854d5943",
-          "message": "chore: release main (#1066)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.23.0</summary>\n\n##\n[1.23.0](https://github.com/nimbus-agent/Nimbus/compare/v1.22.0...v1.23.0)\n(2026-08-07)\n\n\n### Features\n\n* **gateway:** invoke read-only agents over the HTTP API, recorded in\nthe egress ledger\n([#1063](https://github.com/nimbus-agent/Nimbus/issues/1063))\n([4b4bedb](https://github.com/nimbus-agent/Nimbus/commit/4b4bedb4e000f79d63f2cddbbda2e2d92006a51e))\n* **gateway:** ownership graph derived from already-indexed blame data\n([#1064](https://github.com/nimbus-agent/Nimbus/issues/1064))\n([82c03d2](https://github.com/nimbus-agent/Nimbus/commit/82c03d27339290d11276f65cec795c9975432647))\n* **gateway:** scope the HTTP API bearer tokens\n([#1062](https://github.com/nimbus-agent/Nimbus/issues/1062))\n([826b76a](https://github.com/nimbus-agent/Nimbus/commit/826b76a1a5352ac226bfcd3c6a88b901d6afe33a))\n\n\n### Bug Fixes\n\n* **gateway:** serve the admin console and OpenAPI doc from a compiled\nbinary ([#1058](https://github.com/nimbus-agent/Nimbus/issues/1058))\n([36abf19](https://github.com/nimbus-agent/Nimbus/commit/36abf192457984a42e2d4e74b984603d51fbb376))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-07T12:20:41+03:00",
-          "tree_id": "f4bdb9968a4dd8f86891a31022efee31d53e9aa1",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/672901010c8d3595020d236597eab3e1854d5943"
-        },
-        "date": 1786095142963,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 326.02581155000223,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.64241410000324,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 275.9150742500022,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0d932de0b276a987aadec861b347d69c6889bbe3",
+          "message": "feat(fleet): a bad fleet job drops only itself, and enabled = false disables one (#1752)\n\n## Summary\n\nRole packs, Project 1, PR 4 of 5: fleet job merging.\n\n- **Each fleet job knows its layer.** A `[[fleet.job]]` merged across\nlayers (pack < `nimbus.toml` < profile) now records which lower layers\nit replaced. `fleet list` and `config explain fleet.job.<name>` name the\nlayer each job came from.\n- **`enabled = false` silences a job, including a pack's.** The owner\nwrites `[[fleet.job]] name = \"<same>\"` and `enabled = false` in their\nown file. That stub is always valid, even when nothing below it defines\nthe name, for example after its pack is removed. An orphan stub is\ninert: it is not an error and not a dropped job, and it is shown as\n\"disables nothing\".\n- **A bad job drops only itself.** Before this PR, one bad\n`[[fleet.job]]` disabled the whole fleet. Now each of these drops only\nthat job, in any layer, and the rest run: a missing `agent` or\n`interval_seconds`, an ineligible agent, a bad sweep, `digest_min_delta`\nbelow 1, sweep combined with federation params, or a duplicate name\nwithin one file (the later entry is dropped). A dropped override never\nbrings back the job it replaced. **A bad `[fleet]` table still turns the\nfleet off,** as before.\n- **Drops are reported everywhere the spec asks**, with their layer and\nfile:\n  - at error in the boot and reload log;\n  - in `fleet status`;\n  - in `nimbus doctor`;\n- in `diag.snapshot` `configLayers.droppedFleetJobs`, as basenames only,\nbecause `diag.snapshot` is LAN-callable and renderer-exposed;\n- in `config explain`, which runs the loader's own `resolveFleetJobs`,\nso it cannot disagree with it.\n- `fleet run <job>` on a disabled or dropped job says so, instead of \"no\nsuch fleet job\".\n\n**Seam:** `config/` cannot import `fleet/` or `ipc/`, so the\nagent-eligibility and sweep-support check is injected as a\n`FleetJobChecker`. This is the same shape `pack-settable.ts` uses for\nits `PackJobChecker`.\n\n## Behaviour changes worth knowing\n\n- `enabled` is now a reserved job key. Before, a job's `enabled` line\nwas passed to the agent as a param. Not breaking: no user has to change\nanything.\n- Agent eligibility is now checked when the config loads, not only when\na job runs. A leftover job that names an agent that is no longer\nfleet-eligible therefore logs an error and makes `nimbus doctor` warn,\neven while `[fleet] enabled = false`.\n- Within one block, the strict parser may report a different error first\nthan before. For example, `digest_min_delta` is now checked after `name`\nand `enabled`. Every message text is unchanged.\n- `fleet status`'s `jobsConfigured` counts scheduled jobs only. Disabled\njobs and drops are reported beside it.\n- `fleet run <stubbed-job>` refuses with `-32602`, which the CLI maps to\nits not-found exit code. The message says the job is disabled.\n- `config explain` reads the files as they are now. `fleet status` and\n`diag.snapshot` read the running fleet. The two can differ for up to the\n5-second reload interval.\n\n## Not included\n\n- `[agents] visible` and the catalog: PR 5.\n- Pack install and remove: Project 3.\n- Follow-up: the CLI prints `config explain` notes without stripping\ncontrol characters. The new fleet-job notes and the existing pack notes\nare both affected.\n\n## Verification\n\n- `bun run preflight:fast` passed at the final commit. `bun run\ntypecheck` is clean.\n- Affected test trees: 8646 pass, 0 fail across config, fleet, packs,\nipc, platform, cli commands, and the fleet and config integration tests.\nThat run was before the last review fix-up. After the fix-up, the\ncovering suites passed again (1036/1036).\n- A new integration test,\n`test/integration/fleet/fleet-job-merging.test.ts`, covers spec § 7: a\nuser stub silences a pack job without a restart, the stub goes inert\nwhen the pack is removed, a broken user job does not stop a pack job,\nand job state survives stubbing and unstubbing.\n- Coverage-floor gates are CI-Linux-only and were not run locally.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Fleet jobs resolve independently across configuration layers: valid\njobs can continue when others are invalid, and higher-layer jobs replace\nsame-named jobs as a whole.\n* Disable a job live with an `enabled = false` stub; removing the stub\nresumes the job with its retained state.\n* Fleet status, job lists, configuration explanations, diagnostics, and\ndoctor checks now report job layers, disabled jobs, and dropped jobs\nwith reasons.\n* Attempts to run disabled or dropped jobs now return an explanatory\nerror.\n\n* **Bug Fixes**\n* Invalid fleet job entries no longer prevent other valid jobs from\nrunning. Invalid `[fleet]` tables still disable the fleet. A dropped\noverride does not restore the lower-layer job it replaced.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-24T08:18:39Z",
+          "tree_id": "cc59d855df4f7592e058b942b0a5cbb1badb2761",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0d932de0b276a987aadec861b347d69c6889bbe3"
+        },
+        "date": 1792830502126,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 223.88645754999706,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 234.3049567000002,
             "unit": "ms"
           }
         ]
