@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792842813079,
+  "lastUpdate": 1792848049573,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8bad09730c1fd5c26a0cdab625995f6a75f2b863",
-          "message": "chore: release main (#1069)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.24.0</summary>\n\n##\n[1.24.0](https://github.com/nimbus-agent/Nimbus/compare/v1.23.0...v1.24.0)\n(2026-08-07)\n\n\n### Features\n\n* **gateway:** read the ownership graph through the agents.ownership\nbrief ([#1067](https://github.com/nimbus-agent/Nimbus/issues/1067))\n([e898a1e](https://github.com/nimbus-agent/Nimbus/commit/e898a1e9e204c8720050b44b73b37c52611690fc))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-07T15:41:35+03:00",
-          "tree_id": "b92d454fd66d207bc29e981bcc846bb235007844",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8bad09730c1fd5c26a0cdab625995f6a75f2b863"
-        },
-        "date": 1786107178295,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.3556513500051,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.4924528000003,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 217.01416494999793,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e3ae39e6975d6514d3b242d966b305988e110053",
+          "message": "feat(registry-format): role-pack manifest format and registry packs entry (#1762)\n\nRole packs, Project 3 (the pack itself), PR 1 of 3. This adds the format\nonly: nothing in the gateway reads it yet. PR 2 adds install and remove,\nthe `pack.install` approval and the CLI on top of it.\n\n## What it adds (`packages/registry-format`)\n\n- **`role-pack.ts`.** This file parses and validates a role-pack\nmanifest.\n- **Functions:** `parseRolePackManifest(text)`,\n`parseRolePackManifestValue(raw)` (for static JSON imports) and\n`rolePackDigest(m)`.\n- **Fields:** schema 1, plus `id`, `name`, `version`, `description`,\n`roles`, `suggestedConnectors`, `members` and `defaults`. `defaults`\nholds the pack-layer TOML text.\n- **Strict:** unknown fields are refused, as is a non-plain or\ninheriting object. Lists are capped and may not repeat an entry.\n- **Size caps:** `defaults` is limited to 65,536 UTF-8 bytes and the\nwhole document to 128 KiB.\n- **Errors:** every failure is a `RegistryError` with code\n`ERR_REGISTRY_ROLE_PACK_INVALID` and the field path, never a bare\n`SyntaxError`.\n- **The digest** is SHA-256 over the canonical JSON of the parsed\nmanifest. Formatting and key order never change it.\n- **`readRegistryPacks(index)`.** This reads the registry index's\noptional `packs` map and never throws on bad data.\n- `parseRegistryIndex` is deliberately unchanged. It already passes\nunknown top-level keys through untouched, and the signature is checked\nover the object it returns, so parsing `packs` into that object would\nbreak signature checks.\n- A malformed `packs` map is dropped whole and the reason is returned,\nso a bad pack entry can never stop an extension install or update.\n- Pack entries mirror the extension entry shape: canonical\n`packs/<id>/<version>/manifest.json`, sha256, size, channel,\npublishedAt. They have no `publisher` key, because who may sign a pack\nis the trust layer's decision.\n- **`semver.ts`.** `isValidSemver` moved here to avoid an import cycle.\n`index-format.ts` re-exports it unchanged.\n- **A gateway test** pins `ROLE_PACK_ID_RE` equal to the gateway's\n`PACK_ID_RE`.\n\n## Fix found in review\n\n`nimbus registry maintain` (add/remove) and the registry action's `sign`\nmode rebuilt the next index from a fixed list of fields. Any other\ntop-level field, `packs` included, was silently dropped on the next\nre-sign, and the signature still verified. Both now carry the previous\nindex forward, and each has a test that fails without the fix.\n\nThe registry action's `dist/index.js` is rebuilt under the recorded Bun\n1.4.3 (`audit:action-dist`).\n\n## Verification\n\n- `bun run preflight:fast`: passed.\n- Tests: `bun test packages/registry-format\npackages/cli/src/commands/registry-maintain` (392 pass) and the\nregistry-action suite (91 pass).\n- Line coverage is 100% on `role-pack.ts`, `index-format.ts` and\n`semver.ts`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added support for reading role-pack listings from signed registry\nindexes and validating role-pack manifests, including their metadata,\ncontent size, and defaults.\n* Registry pack entries are checked for valid versions, identifiers,\npaths, and digests.\n\n* **Bug Fixes**\n* Registry updates now retain existing index fields, such as role-pack\nlistings, while updating and re-signing the index.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-24T16:11:25+03:00",
+          "tree_id": "b3ba74d8e4cb0e94be6e1699f3bd5e01be24e914",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e3ae39e6975d6514d3b242d966b305988e110053"
+        },
+        "date": 1792848045592,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 259.7698904499986,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 263.60498299999637,
             "unit": "ms"
           }
         ]
