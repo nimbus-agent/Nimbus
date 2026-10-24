@@ -130,7 +130,7 @@ function installedLine(p: InstalledPackRow): string {
   if (p.updateAvailable) {
     update = `  [update available${p.bundledVersion === undefined ? "" : `: ${clean(p.bundledVersion)}`}]`;
   }
-  return `  ${clean(p.id)}  ${clean(p.name)}  ${clean(version)}  (${p.source})${update}`;
+  return `  ${clean(p.id)}  ${clean(p.name)}  ${clean(version)}  (${clean(p.source)})${update}`;
 }
 
 function listLines(r: PackListResult): string[] {
@@ -216,7 +216,9 @@ async function doInstall(args: string[], io: PackIo, call: PackCall): Promise<nu
     return 1;
   }
   const r = await call<PackInstallResult>("pack.install", target.params);
-  io.out(`${clean(r.id)} ${clean(r.version)}: ${OUTCOME_TEXT[r.outcome]}.\n`);
+  io.out(
+    `${clean(r.id)} ${clean(r.version)}: ${OUTCOME_TEXT[r.outcome] ?? clean(String(r.outcome))}.\n`,
+  );
   return 0;
 }
 

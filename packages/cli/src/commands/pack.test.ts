@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { type PackIo, runPackWith } from "./pack.ts";
+import { type PackIo, runPack, runPackWith } from "./pack.ts";
 
 interface Harness {
   readonly io: PackIo;
@@ -191,5 +191,155 @@ describe("pack.ts source pin", () => {
     expect(src).not.toContain("withGatewayIpc(");
     expect(src).not.toContain("registerConsentFor(");
     expect(src).not.toContain("registerDefaultConsentHandler(");
+  });
+});
+
+describe("nimbus pack branches", () => {
+  const installOk = { outcome: "installed", id: "x", version: "1.0.0", snapshotVersion: 1 };
+
+  it("-y is refused like --yes", async () => {
+    const h = harness();
+    expect(await runPackWith(["install", "pm", "-y"], h.io, h.call)).toBe(1);
+    expect(h.stderr.join("")).toContain("no --yes");
+    expect(h.calls).toEqual([]);
+  });
+
+  it("an install with no target prints usage and exits 2", async () => {
+    const h = harness();
+    expect(await runPackWith(["install"], h.io, h.call)).toBe(2);
+    expect(h.stderr.join("")).toContain("Usage: nimbus pack");
+    expect(h.calls).toEqual([]);
+  });
+
+  it("--file with no value (or a flag as its value) prints usage and exits 2", async () => {
+    const a = harness();
+    expect(await runPackWith(["install", "--file"], a.io, a.call)).toBe(2);
+    const b = harness();
+    expect(await runPackWith(["show", "--file", "--json"], b.io, b.call)).toBe(2);
+    expect(b.calls).toEqual([]);
+  });
+
+  it("show --file over the size limit errors without reading", async () => {
+    const h = harness({ size: 131073 });
+    expect(await runPackWith(["show", "--file", "p.toml"], h.io, h.call)).toBe(1);
+    expect(h.stderr.join("")).toContain("131072");
+    expect(h.calls).toEqual([]);
+  });
+
+  it("a stat failure is reported and exits 1", async () => {
+    const h = harness();
+    const io: PackIo = {
+      ...h.io,
+      statSize: () => {
+        throw new Error("ENOENT: no such file");
+      },
+    };
+    expect(await runPackWith(["install", "--file", "gone.toml"], io, h.call)).toBe(1);
+    expect(h.stderr.join("")).toContain("ENOENT");
+    expect(h.calls).toEqual([]);
+  });
+
+  it("show --file sends fileText and filePath; show --json prints the raw result", async () => {
+    const shown = { prompt: "P", mode: "install" };
+    const h = harness({ fileText: "T", reply: () => shown });
+    expect(await runPackWith(["show", "--file", "p.toml", "--json"], h.io, h.call)).toBe(0);
+    expect(h.calls[0]?.method).toBe("pack.show");
+    expect((h.calls[0]?.params as { fileText: string } | undefined)?.fileText).toBe("T");
+    expect(JSON.parse(h.stdout.join(""))).toEqual(shown);
+  });
+
+  it("show of a pack that is not installed prints only the prompt", async () => {
+    const h = harness({ reply: () => ({ prompt: "P", mode: "install" }) });
+    expect(await runPackWith(["show", "pm"], h.io, h.call)).toBe(0);
+    expect(h.stdout.join("")).toBe("P\n");
+  });
+
+  it("an unknown install outcome is printed cleaned, not as undefined", async () => {
+    const h = harness({ reply: () => ({ ...installOk, outcome: "wei\u001b[2Jrd" }) });
+    expect(await runPackWith(["install", "x"], h.io, h.call)).toBe(0);
+    const out = h.stdout.join("");
+    expect(out).toContain("wei[2Jrd");
+    expect(out).not.toContain("undefined");
+    expect(out).not.toContain("\u001b");
+  });
+
+  it("every known outcome has its own text", async () => {
+    for (const [outcome, text] of [
+      ["updated", "updated"],
+      ["repaired", "repaired"],
+    ] as const) {
+      const h = harness({ reply: () => ({ ...installOk, outcome }) });
+      await runPackWith(["install", "x"], h.io, h.call);
+      expect(h.stdout.join("")).toContain(`: ${text}.`);
+    }
+  });
+
+  it("remove with no id prints usage and exits 2; a non-Error throw is stringified", async () => {
+    const a = harness();
+    expect(await runPackWith(["remove"], a.io, a.call)).toBe(2);
+    const b = harness({
+      reply: () => {
+        throw "plain string failure";
+      },
+    });
+    expect(await runPackWith(["remove", "pm"], b.io, b.call)).toBe(1);
+    expect(b.stderr.join("")).toContain("plain string failure");
+  });
+
+  it("list renders versionUnknown, a missing bundledVersion, listError, skipped, and a cleaned source", async () => {
+    const h = harness({
+      reply: () => ({
+        profile: "p\u001b[2J",
+        installed: [
+          {
+            id: "a",
+            name: "A",
+            version: "0",
+            source: "fi\u001b[2Jle",
+            updateAvailable: true,
+            versionUnknown: true,
+          },
+        ],
+        available: [],
+        skipped: 1,
+        listError: "bad\u001b[2J json",
+      }),
+    });
+    expect(await runPackWith(["list"], h.io, h.call)).toBe(0);
+    const out = h.stdout.join("");
+    expect(out).toContain("version unknown");
+    expect(out).toContain("[update available]");
+    expect(out).toContain("(fi[2Jle)");
+    expect(out).toContain("could not read the installed list: bad[2J json");
+    expect(out).toContain("1 entry skipped.");
+    expect(out).not.toContain("\u001b");
+    expect(out).toContain("Available:\n  (none)");
+  });
+
+  it("list says (none) for an empty installed list and pluralises skipped", async () => {
+    const h = harness({
+      reply: () => ({ profile: "d", installed: [], available: [], skipped: 3 }),
+    });
+    await runPackWith(["list"], h.io, h.call);
+    const out = h.stdout.join("");
+    expect(out).toContain("Installed:\n  (none)");
+    expect(out).toContain("3 entries skipped.");
+  });
+});
+
+describe("runPack", () => {
+  it("an unknown subcommand writes usage to stderr and throws CliExit(2)", async () => {
+    const chunks: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((s: string) => {
+      chunks.push(String(s));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await expect(runPack(["bogus"])).rejects.toMatchObject({ code: 2 });
+    } finally {
+      process.stderr.write = orig;
+    }
+    expect(chunks.join("")).toContain("Usage: nimbus pack");
   });
 });
