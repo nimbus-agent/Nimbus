@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792826942825,
+  "lastUpdate": 1792829986648,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "82c03d27339290d11276f65cec795c9975432647",
-          "message": "feat(gateway): ownership graph derived from already-indexed blame data (#1064)\n\nCloses the last unstarted **Spine S1 (Local Brain)** item: an ownership\ngraph derived entirely from data the index already holds. No new\nconnectors, no LLM, no network egress, no HTTP route, no new security\ninvariant.\n\n## What it builds\n\n`person → source_file`, `person → directory` and `person → service`\nedges scored by **recency-weighted git-blame line share**, plus the two\nstructural edges that make the service rollup possible: `workspace\n--tracks_remote--> repo` (from the local `git` origin remote) and `repo\n--belongs_to--> service` (from `[ci.service.<id>]` config).\n\nNew subsystem `packages/gateway/src/ownership/` (5 modules), a debounced\nsingle-flight pass on the existing post-connector-sync seam, and schema\n**V51**.\n\n## The roadmap row's premise needed correcting\n\nThe roadmap says ownership is \"derived from the existing GitHub +\nPagerDuty index\". Verified against the tree, those are the *weakest*\navailable sources:\n\n| Signal the row implies | Reality |\n| --- | --- |\n| PagerDuty services / teams / on-call | **Not indexed.**\n`pagerduty-sync.ts` fetches only `GET /incidents`; no assignee. |\n| GitHub PR reviewers | **Not indexed.** `extractPrMetadataForIndex`\nemits no reviewer field. |\n| GitHub changed-file paths | **Not indexed** — the same gap that caps\n`nimbus decisions` at 0.86 confidence. |\n| CODEOWNERS | **Not indexed anywhere.** |\n\nThe signal that *is* genuinely indexed and genuinely about ownership is\n**`git_blame_line` (V32)**, which the row never mentions. So this builds\n**code ownership as the primary graph, with service ownership as a\ntransitive rollup over it**, and does not attempt team/rotation-level\nownership — no such data exists in the index. That stays with the IDP\nconnectors demoted to S5.\n\nClosing the rollup also required a bridge that did not exist:\n`[ci.service.<id>]` keys on `github:owner/name` URNs while blame keys on\nabsolute local `repo_root` paths, and nothing mapped between them. Now\nderived from the origin remote via the same local `git` the blame sync\nalready invokes.\n\n## ⚠️ V50 is NOT a backfillable slot\n\n`CURRENT_SCHEMA_VERSION` goes 49 → **51**. The 49→50 step is a\ndeliberate **no-op** that exists only so the ladder can reach 51.\n\n**It cannot be backfilled later.** The runner applies a step only while\n`user_version === fromVersion` (`migrations/runner.ts:609`), so a\ndatabase already at V51 never re-enters 49→50. Any parallel work that\nplanned to claim V50 — including the in-flight HTTP-agents `resolve_key`\nwork — **must take a new version (V52+)**, or fresh installs and\nupgraded installs silently diverge.\n\n## Honesty limits, stated per-read rather than absorbed\n\nOwnership is **authorship-derived**: blame measures who wrote lines, not\nwho is accountable. Every limit is backed by a counter in\n`ownership_pass_state` so it is reportable rather than implied — no\ngit-aware `[[filesystem.roots]]` means legitimately empty;\n`MAX_BLAME_FILES = 400` per root per tick makes early runs partial;\nlock/generated files are excluded by default `ignore_globs` with the\nexcluded count recorded; service rollup needs both a config declaration\nand a matching remote.\n\n## Scope boundaries\n\n- **No read surface.** `ownership.*` IPC, `nimbus owners`, and the Tauri\nallowlist are deliberately **PR B**.\n- **No built-in agent** and no touch of `AGENTS_RPC_HANDLERS`.\n- **`packages/gateway/src/graph/` is not modified** — its helpers are\ncalled, not changed.\n- Untouched, for the parallel session: `ipc/agents-rpc.ts`,\n`ipc/http-*`, `egress/*`, `cli/src/commands/prove.ts`,\n`check-nimbus-invariants.ts`, and **`security-invariants.test.ts`** (no\nHTTP route added, so `WRITE_ROUTE_ALLOWLIST` stays at 12).\n\n## Verification\n\n20 static preflight gates green; `test:ci` **21,773 pass / 0 fail**;\nownership suite 78 pass; suite re-run from a second working directory\n(no CWD-relative assumptions); merges with zero conflicts.\n\n**One gate could not be run locally:** `audit:coverage-floor`.\n`bunfig.toml:16` sets `coverage = false`, which suppresses lcov even\nwith an explicit flag — the floor is Linux/CI-authoritative by design.\nCI is the authority; `repo-remote.ts` is the file to watch if it\ncomplains.\n\nEvery guard in this branch was **red-proved** — broken, observed\nfailing, reverted byte-exact — after an early round found a test that\npassed whether the feature worked or not.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-07T03:39:40Z",
-          "tree_id": "02d0e57d9401ae465f33868e7a932c6bb4c80996",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/82c03d27339290d11276f65cec795c9975432647"
-        },
-        "date": 1786074666242,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.8800759499965,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 317.9111483499975,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 282.64046849999943,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8a0800f0534594c4a4e305c481a727f63320e724",
+          "message": "chore: release main (#1755)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.3.1</summary>\n\n##\n[10.3.1](https://github.com/nimbus-agent/Nimbus/compare/v10.3.0...v10.3.1)\n(2026-10-24)\n\n\n### Bug Fixes\n\n* **admin-console:** mount views as DOM nodes instead of innerHTML\n(Sonar S5696)\n([#1749](https://github.com/nimbus-agent/Nimbus/issues/1749))\n([d33a2f1](https://github.com/nimbus-agent/Nimbus/commit/d33a2f1db04038404d54d4b6701f1ca47b8b0bee))\n* **deps:** clear main's red Security run (withdrawn braces advisory,\ntokio + clipboard-win)\n([#1748](https://github.com/nimbus-agent/Nimbus/issues/1748))\n([baba9ce](https://github.com/nimbus-agent/Nimbus/commit/baba9cebe4bdab6efc1dbfdba4abe54fa667b669))\n* **deps:** clear the 2026-10-24 advisories (zod, body-parser, undici,\nhttp-cache-semantics, fast-uri, nodemailer)\n([#1754](https://github.com/nimbus-agent/Nimbus/issues/1754))\n([a2b5dda](https://github.com/nimbus-agent/Nimbus/commit/a2b5dda2c1334491aadfa5604eca32bdddb725c6))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-24T11:09:26+03:00",
+          "tree_id": "d3369411d55642fbc0c0129d1fe3405e017580a9",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8a0800f0534594c4a4e305c481a727f63320e724"
+        },
+        "date": 1792829982873,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 275.1769834999994,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 275.9150742500022,
             "unit": "ms"
           }
         ]
