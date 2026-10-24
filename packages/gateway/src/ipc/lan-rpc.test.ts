@@ -488,6 +488,7 @@ describe("demo over LAN (I41 clause 5 — the demo seeder is local CLI only)", (
 test("catalog.list is LAN-forbidden", () => {
   const peer = { peerId: "p", writeAllowed: true };
   expect(() => checkLanMethodAllowed("catalog.list", peer)).toThrow(/not callable over LAN/);
+  expect(() => checkLanMethodAllowed("agents.ownership", peer)).not.toThrow(); // negative control
 });
 
 describe("tour and locality over LAN (nimbus wow)", () => {
