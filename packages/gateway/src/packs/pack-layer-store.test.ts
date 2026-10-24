@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -19,6 +20,7 @@ import {
 } from "../config/layered-config.ts";
 import { loadNimbusDecisionsFromConfigDir } from "../config/nimbus-toml.ts";
 import { PACK_FRAGMENT_MAX_BYTES } from "../config/pack-settable.ts";
+import { writeUtf8FileAtomicReplace } from "../config/toml-section-writer.ts";
 import {
   createPackLayerStore,
   PackLayerRefusedError,
@@ -477,5 +479,109 @@ describe("read — hand-edited pack files", () => {
     unlinkSync(packFile("pm"));
     mkdirSync(packFile("pm"));
     expect(store.read("default").skipped).toEqual([{ packId: "pm", reason: "not a regular file" }]);
+  });
+});
+
+describe("record sidecar and checkPackLayer", () => {
+  const recordFile = (id: string, profile = "default") =>
+    join(profileDir(profile), `${id}.pack.json`);
+
+  test("checkPackLayer returns the same problems setPackLayer would throw, and writes nothing", () => {
+    const store = wired();
+    store.setPackLayer("default", "a", CONF("0.7"));
+    const before = readdirSync(profileDir());
+    const cases: Array<{
+      profile: string;
+      id: string;
+      fragment: string;
+      reason: "invalid" | "conflict";
+    }> = [
+      { profile: "default", id: "b", fragment: CONF("0.8"), reason: "conflict" },
+      { profile: "default", id: "c", fragment: "[fleet]\nbogus = 1\n", reason: "invalid" },
+      { profile: "default", id: "Bad Id", fragment: CONF("0.7"), reason: "invalid" },
+      { profile: "bad/profile", id: "d", fragment: CONF("0.7"), reason: "invalid" },
+    ];
+    for (const c of cases) {
+      const check = store.checkPackLayer(c.profile, c.id, c.fragment);
+      expect(check.ok).toBe(false);
+      if (check.ok) continue;
+      expect(check.reason).toBe(c.reason);
+      const err = refusal(() => store.setPackLayer(c.profile, c.id, c.fragment));
+      expect(err.reason).toBe(c.reason);
+      expect(err.problems).toEqual(check.problems);
+    }
+    expect(readdirSync(profileDir()).sort()).toEqual(before.sort());
+    expect(store.checkPackLayer("default", "ok", CONF("0.7"))).toEqual({ ok: true });
+  });
+
+  test("checkPackLayer reports an unreadable active.json", () => {
+    const store = wired();
+    writeActive("{");
+    expect(store.checkPackLayer("default", "pm", CONF("0.5"))).toEqual({
+      ok: false,
+      reason: "store",
+      problems: ["active.json is not valid JSON"],
+    });
+    expect(refusal(() => store.setPackLayer("default", "pm", CONF("0.5"))).reason).toBe("store");
+  });
+
+  test('removePackLayer with an unreadable active.json throws reason "store"', () => {
+    const store = wired();
+    writeActive("{");
+    expect(refusal(() => store.removePackLayer("default", "pm")).reason).toBe("store");
+    expect(refusal(() => store.removePackLayer("default", "nope")).reason).toBe("store");
+  });
+
+  test("setPackLayer with a record writes toml, then record, then active.json", () => {
+    const store = wired();
+    store.setPackLayer("default", "pm", CONF("0.55"), { record: '{"v":1}\n' });
+    expect(existsSync(packFile("pm"))).toBe(true);
+    expect(existsSync(recordFile("pm"))).toBe(true);
+    expect(readActive()).toEqual({ version: 1, packs: ["pm"] });
+    expect(store.readPackRecord("default", "pm")).toBe('{"v":1}\n');
+  });
+
+  test("write order: a failure writing the record leaves the pack unlisted", () => {
+    // The real writer replaces even a directory, so the failure is injected at the writer.
+    const store = createPackLayerStore({
+      configDir: dir,
+      writeFile: (path, content) => {
+        if (path.endsWith(".pack.json")) throw new Error("disk full");
+        writeUtf8FileAtomicReplace(path, content);
+      },
+    });
+    expect(() => store.setPackLayer("default", "pm", CONF("0.55"), { record: "{}" })).toThrow();
+    expect(existsSync(activeFile())).toBe(false);
+  });
+
+  test("removePackLayer deletes the record too, delisting first", () => {
+    const store = wired();
+    store.setPackLayer("default", "pm", CONF("0.55"), { record: "{}" });
+    const r = store.removePackLayer("default", "pm");
+    expect(r.removed).toBe(true);
+    expect(existsSync(packFile("pm"))).toBe(false);
+    expect(existsSync(recordFile("pm"))).toBe(false);
+    expect(readActive()).toEqual({ version: 1, packs: [] });
+  });
+
+  test("removePackLayer on an id that is not installed returns removed false and touches nothing", () => {
+    const store = wired();
+    const r = store.removePackLayer("default", "ghost");
+    expect(r.removed).toBe(false);
+    expect(existsSync(activeFile())).toBe(false);
+  });
+
+  test("readPackLayerText returns the raw on-disk text, undefined when absent", () => {
+    const store = wired();
+    expect(store.readPackLayerText("default", "pm")).toBeUndefined();
+    expect(store.readPackRecord("default", "pm")).toBeUndefined();
+    store.setPackLayer("default", "pm", CONF("0.55"));
+    expect(store.readPackLayerText("default", "pm")).toBe(CONF("0.55"));
+  });
+
+  test("setPackLayer without opts.record writes no record", () => {
+    const store = wired();
+    store.setPackLayer("default", "pm", CONF("0.55"));
+    expect(existsSync(recordFile("pm"))).toBe(false);
   });
 });

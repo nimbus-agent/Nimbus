@@ -30,16 +30,30 @@ import { checkPackFleetJobs } from "./pack-job-check.ts";
 const ACTIVE_FILE = "active.json";
 const ACTIVE_VERSION = 1;
 
+/** Why a layer was refused: the store is unreadable, the input is bad, or it clashes with a pack. */
+export type PackLayerRefusalReason = "store" | "invalid" | "conflict";
+
 /** Every refusal from `setPackLayer`/`removePackLayer`; the message joins `problems`. */
 export class PackLayerRefusedError extends Error {
   readonly problems: readonly string[];
+  readonly reason: PackLayerRefusalReason;
 
-  constructor(problems: readonly string[]) {
+  constructor(problems: readonly string[], reason: PackLayerRefusalReason) {
     super(problems.join("; "));
     this.name = "PackLayerRefusedError";
     this.problems = problems;
+    this.reason = reason;
   }
 }
+
+/** The result of `checkPackLayer`: what `setPackLayer` would refuse, without writing anything. */
+export type PackLayerCheck =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly reason: PackLayerRefusalReason;
+      readonly problems: readonly string[];
+    };
 
 export type PackWriteResult = {
   readonly path: string;
@@ -53,7 +67,19 @@ export type PackWriteResult = {
  * fails at the unlink has already delisted the pack, which is inert.
  */
 export type PackLayerStore = PackLayerSource & {
-  setPackLayer(profile: string, packId: string, fragment: string): PackWriteResult;
+  /** `opts.record` is written beside the layer as `<id>.pack.json`, between the layer and the list. */
+  setPackLayer(
+    profile: string,
+    packId: string,
+    fragment: string,
+    opts?: { readonly record?: string },
+  ): PackWriteResult;
+  /** The refusals `setPackLayer` would throw, as a value; writes nothing. */
+  checkPackLayer(profile: string, packId: string, fragment: string): PackLayerCheck;
+  /** The raw `<id>.pack.json`; undefined when absent or unreadable. */
+  readPackRecord(profile: string, packId: string): string | undefined;
+  /** The raw on-disk `<id>.toml`; undefined when absent or unreadable. */
+  readPackLayerText(profile: string, packId: string): string | undefined;
   removePackLayer(profile: string, packId: string): PackWriteResult & { readonly removed: boolean };
 };
 
@@ -122,9 +148,14 @@ export function createPackLayerStore(opts: {
   configDir: string;
   checkJobs?: PackJobChecker;
   onChange?: (profile: string) => number | null;
+  /** Test seam: the atomic file writer. */
+  writeFile?: (path: string, content: string) => void;
 }): PackLayerStore {
   const configDir = resolve(opts.configDir);
   const checkJobs = opts.checkJobs ?? checkPackFleetJobs;
+  const writeFile =
+    opts.writeFile ??
+    ((path: string, content: string) => writeUtf8FileAtomicReplace(path, content));
   const onChange =
     opts.onChange ??
     ((profile: string): number | null => {
@@ -142,6 +173,9 @@ export function createPackLayerStore(opts: {
     basenameSafeMessage(message, configDir).replace(/\p{Cc}/gu, " ");
   const profileDir = (profile: string): string => join(configDir, "packs", profile);
   const packPath = (profile: string, id: string): string => join(profileDir(profile), `${id}.toml`);
+
+  const recordPath = (profile: string, id: string): string =>
+    join(profileDir(profile), `${id}.pack.json`);
 
   function readActive(profile: string): ActiveList {
     let raw: string;
@@ -230,21 +264,53 @@ export function createPackLayerStore(opts: {
     return { layers, skipped, clean, ids: active.ids };
   }
 
-  function assertNames(profile: string, packId: string): void {
+  function nameProblems(profile: string, packId: string): string[] {
     const problems: string[] = [];
     if (!PROFILE_NAME_RE.test(profile)) problems.push("invalid profile name");
     if (!PACK_ID_RE.test(packId)) problems.push("invalid pack id");
-    if (problems.length > 0) throw new PackLayerRefusedError(problems);
+    return problems;
+  }
+
+  function assertNames(profile: string, packId: string): void {
+    const problems = nameProblems(profile, packId);
+    if (problems.length > 0) throw new PackLayerRefusedError(problems, "invalid");
   }
 
   function activeIds(profile: string): readonly string[] {
     const active = readActive(profile);
-    if (!active.ok) throw new PackLayerRefusedError([active.error]);
+    if (!active.ok) throw new PackLayerRefusedError([active.error], "store");
     return active.ids;
   }
 
+  /** The one check, in write order. A pass carries the listed ids so the writer reads once. */
+  function check(
+    profile: string,
+    packId: string,
+    fragment: string,
+  ): PackLayerCheck & { readonly ids?: readonly string[] } {
+    const names = nameProblems(profile, packId);
+    if (names.length > 0) return { ok: false, reason: "invalid", problems: names };
+    const current = readDetailed(profile);
+    if (current.listError !== undefined) {
+      return { ok: false, reason: "store", problems: [current.listError] };
+    }
+    const parsed = checkPackFragment(fragment, checkJobs);
+    if (!parsed.ok) return { ok: false, reason: "invalid", problems: parsed.problems };
+    const clash = conflicts(packId, parsed.scalars, parsed.jobNames, current.clean);
+    if (clash.length > 0) return { ok: false, reason: "conflict", problems: clash };
+    return { ok: true, ids: current.ids };
+  }
+
+  function readText(path: string): string | undefined {
+    try {
+      return readFileSync(path, "utf8");
+    } catch {
+      return undefined;
+    }
+  }
+
   function writeActive(profile: string, ids: readonly string[]): void {
-    writeUtf8FileAtomicReplace(
+    writeFile(
       join(profileDir(profile), ACTIVE_FILE),
       `${JSON.stringify({ version: ACTIVE_VERSION, packs: ids })}\n`,
     );
@@ -284,19 +350,42 @@ export function createPackLayerStore(opts: {
       }
     },
 
-    setPackLayer(profile: string, packId: string, fragment: string): PackWriteResult {
-      assertNames(profile, packId);
-      const current = readDetailed(profile);
-      if (current.listError !== undefined) throw new PackLayerRefusedError([current.listError]);
-      const check = checkPackFragment(fragment, checkJobs);
-      if (!check.ok) throw new PackLayerRefusedError(check.problems);
-      const clash = conflicts(packId, check.scalars, check.jobNames, current.clean);
-      if (clash.length > 0) throw new PackLayerRefusedError(clash);
-      const ids = current.ids;
+    checkPackLayer(profile: string, packId: string, fragment: string): PackLayerCheck {
+      const r = check(profile, packId, fragment);
+      return r.ok ? { ok: true } : r;
+    },
+
+    readPackRecord(profile: string, packId: string): string | undefined {
+      if (nameProblems(profile, packId).length > 0) return undefined;
+      return readText(recordPath(profile, packId));
+    },
+
+    readPackLayerText(profile: string, packId: string): string | undefined {
+      if (nameProblems(profile, packId).length > 0) return undefined;
+      return readText(packPath(profile, packId));
+    },
+
+    setPackLayer(
+      profile: string,
+      packId: string,
+      fragment: string,
+      opts?: { readonly record?: string },
+    ): PackWriteResult {
+      const checked = check(profile, packId, fragment);
+      if (!checked.ok) throw new PackLayerRefusedError(checked.problems, checked.reason);
+      const ids = checked.ids ?? [];
       const path = packPath(profile, packId);
       mkdirSync(profileDir(profile), { recursive: true });
-      // A crash between the two writes leaves an unlisted file, which is inert.
-      writeUtf8FileAtomicReplace(path, fragment);
+      // Order: layer, record, list. A crash before the list write leaves an unlisted file, which
+      // is inert. On an UPDATE the id is already listed, so a crash between the layer and the
+      // record leaves the new, approved defaults live under the old record. That heals itself:
+      // `pack list` shows the old version and the next install sees a different digest and
+      // prompts as an update. Writing the record first would only give the mirror case (new
+      // record, old layer), which prompts as a repair.
+      writeFile(path, fragment);
+      if (opts?.record !== undefined) {
+        writeFile(recordPath(profile, packId), opts.record);
+      }
       if (!ids.includes(packId)) writeActive(profile, [...ids, packId]);
       return { path, snapshotVersion: onChange(profile) };
     },
@@ -312,11 +401,13 @@ export function createPackLayerStore(opts: {
           ids.filter((id) => id !== packId),
         );
       let deleted = false;
-      try {
-        unlinkSync(path);
-        deleted = true;
-      } catch (err) {
-        if (!isEnoent(err)) throw err;
+      for (const file of [path, recordPath(profile, packId)]) {
+        try {
+          unlinkSync(file);
+          deleted = true;
+        } catch (err) {
+          if (!isEnoent(err)) throw err;
+        }
       }
       const removed = listed || deleted;
       return { path, snapshotVersion: removed ? onChange(profile) : null, removed };
