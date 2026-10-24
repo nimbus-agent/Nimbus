@@ -58,7 +58,13 @@ const RESOLVER_ALLOWED = new Set([
   "ipc/diagnostics-rpc.ts",
 ]);
 
-const CATALOG_IMPORTERS_ALLOWED = new Set(["ipc/catalog-rpc.ts", "ipc/diagnostics-rpc.ts"]);
+// `packs/pack-validate.ts` imports only the pure `normaliseAgentName` to compare a pack's agent names
+// with the catalog; it reads no visibility and gates nothing.
+const CATALOG_IMPORTERS_ALLOWED = new Set([
+  "ipc/catalog-rpc.ts",
+  "ipc/diagnostics-rpc.ts",
+  "packs/pack-validate.ts",
+]);
 
 const AGENTS_LITERAL = /["'`](?:agents|\[agents\])["'`]/;
 const VISIBILITY_KEY_LITERAL = /["'`](?:show|hide|visible)["'`]/;

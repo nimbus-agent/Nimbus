@@ -71,6 +71,17 @@ function byId(a: { readonly id: string }, b: { readonly id: string }): number {
 
 const META_BY_ID: Readonly<Record<string, ConnectorMeta>> = CONNECTOR_CATALOG_META;
 
+/** The connectors that ship built in: bundled ones, then the gateway-syncable ones. */
+export function builtinCatalogConnectorIds(): readonly string[] {
+  // An unbundled connector ships as a signed extension: it is listed once, as the installed
+  // extension, never as built in.
+  const unbundled: ReadonlySet<string> = new Set(UNBUNDLED_CONNECTOR_IDS);
+  return [
+    ...CONNECTOR_SERVICE_IDS.filter((id) => !unbundled.has(id)),
+    ...GATEWAY_SYNCABLE_SERVICE_IDS,
+  ];
+}
+
 export function buildCatalogList(deps: {
   readonly db: Database;
   readonly snapshot: () => Pick<ConfigSnapshot, "doc">;
@@ -81,15 +92,8 @@ export function buildCatalogList(deps: {
     visible: visibility.visible.has(a.name),
   }));
 
-  // An unbundled connector ships as a signed extension: it is listed once, as the installed
-  // extension, never as built in.
-  const unbundled: ReadonlySet<string> = new Set(UNBUNDLED_CONNECTOR_IDS);
-  const builtinIds: readonly string[] = [
-    ...CONNECTOR_SERVICE_IDS.filter((id) => !unbundled.has(id)),
-    ...GATEWAY_SYNCABLE_SERVICE_IDS,
-  ];
   const builtins: CatalogConnector[] = [];
-  for (const id of builtinIds) {
+  for (const id of builtinCatalogConnectorIds()) {
     const meta = META_BY_ID[id];
     if (meta !== undefined) {
       builtins.push({ kind: "builtin", id, ...meta });
