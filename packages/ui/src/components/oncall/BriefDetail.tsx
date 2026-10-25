@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { useIpcQuery } from "../../hooks/useIpcQuery";
 import { asPushedBriefGet, useOncallBriefs } from "../../hooks/useOncallBriefs";
+import { Markdown } from "../markdown/Markdown";
 import { DeliveryStrip } from "./DeliveryStrip";
 
 export function BriefDetail({
@@ -45,9 +46,9 @@ export function BriefDetail({
           <pre className="font-mono text-xs">{`nimbus oncall pushed ${b.incidentId} --retry`}</pre>
         </div>
       ) : (
-        <pre className="whitespace-pre-wrap break-words font-mono text-xs border border-[var(--color-border)] rounded-md p-3">
-          {b.briefMarkdown ?? ""}
-        </pre>
+        <div className="border border-[var(--color-border)] rounded-md p-3">
+          <Markdown text={b.briefMarkdown ?? ""} />
+        </div>
       )}
     </article>
   );

@@ -147,9 +147,9 @@ describe("Oncall page", () => {
     expect(screen.getByTestId("nav").textContent).toBe("REPLACE");
   });
 
-  it("3: the detail <pre> is the brief verbatim and the strip shows chatops", () => {
+  it("3: the detail renders the brief as markdown and the strip shows chatops", () => {
     const { container } = render(ui(`/oncall?id=${enc(OK_ID)}`));
-    expect(container.querySelector("pre")?.textContent).toBe(fixture.getOk.brief.briefMarkdown);
+    expect(container.querySelector("article h1")?.textContent).toBe("On-call");
     expect(screen.getByText(/chatops: skipped/)).toBeTruthy();
   });
 
@@ -157,7 +157,7 @@ describe("Oncall page", () => {
     const evil = "<img src=x onerror=alert(1)>";
     setQuery(OK_ID, { brief: { ...fixture.getOk.brief, briefMarkdown: evil } });
     const { container } = render(ui(`/oncall?id=${enc(OK_ID)}`));
-    expect(container.querySelector("pre")?.textContent).toBe(evil);
+    expect(container.querySelector("article")?.textContent).toContain(evil);
     expect(container.querySelector("img")).toBeNull();
   });
 
@@ -221,7 +221,7 @@ describe("Oncall page", () => {
     const q = setQuery(OK_ID, fixture.getOk);
     q.error = "Gateway offline";
     const { container } = render(ui(`/oncall?id=${enc(OK_ID)}`));
-    expect(container.querySelector("pre")?.textContent).toBe(fixture.getOk.brief.briefMarkdown);
+    expect(container.querySelector("article h1")?.textContent).toBe("On-call");
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -233,7 +233,7 @@ describe("Oncall page", () => {
     });
     rerender(ui(`/oncall?id=${enc(OK_ID)}`));
     expect(search()).toBe(`?id=${enc(OK_ID)}`);
-    expect(container.querySelector("pre")?.textContent).toBe(fixture.getOk.brief.briefMarkdown);
+    expect(container.querySelector("article h1")?.textContent).toBe("On-call");
   });
 
   it("10: an id with reserved characters round-trips through the URL and the query", async () => {
@@ -274,10 +274,10 @@ describe("Oncall page", () => {
   it("14: switching rows never shows the previous row's brief while the new one loads", async () => {
     h.stale = true;
     const { container } = render(ui(`/oncall?id=${enc(OK_ID)}`));
-    expect(container.querySelector("pre")?.textContent).toBe(fixture.getOk.brief.briefMarkdown);
+    expect(container.querySelector("article h1")?.textContent).toBe("On-call");
     await userEvent.click(screen.getByRole("button", { name: new RegExp(FAIL_ID) }));
     expect(search()).toBe(`?id=${enc(FAIL_ID)}`);
-    expect(container.textContent).not.toContain("# On-call");
+    expect(container.querySelector("article h1")).toBeNull();
     expect(screen.getByText(/timeout: no brief in 30000ms/)).toBeTruthy();
   });
 
