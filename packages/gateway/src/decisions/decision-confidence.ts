@@ -1,3 +1,4 @@
+import { sourceKindOf } from "../sources/source-kinds.ts";
 import type { CueTier, EvidenceKind } from "./decision-types.ts";
 
 const W_CUE = 0.25;
@@ -11,17 +12,22 @@ export function cueStrength(tier: CueTier): number {
   return 0.25;
 }
 
-/** Long-form docs outrank tickets, which outrank chat. */
+/** Long-form docs outrank tickets, which outrank chat, commits and notes. */
 export function sourceAuthority(serviceType: string): number {
-  if (
-    serviceType === "notion:page" ||
-    serviceType === "confluence:page" ||
-    serviceType === "obsidian:obsidian_note"
-  ) {
-    return 1;
+  const kind = sourceKindOf(serviceType);
+  // A type outside the source table keeps the rule it always had: an owner-accepted agent decision
+  // (`mcp-sink/capture-native.ts`) can point at ANY item, and the brief scores it through here.
+  if (kind === undefined) return serviceType.endsWith(":issue") ? 0.6 : 0.3;
+  switch (kind) {
+    case "doc":
+      return 1;
+    case "ticket":
+      return 0.6;
+    case "message":
+    case "commit":
+    case "note":
+      return 0.3;
   }
-  if (serviceType.endsWith(":issue")) return 0.6;
-  return 0.3;
 }
 
 /**
