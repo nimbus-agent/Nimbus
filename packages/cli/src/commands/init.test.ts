@@ -76,8 +76,8 @@ test("plans an add when the cwd is a git repo not yet configured", () => {
   expect(initPlan({ cwd: repo, configDir }).kind).toBe("add-root");
 });
 
-test("refuses when the cwd is not a git repository", () => {
-  expect(initPlan({ cwd: dir, configDir }).kind).toBe("not-a-repo");
+test("plans no-repo when the cwd is not a git repository", () => {
+  expect(initPlan({ cwd: dir, configDir }).kind).toBe("no-repo");
 });
 
 test("reports already-configured on a second run", () => {
@@ -91,7 +91,7 @@ test("applyInitPlan writes nothing for a plan that is not an add", () => {
   // future caller and a duplicate [[filesystem.roots]] entry (or a root named "undefined").
   const opts = { cwd: repo, configDir };
   applyInitPlan({ kind: "already-configured", repoRoot: repo }, opts);
-  applyInitPlan({ kind: "not-a-repo" }, opts);
+  applyInitPlan({ kind: "no-repo" }, opts);
   expect(existsSync(join(configDir, "nimbus.toml"))).toBe(false);
 });
 
@@ -171,6 +171,10 @@ test("nextStepLines omits `nimbus wow` from the concrete block too when no gatew
 // ------------------------------------------------------------------ runInit
 
 type Recorded = {
+  /** Gateway methods the role step called, in order. */
+  roleCalls: string[];
+  /** Packs the role step installed. */
+  installed: string[];
   out: string[];
   err: string[];
   started: number;
@@ -182,11 +186,44 @@ type Recorded = {
   order: string[];
 };
 
+const ROLE_PACK_LIST = {
+  profile: "default",
+  installed: [],
+  available: [
+    {
+      id: "pm",
+      name: "Product",
+      version: "1.0.0",
+      description: "Decisions, glossary and catch-up for product work.",
+      roles: ["product"],
+      suggestedConnectors: ["slack", "jira"],
+    },
+  ],
+  skipped: [],
+};
+const ROLE_CATALOG = {
+  agents: [],
+  connectors: [
+    { kind: "builtin", id: "slack", displayName: "Slack", signIn: "browser" },
+    { kind: "builtin", id: "jira", displayName: "Jira", signIn: "atlassian" },
+  ],
+  suggestedConnectors: ["slack", "jira"],
+  visibility: { basis: "all", packs: [], notes: [] },
+};
+
 function fakeDeps(
-  over: Partial<InitDeps> & { confirmTourAnswer?: boolean; runTourThrows?: () => never } = {},
+  over: Partial<InitDeps> & {
+    confirmTourAnswer?: boolean;
+    runTourThrows?: () => never;
+    /** What the "What do you do?" question answers, when it is asked. */
+    roleAnswer?: string;
+  } = {},
 ): { deps: InitDeps; rec: Recorded } {
-  const { confirmTourAnswer, runTourThrows, ...depsOver } = over;
+  const { confirmTourAnswer, runTourThrows, roleAnswer: picked, ...depsOver } = over;
+  const roleAnswer = picked ?? "engineering";
   const rec: Recorded = {
+    roleCalls: [],
+    installed: [],
     out: [],
     err: [],
     started: 0,
@@ -229,6 +266,27 @@ function fakeDeps(
       rec.ranTour += 1;
       rec.order.push("runTour");
       if (runTourThrows) runTourThrows();
+    },
+    role: {
+      interactive: false,
+      log: (l) => rec.out.push(l),
+      error: (l) => rec.err.push(l),
+      call: async (method) => {
+        rec.roleCalls.push(method);
+        rec.order.push(method);
+        if (method === "pack.list") return ROLE_PACK_LIST;
+        if (method === "catalog.list") return ROLE_CATALOG;
+        if (method === "connector.listStatus") return [];
+        throw new Error(`unexpected ${method}`);
+      },
+      selectRole: async () => roleAnswer,
+      installPack: async (id) => {
+        rec.installed.push(id);
+        rec.order.push("installPack");
+        return 0;
+      },
+      confirmConnect: async () => false,
+      connectorAuth: async () => {},
     },
     ...depsOver,
   };
@@ -342,7 +400,8 @@ test("interactive + yes: the tour runs exactly once, after offerLocalAuth", asyn
     await runInit([], deps);
     expect(rec.confirmedTour).toBe(1);
     expect(rec.ranTour).toBe(1);
-    expect(rec.order).toEqual(["offerLocalAuth", "confirmTour", "runTour"]);
+    // An interactive run asks "What do you do?" first (the fake answers Engineering).
+    expect(rec.order).toEqual(["pack.list", "offerLocalAuth", "confirmTour", "runTour"]);
     expect(process.exitCode ?? 0).toBe(0);
   });
 });
@@ -450,11 +509,18 @@ test("--no-sync writes config and stops without touching the gateway", async () 
   expect(rec.out.join("\n")).toContain("nimbus connector sync filesystem");
 });
 
-test("exits non-zero outside a git repository", async () => {
+test("outside a git repository: starts the gateway, writes no root, exits 0 with neutral connectors", async () => {
   const { deps, rec } = fakeDeps({ cwd: dir });
-  await runInit([], deps);
-  expect(process.exitCode).toBe(1);
-  expect(rec.err.join("\n")).toContain("git repository");
+  await withCiUnset(() => runInit([], deps));
+  expect(process.exitCode).toBe(0);
+  expect(rec.started).toBe(1);
+  expect(rec.synced).toBe(0);
+  expect(existsSync(join(configDir, "nimbus.toml"))).toBe(false);
+  const out = rec.out.join("\n");
+  expect(out).toContain("No git repository here, so nothing was indexed from this folder.");
+  expect(out).toContain("Connectors for getting started:");
+  expect(rec.offered).toEqual([]);
+  expect(rec.confirmedTour).toBe(0);
 });
 
 test("--demo: refuses before doing anything — no gateway spawn, no config write, no wizard", async () => {
@@ -614,7 +680,8 @@ test("a running gateway that must be restarted did not index either — non-zero
 test("initExitCode maps every outcome to its documented code", () => {
   expect(initExitCode({ kind: "indexed", demo: null })).toBe(0);
   expect(initExitCode({ kind: "config-only" })).toBe(0);
-  expect(initExitCode({ kind: "not-a-repo" })).toBe(1);
+  expect(initExitCode({ kind: "no-repo", gatewayUp: true })).toBe(0);
+  expect(initExitCode({ kind: "no-repo", gatewayUp: false })).toBe(0);
   expect(initExitCode({ kind: "gateway-unavailable" })).toBe(2);
   expect(initExitCode({ kind: "restart-required" })).toBe(3);
   expect(initExitCode({ kind: "index-failed", message: "boom" })).toBe(3);
@@ -624,7 +691,6 @@ test("every failure outcome is non-zero and total failure is not collapsed into 
   // The guard, stated once: a gateway that never came up can never share an
   // exit code with a run that actually indexed something.
   const failures = [
-    initExitCode({ kind: "not-a-repo" }),
     initExitCode({ kind: "gateway-unavailable" }),
     initExitCode({ kind: "restart-required" }),
     initExitCode({ kind: "index-failed", message: "boom" }),
@@ -635,7 +701,7 @@ test("every failure outcome is non-zero and total failure is not collapsed into 
   expect(initExitCode({ kind: "gateway-unavailable" })).not.toBe(
     initExitCode({ kind: "index-failed", message: "boom" }),
   );
-  expect(new Set(failures).size).toBe(3);
+  expect(new Set(failures).size).toBe(2);
 });
 
 // ------------------------------------------------------- gatewayLogLines
@@ -839,6 +905,8 @@ test("--help documents every exit code and does no work", async () => {
   }
   expect(out).toContain("Exit codes:");
   expect(out).toContain("--no-sync");
+  expect(out).toContain("[--role <role>]");
+  expect(out).toContain("usage error (an invalid --role)");
   // Help must not start a gateway or write config.
   expect(rec.started).toBe(0);
   expect(rec.synced).toBe(0);
@@ -943,4 +1011,147 @@ test("defaultInitDeps log/error write to the console without throwing", () => {
     deps.log("");
     deps.error("");
   }).not.toThrow();
+});
+
+// ------------------------------------------------------- role packs P5: "What do you do?"
+
+test("outside a repo with --no-sync: starts nothing, asks nothing, exits 0", async () => {
+  const { deps, rec } = fakeDeps({ cwd: dir });
+  await runInit(["--no-sync"], deps);
+  expect(process.exitCode).toBe(0);
+  expect(rec.started).toBe(0);
+  expect(rec.roleCalls).toEqual([]);
+  expect(rec.out.join("\n")).toContain("nimbus start");
+});
+
+test("outside a repo, a gateway that never comes up: exit 2, no role step", async () => {
+  const { deps, rec } = fakeDeps({ cwd: dir, startGateway: async () => false });
+  await runInit([], deps);
+  expect(process.exitCode).toBe(2);
+  expect(rec.roleCalls).toEqual([]);
+});
+
+test("in a repo, non-interactive, no --role: exactly today's flow — the role step never runs", async () => {
+  const { deps, rec } = fakeDeps();
+  await withCiUnset(() => runInit([], deps));
+  expect(rec.roleCalls).toEqual([]);
+  expect(rec.offered).toEqual([false]);
+  expect(rec.out).toEqual([
+    `Added ${repo} to nimbus.toml (code indexing on).`,
+    "",
+    "Starting the gateway...",
+    "Indexing this repository...",
+    "",
+    "Try it:",
+    "  nimbus why src/auth.ts:42   # verifyToken",
+    "  nimbus wow",
+  ]);
+  expect(process.exitCode).toBe(0);
+});
+
+test("in a repo, interactive, Engineering: today's adoption and tour offers, no pack calls", async () => {
+  const { deps, rec } = fakeDeps({ interactive: true, roleAnswer: "engineering" });
+  await withCiUnset(() => runInit([], deps));
+  expect(rec.roleCalls).toEqual(["pack.list"]);
+  expect(rec.order).toEqual(["pack.list", "offerLocalAuth", "confirmTour"]);
+  expect(rec.installed).toEqual([]);
+});
+
+test("in a repo, interactive, Product: role step after indexing, no adoption offer, tour still offered", async () => {
+  const { deps, rec } = fakeDeps({ interactive: true, roleAnswer: "pack:pm" });
+  await withCiUnset(() => runInit([], deps));
+  expect(rec.synced).toBe(1);
+  expect(rec.installed).toEqual(["pm"]);
+  expect(rec.offered).toEqual([]);
+  expect(rec.order).toEqual([
+    "pack.list",
+    "installPack",
+    "pack.list",
+    "catalog.list",
+    "connector.listStatus",
+    "confirmTour",
+  ]);
+  expect(process.exitCode).toBe(0);
+});
+
+test("CI=true on a TTY inside a repo keeps today's flow: no question", async () => {
+  const { deps, rec } = fakeDeps({ interactive: true });
+  await withCiTrue(() => runInit([], deps));
+  expect(rec.roleCalls).toEqual([]);
+});
+
+test("--role bogus in a repo: indexes, then reports the unknown role and exits 1", async () => {
+  const { deps, rec } = fakeDeps();
+  await withCiUnset(() => runInit(["--role", "bogus"], deps));
+  expect(rec.synced).toBe(1);
+  expect(process.exitCode).toBe(1);
+  const err = rec.err.join("\n");
+  expect(err).toContain(
+    'unknown --role "bogus". Use one of: pm, product, engineering, design, other.',
+  );
+  expect(err).toContain("The repository was indexed.");
+});
+
+test("--role with a malformed value is a usage error before anything runs", async () => {
+  const { deps, rec } = fakeDeps();
+  await runInit(["--role", "Bad!"], deps);
+  expect(process.exitCode).toBe(1);
+  expect(rec.started).toBe(0);
+  expect(rec.synced).toBe(0);
+  expect(existsSync(join(configDir, "nimbus.toml"))).toBe(false);
+});
+
+test("--demo still refuses before --role is even parsed", async () => {
+  const { deps, rec } = fakeDeps({ inDemoRoot: true });
+  await runInit(["--role", "Bad!"], deps);
+  expect(rec.err.join("\n")).toContain("nimbus demo");
+  expect(rec.started).toBe(0);
+});
+
+test("--role product on a non-interactive shell outside a repo prints the install step, installs nothing", async () => {
+  const { deps, rec } = fakeDeps({ cwd: dir });
+  await withCiUnset(() => runInit(["--role", "product"], deps));
+  expect(rec.installed).toEqual([]);
+  expect(rec.out).toContain("Next: nimbus pack install pm");
+  expect(process.exitCode).toBe(0);
+});
+
+test("Engineering outside a repo points at indexing code and offers the logins", async () => {
+  const { deps, rec } = fakeDeps({ cwd: dir, interactive: true, roleAnswer: "engineering" });
+  await withCiUnset(() => runInit([], deps));
+  expect(rec.out).toContain("No git repository here; run nimbus init inside one to index code.");
+  expect(rec.offered).toEqual([true]);
+  expect(rec.confirmedTour).toBe(0);
+});
+
+test("restart-required and index-failed never run the role step", async () => {
+  const restart = fakeDeps({ gatewayRunning: async () => true, interactive: true });
+  await withCiUnset(() => runInit([], restart.deps));
+  expect(restart.rec.roleCalls).toEqual([]);
+  const failed = fakeDeps({
+    interactive: true,
+    syncFilesystem: async () => {
+      throw new Error("boom");
+    },
+  });
+  await withCiUnset(() => runInit([], failed.deps));
+  expect(failed.rec.roleCalls).toEqual([]);
+});
+
+test("a role step that throws is reported and init keeps its own exit code", async () => {
+  const { deps, rec } = fakeDeps({ interactive: true });
+  const broken = {
+    ...deps,
+    role: {
+      ...deps.role,
+      call: async () => {
+        throw new Error("gateway went away");
+      },
+    },
+  };
+  await withCiUnset(() => runInit([], broken));
+  expect(rec.err.join("\n")).toContain(
+    "Could not finish setting Nimbus up for your role: gateway went away",
+  );
+  expect(process.exitCode).toBe(0);
 });

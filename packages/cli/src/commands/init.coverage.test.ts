@@ -49,6 +49,12 @@ function effects(over: Partial<InitEffects> = {}): InitEffects {
     runWow: async () => {
       throw new Error("unexpected runWow");
     },
+    select: async () => {
+      throw new Error("unexpected select");
+    },
+    installPack: async () => {
+      throw new Error("unexpected installPack");
+    },
     ...over,
   };
 }
@@ -339,7 +345,7 @@ test("runInit with no deps at all prints its help through the real console and d
     }
   }
   expect(out.stdout).toStartWith(
-    "nimbus init — index the git repository in the current directory\n",
+    "nimbus init — set Nimbus up: index the git repository here (if any) and ask what you do\n",
   );
   expect(out.stdout).toContain("  2  the Gateway never became ready — nothing was indexed\n");
   expect(out.stderr).toBe("");

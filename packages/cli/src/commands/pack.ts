@@ -288,12 +288,12 @@ const REAL_IO: PackIo = {
   err: (s) => process.stderr.write(s),
 };
 
-export async function runPack(args: string[]): Promise<void> {
-  const sub = args[0] ?? "";
-  if (!["list", "show", "install", "remove"].includes(sub)) {
-    REAL_IO.err(`${PACK_USAGE}\n`);
-    throw new CliExit(2);
-  }
+/**
+ * Run `fn` against the running gateway on a client whose consent handler is the DIRECT terminal
+ * prompt, never an environment-selected script handler, so nothing but a person at this terminal
+ * can answer a `pack.install` approval (`withGatewayIpc` binds the script handler first).
+ */
+export async function withPackClient<T>(fn: (call: PackCall) => Promise<T>): Promise<T> {
   const paths = getCliPlatformPaths();
   const state = await readGatewayState(paths);
   if (state === undefined) {
@@ -302,12 +302,26 @@ export async function runPack(args: string[]): Promise<void> {
   const client = createIpcClient(state.socketPath, BATCH_RPC_TIMEOUT_MS);
   await client.connect();
   try {
-    // The prompt handler directly: an environment-selected script handler must never be able
-    // to answer a `pack.install` approval. Read-only verbs raise no prompt, so it is inert there.
+    // Read-only verbs raise no prompt, so the handler is inert there.
     registerConsentPromptHandler(client);
-    const code = await runPackWith(args, REAL_IO, (method, params) => client.call(method, params));
-    if (code !== 0) throw new CliExit(code);
+    return await fn((method, params) => client.call(method, params));
   } finally {
     await client.disconnect();
   }
+}
+
+/** `nimbus pack install <id>` in-process (used by `nimbus init`); returns its exit code. */
+export function installPackInteractive(id: string): Promise<number> {
+  return withPackClient((call) => runPackWith(["install", id], REAL_IO, call));
+}
+
+export async function runPack(args: string[]): Promise<void> {
+  const sub = args[0] ?? "";
+  if (!["list", "show", "install", "remove"].includes(sub)) {
+    REAL_IO.err(`${PACK_USAGE}
+`);
+    throw new CliExit(2);
+  }
+  const code = await withPackClient((call) => runPackWith(args, REAL_IO, call));
+  if (code !== 0) throw new CliExit(code);
 }

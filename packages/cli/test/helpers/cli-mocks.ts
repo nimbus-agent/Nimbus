@@ -66,6 +66,8 @@ export function installCliMocks(): void {
     confirm: async (): Promise<boolean | symbol> =>
       globalThis.__nimbusCliFixture?.clackAnswer ?? true,
     isCancel: (v: unknown): boolean => v === cancelSymbol,
+    // `nimbus init`'s "What do you do?" question; cancelled unless a test drives it directly.
+    select: async (): Promise<symbol> => cancelSymbol,
     spinner: (): {
       start: (msg?: string) => void;
       message: (msg?: string) => void;
