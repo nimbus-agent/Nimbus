@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-import { sourceKindOf } from "../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING, type SourceMapping } from "../sources/source-mapping.ts";
 import type { DecisionEvidence } from "./decision-types.ts";
 
 export type ServiceMatchRoute = "repo" | "ticket-key";
@@ -108,12 +108,17 @@ function ticketIdentifier(m: { key?: unknown; identifier?: unknown }): string | 
 }
 
 /** Jira stores `metadata.key`, Linear `metadata.identifier`; both look like `BILLING-123`. */
-function matchesTicketKey(db: Database, sourceItemId: string, service: string): boolean {
+function matchesTicketKey(
+  db: Database,
+  sourceItemId: string,
+  service: string,
+  mapping: SourceMapping,
+): boolean {
   const row = db
     .query("SELECT service, type, metadata FROM item WHERE id = ?")
     .get(sourceItemId) as { service: string; type: string; metadata: string | null } | null;
   if (row?.metadata == null) return false;
-  if (sourceKindOf(`${row.service}:${row.type}`) !== "ticket") return false;
+  if (mapping.kindOf(`${row.service}:${row.type}`) !== "ticket") return false;
 
   let raw: unknown;
   try {
@@ -136,9 +141,12 @@ export function matchesService(
     readonly sourceItemId: string;
     readonly evidence: readonly DecisionEvidence[];
     readonly service: string;
+    /** The effective mapping: which types count as tickets. Built-in by default. */
+    readonly mapping?: SourceMapping;
   },
 ): ServiceMatchRoute | null {
   if (matchesRepo(db, input.evidence, input.service)) return "repo";
-  if (matchesTicketKey(db, input.sourceItemId, input.service)) return "ticket-key";
+  const mapping = input.mapping ?? BUILTIN_SOURCE_MAPPING;
+  if (matchesTicketKey(db, input.sourceItemId, input.service, mapping)) return "ticket-key";
   return null;
 }

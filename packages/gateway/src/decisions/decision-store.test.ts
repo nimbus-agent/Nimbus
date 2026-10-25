@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 import {
   agentDecisionOwned,
   clearDecisions,
@@ -56,26 +57,32 @@ test("upsertCandidate is idempotent on the same id", () => {
 test("selectPendingByPriority returns highest priority first", () => {
   candidate("low", 0.1);
   candidate("high", 0.9);
-  expect(selectPendingByPriority(db, 10, 0).map((r) => r.id)).toEqual(["high", "low"]);
+  expect(selectPendingByPriority(db, 10, 0, BUILTIN_SOURCE_MAPPING).map((r) => r.id)).toEqual([
+    "high",
+    "low",
+  ]);
 });
 
 test("selectPendingByPriority breaks ties by decided_at DESC", () => {
   candidate("older", 0.5, 1_000);
   candidate("newer", 0.5, 9_000);
-  expect(selectPendingByPriority(db, 10, 0).map((r) => r.id)).toEqual(["newer", "older"]);
+  expect(selectPendingByPriority(db, 10, 0, BUILTIN_SOURCE_MAPPING).map((r) => r.id)).toEqual([
+    "newer",
+    "older",
+  ]);
 });
 
 test("a row attempted more recently than the cooldown is skipped", () => {
   candidate("a", 0.5);
   recordAttempt(db, "a", 10_000);
-  expect(selectPendingByPriority(db, 10, 9_000)).toHaveLength(0);
-  expect(selectPendingByPriority(db, 10, 11_000)).toHaveLength(1);
+  expect(selectPendingByPriority(db, 10, 9_000, BUILTIN_SOURCE_MAPPING)).toHaveLength(0);
+  expect(selectPendingByPriority(db, 10, 11_000, BUILTIN_SOURCE_MAPPING)).toHaveLength(1);
 });
 
 test("a vetoed row is never re-selected", () => {
   candidate("a", 0.5);
   markVetoed(db, "a", 6_000);
-  expect(selectPendingByPriority(db, 10, 0)).toHaveLength(0);
+  expect(selectPendingByPriority(db, 10, 0, BUILTIN_SOURCE_MAPPING)).toHaveLength(0);
   expect(countByStatus(db).vetoed).toBe(1);
 });
 
@@ -109,7 +116,7 @@ test("selectSnippetUpgrades returns only snippet-sourced extracted rows, oldest 
   markExtracted(db, "a", fields, 6_000);
   markExtracted(db, "b", { ...fields, extractionSource: "llm" }, 6_000);
   recordAttempt(db, "a", 1_000);
-  expect(selectSnippetUpgrades(db, 10).map((r) => r.id)).toEqual(["a"]);
+  expect(selectSnippetUpgrades(db, 10, BUILTIN_SOURCE_MAPPING).map((r) => r.id)).toEqual(["a"]);
 });
 
 test("replaceEvidence is idempotent and readable back through listDecisions", () => {
@@ -185,8 +192,8 @@ test("listDecisions filters by since and min confidence, newest first", () => {
   const f = { statement: "s", rationale: null, alternatives: [], extractionSource: "llm" } as const;
   markExtracted(db, "old", f, 6_000);
   markExtracted(db, "new", f, 6_000);
-  setConfidence(db, "old", 0.9, false, 6_000);
-  setConfidence(db, "new", 0.1, false, 6_000);
+  setConfidence(db, "old", 0.9, false, 6_000, null);
+  setConfidence(db, "new", 0.1, false, 6_000, null);
 
   expect(
     listDecisions(db, { sinceMs: 5_000, minConfidence: 0, limit: 10 }).map((r) => r.id),

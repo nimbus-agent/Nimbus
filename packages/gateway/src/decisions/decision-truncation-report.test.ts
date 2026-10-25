@@ -4,6 +4,7 @@ import { expect, test } from "bun:test";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 import { loadDecisionCandidates, runDecisionPass } from "./decision-extract.ts";
 import { listDecisions } from "./decision-store.ts";
 
@@ -154,6 +155,7 @@ test("discovery mines a cue past the old 512-character mark from the full stored
     useLlm: false,
     maxLlmCalls: 25,
     retryCooldownMs: 1_000,
+    mapping: BUILTIN_SOURCE_MAPPING,
   }).then((summary) => {
     expect(summary.discovered).toBe(1);
     expect(summary.extracted).toBe(1);

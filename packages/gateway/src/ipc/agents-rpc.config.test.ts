@@ -300,7 +300,7 @@ describe("agents.decisions — [decisions] min_confidence is only the DEFAULT fl
         { statement: r.id, rationale: null, alternatives: [], extractionSource: "snippet" },
         now,
       );
-      setConfidence(db, r.id, r.confidence, false, now);
+      setConfidence(db, r.id, r.confidence, false, now, null);
     }
   }
 

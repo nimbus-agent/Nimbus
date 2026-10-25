@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-import { sourceTypesOfKind } from "../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING, type SourceMapping } from "../sources/source-mapping.ts";
 import type { DecisionEvidence } from "./decision-types.ts";
 
 /**
@@ -41,6 +41,8 @@ export interface CorroborateInput {
   readonly sourceItemId: string;
   readonly decidedAt: number;
   readonly statement: string;
+  /** The effective mapping; its `doc` types are where ADRs are looked for. Built-in by default. */
+  readonly mapping?: SourceMapping;
 }
 
 export function corroborate(db: Database, input: CorroborateInput): DecisionEvidence[] {
@@ -181,8 +183,20 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
   // no way for the caller to know. Pushing the shape test down means the cap is
   // reached only by pages that already look like ADRs, and `ORDER BY` makes
   // which ones deterministic.
-  // ADRs live in long-form docs: every type the source table classifies as `doc`.
-  const docTypes = sourceTypesOfKind("doc");
+  // ADRs live in long-form docs: every type the effective mapping classifies as `doc`. With none
+  // there is nothing to look in, and `IN ()` is not SQL — skip the lookup.
+  const docTypes = (input.mapping ?? BUILTIN_SOURCE_MAPPING).typesOfKind("doc");
+  const adr = docTypes.length === 0 ? undefined : findAdr(db, docTypes, input.statement);
+  if (adr !== undefined) out.push(adr);
+
+  return out;
+}
+
+function findAdr(
+  db: Database,
+  docTypes: readonly string[],
+  statement: string,
+): DecisionEvidence | undefined {
   const adrs = db
     .query(
       `SELECT id, title, url, modified_at FROM item
@@ -199,21 +213,16 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
     url: string | null;
     modified_at: number;
   }>;
-  for (const a of adrs) {
-    if (!ADR_TITLE_RE.test(a.title)) continue;
-    if (!tokenOverlap(input.statement, a.title)) continue;
-    out.push({
-      kind: "adr",
-      entityId: null,
-      itemId: a.id,
-      label: a.title,
-      url: a.url,
-      occurredAt: a.modified_at,
-    });
-    break;
-  }
-
-  return out;
+  const a = adrs.find((r) => ADR_TITLE_RE.test(r.title) && tokenOverlap(statement, r.title));
+  if (a === undefined) return undefined;
+  return {
+    kind: "adr",
+    entityId: null,
+    itemId: a.id,
+    label: a.title,
+    url: a.url,
+    occurredAt: a.modified_at,
+  };
 }
 
 export function hasAdrEvidence(ev: readonly DecisionEvidence[]): boolean {

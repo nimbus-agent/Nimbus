@@ -1,15 +1,23 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
-
+import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { rebuildDecisions, runDecisionPass } from "./decision-extract.ts";
+import {
+  BUILTIN_SOURCE_MAPPING,
+  resolveSourceMapping,
+  type SourceMapping,
+} from "../sources/source-mapping.ts";
+import { loadDecisionCandidates, rebuildDecisions, runDecisionPass } from "./decision-extract.ts";
 import type { DecisionLlm } from "./decision-llm-adapter.ts";
 import {
   countByStatus,
   insertAgentDecision,
   listDecisions,
   readPassState,
+  selectPendingByPriority,
+  selectSnippetUpgrades,
+  upsertCandidate,
 } from "./decision-store.ts";
 
 let db: Database;
@@ -43,6 +51,7 @@ const OPTS = {
   useLlm: true,
   maxLlmCalls: 25,
   retryCooldownMs: 1_000,
+  mapping: BUILTIN_SOURCE_MAPPING,
 };
 
 function scriptedLlm(replies: Record<string, string>, fallback: string): DecisionLlm {
@@ -552,4 +561,120 @@ test("a non-finite scanBatchLimit falls back to the default instead of reaching 
   });
   expect(summary.scanned).toBe(1);
   expect(summary.discoveryComplete).toBe(true);
+});
+
+function ownerMapping(body: string): SourceMapping {
+  const doc = parseLayerDoc(
+    { kind: "base", id: "base", path: "/virtual/base.toml" },
+    `[sources]\n${body}\n`,
+  );
+  return resolveSourceMapping({ doc: mergeLayerDocs([doc]) });
+}
+
+const NO_SLACK = ownerMapping('exclude = ["slack:message"]');
+
+test("exclude stops mining and model calls", async () => {
+  seed("s1", "slack", "message", "t", "We decided to move billing to Postgres.", 5_000);
+  // A Slack candidate queued before the exclude.
+  upsertCandidate(db, {
+    id: "queued",
+    sourceItemId: "s1",
+    cueTier: "explicit",
+    cueText: "we decided",
+    priority: 0.9,
+    decidedAt: 5_000,
+    nowMs: 1_000,
+  });
+  seed("s2", "slack", "message", "t", "We decided to retire the queue.", 6_000);
+  let calls = 0;
+  const llm: DecisionLlm = {
+    complete: async () => {
+      calls++;
+      return '{"is_decision":true,"statement":"x"}';
+    },
+  };
+  const summary = await runDecisionPass(db, { ...OPTS, mapping: NO_SLACK, llm });
+  expect(summary.discovered).toBe(0);
+  expect(calls).toBe(0);
+  expect(selectPendingByPriority(db, 10, 100_000, NO_SLACK)).toEqual([]);
+  const row = db.query("SELECT status FROM decision_record WHERE id = 'queued'").get() as {
+    status: string;
+  } | null;
+  expect(row?.status).toBe("pending");
+  expect(countByStatus(db).total).toBe(1);
+  // Re-included: the queued row is selected again.
+  expect(selectPendingByPriority(db, 10, 100_000, BUILTIN_SOURCE_MAPPING).map((r) => r.id)).toEqual(
+    ["queued"],
+  );
+});
+
+test("a pending row whose source item is gone still reaches the queue", () => {
+  upsertCandidate(db, {
+    id: "orphan",
+    sourceItemId: "gone",
+    cueTier: "explicit",
+    cueText: "we decided",
+    priority: 0.5,
+    decidedAt: 5_000,
+    nowMs: 1_000,
+  });
+  expect(selectPendingByPriority(db, 10, 100_000, NO_SLACK).map((r) => r.id)).toEqual(["orphan"]);
+});
+
+test("exclude stops snippet upgrades", async () => {
+  seed("s1", "slack", "message", "t", "We decided to move billing to Postgres.", 5_000);
+  await runDecisionPass(db, { ...OPTS, useLlm: false });
+  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  expect(row?.extractionSource).toBe("snippet");
+  expect(selectSnippetUpgrades(db, 10, NO_SLACK)).toEqual([]);
+  expect(selectSnippetUpgrades(db, 10, BUILTIN_SOURCE_MAPPING).map((r) => r.id)).toEqual([
+    row?.id ?? "missing",
+  ]);
+});
+
+test("re-kind changes authority for new scores", async () => {
+  seed("j1", "jira", "issue", "t", "We decided to move billing to Postgres.", 5_000);
+  const asDoc = ownerMapping('map = ["jira:issue=doc"]');
+  await runDecisionPass(db, { ...OPTS, useLlm: false, mapping: asDoc });
+  const row = db.query("SELECT scored_kind, confidence FROM decision_record").get() as {
+    scored_kind: string | null;
+    confidence: number;
+  };
+  expect(row.scored_kind).toBe("doc");
+  // explicit cue 0.25*0.6 + doc authority 0.2*1; no corroboration, no rationale/alternatives.
+  expect(row.confidence).toBeCloseTo(0.35, 10);
+});
+
+test("a built-in score stores its kind beside the confidence", async () => {
+  seed("j1", "jira", "issue", "t", "We decided to move billing to Postgres.", 5_000);
+  await runDecisionPass(db, { ...OPTS, useLlm: false });
+  const row = db.query("SELECT scored_kind, confidence FROM decision_record").get() as {
+    scored_kind: string | null;
+    confidence: number;
+  };
+  expect(row.scored_kind).toBe("ticket");
+  expect(row.confidence).toBeCloseTo(0.27, 10);
+});
+
+test("rebuild clears catch-up cursors", async () => {
+  db.run(
+    "INSERT INTO source_catchup_state (pass, service_type, watermark_ms, watermark_id, done) VALUES ('decisions', 'readwise:highlight', 4242, 'mid', 0)",
+  );
+  await rebuildDecisions(db, { ...OPTS, useLlm: false });
+  const rows = db
+    .query(
+      "SELECT service_type, watermark_ms FROM source_catchup_state WHERE pass = 'decisions' AND watermark_ms = 4242",
+    )
+    .all();
+  expect(rows).toEqual([]);
+  const stale = db
+    .query("SELECT 1 FROM source_catchup_state WHERE service_type = 'readwise:highlight'")
+    .get();
+  expect(stale).toBeNull(); // not effective under the built-in mapping, so not re-inserted
+});
+
+test("the candidate count follows a given mapping", () => {
+  seed("s1", "slack", "message", "t", "We decided to ship it.", 5_000);
+  expect(loadDecisionCandidates(db, { sinceMs: 0 }).total).toBe(1);
+  expect(loadDecisionCandidates(db, { sinceMs: 0, mapping: NO_SLACK }).total).toBe(0);
 });

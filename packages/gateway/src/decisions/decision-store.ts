@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
+import type { SourceKind } from "../sources/source-kinds.ts";
+import { type SourceMapping, sourceFilterSql } from "../sources/source-mapping.ts";
 import type {
   CueTier,
   DecisionEvidence,
@@ -158,31 +160,50 @@ export function upsertCandidate(db: Database, c: CandidateInsert): void {
   );
 }
 
+/**
+ * The model-work queues' filter: a row whose source is no longer in the effective decisions set
+ * is not sent to the model (it stays as it is and resumes if the type is mapped again). A row
+ * whose source item is gone passes through, as before. Joined as `item i` on the record `d`.
+ */
+export function pendingWorkFilter(mapping: SourceMapping): { sql: string; params: string[] } {
+  const f = sourceFilterSql(mapping.typesFor("decisions"), "i");
+  return { sql: `(i.id IS NULL OR ${f.sql})`, params: f.params };
+}
+
 export function selectPendingByPriority(
   db: Database,
   limit: number,
   cooldownBeforeMs: number,
+  mapping: SourceMapping,
 ): DecisionRecord[] {
+  const f = pendingWorkFilter(mapping);
   const rows = db
     .query(
-      `SELECT * FROM decision_record
-        WHERE status = 'pending' AND last_attempt_at <= ?
-        ORDER BY priority DESC, decided_at DESC, id ASC
+      `SELECT d.* FROM decision_record d
+         LEFT JOIN item i ON i.id = d.source_item_id
+        WHERE d.status = 'pending' AND d.last_attempt_at <= ? AND ${f.sql}
+        ORDER BY d.priority DESC, d.decided_at DESC, d.id ASC
         LIMIT ?`,
     )
-    .all(cooldownBeforeMs, limit) as DecisionRow[];
+    .all(cooldownBeforeMs, ...f.params, limit) as DecisionRow[];
   return hydrate(db, rows);
 }
 
-export function selectSnippetUpgrades(db: Database, limit: number): DecisionRecord[] {
+export function selectSnippetUpgrades(
+  db: Database,
+  limit: number,
+  mapping: SourceMapping,
+): DecisionRecord[] {
+  const f = pendingWorkFilter(mapping);
   const rows = db
     .query(
-      `SELECT * FROM decision_record
-        WHERE status = 'extracted' AND extraction_source = 'snippet'
-        ORDER BY last_attempt_at ASC, id ASC
+      `SELECT d.* FROM decision_record d
+         LEFT JOIN item i ON i.id = d.source_item_id
+        WHERE d.status = 'extracted' AND d.extraction_source = 'snippet' AND ${f.sql}
+        ORDER BY d.last_attempt_at ASC, d.id ASC
         LIMIT ?`,
     )
-    .all(limit) as DecisionRow[];
+    .all(...f.params, limit) as DecisionRow[];
   return hydrate(db, rows);
 }
 
@@ -259,13 +280,15 @@ export function setConfidence(
   confidence: number,
   hasAdr: boolean,
   nowMs: number,
+  /** The kind `confidence` was scored under (`null`: the source's type is not mapped). */
+  scoredKind: SourceKind | null,
 ): void {
   dbRun(
     db,
     `UPDATE decision_record
-        SET confidence = ?, has_adr = ?, stats_verified_at = ?, updated_at = ?
+        SET confidence = ?, has_adr = ?, scored_kind = ?, stats_verified_at = ?, updated_at = ?
       WHERE id = ?`,
-    [confidence, hasAdr ? 1 : 0, nowMs, nowMs, id],
+    [confidence, hasAdr ? 1 : 0, scoredKind, nowMs, nowMs, id],
   );
 }
 
@@ -346,7 +369,9 @@ export function writePassState(db: Database, s: PassState): void {
  * Used only by `--rebuild`. Clears vetoes too — that is the point of a rebuild. Owner-accepted
  * `'agent'` rows (and their evidence) SURVIVE: they are not derivable from the index, so a
  * rebuild could never re-mine them; revoking the capture is how they leave. The pass-state
- * watermark is still reset so every historical item is re-scanned.
+ * watermark is still reset so every historical item is re-scanned, and the per-type catch-up
+ * cursors go with it, so every type starts again from the run-start reconcile rules rather than
+ * from a cursor that described the store just cleared.
  */
 export function clearDecisions(db: Database): void {
   db.transaction(() => {
@@ -358,6 +383,7 @@ export function clearDecisions(db: Database): void {
     );
     dbRun(db, "DELETE FROM decision_record WHERE extraction_source IS NOT 'agent'", []);
     dbRun(db, "DELETE FROM decision_pass_state", []);
+    dbRun(db, "DELETE FROM source_catchup_state WHERE pass = 'decisions'", []);
   })();
 }
 

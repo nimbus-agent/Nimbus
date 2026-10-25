@@ -1,4 +1,5 @@
-import { sourceKindOf } from "../sources/source-kinds.ts";
+import type { SourceKind } from "../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING, type SourceMapping } from "../sources/source-mapping.ts";
 import type { CueTier, EvidenceKind } from "./decision-types.ts";
 
 const W_CUE = 0.25;
@@ -13,11 +14,7 @@ export function cueStrength(tier: CueTier): number {
 }
 
 /** Long-form docs outrank tickets, which outrank chat, commits and notes. */
-export function sourceAuthority(serviceType: string): number {
-  const kind = sourceKindOf(serviceType);
-  // A type outside the source table keeps the rule it always had: an owner-accepted agent decision
-  // (`mcp-sink/capture-native.ts`) can point at ANY item, and the brief scores it through here.
-  if (kind === undefined) return serviceType.endsWith(":issue") ? 0.6 : 0.3;
+export function authorityOfKind(kind: SourceKind): number {
   switch (kind) {
     case "doc":
       return 1;
@@ -28,6 +25,18 @@ export function sourceAuthority(serviceType: string): number {
     case "note":
       return 0.3;
   }
+}
+
+/** Authority of a `service:type` under `mapping` (the effective one; built-in by default). */
+export function sourceAuthority(
+  serviceType: string,
+  mapping: SourceMapping = BUILTIN_SOURCE_MAPPING,
+): number {
+  const kind = mapping.kindOf(serviceType);
+  // A type outside the mapping keeps the rule it always had: an owner-accepted agent decision
+  // (`mcp-sink/capture-native.ts`) can point at ANY item, and the brief scores it through here.
+  if (kind === undefined) return serviceType.endsWith(":issue") ? 0.6 : 0.3;
+  return authorityOfKind(kind);
 }
 
 /**
@@ -60,6 +69,19 @@ function completeness(hasRationale: boolean, hasAlternatives: boolean): number {
 export interface PriorityInput {
   readonly tier: CueTier;
   readonly serviceType: string;
+  /** The effective mapping `serviceType` is classified under; built-in when absent. */
+  readonly mapping?: SourceMapping;
+  /**
+   * The kind the row was scored under (`decision_record.scored_kind`). When given, authority is
+   * that kind's and `serviceType` is not consulted, so a read path needs no per-row item lookup.
+   * `null` (an unknown kind) falls back to `serviceType` under `mapping`.
+   */
+  readonly scoredKind?: SourceKind | null;
+}
+
+function authority(input: PriorityInput): number {
+  if (input.scoredKind != null) return authorityOfKind(input.scoredKind);
+  return sourceAuthority(input.serviceType, input.mapping);
 }
 
 /**
@@ -69,7 +91,7 @@ export interface PriorityInput {
  * of the per-pass budget.
  */
 export function computePriority(input: PriorityInput): number {
-  return W_CUE * cueStrength(input.tier) + W_AUTHORITY * sourceAuthority(input.serviceType);
+  return W_CUE * cueStrength(input.tier) + W_AUTHORITY * authority(input);
 }
 
 export interface ConfidenceInput extends PriorityInput {
@@ -82,7 +104,7 @@ export function computeConfidence(input: ConfidenceInput): number {
   const raw =
     W_CUE * cueStrength(input.tier) +
     W_CORROBORATION * corroboration(input.evidenceKinds) +
-    W_AUTHORITY * sourceAuthority(input.serviceType) +
+    W_AUTHORITY * authority(input) +
     W_COMPLETENESS * completeness(input.hasRationale, input.hasAlternatives);
   return Math.min(1, Math.max(0, raw));
 }
@@ -104,7 +126,7 @@ export function explainConfidence(
     },
     {
       term: "authority",
-      value: W_AUTHORITY * sourceAuthority(input.serviceType),
+      value: W_AUTHORITY * authority(input),
       detail: input.serviceType,
     },
     {

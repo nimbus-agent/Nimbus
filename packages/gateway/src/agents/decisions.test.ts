@@ -11,6 +11,7 @@ import {
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 import { emitDecisionsBrief, runDecisions } from "./decisions.ts";
 
@@ -51,7 +52,7 @@ function extracted(
     },
     1_000,
   );
-  setConfidence(db, id, confidence, false, 1_000);
+  setConfidence(db, id, confidence, false, 1_000, null);
 }
 
 function seedItem(id: string, service: string, type: string, metadata: string | null): void {
@@ -177,6 +178,7 @@ test("a completed pass that found nothing new clears the 'has not run yet' gap",
     useLlm: false,
     maxLlmCalls: 0,
     retryCooldownMs: 0,
+    mapping: BUILTIN_SOURCE_MAPPING,
   });
 
   const after = await runDecisions({}, ctx());
