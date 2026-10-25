@@ -21,6 +21,7 @@ function term(over: Partial<GlossaryTerm> = {}): GlossaryTerm {
     status: "consolidated",
     definition: "Change Data Record — the per-row change envelope.",
     definitionSource: "llm",
+    definitionLocal: false,
     docFreq: 7,
     serviceSpread: 2,
     score: 3.2,
@@ -43,7 +44,7 @@ beforeEach(() => {
 });
 
 test("projects a consolidated term as a nimbus:glossary_term item", () => {
-  projectTerm(db, term(), 1000);
+  projectTerm(db, term(), 1000, "glossary_term");
   const row = db.query("SELECT * FROM item WHERE type = 'glossary_term'").get() as {
     service: string;
     title: string;
@@ -55,7 +56,7 @@ test("projects a consolidated term as a nimbus:glossary_term item", () => {
 });
 
 test("synonyms land in body_preview so FTS can reach them", () => {
-  projectTerm(db, term(), 1000);
+  projectTerm(db, term(), 1000, "glossary_term");
   const hit = db
     .query("SELECT COUNT(*) AS c FROM item_fts WHERE item_fts MATCH ?")
     .get('"change data record"') as { c: number };
@@ -73,13 +74,13 @@ test("buildProjectedBody omits the synonym line when there are none", () => {
 });
 
 test("projection is idempotent — re-projecting updates in place", () => {
-  projectTerm(db, term(), 1000);
-  projectTerm(db, term({ definition: "updated definition" }), 2000);
+  projectTerm(db, term(), 1000, "glossary_term");
+  projectTerm(db, term({ definition: "updated definition" }), 2000, "glossary_term");
   expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all()).toHaveLength(1);
 });
 
 test("unprojectTerm removes the item row", () => {
-  projectTerm(db, term(), 1000);
+  projectTerm(db, term(), 1000, "glossary_term");
   unprojectTerm(db, "cdr");
   expect(db.query("SELECT * FROM item WHERE type = 'glossary_term'").all()).toHaveLength(0);
 });
@@ -89,17 +90,28 @@ test("unprojectTerm is safe when nothing is projected", () => {
 });
 
 test("a term with no definition is not projected", () => {
-  expect(() => projectTerm(db, term({ definition: null }), 1000)).toThrow();
+  expect(() => projectTerm(db, term({ definition: null }), 1000, "glossary_term")).toThrow();
 });
 
 test("the projected item's modified_at is the term's lastSeenAt (a content date), not nowMs", () => {
   // Guards against a refactor silently swapping the two args: `modified_at`
   // must track when the team last USED the term, not when Nimbus happened to
   // run the pass.
-  projectTerm(db, term({ lastSeenAt: 777 }), 999_999);
+  projectTerm(db, term({ lastSeenAt: 777 }), 999_999, "glossary_term");
   const row = db.query("SELECT modified_at FROM item WHERE type = 'glossary_term'").get() as {
     modified_at: number;
   } | null;
   expect(row?.modified_at).toBe(777);
   expect(row?.modified_at).not.toBe(999_999);
+});
+
+test("a local-only term projects under glossary_term_local with the same item id", () => {
+  const remoteId = projectTerm(db, term(), 1000, "glossary_term");
+  unprojectTerm(db, "cdr");
+  const localId = projectTerm(db, term(), 1000, "glossary_term_local");
+  expect(localId).toBe(remoteId);
+  const rows = db.query("SELECT type FROM item WHERE id = ?").all(localId) as { type: string }[];
+  expect(rows).toEqual([{ type: "glossary_term_local" }]);
+  unprojectTerm(db, "cdr");
+  expect(db.query("SELECT 1 FROM item WHERE id = ?").get(localId)).toBeNull();
 });

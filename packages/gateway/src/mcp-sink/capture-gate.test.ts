@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
 import {
   computeTermStats,
@@ -12,6 +11,7 @@ import {
 import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
 import { deleteItemByPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 import { type CaptureCapability, resolveCaptureCapability } from "./capture-capability.ts";
 import {
   acceptCapture,
@@ -686,7 +686,7 @@ describe("accept", () => {
       definition: "the owner's own",
       synonyms: [],
       nearMisses: [],
-      stats: computeTermStats(db, "wal"),
+      stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
       score: 0,
       nowMs: 1,
     });
@@ -722,7 +722,7 @@ describe("accept", () => {
       key: "wal",
       surface: "WAL",
       form: "phrase",
-      stats: computeTermStats(db, "wal"),
+      stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
       score: 1,
       nowMs: 1,
     });

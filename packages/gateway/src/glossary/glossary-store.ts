@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
-import { glossarySourceFilter } from "./glossary-source-types.ts";
+import { sourceFilterSql } from "../sources/source-mapping.ts";
 import type {
   CandidateForm,
   DefinitionSource,
+  GlossarySets,
   GlossarySource,
   GlossaryStatus,
   GlossaryTerm,
@@ -19,6 +20,7 @@ type Row = {
   status: string;
   definition: string | null;
   definition_source: string | null;
+  definition_local: number;
   doc_freq: number;
   service_spread: number;
   score: number;
@@ -49,6 +51,7 @@ function toTerm(r: Row): GlossaryTerm {
     status: r.status as GlossaryStatus,
     definition: r.definition,
     definitionSource: r.definition_source as DefinitionSource | null,
+    definitionLocal: r.definition_local === 1,
     docFreq: r.doc_freq,
     serviceSpread: r.service_spread,
     score: r.score,
@@ -102,31 +105,48 @@ function safeFtsGet<T>(run: () => T, fallback: T): T {
  * index — never accumulated — so the result is idempotent under re-runs,
  * edits and deletions.
  */
-export function computeTermStats(db: Database, termKey: string): TermStats {
-  const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
-  const agg = safeFtsGet(
+export function computeTermStats(
+  db: Database,
+  termKey: string,
+  types: readonly string[],
+): TermStats {
+  const { sql: sourceFilter, params: sourceKeys } = sourceFilterSql(types, "i");
+  // ONE grouped pass over the match: the aggregate and the contributing types are both derived
+  // from the per-`(service, type)` rows, so the FTS MATCH runs once for the two of them.
+  const groups = safeFtsGet(
     () =>
       db
         .query(
-          `SELECT COUNT(*) AS doc_freq,
-                  COUNT(DISTINCT i.service) AS service_spread,
+          `SELECT i.service AS service,
+                  i.type AS type,
+                  COUNT(*) AS doc_freq,
                   MIN(i.modified_at) AS first_seen,
                   MAX(i.modified_at) AS last_seen
            FROM item_fts f
            JOIN item i ON i.rowid = f.rowid
-           WHERE item_fts MATCH ? AND ${sourceFilter}`,
+           WHERE item_fts MATCH ? AND ${sourceFilter}
+           GROUP BY i.service, i.type
+           ORDER BY (i.service || ':' || i.type) ASC`,
         )
-        .get(ftsQuery(termKey), ...sourceKeys) as {
+        .all(ftsQuery(termKey), ...sourceKeys) as Array<{
+        service: string;
+        type: string;
         doc_freq: number;
-        service_spread: number;
-        first_seen: number | null;
-        last_seen: number | null;
-      } | null,
-    null,
+        first_seen: number;
+        last_seen: number;
+      }>,
+    [],
   );
 
-  if (agg === null || agg.doc_freq === 0) {
-    return { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] };
+  if (groups.length === 0) {
+    return {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    };
   }
 
   const sources = db
@@ -147,10 +167,11 @@ export function computeTermStats(db: Database, termKey: string): TermStats {
   }>;
 
   return {
-    docFreq: agg.doc_freq,
-    serviceSpread: agg.service_spread,
-    firstSeenAt: agg.first_seen ?? 0,
-    lastSeenAt: agg.last_seen ?? 0,
+    docFreq: groups.reduce((n, g) => n + g.doc_freq, 0),
+    contributingTypes: groups.map((g) => `${g.service}:${g.type}`),
+    serviceSpread: new Set(groups.map((g) => g.service)).size,
+    firstSeenAt: Math.min(...groups.map((g) => g.first_seen)),
+    lastSeenAt: Math.max(...groups.map((g) => g.last_seen)),
     topSources: sources.map((s) => ({
       itemId: s.id,
       title: s.title,
@@ -159,6 +180,91 @@ export function computeTermStats(db: Database, termKey: string): TermStats {
       modifiedAt: s.modified_at,
     })),
   };
+}
+
+/**
+ * Whether the term occurs in at least one item of the EFFECTIVE set — the visibility test for a
+ * mined term (spec § 7). Stored statistics are over the known set, so a term whose only
+ * occurrences are in an excluded type keeps its row; this is what hides it. False for an empty
+ * set, and for a key FTS cannot parse (the same degradation `computeTermStats` applies).
+ */
+export function hasEffectiveOccurrence(
+  db: Database,
+  termKey: string,
+  effective: readonly string[],
+): boolean {
+  if (effective.length === 0) return false;
+  const { sql: sourceFilter, params: sourceKeys } = sourceFilterSql(effective, "i");
+  const row = safeFtsGet(
+    () =>
+      db
+        .query(
+          `SELECT EXISTS (
+             SELECT 1 FROM item_fts f
+             JOIN item i ON i.rowid = f.rowid
+             WHERE item_fts MATCH ? AND ${sourceFilter}
+             LIMIT 1
+           ) AS hit`,
+        )
+        .get(ftsQuery(termKey), ...sourceKeys) as { hit: number } | null,
+    null,
+  );
+  return row?.hit === 1;
+}
+
+/** How many consolidated terms near-miss suggestions draw from — mirrors `agents/glossary.ts`. */
+export const NEAR_MISS_POOL = 500;
+
+/** One page of a queue, in the queue's own (total) order. */
+type QueuePage = (limit: number, offset: number) => Row[];
+
+/**
+ * The queues' visibility filter. On the fast path (every known type effective) nothing can be
+ * hidden, so it is the queue's one query, unchanged. Otherwise it pages through the queue in its
+ * own order, keeping rows until `limit` are kept or a short page shows the queue is exhausted. A
+ * row is skipped when it is mined (not `manual`/`agent`, which the mapping never hides) and has no
+ * occurrence in the effective set; a skipped row is NOT touched, with no attempt recorded.
+ *
+ * Paging rather than one bounded over-fetch is deliberate. A hidden row is never attempted, so it
+ * never moves in either queue's order (`score`, or `last_attempt_at`): with a fixed window, more
+ * hidden rows than the window at the head would block every visible row for as long as the
+ * exclusion lasts — and excluding a busy type such as `slack:message` makes that the normal case.
+ * Each order ends in `term_key`, so pages never overlap or skip a tie.
+ */
+function selectVisible(
+  db: Database,
+  limit: number,
+  sets: GlossarySets,
+  page: QueuePage,
+  pageSize = limit * 4,
+): Row[] {
+  if (sets.fast) return page(limit, 0);
+  if (limit <= 0) return [];
+  const kept: Row[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const rows = page(pageSize, offset);
+    for (const r of rows) {
+      if (isRowVisible(db, r.term_key, r.definition_source, sets)) kept.push(r);
+      if (kept.length >= limit) return kept;
+    }
+    if (rows.length < pageSize) return kept;
+  }
+}
+
+/**
+ * THE visibility rule over a row's key and provenance (spec § 7): manual and owner-accepted agent
+ * terms are never hidden by the mapping; on the fast path nothing is hidden; otherwise a mined term
+ * needs at least one occurrence in the effective set. `isTermVisible` and every read here use it.
+ */
+export function isRowVisible(
+  db: Database,
+  termKey: string,
+  definitionSource: string | null,
+  sets: GlossarySets,
+): boolean {
+  if (definitionSource === "manual" || definitionSource === "agent") return true;
+  if (sets.fast) return true;
+  return hasEffectiveOccurrence(db, termKey, sets.effective);
 }
 
 export function upsertCandidate(
@@ -215,14 +321,26 @@ export function getTerm(db: Database, termKey: string): GlossaryTerm | null {
   return r === null ? null : toTerm(r);
 }
 
-export function findBySynonym(db: Database, normalizedQuery: string): GlossaryTerm | null {
+/**
+ * The first consolidated term, in `term_key` order, that lists the query as a synonym and that a
+ * reader resolving `sets` sees. A hidden holder is skipped rather than returned, so it cannot mask
+ * a visible one that lists the same synonym (the visibility check runs only on a synonym hit).
+ */
+export function findBySynonym(
+  db: Database,
+  normalizedQuery: string,
+  sets: GlossarySets,
+): GlossaryTerm | null {
   const rows = db
-    .query("SELECT * FROM glossary_term WHERE status = 'consolidated' AND synonyms <> '[]'")
+    .query(
+      `SELECT * FROM glossary_term WHERE status = 'consolidated' AND synonyms <> '[]'
+       ORDER BY term_key ASC`,
+    )
     .all() as Row[];
   const needle = normalizedQuery.toLowerCase();
   for (const r of rows) {
-    if (parseJsonArray<string>(r.synonyms).some((s) => s.toLowerCase() === needle))
-      return toTerm(r);
+    const hit = parseJsonArray<string>(r.synonyms).some((s) => s.toLowerCase() === needle);
+    if (hit && isRowVisible(db, r.term_key, r.definition_source, sets)) return toTerm(r);
   }
   return null;
 }
@@ -238,6 +356,7 @@ export function selectPendingBatch(
   db: Database,
   limit: number,
   opts: { nowMs: number; retryBaseCooldownMs: number; minDocFreq: number },
+  sets: GlossarySets,
 ): GlossaryTerm[] {
   // Selects across the WHOLE table, not just this pass's discoveries: a
   // high-scoring candidate deferred by the cap three passes ago must still
@@ -254,20 +373,18 @@ export function selectPendingBatch(
   // sub-floor doc_freq is re-selected on the very next pass and re-projected
   // from its single surviving source, contradicting §5.5's "sits pending
   // below the floor and never reaches the index again."
-  const rows = db
-    .query(
-      `SELECT * FROM glossary_term
+  const sql = `SELECT * FROM glossary_term
        WHERE status = 'pending'
          AND doc_freq >= ?
          AND (
            attempts = 0
            OR last_attempt_at + MIN(86400000, ? * (1 << (attempts - 1))) <= ?
          )
-       ORDER BY score DESC
-       LIMIT ?`,
-    )
-    .all(opts.minDocFreq, opts.retryBaseCooldownMs, opts.nowMs, limit) as Row[];
-  return rows.map(toTerm);
+       ORDER BY score DESC, term_key ASC
+       LIMIT ? OFFSET ?`;
+  const page: QueuePage = (n, offset) =>
+    db.query(sql).all(opts.minDocFreq, opts.retryBaseCooldownMs, opts.nowMs, n, offset) as Row[];
+  return selectVisible(db, limit, sets, page).map(toTerm);
 }
 
 /**
@@ -296,21 +413,20 @@ export function selectSnippetUpgradeBatch(
   db: Database,
   limit: number,
   opts: { nowMs: number; retryBaseCooldownMs: number },
+  sets: GlossarySets,
 ): GlossaryTerm[] {
   if (limit <= 0) return [];
-  const rows = db
-    .query(
-      `SELECT * FROM glossary_term
+  const sql = `SELECT * FROM glossary_term
        WHERE status = 'consolidated' AND definition_source = 'snippet'
          AND (
            attempts = 0
            OR last_attempt_at + MIN(86400000, ? * (1 << (attempts - 1))) <= ?
          )
-       ORDER BY last_attempt_at ASC, score DESC
-       LIMIT ?`,
-    )
-    .all(opts.retryBaseCooldownMs, opts.nowMs, limit) as Row[];
-  return rows.map(toTerm);
+       ORDER BY last_attempt_at ASC, score DESC, term_key ASC
+       LIMIT ? OFFSET ?`;
+  const page: QueuePage = (n, offset) =>
+    db.query(sql).all(opts.retryBaseCooldownMs, opts.nowMs, n, offset) as Row[];
+  return selectVisible(db, limit, sets, page).map(toTerm);
 }
 
 /** Records a failed consolidation so the backoff above takes effect. */
@@ -360,13 +476,68 @@ export function selectStaleForRecheck(
  * suggested.
  */
 export function listConsolidated(db: Database, limit: number): GlossaryTerm[] {
-  const rows = db
-    .query(
-      `SELECT * FROM glossary_term WHERE status = 'consolidated'
-       ORDER BY (definition_source = 'manual') DESC, score DESC LIMIT ?`,
-    )
-    .all(limit) as Row[];
-  return rows.map(toTerm);
+  return (db.query(CONSOLIDATED_PAGE_SQL).all(limit, 0) as Row[]).map(toTerm);
+}
+
+/** `listConsolidated`'s order, ending in `term_key` so pages never overlap or skip a tie. */
+const CONSOLIDATED_PAGE_SQL = `SELECT * FROM glossary_term WHERE status = 'consolidated'
+       ORDER BY (definition_source = 'manual') DESC, score DESC, term_key ASC
+       LIMIT ? OFFSET ?`;
+
+/** The smallest page `listVisibleConsolidated` reads, so a small `limit` does not page row by row. */
+const VISIBLE_PAGE_MIN = 50;
+
+/**
+ * `listConsolidated` restricted to the terms a reader resolving `sets` sees (spec § 7). On the
+ * fast path it IS `listConsolidated`. Otherwise it pages in the same order until `limit` visible
+ * rows are kept or the table is exhausted, so `limit` counts visible terms and a hidden head of
+ * high-scoring terms cannot crowd out the visible ones.
+ *
+ * With `recomputeStats`, each visible MINED row's `docFreq`, `serviceSpread` and `topSources` are
+ * replaced by figures over the effective set (`effectiveView`): display only, never written. A
+ * caller that uses only the keys (the near-miss pool) passes `false` and pays no extra FTS query.
+ */
+export function listVisibleConsolidated(
+  db: Database,
+  limit: number,
+  sets: GlossarySets,
+  opts: { recomputeStats: boolean },
+): GlossaryTerm[] {
+  if (sets.fast) return listConsolidated(db, limit);
+  const page: QueuePage = (n, offset) => db.query(CONSOLIDATED_PAGE_SQL).all(n, offset) as Row[];
+  const pageSize = Math.max(limit, VISIBLE_PAGE_MIN);
+  const terms = selectVisible(db, limit, sets, page, pageSize).map(toTerm);
+  return opts.recomputeStats ? terms.map((t) => effectiveView(db, t, sets)) : terms;
+}
+
+/**
+ * One term as a reader resolving `sets` sees it (spec § 7). Display only: nothing is written.
+ * Identity on the fast path. Otherwise:
+ * - stored `nearMisses` naming a term the reader cannot see are dropped, for every row (a
+ *   suggestion the reader follows to a miss is a loop with no exit);
+ * - a MINED term's `docFreq`, `serviceSpread` and `topSources` are recomputed over the EFFECTIVE
+ *   set, since stored statistics are over the known set. Manual and agent rows keep their stored
+ *   figures: they are never hidden, and their statistics are not the point of the entry.
+ */
+export function effectiveView(db: Database, term: GlossaryTerm, sets: GlossarySets): GlossaryTerm {
+  if (sets.fast) return term;
+  const nearMisses = term.nearMisses.filter((key) => {
+    const r = db
+      .query("SELECT definition_source FROM glossary_term WHERE term_key = ?")
+      .get(key) as { definition_source: string | null } | null;
+    return r === null || isRowVisible(db, key, r.definition_source, sets);
+  });
+  if (term.definitionSource === "manual" || term.definitionSource === "agent") {
+    return { ...term, nearMisses };
+  }
+  const stats = computeTermStats(db, term.termKey, sets.effective);
+  return {
+    ...term,
+    docFreq: stats.docFreq,
+    serviceSpread: stats.serviceSpread,
+    topSources: stats.topSources,
+    nearMisses,
+  };
 }
 
 export function listAllKeys(db: Database): string[] {
@@ -381,6 +552,11 @@ export function markConsolidated(
     termKey: string;
     definition: string;
     definitionSource: DefinitionSource;
+    /**
+     * Whether the definition was written while a non-remote-eligible source type contributed
+     * (spec § 7.1). Required: every definition rewrite decides it afresh.
+     */
+    definitionLocal: boolean;
     synonyms: string[];
     nearMisses: string[];
     nowMs: number;
@@ -390,13 +566,14 @@ export function markConsolidated(
     dbRun(
       db,
       `UPDATE glossary_term
-     SET status = 'consolidated', definition = ?, definition_source = ?,
+     SET status = 'consolidated', definition = ?, definition_source = ?, definition_local = ?,
          synonyms = ?, near_misses = ?, consolidated_at = ?,
          stats_verified_at = ?, last_attempt_at = ?, updated_at = ?
      WHERE term_key = ? AND definition_source IS NOT 'agent'`,
       [
         p.definition,
         p.definitionSource,
+        p.definitionLocal ? 1 : 0,
         JSON.stringify(p.synonyms),
         JSON.stringify(p.nearMisses),
         p.nowMs,
@@ -458,8 +635,21 @@ export function applyStats(
   );
 }
 
-export function countByStatus(db: Database): {
+/**
+ * The brief's counts. `total` counts the consolidated terms a reader resolving `sets` sees: on the
+ * fast path that is every consolidated row (one aggregate, no FTS query); otherwise mined rows
+ * without an effective occurrence are subtracted, at one `EXISTS ... LIMIT 1` per consolidated
+ * mined term. `hidden` is that subtracted count (0 on the fast path), so the brief can say why
+ * terms are missing. `pending` and `vetoed` stay whole-table: they are queue bookkeeping, and
+ * filtering them would cost one FTS query per queued term on every brief, so the pending count
+ * includes terms waiting on an excluded source.
+ */
+export function countByStatus(
+  db: Database,
+  sets: GlossarySets,
+): {
   total: number;
+  hidden: number;
   pending: number;
   vetoed: number;
   manual: number;
@@ -485,13 +675,28 @@ export function countByStatus(db: Database): {
   // `manual` is a SUBSET of `total`, not a fourth disjoint bucket: `total`
   // counts consolidated rows, which now include authored ones. Mined count is
   // `total - manual`.
+  const hidden = hiddenConsolidatedCount(db, sets);
   return {
-    total: r?.total ?? 0,
+    total: (r?.total ?? 0) - hidden,
+    hidden,
     pending: r?.pending ?? 0,
     vetoed: r?.vetoed ?? 0,
     manual: r?.manual ?? 0,
     agent: r?.agent ?? 0,
   };
+}
+
+/** Consolidated mined terms `sets` hides. Zero, with no query at all, on the fast path. */
+function hiddenConsolidatedCount(db: Database, sets: GlossarySets): number {
+  if (sets.fast) return 0;
+  const mined = db
+    .query(
+      `SELECT term_key, definition_source FROM glossary_term
+       WHERE status = 'consolidated'
+         AND (definition_source IS NULL OR definition_source NOT IN ('manual', 'agent'))`,
+    )
+    .all() as Array<{ term_key: string; definition_source: string | null }>;
+  return mined.filter((r) => !isRowVisible(db, r.term_key, r.definition_source, sets)).length;
 }
 
 /**
@@ -506,15 +711,26 @@ export function countByStatus(db: Database): {
  * So `.get()` cannot return `null` and `n` cannot be null here; adding the
  * fallback back "for safety" would just re-introduce an unreachable branch.
  */
-export function countSnippetSourced(db: Database): number {
-  return (
-    db
-      .query(
-        `SELECT COUNT(*) AS n FROM glossary_term
-         WHERE status = 'consolidated' AND definition_source = 'snippet'`,
-      )
-      .get() as { n: number }
-  ).n;
+export function countSnippetSourced(db: Database, sets: GlossarySets): number {
+  if (sets.fast) {
+    return (
+      db
+        .query(
+          `SELECT COUNT(*) AS n FROM glossary_term
+           WHERE status = 'consolidated' AND definition_source = 'snippet'`,
+        )
+        .get() as { n: number }
+    ).n;
+  }
+  // Slow path: only the snippet terms `countByStatus`'s `total` counts, so the brief's "N of M"
+  // ratio can never read N > M (one existence check per consolidated snippet term).
+  const rows = db
+    .query(
+      `SELECT term_key, definition_source FROM glossary_term
+       WHERE status = 'consolidated' AND definition_source = 'snippet'`,
+    )
+    .all() as Array<{ term_key: string; definition_source: string | null }>;
+  return rows.filter((r) => isRowVisible(db, r.term_key, r.definition_source, sets)).length;
 }
 
 export type GlossaryPassState = {
@@ -568,6 +784,9 @@ export function writePassState(db: Database, s: GlossaryPassState): void {
 export function clearGlossary(db: Database): void {
   dbRun(db, "DELETE FROM glossary_term WHERE definition_source IS NOT 'agent'", []);
   dbRun(db, "DELETE FROM glossary_pass_state", []);
+  // The per-type catch-up cursors are part of the pass state: left behind, a rebuilt glossary
+  // would treat every mapped type as already caught up.
+  dbRun(db, "DELETE FROM source_catchup_state WHERE pass = 'glossary'", []);
 }
 
 /**
@@ -614,13 +833,14 @@ export function upsertManualTerm(
        term_key, display_term, status, definition, definition_source,
        doc_freq, service_spread, score, first_seen_at, last_seen_at,
        top_sources, synonyms, near_misses, consolidated_at,
-       stats_verified_at, updated_at
-     ) VALUES (?, ?, 'consolidated', ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       stats_verified_at, updated_at, definition_local
+     ) VALUES (?, ?, 'consolidated', ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
      ON CONFLICT(term_key) DO UPDATE SET
        display_term = excluded.display_term,
        status = 'consolidated',
        definition = excluded.definition,
        definition_source = 'manual',
+       definition_local = 0,
        doc_freq = excluded.doc_freq,
        service_spread = excluded.service_spread,
        score = excluded.score,

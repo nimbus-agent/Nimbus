@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { mergeLayerDocs, parseLayerDoc } from "../../config/layered-merge.ts";
 import {
   markExtracted,
   upsertCandidate as upsertDecisionCandidate,
@@ -16,7 +17,8 @@ import { ensureGraphEntity } from "../../graph/relationship-graph.ts";
 import { upsertIndexedItem } from "../../index/item-store.ts";
 import { openMigratedMemoryDb } from "../../index/migrated-db-template.ts";
 import { dirExternalId, fileExternalId } from "../../ownership/ownership-pass.ts";
-import { BUILTIN_SOURCE_MAPPING } from "../../sources/source-mapping.ts";
+import { sourceTypesFor } from "../../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING, resolveSourceMapping } from "../../sources/source-mapping.ts";
 import { TOUR_SELECTORS, type TourSelectorCtx } from "./tour-selectors.ts";
 import { TOUR_STEP_KINDS } from "./tour-types.ts";
 
@@ -53,7 +55,7 @@ describe("glossary", () => {
       key,
       surface,
       form: "phrase",
-      stats: computeTermStats(d, key),
+      stats: computeTermStats(d, key, sourceTypesFor("glossary")),
       score: 1,
       nowMs: 1,
     });
@@ -66,6 +68,7 @@ describe("glossary", () => {
       termKey: normalizeTerm(surface),
       definition: "d",
       definitionSource: "snippet",
+      definitionLocal: false,
       synonyms: [],
       nearMisses: [],
       nowMs: 2,
@@ -77,6 +80,32 @@ describe("glossary", () => {
     expect(await TOUR_SELECTORS.glossary(ctx())).toEqual({
       skip: "no consolidated glossary terms",
     });
+  });
+  test("the wow tour skips a term hidden by the mapping", async () => {
+    for (let i = 0; i < 3; i++) {
+      upsertIndexedItem(db, {
+        service: "slack",
+        type: "message",
+        externalId: `s${String(i)}`,
+        title: "about idempotency",
+        bodyPreview: "idempotency matters",
+        modifiedAt: 100 + i,
+        syncedAt: 100 + i,
+      });
+    }
+    seedConsolidatedGlossaryTerm(db, "idempotency");
+    const noSlack = resolveSourceMapping({
+      doc: mergeLayerDocs([
+        parseLayerDoc(
+          { kind: "base", id: "base", path: "/virtual/base.toml" },
+          '[sources]\nexclude = ["slack:message"]\n',
+        ),
+      ]),
+    });
+    expect(await TOUR_SELECTORS.glossary(ctx({ mapping: noSlack }))).toEqual({
+      skip: "no consolidated glossary terms",
+    });
+    expect(await TOUR_SELECTORS.glossary(ctx())).toHaveProperty("ok");
   });
   test("offers the step once a term is consolidated", async () => {
     seedConsolidatedGlossaryTerm(db, "idempotency");

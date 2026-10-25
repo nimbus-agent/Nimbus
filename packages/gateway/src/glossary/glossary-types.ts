@@ -36,6 +36,8 @@ export type TermStats = {
   firstSeenAt: number;
   lastSeenAt: number;
   topSources: GlossarySource[];
+  /** Distinct `service:type` over the same match, sorted. */
+  contributingTypes: readonly string[];
 };
 
 /** Per-term progress emitted during phase B, for on-demand passes. */
@@ -55,6 +57,12 @@ export type GlossaryTerm = {
   status: GlossaryStatus;
   definition: string | null;
   definitionSource: DefinitionSource | null;
+  /**
+   * True when the stored definition was written while a source type that is not remote-eligible
+   * contributed (V75, spec § 7.1). It pins the search copy local until the definition is rewritten;
+   * a statistics refresh never clears it.
+   */
+  definitionLocal: boolean;
   docFreq: number;
   serviceSpread: number;
   score: number;
@@ -67,4 +75,18 @@ export type GlossaryTerm = {
   consolidatedAt: number | null;
   statsVerifiedAt: number;
   updatedAt: number;
+};
+
+/**
+ * The source-type sets one read of the glossary resolves against (role packs P2, spec § 7).
+ *
+ * `effective` is what the current mapping mines; `known` is every type the pass has ever tracked
+ * (`knownSourceTypes`), which stored statistics are computed over so a mapping change never
+ * rewrites a row. `fast` is true when every known type is effective: nothing can be hidden, so the
+ * queues and counts skip the per-term existence check entirely.
+ */
+export type GlossarySets = {
+  readonly effective: readonly string[];
+  readonly known: readonly string[];
+  readonly fast: boolean;
 };

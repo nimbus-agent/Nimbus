@@ -5,14 +5,18 @@ import { loadGlossaryCandidates } from "../glossary/glossary-extract.ts";
 import {
   countByStatus,
   countSnippetSourced,
+  effectiveView,
   findBySynonym,
   getTerm,
-  listConsolidated,
+  listVisibleConsolidated,
+  NEAR_MISS_POOL,
   readPassState,
 } from "../glossary/glossary-store.ts";
-import type { GlossaryTerm } from "../glossary/glossary-types.ts";
+import type { GlossarySets, GlossaryTerm } from "../glossary/glossary-types.ts";
+import { glossarySets, isTermVisible } from "../glossary/glossary-visibility.ts";
 import { findNearMisses } from "../glossary/near-miss.ts";
 import { normalizeTerm } from "../glossary/term-normalize.ts";
+import type { SourceMapping } from "../sources/source-mapping.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
 import type {
@@ -29,12 +33,15 @@ export type GlossaryContext = {
   notify: (method: string, params: unknown) => void;
   sessionId: string;
   runner?: SynthesisRunner;
+  /**
+   * The source mapping resolved for THIS read (`sourceMappingFor(configDir)`), never a boot
+   * snapshot. Required: it decides which terms the brief shows (spec § 7), so a construction site
+   * that forgot it must fail to compile rather than silently show the built-in view.
+   */
+  mapping: SourceMapping;
 };
 
 const DEFAULT_LIMIT = 50;
-
-/** How many consolidated terms to consider as near-miss candidates. */
-const NEAR_MISS_POOL = 500;
 
 function toEntry(t: GlossaryTerm): GlossaryEntry {
   return {
@@ -63,23 +70,30 @@ function toEntry(t: GlossaryTerm): GlossaryEntry {
 function resolveTerm(
   db: Database,
   raw: string,
+  sets: GlossarySets,
 ): { term: GlossaryTerm | null; matchedVia: GlossaryMatchedVia } {
   const key = normalizeTerm(raw);
   if (key === "") return { term: null, matchedVia: null };
 
+  // A term the mapping hides is never returned (spec § 7): a hidden exact match falls through to
+  // the synonym lookup, which itself skips hidden holders. A match is shown through
+  // `effectiveView`, so its statistics and near misses are over what the reader sees.
   const exact = getTerm(db, key);
-  if (exact !== null && exact.status === "consolidated") {
-    return { term: exact, matchedVia: "exact" };
+  if (exact !== null && exact.status === "consolidated" && isTermVisible(db, exact, sets)) {
+    return { term: effectiveView(db, exact, sets), matchedVia: "exact" };
   }
-  const bySynonym = findBySynonym(db, key);
-  if (bySynonym !== null) return { term: bySynonym, matchedVia: "synonym" };
+  const bySynonym = findBySynonym(db, key, sets);
+  if (bySynonym !== null) {
+    return { term: effectiveView(db, bySynonym, sets), matchedVia: "synonym" };
+  }
 
   return { term: null, matchedVia: null };
 }
 
 function buildGaps(
   db: Database,
-  counts: { total: number; pending: number; vetoed: number },
+  sets: GlossarySets,
+  counts: { total: number; hidden: number; pending: number; vetoed: number },
   lastPassAt: number | null,
   entryCount: number,
   truncation: { totalSources: number; truncatedSources: number },
@@ -106,7 +120,21 @@ function buildGaps(
     });
     return gaps;
   }
-  if (counts.total === 0) {
+  // Terms the current source mapping hides are not "below the frequency floor": telling that
+  // user to lower `min_doc_freq` would send them after the wrong setting. Stated whenever any term
+  // is hidden, not only when the list is empty, since the list is shorter than the glossary.
+  if (counts.hidden > 0) {
+    gaps.push({
+      category: "missing_connector",
+      detail:
+        `${String(counts.hidden)} consolidated term(s) are hidden because their sources are ` +
+        "not in the current source mapping.",
+      remediation:
+        "Run `nimbus config explain sources` to see the mapping; the terms reappear, unchanged, " +
+        "when their sources are mapped again.",
+    });
+  }
+  if (counts.total === 0 && counts.hidden === 0) {
     gaps.push({
       category: "missing_connector",
       detail: "A pass ran but no candidate met the minimum document frequency.",
@@ -125,7 +153,7 @@ function buildGaps(
   // simply not running has no way to notice the pattern — the glossary looks
   // built, just oddly worded. Report the ratio rather than picking a
   // "predominantly" threshold nobody can justify.
-  const snippetCount = countSnippetSourced(db);
+  const snippetCount = countSnippetSourced(db, sets);
   if (snippetCount > 0) {
     gaps.push({
       category: "missing_connector",
@@ -168,12 +196,17 @@ export async function runGlossary(
     toolCallCount: { value: 0 },
   });
 
-  const counts = countByStatus(ctx.db);
+  // Resolved once per brief, so the list, the lookup, the near misses and the counts agree.
+  const sets = glossarySets(ctx.db, ctx.mapping);
+  const counts = countByStatus(ctx.db, sets);
   const passState = readPassState(ctx.db);
   // The honesty count: how many of the glossary-source items indexed so far
   // carry a truncated body. No time window here — unlike `decisions`, the
   // glossary has no `--since`, so this covers the whole corpus.
-  const candidates = loadGlossaryCandidates(ctx.db, { sinceMs: 0 });
+  const candidates = loadGlossaryCandidates(ctx.db, {
+    sinceMs: 0,
+    mapping: ctx.mapping,
+  });
   const truncation = {
     totalSources: candidates.total,
     truncatedSources: candidates.truncatedSources,
@@ -192,12 +225,14 @@ export async function runGlossary(
     // One lane: `countByStatus` for stats/gaps is already computed in the
     // outer `counts` variable above — a second sub-task recomputing it was
     // dead code, its result never decoded. Matches term mode's earlier fix.
-    const tasks: SubTask[] = [subAgent(() => listConsolidated(ctx.db, limit))];
+    const tasks: SubTask[] = [
+      subAgent(() => listVisibleConsolidated(ctx.db, limit, sets, { recomputeStats: true })),
+    ];
     const results = await coordinator.run(tasks);
     const terms = decode<GlossaryTerm[]>(results[0]?.text, []);
     entries = terms.map(toEntry);
     mode = "list";
-    const gaps = buildGaps(ctx.db, counts, passState.lastPassAt, entries.length, truncation);
+    const gaps = buildGaps(ctx.db, sets, counts, passState.lastPassAt, entries.length, truncation);
     return {
       kind: "glossary",
       agentVersion: 1,
@@ -226,11 +261,13 @@ export async function runGlossary(
   // suggests pending terms that have no definition yet, so following the
   // suggestion returns another miss — a loop with no exit.
   const tasks: SubTask[] = [
-    subAgent(() => resolveTerm(ctx.db, rawTerm)),
+    subAgent(() => resolveTerm(ctx.db, rawTerm, sets)),
     subAgent(() =>
       findNearMisses(
         normalizeTerm(rawTerm),
-        listConsolidated(ctx.db, NEAR_MISS_POOL).map((t) => t.termKey),
+        listVisibleConsolidated(ctx.db, NEAR_MISS_POOL, sets, { recomputeStats: false }).map(
+          (t) => t.termKey,
+        ),
       ),
     ),
   ];
@@ -256,7 +293,7 @@ export async function runGlossary(
     agentVersion: 1,
     generatedAt: Date.now(),
     latencyMs: Math.round(performance.now() - start),
-    gaps: buildGaps(ctx.db, counts, passState.lastPassAt, entries.length, truncation),
+    gaps: buildGaps(ctx.db, sets, counts, passState.lastPassAt, entries.length, truncation),
     query: { term: rawTerm, limit },
     mode,
     entries,

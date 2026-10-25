@@ -1,8 +1,10 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
-
+import { type LayerKind, mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING, resolveSourceMapping } from "../sources/source-mapping.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -10,6 +12,8 @@ function runMigrations(db: Database): void {
 }
 
 import { upsertIndexedItem } from "../index/item-store.ts";
+import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
+import { runGlossaryPass } from "./glossary-extract.ts";
 import { projectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
 import {
@@ -21,8 +25,15 @@ import {
   upsertCandidate,
   upsertManualTerm,
 } from "./glossary-store.ts";
+import type { GlossarySets } from "./glossary-types.ts";
+import { glossarySets } from "./glossary-visibility.ts";
 
 let db: Database;
+
+/** The built-in mapping's sets: every known type effective, so nothing is hidden. */
+function builtinSets(): GlossarySets {
+  return glossarySets(db, BUILTIN_SOURCE_MAPPING);
+}
 
 function seedItem(externalId: string, body: string, modifiedAt: number): void {
   upsertIndexedItem(db, {
@@ -41,7 +52,14 @@ function seedConsolidated(key: string, docFreq: number, nowMs = 1000): void {
     key,
     surface: key.toUpperCase(),
     form: "acronym",
-    stats: { docFreq, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 5,
     nowMs,
   });
@@ -49,12 +67,13 @@ function seedConsolidated(key: string, docFreq: number, nowMs = 1000): void {
     termKey: key,
     definition: "a definition",
     definitionSource: "llm",
+    definitionLocal: false,
     synonyms: [],
     nearMisses: [],
     nowMs,
   });
   const t = getTerm(db, key);
-  if (t !== null) projectTerm(db, t, nowMs);
+  if (t !== null) projectTerm(db, t, nowMs, "glossary_term");
 }
 
 beforeEach(() => {
@@ -69,7 +88,13 @@ test("a term whose sources vanished is demoted and unprojected", () => {
   seedConsolidated("cdr", 3);
   db.run("DELETE FROM item WHERE type = 'message'");
 
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  const out = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 2000,
+    cooldownMs: 0,
+    sets: builtinSets(),
+  });
 
   expect(out.demoted).toEqual(["cdr"]);
   expect(getTerm(db, "cdr")?.status).toBe("pending");
@@ -82,7 +107,13 @@ test("a term still above the floor keeps its definition and is re-stamped", () =
   seedItem("c", "CDR three", 100);
   seedConsolidated("cdr", 3);
 
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  const out = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 2000,
+    cooldownMs: 0,
+    sets: builtinSets(),
+  });
 
   expect(out.demoted).toEqual([]);
   const t = getTerm(db, "cdr");
@@ -96,7 +127,7 @@ test("statistics are refreshed rather than left stale", () => {
   seedItem("b", "CDR two", 100);
   seedItem("c", "CDR three", 100);
   seedConsolidated("cdr", 99);
-  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0, sets: builtinSets() });
   expect(getTerm(db, "cdr")?.docFreq).toBe(3);
 });
 
@@ -115,7 +146,7 @@ test("a retained term's projected item is re-projected with its refreshed topSou
   } | null;
   expect(JSON.parse(before?.metadata ?? "{}").topSources).toEqual([]);
 
-  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0, sets: builtinSets() });
 
   const after = db.query("SELECT metadata FROM item WHERE type = 'glossary_term'").get() as {
     metadata: string;
@@ -129,13 +160,20 @@ test("the sweep honours its limit", () => {
   seedConsolidated("cdr", 3, 1000);
   seedConsolidated("aaa", 3, 1000);
   seedConsolidated("bbb", 3, 1000);
-  expect(reconcilePass(db, { limit: 2, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 }).verified).toBe(
-    2,
-  );
+  expect(
+    reconcilePass(db, { limit: 2, minDocFreq: 3, nowMs: 2000, cooldownMs: 0, sets: builtinSets() })
+      .verified,
+  ).toBe(2);
 });
 
 test("the sweep is a no-op on an empty glossary", () => {
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  const out = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 2000,
+    cooldownMs: 0,
+    sets: builtinSets(),
+  });
   expect(out).toEqual({ verified: 0, demoted: [] });
 });
 
@@ -143,8 +181,8 @@ test("round-robin reaches a different term on the next pass", () => {
   seedItem("a", "CDR one AAA", 100);
   seedConsolidated("cdr", 3, 1000);
   seedConsolidated("aaa", 3, 1000);
-  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
-  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 3000, cooldownMs: 0 });
+  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 2000, cooldownMs: 0, sets: builtinSets() });
+  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 3000, cooldownMs: 0, sets: builtinSets() });
   expect(getTerm(db, "cdr")?.statsVerifiedAt).toBeGreaterThan(1000);
   expect(getTerm(db, "aaa")?.statsVerifiedAt).toBeGreaterThan(1000);
 });
@@ -155,15 +193,33 @@ test("the cooldown makes a repeat sweep a no-op", () => {
   seedItem("c", "CDR three", 100);
   seedConsolidated("cdr", 3, 1000);
 
-  const first = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 100_000, cooldownMs: 1000 });
+  const first = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 100_000,
+    cooldownMs: 1000,
+    sets: builtinSets(),
+  });
   expect(first.verified).toBe(1);
 
   // Immediately after: the term was just verified, so nothing is due.
-  const second = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 100_500, cooldownMs: 1000 });
+  const second = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 100_500,
+    cooldownMs: 1000,
+    sets: builtinSets(),
+  });
   expect(second.verified).toBe(0);
 
   // Once the cooldown lapses it becomes due again.
-  const third = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 102_000, cooldownMs: 1000 });
+  const third = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 102_000,
+    cooldownMs: 1000,
+    sets: builtinSets(),
+  });
   expect(third.verified).toBe(1);
 });
 
@@ -192,7 +248,13 @@ test("demotion is atomic — a failure between the writes rolls all three back",
   );
 
   expect(() =>
-    reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 }),
+    reconcilePass(db, {
+      limit: 10,
+      minDocFreq: 3,
+      nowMs: 2000,
+      cooldownMs: 0,
+      sets: builtinSets(),
+    }),
   ).toThrow();
 
   db.run("DROP TRIGGER simulated_crash_before_apply_stats");
@@ -213,7 +275,14 @@ test("the sweep refreshes a manual row's stats but never demotes it", () => {
     definition: "Authored.",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 5, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 5,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 5,
     nowMs: 0,
   });
@@ -223,6 +292,7 @@ test("the sweep refreshes a manual row's stats but never demotes it", () => {
     minDocFreq: 3,
     nowMs: 1_000_000,
     cooldownMs: 0,
+    sets: builtinSets(),
   });
 
   const t = getTerm(db, "cdr");
@@ -247,11 +317,17 @@ test("a stale owner-accepted agent term with zero mentions survives, unprojected
     definition: "agent def",
     synonyms: [],
     captureId: "cap_1",
-    stats: computeTermStats(db, "wal"),
+    stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
     score: 0,
     nowMs: 10,
   });
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 5000, cooldownMs: 100 });
+  const out = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 5000,
+    cooldownMs: 100,
+    sets: builtinSets(),
+  });
   expect(out.verified).toBe(1);
   expect(out.demoted).toEqual([]);
   expect(termOwnership(db, "wal")).toEqual({
@@ -265,4 +341,55 @@ test("a stale owner-accepted agent term with zero mentions survives, unprojected
       .query("SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus' AND type = 'glossary_term'")
       .get(),
   ).toEqual({ n: 0 });
+});
+
+test("removing a mapping never demotes a term", async () => {
+  const mappingOf = (kind: LayerKind, body: string) =>
+    resolveSourceMapping({
+      doc: mergeLayerDocs([
+        parseLayerDoc(
+          { kind, id: "p", path: `/virtual/${kind}.toml` },
+          `[sources]
+${body}
+`,
+        ),
+      ]),
+    });
+  const withNotes = mappingOf("pack", 'map = ["ext_notes:highlight=note"]');
+  const text = "the CDR pipeline runs nightly";
+  const seedAs = (service: string, type: string, externalId: string, at: number) =>
+    upsertIndexedItem(db, {
+      service,
+      type,
+      externalId,
+      title: text,
+      bodyPreview: text,
+      modifiedAt: at,
+      syncedAt: at,
+    });
+  seedAs("jira", "issue", "j1", 1000);
+  seedAs("jira", "issue", "j2", 1001);
+  seedAs("ext_notes", "highlight", "h1", 1002);
+  seedAs("ext_notes", "highlight", "h2", 1003);
+  const llm: ConsolidatorLlm = {
+    generateJson: async () => JSON.stringify({ isDomainTerm: true, definition: "a definition" }),
+  };
+  const opts = {
+    maxNewTermsPerPass: 25,
+    statsRecheckPerPass: 50,
+    statsRecheckCooldownMs: 1000,
+    minDocFreq: 3,
+    consolidateTimeoutMs: 1000,
+    retryBaseCooldownMs: 1000,
+    llm,
+  };
+
+  await runGlossaryPass(db, { ...opts, nowMs: 5000, mapping: withNotes });
+  expect(getTerm(db, "cdr")).toMatchObject({ status: "consolidated", docFreq: 4 });
+
+  // The pack is removed; the sweep runs well past its cooldown.
+  await runGlossaryPass(db, { ...opts, nowMs: 50_000, mapping: BUILTIN_SOURCE_MAPPING });
+  const t = getTerm(db, "cdr");
+  expect(t?.statsVerifiedAt).toBe(50_000);
+  expect(t).toMatchObject({ status: "consolidated", docFreq: 4 });
 });

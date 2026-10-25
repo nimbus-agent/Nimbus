@@ -271,6 +271,41 @@ describe("diffPacks", () => {
     expect(renderPackPrompt(input())).toMatch(/Sources added:\n {2}none/);
   });
 
+  test("a non-remote-eligible added source states that its glossary terms embed locally", () => {
+    const line =
+      "  glossary terms mined from ext_notes:highlight are embedded on this machine only";
+    const t = renderPackPrompt(input({ sourceMappings: ["ext_notes:highlight=note"] }));
+    expect(t).toContain(`Sources added:
+  ext_notes:highlight as note
+${line}`);
+    expect(renderPackPrompt(input({ sourceMappings: ["zoom:transcript=note"] }))).not.toContain(
+      "embedded on this machine only",
+    );
+    const d = diffPacks(
+      manifest({ defaults: "" }),
+      manifest({ defaults: '[sources]\nmap = ["ext_notes:highlight=note"]\n' }),
+    );
+    const u = renderPackPrompt(
+      input({ mode: "update", diff: d, sourceMappings: ["ext_notes:highlight=note"] }),
+    );
+    expect(u).toContain("embedded on this machine only");
+  });
+
+  test("only the local-only types are named when a pack mixes eligible and local-only sources", () => {
+    const t = renderPackPrompt(
+      input({ sourceMappings: ["zoom:transcript=note", "ext_notes:highlight=note"] }),
+    );
+    expect(t).toContain("glossary terms mined from ext_notes:highlight are embedded");
+    expect(t).not.toContain("mined from zoom:transcript");
+    expect(t).not.toContain("from these sources");
+    const two = renderPackPrompt(
+      input({ sourceMappings: ["ext_notes:highlight=note", "ext_clips:clip=doc"] }),
+    );
+    expect(two).toContain(
+      "glossary terms mined from ext_notes:highlight, ext_clips:clip are embedded on this machine only",
+    );
+  });
+
   test("jobs added, removed and changed", () => {
     const job = (n: string, i: number): string =>
       `[[fleet.job]]\nname = "${n}"\nagent = "changelog"\ninterval_seconds = ${i}\n`;

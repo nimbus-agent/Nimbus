@@ -7,6 +7,7 @@ import { emitGlossaryBrief, runGlossary } from "../../../src/agents/glossary.ts"
 import { runGlossaryPass } from "../../../src/glossary/glossary-extract.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../../../src/sources/source-mapping.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -28,6 +29,7 @@ const PASS = {
   // Required. Omitting it makes the backoff window NaN.
   retryBaseCooldownMs: 1000,
   nowMs: 5000,
+  mapping: BUILTIN_SOURCE_MAPPING,
 };
 
 /** Narrows the `glossary.briefReady` payload instead of casting it into shape. */
@@ -84,7 +86,7 @@ test("extraction to brief: a term evidenced by 3 threads is defined with dates",
 
   const brief = await runGlossary(
     { term: "CDR" },
-    { db, notify: () => undefined, sessionId: "e2e" },
+    { db, notify: () => undefined, sessionId: "e2e", mapping: BUILTIN_SOURCE_MAPPING },
   );
 
   expect(brief.mode).toBe("term");
@@ -132,7 +134,10 @@ test("the no-argument list is frequency ranked", async () => {
   };
   await runGlossaryPass(db, { ...PASS, llm });
 
-  const brief = await runGlossary({}, { db, notify: () => undefined, sessionId: "e2e" });
+  const brief = await runGlossary(
+    {},
+    { db, notify: () => undefined, sessionId: "e2e", mapping: BUILTIN_SOURCE_MAPPING },
+  );
   expect(brief.mode).toBe("list");
   expect(brief.entries.length).toBeGreaterThan(1);
 
@@ -160,7 +165,12 @@ test("the briefReady notification carries markdown and typed findings", async ()
   const seen: Array<{ method: string; params: unknown }> = [];
   await emitGlossaryBrief(
     { term: "CDR" },
-    { db, notify: (method, params) => seen.push({ method, params }), sessionId: "e2e" },
+    {
+      db,
+      notify: (method, params) => seen.push({ method, params }),
+      sessionId: "e2e",
+      mapping: BUILTIN_SOURCE_MAPPING,
+    },
   );
   await Bun.sleep(50);
 
@@ -193,7 +203,10 @@ test("zero egress: a full pass plus a brief appends no egress_ledger rows", asyn
     generateJson: async () => JSON.stringify({ isDomainTerm: true, definition: "d" }),
   };
   await runGlossaryPass(db, { ...PASS, llm });
-  await runGlossary({ term: "CDR" }, { db, notify: () => undefined, sessionId: "e2e" });
+  await runGlossary(
+    { term: "CDR" },
+    { db, notify: () => undefined, sessionId: "e2e", mapping: BUILTIN_SOURCE_MAPPING },
+  );
 
   const row: unknown = db.query("SELECT COUNT(*) AS c FROM egress_ledger").get();
   expect(countOf(row)).toBe(0);
@@ -208,7 +221,7 @@ test("an unknown term returns did-you-mean suggestions", async () => {
 
   const brief = await runGlossary(
     { term: "CDC" },
-    { db, notify: () => undefined, sessionId: "e2e" },
+    { db, notify: () => undefined, sessionId: "e2e", mapping: BUILTIN_SOURCE_MAPPING },
   );
   expect(brief.mode).toBe("miss");
   expect(brief.suggestions).toContain("cdr");

@@ -4,13 +4,21 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveMatchToken } from "../agents/_lib/match-token.ts";
+import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { computeTermStats, markConsolidated, upsertCandidate } from "../glossary/glossary-store.ts";
 import { normalizeTerm } from "../glossary/term-normalize.ts";
 import { syncGraphFromIndexedItem } from "../graph/graph-populator.ts";
 import { ensureGraphEntity } from "../graph/relationship-graph.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
 import { openMigratedDb } from "../index/migrated-db-template.ts";
 import { dirExternalId, fileExternalId } from "../ownership/ownership-pass.ts";
 import { resolveOwnershipPath } from "../ownership/ownership-target.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
+import {
+  BUILTIN_SOURCE_MAPPING,
+  resolveSourceMapping,
+  type SourceMapping,
+} from "../sources/source-mapping.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import {
   buildFleetSweepEnumerate,
@@ -183,7 +191,7 @@ describe("enumerateTerms", () => {
         key,
         surface,
         form: "phrase",
-        stats: computeTermStats(db, key),
+        stats: computeTermStats(db, key, sourceTypesFor("glossary")),
         score: 1,
         nowMs: 1,
       });
@@ -192,21 +200,83 @@ describe("enumerateTerms", () => {
           termKey: key,
           definition: "d",
           definitionSource: "snippet",
+          definitionLocal: false,
           synonyms: [],
           nearMisses: [],
           nowMs: 2,
         });
       }
     }
-    const out = enumerateTerms(db, "term");
+    const out = enumerateTerms(db, "term", BUILTIN_SOURCE_MAPPING);
     expect(out.subjects).toHaveLength(1);
     const [s] = out.subjects;
     expect(s?.key).toBe(`terms:${normalizeTerm("Retry Budget")}`);
     expect(normalizeTerm(s?.params["term"] ?? "")).toBe(normalizeTerm("Retry Budget"));
   });
 
+  test("the fleet terms sweep skips hidden terms, reading the mapping per call", () => {
+    for (const [surface, service, type] of [
+      ["Retry Budget", "slack", "message"],
+      ["Error Budget", "jira", "issue"],
+    ] as const) {
+      for (let i = 0; i < 3; i++) {
+        upsertIndexedItem(db, {
+          service,
+          type,
+          externalId: `${surface}-${String(i)}`,
+          title: `the ${surface}`,
+          bodyPreview: `${surface} matters`,
+          modifiedAt: 100 + i,
+          syncedAt: 100 + i,
+        });
+      }
+      const key = normalizeTerm(surface);
+      upsertCandidate(db, {
+        key,
+        surface,
+        form: "phrase",
+        stats: computeTermStats(db, key, sourceTypesFor("glossary")),
+        score: 1,
+        nowMs: 1,
+      });
+      markConsolidated(db, {
+        termKey: key,
+        definition: "d",
+        definitionSource: "llm",
+        definitionLocal: false,
+        synonyms: [],
+        nearMisses: [],
+        nowMs: 2,
+      });
+    }
+    const noSlack = resolveSourceMapping({
+      doc: mergeLayerDocs([
+        parseLayerDoc(
+          { kind: "base", id: "base", path: "/virtual/base.toml" },
+          '[sources]\nexclude = ["slack:message"]\n',
+        ),
+      ]),
+    });
+    expect(enumerateTerms(db, "term", noSlack).subjects.map((s) => s.key)).toEqual([
+      `terms:${normalizeTerm("Error Budget")}`,
+    ]);
+    let mapping: SourceMapping = noSlack;
+    const enumerate = buildFleetSweepEnumerate({
+      db,
+      roots: () => [],
+      serviceIds: () => [],
+      mapping: () => mapping,
+    });
+    const terms = () => enumerate({ kind: "terms", param: "term", pathPrefix: null }).subjects;
+    expect(terms()).toHaveLength(1);
+    mapping = BUILTIN_SOURCE_MAPPING;
+    expect(terms()).toHaveLength(2);
+  });
+
   test("states why it is empty", () => {
-    expect(enumerateTerms(db, "term").emptyReason).toMatch(/no consolidated glossary terms/);
+    expect(enumerateTerms(db, "term", BUILTIN_SOURCE_MAPPING).emptyReason).toMatch(
+      /no consolidated glossary terms/,
+    );
   });
 });
 
@@ -227,7 +297,12 @@ describe("enumerateServices", () => {
 describe("buildFleetSweepEnumerate", () => {
   test("reads roots and services FRESH on every call", () => {
     let ids: string[] = ["a"];
-    const enumerate = buildFleetSweepEnumerate({ db, roots: () => [], serviceIds: () => ids });
+    const enumerate = buildFleetSweepEnumerate({
+      db,
+      roots: () => [],
+      serviceIds: () => ids,
+      mapping: () => BUILTIN_SOURCE_MAPPING,
+    });
     expect(
       enumerate({ kind: "services", param: "service", pathPrefix: null }).subjects,
     ).toHaveLength(1);

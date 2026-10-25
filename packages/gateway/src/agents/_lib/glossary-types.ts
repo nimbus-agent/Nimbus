@@ -50,7 +50,13 @@ export type GlossaryBrief = {
   matchedVia: GlossaryMatchedVia;
   suggestions: string[];
   stats: {
+    /** Consolidated terms the current source mapping lets the reader see. */
     total: number;
+    /**
+     * Consolidated terms the current source mapping hides (spec § 7): mined terms with no
+     * occurrence in a mapped source. Not part of `total`; 0 when nothing can be hidden.
+     */
+    hidden: number;
     pending: number;
     vetoed: number;
     /** Subset of `total` — authored in `[glossary.terms]`. */

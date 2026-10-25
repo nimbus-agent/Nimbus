@@ -414,6 +414,8 @@ export async function seedDemoCorpus(
     retryBaseCooldownMs: glossaryCfg.retryBaseCooldownMs,
     configDir: opts.configDir,
     nowMs: opts.nowMs,
+    // The demo corpus is built-in sources only; a demo pack's mapping does not apply here.
+    mapping: BUILTIN_SOURCE_MAPPING,
   });
 
   const decisionsCfg = loadNimbusDecisionsFromConfigDir(opts.configDir);

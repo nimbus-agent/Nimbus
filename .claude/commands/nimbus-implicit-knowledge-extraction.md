@@ -85,14 +85,14 @@ ticket 0.6, else 0.3; a type outside the table keeps the old `*:issue` → 0.6 r
 owner-accepted agent decision can point at any item), the ADR lookup (doc-kind types), and
 ticket-key matching (ticket-kind types, through `metadata.key`/`identifier` only).
 
-**The effective mapping (decisions only, PR 2a).** The built-in table is the base; `sources/source-mapping.ts`
+**The effective mapping (decisions PR 2a, glossary PR 2b).** The built-in table is the base; `sources/source-mapping.ts`
 `resolveSourceMapping` adds pack `[sources] map` entries (add-only: refused for built-in types, the
 `PERSONAL_SOURCE_TYPES`, duplicates and `nimbus:*`; two packs disagreeing on a kind conflict), then
 the owner's base and profile `map` (add or re-kind any type) and `exclude` (owner only; beats `map`
 within a layer). `nimbus:*` is dropped by the resolver as well as the parser (I28). Resolve it live
 (`sourceMappingFor(configDir)`), never snapshot it at boot. Decisions reads and the pass use it;
-`GLOSSARY_SOURCE_TYPES` and its consumers stay built-in until PR 2b. Reads hide rows of unmapped
-types (never delete); orphan and owner-accepted agent decisions always show. V74 adds
+The glossary reads it too: terms use the KNOWN set (`knownSourceTypes` in `sources/source-catchup.ts`) for stored stats and the EFFECTIVE set for scans, queues and visibility (`glossary/glossary-visibility.ts`). Reads hide rows of unmapped
+types (never delete); orphan and owner-accepted agent decisions and manual/agent terms always show. V74 adds
 `source_catchup_state`, `decision_record.scored_kind` and `idx_item_service_type_modified`.
 `BUILTIN_SOURCE_KINDS` is no longer exported; use `builtinSourceEntries()`.
 
@@ -292,8 +292,7 @@ previews the delete count and requires `--yes`.
 5. For **decisions**, a newly mapped type IS caught up: the pass mines already-indexed items of
    it (a re-included type only over the window it was unmapped) from the V74
    `source_catchup_state` cursors, before the delta scan. Built-in rows on an index that predates
-   V74 are not re-scanned. For the **glossary**, existing rows are still **not** re-scanned by
-   adding a type, because the watermark has already passed them: say so and point at `--rebuild`.
+   V74 are not re-scanned. The **glossary** is caught up the same way (shared `sources/source-catchup.ts`; `--rebuild` clears its cursors). A type that is not in `PROSE_HEAVY_TYPES` or the built-in table makes a term's search copy local-only (`nimbus:glossary_term_local`, V75 `definition_local`).
 6. Update the honesty statements if the change moves a ceiling or a coverage claim.
 
 ## See also

@@ -13,6 +13,7 @@ import {
 import { graphRelationExists } from "../graph/relationship-graph.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 import {
   assertAcceptable,
@@ -97,7 +98,7 @@ function seedLlmTerm(project: boolean): void {
     key: "wal",
     surface: "WAL",
     form: "phrase",
-    stats: computeTermStats(db, "wal"),
+    stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
     score: 1,
     nowMs: NOW,
   });
@@ -105,6 +106,7 @@ function seedLlmTerm(project: boolean): void {
     termKey: "wal",
     definition: "old def",
     definitionSource: "llm",
+    definitionLocal: false,
     synonyms: [],
     nearMisses: [],
     nowMs: NOW,
@@ -112,7 +114,7 @@ function seedLlmTerm(project: boolean): void {
   if (!project) return;
   const t = getTerm(db, "wal");
   if (t === null) throw new Error("seed failed");
-  projectTerm(db, t, NOW);
+  projectTerm(db, t, NOW, "glossary_term");
 }
 
 describe("decision", () => {
@@ -177,7 +179,7 @@ describe("term", () => {
       definition: "mine",
       synonyms: [],
       nearMisses: [],
-      stats: computeTermStats(db, "man"),
+      stats: computeTermStats(db, "man", sourceTypesFor("glossary")),
       score: 0,
       nowMs: NOW,
     });
@@ -202,7 +204,7 @@ describe("term", () => {
       definition: "mine",
       synonyms: [],
       nearMisses: [],
-      stats: computeTermStats(db, "wal"),
+      stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
       score: 0,
       nowMs: NOW,
     });

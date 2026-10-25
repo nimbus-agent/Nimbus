@@ -112,6 +112,7 @@ function glossaryBrief(entries: GlossaryEntry[]): GlossaryBrief {
     suggestions: [],
     stats: {
       total: entries.length,
+      hidden: 0,
       pending: 0,
       vetoed: 0,
       manual: 1,

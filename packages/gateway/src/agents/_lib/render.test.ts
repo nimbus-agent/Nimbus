@@ -764,6 +764,7 @@ describe("renderGlossary", () => {
       suggestions: [],
       stats: {
         total: 1,
+        hidden: 0,
         pending: 0,
         vetoed: 0,
         manual: 1,
@@ -791,6 +792,7 @@ describe("renderGlossary", () => {
       suggestions: [],
       stats: {
         total: 2,
+        hidden: 0,
         pending: 0,
         vetoed: 0,
         manual: 1,

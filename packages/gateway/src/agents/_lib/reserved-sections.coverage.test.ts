@@ -62,6 +62,7 @@ const HOSTILE_GLOSSARY: GlossaryBrief = {
   ],
   stats: {
     total: 1,
+    hidden: 0,
     pending: 0,
     vetoed: 0,
     manual: 0,
@@ -270,6 +271,7 @@ const GLOSSARY: GlossaryBrief = {
   suggestions: [],
   stats: {
     total: 0,
+    hidden: 0,
     pending: 0,
     vetoed: 0,
     manual: 0,

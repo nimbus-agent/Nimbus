@@ -1,9 +1,11 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-
+import { type LayerKind, mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { dbRun } from "../db/write.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING, resolveSourceMapping } from "../sources/source-mapping.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -17,12 +19,16 @@ import {
   clearGlossary,
   computeTermStats,
   countByStatus,
+  countSnippetSourced,
   deleteAgentTerm,
   demoteTerm,
+  effectiveView,
   findBySynonym,
   getTerm,
+  hasEffectiveOccurrence,
   listAllKeys,
   listConsolidated,
+  listVisibleConsolidated,
   markConsolidated,
   markVetoed,
   readPassState,
@@ -37,6 +43,8 @@ import {
   upsertManualTerm,
   writePassState,
 } from "./glossary-store.ts";
+import type { GlossarySets, GlossaryTerm } from "./glossary-types.ts";
+import { glossarySets } from "./glossary-visibility.ts";
 
 let db: Database;
 
@@ -64,7 +72,14 @@ function seedCandidate(key: string, score = 1): void {
     key,
     surface: key.toUpperCase(),
     form: "acronym",
-    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 100, lastSeenAt: 200, topSources: [] },
+    stats: {
+      docFreq: 3,
+      serviceSpread: 1,
+      firstSeenAt: 100,
+      lastSeenAt: 200,
+      topSources: [],
+      contributingTypes: [],
+    },
     score,
     nowMs: 1000,
   });
@@ -75,6 +90,7 @@ function consolidate(key: string, nowMs = 2000, synonyms: string[] = []): void {
     termKey: key,
     definition: "d",
     definitionSource: "llm",
+    definitionLocal: false,
     synonyms,
     nearMisses: [],
     nowMs,
@@ -97,7 +113,7 @@ test("computeTermStats counts distinct citing items and services", () => {
     body: "CDR work",
     modifiedAt: 200,
   });
-  const s = computeTermStats(db, "cdr");
+  const s = computeTermStats(db, "cdr", sourceTypesFor("glossary"));
   expect(s.docFreq).toBe(3);
   expect(s.serviceSpread).toBe(2);
   expect(s.firstSeenAt).toBe(100);
@@ -118,7 +134,7 @@ test("computeTermStats ignores an allowlisted type carried by a non-allowlisted 
     body: "CDR bucket is public",
     modifiedAt: 200,
   });
-  const s = computeTermStats(db, "cdr");
+  const s = computeTermStats(db, "cdr", sourceTypesFor("glossary"));
   expect(s.docFreq).toBe(1);
   expect(s.serviceSpread).toBe(1);
   expect(s.topSources.map((t) => t.service)).toEqual(["slack"]);
@@ -128,11 +144,11 @@ test("computeTermStats returns at most five top sources", () => {
   for (let i = 0; i < 8; i++) {
     seedItem({ externalId: `i${String(i)}`, title: "CDR", body: "CDR here", modifiedAt: 100 + i });
   }
-  expect(computeTermStats(db, "cdr").topSources).toHaveLength(5);
+  expect(computeTermStats(db, "cdr", sourceTypesFor("glossary")).topSources).toHaveLength(5);
 });
 
 test("computeTermStats is zero for an absent term", () => {
-  expect(computeTermStats(db, "nosuchterm").docFreq).toBe(0);
+  expect(computeTermStats(db, "nosuchterm", sourceTypesFor("glossary")).docFreq).toBe(0);
 });
 
 test("computeTermStats ignores item types outside the source scope", () => {
@@ -145,14 +161,14 @@ test("computeTermStats ignores item types outside the source scope", () => {
     modifiedAt: 100,
     syncedAt: 100,
   });
-  expect(computeTermStats(db, "cdr").docFreq).toBe(0);
+  expect(computeTermStats(db, "cdr", sourceTypesFor("glossary")).docFreq).toBe(0);
 });
 
 test("computeTermStats drops to zero after the citing item is deleted", () => {
   seedItem({ externalId: "a", title: "CDR", body: "CDR", modifiedAt: 100 });
-  expect(computeTermStats(db, "cdr").docFreq).toBe(1);
+  expect(computeTermStats(db, "cdr", sourceTypesFor("glossary")).docFreq).toBe(1);
   db.run("DELETE FROM item");
-  expect(computeTermStats(db, "cdr").docFreq).toBe(0);
+  expect(computeTermStats(db, "cdr", sourceTypesFor("glossary")).docFreq).toBe(0);
 });
 
 test("upsertCandidate inserts pending and getTerm round-trips it", () => {
@@ -178,7 +194,7 @@ test("a hyphenated term is matched (documented phrase-equivalence)", () => {
     modifiedAt: 100,
   });
   seedItem({ externalId: "h2", title: "caching", body: "write-behind again", modifiedAt: 101 });
-  expect(computeTermStats(db, "write-behind").docFreq).toBe(2);
+  expect(computeTermStats(db, "write-behind", sourceTypesFor("glossary")).docFreq).toBe(2);
 });
 
 test("hyphenated matching is phrase-equivalent — unhyphenated prose also counts", () => {
@@ -197,54 +213,74 @@ test("hyphenated matching is phrase-equivalent — unhyphenated prose also count
     body: "we write behind the scenes",
     modifiedAt: 101,
   });
-  expect(computeTermStats(db, "write-behind").docFreq).toBe(2);
+  expect(computeTermStats(db, "write-behind", sourceTypesFor("glossary")).docFreq).toBe(2);
 });
 
 test("an underscored term is matched", () => {
   seedItem({ externalId: "u1", title: "keys", body: "set the shard_key first", modifiedAt: 100 });
-  expect(computeTermStats(db, "shard_key").docFreq).toBe(1);
+  expect(computeTermStats(db, "shard_key", sourceTypesFor("glossary")).docFreq).toBe(1);
 });
 
 test("a term key with FTS-hostile characters degrades to zero, never throws", () => {
-  expect(() => computeTermStats(db, 'we"ird^(term)')).not.toThrow();
+  expect(() => computeTermStats(db, 'we"ird^(term)', sourceTypesFor("glossary"))).not.toThrow();
 });
 
 const QUEUE = { nowMs: 10_000, retryBaseCooldownMs: 1000, minDocFreq: 0 };
+
+/** The built-in mapping: every known type is effective, so the queues take the fast path. */
+const BUILTIN_SETS: GlossarySets = {
+  effective: sourceTypesFor("glossary"),
+  known: sourceTypesFor("glossary"),
+  fast: true,
+};
 
 test("markVetoed is sticky and keeps the row out of the pending batch", () => {
   seedCandidate("cdr");
   markVetoed(db, "cdr", 2000);
   expect(getTerm(db, "cdr")?.status).toBe("vetoed");
-  expect(selectPendingBatch(db, 10, QUEUE)).toHaveLength(0);
+  expect(selectPendingBatch(db, 10, QUEUE, BUILTIN_SETS)).toHaveLength(0);
 });
 
 test("selectPendingBatch orders by score descending and honours the limit", () => {
   seedCandidate("low", 1);
   seedCandidate("high", 9);
   seedCandidate("mid", 5);
-  expect(selectPendingBatch(db, 2, QUEUE).map((t) => t.termKey)).toEqual(["high", "mid"]);
+  expect(selectPendingBatch(db, 2, QUEUE, BUILTIN_SETS).map((t) => t.termKey)).toEqual([
+    "high",
+    "mid",
+  ]);
 });
 
 test("a freshly-attempted term is withheld while its backoff is active", () => {
   seedCandidate("high", 9);
   seedCandidate("low", 1);
   recordAttempt(db, "high", 10_000);
-  const batch = selectPendingBatch(db, 10, {
-    nowMs: 10_500,
-    retryBaseCooldownMs: 1000,
-    minDocFreq: 0,
-  });
+  const batch = selectPendingBatch(
+    db,
+    10,
+    {
+      nowMs: 10_500,
+      retryBaseCooldownMs: 1000,
+      minDocFreq: 0,
+    },
+    BUILTIN_SETS,
+  );
   expect(batch.map((t) => t.termKey)).toEqual(["low"]);
 });
 
 test("a term returns to the queue once its backoff expires", () => {
   seedCandidate("high", 9);
   recordAttempt(db, "high", 10_000);
-  const batch = selectPendingBatch(db, 10, {
-    nowMs: 12_000,
-    retryBaseCooldownMs: 1000,
-    minDocFreq: 0,
-  });
+  const batch = selectPendingBatch(
+    db,
+    10,
+    {
+      nowMs: 12_000,
+      retryBaseCooldownMs: 1000,
+      minDocFreq: 0,
+    },
+    BUILTIN_SETS,
+  );
   expect(batch.map((t) => t.termKey)).toEqual(["high"]);
 });
 
@@ -255,10 +291,20 @@ test("backoff grows with repeated failures", () => {
   recordAttempt(db, "high", 0);
   // attempts=3 -> base * 2^2 = 4000 ms
   expect(
-    selectPendingBatch(db, 10, { nowMs: 3000, retryBaseCooldownMs: 1000, minDocFreq: 0 }),
+    selectPendingBatch(
+      db,
+      10,
+      { nowMs: 3000, retryBaseCooldownMs: 1000, minDocFreq: 0 },
+      BUILTIN_SETS,
+    ),
   ).toHaveLength(0);
   expect(
-    selectPendingBatch(db, 10, { nowMs: 5000, retryBaseCooldownMs: 1000, minDocFreq: 0 }),
+    selectPendingBatch(
+      db,
+      10,
+      { nowMs: 5000, retryBaseCooldownMs: 1000, minDocFreq: 0 },
+      BUILTIN_SETS,
+    ),
   ).toHaveLength(1);
 });
 
@@ -271,16 +317,28 @@ test("selectPendingBatch excludes a term demoted below the floor", () => {
   applyStats(
     db,
     "cdr",
-    { docFreq: 1, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    {
+      docFreq: 1,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     0,
     3000,
   );
 
-  const batch = selectPendingBatch(db, 10, {
-    nowMs: 10_000,
-    retryBaseCooldownMs: 1000,
-    minDocFreq: 3,
-  });
+  const batch = selectPendingBatch(
+    db,
+    10,
+    {
+      nowMs: 10_000,
+      retryBaseCooldownMs: 1000,
+      minDocFreq: 3,
+    },
+    BUILTIN_SETS,
+  );
   expect(batch.map((t) => t.termKey)).toEqual(["slo"]);
   expect(getTerm(db, "cdr")?.status).toBe("pending");
 });
@@ -298,7 +356,14 @@ test("selectStaleForRecheck returns consolidated rows oldest-verified first", ()
   applyStats(
     db,
     "b",
-    { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    {
+      docFreq: 3,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     1,
     9000,
   );
@@ -315,8 +380,9 @@ test("selectStaleForRecheck skips terms verified after the cutoff", () => {
 test("findBySynonym resolves the canonical term", () => {
   seedCandidate("cdr");
   consolidate("cdr", 2000, ["change data record"]);
-  expect(findBySynonym(db, "change data record")?.termKey).toBe("cdr");
-  expect(findBySynonym(db, "nope")).toBeNull();
+  const sets = glossarySets(db, BUILTIN_SOURCE_MAPPING);
+  expect(findBySynonym(db, "change data record", sets)?.termKey).toBe("cdr");
+  expect(findBySynonym(db, "nope", sets)).toBeNull();
 });
 
 test("demoteTerm returns a consolidated row to pending and clears its definition", () => {
@@ -333,7 +399,7 @@ test("countByStatus reports totals", () => {
   seedCandidate("b");
   consolidate("a");
   markVetoed(db, "b", 2000);
-  const c = countByStatus(db);
+  const c = countByStatus(db, glossarySets(db, BUILTIN_SOURCE_MAPPING));
   expect(c.total).toBe(1);
   expect(c.vetoed).toBe(1);
 });
@@ -385,7 +451,7 @@ describe("agent terms (capture sink)", () => {
     definition,
     synonyms: ["write-ahead log"],
     captureId,
-    stats: computeTermStats(db, "wal"),
+    stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
     score: 0,
     nowMs: 10,
   });
@@ -442,7 +508,7 @@ describe("agent terms (capture sink)", () => {
       definition: "mine",
       synonyms: [],
       nearMisses: [],
-      stats: computeTermStats(db, "wal"),
+      stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
       score: 0,
       nowMs: 4,
     });
@@ -468,7 +534,14 @@ describe("agent terms (capture sink)", () => {
       key: "wal",
       surface: "Wal",
       form: "acronym",
-      stats: { docFreq: 9, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+      stats: {
+        docFreq: 9,
+        serviceSpread: 1,
+        firstSeenAt: 1,
+        lastSeenAt: 2,
+        topSources: [],
+        contributingTypes: [],
+      },
       score: 9,
       nowMs: 11,
     });
@@ -485,6 +558,7 @@ describe("agent terms (capture sink)", () => {
       termKey: "wal",
       definition: "llm",
       definitionSource: "llm",
+      definitionLocal: false,
       synonyms: [],
       nearMisses: [],
       nowMs: 20,
@@ -559,7 +633,9 @@ describe("selectSnippetUpgradeBatch", () => {
        VALUES ('pend_snip', 'PEND_SNIP', 'pending', 'snippet', 5, 2, 75, 'acronym', 1, 2, 1)`,
       [],
     );
-    expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual(["cdr"]);
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS, BUILTIN_SETS).map((t) => t.termKey)).toEqual([
+      "cdr",
+    ]);
   });
 
   // Ordering, not count: a count-only assertion passes under either ordering.
@@ -567,7 +643,7 @@ describe("selectSnippetUpgradeBatch", () => {
     seedConsolidated("recent", { source: "snippet", score: 99, lastAttemptAt: 900_000 });
     seedConsolidated("never", { source: "snippet", score: 1, lastAttemptAt: 0 });
     seedConsolidated("middle", { source: "snippet", score: 50, lastAttemptAt: 400_000 });
-    expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual([
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS, BUILTIN_SETS).map((t) => t.termKey)).toEqual([
       "never",
       "middle",
       "recent",
@@ -577,20 +653,22 @@ describe("selectSnippetUpgradeBatch", () => {
   test("withholds a term still inside its exponential backoff", () => {
     // attempts=1 -> cooldown 60_000; last attempt at 999_000 -> due at 1_059_000 > now.
     seedConsolidated("cdr", { source: "snippet", score: 10, attempts: 1, lastAttemptAt: 999_000 });
-    expect(selectSnippetUpgradeBatch(db, 10, OPTS)).toEqual([]);
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS, BUILTIN_SETS)).toEqual([]);
   });
 
   test("admits a term whose backoff has elapsed", () => {
     seedConsolidated("cdr", { source: "snippet", score: 10, attempts: 1, lastAttemptAt: 100_000 });
-    expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual(["cdr"]);
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS, BUILTIN_SETS).map((t) => t.termKey)).toEqual([
+      "cdr",
+    ]);
   });
 
   // SQLite treats LIMIT -1 as UNLIMITED, so a subtraction-derived caller that
   // goes negative would silently select the whole snippet population.
   test("returns nothing for a zero or negative limit", () => {
     seedConsolidated("cdr", { source: "snippet", score: 10 });
-    expect(selectSnippetUpgradeBatch(db, 0, OPTS)).toEqual([]);
-    expect(selectSnippetUpgradeBatch(db, -1, OPTS)).toEqual([]);
+    expect(selectSnippetUpgradeBatch(db, 0, OPTS, BUILTIN_SETS)).toEqual([]);
+    expect(selectSnippetUpgradeBatch(db, -1, OPTS, BUILTIN_SETS)).toEqual([]);
   });
 });
 
@@ -607,6 +685,7 @@ test("markConsolidated stamps last_attempt_at", () => {
     termKey: "cdr",
     definition: "d",
     definitionSource: "llm",
+    definitionLocal: false,
     synonyms: [],
     nearMisses: [],
     nowMs: 777,
@@ -624,7 +703,14 @@ test("a mined sighting refreshes a manual row's stats but not its display form",
     definition: "Authored.",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    stats: {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 0,
     nowMs: 1000,
   });
@@ -633,7 +719,14 @@ test("a mined sighting refreshes a manual row's stats but not its display form",
     key: "cdr",
     surface: "cdr",
     form: "acronym",
-    stats: { docFreq: 7, serviceSpread: 2, firstSeenAt: 10, lastSeenAt: 20, topSources: [] },
+    stats: {
+      docFreq: 7,
+      serviceSpread: 2,
+      firstSeenAt: 10,
+      lastSeenAt: 20,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 9,
     nowMs: 2000,
   });
@@ -659,7 +752,14 @@ test("a mined sighting still updates a mined row's display form", () => {
     key: "widget",
     surface: "widget",
     form: "phrase",
-    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 3,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 1,
     nowMs: 1000,
   });
@@ -667,7 +767,14 @@ test("a mined sighting still updates a mined row's display form", () => {
     key: "widget",
     surface: "Widget",
     form: "phrase",
-    stats: { docFreq: 4, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 4,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 2,
     nowMs: 2000,
   });
@@ -681,22 +788,39 @@ test("a manual row is selected by neither consolidation batch", () => {
     definition: "Authored.",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 9, serviceSpread: 3, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 9,
+      serviceSpread: 3,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 99,
     nowMs: 1000,
   });
 
   // High score, zero attempts, well above the floor — it qualifies on every
   // predicate except the ones that structurally exclude it.
-  const pending = selectPendingBatch(db, 10, {
-    nowMs: 9_000_000,
-    retryBaseCooldownMs: 1,
-    minDocFreq: 3,
-  });
-  const upgrades = selectSnippetUpgradeBatch(db, 10, {
-    nowMs: 9_000_000,
-    retryBaseCooldownMs: 1,
-  });
+  const pending = selectPendingBatch(
+    db,
+    10,
+    {
+      nowMs: 9_000_000,
+      retryBaseCooldownMs: 1,
+      minDocFreq: 3,
+    },
+    BUILTIN_SETS,
+  );
+  const upgrades = selectSnippetUpgradeBatch(
+    db,
+    10,
+    {
+      nowMs: 9_000_000,
+      retryBaseCooldownMs: 1,
+    },
+    BUILTIN_SETS,
+  );
 
   expect(pending.map((t) => t.termKey)).not.toContain("cdr");
   expect(upgrades.map((t) => t.termKey)).not.toContain("cdr");
@@ -707,7 +831,14 @@ test("listConsolidated puts authored terms ahead of higher-scoring mined ones", 
     key: "widget",
     surface: "Widget",
     form: "phrase",
-    stats: { docFreq: 50, serviceSpread: 5, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 50,
+      serviceSpread: 5,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 999,
     nowMs: 1,
   });
@@ -715,6 +846,7 @@ test("listConsolidated puts authored terms ahead of higher-scoring mined ones", 
     termKey: "widget",
     definition: "mined",
     definitionSource: "llm",
+    definitionLocal: false,
     synonyms: [],
     nearMisses: [],
     nowMs: 1,
@@ -725,7 +857,14 @@ test("listConsolidated puts authored terms ahead of higher-scoring mined ones", 
     definition: "authored",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    stats: {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 0,
     nowMs: 1,
   });
@@ -742,11 +881,18 @@ test("countByStatus reports manual as a subset of total", () => {
     definition: "authored",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    stats: {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 0,
     nowMs: 1,
   });
-  const counts = countByStatus(db);
+  const counts = countByStatus(db, glossarySets(db, BUILTIN_SOURCE_MAPPING));
   expect(counts.total).toBe(1);
   expect(counts.manual).toBe(1);
 });
@@ -769,11 +915,402 @@ test("countByStatus.total includes both a manual and a mined consolidated row", 
     definition: "authored",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    stats: {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 0,
     nowMs: 1,
   });
-  const counts = countByStatus(db);
+  const counts = countByStatus(db, glossarySets(db, BUILTIN_SOURCE_MAPPING));
   expect(counts.total).toBe(2);
   expect(counts.manual).toBe(1);
+});
+
+test("computeTermStats with an empty source set is zero and never builds IN ()", () => {
+  seedItem({ externalId: "a", title: "CDR rollout", body: "the CDR is live", modifiedAt: 100 });
+  const s = computeTermStats(db, "cdr", []);
+  expect(s.docFreq).toBe(0);
+  expect(s.contributingTypes).toEqual([]);
+});
+
+test("computeTermStats lists the contributing service:type keys, sorted", () => {
+  seedItem({ externalId: "a", title: "CDR rollout", body: "the CDR is live", modifiedAt: 100 });
+  seedItem({
+    externalId: "c",
+    service: "jira",
+    type: "issue",
+    title: "CDR ticket",
+    body: "CDR work",
+    modifiedAt: 200,
+  });
+  const s = computeTermStats(db, "cdr", sourceTypesFor("glossary"));
+  expect(s.contributingTypes).toEqual(["jira:issue", "slack:message"]);
+});
+
+// ---------------------------------------------------------------------------
+// Effective-mapping visibility of the model queues (role packs P2, spec § 7)
+// ---------------------------------------------------------------------------
+
+describe("queues under an excluding mapping", () => {
+  const mappingOf = (kind: LayerKind, body: string) =>
+    resolveSourceMapping({
+      doc: mergeLayerDocs([
+        parseLayerDoc(
+          { kind, id: kind, path: `/virtual/${kind}.toml` },
+          `[sources]
+${body}
+`,
+        ),
+      ]),
+    });
+  const NO_SLACK = mappingOf("base", 'exclude = ["slack:message"]');
+
+  function seedBacked(key: string, service: string, type: string, score: number): void {
+    for (let i = 0; i < 3; i++) {
+      seedItem({
+        externalId: `${key}-${String(i)}`,
+        service,
+        type,
+        title: `about ${key.toUpperCase()}`,
+        body: `the ${key.toUpperCase()} thing`,
+        modifiedAt: 100 + i,
+      });
+    }
+    seedCandidate(key, score);
+  }
+
+  /** Counts FTS queries issued through `db.query` while `run` executes. */
+  function ftsQueriesDuring(run: () => void): number {
+    const original = db.query.bind(db);
+    let n = 0;
+    const spy = (sql: string) => {
+      if (sql.includes("item_fts")) n++;
+      return original(sql);
+    };
+    (db as unknown as { query: typeof spy }).query = spy;
+    try {
+      run();
+    } finally {
+      (db as unknown as { query: typeof original }).query = original;
+    }
+    return n;
+  }
+
+  test("exclude keeps a Slack-only pending term out of the model batch", () => {
+    seedBacked("cdr", "slack", "message", 9);
+    seedBacked("wal", "jira", "issue", 1);
+    const sets = glossarySets(db, NO_SLACK);
+    expect(sets.fast).toBe(false);
+
+    expect(selectPendingBatch(db, 10, QUEUE, sets).map((t) => t.termKey)).toEqual(["wal"]);
+    const kept = db
+      .query("SELECT status, attempts FROM glossary_term WHERE term_key = 'cdr'")
+      .get() as { status: string; attempts: number };
+    expect(kept).toEqual({ status: "pending", attempts: 0 });
+    // The built-in mapping still selects it.
+    expect(
+      selectPendingBatch(db, 10, QUEUE, glossarySets(db, BUILTIN_SOURCE_MAPPING)).map(
+        (t) => t.termKey,
+      ),
+    ).toEqual(["cdr", "wal"]);
+  });
+
+  test("an excluded snippet term is skipped by the upgrade queue, not the manual one", () => {
+    seedBacked("cdr", "slack", "message", 9);
+    dbRun(
+      db,
+      "UPDATE glossary_term SET status = 'consolidated', definition = 'd', definition_source = 'snippet' WHERE term_key = 'cdr'",
+      [],
+    );
+    seedBacked("lsn", "slack", "message", 5);
+    dbRun(db, "UPDATE glossary_term SET definition_source = 'manual' WHERE term_key = 'lsn'", []);
+    const sets = glossarySets(db, NO_SLACK);
+    const opts = { nowMs: 10_000, retryBaseCooldownMs: 1000 };
+    expect(selectSnippetUpgradeBatch(db, 10, opts, sets)).toEqual([]);
+    expect(selectPendingBatch(db, 10, QUEUE, sets).map((t) => t.termKey)).toEqual(["lsn"]);
+  });
+
+  test("the slow path still fills the limit past hidden rows", () => {
+    seedBacked("aaa", "slack", "message", 9);
+    seedBacked("bbb", "slack", "message", 8);
+    seedBacked("ccc", "jira", "issue", 2);
+    seedBacked("ddd", "jira", "issue", 1);
+    const sets = glossarySets(db, NO_SLACK);
+    expect(selectPendingBatch(db, 2, QUEUE, sets).map((t) => t.termKey)).toEqual(["ccc", "ddd"]);
+  });
+
+  // More hidden rows than one over-fetch window (limit × 4) ranked ahead of the only visible one:
+  // a fixed window would return nothing for as long as the exclusion lasts, since a hidden row is
+  // never attempted and so never moves in the queue's order.
+  test("the pending queue pages past more hidden rows than one window", () => {
+    for (let i = 0; i < 6; i++) seedBacked(`hid${String(i)}`, "slack", "message", 50 - i);
+    seedBacked("vis", "jira", "issue", 1);
+    const sets = glossarySets(db, NO_SLACK);
+    expect(selectPendingBatch(db, 1, QUEUE, sets).map((t) => t.termKey)).toEqual(["vis"]);
+    const untouched = db
+      .query("SELECT COUNT(*) AS n FROM glossary_term WHERE status = 'pending' AND attempts = 0")
+      .get() as { n: number };
+    expect(untouched.n).toBe(7);
+  });
+
+  test("the snippet upgrade queue pages past more hidden rows than one window", () => {
+    for (let i = 0; i < 6; i++) seedBacked(`hid${String(i)}`, "slack", "message", 50 - i);
+    seedBacked("vis", "jira", "issue", 1);
+    dbRun(
+      db,
+      "UPDATE glossary_term SET status = 'consolidated', definition = 'd', definition_source = 'snippet', last_attempt_at = CASE WHEN term_key = 'vis' THEN 500 ELSE 0 END",
+      [],
+    );
+    const sets = glossarySets(db, NO_SLACK);
+    const opts = { nowMs: 10_000, retryBaseCooldownMs: 1000 };
+    expect(selectSnippetUpgradeBatch(db, 1, opts, sets).map((t) => t.termKey)).toEqual(["vis"]);
+  });
+
+  test("fast path issues no FTS existence check", () => {
+    seedBacked("cdr", "slack", "message", 9);
+    const fast = glossarySets(db, BUILTIN_SOURCE_MAPPING);
+    expect(fast.fast).toBe(true);
+    expect(
+      ftsQueriesDuring(() => {
+        selectPendingBatch(db, 10, QUEUE, fast);
+        selectSnippetUpgradeBatch(db, 10, { nowMs: 10_000, retryBaseCooldownMs: 1000 }, fast);
+      }),
+    ).toBe(0);
+    // Positive control: the same spy does see the slow path's check.
+    expect(
+      ftsQueriesDuring(() => {
+        selectPendingBatch(db, 10, QUEUE, glossarySets(db, NO_SLACK));
+      }),
+    ).toBeGreaterThan(0);
+  });
+
+  test("hasEffectiveOccurrence matches only the effective set", () => {
+    seedBacked("cdr", "slack", "message", 9);
+    expect(hasEffectiveOccurrence(db, "cdr", ["slack:message"])).toBe(true);
+    expect(hasEffectiveOccurrence(db, "cdr", ["jira:issue"])).toBe(false);
+    expect(hasEffectiveOccurrence(db, "cdr", [])).toBe(false);
+    expect(hasEffectiveOccurrence(db, 'we"ird^(term)', ["slack:message"])).toBe(false);
+  });
+});
+
+describe("consolidated reads under an excluding mapping", () => {
+  const NO_SLACK = resolveSourceMapping({
+    doc: mergeLayerDocs([
+      parseLayerDoc(
+        { kind: "base", id: "base", path: "/virtual/base.toml" },
+        '[sources]\nexclude = ["slack:message"]\n',
+      ),
+    ]),
+  });
+
+  /** A consolidated mined term with `n` occurrences in `service:type`, stored stats fixed. */
+  function seedConsolidatedIn(
+    key: string,
+    service: string,
+    type: string,
+    score: number,
+    n = 1,
+  ): void {
+    for (let i = 0; i < n; i++) {
+      seedItem({
+        externalId: `${key}-${service}-${String(i)}`,
+        service,
+        type,
+        title: `about ${key.toUpperCase()}`,
+        body: `the ${key.toUpperCase()} thing`,
+        modifiedAt: 100 + i,
+      });
+    }
+    seedCandidate(key, score);
+    consolidate(key);
+  }
+
+  function storedRow(key: string): unknown {
+    return db.query("SELECT * FROM glossary_term WHERE term_key = ?").get(key);
+  }
+
+  test("listConsolidated breaks score ties by term_key", () => {
+    seedConsolidatedIn("zzz", "jira", "issue", 5);
+    seedConsolidatedIn("aaa", "jira", "issue", 5);
+    seedConsolidatedIn("mmm", "jira", "issue", 5);
+    expect(listConsolidated(db, 10).map((t) => t.termKey)).toEqual(["aaa", "mmm", "zzz"]);
+  });
+
+  test("paging with tied scores returns each visible term once", () => {
+    for (let i = 0; i < 120; i++) {
+      const key = `t${String(i).padStart(3, "0")}x`;
+      if (i % 3 === 0) seedConsolidatedIn(key, "slack", "message", 7);
+      else seedConsolidatedIn(key, "jira", "issue", 7);
+    }
+    const sets = glossarySets(db, NO_SLACK);
+    expect(sets.fast).toBe(false);
+    const keys = listVisibleConsolidated(db, 60, sets, { recomputeStats: false }).map(
+      (t) => t.termKey,
+    );
+    expect(keys).toHaveLength(60);
+    expect(new Set(keys).size).toBe(60);
+    for (const k of keys) expect(Number(k.slice(1, 4)) % 3).not.toBe(0);
+  });
+
+  test("limit counts visible terms", () => {
+    seedConsolidatedIn("hid", "slack", "message", 90);
+    seedConsolidatedIn("hie", "slack", "message", 80);
+    seedConsolidatedIn("hif", "slack", "message", 70);
+    seedConsolidatedIn("vis", "jira", "issue", 2);
+    seedConsolidatedIn("vit", "jira", "issue", 1);
+    const sets = glossarySets(db, NO_SLACK);
+    expect(
+      listVisibleConsolidated(db, 2, sets, { recomputeStats: false }).map((t) => t.termKey),
+    ).toEqual(["vis", "vit"]);
+  });
+
+  test("the fast path is listConsolidated unchanged", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5);
+    const sets = glossarySets(db, BUILTIN_SOURCE_MAPPING);
+    expect(listVisibleConsolidated(db, 10, sets, { recomputeStats: true })).toEqual(
+      listConsolidated(db, 10),
+    );
+  });
+
+  test("manual and agent terms are never hidden", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5);
+    seedItem({ externalId: "m", title: "the LSN", body: "LSN", modifiedAt: 100 });
+    seedItem({ externalId: "a", title: "the WAL", body: "WAL", modifiedAt: 100 });
+    upsertManualTerm(db, {
+      termKey: "lsn",
+      displayTerm: "LSN",
+      definition: "authored",
+      synonyms: [],
+      nearMisses: [],
+      stats: computeTermStats(db, "lsn", sourceTypesFor("glossary")),
+      score: 1,
+      nowMs: 1000,
+    });
+    upsertAgentTerm(db, {
+      termKey: "wal",
+      displayTerm: "WAL",
+      definition: "accepted",
+      synonyms: [],
+      captureId: "cap1",
+      stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
+      score: 1,
+      nowMs: 1000,
+    });
+    const sets = glossarySets(db, NO_SLACK);
+    expect(
+      listVisibleConsolidated(db, 10, sets, { recomputeStats: true })
+        .map((t) => t.termKey)
+        .sort(),
+    ).toEqual(["lsn", "wal"]);
+    expect(countByStatus(db, sets).total).toBe(2);
+  });
+
+  test("recomputeStats shows effective stats only and never writes them", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5, 3);
+    for (let i = 0; i < 2; i++) {
+      seedItem({
+        externalId: `cdr-jira-${String(i)}`,
+        service: "jira",
+        type: "issue",
+        title: "the CDR ticket",
+        body: "CDR",
+        modifiedAt: 500 + i,
+      });
+    }
+    applyStats(db, "cdr", computeTermStats(db, "cdr", sourceTypesFor("glossary")), 5, 3000);
+    const before = storedRow("cdr");
+    expect((before as { doc_freq: number }).doc_freq).toBe(5);
+    const sets = glossarySets(db, NO_SLACK);
+    const [shown] = listVisibleConsolidated(db, 10, sets, { recomputeStats: true });
+    expect(shown?.docFreq).toBe(2);
+    expect(shown?.serviceSpread).toBe(1);
+    expect(shown?.topSources.every((s) => s.service === "jira")).toBe(true);
+    const viewed = effectiveView(db, getTerm(db, "cdr") as GlossaryTerm, sets);
+    expect(viewed.docFreq).toBe(2);
+    expect(storedRow("cdr")).toEqual(before);
+    // Without recompute, the stored figures pass through.
+    expect(listVisibleConsolidated(db, 10, sets, { recomputeStats: false })[0]?.docFreq).toBe(5);
+    // Identity on the fast path.
+    const fast = glossarySets(db, BUILTIN_SOURCE_MAPPING);
+    expect(effectiveView(db, getTerm(db, "cdr") as GlossaryTerm, fast).docFreq).toBe(5);
+  });
+
+  test("countByStatus counts visible consolidated terms; pending and vetoed stay whole-table", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5);
+    seedConsolidatedIn("wal", "jira", "issue", 5);
+    seedItem({ externalId: "p", title: "the LSN", body: "LSN", modifiedAt: 100 });
+    seedCandidate("lsn"); // pending, Slack-only
+    seedCandidate("xid");
+    markVetoed(db, "xid", 3000);
+    const slow = countByStatus(db, glossarySets(db, NO_SLACK));
+    expect(slow).toMatchObject({ total: 1, hidden: 1, pending: 1, vetoed: 1 });
+    const fast = countByStatus(db, glossarySets(db, BUILTIN_SOURCE_MAPPING));
+    expect(fast).toMatchObject({ total: 2, hidden: 0, pending: 1, vetoed: 1 });
+  });
+
+  test("countByStatus's fast path issues no FTS query", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5);
+    const fast = glossarySets(db, BUILTIN_SOURCE_MAPPING);
+    const slow = glossarySets(db, NO_SLACK);
+    const original = db.query.bind(db);
+    let n = 0;
+    const spy = (sql: string) => {
+      if (sql.includes("item_fts")) n++;
+      return original(sql);
+    };
+    (db as unknown as { query: typeof spy }).query = spy;
+    try {
+      countByStatus(db, fast);
+      expect(n).toBe(0);
+      countByStatus(db, slow);
+      expect(n).toBeGreaterThan(0); // positive control
+    } finally {
+      (db as unknown as { query: typeof original }).query = original;
+    }
+  });
+
+  test("countByStatus over 500 consolidated terms with one type excluded stays under 2 s", () => {
+    db.transaction(() => {
+      for (let i = 0; i < 500; i++) {
+        const key = `k${String(i).padStart(3, "0")}q`;
+        if (i % 2 === 0) seedConsolidatedIn(key, "slack", "message", 3);
+        else seedConsolidatedIn(key, "jira", "issue", 3);
+      }
+    })();
+    const sets = glossarySets(db, NO_SLACK);
+    const start = performance.now();
+    const counts = countByStatus(db, sets);
+    const elapsed = performance.now() - start;
+    expect(counts.total).toBe(250);
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  test("countSnippetSourced counts visible snippet terms on the slow path only", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5);
+    seedConsolidatedIn("wal", "jira", "issue", 5);
+    dbRun(db, "UPDATE glossary_term SET definition_source = 'snippet'", []);
+    expect(countSnippetSourced(db, glossarySets(db, NO_SLACK))).toBe(1);
+    expect(countSnippetSourced(db, glossarySets(db, BUILTIN_SOURCE_MAPPING))).toBe(2);
+  });
+
+  test("list mode with recomputeStats at limit 50 over 300 terms stays under 2 s", () => {
+    db.transaction(() => {
+      for (let i = 0; i < 300; i++) {
+        const key = `r${String(i).padStart(3, "0")}q`;
+        if (i % 2 === 0) seedConsolidatedIn(key, "slack", "message", 3);
+        else seedConsolidatedIn(key, "jira", "issue", 3);
+      }
+    })();
+    const sets = glossarySets(db, NO_SLACK);
+    const start = performance.now();
+    const rows = listVisibleConsolidated(db, 50, sets, { recomputeStats: true });
+    const elapsed = performance.now() - start;
+    expect(rows).toHaveLength(50);
+    expect(elapsed).toBeLessThan(2000);
+  });
 });
