@@ -2050,7 +2050,7 @@ publisher-key conflict, then the entry hash. Only then does the reused `extensio
 and root fingerprint; `--yes` is refused for registry installs. The recorded source feeds nothing yet: the update daemon does NOT use
 registries (PR 4).
 
-**Built-in official registry** (`extensions/registry/builtin-registry.ts`, Readwise unbundling gateway PR 5; schema V73). The
+**Built-in official registry** (`extensions/registry/builtin-registry.ts`, Readwise unbundling gateway PR 5; added in V73). The
 release carries one registry's URL and root key, `BUILTIN_REGISTRY`, baked in by the pilot's PR 7:
 `https://nimbus-agent.github.io/nimbus-mcp-servers/` (the trailing slash is load-bearing: `index.json` is
 resolved against it) with root fingerprint `6fb9beb2cf6bdc748c72c03b30b83a9a`. It is `null` only in test
@@ -2089,7 +2089,7 @@ I44. `registry search` reads the owner's registries only, so it does not include
 
 ### Connector migration
 
-**Readwise unbundling pilot, gateway PR 5** (schema V73 `connector_migration`; HITL type `extension.migrate` in the I2 frozen
+**Readwise unbundling pilot, gateway PR 5** (the V73 `connector_migration` table; HITL type `extension.migrate` in the I2 frozen
 set, never delegable; static D34; no new invariant). Moves an existing user of a bundled connector to its signed extension from
 the built-in official registry (live for Readwise since PR 7) with ONE owner decision. The engine is `extensions/migration/migration-engine.ts`, its store
 `migration-store.ts`; the table names a legacy connector at most once (`UNIQUE legacy_service_id`).
