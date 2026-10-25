@@ -74,7 +74,7 @@ rather than a full re-scan. Decisions has the analogous demote-on-missing-source
 
 ## Source types — a service-qualified SSoT, never a bare `type`
 
-Every source is classified ONCE, in `sources/source-kinds.ts`: `BUILTIN_SOURCE_KINDS` maps a
+Every source is classified ONCE, in `sources/source-kinds.ts`: the built-in table maps a
 **`service:type`** key to a kind (`message`, `doc`, `ticket`, `commit`, `note`), and `PASS_KINDS`
 says which kinds each pass reads (decisions: message, doc, ticket, note; glossary adds commit).
 `glossary/glossary-source-types.ts` `GLOSSARY_SOURCE_TYPES` and
@@ -84,6 +84,17 @@ says which kinds each pass reads (decisions: message, doc, ticket, note; glossar
 ticket 0.6, else 0.3; a type outside the table keeps the old `*:issue` → 0.6 rule, because an
 owner-accepted agent decision can point at any item), the ADR lookup (doc-kind types), and
 ticket-key matching (ticket-kind types, through `metadata.key`/`identifier` only).
+
+**The effective mapping (decisions only, PR 2a).** The built-in table is the base; `sources/source-mapping.ts`
+`resolveSourceMapping` adds pack `[sources] map` entries (add-only: refused for built-in types, the
+`PERSONAL_SOURCE_TYPES`, duplicates and `nimbus:*`; two packs disagreeing on a kind conflict), then
+the owner's base and profile `map` (add or re-kind any type) and `exclude` (owner only; beats `map`
+within a layer). `nimbus:*` is dropped by the resolver as well as the parser (I28). Resolve it live
+(`sourceMappingFor(configDir)`), never snapshot it at boot. Decisions reads and the pass use it;
+`GLOSSARY_SOURCE_TYPES` and its consumers stay built-in until PR 2b. Reads hide rows of unmapped
+types (never delete); orphan and owner-accepted agent decisions always show. V74 adds
+`source_catchup_state`, `decision_record.scored_kind` and `idx_item_service_type_modified`.
+`BUILTIN_SOURCE_KINDS` is no longer exported; use `builtinSourceEntries()`.
 
 **Filtering on the bare `type` half silently widens scope.** `message`, `page` and `issue` are
 generic names shared across services — `type IN ('issue', …)` also admits `wiz:issue` (cloud
@@ -264,7 +275,7 @@ previews the delete count and requires `--yes`.
 
 ## Checklist — adding a source item type to either pass
 
-1. Add the **`<service>:<type>`** key with its kind to `BUILTIN_SOURCE_KINDS`
+1. Add the **`<service>:<type>`** key with its kind to the built-in table
    (`sources/source-kinds.ts`); both pass sets derive from it. Never a bare type. The kind decides
    which passes read it and how a decision from it is scored.
 2. Confirm the connector actually writes a body for that type, and at what cap — a type with
@@ -278,8 +289,11 @@ previews the delete count and requires `--yes`.
    type an ADR candidate, and lets a ticket-kind type match `--service` by `metadata.key` /
    `identifier`. Do not add a per-service branch to `sourceAuthority`; only a type OUTSIDE the
    table uses its fallback (`*:issue` `0.6`, else `0.3`).
-5. Existing rows are **not** re-scanned by adding a type — the watermark has already passed
-   them. Say so, and point the user at `--rebuild`.
+5. For **decisions**, a newly mapped type IS caught up: the pass mines already-indexed items of
+   it (a re-included type only over the window it was unmapped) from the V74
+   `source_catchup_state` cursors, before the delta scan. Built-in rows on an index that predates
+   V74 are not re-scanned. For the **glossary**, existing rows are still **not** re-scanned by
+   adding a type, because the watermark has already passed them: say so and point at `--rebuild`.
 6. Update the honesty statements if the change moves a ceiling or a coverage claim.
 
 ## See also

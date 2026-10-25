@@ -1268,6 +1268,26 @@ count as ADRs (doc-kind ones) and which items can match a `--service` by ticket 
 ones carrying `metadata.key` or `metadata.identifier`). Email, calendar and gateway-written
 `nimbus:*` types are not in the table.
 
+**The effective mapping (decisions only).** `sources/source-mapping.ts` layers owner and pack
+config over the built-in table: pack `[sources] map` entries are add-only (refused for built-in
+types, the seven personal email and calendar types, duplicates and `nimbus:*`; two packs
+disagreeing on a kind conflict), the owner's base then profile `map` may add or re-kind any type,
+and the owner's `exclude` removes any, with `exclude` beating `map` inside one layer. `nimbus:*` is
+refused by the parser and dropped again by the resolver (I28). It is resolved live, per pass run
+and per read, from the cached layered-config snapshot, never from a boot-time copy. Glossary
+filters still read the built-in table until a later release.
+
+V74 supports it: `source_catchup_state` holds per-type catch-up cursors, `decision_record.scored_kind`
+records the kind a row was scored under (so a re-kind does not trip the stale-score note), and
+`idx_item_service_type_modified ON item(service, type, modified_at, id)` lets the catch-up seek.
+The pass mines already-indexed items of a newly mapped type, and of a re-included type only the
+window it was unmapped, before the delta scan; built-ins on an upgraded index are not re-scanned;
+queued and snippet-upgrade rows of excluded types are not sent to the model; `--rebuild` clears
+the cursors; the ADR lookup uses the mapping's doc types and is skipped when there are none. Reads
+(`nimbus decisions`, counts, candidate totals, negotiate's decisions lane, the tour) hide rows of
+types not currently mapped without deleting them, and always show orphan decisions and
+owner-accepted agent decisions.
+
 ---
 
 ## Phase 6+ Subsystems
