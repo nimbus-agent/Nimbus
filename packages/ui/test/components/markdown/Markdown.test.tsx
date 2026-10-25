@@ -102,7 +102,9 @@ describe("Markdown", () => {
     let sets = 0;
     Object.defineProperty(Element.prototype, "innerHTML", {
       configurable: true,
-      get: desc?.get,
+      get(this: Element) {
+        return desc?.get?.call(this);
+      },
       set(this: Element, v: string) {
         sets += 1;
         desc?.set?.call(this, v);

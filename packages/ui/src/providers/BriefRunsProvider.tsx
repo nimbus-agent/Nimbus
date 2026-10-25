@@ -47,8 +47,9 @@ export function BriefRunsProvider({ children }: { readonly children: ReactNode }
       .then((fn) => {
         if (cancelled) fn();
         else unlisten = fn;
-      })
-      .catch(() => undefined);
+      });
+    // `start` awaits `p` and so sees a rejection; this no-op only silences the unhandled-rejection warning.
+    p.catch(() => undefined);
     subscribed.current = p;
     return () => {
       cancelled = true;
@@ -57,7 +58,12 @@ export function BriefRunsProvider({ children }: { readonly children: ReactNode }
   }, []);
 
   const start = useCallback(async (agent: string, params: Record<string, unknown>) => {
-    await subscribed.current;
+    try {
+      await subscribed.current;
+    } catch (e) {
+      // No listener means no result could ever arrive: fail now rather than sit pending.
+      throw e instanceof Error ? e : new Error(String(e));
+    }
     let res: unknown;
     try {
       res = await createIpcClient().call<unknown>(`agents.${agent}`, params);

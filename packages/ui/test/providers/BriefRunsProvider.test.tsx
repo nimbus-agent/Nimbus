@@ -4,15 +4,19 @@ import type { JsonRpcNotification } from "../../src/ipc/types";
 
 let handler: ((n: JsonRpcNotification) => void) | undefined;
 const call = vi.fn();
+const okSubscribe = async (h: (n: JsonRpcNotification) => void): Promise<() => void> => {
+  handler = h;
+  return () => {
+    handler = undefined;
+  };
+};
+const sub: { impl: (h: (n: JsonRpcNotification) => void) => Promise<() => void> } = {
+  impl: okSubscribe,
+};
 vi.mock("../../src/ipc/client", () => ({
   createIpcClient: () => ({
     call: (m: string, p: unknown) => call(m, p),
-    subscribe: async (h: (n: JsonRpcNotification) => void) => {
-      handler = h;
-      return () => {
-        handler = undefined;
-      };
-    },
+    subscribe: (h: (n: JsonRpcNotification) => void) => sub.impl(h),
   }),
 }));
 
@@ -33,7 +37,6 @@ function mount() {
   );
 }
 const ready = (sessionId: string): JsonRpcNotification => ({
-  jsonrpc: "2.0",
   method: "decisions.briefReady",
   params: { sessionId, brief: "# md" },
 });
@@ -43,6 +46,42 @@ describe("BriefRunsProvider", () => {
     call.mockReset();
     handler = undefined;
     api = undefined;
+    sub.impl = okSubscribe;
+  });
+
+  it("start does not call the gateway until the subscription has resolved", async () => {
+    let release: (() => void) | undefined;
+    sub.impl = (h) =>
+      new Promise((resolve) => {
+        release = () => {
+          handler = h;
+          resolve(() => undefined);
+        };
+      });
+    call.mockResolvedValue({ sessionId: "s1" });
+    mount();
+    await vi.waitFor(() => expect(release).toBeDefined());
+    let started: Promise<void> | undefined;
+    act(() => {
+      started = api?.start("decisions", {});
+    });
+    await Promise.resolve();
+    expect(call).not.toHaveBeenCalled();
+    await act(async () => {
+      release?.();
+      await started;
+    });
+    expect(call).toHaveBeenCalledWith("agents.decisions", {});
+  });
+
+  it("a rejected subscribe makes start reject without calling the gateway", async () => {
+    sub.impl = () => Promise.reject(new Error("no bridge"));
+    mount();
+    await act(async () => {
+      await expect(api?.start("decisions", {})).rejects.toThrow("no bridge");
+    });
+    expect(call).not.toHaveBeenCalled();
+    expect(screen.getByTestId("s").textContent).toBe("none");
   });
 
   it("subscribes before the first start, and start calls agents.<agent> with the params", async () => {
