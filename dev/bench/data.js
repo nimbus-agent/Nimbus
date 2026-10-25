@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792910700083,
+  "lastUpdate": 1792925960775,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "209d051788e8acbdeb48da39b884219b23260b07",
-          "message": "chore: release main (#1083)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.25.1</summary>\n\n##\n[1.25.1](https://github.com/nimbus-agent/Nimbus/compare/v1.25.0...v1.25.1)\n(2026-08-08)\n\n\n### Bug Fixes\n\n* resolve macos-15 CI test failures and consolidate open connector PRs\n([#1082](https://github.com/nimbus-agent/Nimbus/issues/1082))\n([9f9215b](https://github.com/nimbus-agent/Nimbus/commit/9f9215bfcca7ba4cdde0b66e4975881359882797))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-08T14:40:52Z",
-          "tree_id": "0d4ec3f231c10be9ef06fc0a3f903f33f8c5ade7",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/209d051788e8acbdeb48da39b884219b23260b07"
-        },
-        "date": 1786200730841,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.47152444999466,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 315.1174415499998,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 277.03040639999455,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a943cd509c29f22e876644497e4777706b001c73",
+          "message": "chore: release main (#1769)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.4.0</summary>\n\n##\n[10.4.0](https://github.com/nimbus-agent/Nimbus/compare/v10.3.1...v10.4.0)\n(2026-10-25)\n\n\n### Features\n\n* **catalog:** agent visibility and a catalog of agents and connectors\n([#1757](https://github.com/nimbus-agent/Nimbus/issues/1757))\n([81ff8ec](https://github.com/nimbus-agent/Nimbus/commit/81ff8ec0a5538bbd420171ff4e05569a36f52117))\n* **fleet:** a bad fleet job drops only itself, and enabled = false\ndisables one\n([#1752](https://github.com/nimbus-agent/Nimbus/issues/1752))\n([0d932de](https://github.com/nimbus-agent/Nimbus/commit/0d932de0b276a987aadec861b347d69c6889bbe3))\n* **oncall-push:** a role pack can turn the pushed brief on, live\n([#1767](https://github.com/nimbus-agent/Nimbus/issues/1767))\n([232fa19](https://github.com/nimbus-agent/Nimbus/commit/232fa19136d896c6173b85f972fd2f312de8c0e4))\n* **packs:** install and remove role packs behind the owner's\npack.install approval\n([#1764](https://github.com/nimbus-agent/Nimbus/issues/1764))\n([a7db19a](https://github.com/nimbus-agent/Nimbus/commit/a7db19aa4e3b7201946065ff2fdeb4cac5813b81))\n* **registry-format:** role-pack manifest format and registry packs\nentry ([#1762](https://github.com/nimbus-agent/Nimbus/issues/1762))\n([e3ae39e](https://github.com/nimbus-agent/Nimbus/commit/e3ae39e6975d6514d3b242d966b305988e110053))\n* **ui:** the desktop follows your role packs\n([#1770](https://github.com/nimbus-agent/Nimbus/issues/1770))\n([7a14406](https://github.com/nimbus-agent/Nimbus/commit/7a14406ab829636b3d619d97233d45f9899505bb))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-25T12:48:33+02:00",
+          "tree_id": "6b36fbd2505852732d5f0b5a9515af9d04eef5e6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a943cd509c29f22e876644497e4777706b001c73"
+        },
+        "date": 1792925957342,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 280.69411420000415,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 283.44140205000076,
             "unit": "ms"
           }
         ]
