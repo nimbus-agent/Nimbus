@@ -339,3 +339,17 @@ function sectionLines(s: EffectiveSection): string[] {
   for (const p of s.passthrough) lines.push(p.raw);
   return lines;
 }
+
+export type LayerValue = { readonly layer: LayerRef; readonly valRaw: string };
+
+/** The last entry for `key` carries the highest layer; its `shadowed` is the lower layers, low to high. */
+export function layerValues(
+  entries: readonly EffectiveEntry[],
+  key: string,
+): readonly LayerValue[] {
+  const last = entries.findLast((e) => e.key === key);
+  if (last === undefined) return [];
+  return [...last.shadowed, { layer: last.layer, valRaw: last.valRaw }];
+}
+
+export const layerLabel = (l: LayerRef): string => `${l.kind}:${l.id}`;

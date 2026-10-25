@@ -1,4 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { forgetLayeredConfigForTests } from "../config/layered-config.ts";
 import {
   type LayerKind,
   type LayerRef,
@@ -126,7 +130,7 @@ describe("resolveSourceMapping", () => {
       base('exclude = ["slack:message"]'),
       profile('map = ["slack:message=message"]'),
     );
-    expect(m.typesFor("decisions")).toContain("slack:message");
+    expect([...m.typesFor("decisions")]).toEqual([...sourceTypesFor("decisions")]);
     expect(m.excluded).toEqual([]);
   });
 
@@ -221,5 +225,24 @@ describe("entry grammar", () => {
       ["a:b", "note"],
       ["c:d", "doc"],
     ]);
+  });
+});
+
+describe("sourceMappingFor a real config dir", () => {
+  let dir: string | undefined;
+  afterEach(() => {
+    if (dir !== undefined) {
+      forgetLayeredConfigForTests(dir);
+      rmSync(dir, { recursive: true, force: true });
+      dir = undefined;
+    }
+  });
+
+  test("reads the owner's nimbus.toml live", () => {
+    dir = mkdtempSync(join(tmpdir(), "nimbus-source-mapping-"));
+    writeFileSync(join(dir, "nimbus.toml"), '[sources]\nexclude = ["slack:message"]\n');
+    const m = sourceMappingFor(dir);
+    expect(m.typesFor("decisions")).not.toContain("slack:message");
+    expect(m.excluded.map((e) => e.serviceType)).toEqual(["slack:message"]);
   });
 });

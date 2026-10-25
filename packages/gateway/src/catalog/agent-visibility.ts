@@ -3,7 +3,12 @@
 // (unioned); the owner's base and profile files add `show` / `hide`.
 
 import type { ConfigSnapshot } from "../config/layered-config.ts";
-import type { EffectiveEntry, LayerRef } from "../config/layered-merge.ts";
+import {
+  type LayerRef,
+  type LayerValue,
+  layerLabel as label,
+  layerValues,
+} from "../config/layered-merge.ts";
 import { parseAgentNameList } from "../config/pack-settable.ts";
 import { parseStringArray } from "../config/toml-primitives.ts";
 
@@ -29,17 +34,6 @@ const AGENT_PREFIX = "agents.";
 export function normaliseAgentName(raw: string): string {
   return raw.startsWith(AGENT_PREFIX) ? raw.slice(AGENT_PREFIX.length) : raw;
 }
-
-type LayerValue = { readonly layer: LayerRef; readonly valRaw: string };
-
-/** The last entry for `key` carries the highest layer; its `shadowed` is the lower layers, low to high. */
-function layerValues(entries: readonly EffectiveEntry[], key: string): readonly LayerValue[] {
-  const last = entries.findLast((e) => e.key === key);
-  if (last === undefined) return [];
-  return [...last.shadowed, { layer: last.layer, valRaw: last.valRaw }];
-}
-
-const label = (l: LayerRef): string => `${l.kind}:${l.id}`;
 
 type Names = { readonly layer: LayerRef; readonly names: readonly string[] };
 

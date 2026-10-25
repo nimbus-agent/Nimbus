@@ -98,28 +98,35 @@ export const PACK_SETTABLE_KEYS: readonly PackSettableKey[] = [
 /** A name in an `[agents]` list: a short agent name, optionally written `agents.<name>`. */
 export const AGENT_NAME_IN_LIST_RE = /^(?:agents\.)?[a-z][A-Za-z]{0,63}$/;
 
-const AGENT_LIST_MAX = 64;
+const AGENT_LIST_MAX = 64; // also the bound for every strict list
 
 /**
  * Strict parse of `["a", "b"]`. Deliberately not `parseString`, which accepts unquoted tokens.
  * Names are returned as written; normalisation belongs to the consumer.
  */
-export function parseAgentNameList(valRaw: string): readonly string[] | undefined {
+export function parseStrictStringList(
+  valRaw: string,
+  accept: (element: string) => boolean,
+): readonly string[] | undefined {
   const t = valRaw.trim();
   if (!t.startsWith("[") || !t.endsWith("]")) return undefined;
   const inner = t.slice(1, -1).trim();
   if (inner === "" || inner.endsWith(",")) return undefined;
   const parts = inner.split(",");
   if (parts.length > AGENT_LIST_MAX) return undefined;
-  const names: string[] = [];
+  const out: string[] = [];
   for (const part of parts) {
     const p = part.trim();
     if (p.length < 2 || !p.startsWith('"') || !p.endsWith('"')) return undefined;
-    const name = p.slice(1, -1);
-    if (!AGENT_NAME_IN_LIST_RE.test(name)) return undefined;
-    names.push(name);
+    const element = p.slice(1, -1);
+    if (!accept(element)) return undefined;
+    out.push(element);
   }
-  return names;
+  return out;
+}
+
+export function parseAgentNameList(valRaw: string): readonly string[] | undefined {
+  return parseStrictStringList(valRaw, (name) => AGENT_NAME_IN_LIST_RE.test(name));
 }
 
 export type PackSettableList = {

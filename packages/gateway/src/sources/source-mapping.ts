@@ -6,7 +6,13 @@
  */
 
 import { type ConfigSnapshot, getLayeredConfig } from "../config/layered-config.ts";
-import type { EffectiveEntry, LayerRef } from "../config/layered-merge.ts";
+import {
+  type EffectiveEntry,
+  type LayerRef,
+  layerLabel as label,
+  layerValues,
+} from "../config/layered-merge.ts";
+import { parseStrictStringList } from "../config/pack-settable.ts";
 import {
   builtinSourceEntries,
   PASS_KINDS,
@@ -45,7 +51,6 @@ export const PERSONAL_SOURCE_TYPES: ReadonlySet<string> = new Set([
   "apple:event",
 ]);
 
-const LIST_MAX = 64;
 const TYPE_RE = /^([a-z0-9_]+):([a-z0-9_]+)$/;
 const KIND_SET: ReadonlySet<string> = new Set(SOURCE_KINDS);
 
@@ -65,34 +70,12 @@ export function parseSourceMapEntry(raw: string): SourceMapEntry | undefined {
   return { serviceType, kind: kind as SourceKind };
 }
 
-/** Strict `["a", "b"]`: quoted elements only, 1..64, each passing `accept`. */
-function parseStrictList(
-  valRaw: string,
-  accept: (element: string) => boolean,
-): readonly string[] | undefined {
-  const t = valRaw.trim();
-  if (!t.startsWith("[") || !t.endsWith("]")) return undefined;
-  const inner = t.slice(1, -1).trim();
-  if (inner === "" || inner.endsWith(",")) return undefined;
-  const parts = inner.split(",");
-  if (parts.length > LIST_MAX) return undefined;
-  const out: string[] = [];
-  for (const part of parts) {
-    const p = part.trim();
-    if (p.length < 2 || !p.startsWith('"') || !p.endsWith('"')) return undefined;
-    const element = p.slice(1, -1);
-    if (!accept(element)) return undefined;
-    out.push(element);
-  }
-  return out;
-}
-
 export function parseSourceMapList(valRaw: string): readonly string[] | undefined {
-  return parseStrictList(valRaw, (e) => parseSourceMapEntry(e) !== undefined);
+  return parseStrictStringList(valRaw, (e) => parseSourceMapEntry(e) !== undefined);
 }
 
 export function parseSourceTypeList(valRaw: string): readonly string[] | undefined {
-  return parseStrictList(valRaw, (e) => parseServiceType(e) !== undefined);
+  return parseStrictStringList(valRaw, (e) => parseServiceType(e) !== undefined);
 }
 
 const isDefined = <T>(x: T | undefined): x is T => x !== undefined;
@@ -107,15 +90,21 @@ export function sourceMapFromList(
 
 type Slot = { kind: SourceKind; origin: SourceOrigin };
 
-const label = (l: LayerRef): string => `${l.kind}:${l.id}`;
-
 function build(
   slots: ReadonlyMap<string, Slot>,
   excluded: readonly { serviceType: string; layer: LayerRef }[],
   notes: readonly string[],
 ): SourceMapping {
+  // Built-in table order first, then added types in layer order, however a layer re-kinded or
+  // re-added a built-in.
+  const builtinKeys = builtinSourceEntries().map(([key]) => key);
+  const builtinSet = new Set(builtinKeys);
+  const order = [
+    ...builtinKeys.filter((k) => slots.has(k)),
+    ...[...slots.keys()].filter((k) => !builtinSet.has(k)),
+  ];
   const entries = Object.freeze(
-    [...slots].map(([serviceType, s]) => Object.freeze({ serviceType, ...s })),
+    order.map((serviceType) => Object.freeze({ serviceType, ...(slots.get(serviceType) as Slot) })),
   );
   const typesWhere = (keep: (k: SourceKind) => boolean): readonly string[] =>
     Object.freeze(entries.filter((e) => keep(e.kind)).map((e) => e.serviceType));
@@ -202,15 +191,6 @@ function applyOwnerExclude(walk: Walk, layer: LayerRef, excludeRaw: string): voi
     walk.slots.delete(serviceType);
     walk.excluded.push({ serviceType, layer });
   }
-}
-
-type LayerValue = { readonly layer: LayerRef; readonly valRaw: string };
-
-/** The last entry for `key` carries the highest layer; its `shadowed` is the lower layers, low to high. */
-function layerValues(entries: readonly EffectiveEntry[], key: string): readonly LayerValue[] {
-  const last = entries.findLast((e) => e.key === key);
-  if (last === undefined) return [];
-  return [...last.shadowed, { layer: last.layer, valRaw: last.valRaw }];
 }
 
 function valuesOf(entries: readonly EffectiveEntry[], key: string, kind: LayerRef["kind"]) {
