@@ -82,6 +82,7 @@ import { SCHEDULER_V2_MIGRATION_SQL } from "../scheduler-schema-sql.ts";
 import { INITIAL_SCHEMA_SQL } from "../schema-sql.ts";
 import { SHARE_INBOX_V43_SQL } from "../share-inbox-v43-sql.ts";
 import { SHARE_RECORDS_V41_SQL } from "../share-records-v41-sql.ts";
+import { SOURCE_CATCHUP_V74_SQL } from "../source-catchup-v74-sql.ts";
 import { tryLoadSqliteVec } from "../sqlite-vec-load.ts";
 import { SUB_TASK_RESULTS_V17_SQL } from "../sub-task-results-v17-sql.ts";
 import { V35_TEAM_VAULT_SQL } from "../team-vault-v35-sql.ts";
@@ -673,6 +674,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     73,
     "connector migration + built-in registry state + sync_telemetry.items_dropped",
     CONNECTOR_MIGRATION_V73_SQL,
+  ),
+  simpleStep(
+    73,
+    74,
+    "source catch-up cursors + decision_record.scored_kind",
+    SOURCE_CATCHUP_V74_SQL,
   ),
 ];
 
