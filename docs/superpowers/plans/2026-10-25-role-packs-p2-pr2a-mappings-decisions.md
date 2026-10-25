@@ -54,6 +54,7 @@
   - `export function parseSourceMapList(valRaw: string): readonly string[] | undefined` — the `PackSettableList.parse` shape (strict TOML string list, every element passes `parseSourceMapEntry`, 1–64).
   - `export function parseSourceTypeList(valRaw: string): readonly string[] | undefined` — for `exclude` (`service:type` elements, `nimbus:*` refused).
   - `export const PERSONAL_SOURCE_TYPES: ReadonlySet<string>` — the seven keys.
+  - `export function sourceMapFromList(entries: readonly string[] | undefined): ReadonlyMap<string, SourceKind>` — `parseSourceMapEntry` over an already-validated list (`undefined` → empty map); the ONE conversion `pack-layer-store.ts` uses at both its build site and `check()`.
   - `export type SourceOrigin = { readonly kind: "builtin" } | { readonly kind: "layer"; readonly layer: LayerRef };`
   - `export interface SourceMapping { kindOf(serviceType: string): SourceKind | undefined; typesFor(pass: SourcePass): readonly string[]; typesOfKind(kind: SourceKind): readonly string[]; readonly entries: readonly { serviceType: string; kind: SourceKind; origin: SourceOrigin }[]; readonly excluded: readonly { serviceType: string; layer: LayerRef }[]; readonly notes: readonly string[] }`
   - `export const BUILTIN_SOURCE_MAPPING: SourceMapping` — built-in table only.
@@ -86,20 +87,20 @@
 ### Task 2: Packs and config explain
 
 **Files:**
-- Modify: `config/pack-settable.ts` (`PACK_SETTABLE_LISTS`, :135), `packs/pack-validate.ts` (:16-20 area), `packs/pack-layer-store.ts` (`CleanPack` :132, build site :294, `conflicts` :206, call :356), `packs/pack-prompt.ts` (:60, :86-95, :115, :197, :224), `packs/pack-install.ts` (`PackListResult` :81, rows :479/:494, a `packSourceMappings` beside `packVisibleAgents` :499), `config/config-explain.ts` (`SECTION_LOADERS` :77 and the agents-notes hook :494/:513), `packages/ui/src/ipc/types.ts:590` (optional field)
+- Modify: `config/pack-settable.ts` (`PACK_SETTABLE_LISTS`, :135), `packs/pack-validate.ts` (:16-20 area), `packs/pack-layer-store.ts` (`CleanPack` :132, build site :294, `conflicts` :206, call :356), `packs/pack-prompt.ts` (:60, :86-95, :115, :197, :224), `packs/pack-install.ts` (`PackListResult` :81, rows :479/:494, a `packSourceMappings` beside `packVisibleAgents` :499), `config/config-explain.ts` (`SECTION_LOADERS` :77; a `sourceMappingNotes?: () => readonly string[]` hook beside `agentVisibilityNotes` :494/:513), `ipc/diagnostics-rpc.ts` (:240-245 — pass `sourceMappingNotes: () => describeSourceMapping(resolveSourceMapping(reader.snapshot()))`; without it `nimbus config explain sources` over IPC gets no notes), `packages/ui/src/ipc/types.ts:590` (optional field)
 - Test: the existing `*.test.ts` beside each (ADD tests)
 
 **Interfaces:**
-- Consumes (Task 1): `parseSourceMapList`, `parseSourceMapEntry`, `PERSONAL_SOURCE_TYPES`, `builtinSourceEntries`, `sourceMappingFor`.
+- Consumes (Task 1): `parseSourceMapList`, `parseSourceMapEntry`, `sourceMapFromList`, `resolveSourceMapping`, `PERSONAL_SOURCE_TYPES`, `builtinSourceEntries`, `sourceMappingFor`.
 - Produces: `PACK_SETTABLE_LISTS` entry `{ section: "sources", key: "map", consumer: "per-call", parse: parseSourceMapList, … }` (list id `"sources.map"`); `CleanPack.sourceMap: ReadonlyMap<string, SourceKind>`; `PackListResult.installed[].sourceMappings: readonly SourceMapEntry[]` (`[]` when unreadable); UI `sourceMappings?: readonly { serviceType: string; kind: string }[]`.
 
 - [ ] **Step 1: Tests** (add to the existing files):
   - pack-settable: a fragment with `[sources]\nmap = ["readwise:highlight=note"]` is ok and `lists.get("sources.map")` equals that one string; `exclude = [...]` in a pack fragment is refused (not settable); `map = ["nimbus:capture=note"]` is refused.
   - pack-validate: `jira:issue=doc` → problem `[sources] map names built-in source "jira:issue"`; `gmail:email=message` → problem `[sources] map names personal source "gmail:email"`; `readwise:highlight=note` → no problem.
   - pack-layer-store `check()`: active pack A maps `readwise:highlight=note`, candidate B maps `readwise:highlight=doc` → `{ok:false, reason:"conflict"}` with problem `[sources] map readwise:highlight: pack A maps it to note`; B mapping `=note` → ok.
-  - pack-prompt install: a pack mapping `readwise:highlight=note` renders a `Sources added:` section with the line `  readwise:highlight as note`; none → `  none`. Update prompt: `added: readwise:highlight as note` / `removed: …`.
+  - pack-prompt install: a pack mapping `readwise:highlight=note` renders a `Sources added:` section with the line `  readwise:highlight as note`; none → `  none`. Update prompt: `added: readwise:highlight as note` / `removed: …`; an update that re-kinds a type (`=note` → `=doc`) shows `removed: readwise:highlight as note` AND `added: readwise:highlight as doc` (entries diff as strings, like the other lists — no separate "changed" category).
   - pack-install `pack.list`: an installed pack's row has `sourceMappings: [{serviceType:"readwise:highlight", kind:"note"}]`.
-  - config-explain: `nimbus config explain sources` lists each effective entry with its origin (`built-in`, `pack <id>`, `base`, `profile`), each exclusion, and the resolver's notes; `sources.map` and `sources.exclude` paths resolve to that section.
+  - config-explain: `nimbus config explain sources` lists each effective entry with its origin (`built-in`, `pack <id>`, `base`, `profile`), each exclusion, and the resolver's notes; `sources.map` and `sources.exclude` paths resolve to that section. In `ipc/diagnostics-rpc.test.ts`: `config.explain` with path `sources` over the dispatcher returns the resolver's notes (a base layer with `map = ["jira:issue=wiki"]` → its note is present).
 - [ ] **Step 2: Run** the touched test files → the new tests FAIL.
 - [ ] **Step 3: Implement.** Validation runs before the prompt (existing order). The prompt's `Sources added:` section sits after `Visible agents:`, same `section()` helper. The UI type gains the optional field only (no UI change).
 - [ ] **Step 4: Run** `bun test packages/gateway/src/packs packages/gateway/src/config` and `packages/ui` vitest for types (`cd packages/ui && bunx vitest run test/ipc` if a types test exists; otherwise `bun run typecheck`) → PASS.
@@ -125,7 +126,7 @@
 ### Task 4: The decisions pass follows the mapping
 
 **Files:**
-- Modify: `decisions/decision-extract.ts` (`DecisionPassOptions` :56, `scanDelta` :111, `loadDecisionCandidates` :152, `commitBatch` :180, `discoverPhase` :234, `serviceTypeOf` :271, `corroboratePhase` :323, `runDecisionPass` :440, `rebuildDecisions` :496), `decisions/decision-store.ts` (`selectPendingByPriority` :161; a `scored_kind` write where confidence is stored), `decisions/decision-confidence.ts` (`sourceAuthority`, `computeConfidence`, `computePriority`, `explainConfidence` inputs), `decisions/decision-corroborate.ts` (ADR query), `decisions/decision-service-scope.ts` (`matchesTicketKey`, `matchesService`), `platform/assemble.ts` (:791-805 `runPass`), `demo/seed.ts:419`
+- Modify: `decisions/decision-extract.ts` (`DecisionPassOptions` :56, `scanDelta` :111, `loadDecisionCandidates` :152, `commitBatch` :180, `discoverPhase` :234, `serviceTypeOf` :271, `corroboratePhase` :323, `runDecisionPass` :440, `rebuildDecisions` :496), `decisions/decision-store.ts` (`selectPendingByPriority` :161, `selectSnippetUpgrades` :177, `clearDecisions` :351; a `scored_kind` write where confidence is stored), `decisions/decision-confidence.ts` (`sourceAuthority`, `computeConfidence`, `computePriority`, `explainConfidence` inputs), `decisions/decision-corroborate.ts` (ADR query), `decisions/decision-service-scope.ts` (`matchesTicketKey`, `matchesService`), `platform/assemble.ts` (:791-805 `runPass`), `demo/seed.ts:419`
 - Create: `decisions/decision-catchup.ts` (+ test)
 - Test: existing decision test files (ADD tests); existing call sites updated to pass `BUILTIN_SOURCE_MAPPING` where they construct options
 
@@ -133,15 +134,17 @@
 - Consumes: `SourceMapping`, `BUILTIN_SOURCE_MAPPING`, `sourceMappingFor`, `sourceFilterSql` (Task 1); V74 table/column (Task 3).
 - Produces:
   - `DecisionPassOptions.mapping: SourceMapping` (REQUIRED — a caller that forgets it is a compile error).
-  - `ConfidenceInput` / `PriorityInput` gain `mapping?: SourceMapping` (default `BUILTIN_SOURCE_MAPPING`); `sourceAuthority(serviceType: string, mapping: SourceMapping = BUILTIN_SOURCE_MAPPING): number`; `export function authorityOfKind(kind: SourceKind): number`.
+  - `ConfidenceInput` / `PriorityInput` gain `mapping?: SourceMapping` (default `BUILTIN_SOURCE_MAPPING`) and `scoredKind?: SourceKind | null` — when a kind is given, authority is `authorityOfKind(scoredKind)` and `serviceType` is not consulted (so Task 5's callers need no per-row item lookup); `sourceAuthority(serviceType: string, mapping: SourceMapping = BUILTIN_SOURCE_MAPPING): number`; `export function authorityOfKind(kind: SourceKind): number`.
   - `corroborate(db, input & { mapping?: SourceMapping })`, `matchesService(db, input & { mapping?: SourceMapping })` — default built-in.
   - `decision-catchup.ts`: `export function reconcileCatchupRows(db, pass: "decisions", effective: readonly string[], builtin: ReadonlySet<string>, mainCursor: {watermarkMs:number; watermarkId:string}): void` and `export function catchupTypes(db, pass: "decisions", effective: readonly string[]): readonly { serviceType: string; watermarkMs: number; watermarkId: string }[]`.
 
 Rules (spec § 6, with the review fix):
-- At run start, `reconcileCatchupRows`: an effective type with no row → insert (`done = 1`, cursor = main cursor) if built-in, else (`done = 0`, cursor 0/''). A row with `done = 1` whose type is no longer effective → `done = 0`, cursor = main cursor at this moment. A `done = 0` row whose type left the set is left alone.
-- Catch-up runs BEFORE the delta scan, per type, in bounded batches sharing the run's `maxDiscoveryBatches`, scanning `service || ':' || type = ?` with its own composite cursor up to (and including) the main cursor captured at run start; it mines exactly like `commitBatch` but advances the catch-up row; an empty batch sets `done = 1`. It re-checks the effective set between batches (stop a type that left it).
+- `commitBatch` is split: `mineRows(db, rows, opts): number` (the `mineCues` + `upsertCandidate` loop, no watermark) is shared; the delta path wraps `mineRows` + `writePassState` in one transaction, the catch-up path wraps `mineRows` + its `source_catchup_state` update in one transaction. Catch-up must NEVER call `writePassState` — an older catch-up cursor written there would rewind the main watermark and re-scan the index.
+- At run start, `reconcileCatchupRows` runs in its own `db.transaction`, before catch-up and the delta scan: an effective type with no row → insert (`done = 1`, cursor = main cursor) if built-in, else (`done = 0`, cursor 0/''). A row with `done = 1` whose type is no longer effective → `done = 0`, cursor = main cursor at this moment. A `done = 0` row whose type left the set is left alone.
+- Catch-up runs BEFORE the delta scan, per type, in bounded batches sharing the run's `maxDiscoveryBatches`, scanning `i.service = ? AND i.type = ?` (split from the key, so `idx_item_service` applies — never the concatenation for a single type) with its own composite cursor up to (and including) the main cursor captured at run start; it mines exactly like `commitBatch` but advances the catch-up row; an empty batch sets `done = 1`. It re-checks the effective set between batches (stop a type that left it).
 - The delta scan uses `mapping.typesFor("decisions")` via `sourceFilterSql`.
-- `selectPendingByPriority` gains the effective set: `LEFT JOIN item i … WHERE (i.id IS NULL OR <filter>)`, so excluded types' pending rows are not sent to the model (they stay `pending`).
+- `selectPendingByPriority` gains the effective set: `LEFT JOIN item i … WHERE (i.id IS NULL OR <filter>)`, so excluded types' pending rows are not sent to the model (they stay `pending`). `selectSnippetUpgrades` gains the same filter (Phase B's second queue — without it an excluded type's snippet decisions are still sent for upgrade). One `pendingWorkFilter(mapping)` helper serves both.
+- `clearDecisions` (`--rebuild`) also runs `DELETE FROM source_catchup_state WHERE pass = 'decisions'` in its transaction, so a rebuild starts every type from the reconcile rules rather than a stale cursor.
 - Confidence is computed with the mapping's kind and `scored_kind` is stored beside it (`mapping.kindOf(serviceType) ?? null`).
 - ADR lookup uses `mapping.typesOfKind("doc")`; empty → no ADR query.
 - Ticket matching uses `mapping.kindOf`.
@@ -155,6 +158,9 @@ Rules (spec § 6, with the review fix):
   - `exclude stops mining and model calls` — with `slack:message` excluded: no new Slack candidates; a pre-existing Slack `pending` row is not selected by `selectPendingByPriority`; the row still exists with `status = 'pending'`.
   - `re-kind changes authority for new scores` — `jira:issue=doc` mapping: a newly corroborated Jira decision stores `scored_kind = 'doc'` and its confidence uses authority 1.
   - `empty doc set skips the ADR lookup` — mapping excluding all three doc types: `corroborate` returns no `adr` evidence and does not throw.
+  - `catch-up never moves the main watermark` — main cursor at T; a newly mapped type whose items are all older than T is caught up → `readPassState(db)` watermark is still T afterwards (red-proof: route catch-up through the old `commitBatch` and watch it rewind).
+  - `exclude stops snippet upgrades` — an extracted `snippet` Slack decision with `slack:message` excluded → not returned by `selectSnippetUpgrades`; returned again when re-included.
+  - `rebuild clears catch-up cursors` — a `done = 0` row with a mid cursor → after `rebuildDecisions`, no `source_catchup_state` row for `decisions` survives from before (the reconcile re-inserts fresh ones).
   - `catch-up stops a type that left the set mid-run` — use a mapping provider that changes between batches (inject via the options), assert no further batches for it.
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement** (catch-up in `decision-catchup.ts`; keep `commitBatch`'s mining loop shared, not copied). **Step 4: Run** `bun test packages/gateway/src/decisions packages/gateway/src/demo packages/gateway/src/platform` → PASS; `bun run typecheck` clean. **Step 5: Commit** `feat(decisions): the pass mines the effective source mapping and catches up new types`.
 
@@ -163,8 +169,9 @@ Rules (spec § 6, with the review fix):
 ### Task 5: Decisions reads hide unmapped rows
 
 **Files:**
-- Modify: `decisions/decision-store.ts` (`listDecisions` :272, `countByStatus` :287), `decisions/decision-extract.ts` (`loadDecisionCandidates` :152), `agents/decisions.ts` (`DecisionsContext` :15, `serviceTypeOf` :32, explain :57, :213/:220 calls, :236-251 loop, stale-score :260-273), `agents/negotiate.ts` (`laneDecisions` :697 — the three queries), `ipc/agents-rpc.ts` (~:1041 where the decisions context is built), `ipc/tour-rpc.ts` (~:84)
-- Test: `decision-store.test.ts`, `agents/decisions.test.ts`, `agents/negotiate.test.ts` (ADD tests)
+- Modify: `decisions/decision-store.ts` (`listDecisions` :272, `countByStatus` :287), `decisions/decision-extract.ts` (`loadDecisionCandidates` :152), `agents/decisions.ts` (`DecisionsContext` :15, `serviceTypeOf` :32, explain :57, :213/:220 calls, :236-251 loop, stale-score :260-273), `agents/negotiate.ts` (`laneDecisions` :697 — the three queries), `ipc/agents-rpc.ts` (~:1041 where the decisions context is built), `ipc/tour-rpc.ts` (~:73-84, `TourSelectorCtx` gains `mapping`), `agents/_lib/tour-selectors.ts` (:151 `listDecisions` call passes `ctx.mapping`)
+- Test: `decision-store.test.ts`, `agents/decisions.test.ts`, `agents/negotiate.test.ts` (ADD tests). Existing callers that now need `mapping: BUILTIN_SOURCE_MAPPING` (typecheck finds them; known today): `decisions/decision-extract.test.ts`, `decisions/decision-store.test.ts`, `decisions/decision-truncation-report.test.ts`, `mcp-sink/capture-native.test.ts`, plus any test building a `DecisionsContext` or tour context. `glossary-store.ts`'s `countByStatus` is a different function — leave it.
+- Ruling: `mapping` stays REQUIRED on `listDecisions` / `countByStatus` / `loadDecisionCandidates` (no `= BUILTIN_SOURCE_MAPPING` default) — a default lets a production read forget the mapping and silently show excluded rows (Review Focus 2), and only a required parameter lets the compiler find every read; the cost is the mechanical test edits above.
 
 **Interfaces:**
 - Consumes: Task 1, Task 3, Task 4's `authorityOfKind` and confidence `mapping` input.
@@ -181,7 +188,7 @@ Visibility rule (one SQL fragment, defined once in `decision-store.ts` and reuse
   - `re-kind does not trip the stale-score check` — a row scored as `ticket` (scored_kind `ticket`) under a mapping that now says `jira:issue=doc` → `staleScoreCount` 0; a row with `scored_kind` NULL keeps today's recompute.
   - `negotiate excludes hidden decisions` — its counts and refs drop an excluded type's decisions.
   - Grep step: `git grep -n "FROM decision_record" -- packages/gateway/src ':!*.test.ts'` and list every read in the report; any read that surfaces rows to a user (not the pass's own bookkeeping, not `clearDecisions`) applies the visibility fragment.
-- [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** Stale check: recompute with `authorityOfKind(scoredKind)` when `scored_kind` is set, else today's path (the mapping's kind). Explain uses the same kind as the stale check. **Step 4: Run** `bun test packages/gateway/src/decisions packages/gateway/src/agents packages/gateway/src/ipc` → PASS. **Step 5: Commit** `feat(decisions): nimbus decisions shows only currently mapped sources`.
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** Stale check: recompute with `scoredKind: r.scoredKind` (Task 4's confidence input) when `scored_kind` is set — no per-row `SELECT service, type` for that row — else today's path (the mapping's kind). Explain uses the same kind as the stale check. No new `## Gaps` disclosure when `--service` names an excluded source (Ruling: only the owner can exclude, and `nimbus config explain sources` lists every exclusion — cost if wrong: an owner who forgot an exclude sees "0 decisions" for that service with no hint; one anchored gap line would close it, in 2b or later). **Step 4: Run** `bun test packages/gateway/src/decisions packages/gateway/src/agents packages/gateway/src/ipc` → PASS. **Step 5: Commit** `feat(decisions): nimbus decisions shows only currently mapped sources`.
 
 ---
 
