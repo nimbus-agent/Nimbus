@@ -789,7 +789,7 @@ that reaches them. `capture.revoke` records `hitl_status = 'not_required'`: no c
 the owner's own command, and I4 forbids an `approved` row a gate did not earn; so does
 `capture.purge`, the owner's deletion of a FINISHED action row (`executed`/`failed`/`rejected`/`expired`),
 whose audit row names the capture, its action type and prior state but never the payload. Capture items are
-excluded from decision/glossary extraction and embed locally only (`LOCAL_ONLY_PROSE_TYPES`).
+excluded from decision/glossary extraction and embed locally only (`LOCAL_ONLY_PROSE_TYPES`). The exclusion also holds for every source mapping (`[sources]` in a pack or the owner's config): the entry parser refuses `nimbus:*` and the resolver drops it again.
 
 Proposals (decision/term/link) are stored with no item, no native row and no embedding until the owner's `acceptCapture()`. Accept checks, in order: capability (a disabled sink freezes accept), owner kind, `proposed` state, referenced items still exist, then the kind precondition (a `nimbus.toml`-authored, `manual`, term wins; a model-`vetoed` term does not, since the owner's explicit accept outranks the local model's classification; link endpoints still graphed). It then writes, in ONE transaction, the native row (a decision or term row carries `'agent'` provenance and a `capture_id` owner; a link is a plain `graph_relation` row with neither, owned by the capture's `native_ref` `from|to|type`), the capture item and a `capture.accept` audit row (`not_required`). `rejectCapture()` needs no capability. Revoke deletes only what the capture still owns.
 
