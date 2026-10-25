@@ -11,7 +11,7 @@ import {
   type SourceMapping,
 } from "../sources/source-mapping.ts";
 import { catchupTypes, reconcileCatchupRows } from "./decision-catchup.ts";
-import { runDecisionPass } from "./decision-extract.ts";
+import { CATCHUP_SCAN_SQL, runDecisionPass } from "./decision-extract.ts";
 import { readPassState } from "./decision-store.ts";
 
 let db: Database;
@@ -248,5 +248,21 @@ describe("catch-up in the decisions pass", () => {
     expect(recordsFor("h0")).toHaveLength(1);
     expect(recordsFor("h2")).toHaveLength(0);
     expect(catchupRow("readwise:highlight")).toMatchObject({ done: 0, watermark_id: "h1" });
+  });
+});
+
+describe("catch-up query plan", () => {
+  test("one type's window is a seek on the composite index, with no sort", () => {
+    const plan = db
+      .query(`EXPLAIN QUERY PLAN ${CATCHUP_SCAN_SQL}`)
+      .all("slack", "message", 0, "", 9, "z", 5000) as { detail: string }[];
+    const details = plan.map((p) => p.detail);
+    // The cursor range must be part of the index seek, not a filter over the whole type.
+    expect(
+      details.some(
+        (d) => d.includes("idx_item_service_type_modified") && d.includes("(modified_at,id)>"),
+      ),
+    ).toBe(true);
+    expect(details.filter((d) => d.includes("TEMP B-TREE"))).toEqual([]);
   });
 });

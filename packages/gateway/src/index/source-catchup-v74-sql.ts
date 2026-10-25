@@ -4,7 +4,9 @@
  * A source mapping can change while the gateway runs, so a type that was unmapped for a while holds
  * items nobody scanned. `source_catchup_state` is one cursor per (pass, service:type) so a type that
  * joins the mapping is caught up over its own unmapped window. No seed rows: built-ins are handled
- * in code.
+ * in code. `idx_item_service_type_modified` serves the catch-up scan (one `service`/`type` pair,
+ * ordered by `(modified_at, id)`): the item table's indexes are single-column, so without it each
+ * batch read and sorted every item of that type.
  *
  * `scored_kind` records the kind a decision's priority was scored under, so a later re-kind does not
  * read as a stale scale. The backfill is a FROZEN literal of the 13 built-in keys as they stood when
@@ -20,6 +22,8 @@ CREATE TABLE IF NOT EXISTS source_catchup_state (
   done         INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1)),
   PRIMARY KEY (pass, service_type)
 );
+CREATE INDEX IF NOT EXISTS idx_item_service_type_modified
+  ON item(service, type, modified_at, id);
 ALTER TABLE decision_record ADD COLUMN scored_kind TEXT
   CHECK (scored_kind IS NULL OR scored_kind IN ('message','doc','ticket','commit','note'));
 UPDATE decision_record SET scored_kind = (

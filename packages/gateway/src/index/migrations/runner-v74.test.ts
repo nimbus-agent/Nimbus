@@ -74,6 +74,26 @@ describe("V74 migration — source catch-up cursors and decision scored_kind", (
     }
   });
 
+  test("creates the composite item index the catch-up scan reads", () => {
+    const db = new Database(":memory:");
+    try {
+      runIndexedSchemaMigrations(db, 74);
+      const cols = db
+        .query(
+          "SELECT name FROM pragma_index_info('idx_item_service_type_modified') ORDER BY seqno",
+        )
+        .all();
+      expect(cols).toEqual([
+        { name: "service" },
+        { name: "type" },
+        { name: "modified_at" },
+        { name: "id" },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   test("the frozen CASE keys equal builtinSourceEntries() today", () => {
     const pairs = [...SOURCE_CATCHUP_V74_SQL.matchAll(/WHEN '([^']+)' THEN '([^']+)'/g)].map(
       (m) => [m[1], m[2]],

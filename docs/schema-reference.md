@@ -1173,6 +1173,7 @@ ALTER TABLE sync_telemetry ADD COLUMN items_dropped INTEGER NOT NULL DEFAULT 0;
 -- source mapping is caught up over its own unmapped window; no seed rows (built-ins are handled in
 -- code). `decision_record.scored_kind` is the kind a decision's priority was scored under; V74
 -- backfills it from a FROZEN literal of the 13 built-in keys (orphans and non-built-in types stay NULL).
+-- `idx_item_service_type_modified` serves the per-type catch-up scan (range + ORDER BY, no sort).
 -- Authoritative source: packages/gateway/src/index/source-catchup-v74-sql.ts
 CREATE TABLE source_catchup_state (
     pass         TEXT NOT NULL CHECK(pass IN ('decisions','glossary')),
@@ -1182,6 +1183,7 @@ CREATE TABLE source_catchup_state (
     done         INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1)),
     PRIMARY KEY (pass, service_type)
 );
+CREATE INDEX idx_item_service_type_modified ON item (service, type, modified_at, id);
 ALTER TABLE decision_record ADD COLUMN scored_kind TEXT
     CHECK (scored_kind IS NULL OR scored_kind IN ('message','doc','ticket','commit','note'));
 ```
