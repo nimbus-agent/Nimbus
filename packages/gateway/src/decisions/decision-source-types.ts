@@ -1,27 +1,11 @@
+import { sourceTypesFor } from "../sources/source-kinds.ts";
+
 /**
- * Which indexed item types feed decision mining.
- *
- * Email and calendar are deliberately absent, matching `glossary`: mining a
- * personal inbox into a TEAM artifact is not a posture to adopt silently.
- *
- * Keys are `service:type`. Filtering on the bare `type` half would silently
- * widen scope — `message`, `page` and `issue` are generic names shared across
- * services, so `type IN (...)` also admits `wiz:issue` (cloud-security posture
- * findings) today and any user-installed extension emitting `message`
- * tomorrow.
+ * Which indexed item types feed decision mining: every `service:type` whose kind the decisions
+ * pass reads (`sources/source-kinds.ts`, which also carries the service-qualified-key and the
+ * no-email/calendar reasoning).
  */
-export const DECISION_SOURCE_TYPES: ReadonlySet<string> = new Set([
-  "slack:message",
-  "discord:message",
-  "teams:message",
-  "notion:page",
-  "confluence:page",
-  "obsidian:obsidian_note",
-  "linear:issue",
-  "jira:issue",
-  "github:issue",
-  "gitlab:issue",
-]);
+export const DECISION_SOURCE_TYPES: ReadonlySet<string> = new Set(sourceTypesFor("decisions"));
 
 /** The table MUST be aliased `i`. */
 const DECISION_SOURCE_MATCH_SQL = "(i.service || ':' || i.type)";

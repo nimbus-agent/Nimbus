@@ -1,9 +1,9 @@
+import { sourceTypesFor } from "../sources/source-kinds.ts";
+
 /**
- * Which indexed item types feed glossary mining.
- *
- * Email and calendar are deliberately absent. The roadmap does not list them,
- * and mining a personal inbox into a TEAM glossary is not a posture to adopt
- * silently. Keys are `service:type`, matching PROSE_HEAVY_TYPES style.
+ * Which indexed item types feed glossary mining: every `service:type` whose kind the glossary
+ * pass reads (`sources/source-kinds.ts`, which also carries the service-qualified-key and the
+ * no-email/calendar reasoning).
  *
  * `filesystem:git_commit` is the ONLY commit source that exists today
  * (`connectors/filesystem-v2-sync.ts`). That row stores the commit subject in
@@ -20,21 +20,7 @@
  * repository is indexed as an Obsidian vault (`obsidian:obsidian_note`).
  * Recorded in the spec's Known Limits rather than silently under-delivered.
  */
-export const GLOSSARY_SOURCE_TYPES: ReadonlySet<string> = new Set([
-  "slack:message",
-  "discord:message",
-  "teams:message",
-  "notion:page",
-  "confluence:page",
-  "obsidian:obsidian_note",
-  "linear:issue",
-  "jira:issue",
-  "github:issue",
-  "gitlab:issue",
-  "github:commit",
-  "gitlab:commit",
-  "filesystem:git_commit",
-]);
+export const GLOSSARY_SOURCE_TYPES: ReadonlySet<string> = new Set(sourceTypesFor("glossary"));
 
 /**
  * SQL predicate matching an `item` row against the allowlist, service half
