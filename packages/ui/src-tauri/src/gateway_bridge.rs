@@ -673,7 +673,10 @@ mod tests {
         assert!(is_method_allowed("decisions.status"));
         for m in ALLOWED_METHODS {
             if m.starts_with("decisions.") {
-                assert!(*m == "decisions.status", "only decisions.status may be exposed: {m}");
+                assert!(
+                    *m == "decisions.status",
+                    "only decisions.status may be exposed: {m}"
+                );
             }
         }
     }
