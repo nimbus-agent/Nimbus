@@ -599,6 +599,10 @@ export interface PackListResult {
     readonly visibleAgents?: readonly string[];
     /** Optional: an older gateway omits it. */
     readonly sourceMappings?: readonly { readonly serviceType: string; readonly kind: string }[];
+    /** Optional: an older gateway omits it. */
+    readonly roles?: readonly string[];
+    /** Optional: an older gateway omits it. */
+    readonly suggestedConnectors?: readonly string[];
   }[];
   readonly available: readonly unknown[];
   readonly skipped: readonly { readonly packId: string; readonly reason: string }[];

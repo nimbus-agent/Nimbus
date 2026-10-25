@@ -365,6 +365,7 @@ describe("decisions over LAN (I5 — on-demand passes are write-class and local-
     const peer = { peerId: "p1", writeAllowed: true };
     expect(() => checkLanMethodAllowed("decisions.refresh", peer)).toThrow("not callable over LAN");
     expect(() => checkLanMethodAllowed("decisions.rebuild", peer)).toThrow("not callable over LAN");
+    expect(() => checkLanMethodAllowed("decisions.status", peer)).toThrow("not callable over LAN");
     // The read-only agent stays reachable, like the other nine agents.
     expect(() => checkLanMethodAllowed("agents.decisions", peer)).not.toThrow();
   });

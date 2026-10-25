@@ -293,3 +293,16 @@ test("onError observes a debounced pass failure and the refresher stays usable",
   expect(calls).toBe(2);
   r.stop();
 });
+
+test("status() reports running during a pass and idle after", async () => {
+  const d = deferred();
+  const r = createDecisionRefresher({ debounceMs: 10_000, runPass: () => d.promise });
+  expect(r.status()).toBe("idle");
+  const pass = r.run();
+  expect(r.status()).toBe("running");
+  d.resolve();
+  await pass;
+  expect(r.status()).toBe("idle");
+  r.stop();
+  expect(r.status()).toBe("stopped");
+});

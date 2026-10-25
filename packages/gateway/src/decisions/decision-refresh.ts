@@ -34,6 +34,8 @@ export type DecisionRefresher = {
    */
   run: (opts?: DecisionRunOptions) => Promise<DecisionPassSummary>;
   stop: () => void;
+  /** The pass scheduler's state, for `decisions.status` (a read; it changes nothing). */
+  status: () => "idle" | "running" | "stopped" | "disabled";
 };
 
 /**
@@ -74,5 +76,6 @@ export function createDecisionRefresher(deps: DecisionRefresherDeps): DecisionRe
     trigger: scheduler.trigger,
     run: (opts?: DecisionRunOptions) => scheduler.runNow(opts),
     stop: scheduler.stop,
+    status: scheduler.status,
   };
 }

@@ -29,6 +29,8 @@ export type CatalogConnector =
       readonly displayName: string;
       readonly category: ConnectorCategory;
       readonly description: string;
+      /** How onboarding offers its sign-in (derived from the gateway's auth table). */
+      readonly signIn: ConnectorSignInKind;
     }
   | {
       readonly kind: "extension";
@@ -47,6 +49,12 @@ export type CatalogConnector =
 export type CatalogListResult = {
   readonly agents: readonly (CatalogAgent & { readonly visible: boolean })[];
   readonly connectors: readonly CatalogConnector[];
+  /**
+   * The connectors onboarding and the connector screens suggest, in order: the active packs'
+   * suggestions, or {@link NEUTRAL_SUGGESTED_CONNECTORS} when no pack suggests any; ids not on this
+   * install are dropped. Presentation only.
+   */
+  readonly suggestedConnectors: readonly string[];
   readonly visibility: {
     readonly basis: "all" | "packs";
     readonly packs: readonly string[];
@@ -55,6 +63,19 @@ export type CatalogListResult = {
 };
 
 const EXTENSION_NAME_MAX = 200;
+
+/** Same values as `ipc/connector-rpc-handlers/auth.ts`; declared here so catalog/ imports no ipc/. */
+export type ConnectorSignInKind = "browser" | "atlassian" | "terminal";
+
+/** Suggested with no active pack: the six the desktop onboarding always showed, as ids. */
+export const NEUTRAL_SUGGESTED_CONNECTORS = [
+  "google_drive",
+  "slack",
+  "notion",
+  "gmail",
+  "github",
+  "linear",
+] as const;
 
 function extensionName(row: ExtensionRow): string | null {
   try {
@@ -85,6 +106,9 @@ export function builtinCatalogConnectorIds(): readonly string[] {
 export function buildCatalogList(deps: {
   readonly db: Database;
   readonly snapshot: () => Pick<ConfigSnapshot, "doc">;
+  readonly signInFor: (id: string) => ConnectorSignInKind;
+  /** The active packs' suggestions, in order (`activePackSuggestedConnectors`). */
+  readonly packSuggestions: readonly string[];
 }): CatalogListResult {
   const visibility = resolveAgentVisibility(deps.snapshot(), CATALOG_AGENT_NAMES);
   const agents = listCatalogAgents().map((a) => ({
@@ -96,7 +120,7 @@ export function buildCatalogList(deps: {
   for (const id of builtinCatalogConnectorIds()) {
     const meta = META_BY_ID[id];
     if (meta !== undefined) {
-      builtins.push({ kind: "builtin", id, ...meta });
+      builtins.push({ kind: "builtin", id, ...meta, signIn: deps.signInFor(id) });
     }
   }
   builtins.sort(byId);
@@ -127,9 +151,17 @@ export function buildCatalogList(deps: {
     )
     .sort(byId);
 
+  const offered = new Set<string>(builtins.map((c) => c.id));
+  for (const c of extensions) {
+    if (c.kind === "extension" && c.serviceId !== null) offered.add(c.serviceId);
+  }
+  const wanted =
+    deps.packSuggestions.length > 0 ? deps.packSuggestions : NEUTRAL_SUGGESTED_CONNECTORS;
+
   return {
     agents,
     connectors: [...builtins, ...extensions, ...userMcp],
+    suggestedConnectors: wanted.filter((id) => offered.has(id)),
     visibility: {
       basis: visibility.basis,
       packs: visibility.packs,

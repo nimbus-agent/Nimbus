@@ -80,3 +80,23 @@ describe("dispatchCatalogRpc", () => {
     expect(visible.get("oncall")).toBe(true);
   });
 });
+
+describe("dispatchCatalogRpc — onboarding fields", () => {
+  test("passes the active packs' suggestions through, and builtins carry the real signIn", () => {
+    const ctx = setup();
+    initLayeredConfig(ctx.configDir);
+    const out = dispatchCatalogRpc("catalog.list", {}, { ...ctx, packSuggestions: () => ["jira"] });
+    if (out.kind !== "hit") throw new Error("expected a hit");
+    expect(out.value.suggestedConnectors).toEqual(["jira"]);
+    const jira = out.value.connectors.find((c) => c.id === "jira");
+    expect(jira).toMatchObject({ kind: "builtin", signIn: "atlassian" });
+  });
+
+  test("with no packSuggestions the neutral default is suggested", () => {
+    const ctx = setup();
+    initLayeredConfig(ctx.configDir);
+    const out = dispatchCatalogRpc("catalog.list", {}, ctx);
+    if (out.kind !== "hit") throw new Error("expected a hit");
+    expect(out.value.suggestedConnectors[0]).toBe("google_drive");
+  });
+});

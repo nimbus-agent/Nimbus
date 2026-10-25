@@ -6,7 +6,7 @@ import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerConsentPromptHandler } from "../lib/interactive-ipc-handlers.ts";
 import { BATCH_RPC_TIMEOUT_MS, createIpcClient } from "../lib/rpc-timeouts.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
 
 /** The gateway's own cap on a local pack file; checked here too so a huge file is never read. */
 const MAX_PACK_FILE_BYTES = 131_072;
@@ -29,12 +29,22 @@ interface InstalledPackRow {
   readonly updateAvailable: boolean;
   readonly bundledVersion?: string;
   readonly versionUnknown?: boolean;
+  /** Optional: an older gateway omits it. */
+  readonly roles?: readonly string[];
+  /** Optional: an older gateway omits it. */
+  readonly suggestedConnectors?: readonly string[];
 }
 interface AvailablePackRow {
   readonly id: string;
   readonly name: string;
   readonly version: string;
   readonly description: string;
+  /** Optional: an older gateway omits it. */
+  readonly roles?: readonly string[];
+  /** Optional: an older gateway omits it. */
+  readonly suggestedConnectors?: readonly string[];
+  /** Optional: an older gateway omits it. */
+  readonly visibleAgents?: readonly string[];
 }
 interface SkippedPackRow {
   readonly packId: string;
@@ -157,6 +167,12 @@ function listLines(r: PackListResult): string[] {
     lines.push("", "Skipped:");
     for (const s of r.skipped) lines.push(`  ${clean(s.packId)}: ${clean(s.reason)}`);
   }
+  // Only when nothing is installed and the list was read: an upgraded install with no pack is told
+  // once, here, that packs exist. Never when the installed list could not be read.
+  if (r.listError === undefined && r.installed.length === 0 && r.available.length > 0) {
+    const offers = r.available.map((p) => `${clean(p.id)} (${clean(p.name)})`).join(", ");
+    lines.push("", `Tip: nimbus pack install <id> sets Nimbus up for a role: ${offers}.`);
+  }
   return lines;
 }
 
@@ -274,13 +290,15 @@ const REAL_IO: PackIo = {
   err: (s) => process.stderr.write(s),
 };
 
-export async function runPack(args: string[]): Promise<void> {
-  const sub = args[0] ?? "";
-  if (!["list", "show", "install", "remove"].includes(sub)) {
-    REAL_IO.err(`${PACK_USAGE}\n`);
-    throw new CliExit(2);
-  }
-  const paths = getCliPlatformPaths();
+/**
+ * Run `fn` against the running gateway on a client whose consent handler is the DIRECT terminal
+ * prompt, never an environment-selected script handler, so nothing but a person at this terminal
+ * can answer a `pack.install` approval (`withGatewayIpc` binds the script handler first).
+ */
+export async function withPackClient<T>(
+  fn: (call: PackCall) => Promise<T>,
+  paths: CliPlatformPaths = getCliPlatformPaths(),
+): Promise<T> {
   const state = await readGatewayState(paths);
   if (state === undefined) {
     throw new Error(gatewayNotRunningMessage(paths.demo === true));
@@ -288,12 +306,26 @@ export async function runPack(args: string[]): Promise<void> {
   const client = createIpcClient(state.socketPath, BATCH_RPC_TIMEOUT_MS);
   await client.connect();
   try {
-    // The prompt handler directly: an environment-selected script handler must never be able
-    // to answer a `pack.install` approval. Read-only verbs raise no prompt, so it is inert there.
+    // Read-only verbs raise no prompt, so the handler is inert there.
     registerConsentPromptHandler(client);
-    const code = await runPackWith(args, REAL_IO, (method, params) => client.call(method, params));
-    if (code !== 0) throw new CliExit(code);
+    return await fn((method, params) => client.call(method, params));
   } finally {
     await client.disconnect();
   }
+}
+
+/** `nimbus pack install <id>` in-process (used by `nimbus init`); returns its exit code. */
+export function installPackInteractive(id: string, paths?: CliPlatformPaths): Promise<number> {
+  return withPackClient((call) => runPackWith(["install", id], REAL_IO, call), paths);
+}
+
+export async function runPack(args: string[]): Promise<void> {
+  const sub = args[0] ?? "";
+  if (!["list", "show", "install", "remove"].includes(sub)) {
+    REAL_IO.err(`${PACK_USAGE}
+`);
+    throw new CliExit(2);
+  }
+  const code = await withPackClient((call) => runPackWith(args, REAL_IO, call));
+  if (code !== 0) throw new CliExit(code);
 }

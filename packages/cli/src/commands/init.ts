@@ -10,11 +10,13 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { confirm, isCancel } from "@clack/prompts";
+import { confirm, isCancel, select } from "@clack/prompts";
 
 import { hasFlag } from "../lib/flag-parsing.ts";
 import { extractLatestMessage, truncatePreview } from "../lib/gateway-log-tail.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
+import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { appendFilesystemRoot, hasFilesystemRoot } from "../lib/toml-append.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
@@ -24,6 +26,14 @@ import {
   runConnectorDetect,
   summarizeLocalLogins,
 } from "./connector-detect.ts";
+import {
+  parseRoleFlag,
+  type RoleAnswer,
+  RoleFlagError,
+  type RoleStepDeps,
+  runRoleStep,
+} from "./init-role.ts";
+import { installPackInteractive } from "./pack.ts";
 import { runStart } from "./start.ts";
 import { runWow } from "./wow.ts";
 
@@ -32,7 +42,7 @@ export type InitOptions = { cwd: string; configDir: string };
 export type InitPlan =
   | { kind: "add-root"; repoRoot: string }
   | { kind: "already-configured"; repoRoot: string }
-  | { kind: "not-a-repo" };
+  | { kind: "no-repo" };
 
 /**
  * Structural mirror of the gateway's `DemoSymbol`. Declared here rather than
@@ -53,9 +63,10 @@ export type InitOutcome =
   | { kind: "indexed"; demo: DemoSymbolLike | null }
   /** `--no-sync`: the config edit was the whole job. */
   | { kind: "config-only" }
-  | { kind: "not-a-repo" }
-  /** The gateway never came up. Nothing was indexed. */
-  | { kind: "gateway-unavailable" }
+  /** No git repository here, so nothing was indexed; `gatewayUp` is false under `--no-sync`. */
+  | { kind: "no-repo"; gatewayUp: boolean }
+  /** The gateway never came up. Nothing was indexed. `outsideRepo`: no config edit was made either. */
+  | { kind: "gateway-unavailable"; outsideRepo?: true }
   /** A gateway is running but cannot see the new root until it restarts. */
   | { kind: "restart-required" }
   /** Gateway reachable, sync attempted and failed. */
@@ -72,7 +83,7 @@ export type InitOutcome =
 export const INIT_EXIT = {
   /** Indexed. A `nimbus why` target may or may not have been found. */
   ok: 0,
-  /** Usage: not a git repository. Nothing was written. */
+  /** Usage: an invalid `--role`. */
   usage: 1,
   /** The Gateway never became ready. Nothing was indexed. */
   gatewayUnavailable: 2,
@@ -84,9 +95,8 @@ export function initExitCode(outcome: InitOutcome): number {
   switch (outcome.kind) {
     case "indexed":
     case "config-only":
+    case "no-repo":
       return INIT_EXIT.ok;
-    case "not-a-repo":
-      return INIT_EXIT.usage;
     case "gateway-unavailable":
       return INIT_EXIT.gatewayUnavailable;
     case "restart-required":
@@ -122,22 +132,26 @@ export type InitDeps = {
   confirmTour: () => Promise<boolean>;
   /** Runs `nimbus wow` in-process (shared streams/TTY). May throw anything, `CliExit` included. */
   runTour: () => Promise<void>;
+  /** The "What do you do?" step's gateway calls and prompts (`init-role.ts`). */
+  role: RoleStepDeps;
 };
 
 const HELP_LINES: readonly string[] = [
-  "nimbus init — index the git repository in the current directory",
+  "nimbus init — set Nimbus up: index the git repository here (if any) and ask what you do",
   "",
   "Usage:",
-  "  nimbus init [--no-sync] [--no-detect]",
+  "  nimbus init [--no-sync] [--no-detect] [--role <role>]",
   "",
   "Flags:",
   "  --no-sync   write nimbus.toml only; do not start the Gateway and do not index",
   "  --no-detect do not offer to reuse existing gh/aws/kubectl/gcloud logins",
+  '  --role      skip the "What do you do?" question (a pack role or id, engineering, design, other)',
   "  --help      this message",
   "",
   "Exit codes:",
-  "  0  the repository was indexed (a `nimbus why` target may not exist yet)",
-  "  1  the current directory is not a git repository — nothing was written",
+  "  0  the repository was indexed (a `nimbus why` target may not exist yet),",
+  "     or there is no git repository here (nothing to index)",
+  "  1  usage error (an invalid --role)",
   "  2  the Gateway never became ready — nothing was indexed",
   "  3  the Gateway is reachable, but this repository was not indexed",
   "     (the sync failed, or a running Gateway must restart to see the new root)",
@@ -147,7 +161,7 @@ const HELP_LINES: readonly string[] = [
 export function initPlan(opts: InitOptions): InitPlan {
   const repoRoot = resolve(opts.cwd);
   if (!existsSync(join(repoRoot, ".git"))) {
-    return { kind: "not-a-repo" };
+    return { kind: "no-repo" };
   }
 
   const tomlPath = join(opts.configDir, "nimbus.toml");
@@ -413,10 +427,12 @@ async function indexRepository(deps: InitDeps, repoRoot: string): Promise<InitOu
   return { kind: "indexed", demo: await pickDemo(deps, repoRoot) };
 }
 
-function reportGatewayUnavailable(deps: InitDeps): void {
+function reportGatewayUnavailable(deps: InitDeps, outsideRepo: boolean): void {
   deps.error("");
   deps.error("nimbus init: the Gateway never became ready, so nothing was indexed.");
-  deps.error("  The nimbus.toml edit above is done — re-running init will not repeat it.");
+  if (!outsideRepo) {
+    deps.error("  The nimbus.toml edit above is done — re-running init will not repeat it.");
+  }
   deps.error("");
   for (const line of gatewayLogLines(deps.gatewayLogTail())) {
     deps.error(line);
@@ -467,8 +483,14 @@ function reportIndexed(deps: InitDeps, demo: DemoSymbolLike | null): void {
 /** The single place an outcome becomes output. */
 function reportOutcome(outcome: InitOutcome, deps: InitDeps): void {
   switch (outcome.kind) {
-    case "not-a-repo":
-      deps.error("nimbus init: run this inside a git repository.");
+    case "no-repo":
+      deps.log("No git repository here, so nothing was indexed from this folder.");
+      if (!outcome.gatewayUp) {
+        deps.log("");
+        deps.log("Next:");
+        deps.log("  nimbus start");
+        deps.log("  nimbus init");
+      }
       return;
     case "config-only":
       // `--no-sync` wrote the config and deliberately started nothing, so the reader needs
@@ -481,7 +503,7 @@ function reportOutcome(outcome: InitOutcome, deps: InitDeps): void {
       reportIndexed(deps, outcome.demo);
       return;
     case "gateway-unavailable":
-      reportGatewayUnavailable(deps);
+      reportGatewayUnavailable(deps, outcome.outsideRepo === true);
       return;
     case "restart-required":
       reportRestartRequired(deps);
@@ -492,13 +514,23 @@ function reportOutcome(outcome: InitOutcome, deps: InitDeps): void {
   }
 }
 
+/** Outside a repository nothing is written; the gateway is still started for the role step. */
+async function noRepoOutcome(args: string[], deps: InitDeps): Promise<InitOutcome> {
+  if (hasFlag(args, "--no-sync")) return { kind: "no-repo", gatewayUp: false };
+  if (await deps.gatewayRunning()) return { kind: "no-repo", gatewayUp: true };
+  deps.log("Starting the gateway...");
+  return (await deps.startGateway())
+    ? { kind: "no-repo", gatewayUp: true }
+    : { kind: "gateway-unavailable", outsideRepo: true };
+}
+
 /** Everything up to the report: config edit, gateway, sync. */
 async function initOutcome(args: string[], deps: InitDeps): Promise<InitOutcome> {
   const opts: InitOptions = { cwd: deps.cwd, configDir: deps.configDir };
   const plan = initPlan(opts);
 
-  if (plan.kind === "not-a-repo") {
-    return { kind: "not-a-repo" };
+  if (plan.kind === "no-repo") {
+    return await noRepoOutcome(args, deps);
   }
 
   if (plan.kind === "already-configured") {
@@ -584,8 +616,28 @@ export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()
     return;
   }
 
+  let flagRole: string | undefined;
+  try {
+    flagRole = parseRoleFlag(args);
+  } catch (e) {
+    if (!(e instanceof RoleFlagError)) throw e;
+    deps.error(e.message);
+    process.exitCode = INIT_EXIT.usage;
+    return;
+  }
+
   const outcome = await initOutcome(args, deps);
   reportOutcome(outcome, deps);
+  const role = await roleStepAfterOutcome(outcome, flagRole, deps);
+  if (role === "unknown-role") {
+    process.exitCode = INIT_EXIT.usage;
+    return;
+  }
+  if (role !== undefined) {
+    await finishWithRole(outcome, role, args, deps);
+    process.exitCode = initExitCode(outcome);
+    return;
+  }
   // `CI=true` skips it for the same reason `start.ts`'s first-run hint does: detection spawns up
   // to three CLIs, each with a 10 s bound, and a pipeline gains nothing from a login it cannot
   // approve. A non-TTY developer shell still gets the one-line count.
@@ -614,6 +666,64 @@ export async function runInit(args: string[], deps: InitDeps = defaultInitDeps()
   // can leave the two disagreeing. This is also what resets process.exitCode after a runTour
   // failure above — CliExit or otherwise — back to init's own, already-successful verdict.
   process.exitCode = initExitCode(outcome);
+}
+
+/**
+ * The "What do you do?" step, run only once a gateway is up and only when it applies: a `--role`
+ * was given, there is no repository here (the role step is then the whole job), or this is an
+ * interactive terminal outside CI. Inside a repository on a non-interactive shell with no `--role`
+ * it never runs, so that path stays exactly what it was (`undefined` = today's flow). The prompt
+ * is suppressed under `CI=true` even on a TTY, as every other `init` prompt is.
+ */
+async function roleStepAfterOutcome(
+  outcome: InitOutcome,
+  flagRole: string | undefined,
+  deps: InitDeps,
+): Promise<RoleAnswer | "unknown-role" | undefined> {
+  const gatewayUp = outcome.kind === "indexed" || (outcome.kind === "no-repo" && outcome.gatewayUp);
+  if (!gatewayUp) return undefined;
+  const interactive = deps.interactive && process.env["CI"] !== "true";
+  if (flagRole === undefined && outcome.kind === "indexed" && !interactive) return undefined;
+  try {
+    const r = await runRoleStep(flagRole, { ...deps.role, interactive });
+    if (r.kind !== "unknown-role") return r;
+    deps.error(r.message);
+    if (outcome.kind === "indexed") deps.error("The repository was indexed.");
+    return "unknown-role";
+  } catch (e) {
+    // The repository step already succeeded; a failure here is reported, never a failed init.
+    deps.error(
+      `Could not finish setting Nimbus up for your role: ${stripControlChars(errorMessage(e))}`,
+    );
+    return { kind: "other" };
+  }
+}
+
+/**
+ * After the role step: Engineering keeps today's login-adoption offer (outside a repository with a
+ * pointer to where code gets indexed); other answers skip it, since those logins are developer
+ * tools. The tour offer keeps today's rule for every answer.
+ */
+async function finishWithRole(
+  outcome: InitOutcome,
+  role: RoleAnswer,
+  args: string[],
+  deps: InitDeps,
+): Promise<void> {
+  if (role.kind === "engineering") {
+    if (outcome.kind === "no-repo") {
+      deps.log("No git repository here; run nimbus init inside one to index code.");
+    }
+    if (!hasFlag(args, "--no-detect") && process.env["CI"] !== "true") {
+      await offerLocalAuthAfterIndex(deps);
+    }
+  }
+  if (outcome.kind === "indexed" && outcome.demo !== null && process.env["CI"] !== "true") {
+    await offerTourAfterIndex(deps);
+  } else if (outcome.kind === "no-repo") {
+    deps.log("");
+    deps.log("Any time: nimbus wow");
+  }
 }
 
 /**
@@ -648,6 +758,12 @@ export type InitEffects = {
   readonly connectorDetectDeps: (paths: CliPlatformPaths) => ConnectorDetectDeps;
   readonly confirm: (opts: { message: string; initialValue: boolean }) => Promise<unknown>;
   readonly runWow: (args: string[]) => Promise<void>;
+  readonly select: (opts: {
+    message: string;
+    options: { value: string; label: string; hint?: string }[];
+  }) => Promise<unknown>;
+  /** `nimbus pack install <id>` behind the terminal-only approval handler (`pack.ts`). */
+  readonly installPack: (id: string, paths: CliPlatformPaths) => Promise<number>;
 };
 
 const REAL_INIT_EFFECTS: InitEffects = {
@@ -655,6 +771,8 @@ const REAL_INIT_EFFECTS: InitEffects = {
   connectorDetectDeps: defaultConnectorDetectDeps,
   confirm,
   runWow,
+  select: (opts) => select(opts),
+  installPack: installPackInteractive,
 };
 
 /**
@@ -721,5 +839,35 @@ export function defaultInitDeps(
       return !isCancel(answer) && answer === true;
     },
     runTour: () => effects.runWow([]),
+    role: {
+      interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
+      log: (line) => {
+        console.log(line);
+      },
+      error: (line) => {
+        console.error(line);
+      },
+      call: (method, params) => withGatewayIpc((c) => c.call(method, params), paths),
+      selectRole: async (choices) => {
+        const answer = await effects.select({
+          message: "What do you do?",
+          options: choices.map((c) => ({ ...c })),
+        });
+        return isCancel(answer) || typeof answer !== "string" ? undefined : answer;
+      },
+      installPack: (id) => effects.installPack(id, paths),
+      confirmConnect: async (name) => {
+        const answer = await effects.confirm({
+          message: `Connect ${name} now? (opens your browser)`,
+          initialValue: true,
+        });
+        return !isCancel(answer) && answer === true;
+      },
+      connectorAuth: async (serviceId) => {
+        await withGatewayIpc((c) => c.call("connector.auth", { service: serviceId }), paths, {
+          requestTimeoutMs: INTERACTIVE_RPC_TIMEOUT_MS,
+        });
+      },
+    },
   };
 }

@@ -60,6 +60,7 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
 import {
   connectorAuthUnavailableMessage,
+  connectorSignInKind,
   handleConnectorAuth,
   oauthClientConfigForProvider,
 } from "./auth.ts";
@@ -979,4 +980,33 @@ describe("token-only connectors (linear, circleci, pagerduty) — reading the to
       .all()
       .map((r) => r.service_id);
   }
+});
+
+describe("connectorSignInKind — how onboarding offers each connector", () => {
+  test("browser for OAuth connectors, atlassian for jira/confluence, terminal for token and unknown ids", () => {
+    expect(connectorSignInKind("slack")).toBe("browser");
+    expect(connectorSignInKind("google_drive")).toBe("browser");
+    expect(connectorSignInKind("notion")).toBe("browser");
+    expect(connectorSignInKind("gmail")).toBe("browser");
+    expect(connectorSignInKind("jira")).toBe("atlassian");
+    expect(connectorSignInKind("confluence")).toBe("atlassian");
+    expect(connectorSignInKind("github")).toBe("terminal");
+    expect(connectorSignInKind("linear")).toBe("terminal");
+    expect(connectorSignInKind("pagerduty")).toBe("terminal");
+    expect(connectorSignInKind("not_a_service")).toBe("terminal");
+  });
+
+  test("every browser connector can actually start the OAuth arm (its profile resolves)", () => {
+    const browser = CONNECTOR_SERVICE_IDS.filter((id) => connectorSignInKind(id) === "browser");
+    expect(browser.length).toBeGreaterThan(0);
+    for (const id of browser) expect(() => oauthProfileForService(id)).not.toThrow();
+  });
+
+  test("a connector with no auth flow of its own is never offered in the browser", () => {
+    for (const id of CONNECTOR_SERVICE_IDS) {
+      if (connectorAuthUnavailableMessage(id) !== null) {
+        expect(connectorSignInKind(id)).toBe("terminal");
+      }
+    }
+  });
 });

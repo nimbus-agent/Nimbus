@@ -1,4 +1,8 @@
+import type { Database } from "bun:sqlite";
+import { loadNimbusDecisionsFromConfigDir } from "../config/nimbus-toml.ts";
 import type { DecisionRefresher } from "../decisions/decision-refresh.ts";
+import { type DecisionStatusResult, readDecisionStatus } from "../decisions/decision-status.ts";
+import { sourceMappingFor } from "../sources/source-mapping.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import { LongRunningJobRegistry } from "./_lib/long-running.ts";
 
@@ -55,6 +59,40 @@ function startPass(ctx: DecisionsRpcContext, rebuild: boolean): { jobId: string 
     // always passes `true` — the two methods never share a code path that could let `refresh`
     // clear anything.
     run: () => ctx.refresher.run({ rebuild }),
+  });
+}
+
+export type DecisionsStatusContext = {
+  readonly db: Database;
+  readonly configDir: string | undefined;
+  /** Absent when `[decisions] enabled` was false at boot: the answer is then `enabled: false`. */
+  readonly refresher: DecisionRefresher | undefined;
+  readonly nowMs: () => number;
+};
+
+/**
+ * `decisions.status` — read-only, renderer-safe: counts and at most five short statements the
+ * `agents.decisions` brief already exposes. Config and mapping are read fresh per call, exactly as
+ * `tour.plan` reads them, so a pack install shows up without a restart.
+ */
+export function handleDecisionsStatus(
+  params: unknown,
+  ctx: DecisionsStatusContext,
+): DecisionStatusResult {
+  if (
+    params !== undefined &&
+    params !== null &&
+    (typeof params !== "object" || Array.isArray(params) || Object.keys(params).length > 0)
+  ) {
+    throw new DecisionsRpcError(-32602, "decisions.status takes no params");
+  }
+  const minConfidence =
+    ctx.configDir === undefined ? 0 : loadNimbusDecisionsFromConfigDir(ctx.configDir).minConfidence;
+  return readDecisionStatus(ctx.db, {
+    mapping: sourceMappingFor(ctx.configDir),
+    nowMs: ctx.nowMs(),
+    minConfidence,
+    refresherState: ctx.refresher?.status(),
   });
 }
 

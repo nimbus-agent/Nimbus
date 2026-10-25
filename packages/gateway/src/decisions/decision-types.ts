@@ -1,6 +1,9 @@
 import type { SourceKind } from "../sources/source-kinds.ts";
 
 export type DecisionStatus = "pending" | "extracted" | "vetoed";
+
+/** The decisions brief's default window (`nimbus decisions`, `decisions.status`): 90 days. */
+export const DECISIONS_DEFAULT_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 export type CueTier = "heading" | "explicit" | "weak";
 export type EvidenceKind = "source" | "pr" | "commit" | "migration" | "iac" | "adr";
 export type ExtractionSource = "llm" | "snippet" | "agent";

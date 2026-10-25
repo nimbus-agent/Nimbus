@@ -697,6 +697,7 @@ describe("decisions.* — reached through the chain, job events broadcast", () =
         return SUMMARY;
       },
       stop: () => {},
+      status: () => "idle",
     };
   }
 
@@ -756,6 +757,38 @@ describe("decisions.* — reached through the chain, job events broadcast", () =
 
     const { ctx: unwired } = harness();
     expect(await tryDispatchDecisionsRpc(unwired, "decisions.refresh", {})).toBe(phase4RpcSkipped);
+  });
+
+  test("decisions.status answers with no refresher (enabled: false), and with one (its state)", async () => {
+    const { ctx: unwired } = harness({ localIndex: freshIndex() });
+    expect(await tryDispatchDecisionsRpc(unwired, "decisions.status", {})).toMatchObject({
+      enabled: false,
+      state: "disabled",
+      shown: 0,
+    });
+    const { ctx } = harness({ localIndex: freshIndex(), decisionsRefresher: refresher([]) });
+    expect(await tryDispatchDecisionsRpc(ctx, "decisions.status", {})).toMatchObject({
+      enabled: true,
+      state: "idle",
+    });
+  });
+
+  test("decisions.status is reached through the whole phase-4 chain, refresher or not", async () => {
+    const { ctx } = harness({ localIndex: freshIndex() });
+    expect(await tryDispatchPhase4Rpc(ctx, "decisions.status", {}, "c1")).toMatchObject({
+      enabled: false,
+    });
+  });
+
+  test("decisions.status refuses params as -32602 and needs the index", async () => {
+    const { ctx } = harness({ localIndex: freshIndex() });
+    expect(
+      (await rpcErrorOf(tryDispatchDecisionsRpc(ctx, "decisions.status", { x: 1 }))).rpcCode,
+    ).toBe(-32602);
+    const { ctx: noIndex } = harness();
+    expect(
+      (await rpcErrorOf(tryDispatchDecisionsRpc(noIndex, "decisions.status", {}))).rpcCode,
+    ).toBe(-32603);
   });
 });
 

@@ -36,7 +36,7 @@ import {
 import { runMediaPass } from "../../multimodal/media-pass.ts";
 import { MULTIMODAL_CAPABILITY, type RemoteVlmVendor } from "../../multimodal/media-types.ts";
 import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
-import type { PackOwnerGate } from "../../packs/pack-install.ts";
+import { activePackSuggestedConnectors, type PackOwnerGate } from "../../packs/pack-install.ts";
 import { isConnectorConfigured } from "../../sync/connector-configured.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
@@ -51,7 +51,11 @@ import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
-import { DecisionsRpcError, dispatchDecisionsRpc } from "../decisions-rpc.ts";
+import {
+  DecisionsRpcError,
+  dispatchDecisionsRpc,
+  handleDecisionsStatus,
+} from "../decisions-rpc.ts";
 import { DemoRpcError, dispatchDemoRpc } from "../demo-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
@@ -1004,9 +1008,16 @@ export function tryDispatchCatalogRpc(
       throw new RpcMethodError(-32603, "catalog.list requires configDir");
     }
     try {
+      const configDir = ctx.options.configDir;
+      const packStore = ctx.options.packLayerStore;
       const out = dispatchCatalogRpc(method, params, {
         db: ctx.options.localIndex.getDatabase(),
-        configDir: ctx.options.configDir,
+        configDir,
+        ...(packStore === undefined
+          ? {}
+          : {
+              packSuggestions: () => activePackSuggestedConnectors({ store: packStore, configDir }),
+            }),
       });
       if (out.kind === "hit") return out.value;
     } catch (e) {
@@ -1655,6 +1666,25 @@ export async function tryDispatchDecisionsRpc(
 ): Promise<unknown> {
   if (!method.startsWith("decisions.")) return phase4RpcSkipped;
   const refresher = ctx.options.decisionsRefresher;
+  // Answered with or without a refresher: a disabled pass reports `enabled: false` rather than
+  // looking like a method that does not exist.
+  if (method === "decisions.status") {
+    const localIndex = ctx.options.localIndex;
+    if (localIndex === undefined) {
+      throw new RpcMethodError(-32603, "decisions.status requires LocalIndex");
+    }
+    try {
+      return handleDecisionsStatus(params, {
+        db: localIndex.getDatabase(),
+        configDir: ctx.options.configDir,
+        refresher,
+        nowMs: () => Date.now(),
+      });
+    } catch (e) {
+      if (e instanceof DecisionsRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+      throw e;
+    }
+  }
   if (refresher === undefined) return phase4RpcSkipped;
   try {
     const out = await dispatchDecisionsRpc(method, params, {

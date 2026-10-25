@@ -102,11 +102,13 @@ describe("zero-config onboarding funnel", () => {
     expect(written.split("[[filesystem.roots]]").length - 1).toBe(1);
   });
 
-  test("it refuses outside a git repository instead of writing config", async () => {
+  test("outside a git repository it writes no config and exits 0 (role packs P5)", async () => {
     repo = root;
     const res = await runInitInRepo(["--no-sync"]);
-    expect(res.exitCode).toBe(1);
-    expect(res.stderr).toContain("git repository");
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain(
+      "No git repository here, so nothing was indexed from this folder.",
+    );
     expect(existsSync(join(configDir, "nimbus.toml"))).toBe(false);
   });
 

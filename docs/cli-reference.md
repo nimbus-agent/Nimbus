@@ -40,19 +40,21 @@ reading the command's implementation:
 
 ### `nimbus init`
 
-Index the git repository in the current directory. Needs no credentials, no API key, and no LLM.
+Set Nimbus up: index the git repository in the current directory, if there is one, and ask what you do. Needs no credentials, no API key, and no LLM.
 
 ```bash
 cd ~/code/your-project
 nimbus init
 nimbus init --no-sync           # Write the config only; do not start or sync
 nimbus init --no-detect         # Skip the offer to reuse existing gh/aws/kubectl/gcloud logins
+nimbus init --role product      # Skip the "What do you do?" question
 nimbus init --help              # Usage and the exit-code table
 ```
 
 What it does:
 
-1. Verifies the current directory is a git repository (exits 1 if not, writing nothing).
+1. Checks whether the current directory is a git repository. Outside one, `init` writes nothing,
+   starts the Gateway (unless `--no-sync`), and goes straight to the role step below.
 2. **Appends** a `[[filesystem.roots]]` block for it to `nimbus.toml` with `git_aware = true` and `code_index = true`. Appending — never rewriting — is deliberate: it cannot reorder keys, strip comments, or reformat anything you wrote. An existing file is copied to `nimbus.toml.bak` first.
 3. Starts the Gateway if it is not already running, then syncs the `filesystem` connector.
 4. On a successful index, offers to reuse any local `gh`/`aws`/`kubectl`/`gcloud` login it finds — the same
@@ -76,14 +78,37 @@ What it does:
    yes: the `Try it:` block (step 5, with its `file:line`) prints before the offer, so that line
    sits above the tour's own output rather than scrolling past it.
 
+**What do you do?** Once the Gateway is up — after a successful index inside a repository, or
+after starting it outside one — an interactive terminal (not `CI=true`) is asked one question. The
+choices come from the Gateway: one per bundled role pack (`Product`, `DevOps`), then
+`Engineering`, `Design` and `Something else`; `--role <value>` answers it up front with a pack role
+tag (`product`, `devops`, `sre`), a pack id (`pm`, `devops`) or `engineering` / `design` / `other`.
+
+- **A pack** (for example Product): `init` runs [`nimbus pack install`](#nimbus-pack) for it, with
+  its usual approval at this terminal, then lists the pack's suggested connectors (`connected`, or
+  the `nimbus connector auth <id>` command) and offers to connect each one that signs in through
+  the browser. When the pack shows `decisions`, it ends with `nimbus decisions`. Declining the
+  approval is not a failure: `init` continues with the general suggestions. The login-adoption
+  offer (step 4) is skipped, since those are developer tools. On a non-interactive shell a pack
+  `--role` prints `Next: nimbus pack install <id>` and installs nothing.
+- **Engineering**: today's flow, unchanged — step 4's adoption offer and step 6's tour offer.
+  Outside a repository it says to run `nimbus init` inside one to index code.
+- **Design / Something else** (and a cancelled question): the general connector suggestions, no
+  pack.
+
+Inside a repository, a non-interactive shell with no `--role` is never asked anything and behaves
+exactly as before; outside one it gets the general connector suggestions. The tour offer keeps its
+rule for every answer, and outside a repository it is not offered at all. A `--role` value no pack
+matches is reported after the repository step (which already succeeded) and exits `1`.
+
 Re-running is safe and idempotent — a root that is already configured reports `Already configured` and is not duplicated.
 
 Exit codes:
 
 | Code | Meaning |
 | --- | --- |
-| `0` | The repository was indexed. A concrete `nimbus why` target may or may not have been found — if the index had nothing to suggest yet, `init` says so and prints the generic next step. |
-| `1` | The current directory is not a git repository. Nothing was written. |
+| `0` | The repository was indexed (a concrete `nimbus why` target may or may not have been found — if the index had nothing to suggest yet, `init` says so and prints the generic next step), or there is no git repository here and there was nothing to index. |
+| `1` | A usage error: `--role` with no value, a malformed value, or a value no pack and no fixed role matches. |
 | `2` | The Gateway never became ready, so **nothing was indexed**. The failure names what happened, inlines the tail of the gateway log, and tells you what to run next. |
 | `3` | The Gateway is reachable but this repository was still not indexed — the `filesystem` sync failed, or a Gateway that is already running has to be restarted before it can see the new root. |
 
@@ -121,7 +146,7 @@ nimbus wow --json
 
 Any other flag is refused (exit `2`), same as an out-of-range `--steps`.
 
-**What "worth showing" means, per step:** `oncall` needs an indexed incident; `why` needs an indexed symbol under a configured `[[filesystem.roots]]` path; `owners` needs at least one indexed directory with at least one indexed file beneath it — it PREFERS a non-root directory over the configured root itself, falling back to the root only when no non-root candidate has any files under it; `standup` needs activity attributed to you (via `resolveSelfPerson`, below) in the last 24 hours; `decisions` needs an extracted decision in the last 90 days; `glossary` needs a consolidated term. A kind with nothing to show is skipped, never padded with an empty brief — the tour prints `Not shown: <kind> (<reason>)` for each, and any offerable step beyond `--steps` is listed under `Also try:` with its exact command.
+**What "worth showing" means, per step:** `oncall` needs an indexed incident; `why` needs an indexed symbol under a configured `[[filesystem.roots]]` path; `owners` needs at least one indexed directory with at least one indexed file beneath it — it PREFERS a non-root directory over the configured root itself, falling back to the root only when no non-root candidate has any files under it; `standup` needs activity attributed to you (via `resolveSelfPerson`, below) in the last 24 hours; `decisions` needs an extracted decision in the last 90 days; `glossary` needs a consolidated term. A kind with nothing to show is skipped, never padded with an empty brief — the tour prints `Not shown: <kind> (<reason>)` for each, and any offerable step beyond `--steps` is listed under `Also try:` with its exact command. A kind whose agent is hidden — by your role packs' `[agents] visible` or your own `[agents] hide` — is not run at all and shows as `Not shown: <kind> (hidden by your role packs)` or `(hidden in your config)`; hiding is presentation only, so the agent itself still runs from its own command.
 
 **An empty plan is not an error.** If none of the six kinds has anything to offer — the most common reason being a fresh gateway with nothing indexed yet — `nimbus wow` prints a pointer to [`nimbus init`](#nimbus-init) and exits `0`. No locality panel, no proof call: there is nothing yet to be honest about.
 
@@ -608,7 +633,7 @@ nimbus pack remove <id>
 
 A role pack is a curated settings layer (agent visibility, fleet jobs, defaults) for one role. The gateway must be running. All four verbs are refused over LAN and on a `--demo` root, and `show`, `install` and `remove` are CLI-only and not on the Tauri allowlist; `list` is also renderer-callable as `pack.list`, the one pack method on the allowlist. They act on the **active profile**.
 
-- `list` prints the packs installed on the active profile (marking `update available` when the bundled copy differs from the installed one, and naming any pack whose layer was skipped and why) and the bundled packs you could install (`pm`, `devops`). `--json` prints the raw result.
+- `list` prints the packs installed on the active profile (marking `update available` when the bundled copy differs from the installed one, and naming any pack whose layer was skipped and why) and the bundled packs you could install (`pm`, `devops`). When nothing is installed and the list was read, it ends with one line naming them: `Tip: nimbus pack install <id> sets Nimbus up for a role: pm (Product), devops (DevOps).` `--json` prints the raw result; its rows carry each pack's `roles` and `suggestedConnectors` (what [`nimbus init`](#nimbus-init) builds its question and connector list from).
 - `show` prints the exact prompt `install` would ask you, plus an `Installed:` line when the pack is already installed. It changes nothing. Pack-supplied text is shown visibly escaped, never raw.
 - `install` asks under the `pack.install` approval and writes the pack as a layer under the profile. It needs a terminal on both stdin and stdout and has **no `--yes`**: it refuses `Refusing to install a pack in non-TTY mode`. Installing an identical pack again is `already installed`; a damaged or hand-edited layer file is offered as a repair. A delegate never approves it. Installing the DevOps pack turns on the on-call pushed brief ([`[oncall.push]`](#nimbus-oncall)): an OS toast, plus a ChatOps headline if `[oncall.push] chatops_namespace` is already set. `nimbus doctor` reports an available pack update.
 - `--file <path>` installs a pack from a local file (at most 131072 bytes). A local-file pack is **refused in a production build** (`ERR_PACK_LOCAL_FILE_PRODUCTION`); only bundled packs install there.

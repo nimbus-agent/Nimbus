@@ -320,6 +320,67 @@ describe("nimbus pack branches", () => {
     expect(out).toContain("Available:\n  (none)");
   });
 
+  it("list ends with a role tip when nothing is installed and something is available", async () => {
+    const h = harness({
+      reply: () => ({
+        profile: "d",
+        installed: [],
+        available: [
+          { id: "pm", name: "Product", version: "1.0.0", description: "x" },
+          { id: "devops", name: "DevOps", version: "1.1.0", description: "y" },
+        ],
+        skipped: [],
+      }),
+    });
+    await runPackWith(["list"], h.io, h.call);
+    const lines = h.stdout.join("").trimEnd().split("\n");
+    expect(lines.at(-1)).toBe(
+      "Tip: nimbus pack install <id> sets Nimbus up for a role: pm (Product), devops (DevOps).",
+    );
+  });
+
+  it("no role tip when a pack is installed, when the list is unreadable, or with --json", async () => {
+    const installed = harness({
+      reply: () => ({
+        profile: "d",
+        installed: [
+          {
+            id: "pm",
+            name: "Product",
+            version: "1.0.0",
+            source: "bundled",
+            updateAvailable: false,
+          },
+        ],
+        available: [{ id: "devops", name: "DevOps", version: "1.1.0", description: "y" }],
+        skipped: [],
+      }),
+    });
+    await runPackWith(["list"], installed.io, installed.call);
+    expect(installed.stdout.join("")).not.toContain("Tip:");
+    const unreadable = harness({
+      reply: () => ({
+        profile: "d",
+        installed: [],
+        available: [{ id: "devops", name: "DevOps", version: "1.1.0", description: "y" }],
+        skipped: [],
+        listError: "bad json",
+      }),
+    });
+    await runPackWith(["list"], unreadable.io, unreadable.call);
+    expect(unreadable.stdout.join("")).not.toContain("Tip:");
+    const json = harness({
+      reply: () => ({
+        profile: "d",
+        installed: [],
+        available: [{ id: "devops", name: "DevOps", version: "1.1.0", description: "y" }],
+        skipped: [],
+      }),
+    });
+    await runPackWith(["list", "--json"], json.io, json.call);
+    expect(json.stdout.join("")).not.toContain("Tip:");
+  });
+
   it("list says (none) for an empty installed list and no Skipped section when none are skipped", async () => {
     const h = harness({
       reply: () => ({ profile: "d", installed: [], available: [], skipped: [] }),
