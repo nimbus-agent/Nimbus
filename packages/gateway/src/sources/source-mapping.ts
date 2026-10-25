@@ -12,7 +12,7 @@ import {
   layerLabel as label,
   layerValues,
 } from "../config/layered-merge.ts";
-import { parseStrictStringList } from "../config/pack-settable.ts";
+import { parseStrictStringList } from "../config/strict-string-list.ts";
 import {
   builtinSourceEntries,
   PASS_KINDS,
