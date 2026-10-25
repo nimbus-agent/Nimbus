@@ -165,6 +165,12 @@ function listLines(r: PackListResult): string[] {
     lines.push("", "Skipped:");
     for (const s of r.skipped) lines.push(`  ${clean(s.packId)}: ${clean(s.reason)}`);
   }
+  // Only when nothing is installed and the list was read: an upgraded install with no pack is told
+  // once, here, that packs exist. Never when the installed list could not be read.
+  if (r.listError === undefined && r.installed.length === 0 && r.available.length > 0) {
+    const offers = r.available.map((p) => `${clean(p.id)} (${clean(p.name)})`).join(", ");
+    lines.push("", `Tip: nimbus pack install <id> sets Nimbus up for a role: ${offers}.`);
+  }
   return lines;
 }
 
