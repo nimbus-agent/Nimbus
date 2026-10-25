@@ -119,6 +119,16 @@ function optString(params: unknown, key: string): string | undefined {
   return v;
 }
 
+function optBool(params: unknown, key: string): boolean | undefined {
+  const rec = asRecord(params);
+  if (rec === undefined || !(key in rec)) return undefined;
+  const v = rec[key];
+  if (typeof v !== "boolean") {
+    throw new FleetRpcError(-32602, `fleet: ${key} must be a boolean`);
+  }
+  return v;
+}
+
 function reqString(params: unknown, key: string): string {
   const v = optString(params, key);
   if (v === undefined) {
@@ -318,12 +328,18 @@ function handleBriefs(params: unknown, ctx: FleetRpcCtx): { briefs: readonly Fle
   const limit = optLimit(params, "limit") ?? DEFAULT_BRIEFS_LIMIT;
   const jobId = optString(params, "jobId");
   const subjectKey = optString(params, "subjectKey");
+  const agentMethod = optString(params, "agentMethod");
+  const nonSweep = optBool(params, "nonSweep");
+  const withMarkdown = optBool(params, "withMarkdown");
   return {
     briefs: store.listBriefs({
       limit,
       now: ctx.now(),
       ...(jobId === undefined ? {} : { jobId }),
       ...(subjectKey === undefined ? {} : { subjectKey }),
+      ...(agentMethod === undefined ? {} : { agentMethod }),
+      ...(nonSweep === undefined ? {} : { nonSweep }),
+      ...(withMarkdown === undefined ? {} : { withMarkdown }),
     }),
   };
 }

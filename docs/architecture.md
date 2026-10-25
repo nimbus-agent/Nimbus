@@ -3203,7 +3203,11 @@ const streamReq: JSONRPCRequest = {
 // fleet.list    — every CONFIGURED job plus its `fleet_job_state` row (`null` when it has never run).
 // fleet.briefs  — precomputed briefs, newest first. `limit` defaults to 20 and is capped at 500
 //   HERE, at the IPC boundary rather than in the CLI: the CLI is not the trust boundary and a
-//   `brief_markdown` body can be tens of KB.
+//   `brief_markdown` body can be tens of KB. Optional filters: `jobId`, `subjectKey`, `agentMethod`
+//   (exact, e.g. `agents.decisions`), `nonSweep: true` (`subject_key = job_id`: only rows whose subject
+//   is their own job; bound: a sweep subject key that happens to equal its job name would pass) and
+//   `withMarkdown: true` (`brief_markdown IS NOT NULL`); `false` means no filter, a non-boolean is
+//   -32602. No index or migration — the 500-row cap and retention bound the scan.
 // fleet.show    — one brief. Returns `{brief: null}` — never an error — for an id that never
 //   existed AND for one that has expired; the two are deliberately indistinguishable, since a
 //   distinguishable "it expired" answer is itself a retention disclosure.

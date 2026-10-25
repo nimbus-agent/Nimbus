@@ -589,3 +589,120 @@ describe("subject-scoped brief reads", () => {
     expect(row).toEqual({ subjects_in_scope: 4, subjects_attempted: 4, subjects_completed: 3 });
   });
 });
+
+describe("listBriefs card filters (agentMethod / nonSweep / withMarkdown)", () => {
+  let A: string;
+  let B: string;
+  let C: string;
+  let D: string;
+
+  function seed(b: {
+    jobId: string;
+    subjectKey: string;
+    agentMethod: string;
+    briefMarkdown: string | null;
+    createdAt: number;
+  }): string {
+    const runId = store.openRun({
+      startedAt: b.createdAt,
+      hostPower: "ac",
+      hostIdleMs: 0,
+      hostSource: "measured",
+      remoteCallBudget: 0,
+    });
+    return store.recordBrief({
+      runId,
+      jobId: b.jobId,
+      subjectKey: b.subjectKey,
+      agentMethod: b.agentMethod,
+      briefMarkdown: b.briefMarkdown,
+      findingsJson: "{}",
+      synthesisJson: null,
+      createdAt: b.createdAt,
+      expiresAt: b.createdAt + 86_400_000,
+    });
+  }
+
+  const now = 10_000;
+
+  beforeEach(() => {
+    A = seed({
+      jobId: "nightly",
+      subjectKey: "nightly",
+      agentMethod: "agents.decisions",
+      briefMarkdown: "a",
+      createdAt: 1000,
+    });
+    B = seed({
+      jobId: "sweep-svc",
+      subjectKey: "services:checkout",
+      agentMethod: "agents.decisions",
+      briefMarkdown: "b",
+      createdAt: 2000,
+    });
+    C = seed({
+      jobId: "nightly2",
+      subjectKey: "nightly2",
+      agentMethod: "agents.decisions",
+      briefMarkdown: null,
+      createdAt: 3000,
+    });
+    D = seed({
+      jobId: "g",
+      subjectKey: "g",
+      agentMethod: "agents.glossary",
+      briefMarkdown: "d",
+      createdAt: 500,
+    });
+  });
+
+  test("listBriefs filters by agentMethod", () => {
+    expect(
+      store.listBriefs({ limit: 10, agentMethod: "agents.glossary", now }).map((b) => b.id),
+    ).toEqual([D]);
+  });
+
+  test("nonSweep keeps only rows whose subject is their job", () => {
+    const ids = store
+      .listBriefs({ limit: 10, agentMethod: "agents.decisions", nonSweep: true, now })
+      .map((b) => b.id);
+    expect(ids).not.toContain(B);
+    expect(ids).toContain(A);
+  });
+
+  test("withMarkdown drops null-markdown rows; the three compose to the card query", () => {
+    const rows = store.listBriefs({
+      limit: 1,
+      agentMethod: "agents.decisions",
+      nonSweep: true,
+      withMarkdown: true,
+      now,
+    });
+    expect(rows.map((b) => b.id)).toEqual([A]);
+  });
+
+  test("false means no filter", () => {
+    expect(
+      store.listBriefs({
+        limit: 10,
+        agentMethod: "agents.decisions",
+        nonSweep: false,
+        withMarkdown: false,
+        now,
+      }),
+    ).toHaveLength(3);
+    expect(C).toBeDefined();
+  });
+
+  test("every filter at once still binds limit last", () => {
+    const rows = store.listBriefs({
+      limit: 1,
+      jobId: "nightly",
+      agentMethod: "agents.decisions",
+      nonSweep: true,
+      withMarkdown: true,
+      now,
+    });
+    expect(rows.map((b) => b.id)).toEqual([A]);
+  });
+});

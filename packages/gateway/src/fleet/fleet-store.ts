@@ -298,11 +298,20 @@ export class FleetStore {
    * the brief is gone, and a read surface that still returns it makes retention a lie. A caller-
    * supplied clock (rather than an internal `Date.now()`) keeps this testable without a live clock
    * and matches every other timestamped method on this class (`pruneBriefs`, `recordJobSuccess`, …).
+   *
+   * `agentMethod` / `nonSweep` / `withMarkdown` need no index and no migration: the 500-row IPC
+   * cap and brief retention bound the scan.
    */
   listBriefs(q: {
     limit: number;
     jobId?: string;
     subjectKey?: string;
+    /** Exact `agent_method`, e.g. `agents.decisions`. */
+    agentMethod?: string;
+    /** `true`: only rows whose subject is their own job (config-named jobs, not sweep subjects). */
+    nonSweep?: boolean;
+    /** `true`: only rows that carry a non-null `brief_markdown`. */
+    withMarkdown?: boolean;
     now: number;
   }): FleetBriefRow[] {
     const where: string[] = ["expires_at > ?"];
@@ -315,6 +324,13 @@ export class FleetStore {
       where.push("subject_key = ?");
       params.push(q.subjectKey);
     }
+    if (q.agentMethod !== undefined) {
+      where.push("agent_method = ?");
+      params.push(q.agentMethod);
+    }
+    // Literal predicates: they bind nothing, so `params` stays aligned with the placeholders.
+    if (q.nonSweep === true) where.push("subject_key = job_id");
+    if (q.withMarkdown === true) where.push("brief_markdown IS NOT NULL");
     params.push(q.limit);
     const rows = this.db
       .query(
