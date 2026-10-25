@@ -1,7 +1,7 @@
 # Role packs — Project 5: role-aware onboarding
 
-**Date:** 2026-10-25 · **Status:** brainstormed with the owner 2026-10-25; Antigravity review stands
-in for owner approval (owner's instruction) · **Parent:** `2026-10-21-role-packs-overview-design.md`
+**Date:** 2026-10-25 · **Status:** shipped — PR 1 #1781 (0c00274b), PR 2 #1782. Brainstormed with the owner 2026-10-25;
+Antigravity review stood in for owner approval (owner's instruction) · **Parent:** `2026-10-21-role-packs-overview-design.md`
 § 5 Project 5 and § 6 (programme proof).
 
 > Per the repo convention this spec lives on `dev/asaf/role-packs` only. Durable content moves to
@@ -304,8 +304,8 @@ install. `decisions.status` joins it too. Bounds, all gateway-enforced:
   `decisions.refresh` and `decisions.rebuild` stay out.
 - The HITL popup window is 480×360 and not resizable (`src-tauri/src/hitl_popup.rs`); the
   `pack.install` branch puts the prompt text in a scroll container with a bounded height so the
-  Approve/Reject footer is always visible, and the window becomes resizable (my call; the size of
-  other prompts is unchanged).
+  Approve/Reject footer is always visible; the window stays 480×360 and not resizable, with the
+  box capped at 200 px (my call, revised at review: a resizable borderless window misbehaves).
 - **Stated bound (I46's shape):** a compromised renderer can answer the prompt it raised. The worst
   it can do is install a first-party bundled pack, which can only set allowlisted, local-only keys
   (overview § 4); removal is ungated and in the terminal.
