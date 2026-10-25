@@ -42,7 +42,7 @@ export class RoleFlagError extends Error {
   }
 }
 
-const ROLE_VALUE_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+const ROLE_VALUE_RE = /^(?:pack:)?[a-z][a-z0-9_-]{0,31}$/;
 const FIXED_ROLES = ["engineering", "design", "other"] as const;
 type FixedRole = (typeof FIXED_ROLES)[number];
 const FIXED_LABEL: Readonly<Record<FixedRole, string>> = {
@@ -162,8 +162,9 @@ export function connectorSuggestions(
   const byId = new Map<string, Record<string, unknown>>();
   for (const raw of Array.isArray(c?.["connectors"]) ? (c["connectors"] as unknown[]) : []) {
     const r = asRecord(raw);
-    const id = r?.["id"];
-    if (r !== undefined && typeof id === "string") byId.set(id, r);
+    if (r === undefined) continue;
+    // An installed extension is suggested by its service id (`ext_*`), not its package id.
+    for (const key of [r["id"], r["serviceId"]]) if (typeof key === "string") byId.set(key, r);
   }
   const connected = new Set<string>();
   for (const raw of Array.isArray(statuses) ? statuses : []) {

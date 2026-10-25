@@ -16,6 +16,7 @@ import { hasFlag } from "../lib/flag-parsing.ts";
 import { extractLatestMessage, truncatePreview } from "../lib/gateway-log-tail.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 import { appendFilesystemRoot, hasFilesystemRoot } from "../lib/toml-append.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
@@ -691,7 +692,9 @@ async function roleStepAfterOutcome(
     return "unknown-role";
   } catch (e) {
     // The repository step already succeeded; a failure here is reported, never a failed init.
-    deps.error(`Could not finish setting Nimbus up for your role: ${errorMessage(e)}`);
+    deps.error(
+      `Could not finish setting Nimbus up for your role: ${stripControlChars(errorMessage(e))}`,
+    );
     return { kind: "other" };
   }
 }

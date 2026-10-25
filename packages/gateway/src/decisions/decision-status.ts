@@ -1,6 +1,9 @@
 // `decisions.status` (role packs P5): what the decisions pass has read and found, in numbers a
-// first-run screen can say in plain words. Read-only. Every count uses the brief's own read rule
-// (`decisionVisibilityFilter`) and window, so this screen and `nimbus decisions` cannot disagree.
+// first-run screen can say in plain words. Read-only. `shown` and `recent` are exactly what
+// `nimbus decisions` lists (the brief's read rule, `decisionVisibilityFilter`, its floor and its
+// default window); `candidates` uses the same rule over the same window — unlike the brief's own
+// status totals, which are all-time — so a row older than the window can never make the screen
+// say "too uncertain to show" about decisions the list would not show anyway.
 
 import type { Database } from "bun:sqlite";
 import type { SourceMapping } from "../sources/source-mapping.ts";

@@ -71,6 +71,7 @@ describe("parseRoleFlag", () => {
   test("absent → undefined; a value → it", () => {
     expect(parseRoleFlag([])).toBeUndefined();
     expect(parseRoleFlag(["--no-detect", "--role", "product"])).toBe("product");
+    expect(parseRoleFlag(["--role", "pack:pm"])).toBe("pack:pm");
   });
   test("a missing or malformed value is a usage error", () => {
     expect(() => parseRoleFlag(["--role"])).toThrow(RoleFlagError);
@@ -139,6 +140,21 @@ describe("connectorSuggestions", () => {
       { id: "jira", displayName: "Jira", signIn: "atlassian", connected: false },
       { id: "notion", displayName: "Notion", signIn: "browser", connected: false },
       { id: "google_drive", displayName: "Google Drive", signIn: "browser", connected: false },
+    ]);
+  });
+
+  test("an installed extension is found by its service id", () => {
+    const rows = connectorSuggestions(
+      {
+        connectors: [
+          { kind: "extension", id: "com.example.notes", serviceId: "ext_notes", name: "Notes" },
+        ],
+        suggestedConnectors: ["ext_notes"],
+      },
+      [],
+    );
+    expect(rows).toEqual([
+      { id: "ext_notes", displayName: "Notes", signIn: "terminal", connected: false },
     ]);
   });
 

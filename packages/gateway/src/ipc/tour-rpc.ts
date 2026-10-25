@@ -122,7 +122,7 @@ async function handleTourPlan(params: unknown, ctx: TourRpcContext): Promise<Tou
   return buildTourPlan(selectorCtx, {
     steps,
     demo: ctx.demo,
-    visible: { set: v.visible, basis: v.basis },
+    visible: { set: v.visible, basis: v.basis, userHidden: v.userHidden },
   });
 }
 

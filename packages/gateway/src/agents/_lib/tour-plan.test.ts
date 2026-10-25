@@ -228,3 +228,20 @@ test("hidden with no packs (an owner [agents] hide) says so", async () => {
   expect(p.skipped.every((s) => s.reason === "hidden in your config")).toBe(true);
   expect(p.skipped).toHaveLength(5);
 });
+
+test("with packs active, an agent the owner hid says it was hidden in their config", async () => {
+  const p = await buildTourPlan(ctx, {
+    steps: 6,
+    demo: false,
+    selectors: all(() => ok()),
+    visible: {
+      set: new Set(["why", "oncall", "standup", "ownership"]),
+      basis: "packs",
+      userHidden: new Set(["glossary"]),
+    },
+  });
+  expect(p.skipped).toEqual([
+    { kind: "decisions", reason: "hidden by your role packs" },
+    { kind: "glossary", reason: "hidden in your config" },
+  ]);
+});

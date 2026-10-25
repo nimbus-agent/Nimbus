@@ -178,9 +178,15 @@ export function resolveAgentVisibility(
 export function visibleAgentNames(snapshot: Pick<ConfigSnapshot, "doc">): {
   readonly visible: ReadonlySet<string>;
   readonly basis: "all" | "packs";
+  /** Agents a user layer (`[agents] hide`) hid, as opposed to agents no pack shows. */
+  readonly userHidden: ReadonlySet<string>;
 } {
   const v = resolveAgentVisibility(snapshot, CATALOG_AGENT_NAMES);
-  return { visible: v.visible, basis: v.basis };
+  return {
+    visible: v.visible,
+    basis: v.basis,
+    userHidden: new Set(v.overrides.filter((o) => !o.visible).map((o) => o.agent)),
+  };
 }
 
 export function describeAgentVisibility(v: AgentVisibility): readonly string[] {

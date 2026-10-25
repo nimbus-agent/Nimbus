@@ -31,7 +31,16 @@ export const TOUR_KIND_AGENT: Readonly<Record<TourStepKind, string>> = {
 export type TourVisibility = {
   readonly set: ReadonlySet<string>;
   readonly basis: "all" | "packs";
+  /** Agents the owner's own `[agents] hide` hid; their skip says so even when packs are active. */
+  readonly userHidden?: ReadonlySet<string>;
 };
+
+function hiddenReason(visible: TourVisibility, agent: string): string {
+  if (visible.userHidden?.has(agent) === true || visible.basis === "all") {
+    return "hidden in your config";
+  }
+  return "hidden by your role packs";
+}
 
 /** The CLI subcommand each kind runs. Total by type. */
 const SUBCOMMAND: Readonly<Record<TourStepKind, string>> = {
@@ -135,8 +144,6 @@ export async function buildTourPlan(
 ): Promise<TourPlan> {
   const selectors = opts.selectors ?? TOUR_SELECTORS;
   const visible = opts.visible;
-  const hiddenReason =
-    visible?.basis === "packs" ? "hidden by your role packs" : "hidden in your config";
   // The selectors are independent read-only lookups, so they run concurrently. `Promise.all` keeps
   // TOUR_PRIORITY order in its result, and each outcome already carries its own failure, so the
   // plan comes out exactly as a one-at-a-time loop would build it.
@@ -147,7 +154,9 @@ export async function buildTourPlan(
       (kind): Promise<SelectorOutcome> =>
         visible === undefined || visible.set.has(TOUR_KIND_AGENT[kind])
           ? evaluateSelector(kind, ctx, selectors, opts.demo)
-          : Promise.resolve({ skip: { kind, reason: hiddenReason } }),
+          : Promise.resolve({
+              skip: { kind, reason: hiddenReason(visible, TOUR_KIND_AGENT[kind]) },
+            }),
     ),
   );
   const candidates: TourStep[] = [];
