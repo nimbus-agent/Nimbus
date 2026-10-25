@@ -249,7 +249,7 @@ describe("installPack: approval", () => {
     const before = getLayeredConfig(dir).snapshot().version;
     const g = gate();
     const r = await installPack({ id: "pm" }, deps(), g.gate);
-    expect(r).toMatchObject({ outcome: "installed", id: "pm", version: "1.0.0" });
+    expect(r).toMatchObject({ outcome: "installed", id: "pm", version: "1.1.0" });
     expect(r.snapshotVersion).toBeGreaterThan(before);
     expect(readFileSync(layerFile("pm"), "utf8")).toBe(BUNDLED_PACKS.get("pm")?.defaults ?? "");
     expect(JSON.parse(readFileSync(recordFile("pm"), "utf8"))).toMatchObject({
@@ -277,7 +277,7 @@ describe("installPack: approval", () => {
     expect(Object.keys(call?.payload ?? {}).sort()).toEqual(
       ["digest", "packId", "promptText", "source", "version"].sort(),
     );
-    expect(call?.payload).toMatchObject({ packId: "pm", version: "1.0.0", source: "bundled" });
+    expect(call?.payload).toMatchObject({ packId: "pm", version: "1.1.0", source: "bundled" });
     expect(call?.payload["digest"]).toMatch(/^[0-9a-f]{64}$/);
     const prompt = String(call?.payload["promptText"]);
     expect(prompt).toContain(BUNDLED_PACKS.get("pm")?.defaults ?? "missing");
@@ -394,7 +394,7 @@ describe("installPack: re-installs", () => {
     expect(r).toEqual({
       outcome: "already_installed",
       id: "pm",
-      version: "1.0.0",
+      version: "1.1.0",
       snapshotVersion: null,
     });
     expect(g.calls).toHaveLength(0);
@@ -509,11 +509,11 @@ describe("listPacks and previewPack", () => {
       {
         id: "pm",
         name: "Product",
-        version: "1.0.0",
+        version: "1.1.0",
         source: "bundled",
         updateAvailable: false,
         visibleAgents: ["decisions", "glossary", "catchup"],
-        sourceMappings: [],
+        sourceMappings: [{ serviceType: "google_drive:doc", kind: "doc" }],
       },
     ]);
   });
@@ -583,7 +583,7 @@ describe("listPacks and previewPack", () => {
         version: "unknown",
         source: "bundled",
         updateAvailable: true,
-        bundledVersion: "1.0.0",
+        bundledVersion: "1.1.0",
         versionUnknown: true,
         visibleAgents: [],
         sourceMappings: [],
@@ -638,11 +638,11 @@ describe("listPacks and previewPack", () => {
     await installPack({ id: "pm" }, deps(), g.gate);
     const r = await previewPack({ id: "pm" }, deps());
     expect(r.mode).toBe("already_installed");
-    expect(r.prompt).toStartWith("Installed: role pack Product (pm) version 1.0.0");
+    expect(r.prompt).toStartWith("Installed: role pack Product (pm) version 1.1.0");
     expect(r.prompt).not.toContain("Install role pack");
     expect(r.prompt).toContain("Config defaults:");
     expect(r.installed).toEqual({
-      version: "1.0.0",
+      version: "1.1.0",
       source: "bundled",
       installedAt: "2026-10-24T00:00:00.000Z",
       digest: String(g.calls[0]?.payload["digest"]),

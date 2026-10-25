@@ -5,7 +5,12 @@ import {
   registerGlobalFetchRestore,
   requestUrlString,
 } from "../testing/bun-test-support.ts";
-import { fetchGoogleJson, formatGoogleHttpError } from "./google-sync-shared.ts";
+import {
+  fetchGoogleJson,
+  fetchGoogleText,
+  formatGoogleHttpError,
+  GoogleHttpError,
+} from "./google-sync-shared.ts";
 
 type FetchInput = string | URL | Request;
 
@@ -305,5 +310,64 @@ describe("fetchGoogleJson", () => {
     expect(result.bytes).toBe(Buffer.byteLength(body, "utf8"));
     // multi-byte: bytes > body.length for unicode chars
     expect(result.bytes).toBeGreaterThan(body.length);
+  });
+});
+
+describe("fetchGoogleText", () => {
+  registerGlobalFetchRestore(afterEach);
+
+  test("returns the body as text, with Google's leading byte-order mark dropped", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("google");
+    const raw = `${String.fromCodePoint(0xfe_ff)}We decided to ship weekly.`;
+    const seen: { auth: string | null } = { auth: null };
+    globalThis.fetch = (async (_input: FetchInput, init?: RequestInit) => {
+      seen.auth = new Headers(init?.headers).get("authorization");
+      return new Response(raw, { status: 200, headers: { "Content-Type": "text/plain" } });
+    }) as typeof fetch;
+
+    const result = await fetchGoogleText(ctx, "tok", "https://example.com/export", "Google Drive");
+    expect(result.text).toBe("We decided to ship weekly.");
+    expect(result.bytes).toBe(Buffer.byteLength(raw, "utf8"));
+    expect(seen.auth).toBe("Bearer tok");
+  });
+
+  test("a body without a byte-order mark is returned unchanged, even if it is not JSON", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("google");
+    globalThis.fetch = (async (_input: FetchInput) =>
+      new Response("plain {text", { status: 200 })) as typeof fetch;
+    const result = await fetchGoogleText(ctx, "tok", "https://example.com/export", "Google Drive");
+    expect(result.text).toBe("plain {text");
+  });
+
+  test("401 → UnauthenticatedError; other failures → Error with the formatted message", async () => {
+    const { ctx } = await createOAuthConnectorTestSetup("google");
+    globalThis.fetch = (async (_input: FetchInput) =>
+      new Response("", { status: 401 })) as typeof fetch;
+    await expect(
+      fetchGoogleText(ctx, "tok", "https://example.com/export", "Google Drive"),
+    ).rejects.toBeInstanceOf(UnauthenticatedError);
+
+    globalThis.fetch = (async (_input: FetchInput) =>
+      new Response(
+        JSON.stringify({ error: { message: "This file is too large to be exported." } }),
+        {
+          status: 403,
+        },
+      )) as typeof fetch;
+    const thrown = await fetchGoogleText(
+      ctx,
+      "tok",
+      "https://example.com/export",
+      "Google Drive",
+    ).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    // The status is what lets the Drive sync tell a permanent 403 from a transient 429.
+    expect(thrown).toBeInstanceOf(GoogleHttpError);
+    expect((thrown as GoogleHttpError).status).toBe(403);
+    expect((thrown as GoogleHttpError).message).toBe(
+      "Google Drive sync failed: 403 — This file is too large to be exported.",
+    );
   });
 });

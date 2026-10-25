@@ -106,14 +106,10 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
     if (pieces.length === 0) {
       // No embeddable text (e.g. a depth downgrade suppressed body_preview and
       // the title is also blank). Any previously-computed chunks for this
-      // item+model were derived from the now-suppressed text and must not
-      // survive — the per-row AFTER DELETE triggers on embedding_chunk (V30)
-      // cascade this into the dim-matched vec table, same as the non-empty
-      // path below.
-      dbRun(this.db, `DELETE FROM embedding_chunk WHERE item_id = ? AND model = ?`, [
-        item.id,
-        this.embedder.model,
-      ]);
+      // item were derived from the now-suppressed text and must not survive —
+      // the per-row AFTER DELETE triggers on embedding_chunk (V30) cascade this
+      // into the dim-matched vec table, same as the non-empty path below.
+      dbRun(this.db, `DELETE FROM embedding_chunk WHERE item_id = ?`, [item.id]);
       return;
     }
 
@@ -135,10 +131,12 @@ export class SqliteEmbeddingPipeline implements EmbeddingPipeline {
     const itemId = item.id;
 
     this.db.transaction(() => {
-      dbRun(this.db, `DELETE FROM embedding_chunk WHERE item_id = ? AND model = ?`, [
-        itemId,
-        model,
-      ]);
+      // EVERY model's chunks, not just this one's. `embedding_chunk` is UNIQUE(item_id,
+      // chunk_index), so an item holds one model's chunks at a time; an item re-typed onto the
+      // other embedding route (a Drive Doc, `google_drive:file` -> `google_drive:doc`) still
+      // carries the old model's rows, and deleting only this model's made the insert below fail — on the backfill's drain loop, which
+      // re-selects a failed item, that repeated for as long as the pass ran.
+      dbRun(this.db, `DELETE FROM embedding_chunk WHERE item_id = ?`, [itemId]);
 
       const maxRow = this.db
         .query(`SELECT COALESCE(MAX(rowid), 0) AS m FROM ${this.vecTable}`)

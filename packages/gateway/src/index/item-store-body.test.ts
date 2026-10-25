@@ -173,6 +173,7 @@ test("selectItemBodyFetchState reads modified_at and metadata.bodyFetch", () => 
   expect(selectItemBodyFetchState(d, "notion:p3")).toEqual({
     modifiedAt: 4242,
     bodyFetch: "capped",
+    hasBody: true,
   });
   d.close();
 });
@@ -189,7 +190,36 @@ test("selectItemBodyFetchState returns null bodyFetch when the key is absent", (
     metadata: { notionPageId: "p4" },
   });
 
-  expect(selectItemBodyFetchState(d, "notion:p4")).toEqual({ modifiedAt: 7, bodyFetch: null });
+  expect(selectItemBodyFetchState(d, "notion:p4")).toEqual({
+    modifiedAt: 7,
+    bodyFetch: null,
+    hasBody: true,
+  });
+  d.close();
+});
+
+test("selectItemBodyFetchState reports a body a metadata_only reindex removed, verdict and all", () => {
+  // `reindexConnector` NULLs `body` but leaves `metadata.bodyFetch`; a connector skipping on the
+  // verdict alone would never restore that body when the owner deepens the connector again.
+  const d = db();
+  upsertIndexedItem(d, {
+    ...base,
+    service: "google_drive",
+    type: "doc",
+    externalId: "d1",
+    body: "We decided to ship weekly.",
+    modifiedAt: 9,
+    metadata: { mimeType: "application/vnd.google-apps.document", bodyFetch: "complete" },
+  });
+  d.run("UPDATE item SET body = NULL, body_preview = NULL, body_complete = 0 WHERE id = ?", [
+    "google_drive:d1",
+  ]);
+
+  expect(selectItemBodyFetchState(d, "google_drive:d1")).toEqual({
+    modifiedAt: 9,
+    bodyFetch: "complete",
+    hasBody: false,
+  });
   d.close();
 });
 

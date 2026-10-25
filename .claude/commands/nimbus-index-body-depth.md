@@ -134,8 +134,11 @@ as vectors after its text was gone.
 hand-written one you find.** Two independent axes get conflated:
 
 1. **`PROSE_HEAVY_TYPES` membership** (`embedding/routing.ts`) — raises the cap from 512 to
-   16,384 UTF-16 code units. **It does not mean the connector writes a body.** There are 23 members; only 14 write a
-   full body.
+   16,384 UTF-16 code units. **It does not mean the connector writes a body.** There were 23
+   members on 2026-10-25 (`google_drive:doc` was the 23rd, and its Drive sync does write the
+   exported text) — count them rather than trusting this figure, and derive the writers below.
+   Drive is a MIXED service (`doc` declared-full, `file`/`folder` preview-only), so it stays out of
+   `REBODY_IMPROVABLE_SERVICES`.
 2. **The connector actually passing the `{ body }` arm** — this is what puts text in the column.
 
 A type in `PROSE_HEAVY_TYPES` whose connector still passes `bodyPreview` is *inert*: it has a

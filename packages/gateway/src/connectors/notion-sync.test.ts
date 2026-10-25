@@ -1059,6 +1059,39 @@ describeWithFetchRestore("notion-sync", () => {
     db.close();
   });
 
+  test("re-fetches a page a metadata_only reindex stripped, though its verdict is still recorded", async () => {
+    // `reindexConnector` NULLs `body` but leaves `metadata.bodyFetch`; skipping on the verdict
+    // alone would leave the page bodyless for good once the owner deepens Notion again.
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    const page = makePage("pg-1");
+    installSearchAndBlocks([page], { "pg-1": [] });
+    const syncable = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    await syncable.sync(syncTestContext(db, vault, "notion"), null);
+    db.run(
+      "UPDATE item SET body = NULL, body_preview = NULL, body_complete = 0 WHERE service = 'notion'",
+    );
+
+    const second = installSearchAndBlocks([page], { "pg-1": [] });
+    await syncable.sync(syncTestContext(db, vault, "notion"), null);
+    expect(second.count()).toBe(1);
+    db.close();
+  });
+
+  test("a page first synced at metadata_only is fetched again once Notion is deepened to full", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({ "notion.oauth": makeOauthPayload() });
+    const page = makePage("pg-1");
+    installSearchAndBlocks([page], { "pg-1": [] });
+    const syncable = createNotionSyncable({ ensureNotionMcpRunning: async () => {} });
+    await syncable.sync(syncTestContext(db, vault, "notion", "metadata_only"), null);
+
+    const second = installSearchAndBlocks([page], { "pg-1": [] });
+    await syncable.sync(syncTestContext(db, vault, "notion", "full"), null);
+    expect(second.count()).toBe(1);
+    db.close();
+  });
+
   test("a capped page is skipped on the next pass — no perpetual re-fetch", async () => {
     const db = createMemoryIndexDb();
     const vault = createStubVault({ "notion.oauth": makeOauthPayload() });

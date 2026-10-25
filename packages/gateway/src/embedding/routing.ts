@@ -12,6 +12,9 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   "gmail:email",
   "outlook:email",
   "notion:page",
+  // Google Docs exported as plain text (google-drive-sync.ts). Same posture as notion:page — the
+  // other doc-kind workspace page. Other Drive files stay `file`, metadata only, in neither set.
+  "google_drive:doc",
   "confluence:page",
   "obsidian:obsidian_note",
   "pagerduty:incident",
