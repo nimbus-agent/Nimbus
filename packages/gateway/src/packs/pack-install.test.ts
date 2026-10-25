@@ -21,12 +21,12 @@ import {
 } from "../config/layered-config.ts";
 import { BUNDLED_PACKS } from "./bundled-packs.ts";
 import {
+  activePackSuggestedConnectors,
   installPack,
   listPacks,
   type PackDeps,
   PackError,
   type PackOwnerGate,
-  activePackSuggestedConnectors,
   packSourceMappings,
   packVisibleAgents,
   previewPack,
@@ -539,7 +539,10 @@ describe("listPacks and previewPack", () => {
 
   test("activePackSuggestedConnectors unions the active packs in active order, first occurrence wins", async () => {
     await installPack(
-      { fileText: fileText({ id: "a", suggestedConnectors: ["slack", "jira"] }), filePath: FILE_PATH },
+      {
+        fileText: fileText({ id: "a", suggestedConnectors: ["slack", "jira"] }),
+        filePath: FILE_PATH,
+      },
       deps(),
       gate().gate,
     );

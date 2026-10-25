@@ -36,7 +36,7 @@ import {
 import { runMediaPass } from "../../multimodal/media-pass.ts";
 import { MULTIMODAL_CAPABILITY, type RemoteVlmVendor } from "../../multimodal/media-types.ts";
 import { loadMultimodalConfig, type MultimodalConfig } from "../../multimodal/multimodal-config.ts";
-import type { PackOwnerGate } from "../../packs/pack-install.ts";
+import { activePackSuggestedConnectors, type PackOwnerGate } from "../../packs/pack-install.ts";
 import { isConnectorConfigured } from "../../sync/connector-configured.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { GATEWAY_VERSION } from "../../version.ts";
@@ -1004,9 +1004,16 @@ export function tryDispatchCatalogRpc(
       throw new RpcMethodError(-32603, "catalog.list requires configDir");
     }
     try {
+      const configDir = ctx.options.configDir;
+      const packStore = ctx.options.packLayerStore;
       const out = dispatchCatalogRpc(method, params, {
         db: ctx.options.localIndex.getDatabase(),
-        configDir: ctx.options.configDir,
+        configDir,
+        ...(packStore === undefined
+          ? {}
+          : {
+              packSuggestions: () => activePackSuggestedConnectors({ store: packStore, configDir }),
+            }),
       });
       if (out.kind === "hit") return out.value;
     } catch (e) {

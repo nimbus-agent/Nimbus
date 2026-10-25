@@ -9,7 +9,13 @@ import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { insertUserMcpConnector } from "../connectors/user-mcp-store.ts";
 import { upsertRunGrant } from "../extensions/run-grant-store.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
-import { buildCatalogList } from "./catalog-list.ts";
+import { buildCatalogList, NEUTRAL_SUGGESTED_CONNECTORS } from "./catalog-list.ts";
+
+/** The two presentation deps the RPC supplies; neutral values unless a test is about them. */
+const EXTRAS = {
+  signInFor: (): "terminal" => "terminal",
+  packSuggestions: [] as readonly string[],
+};
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -63,7 +69,7 @@ function addExtension(
 describe("buildCatalogList", () => {
   test("lists every agent with visible from the snapshot", () => {
     const { db } = setup();
-    const r = buildCatalogList({ db, snapshot: snapshotOf('hide = ["decisions"]') });
+    const r = buildCatalogList({ ...EXTRAS, db, snapshot: snapshotOf('hide = ["decisions"]') });
     expect(r.agents).toHaveLength(17);
     expect(r.agents.find((a) => a.name === "decisions")?.visible).toBe(false);
     expect(r.agents.find((a) => a.name === "oncall")?.visible).toBe(true);
@@ -90,7 +96,7 @@ describe("buildCatalogList", () => {
       net_hosts_json: "[]",
       model_access: 0,
     });
-    const { connectors } = buildCatalogList({ db, snapshot: snapshotOf("") });
+    const { connectors } = buildCatalogList({ ...EXTRAS, db, snapshot: snapshotOf("") });
     const kinds = connectors.map((c) => c.kind);
     const firstExt = kinds.indexOf("extension");
     const firstMcp = kinds.indexOf("user-mcp");
@@ -110,7 +116,7 @@ describe("buildCatalogList", () => {
   test("an extension whose manifest fails verification is listed with name null", () => {
     const { db, root } = setup();
     addExtension(db, root, "com.example.t", { name: "Tampered" }, { tamper: true });
-    const ext = buildCatalogList({ db, snapshot: snapshotOf("") }).connectors.find(
+    const ext = buildCatalogList({ ...EXTRAS, db, snapshot: snapshotOf("") }).connectors.find(
       (c) => c.id === "com.example.t",
     );
     expect(ext).toMatchObject({ kind: "extension", name: null, serviceId: null });
@@ -119,7 +125,7 @@ describe("buildCatalogList", () => {
   test("an extension whose manifest name is blank is listed with name null", () => {
     const { db, root } = setup();
     addExtension(db, root, "com.example.blank", { name: "  " });
-    const ext = buildCatalogList({ db, snapshot: snapshotOf("") }).connectors.find(
+    const ext = buildCatalogList({ ...EXTRAS, db, snapshot: snapshotOf("") }).connectors.find(
       (c) => c.id === "com.example.blank",
     );
     expect(ext).toMatchObject({ kind: "extension", name: null });
@@ -128,7 +134,7 @@ describe("buildCatalogList", () => {
   test("a verified manifest name is trimmed and cut to 200 characters", () => {
     const { db, root } = setup();
     addExtension(db, root, "com.example.long", { name: ` ${"n".repeat(300)} ` });
-    const ext = buildCatalogList({ db, snapshot: snapshotOf("") }).connectors.find(
+    const ext = buildCatalogList({ ...EXTRAS, db, snapshot: snapshotOf("") }).connectors.find(
       (c) => c.id === "com.example.long",
     );
     expect(ext).toMatchObject({ name: "n".repeat(200) });
@@ -147,7 +153,7 @@ describe("buildCatalogList", () => {
       approved_at: 1,
       credentials_json: "{}",
     });
-    const ext = buildCatalogList({ db, snapshot: snapshotOf("") }).connectors.find(
+    const ext = buildCatalogList({ ...EXTRAS, db, snapshot: snapshotOf("") }).connectors.find(
       (c) => c.id === "com.example.run",
     );
     expect(ext).toMatchObject({ serviceId: "ext_run", name: "Runner" });
@@ -156,7 +162,7 @@ describe("buildCatalogList", () => {
   test("an installed unbundled connector is listed once, as an extension, never as built in", () => {
     const { db, root } = setup();
     addExtension(db, root, "com.nimbus.readwise", { name: "Readwise" });
-    const { connectors } = buildCatalogList({ db, snapshot: snapshotOf("") });
+    const { connectors } = buildCatalogList({ ...EXTRAS, db, snapshot: snapshotOf("") });
     const builtinIds = connectors.filter((c) => c.kind === "builtin").map((c) => c.id);
     expect(builtinIds).not.toContain("readwise");
     const matches = connectors.filter((c) => /readwise/i.test(c.id));
@@ -166,5 +172,67 @@ describe("buildCatalogList", () => {
       id: "com.nimbus.readwise",
       name: "Readwise",
     });
+  });
+});
+
+describe("buildCatalogList — onboarding suggestions and sign-in", () => {
+  test("suggestedConnectors is the neutral default when no pack suggests any", () => {
+    const { db } = setup();
+    const r = buildCatalogList({ ...EXTRAS, db, snapshot: snapshotOf("") });
+    expect(r.suggestedConnectors).toEqual([...NEUTRAL_SUGGESTED_CONNECTORS]);
+    expect([...NEUTRAL_SUGGESTED_CONNECTORS]).toEqual([
+      "google_drive",
+      "slack",
+      "notion",
+      "gmail",
+      "github",
+      "linear",
+    ]);
+  });
+
+  test("pack suggestions replace the neutral default, in order, and unknown ids are dropped", () => {
+    const { db } = setup();
+    const r = buildCatalogList({
+      ...EXTRAS,
+      db,
+      snapshot: snapshotOf(""),
+      packSuggestions: ["slack", "no_such_connector", "jira"],
+    });
+    expect(r.suggestedConnectors).toEqual(["slack", "jira"]);
+  });
+
+  test("an installed extension's service id may be suggested", () => {
+    const { db, root } = setup();
+    addExtension(db, root, "com.example.notes", { name: "Notes" });
+    upsertRunGrant(db, {
+      extension_id: "com.example.notes",
+      service_id: "ext_notes",
+      version: "1.0.0",
+      tree_digest: "d",
+      permissions_json: "{}",
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: "{}",
+    });
+    const r = buildCatalogList({
+      ...EXTRAS,
+      db,
+      snapshot: snapshotOf(""),
+      packSuggestions: ["ext_notes"],
+    });
+    expect(r.suggestedConnectors).toEqual(["ext_notes"]);
+  });
+
+  test("every builtin row carries signIn from signInFor", () => {
+    const { db } = setup();
+    const r = buildCatalogList({
+      ...EXTRAS,
+      db,
+      snapshot: snapshotOf(""),
+      signInFor: (id) => (id === "slack" ? "browser" : "terminal"),
+    });
+    const builtins = r.connectors.filter((c) => c.kind === "builtin");
+    expect(builtins.find((c) => c.id === "slack")).toMatchObject({ signIn: "browser" });
+    expect(builtins.every((c) => "signIn" in c)).toBe(true);
   });
 });

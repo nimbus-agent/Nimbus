@@ -8,6 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { buildCatalogList, type CatalogListResult } from "../catalog/catalog-list.ts";
 import { getLayeredConfig } from "../config/layered-config.ts";
+import { connectorSignInKind } from "./connector-rpc-handlers/auth.ts";
 
 export class CatalogRpcError extends Error {
   constructor(
@@ -19,7 +20,12 @@ export class CatalogRpcError extends Error {
   }
 }
 
-export type CatalogRpcContext = { readonly db: Database; readonly configDir: string };
+export type CatalogRpcContext = {
+  readonly db: Database;
+  readonly configDir: string;
+  /** The active packs' suggested connectors (`activePackSuggestedConnectors`); absent = none. */
+  readonly packSuggestions?: () => readonly string[];
+};
 
 function isEmptyParams(params: unknown): boolean {
   if (params === undefined || params === null) return true;
@@ -39,6 +45,11 @@ export function dispatchCatalogRpc(
   const reader = getLayeredConfig(ctx.configDir);
   return {
     kind: "hit",
-    value: buildCatalogList({ db: ctx.db, snapshot: () => reader.snapshot() }),
+    value: buildCatalogList({
+      db: ctx.db,
+      snapshot: () => reader.snapshot(),
+      signInFor: connectorSignInKind,
+      packSuggestions: ctx.packSuggestions?.() ?? [],
+    }),
   };
 }

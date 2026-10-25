@@ -23,12 +23,14 @@ import {
 } from "../../auth/oauth-env-help-messages.ts";
 import { OAUTH_PROVIDERS } from "../../auth/oauth-registry.ts";
 import { type PKCEOptions, type PKCEResult, runPKCEFlow } from "../../auth/pkce.ts";
+import type { ConnectorSignInKind as CatalogSignInKind } from "../../catalog/catalog-list.ts";
 import { Config } from "../../config.ts";
 import {
   type ConnectorOAuthProfile,
   type ConnectorServiceId,
   credentialsReusedFrom,
   defaultSyncIntervalMsForService,
+  normalizeConnectorServiceId,
   oauthProfileForService,
   oauthUnsupportedDetail,
 } from "../../connectors/connector-catalog.ts";
@@ -915,6 +917,25 @@ export function connectorAuthUnavailableMessage(id: ConnectorServiceId): string 
     "Store its settings in the Vault instead (each write asks for your approval; set the ones your setup uses):\n" +
     commands
   );
+}
+
+/** How a client should offer a connector's sign-in during onboarding (role packs P5, presentation). */
+export type ConnectorSignInKind = CatalogSignInKind;
+
+const ATLASSIAN_SIGN_IN: ReadonlySet<string> = new Set(["jira", "confluence"]);
+
+/**
+ * Derived from the SAME table `handleConnectorAuth` dispatches on, so it cannot drift from the
+ * handler: `browser` is exactly the ids that reach the OAuth PKCE arm (no PAT handler and
+ * `connectorAuthUnavailableMessage` null); `atlassian` the two `parseAtlassianSiteCredentials` arms;
+ * everything else, an unknown id included, is set up from a terminal.
+ */
+export function connectorSignInKind(id: string): ConnectorSignInKind {
+  if (ATLASSIAN_SIGN_IN.has(id)) return "atlassian";
+  const sid = normalizeConnectorServiceId(id);
+  if (sid === null || sid !== id) return "terminal";
+  if (PAT_CONNECTOR_AUTH_HANDLERS[sid] !== undefined) return "terminal";
+  return connectorAuthUnavailableMessage(sid) === null ? "browser" : "terminal";
 }
 
 export async function handleConnectorAuth(
