@@ -362,6 +362,41 @@ export function countByStatus(
   return { total: pending + extracted + vetoed, pending, extracted, vetoed };
 }
 
+/** {@link countByStatus} over rows decided at or after `sinceMs` (the brief's window). */
+export function countByStatusSince(
+  db: Database,
+  mapping: SourceMapping,
+  sinceMs: number,
+): { pending: number; extracted: number; vetoed: number } {
+  const f = decisionVisibilityFilter(mapping);
+  const rows = db
+    .query(
+      `SELECT d.status AS status, COUNT(*) AS n FROM decision_record d
+         LEFT JOIN item i ON i.id = d.source_item_id
+        WHERE d.decided_at >= ? AND ${f.sql}
+        GROUP BY d.status`,
+    )
+    .all(sinceMs, ...f.params) as Array<{ status: string; n: number }>;
+  const get = (s: string): number => rows.find((r) => r.status === s)?.n ?? 0;
+  return { pending: get("pending"), extracted: get("extracted"), vetoed: get("vetoed") };
+}
+
+/** How many rows {@link listDecisions} would show with no limit. */
+export function countShown(
+  db: Database,
+  opts: { sinceMs: number; minConfidence: number; mapping: SourceMapping },
+): number {
+  const f = decisionVisibilityFilter(opts.mapping);
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM decision_record d
+         LEFT JOIN item i ON i.id = d.source_item_id
+        WHERE d.status = 'extracted' AND d.decided_at >= ? AND d.confidence >= ? AND ${f.sql}`,
+    )
+    .get(opts.sinceMs, opts.minConfidence, ...f.params) as { n: number };
+  return row.n;
+}
+
 export function readPassState(db: Database): PassState {
   const r = db.query("SELECT * FROM decision_pass_state WHERE id = 1").get() as {
     watermark_ms: number;

@@ -20,6 +20,7 @@ function fakeRefresher(over: Partial<DecisionRefresher> = {}): DecisionRefresher
     trigger: () => undefined,
     stop: () => undefined,
     run: () => Promise.resolve(SUMMARY),
+    status: () => "idle",
     ...over,
   };
 }

@@ -51,7 +51,11 @@ import { dispatchClipRpc } from "../clip-rpc.ts";
 import { ComputerRpcError, dispatchComputerRpc } from "../computer-rpc.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "../connector-rpc.ts";
 import { DataRpcError, dispatchDataRpc } from "../data-rpc.ts";
-import { DecisionsRpcError, dispatchDecisionsRpc } from "../decisions-rpc.ts";
+import {
+  DecisionsRpcError,
+  dispatchDecisionsRpc,
+  handleDecisionsStatus,
+} from "../decisions-rpc.ts";
 import { DemoRpcError, dispatchDemoRpc } from "../demo-rpc.ts";
 import { DeploymentRpcError, dispatchDeploymentRpc } from "../deployment-rpc.ts";
 import { DiagnosticsRpcError, dispatchDiagnosticsRpc } from "../diagnostics-rpc.ts";
@@ -1662,6 +1666,25 @@ export async function tryDispatchDecisionsRpc(
 ): Promise<unknown> {
   if (!method.startsWith("decisions.")) return phase4RpcSkipped;
   const refresher = ctx.options.decisionsRefresher;
+  // Answered with or without a refresher: a disabled pass reports `enabled: false` rather than
+  // looking like a method that does not exist.
+  if (method === "decisions.status") {
+    const localIndex = ctx.options.localIndex;
+    if (localIndex === undefined) {
+      throw new RpcMethodError(-32603, "decisions.status requires LocalIndex");
+    }
+    try {
+      return handleDecisionsStatus(params, {
+        db: localIndex.getDatabase(),
+        configDir: ctx.options.configDir,
+        refresher,
+        nowMs: () => Date.now(),
+      });
+    } catch (e) {
+      if (e instanceof DecisionsRpcError) throw new RpcMethodError(e.rpcCode, e.message);
+      throw e;
+    }
+  }
   if (refresher === undefined) return phase4RpcSkipped;
   try {
     const out = await dispatchDecisionsRpc(method, params, {

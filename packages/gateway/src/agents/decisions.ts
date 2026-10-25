@@ -8,7 +8,7 @@ import {
 import { loadDecisionCandidates } from "../decisions/decision-extract.ts";
 import { matchesService, type ServiceMatchRoute } from "../decisions/decision-service-scope.ts";
 import { countByStatus, listDecisions, readPassState } from "../decisions/decision-store.ts";
-import type { DecisionRecord } from "../decisions/decision-types.ts";
+import { DECISIONS_DEFAULT_WINDOW_MS, type DecisionRecord } from "../decisions/decision-types.ts";
 import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
 import type { SourceMapping } from "../sources/source-mapping.ts";
 import type { DecisionsBrief, DecisionsEntry, DecisionsInput } from "./_lib/decisions-types.ts";
@@ -37,7 +37,6 @@ export type DecisionsContext = {
   mapping: SourceMapping;
 };
 
-const DEFAULT_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_LIMIT = 50;
 
 function serviceTypeOf(db: Database, itemId: string): string {
@@ -230,7 +229,7 @@ export async function runDecisions(
   // `parseDurationToMs("90d")` produces). Reading it as an absolute epoch
   // cutoff made `--since` inert: `7d` filtered on `decided_at >= 604800000`
   // (Jan 1970) and matched everything.
-  const windowMs = input.sinceMs ?? DEFAULT_WINDOW_MS;
+  const windowMs = input.sinceMs ?? DECISIONS_DEFAULT_WINDOW_MS;
   // The store, by contrast, filters on an ABSOLUTE `decided_at` floor, and
   // `query.sinceMs` carries that same absolute cutoff so `renderDecisions`'s
   // `decisionsWindowDays(generatedAt, sinceMs)` recovers the window in days.
