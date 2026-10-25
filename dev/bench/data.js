@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792962084885,
+  "lastUpdate": 1792962836845,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "af0af5268c8f21225c4bcbbc56cb65da2dc8ff59",
-          "message": "test/chore: combined open test and docs PRs (#1122)\n\nConsolidated PR containing changes from all open feature, test, and docs\nPRs on the repository. Auto-resolved conflicts and validated.\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Documentation**\n- Added the system tray icon and context-menu image to the first-run\nsetup guide.\n\n- **Performance Improvements**\n- Improved Elasticsearch synchronization by batching mapping requests\nand reusing mapping details, reducing unnecessary network requests.\n\n- **Reliability**\n- Improved handling of malformed, missing, empty, or oversized responses\nacross Elasticsearch, CloudWatch, Flagsmith, LaunchDarkly, Tableau,\nTestFlight, Zendesk, Zoom, and Great Expectations integrations.\n\n- **Tests**\n- Expanded coverage for connector search, filtering, pagination,\nvalidation, error handling, date limits, and secure file processing.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-08T17:15:20Z",
-          "tree_id": "0281db5d6290c2a5a581ec55f5da5e5b19807599",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/af0af5268c8f21225c4bcbbc56cb65da2dc8ff59"
-        },
-        "date": 1786210028039,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.52480855000465,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.43412219999266,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 273.9858576000017,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "71eb15107912aceb9506a6c56263616c6706e5f2",
+          "message": "feat(mcp-sink): an MCP agent can propose obsidian.note.append (#1779)\n\nCloses the one known gap of the S3 MCP act door [I28]: an MCP agent can\nnow propose `obsidian.note.append`, which runs, as every proposed action\ndoes, only after the owner's `nimbus captures accept <id>` and the\nexecutor's own HITL prompt.\n\n## Design note\n\n**Why it was denied.** The act door dispatches a first-party proposable\nthrough the real connector dispatcher with `mcpToolId` set to the bare\ntool id from `PROPOSABLE_WRITE_TOOLS` [built by `ipc/capture-rpc.ts`\n`buildActDeps`]. The dispatcher resolves a bare id with\n`resolveServerTool[map, serviceOf[type], toolId]`, whose second step\nbuilds `<server>_<toolId>` and accepts it only when the ownership rule\nattributes that key to the action's server. That rule\n[`serviceIdForToolKey`] knows only `CONNECTOR_SERVICE_IDS`. `obsidian`\nis not one: it is a gateway syncable whose MCP server the mesh spawns\nunder its own name [`lazy-mesh/connector-spawns.ts` `startObsidianMcp`].\nSo `obsidian_obsidian_append_to_daily_note` was unattributed and the\ntype was classified `denied: unroutable`.\n\n**Why not \"add obsidian to the connector catalog\".**\n`CONNECTOR_SERVICE_IDS` is also the org-policy connector set.\n`assemble.ts` records that \"fs/openapi/obsidian syncables are not policy\nconnectors\". Adding obsidian would make the mesh's I22 filter\n[`dropDisallowedConnectorTools`] drop every Obsidian tool, read tools\nincluded, under any `[policy.connectors] allow` that does not name it.\nIt would also force entries in the sync-interval and Vault-manifest\nrecords [an empty manifest entry reads as \"configured\" vacuously], and\nlist obsidian twice in the built-in catalog [`catalog ∪ gateway\nsyncables`].\n\n**What changes**\n1. `connectors/lazy-mesh/tool-map.ts`\n- Adds `MESH_ONLY_SERVER_IDS = [\"obsidian\"]` and `meshServerForToolKey`\n= `serviceIdForToolKey` plus those servers.\n   - `resolveServerTool` uses the wider rule. Nothing else does.\n- The policy paths keep `serviceIdForToolKey`, unchanged: the mesh I22\nfilter, `federation/invoke-gate.ts`, and the connector-write transport\nthrough `resolveServerTool`'s server argument.\n- Tests prove the two rules agree wherever the narrower one answers: no\nmesh-only id is prefix-related to a catalog id. They also prove every\nmesh-only id is a gateway syncable with its own `LAZY_MESH` slot.\n2. `connectors/proposable-actions.ts`: adds the routing row\n`\"obsidian.note.append\" → \"obsidian_append_to_daily_note\"` and moves the\ntype out of `unroutable`. The installed-package sync test proves the row\n[`mutates: \"obsidian.note.append\"` on server `obsidian`]. Its bare-id\ncollision check now enumerates the mesh-only servers too.\n3. `connectors/proposable-service-configured.ts` [new, wired in\n`platform/assemble.ts`]: the act door's configured-ness check, used by\n`capture.status`, submit and accept.\n- Obsidian has no Vault keys, so `isConnectorConfigured` answered yes\nvacuously.\n- It now counts as configured only when `[[filesystem.roots]]` existed\nat boot, which is the condition its server spawns under.\n   - User-MCP and catalog ids behave as before.\n- Bound: a root holding no `.obsidian` vault still counts. An accepted\naction there fails at the tool [`Unknown vault_id`] with a terminal\n`failed` outcome.\n4. Not changed:\n- I29: obsidian stays `LOCAL_ONLY_SYNC_SERVICES`, and an accepted action\nstill appends its executor egress row like every gated connector action.\n- `nimbus prove`, `nimbus connector list` and the catalog, org policy,\nand the HITL set [`obsidian.note.append` was already in it].\n\n**Counts** [derived from `HITL_REQUIRED` and `ACTION_PROPOSABILITY`]:\n143 HITL types; 30 proposable [was 29]; 113 denied [was 114], of which 4\nare `unroutable` [was 5]. I re-derived these in CLAUDE.md, GEMINI.md,\n`.claude/commands/nimbus-mcp-sink.md`, docs/architecture.md [which was\nalready stale at 142/29/113], docs/cli-reference.md, docs/roadmap.md,\ndocs/SECURITY-INVARIANTS.md [the I22 bare-id paragraph] and a CHANGELOG\nentry.\n\n## Tests\n- `test/integration/mcp-sink/capture-action-routing.test.ts`, through\nthe REAL `createConnectorDispatcher` over mesh-shaped keys:\n- `obsidian.note.append` now reaches\n`obsidian_obsidian_append_to_daily_note` with the stored input. The case\nwas previously asserted as `Tool not found`.\n  - The obsidian bare id under a `slack.*` type resolves nothing.\n- `tool-map.test.ts`: `meshServerForToolKey` agreement and the prefix\nguard; the policy rule still leaves `obsidian_*` unowned; bare-id\nresolution on `obsidian` but not from another server.\n- `proposable-service-configured.test.ts`:\n- the configured branches, including a RED-proof that the manifest check\nalone says yes;\n  - `capture.status` advertises the type only when obsidian can spawn.\n\nLocal results: `preflight:fast` green, and `bun test\npackages/gateway/src` gave 21064 pass / 0 fail. `bun test scripts` gave\n5 fails, all `install.ps1`/`nimbus-verify.ps1` tests needing `pwsh`,\nwhich this machine lacks [`Executable not found in $PATH: \"pwsh\"`]. This\nbranch touches nothing under `scripts/`.\n\n## Antigravity reviews\n\n**Design note:** 5 findings.\n\n| # | Finding | Disposition |\n|---|---|---|\n| 1 [Critical] | `proposable-actions.test.ts` \"each row resolves on its\nOWN server\" uses `serviceIdForToolKey`, so it would fail for obsidian |\nFixed: it now uses `meshServerForToolKey`, and the tool-map test pins\n`serviceIdForToolKey[\"obsidian_…\"] === undefined` |\n| 2 [Critical] | The collision test enumerates `CONNECTOR_SERVICE_IDS`\nonly, so it does not cover the obsidian bare id, contrary to the note |\nFixed: it enumerates `MESH_ONLY_SERVER_IDS` too, with a guard asserting\nthe obsidian candidate |\n| 3 [Important] | The note's shorthand\n`resolveServerTool[map,\"obsidian\",\"append_to_daily_note\"]` names the\nwrong id | Fixed in the note; the shipped tests use\n`obsidian_append_to_daily_note` |\n| 4 [Important] | The test plan omitted the status/submit/accept\nconfigured-ness branches | Partly fixed: added a `capture.status` test\nthrough the real factory. Declined new submit/accept tests: both read\nthe same `isServiceConfigured` callback, whose unconfigured branch is\nalready tested generically in\n`capture-gate.test.ts`/`capture-act.test.ts`; only the callback changed,\nand its obsidian arm is unit-tested |\n| 5 [Minor] | The note's test path lacked `packages/gateway/`, and it\nattributed `mcpToolId` injection to `capture-act.ts` instead of\n`capture-rpc.ts` `buildActDeps` | Fixed in this description |\n\n**Finished branch:** 5 findings.\n\n| # | Finding | Disposition |\n|---|---|---|\n| 1 [Important] | `session-tool-resolution.integration.test.ts` still\ncounts nested refusals with `serviceIdForToolKey` [l.207] and checks\ndrained keys with it [l.350] | Fixed l.207, which mirrors\n`resolveServerTool`'s rule and so now uses `meshServerForToolKey`. Kept\nl.350: it asserts warehouse/BI drains belong to their catalog service,\nwhich is policy attribution, correctly the narrow rule |\n| 2 [Important] | The \"obsidian bare id under a `slack.*` type\" tests\ncannot fail: `slack_obsidian_…` is owned by slack, so the lookup misses\nfor lack of a tool, not because of ownership | Fixed: removed both.\nCross-server capture for a mesh-only server is ruled out by the prefix\nguard [no mesh-only id is prefix-related to a catalog id], and that\nguard is what the tests now rely on, as the comment says |\n| 3 [Important] | The widened collision guard could pass vacuously if\n`sourcesOfServer[\"obsidian\"]` were empty | Fixed: the guard now asserts\nobsidian sources are found and contain the tool literal |\n| 4 [Minor] | The configured factory hard-coded `\"obsidian\"`, so a\nfuture mesh-only server would fall through to the vacuous manifest yes |\nFixed: `meshOnly` is a record total over `MESH_ONLY_SERVER_IDS`, so\nadding a mesh-only server without a check is a compile error |\n| 5 [Note] | I22/I3/I42 paths preserved; counts 143/30/113/4 match code\nand docs | No change |\n\nAlso changed since the note review: `proposable-service-configured.ts`\ntakes `meshOnly: { obsidian: [] => boolean }` rather than a root count.\nThe tests re-ran [connectors, platform, `test/integration/mcp-sink`,\nsession-tool-resolution: 4847 pass / 0 fail], and `preflight:fast` and\n`typecheck:tests` are green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-25T21:05:43Z",
+          "tree_id": "24b8c2beb6bdee5384ba4543404dc6a9a5ed2ada",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/71eb15107912aceb9506a6c56263616c6706e5f2"
+        },
+        "date": 1792962832561,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 226.82608925000204,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 226.0556388999954,
             "unit": "ms"
           }
         ]
