@@ -18,6 +18,19 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-25 — Role packs P2 PR 2b: role packs and your config choose which sources glossary terms come from (schema V75, no invariant, no egress class).**
+  The `[sources]` mapping now drives `nimbus glossary` as it does `nimbus decisions`. The catch-up code moved to
+  `sources/source-catchup.ts` and both passes share it. The glossary pass catches up a newly mapped type's existing items
+  (a re-included type only over the window it was unmapped), keeps term statistics over the known set so removing a mapping
+  never demotes or rewrites a term, scans and queues over the effective set, and `--rebuild` clears its cursors. A term mined
+  only from unmapped types is hidden from `nimbus glossary` (list, lookup, suggestions, counts), the `wow` tour and the fleet
+  `terms` sweep, never deleted; manual and agent-accepted terms always show; displayed counts and top sources cover the mapped
+  types, and a gap note says how many are hidden. Search copies follow: a hidden term is unprojected and re-projected without a
+  model call, and a term embeds remotely only if every contributing type is prose-heavy or built-in and its definition was not
+  written from a local-only source; otherwise it is projected as `nimbus:glossary_term_local` (embedded on this machine only).
+  Schema V75 adds `glossary_term.definition_local`. The pack install prompt says when added sources have local-only glossary
+  terms. Stated bounds: score and first/last-seen are still stored known-set values, and pending/vetoed counts are whole-table.
+
 - **2026-10-25 — Role packs P2 PR 2a: role packs and your config choose which sources decisions are mined from (schema V74, no invariant, no egress class).**
   A `[sources]` table (`map` = `service:type=kind` entries, `exclude`) in a pack or in `nimbus.toml` / `nimbus.<profile>.toml`
   changes what `nimbus decisions` mines. `sources/source-mapping.ts` resolves the effective mapping live (built-ins, then packs
@@ -28,7 +41,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `idx_item_service_type_modified`. The pass catches up already-indexed items of a newly mapped type (a re-included type only
   over the window it was unmapped) before its delta scan, skips queued rows of excluded types, and `--rebuild` clears the
   cursors. Reads hide rows of types no longer mapped (never deleted); orphan and owner-accepted agent decisions always show.
-  The glossary is unchanged until a later release. Installing a pack does not run a pass.
+  The glossary followed in PR 2b (above). Installing a pack does not run a pass.
 
 - **2026-10-25 — Role packs P2 PR 1: decisions and glossary sources resolve through one kind table (no behaviour change, no migration, no invariant, no egress class).**
   `sources/source-kinds.ts` classifies every decisions/glossary source `service:type` as a kind (`message`, `doc`,

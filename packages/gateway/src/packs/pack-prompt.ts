@@ -5,6 +5,7 @@
 
 import type { RolePackManifest } from "@nimbus-dev/registry-format";
 import { checkPackFragment } from "../config/pack-settable.ts";
+import { routesRemotely } from "../glossary/glossary-visibility.ts";
 import { FORMAT_INVISIBLE_RANGES } from "../mcp-sink/invisible-text.ts";
 import type { PackSource } from "./pack-record.ts";
 
@@ -206,11 +207,28 @@ function sourceRow(entry: string): string {
   return visibleText(entry.replace("=", " as "));
 }
 
+const LOCAL_GLOSSARY_LINE =
+  "glossary terms mined from these sources are embedded on this machine only";
+
+/** The `service:type` half of a `service:type=kind` entry. */
+function entryServiceType(entry: string): string {
+  const eq = entry.indexOf("=");
+  return eq < 0 ? entry : entry.slice(0, eq);
+}
+
+/** The § 7.1 note, only when an added entry's type may not feed a remotely embedded term. */
+function localGlossaryNote(added: readonly string[]): string[] {
+  return added.some((e) => !routesRemotely([entryServiceType(e)])) ? [LOCAL_GLOSSARY_LINE] : [];
+}
+
 function installSections(i: PackPromptInput): string[] {
   return [
     ...section("Config defaults:", i.scalars.map(scalarRow)),
     ...section("Visible agents:", i.visibleAgents.map(visibleText)),
-    ...section("Sources added:", i.sourceMappings.map(sourceRow)),
+    ...section("Sources added:", [
+      ...i.sourceMappings.map(sourceRow),
+      ...localGlossaryNote(i.sourceMappings),
+    ]),
     ...section("Overnight jobs:", [...i.jobs.map(jobRow), ...fleetNote(i)]),
     ...section(
       "Suggested connectors:",
@@ -244,6 +262,7 @@ function updateSections(i: PackPromptInput, d: PackDiff): string[] {
     ...section("Sources added:", [
       ...d.sources.added.map((e) => `added: ${sourceRow(e)}`),
       ...d.sources.removed.map((e) => `removed: ${sourceRow(e)}`),
+      ...localGlossaryNote(d.sources.added),
     ]),
     ...section("Overnight jobs:", [
       ...i.jobs.filter((j) => touchedJobs.has(j.name)).map(jobRow),

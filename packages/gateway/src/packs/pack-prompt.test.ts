@@ -271,6 +271,25 @@ describe("diffPacks", () => {
     expect(renderPackPrompt(input())).toMatch(/Sources added:\n {2}none/);
   });
 
+  test("a non-remote-eligible added source states that its glossary terms embed locally", () => {
+    const line = "  glossary terms mined from these sources are embedded on this machine only";
+    const t = renderPackPrompt(input({ sourceMappings: ["ext_notes:highlight=note"] }));
+    expect(t).toContain(`Sources added:
+  ext_notes:highlight as note
+${line}`);
+    expect(renderPackPrompt(input({ sourceMappings: ["zoom:transcript=note"] }))).not.toContain(
+      "embedded on this machine only",
+    );
+    const d = diffPacks(
+      manifest({ defaults: "" }),
+      manifest({ defaults: '[sources]\nmap = ["ext_notes:highlight=note"]\n' }),
+    );
+    const u = renderPackPrompt(
+      input({ mode: "update", diff: d, sourceMappings: ["ext_notes:highlight=note"] }),
+    );
+    expect(u).toContain("embedded on this machine only");
+  });
+
   test("jobs added, removed and changed", () => {
     const job = (n: string, i: number): string =>
       `[[fleet.job]]\nname = "${n}"\nagent = "changelog"\ninterval_seconds = ${i}\n`;
