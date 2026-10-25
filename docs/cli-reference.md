@@ -593,7 +593,7 @@ nimbus pack install <id> | --file <path>
 nimbus pack remove <id>
 ```
 
-A role pack is a curated settings layer (agent visibility, fleet jobs, defaults) for one role. The gateway must be running. All four verbs are CLI-only: refused over LAN and on a `--demo` root, and not on the Tauri allowlist (the desktop reads packs through `pack.list` alone). They act on the **active profile**.
+A role pack is a curated settings layer (agent visibility, fleet jobs, defaults) for one role. The gateway must be running. All four verbs are refused over LAN and on a `--demo` root, and `show`, `install` and `remove` are CLI-only and not on the Tauri allowlist; `list` is also renderer-callable as `pack.list`, the one pack method on the allowlist. They act on the **active profile**.
 
 - `list` prints the packs installed on the active profile (marking `update available` when the bundled copy differs from the installed one, and naming any pack whose layer was skipped and why) and the bundled packs you could install (`pm`, `devops`). `--json` prints the raw result.
 - `show` prints the exact prompt `install` would ask you, plus an `Installed:` line when the pack is already installed. It changes nothing. Pack-supplied text is shown visibly escaped, never raw.
