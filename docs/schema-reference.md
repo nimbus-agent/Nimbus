@@ -1171,7 +1171,7 @@ ALTER TABLE sync_telemetry ADD COLUMN items_dropped INTEGER NOT NULL DEFAULT 0;
 -- V74 -- source catch-up cursors + decision_record.scored_kind (2026-10-25; role packs P2, PR 2a).
 -- `source_catchup_state` is one cursor per (pass, service:type), so a type that joins the effective
 -- source mapping is caught up over its own unmapped window; no seed rows (built-ins are handled in
--- code). `decision_record.scored_kind` is the kind a decision's priority was scored under; V74
+-- code). `decision_record.scored_kind` is the kind a decision's confidence was scored under (written by `setConfidence`); V74
 -- backfills it from a FROZEN literal of the 13 built-in keys (orphans and non-built-in types stay NULL).
 -- `idx_item_service_type_modified` serves the per-type catch-up scan (range + ORDER BY, no sort).
 -- Authoritative source: packages/gateway/src/index/source-catchup-v74-sql.ts

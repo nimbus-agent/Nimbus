@@ -8,7 +8,7 @@
  * ordered by `(modified_at, id)`): the item table's indexes are single-column, so without it each
  * batch read and sorted every item of that type.
  *
- * `scored_kind` records the kind a decision's priority was scored under, so a later re-kind does not
+ * `scored_kind` records the kind a decision's confidence was scored under (written by `setConfidence`), so a later re-kind does not
  * read as a stale scale. The backfill is a FROZEN literal of the 13 built-in keys as they stood when
  * V74 shipped (a later change to the built-in table must not alter what V74 wrote). Rows with no
  * item, or a non-built-in type, stay NULL. Additive only.
