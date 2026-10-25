@@ -26,6 +26,7 @@ import {
   type PackDeps,
   PackError,
   type PackOwnerGate,
+  packVisibleAgents,
   previewPack,
   removePack,
 } from "./pack-install.ts";
@@ -504,8 +505,33 @@ describe("listPacks and previewPack", () => {
     const after = listPacks(deps());
     expect(after.available.map((p) => p.id)).toEqual(["devops"]);
     expect(after.installed).toEqual([
-      { id: "pm", name: "Product", version: "1.0.0", source: "bundled", updateAvailable: false },
+      {
+        id: "pm",
+        name: "Product",
+        version: "1.0.0",
+        source: "bundled",
+        updateAvailable: false,
+        visibleAgents: ["decisions", "glossary", "catchup"],
+      },
     ]);
+  });
+
+  test("packVisibleAgents normalises, dedupes and keeps manifest order", () => {
+    expect(
+      packVisibleAgents('[agents]\nvisible = ["agents.decisions", "glossary", "decisions"]\n'),
+    ).toEqual(["decisions", "glossary"]);
+  });
+
+  test("packVisibleAgents is [] for defaults with no [agents] visible, or invalid defaults", () => {
+    expect(packVisibleAgents("")).toEqual([]);
+    expect(packVisibleAgents("[agents]\nvisible = 3\n")).toEqual([]);
+  });
+
+  test("listPacks reads visibleAgents from the INSTALLED record, not the bundled copy", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    const other = pmWith({ defaults: '[agents]\nvisible = ["owners"]\n' });
+    const r = listPacks(deps({ bundled: new Map([["pm", other]]) }));
+    expect(r.installed[0]?.visibleAgents).toEqual(["decisions", "glossary", "catchup"]);
   });
 
   test("updateAvailable against a newer bundled map", async () => {
@@ -538,6 +564,7 @@ describe("listPacks and previewPack", () => {
         updateAvailable: true,
         bundledVersion: "1.0.0",
         versionUnknown: true,
+        visibleAgents: [],
       },
       {
         id: "ghost",
@@ -546,6 +573,7 @@ describe("listPacks and previewPack", () => {
         source: "file",
         updateAvailable: false,
         versionUnknown: true,
+        visibleAgents: [],
       },
     ]);
     expect(r.skipped).toEqual([

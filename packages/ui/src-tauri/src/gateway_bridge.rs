@@ -78,6 +78,7 @@ impl Default for HitlInbox {
 pub const ALLOWED_METHODS: &[&str] = &[
     "admin.status",
     "agents.catchup",
+    "agents.changelog",
     "agents.conflicts",
     "agents.decisions",
     "agents.expert",
@@ -87,9 +88,9 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "agents.impact",
     "agents.janitor",
     "agents.negotiate",
+    "agents.oncall",
     "agents.ownership",
-    "agents.preflight",
-    "agents.premortem",
+    "agents.standup",
     "agents.why",
     "agents.whyPeek",
     "audit.export",
@@ -98,6 +99,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "audit.verify",
     "captures.get",
     "captures.list",
+    "catalog.list",
     "chatops.status",
     "connector.auth",
     "connector.listStatus",
@@ -133,6 +135,8 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "federation.namespace.revoke",
     "federation.peers",
     "federation.quorumRespond",
+    "fleet.briefs",
+    "fleet.show",
     "hitl.listDelegations",
     "hitl.pendingQueue",
     "identity.listBindings",
@@ -152,6 +156,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "migration.list",
     "oncall.pushedGet",
     "oncall.pushedList",
+    "pack.list",
     "policy.show",
     "profile.create",
     "profile.delete",
@@ -695,21 +700,14 @@ mod tests {
     }
 
     #[test]
-    fn allowlist_premortem_brief_only() {
-        // S1 pre-mortem: the brief is renderer-callable; the maintenance verb that re-derives
-        // the theme pass is not (I7). premortem.refresh has no rebuild counterpart and is
-        // LAN-forbidden, so it must not reach the renderer.
-        //
-        // Unlike the sibling briefs above, agents.premortem is NOT purely read-only: it writes
-        // paused (enabled = 0) watcher rows plus their proposal tombstones into local SQLite.
-        // It qualifies under I7 all the same, because a paused row is inert until a human arms
-        // it, and a local insert never reaches the executor's HITL gate. See
-        // docs/SECURITY-INVARIANTS.md § I7.
-        //
-        // Named explicitly for the same reason as the decisions/ownership tests above:
-        // allowlist_exact_size alone stays green if a later change swaps agents.premortem out
-        // for premortem.refresh, since the count is unchanged by a one-for-one substitution.
-        assert!(is_method_allowed("agents.premortem"));
+    fn allowlist_preflight_and_premortem_removed() {
+        // Role packs Project 4 (I7): the renderer never called these two briefs, and
+        // agents.premortem was the one renderer-callable entry that was not purely a read (it
+        // writes paused watcher rows plus proposal tombstones into local SQLite). Removed rather
+        // than kept for symmetry; the I7 reasoning in docs/SECURITY-INVARIANTS.md stays the rule
+        // for any future inert-write entry. premortem.refresh was never renderer-callable.
+        assert!(!is_method_allowed("agents.preflight"));
+        assert!(!is_method_allowed("agents.premortem"));
         assert!(!is_method_allowed("premortem.refresh"));
     }
 
@@ -800,18 +798,57 @@ mod tests {
     }
 
     #[test]
-    fn allowlist_excludes_fleet_namespace() {
-        // S2 overnight agent fleets (Task 9, I7). `fleet.runNow` spends the machine's resources
-        // and `fleet.briefs`/`fleet.show` return synthesised answers over the private index —
-        // neither is something the renderer needs. Whole-namespace exclusion, matching
-        // exec/computer/media: a scan over every entry so a later one-off addition (e.g.
-        // `fleet.status`) is caught here rather than only by the total staying unchanged.
+    fn allowlist_fleet_reads_only() {
+        // Role packs Project 4 (I7). The desktop reads stored fleet briefs, so exactly
+        // `fleet.briefs` and `fleet.show` are renderer-callable. Both return local SQLite text
+        // the renderer could already regenerate through the `agents.*` reads it holds, so they
+        // widen nothing. Every other fleet method stays off: `fleet.runNow` spends the
+        // machine's resources, and `fleet.digest`/`fleet.status`/`fleet.list` are terminal
+        // surfaces. A scan over every `fleet.` entry, so a later one-off addition is caught here
+        // rather than only by the total staying unchanged.
         for m in ALLOWED_METHODS {
-            assert!(
-                !m.starts_with("fleet."),
-                "fleet.* must never be Tauri-exposed (I7): {m}"
-            );
+            if m.starts_with("fleet.") {
+                assert!(
+                    *m == "fleet.briefs" || *m == "fleet.show",
+                    "only fleet.briefs and fleet.show may be Tauri-exposed (I7): {m}"
+                );
+            }
         }
+        assert!(is_method_allowed("fleet.briefs"));
+        assert!(is_method_allowed("fleet.show"));
+        assert!(!is_method_allowed("fleet.runNow"));
+        assert!(!is_method_allowed("fleet.digest"));
+        assert!(!is_method_allowed("fleet.status"));
+        assert!(!is_method_allowed("fleet.list"));
+    }
+
+    #[test]
+    fn allowlist_pack_list_only() {
+        // Role packs Project 4 (I7): the desktop lists packs; installing and removing a pack
+        // stay in a terminal behind the `pack.install` approval (I47), and `pack.show` is not
+        // needed by the renderer. A scan so a later `pack.*` addition cannot slip in.
+        for m in ALLOWED_METHODS {
+            if m.starts_with("pack.") {
+                assert!(
+                    *m == "pack.list",
+                    "only pack.list may be Tauri-exposed (I7): {m}"
+                );
+            }
+        }
+        assert!(is_method_allowed("pack.list"));
+        assert!(!is_method_allowed("pack.install"));
+        assert!(!is_method_allowed("pack.remove"));
+        assert!(!is_method_allowed("pack.show"));
+    }
+
+    #[test]
+    fn allowlist_role_pack_desktop_reads() {
+        // Role packs Project 4 (I7): the catalog read and the three read-only briefs the
+        // role-pack desktop pages render.
+        assert!(is_method_allowed("catalog.list"));
+        assert!(is_method_allowed("agents.oncall"));
+        assert!(is_method_allowed("agents.standup"));
+        assert!(is_method_allowed("agents.changelog"));
     }
 
     #[test]
@@ -860,7 +897,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 111);
+        assert_eq!(ALLOWED_METHODS.len(), 116);
     }
 
     #[test]

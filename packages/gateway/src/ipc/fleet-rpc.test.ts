@@ -823,3 +823,79 @@ describe("fleet layers, disabled and dropped jobs", () => {
     expect(calls).toEqual([{ jobName: "d", force: false }]);
   });
 });
+
+describe("fleet.briefs card filters", () => {
+  let db: Database;
+  let store: FleetStore;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.run("PRAGMA foreign_keys = ON");
+    db.exec(FLEET_V60_SQL);
+    for (const stmt of FLEET_SUBJECTS_V63_SQL) db.exec(stmt);
+    store = new FleetStore(db);
+  });
+
+  let tick = 1000;
+  function seed(jobId: string, subjectKey: string, agentMethod: string, md: string | null): void {
+    const runId = store.openRun({
+      startedAt: 1000,
+      hostPower: "ac",
+      hostIdleMs: 0,
+      hostSource: "measured",
+      remoteCallBudget: 0,
+    });
+    tick += 1;
+    store.recordBrief({
+      runId,
+      jobId,
+      subjectKey,
+      agentMethod,
+      briefMarkdown: md,
+      findingsJson: "{}",
+      synthesisJson: null,
+      createdAt: tick,
+      expiresAt: tick + 86_400_000,
+    });
+  }
+
+  function cx(): FleetRpcCtx {
+    return {
+      scheduler: undefined,
+      store,
+      hostActivity: { probe: async () => ({ power: "ac", idleMs: 0, source: "measured" }) },
+      config: DEFAULT_FLEET_CONFIG,
+      jobs: [],
+      now: () => 2000,
+    };
+  }
+
+  test("agentMethod, nonSweep and withMarkdown reach the store", async () => {
+    seed("n", "n", "agents.decisions", "x");
+    seed("sw", "services:a", "agents.decisions", "x");
+    seed("e", "e", "agents.decisions", null);
+    seed("g", "g", "agents.glossary", "x");
+    const r = await dispatchFleetRpc(
+      "fleet.briefs",
+      { agentMethod: "agents.decisions", nonSweep: true, withMarkdown: true, limit: 1 },
+      cx(),
+    );
+    const briefs = (r as { value: { briefs: Array<{ jobId: string }> } }).value.briefs;
+    expect(briefs.map((b) => b.jobId)).toEqual(["n"]);
+  });
+
+  test("a non-boolean nonSweep / withMarkdown is -32602", async () => {
+    await expect(dispatchFleetRpc("fleet.briefs", { nonSweep: "yes" }, cx())).rejects.toThrow(
+      "fleet: nonSweep must be a boolean",
+    );
+    await expect(dispatchFleetRpc("fleet.briefs", { withMarkdown: 1 }, cx())).rejects.toThrow(
+      "fleet: withMarkdown must be a boolean",
+    );
+  });
+
+  test("an empty agentMethod is -32602", async () => {
+    await expect(dispatchFleetRpc("fleet.briefs", { agentMethod: "" }, cx())).rejects.toThrow(
+      /agentMethod must be a non-empty string/,
+    );
+  });
+});

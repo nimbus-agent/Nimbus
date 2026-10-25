@@ -517,7 +517,7 @@ Handlers: `packages/gateway/src/ipc/{tour-rpc,locality-rpc}.ts`. CLI: `nimbus wo
 
 ---
 
-### Namespaces added since Spine S2 — LAN-forbidden (oncall's two reads are on the Tauri allowlist)
+### Namespaces added since Spine S2 — LAN-forbidden (oncall's two reads and fleet's `briefs`/`show` are on the Tauri allowlist)
 
 Every namespace below is in `FORBIDDEN_OVER_LAN` (`ipc/lan-rpc.ts`) as a whole, and none is on
 `ALLOWED_METHODS` except where its row says so. Design detail lives in `docs/architecture.md` § Spine S2 Subsystems; each handler
@@ -528,7 +528,7 @@ file is the authority for its method set.
 | `exec.*` | `run`, `approvalRespond` | `ipc/exec-rpc.ts` | sandboxed code execution (I33) |
 | `computer.*` | `sessionOpen`, `act`, `sessionStatus`, `sessionClose`, `approvalRespond` | `ipc/computer-rpc.ts` | computer-use lanes (I35) |
 | `media.*` | `understand`, `allowRemote`, `grants.list`, `grants.revoke` | `ipc/media-rpc.ts` | multimodal pass and remote-vision grants (I37) |
-| `fleet.*` | `status`, `list`, `briefs`, `show`, `runNow`, `digest` | `ipc/fleet-rpc.ts` | overnight fleets (I38) |
+| `fleet.*` | `status`, `list`, `briefs`, `show`, `runNow`, `digest` | `ipc/fleet-rpc.ts` | overnight fleets (I38); only `briefs`/`show` are on the Tauri `ALLOWED_METHODS` (stored-brief reads) |
 | `toolgen.*` | `create`, `approvalRespond`, `save`, `saveApprovalRespond`, `list`, `invoke`, `revoke`, `credentialSet` | `ipc/toolgen-rpc.ts` | runtime tool generation (I39/I40) |
 | `ask.*` | `explainLast` | `ipc/diagnostics-rpc.ts` | `nimbus explain last`; also needs its entry in `tryDispatchDiagnosticsRpc`'s outer match |
 | `oncall.*` | `pushedList`, `pushedGet`, `pushedRetry` | `ipc/oncall-push-rpc.ts` | the on-call pushed brief, default-off `[oncall.push]`; `pushedList`/`pushedGet` ARE on the Tauri `ALLOWED_METHODS` (desktop On-call page), `pushedRetry` is CLI-only |

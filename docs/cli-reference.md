@@ -577,7 +577,7 @@ Applies to **three** surfaces: `nimbus ask`, every built-in agent brief, and —
 nimbus catalog [agents|connectors] [--json]
 ```
 
-Lists the built-in agents and the connectors on this install, with short descriptions. Read-only; it calls `catalog.list` (CLI-only today and LAN-forbidden; it joins the desktop allowlist in a later release) and touches no connector.
+Lists the built-in agents and the connectors on this install, with short descriptions. Read-only; it calls `catalog.list` (LAN-forbidden; also on the desktop allowlist, which reads it for the agent pages) and touches no connector.
 
 - With no subcommand it prints both lists. An unknown subcommand prints the usage and exits 1.
 - The agents table has `name`, `shown`, `category` and `description`. `shown` reads `shown` or `hidden` per the visibility rules under [Team Intelligence](#team-intelligence) (`[agents] show`/`hide`, pack `visible`); a one-line summary of where the visibility came from comes first. Hidden agents are listed, not removed, and still run.
@@ -593,7 +593,7 @@ nimbus pack install <id> | --file <path>
 nimbus pack remove <id>
 ```
 
-A role pack is a curated settings layer (agent visibility, fleet jobs, defaults) for one role. The gateway must be running. All four verbs are CLI-only: refused over LAN and on a `--demo` root, and not on the Tauri allowlist. They act on the **active profile**.
+A role pack is a curated settings layer (agent visibility, fleet jobs, defaults) for one role. The gateway must be running. All four verbs are refused over LAN and on a `--demo` root, and `show`, `install` and `remove` are CLI-only and not on the Tauri allowlist; `list` is also renderer-callable as `pack.list`, the one pack method on the allowlist. They act on the **active profile**.
 
 - `list` prints the packs installed on the active profile (marking `update available` when the bundled copy differs from the installed one, and naming any pack whose layer was skipped and why) and the bundled packs you could install (`pm`, `devops`). `--json` prints the raw result.
 - `show` prints the exact prompt `install` would ask you, plus an `Installed:` line when the pack is already installed. It changes nothing. Pack-supplied text is shown visibly escaped, never raw.
@@ -888,7 +888,7 @@ Like `nimbus owners`/`nimbus glossary`, `nimbus pre-mortem` **hard-rejects** an 
 
 **Review drag is measured only for pull requests carrying both an *opened* and a *merged* timestamp:** GitHub and GitLab can record both; Bitbucket never records a merge time, and a repo with no indexed pull request has neither. Where it cannot be measured the review-drag risk reports a gap that names the forge behind it, rather than a fabricated `0`. When review drag IS measured but some pull requests lacked a timestamp — linked to the cohort, or merged in the same repos over the repo-wide baseline window — those are left out of both medians and the summary names the forges concerned and why.
 
-**Read-only in the request sense, not the write sense:** a plain `nimbus pre-mortem` never triggers HITL and never calls `connectors.dispatch` — the watcher-proposal writes above are plain local SQLite inserts, not egress. `agents.premortem` is deliberately excluded from the HTTP agent-invocation surface (`POST /v1/agents/{agent}`) and the MCP tool surface, matching `agents.preflight`, because those writes have no HITL gate and an external caller must not be able to trigger them unprompted; it remains reachable from the CLI (this command) and the Tauri renderer.
+**Read-only in the request sense, not the write sense:** a plain `nimbus pre-mortem` never triggers HITL and never calls `connectors.dispatch` — the watcher-proposal writes above are plain local SQLite inserts, not egress. `agents.premortem` is deliberately excluded from the HTTP agent-invocation surface (`POST /v1/agents/{agent}`) and the MCP tool surface, matching `agents.preflight`, because those writes have no HITL gate and an external caller must not be able to trigger them unprompted; it remains reachable from the CLI (this command); it was removed from the Tauri allowlist in the role-packs desktop change, since the renderer never called it.
 
 **Exit codes:** `1` = gateway not running; `2` = agent error (unknown or non-Epic epic key, unsupported tracker, or a `--refresh` pass failure).
 
@@ -1003,7 +1003,7 @@ nimbus changelog --json
 
 **Entry lists are capped at 50 per category**, so a 500-PR window is not handed wholesale to the synthesis model. `counts` (visible via `--json`) always carries the true pre-cap total per category, so the truncation is recoverable — a window with 53 merged PRs and a 50-entry list means 3 were dropped, not lost.
 
-**Read-only:** never triggers HITL, never makes a live connector API call. Not reachable over the local HTTP API, nor as an MCP tool, nor from ChatOps, nor from the desktop renderer — `agents.changelog` is served on the local IPC socket and is **not** on the Tauri `ALLOWED_METHODS` allowlist (I7), so the CLI is the only surface a *user* can reach it from today; a sequencing decision (letting the shape settle against one consumer before it is committed across every external surface) rather than a side-effect or dossier concern like the other excluded agents. The gateway's own `nimbus fleet` scheduler is the one other caller, and it is not an exception to that reasoning: a fleet job is owner-configured in advance and runs in-process, never an arbitrary network caller. It **is** therefore eligible for `nimbus fleet` — an unattended weekly changelog produced on idle hardware is close to the feature's own stated purpose, and it is a pure read with no side effects.
+**Read-only:** never triggers HITL, never makes a live connector API call. Not reachable over the local HTTP API, nor as an MCP tool, nor from ChatOps — `agents.changelog` is served on the local IPC socket and is on the Tauri `ALLOWED_METHODS` allowlist (I7, since the role-packs desktop change), so the CLI and the desktop are the only surfaces a *user* can reach it from; the external exclusion is a sequencing decision (letting the shape settle against one consumer before it is committed across every external surface) rather than a side-effect or dossier concern like the other excluded agents. The gateway's own `nimbus fleet` scheduler is the one other caller, and it is not an exception to that reasoning: a fleet job is owner-configured in advance and runs in-process, never an arbitrary network caller. It **is** therefore eligible for `nimbus fleet` — an unattended weekly changelog produced on idle hardware is close to the feature's own stated purpose, and it is a pure read with no side effects.
 
 ---
 
@@ -1053,7 +1053,7 @@ nimbus standup --json
 
 **Entry lists are capped at 50 per lane**, so a chatty day is not handed wholesale to the synthesis model. `counts` (visible via `--json`) always carries the true pre-cap total per lane, so the truncation is recoverable.
 
-**Read-only:** never triggers HITL, never makes a live connector API call. Not reachable over the local HTTP API, nor as an MCP tool, nor from ChatOps, nor from the desktop renderer — `agents.standup` is served on the local IPC socket and is **not** on the Tauri `ALLOWED_METHODS` allowlist (I7). Unlike `nimbus changelog`'s exclusion, that is not a sequencing decision: this brief is owner-scoped by construction, so an external caller cannot ask about *itself* and would instead receive the gateway owner's day. An external surface for it needs a way to establish who is asking first. It **is** eligible for `nimbus fleet`, which is a different principal — owner-configured in advance, running in-process, and about its own owner.
+**Read-only:** never triggers HITL, never makes a live connector API call. Not reachable over the local HTTP API, nor as an MCP tool, nor from ChatOps — `agents.standup` is served on the local IPC socket and is on the Tauri `ALLOWED_METHODS` allowlist (I7, since the role-packs desktop change), where the caller is the local owner. Unlike `nimbus changelog`'s exclusion, the external exclusion is not a sequencing decision: this brief is owner-scoped by construction, so an external caller cannot ask about *itself* and would instead receive the gateway owner's day. An external surface for it needs a way to establish who is asking first. It **is** eligible for `nimbus fleet`, which is a different principal — owner-configured in advance, running in-process, and about its own owner.
 
 ---
 

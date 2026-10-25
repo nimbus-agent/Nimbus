@@ -67,6 +67,40 @@ describe("useIpcQuery", () => {
     await waitFor(() => expect(result.current.error).toBe("boom"));
   });
 
+  it("refetchOnFocus: a window focus event re-runs the query", async () => {
+    callMock.mockResolvedValue("v");
+    renderHook(() => useIpcQuery<string>("m", 30_000, undefined, { refetchOnFocus: true }));
+    await waitFor(() => expect(callMock).toHaveBeenCalledTimes(1));
+    callMock.mockClear();
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(callMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("without refetchOnFocus, focus does not re-run", async () => {
+    callMock.mockResolvedValue("v");
+    renderHook(() => useIpcQuery<string>("m", 30_000));
+    await waitFor(() => expect(callMock).toHaveBeenCalledTimes(1));
+    callMock.mockClear();
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(callMock).not.toHaveBeenCalled();
+  });
+
+  it("the focus listener is removed on unmount", async () => {
+    callMock.mockResolvedValue("v");
+    const spy = vi.spyOn(window, "removeEventListener");
+    const { unmount } = renderHook(() =>
+      useIpcQuery<string>("m", 30_000, undefined, { refetchOnFocus: true }),
+    );
+    await waitFor(() => expect(callMock).toHaveBeenCalledTimes(1));
+    unmount();
+    expect(spy).toHaveBeenCalledWith("focus", expect.any(Function));
+    spy.mockRestore();
+  });
+
   it("refetch() fires an immediate call", async () => {
     callMock.mockResolvedValue("v");
     const { result } = renderHook(() => useIpcQuery<string>("m", 30_000));

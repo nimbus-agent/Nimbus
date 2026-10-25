@@ -36,7 +36,27 @@ vi.mock("../../src/store", () => ({
     }),
 }));
 
+const rolePacks = vi.hoisted(() => ({
+  loaded: true,
+  packError: null as string | null,
+  sections: [] as readonly { id: string; name: string; agents: readonly unknown[] }[],
+}));
+vi.mock("../../src/hooks/useRolePacks", () => ({
+  useRolePacks: () => ({ packs: null, catalog: null, ...rolePacks }),
+}));
+vi.mock("../../src/components/home/AgentCard", () => ({
+  AgentCard: ({ agent }: { agent: { name: string } }) => <div>card-{agent.name}</div>,
+}));
+
 import { Dashboard } from "../../src/pages/Dashboard";
+
+function renderDash() {
+  return render(
+    <MemoryRouter>
+      <Dashboard />
+    </MemoryRouter>,
+  );
+}
 
 describe("Dashboard", () => {
   it("renders PageHeader + three panels", () => {
@@ -49,5 +69,52 @@ describe("Dashboard", () => {
     expect(screen.getByLabelText(/Index metrics/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Connectors/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Recent activity/i)).toBeInTheDocument();
+  });
+
+  it("shows one section per active pack above the existing panels", () => {
+    rolePacks.loaded = true;
+    rolePacks.sections = [
+      { id: "devops", name: "DevOps", agents: [{ name: "oncall" }, { name: "why" }] },
+      { id: "pm", name: "PM", agents: [{ name: "decisions" }] },
+    ];
+    renderDash();
+    expect(screen.getByRole("heading", { name: "DevOps" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "PM" })).toBeInTheDocument();
+    expect(screen.getByText("card-why")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Index metrics/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Connectors/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Recent activity/i)).toBeInTheDocument();
+  });
+
+  it("points at nimbus pack list when loaded with no sections", () => {
+    rolePacks.loaded = true;
+    rolePacks.sections = [];
+    renderDash();
+    expect(
+      screen.getByText("Role packs tailor this screen — see nimbus pack list."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows neither while role packs are loading", () => {
+    rolePacks.loaded = false;
+    rolePacks.sections = [];
+    renderDash();
+    expect(screen.queryByText(/Role packs tailor/)).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "DevOps" })).toBeNull();
+  });
+
+  it("reports a failed pack list instead of claiming no packs are active", () => {
+    rolePacks.loaded = true;
+    rolePacks.sections = [];
+    rolePacks.packError = "active.json unreadable";
+    try {
+      renderDash();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Could not load role packs: active.json unreadable",
+      );
+      expect(screen.queryByText(/Role packs tailor/)).toBeNull();
+    } finally {
+      rolePacks.packError = null;
+    }
   });
 });

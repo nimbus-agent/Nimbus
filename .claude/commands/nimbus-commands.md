@@ -559,7 +559,7 @@ nimbus clip delete <id|url> | --all [--yes]           # delete clips
 
 The browser extension lives in the satellite repo `nimbus-agent/nimbus-web-clipper` and reaches the gateway over HTTP only (`POST /v1/clips`, `/v1/clips/pair/confirm`, `/v1/clips/related`).
 
-### Spine S2 — local compute (all DEFAULT OFF; `exec.*` / `computer.*` / `media.*` / `fleet.*` / `toolgen.*` are LAN-forbidden and off the Tauri allowlist)
+### Spine S2 — local compute (all DEFAULT OFF; `exec.*` / `computer.*` / `media.*` / `fleet.*` / `toolgen.*` are LAN-forbidden and off the Tauri allowlist, except the two fleet reads `fleet.briefs`/`fleet.show`)
 
 ```bash
 # Sandboxed code execution — invariant I33 / static D23. [code_execution] enabled = true.

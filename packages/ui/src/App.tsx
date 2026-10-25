@@ -7,6 +7,8 @@ import {
   RouterProvider,
 } from "react-router";
 import { RootLayout } from "./layouts/RootLayout";
+import { BriefRun } from "./pages/BriefRun";
+import { Briefs } from "./pages/Briefs";
 import { Captures } from "./pages/Captures";
 import { Dashboard } from "./pages/Dashboard";
 import { HitlPopup } from "./pages/HitlPopup";
@@ -18,6 +20,7 @@ import { Syncing } from "./pages/onboarding/Syncing";
 import { Welcome } from "./pages/onboarding/Welcome";
 import { QuickQuery } from "./pages/QuickQuery";
 import { Settings } from "./pages/Settings";
+import { StoredBrief } from "./pages/StoredBrief";
 import { AuditPanel } from "./pages/settings/AuditPanel";
 import { ConnectorsPanel } from "./pages/settings/ConnectorsPanel";
 import { DataPanel } from "./pages/settings/DataPanel";
@@ -46,6 +49,9 @@ const router = createBrowserRouter(
       <Route index element={<Dashboard />} />
       <Route path="oncall" element={<Oncall />} />
       <Route path="captures" element={<Captures />} />
+      <Route path="briefs" element={<Briefs />} />
+      <Route path="briefs/stored/:id" element={<StoredBrief />} />
+      <Route path="briefs/:agent" element={<BriefRun />} />
       <Route path="onboarding" element={<Onboarding />}>
         <Route index element={<Navigate to="welcome" replace />} />
         <Route path="welcome" element={<Welcome />} />

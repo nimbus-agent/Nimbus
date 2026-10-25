@@ -11,6 +11,8 @@ export interface UseIpcQueryResult<T> {
 
 interface Options {
   enabled?: boolean;
+  /** Also re-run when the window regains focus (default false). */
+  refetchOnFocus?: boolean;
 }
 
 export function useIpcQuery<T>(
@@ -20,6 +22,7 @@ export function useIpcQuery<T>(
   opts: Options = {},
 ): UseIpcQueryResult<T> {
   const enabled = opts.enabled ?? true;
+  const refetchOnFocus = opts.refetchOnFocus ?? false;
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -61,11 +64,16 @@ export function useIpcQuery<T>(
       if (document.visibilityState === "visible") run().catch(() => undefined);
     };
     document.addEventListener("visibilitychange", onVis);
+    const onFocus = () => {
+      run().catch(() => undefined);
+    };
+    if (refetchOnFocus) window.addEventListener("focus", onFocus);
     return () => {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
+      if (refetchOnFocus) window.removeEventListener("focus", onFocus);
     };
-  }, [enabled, connectionState, intervalMs, run]);
+  }, [enabled, connectionState, intervalMs, run, refetchOnFocus]);
 
   return { data, error, isLoading, refetch: run };
 }
