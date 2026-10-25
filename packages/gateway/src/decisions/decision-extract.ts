@@ -1,10 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { sourceTypesFor } from "../sources/source-kinds.ts";
-import {
-  BUILTIN_SOURCE_MAPPING,
-  type SourceMapping,
-  sourceFilterSql,
-} from "../sources/source-mapping.ts";
+import { type SourceMapping, sourceFilterSql } from "../sources/source-mapping.ts";
 import { decisionRowId, mineCues } from "./cue-mining.ts";
 import {
   type CatchupCursor,
@@ -213,14 +209,14 @@ function scanCatchup(
  * `sourceFilterSql(mapping.typesFor("decisions"))` predicate as `scanDelta` so
  * the counted population always matches the mined population — that
  * equivalence is what makes the reported number honest, so do not inline or
- * re-derive it. The mapping defaults to the built-in one; the read path
- * passes the effective mapping.
+ * re-derive it. The mapping is required (the read path passes the
+ * effective one), so a caller cannot silently count an excluded type.
  */
 export function loadDecisionCandidates(
   db: Database,
-  opts: { sinceMs: number; mapping?: SourceMapping },
+  opts: { sinceMs: number; mapping: SourceMapping },
 ): { total: number; truncatedSources: number } {
-  const types = (opts.mapping ?? BUILTIN_SOURCE_MAPPING).typesFor("decisions");
+  const types = opts.mapping.typesFor("decisions");
   const { sql, params } = sourceFilterSql(types, "i");
   const row = db
     .query(

@@ -45,7 +45,7 @@ test("candidate loading reports how many source bodies were truncated", () => {
     syncedAt: 1,
   });
 
-  const loaded = loadDecisionCandidates(d, { sinceMs: 0 });
+  const loaded = loadDecisionCandidates(d, { sinceMs: 0, mapping: BUILTIN_SOURCE_MAPPING });
 
   expect(loaded.total).toBe(2);
   expect(loaded.truncatedSources).toBe(1);
@@ -94,7 +94,7 @@ test("the SQL aggregate matches a hand-counted mixed fixture of complete and tru
     syncedAt: 1,
   });
 
-  const loaded = loadDecisionCandidates(d, { sinceMs: 10 });
+  const loaded = loadDecisionCandidates(d, { sinceMs: 10, mapping: BUILTIN_SOURCE_MAPPING });
   expect(loaded.total).toBe(3);
   expect(loaded.truncatedSources).toBe(1);
   d.close();
@@ -111,7 +111,7 @@ test("an item outside the source-type allowlist is not counted as a candidate", 
     modifiedAt: 1,
     syncedAt: 1,
   });
-  const loaded = loadDecisionCandidates(d, { sinceMs: 0 });
+  const loaded = loadDecisionCandidates(d, { sinceMs: 0, mapping: BUILTIN_SOURCE_MAPPING });
   expect(loaded.total).toBe(0);
   expect(loaded.truncatedSources).toBe(0);
 });
@@ -127,7 +127,7 @@ test("an item older than sinceMs is excluded from the candidate load", () => {
     modifiedAt: 100,
     syncedAt: 1,
   });
-  const loaded = loadDecisionCandidates(d, { sinceMs: 200 });
+  const loaded = loadDecisionCandidates(d, { sinceMs: 200, mapping: BUILTIN_SOURCE_MAPPING });
   expect(loaded.total).toBe(0);
 });
 
@@ -159,7 +159,12 @@ test("discovery mines a cue past the old 512-character mark from the full stored
   }).then((summary) => {
     expect(summary.discovered).toBe(1);
     expect(summary.extracted).toBe(1);
-    const [row] = listDecisions(d, { sinceMs: 0, minConfidence: 0, limit: 10 });
+    const [row] = listDecisions(d, {
+      sinceMs: 0,
+      minConfidence: 0,
+      limit: 10,
+      mapping: BUILTIN_SOURCE_MAPPING,
+    });
     expect(row?.statement).toBe("We decided to move billing to Postgres.");
     d.close();
   });

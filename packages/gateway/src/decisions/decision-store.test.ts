@@ -1,9 +1,13 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-
+import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
-import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
+import {
+  BUILTIN_SOURCE_MAPPING,
+  resolveSourceMapping,
+  type SourceMapping,
+} from "../sources/source-mapping.ts";
 import {
   agentDecisionOwned,
   clearDecisions,
@@ -51,7 +55,7 @@ function candidate(id: string, priority: number, decidedAt = 1_000): void {
 test("upsertCandidate is idempotent on the same id", () => {
   candidate("a", 0.4);
   candidate("a", 0.4);
-  expect(countByStatus(db).total).toBe(1);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).total).toBe(1);
 });
 
 test("selectPendingByPriority returns highest priority first", () => {
@@ -83,7 +87,7 @@ test("a vetoed row is never re-selected", () => {
   candidate("a", 0.5);
   markVetoed(db, "a", 6_000);
   expect(selectPendingByPriority(db, 10, 0, BUILTIN_SOURCE_MAPPING)).toHaveLength(0);
-  expect(countByStatus(db).vetoed).toBe(1);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).vetoed).toBe(1);
 });
 
 test("markExtracted stores alternatives as a round-trippable array", () => {
@@ -99,7 +103,12 @@ test("markExtracted stores alternatives as a round-trippable array", () => {
     },
     6_000,
   );
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.alternatives).toEqual(["stay on MySQL", "shard"]);
   expect(row?.statement).toBe("Adopt Postgres");
 });
@@ -132,7 +141,12 @@ test("replaceEvidence is idempotent and readable back through listDecisions", ()
   ] as const;
   replaceEvidence(db, "a", ev);
   replaceEvidence(db, "a", ev);
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.evidence).toHaveLength(1);
   expect(row?.evidence[0]?.label).toBe("#412");
 });
@@ -170,12 +184,22 @@ test("two same-titled PRs on one decision BOTH survive replaceEvidence", () => {
   ] as const;
   replaceEvidence(db, "a", ev);
 
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.evidence).toHaveLength(2);
   expect(row?.evidence.map((e) => e.entityId).sort()).toEqual(["gh:pr:1", "gh:pr:2"]);
   // Re-running must still be idempotent, not additive.
   replaceEvidence(db, "a", ev);
-  const [again] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [again] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(again?.evidence).toHaveLength(2);
 });
 
@@ -196,18 +220,30 @@ test("listDecisions filters by since and min confidence, newest first", () => {
   setConfidence(db, "new", 0.1, false, 6_000, null);
 
   expect(
-    listDecisions(db, { sinceMs: 5_000, minConfidence: 0, limit: 10 }).map((r) => r.id),
+    listDecisions(db, {
+      sinceMs: 5_000,
+      minConfidence: 0,
+      limit: 10,
+      mapping: BUILTIN_SOURCE_MAPPING,
+    }).map((r) => r.id),
   ).toEqual(["new"]);
-  expect(listDecisions(db, { sinceMs: 0, minConfidence: 0.5, limit: 10 }).map((r) => r.id)).toEqual(
-    ["old"],
-  );
+  expect(
+    listDecisions(db, {
+      sinceMs: 0,
+      minConfidence: 0.5,
+      limit: 10,
+      mapping: BUILTIN_SOURCE_MAPPING,
+    }).map((r) => r.id),
+  ).toEqual(["old"]);
 });
 
 test("listDecisions never returns pending or vetoed rows", () => {
   candidate("p", 0.5);
   candidate("v", 0.5);
   markVetoed(db, "v", 6_000);
-  expect(listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 })).toHaveLength(0);
+  expect(
+    listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10, mapping: BUILTIN_SOURCE_MAPPING }),
+  ).toHaveLength(0);
 });
 
 test("pass state round-trips", () => {
@@ -253,7 +289,8 @@ describe("agent decisions (capture sink)", () => {
     ],
     nowMs: 6_000,
   };
-  const list = () => listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const list = () =>
+    listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10, mapping: BUILTIN_SOURCE_MAPPING });
 
   test("insertAgentDecision writes an extracted 'agent' row, confidence 1, with its evidence", () => {
     insertAgentDecision(db, base);
@@ -338,5 +375,126 @@ describe("agent decisions (capture sink)", () => {
     expect(ev.n).toBe(1);
     const ps = db.query("SELECT COUNT(*) AS n FROM decision_pass_state").get() as { n: number };
     expect(ps.n).toBe(0);
+  });
+});
+
+describe("read visibility follows the effective source mapping", () => {
+  function ownerMapping(body: string): SourceMapping {
+    const doc = parseLayerDoc(
+      { kind: "base", id: "base", path: "/virtual/base.toml" },
+      `[sources]\n${body}\n`,
+    );
+    return resolveSourceMapping({ doc: mergeLayerDocs([doc]) });
+  }
+  const NO_SLACK = ownerMapping('exclude = ["slack:message"]');
+
+  function item(id: string, service: string, type: string): void {
+    db.run(
+      `INSERT INTO item (id, service, type, external_id, title, modified_at, synced_at, pinned)
+       VALUES (?, ?, ?, ?, ?, 1000, 1000, 0)`,
+      [id, service, type, id, id],
+    );
+  }
+
+  function extractedFrom(id: string, sourceItemId: string, decidedAt = 1_000): void {
+    upsertCandidate(db, {
+      id,
+      sourceItemId,
+      cueTier: "explicit",
+      cueText: "we decided",
+      priority: 0.5,
+      decidedAt,
+      nowMs: 5_000,
+    });
+    markExtracted(
+      db,
+      id,
+      { statement: id, rationale: null, alternatives: [], extractionSource: "llm" },
+      5_000,
+    );
+  }
+
+  const rowCount = (): number =>
+    (db.query("SELECT COUNT(*) AS n FROM decision_record").get() as { n: number }).n;
+  const ids = (mapping: SourceMapping, limit = 10): string[] =>
+    listDecisions(db, { sinceMs: 0, minConfidence: 0, limit, mapping }).map((r) => r.id);
+
+  test("excluded type's rows are hidden from list and counts", () => {
+    item("slack:m1", "slack", "message");
+    item("jira:J-1", "jira", "issue");
+    extractedFrom("slack-d", "slack:m1", 2_000);
+    extractedFrom("jira-d", "jira:J-1", 1_000);
+    upsertCandidate(db, {
+      id: "slack-pending",
+      sourceItemId: "slack:m1",
+      cueTier: "explicit",
+      cueText: "we decided",
+      priority: 0.5,
+      decidedAt: 1_000,
+      nowMs: 5_000,
+    });
+    expect(rowCount()).toBe(3);
+
+    expect(ids(NO_SLACK)).toEqual(["jira-d"]);
+    expect(countByStatus(db, NO_SLACK)).toEqual({
+      total: 1,
+      pending: 0,
+      extracted: 1,
+      vetoed: 0,
+    });
+    expect(rowCount()).toBe(3);
+
+    expect(ids(BUILTIN_SOURCE_MAPPING)).toEqual(["slack-d", "jira-d"]);
+    expect(countByStatus(db, BUILTIN_SOURCE_MAPPING)).toEqual({
+      total: 3,
+      pending: 1,
+      extracted: 2,
+      vetoed: 0,
+    });
+    expect(rowCount()).toBe(3);
+  });
+
+  test("orphan decisions are shown", () => {
+    extractedFrom("orphan", "slack:deleted");
+    expect(ids(BUILTIN_SOURCE_MAPPING)).toEqual(["orphan"]);
+    expect(ids(NO_SLACK)).toEqual(["orphan"]);
+    expect(countByStatus(db, NO_SLACK).extracted).toBe(1);
+  });
+
+  test("agent decisions are never hidden", () => {
+    item("nimbus:capture:c1", "nimbus", "capture");
+    insertAgentDecision(db, {
+      id: "capture:c1",
+      captureId: "c1",
+      sourceItemId: "nimbus:capture:c1",
+      statement: "Adopt WAL",
+      rationale: null,
+      alternatives: [],
+      decidedAt: 1_000,
+      evidence: [],
+      nowMs: 5_000,
+    });
+    const NO_ANYTHING = ownerMapping(
+      `exclude = [${BUILTIN_SOURCE_MAPPING.typesFor("decisions")
+        .map((t) => `"${t}"`)
+        .join(", ")}]`,
+    );
+    expect(NO_ANYTHING.typesFor("decisions")).toEqual([]);
+    for (const m of [BUILTIN_SOURCE_MAPPING, NO_SLACK, NO_ANYTHING]) {
+      expect(ids(m)).toEqual(["capture:c1"]);
+      expect(countByStatus(db, m).extracted).toBe(1);
+    }
+  });
+
+  test("limit counts visible rows", () => {
+    item("slack:m1", "slack", "message");
+    item("jira:J-1", "jira", "issue");
+    // The three hidden rows are the NEWEST, so a post-LIMIT filter would return nothing.
+    extractedFrom("h1", "slack:m1", 9_000);
+    extractedFrom("h2", "slack:m1", 8_000);
+    extractedFrom("h3", "slack:m1", 7_000);
+    extractedFrom("v1", "jira:J-1", 2_000);
+    extractedFrom("v2", "jira:J-1", 1_000);
+    expect(ids(NO_SLACK, 2)).toEqual(["v1", "v2"]);
   });
 });

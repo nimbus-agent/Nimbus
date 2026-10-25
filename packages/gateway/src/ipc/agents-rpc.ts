@@ -49,6 +49,7 @@ import { resolveFileByRemote } from "../index/resolve-file-by-remote.ts";
 import type { ServiceConfig } from "../metrics/dora-config.ts";
 import { buildServiceIdentityResolver } from "../metrics/service-identity.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
+import { sourceMappingFor } from "../sources/source-mapping.ts";
 import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import {
@@ -1054,6 +1055,8 @@ async function handleDecisions(
     db: ctx.db,
     notify: ctx.notify,
     sessionId: newSessionId("decisions"),
+    // Built per call, like `defaultMinConfidence`: a `[sources]` or pack change applies live.
+    mapping: sourceMappingFor(ctx.configDir),
     ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
     ...(defaultMinConfidence === undefined ? {} : { defaultMinConfidence }),
   });
@@ -1109,6 +1112,7 @@ async function handleNegotiate(
     notify: ctx.notify,
     sessionId: newSessionId("negotiate"),
     personalSources: negotiatePersonalSources(ctx),
+    mapping: sourceMappingFor(ctx.configDir),
     ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
   });
 }

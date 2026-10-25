@@ -1,11 +1,13 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { gitlabMrMetadata } from "../connectors/_lib/gitlab/events.ts";
 import { extractPrMetadataForIndex } from "../connectors/github-sync.ts";
 import type { SubTaskResult } from "../engine/coordinator.ts";
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { BUILTIN_SOURCE_MAPPING, resolveSourceMapping } from "../sources/source-mapping.ts";
 import type { NegotiateBrief } from "./_lib/negotiate-types.ts";
 import { renderNegotiate } from "./_lib/render.ts";
 import {
@@ -103,7 +105,13 @@ function freshDb(): Database {
 }
 
 function ctxFor(db: Database, personalSources: string[] = []) {
-  return { db, notify: () => {}, sessionId: "negotiate-test-1", personalSources };
+  return {
+    db,
+    notify: () => {},
+    sessionId: "negotiate-test-1",
+    personalSources,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  };
 }
 
 test("an empty index yields an empty_index gap, not zeroes", async () => {
@@ -171,6 +179,7 @@ test("renders deterministically with no LLM configured", async () => {
       db,
       sessionId: "s1",
       personalSources: [],
+      mapping: BUILTIN_SOURCE_MAPPING,
       notify: (method, params) => {
         if (method === "negotiate.briefReady") captured = params as { brief: string };
       },
@@ -355,6 +364,7 @@ test("emitNegotiateBrief routes through a configured LLM", async () => {
       db,
       sessionId: "s2",
       personalSources: [],
+      mapping: BUILTIN_SOURCE_MAPPING,
       runner: {
         run: async () => ({
           ok: true,
@@ -1926,5 +1936,59 @@ test("an explicit --person at a zero-edge record is disclosed too", async () => 
   );
 
   expect(brief.gaps.some((g) => g.detail.includes("no `authored`"))).toBe(true);
+  db.close();
+});
+
+test("negotiate excludes hidden decisions", async () => {
+  const db = freshDb();
+  db.run("INSERT INTO person (id, display_name) VALUES (?, ?)", ["person:me", "Me"]);
+  const now = Date.now();
+  for (const [service, type, externalId, title, authorId] of [
+    ["slack", "message", "C1/1.1", "slack decision", "person:me"],
+    ["jira", "issue", "J-1", "jira decision", "person:me"],
+    ["slack", "message", "C1/2.2", "nobody's slack decision", null],
+  ] as const) {
+    upsertIndexedItem(db, {
+      service,
+      type,
+      externalId,
+      title,
+      bodyPreview: "",
+      modifiedAt: now,
+      syncedAt: now,
+      authorId,
+      metadata: {},
+    });
+  }
+  for (const [id, src] of [
+    ["d1", "slack:C1/1.1"],
+    ["d2", "jira:J-1"],
+    ["d3", "slack:C1/2.2"],
+  ] as const) {
+    db.run(
+      `INSERT INTO decision_record
+         (id, source_item_id, status, cue_tier, cue_text, priority, confidence, decided_at, updated_at)
+       VALUES (?, ?, 'extracted', 'explicit', 'we decided', 1, 0.8, ?, ?)`,
+      [id, src, now, now],
+    );
+  }
+
+  const all = await runNegotiate({ mePersonIdOverride: "person:me" }, ctxFor(db));
+  expect(all.decisions?.authored).toBe(2);
+  expect(all.decisions?.unattributable).toBe(1);
+
+  const doc = parseLayerDoc(
+    { kind: "base", id: "base", path: "/virtual/base.toml" },
+    '[sources]\nexclude = ["slack:message"]\n',
+  );
+  const noSlack = resolveSourceMapping({ doc: mergeLayerDocs([doc]) });
+  const brief = await runNegotiate(
+    { mePersonIdOverride: "person:me" },
+    { ...ctxFor(db), mapping: noSlack },
+  );
+  expect(brief.decisions?.authored).toBe(1);
+  expect(brief.decisions?.unattributable).toBe(0);
+  expect(brief.decisions?.evidence.refs.map((r) => r.title)).toEqual(["jira decision"]);
+  expect(brief.decisions?.evidence.total).toBe(1);
   db.close();
 });

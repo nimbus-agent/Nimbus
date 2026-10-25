@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { CaptureStore } from "../mcp-sink/capture-store.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 import { contractViolations, requiredPhrases } from "./_lib/brief-contract.ts";
 import { AGENT_ACTION_LANES, agentActionExclusions } from "./_lib/negotiate-agent-actions.ts";
 import { renderNegotiate } from "./_lib/render.ts";
@@ -30,7 +30,13 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 function ctx() {
-  return { db, notify: () => {}, sessionId: "negotiate-agent-1", personalSources: [] };
+  return {
+    db,
+    notify: () => {},
+    sessionId: "negotiate-agent-1",
+    personalSources: [],
+    mapping: BUILTIN_SOURCE_MAPPING,
+  };
 }
 
 function seedMessage(id: string, url: string, authorId = "person:me"): void {

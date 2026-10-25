@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-
 import { listDecisions } from "../decisions/decision-store.ts";
 import { projectTerm } from "../glossary/glossary-project.ts";
 import {
@@ -14,6 +13,7 @@ import {
 import { graphRelationExists } from "../graph/relationship-graph.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 import {
   assertAcceptable,
   captureNativeStatus,
@@ -127,7 +127,12 @@ describe("decision", () => {
       nowMs: NOW,
     });
     expect(ref).toBe("capture:cap_1");
-    const rows = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+    const rows = listDecisions(db, {
+      sinceMs: 0,
+      minConfidence: 0,
+      limit: 10,
+      mapping: BUILTIN_SOURCE_MAPPING,
+    });
     expect(rows).toHaveLength(1);
     expect(rows[0]?.extractionSource).toBe("agent");
     expect(rows[0]?.evidence.map((e) => e.label).sort()).toEqual(["PR 1", "missing-item"]);
@@ -135,7 +140,14 @@ describe("decision", () => {
     expect(captureNativeStatus(db, row)).toBe("owned");
     revokeCaptureNative(db, row, false);
     expect(captureNativeStatus(db, row)).toBe("absent");
-    expect(listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 })).toHaveLength(0);
+    expect(
+      listDecisions(db, {
+        sinceMs: 0,
+        minConfidence: 0,
+        limit: 10,
+        mapping: BUILTIN_SOURCE_MAPPING,
+      }),
+    ).toHaveLength(0);
   });
 });
 

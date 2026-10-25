@@ -16,6 +16,7 @@ import { ensureGraphEntity } from "../../graph/relationship-graph.ts";
 import { upsertIndexedItem } from "../../index/item-store.ts";
 import { openMigratedMemoryDb } from "../../index/migrated-db-template.ts";
 import { dirExternalId, fileExternalId } from "../../ownership/ownership-pass.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../../sources/source-mapping.ts";
 import { TOUR_SELECTORS, type TourSelectorCtx } from "./tour-selectors.ts";
 import { TOUR_STEP_KINDS } from "./tour-types.ts";
 
@@ -29,6 +30,7 @@ const ctx = (over: Partial<TourSelectorCtx> = {}): TourSelectorCtx => ({
   fsRoots: [],
   ownershipRoots: [],
   decisionsMinConfidence: 0,
+  mapping: BUILTIN_SOURCE_MAPPING,
   resolveSelf: async () => null,
   ...over,
 });

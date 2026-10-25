@@ -45,6 +45,7 @@ type DecisionRow = {
   has_adr: number;
   attempts: number;
   last_attempt_at: number;
+  scored_kind: string | null;
 };
 
 type EvidenceRow = {
@@ -105,6 +106,7 @@ function toRecord(r: DecisionRow, evidence: readonly DecisionEvidence[]): Decisi
     hasAdr: r.has_adr === 1,
     attempts: r.attempts,
     lastAttemptAt: r.last_attempt_at,
+    scoredKind: r.scored_kind as SourceKind | null,
     evidence,
   };
 }
@@ -168,6 +170,27 @@ export function upsertCandidate(db: Database, c: CandidateInsert): void {
 export function pendingWorkFilter(mapping: SourceMapping): { sql: string; params: string[] } {
   const f = sourceFilterSql(mapping.typesFor("decisions"), "i");
   return { sql: `(i.id IS NULL OR ${f.sql})`, params: f.params };
+}
+
+/**
+ * The READ visibility rule for every user-facing decisions surface (`nimbus decisions`, its counts,
+ * `nimbus negotiate`'s decisions lane, the `nimbus wow` selector): a row shows while its source's
+ * `service:type` is in the effective decisions set. Two kinds of row show whatever the mapping
+ * says — an owner-accepted `'agent'` decision (its source is a `nimbus:capture` item, which no
+ * mapping can name, I28) and a row whose source item is gone (shown exactly as before mappings
+ * existed). Nothing is deleted: re-including a type shows its rows again. Distinct from
+ * {@link pendingWorkFilter}, which governs what the pass sends to the model and has no `'agent'`
+ * arm (agent rows are never queued). Joined as `LEFT JOIN item i` on the record `d`.
+ */
+export function decisionVisibilityFilter(mapping: SourceMapping): {
+  sql: string;
+  params: string[];
+} {
+  const f = sourceFilterSql(mapping.typesFor("decisions"), "i");
+  return {
+    sql: `(d.extraction_source = 'agent' OR i.id IS NULL OR ${f.sql})`,
+    params: f.params,
+  };
 }
 
 export function selectPendingByPriority(
@@ -292,30 +315,46 @@ export function setConfidence(
   );
 }
 
+/**
+ * `mapping` is REQUIRED, never defaulted: a default would let a user-facing read forget it and
+ * silently show an excluded type's rows. `limit` counts VISIBLE rows (the filter is in the WHERE).
+ */
 export function listDecisions(
   db: Database,
-  opts: { sinceMs: number; minConfidence: number; limit: number },
+  opts: { sinceMs: number; minConfidence: number; limit: number; mapping: SourceMapping },
 ): DecisionRecord[] {
+  const f = decisionVisibilityFilter(opts.mapping);
   const rows = db
     .query(
-      `SELECT * FROM decision_record
-        WHERE status = 'extracted' AND decided_at >= ? AND confidence >= ?
-        ORDER BY decided_at DESC, id ASC
+      `SELECT d.* FROM decision_record d
+         LEFT JOIN item i ON i.id = d.source_item_id
+        WHERE d.status = 'extracted' AND d.decided_at >= ? AND d.confidence >= ? AND ${f.sql}
+        ORDER BY d.decided_at DESC, d.id ASC
         LIMIT ?`,
     )
-    .all(opts.sinceMs, opts.minConfidence, opts.limit) as DecisionRow[];
+    .all(opts.sinceMs, opts.minConfidence, ...f.params, opts.limit) as DecisionRow[];
   return hydrate(db, rows);
 }
 
-export function countByStatus(db: Database): {
+/** Counts the rows {@link decisionVisibilityFilter} shows under `mapping` (required, as above). */
+export function countByStatus(
+  db: Database,
+  mapping: SourceMapping,
+): {
   total: number;
   pending: number;
   extracted: number;
   vetoed: number;
 } {
+  const f = decisionVisibilityFilter(mapping);
   const rows = db
-    .query("SELECT status, COUNT(*) AS n FROM decision_record GROUP BY status")
-    .all() as Array<{ status: string; n: number }>;
+    .query(
+      `SELECT d.status AS status, COUNT(*) AS n FROM decision_record d
+         LEFT JOIN item i ON i.id = d.source_item_id
+        WHERE ${f.sql}
+        GROUP BY d.status`,
+    )
+    .all(...f.params) as Array<{ status: string; n: number }>;
   const get = (s: string): number => rows.find((r) => r.status === s)?.n ?? 0;
   const pending = get("pending");
   const extracted = get("extracted");

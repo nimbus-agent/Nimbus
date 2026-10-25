@@ -61,7 +61,12 @@ describe("nimbus decisions (e2e, in-process)", () => {
     const seen: Array<{ method: string; params: unknown }> = [];
     await emitDecisionsBrief(
       {},
-      { db, sessionId: "e2e-decisions", notify: (method, params) => seen.push({ method, params }) },
+      {
+        db,
+        sessionId: "e2e-decisions",
+        mapping: BUILTIN_SOURCE_MAPPING,
+        notify: (method, params) => seen.push({ method, params }),
+      },
     );
     await Bun.sleep(50);
 

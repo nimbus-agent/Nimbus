@@ -9,6 +9,7 @@ import { upsertIndexedItem } from "../../../src/index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
 import { insertPerson } from "../../../src/people/person-store.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../../../src/sources/source-mapping.ts";
 
 /**
  * Derived from the clock, never a fixed epoch. Every lane except ownership windows on
@@ -167,6 +168,7 @@ describe("nimbus negotiate (e2e, in-process)", () => {
           notify: (method, params) => seen.push({ method, params }),
           sessionId: "e2e-negotiate",
           personalSources: [],
+          mapping: BUILTIN_SOURCE_MAPPING,
         },
       );
       expect(result).toEqual({ sessionId: "e2e-negotiate" });

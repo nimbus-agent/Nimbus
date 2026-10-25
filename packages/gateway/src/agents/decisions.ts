@@ -1,11 +1,16 @@
 import type { Database } from "bun:sqlite";
 
-import { computeConfidence, explainConfidence } from "../decisions/decision-confidence.ts";
+import {
+  type ConfidenceInput,
+  computeConfidence,
+  explainConfidence,
+} from "../decisions/decision-confidence.ts";
 import { loadDecisionCandidates } from "../decisions/decision-extract.ts";
 import { matchesService, type ServiceMatchRoute } from "../decisions/decision-service-scope.ts";
 import { countByStatus, listDecisions, readPassState } from "../decisions/decision-store.ts";
 import type { DecisionRecord } from "../decisions/decision-types.ts";
 import { AgentCoordinator, type SubTask } from "../engine/coordinator.ts";
+import type { SourceMapping } from "../sources/source-mapping.ts";
 import type { DecisionsBrief, DecisionsEntry, DecisionsInput } from "./_lib/decisions-types.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
@@ -24,6 +29,12 @@ export type DecisionsContext = {
    * always wins, including an explicit `0`.
    */
   defaultMinConfidence?: number;
+  /**
+   * The effective source mapping, built per call by the caller (`sourceMappingFor(configDir)`).
+   * REQUIRED: every read below shows only rows whose source is mapped now (plus agent and orphan
+   * rows), and an optional field would let a caller forget it and show excluded rows.
+   */
+  mapping: SourceMapping;
 };
 
 const DEFAULT_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
@@ -37,11 +48,46 @@ function serviceTypeOf(db: Database, itemId: string): string {
   return r === null ? "unknown:unknown" : `${r.service}:${r.type}`;
 }
 
+/**
+ * The inputs a row is re-scored from, shared by `--explain` and the stale-score check so the two
+ * cannot disagree. A row carrying `scoredKind` is scored under THAT kind: a later re-kind
+ * (`jira:issue=doc`) changes authority for NEW scores only, and must not make every existing row
+ * read as "the previous scale". Its `serviceType` is then display-only (`--explain`'s detail), so
+ * the stale check skips the per-row item lookup. A row without one (`null`) keeps the old path:
+ * its source's kind under the effective mapping.
+ */
+function scoringInput(
+  r: DecisionRecord,
+  mapping: SourceMapping,
+  serviceType: () => string,
+): ConfidenceInput {
+  const base = {
+    tier: r.cueTier,
+    evidenceKinds: r.evidence.map((e) => e.kind),
+    hasRationale: r.rationale !== null,
+    hasAlternatives: r.alternatives.length > 0,
+  };
+  return r.scoredKind === null
+    ? { ...base, serviceType: serviceType(), mapping }
+    : { ...base, serviceType: "", scoredKind: r.scoredKind };
+}
+
+/** `--explain`: scored as the stale check scores it; the source's type is shown as the detail. */
+function explainRow(
+  db: Database,
+  r: DecisionRecord,
+  mapping: SourceMapping,
+): ReturnType<typeof explainConfidence> {
+  const serviceType = serviceTypeOf(db, r.sourceItemId);
+  return explainConfidence({ ...scoringInput(r, mapping, () => serviceType), serviceType });
+}
+
 function toEntry(
   db: Database,
   r: DecisionRecord,
   explain: boolean,
   matchedVia: ServiceMatchRoute | null,
+  mapping: SourceMapping,
 ): DecisionsEntry {
   return {
     id: r.id,
@@ -53,15 +99,7 @@ function toEntry(
     hasAdr: r.hasAdr,
     extractionSource: r.extractionSource,
     evidence: [...r.evidence],
-    explain: explain
-      ? explainConfidence({
-          tier: r.cueTier,
-          serviceType: serviceTypeOf(db, r.sourceItemId),
-          evidenceKinds: r.evidence.map((e) => e.kind),
-          hasRationale: r.rationale !== null,
-          hasAlternatives: r.alternatives.length > 0,
-        })
-      : [],
+    explain: explain ? explainRow(db, r, mapping) : [],
     matchedVia,
   };
 }
@@ -210,14 +248,16 @@ export async function runDecisions(
   });
 
   const tasks: SubTask[] = [
-    subAgent(() => listDecisions(ctx.db, { sinceMs: cutoffMs, minConfidence, limit })),
-    subAgent(() => countByStatus(ctx.db)),
+    subAgent(() =>
+      listDecisions(ctx.db, { sinceMs: cutoffMs, minConfidence, limit, mapping: ctx.mapping }),
+    ),
+    subAgent(() => countByStatus(ctx.db, ctx.mapping)),
     subAgent(() => readPassState(ctx.db)),
     // The honesty count: how many of the decision-source items considered in
     // this window were indexed with a truncated body. A separate scan from
     // `listDecisions` above — it covers every candidate source in the window,
     // not just the ones that produced a decision.
-    subAgent(() => loadDecisionCandidates(ctx.db, { sinceMs: cutoffMs })),
+    subAgent(() => loadDecisionCandidates(ctx.db, { sinceMs: cutoffMs, mapping: ctx.mapping })),
   ];
   const results = await coordinator.run(tasks);
 
@@ -235,7 +275,7 @@ export async function runDecisions(
   const entries: DecisionsEntry[] = [];
   for (const r of rows) {
     if (service === null) {
-      entries.push(toEntry(ctx.db, r, explain, null));
+      entries.push(toEntry(ctx.db, r, explain, null, ctx.mapping));
       continue;
     }
     const route = matchesService(ctx.db, {
@@ -247,7 +287,7 @@ export async function runDecisions(
       serviceUnmatched++;
       continue;
     }
-    entries.push(toEntry(ctx.db, r, explain, route));
+    entries.push(toEntry(ctx.db, r, explain, route, ctx.mapping));
   }
 
   // Counted over the ENTRIES, not over `rows`. Every gap note describes the
@@ -262,13 +302,9 @@ export async function runDecisions(
   // `explainConfidence` already uses — so this measures the actual disagreement rather than
   // guessing from a timestamp.
   const staleScoreCount = rows.filter((r) => {
-    const fresh = computeConfidence({
-      tier: r.cueTier,
-      serviceType: serviceTypeOf(ctx.db, r.sourceItemId),
-      evidenceKinds: r.evidence.map((e) => e.kind),
-      hasRationale: r.rationale !== null,
-      hasAlternatives: r.alternatives.length > 0,
-    });
+    const fresh = computeConfidence(
+      scoringInput(r, ctx.mapping, () => serviceTypeOf(ctx.db, r.sourceItemId)),
+    );
     return Math.abs(fresh - r.confidence) > 0.005;
   }).length;
 

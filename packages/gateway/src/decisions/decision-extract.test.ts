@@ -77,7 +77,12 @@ test("discovers a cue, extracts it, and stores statement and rationale", async (
   const summary = await runDecisionPass(db, { ...OPTS, llm });
   expect(summary.discovered).toBe(1);
   expect(summary.extracted).toBe(1);
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.statement).toBe("Move billing to Postgres");
   expect(row?.rationale).toBe("pool exhaustion");
 });
@@ -93,7 +98,7 @@ test("a vetoed candidate is not re-asked on a second pass", async () => {
   };
   await runDecisionPass(db, { ...OPTS, llm });
   expect(calls).toBe(1);
-  expect(countByStatus(db).vetoed).toBe(1);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).vetoed).toBe(1);
 
   await runDecisionPass(db, { ...OPTS, nowMs: 20_000, llm });
   expect(calls).toBe(1);
@@ -104,14 +109,19 @@ test("the watermark advances even when extraction fails", async () => {
   const llm: DecisionLlm = { complete: async () => "unparseable" };
   await runDecisionPass(db, { ...OPTS, llm });
   expect(readPassState(db).watermarkMs).toBe(5_000);
-  expect(countByStatus(db).pending).toBe(1); // stays pending, retries later
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).pending).toBe(1); // stays pending, retries later
 });
 
 test("with no LLM the pass still produces snippet-sourced rows", async () => {
   seed("s1", "slack", "message", "thread", "We decided to move billing to Postgres.", 5_000);
   const summary = await runDecisionPass(db, { ...OPTS, useLlm: false });
   expect(summary.extracted).toBe(1);
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.extractionSource).toBe("snippet");
 });
 
@@ -153,7 +163,12 @@ test("a later pass with an LLM upgrades a snippet row to llm-sourced", async () 
   );
   const summary = await runDecisionPass(db, { ...OPTS, nowMs: 20_000, llm });
   expect(summary.upgraded).toBe(1);
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.extractionSource).toBe("llm");
 });
 
@@ -194,12 +209,12 @@ test("a snippet upgrade still happens when new candidates would fill the budget"
 test("rebuildDecisions clears vetoes so a candidate is re-evaluated", async () => {
   seed("s1", "slack", "message", "t", "We decided to grab lunch.", 5_000);
   await runDecisionPass(db, { ...OPTS, llm: scriptedLlm({}, '{"is_decision":false}') });
-  expect(countByStatus(db).vetoed).toBe(1);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).vetoed).toBe(1);
 
   const llm = scriptedLlm({}, '{"is_decision":true,"statement":"Lunch at noon"}');
   await rebuildDecisions(db, { ...OPTS, nowMs: 30_000, llm });
-  expect(countByStatus(db).vetoed).toBe(0);
-  expect(countByStatus(db).extracted).toBe(1);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).vetoed).toBe(0);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).extracted).toBe(1);
 });
 
 test("rebuildDecisions keeps an owner-accepted agent row through the full rebuild-and-pass", async () => {
@@ -217,7 +232,12 @@ test("rebuildDecisions keeps an owner-accepted agent row through the full rebuil
   seed("s1", "slack", "message", "t", "We decided to grab lunch.", 5_000);
   const llm = scriptedLlm({}, '{"is_decision":true,"statement":"Lunch at noon"}');
   await rebuildDecisions(db, { ...OPTS, nowMs: 30_000, llm });
-  const rows = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const rows = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   const agent = rows.find((r) => r.id === "capture:cap_1");
   expect(agent?.extractionSource).toBe("agent");
   expect(agent?.confidence).toBe(1);
@@ -315,9 +335,14 @@ test("a pass with an LLM that has no model available produces snippet rows, not 
   expect(summary.noModel).toBe(1);
   expect(summary.failed).toBe(0);
   expect(summary.vetoed).toBe(0);
-  expect(countByStatus(db).vetoed).toBe(0);
-  expect(countByStatus(db).pending).toBe(0);
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).vetoed).toBe(0);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).pending).toBe(0);
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.extractionSource).toBe("snippet");
 });
 
@@ -332,7 +357,12 @@ test("an item with no body is scanned and extracted from its title alone", async
   );
   const summary = await runDecisionPass(db, { ...OPTS, useLlm: false });
   expect(summary.discovered).toBe(1);
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.statement).toBe("Decision: adopt Postgres for billing.");
 });
 
@@ -343,12 +373,17 @@ test("a candidate whose source item vanished falls back to the stored cue text",
   seed("s1", "slack", "message", "t", "We decided to move billing to Postgres.", 5_000);
   // Discover the candidate without spending budget on extraction.
   await runDecisionPass(db, { ...OPTS, useLlm: false, maxLlmCalls: 0 });
-  expect(countByStatus(db).pending).toBe(1);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).pending).toBe(1);
   db.run("DELETE FROM item WHERE id = ?", ["s1"]);
 
   const summary = await runDecisionPass(db, { ...OPTS, nowMs: 20_000, useLlm: false });
   expect(summary.extracted).toBe(1);
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.statement).toBe("We decided");
   // Confidence still scores, with the source authority degraded to unknown
   // (0.25*0.6 cue + 0.2*0.3 authority) rather than throwing on the missing row.
@@ -369,7 +404,12 @@ test("each candidate re-mines its own sentence, not the first cue in the item", 
   );
   const summary = await runDecisionPass(db, { ...OPTS, useLlm: false });
   expect(summary.discovered).toBe(2);
-  const statements = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 })
+  const statements = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  })
     .map((r) => r.statement)
     .sort();
   expect(statements).toEqual([
@@ -394,14 +434,21 @@ test("an upgrade attempt with no model available counts noModel only, never upgr
   expect(summary.noModel).toBe(1);
   expect(summary.extracted).toBe(0); // the pending queue was empty; this was upgrade work
   expect(summary.failed).toBe(0);
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.extractionSource).toBe("snippet");
 });
 
 test("a model that rejects a snippet row on upgrade vetoes it and drops it from the list", async () => {
   seed("s1", "slack", "message", "t", "We decided to grab lunch at noon.", 5_000);
   await runDecisionPass(db, { ...OPTS, useLlm: false });
-  expect(listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 })).toHaveLength(1);
+  expect(
+    listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10, mapping: BUILTIN_SOURCE_MAPPING }),
+  ).toHaveLength(1);
 
   const summary = await runDecisionPass(db, {
     ...OPTS,
@@ -410,8 +457,10 @@ test("a model that rejects a snippet row on upgrade vetoes it and drops it from 
   });
   expect(summary.vetoed).toBe(1);
   expect(summary.upgraded).toBe(0);
-  expect(countByStatus(db).vetoed).toBe(1);
-  expect(listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 })).toHaveLength(0);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).vetoed).toBe(1);
+  expect(
+    listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10, mapping: BUILTIN_SOURCE_MAPPING }),
+  ).toHaveLength(0);
 });
 
 test("unparseable model output on upgrade counts as failed and keeps the snippet row", async () => {
@@ -428,7 +477,12 @@ test("unparseable model output on upgrade counts as failed and keeps the snippet
   expect(summary.vetoed).toBe(0);
   // Garbage output is retryable, not a rejection: the row keeps its snippet
   // statement and stays eligible for a later upgrade.
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.extractionSource).toBe("snippet");
 });
 
@@ -443,7 +497,12 @@ test("a later pass with a working LLM upgrades rows that previously had no model
   );
   const summary = await runDecisionPass(db, { ...OPTS, nowMs: 20_000, llm });
   expect(summary.upgraded).toBe(1);
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.extractionSource).toBe("llm");
 });
 
@@ -497,7 +556,7 @@ test("discovery drains past a single batch instead of truncating", async () => {
   expect(summary.scanned).toBe(7);
   expect(summary.discovered).toBe(7);
   expect(summary.discoveryComplete).toBe(true);
-  expect(countByStatus(db).total).toBe(7);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).total).toBe(7);
   expect(readPassState(db).watermarkId).toBe("s6");
   expect(readPassState(db).scannedItems).toBe(7);
 });
@@ -517,7 +576,7 @@ test("--rebuild re-discovers every item, not just the first batch", async () => 
   });
   expect(summary.discovered).toBe(5);
   expect(summary.discoveryComplete).toBe(true);
-  expect(countByStatus(db).total).toBe(5);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).total).toBe(5);
 });
 
 // The safety bound must be honest, not silently treated as completion: a capped
@@ -547,7 +606,7 @@ test("hitting the discovery batch bound reports discoveryComplete false and resu
   });
   expect(rest.scanned).toBe(3);
   expect(rest.discoveryComplete).toBe(true);
-  expect(countByStatus(db).total).toBe(7);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).total).toBe(7);
 });
 
 test("a non-finite scanBatchLimit falls back to the default instead of reaching SQL", async () => {
@@ -601,7 +660,7 @@ test("exclude stops mining and model calls", async () => {
     status: string;
   } | null;
   expect(row?.status).toBe("pending");
-  expect(countByStatus(db).total).toBe(1);
+  expect(countByStatus(db, BUILTIN_SOURCE_MAPPING).total).toBe(1);
   // Re-included: the queued row is selected again.
   expect(selectPendingByPriority(db, 10, 100_000, BUILTIN_SOURCE_MAPPING).map((r) => r.id)).toEqual(
     ["queued"],
@@ -624,7 +683,12 @@ test("a pending row whose source item is gone still reaches the queue", () => {
 test("exclude stops snippet upgrades", async () => {
   seed("s1", "slack", "message", "t", "We decided to move billing to Postgres.", 5_000);
   await runDecisionPass(db, { ...OPTS, useLlm: false });
-  const [row] = listDecisions(db, { sinceMs: 0, minConfidence: 0, limit: 10 });
+  const [row] = listDecisions(db, {
+    sinceMs: 0,
+    minConfidence: 0,
+    limit: 10,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   expect(row?.extractionSource).toBe("snippet");
   expect(selectSnippetUpgrades(db, 10, NO_SLACK)).toEqual([]);
   expect(selectSnippetUpgrades(db, 10, BUILTIN_SOURCE_MAPPING).map((r) => r.id)).toEqual([
@@ -675,6 +739,6 @@ test("rebuild clears catch-up cursors", async () => {
 
 test("the candidate count follows a given mapping", () => {
   seed("s1", "slack", "message", "t", "We decided to ship it.", 5_000);
-  expect(loadDecisionCandidates(db, { sinceMs: 0 }).total).toBe(1);
+  expect(loadDecisionCandidates(db, { sinceMs: 0, mapping: BUILTIN_SOURCE_MAPPING }).total).toBe(1);
   expect(loadDecisionCandidates(db, { sinceMs: 0, mapping: NO_SLACK }).total).toBe(0);
 });
