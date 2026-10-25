@@ -18,6 +18,19 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-25 — Role packs P5 PR 1: `nimbus init` asks what you do and works outside a git repository (no schema change, no invariant, no egress class).**
+  Once the Gateway is up — after indexing inside a repository, after starting it outside one — an interactive `nimbus init`
+  asks "What do you do?": one choice per bundled role pack (matched on the pack's `roles` tags), then Engineering, Design and
+  Something else; `--role <value>` answers it up front. A pack answer installs that pack through the existing
+  `nimbus pack install` approval, lists its suggested connectors and offers browser sign-in for each one that supports it;
+  Engineering keeps today's login-adoption and tour offers; Design and Something else get general connector suggestions.
+  A non-interactive run inside a repository with no `--role` is unchanged. Outside a repository `init` no longer exits 1: it
+  writes nothing, starts the Gateway and exits 0; exit 1 now means an invalid `--role`. Gateway reads behind it: `pack.list`
+  rows carry `roles` and `suggestedConnectors`; `catalog.list` carries `suggestedConnectors` (the active packs', or a neutral
+  six) and each built-in connector's `signIn`; a new read `decisions.status` (LAN-forbidden) reports what the decisions pass
+  read and found, windowed and filtered exactly as `nimbus decisions` is; `nimbus wow` skips agents your packs or your
+  `[agents] hide` hide; `nimbus pack list` names the packs when none is installed. The desktop half (Tauri allowlist,
+  onboarding steps) is PR 2.
 - **2026-10-25 — Role packs P2 PR 3: Google Docs are indexed with their text, and the Product pack (1.1.0) mines them for decisions and glossary terms (no migration, no invariant, no egress class).**
   The Drive sync now writes a Google Doc as `google_drive:doc` (same item id as the `file` row it replaces, re-typed in
   place) with its plain-text export as the body, under the existing depth chokepoint: up to 16,384 characters at `full`,
