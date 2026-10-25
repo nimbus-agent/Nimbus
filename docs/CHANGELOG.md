@@ -18,6 +18,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-25 — Role packs P2 PR 1: decisions and glossary sources resolve through one kind table (no behaviour change, no migration, no invariant, no egress class).**
+  `sources/source-kinds.ts` classifies every decisions/glossary source `service:type` as a kind (`message`, `doc`,
+  `ticket`, `commit`, `note`), and both passes' source sets now derive from it; source authority, ADR corroboration
+  and ticket-key matching read the kind instead of naming services. Every output is unchanged: both source sets
+  are pinned in order to their previous literal values, and no existing test assertion was edited. Groundwork for role packs
+  and the owner adding sources of their own (Project 2, PR 2).
+
 - **2026-10-25 — Role packs P4: the desktop follows your role packs (no migration, no invariant, no egress class).**
   The sidebar now groups the agent pages by your active role packs, and the home screen shows a card per visible
   agent of those packs. A card shows the newest stored fleet brief for that agent with an Open link when there is

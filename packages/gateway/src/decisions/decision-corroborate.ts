@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { sourceTypesOfKind } from "../sources/source-kinds.ts";
 import type { DecisionEvidence } from "./decision-types.ts";
 
 /**
@@ -180,17 +181,24 @@ export function corroborate(db: Database, input: CorroborateInput): DecisionEvid
   // no way for the caller to know. Pushing the shape test down means the cap is
   // reached only by pages that already look like ADRs, and `ORDER BY` makes
   // which ones deterministic.
+  // ADRs live in long-form docs: every type the source table classifies as `doc`.
+  const docTypes = sourceTypesOfKind("doc");
   const adrs = db
     .query(
       `SELECT id, title, url, modified_at FROM item
-        WHERE (service || ':' || type) IN ('notion:page','confluence:page','obsidian:obsidian_note')
+        WHERE (service || ':' || type) IN (${docTypes.map(() => "?").join(", ")})
           AND (LOWER(title) LIKE '%adr%'
             OR LOWER(title) LIKE '%decision%'
             OR title GLOB '[0-9]*')
         ORDER BY modified_at DESC, id ASC
         LIMIT 200`,
     )
-    .all() as Array<{ id: string; title: string; url: string | null; modified_at: number }>;
+    .all(...docTypes) as Array<{
+    id: string;
+    title: string;
+    url: string | null;
+    modified_at: number;
+  }>;
   for (const a of adrs) {
     if (!ADR_TITLE_RE.test(a.title)) continue;
     if (!tokenOverlap(input.statement, a.title)) continue;

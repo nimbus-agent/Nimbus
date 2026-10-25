@@ -308,3 +308,19 @@ test("a numerically-titled page that is not a numbered ADR is rejected by the sh
   });
   expect(hasAdrEvidence(ev)).toBe(false);
 });
+
+test("ADR lookup admits doc-kind sources only", () => {
+  seedItem("src", "slack", "message", "thread", DECIDED_AT);
+  seedItem("drv", "google_drive", "page", "ADR: move billing to Postgres", DECIDED_AT);
+  seedItem("wiz", "wiz", "issue", "ADR: move billing to Postgres", DECIDED_AT);
+  const input = {
+    decisionId: "d1",
+    sourceItemId: "src",
+    decidedAt: DECIDED_AT,
+    statement: "move billing to Postgres",
+  };
+  expect(hasAdrEvidence(corroborate(db, input))).toBe(false);
+  seedItem("cnf", "confluence", "page", "ADR: move billing to Postgres", DECIDED_AT);
+  const adrs = corroborate(db, input).filter((e) => e.kind === "adr");
+  expect(adrs.map((e) => e.itemId)).toEqual(["cnf"]);
+});

@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 
-import { computeConfidence, computePriority, explainConfidence } from "./decision-confidence.ts";
+import {
+  computeConfidence,
+  computePriority,
+  explainConfidence,
+  sourceAuthority,
+} from "./decision-confidence.ts";
 
 test("a fully-evidenced heading decision on a page scores near 1", () => {
   const c = computeConfidence({
@@ -183,4 +188,22 @@ test("the reachable confidence ceiling is 1.0 — full marks are attainable", ()
     hasAlternatives: true,
   });
   expect(best).toBeCloseTo(1, 5);
+});
+
+test("authority by kind: doc 1, ticket 0.6, message and commit 0.3", () => {
+  expect(sourceAuthority("notion:page")).toBe(1);
+  expect(sourceAuthority("obsidian:obsidian_note")).toBe(1);
+  expect(sourceAuthority("jira:issue")).toBe(0.6);
+  expect(sourceAuthority("github:issue")).toBe(0.6);
+  expect(sourceAuthority("slack:message")).toBe(0.3);
+  expect(sourceAuthority("filesystem:git_commit")).toBe(0.3);
+});
+
+// Owner-accepted agent decisions (mcp-sink/capture-native.ts) can point at ANY item type, and the
+// brief's explain and stale-score paths score them through sourceAuthority.
+test("unmapped types keep today's authority (agent decisions can point anywhere)", () => {
+  expect(sourceAuthority("bitbucket:issue")).toBe(0.6);
+  expect(sourceAuthority("wiz:issue")).toBe(0.6);
+  expect(sourceAuthority("gmail:email")).toBe(0.3);
+  expect(sourceAuthority("google_drive:file")).toBe(0.3);
 });

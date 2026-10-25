@@ -74,9 +74,16 @@ rather than a full re-scan. Decisions has the analogous demote-on-missing-source
 
 ## Source types — a service-qualified SSoT, never a bare `type`
 
+Every source is classified ONCE, in `sources/source-kinds.ts`: `BUILTIN_SOURCE_KINDS` maps a
+**`service:type`** key to a kind (`message`, `doc`, `ticket`, `commit`, `note`), and `PASS_KINDS`
+says which kinds each pass reads (decisions: message, doc, ticket, note; glossary adds commit).
 `glossary/glossary-source-types.ts` `GLOSSARY_SOURCE_TYPES` and
-`decisions/decision-source-types.ts` `DECISION_SOURCE_TYPES` are `ReadonlySet<string>` of
-**`service:type`** keys, and the SQL filter matches `(i.service || ':' || i.type)`.
+`decisions/decision-source-types.ts` `DECISION_SOURCE_TYPES` are DERIVED from it (still
+`ReadonlySet<string>`, still what the passes and the I28 test import), and the SQL filter matches
+`(i.service || ':' || i.type)`. Three decision helpers read the kind too: `sourceAuthority` (doc 1,
+ticket 0.6, else 0.3; a type outside the table keeps the old `*:issue` → 0.6 rule, because an
+owner-accepted agent decision can point at any item), the ADR lookup (doc-kind types), and
+ticket-key matching (ticket-kind types, through `metadata.key`/`identifier` only).
 
 **Filtering on the bare `type` half silently widens scope.** `message`, `page` and `issue` are
 generic names shared across services — `type IN ('issue', …)` also admits `wiz:issue` (cloud
@@ -88,8 +95,8 @@ Two standing decisions, both deliberate:
 - **Email and calendar are absent from both sets.** Mining a personal inbox into a *team*
   artifact is not a posture to adopt silently. This is a product decision, not an oversight —
   do not "fix" it as part of an unrelated change.
-- **A dead allowlist row fails safe.** `github:commit` / `gitlab:commit` are listed in
-  `GLOSSARY_SOURCE_TYPES` because the roadmap names commit messages as a source, but no
+- **A dead allowlist row fails safe.** `github:commit` / `gitlab:commit` are commit-kind rows,
+  so they reach `GLOSSARY_SOURCE_TYPES`, because the roadmap names commit messages as a source, but no
   connector writes `item.type = 'commit'` today, so they match nothing until one lands. That
   is the safe direction; the opposite (a bare-type filter that matches early) is not.
 
@@ -257,16 +264,20 @@ previews the delete count and requires `--yes`.
 
 ## Checklist — adding a source item type to either pass
 
-1. Add the **`<service>:<type>`** key to `GLOSSARY_SOURCE_TYPES` / `DECISION_SOURCE_TYPES`.
-   Never a bare type.
+1. Add the **`<service>:<type>`** key with its kind to `BUILTIN_SOURCE_KINDS`
+   (`sources/source-kinds.ts`); both pass sets derive from it. Never a bare type. The kind decides
+   which passes read it and how a decision from it is scored.
 2. Confirm the connector actually writes a body for that type, and at what cap — a type with
    only a 512-char `body_preview` will surface almost nothing. Derive it; see
    `nimbus-index-body-depth`.
 3. If it is paragraph-shaped, check whether it belongs in `PROSE_HEAVY_TYPES`
    (`nimbus-embedding-routing`) — that raises the body cap, which is usually the real
    blocker.
-4. For decisions, set `sourceAuthority` deliberately (`decision-confidence.ts`: long-form docs
-   `1`, `*:issue` `0.6`, chat `0.3`). A new type falls through to `0.3`.
+4. For decisions, choose the kind deliberately: it sets the authority (`sourceAuthority` in
+   `decision-confidence.ts`: doc `1`, ticket `0.6`, message/commit/note `0.3`), makes a doc-kind
+   type an ADR candidate, and lets a ticket-kind type match `--service` by `metadata.key` /
+   `identifier`. Do not add a per-service branch to `sourceAuthority`; only a type OUTSIDE the
+   table uses its fallback (`*:issue` `0.6`, else `0.3`).
 5. Existing rows are **not** re-scanned by adding a type — the watermark has already passed
    them. Say so, and point the user at `--rebuild`.
 6. Update the honesty statements if the change moves a ceiling or a coverage claim.

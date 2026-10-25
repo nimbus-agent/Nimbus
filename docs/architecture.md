@@ -1255,6 +1255,19 @@ All built-in agents follow the pattern above. The IPC handlers live in `packages
 | 9 | `model-health` | `nimbus model-health [<model-name>]` | `agents.modelHealth` | Planned — latency p50/p95/p99, eval-suite pass rate, cost burn vs. budget, prompt regressions, drift indicators |
 | 9 | `rag-health` | `nimbus rag-health [<rag-app-name>]` | `agents.ragHealth` | Planned — retrieval-quality scores, embedding-version drift, vector-store health, knowledge-base freshness |
 
+### Source kinds (decisions and glossary inputs)
+
+The `decisions` and `glossary` passes find their inputs by **kind**, not by service.
+`packages/gateway/src/sources/source-kinds.ts` maps each `service:type` to one of five kinds —
+`message`, `doc`, `ticket`, `commit`, `note` — and each pass reads a set of kinds (decisions:
+message, doc, ticket, note; glossary adds commit). The two per-pass source sets derive from that one
+table, so a source is classified in exactly one place. Inside `decisions/`, the kind also decides a
+source's authority (doc 1, ticket 0.6, anything else 0.3; a type outside the table keeps the older
+`*:issue` → 0.6 rule, because an owner-accepted agent decision can point at any item), which items
+count as ADRs (doc-kind ones) and which items can match a `--service` by ticket key (ticket-kind
+ones carrying `metadata.key` or `metadata.identifier`). Email, calendar and gateway-written
+`nimbus:*` types are not in the table.
+
 ---
 
 ## Phase 6+ Subsystems

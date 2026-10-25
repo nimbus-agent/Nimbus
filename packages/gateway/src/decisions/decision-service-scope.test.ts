@@ -222,3 +222,22 @@ test("reports the repo route when both routes would match", () => {
     matchesService(db, { sourceItemId: "j1", evidence: prEvidence("pr1"), service: "billing" }),
   ).toBe("repo");
 });
+
+test("github issue metadata never ticket-key-matches", () => {
+  // The GitHub writer's issue metadata shape (connectors/github-sync.ts): no key, no identifier.
+  seedTicket(
+    "g1",
+    "github",
+    JSON.stringify({ number: 12, repo: "acme/billing", state: "open", user: "x" }),
+  );
+  expect(matchesService(db, { sourceItemId: "g1", evidence: [], service: "billing" })).toBeNull();
+});
+
+test("a key on a non-ticket type does not match", () => {
+  db.run(
+    `INSERT INTO item (id, service, type, external_id, title, metadata, modified_at, synced_at, pinned)
+     VALUES ('m1', 'slack', 'message', 'm1', 't', ?, 1, 1, 0)`,
+    [JSON.stringify({ key: "BILLING-1" })],
+  );
+  expect(matchesService(db, { sourceItemId: "m1", evidence: [], service: "billing" })).toBeNull();
+});

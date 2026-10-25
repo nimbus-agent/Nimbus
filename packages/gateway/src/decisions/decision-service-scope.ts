@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { sourceKindOf } from "../sources/source-kinds.ts";
 import type { DecisionEvidence } from "./decision-types.ts";
 
 export type ServiceMatchRoute = "repo" | "ticket-key";
@@ -90,10 +91,15 @@ function matchesRepo(
 }
 
 /**
- * Jira's `metadata.key`, else Linear's `metadata.identifier`. No real item
- * carries both — the two connectors write disjoint metadata — so the
- * precedence only ever settles a case that cannot occur; it is spelled out
- * rather than left to a nested ternary so it stays settled.
+ * A ticket's key: `metadata.key` (Jira writes it), else `metadata.identifier` (Linear writes it).
+ * No real item carries both — the two connectors write disjoint metadata — so the precedence only
+ * ever settles a case that cannot occur; it is spelled out rather than left to a nested ternary so
+ * it stays settled.
+ *
+ * Any ticket-kind item is eligible, but only through these two fields. GitHub and GitLab issues are
+ * ticket-kind and write neither (`connectors/github-sync.ts` writes `{number, repo, state, user}`),
+ * so they never ticket-key-match: a stated bound, not an accident. A new ticket source matches only
+ * if its connector writes one of the two.
  */
 function ticketIdentifier(m: { key?: unknown; identifier?: unknown }): string | null {
   if (typeof m.key === "string") return m.key;
@@ -103,12 +109,11 @@ function ticketIdentifier(m: { key?: unknown; identifier?: unknown }): string | 
 
 /** Jira stores `metadata.key`, Linear `metadata.identifier`; both look like `BILLING-123`. */
 function matchesTicketKey(db: Database, sourceItemId: string, service: string): boolean {
-  const row = db.query("SELECT service, metadata FROM item WHERE id = ?").get(sourceItemId) as {
-    service: string;
-    metadata: string | null;
-  } | null;
+  const row = db
+    .query("SELECT service, type, metadata FROM item WHERE id = ?")
+    .get(sourceItemId) as { service: string; type: string; metadata: string | null } | null;
   if (row?.metadata == null) return false;
-  if (row.service !== "jira" && row.service !== "linear") return false;
+  if (sourceKindOf(`${row.service}:${row.type}`) !== "ticket") return false;
 
   let raw: unknown;
   try {
