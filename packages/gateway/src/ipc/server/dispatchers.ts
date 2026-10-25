@@ -2329,7 +2329,8 @@ export async function tryDispatchRegistryRpc(
 }
 
 /**
- * `pack.*` (CLI-only). Only `pack.install` asks the owner, through the same gate-only executor as
+ * `pack.*`. `pack.list` and `pack.install` are renderer-callable (I47: bundled id only from a `ui`
+ * connection, refused in `ipc/pack-rpc.ts`). Only `pack.install` asks the owner, through the same gate-only executor as
  * `registry.add` (a local config-layer write, no connector dispatch, so no egress row). This file
  * calls the install module only, never the store's write half.
  */
@@ -2359,7 +2360,13 @@ export async function tryDispatchPackRpc(
     const toolExecutor = buildExtensionGateExecutor(ctx, localIndex, clientId);
     ownerGate = async (action) => (await toolExecutor.gate(action)) === "proceed";
   }
-  const out = await dispatchPackRpc(method, params, deps, ownerGate);
+  const out = await dispatchPackRpc(
+    method,
+    params,
+    deps,
+    ownerGate,
+    ctx.getClientKind(clientId) === "ui",
+  );
   if (out.kind === "hit") {
     return out.value;
   }

@@ -32,19 +32,19 @@ This skill is the rule a contributor consults **before** editing the allowlist.
 
 ### `ALLOWED_METHODS`
 
-Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currently 116 entries (the count grows with each renderer-exposed surface — verify the live `ALLOWED_METHODS.len()` constant in `gateway_bridge.rs` rather than trusting this number). The list is:
+Every JSON-RPC method the renderer is permitted to call via `rpc_call`. Currently 118 entries (the count grows with each renderer-exposed surface — verify the live `ALLOWED_METHODS.len()` constant in `gateway_bridge.rs` rather than trusting this number). The list is:
 
 - **Alphabetized** — enforced by `allowlist_is_alphabetized`. Insert in order; do not append at the end.
-- **Size-asserted** — `allowlist_exact_size` checks `ALLOWED_METHODS.len() == 116`. **Adding a method requires updating this constant.** Removing a method also requires updating it.
+- **Size-asserted** — `allowlist_exact_size` checks `ALLOWED_METHODS.len() == 118`. **Adding a method requires updating this constant.** Removing a method also requires updating it.
 - **Deduplicated** — `allowlist_has_no_duplicates` covers copy-paste mistakes.
 - **Free of forbidden namespaces** — `allowlist_rejects_vault_and_raw_db_writes` asserts that `vault.*`, `db.put` / `db.delete`, `config.set`, `index.rebuild`, and `index.querySql` are absent. Add to this test if you introduce a new forbidden namespace.
 
 ### `NO_TIMEOUT_METHODS`
 
-Methods that legitimately take many minutes and are tracked for liveness via streamed progress notifications instead of the default 30 s RPC timeout. Currently 7: `data.export`, `data.import`, `identity.login`, `llm.pullModel`, `migration.accept`, `updater.applyUpdate`, `workflow.run`. `migration.accept` resolves only once the owner answers its `extension.migrate` consent prompt, so a timeout would cut off the owner's read of that prompt. `workflow.run` earns its place for two reasons, not one: the handler resolves only when the run ends, AND a step can trip a HITL gate whose approval the user supplies mid-call, so the bound would double as the user's think time. The list is:
+Methods that legitimately take many minutes and are tracked for liveness via streamed progress notifications instead of the default 30 s RPC timeout. Currently 8: `data.export`, `data.import`, `identity.login`, `llm.pullModel`, `migration.accept`, `pack.install`, `updater.applyUpdate`, `workflow.run`. `migration.accept` and `pack.install` resolve only once the owner answers their consent prompt (`extension.migrate`, `pack.install`), so a timeout would cut off the owner's read of that prompt. `workflow.run` earns its place for two reasons, not one: the handler resolves only when the run ends, AND a step can trip a HITL gate whose approval the user supplies mid-call, so the bound would double as the user's think time. The list is:
 
 - **A subset of `ALLOWED_METHODS`** — enforced by `no_timeout_methods_are_subset_of_allowlist`.
-- **Size-asserted** — `no_timeout_methods_exact_size` checks `NO_TIMEOUT_METHODS.len() == 7`.
+- **Size-asserted** — `no_timeout_methods_exact_size` checks `NO_TIMEOUT_METHODS.len() == 8`.
 
 A new no-timeout method must (a) emit periodic progress notifications the UI polls for liveness, (b) support cancellation via a partner method (e.g. `llm.cancelPull`), and (c) appear in both lists with both size constants updated.
 

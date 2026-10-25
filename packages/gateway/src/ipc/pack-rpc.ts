@@ -1,5 +1,6 @@
-// `pack.*` (CLI-only; LAN-forbidden, not on the Tauri allowlist): list, show, install and remove
-// role packs in the running profile. Thin: it validates params and hands off to
+// `pack.*` (LAN-forbidden): list, show, install and remove role packs in the running profile.
+// `pack.list` and `pack.install` are on the Tauri allowlist; a renderer connection may install a
+// BUNDLED pack by id only — the local-file form is refused for it before anything is read (I47). Thin: it validates params and hands off to
 // `packs/pack-install.ts`, which owns every refusal, the prompt and the one write path. Only
 // `pack.install` asks the owner, through the gate the outer dispatcher builds.
 
@@ -82,6 +83,23 @@ function assertNoParams(params: unknown, method: string): void {
   if (Object.keys(o).length > 0) throw invalid(`${method} takes no params`);
 }
 
+/**
+ * I47: the desktop installs bundled packs by id only. A renderer connection (the Tauri bridge
+ * declares `ui` before any renderer frame, and the renderer cannot reach `session.declareKind`)
+ * sending the file form is refused before `parseRequest` touches the text and before any gate.
+ */
+function refuseRendererFile(method: string, params: unknown, fromRenderer: boolean): void {
+  if (!fromRenderer || (method !== "pack.install" && method !== "pack.show")) return;
+  if (typeof params !== "object" || params === null || Array.isArray(params)) return;
+  const o = params as Record<string, unknown>;
+  if (o["fileText"] !== undefined || o["filePath"] !== undefined) {
+    throw new RpcMethodError(
+      -32000,
+      "ERR_PACK_RENDERER_FILE: the desktop installs bundled packs by id only",
+    );
+  }
+}
+
 async function run(
   method: string,
   params: unknown,
@@ -120,8 +138,11 @@ export async function dispatchPackRpc(
   params: unknown,
   deps: PackDeps,
   gate: PackOwnerGate | undefined,
+  /** The connection's declared kind is `ui` (filled by the dispatcher, never a request field). */
+  fromRenderer: boolean,
 ): Promise<{ kind: "hit"; value: unknown } | { kind: "skip" }> {
   if (!METHODS.has(method)) return { kind: "skip" };
+  refuseRendererFile(method, params, fromRenderer);
   try {
     return { kind: "hit", value: await run(method, params, deps, gate) };
   } catch (err) {

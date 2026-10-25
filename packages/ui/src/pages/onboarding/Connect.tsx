@@ -1,47 +1,15 @@
-import { useEffect, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import { AtlassianForm } from "../../components/onboarding/AtlassianForm";
 import { createIpcClient } from "../../ipc/client";
+import {
+  connectedIds,
+  type Suggestion,
+  suggestionsFrom,
+} from "../../onboarding/connect-suggestions";
 import { useNimbusStore } from "../../store";
-
-/**
- * The subset of the gateway's `SyncStatus` this page reads, named for what it is: the shape on the
- * wire. `healthState` carries the same six-member `ConnectorHealthState` union the UI calls
- * `ConnectorHealth`, and is optional because a connector with no health row yet has none.
- */
-interface WireConnectorStatus {
-  readonly serviceId: string;
-  readonly healthState?: string;
-}
-
-/**
- * Validate the wire payload instead of asserting it.
- *
- * `client.call<T>()` only changes the TypeScript view of data that came from outside the process.
- * If the gateway returned a non-array — an error object, a shape change, an older gateway — then
- * `list.find` throws, the poll's bare `catch` calls it transient, and onboarding hangs forever
- * with no error shown. That is precisely the failure this page just had with `connector.list`,
- * reached by a different route, so the fix has to close it rather than move it.
- */
-function asWireStatuses(raw: unknown): WireConnectorStatus[] {
-  if (!Array.isArray(raw)) return [];
-  const out: WireConnectorStatus[] = [];
-  for (const entry of raw) {
-    if (entry === null || typeof entry !== "object") continue;
-    const rec = entry as Record<string, unknown>;
-    if (typeof rec["serviceId"] !== "string") continue;
-    const health = rec["healthState"];
-    out.push(
-      typeof health === "string"
-        ? { serviceId: rec["serviceId"], healthState: health }
-        : { serviceId: rec["serviceId"] },
-    );
-  }
-  return out;
-}
-
-const CONNECTORS = ["Google Drive", "GitHub", "Slack", "Linear", "Notion", "Gmail"] as const;
-
-type AuthStatus = "authenticating" | "connected" | "failed" | "cancelled" | "pending";
+import type { AuthStatus } from "../../store/slices/onboarding";
+import { buttonStyle, cardStyle, plainError, StepLabel } from "./onboarding-ui";
 
 const STATUS_COLOR: Record<AuthStatus, string> = {
   connected: "var(--color-ok)",
@@ -58,175 +26,204 @@ const STATUS_LABEL: Record<AuthStatus, string> = {
   cancelled: "Cancelled — retry",
   pending: "Pending",
 };
-const CONNECTOR_DESCRIPTIONS: Record<(typeof CONNECTORS)[number], string> = {
-  "Google Drive": "Docs, Sheets, Slides",
-  GitHub: "Repos, PRs, issues",
-  Slack: "Channels, DMs",
-  Linear: "Issues, projects",
-  Notion: "Pages, databases",
-  Gmail: "Mail + labels",
-};
 
-export function Connect() {
+const POLL_MS = 2000;
+
+/**
+ * The connectors the gateway suggests (the chosen pack's, or the neutral default), each signed in
+ * its own way: the browser for OAuth connectors, an inline form for Jira/Confluence, a terminal
+ * command for the rest. Connection state is polled from `connector.listStatus`. Nothing navigates
+ * on its own — the owner may still be signing in a second connector.
+ */
+export function Connect(): ReactNode {
   const navigate = useNavigate();
   const selected = useNimbusStore((s) => s.selected);
   const authStatus = useNimbusStore((s) => s.authStatus);
   const toggleSelected = useNimbusStore((s) => s.toggleSelected);
   const setAuthStatus = useNimbusStore((s) => s.setAuthStatus);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chosenPackId = useNimbusStore((s) => s.chosenPackId);
+  const toDecisions = useNimbusStore((s) => s.endsOnDecisions);
+  const [suggestions, setSuggestions] = useState<readonly Suggestion[]>([]);
+  const [connected, setConnected] = useState<ReadonlySet<string>>(new Set());
+  const [signingIn, setSigningIn] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(
-    () => () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    },
-    [],
+  const refreshStatus = useCallback(async (): Promise<void> => {
+    if (document.visibilityState === "hidden") return;
+    try {
+      setConnected(connectedIds(await createIpcClient().call<unknown>("connector.listStatus", {})));
+    } catch {
+      // transient; the next poll tries again
+    }
+  }, []);
+
+  useEffect(() => {
+    let live = true;
+    const client = createIpcClient();
+    void client
+      .call<unknown>("catalog.list", {})
+      .catch(() => null)
+      .then((catalog) => {
+        if (live) setSuggestions(suggestionsFrom(catalog));
+      });
+    void refreshStatus();
+    const iv = setInterval(() => void refreshStatus(), POLL_MS);
+    return () => {
+      live = false;
+      clearInterval(iv);
+    };
+  }, [refreshStatus]);
+
+  const browserSelected = suggestions.filter(
+    (s) => s.signIn === "browser" && selected.has(s.id) && !connected.has(s.id),
   );
 
-  const onAuth = async () => {
+  const signInSelected = async (): Promise<void> => {
+    if (signingIn) return;
+    setSigningIn(true);
+    setError(null);
     const client = createIpcClient();
-    const services = [...selected];
-    for (const name of services) setAuthStatus(name, "authenticating");
-    for (const name of services) {
+    for (const s of browserSelected) setAuthStatus(s.id, "authenticating");
+    for (const s of browserSelected) {
       try {
-        await client.call("connector.auth", { service: name }); // NOSONAR S9382: each connector.auth runs an interactive sign-in (OAuth opens a browser consent page + loopback callback) - one provider prompt at a time
-      } catch {
-        setAuthStatus(name, "failed");
+        await client.call("connector.auth", { service: s.id }); // NOSONAR S9382: each connector.auth runs an interactive sign-in (OAuth opens a browser consent page + loopback callback) - one provider prompt at a time
+        setAuthStatus(s.id, "connected");
+      } catch (e) {
+        setAuthStatus(s.id, "failed");
+        setError(`${s.displayName}: ${plainError(e)}`);
       }
     }
-    pollRef.current = setInterval(async () => {
-      try {
-        // `connector.listStatus`, not `connector.list`. The latter sat on the Tauri allowlist with
-        // no gateway handler behind it, so this poll returned -32601 on every tick and the bare
-        // `catch` below classified a permanent structural error as transient — the navigate was
-        // unreachable. `listStatus` is what every other consumer calls.
-        //
-        // Typed against the WIRE shape (`SyncStatus` in gateway `sync/types.ts`), deliberately not
-        // against this package's `ConnectorStatus`, which declares `{ name, health }` and does not
-        // match what the gateway sends. That mismatch is real and pre-existing — `ConnectorsPanel`
-        // reads `.name`/`.health` off this same call and gets `undefined` (`ConnectorGrid` has
-        // since been fixed to map the wire shape field-by-field) — but it is a separate defect in
-        // a surface that has never shipped, and inheriting the wrong type here to be consistent
-        // with it would just spread the bug.
-        const list = asWireStatuses(await client.call<unknown>("connector.listStatus"));
-        let anyConnected = false;
-        for (const name of services) {
-          const summary = list.find((c) => c.serviceId === name);
-          // Absent healthState means the connector has no health row yet — not yet authenticated.
-          if (summary?.healthState !== undefined && summary.healthState !== "unauthenticated") {
-            setAuthStatus(name, "connected");
-            anyConnected = true;
-          }
-        }
-        if (anyConnected) {
-          if (pollRef.current) clearInterval(pollRef.current);
-          // `void`, not `await`: `navigate` rejects only for an external target (this route is
-          // internal), and awaiting it would route a failure into the "transient" catch below
-          // even though polling has already stopped.
-          void navigate("/onboarding/syncing");
-        }
-      } catch {
-        // transient; keep polling
-      }
-    }, 2000);
+    setSigningIn(false);
+    await refreshStatus();
   };
 
-  const selectedCount = selected.size;
+  const anyConnected = suggestions.some((s) => connected.has(s.id));
+  const next = (): void => {
+    void navigate(toDecisions ? "/onboarding/decisions" : "/onboarding/syncing");
+  };
 
   return (
     <div>
-      <div
-        style={{
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          color: "var(--color-fg-muted)",
-          marginBottom: 6,
-        }}
-      >
-        Step 2
-      </div>
-      <h2 style={{ marginTop: 0 }}>Connect your first service</h2>
+      <StepLabel>Connect</StepLabel>
+      <h2 style={{ marginTop: 0 }}>Connect your tools</h2>
       <p style={{ color: "var(--color-fg-muted)" }}>
-        Pick one or more. You can add others from Settings.
+        Pick the ones you use. You can add others from Settings.
       </p>
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 10,
-          marginTop: 18,
-        }}
+        style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginTop: 18 }}
       >
-        {CONNECTORS.map((name) => {
-          const isSelected = selected.has(name);
-          const status = authStatus[name];
-          return (
-            <button
-              type="button"
-              key={name}
-              onClick={() => toggleSelected(name)}
-              style={{
-                textAlign: "left",
-                padding: 14,
-                border: `1px solid ${isSelected ? "var(--color-accent)" : "var(--color-border)"}`,
-                borderRadius: "var(--radius-md)",
-                background: isSelected ? "rgba(120, 144, 255, 0.12)" : "transparent",
-                color: "var(--color-fg)",
-                cursor: "pointer",
-              }}
-            >
-              <div style={{ fontSize: 13, marginBottom: 4 }}>
-                {isSelected && <span aria-hidden="true">✓ </span>}
-                <span>{name}</span>
-              </div>
-              <div style={{ fontSize: 11, color: "var(--color-fg-muted)" }}>
-                {CONNECTOR_DESCRIPTIONS[name]}
-              </div>
-              {status && (
-                <div
-                  style={{
-                    fontSize: 11,
-                    marginTop: 6,
-                    color: STATUS_COLOR[status] ?? STATUS_COLOR.pending,
-                  }}
-                >
-                  {STATUS_LABEL[status] ?? STATUS_LABEL.pending}
-                </div>
-              )}
-            </button>
-          );
-        })}
+        {suggestions.map((s) => (
+          <Tile
+            key={s.id}
+            s={s}
+            isConnected={connected.has(s.id)}
+            isSelected={selected.has(s.id)}
+            status={authStatus[s.id]}
+            onToggle={() => toggleSelected(s.id)}
+            onConnected={() => void refreshStatus()}
+          />
+        ))}
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32 }}>
+      {error !== null && (
+        <p role="alert" style={{ color: "var(--color-error)", fontSize: 12 }}>
+          {error}
+        </p>
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32, gap: 8 }}>
         <button
           type="button"
-          onClick={() => navigate("/onboarding/welcome")}
-          style={{
-            padding: "8px 20px",
-            borderRadius: "var(--radius-md)",
-            background: "transparent",
-            color: "var(--color-fg)",
-            border: "1px solid var(--color-border)",
-            cursor: "pointer",
-          }}
+          onClick={() => navigate(chosenPackId === null ? "/onboarding/role" : "/onboarding/pack")}
+          style={buttonStyle("outline")}
         >
           ← Back
         </button>
-        <button
-          type="button"
-          onClick={onAuth}
-          disabled={selectedCount === 0}
-          style={{
-            padding: "8px 20px",
-            borderRadius: "var(--radius-md)",
-            background: selectedCount === 0 ? "var(--color-surface)" : "var(--color-accent)",
-            color: selectedCount === 0 ? "var(--color-fg-muted)" : "white",
-            border: "1px solid var(--color-accent)",
-            cursor: selectedCount === 0 ? "not-allowed" : "pointer",
-          }}
-        >
-          Authenticate ({selectedCount}) →
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" onClick={next} style={buttonStyle("ghost")}>
+            Skip for now
+          </button>
+          {browserSelected.length > 0 && (
+            <button
+              type="button"
+              disabled={signingIn}
+              onClick={() => void signInSelected()}
+              style={buttonStyle("outline", signingIn)}
+            >
+              {signingIn ? "Signing in…" : `Sign in (${String(browserSelected.length)})`}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={next}
+            disabled={!anyConnected}
+            style={buttonStyle("primary", !anyConnected)}
+          >
+            Continue →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Tile({
+  s,
+  isConnected,
+  isSelected,
+  status,
+  onToggle,
+  onConnected,
+}: {
+  readonly s: Suggestion;
+  readonly isConnected: boolean;
+  readonly isSelected: boolean;
+  readonly status: AuthStatus | undefined;
+  readonly onToggle: () => void;
+  readonly onConnected: () => void;
+}): ReactNode {
+  const header = (
+    <>
+      <div style={{ fontSize: 13, marginBottom: 4 }}>
+        {(isSelected || isConnected) && <span aria-hidden="true">✓ </span>}
+        <span>{s.displayName}</span>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--color-fg-muted)" }}>{s.description}</div>
+    </>
+  );
+  if (isConnected) {
+    return (
+      <div style={cardStyle(true)}>
+        {header}
+        <div style={{ fontSize: 11, marginTop: 6, color: STATUS_COLOR.connected }}>Connected</div>
+      </div>
+    );
+  }
+  if (s.signIn === "browser") {
+    return (
+      <button type="button" onClick={onToggle} style={cardStyle(isSelected)}>
+        {header}
+        {status !== undefined && (
+          <div style={{ fontSize: 11, marginTop: 6, color: STATUS_COLOR[status] }}>
+            {STATUS_LABEL[status]}
+          </div>
+        )}
+      </button>
+    );
+  }
+  if (s.signIn === "atlassian") {
+    return (
+      <div style={cardStyle(false)}>
+        {header}
+        <AtlassianForm serviceId={s.id} displayName={s.displayName} onConnected={onConnected} />
+      </div>
+    );
+  }
+  return (
+    <div style={cardStyle(false)}>
+      {header}
+      <div style={{ fontSize: 11, marginTop: 6 }}>Set up from a terminal:</div>
+      <code style={{ fontSize: 11, userSelect: "all" }}>{`nimbus connector auth ${s.id}`}</code>
+      <div style={{ fontSize: 11, marginTop: 4, color: "var(--color-fg-muted)" }}>
+        We'll notice when it's connected.
       </div>
     </div>
   );

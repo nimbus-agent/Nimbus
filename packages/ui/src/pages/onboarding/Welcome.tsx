@@ -1,9 +1,15 @@
 import type React from "react";
+import { useEffect } from "react";
 import { useNavigate } from "react-router";
 import { createIpcClient } from "../../ipc/client";
+import { useNimbusStore } from "../../store";
 
 export function Welcome() {
   const navigate = useNavigate();
+  // A fresh start: an earlier run's role, pack and selections do not carry over.
+  useEffect(() => {
+    useNimbusStore.getState().resetOnboarding();
+  }, []);
 
   const onSkip = async () => {
     await createIpcClient().call("db.setMeta", {
@@ -40,11 +46,7 @@ export function Welcome() {
         <button type="button" onClick={onSkip} style={btn("ghost")}>
           Skip setup
         </button>
-        <button
-          type="button"
-          onClick={() => navigate("/onboarding/connect")}
-          style={btn("primary")}
-        >
+        <button type="button" onClick={() => navigate("/onboarding/role")} style={btn("primary")}>
           Continue →
         </button>
       </div>

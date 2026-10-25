@@ -8,16 +8,86 @@ import { callMock } from "../../src/ipc/__mocks__/client";
 import { Connect } from "../../src/pages/onboarding/Connect";
 import { useNimbusStore } from "../../src/store";
 
+// Shaped like the gateway's `catalog.list` (role packs P5): builtin rows carry `displayName`,
+// `description` and `signIn`; `suggestedConnectors` is the active packs' list.
+const CATALOG = {
+  agents: [],
+  connectors: [
+    {
+      kind: "builtin",
+      id: "slack",
+      displayName: "Slack",
+      description: "Channels",
+      signIn: "browser",
+    },
+    {
+      kind: "builtin",
+      id: "jira",
+      displayName: "Jira",
+      description: "Issues",
+      signIn: "atlassian",
+    },
+    {
+      kind: "builtin",
+      id: "notion",
+      displayName: "Notion",
+      description: "Pages",
+      signIn: "browser",
+    },
+    {
+      kind: "builtin",
+      id: "github",
+      displayName: "GitHub",
+      description: "Repos",
+      signIn: "terminal",
+    },
+  ],
+  suggestedConnectors: ["slack", "jira", "notion", "github"],
+  visibility: { basis: "packs", packs: ["pm"], notes: [] },
+};
+const PACKS = {
+  profile: "default",
+  installed: [
+    {
+      id: "pm",
+      name: "Product",
+      version: "1.0.0",
+      source: "bundled",
+      updateAvailable: false,
+      visibleAgents: ["decisions", "glossary"],
+    },
+  ],
+  available: [],
+  skipped: [],
+};
+
+type Statuses = { serviceId: string; healthState?: unknown }[];
+
+function gateway(
+  over: { statuses?: () => Statuses; auth?: (p: unknown) => Promise<unknown> } = {},
+) {
+  callMock.mockImplementation(async (method: string, params?: unknown) => {
+    if (method === "catalog.list") return CATALOG;
+    if (method === "pack.list") return PACKS;
+    if (method === "connector.listStatus") return over.statuses?.() ?? [];
+    if (method === "connector.auth") return (over.auth ?? (async () => null))(params);
+    throw new Error(`unexpected ${method}`);
+  });
+}
+
 function renderAt() {
   return render(
     <MemoryRouter initialEntries={["/onboarding/connect"]}>
       <Routes>
         <Route path="/onboarding/connect" element={<Connect />} />
         <Route path="/onboarding/syncing" element={<div>syncing</div>} />
+        <Route path="/onboarding/decisions" element={<div>decisions step</div>} />
       </Routes>
     </MemoryRouter>,
   );
 }
+
+const authCalls = () => callMock.mock.calls.filter(([m]) => m === "connector.auth");
 
 describe("Onboarding → Connect", () => {
   beforeEach(() => {
@@ -25,149 +95,153 @@ describe("Onboarding → Connect", () => {
     useNimbusStore.getState().resetOnboarding();
   });
 
-  it("renders the 6 connector cards", () => {
+  it("renders the suggested connectors in the catalog's order", async () => {
+    gateway();
     renderAt();
-    for (const name of ["Google Drive", "GitHub", "Slack", "Linear", "Notion", "Gmail"]) {
-      expect(screen.getByText(name)).toBeTruthy();
+    expect(await screen.findByText("Slack")).toBeTruthy();
+    const names = ["Slack", "Jira", "Notion", "GitHub"].map((n) => screen.getByText(n));
+    for (let i = 1; i < names.length; i++) {
+      const prev = names[i - 1] as HTMLElement;
+      const cur = names[i] as HTMLElement;
+      expect(prev.compareDocumentPosition(cur) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
   });
 
-  it("clicking a card toggles its selection in the store", () => {
-    renderAt();
-    fireEvent.click(screen.getByText("GitHub"));
-    expect(useNimbusStore.getState().selected.has("GitHub")).toBe(true);
-    fireEvent.click(screen.getByText("GitHub"));
-    expect(useNimbusStore.getState().selected.has("GitHub")).toBe(false);
-  });
-
-  it("Authenticate dispatches connector.auth for each selected", async () => {
-    callMock.mockImplementation(async (method) => {
-      if (method === "connector.auth") return null;
-      if (method === "connector.listStatus")
-        return [{ serviceId: "GitHub", healthState: "healthy" }];
-      throw new Error(`unexpected ${method}`);
-    });
-    renderAt();
-    fireEvent.click(screen.getByText("GitHub"));
-    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
-    await waitFor(() =>
-      expect(callMock).toHaveBeenCalledWith("connector.auth", { service: "GitHub" }),
-    );
-  });
-
-  it("runs one connector.auth sign-in at a time, never two concurrently", async () => {
-    // Pins the sequential loop in `onAuth` (kept on purpose; see the S9382 suppression on its
-    // `await`): an OAuth `connector.auth` opens a browser consent page and waits on a loopback
-    // callback, so a `Promise.all` rewrite would put every selected provider's sign-in in front of
-    // the user at once.
-    const pendingAuth: Array<() => void> = [];
-    callMock.mockImplementation(async (method) => {
-      if (method === "connector.auth")
-        return new Promise<null>((resolve) => {
-          pendingAuth.push(() => resolve(null));
-        });
-      if (method === "connector.listStatus") return [];
-      throw new Error(`unexpected ${method}`);
-    });
-    const authCalls = () => callMock.mock.calls.filter(([method]) => method === "connector.auth");
-    renderAt();
-    fireEvent.click(screen.getByText("GitHub"));
-    fireEvent.click(screen.getByText("Slack"));
-    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
-
-    await waitFor(() => expect(pendingAuth).toHaveLength(1));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
-    expect(authCalls()).toEqual([["connector.auth", { service: "GitHub" }]]);
-
-    await act(async () => {
-      pendingAuth[0]!();
-    });
-    await waitFor(() => expect(pendingAuth).toHaveLength(2));
-    expect(authCalls()).toEqual([
-      ["connector.auth", { service: "GitHub" }],
-      ["connector.auth", { service: "Slack" }],
-    ]);
-    await act(async () => {
-      pendingAuth[1]!();
-    });
-  });
-
-  it("shows Authenticating… immediately after clicking Authenticate", async () => {
-    let resolveAuth!: () => void;
-    callMock.mockImplementation(async (method) => {
-      if (method === "connector.auth")
-        return new Promise<null>((r) => {
-          resolveAuth = () => r(null);
-        });
+  it("an older gateway with no suggestions gets today's six, by id", async () => {
+    callMock.mockImplementation(async (method: string) => {
+      if (method === "catalog.list") return { agents: [], connectors: [] };
+      if (method === "pack.list") return null;
       if (method === "connector.listStatus") return [];
       throw new Error(`unexpected ${method}`);
     });
     renderAt();
-    fireEvent.click(screen.getByText("GitHub"));
-    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
-    expect(await screen.findByText("Authenticating…")).toBeTruthy();
-    resolveAuth();
+    expect(await screen.findByText("google_drive")).toBeTruthy();
+    expect(screen.getByText("linear")).toBeTruthy();
   });
 
-  it("shows Failed — retry when connector.auth throws", async () => {
-    callMock.mockImplementation(async (method) => {
-      if (method === "connector.auth") throw new Error("auth error");
-      if (method === "connector.listStatus") return [];
-      throw new Error(`unexpected ${method}`);
+  it("browser sign-in sends the connector ID, never its display name", async () => {
+    gateway();
+    renderAt();
+    fireEvent.click(await screen.findByText("Slack"));
+    expect(useNimbusStore.getState().selected.has("slack")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /sign in \(1\)/i }));
+    await waitFor(() => expect(authCalls()).toEqual([["connector.auth", { service: "slack" }]]));
+  });
+
+  it("runs one browser sign-in at a time, never two concurrently", async () => {
+    const pending: Array<() => void> = [];
+    gateway({
+      auth: () =>
+        new Promise((resolve) => {
+          pending.push(() => resolve(null));
+        }),
     });
     renderAt();
-    fireEvent.click(screen.getByText("GitHub"));
-    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
+    fireEvent.click(await screen.findByText("Slack"));
+    fireEvent.click(screen.getByText("Notion"));
+    fireEvent.click(screen.getByRole("button", { name: /sign in \(2\)/i }));
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(authCalls()).toHaveLength(1);
+    await act(async () => {
+      pending[0]?.();
+    });
+    await waitFor(() => expect(pending).toHaveLength(2));
+    await act(async () => {
+      pending[1]?.();
+    });
+  });
+
+  it("a failed sign-in shows Failed — retry and the reason", async () => {
+    gateway({
+      auth: async () => {
+        throw new Error("ERR_OAUTH: Missing OAuth client id for slack");
+      },
+    });
+    renderAt();
+    fireEvent.click(await screen.findByText("Slack"));
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
     expect(await screen.findByText("Failed — retry")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("Slack: Missing OAuth client id for slack");
   });
 
-  it("navigates to /onboarding/syncing when a connector becomes connected", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    callMock.mockImplementation(async (method) => {
-      if (method === "connector.auth") return null;
-      if (method === "connector.listStatus")
-        return [{ serviceId: "GitHub", healthState: "healthy" }];
-      throw new Error(`unexpected ${method}`);
+  it("the Jira form sends email, token and site once, then clears the token", async () => {
+    gateway();
+    renderAt();
+    const email = (await screen.findByLabelText("Jira email")) as HTMLInputElement;
+    const token = screen.getByLabelText("Jira API token") as HTMLInputElement;
+    const site = screen.getByLabelText("Jira site URL") as HTMLInputElement;
+    expect(token.type).toBe("password");
+    fireEvent.change(email, { target: { value: " pm@example.com " } });
+    fireEvent.change(token, { target: { value: "tok-123" } });
+    fireEvent.change(site, { target: { value: "https://acme.atlassian.net" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect Jira" }));
+    await waitFor(() =>
+      expect(authCalls()).toEqual([
+        [
+          "connector.auth",
+          {
+            service: "jira",
+            atlassianEmail: "pm@example.com",
+            apiToken: "tok-123",
+            apiBaseUrl: "https://acme.atlassian.net",
+          },
+        ],
+      ]),
+    );
+    await waitFor(() => expect(token.value).toBe(""));
+  });
+
+  it("the Jira form clears the token even when the gateway refuses it", async () => {
+    gateway({
+      auth: async () => {
+        throw new Error("ERR_X: bad token");
+      },
     });
     renderAt();
-    fireEvent.click(screen.getByText("GitHub"));
-    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
-    // advanceTimersByTimeAsync flushes the pending connector.auth microtasks first (so onAuth reaches
-    // the setInterval poll registration) and then fires the poll — plain advanceTimersByTime would
-    // run before the interval is even registered, and the navigation would never trigger.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2100);
-    });
+    const token = (await screen.findByLabelText("Jira API token")) as HTMLInputElement;
+    fireEvent.change(screen.getByLabelText("Jira email"), { target: { value: "a@b.c" } });
+    fireEvent.change(token, { target: { value: "tok" } });
+    fireEvent.change(screen.getByLabelText("Jira site URL"), { target: { value: "https://x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect Jira" }));
+    expect(await screen.findByText("bad token")).toBeTruthy();
+    expect(token.value).toBe("");
+  });
+
+  it("a terminal connector shows its command and no sign-in button", async () => {
+    gateway();
+    renderAt();
+    expect(await screen.findByText("nimbus connector auth github")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /GitHub/ })).toBeNull();
+  });
+
+  it("connecting does not navigate on its own; Continue goes to Decisions for a pack showing decisions", async () => {
+    useNimbusStore.getState().setChosenPack("pm", true);
+    gateway({ statuses: () => [{ serviceId: "slack", healthState: "healthy" }] });
+    renderAt();
+    const cont = await screen.findByRole("button", { name: /continue/i });
+    await waitFor(() => expect((cont as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText("decisions step")).toBeNull();
+    fireEvent.click(cont);
+    expect(await screen.findByText("decisions step")).toBeTruthy();
+  });
+
+  it("with no pack chosen, Skip for now goes to Syncing", async () => {
+    gateway();
+    renderAt();
+    fireEvent.click(await screen.findByRole("button", { name: /skip for now/i }));
     expect(await screen.findByText("syncing")).toBeTruthy();
-    vi.useRealTimers();
   });
 
-  it("does not treat a non-string healthState as authenticated", async () => {
-    // The real difference validation makes here, established by red-proving the alternative:
-    // a throw from `list.find` is already absorbed by the poll's bare `catch` and the interval
-    // survives, so "malformed payload wedges onboarding" is NOT the failure mode — a test built
-    // on that premise passes with or without the validator, which is how a test that cannot fail
-    // gets written.
-    //
-    // What validation actually prevents is a FALSE POSITIVE. The page treats any `healthState`
-    // that is neither `undefined` nor `"unauthenticated"` as connected, so an unvalidated
-    // non-string value (42, null, an object) satisfies both checks and navigates the user onward
-    // on garbage. `asWireStatuses` drops the bad field, leaving the entry correctly unauthenticated.
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    callMock.mockImplementation(async (method) => {
-      if (method === "connector.auth") return null;
-      if (method === "connector.listStatus") return [{ serviceId: "GitHub", healthState: 42 }];
-      throw new Error(`unexpected ${method}`);
-    });
+  it("Continue stays disabled until a suggested connector is connected (a non-string health is not)", async () => {
+    gateway({ statuses: () => [{ serviceId: "slack", healthState: 42 }] });
     renderAt();
-    fireEvent.click(screen.getByText("GitHub"));
-    fireEvent.click(screen.getByRole("button", { name: /authenticate/i }));
+    const cont = (await screen.findByRole("button", { name: /continue/i })) as HTMLButtonElement;
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(4200);
+      await new Promise((r) => setTimeout(r, 20));
     });
-    expect(screen.queryByText("syncing")).toBeNull();
-    vi.useRealTimers();
+    expect(cont.disabled).toBe(true);
   });
 });

@@ -37,7 +37,7 @@ async function rpcError(p: Promise<unknown>): Promise<RpcMethodError> {
 }
 
 async function hit(method: string, params: unknown, gate?: PackOwnerGate): Promise<unknown> {
-  const out = await dispatchPackRpc(method, params, deps, gate);
+  const out = await dispatchPackRpc(method, params, deps, gate, false);
   if (out.kind !== "hit") throw new Error(`${method} skipped`);
   return out.value;
 }
@@ -54,8 +54,12 @@ describe("buildPackDeps", () => {
 
 describe("dispatchPackRpc", () => {
   test("a method outside the four is a skip", async () => {
-    expect(await dispatchPackRpc("pack.nope", {}, deps, undefined)).toEqual({ kind: "skip" });
-    expect(await dispatchPackRpc("registry.list", {}, deps, undefined)).toEqual({ kind: "skip" });
+    expect(await dispatchPackRpc("pack.nope", {}, deps, undefined, false)).toEqual({
+      kind: "skip",
+    });
+    expect(await dispatchPackRpc("registry.list", {}, deps, undefined, false)).toEqual({
+      kind: "skip",
+    });
   });
 
   const badParams: { method: string; params: unknown }[] = [
@@ -76,7 +80,7 @@ describe("dispatchPackRpc", () => {
   ];
   for (const c of badParams) {
     test(`${c.method} ${JSON.stringify(c.params)} → -32602`, async () => {
-      const err = await rpcError(dispatchPackRpc(c.method, c.params, deps, approve));
+      const err = await rpcError(dispatchPackRpc(c.method, c.params, deps, approve, false));
       expect(err.rpcCode).toBe(-32602);
       expect(err.message.startsWith("ERR_INVALID_PARAMS: ")).toBe(true);
     });
@@ -96,7 +100,9 @@ describe("dispatchPackRpc", () => {
   });
 
   test("pack.install without a gate → -32603", async () => {
-    const err = await rpcError(dispatchPackRpc("pack.install", { id: "pm" }, deps, undefined));
+    const err = await rpcError(
+      dispatchPackRpc("pack.install", { id: "pm" }, deps, undefined, false),
+    );
     expect(err.rpcCode).toBe(-32603);
   });
 
@@ -113,7 +119,9 @@ describe("dispatchPackRpc", () => {
   });
 
   test("a PackError becomes -32000 '<code>: <detail>'", async () => {
-    const err = await rpcError(dispatchPackRpc("pack.install", { id: "nope" }, deps, approve));
+    const err = await rpcError(
+      dispatchPackRpc("pack.install", { id: "nope" }, deps, approve, false),
+    );
     expect(err.rpcCode).toBe(-32000);
     expect(err.message).toBe(
       'ERR_PACK_NOT_FOUND: no bundled pack "nope"; a local-file pack is installed with --file',
@@ -127,8 +135,71 @@ describe("dispatchPackRpc", () => {
         throw new Error("vault locked");
       },
     };
-    await expect(dispatchPackRpc("pack.show", { id: "pm" }, broken, undefined)).rejects.toThrow(
-      "vault locked",
+    await expect(
+      dispatchPackRpc("pack.show", { id: "pm" }, broken, undefined, false),
+    ).rejects.toThrow("vault locked");
+  });
+});
+
+describe("I47: a renderer installs bundled packs by id only", () => {
+  test("a renderer pack.install with fileText is refused before any read or gate call", async () => {
+    let gateCalls = 0;
+    const gate: PackOwnerGate = async () => {
+      gateCalls += 1;
+      return true;
+    };
+    for (const params of [
+      { fileText: "{}", filePath: join(dir, "x.json") },
+      { fileText: "{}" },
+      { filePath: join(dir, "x.json") },
+    ]) {
+      const err = await rpcError(dispatchPackRpc("pack.install", params, deps, gate, true));
+      expect(err.message).toStartWith("ERR_PACK_RENDERER_FILE:");
+    }
+    const show = await rpcError(
+      dispatchPackRpc(
+        "pack.show",
+        { fileText: "{}", filePath: join(dir, "x.json") },
+        deps,
+        gate,
+        true,
+      ),
     );
+    expect(show.message).toStartWith("ERR_PACK_RENDERER_FILE:");
+    expect(gateCalls).toBe(0);
+  });
+
+  test("a renderer pack.install { id } reaches the owner's gate", async () => {
+    let gateCalls = 0;
+    const gate: PackOwnerGate = async () => {
+      gateCalls += 1;
+      return false;
+    };
+    await rpcError(dispatchPackRpc("pack.install", { id: "pm" }, deps, gate, true));
+    expect(gateCalls).toBe(1);
+  });
+
+  test("a CLI connection may still preview a local file", async () => {
+    const out = await dispatchPackRpc(
+      "pack.show",
+      {
+        fileText: JSON.stringify({
+          schema: 1,
+          id: "mine",
+          name: "Mine",
+          version: "1.0.0",
+          description: "x",
+          roles: [],
+          suggestedConnectors: [],
+          members: [],
+          defaults: "",
+        }),
+        filePath: join(dir, "mine.json"),
+      },
+      deps,
+      undefined,
+      false,
+    );
+    expect(out.kind).toBe("hit");
   });
 });

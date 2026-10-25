@@ -48,12 +48,12 @@ Subsequent launches skip the wizard and go directly to the dashboard.
 
 ---
 
-## Onboarding wizard — Step 1: Welcome
+## Onboarding wizard — Welcome
 
 The welcome screen introduces Nimbus and its three core principles:
 local-first indexing, structural HITL consent, and vault-only credentials.
 
-Click **Continue** to proceed to service selection, or **Skip** to go straight
+Click **Continue** to answer one question, or **Skip setup** to go straight
 to the dashboard with no connectors configured (you can add them later via
 Settings → Connectors).
 
@@ -61,27 +61,39 @@ Settings → Connectors).
 
 ---
 
-## Onboarding wizard — Step 2: Connect a service
+## Onboarding wizard — What do you do?
 
-The service selection screen shows connector cards for the six most commonly
-used integrations. Click a card to select it, then click **Authenticate** to
-open the OAuth flow in your system browser.
+One card per role pack that ships with Nimbus (for example **Product** and
+**DevOps**), then **Engineering**, **Design** and **Something else**.
 
-| Card | What it indexes |
+- A **role pack** sets Nimbus up for that role: which briefs it shows, an
+  overnight digest, and which tools it suggests connecting. Picking one opens
+  a short summary of the pack, and **Continue** asks for your approval in a
+  popup that shows exactly what the pack changes. Decline it and you can carry
+  on without the pack. Your own settings always win over a pack.
+- **Engineering**, **Design** and **Something else** go straight to the next
+  step with general suggestions.
+
+The same question is asked by `nimbus init` in a terminal.
+
+---
+
+## Onboarding wizard — Connect your tools
+
+The connectors shown are the ones your role pack suggests (Product: Slack,
+Jira, Notion, Google Drive), or six general ones when you picked no pack.
+Each signs in its own way:
+
+| Connector kind | How it signs in |
 |---|---|
-| Google Drive | Files, folders, recent edits, shared-with-me |
-| Gmail | Threads, labels, attachments metadata |
-| GitHub | Pull requests, issues, commits, repositories |
-| Slack | Channels, threads, DMs (with your consent per workspace) |
-| Linear | Issues, cycles, projects, comments |
-| Notion | Pages, databases, comments |
+| Browser sign-in (Slack, Google Drive, Gmail, Notion, …) | Select it, then **Sign in** opens your system browser |
+| Jira, Confluence | An inline form: your Atlassian email, an API token and your site URL |
+| Token connectors (GitHub, Linear, PagerDuty, …) | The tile shows the `nimbus connector auth <id>` command to run in a terminal; the tile turns green once it is connected |
 
-You can select multiple services before clicking Authenticate — the wizard
-queues OAuth flows in sequence. You do not need to connect any service at this
-step; the assistant works immediately against any connectors already
-configured.
+Nothing moves on by itself: **Continue** is enabled once one connector is
+connected, and **Skip for now** is always available.
 
-For the full OAuth walkthrough (what scopes are requested, what is indexed,
+For the full walkthrough (what scopes are requested, what is indexed,
 how to revoke access), see
 [Connect your first service](/user-guide/connect-your-first-service/).
 
@@ -89,18 +101,31 @@ how to revoke access), see
 
 ---
 
-## Onboarding wizard — Step 3: Syncing
+## Onboarding wizard — Decisions, or Syncing
 
-After a successful OAuth handshake, the wizard moves to the syncing screen.
-A live counter shows how many items have been indexed so far. Initial sync
-time depends on the size of your account — a GitHub account with several
-hundred PRs typically finishes in under 60 seconds.
+If your role pack shows **Decisions** (the Product pack does), onboarding ends
+on the Decisions screen. While your tools sync and Nimbus looks for decisions
+it shows plain progress ("Syncing Slack… 1,240 items", "Looking for decisions…
+3 found so far"), and decisions appear as they are found. If it finishes and
+finds none, it says what it read ("We read 40 messages from Slack and 120
+tickets from Jira…") and why nothing qualified — nothing used decision language,
+or the candidates were below your confidence floor — and offers to add a
+channel, connect Notion or Google Drive, or widen the window to a year.
 
-You do not need to wait for sync to complete. Click **Open Dashboard** at
-any time to start using Nimbus. The index continues building in the background
-and queries return progressively better results as more items are indexed.
+Any other answer ends on the syncing screen: a live counter of indexed items.
+
+You do not need to wait. **Open dashboard** is always available; the index keeps
+building in the background.
 
 ![Onboarding syncing step with live item counter](../../../assets/onboarding-syncing.png)
+
+---
+
+## Already set up?
+
+An existing install with no role pack sees a quiet **Try a role pack** card on
+the dashboard, once. Pick a pack to set it up, or **Not now** to dismiss it for
+good. From a terminal, `nimbus pack list` names the packs you can install.
 
 ---
 

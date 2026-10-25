@@ -18,7 +18,27 @@ export const SINCE_PRESETS = [
   { label: "7 days", ms: 604_800_000 },
   { label: "30 days", ms: 2_592_000_000 },
   { label: "90 days", ms: 7_776_000_000 },
+  { label: "1 year", ms: 31_536_000_000 },
 ] as const;
+
+/**
+ * Initial form values from a URL query string (`/briefs/decisions?sinceMs=…`, used by onboarding's
+ * "Widen the window"): only a non-boolean param the brief declares, and for `sinceMs` only one of
+ * {@link SINCE_PRESETS}. A prefill never runs the brief; the owner still clicks Run.
+ */
+export function prefillValues(params: readonly CatalogParam[], query: URLSearchParams): FormValues {
+  const presets: ReadonlySet<string> = new Set(
+    SINCE_PRESETS.flatMap((s) => (s.ms === undefined ? [] : [String(s.ms)])),
+  );
+  const out: Record<string, string> = {};
+  for (const p of params) {
+    const v = query.get(p.name);
+    if (v === null || p.kind === "boolean") continue;
+    if (p.name === "sinceMs" && !presets.has(v)) continue;
+    out[p.name] = v;
+  }
+  return out;
+}
 
 export type FormModel = {
   plain: readonly CatalogParam[];

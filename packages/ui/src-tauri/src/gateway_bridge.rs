@@ -112,6 +112,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "data.import",
     "db.getMeta",
     "db.setMeta",
+    "decisions.status",
     "diag.getVersion",
     "diag.snapshot",
     "egress.head",
@@ -156,6 +157,7 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "migration.list",
     "oncall.pushedGet",
     "oncall.pushedList",
+    "pack.install",
     "pack.list",
     "policy.show",
     "profile.create",
@@ -242,13 +244,15 @@ const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// supplies mid-call — so the bound would double as the user's think time.
 ///
 /// `migration.accept` is here for the second reason alone: it resolves only after
-/// the owner answers the `extension.migrate` prompt it raises (I46).
+/// the owner answers the `extension.migrate` prompt it raises (I46). `pack.install`
+/// likewise resolves only once the owner answers its `pack.install` prompt (I47).
 pub const NO_TIMEOUT_METHODS: &[&str] = &[
     "data.export",
     "data.import",
     "identity.login",
     "llm.pullModel",
     "migration.accept",
+    "pack.install",
     "updater.applyUpdate",
     "workflow.run",
 ];
@@ -664,6 +668,17 @@ mod tests {
         assert!(is_method_allowed("agents.decisions"));
         assert!(!is_method_allowed("decisions.refresh"));
         assert!(!is_method_allowed("decisions.rebuild"));
+        // Role packs Project 5: onboarding reads what the pass has read and found. A read; the
+        // two maintenance verbs above stay off.
+        assert!(is_method_allowed("decisions.status"));
+        for m in ALLOWED_METHODS {
+            if m.starts_with("decisions.") {
+                assert!(
+                    *m == "decisions.status",
+                    "only decisions.status may be exposed: {m}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -823,20 +838,23 @@ mod tests {
     }
 
     #[test]
-    fn allowlist_pack_list_only() {
-        // Role packs Project 4 (I7): the desktop lists packs; installing and removing a pack
-        // stay in a terminal behind the `pack.install` approval (I47), and `pack.show` is not
-        // needed by the renderer. A scan so a later `pack.*` addition cannot slip in.
+    fn allowlist_pack_list_and_install_only() {
+        // Role packs Project 4 + 5 (I7, I47): the desktop lists packs and, from onboarding,
+        // installs a BUNDLED pack by id behind the owner's `pack.install` approval; the gateway
+        // refuses the local-file form from a renderer connection. Removing a pack stays in a
+        // terminal, and `pack.show` is not needed. A scan so a later `pack.*` addition cannot
+        // slip in.
         for m in ALLOWED_METHODS {
             if m.starts_with("pack.") {
                 assert!(
-                    *m == "pack.list",
-                    "only pack.list may be Tauri-exposed (I7): {m}"
+                    *m == "pack.list" || *m == "pack.install",
+                    "only pack.list and pack.install may be Tauri-exposed (I7): {m}"
                 );
             }
         }
         assert!(is_method_allowed("pack.list"));
-        assert!(!is_method_allowed("pack.install"));
+        assert!(is_method_allowed("pack.install"));
+        assert!(is_no_timeout_method("pack.install"));
         assert!(!is_method_allowed("pack.remove"));
         assert!(!is_method_allowed("pack.show"));
     }
@@ -897,7 +915,7 @@ mod tests {
 
     #[test]
     fn allowlist_exact_size() {
-        assert_eq!(ALLOWED_METHODS.len(), 116);
+        assert_eq!(ALLOWED_METHODS.len(), 118);
     }
 
     #[test]
@@ -926,12 +944,13 @@ mod tests {
     }
 
     #[test]
-    fn no_timeout_methods_contains_expected_seven() {
+    fn no_timeout_methods_contains_expected_eight() {
         assert!(is_no_timeout_method("data.export"));
         assert!(is_no_timeout_method("data.import"));
         assert!(is_no_timeout_method("identity.login"));
         assert!(is_no_timeout_method("llm.pullModel"));
         assert!(is_no_timeout_method("migration.accept"));
+        assert!(is_no_timeout_method("pack.install"));
         assert!(is_no_timeout_method("updater.applyUpdate"));
         assert!(is_no_timeout_method("workflow.run"));
         assert!(!is_no_timeout_method("profile.list"));
@@ -940,7 +959,7 @@ mod tests {
 
     #[test]
     fn no_timeout_methods_exact_size() {
-        assert_eq!(NO_TIMEOUT_METHODS.len(), 7);
+        assert_eq!(NO_TIMEOUT_METHODS.len(), 8);
     }
 
     #[test]

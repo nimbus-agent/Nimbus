@@ -22,7 +22,7 @@ function renderAt(path: string) {
           <Route path="welcome" element={<Welcome />} />
         </Route>
         <Route path="/" element={<div>dashboard</div>} />
-        <Route path="/onboarding/connect" element={<div>connect</div>} />
+        <Route path="/onboarding/role" element={<div>role</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -35,6 +35,12 @@ describe("Onboarding → Welcome", () => {
     renderAt("/onboarding/welcome");
     expect(screen.getByText(/Welcome to Nimbus/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /continue/i })).toBeTruthy();
+  });
+
+  it("Continue goes to the role question", async () => {
+    renderAt("/onboarding/welcome");
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    expect(await screen.findByText("role")).toBeTruthy();
   });
 
   it("Skip writes onboarding_completed meta and navigates home", async () => {
