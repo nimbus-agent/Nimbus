@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792943596827,
+  "lastUpdate": 1792955520654,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d94d63274a0d8f4a29771816e77911363ea24c11",
-          "message": "perf(jenkins): ⚡ batch jenkins job builds sync (#1087)\n\n💡 **What:** The iteration logic in `runJenkinsSyncAfterAuth` has been\noptimized. Instead of fetching builds for each Jenkins job sequentially\none-by-one, the code now batches jobs into chunks of 10 and fetches them\nconcurrently using `Promise.all`.\n\n🎯 **Why:** The previous approach caused a significant N+1 API call\nbottleneck when synchronizing a large number of jobs, as each fetch was\nblocked by the completion of the previous one. Batching network requests\nsubstantially speeds up the synchronization process without overwhelming\nthe Jenkins server with an unbounded number of simultaneous connections.\n\n📊 **Measured Improvement:** In a simulated benchmark involving 100 jobs\nwith a network delay of 10ms per API call, the baseline sequential\napproach took approximately `1044ms`, while the batched `Promise.all`\napproach (with chunk size 10) completed in just `110ms`—an almost 10x\nimprovement.\n\n---\n*PR created automatically by Jules for task\n[4716080031047686192](https://jules.google.com/task/4716080031047686192)\nstarted by @asafgolombek*\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-08T18:58:24+03:00",
-          "tree_id": "92ca4a7b521e6398b0a83490835863b7160e4355",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d94d63274a0d8f4a29771816e77911363ea24c11"
-        },
-        "date": 1786206771545,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 307.91996330000256,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 308.9301128499977,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.15891730000513,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fd292567daf9089b307b8cb87261d67d19262b71",
+          "message": "feat(glossary): role packs and your config choose which sources glossary terms come from (#1776)\n\nRole packs Project 2, PR 2 of 3, part b. The glossary now follows the\nsource mapping that #1774 built for decisions. A pack's `[sources] map`,\nor your own `map` / `exclude`, changes which terms the glossary mines\nand shows. The change is live and nothing is deleted. A term mined from\na local-only source is embedded on this machine only.\n\n## What changes for a user\n\n- **Catch-up.** A newly mapped source's already-indexed items are mined\nfor terms. A source that comes back after being removed is caught up\nonly for the window it was off. Built-in sources are not re-scanned on\nupgrade. `--rebuild` clears the glossary catch-up cursors.\n- **Hiding, nothing rewritten.**\n- A mined term whose only occurrences are in excluded sources is hidden\nfrom:\n- `nimbus glossary`: list, term lookup, synonym lookup, near-miss\nsuggestions and counts;\n    - the `wow` tour;\n    - fleet `terms` sweeps.\n- Its row keeps its status, statistics and definition, and it comes back\nwith no model call when the source is mapped again. Stored statistics\nare computed over every source ever mapped, so removing a mapping never\ndemotes a term.\n  - Manual and agent-accepted terms are never hidden.\n- A gap note says how many terms are hidden and points to `nimbus config\nexplain sources`. It replaces a false \"min_doc_freq\" diagnosis that\nwould otherwise have appeared.\n- **Displayed statistics.** `docFreq`, `serviceSpread` and top sources\nare recomputed over the current mapping for the terms shown.\n- **Queues.** Terms whose only sources are excluded are not sent to the\nmodel. The queues page past them instead of starving the visible terms.\nConsolidation snippets come only from mapped sources.\n- **Search copies.** A hidden term is unprojected on the next glossary\npass. `nimbus glossary` hides it immediately; `nimbus ask` can still\nretrieve it until that pass. It is re-projected the same way, with no\nmodel call.\n- **Local-only embedding (spec § 7.1).** A term is projected as\n`nimbus:glossary_term_local` (local MiniLM only) instead of\n`nimbus:glossary_term` if either of these holds:\n- any contributing source is not remote-eligible (remote-eligible means\na built-in type or in `PROSE_HEAVY_TYPES`);\n  - its definition was written from a local-only source.\n\nThe second rule holds even after that source item is deleted. A routing\nflip deletes and re-inserts the item, so old remote vectors are dropped.\n- **`pack.install` prompt.** It names the added sources whose glossary\nterms stay local.\n\n## Schema V75 (additive)\n\n`glossary_term.definition_local INTEGER NOT NULL DEFAULT 0 CHECK (0,1)`.\nIt records that a definition was written from a local-only source, and\nonly a definition rewrite clears it. Existing rows default to 0: before\nthis PR every definition came from built-in, remote-eligible sources.\n\n## Default users\n\nWith no `[sources]` config, every known source is mapped. A fast path\nthen skips every per-term check: the list, the counts and the queues\nissue the same queries as before. The projection sweep costs one query\nper gateway boot.\n\n## Rulings and stated bounds\n\n- **Overrides of the plan:**\n- **V75 was added (the plan said \"no migration\").** Routing only by a\nterm's current sources would let a definition written from a\nsince-deleted local-only item return to remote embedding. That\ncontradicts the goal of spec § 7.1.\n- **Queue selection.** The model queues page through all terms instead\nof over-fetching a fixed window, which starved them under a large\nexclusion.\n- **The visibility fingerprint is kept in memory.** The cost is one\nsweep per boot.\n- **Not filtered:**\n- The pending and vetoed counts are whole-table, so the brief's pending\ncount can include terms waiting on an excluded source.\n- List-mode score and first/last-seen still come from stored statistics,\nwhich cover every known source.\n- The search copy's metadata keeps the stored top sources. It is not\nembedded.\n- **The hidden-terms gap uses the existing `missing_connector`\ncategory.** The SDK's category list is closed, and the category is not\nrendered.\n- **Shared catch-up module.** It moved from\n`decisions/decision-catchup.ts` to `sources/source-catchup.ts`, so both\npasses share it.\n\n## Verification\n\n- `bun test packages/gateway/src`: 21,053 pass, 0 fail. `bun test\npackages/cli`: 4,720 pass.\n- `preflight:fast`: PASSED. `typecheck:tests`: 0 new.\n- `bun test scripts` was run once, before the final fix round. Its only\nfailures were the 5 PowerShell installer tests, which could not find\n`pwsh` on the local Bash PATH; that is unrelated to this branch, and CI\nLinux is authoritative.\n- Coverage could not be measured locally (`bunfig` `coverage = false`).\nThe CI Linux leg is authoritative.\n- Every task had its own review. The whole branch had a final review and\nan independent review with the Google Antigravity CLI. Its findings were\nfixed: snippet sources, the prompt wording, docs, and avoiding duplicate\nFTS work.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Glossary source mappings now control which mined terms appear in\nlists, lookups, suggestions, counts, tours, and fleet term sweeps.\nHidden terms are retained and can reappear when mappings change; manual\nand agent-accepted terms remain visible.\n* Newly mapped sources are scanned during catch-up, and glossary\nrebuilds clear catch-up progress.\n* Glossary search content from sources that aren’t eligible for remote\nprocessing is indexed locally. Glossary counts now report hidden terms\nseparately.\n* **Documentation**\n* Updated the CLI, schema, and architecture references to describe\nglossary mappings, visibility, catch-up, and local indexing.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-25T19:00:59Z",
+          "tree_id": "7dcdc05eaff3687b75b0dab5a3873a4cc156dea2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/fd292567daf9089b307b8cb87261d67d19262b71"
+        },
+        "date": 1792955516771,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 282.7882031000001,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 284.42062955000256,
             "unit": "ms"
           }
         ]
