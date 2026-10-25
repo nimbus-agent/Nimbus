@@ -282,27 +282,73 @@ in `metadata.mimeType` (`connectors/google-drive-sync.ts:150`). Mapping that typ
 names. Calls:
 
 - Items with MIME `application/vnd.google-apps.document` are written as type **`doc`**; text comes
-  from the Drive export endpoint as `text/plain`. Other files stay `file`, metadata only, unchanged.
-  `metadata.mimeType` and `metadata.size` stay on every row (the media pipeline reads them,
-  `multimodal/media-source-registry.ts:128,172`).
-- Body under the existing depth chokepoint (`upsertIndexedItemForSync`, V48/V49): `google_drive:doc`
-  joins the long-body prose types so `full` depth stores up to `BODY_MAX_PROSE` (16,384). Whether it
-  joins `PROSE_HEAVY_TYPES` (remote 1536-dim embedding when an OpenAI key exists) or the local-only
-  prose set is the builder's call; the default is whatever `notion:page` does.
-- Export only when a Doc is new or its `modifiedTime` changed; never for other MIME types. A text
-  variant of `fetchGoogleJson` (`google-sync-shared.ts:38`) goes through the same rate limiter and
-  401 handling.
-- Egress: the export calls run inside the Drive sync run and share its one `sync.run` row
-  (`sync/scheduler.ts:996`); no new coverage class.
-- Existing Docs: the changes cursor only sees changed files, so a one-time re-list of Docs
-  (`mimeType = 'application/vnd.google-apps.document'`) rewrites them as `doc` with text, resumable
-  through the cursor, bounded per run. The old `file` rows for those Docs are replaced (same item id
-  if the id scheme allows, otherwise deleted after the `doc` row lands). Exports per run are capped;
-  the cap value is the builder's.
+  from the Drive export endpoint as `text/plain` (`files/{id}/export?mimeType=text/plain`). Other
+  files stay `file` (folders `folder`), metadata only, unchanged. `metadata.mimeType` and
+  `metadata.size` stay on every row (the media pipeline reads them: `MIME_KEYED_SERVICES` and
+  `SOURCE_BYTES_KEY`, `multimodal/media-source-registry.ts:82-86,172`, and the mime arm of
+  `multimodal/media-discovery.ts`). A Doc's mime is neither image nor audio/video, so media discovery
+  never selected a Doc and still does not.
+- **Same item id, re-typed in place (owner's call).** `itemPrimaryKey` is `service:externalId`
+  (`index/item-key.ts:7`), never the type, and `upsertIndexedItem` sets `type = excluded.type` on
+  conflict (`index/item-store.ts:117`), so the `doc` upsert rewrites the old `file` row; nothing is
+  deleted.
+- **Routing (owner's call):** `google_drive:doc` joins `PROSE_HEAVY_TYPES` like `notion:page` —
+  remote 1536-dim embedding when an OpenAI key exists, MiniLM otherwise. That also gives it
+  `BODY_MAX_PROSE` (16,384), since `LONG_BODY_TYPES` is derived from the two routing sets
+  (`index/body-caps.ts:27`), and makes it remote-eligible under § 7.1.
+- **Re-routing an item must drop its old route's vector.** Each inner pipeline replaces only its own
+  model's chunks (`embedding/pipeline.ts:137`), and `embedding_chunk` is `UNIQUE(item_id,
+  chunk_index)` (`index/embedding-v6-sql.ts:14`), so with an OpenAI key a re-typed Doc's new embed
+  would FAIL on that constraint and leave the file name's MiniLM vector as its only one.
+  `RoutingEmbeddingPipeline.embedItem` deletes the item's chunks under any other model before it
+  embeds. A failed embed then leaves the item with no chunks, which the backfill picks up.
+- **When to export.** A Doc is exported unless its row already holds this revision's text:
+  `ctx.bodyFetchState` (the Notion pattern, `connectors/notion-sync.ts:200`) gains `hasBody`, and the
+  export is skipped only when a `bodyFetch` verdict is recorded, the body is present and
+  `modifiedAt` is unchanged. `hasBody` matters because a `metadata_only` reindex NULLs the body but
+  keeps the verdict (`connectors/reindex.ts`). Never for other MIME types.
+- **Depth.** At `metadata_only` nothing is exported (the chokepoint would drop it). The verdict
+  (`bodyFetch: "complete" | "capped"`) is recorded only at `full`, so a `summary` row is exported
+  again once the owner deepens the connector.
+- **Export failures never fail the sync.** A text variant of `fetchGoogleJson`
+  (`fetchGoogleText`, `connectors/google-sync-shared.ts`) shares its rate limiter and 401 handling
+  and strips the leading UTF-8 byte-order mark Google puts on `text/plain` exports. A 401 still
+  throws `UnauthenticatedError`. Any other failure (403 export-size limit or export disabled, 404,
+  429, 5xx) indexes that Doc without text and no verdict, and the sync carries on. Non-401 failures
+  carry their status (`GoogleHttpError`) so a 429/5xx can be told from a 403.
+- **Cap (owner's call): 200 exports per `sync()` call** (`DOC_EXPORTS_PER_SYNC`). A changes or list
+  page holds at most 100 files, so the cap binds only when a changes page and the re-list share a
+  call. A Doc written without text because the cap ran out, or because its export failed
+  transiently (429, 5xx, network), re-arms the re-list.
+- Egress: the export and re-list calls run inside the Drive sync run and share its one `sync.run`
+  row (`sync/scheduler.ts:996`); no new coverage class.
+- **The one-time re-list.** The changes cursor only sees changed files, so existing Docs are re-listed
+  once (`mimeType = 'application/vnd.google-apps.document' and trashed = false`), resumable through
+  the cursor. State lives on the `delta` cursor as `docs`: `{ listToken }` while running,
+  `{ doneAt: <depth> }` when finished. An ABSENT field means "not started", which is how every
+  cursor written before this PR reads, so an upgraded install re-lists once and a fresh install
+  re-lists once after its first drain (cheap: Docs it already exported are skipped by the check
+  above). A depth change re-arms it (`doneAt` differs from the run's depth), as does a re-arm
+  above.
+  - Each call applies its changes page first, so the re-list never holds up the changes feed or lets
+    its token expire. The re-list runs only once the feed is caught up, with the call's remaining
+    budget, and never starts a list page it cannot finish (at least 100 exports left), since the next
+    page's token is the only resume point.
+  - **Scope:** a re-listed Doc is written only if it is already indexed or was modified inside the
+    initial 30-day window. The re-list rewrites rows; it does not widen what Drive indexes.
+  - A transient export failure inside the re-list does not re-arm it (a Doc that keeps failing would
+    otherwise re-list the whole Drive on every sync). That Doc gets its text on its next edit, a
+    depth change, or a cleared cursor.
 - No SQL migration rewrites Drive rows: the connector itself writes `doc` from the first sync after
-  upgrade, and the re-list is its own work, so a sync can never revert a row to `file`. A rewritten
-  row changes type, so it is re-embedded under `google_drive:doc`'s routing (`google_drive:file` is
-  in neither routing set today); the old vector goes with the old row.
+  upgrade, and the re-list is its own work, so a sync can never revert a row to `file`. A re-typed
+  row is re-embedded under `google_drive:doc`'s routing on its upsert (`scheduleItemEmbedding`).
+- **Not a built-in source kind.** `google_drive:doc` is not added to `sources/source-kinds.ts`; the PM
+  pack maps it (below), so it is mined only where a pack or the owner says Docs count (goal: with no
+  entries, outputs match today's).
+- **`nimbus index rebody`:** `google_drive` stays out of `REBODY_IMPROVABLE_SERVICES`
+  (`ipc/index-rebody-rpc.ts`). With `doc` declared-full and `file`/`folder` preview-only it is a
+  mixed service, which that set excludes (like `zoom` and `nimbus`) because pending counts are
+  grouped by service only.
 - PM pack → **1.1.0**, adding `[sources] map = ["google_drive:doc=doc"]` to its defaults. Since
   update detection is digest-based (`pack-install.ts:483`), installed PM packs see an update.
 
@@ -347,6 +393,7 @@ set only by packs and the owner.
 
 ## 11. Left to the builder
 
-File and module names; whether pack install/remove triggers the passes; the catch-up batch size and
-the Docs export cap; the exact email/calendar type list (derived from the writers); PROSE_HEAVY vs
-local-only for Docs; the `doc` row id scheme; wording of the prompt line and `config explain` rows.
+File and module names; whether pack install/remove triggers the passes; the catch-up batch size; the
+exact email/calendar type list (derived from the writers); wording of the prompt line and `config
+explain` rows. (The Docs export cap, Docs routing and the `doc` row id scheme were settled by the
+owner on 2026-10-25: 200 per call, `PROSE_HEAVY_TYPES`, same item id — see § 8.)
