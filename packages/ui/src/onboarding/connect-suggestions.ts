@@ -32,7 +32,10 @@ export function suggestionsFrom(catalog: unknown): readonly Suggestion[] {
   const c = isRecord(catalog) ? catalog : {};
   const byId = new Map<string, Record<string, unknown>>();
   for (const raw of Array.isArray(c["connectors"]) ? c["connectors"] : []) {
-    if (isRecord(raw) && typeof raw["id"] === "string") byId.set(raw["id"], raw);
+    if (!isRecord(raw)) continue;
+    // An installed extension is suggested by its service id (`ext_*`), not its package id.
+    for (const key of [raw["id"], raw["serviceId"]])
+      if (typeof key === "string") byId.set(key, raw);
   }
   const ids = Array.isArray(c["suggestedConnectors"])
     ? c["suggestedConnectors"].filter((x): x is string => typeof x === "string")

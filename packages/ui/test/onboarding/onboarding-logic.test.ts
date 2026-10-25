@@ -94,7 +94,13 @@ describe("connect suggestions", () => {
     const rows = suggestionsFrom({
       connectors: [
         { id: "slack", displayName: "Slack", description: "d", signIn: "browser" },
-        { id: "ext_x", name: "X notes", signIn: "weird" },
+        {
+          kind: "extension",
+          id: "com.example.x",
+          serviceId: "ext_x",
+          name: "X notes",
+          signIn: "weird",
+        },
       ],
       suggestedConnectors: ["slack", "ext_x", "unknown"],
     });
