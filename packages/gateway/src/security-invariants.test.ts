@@ -1423,13 +1423,14 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 116", async () => {
+  test("allowlist_exact_size assertion is 118", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*116\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*118\s*\)/);
   });
 
-  // Role packs Project 4: 111 + 7 - 2 = 116. By NAME, since a swap keeps the count.
-  test("role packs desktop: only fleet.briefs/fleet.show and pack.list are exposed from those namespaces", async () => {
+  // Role packs Project 4: 111 + 7 - 2 = 116; Project 5 (onboarding): + pack.install, decisions.status
+  // = 118. By NAME, since a swap keeps the count.
+  test("role packs desktop: only fleet.briefs/fleet.show, pack.install/pack.list and decisions.status are exposed from those namespaces", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     const start = rust.indexOf("pub const ALLOWED_METHODS: &[&str] = &[");
     const list = rust.slice(start, rust.indexOf("];", start));
@@ -1437,7 +1438,13 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
       "fleet.briefs",
       "fleet.show",
     ]);
-    expect([...list.matchAll(/"(pack\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual(["pack.list"]);
+    expect([...list.matchAll(/"(pack\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual([
+      "pack.install",
+      "pack.list",
+    ]);
+    expect([...list.matchAll(/"(decisions\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual([
+      "decisions.status",
+    ]);
     for (const m of ["catalog.list", "agents.oncall", "agents.standup", "agents.changelog"]) {
       expect(list).toContain(`"${m}"`);
     }
@@ -7694,7 +7701,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*116\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*118\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------
@@ -8048,6 +8055,37 @@ describe("I47 — a role-pack layer is written only after the owner approved pac
     // The production predicate the RPC hands in is the runtime's, not a constant.
     const rpc = await read("packages/gateway/src/ipc/pack-rpc.ts");
     expect(rpc).toContain("isProduction: () => isProductionRuntime(),");
+  });
+
+  test("a renderer pack.install takes a bundled id only: the file form is refused before any read or prompt", async () => {
+    const { dispatchPackRpc, buildPackDeps } = await import("./ipc/pack-rpc.ts");
+    const deps = buildPackDeps({ store, configDir: dir, isConfigured: async () => false });
+    let prompts = 0;
+    const gate = async (): Promise<boolean> => {
+      prompts += 1;
+      return true;
+    };
+    await expect(
+      dispatchPackRpc(
+        "pack.install",
+        { fileText: "{}", filePath: join(dir, "x.json") },
+        deps,
+        gate,
+        true,
+      ),
+    ).rejects.toThrow(/^ERR_PACK_RENDERER_FILE:/);
+    expect(prompts).toBe(0);
+    // The kind is the connection's declared one, filled by the dispatcher — never a request field.
+    const src = stripComments(await read("packages/gateway/src/ipc/server/dispatchers.ts"));
+    const fnAt = src.indexOf("export async function tryDispatchPackRpc(");
+    const body = src.slice(fnAt, src.indexOf("\n}\n", fnAt));
+    expect(body).toContain('ctx.getClientKind(clientId) === "ui"');
+    // And the refusal runs before the request is parsed.
+    const rpc = stripComments(await read("packages/gateway/src/ipc/pack-rpc.ts"));
+    const dAt = rpc.indexOf("export async function dispatchPackRpc(");
+    const dBody = rpc.slice(dAt);
+    expect(dBody.indexOf("refuseRendererFile(")).toBeGreaterThan(-1);
+    expect(dBody.indexOf("refuseRendererFile(")).toBeLessThan(dBody.indexOf("run(method"));
   });
 
   test("pack.install and pack.remove are demo-refused; the pack namespace is LAN-forbidden", async () => {
