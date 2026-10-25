@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792964109194,
+  "lastUpdate": 1792966600862,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "20b705e7a90d9b45c7b0b1571cf348e3d93e1e85",
-          "message": "chore: release main (#1123)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.25.2</summary>\n\n##\n[1.25.2](https://github.com/nimbus-agent/Nimbus/compare/v1.25.1...v1.25.2)\n(2026-08-08)\n\n\n### Bug Fixes\n\n* **bitbucket:** 🧹 correct itemsUpserted overcount\n([#1086](https://github.com/nimbus-agent/Nimbus/issues/1086))\n([9657921](https://github.com/nimbus-agent/Nimbus/commit/965792107ebcafba10667aab9bd5c7166388dc00))\n* **gateway:** 🔒 Prevent command injection in tar extraction\n([#1091](https://github.com/nimbus-agent/Nimbus/issues/1091))\n([575e2aa](https://github.com/nimbus-agent/Nimbus/commit/575e2aa5648d101c02f06450df4016500e3cfe50))\n* **gateway:** resolve WAL mode race in http-api-test-server\n([#1093](https://github.com/nimbus-agent/Nimbus/issues/1093))\n([1323567](https://github.com/nimbus-agent/Nimbus/commit/1323567a7a2d07bea4b39a6ba1b4a974cccc2b00))\n\n\n### Performance Improvements\n\n* **connectors:** ⚡ batch fetch message metadata in Gmail sync\n([#1099](https://github.com/nimbus-agent/Nimbus/issues/1099))\n([cf1dfe1](https://github.com/nimbus-agent/Nimbus/commit/cf1dfe1d50b61682a7a27849e4678ecd734bc078))\n* **gateway:** ⚡ batch API calls in SonarQube Sync to resolve N+1 issue\n([#1089](https://github.com/nimbus-agent/Nimbus/issues/1089))\n([892e96b](https://github.com/nimbus-agent/Nimbus/commit/892e96b62839e9bc1a94d73b206a49fa1dd3233a))\n* **jenkins:** ⚡ batch jenkins job builds sync\n([#1087](https://github.com/nimbus-agent/Nimbus/issues/1087))\n([d94d632](https://github.com/nimbus-agent/Nimbus/commit/d94d63274a0d8f4a29771816e77911363ea24c11))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-08T17:36:32Z",
-          "tree_id": "49193384631daf44d058107d90c1a1bf1ee85c10",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/20b705e7a90d9b45c7b0b1571cf348e3d93e1e85"
-        },
-        "date": 1786211319357,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 306.15316005000057,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.30708710000073,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 283.6784995500002,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c00274b53e69025d0ba6b226b702d248c238e03",
+          "message": "feat(onboarding): nimbus init asks what you do and works outside a git repository (#1781)\n\nRole packs Project 5, PR 1 of 2: role-aware onboarding, gateway and CLI\nhalf. The desktop half is PR 2.\n\n## What changes for a user\n\n- `nimbus init` asks **\"What do you do?\"** once the Gateway is up: one\nchoice per bundled role pack, matched on the pack's `roles` tags, then\nEngineering, Design and Something else. `--role <value>` answers it up\nfront with a role tag, a pack id, `pack:<id>`, or `engineering` /\n`design` / `other`.\n- A pack answer installs the pack through the existing `nimbus pack\ninstall` approval at this terminal, lists the pack's suggested\nconnectors with their state and the command to connect each, and offers\nbrowser sign-in for the ones that support it. Declining the approval is\nnot a failure.\n- Engineering keeps today's login-adoption and tour offers. Design and\nSomething else get general connector suggestions.\n- **`nimbus init` works outside a git repository.** It writes nothing,\nstarts the Gateway and exits 0. Exit 1 now means an invalid `--role`.\n- **Unchanged:** a non-interactive `nimbus init` inside a repository\nwith no `--role`, which is what install-smoke runs. A test pins its\nexact output.\n- `nimbus wow` skips agents your packs or your own `[agents] hide` hide,\nand says which.\n- `nimbus pack list` names the packs when none is installed.\n\n## Gateway reads behind it\n\n- `pack.list` rows carry `roles` and `suggestedConnectors`. Available\nrows also carry `visibleAgents`.\n- `catalog.list` carries `suggestedConnectors` and each built-in\nconnector's `signIn`.\n- `suggestedConnectors` is the active packs' list in order, or a neutral\nsix when no pack suggests any.\n- `signIn` is `browser`, `atlassian` or `terminal`, derived from the\nsame table `connector.auth` dispatches on.\n- New read **`decisions.status`**, LAN-forbidden with the rest of\n`decisions.*`. It reports the pass state, the effective decision sources\nwith item counts, windowed candidate counts, the shown count and the\nfive newest statements.\n- `shown` and `recent` match what `nimbus decisions` lists, under the\nsame rule, floor and window.\n- It answers `enabled: false` when the pass is off, never \"Method not\nfound\".\n- No schema change, no new invariant, no egress class, no Tauri\nallowlist change. Not breaking: a command that refused now works, so\nthere is no `!`.\n\n## Design\n\nThe spec and plans live on `dev/asaf/role-packs` only:\n- `docs/superpowers/specs/2026-10-25-role-packs-p5-onboarding-design.md`\n- `docs/superpowers/plans/2026-10-25-role-packs-p5-pr1-gateway-cli.md`\n\nThe spec, the plan and this branch were each reviewed by the Google\nAntigravity CLI.\n\nPlanning changed one thing in the spec. The question is asked after the\nrepository step, not before it. The CLI cannot know the packs without\nthe Gateway, and starting the Gateway before the root is appended would\nmake every first run `restart-required`.\n\n## Antigravity end-result review: disposition\n\n| # | Finding | Disposition |\n|---|---|---|\n| 1 | `pack.*` lacks a demo check | Declined: `pack.install` and\n`pack.remove` are refused on a demo root by the `dispatchMethod` demo\ngate, I41 and I47, which runs before every dispatcher. That is\npre-existing and tested. |\n| 2 | `pack.show` and `pack.remove` over LAN | Declined: the whole\n`pack` namespace is on the LAN denylist, and an I47 test covers all four\nverbs. |\n| 3 | `pack.install` without a LocalIndex | Declined: `pack-rpc.ts`\nrefuses an absent gate with -32603 before `installPack`. |\n| 4 | `decisions.status` reads unlayered config | Declined:\n`loadNimbusDecisionsFromConfigDir` reads through the layered reader,\nwhich D35 enforces. |\n| 5 | Candidate counts vs the brief's all-time totals | Fixed the\ncomment. The windowing is deliberate, since it keeps an old row from\nproducing the \"too uncertain\" explanation. The file now says so instead\nof claiming the totals match. |\n| 6 | User-MCP connectors dropped from suggestions | Declined: a pack's\nsuggestions are validated against built-in connector ids at install, so\na user MCP id can never be suggested. |\n| 7 | An agent the owner hid is blamed on the packs | Fixed:\n`visibleAgentNames` returns `userHidden`, and the tour says \"hidden in\nyour config\" for those. Tested. |\n| 8 | `--help` runs before the demo refusal | Declined: that order is\nunchanged from main, and help does no work. |\n| 9, 14 | `--role pack:<id>` rejected | Fixed and tested. |\n| 10 | Extension suggestions looked up by package id | Fixed: rows are\nindexed by `serviceId` too. Tested. |\n| 11 | Unsanitised error text | Fixed: `stripControlChars`. |\n| 12 | `runPack` gateway-not-running error | Declined: unchanged from\nmain. |\n| 13 | Demo test wording | Declined: a pre-existing test, out of scope.\n|\n| 15 | Desktop types | Deferred to PR 2, which parses these replies with\nguards. |\n\n## Verification\n\n- `bun run preflight:fast`: passed.\n- `typecheck:tests`: 0 new errors.\n- Full `bun test packages/gateway/src`: 21077 pass. The 7 failures are 5\ns timeouts on whole-tree scans under parallel load, and each passes when\nrun on its own.\n- `bun test packages/cli/src`: the same 10 Yoga-layout \"between tests\"\nerrors appear on `main` under local Bun 1.3.14 `--parallel`, so they are\npre-existing. One timeout passes alone.\n- `bun test scripts`: the only failures are the 5 `pwsh`-dependent\ncases, because `pwsh` is not on this machine's PATH.\n- `packages/ui` vitest: green.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* `nimbus init` now offers role selection, with a `--role` option.\nChoosing a pack role can install the pack and suggest connectors,\nincluding sign-in options.\n* `nimbus init` can run outside a Git repository without writing\nrepository configuration; it starts the Gateway unless `--no-sync` is\nused.\n* `nimbus pack list` now shows an install tip when packs are available\nand none are installed.\n* **Updates**\n* The `nimbus wow` tour now skips agents hidden by configuration or role\npacks and reports why.\n* **Documentation**\n* Updated CLI and architecture references to describe role selection,\npack details, and connector suggestions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-10-25T22:06:05Z",
+          "tree_id": "431dd553977706f1547bcd585782d0f3e246f2c0",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0c00274b53e69025d0ba6b226b702d248c238e03"
+        },
+        "date": 1792966597330,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 275.97172639999735,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 275.55385490000555,
             "unit": "ms"
           }
         ]
