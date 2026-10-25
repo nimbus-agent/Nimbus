@@ -36,6 +36,7 @@ function input(over: Partial<PackPromptInput> = {}): PackPromptInput {
       },
     ],
     visibleAgents: ["oncall", "why"],
+    sourceMappings: [],
     jobs: [{ name: "nightly", agent: "changelog", intervalSeconds: 86400, userReplaces: false }],
     connectors: [
       { id: "pagerduty", configured: true },
@@ -89,11 +90,12 @@ describe("renderPackPrompt", () => {
         manifest: manifest({ defaults: "" }),
         scalars: [],
         visibleAgents: [],
+        sourceMappings: [],
         jobs: [],
         connectors: [],
       }),
     );
-    expect(t.match(/^ {2}none$/gm)?.length).toBe(4);
+    expect(t.match(/^ {2}none$/gm)?.length).toBe(5);
     expect(t).toContain("This pack writes no config.");
   });
 
@@ -245,6 +247,28 @@ describe("diffPacks", () => {
     const d = diffPacks(prev, next);
     expect(d.visible.added).toEqual(["impact"]);
     expect(d.visible.removed).toEqual(["oncall"]);
+  });
+
+  test("source mappings diff as entries, so a re-kind is a removal and an addition", () => {
+    const sources = (k: string): string => `[sources]\nmap = ["readwise:highlight=${k}"]\n`;
+    const d = diffPacks(
+      manifest({ defaults: sources("note") }),
+      manifest({ defaults: sources("doc") }),
+    );
+    expect(d.sources.added).toEqual(["readwise:highlight=doc"]);
+    expect(d.sources.removed).toEqual(["readwise:highlight=note"]);
+    const t = renderPackPrompt(
+      input({ mode: "update", diff: d, sourceMappings: ["readwise:highlight=doc"] }),
+    );
+    expect(t).toContain("Sources added:");
+    expect(t).toContain("added: readwise:highlight as doc");
+    expect(t).toContain("removed: readwise:highlight as note");
+  });
+
+  test("install shows each mapped source, or none", () => {
+    const t = renderPackPrompt(input({ sourceMappings: ["readwise:highlight=note"] }));
+    expect(t).toContain("Sources added:\n  readwise:highlight as note");
+    expect(renderPackPrompt(input())).toMatch(/Sources added:\n {2}none/);
   });
 
   test("jobs added, removed and changed", () => {

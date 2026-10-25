@@ -313,6 +313,7 @@ import {
 import { ensureShareKeypair } from "../share/share-keypair.ts";
 import type { ShareRecord } from "../share/share-store.ts";
 import { getShareRecord } from "../share/share-store.ts";
+import { sourceMappingFor } from "../sources/source-mapping.ts";
 import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import {
   deriveFetchHostMap,
@@ -802,6 +803,12 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
             // `decisionsCfg.minConfidence` is deliberately NOT passed: it is a
             // read-path floor (`agents/decisions.ts`), not an extraction filter.
             retryCooldownMs: decisionsCfg.retryCooldownMs,
+            // Resolved on EVERY run, never at assemble time: a pack install or an owner edit to
+            // `[sources]` applies to the next pass without a restart. Pack install/remove does not
+            // itself trigger a pass; the next post-sync pass (or `nimbus decisions --refresh`) mines it.
+            mapping: sourceMappingFor(paths.configDir),
+            // Catch-up re-reads it between batches, so a type removed mid-run stops there.
+            mappingAt: () => sourceMappingFor(paths.configDir),
             ...(extractionLlm === undefined ? {} : { llm: extractionLlm }),
           };
           // `decisions.rebuild` (ipc/decisions-rpc.ts) is the only caller that ever sets

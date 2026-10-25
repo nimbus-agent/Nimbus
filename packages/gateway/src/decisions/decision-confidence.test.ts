@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 
+import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
+import { resolveSourceMapping } from "../sources/source-mapping.ts";
 import {
+  authorityOfKind,
   computeConfidence,
   computePriority,
   explainConfidence,
@@ -206,4 +209,42 @@ test("unmapped types keep today's authority (agent decisions can point anywhere)
   expect(sourceAuthority("wiz:issue")).toBe(0.6);
   expect(sourceAuthority("gmail:email")).toBe(0.3);
   expect(sourceAuthority("google_drive:file")).toBe(0.3);
+});
+
+const AS_DOC = resolveSourceMapping({
+  doc: mergeLayerDocs([
+    parseLayerDoc(
+      { kind: "base", id: "base", path: "/virtual/base.toml" },
+      '[sources]\nmap = ["jira:issue=doc", "readwise:highlight=note"]\n',
+    ),
+  ]),
+});
+
+test("authority follows the mapping's kind", () => {
+  expect(authorityOfKind("doc")).toBe(1);
+  expect(authorityOfKind("ticket")).toBe(0.6);
+  expect(authorityOfKind("note")).toBe(0.3);
+  expect(sourceAuthority("jira:issue", AS_DOC)).toBe(1);
+  expect(sourceAuthority("readwise:highlight", AS_DOC)).toBe(0.3);
+});
+
+test("a given scoredKind decides authority without consulting serviceType", () => {
+  const base = {
+    tier: "explicit" as const,
+    evidenceKinds: [],
+    hasRationale: false,
+    hasAlternatives: false,
+  };
+  const byKind = computeConfidence({ ...base, serviceType: "slack:message", scoredKind: "doc" });
+  const byType = computeConfidence({ ...base, serviceType: "jira:issue", mapping: AS_DOC });
+  expect(byKind).toBeCloseTo(byType, 10);
+  expect(
+    computeConfidence({ ...base, serviceType: "jira:issue", mapping: AS_DOC, scoredKind: null }),
+  ).toBeCloseTo(byType, 10);
+  expect(computePriority({ tier: "explicit", serviceType: "x:y", scoredKind: "doc" })).toBeCloseTo(
+    0.25 * 0.6 + 0.2,
+    10,
+  );
+  const explained = explainConfidence({ ...base, serviceType: "slack:message", scoredKind: "doc" });
+  expect(explained.reduce((a, t) => a + t.value, 0)).toBeCloseTo(byKind, 10);
 });

@@ -138,6 +138,16 @@ describe("setPackLayer", () => {
     expect(existsSync(packFile("data"))).toBe(true);
   });
 
+  test("two packs mapping one source to different kinds conflict; the same kind unions", () => {
+    const map = (kind: string): string => `[sources]\nmap = ["readwise:highlight=${kind}"]\n`;
+    const store = wired();
+    store.setPackLayer("default", "a", map("note"));
+    const err = refusal(() => store.setPackLayer("default", "b", map("doc")));
+    expect(err.reason).toBe("conflict");
+    expect(err.problems).toContain("[sources] map readwise:highlight: pack a maps it to note");
+    expect(() => store.setPackLayer("default", "b", map("note"))).not.toThrow();
+  });
+
   test("refuses conflicting scalars and job names, even when the user's file sets the key", () => {
     writeFileSync(join(dir, "nimbus.toml"), "[fleet]\nretention_days = 30\n");
     const store = wired();

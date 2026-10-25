@@ -15,6 +15,7 @@ import {
   loadNimbusUserFromConfigDir,
 } from "../config/nimbus-toml.ts";
 import { ownershipRoots } from "../ownership/ownership-target.ts";
+import { sourceMappingFor } from "../sources/source-mapping.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 
 export class TourRpcError extends Error {
@@ -94,6 +95,7 @@ export function buildSelectorCtx(ctx: TourRpcContext): TourSelectorCtx {
     fsRoots,
     ownershipRoots: roots,
     decisionsMinConfidence,
+    mapping: sourceMappingFor(configDir),
     // MUST NOT throw — `resolveSelfPerson` doesn't today, but the contract belongs here rather
     // than resting on that staying true.
     resolveSelf: async () => {

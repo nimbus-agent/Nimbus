@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Runtime:** Bun v1.2+ / TypeScript 7.x (strict)
-**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants I1–I47; schema V73.
+**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants I1–I47; schema V74.
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
 >
@@ -1268,6 +1268,26 @@ count as ADRs (doc-kind ones) and which items can match a `--service` by ticket 
 ones carrying `metadata.key` or `metadata.identifier`). Email, calendar and gateway-written
 `nimbus:*` types are not in the table.
 
+**The effective mapping (decisions only).** `sources/source-mapping.ts` layers owner and pack
+config over the built-in table: pack `[sources] map` entries are add-only (refused for built-in
+types, the seven personal email and calendar types, duplicates and `nimbus:*`; two packs
+disagreeing on a kind conflict), the owner's base then profile `map` may add or re-kind any type,
+and the owner's `exclude` removes any, with `exclude` beating `map` inside one layer. `nimbus:*` is
+refused by the parser and dropped again by the resolver (I28). It is resolved live, per pass run
+and per read, from the cached layered-config snapshot, never from a boot-time copy. Glossary
+filters still read the built-in table until a later release.
+
+V74 supports it: `source_catchup_state` holds per-type catch-up cursors, `decision_record.scored_kind`
+records the kind a row was scored under (so a re-kind does not trip the stale-score note), and
+`idx_item_service_type_modified ON item(service, type, modified_at, id)` lets the catch-up seek.
+The pass mines already-indexed items of a newly mapped type, and of a re-included type only the
+window it was unmapped, before the delta scan; built-ins on an upgraded index are not re-scanned;
+queued and snippet-upgrade rows of excluded types are not sent to the model; `--rebuild` clears
+the cursors; the ADR lookup uses the mapping's doc types and is skipped when there are none. Reads
+(`nimbus decisions`, counts, candidate totals, negotiate's decisions lane, the tour) hide rows of
+types not currently mapped without deleting them, and always show orphan decisions and
+owner-accepted agent decisions.
+
 ---
 
 ## Phase 6+ Subsystems
@@ -2050,7 +2070,7 @@ publisher-key conflict, then the entry hash. Only then does the reused `extensio
 and root fingerprint; `--yes` is refused for registry installs. The recorded source feeds nothing yet: the update daemon does NOT use
 registries (PR 4).
 
-**Built-in official registry** (`extensions/registry/builtin-registry.ts`, Readwise unbundling gateway PR 5; schema V73). The
+**Built-in official registry** (`extensions/registry/builtin-registry.ts`, Readwise unbundling gateway PR 5; added in V73). The
 release carries one registry's URL and root key, `BUILTIN_REGISTRY`, baked in by the pilot's PR 7:
 `https://nimbus-agent.github.io/nimbus-mcp-servers/` (the trailing slash is load-bearing: `index.json` is
 resolved against it) with root fingerprint `6fb9beb2cf6bdc748c72c03b30b83a9a`. It is `null` only in test
@@ -2089,7 +2109,7 @@ I44. `registry search` reads the owner's registries only, so it does not include
 
 ### Connector migration
 
-**Readwise unbundling pilot, gateway PR 5** (schema V73 `connector_migration`; HITL type `extension.migrate` in the I2 frozen
+**Readwise unbundling pilot, gateway PR 5** (the V73 `connector_migration` table; HITL type `extension.migrate` in the I2 frozen
 set, never delegable; static D34; no new invariant). Moves an existing user of a bundled connector to its signed extension from
 the built-in official registry (live for Readwise since PR 7) with ONE owner decision. The engine is `extensions/migration/migration-engine.ts`, its store
 `migration-store.ts`; the table names a legacy connector at most once (`UNIQUE legacy_service_id`).

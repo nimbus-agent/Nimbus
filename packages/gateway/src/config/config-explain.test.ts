@@ -341,6 +341,23 @@ describe("agent visibility notes", () => {
   });
 });
 
+describe("source mapping notes", () => {
+  test("sources paths get the notes, other paths do not call the hook", () => {
+    writeBase('[sources]\nmap = ["a:b=note"]\n[fleet]\nenabled = true\n');
+    const reader = initLayeredConfig(dir);
+    for (const p of ["sources", "sources.map", "sources.exclude"]) {
+      const r = explainConfig(reader, p, noEnv, { sourceMappingNotes: () => ["x"] });
+      expect(r.notes).toContain("x");
+    }
+    const sourceMappingNotes = (): readonly string[] => {
+      throw new Error("must not be called");
+    };
+    for (const p of ["fleet.enabled", "sourcesx", undefined]) {
+      expect(() => explainConfig(reader, p, noEnv, { sourceMappingNotes })).not.toThrow();
+    }
+  });
+});
+
 describe("section fallbacks", () => {
   test("fallback is reported right after an edit", () => {
     const reader = initLayeredConfig(dir);

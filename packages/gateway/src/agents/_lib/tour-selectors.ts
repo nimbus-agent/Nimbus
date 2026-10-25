@@ -14,6 +14,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { listDecisions } from "../../decisions/decision-store.ts";
 import { enumeratePaths } from "../../fleet/fleet-sweep-enumerators.ts";
 import { listConsolidated } from "../../glossary/glossary-store.ts";
+import type { SourceMapping } from "../../sources/source-mapping.ts";
 import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 import {
   selectActivePrs,
@@ -43,6 +44,8 @@ export interface TourSelectorCtx {
   readonly ownershipRoots: readonly string[];
   /** `[decisions] min_confidence`, or 0 — the SAME default `handleDecisions` applies. */
   readonly decisionsMinConfidence: number;
+  /** `sourceMappingFor(configDir)` — the SAME mapping `handleDecisions` reads under. */
+  readonly mapping: SourceMapping;
   /** Resolves "me", or null. MUST NOT throw. */
   readonly resolveSelf: () => Promise<string | null>;
 }
@@ -152,6 +155,7 @@ function selectDecisions(ctx: TourSelectorCtx): TourSelectorResult {
     sinceMs: ctx.nowMs - DECISIONS_WINDOW_MS,
     minConfidence: ctx.decisionsMinConfidence,
     limit: 1,
+    mapping: ctx.mapping,
   });
   return rows.length > 0
     ? {

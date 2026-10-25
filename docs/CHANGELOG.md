@@ -18,6 +18,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-25 — Role packs P2 PR 2a: role packs and your config choose which sources decisions are mined from (schema V74, no invariant, no egress class).**
+  A `[sources]` table (`map` = `service:type=kind` entries, `exclude`) in a pack or in `nimbus.toml` / `nimbus.<profile>.toml`
+  changes what `nimbus decisions` mines. `sources/source-mapping.ts` resolves the effective mapping live (built-ins, then packs
+  add-only, then your base and profile layers; your `exclude` wins). Packs cannot name a built-in type, a personal email or
+  calendar type, or `nimbus:*`; two packs mapping a type to different kinds conflict. `nimbus config explain sources` shows
+  origin, exclusions and notes; the pack install prompt gains a `Sources added:` section and `pack.list` rows carry
+  `sourceMappings`. V74 adds `source_catchup_state`, `decision_record.scored_kind` and
+  `idx_item_service_type_modified`. The pass catches up already-indexed items of a newly mapped type (a re-included type only
+  over the window it was unmapped) before its delta scan, skips queued rows of excluded types, and `--rebuild` clears the
+  cursors. Reads hide rows of types no longer mapped (never deleted); orphan and owner-accepted agent decisions always show.
+  The glossary is unchanged until a later release. Installing a pack does not run a pass.
+
 - **2026-10-25 — Role packs P2 PR 1: decisions and glossary sources resolve through one kind table (no behaviour change, no migration, no invariant, no egress class).**
   `sources/source-kinds.ts` classifies every decisions/glossary source `service:type` as a kind (`message`, `doc`,
   `ticket`, `commit`, `note`), and both passes' source sets now derive from it; source authority, ADR corroboration

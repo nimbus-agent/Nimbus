@@ -7,6 +7,7 @@ import { emitDecisionsBrief } from "../../../src/agents/decisions.ts";
 import { runDecisionPass } from "../../../src/decisions/decision-extract.ts";
 import { upsertIndexedItem } from "../../../src/index/item-store.ts";
 import { LocalIndex } from "../../../src/index/local-index.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../../../src/sources/source-mapping.ts";
 
 /** Narrows the `decisions.briefReady` payload instead of casting it into shape. */
 function isBriefReadyParams(v: unknown): v is { brief: string; findings: { kind: string } } {
@@ -53,13 +54,19 @@ describe("nimbus decisions (e2e, in-process)", () => {
       maxLlmCalls: 25,
       minConfidence: 0,
       retryCooldownMs: 1_000,
+      mapping: BUILTIN_SOURCE_MAPPING,
     });
     expect(summary.extracted).toBeGreaterThan(0);
 
     const seen: Array<{ method: string; params: unknown }> = [];
     await emitDecisionsBrief(
       {},
-      { db, sessionId: "e2e-decisions", notify: (method, params) => seen.push({ method, params }) },
+      {
+        db,
+        sessionId: "e2e-decisions",
+        mapping: BUILTIN_SOURCE_MAPPING,
+        notify: (method, params) => seen.push({ method, params }),
+      },
     );
     await Bun.sleep(50);
 

@@ -33,6 +33,8 @@ import {
   type PackScalar,
 } from "../config/pack-settable.ts";
 import { writeUtf8FileAtomicReplace } from "../config/toml-section-writer.ts";
+import type { SourceKind } from "../sources/source-kinds.ts";
+import { sourceMapFromList } from "../sources/source-mapping.ts";
 import { checkPackFleetJobs } from "./pack-job-check.ts";
 
 const ACTIVE_FILE = "active.json";
@@ -133,6 +135,7 @@ type CleanPack = {
   readonly id: string;
   readonly scalars: ReadonlyMap<string, PackScalar>;
   readonly jobNames: readonly string[];
+  readonly sourceMap: ReadonlyMap<string, SourceKind>;
 };
 
 type DetailedRead = PackLayersRead & {
@@ -207,6 +210,7 @@ function conflicts(
   packId: string,
   scalars: ReadonlyMap<string, PackScalar>,
   jobNames: readonly string[],
+  sourceMap: ReadonlyMap<string, SourceKind>,
   others: readonly CleanPack[],
 ): string[] {
   const problems: string[] = [];
@@ -221,6 +225,12 @@ function conflicts(
     for (const name of jobNames) {
       if (other.jobNames.includes(name)) {
         problems.push(`[[fleet.job]] ${name} is also set by pack ${other.id}`);
+      }
+    }
+    for (const [type, kind] of sourceMap) {
+      const theirs = other.sourceMap.get(type);
+      if (theirs !== undefined && theirs !== kind) {
+        problems.push(`[sources] map ${type}: pack ${other.id} maps it to ${theirs}`);
       }
     }
   }
@@ -291,7 +301,15 @@ export function createPackLayerStore(opts: {
     if (!read.ok) return { reason: readFailure(read, PACK_FRAGMENT_MAX_BYTES) };
     const check = checkPackFragment(read.text, checkJobs);
     if (!check.ok) return { reason: refusedReason(check.problems, safe) };
-    return { text: read.text, pack: { id, scalars: check.scalars, jobNames: check.jobNames } };
+    return {
+      text: read.text,
+      pack: {
+        id,
+        scalars: check.scalars,
+        jobNames: check.jobNames,
+        sourceMap: sourceMapFromList(check.lists.get("sources.map")),
+      },
+    };
   }
 
   function readFailure(read: Exclude<RegularRead, { ok: true }>, maxBytes: number): string {
@@ -353,7 +371,13 @@ export function createPackLayerStore(opts: {
     }
     const parsed = checkPackFragment(fragment, checkJobs);
     if (!parsed.ok) return { ok: false, reason: "invalid", problems: parsed.problems };
-    const clash = conflicts(packId, parsed.scalars, parsed.jobNames, current.clean);
+    const clash = conflicts(
+      packId,
+      parsed.scalars,
+      parsed.jobNames,
+      sourceMapFromList(parsed.lists.get("sources.map")),
+      current.clean,
+    );
     if (clash.length > 0) return { ok: false, reason: "conflict", problems: clash };
     return { ok: true, ids: current.ids };
   }

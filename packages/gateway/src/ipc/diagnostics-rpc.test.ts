@@ -2124,6 +2124,19 @@ describe("layered config over IPC", () => {
     }
   });
 
+  test("config.explain sources returns the resolver's notes", () =>
+    withProfileDir(
+      { "nimbus.toml": '[sources]\nmap = ["jira:issue=wiki"]\n' },
+      "default",
+      async (dir) => {
+        const r = await dispatchDiagnosticsRpc("config.explain", { path: "sources" }, makeCtx(dir));
+        const notes = (r as { value: { notes: string[] } }).value.notes;
+        expect(
+          notes.some((n) => n.includes("is not a valid list") && n.includes("jira:issue=wiki")),
+        ).toBe(true);
+      },
+    ));
+
   test("config.explain rejects a non-string path", () =>
     withProfileDir({ "nimbus.toml": "schema_version = 1\n" }, "default", (dir) => {
       expect(() => dispatchDiagnosticsRpc("config.explain", { path: 7 }, makeCtx(dir))).toThrow(

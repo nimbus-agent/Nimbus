@@ -6,10 +6,10 @@
  */
 import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
-
 import { dbExec, dbRun } from "../db/write.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 import { runNegotiate } from "./negotiate.ts";
 
 const DAY = 86_400_000;
@@ -27,7 +27,13 @@ function freshDb(): Database {
 }
 
 function ctxFor(db: Database) {
-  return { db, notify: () => {}, sessionId: "negotiate-cov", personalSources: [] };
+  return {
+    db,
+    notify: () => {},
+    sessionId: "negotiate-cov",
+    personalSources: [],
+    mapping: BUILTIN_SOURCE_MAPPING,
+  };
 }
 
 function seedPerson(

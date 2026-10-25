@@ -2928,6 +2928,23 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     const { GLOSSARY_SOURCE_TYPES } = await import("./glossary/glossary-source-types.ts");
     expect(DECISION_SOURCE_TYPES.has("nimbus:capture")).toBe(false);
     expect(GLOSSARY_SOURCE_TYPES.has("nimbus:capture")).toBe(false);
+
+    // A source mapping is no way back in: the entry parser refuses `nimbus:*` and the resolver
+    // drops it, from a pack layer and from the owner's base layer alike.
+    const { mergeLayerDocs, parseLayerDoc } = await import("./config/layered-merge.ts");
+    const { parseSourceMapEntry, resolveSourceMapping } = await import(
+      "./sources/source-mapping.ts"
+    );
+    const layer = (kind: "pack" | "base") => ({ kind, id: kind, path: `/virtual/${kind}.toml` });
+    const doc = mergeLayerDocs([
+      parseLayerDoc(layer("pack"), '[sources]\nmap = ["nimbus:capture=note"]\n'),
+      parseLayerDoc(layer("base"), '[sources]\nmap = ["nimbus:capture=note"]\n'),
+    ]);
+    const mapping = resolveSourceMapping({ doc });
+    expect(mapping.typesFor("decisions")).not.toContain("nimbus:capture");
+    expect(mapping.typesFor("glossary")).not.toContain("nimbus:capture");
+    expect(mapping.kindOf("nimbus:capture")).toBeUndefined();
+    expect(parseSourceMapEntry("nimbus:capture=note")).toBeUndefined();
   });
 
   test("capture items embed LOCALLY only (no remote egress through the embedder)", async () => {

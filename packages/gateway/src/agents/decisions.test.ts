@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
+import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
+import { computeConfidence } from "../decisions/decision-confidence.ts";
 import { runDecisionPass } from "../decisions/decision-extract.ts";
 import {
   markExtracted,
@@ -11,6 +13,11 @@ import {
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import {
+  BUILTIN_SOURCE_MAPPING,
+  resolveSourceMapping,
+  type SourceMapping,
+} from "../sources/source-mapping.ts";
 import type { SynthesisRunner } from "./_lib/synthesis-llm.ts";
 import { emitDecisionsBrief, runDecisions } from "./decisions.ts";
 
@@ -51,7 +58,7 @@ function extracted(
     },
     1_000,
   );
-  setConfidence(db, id, confidence, false, 1_000);
+  setConfidence(db, id, confidence, false, 1_000, null);
 }
 
 function seedItem(id: string, service: string, type: string, metadata: string | null): void {
@@ -62,7 +69,7 @@ function seedItem(id: string, service: string, type: string, metadata: string | 
   );
 }
 
-const ctx = () => ({ db, notify: () => {}, sessionId: "s1" });
+const ctx = () => ({ db, notify: () => {}, sessionId: "s1", mapping: BUILTIN_SOURCE_MAPPING });
 
 const PASS_STATE = {
   watermarkMs: 2_000,
@@ -86,6 +93,7 @@ async function collectBrief(
     {
       db,
       sessionId: "s1",
+      mapping: BUILTIN_SOURCE_MAPPING,
       notify: (method: string, params: unknown) => {
         seen.push({ method, params });
         settle();
@@ -177,6 +185,7 @@ test("a completed pass that found nothing new clears the 'has not run yet' gap",
     useLlm: false,
     maxLlmCalls: 0,
     retryCooldownMs: 0,
+    mapping: BUILTIN_SOURCE_MAPPING,
   });
 
   const after = await runDecisions({}, ctx());
@@ -483,4 +492,113 @@ test("no longer reports a confidence ceiling, because there is not one (F25)", a
   expect(withRows.gaps.some((g) => g.detail.includes("tops out"))).toBe(false);
   const empty = await runDecisions({}, ctx());
   expect(empty.gaps.some((g) => g.detail.includes("tops out"))).toBe(false);
+});
+
+function ownerMapping(body: string): SourceMapping {
+  const doc = parseLayerDoc(
+    { kind: "base", id: "base", path: "/virtual/base.toml" },
+    `[sources]\n${body}\n`,
+  );
+  return resolveSourceMapping({ doc: mergeLayerDocs([doc]) });
+}
+
+/** One extracted row from `sourceItemId`, scored as `ticket`, with `scoredKind` stored. */
+function scoredRow(id: string, sourceItemId: string, scoredKind: "ticket" | null): void {
+  upsertCandidate(db, {
+    id,
+    sourceItemId,
+    cueTier: "explicit",
+    cueText: "we decided",
+    priority: 0.5,
+    decidedAt: 1_000,
+    nowMs: 1_000,
+  });
+  markExtracted(
+    db,
+    id,
+    {
+      statement: `Decision ${id}`,
+      rationale: "because",
+      alternatives: [],
+      extractionSource: "llm",
+    },
+    1_000,
+  );
+  const confidence = computeConfidence({
+    tier: "explicit",
+    serviceType: "jira:issue",
+    scoredKind: "ticket",
+    evidenceKinds: [],
+    hasRationale: true,
+    hasAlternatives: false,
+  });
+  setConfidence(db, id, confidence, false, 1_000, scoredKind);
+}
+
+const staleGap = (brief: { gaps: readonly { detail: string }[] }): string | undefined =>
+  brief.gaps.find((g) => g.detail.includes("previous scale"))?.detail;
+
+test("re-kind does not trip the stale-score check", async () => {
+  seedItem("jira:J-1", "jira", "issue", null);
+  scoredRow("kinded", "jira:J-1", "ticket");
+  writePassState(db, PASS_STATE);
+  const asDoc = ownerMapping('map = ["jira:issue=doc"]');
+  const brief = await runDecisions(
+    { sinceMs: ALL_TIME_MS, explain: true },
+    { ...ctx(), mapping: asDoc },
+  );
+  expect(staleGap(brief)).toBeUndefined();
+  // Explain scores authority under the SAME kind the stale check used: ticket, 0.2 * 0.6.
+  const authority = brief.entries[0]?.explain.find((t) => t.term === "authority");
+  expect(authority?.value).toBeCloseTo(0.12, 10);
+});
+
+test("a row with no scored kind keeps the recompute under the effective mapping", async () => {
+  seedItem("jira:J-1", "jira", "issue", null);
+  scoredRow("unkinded", "jira:J-1", null);
+  writePassState(db, PASS_STATE);
+  const builtin = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
+  expect(staleGap(builtin)).toBeUndefined();
+  const asDoc = ownerMapping('map = ["jira:issue=doc"]');
+  const brief = await runDecisions({ sinceMs: ALL_TIME_MS }, { ...ctx(), mapping: asDoc });
+  expect(staleGap(brief)).toStartWith("1 decision(s)");
+});
+
+test("an excluded type's decisions leave the brief and its counts", async () => {
+  seedItem("slack:m1", "slack", "message", null);
+  seedItem("jira:J-1", "jira", "issue", null);
+  scoredRow("slack-d", "slack:m1", null);
+  scoredRow("jira-d", "jira:J-1", "ticket");
+  writePassState(db, PASS_STATE);
+  const noSlack = ownerMapping('exclude = ["slack:message"]');
+  const all = await runDecisions({ sinceMs: ALL_TIME_MS }, ctx());
+  expect(all.entries.map((e) => e.id).sort()).toEqual(["jira-d", "slack-d"]);
+  const brief = await runDecisions({ sinceMs: ALL_TIME_MS }, { ...ctx(), mapping: noSlack });
+  expect(brief.entries.map((e) => e.id)).toEqual(["jira-d"]);
+  expect(brief.stats.extracted).toBe(1);
+  expect(brief.stats.total).toBe(1);
+});
+
+test("--service ticket-key matching follows the effective mapping", async () => {
+  seedItem("acme:T-1", "acme", "ticket", JSON.stringify({ key: "BILLING-7" }));
+  seedItem("jira:J-1", "jira", "issue", JSON.stringify({ key: "BILLING-12" }));
+  scoredRow("acme-d", "acme:T-1", null);
+  scoredRow("jira-d", "jira:J-1", "ticket");
+  writePassState(db, PASS_STATE);
+
+  // Added ticket type: matches by key. Built-in mapping does not know it.
+  const added = ownerMapping('map = ["acme:ticket=ticket"]');
+  const withAcme = await runDecisions(
+    { sinceMs: ALL_TIME_MS, service: "billing" },
+    { ...ctx(), mapping: added },
+  );
+  expect(withAcme.entries.map((e) => e.id).sort()).toEqual(["acme-d", "jira-d"]);
+
+  // Re-kinded away from ticket: a Jira item no longer matches by its key.
+  const asDoc = ownerMapping('map = ["jira:issue=doc"]');
+  const reKinded = await runDecisions(
+    { sinceMs: ALL_TIME_MS, service: "billing" },
+    { ...ctx(), mapping: asDoc },
+  );
+  expect(reKinded.entries.map((e) => e.id)).toEqual([]);
 });

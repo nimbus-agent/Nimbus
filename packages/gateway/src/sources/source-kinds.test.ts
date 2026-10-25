@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
-import { DECISION_SOURCE_TYPES, decisionSourceFilter } from "../decisions/decision-source-types.ts";
+import { DECISION_SOURCE_TYPES } from "../decisions/decision-source-types.ts";
 import { GLOSSARY_SOURCE_TYPES, glossarySourceFilter } from "../glossary/glossary-source-types.ts";
 import {
-  BUILTIN_SOURCE_KINDS,
+  builtinSourceEntries,
   PASS_KINDS,
   sourceKindOf,
   sourceTypesFor,
@@ -42,8 +42,7 @@ test("the glossary set is exactly today's list, in today's order", () => {
   expect([...GLOSSARY_SOURCE_TYPES]).toEqual(GLOSSARY_BEFORE);
 });
 
-test("the filters' params are unchanged", () => {
-  expect(decisionSourceFilter().params).toEqual(DECISIONS_BEFORE);
+test("the glossary filter's params are unchanged", () => {
   expect(glossarySourceFilter().params).toEqual(GLOSSARY_BEFORE);
 });
 
@@ -56,7 +55,7 @@ test("doc kind is the three long-form sources", () => {
 });
 
 test("the built-in table has no note, email, calendar or nimbus entries", () => {
-  for (const [key, kind] of BUILTIN_SOURCE_KINDS) {
+  for (const [key, kind] of builtinSourceEntries()) {
     expect(kind).not.toBe("note");
     expect(key.startsWith("nimbus:")).toBe(false);
     expect(/:(email|calendar_event|event)$/.test(key)).toBe(false);

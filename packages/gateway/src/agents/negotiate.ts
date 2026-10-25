@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { userInfo } from "node:os";
 
+import { decisionVisibilityFilter } from "../decisions/decision-store.ts";
 import { AgentCoordinator, type SubTask, type SubTaskResult } from "../engine/coordinator.ts";
 import { normalizeEmail } from "../people/person-store.ts";
+import type { SourceMapping } from "../sources/source-mapping.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
 import {
@@ -60,6 +62,12 @@ export type NegotiateContext = {
    * `[]`) explicitly rather than silently disabling an opt-in the user believes is active.
    */
   personalSources: readonly string[];
+  /**
+   * The effective source mapping (`sourceMappingFor(configDir)`, built per call by the caller).
+   * Required for the same reason as `personalSources`: the decisions lane counts and cites only
+   * decisions whose source is mapped now, and a default would silently count excluded ones.
+   */
+  mapping: SourceMapping;
 };
 
 const PERSONAL_DOCS_CONFIG_KEY = "[negotiate] personal_sources";
@@ -694,25 +702,35 @@ function countUnmappedOwnerIdentities(db: Database): number {
  * resolves to an item with `author_id IS NULL`; `unattributable` counts those rows rather
  * than silently dropping them from the denominator (spec § 8.2, Task 5 brief).
  */
-function laneDecisions(db: Database, personId: string, sinceMs: number): NegotiateDecisions {
+function laneDecisions(
+  db: Database,
+  personId: string,
+  sinceMs: number,
+  mapping: SourceMapping,
+): NegotiateDecisions {
   const cutoff = Date.now() - sinceMs;
+  // The same rows `nimbus decisions` shows. The inner `JOIN item` already drops orphans (an
+  // orphan has no author to attribute), so of the fragment's arms only the mapping and the
+  // `'agent'` one can matter here.
+  const visible = decisionVisibilityFilter(mapping);
   const authored = db
     .query(
       `SELECT COUNT(*) AS n
          FROM decision_record d
          JOIN item i ON i.id = d.source_item_id
-        WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id = ?`,
+        WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id = ? AND ${visible.sql}`,
     )
-    .get(cutoff, personId) as { n: number };
+    .get(cutoff, personId, ...visible.params) as { n: number };
 
   const unattributable = db
     .query(
       `SELECT COUNT(*) AS n
          FROM decision_record d
          JOIN item i ON i.id = d.source_item_id
-        WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id IS NULL`,
+        WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id IS NULL
+          AND ${visible.sql}`,
     )
-    .get(cutoff) as { n: number };
+    .get(cutoff, ...visible.params) as { n: number };
 
   // Cited from `authored` ONLY. `d.statement` is nullable (a `pending` row has none, and an
   // `extracted` one can still be null if extraction produced nothing usable), so fall back to
@@ -723,10 +741,10 @@ function laneDecisions(db: Database, personId: string, sinceMs: number): Negotia
             COALESCE(i.canonical_url, i.url) AS url
        FROM decision_record d
        JOIN item i ON i.id = d.source_item_id
-      WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id = ?
+      WHERE d.status = 'extracted' AND d.decided_at >= ? AND i.author_id = ? AND ${visible.sql}
       ORDER BY d.decided_at DESC, d.id ASC
       LIMIT ?`,
-    [cutoff, personId, NEGOTIATE_EVIDENCE_LIMIT],
+    [cutoff, personId, ...visible.params, NEGOTIATE_EVIDENCE_LIMIT],
   );
   return {
     authored: authored.n,
@@ -1312,7 +1330,7 @@ export async function runNegotiate(
       subAgent(() => laneReviewedPrs(ctx.db, personId, sinceMs)),
       subAgent(() => laneTickets(ctx.db, personId, sinceMs, agent.tickets)),
       subAgent(() => laneOwnership(ctx.db, personId)),
-      subAgent(() => laneDecisions(ctx.db, personId, sinceMs)),
+      subAgent(() => laneDecisions(ctx.db, personId, sinceMs, ctx.mapping)),
       subAgent(() => laneWriting(ctx.db, personId, sinceMs, ctx.personalSources, agent.writing)),
       subAgent(() => laneIncidents(ctx.db, personId, sinceMs)),
     );

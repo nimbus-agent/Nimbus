@@ -29,7 +29,7 @@ export const SOURCE_KINDS: readonly SourceKind[] = Object.freeze([
 ]);
 
 /** Insertion order is the order the passes' SQL parameters were always bound in; keep it. */
-export const BUILTIN_SOURCE_KINDS: ReadonlyMap<string, SourceKind> = new Map<string, SourceKind>([
+const BUILTIN_SOURCE_KINDS: ReadonlyMap<string, SourceKind> = new Map<string, SourceKind>([
   ["slack:message", "message"],
   ["discord:message", "message"],
   ["teams:message", "message"],
@@ -84,4 +84,13 @@ export function sourceTypesFor(pass: SourcePass): readonly string[] {
 
 export function sourceTypesOfKind(kind: SourceKind): readonly string[] {
   return TYPES_OF_KIND[kind];
+}
+
+const BUILTIN_ENTRIES: readonly (readonly [string, SourceKind])[] = Object.freeze(
+  [...BUILTIN_SOURCE_KINDS].map(([key, kind]) => Object.freeze([key, kind] as const)),
+);
+
+/** The built-in table as frozen `[serviceType, kind]` pairs, in table order, for the resolver and tests. */
+export function builtinSourceEntries(): readonly (readonly [string, SourceKind])[] {
+  return BUILTIN_ENTRIES;
 }

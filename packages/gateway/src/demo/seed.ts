@@ -21,6 +21,7 @@ import { runOwnershipPass } from "../ownership/ownership-pass.ts";
 import { NIMBUS_PERSON_NAMESPACE_UUID, uuidV5 } from "../people/person-id.ts";
 import { insertPerson } from "../people/person-store.ts";
 import { type BlameRow, upsertBlameLines } from "../security/blame-store.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 
 import {
   ACME_TOUR_STEPS,
@@ -421,6 +422,8 @@ export async function seedDemoCorpus(
     useLlm: false,
     maxLlmCalls: decisionsCfg.maxLlmCallsPerPass,
     retryCooldownMs: decisionsCfg.retryCooldownMs,
+    // The demo corpus is built-in sources only; a demo pack's mapping does not apply here.
+    mapping: BUILTIN_SOURCE_MAPPING,
   });
 
   writeMarker(opts.dataDir, opts.nowMs);

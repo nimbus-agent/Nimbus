@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
-
+import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { resolveSourceMapping } from "../sources/source-mapping.ts";
 import {
   CORROBORATION_BACKWARD_MS,
   CORROBORATION_FORWARD_MS,
@@ -323,4 +324,41 @@ test("ADR lookup admits doc-kind sources only", () => {
   seedItem("cnf", "confluence", "page", "ADR: move billing to Postgres", DECIDED_AT);
   const adrs = corroborate(db, input).filter((e) => e.kind === "adr");
   expect(adrs.map((e) => e.itemId)).toEqual(["cnf"]);
+});
+
+test("empty doc set skips the ADR lookup", () => {
+  const doc = parseLayerDoc(
+    { kind: "base", id: "base", path: "/virtual/base.toml" },
+    '[sources]\nexclude = ["notion:page", "confluence:page", "obsidian:obsidian_note"]\n',
+  );
+  const mapping = resolveSourceMapping({ doc: mergeLayerDocs([doc]) });
+  expect(mapping.typesOfKind("doc")).toEqual([]);
+  seedItem("src", "slack", "message", "thread", DECIDED_AT);
+  seedItem("cnf", "confluence", "page", "ADR: move billing to Postgres", DECIDED_AT);
+  const ev = corroborate(db, {
+    decisionId: "d1",
+    sourceItemId: "src",
+    decidedAt: DECIDED_AT,
+    statement: "move billing to Postgres",
+    mapping,
+  });
+  expect(ev.filter((e) => e.kind === "adr")).toEqual([]);
+});
+
+test("a re-kinded doc type becomes an ADR source", () => {
+  const doc = parseLayerDoc(
+    { kind: "base", id: "base", path: "/virtual/base.toml" },
+    '[sources]\nmap = ["google_drive:page=doc"]\n',
+  );
+  const mapping = resolveSourceMapping({ doc: mergeLayerDocs([doc]) });
+  seedItem("src", "slack", "message", "thread", DECIDED_AT);
+  seedItem("drv", "google_drive", "page", "ADR: move billing to Postgres", DECIDED_AT);
+  const input = {
+    decisionId: "d1",
+    sourceItemId: "src",
+    decidedAt: DECIDED_AT,
+    statement: "move billing to Postgres",
+  };
+  expect(hasAdrEvidence(corroborate(db, input))).toBe(false);
+  expect(hasAdrEvidence(corroborate(db, { ...input, mapping }))).toBe(true);
 });

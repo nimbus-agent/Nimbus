@@ -1,9 +1,16 @@
 import type { Database } from "bun:sqlite";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { type SourceMapping, sourceFilterSql } from "../sources/source-mapping.ts";
 import { decisionRowId, mineCues } from "./cue-mining.ts";
+import {
+  type CatchupCursor,
+  catchupTypes,
+  reconcileCatchupRows,
+  runCatchup,
+} from "./decision-catchup.ts";
 import { computeConfidence, computePriority } from "./decision-confidence.ts";
 import { corroborate, hasAdrEvidence } from "./decision-corroborate.ts";
 import { type DecisionLlm, extractDecision } from "./decision-llm-adapter.ts";
-import { decisionSourceFilter } from "./decision-source-types.ts";
 import {
   clearDecisions,
   markExtracted,
@@ -72,6 +79,17 @@ export interface DecisionPassOptions {
   readonly scanBatchLimit?: number;
   /** Test seam for `MAX_DISCOVERY_BATCHES`; same normalisation. */
   readonly maxDiscoveryBatches?: number;
+  /**
+   * The effective source mapping this run mines (`sources/source-mapping.ts`). Required: the
+   * production caller resolves it from the layered config at the start of EVERY run, so a pack
+   * install or an owner edit applies without a restart.
+   */
+  readonly mapping: SourceMapping;
+  /**
+   * The mapping as it stands NOW, re-read by catch-up between batches so a type that leaves the
+   * mapping mid-run stops. Defaults to `() => mapping`; a test injects one that changes.
+   */
+  readonly mappingAt?: () => SourceMapping;
 }
 
 export interface DecisionPassSummary {
@@ -108,15 +126,20 @@ type ScanRow = {
   modified_at: number;
 };
 
+const BUILTIN_DECISION_TYPES: ReadonlySet<string> = new Set(sourceTypesFor("decisions"));
+
+const SCAN_COLUMNS = "i.id, i.service, i.type, i.title, i.body, i.body_complete, i.modified_at";
+
 function scanDelta(
   db: Database,
-  cursor: { watermarkMs: number; watermarkId: string },
+  cursor: CatchupCursor,
   batchLimit: number,
+  mapping: SourceMapping,
 ): ScanRow[] {
-  const { sql, params } = decisionSourceFilter();
+  const { sql, params } = sourceFilterSql(mapping.typesFor("decisions"), "i");
   return db
     .query(
-      `SELECT i.id, i.service, i.type, i.title, i.body, i.body_complete, i.modified_at
+      `SELECT ${SCAN_COLUMNS}
          FROM item i
         WHERE ${sql}
           AND (i.modified_at > ? OR (i.modified_at = ? AND i.id > ?))
@@ -128,6 +151,44 @@ function scanDelta(
       cursor.watermarkMs,
       cursor.watermarkMs,
       cursor.watermarkId,
+      batchLimit,
+    ) as ScanRow[];
+}
+
+/**
+ * One catch-up batch: ONE type, strictly after its own cursor, up to and including the main cursor
+ * the run started at. `service`/`type` are matched as two equality columns, never the
+ * concatenation, so `idx_item_service_type_modified (service, type, modified_at, id)` (V74) serves
+ * both the range and the ORDER BY: each batch seeks to its window, with no sort. The bounds are
+ * row-value comparisons on purpose — the equivalent `a > ? OR (a = ? AND b > ?)` form keeps the
+ * index for the ORDER BY but not for the range, so every batch would re-read the type from its
+ * first item. Exported for the query-plan test that pins this.
+ */
+export const CATCHUP_SCAN_SQL = `SELECT ${SCAN_COLUMNS}
+         FROM item i
+        WHERE i.service = ? AND i.type = ?
+          AND (i.modified_at, i.id) > (?, ?)
+          AND (i.modified_at, i.id) <= (?, ?)
+        ORDER BY i.modified_at ASC, i.id ASC
+        LIMIT ?`;
+
+function scanCatchup(
+  db: Database,
+  serviceType: string,
+  after: CatchupCursor,
+  upTo: CatchupCursor,
+  batchLimit: number,
+): ScanRow[] {
+  const colon = serviceType.indexOf(":");
+  return db
+    .query(CATCHUP_SCAN_SQL)
+    .all(
+      serviceType.slice(0, colon),
+      serviceType.slice(colon + 1),
+      after.watermarkMs,
+      after.watermarkId,
+      upTo.watermarkMs,
+      upTo.watermarkId,
       batchLimit,
     ) as ScanRow[];
 }
@@ -145,15 +206,18 @@ function scanDelta(
  * matching item's full `body` (up to 16 KiB each, unbounded — unlike
  * `scanDelta`, there is no `LIMIT` here) across the `AgentCoordinator`
  * JSON-stringify boundary just to discard it. Uses the SAME
- * `decisionSourceFilter()` predicate as `scanDelta` so the counted
- * population always matches the mined population — that equivalence is
- * what makes the reported number honest, so do not inline or re-derive it.
+ * `sourceFilterSql(mapping.typesFor("decisions"))` predicate as `scanDelta` so
+ * the counted population always matches the mined population — that
+ * equivalence is what makes the reported number honest, so do not inline or
+ * re-derive it. The mapping is required (the read path passes the
+ * effective one), so a caller cannot silently count an excluded type.
  */
 export function loadDecisionCandidates(
   db: Database,
-  opts: { sinceMs: number },
+  opts: { sinceMs: number; mapping: SourceMapping },
 ): { total: number; truncatedSources: number } {
-  const { sql, params } = decisionSourceFilter();
+  const types = opts.mapping.typesFor("decisions");
+  const { sql, params } = sourceFilterSql(types, "i");
   const row = db
     .query(
       `SELECT COUNT(*) AS total,
@@ -176,7 +240,31 @@ function scanText(r: ScanRow): string {
   return `${r.title}. ${r.body ?? ""}`.trim();
 }
 
-/** Mines one already-fetched batch and commits it with the advanced watermark. */
+/**
+ * Mines rows into `pending` candidates. No transaction and no cursor: the delta path and the
+ * catch-up path each wrap this together with THEIR OWN cursor write.
+ */
+function mineRows(db: Database, rows: readonly ScanRow[], opts: DecisionPassOptions): number {
+  let found = 0;
+  for (const r of rows) {
+    const serviceType = `${r.service}:${r.type}`;
+    for (const hit of mineCues(scanText(r))) {
+      upsertCandidate(db, {
+        id: decisionRowId(r.id, hit.normalized),
+        sourceItemId: r.id,
+        cueTier: hit.tier,
+        cueText: hit.cueText,
+        priority: computePriority({ tier: hit.tier, serviceType, mapping: opts.mapping }),
+        decidedAt: r.modified_at,
+        nowMs: opts.nowMs,
+      });
+      found++;
+    }
+  }
+  return found;
+}
+
+/** Mines one delta batch and commits it with the advanced MAIN watermark. */
 function commitBatch(
   db: Database,
   rows: readonly ScanRow[],
@@ -186,21 +274,7 @@ function commitBatch(
 ): number {
   let batchDiscovered = 0;
   db.transaction(() => {
-    for (const r of rows) {
-      const serviceType = `${r.service}:${r.type}`;
-      for (const hit of mineCues(scanText(r))) {
-        upsertCandidate(db, {
-          id: decisionRowId(r.id, hit.normalized),
-          sourceItemId: r.id,
-          cueTier: hit.tier,
-          cueText: hit.cueText,
-          priority: computePriority({ tier: hit.tier, serviceType }),
-          decidedAt: r.modified_at,
-          nowMs: opts.nowMs,
-        });
-        batchDiscovered++;
-      }
-    }
+    batchDiscovered = mineRows(db, rows, opts);
     writePassState(db, {
       watermarkMs: last.modified_at,
       watermarkId: last.id,
@@ -210,6 +284,32 @@ function commitBatch(
     });
   })();
   return batchDiscovered;
+}
+
+/**
+ * Catch-up, before the delta scan: reconcile the per-type rows, then drain every effective type
+ * still behind the run-start main cursor. It shares the run's batch budget and NEVER writes
+ * `decision_pass_state` — its cursors are older than the main one by construction, so writing one
+ * there would rewind the main watermark and re-scan the index.
+ */
+function catchupPhase(
+  db: Database,
+  opts: DecisionPassOptions,
+  mainCursor: CatchupCursor,
+  batchLimit: number,
+  maxBatches: number,
+) {
+  const effective = opts.mapping.typesFor("decisions");
+  reconcileCatchupRows(db, "decisions", effective, BUILTIN_DECISION_TYPES, mainCursor);
+  const mappingAt = opts.mappingAt ?? (() => opts.mapping);
+  return runCatchup(db, catchupTypes(db, "decisions", effective), {
+    pass: "decisions",
+    batchLimit,
+    maxBatches,
+    isEffective: (serviceType) => mappingAt().typesFor("decisions").includes(serviceType),
+    scan: (serviceType, after, limit) => scanCatchup(db, serviceType, after, mainCursor, limit),
+    mine: (rows) => mineRows(db, rows, opts),
+  });
 }
 
 /**
@@ -236,36 +336,53 @@ function discoverPhase(
   const maxBatches = boundOr(opts.maxDiscoveryBatches, MAX_DISCOVERY_BATCHES);
 
   let cursor = { watermarkMs: initial.watermarkMs, watermarkId: initial.watermarkId };
-  const running = { scanned: 0, discovered: 0, scannedItemsBefore: initial.scannedItems };
-  let discoveryComplete = false;
+  const catchup = catchupPhase(db, opts, cursor, batchLimit, maxBatches);
+  const running = {
+    scanned: catchup.scanned,
+    discovered: catchup.discovered,
+    scannedItemsBefore: initial.scannedItems,
+  };
+  let deltaComplete = false;
+  let deltaScanned = 0;
 
-  for (let batch = 0; batch < maxBatches; batch++) {
-    const rows = scanDelta(db, cursor, batchLimit);
+  for (let batch = catchup.batches; batch < maxBatches; batch++) {
+    const rows = scanDelta(db, cursor, batchLimit, opts.mapping);
     const last = rows.at(-1);
     if (last === undefined) {
-      discoveryComplete = true;
+      deltaComplete = true;
       break;
     }
     running.discovered += commitBatch(db, rows, last, opts, running);
     running.scanned += rows.length;
+    deltaScanned += rows.length;
     cursor = { watermarkMs: last.modified_at, watermarkId: last.id };
     if (rows.length < batchLimit) {
-      discoveryComplete = true;
+      deltaComplete = true;
       break;
     }
   }
 
-  if (running.scanned === 0) {
+  if (deltaScanned === 0) {
     // The delta was empty, but the PASS still ran. Recording only inside the
     // non-empty branch left `last_pass_at` null forever on an unchanged index,
     // so `agents/decisions.ts` kept telling a user who had just run
     // `nimbus decisions --refresh` to run `nimbus decisions --refresh`.
     // The watermark and `scanned_items` are carried through UNCHANGED — a pass
     // that scanned nothing must not move a cursor it never read past.
-    writePassState(db, { ...initial, lastPassAt: opts.nowMs, lastPassNew: 0 });
+    // What catch-up found and read still counts as this pass's work.
+    writePassState(db, {
+      ...initial,
+      lastPassAt: opts.nowMs,
+      lastPassNew: running.discovered,
+      scannedItems: initial.scannedItems + running.scanned,
+    });
   }
 
-  return { scanned: running.scanned, discovered: running.discovered, discoveryComplete };
+  return {
+    scanned: running.scanned,
+    discovered: running.discovered,
+    discoveryComplete: catchup.complete && deltaComplete,
+  };
 }
 
 function serviceTypeOf(db: Database, itemId: string): string {
@@ -309,6 +426,7 @@ function corroboratePhase(
     sourceItemId: row.source_item_id,
     decidedAt: row.decided_at,
     statement,
+    mapping: opts.mapping,
   });
   replaceEvidence(db, id, evidence);
 
@@ -320,14 +438,18 @@ function corroboratePhase(
     alternativesCount = 0;
   }
 
+  const serviceType = serviceTypeOf(db, row.source_item_id);
+  const scoredKind = opts.mapping.kindOf(serviceType) ?? null;
   const confidence = computeConfidence({
     tier: row.cue_tier as "heading" | "explicit" | "weak",
-    serviceType: serviceTypeOf(db, row.source_item_id),
+    serviceType,
+    scoredKind,
+    mapping: opts.mapping,
     evidenceKinds: evidence.map((e) => e.kind),
     hasRationale: row.rationale !== null,
     hasAlternatives: alternativesCount > 0,
   });
-  setConfidence(db, id, confidence, hasAdrEvidence(evidence), opts.nowMs);
+  setConfidence(db, id, confidence, hasAdrEvidence(evidence), opts.nowMs, scoredKind);
 }
 
 /** Snippet mode: the mined sentence IS the statement. No model, no alternatives. */
@@ -458,8 +580,8 @@ export async function runDecisionPass(
     // pending even when upgrades have nothing to do. Mirrors
     // `glossary-extract.ts`'s `selectConsolidationWork`.
     const budget = passBudget(opts.maxLlmCalls);
-    const pendingAll = selectPendingByPriority(db, budget, cooldownBefore);
-    const upgradeAll = selectSnippetUpgrades(db, budget);
+    const pendingAll = selectPendingByPriority(db, budget, cooldownBefore, opts.mapping);
+    const upgradeAll = selectSnippetUpgrades(db, budget, opts.mapping);
 
     // Reserve only as many upgrade slots as there are real upgrade
     // candidates, so a reserve with no work to do falls back to pending
@@ -477,7 +599,12 @@ export async function runDecisionPass(
     // only `extracted` produced the exact outcome `noModel` exists to prevent:
     // `12 extracted, 0 upgraded, 0 no model`, from which a user concludes the
     // LLM ran and never learns every statement is a verbatim snippet.
-    for (const row of selectPendingByPriority(db, passBudget(opts.maxLlmCalls), cooldownBefore)) {
+    for (const row of selectPendingByPriority(
+      db,
+      passBudget(opts.maxLlmCalls),
+      cooldownBefore,
+      opts.mapping,
+    )) {
       extractAsSnippet(db, row, opts);
       tally.extracted++;
       tally.noModel++;

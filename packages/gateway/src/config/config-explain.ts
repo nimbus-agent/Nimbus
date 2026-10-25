@@ -4,6 +4,7 @@
 import { DEFAULT_OPENAPI_CONFIG, parseOpenapiToml } from "../connectors/openapi-indexer-config.ts";
 import { loadMultimodalConfig } from "../multimodal/multimodal-config.ts";
 import { processEnvGet } from "../platform/env-access.ts";
+import { sourceMappingFor } from "../sources/source-mapping.ts";
 import type { ProfileSource } from "./active-profile.ts";
 import { CONFIG_ENV_OVERRIDES, isPolicyConstrainedPath } from "./config-env-overrides.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "./filesystem-toml.ts";
@@ -112,6 +113,7 @@ export const SECTION_LOADERS: Readonly<Record<string, (configDir: string) => unk
   premortem: loadNimbusPremortemFromConfigDir,
   scim: loadNimbusScimFromConfigDir,
   security: loadNimbusSecurityFromConfigDir,
+  sources: (configDir) => sourceMappingFor(configDir),
   session: loadNimbusSessionFromConfigDir,
   "share.http_sink": loadNimbusShareHttpSink,
   telemetry: loadNimbusTelemetryFromConfigDir,
@@ -383,6 +385,12 @@ function fleetJobNotes(
   return notes;
 }
 
+function isSourcesPath(path: string | undefined): boolean {
+  if (path === undefined) return false;
+  const wanted = unquote(path);
+  return wanted === "sources" || wanted.startsWith("sources.");
+}
+
 function isAgentsPath(path: string | undefined): boolean {
   if (path === undefined) return false;
   const wanted = unquote(path);
@@ -492,6 +500,8 @@ export function explainConfig(
      * for an `agents` / `agents.*` path, so a bare explain shows owners without packs nothing new.
      */
     readonly agentVisibilityNotes?: () => readonly string[];
+    /** Effective source-mapping lines, injected like the above; called only for a `sources` path. */
+    readonly sourceMappingNotes?: () => readonly string[];
   } = {},
 ): ExplainResult {
   const snap = reader.snapshot();
@@ -512,6 +522,9 @@ export function explainConfig(
   );
   if (opts.agentVisibilityNotes !== undefined && isAgentsPath(path)) {
     notes.push(...opts.agentVisibilityNotes());
+  }
+  if (opts.sourceMappingNotes !== undefined && isSourcesPath(path)) {
+    notes.push(...opts.sourceMappingNotes());
   }
   const running = reader.profile.name;
   const marker = reader.markerProfile();

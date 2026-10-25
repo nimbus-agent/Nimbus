@@ -2,7 +2,9 @@
 // reports problems; it reads no files. A pack fragment may set only the keys listed
 // here; one bad line refuses the whole fragment.
 
+import { parseSourceMapList } from "../sources/source-mapping.ts";
 import { type DocLine, type DocSection, parseLayerDoc } from "./layered-merge.ts";
+import { parseStrictStringList } from "./strict-string-list.ts";
 import { parseBool, parseIntDec, parseString } from "./toml-primitives.ts";
 
 /**
@@ -98,28 +100,8 @@ export const PACK_SETTABLE_KEYS: readonly PackSettableKey[] = [
 /** A name in an `[agents]` list: a short agent name, optionally written `agents.<name>`. */
 export const AGENT_NAME_IN_LIST_RE = /^(?:agents\.)?[a-z][A-Za-z]{0,63}$/;
 
-const AGENT_LIST_MAX = 64;
-
-/**
- * Strict parse of `["a", "b"]`. Deliberately not `parseString`, which accepts unquoted tokens.
- * Names are returned as written; normalisation belongs to the consumer.
- */
 export function parseAgentNameList(valRaw: string): readonly string[] | undefined {
-  const t = valRaw.trim();
-  if (!t.startsWith("[") || !t.endsWith("]")) return undefined;
-  const inner = t.slice(1, -1).trim();
-  if (inner === "" || inner.endsWith(",")) return undefined;
-  const parts = inner.split(",");
-  if (parts.length > AGENT_LIST_MAX) return undefined;
-  const names: string[] = [];
-  for (const part of parts) {
-    const p = part.trim();
-    if (p.length < 2 || !p.startsWith('"') || !p.endsWith('"')) return undefined;
-    const name = p.slice(1, -1);
-    if (!AGENT_NAME_IN_LIST_RE.test(name)) return undefined;
-    names.push(name);
-  }
-  return names;
+  return parseStrictStringList(valRaw, (name) => AGENT_NAME_IN_LIST_RE.test(name));
 }
 
 export type PackSettableList = {
@@ -140,6 +122,14 @@ export const PACK_SETTABLE_LISTS: readonly PackSettableList[] = [
     why: "which agents the catalog shows; packs union, the owner's show/hide decide per agent",
     expect: 'a non-empty array of agent names, e.g. ["decisions", "standup"]',
     parse: parseAgentNameList,
+  },
+  {
+    section: "sources",
+    key: "map",
+    consumer: "per-call",
+    why: "which indexed types the decisions pass mines, and as what; packs only add new types",
+    expect: 'a non-empty array of "service:type=kind" entries, e.g. ["ext_notes:highlight=note"]',
+    parse: (valRaw) => parseSourceMapList(valRaw),
   },
 ];
 

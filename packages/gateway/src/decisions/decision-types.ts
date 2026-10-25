@@ -1,3 +1,5 @@
+import type { SourceKind } from "../sources/source-kinds.ts";
+
 export type DecisionStatus = "pending" | "extracted" | "vetoed";
 export type CueTier = "heading" | "explicit" | "weak";
 export type EvidenceKind = "source" | "pr" | "commit" | "migration" | "iac" | "adr";
@@ -28,5 +30,7 @@ export interface DecisionRecord {
   readonly hasAdr: boolean;
   readonly attempts: number;
   readonly lastAttemptAt: number;
+  /** `decision_record.scored_kind`: the kind `confidence` was scored under; `null` when unknown. */
+  readonly scoredKind: SourceKind | null;
   readonly evidence: readonly DecisionEvidence[];
 }

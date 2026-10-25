@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
-
+import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { resolveSourceMapping } from "../sources/source-mapping.ts";
 import { matchesService } from "./decision-service-scope.ts";
 import type { DecisionEvidence } from "./decision-types.ts";
 
@@ -240,4 +241,20 @@ test("a key on a non-ticket type does not match", () => {
     [JSON.stringify({ key: "BILLING-1" })],
   );
   expect(matchesService(db, { sourceItemId: "m1", evidence: [], service: "billing" })).toBeNull();
+});
+
+test("ticket-key matching follows the mapping's ticket kind", () => {
+  seedTicket("y1", "youtrack", '{"key":"BILLING-9"}');
+  expect(matchesService(db, { sourceItemId: "y1", evidence: [], service: "billing" })).toBeNull();
+  const mapping = resolveSourceMapping({
+    doc: mergeLayerDocs([
+      parseLayerDoc(
+        { kind: "base", id: "base", path: "/virtual/base.toml" },
+        '[sources]\nmap = ["youtrack:issue=ticket"]\n',
+      ),
+    ]),
+  });
+  expect(
+    matchesService(db, { sourceItemId: "y1", evidence: [], service: "billing", mapping }),
+  ).toBe("ticket-key");
 });
