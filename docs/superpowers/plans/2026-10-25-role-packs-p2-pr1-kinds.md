@@ -27,6 +27,10 @@
 
 Spec § 3 calls the authority change for unmapped types "unobservable". It is not: owner-accepted agent decisions (`mcp-sink/capture-native.ts:150`) can point at ANY item type, and `agents/decisions.ts:57` (explain) and `:265` (stale-score recompute) score them through `sourceAuthority(serviceType)`. A `bitbucket:issue` source scores 0.6 today via the `*:issue` suffix rule. Ruling: `sourceAuthority` scores by kind when the type is in the table and falls back to today's rule (`*:issue` → 0.6, else 0.3) when it is not. Cost if wrong: one fallback branch to delete later; without it, stored scores of such rows would read as "previous scale".
 
+## Carried to PR 2 (not this PR)
+
+- **Empty doc set.** Once the owner can `exclude` types (PR 2), every doc-kind type can be excluded, and the ADR query built from them would read `IN ()`, a SQLite syntax error. PR 2 must skip the ADR lookup (no `adr` evidence) when the doc set is empty, with a test. Unreachable in PR 1: the built-in table always has three doc types, and Task 1 pins that.
+
 ## Review Focus
 
 1. An owner-accepted agent decision whose source is outside the table (`bitbucket:issue`, `gmail:email`) — authority must stay 0.6 / 0.3 (Task 2 test `unmapped types keep today's authority`).
@@ -44,7 +48,7 @@ Spec § 3 calls the authority change for unmapped types "unobservable". It is no
 - Create: `packages/gateway/src/sources/source-kinds.test.ts`
 - Modify: `packages/gateway/src/decisions/decision-source-types.ts` (the `DECISION_SOURCE_TYPES` literal at `:13`)
 - Modify: `packages/gateway/src/glossary/glossary-source-types.ts` (the `GLOSSARY_SOURCE_TYPES` literal at `:23`)
-- Modify: `scripts/coverage-floor/exclusions.ts` (`NEVER_EXEMPT_PATHS`, beside the two source-type files at `:363-364`)
+- Not touched: `scripts/coverage-floor/exclusions.ts`. `NEVER_EXEMPT_PATHS` only carves files out of a NAME-shaped exemption (`types.ts` / `-types.ts`); `source-kinds.ts` matches none, so it is already under the coverage floor.
 
 **Interfaces:**
 - Produces (`sources/source-kinds.ts`):
@@ -56,6 +60,7 @@ Spec § 3 calls the authority change for unmapped types "unobservable". It is no
   - `export function sourceKindOf(serviceType: string): SourceKind | undefined` — built-in lookup.
   - `export function sourceTypesFor(pass: SourcePass): readonly string[]` — table keys whose kind is in `PASS_KINDS[pass]`, table order.
   - `export function sourceTypesOfKind(kind: SourceKind): readonly string[]` — table order.
+  - Both return arrays computed ONCE at module load and frozen (`Object.freeze`), never re-filtered per call: `sourceTypesOfKind("doc")` runs inside `corroborate()` for every decision. (PR 2 replaces the module-load constants with a resolved mapping; it keeps the same return types.)
 - `DECISION_SOURCE_TYPES` / `GLOSSARY_SOURCE_TYPES` keep name and type (`ReadonlySet<string>`), now `new Set(sourceTypesFor(...))`. `decisionSourceFilter()` / `glossarySourceFilter()` unchanged in signature and output.
 
 - [ ] **Step 1: Write `source-kinds.test.ts`**
@@ -104,11 +109,9 @@ test("PASS_KINDS is the spec's two rows", () => {
 
 - [ ] **Step 3: Implement `sources/source-kinds.ts`** with the Interfaces above. Header comment: the table is the one place a source is classified; the service-qualified rule (moved from the two source-type files' comments, keep their reasoning about `wiz:issue` and `service_spread`); email/calendar absence (the existing posture); `nimbus:*` never a source (I28). Then replace the two literals with `new Set(sourceTypesFor("decisions"))` / `new Set(sourceTypesFor("glossary"))`, keeping each file's header comment but pointing it at the table. Keep `glossary-source-types.ts`'s commit-source explanation (it is still true and explains why dead `github:commit` rows are harmless).
 
-- [ ] **Step 4: Add `"packages/gateway/src/sources/source-kinds.ts"`** to `NEVER_EXEMPT_PATHS` beside the two source-type files, with a one-line comment (classifies every decisions/glossary source; untested edits reach the query layer).
+- [ ] **Step 4: Verify** — `bun test packages/gateway/src/sources packages/gateway/src/decisions packages/gateway/src/glossary packages/gateway/src/security-invariants.test.ts` → all pass, no existing test edited. `bun run typecheck` → clean.
 
-- [ ] **Step 5: Verify** — `bun test packages/gateway/src/sources packages/gateway/src/decisions packages/gateway/src/glossary packages/gateway/src/security-invariants.test.ts` → all pass, no existing test edited. `bun run typecheck` → clean.
-
-- [ ] **Step 6: Commit** — `git add packages/gateway/src/sources packages/gateway/src/decisions/decision-source-types.ts packages/gateway/src/glossary/glossary-source-types.ts scripts/coverage-floor/exclusions.ts && git commit -m "refactor(sources): one service:type to kind table behind both source sets"`
+- [ ] **Step 5: Commit** — `git add packages/gateway/src/sources packages/gateway/src/decisions/decision-source-types.ts packages/gateway/src/glossary/glossary-source-types.ts && git commit -m "refactor(sources): one service:type to kind table behind both source sets"`
 
 ---
 
@@ -155,7 +158,7 @@ test("unmapped types keep today's authority (agent decisions can point anywhere)
 - [ ] **Step 3: Implement**
   - `sourceAuthority`: `const kind = sourceKindOf(serviceType);` doc → 1, ticket → 0.6, message/commit/note → 0.3; `kind === undefined` → today's rule (`endsWith(":issue")` → 0.6, else 0.3), with a comment citing agent decisions as the reason. Use an exhaustive `switch` over `SourceKind` so a sixth kind is a compile error.
   - ADR query: replace the literal `IN (...)` with placeholders built from `sourceTypesOfKind("doc")`, params bound; keep the title-shape predicates, `ORDER BY modified_at DESC, id ASC`, `LIMIT 200` exactly.
-  - `matchesTicketKey`: select `service, type, metadata`; replace `row.service !== "jira" && row.service !== "linear"` with `sourceKindOf(`${row.service}:${row.type}`) !== "ticket"`. Rewrite the `ticketIdentifier` doc comment: any ticket-kind item matches only through `metadata.key` or `metadata.identifier`; Jira writes the first, Linear the second; GitHub/GitLab issues write neither (`connectors/github-sync.ts:411-416`), so they never match — a stated bound, not an accident.
+  - `matchesTicketKey`: select `service, type, metadata`, and widen the row cast to `{ service: string; type: string; metadata: string | null } | null`; replace `row.service !== "jira" && row.service !== "linear"` with `sourceKindOf(`${row.service}:${row.type}`) !== "ticket"`. Rewrite the `ticketIdentifier` doc comment: any ticket-kind item matches only through `metadata.key` or `metadata.identifier`; Jira writes the first, Linear the second; GitHub/GitLab issues write neither (`connectors/github-sync.ts:411-416`), so they never match — a stated bound, not an accident.
 
 - [ ] **Step 4: Verify** — `bun test packages/gateway/src/decisions packages/gateway/src/agents packages/gateway/src/glossary packages/gateway/src/mcp-sink` → all pass, no existing assertion edited; `confidence-ceiling.test.ts` still reads 1.0. `bun run typecheck` and `bun run typecheck:tests` → clean / 0 new.
 
