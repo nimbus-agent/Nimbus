@@ -1590,7 +1590,7 @@ reason (shown to the owner marked unverified). The tool's description lists the 
 machine. NOTHING is sent when it is called: the reply says the action has NOT run, that the
 owner must accept it with `nimbus captures accept <id>` and approve the prompt, and to poll `capture_status`. Types that are not proposable
 (file, VCS, pipeline, cloud, IaC, Kubernetes, deployment, incident and data-platform writes, the confined ChatOps
-posts, the tribal KB, and `obsidian.note.append`, which cannot yet be routed) are refused, as are user-MCP tools of a
+posts and the tribal KB) are refused, as are user-MCP tools of a
 server not registered `--model`. `capture_status { id }` reads the state of a capture by id (`proposed`, `executed`,
 `failed`, `rejected`, `expired`, `accepted`, `live`, `revoked`) and, for an executed action, a short `https:` link when
 the service returned one; never the payload. It is offered whenever any kind is enabled. It answers for any capture id

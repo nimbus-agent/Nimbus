@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { HITL_REQUIRED } from "../engine/executor.ts";
 import { serviceOf } from "../engine/service-of.ts";
-import { serviceIdForToolKey } from "./lazy-mesh/tool-map.ts";
+import { meshServerForToolKey } from "./lazy-mesh/tool-map.ts";
 import {
   ACTION_PROPOSABILITY,
   classifyActionType,
@@ -40,6 +40,7 @@ const PROPOSABLE = [
   "notion.comment.create",
   "notion.page.create",
   "notion.page.update",
+  "obsidian.note.append",
   "outlook.calendar.create",
   "outlook.mail.send",
   "protonmail.mail.send",
@@ -52,7 +53,7 @@ describe("ACTION_PROPOSABILITY", () => {
   test("is total over HITL_REQUIRED and names nothing else", () => {
     expect(Object.keys(ACTION_PROPOSABILITY).sort()).toEqual([...HITL_REQUIRED].sort());
   });
-  test("the proposable set is exactly the reviewed 29", () => {
+  test("the proposable set is exactly the reviewed 30", () => {
     const got = Object.entries(ACTION_PROPOSABILITY)
       .filter(([, p]) => p.kind === "proposable")
       .map(([t]) => t)
@@ -86,15 +87,16 @@ describe("PROPOSABLE_WRITE_TOOLS", () => {
   });
   test("each row resolves on its OWN server in the mesh key form", () => {
     // resolveServerTool(map, serviceOf(type), toolId) looks up `${server}_${toolId}` and requires
-    // serviceIdForToolKey to give that key back to the same server.
+    // meshServerForToolKey to give that key back to the same server.
     for (const [type, tool] of Object.entries(PROPOSABLE_WRITE_TOOLS)) {
       const server = serviceOf(type);
-      expect(serviceIdForToolKey(`${server}_${tool}`), type).toBe(server);
+      expect(meshServerForToolKey(`${server}_${tool}`), type).toBe(server);
     }
   });
   test("proposableWriteTool: routing value for proposables, undefined otherwise", () => {
     expect(proposableWriteTool("slack.message.post")).toBe("slack_message_post");
-    expect(proposableWriteTool("obsidian.note.append")).toBeUndefined();
+    expect(proposableWriteTool("obsidian.note.append")).toBe("obsidian_append_to_daily_note");
+    expect(proposableWriteTool("email.send")).toBeUndefined();
     expect(proposableWriteTool("github.pr.merge")).toBeUndefined();
     expect(proposableWriteTool("mcp_echo.echo")).toBeUndefined();
     expect(proposableWriteTool("toString")).toBeUndefined();

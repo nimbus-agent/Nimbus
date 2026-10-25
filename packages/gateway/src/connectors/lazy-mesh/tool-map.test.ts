@@ -1,11 +1,15 @@
 import { describe, expect, it } from "bun:test";
-
+import { CONNECTOR_SERVICE_IDS } from "../connector-catalog.ts";
+import { GATEWAY_SYNCABLE_SERVICE_IDS } from "../gateway-syncable-ids.ts";
+import { LAZY_MESH } from "./keys.ts";
 import {
   type LazyMeshToolMap,
   listedTool,
   listLazyMeshClientTools,
+  MESH_ONLY_SERVER_IDS,
   mcpClientToolKey,
   mergeToolMapsOrThrow,
+  meshServerForToolKey,
   resolveServerTool,
   serviceIdForToolKey,
 } from "./tool-map.ts";
@@ -103,6 +107,44 @@ describe("serviceIdForToolKey", () => {
   });
 });
 
+describe("meshServerForToolKey", () => {
+  it("agrees with serviceIdForToolKey wherever that answers", () => {
+    for (const key of [
+      "github_github_pr_list",
+      "github_actions_gha_run_list",
+      "slack_x",
+      "github",
+    ]) {
+      expect(meshServerForToolKey(key)).toBe(serviceIdForToolKey(key));
+    }
+  });
+
+  it("attributes a mesh-only first-party server's keys that the policy rule leaves unowned", () => {
+    expect(serviceIdForToolKey("obsidian_obsidian_append_to_daily_note")).toBeUndefined();
+    expect(meshServerForToolKey("obsidian_obsidian_append_to_daily_note")).toBe("obsidian");
+    expect(meshServerForToolKey("obsidianx_y")).toBeUndefined();
+    expect(meshServerForToolKey("filesystem_read_file")).toBeUndefined();
+    expect(meshServerForToolKey("mcp_mine_tool")).toBeUndefined();
+  });
+
+  it("guard: no mesh-only id is prefix-related to a catalog id, so the two rules never disagree", () => {
+    const related = (a: string, b: string) => a === b || a.startsWith(`${b}_`);
+    for (const m of MESH_ONLY_SERVER_IDS) {
+      for (const c of CONNECTOR_SERVICE_IDS) {
+        expect(related(m, c) || related(c, m), `${m} vs ${c}`).toBe(false);
+      }
+    }
+  });
+
+  it("guard: every mesh-only id is a gateway syncable with its own mesh slot", () => {
+    expect(MESH_ONLY_SERVER_IDS.length).toBeGreaterThan(0);
+    for (const m of MESH_ONLY_SERVER_IDS) {
+      expect(GATEWAY_SYNCABLE_SERVICE_IDS as readonly string[]).toContain(m);
+      expect(Object.hasOwn(LAZY_MESH, m), m).toBe(true);
+    }
+  });
+});
+
 describe("resolveServerTool", () => {
   it("resolves a bare id to the key a real session lists it under, <server>_<tool>", async () => {
     const tools = listedAs({ snowflake: ["snowflake_list", "snowflake_tag_set"] });
@@ -151,6 +193,15 @@ describe("resolveServerTool", () => {
     const tools = listedAs({ aws: ["aws_ec2_list"], athena: ["athena_query"] });
     expect(await resolvedKey(tools, "aws", "athena_query")).toBeNull();
     expect(await resolvedKey(tools, "athena", "athena_query")).toBe("athena_athena_query");
+  });
+
+  it("resolves a bare id on a mesh-only first-party server (obsidian)", async () => {
+    const tools = listedAs({ obsidian: ["obsidian_append_to_daily_note", "obsidian_list"] });
+    expect(await resolvedKey(tools, "obsidian", "obsidian_append_to_daily_note")).toBe(
+      "obsidian_obsidian_append_to_daily_note",
+    );
+    // Another server can never reach it through a bare id.
+    expect(await resolvedKey(tools, "slack", "obsidian_append_to_daily_note")).toBeNull();
   });
 
   it("offers no namespaced step to a server no first-party connector owns", async () => {
