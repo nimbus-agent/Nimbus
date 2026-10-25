@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { useRolePacks } from "../../hooks/useRolePacks";
 import { createIpcClient } from "../../ipc/client";
 import type { DiagSnapshot } from "../../ipc/types";
-import { packRows } from "../../onboarding/role-choices";
+import { endsOnDecisions, packRows } from "../../onboarding/role-choices";
 import { useNimbusStore } from "../../store";
 
 const DISMISSED_KEY = "role_pack_card_dismissed";
@@ -62,7 +62,7 @@ export function TryRolePackCard(): ReactNode {
             type="button"
             className="px-3 py-1 border border-[var(--color-border)] rounded text-sm text-left"
             onClick={() => {
-              setChosenPack(p.id);
+              setChosenPack(p.id, endsOnDecisions(p));
               void navigate("/onboarding/pack");
             }}
           >

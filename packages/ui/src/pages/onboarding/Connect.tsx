@@ -7,7 +7,6 @@ import {
   type Suggestion,
   suggestionsFrom,
 } from "../../onboarding/connect-suggestions";
-import { endsOnDecisions, packRows } from "../../onboarding/role-choices";
 import { useNimbusStore } from "../../store";
 import type { AuthStatus } from "../../store/slices/onboarding";
 import { buttonStyle, cardStyle, plainError, StepLabel } from "./onboarding-ui";
@@ -43,12 +42,14 @@ export function Connect(): ReactNode {
   const toggleSelected = useNimbusStore((s) => s.toggleSelected);
   const setAuthStatus = useNimbusStore((s) => s.setAuthStatus);
   const chosenPackId = useNimbusStore((s) => s.chosenPackId);
+  const toDecisions = useNimbusStore((s) => s.endsOnDecisions);
   const [suggestions, setSuggestions] = useState<readonly Suggestion[]>([]);
   const [connected, setConnected] = useState<ReadonlySet<string>>(new Set());
-  const [toDecisions, setToDecisions] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshStatus = useCallback(async (): Promise<void> => {
+    if (document.visibilityState === "hidden") return;
     try {
       setConnected(connectedIds(await createIpcClient().call<unknown>("connector.listStatus", {})));
     } catch {
@@ -59,27 +60,27 @@ export function Connect(): ReactNode {
   useEffect(() => {
     let live = true;
     const client = createIpcClient();
-    void Promise.all([
-      client.call<unknown>("catalog.list", {}).catch(() => null),
-      client.call<unknown>("pack.list", {}).catch(() => null),
-    ]).then(([catalog, packList]) => {
-      if (!live) return;
-      setSuggestions(suggestionsFrom(catalog));
-      setToDecisions(endsOnDecisions(packRows(packList).find((p) => p.id === chosenPackId)));
-    });
+    void client
+      .call<unknown>("catalog.list", {})
+      .catch(() => null)
+      .then((catalog) => {
+        if (live) setSuggestions(suggestionsFrom(catalog));
+      });
     void refreshStatus();
     const iv = setInterval(() => void refreshStatus(), POLL_MS);
     return () => {
       live = false;
       clearInterval(iv);
     };
-  }, [chosenPackId, refreshStatus]);
+  }, [refreshStatus]);
 
   const browserSelected = suggestions.filter(
     (s) => s.signIn === "browser" && selected.has(s.id) && !connected.has(s.id),
   );
 
   const signInSelected = async (): Promise<void> => {
+    if (signingIn) return;
+    setSigningIn(true);
     setError(null);
     const client = createIpcClient();
     for (const s of browserSelected) setAuthStatus(s.id, "authenticating");
@@ -92,6 +93,7 @@ export function Connect(): ReactNode {
         setError(`${s.displayName}: ${plainError(e)}`);
       }
     }
+    setSigningIn(false);
     await refreshStatus();
   };
 
@@ -130,7 +132,7 @@ export function Connect(): ReactNode {
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32, gap: 8 }}>
         <button
           type="button"
-          onClick={() => navigate("/onboarding/role")}
+          onClick={() => navigate(chosenPackId === null ? "/onboarding/role" : "/onboarding/pack")}
           style={buttonStyle("outline")}
         >
           ← Back
@@ -142,10 +144,11 @@ export function Connect(): ReactNode {
           {browserSelected.length > 0 && (
             <button
               type="button"
+              disabled={signingIn}
               onClick={() => void signInSelected()}
-              style={buttonStyle("outline")}
+              style={buttonStyle("outline", signingIn)}
             >
-              {`Sign in (${String(browserSelected.length)})`}
+              {signingIn ? "Signing in…" : `Sign in (${String(browserSelected.length)})`}
             </button>
           )}
           <button

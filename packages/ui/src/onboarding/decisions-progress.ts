@@ -108,10 +108,14 @@ export function decisionsView(
   const read = joinAnd(
     status.sources.map((s) => `${counted(s.items, s.kind)} from ${nameOf(s.service, names)}`),
   );
-  const headline =
-    read === ""
-      ? "Nothing has been read yet that could hold a decision."
-      : `We read ${read} and found no clear decisions.`;
+  if (read === "") {
+    return {
+      phase: "none",
+      syncLines,
+      headline: "Nothing has been read yet that could hold a decision.",
+    };
+  }
+  const headline = `We read ${read} and found no clear decisions.`;
   const reason =
     status.candidates.extracted > 0
       ? `${String(status.candidates.extracted)} possible ${
@@ -131,6 +135,14 @@ export function asDecisionStatus(v: unknown): DecisionStatus | null {
     return null;
   }
   const c = v["candidates"];
-  if (!isRecord(c) || !Array.isArray(v["sources"]) || !Array.isArray(v["recent"])) return null;
+  if (
+    !isRecord(c) ||
+    typeof c["pending"] !== "number" ||
+    typeof c["extracted"] !== "number" ||
+    !Array.isArray(v["sources"]) ||
+    !Array.isArray(v["recent"])
+  ) {
+    return null;
+  }
   return v as unknown as DecisionStatus;
 }

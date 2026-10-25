@@ -36,8 +36,10 @@ export function AtlassianForm({
   const ready = email.trim() !== "" && token.trim() !== "" && site.trim() !== "" && !busy;
 
   const submit = async (): Promise<void> => {
+    if (!ready) return;
     setBusy(true);
     setError(null);
+    let ok = false;
     try {
       await createIpcClient().call("connector.auth", {
         service: serviceId,
@@ -45,13 +47,15 @@ export function AtlassianForm({
         apiToken: token,
         apiBaseUrl: site.trim(),
       });
-      onConnected();
+      ok = true;
     } catch (e) {
       setError(plainError(e));
     } finally {
       setToken("");
       setBusy(false);
     }
+    // After the token is cleared: a connected tile replaces this form.
+    if (ok) onConnected();
   };
 
   return (

@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { createIpcClient } from "../../ipc/client";
-import { packFor, roleChoices } from "../../onboarding/role-choices";
+import { endsOnDecisions, packFor, roleChoices } from "../../onboarding/role-choices";
 import { useNimbusStore } from "../../store";
 import { buttonStyle, cardStyle, StepLabel } from "./onboarding-ui";
 
@@ -31,7 +31,7 @@ export function Role(): ReactNode {
 
   const pick = (value: string): void => {
     const pack = packFor(value, packList);
-    setChosenPack(pack?.id ?? null);
+    setChosenPack(pack?.id ?? null, endsOnDecisions(pack));
     void navigate(
       pack !== undefined && !pack.installed ? "/onboarding/pack" : "/onboarding/connect",
     );
@@ -39,7 +39,7 @@ export function Role(): ReactNode {
 
   return (
     <div>
-      <StepLabel>Step 2</StepLabel>
+      <StepLabel>Role</StepLabel>
       <h2 style={{ marginTop: 0 }}>What do you do?</h2>
       <p style={{ color: "var(--color-fg-muted)" }}>
         Nimbus sets itself up for your role. You can change this later.

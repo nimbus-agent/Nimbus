@@ -79,6 +79,7 @@ describe("onboarding step header", () => {
       "Connect",
       "Syncing",
     ]);
+    expect(onboardingSteps("/onboarding/connect", true, true).at(-1)?.label).toBe("Decisions");
     expect(onboardingSteps("/onboarding/decisions", true).map((s) => s.label)).toEqual([
       "Welcome",
       "Role",
@@ -199,15 +200,18 @@ describe("decisions progress", () => {
     );
   });
 
-  it("none with nothing read says so", () => {
-    expect(decisionsView(status({ sources: [] }), SYNCED).headline).toBe(
-      "Nothing has been read yet that could hold a decision.",
-    );
+  it("none with nothing read says so, and gives no reason about decision language", () => {
+    const v = decisionsView(status({ sources: [] }), SYNCED);
+    expect(v.headline).toBe("Nothing has been read yet that could hold a decision.");
+    expect(v.reason).toBeUndefined();
   });
 
   it("asDecisionStatus rejects a malformed reply", () => {
     expect(asDecisionStatus(null)).toBeNull();
     expect(asDecisionStatus({ enabled: true })).toBeNull();
+    expect(
+      asDecisionStatus({ ...status(), candidates: { pending: "1", extracted: 0 } }),
+    ).toBeNull();
     expect(asDecisionStatus(status())).not.toBeNull();
   });
 });

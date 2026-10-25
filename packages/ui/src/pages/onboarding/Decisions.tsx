@@ -28,7 +28,8 @@ function progressOf(
     if (!isRecord(raw)) continue;
     const id = raw["serviceId"];
     const health = raw["healthState"];
-    if (typeof id !== "string" || !names.has(id)) continue;
+    // Before the catalog answers there are no names: show every connected connector then.
+    if (typeof id !== "string" || (names.size > 0 && !names.has(id))) continue;
     if (typeof health !== "string" || health === "unauthenticated") continue;
     const itemCount = raw["itemCount"];
     const lastSyncAt = raw["lastSyncAt"];
@@ -54,12 +55,14 @@ export function Decisions(): ReactNode {
   const [connectors, setConnectors] = useState<readonly ConnectorProgress[]>([]);
   const names = useRef<ReadonlyMap<string, string>>(new Map());
   const completed = useRef(false);
+  const inFlight = useRef(false);
 
   useEffect(() => {
     const client = createIpcClient();
     let live = true;
     const tick = async (): Promise<void> => {
-      if (document.visibilityState === "hidden") return;
+      if (inFlight.current || document.visibilityState === "hidden") return;
+      inFlight.current = true;
       try {
         const [s, statuses] = await Promise.all([
           client.call<unknown>("decisions.status", {}),
@@ -70,8 +73,23 @@ export function Decisions(): ReactNode {
         setConnectors(progressOf(names.current, statuses));
       } catch {
         // transient: keep the last answer and try again on the next tick
+      } finally {
+        inFlight.current = false;
       }
     };
+    // Leaving this step by closing or hiding the window still completes onboarding, as the
+    // Syncing step does: the user saw the end of it.
+    const markComplete = (): void => {
+      if (completed.current) return;
+      completed.current = true;
+      void client
+        .call("db.setMeta", { key: "onboarding_completed", value: new Date().toISOString() })
+        .catch(() => undefined);
+    };
+    const onVisibility = (): void => {
+      if (document.visibilityState === "hidden") markComplete();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     void client
       .call<unknown>("catalog.list", {})
       .then((catalog) => {
@@ -83,6 +101,8 @@ export function Decisions(): ReactNode {
     return () => {
       live = false;
       clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVisibility);
+      markComplete();
     };
   }, []);
 
@@ -118,8 +138,8 @@ export function Decisions(): ReactNode {
       {view.reason !== undefined && <p>{view.reason}</p>}
       {(status?.recent.length ?? 0) > 0 && (
         <ul style={{ lineHeight: 1.6 }}>
-          {status?.recent.map((d) => (
-            <li key={`${String(d.at)}:${d.statement}`}>{d.statement}</li>
+          {status?.recent.map((d, i) => (
+            <li key={`${String(i)}:${String(d.at)}`}>{d.statement}</li>
           ))}
         </ul>
       )}

@@ -218,7 +218,7 @@ describe("Onboarding → Connect", () => {
   });
 
   it("connecting does not navigate on its own; Continue goes to Decisions for a pack showing decisions", async () => {
-    useNimbusStore.getState().setChosenPack("pm");
+    useNimbusStore.getState().setChosenPack("pm", true);
     gateway({ statuses: () => [{ serviceId: "slack", healthState: "healthy" }] });
     renderAt();
     const cont = await screen.findByRole("button", { name: /continue/i });

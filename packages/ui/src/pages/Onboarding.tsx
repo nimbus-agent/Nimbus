@@ -7,10 +7,15 @@ type Step = { readonly path: string; readonly label: string };
  * The header's steps for where the user is: the Pack step only while a pack is being set up, and
  * the last step is Decisions or Syncing — whichever route this onboarding ends on.
  */
-export function onboardingSteps(pathname: string, packChosen: boolean): readonly Step[] {
-  const last: Step = pathname.endsWith("/decisions")
-    ? { path: "decisions", label: "Decisions" }
-    : { path: "syncing", label: "Syncing" };
+export function onboardingSteps(
+  pathname: string,
+  packChosen: boolean,
+  endsOnDecisions = false,
+): readonly Step[] {
+  const last: Step =
+    endsOnDecisions || pathname.endsWith("/decisions")
+      ? { path: "decisions", label: "Decisions" }
+      : { path: "syncing", label: "Syncing" };
   return [
     { path: "welcome", label: "Welcome" },
     { path: "role", label: "Role" },
@@ -23,7 +28,8 @@ export function onboardingSteps(pathname: string, packChosen: boolean): readonly
 export function Onboarding() {
   const { pathname } = useLocation();
   const packChosen = useNimbusStore((s) => s.chosenPackId !== null);
-  const steps = onboardingSteps(pathname, packChosen);
+  const toDecisions = useNimbusStore((s) => s.endsOnDecisions);
+  const steps = onboardingSteps(pathname, packChosen, toDecisions);
   const currentIdx = steps.findIndex((s) => pathname.endsWith(`/${s.path}`));
   return (
     <div style={{ display: "flex", justifyContent: "center", padding: "48px 24px" }}>

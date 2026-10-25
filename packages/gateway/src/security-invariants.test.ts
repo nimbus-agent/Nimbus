@@ -1445,6 +1445,9 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect([...list.matchAll(/"(decisions\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual([
       "decisions.status",
     ]);
+    // pack.install resolves only once the owner answers, so the bridge must not time it out.
+    expect(rust).toMatch(/assert_eq!\s*\(\s*NO_TIMEOUT_METHODS\.len\(\),\s*8\s*\)/);
+    expect(rust).toContain('assert!(is_no_timeout_method("pack.install"));');
     for (const m of ["catalog.list", "agents.oncall", "agents.standup", "agents.changelog"]) {
       expect(list).toContain(`"${m}"`);
     }

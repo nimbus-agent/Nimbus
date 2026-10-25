@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { useNavigate } from "react-router";
+import { Navigate, useNavigate } from "react-router";
 import { createIpcClient } from "../../ipc/client";
 import { type PackRow, packRows } from "../../onboarding/role-choices";
 import { useNimbusStore } from "../../store";
@@ -15,9 +15,11 @@ function displayNames(catalog: unknown, key: "agents" | "connectors"): ReadonlyM
   const list = isRecord(catalog) ? catalog[key] : undefined;
   for (const raw of Array.isArray(list) ? list : []) {
     if (!isRecord(raw)) continue;
-    const id = key === "agents" ? raw["name"] : raw["id"];
     const label = raw["displayName"] ?? raw["name"];
-    if (typeof id === "string" && typeof label === "string") out.set(id, label);
+    if (typeof label !== "string") continue;
+    // An installed extension is suggested by its service id (`ext_*`), not its package id.
+    const keys = key === "agents" ? [raw["name"]] : [raw["id"], raw["serviceId"]];
+    for (const id of keys) if (typeof id === "string") out.set(id, label);
   }
   return out;
 }
@@ -30,7 +32,9 @@ type Phase = "idle" | "waiting" | "failed";
  */
 export function Pack(): ReactNode {
   const navigate = useNavigate();
-  const chosenPackId = useNimbusStore((s) => s.chosenPackId);
+  // Read once: "Continue without the pack" clears the store's choice on its way out, and this page
+  // must not redirect in that instant.
+  const [chosenPackId] = useState(() => useNimbusStore.getState().chosenPackId);
   const setChosenPack = useNimbusStore((s) => s.setChosenPack);
   const [pack, setPack] = useState<PackRow | undefined>(undefined);
   const [catalog, setCatalog] = useState<unknown>(null);
@@ -54,7 +58,7 @@ export function Pack(): ReactNode {
   }, [chosenPackId]);
 
   if (chosenPackId === null) {
-    return <p>No role pack was chosen.</p>;
+    return <Navigate to="/onboarding/role" replace />;
   }
   const name = pack?.name ?? chosenPackId;
   const connectors = displayNames(catalog, "connectors");
@@ -63,6 +67,7 @@ export function Pack(): ReactNode {
   const shows = (pack?.visibleAgents ?? []).map((id) => agents.get(id) ?? id);
 
   const install = async (): Promise<void> => {
+    if (phase === "waiting") return;
     setPhase("waiting");
     setError(null);
     try {
@@ -81,7 +86,7 @@ export function Pack(): ReactNode {
 
   return (
     <div>
-      <StepLabel>Step 3</StepLabel>
+      <StepLabel>Pack</StepLabel>
       <h2 style={{ marginTop: 0 }}>{`Set up Nimbus for ${name}`}</h2>
       {pack?.description !== undefined && <p>{pack.description}</p>}
       {suggests.length > 0 && <p>{`Suggests: ${suggests.join(", ")}`}</p>}
@@ -95,7 +100,14 @@ export function Pack(): ReactNode {
           {error}
         </p>
       )}
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32, gap: 8 }}>
+        <button
+          type="button"
+          onClick={() => navigate("/onboarding/role")}
+          style={buttonStyle("outline")}
+        >
+          ← Back
+        </button>
         <button type="button" onClick={skip} style={buttonStyle("ghost")}>
           Continue without the pack
         </button>
