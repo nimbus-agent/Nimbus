@@ -18,6 +18,22 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-25 — Role packs P4: the desktop follows your role packs (no migration, no invariant, no egress class).**
+  The sidebar now groups the agent pages by your active role packs, and the home screen shows a card per visible
+  agent of those packs. A card shows the newest stored fleet brief for that agent when there is one, and a Run
+  button; a new `/briefs` page lists every read-only brief and runs it, `/briefs/:agent` runs one (with a form for
+  its parameters and a 10-minute wait deadline), and `/briefs/stored/:id` reads a stored fleet brief. The on-call
+  card opens `/oncall?id=…` and shows the incident's title and service rather than a markdown preview. Brief text
+  is rendered by our own safe Markdown renderer over `marked`'s lexer; links show as plain text and nothing is
+  opened from a brief. Five calls change what you see: (1) `preflight` and `premortem` leave the desktop (they
+  write, so they stay CLI-only; the Tauri allowlist goes from 111 to 116: `agents.changelog`, `agents.oncall`,
+  `agents.standup`, `catalog.list`, `fleet.briefs`, `fleet.show` and `pack.list` join it); (2) links render as text; (3) installing or removing a pack, or changing `[agents]`
+  visibility, shows up on window focus plus a 15-second poll, with no restart; (4) an agent with required
+  parameters gets a Run-only card and never a stored brief; (5) `huddle` and `ghost` stay on `/briefs` with an
+  "Asks your paired peers." line, and the desktop form omits the federation `namespace` fields. Gateway side:
+  `pack.list` rows carry `visibleAgents`, and `fleet.briefs` accepts `agentMethod`, `nonSweep` and `withMarkdown`
+  filters. Presentation only: hiding an agent still refuses nothing. Not breaking.
+
 - **2026-10-24 — Role packs P3, PR 3: `[oncall.push] enabled` is pack-settable and live; the DevOps pack sets it; `nimbus doctor` notes a pack update (no migration, no invariant, no egress class).**
   `[oncall.push] enabled` joins the pack-settable keys and is read live: installing or removing a pack turns the
   on-call push on or off without a gateway restart, and a disable followed by an enable does not backfill the gap
