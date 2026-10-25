@@ -913,11 +913,16 @@ jobs:
           # resolves its removal targets relative to it.
           $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "fake-localappdata"
           & "$env:STAGE\uninstall.ps1" -Yes
-          foreach ($bin in @("nimbus.exe","nimbus-gateway.exe")) {
+          foreach ($bin in @("nimbus.exe","nimbus-gateway.exe","nimbus-sandbox-helper.exe","vec0.dll")) {
             if (Test-Path "$env:LOCALAPPDATA\Programs\Nimbus\bin\$bin") {
               Write-Error "uninstall did not remove $bin"
               exit 1
             }
+          }
+          # install.ps1 puts nothing else there, so an emptied bin dir must be gone too.
+          if (Test-Path "$env:LOCALAPPDATA\Programs\Nimbus\bin") {
+            Write-Error "uninstall left the emptied install directory behind"
+            exit 1
           }
           $userPath = [Environment]::GetEnvironmentVariable("PATH","User")
           if ($userPath -and (($userPath -split ";") | Where-Object { $_ -ieq "$env:LOCALAPPDATA\Programs\Nimbus\bin" })) {

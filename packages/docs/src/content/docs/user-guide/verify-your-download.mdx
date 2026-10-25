@@ -75,7 +75,16 @@ chmod +x nimbus-verify.sh
 ./nimbus-verify.sh --version 0.2.0
 ```
 
-**Windows (PowerShell):**
+**Windows (PowerShell 7):**
+
+`nimbus-verify.ps1` needs PowerShell 7 (`pwsh`) and GnuPG. Stock Windows ships
+only Windows PowerShell 5.1 and no GnuPG, so install both first, then run the
+commands below in a new `pwsh` window:
+
+```powershell
+winget install --id Microsoft.PowerShell
+winget install --id GnuPG.Gpg4win
+```
 
 ```powershell
 Invoke-WebRequest `

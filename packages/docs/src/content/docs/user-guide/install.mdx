@@ -194,7 +194,7 @@ Installed from the `.deb`:
 | Item | Location |
 |---|---|
 | `nimbus`, `nimbus-gateway` | `/usr/local/bin/` (thin wrappers; real binaries under `/usr/lib/nimbus/bin/`) |
-| Gateway data dir | `~/.local/share/nimbus/` |
+| Gateway data dir | `~/.local/share/nimbus/` (config: `~/.config/nimbus/`) |
 | Shell PATH update | None needed — `/usr/local/bin` is already on `PATH` |
 
 If you install from the tarball or AppImage instead, `install.sh` copies the
@@ -207,15 +207,16 @@ not duplicate PATH entries.
 | Item | Location |
 |---|---|
 | `nimbus` binary | `~/.local/bin/nimbus` |
-| Gateway data dir | `~/Library/Application Support/nimbus/` |
+| Gateway data and config dir | `~/Library/Application Support/Nimbus/` |
 | Shell PATH update | Sentinel marker block added to `~/.zshrc` (and `~/.bash_profile` if present) |
 
 ### Windows
 
 | Item | Location |
 |---|---|
-| `nimbus.exe`, `nimbus-gateway.exe` | `%LOCALAPPDATA%\Programs\Nimbus\bin\` |
-| Gateway data dir | `%LOCALAPPDATA%\nimbus\` |
+| `nimbus.exe`, `nimbus-gateway.exe`, `nimbus-sandbox-helper.exe`, `vec0.dll` | `%LOCALAPPDATA%\Programs\Nimbus\bin\` |
+| Gateway data dir | `%LOCALAPPDATA%\Nimbus\` (index, logs, extensions) |
+| Gateway config dir | `%APPDATA%\Nimbus\` (`nimbus.toml`) |
 | PATH update | User `PATH` registry key under `HKCU\Environment` |
 
 The installer performs a case-insensitive PATH segment check before writing —
@@ -244,8 +245,9 @@ first, then re-run the script.
 
 ## Uninstall
 
-The release tarball includes a companion uninstall script that reverses every
-change the installer makes:
+If you installed with the one-liner or from a release archive, run the companion
+uninstall script. (A `.deb` or `.rpm` install is removed with your package
+manager instead, for example `sudo apt remove nimbus-headless`.)
 
 <Tabs>
   <TabItem label="Linux / macOS">
@@ -259,18 +261,30 @@ curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/unins
   <TabItem label="Windows">
 
 ```powershell
-irm https://github.com/nimbus-agent/Nimbus/releases/latest/download/uninstall.ps1 |
-  Invoke-Expression
+$url = "https://github.com/nimbus-agent/Nimbus/releases/latest/download/uninstall.ps1"
+& ([scriptblock]::Create((irm $url))) -Yes
 ```
+
+Drop `-Yes` to be asked before anything is removed. On Windows the uninstaller
+first stops any Nimbus process running from the install directory, because a
+running `.exe` cannot be deleted, and it tells you about any file it could not
+remove instead of reporting success.
 
   </TabItem>
 </Tabs>
 
-The uninstaller removes binaries, the autostart entry, and the PATH
-modification. It does **not** delete your data directory (`~/.local/share/nimbus/`
-on Linux, `~/Library/Application Support/nimbus/` on macOS,
-`%LOCALAPPDATA%\nimbus\` on Windows) — your indexed data and credentials are
-preserved. Delete that directory manually if you want a complete removal.
+The uninstaller removes the binaries and the PATH modification. (There is no
+autostart entry to remove: the installers never create one.) On Linux and macOS
+it does not stop a running Gateway, so run `nimbus stop` first. It does **not**
+delete your data or configuration — your indexed data and credentials are
+preserved. For a complete removal, delete them yourself:
+
+- Linux: `~/.local/share/nimbus/` and `~/.config/nimbus/`
+- macOS: `~/Library/Application Support/Nimbus/`
+- Windows: `%LOCALAPPDATA%\Nimbus\` and `%APPDATA%\Nimbus\`
+
+Credentials stored in the OS keystore (macOS Keychain, Linux Secret Service)
+stay there until you delete them.
 
 ---
 

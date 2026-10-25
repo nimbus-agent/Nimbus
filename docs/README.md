@@ -773,7 +773,7 @@ The complete command reference — every subcommand, flag, exit code, and the fu
 |---|---|---|---|
 | **Gateway IPC** | Named Pipe | Unix Socket | Unix Socket |
 | **Secrets** | DPAPI | Keychain | libsecret |
-| **Autostart** | Registry | LaunchAgents | systemd user |
+| **Autostart** | Not implemented | Not implemented | Not implemented |
 | **Config dir** | `%APPDATA%\Nimbus` | `~/Library/…/Nimbus` | `~/.config/nimbus` |
 | **Desktop UI** | WebView2 | WKWebView | WebKitGTK |
 | **CI runner** | `windows-2025` | `macos-15` | `ubuntu-24.04` |
