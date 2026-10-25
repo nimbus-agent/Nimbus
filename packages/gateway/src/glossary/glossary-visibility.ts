@@ -127,7 +127,8 @@ export function syncTermProjection(
 const sweptFingerprint = new WeakMap<Database, string>();
 
 function fingerprintOf(sets: GlossarySets): string {
-  return JSON.stringify([[...sets.effective].sort(), [...sets.known].sort()]);
+  const sorted = (xs: readonly string[]): string[] => [...xs].sort((a, b) => a.localeCompare(b));
+  return JSON.stringify([sorted(sets.effective), sorted(sets.known)]);
 }
 
 /** Every projectable term: consolidated, and not an owner-accepted agent row. */
