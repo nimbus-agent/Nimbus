@@ -249,7 +249,7 @@ describe.skipIf(skip)("uninstall.ps1 on Windows PowerShell 5.1", () => {
   );
 
   test(
-    "declining the prompt removes nothing",
+    "declining the prompt removes nothing and exits 1 when run as a file",
     async () => {
       writeFileSync(join(binDir, "nimbus.exe"), "x");
       const proc = Bun.spawn(
@@ -276,7 +276,7 @@ describe.skipIf(skip)("uninstall.ps1 on Windows PowerShell 5.1", () => {
       proc.stdin.write("n\r\n");
       proc.stdin.end();
       const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-      expect(code).toBe(0);
+      expect(code).toBe(1);
       expect(stdout).toContain("Aborted.");
       expect(existsSync(join(binDir, "nimbus.exe"))).toBe(true);
     },

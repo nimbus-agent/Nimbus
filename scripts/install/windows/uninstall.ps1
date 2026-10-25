@@ -37,8 +37,12 @@ Write-Host "  Keep:   your data ($env:LOCALAPPDATA\Nimbus) and config ($env:APPD
 
 if (-not $Yes) {
   $answer = Read-Host "Continue? [y/N]"
-  # `return`, not `exit`: under `irm | iex` an `exit` would close the user's shell.
-  if ($answer -notmatch '^(y|yes)$') { Write-Host "Aborted."; return }
+  if ($answer -notmatch '^(y|yes)$') {
+    Write-Host "Aborted."
+    # Run as a file: exit 1, like uninstall.sh. Run from text (`irm | iex`, the scriptblock
+    # one-liner): `return`, because an `exit` there would close the user's shell.
+    if ($PSCommandPath) { exit 1 } else { return }
+  }
 }
 
 # Only processes whose executable lives in THIS install directory. A gateway run
@@ -46,7 +50,12 @@ if (-not $Yes) {
 function Get-InstalledNimbusProcess {
   $prefix = $InstallDir.TrimEnd('\') + '\'
   @(Get-Process -Name $ProcessNames -ErrorAction SilentlyContinue | Where-Object {
-      $_.Path -and $_.Path.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+      # Reading .Path can throw (another user's or an elevated process, or one that just
+      # exited). Such a process is not ours, and under EAP=Stop it must not end the script.
+      try {
+        $p = $_.Path
+        $p -and $p.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+      } catch { $false }
     })
 }
 
