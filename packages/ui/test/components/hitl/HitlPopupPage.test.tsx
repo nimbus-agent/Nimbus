@@ -66,7 +66,7 @@ describe("HitlPopupPage", () => {
     const box = screen.getByTestId("pack-install-prompt");
     expect(box.tagName).toBe("PRE");
     expect(box.textContent).toBe(prompt);
-    expect(box.style.maxHeight).toBe("220px");
+    expect(box.style.maxHeight).toBe("200px");
     expect(box.style.overflow).toBe("auto");
     // The structured preview would repeat the prompt text; it is not rendered for a pack install.
     expect(screen.queryByText("promptText")).toBeNull();

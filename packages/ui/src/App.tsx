@@ -16,6 +16,9 @@ import { Marketplace } from "./pages/Marketplace";
 import { Onboarding } from "./pages/Onboarding";
 import { Oncall } from "./pages/Oncall";
 import { Connect } from "./pages/onboarding/Connect";
+import { Decisions } from "./pages/onboarding/Decisions";
+import { Pack } from "./pages/onboarding/Pack";
+import { Role } from "./pages/onboarding/Role";
 import { Syncing } from "./pages/onboarding/Syncing";
 import { Welcome } from "./pages/onboarding/Welcome";
 import { QuickQuery } from "./pages/QuickQuery";
@@ -55,7 +58,10 @@ const router = createBrowserRouter(
       <Route path="onboarding" element={<Onboarding />}>
         <Route index element={<Navigate to="welcome" replace />} />
         <Route path="welcome" element={<Welcome />} />
+        <Route path="role" element={<Role />} />
+        <Route path="pack" element={<Pack />} />
         <Route path="connect" element={<Connect />} />
+        <Route path="decisions" element={<Decisions />} />
         <Route path="syncing" element={<Syncing />} />
       </Route>
       <Route path="quick" element={<QuickQuery />} />

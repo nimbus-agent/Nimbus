@@ -40,11 +40,7 @@ export function Welcome() {
         <button type="button" onClick={onSkip} style={btn("ghost")}>
           Skip setup
         </button>
-        <button
-          type="button"
-          onClick={() => navigate("/onboarding/connect")}
-          style={btn("primary")}
-        >
+        <button type="button" onClick={() => navigate("/onboarding/role")} style={btn("primary")}>
           Continue →
         </button>
       </div>

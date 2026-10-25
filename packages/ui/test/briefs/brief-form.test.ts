@@ -176,6 +176,7 @@ describe("constants", () => {
       "7 days",
       "30 days",
       "90 days",
+      "1 year",
     ]);
   });
 });

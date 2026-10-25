@@ -109,7 +109,7 @@ export function HitlPopupPage(): ReactNode {
         <pre
           data-testid="pack-install-prompt"
           className="whitespace-pre-wrap break-words font-mono text-xs border border-[var(--color-border)] rounded p-2"
-          style={{ maxHeight: 220, overflow: "auto" }}
+          style={{ maxHeight: 200, overflow: "auto" }}
         >
           {head.prompt}
         </pre>

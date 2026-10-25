@@ -5,6 +5,9 @@ export type AuthStatus = "pending" | "authenticating" | "connected" | "cancelled
 export interface OnboardingSlice {
   readonly selected: ReadonlySet<string>;
   readonly authStatus: Readonly<Record<string, AuthStatus>>;
+  /** The role pack the Role step chose (a `pack.list` id), or null for a non-pack answer. */
+  readonly chosenPackId: string | null;
+  setChosenPack: (id: string | null) => void;
   toggleSelected: (name: string) => void;
   setAuthStatus: (name: string, status: AuthStatus) => void;
   resetOnboarding: () => void;
@@ -15,6 +18,8 @@ export const createOnboardingSlice: StateCreator<OnboardingSlice, [], [], Onboar
 ) => ({
   selected: new Set<string>(),
   authStatus: {},
+  chosenPackId: null,
+  setChosenPack: (id) => set({ chosenPackId: id }),
   toggleSelected: (name) =>
     set((state) => {
       const next = new Set(state.selected);
@@ -24,5 +29,5 @@ export const createOnboardingSlice: StateCreator<OnboardingSlice, [], [], Onboar
     }),
   setAuthStatus: (name, status) =>
     set((state) => ({ authStatus: { ...state.authStatus, [name]: status } })),
-  resetOnboarding: () => set({ selected: new Set<string>(), authStatus: {} }),
+  resetOnboarding: () => set({ selected: new Set<string>(), authStatus: {}, chosenPackId: null }),
 });

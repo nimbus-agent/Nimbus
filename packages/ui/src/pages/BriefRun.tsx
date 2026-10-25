@@ -1,11 +1,12 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import {
   buildFormModel,
   collectParams,
   FEDERATED_AGENTS,
   type FormModel,
   type FormValues,
+  prefillValues,
   SINCE_PRESETS,
 } from "../briefs/brief-form";
 import { isPastDeadline } from "../briefs/brief-runs";
@@ -90,7 +91,8 @@ function formatElapsed(ms: number): string {
 function BriefRunView({ agent }: { readonly agent: CatalogAgent }): ReactNode {
   const runs = useBriefRuns();
   const model = buildFormModel(agent.params);
-  const [values, setValues] = useState<FormValues>({});
+  const [query] = useSearchParams();
+  const [values, setValues] = useState<FormValues>(() => prefillValues(agent.params, query));
   const [arms, setArms] = useState<Readonly<Record<string, string>>>({});
   const [problems, setProblems] = useState<readonly string[]>([]);
   const [startError, setStartError] = useState<string | null>(null);

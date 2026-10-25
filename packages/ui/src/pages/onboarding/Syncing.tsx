@@ -69,7 +69,7 @@ export function Syncing() {
           marginBottom: 6,
         }}
       >
-        Step 3
+        Syncing
       </div>
       <h2 style={{ marginTop: 0 }}>You're set up</h2>
       <p style={{ color: "var(--color-fg-muted)" }}>

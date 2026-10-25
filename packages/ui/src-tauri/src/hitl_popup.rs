@@ -11,7 +11,7 @@ pub fn open_or_focus(app: &AppHandle) -> Result<(), tauri::Error> {
     WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html#/hitl-popup".into()))
         .title("Nimbus — Approve action")
         .inner_size(480.0, 360.0)
-        .resizable(true)
+        .resizable(false)
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)

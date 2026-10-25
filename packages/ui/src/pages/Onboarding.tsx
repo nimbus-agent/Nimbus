@@ -1,14 +1,30 @@
 import { Outlet, useLocation } from "react-router";
+import { useNimbusStore } from "../store";
 
-const STEPS = [
-  { path: "welcome", label: "Welcome" },
-  { path: "connect", label: "Connect" },
-  { path: "syncing", label: "Syncing" },
-] as const;
+type Step = { readonly path: string; readonly label: string };
+
+/**
+ * The header's steps for where the user is: the Pack step only while a pack is being set up, and
+ * the last step is Decisions or Syncing — whichever route this onboarding ends on.
+ */
+export function onboardingSteps(pathname: string, packChosen: boolean): readonly Step[] {
+  const last: Step = pathname.endsWith("/decisions")
+    ? { path: "decisions", label: "Decisions" }
+    : { path: "syncing", label: "Syncing" };
+  return [
+    { path: "welcome", label: "Welcome" },
+    { path: "role", label: "Role" },
+    ...(packChosen || pathname.endsWith("/pack") ? [{ path: "pack", label: "Pack" }] : []),
+    { path: "connect", label: "Connect" },
+    last,
+  ];
+}
 
 export function Onboarding() {
   const { pathname } = useLocation();
-  const currentIdx = STEPS.findIndex((s) => pathname.endsWith(s.path));
+  const packChosen = useNimbusStore((s) => s.chosenPackId !== null);
+  const steps = onboardingSteps(pathname, packChosen);
+  const currentIdx = steps.findIndex((s) => pathname.endsWith(`/${s.path}`));
   return (
     <div style={{ display: "flex", justifyContent: "center", padding: "48px 24px" }}>
       <div
@@ -22,7 +38,7 @@ export function Onboarding() {
         }}
       >
         <div style={{ display: "flex", gap: 6, padding: "18px 24px 4px" }}>
-          {STEPS.map((s, i) => {
+          {steps.map((s, i) => {
             let state: "done" | "active" | "pending";
             if (i < currentIdx) state = "done";
             else if (i === currentIdx) state = "active";
