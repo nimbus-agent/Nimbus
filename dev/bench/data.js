@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792925960775,
+  "lastUpdate": 1792926523249,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "965792107ebcafba10667aab9bd5c7166388dc00",
-          "message": "fix(bitbucket): 🧹 correct itemsUpserted overcount (#1086)\n\n🎯 **What:** The code health issue addressed was `itemsUpserted`\novercounting when a PR was skipped due to a missing `id` field in the\n`bitbucket-sync` connector.\n💡 **Why:** This improves metrics accuracy and resolves a known bug\ndocumented in `known-todos.md`. Correct counts provide better\noperational observability for connector syncing.\n✅ **Verification:** Verified by updating and successfully running `bun\ntest packages/gateway/test/unit/connectors/bitbucket-sync.test.ts`. 45\nof 45 tests pass.\n✨ **Result:** The `itemsUpserted` variable correctly reflects the number\nof records actually upserted into the store.\n\n---\n*PR created automatically by Jules for task\n[12064685251787481813](https://jules.google.com/task/12064685251787481813)\nstarted by @asafgolombek*\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-08T18:36:32+03:00",
-          "tree_id": "9f0dd1900782ba8247389b80cdd1c12deae7a914",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/965792107ebcafba10667aab9bd5c7166388dc00"
-        },
-        "date": 1786204096218,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 348.32499820000123,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 350.59631105000045,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 283.44140205000076,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ebd2a18f582bc3ff73ecff88a2b4b228eb1779b0",
+          "message": "refactor(decisions): resolve decision and glossary sources through one kind table (#1772)\n\nGroundwork for role-pack source mappings (Project 2, PR 1 of 3). **No\nbehaviour change.**\n\n## What moved\n- New `packages/gateway/src/sources/source-kinds.ts`: one table mapping\neach decisions/glossary source `service:type` to a kind (`message`,\n`doc`, `ticket`, `commit`, `note`), plus which kinds each pass reads\n(decisions: message, doc, ticket, note; glossary adds commit).\n- `DECISION_SOURCE_TYPES` and `GLOSSARY_SOURCE_TYPES` keep their names\nand type, and are now derived from the table. The passes and the I28\ntest (`capture items are never extraction input`) import them unchanged.\n- Three decision helpers read the kind instead of naming services:\n  - `sourceAuthority`: doc 1, ticket 0.6, other kinds 0.3.\n- The ADR lookup: doc-kind types, bound params, same title filter, order\nand limit.\n- Ticket-key matching: ticket-kind types, through `metadata.key` /\n`metadata.identifier` only.\n\n## Why it is the same\n- Both source sets, and both filters' bound params, are pinned **in\norder** to their previous literal values.\n- No existing test assertion was edited. The whole gateway suite passes.\n- **Unmapped types keep the old authority rule** (`*:issue` → 0.6, else\n0.3). Owner-accepted agent decisions can point at any item type, and the\n`decisions` brief's explain and stale-score paths score them through\n`sourceAuthority`. Without the fallback, a decision on a\n`bitbucket:issue` would start reading as \"scored on the previous scale\".\n- GitHub and GitLab issues are now ticket-kind but still never\nticket-key-match: neither connector writes `key` or `identifier`\n(`connectors/github-sync.ts`, `connectors/_lib/gitlab/events.ts`). This\nis stated as a bound in the code.\n- Each new pin was red-proven: breaking its target line made it fail.\n\n## Checks\n- `bun run preflight:fast`: PASSED.\n- `bun test packages/gateway/src`: 20905 pass, 0 fail.\n- `typecheck:tests`: 0 new.\n- A whole-branch review found no Critical or Important issues. Two doc\nwordings it raised were fixed.\n\n## Docs\n- CHANGELOG entry.\n- `docs/architecture.md` § Source kinds.\n- The `nimbus-implicit-knowledge-extraction` skill now points at the\ntable.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-25T10:48:47Z",
+          "tree_id": "488d88a1b053a93a33702cbc61f008f91a6ec7c4",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ebd2a18f582bc3ff73ecff88a2b4b228eb1779b0"
+        },
+        "date": 1792926518871,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 247.7938854000002,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 247.1271772500004,
             "unit": "ms"
           }
         ]
