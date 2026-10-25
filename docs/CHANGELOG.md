@@ -18,6 +18,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-25 — Role packs P5 PR 2: desktop onboarding asks what you do and installs the matching role pack (no schema change, I47 widened, Tauri allowlist 116 → 118).**
+  Desktop onboarding now runs Welcome → What do you do? → (the pack) → Connect → Decisions or Syncing. Picking a role pack
+  shows what it suggests and shows, and installs it behind the usual `pack.install` approval, whose popup now renders the
+  pack's exact text in a scroll box with focus on Reject. Connect offers the pack's (or six general) connectors and signs each in
+  its own way: browser sign-in, an inline Jira/Confluence form, or the terminal command; it no longer jumps ahead on the first
+  connection, and it sends connector ids (the old screen sent display names, which `connector.auth` rejects). A pack that shows
+  Decisions ends on a Decisions screen with live progress, the decisions found, or what was read and why nothing qualified.
+  An existing install with no pack sees a once-dismissible "Try a role pack" card. Security: `pack.install` and
+  `decisions.status` joined the Tauri allowlist (`pack.install` also `NO_TIMEOUT_METHODS`, 7 → 8); the gateway refuses
+  the local-file form of `pack.install`/`pack.show` from a renderer connection (`ERR_PACK_RENDERER_FILE`), so the desktop
+  installs bundled packs by id only; `pack.remove`, `pack.show`, `decisions.refresh` and `decisions.rebuild` stay off.
+
 - **2026-10-25 — Role packs P5 PR 1: `nimbus init` asks what you do and works outside a git repository (no schema change, no invariant, no egress class).**
   Once the Gateway is up — after indexing inside a repository, after starting it outside one — an interactive `nimbus init`
   asks "What do you do?": one choice per bundled role pack (matched on the pack's `roles` tags), then Engineering, Design and
