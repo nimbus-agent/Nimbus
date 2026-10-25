@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite";
-
 import type {
   GlossaryManualConfig,
   ManualSkip,
   ManualTerm,
 } from "../config/nimbus-toml-glossary-terms.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 import { projectTerm, unprojectTerm } from "./glossary-project.ts";
 import {
   computeTermStats,
@@ -107,7 +107,7 @@ export function applyManualTerms(
     // Measured, but EXEMPT from `min_doc_freq` — a human may define a term the
     // sources never mention. doc_freq is still recorded because it is what
     // discriminates the two removal cases above.
-    const stats = computeTermStats(db, term.termKey);
+    const stats = computeTermStats(db, term.termKey, sourceTypesFor("glossary"));
     // One transaction PER TERM, not one for the whole pre-pass.
     //
     // The unit of atomicity is deliberately the term, matching

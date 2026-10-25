@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite";
-
 import {
   agentDecisionOwned,
   deleteAgentDecision,
@@ -22,6 +21,7 @@ import {
   upsertGraphRelation,
 } from "../graph/relationship-graph.ts";
 import { clampBody } from "../index/body-caps.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 import { CaptureError, type CaptureKind, type NativeValidatedCapture } from "./capture-types.ts";
 
 /**
@@ -158,7 +158,7 @@ export function writeCaptureNative(
       return id;
     }
     case "term": {
-      const stats = computeTermStats(db, v.payload.termKey);
+      const stats = computeTermStats(db, v.payload.termKey, sourceTypesFor("glossary"));
       const score = scoreTerm({
         docFreq: stats.docFreq,
         serviceSpread: stats.serviceSpread,

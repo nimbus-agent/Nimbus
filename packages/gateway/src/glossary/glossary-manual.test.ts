@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
-
 import type { GlossaryManualConfig } from "../config/nimbus-toml-glossary-terms.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 import { applyManualTerms } from "./glossary-manual.ts";
 import { glossaryItemExternalId } from "./glossary-project.ts";
 import {
@@ -347,7 +347,7 @@ test("a config term takes over an agent row and clears its capture ownership", (
     definition: "agent def",
     synonyms: [],
     captureId: "cap_1",
-    stats: computeTermStats(db, "wal"),
+    stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
     score: 0,
     nowMs: 10,
   });

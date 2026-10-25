@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
-
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -41,7 +41,14 @@ function seedConsolidated(key: string, docFreq: number, nowMs = 1000): void {
     key,
     surface: key.toUpperCase(),
     form: "acronym",
-    stats: { docFreq, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 5,
     nowMs,
   });
@@ -213,7 +220,14 @@ test("the sweep refreshes a manual row's stats but never demotes it", () => {
     definition: "Authored.",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 5, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 5,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 5,
     nowMs: 0,
   });
@@ -247,7 +261,7 @@ test("a stale owner-accepted agent term with zero mentions survives, unprojected
     definition: "agent def",
     synonyms: [],
     captureId: "cap_1",
-    stats: computeTermStats(db, "wal"),
+    stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
     score: 0,
     nowMs: 10,
   });

@@ -15,6 +15,7 @@ import { normalizeTerm } from "../glossary/term-normalize.ts";
 import { ensureGraphEntity } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { dirExternalId, fileExternalId } from "../ownership/ownership-pass.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 import {
   buildFleetSweepEnumerate,
   enumeratePaths,
@@ -67,7 +68,7 @@ function seedAll(): void {
     key,
     surface: "Retry Budget",
     form: "phrase",
-    stats: computeTermStats(db, key),
+    stats: computeTermStats(db, key, sourceTypesFor("glossary")),
     score: 1,
     nowMs: 1,
   });

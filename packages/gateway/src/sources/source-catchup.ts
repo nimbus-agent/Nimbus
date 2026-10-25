@@ -1,19 +1,20 @@
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
+import { sourceTypesFor } from "./source-kinds.ts";
 
 /**
- * Catch-up for source types that joined the decisions mapping after the main cursor passed their
+ * Catch-up for source types that joined a pass's mapping (decisions or glossary) after the main cursor passed their
  * items (schema V74 `source_catchup_state`, spec § 6).
  *
- * The pass keeps ONE composite cursor (`decision_pass_state`). A type mapped later sits behind it
+ * Each pass keeps ONE composite cursor (e.g. `decision_pass_state`). A type mapped later sits behind it
  * forever, and a type unmapped for a while misses everything modified in that window. Each type
  * therefore carries its own cursor here, scanned from where it stopped up to the main cursor the
  * run started at. Catch-up writes ONLY this table: writing an older cursor into
  * `decision_pass_state` would rewind the main watermark and re-scan the whole index.
  */
 
-export type CatchupPass = "decisions";
+export type CatchupPass = "decisions" | "glossary";
 
 export type CatchupCursor = { readonly watermarkMs: number; readonly watermarkId: string };
 
@@ -154,3 +155,38 @@ export function runCatchup<R extends { id: string; modified_at: number }>(
   }
   return { batches, scanned, discovered, complete: true };
 }
+
+/**
+ * Every type this pass has ever tracked: the built-ins in table order, then each other
+ * `service_type` with a `source_catchup_state` row for THIS pass, in `service_type` order.
+ */
+export function knownSourceTypes(db: Database, pass: CatchupPass): readonly string[] {
+  const builtin = sourceTypesFor(pass);
+  const have = new Set(builtin);
+  const rows = db
+    .query("SELECT service_type FROM source_catchup_state WHERE pass = ? ORDER BY service_type ASC")
+    .all(pass) as { service_type: string }[];
+  const extra = rows.map((r) => r.service_type).filter((t) => !have.has(t));
+  return Object.freeze([...builtin, ...extra]);
+}
+
+/** Columns both passes' scan rows carry (decisions `ScanRow`, glossary `ScanRow`). */
+export const SCAN_COLUMNS =
+  "i.id, i.service, i.type, i.title, i.body, i.body_complete, i.modified_at";
+
+/**
+ * One catch-up batch: ONE type, strictly after its own cursor, up to and including the main cursor
+ * the run started at. `service`/`type` are matched as two equality columns, never the
+ * concatenation, so `idx_item_service_type_modified (service, type, modified_at, id)` (V74) serves
+ * both the range and the ORDER BY: each batch seeks to its window, with no sort. The bounds are
+ * row-value comparisons on purpose — the equivalent `a > ? OR (a = ? AND b > ?)` form keeps the
+ * index for the ORDER BY but not for the range, so every batch would re-read the type from its
+ * first item. Exported for the query-plan test that pins this.
+ */
+export const CATCHUP_SCAN_SQL = `SELECT ${SCAN_COLUMNS}
+         FROM item i
+        WHERE i.service = ? AND i.type = ?
+          AND (i.modified_at, i.id) > (?, ?)
+          AND (i.modified_at, i.id) <= (?, ?)
+        ORDER BY i.modified_at ASC, i.id ASC
+        LIMIT ?`;

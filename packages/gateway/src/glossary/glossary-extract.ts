@@ -5,6 +5,8 @@ import {
   loadGlossaryManualFromConfigDir,
   type ManualSkip,
 } from "../config/nimbus-toml-glossary-terms.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { sourceFilterSql } from "../sources/source-mapping.ts";
 import {
   type ConsolidationOutcome,
   type ConsolidatorLlm,
@@ -13,7 +15,6 @@ import {
 import { applyManualTerms } from "./glossary-manual.ts";
 import { projectTerm, unprojectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
-import { glossarySourceFilter } from "./glossary-source-types.ts";
 import {
   clearGlossary,
   computeTermStats,
@@ -150,7 +151,10 @@ type ScanRow = {
  * exactly where it stopped.
  */
 function scanDelta(db: Database, cursor: { watermarkMs: number; watermarkId: string }): ScanRow[] {
-  const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
+  const { sql: sourceFilter, params: sourceKeys } = sourceFilterSql(
+    sourceTypesFor("glossary"),
+    "i",
+  );
   return db
     .query(
       `SELECT i.id, i.title, i.body, i.body_complete, i.modified_at
@@ -193,7 +197,7 @@ function snippetsFor(db: Database, itemIds: readonly string[]): Array<{ text: st
  * `AgentCoordinator` JSON-stringify boundary just to discard it —
  * particularly costly here since `agents/glossary.ts` calls this
  * unconditionally on every invocation, list mode and single-term lookup
- * alike. Uses the SAME `glossarySourceFilter()` predicate as `scanDelta` so
+ * alike. Uses the SAME `sourceFilterSql(sourceTypesFor("glossary"), "i")` predicate as `scanDelta` so
  * the counted population always matches the mined population — that
  * equivalence is what makes the reported number honest, so do not inline or
  * re-derive it.
@@ -202,7 +206,10 @@ export function loadGlossaryCandidates(
   db: Database,
   opts: { sinceMs: number },
 ): { total: number; truncatedSources: number } {
-  const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
+  const { sql: sourceFilter, params: sourceKeys } = sourceFilterSql(
+    sourceTypesFor("glossary"),
+    "i",
+  );
   const row = db
     .query(
       `SELECT COUNT(*) AS total,
@@ -242,7 +249,7 @@ function discoverPhase(
   }
 
   for (const [key, c] of seen) {
-    const stats = computeTermStats(db, key);
+    const stats = computeTermStats(db, key, sourceTypesFor("glossary"));
     if (stats.docFreq < opts.minDocFreq) continue;
     upsertCandidate(db, {
       key,

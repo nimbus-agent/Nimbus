@@ -21,26 +21,3 @@ import { sourceTypesFor } from "../sources/source-kinds.ts";
  * Recorded in the spec's Known Limits rather than silently under-delivered.
  */
 export const GLOSSARY_SOURCE_TYPES: ReadonlySet<string> = new Set(sourceTypesFor("glossary"));
-
-/**
- * SQL predicate matching an `item` row against the allowlist, service half
- * included. The table MUST be aliased `i`.
- *
- * Filtering on the bare `type` half alone would silently widen the scope:
- * `message`, `page`, `issue` and `commit` are generic type names shared across
- * services, so `type IN (...)` also admits every out-of-scope source that
- * happens to reuse one — `wiz:issue` (cloud-security posture findings) today,
- * and any user-installed extension emitting `message` tomorrow. That is the
- * "mining a personal inbox is not a posture to adopt silently" rule leaking in
- * through the back door, and because `service_spread` is a geometric multiplier
- * in `scoreTerm`, an unintended service also inflates the score of every term
- * it mentions.
- */
-const GLOSSARY_SOURCE_MATCH_SQL = "(i.service || ':' || i.type)";
-
-/** The `service:type` keys plus the SQL that compares a row against them. */
-export function glossarySourceFilter(): { sql: string; params: string[] } {
-  const keys = [...GLOSSARY_SOURCE_TYPES];
-  const placeholders = keys.map(() => "?").join(", ");
-  return { sql: `${GLOSSARY_SOURCE_MATCH_SQL} IN (${placeholders})`, params: keys };
-}

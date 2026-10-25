@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-
 import { dbRun } from "../db/write.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -64,7 +64,14 @@ function seedCandidate(key: string, score = 1): void {
     key,
     surface: key.toUpperCase(),
     form: "acronym",
-    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 100, lastSeenAt: 200, topSources: [] },
+    stats: {
+      docFreq: 3,
+      serviceSpread: 1,
+      firstSeenAt: 100,
+      lastSeenAt: 200,
+      topSources: [],
+      contributingTypes: [],
+    },
     score,
     nowMs: 1000,
   });
@@ -97,7 +104,7 @@ test("computeTermStats counts distinct citing items and services", () => {
     body: "CDR work",
     modifiedAt: 200,
   });
-  const s = computeTermStats(db, "cdr");
+  const s = computeTermStats(db, "cdr", sourceTypesFor("glossary"));
   expect(s.docFreq).toBe(3);
   expect(s.serviceSpread).toBe(2);
   expect(s.firstSeenAt).toBe(100);
@@ -118,7 +125,7 @@ test("computeTermStats ignores an allowlisted type carried by a non-allowlisted 
     body: "CDR bucket is public",
     modifiedAt: 200,
   });
-  const s = computeTermStats(db, "cdr");
+  const s = computeTermStats(db, "cdr", sourceTypesFor("glossary"));
   expect(s.docFreq).toBe(1);
   expect(s.serviceSpread).toBe(1);
   expect(s.topSources.map((t) => t.service)).toEqual(["slack"]);
@@ -128,11 +135,11 @@ test("computeTermStats returns at most five top sources", () => {
   for (let i = 0; i < 8; i++) {
     seedItem({ externalId: `i${String(i)}`, title: "CDR", body: "CDR here", modifiedAt: 100 + i });
   }
-  expect(computeTermStats(db, "cdr").topSources).toHaveLength(5);
+  expect(computeTermStats(db, "cdr", sourceTypesFor("glossary")).topSources).toHaveLength(5);
 });
 
 test("computeTermStats is zero for an absent term", () => {
-  expect(computeTermStats(db, "nosuchterm").docFreq).toBe(0);
+  expect(computeTermStats(db, "nosuchterm", sourceTypesFor("glossary")).docFreq).toBe(0);
 });
 
 test("computeTermStats ignores item types outside the source scope", () => {
@@ -145,14 +152,14 @@ test("computeTermStats ignores item types outside the source scope", () => {
     modifiedAt: 100,
     syncedAt: 100,
   });
-  expect(computeTermStats(db, "cdr").docFreq).toBe(0);
+  expect(computeTermStats(db, "cdr", sourceTypesFor("glossary")).docFreq).toBe(0);
 });
 
 test("computeTermStats drops to zero after the citing item is deleted", () => {
   seedItem({ externalId: "a", title: "CDR", body: "CDR", modifiedAt: 100 });
-  expect(computeTermStats(db, "cdr").docFreq).toBe(1);
+  expect(computeTermStats(db, "cdr", sourceTypesFor("glossary")).docFreq).toBe(1);
   db.run("DELETE FROM item");
-  expect(computeTermStats(db, "cdr").docFreq).toBe(0);
+  expect(computeTermStats(db, "cdr", sourceTypesFor("glossary")).docFreq).toBe(0);
 });
 
 test("upsertCandidate inserts pending and getTerm round-trips it", () => {
@@ -178,7 +185,7 @@ test("a hyphenated term is matched (documented phrase-equivalence)", () => {
     modifiedAt: 100,
   });
   seedItem({ externalId: "h2", title: "caching", body: "write-behind again", modifiedAt: 101 });
-  expect(computeTermStats(db, "write-behind").docFreq).toBe(2);
+  expect(computeTermStats(db, "write-behind", sourceTypesFor("glossary")).docFreq).toBe(2);
 });
 
 test("hyphenated matching is phrase-equivalent — unhyphenated prose also counts", () => {
@@ -197,16 +204,16 @@ test("hyphenated matching is phrase-equivalent — unhyphenated prose also count
     body: "we write behind the scenes",
     modifiedAt: 101,
   });
-  expect(computeTermStats(db, "write-behind").docFreq).toBe(2);
+  expect(computeTermStats(db, "write-behind", sourceTypesFor("glossary")).docFreq).toBe(2);
 });
 
 test("an underscored term is matched", () => {
   seedItem({ externalId: "u1", title: "keys", body: "set the shard_key first", modifiedAt: 100 });
-  expect(computeTermStats(db, "shard_key").docFreq).toBe(1);
+  expect(computeTermStats(db, "shard_key", sourceTypesFor("glossary")).docFreq).toBe(1);
 });
 
 test("a term key with FTS-hostile characters degrades to zero, never throws", () => {
-  expect(() => computeTermStats(db, 'we"ird^(term)')).not.toThrow();
+  expect(() => computeTermStats(db, 'we"ird^(term)', sourceTypesFor("glossary"))).not.toThrow();
 });
 
 const QUEUE = { nowMs: 10_000, retryBaseCooldownMs: 1000, minDocFreq: 0 };
@@ -271,7 +278,14 @@ test("selectPendingBatch excludes a term demoted below the floor", () => {
   applyStats(
     db,
     "cdr",
-    { docFreq: 1, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    {
+      docFreq: 1,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     0,
     3000,
   );
@@ -298,7 +312,14 @@ test("selectStaleForRecheck returns consolidated rows oldest-verified first", ()
   applyStats(
     db,
     "b",
-    { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    {
+      docFreq: 3,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     1,
     9000,
   );
@@ -385,7 +406,7 @@ describe("agent terms (capture sink)", () => {
     definition,
     synonyms: ["write-ahead log"],
     captureId,
-    stats: computeTermStats(db, "wal"),
+    stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
     score: 0,
     nowMs: 10,
   });
@@ -442,7 +463,7 @@ describe("agent terms (capture sink)", () => {
       definition: "mine",
       synonyms: [],
       nearMisses: [],
-      stats: computeTermStats(db, "wal"),
+      stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
       score: 0,
       nowMs: 4,
     });
@@ -468,7 +489,14 @@ describe("agent terms (capture sink)", () => {
       key: "wal",
       surface: "Wal",
       form: "acronym",
-      stats: { docFreq: 9, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+      stats: {
+        docFreq: 9,
+        serviceSpread: 1,
+        firstSeenAt: 1,
+        lastSeenAt: 2,
+        topSources: [],
+        contributingTypes: [],
+      },
       score: 9,
       nowMs: 11,
     });
@@ -624,7 +652,14 @@ test("a mined sighting refreshes a manual row's stats but not its display form",
     definition: "Authored.",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    stats: {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 0,
     nowMs: 1000,
   });
@@ -633,7 +668,14 @@ test("a mined sighting refreshes a manual row's stats but not its display form",
     key: "cdr",
     surface: "cdr",
     form: "acronym",
-    stats: { docFreq: 7, serviceSpread: 2, firstSeenAt: 10, lastSeenAt: 20, topSources: [] },
+    stats: {
+      docFreq: 7,
+      serviceSpread: 2,
+      firstSeenAt: 10,
+      lastSeenAt: 20,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 9,
     nowMs: 2000,
   });
@@ -659,7 +701,14 @@ test("a mined sighting still updates a mined row's display form", () => {
     key: "widget",
     surface: "widget",
     form: "phrase",
-    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 3,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 1,
     nowMs: 1000,
   });
@@ -667,7 +716,14 @@ test("a mined sighting still updates a mined row's display form", () => {
     key: "widget",
     surface: "Widget",
     form: "phrase",
-    stats: { docFreq: 4, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 4,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 2,
     nowMs: 2000,
   });
@@ -681,7 +737,14 @@ test("a manual row is selected by neither consolidation batch", () => {
     definition: "Authored.",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 9, serviceSpread: 3, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 9,
+      serviceSpread: 3,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 99,
     nowMs: 1000,
   });
@@ -707,7 +770,14 @@ test("listConsolidated puts authored terms ahead of higher-scoring mined ones", 
     key: "widget",
     surface: "Widget",
     form: "phrase",
-    stats: { docFreq: 50, serviceSpread: 5, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 50,
+      serviceSpread: 5,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 999,
     nowMs: 1,
   });
@@ -725,7 +795,14 @@ test("listConsolidated puts authored terms ahead of higher-scoring mined ones", 
     definition: "authored",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    stats: {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 0,
     nowMs: 1,
   });
@@ -742,7 +819,14 @@ test("countByStatus reports manual as a subset of total", () => {
     definition: "authored",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    stats: {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 0,
     nowMs: 1,
   });
@@ -769,11 +853,39 @@ test("countByStatus.total includes both a manual and a mined consolidated row", 
     definition: "authored",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    stats: {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 0,
     nowMs: 1,
   });
   const counts = countByStatus(db);
   expect(counts.total).toBe(2);
   expect(counts.manual).toBe(1);
+});
+
+test("computeTermStats with an empty source set is zero and never builds IN ()", () => {
+  seedItem({ externalId: "a", title: "CDR rollout", body: "the CDR is live", modifiedAt: 100 });
+  const s = computeTermStats(db, "cdr", []);
+  expect(s.docFreq).toBe(0);
+  expect(s.contributingTypes).toEqual([]);
+});
+
+test("computeTermStats lists the contributing service:type keys, sorted", () => {
+  seedItem({ externalId: "a", title: "CDR rollout", body: "the CDR is live", modifiedAt: 100 });
+  seedItem({
+    externalId: "c",
+    service: "jira",
+    type: "issue",
+    title: "CDR ticket",
+    body: "CDR work",
+    modifiedAt: 200,
+  });
+  const s = computeTermStats(db, "cdr", sourceTypesFor("glossary"));
+  expect(s.contributingTypes).toEqual(["jira:issue", "slack:message"]);
 });

@@ -22,7 +22,14 @@ function seed(
     key,
     surface: key.toUpperCase(),
     form: "acronym",
-    stats: { docFreq: 4, serviceSpread: 2, firstSeenAt: 100, lastSeenAt: 900, topSources: [] },
+    stats: {
+      docFreq: 4,
+      serviceSpread: 2,
+      firstSeenAt: 100,
+      lastSeenAt: 900,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: opts.score ?? 1,
     nowMs: 1000,
   });
@@ -96,7 +103,14 @@ test("a pending (never-consolidated) term is never suggested as a near-miss", as
     key: "cdc",
     surface: "CDC",
     form: "acronym",
-    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 3,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 1,
     nowMs: 1000,
   });
@@ -124,7 +138,14 @@ test("pending terms are reported in the stats", async () => {
     key: "wip",
     surface: "WIP",
     form: "acronym",
-    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 3,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 1,
     nowMs: 1000,
   });

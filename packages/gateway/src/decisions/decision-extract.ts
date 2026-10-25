@@ -1,13 +1,15 @@
 import type { Database } from "bun:sqlite";
-import { sourceTypesFor } from "../sources/source-kinds.ts";
-import { type SourceMapping, sourceFilterSql } from "../sources/source-mapping.ts";
-import { decisionRowId, mineCues } from "./cue-mining.ts";
 import {
+  CATCHUP_SCAN_SQL,
   type CatchupCursor,
   catchupTypes,
   reconcileCatchupRows,
   runCatchup,
-} from "./decision-catchup.ts";
+  SCAN_COLUMNS,
+} from "../sources/source-catchup.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { type SourceMapping, sourceFilterSql } from "../sources/source-mapping.ts";
+import { decisionRowId, mineCues } from "./cue-mining.ts";
 import { computeConfidence, computePriority } from "./decision-confidence.ts";
 import { corroborate, hasAdrEvidence } from "./decision-corroborate.ts";
 import { type DecisionLlm, extractDecision } from "./decision-llm-adapter.ts";
@@ -128,8 +130,6 @@ type ScanRow = {
 
 const BUILTIN_DECISION_TYPES: ReadonlySet<string> = new Set(sourceTypesFor("decisions"));
 
-const SCAN_COLUMNS = "i.id, i.service, i.type, i.title, i.body, i.body_complete, i.modified_at";
-
 function scanDelta(
   db: Database,
   cursor: CatchupCursor,
@@ -154,23 +154,6 @@ function scanDelta(
       batchLimit,
     ) as ScanRow[];
 }
-
-/**
- * One catch-up batch: ONE type, strictly after its own cursor, up to and including the main cursor
- * the run started at. `service`/`type` are matched as two equality columns, never the
- * concatenation, so `idx_item_service_type_modified (service, type, modified_at, id)` (V74) serves
- * both the range and the ORDER BY: each batch seeks to its window, with no sort. The bounds are
- * row-value comparisons on purpose — the equivalent `a > ? OR (a = ? AND b > ?)` form keeps the
- * index for the ORDER BY but not for the range, so every batch would re-read the type from its
- * first item. Exported for the query-plan test that pins this.
- */
-export const CATCHUP_SCAN_SQL = `SELECT ${SCAN_COLUMNS}
-         FROM item i
-        WHERE i.service = ? AND i.type = ?
-          AND (i.modified_at, i.id) > (?, ?)
-          AND (i.modified_at, i.id) <= (?, ?)
-        ORDER BY i.modified_at ASC, i.id ASC
-        LIMIT ?`;
 
 function scanCatchup(
   db: Database,

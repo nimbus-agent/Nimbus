@@ -3,9 +3,9 @@ import { beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -354,7 +354,14 @@ test("stored near-misses draw from consolidated keys only, not pending or vetoed
     key: "cdz",
     surface: "CDZ",
     form: "acronym",
-    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 3,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 1,
     nowMs: 5000,
   });
@@ -372,7 +379,14 @@ test("stored near-misses draw from consolidated keys only, not pending or vetoed
     key: "cdq",
     surface: "CDQ",
     form: "acronym",
-    stats: { docFreq: 3, serviceSpread: 1, firstSeenAt: 1, lastSeenAt: 2, topSources: [] },
+    stats: {
+      docFreq: 3,
+      serviceSpread: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 1,
     nowMs: 5000,
   });
@@ -758,7 +772,14 @@ test("a rebuild with an unreadable config and existing authored rows refuses to 
     definition: "Authored.",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    stats: {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 0,
     nowMs: 1,
   });
@@ -821,7 +842,14 @@ test("a pass with no configDir touches no authored rows", async () => {
     definition: "Authored.",
     synonyms: [],
     nearMisses: [],
-    stats: { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] },
+    stats: {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    },
     score: 0,
     nowMs: 1,
   });
@@ -950,7 +978,7 @@ test("a rebuild keeps an owner-accepted agent term", async () => {
     definition: "agent def",
     synonyms: [],
     captureId: "cap_1",
-    stats: computeTermStats(db, "wal"),
+    stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
     score: 0,
     nowMs: 10,
   });
@@ -970,7 +998,7 @@ function acceptAgentTermDuring(response: Record<string, unknown>): ConsolidatorL
         definition: "agent def",
         synonyms: [],
         captureId: "cap_1",
-        stats: computeTermStats(db, "cdr"),
+        stats: computeTermStats(db, "cdr", sourceTypesFor("glossary")),
         score: 0,
         nowMs: 5000,
       });

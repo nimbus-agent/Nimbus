@@ -2,6 +2,8 @@ import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { type LayerKind, mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
+import { runDecisionPass } from "../decisions/decision-extract.ts";
+import { readPassState } from "../decisions/decision-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { sourceTypesFor } from "../sources/source-kinds.ts";
@@ -10,9 +12,12 @@ import {
   resolveSourceMapping,
   type SourceMapping,
 } from "../sources/source-mapping.ts";
-import { catchupTypes, reconcileCatchupRows } from "./decision-catchup.ts";
-import { CATCHUP_SCAN_SQL, runDecisionPass } from "./decision-extract.ts";
-import { readPassState } from "./decision-store.ts";
+import {
+  CATCHUP_SCAN_SQL,
+  catchupTypes,
+  knownSourceTypes,
+  reconcileCatchupRows,
+} from "./source-catchup.ts";
 
 let db: Database;
 
@@ -264,5 +269,29 @@ describe("catch-up query plan", () => {
       ),
     ).toBe(true);
     expect(details.filter((d) => d.includes("TEMP B-TREE"))).toEqual([]);
+  });
+});
+
+describe("passes do not interact", () => {
+  const cursor = { watermarkMs: 5, watermarkId: "x" };
+  test("glossary and decisions rows are keyed by pass", () => {
+    reconcileCatchupRows(db, "glossary", ["ext_notes:highlight"], new Set(), cursor);
+    expect(catchupTypes(db, "glossary", ["ext_notes:highlight"])).toHaveLength(1);
+    expect(catchupTypes(db, "decisions", ["ext_notes:highlight"])).toEqual([]);
+  });
+});
+
+describe("knownSourceTypes", () => {
+  const cursor = { watermarkMs: 5, watermarkId: "x" };
+  test("with no rows it is the built-in glossary set", () => {
+    expect(knownSourceTypes(db, "glossary")).toEqual(sourceTypesFor("glossary"));
+  });
+  test("a glossary row appends its type; a decisions-only row is not included", () => {
+    reconcileCatchupRows(db, "glossary", ["ext_notes:highlight"], new Set(), cursor);
+    reconcileCatchupRows(db, "decisions", ["ext_other:thing"], new Set(), cursor);
+    const known = knownSourceTypes(db, "glossary");
+    expect(known.at(-1)).toBe("ext_notes:highlight");
+    expect(known).not.toContain("ext_other:thing");
+    expect(Object.isFrozen(known)).toBe(true);
   });
 });

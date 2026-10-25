@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
-import { glossarySourceFilter } from "./glossary-source-types.ts";
+import { sourceFilterSql } from "../sources/source-mapping.ts";
 import type {
   CandidateForm,
   DefinitionSource,
@@ -102,8 +102,12 @@ function safeFtsGet<T>(run: () => T, fallback: T): T {
  * index — never accumulated — so the result is idempotent under re-runs,
  * edits and deletions.
  */
-export function computeTermStats(db: Database, termKey: string): TermStats {
-  const { sql: sourceFilter, params: sourceKeys } = glossarySourceFilter();
+export function computeTermStats(
+  db: Database,
+  termKey: string,
+  types: readonly string[],
+): TermStats {
+  const { sql: sourceFilter, params: sourceKeys } = sourceFilterSql(types, "i");
   const agg = safeFtsGet(
     () =>
       db
@@ -126,7 +130,14 @@ export function computeTermStats(db: Database, termKey: string): TermStats {
   );
 
   if (agg === null || agg.doc_freq === 0) {
-    return { docFreq: 0, serviceSpread: 0, firstSeenAt: 0, lastSeenAt: 0, topSources: [] };
+    return {
+      docFreq: 0,
+      serviceSpread: 0,
+      firstSeenAt: 0,
+      lastSeenAt: 0,
+      topSources: [],
+      contributingTypes: [],
+    };
   }
 
   const sources = db
@@ -146,8 +157,19 @@ export function computeTermStats(db: Database, termKey: string): TermStats {
     modified_at: number;
   }>;
 
+  const contributing = db
+    .query(
+      `SELECT DISTINCT (i.service || ':' || i.type) AS key
+       FROM item_fts f
+       JOIN item i ON i.rowid = f.rowid
+       WHERE item_fts MATCH ? AND ${sourceFilter}
+       ORDER BY key ASC`,
+    )
+    .all(ftsQuery(termKey), ...sourceKeys) as Array<{ key: string }>;
+
   return {
     docFreq: agg.doc_freq,
+    contributingTypes: contributing.map((c) => c.key),
     serviceSpread: agg.service_spread,
     firstSeenAt: agg.first_seen ?? 0,
     lastSeenAt: agg.last_seen ?? 0,

@@ -11,6 +11,7 @@ import { ensureGraphEntity } from "../graph/relationship-graph.ts";
 import { openMigratedDb } from "../index/migrated-db-template.ts";
 import { dirExternalId, fileExternalId } from "../ownership/ownership-pass.ts";
 import { resolveOwnershipPath } from "../ownership/ownership-target.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import {
   buildFleetSweepEnumerate,
@@ -183,7 +184,7 @@ describe("enumerateTerms", () => {
         key,
         surface,
         form: "phrase",
-        stats: computeTermStats(db, key),
+        stats: computeTermStats(db, key, sourceTypesFor("glossary")),
         score: 1,
         nowMs: 1,
       });

@@ -36,6 +36,8 @@ export type TermStats = {
   firstSeenAt: number;
   lastSeenAt: number;
   topSources: GlossarySource[];
+  /** Distinct `service:type` over the same match, sorted. */
+  contributingTypes: readonly string[];
 };
 
 /** Per-term progress emitted during phase B, for on-demand passes. */

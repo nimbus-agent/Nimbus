@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
 
 import { projectTerm, unprojectTerm } from "./glossary-project.ts";
 import {
@@ -35,7 +36,7 @@ export function reconcilePass(
   const demoted: string[] = [];
 
   for (const term of stale) {
-    const stats = computeTermStats(db, term.termKey);
+    const stats = computeTermStats(db, term.termKey, sourceTypesFor("glossary"));
     if (term.definitionSource === "agent") {
       // An owner-ACCEPTED agent term: its evidence floor does not apply (the owner vouched for it,
       // as for a manual term), and it is never projected — projection would embed agent text
