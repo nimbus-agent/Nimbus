@@ -11,6 +11,7 @@ import {
 } from "../config/layered-merge.ts";
 import { parseAgentNameList } from "../config/pack-settable.ts";
 import { parseStringArray } from "../config/toml-primitives.ts";
+import { CATALOG_AGENT_NAMES } from "./agent-catalog.ts";
 
 export type AgentVisibilityOverride = {
   readonly agent: string;
@@ -168,6 +169,18 @@ export function resolveAgentVisibility(
     overrides,
     notes,
   };
+}
+
+/**
+ * The visible built-in agent names and why, for a presentation surface that only needs the set
+ * (the `nimbus wow` tour). Same resolution as `catalog.list`, so the two cannot disagree.
+ */
+export function visibleAgentNames(snapshot: Pick<ConfigSnapshot, "doc">): {
+  readonly visible: ReadonlySet<string>;
+  readonly basis: "all" | "packs";
+} {
+  const v = resolveAgentVisibility(snapshot, CATALOG_AGENT_NAMES);
+  return { visible: v.visible, basis: v.basis };
 }
 
 export function describeAgentVisibility(v: AgentVisibility): readonly string[] {

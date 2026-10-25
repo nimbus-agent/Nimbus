@@ -62,11 +62,13 @@ const RESOLVER_ALLOWED = new Set([
 // with the catalog; it reads no visibility and gates nothing. `packs/pack-install.ts` imports the
 // same function to normalise the names a pack's own defaults list for `pack.list`'s `visibleAgents`,
 // a display field. `ipc/pack-rpc.ts` imports only the built-in agent names and connector ids that
-// validation compares against, never visibility.
+// validation compares against, never visibility. `ipc/tour-rpc.ts` reads `visibleAgentNames` to
+// leave hidden agents out of the `nimbus wow` tour, a presentation surface: it gates nothing.
 const CATALOG_IMPORTERS_ALLOWED = new Set([
   "ipc/catalog-rpc.ts",
   "ipc/diagnostics-rpc.ts",
   "ipc/pack-rpc.ts",
+  "ipc/tour-rpc.ts",
   "packs/pack-install.ts",
   "packs/pack-validate.ts",
 ]);

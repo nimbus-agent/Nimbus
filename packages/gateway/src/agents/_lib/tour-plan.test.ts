@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { buildTourPlan, TOUR_PRIORITY, tourStepFor } from "./tour-plan.ts";
+import { CATALOG_AGENT_NAMES } from "../../catalog/agent-catalog.ts";
+import { buildTourPlan, TOUR_KIND_AGENT, TOUR_PRIORITY, tourStepFor } from "./tour-plan.ts";
 import type { TourSelectorCtx, TourSelectorResult } from "./tour-selectors.ts";
 import type { TourStepKind } from "./tour-types.ts";
 import { TOUR_STEP_KINDS } from "./tour-types.ts";
@@ -184,4 +185,46 @@ test("quoting: a Windows path WITHOUT a space stays bare and unmodified", async 
   const step = p.steps[0];
   expect(step?.args).toEqual([arg]);
   expect(step?.command).toBe(`nimbus oncall ${arg}`);
+});
+
+test("TOUR_KIND_AGENT names only catalog agents", () => {
+  for (const name of Object.values(TOUR_KIND_AGENT)) expect(CATALOG_AGENT_NAMES).toContain(name);
+});
+
+test("with no visible option every kind is evaluated, as before", async () => {
+  const p = await buildTourPlan(ctx, { steps: 6, demo: false, selectors: all(() => ok()) });
+  expect(p.steps).toHaveLength(6);
+});
+
+test("a hidden agent's kind is skipped with the packs reason and its selector never runs", async () => {
+  let ranDecisions = 0;
+  const sel = {
+    ...all(() => ok()),
+    decisions: () => {
+      ranDecisions += 1;
+      return ok();
+    },
+  };
+  const visible = new Set(["why", "oncall", "standup", "glossary", "ownership"]);
+  const p = await buildTourPlan(ctx, {
+    steps: 6,
+    demo: false,
+    selectors: sel,
+    visible: { set: visible, basis: "packs" },
+  });
+  expect(ranDecisions).toBe(0);
+  expect(p.skipped).toEqual([{ kind: "decisions", reason: "hidden by your role packs" }]);
+  expect(p.steps.map((s) => s.kind)).not.toContain("decisions");
+});
+
+test("hidden with no packs (an owner [agents] hide) says so", async () => {
+  const p = await buildTourPlan(ctx, {
+    steps: 6,
+    demo: false,
+    selectors: all(() => ok()),
+    visible: { set: new Set(["why"]), basis: "all" },
+  });
+  expect(p.steps.map((s) => s.kind)).toEqual(["why"]);
+  expect(p.skipped.every((s) => s.reason === "hidden in your config")).toBe(true);
+  expect(p.skipped).toHaveLength(5);
 });

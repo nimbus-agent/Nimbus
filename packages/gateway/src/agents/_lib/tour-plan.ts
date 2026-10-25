@@ -17,6 +17,22 @@ const PRIORITY_ORDER = [
 // the tuple is not assignable to — so the omission fails the build here, with no runtime check.
 export const TOUR_PRIORITY: TotalOverKinds<typeof PRIORITY_ORDER> = PRIORITY_ORDER;
 
+/** The catalog agent each tour kind runs, so the tour can honour agent visibility. Total by type. */
+export const TOUR_KIND_AGENT: Readonly<Record<TourStepKind, string>> = {
+  why: "why",
+  owners: "ownership",
+  oncall: "oncall",
+  standup: "standup",
+  decisions: "decisions",
+  glossary: "glossary",
+};
+
+/** The visible agents (`visibleAgentNames`), passed by `tour.plan`; omitted = every agent. */
+export type TourVisibility = {
+  readonly set: ReadonlySet<string>;
+  readonly basis: "all" | "packs";
+};
+
 /** The CLI subcommand each kind runs. Total by type. */
 const SUBCOMMAND: Readonly<Record<TourStepKind, string>> = {
   why: "why",
@@ -110,14 +126,29 @@ async function evaluateSelector(
 
 export async function buildTourPlan(
   ctx: TourSelectorCtx,
-  opts: { steps: number; demo: boolean; selectors?: typeof TOUR_SELECTORS },
+  opts: {
+    steps: number;
+    demo: boolean;
+    selectors?: typeof TOUR_SELECTORS;
+    visible?: TourVisibility;
+  },
 ): Promise<TourPlan> {
   const selectors = opts.selectors ?? TOUR_SELECTORS;
+  const visible = opts.visible;
+  const hiddenReason =
+    visible?.basis === "packs" ? "hidden by your role packs" : "hidden in your config";
   // The selectors are independent read-only lookups, so they run concurrently. `Promise.all` keeps
   // TOUR_PRIORITY order in its result, and each outcome already carries its own failure, so the
   // plan comes out exactly as a one-at-a-time loop would build it.
+  // A hidden agent is presentation, never a refusal: its selector is simply not run, and the skip
+  // says why, so the plan still accounts for every kind.
   const outcomes = await Promise.all(
-    TOUR_PRIORITY.map((kind) => evaluateSelector(kind, ctx, selectors, opts.demo)),
+    TOUR_PRIORITY.map(
+      (kind): Promise<SelectorOutcome> =>
+        visible === undefined || visible.set.has(TOUR_KIND_AGENT[kind])
+          ? evaluateSelector(kind, ctx, selectors, opts.demo)
+          : Promise.resolve({ skip: { kind, reason: hiddenReason } }),
+    ),
   );
   const candidates: TourStep[] = [];
   const skipped: TourSkip[] = [];

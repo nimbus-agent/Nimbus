@@ -9,7 +9,9 @@ import {
   TOUR_STEPS_MIN,
   type TourPlan,
 } from "../agents/_lib/tour-types.ts";
+import { visibleAgentNames } from "../catalog/agent-visibility.ts";
 import { loadNimbusFilesystemRootsFromConfigDir } from "../config/filesystem-toml.ts";
+import { getLayeredConfig } from "../config/layered-config.ts";
 import {
   loadNimbusDecisionsFromConfigDir,
   loadNimbusUserFromConfigDir,
@@ -115,7 +117,13 @@ export function buildSelectorCtx(ctx: TourRpcContext): TourSelectorCtx {
 async function handleTourPlan(params: unknown, ctx: TourRpcContext): Promise<TourPlan> {
   const steps = requireSteps(params);
   const selectorCtx = buildSelectorCtx(ctx);
-  return buildTourPlan(selectorCtx, { steps, demo: ctx.demo });
+  if (ctx.configDir === undefined) return buildTourPlan(selectorCtx, { steps, demo: ctx.demo });
+  const v = visibleAgentNames(getLayeredConfig(ctx.configDir).snapshot());
+  return buildTourPlan(selectorCtx, {
+    steps,
+    demo: ctx.demo,
+    visible: { set: v.visible, basis: v.basis },
+  });
 }
 
 export async function dispatchTourRpc(

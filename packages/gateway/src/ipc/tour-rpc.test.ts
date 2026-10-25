@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
+import { forgetLayeredConfigForTests } from "../config/layered-config.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import { insertPerson } from "../people/person-store.ts";
 import { buildSelectorCtx, dispatchTourRpc, TourRpcError } from "./tour-rpc.ts";
@@ -155,5 +156,27 @@ describe("dispatchTourRpc", () => {
       },
     });
     await expect(selectorCtx.resolveSelf()).resolves.toBeNull();
+  });
+});
+
+describe("tour.plan follows agent visibility", () => {
+  test("an owner [agents] hide of decisions skips the decisions step", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-tour-vis-"));
+    writeFileSync(join(dir, "nimbus.toml"), '[agents]\nhide = ["decisions"]\n', "utf8");
+    const db = openMigratedMemoryDb();
+    try {
+      const out = await dispatchTourRpc(
+        "tour.plan",
+        { steps: 6 },
+        { db, configDir: dir, demo: false, nowMs: () => 7, runGit: async () => null },
+      );
+      if (out.kind !== "hit") throw new Error("expected a hit");
+      const plan = out.value as { skipped: { kind: string; reason: string }[] };
+      expect(plan.skipped).toContainEqual({ kind: "decisions", reason: "hidden in your config" });
+    } finally {
+      db.close();
+      forgetLayeredConfigForTests(dir);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
