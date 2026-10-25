@@ -3,7 +3,15 @@ import { useRolePacks } from "../../hooks/useRolePacks";
 import { AgentCard } from "./AgentCard";
 
 export function PackSections(): ReactNode {
-  const { sections, loaded } = useRolePacks();
+  const { sections, loaded, packError } = useRolePacks();
+  // A failed list is not "no packs": say so instead of pointing at `nimbus pack list`.
+  if (packError !== null) {
+    return (
+      <p role="alert" className="text-sm text-[var(--color-error)]">
+        {`Could not load role packs: ${packError}`}
+      </p>
+    );
+  }
   if (!loaded) return null;
   if (sections.length === 0) {
     return (

@@ -31,15 +31,17 @@ export function RolePacksProvider({ children }: { readonly children: ReactNode }
   const packs = asPackList(packsQ.data);
   const catalog = asCatalog(catalogQ.data);
   const catalogError = catalogQ.error;
+  const packError = packsQ.error ?? packs?.listError ?? null;
   const value = useMemo<RolePacksState>(
     () => ({
       packs,
       catalog,
       catalogError,
+      packError,
       sections: packSections(packs, catalog),
       loaded: packs !== null && catalog !== null,
     }),
-    [packs, catalog, catalogError],
+    [packs, catalog, catalogError, packError],
   );
   return <RolePacksContext.Provider value={value}>{children}</RolePacksContext.Provider>;
 }

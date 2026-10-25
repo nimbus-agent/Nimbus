@@ -79,7 +79,10 @@ function StoredCard({ agent }: { readonly agent: CatalogAgent }): ReactNode {
     { enabled: !needsParams },
   );
   // A failed query reads as "nothing stored": the card has no error state by design.
-  const row = needsParams ? undefined : data?.briefs[0];
+  // A gateway that predates the `agentMethod` filter ignores it and answers with any agent's
+  // newest brief, so a row for another agent reads as "nothing stored" rather than mislabelled.
+  const candidate = needsParams ? undefined : data?.briefs[0];
+  const row = candidate?.agentMethod === agent.method ? candidate : undefined;
   // No "nothing stored" claim until the first fetch has answered (a result or an error).
   const firstFetchInFlight = !needsParams && data === null && error === null;
   if (row === undefined)

@@ -38,6 +38,7 @@ vi.mock("../../src/store", () => ({
 
 const rolePacks = vi.hoisted(() => ({
   loaded: true,
+  packError: null as string | null,
   sections: [] as readonly { id: string; name: string; agents: readonly unknown[] }[],
 }));
 vi.mock("../../src/hooks/useRolePacks", () => ({
@@ -100,5 +101,20 @@ describe("Dashboard", () => {
     renderDash();
     expect(screen.queryByText(/Role packs tailor/)).toBeNull();
     expect(screen.queryByRole("heading", { level: 2, name: "DevOps" })).toBeNull();
+  });
+
+  it("reports a failed pack list instead of claiming no packs are active", () => {
+    rolePacks.loaded = true;
+    rolePacks.sections = [];
+    rolePacks.packError = "active.json unreadable";
+    try {
+      renderDash();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Could not load role packs: active.json unreadable",
+      );
+      expect(screen.queryByText(/Role packs tailor/)).toBeNull();
+    } finally {
+      rolePacks.packError = null;
+    }
   });
 });

@@ -7,6 +7,8 @@ export interface RolePacksState {
   readonly catalog: CatalogListResult | null;
   /** The message of a failed `catalog.list`; cleared by the next successful answer. */
   readonly catalogError: string | null;
+  /** A failed `pack.list`, or the `listError` it answered with; null once it answers cleanly. */
+  readonly packError: string | null;
   readonly sections: readonly PackSection[];
   /** True once both `pack.list` and `catalog.list` have returned data. */
   readonly loaded: boolean;

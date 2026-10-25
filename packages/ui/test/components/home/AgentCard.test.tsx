@@ -129,6 +129,28 @@ describe("AgentCard", () => {
     expect(screen.getByRole("link", { name: /run/i })).toHaveAttribute("href", "/briefs/decisions");
   });
 
+  it("ignores a row for another agent, as an older gateway that skips the filter returns", () => {
+    q.result = {
+      data: {
+        briefs: [
+          {
+            id: "b9",
+            jobName: "nightly",
+            agentMethod: "agents.why",
+            createdAt: Date.now(),
+            briefMarkdown: "Someone else's brief",
+          },
+        ],
+      },
+      error: null,
+      isLoading: false,
+    };
+    renderCard(agent("decisions"));
+    expect(screen.getByText("No stored brief yet.")).toBeInTheDocument();
+    expect(screen.queryByText(/Someone else's brief/)).toBeNull();
+    expect(screen.queryByRole("link", { name: /open/i })).toBeNull();
+  });
+
   it("makes no 'No stored brief yet.' claim while the first fetch is in flight", () => {
     q.result = { data: null, error: null, isLoading: true };
     renderCard(agent("decisions"));
