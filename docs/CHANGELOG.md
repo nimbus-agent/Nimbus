@@ -22,7 +22,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `sources/source-kinds.ts` classifies every decisions/glossary source `service:type` as a kind (`message`, `doc`,
   `ticket`, `commit`, `note`), and both passes' source sets now derive from it; source authority, ADR corroboration
   and ticket-key matching read the kind instead of naming services. Every output is unchanged: both source sets
-  are pinned in order to their previous literal values, and no existing test was edited. Groundwork for role packs
+  are pinned in order to their previous literal values, and no existing test assertion was edited. Groundwork for role packs
   and the owner adding sources of their own (Project 2, PR 2).
 
 - **2026-10-25 — Role packs P4: the desktop follows your role packs (no migration, no invariant, no egress class).**

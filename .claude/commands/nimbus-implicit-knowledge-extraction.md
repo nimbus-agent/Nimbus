@@ -273,8 +273,11 @@ previews the delete count and requires `--yes`.
 3. If it is paragraph-shaped, check whether it belongs in `PROSE_HEAVY_TYPES`
    (`nimbus-embedding-routing`) — that raises the body cap, which is usually the real
    blocker.
-4. For decisions, set `sourceAuthority` deliberately (`decision-confidence.ts`: long-form docs
-   `1`, `*:issue` `0.6`, chat `0.3`). A new type falls through to `0.3`.
+4. For decisions, choose the kind deliberately: it sets the authority (`sourceAuthority` in
+   `decision-confidence.ts`: doc `1`, ticket `0.6`, message/commit/note `0.3`), makes a doc-kind
+   type an ADR candidate, and lets a ticket-kind type match `--service` by `metadata.key` /
+   `identifier`. Do not add a per-service branch to `sourceAuthority`; only a type OUTSIDE the
+   table uses its fallback (`*:issue` `0.6`, else `0.3`).
 5. Existing rows are **not** re-scanned by adding a type — the watermark has already passed
    them. Say so, and point the user at `--rebuild`.
 6. Update the honesty statements if the change moves a ceiling or a coverage claim.
