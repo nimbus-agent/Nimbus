@@ -12,7 +12,7 @@ const powershell = isWin ? Bun.which("powershell") : null;
 const skip = !isWin || !powershell;
 
 const UNINSTALL_PS1 = join(import.meta.dir, "uninstall.ps1");
-const PING = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "PING.EXE");
+const PING = join(process.env["SystemRoot"] ?? "C:\\Windows", "System32", "PING.EXE");
 const TEST_TIMEOUT_MS = 90_000;
 
 type RunResult = { code: number; stdout: string; stderr: string };
@@ -71,10 +71,7 @@ function startFakeProcess(exePath: string): ReturnType<typeof Bun.spawn> {
 }
 
 async function isAlive(proc: ReturnType<typeof Bun.spawn>): Promise<boolean> {
-  const done = await Promise.race([
-    proc.exited.then(() => true),
-    Bun.sleep(300).then(() => false),
-  ]);
+  const done = await Promise.race([proc.exited.then(() => true), Bun.sleep(300).then(() => false)]);
   return !done;
 }
 
@@ -132,7 +129,12 @@ describe.skipIf(skip)("uninstall.ps1 on Windows PowerShell 5.1", () => {
   test(
     "removes every installed file, vec0.dll included, and the emptied dirs; keeps data and config",
     async () => {
-      for (const f of ["nimbus.exe", "nimbus-gateway.exe", "nimbus-sandbox-helper.exe", "vec0.dll"]) {
+      for (const f of [
+        "nimbus.exe",
+        "nimbus-gateway.exe",
+        "nimbus-sandbox-helper.exe",
+        "vec0.dll",
+      ]) {
         writeFileSync(join(binDir, f), "x");
       }
       const r = await runUninstall(root);
@@ -260,7 +262,11 @@ describe.skipIf(skip)("uninstall.ps1 on Windows PowerShell 5.1", () => {
           UNINSTALL_PS1,
         ],
         {
-          env: { ...process.env, LOCALAPPDATA: join(root, "Local"), APPDATA: join(root, "Roaming") },
+          env: {
+            ...process.env,
+            LOCALAPPDATA: join(root, "Local"),
+            APPDATA: join(root, "Roaming"),
+          },
           stdin: "pipe",
           stdout: "pipe",
           stderr: "pipe",
