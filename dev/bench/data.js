@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792962836845,
+  "lastUpdate": 1792964109194,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f04c82a8cc91a42a86447ff0fa16ee9374108d9a",
-          "message": "test(mcp): 🧪 add test coverage for startConnector in tableau connector (#1120)\n\n🎯 **What:** The testing gap addressed was that `startConnector` in\n`server.ts` was not covered by tests.\n📊 **Coverage:** The new scenario tested verifies that the read-only\nserver starts properly by calling `runReadOnlyMcpConnector` with the\nappropriate parameters for the tableau connector.\n✨ **Result:** Test coverage for the tableau module has been improved.\n\n---\n*PR created automatically by Jules for task\n[13869546185275677876](https://jules.google.com/task/13869546185275677876)\nstarted by @asafgolombek*\n\n---------\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-08T20:19:25+03:00",
-          "tree_id": "4d689d6e5f31c06131429d0006957289c9a9f8b2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f04c82a8cc91a42a86447ff0fa16ee9374108d9a"
-        },
-        "date": 1786210712713,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.2290919500007,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.40198314999617,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 226.0556388999954,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4fbb00af11fd09ded8a934a6c7ee9aa8abc6ee6b",
+          "message": "feat(google-drive): index Google Docs with their text; the Product pack (1.1.0) mines them (#1780)\n\nRole packs Project 2, PR 3 of 3 (the last). Google Docs are indexed with\ntheir text, and the Product role pack (1.1.0) maps them as a\ndecisions/glossary source. Design: spec § 8 of the P2 source-mapping\ndesign (on `dev/asaf/role-packs`, not merged into `main`), revised\nbefore planning with the owner's three calls and an Antigravity spec\nreview.\n\nNo migration, no invariant, no egress class, no IPC method, no HITL\ntype.\n\n## What changes\n\n**Drive writes a Google Doc as `google_drive:doc` with its text.** The\nbody is the Drive export endpoint's `text/plain` and goes through the\nexisting depth chokepoint:\n- up to 16,384 characters at `full`;\n- 512 at `summary`;\n- nothing is fetched at `metadata_only`.\n\nThe item id is `service:externalId`, never the type, so the upsert\nre-types the old `file` row in place. Nothing is deleted, and no\nmigration rewrites Drive rows. Other Drive files stay `file`/`folder`,\nmetadata only, with `mimeType`/`size` unchanged for the media pipeline.\n\n**When a Doc is exported.** Only when its row does not already hold this\nrevision's text. That is decided by `bodyFetchState` (the Notion\npattern), which gains `hasBody`:\n- A `metadata_only` reindex NULLs the body but keeps the `bodyFetch`\nverdict. Skipping on the verdict alone would never restore that body.\n- The verdict is recorded only at `full`, so a `summary` row is exported\nagain after a deepen.\n\n**Export failures never fail the sync.** `fetchGoogleText` shares\n`fetchGoogleJson`'s rate limiter and 401 handling and strips the UTF-8\nBOM Google prefixes. Non-401 failures now throw `GoogleHttpError`, which\ncarries the status. Only a 401 fails the sync. A 403 (Drive's export\nsize limit), 404, 429 or 5xx indexes that Doc by name, without text and\nwithout a verdict.\n\n**Cap: 200 exports per `sync()` call (owner's call).** A Doc written\nwithout text because the cap ran out, or because of a transient failure,\nre-arms the re-list.\n\n**One-time re-list on the `delta` cursor.** The changes feed only shows\nchanged files, so existing Docs are re-listed once. The state lives on\nthe cursor as `docs`:\n- `{ listToken }` while running, `{ doneAt: depth }` when finished.\n- An absent field means \"not started\", so every pre-PR cursor re-lists\nonce. A depth change re-lists again.\n- The re-list runs only after the call's changes page is caught up, so\nit never holds up the feed.\n- It never starts a page it cannot finish within the budget, since the\nnext page token is the only resume point. It lists at most five pages\nper call; a page of already-current Docs costs no export, so the budget\nalone did not bound it.\n- It writes a Doc only if it is already indexed or changed in the last\n30 days. It rewrites rows; it does not widen what Drive indexes.\n\n**Routing (owner's call):** `google_drive:doc` joins `PROSE_HEAVY_TYPES`\nlike `notion:page`, which also gives it the 16 KiB cap\n(`LONG_BODY_TYPES` is derived from the routing sets).\n\n**Fixed on the way: an item holding one model's chunks could not be\nre-embedded under another.** `SqliteEmbeddingPipeline.embedItem` cleared\nonly its own model's chunks, and `embedding_chunk` is `UNIQUE(item_id,\nchunk_index)`. So with an OpenAI key, a re-typed Doc's insert failed\nwith `SQLITE_CONSTRAINT_UNIQUE`, and the file name's MiniLM vector\nstayed as the item's only vector. On the backfill's drain loop, which\nre-selects a failed item, the pass never finished. The pipeline now\nclears every model's chunks for the item; an item holds one model's\nchunks at a time anyway.\n\n**Notion, same family:** its body re-fetch skip now also reads\n`hasBody`, and it records the `bodyFetch` verdict only at `full`.\nWithout both, a page whose body a `metadata_only` reindex removed, or a\npage first synced at `metadata_only`/`summary`, was never fetched again\nafter a deepen.\n\n**PM pack 1.1.0** adds `[sources] map = [\"google_drive:doc=doc\"]`.\nUpdate detection is digest-based, so installed PM packs report an\nupdate. `google_drive:doc` is NOT a built-in source kind, so with no\npack and no owner entry, outputs match today's.\n\n**`nimbus index rebody`:** `google_drive` stays out of\n`REBODY_IMPROVABLE_SERVICES`. It is now a mixed service (`doc` writes a\nbody, `file`/`folder` do not), which that set excludes.\n\n## Proof\n\n- `src/decisions/decision-google-docs.test.ts` is the done-when check:\n\"a Google Doc's text is in the index and a decision written in it is\nmined after installing PM 1.1.0\". The Doc reaches the index through the\nreal Drive sync, the mapping is resolved from the bundled pm pack's own\ndefaults text, and the decisions pass mines it. Without the pack it does\nnot.\n- `src/connectors/google-drive-docs.test.ts` covers:\n  - in-place re-typing;\n  - the skip, NULLed-body, capped, `metadata_only` and `summary` cases;\n  - 403, 429 (re-arm) and 401;\n- the re-list: upgrade, scope, resume, budget guard, page bound, depth\nre-arm, decode.\n- I mutation-checked the budget guard, the scope filter and both Notion\nchanges (each red when removed). The routing test was red\n(`SQLITE_CONSTRAINT_UNIQUE`) before the pipeline fix, and the backfill\ntest hangs under the old pipeline.\n\nFour existing Drive tests pinned a delta cursor or a call count. They\nnow pass `docs: { doneAt: \"full\" }`, because they test other behaviour.\nThe shared sync harness context also gained `depth: \"full\"`: it had\nnone, which no scheduler run ever produces.\n\n## Stated bound\n\nA Doc whose export keeps failing transiently during the re-list gets its\ntext on its next edit, a depth change, or a cleared cursor. The re-list\ndoes not re-arm itself, because a Doc that always failed would re-list\nthe whole Drive on every sync.\n\n## Antigravity reviews\n\nThree runs of the Google Antigravity CLI (`agy --mode plan`, read-only\nfile bundles). The spec and plan reviews, verbatim with dispositions,\nare on `dev/asaf/role-packs` (`…-p2-pr3-google-docs-spec-review.md`,\n`…-p2-pr3-google-docs-review.md`).\n\n**Spec § 8 (11 findings, all fixed in the spec before planning):**\n- the stale MiniLM vector on an in-place re-type;\n- export errors failing the sync;\n- cap overflow leaving Docs bodyless;\n- the re-list widening past the 30-day window;\n- no cursor schema for the re-list;\n- exports at `metadata_only`;\n- rebody posture;\n- the BOM;\n- three stale citations and delegations.\n\nI declined two suggestions, with reasons: recording `bodyFetch:\n\"errored\"` (kept Notion's \"no verdict = retryable\"), and a SQLite-driven\nre-list (it would need a new SyncContext capability).\n\n**Plan and branch (8 findings, all fixed):**\n\n| # | Finding | Disposition |\n|---|---|---|\n| 1 | The backfill calls the inner pipeline directly, so a router-level\nchunk delete left its drain loop re-selecting a failed item forever |\n**Fixed.** The delete moved into `SqliteEmbeddingPipeline.embedItem`\n(all of the item's chunks). Under the old code the new backfill test\nhangs. |\n| 2 | Notion's skip ignores `hasBody` | **Fixed**, with a red-proven\ntest |\n| 3 | `GoogleHttpError` class/status never asserted | **Fixed** |\n| 4 | Plan named the wrong test file | **Fixed** (plan) |\n| 5 | `DOCS_RELIST_PAGES_PER_SYNC` undocumented | **Fixed** (plan +\nspec) |\n| 6 | Stale describe title | **Fixed** |\n| 7 | The 429 test did not prove the re-list restores the text |\n**Fixed**: the first export 429s, the re-list's retry stores the text\nand a verdict |\n| 8 | `hasBody` reads as \"was fetched\" | **Fixed**: the docstring says\n`body IS NOT NULL` and why |\n\n**Finished branch (4 findings):**\n\n| # | Finding | Disposition |\n|---|---|---|\n| 1 | Notion recorded `bodyFetch` at `metadata_only`/`summary`, so a\npage was never fetched again after a deepen | **Fixed**: the verdict is\nrecorded only at `full`, as in Drive, with a red-proven test.\n**Declined:** changing `hasBody` to `body <> ''`. A genuinely empty page\nor Doc would then be re-fetched every time it is seen, and once the\nverdict is gated on `full` the empty-string case no longer arises. |\n| 2 | The routing skill's `PROSE_HEAVY_TYPES` sample lacked three\nentries | **Fixed** |\n| 3 | The re-list scope sentence in `google-drive.mdx` contradicted\nitself | **Fixed** |\n| 4 | No test drove a real `metadata_only` sync then `full` | **Fixed**:\nadded for Notion (Drive does not export at `metadata_only`, covered by\nthe depth tests) |\n\n## Verification (local, Windows)\n\n- `bun run preflight:fast`: green, after rebasing on `71eb1510`.\n- `bun run typecheck:tests`: 0 new.\n- `bun test packages/gateway/src`: 21,147 tests, 0 fail, before the\nrebase. After the rebase, the connector, embedding, packs, sources and\ndecisions suites were re-run.\n- `bun test packages/gateway/test/unit`: 0 fail.\n- `bun test scripts`: 5 fails, all in\n`scripts/release/nimbus-verify-ps1.test.ts` (the PowerShell/gpg verify\nscript). They fail identically on `main` on this machine, so they are\nenvironmental, not this branch.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-25T21:24:23Z",
+          "tree_id": "87baa7dc0eae7ef0e3ba6c29b969dce4626dd4e4",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4fbb00af11fd09ded8a934a6c7ee9aa8abc6ee6b"
+        },
+        "date": 1792964105511,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 283.96810544999573,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 283.6784995500002,
             "unit": "ms"
           }
         ]
