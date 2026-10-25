@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792926523249,
+  "lastUpdate": 1792943596827,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8ca39a797b5edbce0f2b42e061441d3d5fb614fe",
-          "message": "docs: 🧹 add missing screenshot for onboarding syncing step (#1088)\n\n🎯 **What:** Replaced the `TODO` comment with an actual screenshot for\nthe onboarding syncing step in `first-run-setup.mdx`.\n💡 **Why:** Adding the missing screenshot improves documentation\nreadability and provides clear visual context for the onboarding\nwizard's syncing phase.\n✅ **Verification:** Captured screenshot using Playwright, verified image\ndisplays correctly by injecting it into markdown, and confirmed build\nerrors originated from a preexisting issue in `main`.\n✨ **Result:** A more complete user guide with the required screenshot\nand resolved `TODO` tag.\n\n---\n*PR created automatically by Jules for task\n[3486823898105118336](https://jules.google.com/task/3486823898105118336)\nstarted by @asafgolombek*\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-08T18:42:26+03:00",
-          "tree_id": "9a5c390a8f9da59856b36e266e96f33ed53348a6",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8ca39a797b5edbce0f2b42e061441d3d5fb614fe"
-        },
-        "date": 1786205140213,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.6130479000018,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.73268060000555,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 247.1271772500004,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "50391fb5cb51a1a56ada7b3cac8e05e3a457c687",
+          "message": "feat(decisions): role packs and your config choose which sources decisions are mined from (#1774)\n\nRole packs Project 2, PR 2 of 3, part a. A role pack and your own config\nnow choose which sources `nimbus decisions` mines and shows. Changes\ntake effect live, already-indexed items are caught up, and rows from\nsources you turn off are hidden but never deleted. **The glossary is\nunchanged until PR 2b.**\n\n## What changes for a user\n- **Packs** can add a source with `[sources] map =\n[\"service:type=kind\"]` (`message`/`doc`/`ticket`/`commit`/`note`). Packs\ncan only add. A pack is refused before its approval prompt if it does\nany of these:\n  - names a built-in source\n  - names a personal email or calendar type\n  - names `nimbus:*`\n  - lists one source twice\n  - maps a source to a different kind than another installed pack does\n\nThe install prompt shows a new `Sources added:` section, and `pack.list`\nrows carry `sourceMappings`.\n- **Your config** (`nimbus.toml`, base or profile) can `map` (add or\nre-kind any source) and `exclude` (remove any source):\n  - The profile beats the base.\n  - Within one layer, `exclude` beats `map`.\n  - Your settings win over packs without a prompt.\n\n  Malformed values and unknown keys are ignored, each with a note.\n- **`nimbus config explain sources`** shows each effective source and\nwhere it came from, each exclusion, and a note whenever your config\noverrides or excludes a pack's entry.\n- **The decisions pass** reads the mapping at the start of every run:\n- A newly mapped source's already-indexed items are caught up before the\nnormal scan.\n- A source that comes back after being removed is caught up only for the\nwindow it was off.\n  - Built-in sources are not re-scanned on upgrade.\n- Queued and snippet-upgrade rows from excluded sources are not sent to\nthe model.\n  - `--rebuild` clears the catch-up cursors.\n- The supporting-records (ADR) lookup uses the mapping's doc sources,\nand is skipped when there are none.\n- **Reads** cover `nimbus decisions`, the counts, the candidate totals,\n`negotiate`'s decisions lane and the tour:\n  - Rows from sources that are not currently mapped are hidden.\n  - Orphaned decisions and owner-accepted agent decisions always show.\n  - `--service` ticket matching follows the mapping.\n- The stale-score note uses the kind each row was scored under, so a\nre-kind does not flag old scores.\n\n## Schema V74 (additive)\n- `source_catchup_state`: one catch-up cursor per pass and source type.\n- `decision_record.scored_kind`: backfilled once from the built-in table\nas it stands today, written as a fixed list.\n- `idx_item_service_type_modified ON item(service, type, modified_at,\nid)`: serves the catch-up seek, pinned by an EXPLAIN test. **Cost:** a\none-time index build on `item` at migration, plus a small write cost on\nevery item write after that.\n\n## Invariants\nI28: `nimbus:*` can never become a source. The entry parser refuses it\nat every layer and the resolver drops it again. The I28 test was\nextended to cover this, and the `SECURITY-INVARIANTS.md` sentence was\nupdated to match.\n\n## Rulings\n- Installing or removing a pack does not trigger a pass. Reads change\nimmediately, and the next pass after a sync (or `nimbus decisions\n--refresh`) mines new sources.\n- `nimbus demo` seeds with the built-in mapping.\n- A built-in source that is excluded on the first run under V74 is\nrecorded at the main cursor, so including it again later catches up the\nwindow it was off.\n- `--service` on an excluded source gets no new gap line. Only the owner\ncan exclude a source, and `config explain sources` lists every\nexclusion.\n\n## Verification\n- **Static checks:** `preflight:fast` passed, and `typecheck:tests`\nreports 0 new errors.\n- **Tests:** `bun test packages/gateway/src` gave 20,986 pass and 0 fail\nbefore the final fix wave; the touched suites were re-run after it. `bun\ntest packages/cli` gave 4,720 pass, and the UI vitest suite gave 1,162\npass.\n- **Coverage:** the new files are at 100% line and branch coverage in a\nlocal lcov. The local `audit:coverage-floor` reported 6 violations, all\nin files this PR does not touch. The CI Linux leg is authoritative.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-25T15:44:40Z",
+          "tree_id": "7cb6adbd349c16149e77b4b685c0b1324f23de0f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/50391fb5cb51a1a56ada7b3cac8e05e3a457c687"
+        },
+        "date": 1792943593218,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 176.96495680000044,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.15891730000513,
             "unit": "ms"
           }
         ]
