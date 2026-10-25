@@ -10,6 +10,7 @@ import {
   type RolePackManifest,
   rolePackDigest,
 } from "@nimbus-dev/registry-format";
+import { normaliseAgentName } from "../catalog/agent-visibility.ts";
 import { type ExplainEntry, explainConfig } from "../config/config-explain.ts";
 import { parseNimbusTomlFleetJobs } from "../config/fleet-toml.ts";
 import { getLayeredConfig, type SkippedPack } from "../config/layered-config.ts";
@@ -87,6 +88,8 @@ export type PackListResult = {
     updateAvailable: boolean;
     bundledVersion?: string;
     versionUnknown?: true;
+    /** Agents the installed record's defaults make visible, normalised; `[]` when unreadable. */
+    visibleAgents: readonly string[];
   }[];
   readonly available: readonly { id: string; name: string; version: string; description: string }[];
   readonly skipped: readonly SkippedPack[];
@@ -473,6 +476,7 @@ function installedEntry(
       updateAvailable: bundled !== undefined,
       ...(bundled === undefined ? {} : { bundledVersion: bundled.version }),
       versionUnknown: true,
+      visibleAgents: [],
     };
   }
   const m = record.manifest;
@@ -487,5 +491,18 @@ function installedEntry(
     source: record.source.kind,
     updateAvailable: newer,
     ...(newer ? { bundledVersion: bundled.version } : {}),
+    visibleAgents: packVisibleAgents(m.defaults),
   };
+}
+
+/** The agents a pack's defaults make visible: normalised, first occurrence wins, `[]` if invalid. */
+export function packVisibleAgents(defaults: string): readonly string[] {
+  const parsed = checkPackFragment(defaults, checkPackFleetJobs);
+  if (!parsed.ok) return [];
+  const out: string[] = [];
+  for (const name of parsed.lists.get("agents.visible") ?? []) {
+    const n = normaliseAgentName(name);
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
 }
