@@ -1027,13 +1027,40 @@ ${body}
     expect(selectPendingBatch(db, 10, QUEUE, sets).map((t) => t.termKey)).toEqual(["lsn"]);
   });
 
-  test("the over-fetch still fills the limit past hidden rows", () => {
+  test("the slow path still fills the limit past hidden rows", () => {
     seedBacked("aaa", "slack", "message", 9);
     seedBacked("bbb", "slack", "message", 8);
     seedBacked("ccc", "jira", "issue", 2);
     seedBacked("ddd", "jira", "issue", 1);
     const sets = glossarySets(db, NO_SLACK);
     expect(selectPendingBatch(db, 2, QUEUE, sets).map((t) => t.termKey)).toEqual(["ccc", "ddd"]);
+  });
+
+  // More hidden rows than one over-fetch window (limit × 4) ranked ahead of the only visible one:
+  // a fixed window would return nothing for as long as the exclusion lasts, since a hidden row is
+  // never attempted and so never moves in the queue's order.
+  test("the pending queue pages past more hidden rows than one window", () => {
+    for (let i = 0; i < 6; i++) seedBacked(`hid${String(i)}`, "slack", "message", 50 - i);
+    seedBacked("vis", "jira", "issue", 1);
+    const sets = glossarySets(db, NO_SLACK);
+    expect(selectPendingBatch(db, 1, QUEUE, sets).map((t) => t.termKey)).toEqual(["vis"]);
+    const untouched = db
+      .query("SELECT COUNT(*) AS n FROM glossary_term WHERE status = 'pending' AND attempts = 0")
+      .get() as { n: number };
+    expect(untouched.n).toBe(7);
+  });
+
+  test("the snippet upgrade queue pages past more hidden rows than one window", () => {
+    for (let i = 0; i < 6; i++) seedBacked(`hid${String(i)}`, "slack", "message", 50 - i);
+    seedBacked("vis", "jira", "issue", 1);
+    dbRun(
+      db,
+      "UPDATE glossary_term SET status = 'consolidated', definition = 'd', definition_source = 'snippet', last_attempt_at = CASE WHEN term_key = 'vis' THEN 500 ELSE 0 END",
+      [],
+    );
+    const sets = glossarySets(db, NO_SLACK);
+    const opts = { nowMs: 10_000, retryBaseCooldownMs: 1000 };
+    expect(selectSnippetUpgradeBatch(db, 1, opts, sets).map((t) => t.termKey)).toEqual(["vis"]);
   });
 
   test("fast path issues no FTS existence check", () => {

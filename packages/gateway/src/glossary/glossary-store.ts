@@ -213,27 +213,36 @@ export function hasEffectiveOccurrence(
 /** How many consolidated terms near-miss suggestions draw from — mirrors `agents/glossary.ts`. */
 export const NEAR_MISS_POOL = 500;
 
+/** One page of a queue, in the queue's own (total) order. */
+type QueuePage = (limit: number, offset: number) => Row[];
+
 /**
  * The queues' visibility filter. On the fast path (every known type effective) nothing can be
- * hidden and the rows pass through untouched. Otherwise the caller over-fetched; a row is dropped
- * when it is mined (not `manual`/`agent`, which the mapping never hides) and has no occurrence in
- * the effective set. A dropped row is NOT touched — it stays as it was, with no attempt recorded.
+ * hidden, so it is the queue's one query, unchanged. Otherwise it pages through the queue in its
+ * own order, keeping rows until `limit` are kept or a short page shows the queue is exhausted. A
+ * row is skipped when it is mined (not `manual`/`agent`, which the mapping never hides) and has no
+ * occurrence in the effective set; a skipped row is NOT touched, with no attempt recorded.
+ *
+ * Paging rather than one bounded over-fetch is deliberate. A hidden row is never attempted, so it
+ * never moves in either queue's order (`score`, or `last_attempt_at`): with a fixed window, more
+ * hidden rows than the window at the head would block every visible row for as long as the
+ * exclusion lasts — and excluding a busy type such as `slack:message` makes that the normal case.
+ * Each order ends in `term_key`, so pages never overlap or skip a tie.
  */
-function visibleRows(db: Database, rows: Row[], limit: number, sets: GlossarySets): Row[] {
-  if (sets.fast) return rows;
+function selectVisible(db: Database, limit: number, sets: GlossarySets, page: QueuePage): Row[] {
+  if (sets.fast) return page(limit, 0);
+  if (limit <= 0) return [];
+  const pageSize = limit * 4;
   const kept: Row[] = [];
-  for (const r of rows) {
-    if (kept.length >= limit) break;
-    const authored = r.definition_source === "manual" || r.definition_source === "agent";
-    if (authored || hasEffectiveOccurrence(db, r.term_key, sets.effective)) kept.push(r);
+  for (let offset = 0; ; offset += pageSize) {
+    const rows = page(pageSize, offset);
+    for (const r of rows) {
+      const authored = r.definition_source === "manual" || r.definition_source === "agent";
+      if (authored || hasEffectiveOccurrence(db, r.term_key, sets.effective)) kept.push(r);
+      if (kept.length >= limit) return kept;
+    }
+    if (rows.length < pageSize) return kept;
   }
-  return kept;
-}
-
-/** Rows to fetch for `limit` visible ones: unchanged on the fast path, else over-fetched. */
-function fetchLimit(limit: number, sets: GlossarySets): number {
-  if (sets.fast) return limit;
-  return Math.max(limit, Math.min(limit * 4, NEAR_MISS_POOL));
 }
 
 export function upsertCandidate(
@@ -330,20 +339,18 @@ export function selectPendingBatch(
   // sub-floor doc_freq is re-selected on the very next pass and re-projected
   // from its single surviving source, contradicting §5.5's "sits pending
   // below the floor and never reaches the index again."
-  const rows = db
-    .query(
-      `SELECT * FROM glossary_term
+  const sql = `SELECT * FROM glossary_term
        WHERE status = 'pending'
          AND doc_freq >= ?
          AND (
            attempts = 0
            OR last_attempt_at + MIN(86400000, ? * (1 << (attempts - 1))) <= ?
          )
-       ORDER BY score DESC
-       LIMIT ?`,
-    )
-    .all(opts.minDocFreq, opts.retryBaseCooldownMs, opts.nowMs, fetchLimit(limit, sets)) as Row[];
-  return visibleRows(db, rows, limit, sets).map(toTerm);
+       ORDER BY score DESC, term_key ASC
+       LIMIT ? OFFSET ?`;
+  const page: QueuePage = (n, offset) =>
+    db.query(sql).all(opts.minDocFreq, opts.retryBaseCooldownMs, opts.nowMs, n, offset) as Row[];
+  return selectVisible(db, limit, sets, page).map(toTerm);
 }
 
 /**
@@ -375,19 +382,17 @@ export function selectSnippetUpgradeBatch(
   sets: GlossarySets,
 ): GlossaryTerm[] {
   if (limit <= 0) return [];
-  const rows = db
-    .query(
-      `SELECT * FROM glossary_term
+  const sql = `SELECT * FROM glossary_term
        WHERE status = 'consolidated' AND definition_source = 'snippet'
          AND (
            attempts = 0
            OR last_attempt_at + MIN(86400000, ? * (1 << (attempts - 1))) <= ?
          )
-       ORDER BY last_attempt_at ASC, score DESC
-       LIMIT ?`,
-    )
-    .all(opts.retryBaseCooldownMs, opts.nowMs, fetchLimit(limit, sets)) as Row[];
-  return visibleRows(db, rows, limit, sets).map(toTerm);
+       ORDER BY last_attempt_at ASC, score DESC, term_key ASC
+       LIMIT ? OFFSET ?`;
+  const page: QueuePage = (n, offset) =>
+    db.query(sql).all(opts.retryBaseCooldownMs, opts.nowMs, n, offset) as Row[];
+  return selectVisible(db, limit, sets, page).map(toTerm);
 }
 
 /** Records a failed consolidation so the backoff above takes effect. */
