@@ -64,7 +64,8 @@ That is safe only because the identifier comes from `key`/`identifier` metadata,
 writes (checked: `connectors/github-sync.ts:411-416` writes `{number, repo, state, user}`; the
 GitLab sync writes neither field); a new ticket source matches only if its connector writes one of
 those two fields. The doc comment at `:93-101` (Jira and Linear write disjoint metadata) is updated
-to state this bound. Stated as a bound.
+to state this bound. Stated as a bound. `matchesTicketKey`'s query (`:106`) selects
+`service, metadata` today; it must select `service, type, metadata` to resolve the kind.
 
 Authority note: today any `*:issue` scores 0.6, including types outside both source sets
 (`wiz:issue`). Under kinds an unmapped type is never a source, so it is never scored; the change is
@@ -110,7 +111,17 @@ map = ["readwise:highlight=note", "google_drive:doc=doc"]
   validation (before the prompt), whatever kind it names. Two packs naming the same new type with
   **different** kinds is a conflict and the second install is refused before its prompt — the first
   list key that is conflict-checked (`packs/pack-layer-store.ts:208` today checks scalars and job
-  names only). Same type, same kind: a plain union. (My calls.)
+  names only). Same type, same kind: a plain union. (My calls.) `CleanPack`
+  (`pack-layer-store.ts:134`) carries only `scalars` and `jobNames`, so it gains the pack's source
+  mappings and `conflicts()` (`:206`) compares them across the other active packs.
+- **`nimbus:*` is refused for every layer, packs and owner alike.** Gateway-written types are not
+  source material: `nimbus:capture` must never be extraction input (I28; pinned today only against
+  the two literal sets, `security-invariants.test.ts:2926`), and `nimbus:glossary_term` would feed
+  the glossary its own output. The entry parser refuses any `service` of `nimbus`, and the
+  effective-set resolver drops one again as a second check. The I28 test is rewritten in the same
+  commit to assert the resolver can never yield a `nimbus:*` type for any combination of layers,
+  with I28's docs entry updated (triple rule). Bound: this also keeps `nimbus:web_clip` out; mining
+  clips would be a separate, owner-approved feature.
 - **Personal sources refused for packs.** A pack may not map an email or calendar type
   (gmail/outlook/apple mail/calendar item types — the builder derives the list from the connectors
   that write them and keeps it in one constant). The owner may.
@@ -169,8 +180,14 @@ Design (schema **V74**): a per-pass, per-type state table, e.g.
   bounded batches alongside the main delta scan; `done` is set when it reaches the main cursor.
 - Built-in types are seeded `done` by the migration (they are already covered by the main cursor),
   so an upgrade triggers no re-scan.
-- Removing a mapping deletes nothing — not the records, not the catch-up row. Re-adding finds the
-  row `done` and the records still there, so it re-mines nothing.
+- Removing a mapping deletes nothing — not the records. But the main cursor keeps moving while the
+  type is unmapped and never sees that type's items, so items modified in that window would be
+  missed forever. So when a run finds a type with a catch-up row that has left the effective set, it
+  clears `done` and sets the row's cursor to the main cursor at that moment. On re-add the catch-up
+  scans only from there to the current main cursor: nothing mined before removal is re-mined, and
+  nothing changed while unmapped is skipped.
+- Catch-up runs inside the pass run, sequentially with the delta scan, not concurrently. It
+  re-checks the effective set between batches and stops a type that left it.
 - Idempotent: an item already holding a decision record or contributing to a term is not
   duplicated; owner vetoes (`status='vetoed'`) survive untouched.
 - The glossary computes term statistics live over FTS (`glossary-store.ts:106,137`), so for glossary
@@ -193,7 +210,9 @@ Decisions:
 - A `decision_record` is shown, counted and used in stats/gaps when its source's `service:type` is
   in the effective decisions set. `listDecisions` (`decision-store.ts:272`) has no item join today;
   it gains a LEFT JOIN to `item` with the filter in SQL (not post-filtering), so `limit` and counts
-  stay right. `countByStatus` and `loadDecisionCandidates` use the same filter so the brief's
+  stay right. It selects `SELECT * FROM decision_record` today; with the join it must project
+  `d.*` only, or the item's columns shadow the record's. Shape:
+  `LEFT JOIN item i ON i.id = d.source_item_id WHERE (i.id IS NULL OR (i.service || ':' || i.type) IN (…))`. `countByStatus` and `loadDecisionCandidates` use the same filter so the brief's
   numbers agree with its entries.
 - **Orphans pass through:** a record whose source item no longer exists (`source_item_id` has no
   foreign key, `index/decisions-v47-sql.ts:11-14`) is shown exactly as today.
@@ -204,7 +223,9 @@ Decisions:
 Glossary:
 - `glossary-reconcile.ts:37-79` demotes and unprojects a term that falls below `min_doc_freq`.
   Reconcile computes its statistics over the **known** set, so removing a mapping never demotes a
-  term and re-adding never re-consolidates it.
+  term and re-adding never re-consolidates it. `computeTermStats` and `topSources`
+  (`glossary-store.ts:106,137`) hardcode `glossarySourceFilter()` today; they take the source set as
+  a parameter so reconcile passes the known set and reads pass the effective set.
 - Reads (`nimbus glossary`, its brief and IPC) show a term when it has at least one occurrence in
   the **effective** set, and display `doc_freq`/`service_spread`/top sources recomputed over the
   effective set for the listed terms only (bounded by the list size; the builder measures the cost
@@ -246,9 +267,13 @@ owner-added type in neither set, makes every term it contributes to local-only.
 
 **Stale-score check.** `agents/decisions.ts:260-273` recomputes each row's confidence and flags a
 difference above 0.005 as "scored on the previous scale". An owner re-kinding a type changes its
-authority and would trip it. V74 adds `decision_record.scored_kind` (nullable; backfilled from the
-built-in table for existing rows); the check recomputes with the stored kind, so only a genuine
-formula change is reported. A record re-scored by `--refresh` stores its current kind.
+authority and would trip it. V74 adds `decision_record.scored_kind` (nullable). The migration backfills it
+from the built-in table only — each row's source `service:type` looked up in that table, so the
+values are exactly today's kinds; a row whose source is gone, or whose type is not built-in, stays
+NULL. The check recomputes with the stored kind, and with the current kind when it is NULL (today's
+behaviour), so only a genuine formula change is reported. A newly scored or `--refresh`-rescored
+record stores its current kind. The check also stops issuing a per-row `SELECT service, type`
+(`agents/decisions.ts:32`) for rows that carry a kind.
 
 ## 8. Google Docs text (PR 3)
 
@@ -274,6 +299,10 @@ names. Calls:
   through the cursor, bounded per run. The old `file` rows for those Docs are replaced (same item id
   if the id scheme allows, otherwise deleted after the `doc` row lands). Exports per run are capped;
   the cap value is the builder's.
+- No SQL migration rewrites Drive rows: the connector itself writes `doc` from the first sync after
+  upgrade, and the re-list is its own work, so a sync can never revert a row to `file`. A rewritten
+  row changes type, so it is re-embedded under `google_drive:doc`'s routing (`google_drive:file` is
+  in neither routing set today); the old vector goes with the old row.
 - PM pack → **1.1.0**, adding `[sources] map = ["google_drive:doc=doc"]` to its defaults. Since
   update detection is digest-based (`pack-install.ts:483`), installed PM packs see an update.
 
@@ -288,7 +317,7 @@ Three PRs, in order (owner's choice):
 2. **Mappings.** `[sources] map` (pack + owner) and `exclude` (owner), validation and conflicts,
    the prompt line, `pack.list` field, `config explain`, live resolution, V74 (catch-up state,
    `scored_kind`), the known/effective sets, read-time hiding, unproject/re-project, the § 7.1
-   embedding rule.
+   embedding rule, the `nimbus:*` refusal with the rewritten I28 test and docs.
 3. **Google Docs.** `google_drive:doc`, export, the one-time re-list, PM pack 1.1.0.
 
 Done when (from the overview, made concrete):
@@ -310,6 +339,11 @@ together. No new invariant is expected: the passes' local-LLM gating is unchange
 by which mined text can leave the machine (remote embedding of a term's search copy, ledgered under
 the `model` class) is bounded by § 7.1 so that derived text never travels further than its sources'
 own items do.
+
+Deferred: a team-baseline or org-policy layer for `[sources]`. The overview's order is defaults →
+packs → team baseline → user, but no team-baseline config layer exists yet, and a signed org policy
+(I22) has no `[sources]` lock-off. When either lands it sits above packs; until then `[sources]` is
+set only by packs and the owner.
 
 ## 11. Left to the builder
 
