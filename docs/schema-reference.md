@@ -1186,6 +1186,15 @@ CREATE TABLE source_catchup_state (
 CREATE INDEX idx_item_service_type_modified ON item (service, type, modified_at, id);
 ALTER TABLE decision_record ADD COLUMN scored_kind TEXT
     CHECK (scored_kind IS NULL OR scored_kind IN ('message','doc','ticket','commit','note'));
+
+-- V75 -- glossary_term.definition_local (2026-10-25; role packs P2, PR 2b, spec § 7.1).
+-- 1 when the stored definition was written while a non-remote-eligible source type contributed to the
+-- term; it pins the term's search copy to `nimbus:glossary_term_local` until the definition itself is
+-- rewritten (a statistics refresh never clears it). Existing rows default to 0: every earlier
+-- definition was mined from built-in, remote-eligible sources.
+-- Authoritative source: packages/gateway/src/index/glossary-definition-local-v75-sql.ts
+ALTER TABLE glossary_term ADD COLUMN definition_local INTEGER NOT NULL DEFAULT 0
+    CHECK (definition_local IN (0,1));
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.

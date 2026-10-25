@@ -48,6 +48,7 @@ import { FLEET_V60_SQL } from "../fleet-v60-sql.ts";
 import { GDPR_V37_SQL } from "../gdpr-v37-sql.ts";
 import { GENERATED_TOOL_V61_SQL } from "../generated-tool-v61-sql.ts";
 import { V32_GIT_BLAME_LINE_SQL } from "../git-blame-line-v32-sql.ts";
+import { GLOSSARY_DEFINITION_LOCAL_V75_SQL } from "../glossary-definition-local-v75-sql.ts";
 import { GLOSSARY_MANUAL_V46_SQL } from "../glossary-manual-v46-sql.ts";
 import { GLOSSARY_V45_SQL } from "../glossary-v45-sql.ts";
 import { GRAPH_LINEAGE_TYPES_V40_SQL } from "../graph-lineage-types-v40-sql.ts";
@@ -680,6 +681,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     74,
     "source catch-up cursors + decision_record.scored_kind",
     SOURCE_CATCHUP_V74_SQL,
+  ),
+  simpleStep(
+    74,
+    75,
+    "glossary_term.definition_local (§ 7.1 routing of a stored definition)",
+    GLOSSARY_DEFINITION_LOCAL_V75_SQL,
   ),
 ];
 
