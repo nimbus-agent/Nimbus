@@ -478,7 +478,9 @@ test.skipIf(skip)(
       // The notice must say what WAS and was NOT established, not just fail silent.
       expect(combined).toContain("proves the file");
       expect(combined).toContain("NOT that Nimbus published it");
-      expect(combined).toContain("scripts/release/nimbus-verify.sh --version <ver>");
+      // A Windows user has neither the repo nor bash: name the release asset that runs there.
+      expect(combined).toContain("nimbus-verify.ps1 from the same release page");
+      expect(combined).not.toContain("nimbus-verify.sh");
       expect(stdout).toContain("sha256 verified");
       expect(exitCode).toBe(0);
       const installed = join(localAppData, "Programs", "Nimbus", "bin", "nimbus.exe");

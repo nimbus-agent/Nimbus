@@ -53,7 +53,7 @@ $Asset = "nimbus-headless-windows-x64.zip"
 # keyserver is contacted at install time. NOTE: this is a RELIABILITY
 # measure, not a stronger trust root -- an attacker who can swap this script
 # can swap this key too. It defends a tampered release asset given an
-# authentic script; scripts/release/nimbus-verify.sh --version <ver> is the
+# authentic script; nimbus-verify.ps1 (a release asset) is the
 # real, out-of-band publisher-authenticity check.
 $NimbusSigningFpr = "5A20457CCD8B53FFAA945240886ADA6B487CAB6E"
 $NimbusSigningKey = @'
@@ -101,7 +101,9 @@ function Write-SignatureSkipNotice {
   Write-Warning "  Installed after SHA-256 verification only. The checksum manifest was"
   Write-Warning "  fetched over the same channel as the archive, so this proves the file"
   Write-Warning "  arrived intact -- NOT that Nimbus published it."
-  Write-Warning "  To verify the publisher signature: scripts/release/nimbus-verify.sh --version <ver>"
+  Write-Warning "  To verify the publisher signature: install Gpg4win and PowerShell 7, download"
+  Write-Warning "  nimbus-verify.ps1 from the same release page and run it; step by step:"
+  Write-Warning "  https://nimbus-agent.dev/user-guide/verify-your-download/"
 }
 
 # Pure decision function over `gpg --status-fd 1 --verify` output lines: no

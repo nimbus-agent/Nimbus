@@ -296,7 +296,7 @@ one command everywhere, demo or real install, that genuinely needs one.
 
 ### `nimbus start`
 
-Start the Gateway as a background process and register it for autostart on login.
+Start the Gateway as a background process. It does not register the Gateway to start on login; nothing in Nimbus does yet.
 
 ```bash
 nimbus start
