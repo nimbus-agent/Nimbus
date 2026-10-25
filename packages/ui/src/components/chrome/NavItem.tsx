@@ -55,7 +55,9 @@ export function NavItem({ to, icon, label, badge, dot, dotLabel }: NavItemProps)
       <span aria-hidden="true" className="w-4 text-center">
         {icon}
       </span>
-      <span className="flex-1">{label}</span>
+      <span className="flex-1 truncate" title={label}>
+        {label}
+      </span>
       <Indicator badge={badge} dot={dot} dotLabel={dotLabel} />
     </NavLink>
   );
