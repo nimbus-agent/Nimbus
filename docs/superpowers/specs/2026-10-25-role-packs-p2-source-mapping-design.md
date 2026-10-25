@@ -296,17 +296,19 @@ names. Calls:
   remote 1536-dim embedding when an OpenAI key exists, MiniLM otherwise. That also gives it
   `BODY_MAX_PROSE` (16,384), since `LONG_BODY_TYPES` is derived from the two routing sets
   (`index/body-caps.ts:27`), and makes it remote-eligible under § 7.1.
-- **Re-routing an item must drop its old route's vector.** Each inner pipeline replaces only its own
+- **Re-routing an item must drop its old route's vector.** Each inner pipeline replaced only its own
   model's chunks (`embedding/pipeline.ts:137`), and `embedding_chunk` is `UNIQUE(item_id,
   chunk_index)` (`index/embedding-v6-sql.ts:14`), so with an OpenAI key a re-typed Doc's new embed
-  would FAIL on that constraint and leave the file name's MiniLM vector as its only one.
-  `RoutingEmbeddingPipeline.embedItem` deletes the item's chunks under any other model before it
-  embeds. A failed embed then leaves the item with no chunks, which the backfill picks up.
+  would FAIL on that constraint and leave the file name's MiniLM vector as its only one — and on the
+  backfill's drain loop, which re-selects a failed item, never finish. `SqliteEmbeddingPipeline.embedItem`
+  clears every model's chunks for the item (the backfill calls the inner pipeline directly, so a
+  router-level delete would not cover it).
 - **When to export.** A Doc is exported unless its row already holds this revision's text:
   `ctx.bodyFetchState` (the Notion pattern, `connectors/notion-sync.ts:200`) gains `hasBody`, and the
   export is skipped only when a `bodyFetch` verdict is recorded, the body is present and
   `modifiedAt` is unchanged. `hasBody` matters because a `metadata_only` reindex NULLs the body but
-  keeps the verdict (`connectors/reindex.ts`). Never for other MIME types.
+  keeps the verdict (`connectors/reindex.ts`); Notion's identical skip reads it too. Never for other
+  MIME types.
 - **Depth.** At `metadata_only` nothing is exported (the chokepoint would drop it). The verdict
   (`bodyFetch: "complete" | "capped"`) is recorded only at `full`, so a `summary` row is exported
   again once the owner deepens the connector.
@@ -333,7 +335,9 @@ names. Calls:
   - Each call applies its changes page first, so the re-list never holds up the changes feed or lets
     its token expire. The re-list runs only once the feed is caught up, with the call's remaining
     budget, and never starts a list page it cannot finish (at least 100 exports left), since the next
-    page's token is the only resume point.
+    page's token is the only resume point. It also lists at most 5 pages per call
+    (`DOCS_RELIST_PAGES_PER_SYNC`): a page of Docs already current spends no export, so the budget
+    alone would let one call list a large Drive end to end.
   - **Scope:** a re-listed Doc is written only if it is already indexed or was modified inside the
     initial 30-day window. The re-list rewrites rows; it does not widen what Drive indexes.
   - A transient export failure inside the re-list does not re-arm it (a Doc that keeps failing would
