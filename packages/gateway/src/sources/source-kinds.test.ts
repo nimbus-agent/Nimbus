@@ -1,13 +1,7 @@
 import { expect, test } from "bun:test";
 
-import {
-  DECISION_SOURCE_TYPES,
-  decisionSourceFilter,
-} from "../decisions/decision-source-types.ts";
-import {
-  GLOSSARY_SOURCE_TYPES,
-  glossarySourceFilter,
-} from "../glossary/glossary-source-types.ts";
+import { DECISION_SOURCE_TYPES, decisionSourceFilter } from "../decisions/decision-source-types.ts";
+import { GLOSSARY_SOURCE_TYPES, glossarySourceFilter } from "../glossary/glossary-source-types.ts";
 import {
   BUILTIN_SOURCE_KINDS,
   PASS_KINDS,
