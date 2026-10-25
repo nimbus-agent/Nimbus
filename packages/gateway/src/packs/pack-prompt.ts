@@ -201,7 +201,7 @@ function headerLines(i: PackPromptInput): string[] {
   return lines;
 }
 
-/** `readwise:highlight=note` shown as `readwise:highlight as note`. */
+/** `ext_notes:highlight=note` shown as `ext_notes:highlight as note`. */
 function sourceRow(entry: string): string {
   return visibleText(entry.replace("=", " as "));
 }

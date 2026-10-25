@@ -128,7 +128,7 @@ export const PACK_SETTABLE_LISTS: readonly PackSettableList[] = [
     key: "map",
     consumer: "per-call",
     why: "which indexed types the decisions pass mines, and as what; packs only add new types",
-    expect: 'a non-empty array of "service:type=kind" entries, e.g. ["readwise:highlight=note"]',
+    expect: 'a non-empty array of "service:type=kind" entries, e.g. ["ext_notes:highlight=note"]',
     parse: (valRaw) => parseSourceMapList(valRaw),
   },
 ];
