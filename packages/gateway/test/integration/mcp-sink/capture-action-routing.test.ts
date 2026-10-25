@@ -77,17 +77,16 @@ describe("act door routing through the real dispatcher", () => {
     expect(calls).toEqual([[key, { text: "hi" }]]);
   });
 
-  test("obsidian.note.append is denied: the real dispatcher cannot route it, and nothing is called", async () => {
+  test("obsidian.note.append routes to the obsidian server's mesh key (mesh-only server)", async () => {
     const db = trackedDb();
     const calls: Array<[string, unknown]> = [];
     const dispatcher = createConnectorDispatcher({
       listTools: () => Promise.resolve(meshTools(calls)),
     });
     const act = makeAct(dispatcher, db);
-    await expect(act.execute("obsidian.note.append", { text: "hi" }, PROV)).rejects.toThrow(
-      /^Tool not found$/,
-    );
-    expect(calls).toEqual([]);
+    const input = { vault_id: "v1", text: "hi" };
+    expect(await act.execute("obsidian.note.append", input, PROV)).toMatchObject({ status: "ok" });
+    expect(calls).toEqual([["obsidian_obsidian_append_to_daily_note", input]]);
   });
 
   test("a user-MCP type resolves only its own server's key", async () => {

@@ -37,6 +37,7 @@ import { CONNECTOR_WRITES } from "../../../src/connectors/connector-write-regist
 import { invokeConnectorWrite } from "../../../src/connectors/connector-write-transport.ts";
 import {
   type LazyMeshToolMap,
+  meshServerForToolKey,
   serviceIdForToolKey,
 } from "../../../src/connectors/lazy-mesh/tool-map.ts";
 import { createLookerSyncable } from "../../../src/connectors/looker-sync.ts";
@@ -204,7 +205,7 @@ describe("resolveServerTool over every real listing", () => {
           for (const [id, key] of Object.entries(byId)) {
             const where = `${client}: ${server} asked for ${id}`;
             expect(key, where).toBe(own.has(id) ? `${server}_${id}` : null);
-            if (key === null && serviceIdForToolKey(`${server}_${id}`) !== server) refusedNested++;
+            if (key === null && meshServerForToolKey(`${server}_${id}`) !== server) refusedNested++;
           }
         }
       }

@@ -18,6 +18,20 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-25 — MCP act door: an MCP agent can propose `obsidian.note.append` (no migration, no new invariant, no egress class).**
+  The act door's one known gap is closed. `obsidian.note.append` was denied as `unroutable` because the dispatcher's
+  bare-id step (`resolveServerTool`) only accepted keys its ownership rule attributes to the action's server, and that
+  rule knew catalog connectors only; `obsidian` is a gateway syncable whose MCP server the mesh spawns under its own
+  name. It is now proposable (30 of the 143 HITL types, 113 denied), routed to `obsidian_append_to_daily_note`.
+  `obsidian` was NOT added to the connector catalog: that list is also the org-policy connector set, and adding it
+  would have made the I22 mesh filter drop every Obsidian tool under an allowlist that does not name it. Instead
+  `lazy-mesh/tool-map.ts` gains `MESH_ONLY_SERVER_IDS` and `meshServerForToolKey` (the catalog rule plus those
+  servers), used only by `resolveServerTool`; every policy path keeps `serviceIdForToolKey`, unchanged. The act door
+  now counts obsidian as configured only when `[[filesystem.roots]]` existed at boot, the condition its server spawns
+  under, instead of answering yes because it has no Vault keys (`connectors/proposable-service-configured.ts`). Bound:
+  a root holding no `.obsidian` vault still counts, and such an accepted action fails at the tool (`Unknown vault_id`).
+  The owner still accepts with `nimbus captures accept` and approves the executor's HITL prompt.
+
 - **2026-10-25 — Role packs P2 PR 2b: role packs and your config choose which sources glossary terms come from (schema V75, no invariant, no egress class).**
   The `[sources]` mapping now drives `nimbus glossary` as it does `nimbus decisions`. The catch-up code moved to
   `sources/source-catchup.ts` and both passes share it. The glossary pass catches up a newly mapped type's existing items

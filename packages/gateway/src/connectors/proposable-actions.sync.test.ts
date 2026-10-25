@@ -9,6 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { stripComments } from "../../../../scripts/structure-audit/lib.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { CONNECTOR_SERVICE_IDS } from "./connector-catalog.ts";
+import { MESH_ONLY_SERVER_IDS } from "./lazy-mesh/tool-map.ts";
 import { PROPOSABLE_WRITE_TOOLS } from "./proposable-actions.ts";
 import {
   installedConnectorsPackageRoot,
@@ -61,10 +62,13 @@ describe("act-door routing table vs the installed connectors package", () => {
    */
   describe("no bare routing id is itself a listed key of any server", () => {
     function collisionCandidates(bareId: string): Array<{ server: string; tool: string }> {
-      return CONNECTOR_SERVICE_IDS.filter((srv) => bareId.startsWith(`${srv}_`)).map((srv) => ({
-        server: srv,
-        tool: bareId.slice(srv.length + 1),
-      }));
+      // Every first-party mesh server, the mesh-only ones (obsidian) included.
+      return [...CONNECTOR_SERVICE_IDS, ...MESH_ONLY_SERVER_IDS]
+        .filter((srv) => bareId.startsWith(`${srv}_`))
+        .map((srv) => ({
+          server: srv,
+          tool: bareId.slice(srv.length + 1),
+        }));
     }
     function sourcesOfServer(server: string): string[] {
       return SOURCES.filter(
@@ -96,6 +100,13 @@ describe("act-door routing table vs the installed connectors package", () => {
       expect(collisionCandidates("slack_message_post")).toEqual([
         { server: "slack", tool: "message_post" },
       ]);
+      expect(collisionCandidates("obsidian_append_to_daily_note")).toEqual([
+        { server: "obsidian", tool: "append_to_daily_note" },
+      ]);
+      expect(sourcesOfServer("obsidian").length).toBeGreaterThan(0);
+      expect(
+        quotedLiteral("obsidian_append_to_daily_note").test(sourcesOfServer("obsidian").join("\n")),
+      ).toBe(true);
       expect(sourcesOfServer("slack").length).toBeGreaterThan(0);
       expect(quotedLiteral("slack_message_post").test(sourcesOfServer("slack").join("\n"))).toBe(
         true,

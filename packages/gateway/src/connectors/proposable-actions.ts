@@ -84,6 +84,8 @@ export const PROPOSABLE_WRITE_TOOLS: Readonly<Record<string, string>> = Object.f
   "confluence.page.update": "confluence_page_update",
   "confluence.comment.add": "confluence_comment_add",
   "google_drive.file.create": "gdrive_file_create",
+  // `obsidian` is a mesh-only server (lazy-mesh/tool-map.ts MESH_ONLY_SERVER_IDS), not a catalog id.
+  "obsidian.note.append": "obsidian_append_to_daily_note",
 });
 
 export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Object.freeze(
@@ -205,9 +207,6 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "email.draft.send",
       "email.draft.create",
       "calendar.event.create",
-      // `obsidian` is not in lazy-mesh/tool-map.ts SERVICE_IDS, so `serviceIdForToolKey` cannot
-      // attribute `obsidian_*` to it (brief rule: move to unroutable, do not edit tool-map).
-      "obsidian.note.append",
     ]),
     ...denied("gateway_internal", [
       "data.delete",

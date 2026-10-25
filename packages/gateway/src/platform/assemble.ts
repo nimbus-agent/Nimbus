@@ -145,12 +145,12 @@ import {
 } from "../connectors/openapi-indexer-config.ts";
 import { createOpenapiIndexerSyncable } from "../connectors/openapi-indexer-sync.ts";
 import { classifyActionType, listProposableActionTypes } from "../connectors/proposable-actions.ts";
+import { createProposableServiceConfigured } from "../connectors/proposable-service-configured.ts";
 import { isUserMcpModelAccessEnabled } from "../connectors/user-mcp-model-capability.ts";
 import {
   getUserMcpConnector,
   listModelAccessibleUserMcpIds,
   listUserMcpConnectors,
-  USER_MCP_SERVICE_ID_PATTERN,
 } from "../connectors/user-mcp-store.ts";
 import { resolveTeamListOpenSession } from "../connectors/warehouse-sync-transport.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
@@ -314,7 +314,6 @@ import { ensureShareKeypair } from "../share/share-keypair.ts";
 import type { ShareRecord } from "../share/share-store.ts";
 import { getShareRecord } from "../share/share-store.ts";
 import { sourceMappingFor } from "../sources/source-mapping.ts";
-import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import {
   deriveFetchHostMap,
   type FetchableService,
@@ -3757,10 +3756,14 @@ export async function assemblePlatformServices(
     modelAccessServices: (): ReadonlySet<string> => new Set(listModelAccessibleUserMcpIds(db)),
     userMcpModelAccessAllowed: (): boolean => isUserMcpModelAccessEnabled(policyGate.enforced()),
   };
-  const isServiceConfigured = async (service: string): Promise<boolean> =>
-    USER_MCP_SERVICE_ID_PATTERN.test(service)
-      ? getUserMcpConnector(db, service) !== null
-      : isConnectorConfigured(vault, service);
+  // Obsidian's server spawns from the boot-time `[[filesystem.roots]]` (createSchedulerWithMesh), so
+  // the act door reads them at boot too rather than answering obsidian configured vacuously.
+  const obsidianCanSpawn = loadNimbusFilesystemRootsFromConfigDir(paths.configDir).length > 0;
+  const isServiceConfigured = createProposableServiceConfigured({
+    vault,
+    isUserMcpRegistered: (id) => getUserMcpConnector(db, id) !== null,
+    meshOnly: { obsidian: () => obsidianCanSpawn },
+  });
   const captureGate: CaptureGateDeps = {
     db,
     store: captureStore,

@@ -44,9 +44,10 @@ const SERVICE_IDS_BY_LENGTH_DESC: readonly string[] = [...CONNECTOR_SERVICE_IDS]
 );
 
 /**
- * The connector service id that owns a dispatcher tool key, or undefined if none matches. The ONE
+ * The connector service id that owns a dispatcher tool key, or undefined if none matches. The
  * ownership rule for `<server>_<tool>` keys: the mesh's org-policy filter (I22) attributes a key to
- * a connector with it, and {@link resolveServerTool} will only hand a bare id a key it attributes to
+ * a connector with it, and {@link resolveServerTool} will only hand a bare id a key
+ * {@link meshServerForToolKey} — this rule, plus the servers policy does not govern — attributes to
  * the caller's own server, so the two can never disagree about whose tool a key is.
  *
  * Sharing the RULE is not sharing the ENFORCEMENT. The I22 filter runs over the mesh's own tool map
@@ -55,10 +56,35 @@ const SERVICE_IDS_BY_LENGTH_DESC: readonly string[] = [...CONNECTOR_SERVICE_IDS]
  * connector-write transport does (`connectors/connector-write-transport.ts`).
  */
 export function serviceIdForToolKey(toolKey: string): string | undefined {
-  for (const id of SERVICE_IDS_BY_LENGTH_DESC) {
+  return longestOwner(SERVICE_IDS_BY_LENGTH_DESC, toolKey);
+}
+
+function longestOwner(idsByLengthDesc: readonly string[], toolKey: string): string | undefined {
+  for (const id of idsByLengthDesc) {
     if (toolKey === id || toolKey.startsWith(`${id}_`)) return id;
   }
   return undefined;
+}
+
+/**
+ * First-party MCP servers the mesh spawns under their own service id that are NOT catalog
+ * connectors: gateway syncables whose tools are not governed by the org-policy connector allowlist
+ * (I22), so {@link serviceIdForToolKey} — the policy attribution — must keep leaving them unowned.
+ * A test proves none is prefix-related to a catalog id, so the two rules never disagree.
+ */
+export const MESH_ONLY_SERVER_IDS = ["obsidian"] as const;
+
+const MESH_ONLY_IDS_BY_LENGTH_DESC: readonly string[] = [...MESH_ONLY_SERVER_IDS].sort(
+  (a, b) => b.length - a.length,
+);
+
+/**
+ * The first-party mesh server that lists a dispatcher tool key: {@link serviceIdForToolKey}, or else
+ * a {@link MESH_ONLY_SERVER_IDS} server. The ownership rule {@link resolveServerTool} applies — wider
+ * than the policy attribution only by servers the policy does not govern.
+ */
+export function meshServerForToolKey(toolKey: string): string | undefined {
+  return serviceIdForToolKey(toolKey) ?? longestOwner(MESH_ONLY_IDS_BY_LENGTH_DESC, toolKey);
 }
 
 /**
@@ -82,11 +108,12 @@ export function mcpClientToolKey(serverName: string, toolName: string): string {
  * 1. The exact key, as before: a caller already holding a `<server>_<tool>` key, or a map keyed by
  *    bare ids (a test fake, an e2e sink), is answered verbatim.
  * 2. Otherwise `<serverName>_<toolId>`, the bare tool on the caller's OWN server, and only when
- *    {@link serviceIdForToolKey} attributes that key to `serverName`. One server name can extend
+ *    {@link meshServerForToolKey} attributes that key to `serverName`. One server name can extend
  *    another — the github spawner registers `github` and `github_actions` in one client — so
  *    `github_` + `actions_gha_run_trigger` spells github_actions' `gha_run_trigger`; the ownership
  *    check refuses that rather than hand a bare id another server's tool. It also confines this
- *    step to first-party connector servers, the only names the rule knows.
+ *    step to first-party mesh servers (catalog connectors plus {@link MESH_ONLY_SERVER_IDS}), the
+ *    only names the rule knows.
  *
  * Step 2 makes no new TOOL reachable: every key it can return could already be named exactly, and
  * it only ever returns a tool whose MCP name IS `toolId`. It does give that tool a SECOND spelling,
@@ -110,7 +137,7 @@ export function resolveServerTool<T>(
   const exact = ownEntry(tools, toolId);
   if (exact !== undefined) return exact;
   const key = mcpClientToolKey(serverName, toolId);
-  if (serviceIdForToolKey(key) !== serverName) return undefined;
+  if (meshServerForToolKey(key) !== serverName) return undefined;
   return ownEntry(tools, key);
 }
 

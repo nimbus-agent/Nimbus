@@ -137,13 +137,18 @@ routing row means `Tool not found`, never dispatch-by-type. An agent-supplied `m
 | `listProposableActionTypes` | what `capture.status` advertises (configured first-party types + one `mcp_<id>.*` pattern per `--model` server) |
 
 Counts — derive from `HITL_REQUIRED` (`packages/gateway/src/engine/executor.ts`) and
-`ACTION_PROPOSABILITY` (as of 2026-10-24: 143 HITL types, **29 proposable / 114 denied**, 0
+`ACTION_PROPOSABILITY` (as of 2026-10-25: 143 HITL types, **30 proposable / 113 denied**, 0
 unclassified). Denied classes (`DeniedClass`): `file`, `calendar_delete`, `vcs`, `pipeline`,
 `cloud`, `iac`, `k8s`, `deployment`, `incident`, `data_platform`, `tribal_kb` (I25/D19),
 `chatops_confined` (I23/D17), `unroutable`, `gateway_internal`.
 
-**Known gap:** `obsidian.note.append` is denied `unroutable` — `obsidian` is absent from the
-connector catalog (`packages/gateway/src/connectors/lazy-mesh/tool-map.ts` service ids), so its tool key cannot be attributed.
+**Mesh-only servers:** `obsidian.note.append` is proposable although `obsidian` is not a catalog
+connector. `resolveServerTool` attributes keys with `meshServerForToolKey` — the catalog rule
+`serviceIdForToolKey` plus `MESH_ONLY_SERVER_IDS` (`packages/gateway/src/connectors/lazy-mesh/tool-map.ts`) —
+while the I22 policy filter keeps using `serviceIdForToolKey`, so obsidian stays outside the org
+connector allowlist. The act door's configured-ness comes from
+`packages/gateway/src/connectors/proposable-service-configured.ts` (obsidian = boot-time
+`[[filesystem.roots]]` non-empty; it has no Vault keys, so the manifest check would say yes vacuously).
 
 ## Surfaces
 
@@ -239,8 +244,10 @@ is clamped.
    check the pin is current before trusting a red/green there.
 3. Never make a type proposable whose tool literal is confined elsewhere (D17 ChatOps, D19 tribal
    KB, D20 connector writes are reasons a class is denied).
-4. The service must be attributable by the mesh and checkable by `isConnectorConfigured`
-   (`packages/gateway/src/sync/connector-configured.ts`), or it is `unroutable`.
+4. The service must be attributable by `meshServerForToolKey` (a catalog id, or a
+   `MESH_ONLY_SERVER_IDS` entry) and have an honest configured-ness answer in
+   `proposable-service-configured.ts` (catalog ids delegate to `isConnectorConfigured`,
+   `packages/gateway/src/sync/connector-configured.ts`), or it is `unroutable`.
 5. If its artifact lands in a `negotiate` lane, add it to `AGENT_ACTION_LANES`.
 6. A NEW HITL type is `unknown` (refused) until classified; the totality test fails until you do.
 
