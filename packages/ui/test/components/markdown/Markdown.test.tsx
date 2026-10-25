@@ -65,6 +65,21 @@ describe("Markdown", () => {
     expect(c.querySelector("hr")).not.toBeNull();
   });
 
+  it("backslash escapes render the character, not the backslash", () => {
+    const c = renderMd("\\[x\\] a \\*b\\*");
+    expect(c.textContent).toBe("[x] a *b*");
+    expect(c.querySelector("em")).toBeNull();
+  });
+
+  it("task markers show exactly once per item, tight and loose", () => {
+    for (const src of ["- [ ] a\n- [x] b", "- [ ] a\n\n- [x] b"]) {
+      const c = renderMd(src);
+      const items = [...c.querySelectorAll("li")].map((li) => li.textContent?.trim());
+      expect(items).toEqual(["[ ] a", "[x] b"]);
+      expect(c.querySelector("input")).toBeNull();
+    }
+  });
+
   it("renders inline emphasis, code and unordered lists", () => {
     const c = renderMd("**b** _i_ `x<y` ~~d~~\n\n- one\n- two");
     expect(c.querySelector("strong")?.textContent).toBe("b");

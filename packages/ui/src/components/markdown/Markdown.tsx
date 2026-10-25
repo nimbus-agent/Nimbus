@@ -49,6 +49,11 @@ function inlineToken(t: Token, key: string): ReactNode {
       );
     case "br":
       return <br key={key} />;
+    case "escape":
+      // `[` lexes to {raw: "\[", text: "["}: the character, not the backslash.
+      return (t as Tokens.Escape).text;
+    case "checkbox":
+      return checkboxMarker(t as Tokens.Checkbox);
     case "link": {
       const l = t as Tokens.Link;
       const label = l.tokens.length > 0 ? inline(l.tokens, key) : l.text;
@@ -74,13 +79,14 @@ function inlineToken(t: Token, key: string): ReactNode {
   }
 }
 
+// marked emits the task marker as a `checkbox` token, inline in a loose item and as a block in a
+// tight one; it is shown as text, never as an <input>.
+function checkboxMarker(t: Tokens.Checkbox): string {
+  return t.checked ? "[x] " : "[ ] ";
+}
+
 function listItem(item: Tokens.ListItem, key: string): ReactNode {
-  return (
-    <li key={key}>
-      {item.task ? (item.checked ? "[x] " : "[ ] ") : null}
-      {blocks(item.tokens, key)}
-    </li>
-  );
+  return <li key={key}>{blocks(item.tokens, key)}</li>;
 }
 
 function table(t: Tokens.Table, key: string): ReactNode {
@@ -176,6 +182,8 @@ function block(t: Token, key: string): ReactNode {
       return table(t as Tokens.Table, key);
     case "def":
       return null;
+    case "checkbox":
+      return <span key={key}>{checkboxMarker(t as Tokens.Checkbox)}</span>;
     default:
       // html and anything unrecognised: the literal source, as text.
       return (
