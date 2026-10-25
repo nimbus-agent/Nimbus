@@ -991,6 +991,7 @@ async function handleGlossary(
     db: ctx.db,
     notify: ctx.notify,
     sessionId: newSessionId("glossary"),
+    mapping: sourceMappingFor(ctx.configDir),
     ...(ctx.runner === undefined ? {} : { runner: ctx.runner }),
   });
 }

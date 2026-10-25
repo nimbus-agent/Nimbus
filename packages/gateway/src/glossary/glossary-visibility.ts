@@ -11,7 +11,7 @@ import {
   projectTerm,
   unprojectTerm,
 } from "./glossary-project.ts";
-import { computeTermStats, getTerm, hasEffectiveOccurrence } from "./glossary-store.ts";
+import { computeTermStats, getTerm, isRowVisible } from "./glossary-store.ts";
 import type { GlossarySets, GlossaryTerm, TermStats } from "./glossary-types.ts";
 
 /**
@@ -43,9 +43,7 @@ export function glossarySets(db: Database, mapping: SourceMapping): GlossarySets
  * one occurrence in an effective type.
  */
 export function isTermVisible(db: Database, term: GlossaryTerm, sets: GlossarySets): boolean {
-  if (term.definitionSource === "manual" || term.definitionSource === "agent") return true;
-  if (sets.fast) return true;
-  return hasEffectiveOccurrence(db, term.termKey, sets.effective);
+  return isRowVisible(db, term.termKey, term.definitionSource, sets);
 }
 
 const BUILTIN_TYPES: ReadonlySet<string> = new Set(builtinSourceEntries().map(([key]) => key));

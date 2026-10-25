@@ -16,6 +16,7 @@ import { ensureGraphEntity } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { dirExternalId, fileExternalId } from "../ownership/ownership-pass.ts";
 import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 import {
   buildFleetSweepEnumerate,
   enumeratePaths,
@@ -94,6 +95,7 @@ describe("buildFleetSweepEnumerate routing", () => {
         return [ROOT];
       },
       serviceIds: () => [],
+      mapping: () => BUILTIN_SOURCE_MAPPING,
     });
 
     // Each kind is asked for a param it does not usually carry (paths normally `path`, symbols
@@ -121,7 +123,7 @@ describe("buildFleetSweepEnumerate routing", () => {
     ]);
 
     const terms = enumerate({ kind: "terms", param: "service", pathPrefix: null });
-    expect(terms).toEqual(enumerateTerms(db, "service"));
+    expect(terms).toEqual(enumerateTerms(db, "service", BUILTIN_SOURCE_MAPPING));
     expect(terms.subjects).toEqual([
       { key: `terms:${normalizeTerm("Retry Budget")}`, params: { service: "Retry Budget" } },
     ]);
@@ -130,7 +132,12 @@ describe("buildFleetSweepEnumerate routing", () => {
   });
 
   test("a kind it does not know is refused, not answered with an empty list", () => {
-    const enumerate = buildFleetSweepEnumerate({ db, roots: () => [], serviceIds: () => [] });
+    const enumerate = buildFleetSweepEnumerate({
+      db,
+      roots: () => [],
+      serviceIds: () => [],
+      mapping: () => BUILTIN_SOURCE_MAPPING,
+    });
     expect(() =>
       enumerate({ kind: "repos" as SweepKind, param: "path", pathPrefix: null }),
     ).toThrow("unknown sweep kind: repos");

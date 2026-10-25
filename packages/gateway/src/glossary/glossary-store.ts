@@ -231,20 +231,40 @@ type QueuePage = (limit: number, offset: number) => Row[];
  * exclusion lasts — and excluding a busy type such as `slack:message` makes that the normal case.
  * Each order ends in `term_key`, so pages never overlap or skip a tie.
  */
-function selectVisible(db: Database, limit: number, sets: GlossarySets, page: QueuePage): Row[] {
+function selectVisible(
+  db: Database,
+  limit: number,
+  sets: GlossarySets,
+  page: QueuePage,
+  pageSize = limit * 4,
+): Row[] {
   if (sets.fast) return page(limit, 0);
   if (limit <= 0) return [];
-  const pageSize = limit * 4;
   const kept: Row[] = [];
   for (let offset = 0; ; offset += pageSize) {
     const rows = page(pageSize, offset);
     for (const r of rows) {
-      const authored = r.definition_source === "manual" || r.definition_source === "agent";
-      if (authored || hasEffectiveOccurrence(db, r.term_key, sets.effective)) kept.push(r);
+      if (isRowVisible(db, r.term_key, r.definition_source, sets)) kept.push(r);
       if (kept.length >= limit) return kept;
     }
     if (rows.length < pageSize) return kept;
   }
+}
+
+/**
+ * THE visibility rule over a row's key and provenance (spec § 7): manual and owner-accepted agent
+ * terms are never hidden by the mapping; on the fast path nothing is hidden; otherwise a mined term
+ * needs at least one occurrence in the effective set. `isTermVisible` and every read here use it.
+ */
+export function isRowVisible(
+  db: Database,
+  termKey: string,
+  definitionSource: string | null,
+  sets: GlossarySets,
+): boolean {
+  if (definitionSource === "manual" || definitionSource === "agent") return true;
+  if (sets.fast) return true;
+  return hasEffectiveOccurrence(db, termKey, sets.effective);
 }
 
 export function upsertCandidate(
@@ -444,13 +464,57 @@ export function selectStaleForRecheck(
  * suggested.
  */
 export function listConsolidated(db: Database, limit: number): GlossaryTerm[] {
-  const rows = db
-    .query(
-      `SELECT * FROM glossary_term WHERE status = 'consolidated'
-       ORDER BY (definition_source = 'manual') DESC, score DESC LIMIT ?`,
-    )
-    .all(limit) as Row[];
-  return rows.map(toTerm);
+  return (db.query(CONSOLIDATED_PAGE_SQL).all(limit, 0) as Row[]).map(toTerm);
+}
+
+/** `listConsolidated`'s order, ending in `term_key` so pages never overlap or skip a tie. */
+const CONSOLIDATED_PAGE_SQL = `SELECT * FROM glossary_term WHERE status = 'consolidated'
+       ORDER BY (definition_source = 'manual') DESC, score DESC, term_key ASC
+       LIMIT ? OFFSET ?`;
+
+/** The smallest page `listVisibleConsolidated` reads, so a small `limit` does not page row by row. */
+const VISIBLE_PAGE_MIN = 50;
+
+/**
+ * `listConsolidated` restricted to the terms a reader resolving `sets` sees (spec § 7). On the
+ * fast path it IS `listConsolidated`. Otherwise it pages in the same order until `limit` visible
+ * rows are kept or the table is exhausted, so `limit` counts visible terms and a hidden head of
+ * high-scoring terms cannot crowd out the visible ones.
+ *
+ * With `recomputeStats`, each visible MINED row's `docFreq`, `serviceSpread` and `topSources` are
+ * replaced by figures over the effective set (`effectiveView`): display only, never written. A
+ * caller that uses only the keys (the near-miss pool) passes `false` and pays no extra FTS query.
+ */
+export function listVisibleConsolidated(
+  db: Database,
+  limit: number,
+  sets: GlossarySets,
+  opts: { recomputeStats: boolean },
+): GlossaryTerm[] {
+  if (sets.fast) return listConsolidated(db, limit);
+  const page: QueuePage = (n, offset) => db.query(CONSOLIDATED_PAGE_SQL).all(n, offset) as Row[];
+  const pageSize = Math.max(limit, VISIBLE_PAGE_MIN);
+  const terms = selectVisible(db, limit, sets, page, pageSize).map(toTerm);
+  return opts.recomputeStats ? terms.map((t) => effectiveView(db, t, sets)) : terms;
+}
+
+/**
+ * One term as a reader resolving `sets` sees it: a mined term's `docFreq`, `serviceSpread` and
+ * `topSources` recomputed over the EFFECTIVE set, since stored statistics are over the known set
+ * (spec § 7). Display only: nothing is written. Identity on the fast path and for manual and
+ * agent rows, which are never hidden and keep their stored figures.
+ */
+export function effectiveView(db: Database, term: GlossaryTerm, sets: GlossarySets): GlossaryTerm {
+  if (sets.fast || term.definitionSource === "manual" || term.definitionSource === "agent") {
+    return term;
+  }
+  const stats = computeTermStats(db, term.termKey, sets.effective);
+  return {
+    ...term,
+    docFreq: stats.docFreq,
+    serviceSpread: stats.serviceSpread,
+    topSources: stats.topSources,
+  };
 }
 
 export function listAllKeys(db: Database): string[] {
@@ -548,7 +612,18 @@ export function applyStats(
   );
 }
 
-export function countByStatus(db: Database): {
+/**
+ * The brief's counts. `total` counts the consolidated terms a reader resolving `sets` sees: on the
+ * fast path that is every consolidated row (one aggregate, no FTS query); otherwise mined rows
+ * without an effective occurrence are subtracted, at one `EXISTS ... LIMIT 1` per consolidated
+ * mined term. `pending` and `vetoed` stay whole-table: they are queue bookkeeping, and filtering
+ * them would cost one FTS query per queued term on every brief, so the pending count includes
+ * terms waiting on an excluded source.
+ */
+export function countByStatus(
+  db: Database,
+  sets: GlossarySets,
+): {
   total: number;
   pending: number;
   vetoed: number;
@@ -576,12 +651,25 @@ export function countByStatus(db: Database): {
   // counts consolidated rows, which now include authored ones. Mined count is
   // `total - manual`.
   return {
-    total: r?.total ?? 0,
+    total: (r?.total ?? 0) - hiddenConsolidatedCount(db, sets),
     pending: r?.pending ?? 0,
     vetoed: r?.vetoed ?? 0,
     manual: r?.manual ?? 0,
     agent: r?.agent ?? 0,
   };
+}
+
+/** Consolidated mined terms `sets` hides. Zero, with no query at all, on the fast path. */
+function hiddenConsolidatedCount(db: Database, sets: GlossarySets): number {
+  if (sets.fast) return 0;
+  const mined = db
+    .query(
+      `SELECT term_key, definition_source FROM glossary_term
+       WHERE status = 'consolidated'
+         AND (definition_source IS NULL OR definition_source NOT IN ('manual', 'agent'))`,
+    )
+    .all() as Array<{ term_key: string; definition_source: string | null }>;
+  return mined.filter((r) => !isRowVisible(db, r.term_key, r.definition_source, sets)).length;
 }
 
 /**

@@ -5,15 +5,18 @@ import { loadGlossaryCandidates } from "../glossary/glossary-extract.ts";
 import {
   countByStatus,
   countSnippetSourced,
+  effectiveView,
   findBySynonym,
   getTerm,
-  listConsolidated,
+  listVisibleConsolidated,
+  NEAR_MISS_POOL,
   readPassState,
 } from "../glossary/glossary-store.ts";
-import type { GlossaryTerm } from "../glossary/glossary-types.ts";
+import type { GlossarySets, GlossaryTerm } from "../glossary/glossary-types.ts";
+import { glossarySets, isTermVisible } from "../glossary/glossary-visibility.ts";
 import { findNearMisses } from "../glossary/near-miss.ts";
 import { normalizeTerm } from "../glossary/term-normalize.ts";
-import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
+import type { SourceMapping } from "../sources/source-mapping.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
 import type {
@@ -30,12 +33,15 @@ export type GlossaryContext = {
   notify: (method: string, params: unknown) => void;
   sessionId: string;
   runner?: SynthesisRunner;
+  /**
+   * The source mapping resolved for THIS read (`sourceMappingFor(configDir)`), never a boot
+   * snapshot. Required: it decides which terms the brief shows (spec § 7), so a construction site
+   * that forgot it must fail to compile rather than silently show the built-in view.
+   */
+  mapping: SourceMapping;
 };
 
 const DEFAULT_LIMIT = 50;
-
-/** How many consolidated terms to consider as near-miss candidates. */
-const NEAR_MISS_POOL = 500;
 
 function toEntry(t: GlossaryTerm): GlossaryEntry {
   return {
@@ -64,16 +70,23 @@ function toEntry(t: GlossaryTerm): GlossaryEntry {
 function resolveTerm(
   db: Database,
   raw: string,
+  sets: GlossarySets,
 ): { term: GlossaryTerm | null; matchedVia: GlossaryMatchedVia } {
   const key = normalizeTerm(raw);
   if (key === "") return { term: null, matchedVia: null };
 
+  // A term the mapping hides is a miss, whichever way it was matched (spec § 7). It is shown
+  // through `effectiveView`, so its statistics are over the sources the reader sees.
   const exact = getTerm(db, key);
   if (exact !== null && exact.status === "consolidated") {
-    return { term: exact, matchedVia: "exact" };
+    return isTermVisible(db, exact, sets)
+      ? { term: effectiveView(db, exact, sets), matchedVia: "exact" }
+      : { term: null, matchedVia: null };
   }
   const bySynonym = findBySynonym(db, key);
-  if (bySynonym !== null) return { term: bySynonym, matchedVia: "synonym" };
+  if (bySynonym !== null && isTermVisible(db, bySynonym, sets)) {
+    return { term: effectiveView(db, bySynonym, sets), matchedVia: "synonym" };
+  }
 
   return { term: null, matchedVia: null };
 }
@@ -169,14 +182,16 @@ export async function runGlossary(
     toolCallCount: { value: 0 },
   });
 
-  const counts = countByStatus(ctx.db);
+  // Resolved once per brief, so the list, the lookup, the near misses and the counts agree.
+  const sets = glossarySets(ctx.db, ctx.mapping);
+  const counts = countByStatus(ctx.db, sets);
   const passState = readPassState(ctx.db);
   // The honesty count: how many of the glossary-source items indexed so far
   // carry a truncated body. No time window here — unlike `decisions`, the
   // glossary has no `--since`, so this covers the whole corpus.
   const candidates = loadGlossaryCandidates(ctx.db, {
     sinceMs: 0,
-    mapping: BUILTIN_SOURCE_MAPPING,
+    mapping: ctx.mapping,
   });
   const truncation = {
     totalSources: candidates.total,
@@ -196,7 +211,9 @@ export async function runGlossary(
     // One lane: `countByStatus` for stats/gaps is already computed in the
     // outer `counts` variable above — a second sub-task recomputing it was
     // dead code, its result never decoded. Matches term mode's earlier fix.
-    const tasks: SubTask[] = [subAgent(() => listConsolidated(ctx.db, limit))];
+    const tasks: SubTask[] = [
+      subAgent(() => listVisibleConsolidated(ctx.db, limit, sets, { recomputeStats: true })),
+    ];
     const results = await coordinator.run(tasks);
     const terms = decode<GlossaryTerm[]>(results[0]?.text, []);
     entries = terms.map(toEntry);
@@ -230,11 +247,13 @@ export async function runGlossary(
   // suggests pending terms that have no definition yet, so following the
   // suggestion returns another miss — a loop with no exit.
   const tasks: SubTask[] = [
-    subAgent(() => resolveTerm(ctx.db, rawTerm)),
+    subAgent(() => resolveTerm(ctx.db, rawTerm, sets)),
     subAgent(() =>
       findNearMisses(
         normalizeTerm(rawTerm),
-        listConsolidated(ctx.db, NEAR_MISS_POOL).map((t) => t.termKey),
+        listVisibleConsolidated(ctx.db, NEAR_MISS_POOL, sets, { recomputeStats: false }).map(
+          (t) => t.termKey,
+        ),
       ),
     ),
   ];

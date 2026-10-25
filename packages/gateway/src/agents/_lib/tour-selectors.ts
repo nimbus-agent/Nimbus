@@ -13,7 +13,8 @@ import type { Database } from "bun:sqlite";
 import { isAbsolute, join, relative } from "node:path";
 import { listDecisions } from "../../decisions/decision-store.ts";
 import { enumeratePaths } from "../../fleet/fleet-sweep-enumerators.ts";
-import { listConsolidated } from "../../glossary/glossary-store.ts";
+import { listVisibleConsolidated } from "../../glossary/glossary-store.ts";
+import { glossarySets } from "../../glossary/glossary-visibility.ts";
 import type { SourceMapping } from "../../sources/source-mapping.ts";
 import { codeUnitCompare } from "../../util/code-unit-compare.ts";
 import {
@@ -169,7 +170,10 @@ function selectDecisions(ctx: TourSelectorCtx): TourSelectorResult {
 }
 
 function selectGlossary(ctx: TourSelectorCtx): TourSelectorResult {
-  return listConsolidated(ctx.db, 1).length > 0
+  // The same visibility rule `nimbus glossary` applies: a step whose only terms are hidden by the
+  // mapping would open on an empty glossary.
+  const sets = glossarySets(ctx.db, ctx.mapping);
+  return listVisibleConsolidated(ctx.db, 1, sets, { recomputeStats: false }).length > 0
     ? {
         ok: {
           title: "Your team's vocabulary",

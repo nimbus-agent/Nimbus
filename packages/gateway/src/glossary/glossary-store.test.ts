@@ -21,11 +21,13 @@ import {
   countByStatus,
   deleteAgentTerm,
   demoteTerm,
+  effectiveView,
   findBySynonym,
   getTerm,
   hasEffectiveOccurrence,
   listAllKeys,
   listConsolidated,
+  listVisibleConsolidated,
   markConsolidated,
   markVetoed,
   readPassState,
@@ -40,7 +42,7 @@ import {
   upsertManualTerm,
   writePassState,
 } from "./glossary-store.ts";
-import type { GlossarySets } from "./glossary-types.ts";
+import type { GlossarySets, GlossaryTerm } from "./glossary-types.ts";
 import { glossarySets } from "./glossary-visibility.ts";
 
 let db: Database;
@@ -395,7 +397,7 @@ test("countByStatus reports totals", () => {
   seedCandidate("b");
   consolidate("a");
   markVetoed(db, "b", 2000);
-  const c = countByStatus(db);
+  const c = countByStatus(db, glossarySets(db, BUILTIN_SOURCE_MAPPING));
   expect(c.total).toBe(1);
   expect(c.vetoed).toBe(1);
 });
@@ -888,7 +890,7 @@ test("countByStatus reports manual as a subset of total", () => {
     score: 0,
     nowMs: 1,
   });
-  const counts = countByStatus(db);
+  const counts = countByStatus(db, glossarySets(db, BUILTIN_SOURCE_MAPPING));
   expect(counts.total).toBe(1);
   expect(counts.manual).toBe(1);
 });
@@ -922,7 +924,7 @@ test("countByStatus.total includes both a manual and a mined consolidated row", 
     score: 0,
     nowMs: 1,
   });
-  const counts = countByStatus(db);
+  const counts = countByStatus(db, glossarySets(db, BUILTIN_SOURCE_MAPPING));
   expect(counts.total).toBe(2);
   expect(counts.manual).toBe(1);
 });
@@ -1091,5 +1093,199 @@ ${body}
     expect(hasEffectiveOccurrence(db, "cdr", ["jira:issue"])).toBe(false);
     expect(hasEffectiveOccurrence(db, "cdr", [])).toBe(false);
     expect(hasEffectiveOccurrence(db, 'we"ird^(term)', ["slack:message"])).toBe(false);
+  });
+});
+
+describe("consolidated reads under an excluding mapping", () => {
+  const NO_SLACK = resolveSourceMapping({
+    doc: mergeLayerDocs([
+      parseLayerDoc(
+        { kind: "base", id: "base", path: "/virtual/base.toml" },
+        '[sources]\nexclude = ["slack:message"]\n',
+      ),
+    ]),
+  });
+
+  /** A consolidated mined term with `n` occurrences in `service:type`, stored stats fixed. */
+  function seedConsolidatedIn(
+    key: string,
+    service: string,
+    type: string,
+    score: number,
+    n = 1,
+  ): void {
+    for (let i = 0; i < n; i++) {
+      seedItem({
+        externalId: `${key}-${service}-${String(i)}`,
+        service,
+        type,
+        title: `about ${key.toUpperCase()}`,
+        body: `the ${key.toUpperCase()} thing`,
+        modifiedAt: 100 + i,
+      });
+    }
+    seedCandidate(key, score);
+    consolidate(key);
+  }
+
+  function storedRow(key: string): unknown {
+    return db.query("SELECT * FROM glossary_term WHERE term_key = ?").get(key);
+  }
+
+  test("listConsolidated breaks score ties by term_key", () => {
+    seedConsolidatedIn("zzz", "jira", "issue", 5);
+    seedConsolidatedIn("aaa", "jira", "issue", 5);
+    seedConsolidatedIn("mmm", "jira", "issue", 5);
+    expect(listConsolidated(db, 10).map((t) => t.termKey)).toEqual(["aaa", "mmm", "zzz"]);
+  });
+
+  test("paging with tied scores returns each visible term once", () => {
+    for (let i = 0; i < 120; i++) {
+      const key = `t${String(i).padStart(3, "0")}x`;
+      if (i % 3 === 0) seedConsolidatedIn(key, "slack", "message", 7);
+      else seedConsolidatedIn(key, "jira", "issue", 7);
+    }
+    const sets = glossarySets(db, NO_SLACK);
+    expect(sets.fast).toBe(false);
+    const keys = listVisibleConsolidated(db, 60, sets, { recomputeStats: false }).map(
+      (t) => t.termKey,
+    );
+    expect(keys).toHaveLength(60);
+    expect(new Set(keys).size).toBe(60);
+    for (const k of keys) expect(Number(k.slice(1, 4)) % 3).not.toBe(0);
+  });
+
+  test("limit counts visible terms", () => {
+    seedConsolidatedIn("hid", "slack", "message", 90);
+    seedConsolidatedIn("hie", "slack", "message", 80);
+    seedConsolidatedIn("hif", "slack", "message", 70);
+    seedConsolidatedIn("vis", "jira", "issue", 2);
+    seedConsolidatedIn("vit", "jira", "issue", 1);
+    const sets = glossarySets(db, NO_SLACK);
+    expect(
+      listVisibleConsolidated(db, 2, sets, { recomputeStats: false }).map((t) => t.termKey),
+    ).toEqual(["vis", "vit"]);
+  });
+
+  test("the fast path is listConsolidated unchanged", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5);
+    const sets = glossarySets(db, BUILTIN_SOURCE_MAPPING);
+    expect(listVisibleConsolidated(db, 10, sets, { recomputeStats: true })).toEqual(
+      listConsolidated(db, 10),
+    );
+  });
+
+  test("manual and agent terms are never hidden", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5);
+    seedItem({ externalId: "m", title: "the LSN", body: "LSN", modifiedAt: 100 });
+    seedItem({ externalId: "a", title: "the WAL", body: "WAL", modifiedAt: 100 });
+    upsertManualTerm(db, {
+      termKey: "lsn",
+      displayTerm: "LSN",
+      definition: "authored",
+      synonyms: [],
+      nearMisses: [],
+      stats: computeTermStats(db, "lsn", sourceTypesFor("glossary")),
+      score: 1,
+      nowMs: 1000,
+    });
+    upsertAgentTerm(db, {
+      termKey: "wal",
+      displayTerm: "WAL",
+      definition: "accepted",
+      synonyms: [],
+      captureId: "cap1",
+      stats: computeTermStats(db, "wal", sourceTypesFor("glossary")),
+      score: 1,
+      nowMs: 1000,
+    });
+    const sets = glossarySets(db, NO_SLACK);
+    expect(
+      listVisibleConsolidated(db, 10, sets, { recomputeStats: true })
+        .map((t) => t.termKey)
+        .sort(),
+    ).toEqual(["lsn", "wal"]);
+    expect(countByStatus(db, sets).total).toBe(2);
+  });
+
+  test("recomputeStats shows effective stats only and never writes them", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5, 3);
+    for (let i = 0; i < 2; i++) {
+      seedItem({
+        externalId: `cdr-jira-${String(i)}`,
+        service: "jira",
+        type: "issue",
+        title: "the CDR ticket",
+        body: "CDR",
+        modifiedAt: 500 + i,
+      });
+    }
+    applyStats(db, "cdr", computeTermStats(db, "cdr", sourceTypesFor("glossary")), 5, 3000);
+    const before = storedRow("cdr");
+    expect((before as { doc_freq: number }).doc_freq).toBe(5);
+    const sets = glossarySets(db, NO_SLACK);
+    const [shown] = listVisibleConsolidated(db, 10, sets, { recomputeStats: true });
+    expect(shown?.docFreq).toBe(2);
+    expect(shown?.serviceSpread).toBe(1);
+    expect(shown?.topSources.every((s) => s.service === "jira")).toBe(true);
+    const viewed = effectiveView(db, getTerm(db, "cdr") as GlossaryTerm, sets);
+    expect(viewed.docFreq).toBe(2);
+    expect(storedRow("cdr")).toEqual(before);
+    // Without recompute, the stored figures pass through.
+    expect(listVisibleConsolidated(db, 10, sets, { recomputeStats: false })[0]?.docFreq).toBe(5);
+    // Identity on the fast path.
+    const fast = glossarySets(db, BUILTIN_SOURCE_MAPPING);
+    expect(effectiveView(db, getTerm(db, "cdr") as GlossaryTerm, fast).docFreq).toBe(5);
+  });
+
+  test("countByStatus counts visible consolidated terms; pending and vetoed stay whole-table", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5);
+    seedConsolidatedIn("wal", "jira", "issue", 5);
+    seedItem({ externalId: "p", title: "the LSN", body: "LSN", modifiedAt: 100 });
+    seedCandidate("lsn"); // pending, Slack-only
+    seedCandidate("xid");
+    markVetoed(db, "xid", 3000);
+    const slow = countByStatus(db, glossarySets(db, NO_SLACK));
+    expect(slow).toMatchObject({ total: 1, pending: 1, vetoed: 1 });
+    const fast = countByStatus(db, glossarySets(db, BUILTIN_SOURCE_MAPPING));
+    expect(fast).toMatchObject({ total: 2, pending: 1, vetoed: 1 });
+  });
+
+  test("countByStatus's fast path issues no FTS query", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5);
+    const fast = glossarySets(db, BUILTIN_SOURCE_MAPPING);
+    const slow = glossarySets(db, NO_SLACK);
+    const original = db.query.bind(db);
+    let n = 0;
+    const spy = (sql: string) => {
+      if (sql.includes("item_fts")) n++;
+      return original(sql);
+    };
+    (db as unknown as { query: typeof spy }).query = spy;
+    try {
+      countByStatus(db, fast);
+      expect(n).toBe(0);
+      countByStatus(db, slow);
+      expect(n).toBeGreaterThan(0); // positive control
+    } finally {
+      (db as unknown as { query: typeof original }).query = original;
+    }
+  });
+
+  test("countByStatus over 500 consolidated terms with one type excluded stays under 2 s", () => {
+    db.transaction(() => {
+      for (let i = 0; i < 500; i++) {
+        const key = `k${String(i).padStart(3, "0")}q`;
+        if (i % 2 === 0) seedConsolidatedIn(key, "slack", "message", 3);
+        else seedConsolidatedIn(key, "jira", "issue", 3);
+      }
+    })();
+    const sets = glossarySets(db, NO_SLACK);
+    const start = performance.now();
+    const counts = countByStatus(db, sets);
+    const elapsed = performance.now() - start;
+    console.log(`countByStatus over 500 terms (slow path): ${elapsed.toFixed(1)} ms`);
+    expect(counts.total).toBe(250);
+    expect(elapsed).toBeLessThan(2000);
   });
 });

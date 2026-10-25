@@ -3379,6 +3379,7 @@ function buildFleetScheduler(
         db: deps.db,
         roots: () => ownershipRoots(deps.paths.configDir),
         serviceIds: () => [...loadNimbusServiceConfigsFromConfigDir(deps.paths.configDir).keys()],
+        mapping: () => sourceMappingFor(deps.paths.configDir),
       }),
     });
   } catch (err) {

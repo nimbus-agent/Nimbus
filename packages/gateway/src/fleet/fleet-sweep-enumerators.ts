@@ -1,6 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { SweepKind } from "../config/fleet-toml.ts";
+import { isRowVisible } from "../glossary/glossary-store.ts";
+import { glossarySets } from "../glossary/glossary-visibility.ts";
+import type { SourceMapping } from "../sources/source-mapping.ts";
 import { codeUnitCompare } from "../util/code-unit-compare.ts";
 import type { SweepSubjectParam } from "./fleet-sweep-support.ts";
 
@@ -28,6 +31,8 @@ export interface SweepSources {
   /** Called per enumeration, so a root added since boot is swept on the next run. */
   readonly roots: () => readonly string[];
   readonly serviceIds: () => readonly string[];
+  /** Resolved per enumeration (`sourceMappingFor(configDir)`), so a mapping edit applies next run. */
+  readonly mapping: () => SourceMapping;
 }
 
 function finish(subjects: SweepSubject[], reasonIfEmpty: string): SweepEnumeration {
@@ -137,13 +142,30 @@ export function enumerateSymbols(
   );
 }
 
-/** Consolidated terms only; the param is `display_term`, which the agent normalises to `term_key`. */
-export function enumerateTerms(db: Database, param: SweepSubjectParam): SweepEnumeration {
+/**
+ * Consolidated terms the mapping lets a reader see (spec § 7: a hidden term would brief as a miss);
+ * the param is `display_term`, which the agent normalises to `term_key`.
+ */
+export function enumerateTerms(
+  db: Database,
+  param: SweepSubjectParam,
+  mapping: SourceMapping,
+): SweepEnumeration {
+  const sets = glossarySets(db, mapping);
   const rows = db
-    .query(`SELECT term_key, display_term FROM glossary_term WHERE status = 'consolidated'`)
-    .all() as ReadonlyArray<{ term_key: string; display_term: string }>;
+    .query(
+      `SELECT term_key, display_term, definition_source FROM glossary_term
+       WHERE status = 'consolidated'`,
+    )
+    .all() as ReadonlyArray<{
+    term_key: string;
+    display_term: string;
+    definition_source: string | null;
+  }>;
   return finish(
-    rows.map((r) => ({ key: `terms:${r.term_key}`, params: { [param]: r.display_term } })),
+    rows
+      .filter((r) => isRowVisible(db, r.term_key, r.definition_source, sets))
+      .map((r) => ({ key: `terms:${r.term_key}`, params: { [param]: r.display_term } })),
     "no consolidated glossary terms yet",
   );
 }
@@ -158,7 +180,7 @@ export function buildFleetSweepEnumerate(src: SweepSources): FleetSweepEnumerate
       case "symbols":
         return enumerateSymbols(src.db, req.param, req.pathPrefix);
       case "terms":
-        return enumerateTerms(src.db, req.param);
+        return enumerateTerms(src.db, req.param, src.mapping());
       default: {
         const unreachable: never = req.kind;
         throw new Error(`unknown sweep kind: ${String(unreachable)}`);

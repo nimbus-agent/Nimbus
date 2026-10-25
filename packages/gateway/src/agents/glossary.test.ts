@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { beforeEach, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -9,7 +9,20 @@ function runMigrations(db: Database): void {
   runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
 }
 
-import { markConsolidated, upsertCandidate, writePassState } from "../glossary/glossary-store.ts";
+import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
+import {
+  computeTermStats,
+  markConsolidated,
+  upsertCandidate,
+  writePassState,
+} from "../glossary/glossary-store.ts";
+import { upsertIndexedItem } from "../index/item-store.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
+import {
+  BUILTIN_SOURCE_MAPPING,
+  resolveSourceMapping,
+  type SourceMapping,
+} from "../sources/source-mapping.ts";
 import { runGlossary } from "./glossary.ts";
 
 let db: Database;
@@ -44,8 +57,8 @@ function seed(
   });
 }
 
-function ctx() {
-  return { db, notify: () => undefined, sessionId: "s1" };
+function ctx(mapping: SourceMapping = BUILTIN_SOURCE_MAPPING) {
+  return { db, notify: () => undefined, sessionId: "s1", mapping };
 }
 
 beforeEach(() => {
@@ -209,4 +222,100 @@ test("omits the snippet note when every definition came from a model", async () 
   });
   const brief = await runGlossary({}, ctx());
   expect(brief.gaps.some((g) => g.detail.includes("verbatim snippet"))).toBe(false);
+});
+
+describe("reads under an excluding mapping", () => {
+  const NO_SLACK = resolveSourceMapping({
+    doc: mergeLayerDocs([
+      parseLayerDoc(
+        { kind: "base", id: "base", path: "/virtual/base.toml" },
+        '[sources]\nexclude = ["slack:message"]\n',
+      ),
+    ]),
+  });
+
+  function item(service: string, type: string, id: string, text: string, at: number): void {
+    upsertIndexedItem(db, {
+      service,
+      type,
+      externalId: id,
+      title: text,
+      bodyPreview: text,
+      modifiedAt: at,
+      syncedAt: at,
+    });
+  }
+
+  /** A consolidated term whose stored stats are measured over the built-in set, as a pass would. */
+  function consolidatedFromIndex(key: string, score = 5): void {
+    upsertCandidate(db, {
+      key,
+      surface: key.toUpperCase(),
+      form: "acronym",
+      stats: computeTermStats(db, key, sourceTypesFor("glossary")),
+      score,
+      nowMs: 1000,
+    });
+    markConsolidated(db, {
+      termKey: key,
+      definition: `definition of ${key}`,
+      definitionSource: "llm",
+      definitionLocal: false,
+      synonyms: [],
+      nearMisses: [],
+      nowMs: 1000,
+    });
+  }
+
+  function row(key: string): unknown {
+    return db.query("SELECT * FROM glossary_term WHERE term_key = ?").get(key);
+  }
+
+  test("an excluded source's only term is hidden from list, term lookup, near misses and the count", async () => {
+    for (let i = 0; i < 3; i++)
+      item("slack", "message", `s${String(i)}`, "the CDR rollout", 100 + i);
+    item("jira", "issue", "j1", "the WAL ticket", 200);
+    consolidatedFromIndex("cdr", 9);
+    consolidatedFromIndex("wal", 1);
+    const before = row("cdr");
+
+    const list = await runGlossary({}, ctx(NO_SLACK));
+    expect(list.entries.map((e) => e.term)).toEqual(["WAL"]);
+    expect(list.stats.total).toBe(1);
+    const lookup = await runGlossary({ term: "CDR" }, ctx(NO_SLACK));
+    expect(lookup.mode).toBe("miss");
+    expect(lookup.entries).toEqual([]);
+    const near = await runGlossary({ term: "cdq" }, ctx(NO_SLACK));
+    expect(near.suggestions).not.toContain("cdr");
+    expect(row("cdr")).toEqual(before);
+
+    // Re-included: visible again, the row untouched throughout.
+    const again = await runGlossary({}, ctx(BUILTIN_SOURCE_MAPPING));
+    expect(again.entries.map((e) => e.term)).toEqual(["CDR", "WAL"]);
+    expect(again.stats.total).toBe(2);
+    expect((await runGlossary({ term: "CDR" }, ctx())).mode).toBe("term");
+    expect((await runGlossary({ term: "cdq" }, ctx())).suggestions).toContain("cdr");
+    expect(row("cdr")).toEqual(before);
+  });
+
+  test("a term in two services shows effective stats only", async () => {
+    for (let i = 0; i < 3; i++)
+      item("slack", "message", `s${String(i)}`, "the CDR rollout", 100 + i);
+    for (let i = 0; i < 2; i++) item("jira", "issue", `j${String(i)}`, "the CDR ticket", 300 + i);
+    consolidatedFromIndex("cdr");
+    const before = row("cdr") as { doc_freq: number };
+    expect(before.doc_freq).toBe(5);
+
+    const list = await runGlossary({}, ctx(NO_SLACK));
+    expect(list.entries[0]?.docFreq).toBe(2);
+    expect(list.entries[0]?.serviceSpread).toBe(1);
+    expect(list.entries[0]?.topSources.every((s) => s.service === "jira")).toBe(true);
+    const term = await runGlossary({ term: "CDR" }, ctx(NO_SLACK));
+    expect(term.mode).toBe("term");
+    expect(term.entries[0]?.docFreq).toBe(2);
+    expect(row("cdr")).toEqual(before);
+
+    // The built-in mapping shows the stored figures.
+    expect((await runGlossary({}, ctx())).entries[0]?.docFreq).toBe(5);
+  });
 });
