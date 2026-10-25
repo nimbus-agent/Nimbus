@@ -526,6 +526,7 @@ describe("listPacks and previewPack", () => {
     expect(pm).toMatchObject({
       roles: ["product"],
       suggestedConnectors: ["slack", "jira", "notion", "google_drive"],
+      visibleAgents: ["decisions", "glossary", "catchup"],
     });
   });
 

@@ -105,6 +105,8 @@ export type PackListResult = {
     description: string;
     roles: readonly string[];
     suggestedConnectors: readonly string[];
+    /** The agents the bundled manifest's defaults make visible (what the desktop's pack step shows). */
+    visibleAgents: readonly string[];
   }[];
   readonly skipped: readonly SkippedPack[];
   readonly listError?: string;
@@ -472,6 +474,7 @@ export function listPacks(deps: PackDeps): PackListResult {
       description: m.description,
       roles: m.roles,
       suggestedConnectors: m.suggestedConnectors,
+      visibleAgents: packVisibleAgents(m.defaults),
     }));
   return {
     profile,

@@ -1029,6 +1029,8 @@ test("outside a repo, a gateway that never comes up: exit 2, no role step", asyn
   await runInit([], deps);
   expect(process.exitCode).toBe(2);
   expect(rec.roleCalls).toEqual([]);
+  // Nothing was written outside a repository, so the failure must not claim a config edit.
+  expect(rec.err.join("\n")).not.toContain("nimbus.toml edit above is done");
 });
 
 test("in a repo, non-interactive, no --role: exactly today's flow — the role step never runs", async () => {

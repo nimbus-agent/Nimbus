@@ -12,6 +12,7 @@
 import type { Database } from "bun:sqlite";
 import { isAbsolute, join, relative } from "node:path";
 import { listDecisions } from "../../decisions/decision-store.ts";
+import { DECISIONS_DEFAULT_WINDOW_MS } from "../../decisions/decision-types.ts";
 import { enumeratePaths } from "../../fleet/fleet-sweep-enumerators.ts";
 import { listVisibleConsolidated } from "../../glossary/glossary-store.ts";
 import { glossarySets } from "../../glossary/glossary-visibility.ts";
@@ -52,8 +53,6 @@ export interface TourSelectorCtx {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** Mirrors `agents/decisions.ts` DEFAULT_WINDOW_MS — the brief's own default window. */
-const DECISIONS_WINDOW_MS = 90 * DAY_MS;
 
 function selectWhy(ctx: TourSelectorCtx): TourSelectorResult {
   for (const root of ctx.fsRoots) {
@@ -153,7 +152,7 @@ async function selectStandup(ctx: TourSelectorCtx): Promise<TourSelectorResult> 
 
 function selectDecisions(ctx: TourSelectorCtx): TourSelectorResult {
   const rows = listDecisions(ctx.db, {
-    sinceMs: ctx.nowMs - DECISIONS_WINDOW_MS,
+    sinceMs: ctx.nowMs - DECISIONS_DEFAULT_WINDOW_MS,
     minConfidence: ctx.decisionsMinConfidence,
     limit: 1,
     mapping: ctx.mapping,

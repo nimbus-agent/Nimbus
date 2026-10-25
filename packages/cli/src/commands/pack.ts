@@ -6,7 +6,7 @@ import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerConsentPromptHandler } from "../lib/interactive-ipc-handlers.ts";
 import { BATCH_RPC_TIMEOUT_MS, createIpcClient } from "../lib/rpc-timeouts.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
-import { getCliPlatformPaths } from "../paths.ts";
+import { type CliPlatformPaths, getCliPlatformPaths } from "../paths.ts";
 
 /** The gateway's own cap on a local pack file; checked here too so a huge file is never read. */
 const MAX_PACK_FILE_BYTES = 131_072;
@@ -43,6 +43,8 @@ interface AvailablePackRow {
   readonly roles?: readonly string[];
   /** Optional: an older gateway omits it. */
   readonly suggestedConnectors?: readonly string[];
+  /** Optional: an older gateway omits it. */
+  readonly visibleAgents?: readonly string[];
 }
 interface SkippedPackRow {
   readonly packId: string;
@@ -293,8 +295,10 @@ const REAL_IO: PackIo = {
  * prompt, never an environment-selected script handler, so nothing but a person at this terminal
  * can answer a `pack.install` approval (`withGatewayIpc` binds the script handler first).
  */
-export async function withPackClient<T>(fn: (call: PackCall) => Promise<T>): Promise<T> {
-  const paths = getCliPlatformPaths();
+export async function withPackClient<T>(
+  fn: (call: PackCall) => Promise<T>,
+  paths: CliPlatformPaths = getCliPlatformPaths(),
+): Promise<T> {
   const state = await readGatewayState(paths);
   if (state === undefined) {
     throw new Error(gatewayNotRunningMessage(paths.demo === true));
@@ -311,8 +315,8 @@ export async function withPackClient<T>(fn: (call: PackCall) => Promise<T>): Pro
 }
 
 /** `nimbus pack install <id>` in-process (used by `nimbus init`); returns its exit code. */
-export function installPackInteractive(id: string): Promise<number> {
-  return withPackClient((call) => runPackWith(["install", id], REAL_IO, call));
+export function installPackInteractive(id: string, paths?: CliPlatformPaths): Promise<number> {
+  return withPackClient((call) => runPackWith(["install", id], REAL_IO, call), paths);
 }
 
 export async function runPack(args: string[]): Promise<void> {

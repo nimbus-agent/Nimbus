@@ -64,8 +64,8 @@ export type InitOutcome =
   | { kind: "config-only" }
   /** No git repository here, so nothing was indexed; `gatewayUp` is false under `--no-sync`. */
   | { kind: "no-repo"; gatewayUp: boolean }
-  /** The gateway never came up. Nothing was indexed. */
-  | { kind: "gateway-unavailable" }
+  /** The gateway never came up. Nothing was indexed. `outsideRepo`: no config edit was made either. */
+  | { kind: "gateway-unavailable"; outsideRepo?: true }
   /** A gateway is running but cannot see the new root until it restarts. */
   | { kind: "restart-required" }
   /** Gateway reachable, sync attempted and failed. */
@@ -426,10 +426,12 @@ async function indexRepository(deps: InitDeps, repoRoot: string): Promise<InitOu
   return { kind: "indexed", demo: await pickDemo(deps, repoRoot) };
 }
 
-function reportGatewayUnavailable(deps: InitDeps): void {
+function reportGatewayUnavailable(deps: InitDeps, outsideRepo: boolean): void {
   deps.error("");
   deps.error("nimbus init: the Gateway never became ready, so nothing was indexed.");
-  deps.error("  The nimbus.toml edit above is done — re-running init will not repeat it.");
+  if (!outsideRepo) {
+    deps.error("  The nimbus.toml edit above is done — re-running init will not repeat it.");
+  }
   deps.error("");
   for (const line of gatewayLogLines(deps.gatewayLogTail())) {
     deps.error(line);
@@ -500,7 +502,7 @@ function reportOutcome(outcome: InitOutcome, deps: InitDeps): void {
       reportIndexed(deps, outcome.demo);
       return;
     case "gateway-unavailable":
-      reportGatewayUnavailable(deps);
+      reportGatewayUnavailable(deps, outcome.outsideRepo === true);
       return;
     case "restart-required":
       reportRestartRequired(deps);
@@ -518,7 +520,7 @@ async function noRepoOutcome(args: string[], deps: InitDeps): Promise<InitOutcom
   deps.log("Starting the gateway...");
   return (await deps.startGateway())
     ? { kind: "no-repo", gatewayUp: true }
-    : { kind: "gateway-unavailable" };
+    : { kind: "gateway-unavailable", outsideRepo: true };
 }
 
 /** Everything up to the report: config edit, gateway, sync. */
@@ -758,7 +760,7 @@ export type InitEffects = {
     options: { value: string; label: string; hint?: string }[];
   }) => Promise<unknown>;
   /** `nimbus pack install <id>` behind the terminal-only approval handler (`pack.ts`). */
-  readonly installPack: (id: string) => Promise<number>;
+  readonly installPack: (id: string, paths: CliPlatformPaths) => Promise<number>;
 };
 
 const REAL_INIT_EFFECTS: InitEffects = {
@@ -850,7 +852,7 @@ export function defaultInitDeps(
         });
         return isCancel(answer) || typeof answer !== "string" ? undefined : answer;
       },
-      installPack: (id) => effects.installPack(id),
+      installPack: (id) => effects.installPack(id, paths),
       confirmConnect: async (name) => {
         const answer = await effects.confirm({
           message: `Connect ${name} now? (opens your browser)`,
