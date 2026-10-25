@@ -65,9 +65,14 @@ const TYPES_FOR_PASS: Readonly<Record<SourcePass, readonly string[]>> = Object.f
   glossary: typesWhere((k) => PASS_KINDS.glossary.has(k)),
 });
 
-const TYPES_OF_KIND: ReadonlyMap<SourceKind, readonly string[]> = new Map(
-  SOURCE_KINDS.map((kind) => [kind, typesWhere((k) => k === kind)] as const),
-);
+// Total over `SourceKind`, so a sixth kind fails to compile here rather than reading as "no types".
+const TYPES_OF_KIND: Readonly<Record<SourceKind, readonly string[]>> = Object.freeze({
+  message: typesWhere((k) => k === "message"),
+  doc: typesWhere((k) => k === "doc"),
+  ticket: typesWhere((k) => k === "ticket"),
+  commit: typesWhere((k) => k === "commit"),
+  note: typesWhere((k) => k === "note"),
+});
 
 export function sourceKindOf(serviceType: string): SourceKind | undefined {
   return BUILTIN_SOURCE_KINDS.get(serviceType);
@@ -78,5 +83,5 @@ export function sourceTypesFor(pass: SourcePass): readonly string[] {
 }
 
 export function sourceTypesOfKind(kind: SourceKind): readonly string[] {
-  return TYPES_OF_KIND.get(kind) ?? [];
+  return TYPES_OF_KIND[kind];
 }
