@@ -549,3 +549,74 @@ export interface CaptureDetail extends CaptureSummary {
 export interface CaptureList {
   readonly captures: readonly CaptureSummary[];
 }
+
+export type CatalogParamKind = "string" | "number" | "boolean" | "stringArray";
+
+export interface CatalogParam {
+  readonly name: string;
+  readonly kind: CatalogParamKind;
+  readonly label: string;
+  readonly required: boolean;
+  readonly oneOf?: {
+    readonly group: string;
+    readonly arm: string;
+    readonly required: boolean;
+    readonly armRequired: boolean;
+  };
+}
+
+export interface CatalogAgent {
+  readonly name: string;
+  readonly method: string;
+  readonly displayName: string;
+  readonly description: string;
+  readonly category: "catch-up" | "code" | "knowledge" | "operations" | "people";
+  readonly roles: readonly string[];
+  readonly params: readonly CatalogParam[];
+  readonly surfaces: { readonly external: boolean; readonly fleet: boolean };
+  readonly visible: boolean;
+}
+
+export interface CatalogListResult {
+  readonly agents: readonly CatalogAgent[];
+  readonly connectors: readonly unknown[];
+  readonly visibility: {
+    readonly basis: "all" | "packs";
+    readonly packs: readonly string[];
+    readonly notes: readonly string[];
+  };
+}
+
+export interface PackListResult {
+  readonly profile: string;
+  readonly installed: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly version: string;
+    readonly source: "bundled" | "file";
+    readonly updateAvailable: boolean;
+    /** Optional: an older gateway omits it. */
+    readonly visibleAgents?: readonly string[];
+  }[];
+  readonly available: readonly unknown[];
+  readonly skipped: readonly { readonly packId: string; readonly reason: string }[];
+  readonly listError?: string;
+}
+
+export interface FleetBriefRow {
+  readonly id: string;
+  readonly runId: string;
+  readonly jobId: string;
+  readonly subjectKey: string;
+  readonly agentMethod: string;
+  readonly briefMarkdown: string | null;
+  readonly createdAt: number;
+}
+
+export interface FleetBriefsResult {
+  readonly briefs: readonly FleetBriefRow[];
+}
+
+export interface FleetShowResult {
+  readonly brief: FleetBriefRow | null;
+}
