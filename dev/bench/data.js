@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792955520654,
+  "lastUpdate": 1792962084885,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f755fb19d2439c50d897cbc6909c2ec479266e06",
-          "message": "test(snowflake): 🧪 add edge case tests for search-filter (#1101)\n\n🎯 **What:** The testing gap addressed\nThe issue highlighted a missing test file, but `search-filter.test.ts`\nexisted. To fulfill the testing improvement, I added tests for important\nedge cases that were missing, such as handling empty item lists,\nignoring non-string field values (e.g. numbers, booleans) gracefully,\nand matching a single search query against multiple properties.\n\n📊 **Coverage:** What scenarios are now tested\n- Returns empty array when `items` is empty.\n- Successfully ignores non-string values like `null`, `123`, or `true`\non row fields.\n- Correctly matches complex multi-field queries.\n\n✨ **Result:** The improvement in test coverage\nTest suite now confidently validates the behavior of\n`filterSnowflakeTables` and its underlying helper logic on tricky\ninputs, enhancing reliability for edge cases.\n\n---\n*PR created automatically by Jules for task\n[10598767778754406266](https://jules.google.com/task/10598767778754406266)\nstarted by @asafgolombek*\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-08T18:59:56+03:00",
-          "tree_id": "9d5fcd6623ba5b9b46b5e0d40c67dfd42ace540a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f755fb19d2439c50d897cbc6909c2ec479266e06"
-        },
-        "date": 1786207569604,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 333.3185447500047,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 326.86960350000084,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 284.42062955000256,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a4c99cfd6e5819e5566b90481fd680780d0a3a84",
+          "message": "fix(install): Windows uninstaller runs on PowerShell 5.1, stops its own gateway and reports what it could not remove (#1778)\n\nFixes #1777, found while preparing the Gate 1 Windows run.\n\n## What was wrong\n\n- **`uninstall.ps1` could not run as a file on stock Windows PowerShell\n5.1.** `#Requires -Version 7.0`, and with that changed it still failed\nto parse: 5.1 reads a BOM-less `.ps1` as the ANSI code page, and the em\ndash inside a double-quoted string decoded to a curly quote that\nPowerShell treats as a string delimiter (`Missing closing '}'`). The\ndocumented `irm | iex` form only worked by accident.\n- **It never stopped a running gateway.** A running `.exe` cannot be\ndeleted on Windows, every `Remove-Item` was `SilentlyContinue`, and the\nscript then printed \"Nimbus uninstalled.\"\n- It left `vec0.dll` and the emptied `Programs\\Nimbus\\bin` behind; the\n`irm | Invoke-Expression` form could not pass `-Yes`.\n- On a machine without gpg, `install.ps1` pointed Windows users at\n`scripts/release/nimbus-verify.sh`, a bash script from the source tree.\n- Docs: wrong Windows data dir (`%LOCALAPPDATA%\\nimbus\\`, really\n`%LOCALAPPDATA%\\Nimbus\\` + `%APPDATA%\\Nimbus\\`), an \"autostart entry\"\nthe uninstaller supposedly removes (no installer creates one;\n`AutostartManager` is a stub), `nimbus start` \"registers autostart on\nlogin\", and Registry/LaunchAgents/systemd autostart rows in two support\ntables.\n\n## What changed\n\n- `uninstall.ps1`: 5.1-compatible and pure ASCII (runtime version check,\nsince `#Requires` is inert under `iex`). Stops only processes whose\nexecutable lives in its own install dir (path-filtered; uses `nimbus\nstop` first only when `gateway.json`'s pid is one of them), waits for\nthem, removes all four installed files, removes the bin dir and its\n`Programs\\Nimbus` parent only once empty, **reports any file it could\nnot remove and fails** instead of claiming success, writes the User PATH\nonly when its entry is actually present, and on a declined prompt exits\n1 as a file but `return`s under `iex`/scriptblock so the user's shell\nsurvives.\n- `install.ps1`: the no-gpg notice names `nimbus-verify.ps1` (a release\nasset) with its real prerequisites and the docs link.\n- Docs: `install.mdx` (paths, installed files, one-liner uninstall with\n`-Yes`, stop behaviour per OS, `.deb`/`.rpm` via the package manager),\n`verify-your-download.mdx` (Windows needs PowerShell 7 + Gpg4win),\n`faq.mdx`, `cli-reference.md`, `docs/README.md`,\n`docs/cross-platform.md`.\n- `install-smoke.yml`: the Windows uninstall check also asserts the\nsandbox helper, `vec0.dll` and the emptied dir are gone.\n\n## Tests\n\nNew `scripts/install/windows/uninstall.test.ts`, run under the real\n`powershell.exe` (5.1) with a temp `LOCALAPPDATA`/`APPDATA` (case\nvariants stripped, and a premise probe proves the child resolves the\ntemp install dir before anything runs; the real User PATH is asserted\nunchanged after every test). Covers: full removal + kept data/config,\nuser files kept, a process running from the install dir is stopped and\nits exe deleted, a same-named process elsewhere is NOT stopped, a locked\nfile is reported with a non-zero exit, the remote scriptblock form with\n`-Yes`, `y`/`n` at the prompt, and a declined remote run not closing the\ncaller's shell. Plus an every-OS ASCII-only guard on both `.ps1`\nscripts.\n\nRed-proved: against `main`'s script all 9 PowerShell tests fail (parse\nerror); against `main`'s script made parseable, 4 fail for the behaviour\nthey pin (the other two pin new behaviour that `main` trivially\nsatisfies); the ASCII guard fails on `main`'s `uninstall.ps1`; the\nremote-decline test fails with an unconditional `exit 1`.\n\nLocal: `preflight:fast` green; `bun test scripts` 2384 pass / 5 fail —\nthe same 5 fail on `main` on this machine (`nimbus-verify-ps1` + one\n`install-remote-windows` 5.1 case; `spawnSync` returns no status here),\nuntouched by this branch.\n\n**Only verifiable after the next release:** the documented one-liners\ndownload `install.ps1`/`uninstall.ps1` from `releases/latest`, so the\npublished scripts change when a release carries this.\n\n## Independent review (Google Antigravity CLI) — disposition\n\nChecklist review (pre-branch) produced the five findings this PR fixes.\nBranch reviews:\n\n| Finding | Disposition |\n| --- | --- |\n| Reading `.Path` can throw under EAP=Stop | Fixed — try/catch per\nprocess |\n| Declined prompt `return`s exit 0 as a file | Fixed — exit 1 as a file,\n`return` from text |\n| `Add-Type` duplicate type on session reuse | Declined — pre-existing,\nalready inside try/catch, only skips the live broadcast |\n| `describe.skipIf` does not exist in bun:test | Declined — it exists\nand is used across the repo |\n| Mixed-case `LocalAppData` in env could reach the real profile | Fixed\n— case variants stripped + premise probe before any run |\n| PATH-removal branch untested | Declined — exercising it means writing\nthe real User PATH; `install-smoke.yml` covers it in a sandboxed runner\n|\n| `nimbus stop` branch untested | Clarified — test renamed to the\nStop-Process path it covers; Stop-Process is what guarantees the delete\n|\n| Prompt test can't tell `n` from EOF | Fixed — added a `y` test proving\nthe answer is read |\n| Remote decline not tested for shell survival | Fixed — `SHELL_ALIVE`\ntest, red-proved |\n| Windows table omits sandbox helper and `vec0.dll` | Fixed |\n| \"reverses every change\" untrue for Unix (`vec0.so` left, `.deb`) |\nPartly fixed — wording no longer claims it, `.deb`/`.rpm` → package\nmanager; `uninstall.sh` leaving sqlite-vec sidecars is out of this\nWindows PR's scope |\n| \"release tarball\" on a section with a Windows tab | Fixed |\n| Verify docs don't say Windows needs PowerShell 7 + Gpg4win | Fixed |\n| Smoke doesn't assert the emptied dir is removed | Fixed |\n| Smoke doesn't exercise stopping a live gateway / 5.1 uninstall |\nDeclined — covered by the new 5.1 unit tests on the Windows legs |\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* The Windows uninstaller now prompts before proceeding, stops Nimbus\nprocesses in the install folder, and reports files it cannot remove. It\nremoves installed files and PATH entries while preserving user data and\nconfiguration.\n* **Documentation**\n* Updated installation and uninstall guidance for Windows, macOS, and\nLinux, including which files and directories are removed or retained.\n* Clarified that automatic startup at login is not implemented and\nlisted prerequisites and setup commands for verifying downloads on\nWindows.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-25T20:50:50Z",
+          "tree_id": "0df494f95ef2c51d57198405d8bfd1f9cdddb4a8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a4c99cfd6e5819e5566b90481fd680780d0a3a84"
+        },
+        "date": 1792962080032,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 273.9261645499948,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 273.9858576000017,
             "unit": "ms"
           }
         ]
