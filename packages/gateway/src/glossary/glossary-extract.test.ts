@@ -378,6 +378,7 @@ test("stored near-misses draw from consolidated keys only, not pending or vetoed
     termKey: "cdz",
     definition: "d",
     definitionSource: "llm",
+    definitionLocal: false,
     synonyms: [],
     nearMisses: [],
     nowMs: 5000, // matches OPTS.nowMs so the reconcile sweep does not touch it

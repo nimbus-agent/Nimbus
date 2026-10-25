@@ -20,6 +20,7 @@ type Row = {
   status: string;
   definition: string | null;
   definition_source: string | null;
+  definition_local: number;
   doc_freq: number;
   service_spread: number;
   score: number;
@@ -50,6 +51,7 @@ function toTerm(r: Row): GlossaryTerm {
     status: r.status as GlossaryStatus,
     definition: r.definition,
     definitionSource: r.definition_source as DefinitionSource | null,
+    definitionLocal: r.definition_local === 1,
     docFreq: r.doc_freq,
     serviceSpread: r.service_spread,
     score: r.score,
@@ -463,6 +465,11 @@ export function markConsolidated(
     termKey: string;
     definition: string;
     definitionSource: DefinitionSource;
+    /**
+     * Whether the definition was written while a non-remote-eligible source type contributed
+     * (spec § 7.1). Required: every definition rewrite decides it afresh.
+     */
+    definitionLocal: boolean;
     synonyms: string[];
     nearMisses: string[];
     nowMs: number;
@@ -472,13 +479,14 @@ export function markConsolidated(
     dbRun(
       db,
       `UPDATE glossary_term
-     SET status = 'consolidated', definition = ?, definition_source = ?,
+     SET status = 'consolidated', definition = ?, definition_source = ?, definition_local = ?,
          synonyms = ?, near_misses = ?, consolidated_at = ?,
          stats_verified_at = ?, last_attempt_at = ?, updated_at = ?
      WHERE term_key = ? AND definition_source IS NOT 'agent'`,
       [
         p.definition,
         p.definitionSource,
+        p.definitionLocal ? 1 : 0,
         JSON.stringify(p.synonyms),
         JSON.stringify(p.nearMisses),
         p.nowMs,
@@ -699,13 +707,14 @@ export function upsertManualTerm(
        term_key, display_term, status, definition, definition_source,
        doc_freq, service_spread, score, first_seen_at, last_seen_at,
        top_sources, synonyms, near_misses, consolidated_at,
-       stats_verified_at, updated_at
-     ) VALUES (?, ?, 'consolidated', ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       stats_verified_at, updated_at, definition_local
+     ) VALUES (?, ?, 'consolidated', ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
      ON CONFLICT(term_key) DO UPDATE SET
        display_term = excluded.display_term,
        status = 'consolidated',
        definition = excluded.definition,
        definition_source = 'manual',
+       definition_local = 0,
        doc_freq = excluded.doc_freq,
        service_spread = excluded.service_spread,
        score = excluded.score,

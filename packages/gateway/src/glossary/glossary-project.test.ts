@@ -21,6 +21,7 @@ function term(over: Partial<GlossaryTerm> = {}): GlossaryTerm {
     status: "consolidated",
     definition: "Change Data Record — the per-row change envelope.",
     definitionSource: "llm",
+    definitionLocal: false,
     docFreq: 7,
     serviceSpread: 2,
     score: 3.2,

@@ -106,6 +106,7 @@ function seedLlmTerm(project: boolean): void {
     termKey: "wal",
     definition: "old def",
     definitionSource: "llm",
+    definitionLocal: false,
     synonyms: [],
     nearMisses: [],
     nowMs: NOW,

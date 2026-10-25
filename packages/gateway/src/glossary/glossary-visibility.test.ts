@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { type LayerKind, mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { dbRun } from "../db/write.ts";
+import { itemPrimaryKey } from "../index/item-key.ts";
 import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION, LocalIndex } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -15,7 +16,7 @@ import {
   type SourceMapping,
 } from "../sources/source-mapping.ts";
 import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
-import { runGlossaryPass } from "./glossary-extract.ts";
+import { rebuildGlossary, runGlossaryPass } from "./glossary-extract.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
 import {
   computeTermStats,
@@ -121,6 +122,7 @@ function seedConsolidated(key: string, types: readonly string[]): void {
     termKey: key,
     definition: "a definition",
     definitionSource: "llm",
+    definitionLocal: false,
     synonyms: [],
     nearMisses: [],
     nowMs: 1000,
@@ -231,20 +233,61 @@ describe("syncTermProjection", () => {
     expect(glossaryItems().map((r) => r.type)).toEqual(["glossary_term"]);
   });
 
-  test("routing flips back when the contributor leaves the known set", () => {
-    trackNotes();
+  test("routing flips back when a rebuild drops the contributor from the known set", async () => {
     seedSlack(3, "the CDR runs");
     seedAs("ext_notes", "highlight", "h1", "the CDR runs", 500);
-    seedConsolidated("cdr", glossarySets(db, WITH_NOTES).known);
-    syncTermProjection(db, "cdr", glossarySets(db, WITH_NOTES), 2000);
+    await runGlossaryPass(db, { ...PASS, llm: definingLlm(), mapping: WITH_NOTES });
     expect(glossaryItems().map((r) => r.type)).toEqual(["glossary_term_local"]);
 
-    // What a rebuild leaves behind: the type is no longer tracked at all.
-    dbRun(
-      db,
-      "DELETE FROM source_catchup_state WHERE pass = 'glossary' AND service_type = 'ext_notes:highlight'",
-      [],
-    );
+    // A rebuild clears every definition and the catch-up rows, then re-mines over the built-ins
+    // only: the new definition was never written from the highlight.
+    await rebuildGlossary(db, {
+      ...PASS,
+      llm: definingLlm(),
+      mapping: BUILTIN_SOURCE_MAPPING,
+      nowMs: 6000,
+    });
+    expect(getTerm(db, "cdr")?.definitionLocal).toBe(false);
+    expect(glossaryItems().map((r) => r.type)).toEqual(["glossary_term"]);
+  });
+
+  test("a definition from a since-deleted local-only item stays local", async () => {
+    for (let i = 0; i < 3; i++) seedAs("jira", "issue", `j${String(i)}`, "the CDR runs", 100 + i);
+    seedAs("ext_notes", "highlight", "h1", "the CDR runs", 500);
+    await runGlossaryPass(db, { ...PASS, llm: definingLlm(), mapping: WITH_NOTES });
+    expect(getTerm(db, "cdr")?.definitionLocal).toBe(true);
+    expect(glossaryItems().map((r) => r.type)).toEqual(["glossary_term_local"]);
+
+    // The highlight is gone (its type is still known): the stored definition was still WRITTEN from
+    // it, so a stats refresh must not send that text to the remote embedder.
+    dbRun(db, "DELETE FROM item WHERE id = ?", [itemPrimaryKey("ext_notes", "h1")]);
+    reconcilePass(db, {
+      limit: 10,
+      minDocFreq: 3,
+      nowMs: 6000,
+      cooldownMs: 0,
+      sets: glossarySets(db, WITH_NOTES),
+    });
+    expect(getTerm(db, "cdr")?.topSources.every((s) => s.service === "jira")).toBe(true);
+    expect(glossaryItems().map((r) => r.type)).toEqual(["glossary_term_local"]);
+
+    // Only rewriting the definition, here a snippet upgrade over the Jira-only sources, clears it.
+    dbRun(db, "UPDATE glossary_term SET definition_source = 'snippet' WHERE term_key = 'cdr'", []);
+    const out = await runGlossaryPass(db, {
+      ...PASS,
+      llm: definingLlm(),
+      mapping: WITH_NOTES,
+      nowMs: 7000,
+    });
+    expect(out.upgraded).toBe(1);
+    expect(getTerm(db, "cdr")?.definitionLocal).toBe(false);
+    expect(glossaryItems().map((r) => r.type)).toEqual(["glossary_term"]);
+  });
+
+  test("a stats-only refresh never clears definitionLocal; a manual definition is never local", () => {
+    seedSlack(3, "the CDR runs");
+    seedConsolidated("cdr", BUILTIN);
+    dbRun(db, "UPDATE glossary_term SET definition_local = 1 WHERE term_key = 'cdr'", []);
     reconcilePass(db, {
       limit: 10,
       minDocFreq: 3,
@@ -252,7 +295,11 @@ describe("syncTermProjection", () => {
       cooldownMs: 0,
       sets: glossarySets(db, BUILTIN_SOURCE_MAPPING),
     });
-    expect(glossaryItems().map((r) => r.type)).toEqual(["glossary_term"]);
+    expect(getTerm(db, "cdr")?.definitionLocal).toBe(true);
+    expect(glossaryItems().map((r) => r.type)).toEqual(["glossary_term_local"]);
+
+    seedManual("cdr", "CDR");
+    expect(getTerm(db, "cdr")?.definitionLocal).toBe(false);
   });
 
   test("a hidden term is unprojected; a missing row is skipped", () => {

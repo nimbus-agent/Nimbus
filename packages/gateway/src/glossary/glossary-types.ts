@@ -57,6 +57,12 @@ export type GlossaryTerm = {
   status: GlossaryStatus;
   definition: string | null;
   definitionSource: DefinitionSource | null;
+  /**
+   * True when the stored definition was written while a source type that is not remote-eligible
+   * contributed (V75, spec § 7.1). It pins the search copy local until the definition is rewritten;
+   * a statistics refresh never clears it.
+   */
+  definitionLocal: boolean;
   docFreq: number;
   serviceSpread: number;
   score: number;

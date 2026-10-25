@@ -193,6 +193,7 @@ describe("enumerateTerms", () => {
           termKey: key,
           definition: "d",
           definitionSource: "snippet",
+          definitionLocal: false,
           synonyms: [],
           nearMisses: [],
           nowMs: 2,

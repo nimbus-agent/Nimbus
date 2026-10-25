@@ -42,7 +42,12 @@ import {
   writePassState,
 } from "./glossary-store.ts";
 import type { GlossaryPassProgress, GlossarySets, GlossaryTerm } from "./glossary-types.ts";
-import { glossarySets, sweepProjections, syncTermProjection } from "./glossary-visibility.ts";
+import {
+  glossarySets,
+  routesRemotely,
+  sweepProjections,
+  syncTermProjection,
+} from "./glossary-visibility.ts";
 import { findNearMisses } from "./near-miss.ts";
 import { mineTerms } from "./term-mining.ts";
 import { scoreTerm } from "./term-scoring.ts";
@@ -225,14 +230,29 @@ function scanCatchup(
     ) as ScanRow[];
 }
 
-/** Snippets handed to consolidation — the indexed text of a term's top sources. */
-function snippetsFor(db: Database, itemIds: readonly string[]): Array<{ text: string }> {
+/**
+ * Snippets handed to consolidation — the indexed text of a term's top sources — with each one's
+ * `service:type`, since a definition is derived from exactly these items and so inherits their
+ * routing (spec § 7.1).
+ */
+function snippetsFor(
+  db: Database,
+  itemIds: readonly string[],
+): Array<{ text: string; serviceType: string }> {
   if (itemIds.length === 0) return [];
   const ph = itemIds.map(() => "?").join(", ");
   const rows = db
-    .query(`SELECT title, body FROM item WHERE id IN (${ph})`)
-    .all(...itemIds) as Array<{ title: string; body: string | null }>;
-  return rows.map((r) => ({ text: `${r.title}. ${r.body ?? ""}`.trim() }));
+    .query(`SELECT title, body, service, type FROM item WHERE id IN (${ph})`)
+    .all(...itemIds) as Array<{
+    title: string;
+    body: string | null;
+    service: string;
+    type: string;
+  }>;
+  return rows.map((r) => ({
+    text: `${r.title}. ${r.body ?? ""}`.trim(),
+    serviceType: `${r.service}:${r.type}`,
+  }));
 }
 
 /**
@@ -318,7 +338,8 @@ function mineCandidates(
       nowMs: opts.nowMs,
     });
     if (getTerm(db, key)?.status === "consolidated") {
-      syncTermProjection(db, key, sets, opts.nowMs);
+      // `stats` is over `sets.known`, exactly what the sync would recompute.
+      syncTermProjection(db, key, sets, opts.nowMs, stats);
     }
     discovered += 1;
   }
@@ -490,7 +511,13 @@ function selectConsolidationWork(
 }
 
 /** What every outcome of one consolidate phase shares. */
-type ConsolidationContext = { knownKeys: string[]; nowMs: number; sets: GlossarySets };
+type ConsolidationContext = {
+  knownKeys: string[];
+  nowMs: number;
+  sets: GlossarySets;
+  /** `service:type` of the snippets this unit's definition is written from (spec § 7.1). */
+  snippetTypes: readonly string[];
+};
 
 /** Only a model can veto, so reaching here proves the model answered. */
 function applyVetoedOutcome(
@@ -532,10 +559,16 @@ function applyDefinedOutcome(
   // `consolidated` and this row genuinely is. `db.transaction` nests safely
   // via savepoints, so this composes with any outer transaction.
   const applied = db.transaction((): boolean => {
+    // § 7.1: the definition is written from `ctx.snippetTypes`, so it is local-only if any of them, or
+    // any type the term occurs in now, is not remote-eligible. Recorded on the row, so deleting
+    // that item later cannot send this text to the remote embedder.
+    const stats = computeTermStats(db, unit.term.termKey, ctx.sets.known);
+    const definitionLocal = !routesRemotely([...stats.contributingTypes, ...ctx.snippetTypes]);
     const changed = markConsolidated(db, {
       termKey: unit.term.termKey,
       definition: outcome.definition,
       definitionSource: outcome.source,
+      definitionLocal,
       synonyms: outcome.synonyms,
       nearMisses: findNearMisses(unit.term.termKey, ctx.knownKeys),
       nowMs: ctx.nowMs,
@@ -544,7 +577,7 @@ function applyDefinedOutcome(
     // The row exists but the guarded UPDATE did not take: a capture for this key was accepted
     // during the model call. Agent text is never projected (it can be remote-embedded).
     if (!changed && stored !== null) return false;
-    if (stored !== null) syncTermProjection(db, stored.termKey, ctx.sets, ctx.nowMs);
+    if (stored !== null) syncTermProjection(db, stored.termKey, ctx.sets, ctx.nowMs, stats);
     return true;
   })();
   if (!applied) return;
@@ -616,9 +649,16 @@ async function consolidatePhase(
       db,
       unit.term.topSources.map((s) => s.itemId),
     );
+    const snippetTypes = snippets.map((s) => s.serviceType);
     const outcome = await consolidateTerm(unit.term, snippets, consolidateOpts); // NOSONAR S9382: deliberately sequential (see the doc above) - concurrent calls multiply resident model memory on a local Ollama, and each term re-checks the abort signal and reports ordered progress
 
-    applyConsolidationOutcome(db, unit, outcome, { knownKeys, nowMs: opts.nowMs, sets }, tally);
+    applyConsolidationOutcome(
+      db,
+      unit,
+      outcome,
+      { knownKeys, nowMs: opts.nowMs, sets, snippetTypes },
+      tally,
+    );
 
     done += 1;
     opts.onProgress?.({

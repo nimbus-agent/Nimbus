@@ -37,6 +37,7 @@ function seed(
     termKey: key,
     definition: `definition of ${key}`,
     definitionSource: opts.definitionSource ?? "llm",
+    definitionLocal: false,
     synonyms: opts.synonyms ?? [],
     nearMisses: [],
     nowMs: 1000,

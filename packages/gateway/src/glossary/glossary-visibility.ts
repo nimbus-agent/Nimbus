@@ -12,7 +12,7 @@ import {
   unprojectTerm,
 } from "./glossary-project.ts";
 import { computeTermStats, getTerm, hasEffectiveOccurrence } from "./glossary-store.ts";
-import type { GlossarySets, GlossaryTerm } from "./glossary-types.ts";
+import type { GlossarySets, GlossaryTerm, TermStats } from "./glossary-types.ts";
 
 /**
  * Which glossary terms the effective source mapping lets a reader see, and where each visible
@@ -76,8 +76,10 @@ export type ProjectionOutcome = "projected" | "projected_local" | "unprojected" 
  * - An agent row, a missing row and a row with no definition are skipped (agent text is never
  *   projected; the paths that remove such rows unproject them themselves).
  * - A term that is not `consolidated`, or that `sets` hides, is unprojected.
- * - Otherwise the type is chosen from the term's contributing types over the KNOWN set. This is
- *   never skipped on the fast path: the fast path is about visibility, not routing.
+ * - Otherwise the copy is LOCAL when the stored definition was written from a non-remote-eligible
+ *   source (`definitionLocal`, V75: the text stays derived from that item even after it is
+ *   deleted) OR any current contributing type over the KNOWN set is not remote-eligible. Neither
+ *   check is skipped on the fast path: the fast path is about visibility, not routing.
  *
  * Both types share ONE item id, and `upsertIndexedItem`'s `ON CONFLICT(id)` would rewrite `type`
  * in place, keeping the vectors computed for the old type (for a flip to local, vectors already
@@ -85,12 +87,16 @@ export type ProjectionOutcome = "projected" | "projected_local" | "unprojected" 
  * — the V30 triggers drop their `vec_items_*` rows — and the row itself, then upserts, in one
  * transaction. The chunks are deleted explicitly rather than left to the `ON DELETE CASCADE`,
  * which only fires on a connection with `foreign_keys = ON`.
+ *
+ * `stats` is an optimisation only: a caller that has just run `computeTermStats(db, termKey,
+ * sets.known)` passes the result so the FTS match is not run twice. It must be over `sets.known`.
  */
 export function syncTermProjection(
   db: Database,
   termKey: string,
   sets: GlossarySets,
   nowMs: number,
+  stats?: TermStats,
 ): ProjectionOutcome {
   return db.transaction((): ProjectionOutcome => {
     const term = getTerm(db, termKey);
@@ -101,10 +107,11 @@ export function syncTermProjection(
       unprojectTerm(db, termKey);
       return "unprojected";
     }
-    const { contributingTypes } = computeTermStats(db, termKey, sets.known);
-    const itemType: GlossaryItemType = routesRemotely(contributingTypes)
-      ? "glossary_term"
-      : "glossary_term_local";
+    const { contributingTypes } = stats ?? computeTermStats(db, termKey, sets.known);
+    const itemType: GlossaryItemType =
+      !term.definitionLocal && routesRemotely(contributingTypes)
+        ? "glossary_term"
+        : "glossary_term_local";
     const id = glossaryItemId(termKey);
     const existing = db.query("SELECT type FROM item WHERE id = ?").get(id) as {
       type: string;

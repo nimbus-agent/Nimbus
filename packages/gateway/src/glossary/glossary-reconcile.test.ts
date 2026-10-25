@@ -67,6 +67,7 @@ function seedConsolidated(key: string, docFreq: number, nowMs = 1000): void {
     termKey: key,
     definition: "a definition",
     definitionSource: "llm",
+    definitionLocal: false,
     synonyms: [],
     nearMisses: [],
     nowMs,

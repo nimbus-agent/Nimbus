@@ -10,6 +10,7 @@ function term(over: Partial<GlossaryTerm> = {}): GlossaryTerm {
     status: "pending",
     definition: null,
     definitionSource: null,
+    definitionLocal: false,
     docFreq: 5,
     serviceSpread: 2,
     score: 3,
