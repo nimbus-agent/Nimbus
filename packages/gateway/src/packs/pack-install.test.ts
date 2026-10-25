@@ -26,6 +26,7 @@ import {
   type PackDeps,
   PackError,
   type PackOwnerGate,
+  activePackSuggestedConnectors,
   packSourceMappings,
   packVisibleAgents,
   previewPack,
@@ -514,8 +515,59 @@ describe("listPacks and previewPack", () => {
         updateAvailable: false,
         visibleAgents: ["decisions", "glossary", "catchup"],
         sourceMappings: [{ serviceType: "google_drive:doc", kind: "doc" }],
+        roles: ["product"],
+        suggestedConnectors: ["slack", "jira", "notion", "google_drive"],
       },
     ]);
+  });
+
+  test("available rows carry the bundled manifest's roles and suggestedConnectors", () => {
+    const pm = listPacks(deps()).available.find((p) => p.id === "pm");
+    expect(pm).toMatchObject({
+      roles: ["product"],
+      suggestedConnectors: ["slack", "jira", "notion", "google_drive"],
+    });
+  });
+
+  test("an installed row carries its RECORD's roles and suggestions, not the bundled copy's", async () => {
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    const other = pmWith({ roles: ["other"], suggestedConnectors: ["github"] });
+    const row = listPacks(deps({ bundled: new Map([["pm", other]]) })).installed[0];
+    expect(row?.roles).toEqual(["product"]);
+    expect(row?.suggestedConnectors).toEqual(["slack", "jira", "notion", "google_drive"]);
+  });
+
+  test("activePackSuggestedConnectors unions the active packs in active order, first occurrence wins", async () => {
+    await installPack(
+      { fileText: fileText({ id: "a", suggestedConnectors: ["slack", "jira"] }), filePath: FILE_PATH },
+      deps(),
+      gate().gate,
+    );
+    await installPack(
+      {
+        fileText: fileText({
+          id: "b",
+          suggestedConnectors: ["jira", "pagerduty"],
+        }),
+        filePath: FILE_PATH,
+      },
+      deps(),
+      gate().gate,
+    );
+    expect(activePackSuggestedConnectors(deps())).toEqual(["slack", "jira", "pagerduty"]);
+  });
+
+  test("activePackSuggestedConnectors is [] with no packs; an unreadable record contributes nothing", async () => {
+    expect(activePackSuggestedConnectors(deps())).toEqual([]);
+    await installPack({ id: "pm" }, deps(), gate().gate);
+    unlinkSync(recordFile("pm"));
+    expect(activePackSuggestedConnectors(deps())).toEqual([]);
+  });
+
+  test("activePackSuggestedConnectors is [] when active.json is unreadable", () => {
+    mkdirSync(packDir(), { recursive: true });
+    writeFileSync(activeFile(), "[]");
+    expect(activePackSuggestedConnectors(deps())).toEqual([]);
   });
 
   test("packVisibleAgents normalises, dedupes and keeps manifest order", () => {
@@ -587,6 +639,8 @@ describe("listPacks and previewPack", () => {
         versionUnknown: true,
         visibleAgents: [],
         sourceMappings: [],
+        roles: [],
+        suggestedConnectors: [],
       },
       {
         id: "ghost",
@@ -597,6 +651,8 @@ describe("listPacks and previewPack", () => {
         versionUnknown: true,
         visibleAgents: [],
         sourceMappings: [],
+        roles: [],
+        suggestedConnectors: [],
       },
     ]);
     expect(r.skipped).toEqual([

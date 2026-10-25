@@ -93,8 +93,19 @@ export type PackListResult = {
     visibleAgents: readonly string[];
     /** The `[sources] map` entries the installed record's defaults add; `[]` when unreadable. */
     sourceMappings: readonly SourceMapEntry[];
+    /** The installed record's role tags (onboarding matches on these); `[]` when unreadable. */
+    roles: readonly string[];
+    /** The installed record's suggested connectors, in manifest order; `[]` when unreadable. */
+    suggestedConnectors: readonly string[];
   }[];
-  readonly available: readonly { id: string; name: string; version: string; description: string }[];
+  readonly available: readonly {
+    id: string;
+    name: string;
+    version: string;
+    description: string;
+    roles: readonly string[];
+    suggestedConnectors: readonly string[];
+  }[];
   readonly skipped: readonly SkippedPack[];
   readonly listError?: string;
 };
@@ -454,7 +465,14 @@ export function listPacks(deps: PackDeps): PackListResult {
   // offered as available.
   const available = (read.listError === undefined ? [...deps.bundled.values()] : [])
     .filter((m) => !ids.includes(m.id))
-    .map((m) => ({ id: m.id, name: m.name, version: m.version, description: m.description }));
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      version: m.version,
+      description: m.description,
+      roles: m.roles,
+      suggestedConnectors: m.suggestedConnectors,
+    }));
   return {
     profile,
     installed,
@@ -483,6 +501,8 @@ function installedEntry(
       versionUnknown: true,
       visibleAgents: [],
       sourceMappings: [],
+      roles: [],
+      suggestedConnectors: [],
     };
   }
   const m = record.manifest;
@@ -499,7 +519,31 @@ function installedEntry(
     ...(newer ? { bundledVersion: bundled.version } : {}),
     visibleAgents: packVisibleAgents(m.defaults),
     sourceMappings: packSourceMappings(m.defaults),
+    roles: m.roles,
+    suggestedConnectors: m.suggestedConnectors,
   };
+}
+
+/**
+ * The connectors the active profile's packs suggest, for onboarding and the connector screens: each
+ * listed pack's installed record in `active.json` order, its suggestions in manifest order, first
+ * occurrence wins. Presentation only. A pack whose record does not verify contributes nothing, and
+ * an unreadable `active.json` yields `[]`, so a damaged store never fails the caller's read.
+ */
+export function activePackSuggestedConnectors(
+  deps: Pick<PackDeps, "store" | "configDir">,
+): readonly string[] {
+  const profile = activeProfile(deps.configDir);
+  const read = deps.store.read(profile);
+  if (read.listError !== undefined) return [];
+  const out: string[] = [];
+  for (const layer of read.layers) {
+    const record = readRecord(profile, layer.id, deps.store);
+    for (const id of record?.manifest.suggestedConnectors ?? []) {
+      if (!out.includes(id)) out.push(id);
+    }
+  }
+  return out;
 }
 
 /** The agents a pack's defaults make visible: normalised, first occurrence wins, `[]` if invalid. */

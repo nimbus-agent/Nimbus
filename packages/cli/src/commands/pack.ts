@@ -29,12 +29,20 @@ interface InstalledPackRow {
   readonly updateAvailable: boolean;
   readonly bundledVersion?: string;
   readonly versionUnknown?: boolean;
+  /** Optional: an older gateway omits it. */
+  readonly roles?: readonly string[];
+  /** Optional: an older gateway omits it. */
+  readonly suggestedConnectors?: readonly string[];
 }
 interface AvailablePackRow {
   readonly id: string;
   readonly name: string;
   readonly version: string;
   readonly description: string;
+  /** Optional: an older gateway omits it. */
+  readonly roles?: readonly string[];
+  /** Optional: an older gateway omits it. */
+  readonly suggestedConnectors?: readonly string[];
 }
 interface SkippedPackRow {
   readonly packId: string;

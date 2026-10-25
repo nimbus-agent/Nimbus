@@ -283,7 +283,9 @@ export interface LanPeerRow {
 
 export const CURRENT_SCHEMA_VERSION = 75;
 
-const ALLOWED_META_KEYS = new Set<string>(["onboarding_completed"]);
+// `role_pack_card_dismissed`: the desktop's "Try a role pack" card, set once when an upgraded user
+// dismisses it so it never returns (role packs P5).
+const ALLOWED_META_KEYS = new Set<string>(["onboarding_completed", "role_pack_card_dismissed"]);
 
 export function isAllowedMetaKey(key: string): boolean {
   return ALLOWED_META_KEYS.has(key);

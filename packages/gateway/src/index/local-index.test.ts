@@ -2007,6 +2007,10 @@ describe("isAllowedMetaKey", () => {
     expect(isAllowedMetaKey("onboarding_completed")).toBe(true);
   });
 
+  test("returns true for role_pack_card_dismissed (the desktop's once-only role-pack card)", () => {
+    expect(isAllowedMetaKey("role_pack_card_dismissed")).toBe(true);
+  });
+
   test("returns false for arbitrary keys", () => {
     expect(isAllowedMetaKey("vault_key")).toBe(false);
     expect(isAllowedMetaKey("")).toBe(false);
