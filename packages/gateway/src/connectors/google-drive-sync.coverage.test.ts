@@ -24,6 +24,9 @@ import {
 const START_TOKEN_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/changes\/startPageToken\?/;
 const FILES_LIST_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/files\?/;
 const CHANGES_LIST_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/changes\?/;
+const DOC_EXPORT_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/files\/[^/?]+\/export\?/;
+// The one-time Docs re-list already finished at this depth, so a delta call makes no listing call.
+const RELIST_DONE = { doneAt: "full" } as const;
 
 const ENSURE = { ensureGoogleDriveRunning: async (): Promise<void> => {} };
 
@@ -62,7 +65,7 @@ describe("google-drive-sync — absent response arrays", () => {
 
     const res = await createGoogleDriveSyncable(ENSURE).sync(
       ctx(),
-      encodeDriveSyncCursor({ v: 1, phase: "delta", pageToken: "delta-7" }),
+      encodeDriveSyncCursor({ v: 1, phase: "delta", pageToken: "delta-7", docs: RELIST_DONE }),
     );
 
     expect(res.itemsUpserted).toBe(0);
@@ -72,6 +75,7 @@ describe("google-drive-sync — absent response arrays", () => {
       v: 1,
       phase: "delta",
       pageToken: "start-after-empty",
+      docs: RELIST_DONE,
     });
     expect(fetchStub.calls).toHaveLength(1);
     expect(new URL(fetchStub.calls[0]?.url ?? "").searchParams.get("pageToken")).toBe("delta-7");
@@ -112,10 +116,11 @@ describe("google-drive-sync — a changed file without a name", () => {
         },
       ],
     });
+    fetchStub.respondWithText("GET", DOC_EXPORT_RE, "Roadmap text");
 
     const res = await createGoogleDriveSyncable(ENSURE).sync(
       ctx(),
-      encodeDriveSyncCursor({ v: 1, phase: "delta", pageToken: "delta-1" }),
+      encodeDriveSyncCursor({ v: 1, phase: "delta", pageToken: "delta-1", docs: RELIST_DONE }),
     );
 
     expect(res.hasMore).toBe(false);

@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CATALOG_AGENT_NAMES } from "../catalog/agent-catalog.ts";
 import { builtinCatalogConnectorIds } from "../catalog/catalog-list.ts";
+import { mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { checkPackFragment } from "../config/pack-settable.ts";
+import { resolveSourceMapping } from "../sources/source-mapping.ts";
 import { BUNDLED_PACKS } from "./bundled-packs.ts";
 import { checkPackFleetJobs } from "./pack-job-check.ts";
 import { createPackLayerStore } from "./pack-layer-store.ts";
@@ -29,6 +31,24 @@ describe("BUNDLED_PACKS", () => {
     if (!r.ok) return;
     expect(r.scalars.get("oncall.push.enabled")).toBe(true);
     expect(r.scalars.get("fleet.enabled")).toBe(true);
+  });
+
+  test("pm is 1.1.0 and maps Google Docs as a doc source", () => {
+    const pm = BUNDLED_PACKS.get("pm");
+    expect(pm?.version).toBe("1.1.0");
+    const r = checkPackFragment(pm?.defaults ?? "", checkPackFleetJobs);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.lists.get("sources.map")).toEqual(["google_drive:doc=doc"]);
+    const mapping = resolveSourceMapping({
+      doc: mergeLayerDocs([
+        parseLayerDoc({ kind: "pack", id: "pm", path: "/virtual/pm.toml" }, pm?.defaults ?? ""),
+      ]),
+    });
+    expect(mapping.notes).toEqual([]);
+    expect(mapping.kindOf("google_drive:doc")).toBe("doc");
+    expect(mapping.typesFor("decisions")).toContain("google_drive:doc");
+    expect(mapping.typesFor("glossary")).toContain("google_drive:doc");
   });
 
   test("every bundled pack passes checkPackFragment with checkPackFleetJobs", () => {

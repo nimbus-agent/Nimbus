@@ -73,6 +73,7 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   "gmail:email",
   "outlook:email",
   "notion:page",
+  "google_drive:doc",  // Google Docs' plain-text export; other Drive files are not prose
   "confluence:page",
   "obsidian:obsidian_note",
   "pagerduty:incident",
@@ -86,6 +87,9 @@ export const PROSE_HEAVY_TYPES: ReadonlySet<string> = new Set([
   "imap:email",        // email bodies — same posture as gmail:email
   "fastmail:email",    // JMAP email bodies
   "protonmail:email",  // Bridge email bodies
+  "apple:email",       // iCloud Mail (IMAP) bodies
+  "nimbus:research_brief",
+  "nimbus:glossary_term",
 ]);
 ```
 

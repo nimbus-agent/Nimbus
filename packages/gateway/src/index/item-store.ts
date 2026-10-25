@@ -290,7 +290,18 @@ export function deleteAllItemsForService(db: Database, service: string): void {
   dbRun(db, "DELETE FROM item WHERE service = ?", [service]);
 }
 
-export type ItemBodyFetchState = { modifiedAt: number; bodyFetch: string | null };
+export type ItemBodyFetchState = {
+  modifiedAt: number;
+  bodyFetch: string | null;
+  /**
+   * `body IS NOT NULL` — NOT "a body was fetched": every upsert stores a non-NULL body (it falls
+   * back to the preview or the title), so this is false only where something NULLed the column
+   * afterwards. That something is a `metadata_only` reindex, which NULLs `body` but leaves the
+   * recorded `bodyFetch` verdict in `metadata`, so a connector that skips on the verdict alone
+   * would never re-fetch that body after the owner deepens the connector again.
+   */
+  hasBody: boolean;
+};
 
 /**
  * The two facts a connector needs to decide whether re-fetching an item's body
@@ -304,15 +315,18 @@ export type ItemBodyFetchState = { modifiedAt: number; bodyFetch: string | null 
  * already advanced past it by the time the fetch fails, so the item is
  * re-examined only on a later edit or an explicit `nimbus index rebody`.
  */
-// lane-census: scope=page service=notion
+// lane-census: scope=page,doc service=notion,google_drive
 export function selectItemBodyFetchState(db: Database, id: string): ItemBodyFetchState | null {
   const row = db
-    .query<{ modified_at: number; body_fetch: string | null }, [string]>(
-      `SELECT modified_at, json_extract(metadata, '$.bodyFetch') AS body_fetch
+    .query<{ modified_at: number; body_fetch: string | null; has_body: number }, [string]>(
+      `SELECT modified_at, json_extract(metadata, '$.bodyFetch') AS body_fetch,
+              (body IS NOT NULL) AS has_body
          FROM item WHERE id = ?`,
     )
     .get(id);
-  return row === null ? null : { modifiedAt: row.modified_at, bodyFetch: row.body_fetch };
+  return row === null
+    ? null
+    : { modifiedAt: row.modified_at, bodyFetch: row.body_fetch, hasBody: row.has_body === 1 };
 }
 
 /**

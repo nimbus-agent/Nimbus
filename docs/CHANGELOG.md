@@ -18,6 +18,27 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-25 — Role packs P2 PR 3: Google Docs are indexed with their text, and the Product pack (1.1.0) mines them for decisions and glossary terms (no migration, no invariant, no egress class).**
+  The Drive sync now writes a Google Doc as `google_drive:doc` (same item id as the `file` row it replaces, re-typed in
+  place) with its plain-text export as the body, under the existing depth chokepoint: up to 16,384 characters at `full`,
+  512 at `summary`, nothing fetched at `metadata_only`. Other Drive files stay `file`, metadata only. A Doc is exported only
+  when its stored text is not this revision's; at most 200 exports per sync call; a failed export (a 403 over Drive's size
+  limit, a 429, a 5xx) indexes that Doc without text and never fails the sync, and only a 401 does. Existing Docs are
+  rewritten by a one-time re-list carried on the Drive cursor (an upgraded cursor re-lists once; a depth change re-lists
+  again), which runs only after the changes feed is caught up, never starts a page it cannot finish, lists at most five
+  pages per call, and writes only Docs already indexed or changed in the last 30 days. `google_drive:doc` joins
+  `PROSE_HEAVY_TYPES` like `notion:page`. Fixed on the way: an item holding one model's chunks could not be re-embedded under
+  another — `embedding_chunk` is unique on `(item_id, chunk_index)` and the embedding pipeline cleared only its own model's
+  chunks, so the insert failed, the old vector stayed, and the backfill's drain loop re-selected the failed item for as long
+  as it ran. A re-typed Doc moving from MiniLM to OpenAI is the case this PR creates; the pipeline now clears every
+  model's chunks for the item. Notion's body re-fetch check also reads the new `hasBody`, so a page whose body a
+  `metadata_only` reindex removed is fetched again instead of skipped on its old verdict, and Notion, like Drive, now
+  records that verdict only at `full`, so a page first synced at `metadata_only` or `summary` is fetched again once the
+  connector is deepened. The PM pack is 1.1.0 and adds `[sources] map = ["google_drive:doc=doc"]`, so an
+  installed PM pack reports an update. `google_drive` stays out of `nimbus index rebody`'s improvable set (a mixed
+  service). Stated bound: a Doc whose export keeps failing transiently during the re-list gets its text on its next edit,
+  a depth change, or a cleared cursor.
+
 - **2026-10-25 — MCP act door: an MCP agent can propose `obsidian.note.append` (no migration, no new invariant, no egress class).**
   The act door's one known gap is closed. `obsidian.note.append` was denied as `unroutable` because the dispatcher's
   bare-id step (`resolveServerTool`) only accepted keys its ownership rule attributes to the action's server, and that

@@ -18,7 +18,7 @@ describe("embedding/routing", () => {
     expect(SUPPORTED_EMBEDDING_DIMS.has(512)).toBe(false);
   });
 
-  test("PROSE_HEAVY_TYPES exact membership (22 entries)", () => {
+  test("PROSE_HEAVY_TYPES exact membership (23 entries)", () => {
     const expected = new Set([
       "slack:message",
       "discord:message",
@@ -26,6 +26,7 @@ describe("embedding/routing", () => {
       "gmail:email",
       "outlook:email",
       "notion:page",
+      "google_drive:doc",
       "confluence:page",
       "obsidian:obsidian_note",
       "pagerduty:incident",

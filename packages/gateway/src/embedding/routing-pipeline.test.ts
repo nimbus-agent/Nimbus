@@ -102,6 +102,80 @@ describe("RoutingEmbeddingPipeline", () => {
   });
 
   test.skipIf(!VEC_AVAILABLE)(
+    "an item whose type moves to the other route keeps no vector from its old route",
+    async () => {
+      // A Drive Doc is re-typed in place, `google_drive:file` -> `google_drive:doc`, under the same
+      // item id. Each inner pipeline replaces only its OWN model's chunks, so without this the old
+      // MiniLM vector of the file name stayed beside the new 1536-dim one and search kept finding it.
+      const db = freshDb();
+      insertItem(db, "d1", "slack", "message");
+      const local = new SqliteEmbeddingPipeline({
+        db,
+        embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384, true),
+      });
+      const openai = new SqliteEmbeddingPipeline({
+        db,
+        embedder: stubEmbedder("openai:text-embedding-3-small", 1536, false),
+      });
+      const router = new RoutingEmbeddingPipeline(db, local, openai);
+      const base = { id: "slack:d1", service: "slack", title: "t", body_preview: "b" };
+
+      await router.embedItem({ ...base, type: "git_commit" });
+      await router.embedItem({ ...base, type: "message" });
+      const afterRemote = db
+        .query(`SELECT DISTINCT dims FROM embedding_chunk WHERE item_id = ?`)
+        .all("slack:d1") as Array<{ dims: number }>;
+      expect(afterRemote).toEqual([{ dims: 1536 }]);
+      expect((db.query(`SELECT count(*) AS c FROM vec_items_384`).get() as { c: number }).c).toBe(
+        0,
+      );
+
+      await router.embedItem({ ...base, type: "git_commit" });
+      const afterLocal = db
+        .query(`SELECT DISTINCT dims FROM embedding_chunk WHERE item_id = ?`)
+        .all("slack:d1") as Array<{ dims: number }>;
+      expect(afterLocal).toEqual([{ dims: 384 }]);
+      expect((db.query(`SELECT count(*) AS c FROM vec_items_1536`).get() as { c: number }).c).toBe(
+        0,
+      );
+    },
+  );
+
+  test.skipIf(!VEC_AVAILABLE)(
+    "the backfill re-embeds an item still holding the other model's chunks, and finishes",
+    async () => {
+      // The backfill calls the INNER pipeline directly, not the router. Before, a row embedded under
+      // MiniLM and now routed to OpenAI failed its insert on UNIQUE(item_id, chunk_index), stayed
+      // un-embedded, and was re-selected by the drain loop on every page — the pass never ended.
+      const db = freshDb();
+      insertItem(db, "r1", "slack", "message");
+      const local = new SqliteEmbeddingPipeline({
+        db,
+        embedder: stubEmbedder("Xenova/all-MiniLM-L6-v2", 384, true),
+      });
+      const openai = new SqliteEmbeddingPipeline({
+        db,
+        embedder: stubEmbedder("openai:text-embedding-3-small", 1536, false),
+      });
+      await local.embedItem({
+        id: "slack:r1",
+        service: "slack",
+        type: "message",
+        title: "t",
+        body_preview: "b",
+      });
+
+      await openai.backfillForRoutingKeys({ in: ["slack:message"] });
+
+      const dims = db
+        .query(`SELECT DISTINCT dims FROM embedding_chunk WHERE item_id = ?`)
+        .all("slack:r1") as Array<{ dims: number }>;
+      expect(dims).toEqual([{ dims: 1536 }]);
+    },
+    5_000,
+  );
+
+  test.skipIf(!VEC_AVAILABLE)(
     "backfillAll reports its two passes as one: done never goes backwards",
     async () => {
       // Both halves count from zero against their own total. Forwarding both callbacks unchanged made

@@ -198,7 +198,13 @@ async function notionConsumeSearchResultRow(
 
   // 1. Nothing to gain: we already recorded a verdict for this exact revision.
   const prior = ctx.bodyFetchState(itemPrimaryKey(SERVICE_ID, id));
-  if (prior !== null && prior.bodyFetch !== null && prior.modifiedAt === modifiedAt) {
+  //    (`hasBody`: a `metadata_only` reindex NULLs the body and leaves the verdict.)
+  if (
+    prior !== null &&
+    prior.bodyFetch !== null &&
+    prior.hasBody &&
+    prior.modifiedAt === modifiedAt
+  ) {
     return false;
   }
 
@@ -227,8 +233,11 @@ async function notionConsumeSearchResultRow(
   // happens to be the newest page in the workspace, and pinning the
   // watermark below it would let one permanently-unreadable page (a 403,
   // say) re-walk the entire workspace every sync, forever.
+  // The verdict is recorded only at `full`. At `metadata_only` the depth chokepoint stores an empty
+  // body and at `summary` a 512-character one, and a verdict on either would make step 1 skip this
+  // revision for good once the owner deepens Notion to `full` (the Drive Docs sync does the same).
   const metadata: Record<string, unknown> =
-    fetched.outcome === "errored"
+    fetched.outcome === "errored" || ctx.depth !== "full"
       ? { notionPageId: id }
       : { notionPageId: id, bodyFetch: fetched.outcome };
   ctx.upsertItem({

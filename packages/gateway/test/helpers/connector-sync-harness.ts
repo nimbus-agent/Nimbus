@@ -58,6 +58,8 @@ export function createConnectorSyncFixture(): ConnectorSyncFixture {
           : buildSyncCapabilities({ vault, db, depth: "full" }, serviceId)),
         logger,
         rateLimiter,
+        // The scheduler always sets the run's depth; a context without it is one no sync ever sees.
+        depth: "full",
       } as SyncContext;
     },
     cleanup(): void {

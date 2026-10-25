@@ -2,10 +2,10 @@
   "schema": 1,
   "id": "pm",
   "name": "Product",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Decisions, glossary and catch-up for product work.",
   "roles": ["product"],
   "suggestedConnectors": ["slack", "jira", "notion", "google_drive"],
   "members": [],
-  "defaults": "[agents]\nvisible = [\"decisions\", \"glossary\", \"catchup\"]\n\n[fleet]\nenabled = true\n\n[[fleet.job]]\nname = \"pm-decisions-nightly\"\nagent = \"decisions\"\ninterval_seconds = 86400\n"
+  "defaults": "[agents]\nvisible = [\"decisions\", \"glossary\", \"catchup\"]\n\n[fleet]\nenabled = true\n\n[[fleet.job]]\nname = \"pm-decisions-nightly\"\nagent = \"decisions\"\ninterval_seconds = 86400\n\n[sources]\nmap = [\"google_drive:doc=doc\"]\n"
 }

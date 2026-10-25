@@ -29,6 +29,8 @@ const CHANGES_LIST_PREFIX = "https://www.googleapis.com/drive/v3/changes?";
 const START_TOKEN_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/changes\/startPageToken\?/;
 const FILES_LIST_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/files\?/;
 const CHANGES_LIST_RE = /^https:\/\/www\.googleapis\.com\/drive\/v3\/changes\?/;
+// The one-time Docs re-list already finished at this depth, so a delta call makes no listing call.
+const RELIST_DONE = { doneAt: "full" } as const;
 
 function encodeCursor(payload: unknown): string {
   return CURSOR_PREFIX + Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -456,7 +458,7 @@ describe("google-drive-sync — phase machine: delta", () => {
       changes: [],
       nextPageToken: "delta-page-2",
     });
-    const cur = encodeCursor({ v: 1, phase: "delta", pageToken: "d1" });
+    const cur = encodeCursor({ v: 1, phase: "delta", pageToken: "d1", docs: RELIST_DONE });
     const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext("google_drive"),
       cur,
@@ -473,6 +475,7 @@ describe("google-drive-sync — phase machine: delta", () => {
       phase: "delta",
       pageToken: "delta-page-2",
       deltaPage: 1,
+      docs: RELIST_DONE,
     });
   });
 
@@ -860,7 +863,7 @@ describe("google-drive-sync — getStartPageToken missing token (L247)", () => {
   });
 });
 
-describe("google-drive-sync — runDriveChangePage nextPageToken branch (L316)", () => {
+describe("google-drive-sync — runDrivePhaseDelta page branches", () => {
   test("delta page with nextPageToken → hasMore=true with new delta cursor (L316)", async () => {
     // L316: next !== undefined && next !== "" → return hasMore=true with buildNextCursor(next)
     // (delta phase, different from drain to get independent test for L316 delta path)
@@ -891,7 +894,7 @@ describe("google-drive-sync — runDriveChangePage nextPageToken branch (L316)",
       changes: [],
       newStartPageToken: "final-tok",
     });
-    const cur = encodeCursor({ v: 1, phase: "delta", pageToken: "tok2" });
+    const cur = encodeCursor({ v: 1, phase: "delta", pageToken: "tok2", docs: RELIST_DONE });
     const res = await createGoogleDriveSyncable(ENSURE_MCP).sync(
       fixture.createSyncContext("google_drive"),
       cur,
@@ -903,7 +906,12 @@ describe("google-drive-sync — runDriveChangePage nextPageToken branch (L316)",
     const decoded = JSON.parse(
       Buffer.from(res.cursor.slice(CURSOR_PREFIX.length), "base64url").toString("utf8"),
     );
-    expect(decoded).toEqual({ v: 1, phase: "delta", pageToken: "final-tok" });
+    expect(decoded).toEqual({
+      v: 1,
+      phase: "delta",
+      pageToken: "final-tok",
+      docs: RELIST_DONE,
+    });
   });
 
   test("delta page missing newStartPageToken → throws (delta missingNewTokenMessage)", async () => {
