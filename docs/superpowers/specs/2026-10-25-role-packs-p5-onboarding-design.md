@@ -213,7 +213,6 @@ the dispatcher handles it before its "no refresher → skip" check. Result:
 {
   enabled: boolean;                 // a refresher exists ([decisions] enabled at boot)
   state: "idle" | "running" | "stopped" | "disabled"; // the pass scheduler's status()
-  extraction: "llm" | "snippet";    // use_llm && a local model is wired
   lastPassAt: number | null;        // decision_pass_state
   minConfidence: number;            // the read floor the brief uses
   windowDays: number;               // the brief's default window (90)
@@ -366,6 +365,15 @@ today (install-smoke unchanged); the desktop runs Welcome → Role (Product) →
 Connect (Slack browser, Jira form) → Decisions showing progress, then decisions or the B1
 explanation; an upgraded user sees the card once; `nimbus wow` with the PM pack offers only visible
 kinds; demo output is byte-identical (`assert-demo-tour.ts` passes).
+
+## 12a. Refinements made while planning PR 1
+
+Recorded here so the spec and plan agree (detail in the PR 1 plan): the question is asked once the
+gateway is up — after a successful index inside a repository, after the gateway start outside one —
+because starting the gateway before the root is appended would make every first run
+`restart-required`; `--role` syntax is checked first and its value resolved against `pack.list`
+afterwards (unknown → exit 1, the index already done); outside a repository the tour is not offered;
+`decisions.status` has no `extraction` field.
 
 ## 13. Constraints inherited
 
