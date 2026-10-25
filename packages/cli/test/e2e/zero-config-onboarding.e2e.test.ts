@@ -106,7 +106,9 @@ describe("zero-config onboarding funnel", () => {
     repo = root;
     const res = await runInitInRepo(["--no-sync"]);
     expect(res.exitCode).toBe(0);
-    expect(res.stdout).toContain("No git repository here, so nothing was indexed from this folder.");
+    expect(res.stdout).toContain(
+      "No git repository here, so nothing was indexed from this folder.",
+    );
     expect(existsSync(join(configDir, "nimbus.toml"))).toBe(false);
   });
 
