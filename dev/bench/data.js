@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792870729213,
+  "lastUpdate": 1792910700083,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9f9215bfcca7ba4cdde0b66e4975881359882797",
-          "message": "fix: resolve macos-15 CI test failures and consolidate open connector PRs (#1082)\n\n### Summary\nThis PR fixes the test failures observed in the macos-15 CI runs (Unit +\nIntegration) and consolidates several open PRs containing minor test\nadditions, visual assets, and bug fixes into a single PR.\n\n### Details of Fixes:\n1. **Resolved SQLite Locking Issues (\\SQLITE_CANTOPEN\\)**:\n* Wrapped temporary database directories in \\ ealpathSync(...)\\ in both\n\\http-api-test-server.ts\\ and \\\u0007ssemble.test.ts\\ to ensure paths are\nfully resolved on all operating systems (resolving symlinked paths like\n\\/var\\ -> \\/private/var\\ on macOS).\n2. **Decoupled Vault from Host Keychain**:\n* Added dependency injection support for \\NimbusVault\\ to\n\\\u0007ssemblePlatformServices(paths, customVault?)\\.\n* Updated \\\u0007ssemble.test.ts\\ to supply an isolated \\makeInMemoryVault()\\\ninstead of letting tests fall back to the host system keychain/keyring\n(resolving unauthenticated/401 test crashes due to pre-existing\ndeveloper credentials).\n3. **Command Injection Bug Fix**:\n* Incorporated PR 1076 to resolve command/option injection during local\npackage/archive extraction by resolving \\\u0007rchivePath\\ and \\destDir\\ to\nabsolute paths before calling \\ ar\\.\n\n### Consolidations (PRs 1073, 1074, 1075, 1077, 1078, 1079, 1081):\n* Added unit test coverage for Flagsmith, Great Expectations\n(\\FORBIDDEN_RESULT_KEYS\\), Tableau, Zoom, Zotero, and Elasticsearch\nconnectors.\n* Included the missing \\onboarding-wizard.png\\ screenshot for first-run\nsetup documentation.",
-          "timestamp": "2026-08-08T14:28:17Z",
-          "tree_id": "4b2845396eadae8b5111f4d15d4de42bcf661565",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9f9215bfcca7ba4cdde0b66e4975881359882797"
-        },
-        "date": 1786199991197,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.41911549999605,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.3860549000034,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 236.35490829999836,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7a14406ab829636b3d619d97233d45f9899505bb",
+          "message": "feat(ui): the desktop follows your role packs (#1770)\n\nRole packs Project 4: the desktop app follows your role packs.\n\n## What a user sees\n\n- **Sidebar:** a new **Briefs** entry, plus one group per active pack\nlisting that pack's agents. The sidebar now scrolls, and long labels\ntruncate.\n- **Home screen:** one section per active pack, with a card per agent.\n- A card shows the newest stored fleet brief with **Open**, or `No\nstored brief yet.` with **Run** when nothing is stored.\n- The on-call card shows the newest pushed incident and opens the\nOn-call page.\n  - An agent that needs input shows only **Run**.\n  - With no pack active, one quiet line points at `nimbus pack list`.\n- **Brief pages:**\n  - `/briefs` lists every read-only built-in brief, grouped by category.\n- `/briefs/:agent` has a form built from the agent's catalog params. Run\ncalls the brief only on a click. The page shows elapsed time, and past\n10 minutes shows `Still running — check back.` with Run enabled again.\nThe result renders as markdown and can be copied.\n  - `/briefs/stored/:id` shows a stored fleet brief.\n- **Markdown:** briefs render through `marked`'s lexer into React\nelements we build ourselves.\n  - There is no `innerHTML`, no `<a href>` and no `<img>`.\n- Links show as text plus their URL, and raw HTML shows as literal text.\n  - The On-call page uses the same renderer instead of `<pre>`.\n- **Live switching:** a pack installed in the terminal shows up when you\nreturn to the app, through a focus refresh plus a 15 s poll.\n\n## Gateway changes\n\n- `fleet.briefs` gains three optional filters: `agentMethod`, `nonSweep`\n(which matches `subject_key = job_id`) and `withMarkdown`. A wrong type\nreturns `-32602`. There is no index and no migration.\n- `pack.list` installed rows gain `visibleAgents`, read from the\ninstalled record. The CLI ignores it.\n\n## Desktop method list (I7): 111 → 116\n\n- **Added:** `agents.changelog`, `agents.oncall`, `agents.standup`,\n`catalog.list`, `fleet.briefs`, `fleet.show`, `pack.list`. All are\nreads.\n- **Removed:** `agents.preflight`, which raises an owner approval\nprompt, and `agents.premortem`, which writes watcher rows. Both stay\nCLI-only.\n- Rust and TS tests pin both namespace scans by name.\nSECURITY-INVARIANTS.md, CLAUDE.md, GEMINI.md, architecture.md,\ncli-reference.md and the allowlist skill are updated in the same change.\n\n## New dependency\n\n`marked` 18.1.1, pinned exactly in `packages/ui` only.\n- It has zero runtime dependencies, and we use the lexer only.\n- `react-markdown` was rejected because it pulls in the\nunified/micromark tree.\n\n## Not breaking\n\nNo new invariant, no migration, no egress class. The CSP and\n`capabilities/default.json` are unchanged.\n\n## Verification (local, Windows)\n\n- `bun run preflight:fast` passed.\n- `bun run typecheck:tests`: 0 new errors.\n- `bun test` on fleet, packs, ipc and security-invariants: 3988 pass, 0\nfail.\n- UI vitest: 1160 pass.\n- `cargo test` in `packages/ui/src-tauri`: 52 pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added role-pack sections to the desktop sidebar and home screen, with\nagent cards linking to stored briefs or brief runs.\n* Added Briefs pages for browsing agents, running briefs with parameter\nforms, and viewing stored results. Brief runs can take up to 10 minutes.\n* Added filters for stored briefs, including agent method and whether\nMarkdown content is available.\n* Added on-call cards that link to on-call briefs and show incident and\nservice details.\n* **Improvements**\n* Briefs now display with Markdown formatting, with links shown as plain\ntext, and can be copied.\n* Role-pack and agent listings refresh when the desktop app regains\nfocus or detects changes.\n  * Preflight and premortem are not available for desktop brief runs.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-25T06:34:25Z",
+          "tree_id": "ae9dbc72bd9e95fdbfde8afa03c82ee8004f872b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7a14406ab829636b3d619d97233d45f9899505bb"
+        },
+        "date": 1792910696038,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 272.9033460500021,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 277.03040639999455,
             "unit": "ms"
           }
         ]
