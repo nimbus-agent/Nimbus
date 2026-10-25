@@ -46,6 +46,7 @@ export type PackDiff = {
     readonly changed: string[];
   };
   readonly visible: { readonly added: string[]; readonly removed: string[] };
+  readonly sources: { readonly added: string[]; readonly removed: string[] };
   readonly jobs: {
     readonly added: string[];
     readonly removed: string[];
@@ -58,6 +59,7 @@ export type PackDiff = {
 const NO_JOB_CHECK = (): readonly string[] => [];
 const JOB_NAME_RE = /^\s*name\s*=\s*"(.*)"\s*$/;
 const VISIBLE_KEY = "agents.visible";
+const SOURCE_MAP_KEY = "sources.map";
 
 /** `[[fleet.job]]` blocks keyed by name; a block runs from its header to the next header or EOF. */
 function jobBlocks(text: string): Map<string, string> {
@@ -86,12 +88,17 @@ function jobBlocks(text: string): Map<string, string> {
 function fragmentParts(m: RolePackManifest): {
   scalars: ReadonlyMap<string, string>;
   visible: readonly string[];
+  sources: readonly string[];
 } {
   const r = checkPackFragment(m.defaults, NO_JOB_CHECK);
-  if (!r.ok) return { scalars: new Map(), visible: [] };
+  if (!r.ok) return { scalars: new Map(), visible: [], sources: [] };
   const scalars = new Map<string, string>();
   for (const [k, v] of r.scalars) scalars.set(k, String(v));
-  return { scalars, visible: r.lists.get(VISIBLE_KEY) ?? [] };
+  return {
+    scalars,
+    visible: r.lists.get(VISIBLE_KEY) ?? [],
+    sources: r.lists.get(SOURCE_MAP_KEY) ?? [],
+  };
 }
 
 function setDiff<T>(prev: Iterable<T>, next: Iterable<T>): { added: T[]; removed: T[] } {
@@ -113,6 +120,7 @@ export function diffPacks(prev: RolePackManifest, next: RolePackManifest): PackD
   return {
     scalars: { added: s.added, removed: s.removed, changed: changedScalars.map(([k]) => k) },
     visible: setDiff(a.visible, b.visible),
+    sources: setDiff(a.sources, b.sources),
     jobs: {
       ...j,
       changed: [...nj].filter(([k, v]) => pj.has(k) && pj.get(k) !== v).map(([k]) => k),
@@ -132,6 +140,8 @@ export type PackPromptInput = {
   readonly layerEdited?: boolean;
   readonly scalars: readonly PromptScalar[];
   readonly visibleAgents: readonly string[];
+  /** The pack's `[sources] map` entries as written, `service:type=kind`. */
+  readonly sourceMappings: readonly string[];
   readonly jobs: readonly {
     readonly name: string;
     readonly agent: string;
@@ -191,10 +201,16 @@ function headerLines(i: PackPromptInput): string[] {
   return lines;
 }
 
+/** `readwise:highlight=note` shown as `readwise:highlight as note`. */
+function sourceRow(entry: string): string {
+  return visibleText(entry.replace("=", " as "));
+}
+
 function installSections(i: PackPromptInput): string[] {
   return [
     ...section("Config defaults:", i.scalars.map(scalarRow)),
     ...section("Visible agents:", i.visibleAgents.map(visibleText)),
+    ...section("Sources added:", i.sourceMappings.map(sourceRow)),
     ...section("Overnight jobs:", [...i.jobs.map(jobRow), ...fleetNote(i)]),
     ...section(
       "Suggested connectors:",
@@ -224,6 +240,10 @@ function updateSections(i: PackPromptInput, d: PackDiff): string[] {
     ...section("Visible agents:", [
       ...d.visible.added.map((a) => `added: ${visibleText(a)}`),
       ...removedRows(d.visible.removed),
+    ]),
+    ...section("Sources added:", [
+      ...d.sources.added.map((e) => `added: ${sourceRow(e)}`),
+      ...d.sources.removed.map((e) => `removed: ${sourceRow(e)}`),
     ]),
     ...section("Overnight jobs:", [
       ...i.jobs.filter((j) => touchedJobs.has(j.name)).map(jobRow),

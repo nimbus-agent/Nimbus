@@ -26,6 +26,7 @@ import {
   type PackDeps,
   PackError,
   type PackOwnerGate,
+  packSourceMappings,
   packVisibleAgents,
   previewPack,
   removePack,
@@ -512,6 +513,7 @@ describe("listPacks and previewPack", () => {
         source: "bundled",
         updateAvailable: false,
         visibleAgents: ["decisions", "glossary", "catchup"],
+        sourceMappings: [],
       },
     ]);
   });
@@ -525,6 +527,25 @@ describe("listPacks and previewPack", () => {
   test("packVisibleAgents is [] for defaults with no [agents] visible, or invalid defaults", () => {
     expect(packVisibleAgents("")).toEqual([]);
     expect(packVisibleAgents("[agents]\nvisible = 3\n")).toEqual([]);
+  });
+
+  test("packSourceMappings and the pack.list row carry a pack's added sources", async () => {
+    const defaults = '[sources]\nmap = ["readwise:highlight=note"]\n';
+    expect(packSourceMappings(defaults)).toEqual([
+      { serviceType: "readwise:highlight", kind: "note" },
+    ]);
+    expect(packSourceMappings("")).toEqual([]);
+    const gated = gate();
+    await installPack(
+      { fileText: fileText({ defaults }), filePath: FILE_PATH },
+      deps(),
+      gated.gate,
+    );
+    expect(gated.calls[0]).toBeDefined();
+    expect(JSON.stringify(gated.calls[0])).toContain("readwise:highlight as note");
+    expect(listPacks(deps()).installed[0]?.sourceMappings).toEqual([
+      { serviceType: "readwise:highlight", kind: "note" },
+    ]);
   });
 
   test("listPacks reads visibleAgents from the INSTALLED record, not the bundled copy", async () => {
@@ -565,6 +586,7 @@ describe("listPacks and previewPack", () => {
         bundledVersion: "1.0.0",
         versionUnknown: true,
         visibleAgents: [],
+        sourceMappings: [],
       },
       {
         id: "ghost",
@@ -574,6 +596,7 @@ describe("listPacks and previewPack", () => {
         updateAvailable: false,
         versionUnknown: true,
         visibleAgents: [],
+        sourceMappings: [],
       },
     ]);
     expect(r.skipped).toEqual([

@@ -2,6 +2,7 @@
 // reports problems; it reads no files. A pack fragment may set only the keys listed
 // here; one bad line refuses the whole fragment.
 
+import { parseSourceMapList } from "../sources/source-mapping.ts";
 import { type DocLine, type DocSection, parseLayerDoc } from "./layered-merge.ts";
 import { parseBool, parseIntDec, parseString } from "./toml-primitives.ts";
 
@@ -147,6 +148,14 @@ export const PACK_SETTABLE_LISTS: readonly PackSettableList[] = [
     why: "which agents the catalog shows; packs union, the owner's show/hide decide per agent",
     expect: 'a non-empty array of agent names, e.g. ["decisions", "standup"]',
     parse: parseAgentNameList,
+  },
+  {
+    section: "sources",
+    key: "map",
+    consumer: "per-call",
+    why: "which indexed types the decisions pass mines, and as what; packs only add new types",
+    expect: 'a non-empty array of "service:type=kind" entries, e.g. ["readwise:highlight=note"]',
+    parse: (valRaw) => parseSourceMapList(valRaw),
   },
 ];
 

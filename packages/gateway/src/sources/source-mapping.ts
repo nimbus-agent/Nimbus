@@ -227,6 +227,25 @@ export function sourceMappingFor(configDir: string | undefined): SourceMapping {
   return resolveSourceMapping(getLayeredConfig(configDir).snapshot());
 }
 
+const layerOrigin = (l: LayerRef): string => (l.kind === "pack" ? `pack ${l.id}` : l.kind);
+
+/** `config explain sources`: each effective entry with its origin, each exclusion, then the notes. */
+export function describeSourceMapping(mapping: SourceMapping): readonly string[] {
+  const lines = mapping.entries.map(
+    (e) =>
+      `source ${e.serviceType} is mined as ${e.kind} (${e.origin.kind === "builtin" ? "built-in" : layerOrigin(e.origin.layer)})`,
+  );
+  const seen = new Set<string>();
+  for (const x of mapping.excluded) {
+    const line = `source ${x.serviceType} is excluded by ${layerOrigin(x.layer)}`;
+    if (!seen.has(line)) {
+      seen.add(line);
+      lines.push(line);
+    }
+  }
+  return [...lines, ...mapping.notes];
+}
+
 export function sourceFilterSql(
   types: readonly string[],
   alias: string,

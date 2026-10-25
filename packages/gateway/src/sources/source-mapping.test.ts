@@ -12,6 +12,7 @@ import {
 import { sourceTypesFor } from "./source-kinds.ts";
 import {
   BUILTIN_SOURCE_MAPPING,
+  describeSourceMapping,
   parseSourceMapEntry,
   parseSourceMapList,
   parseSourceTypeList,
@@ -244,5 +245,28 @@ describe("sourceMappingFor a real config dir", () => {
     const m = sourceMappingFor(dir);
     expect(m.typesFor("decisions")).not.toContain("slack:message");
     expect(m.excluded.map((e) => e.serviceType)).toEqual(["slack:message"]);
+  });
+});
+
+describe("describeSourceMapping", () => {
+  test("lists entries with origins, exclusions once per layer, then notes", () => {
+    const m = resolve(
+      pack("research", 'map = ["readwise:highlight=note"]'),
+      base('exclude = ["slack:message", "slack:message"]\nmap = ["jira:issue=bogus"]'),
+      profile('exclude = ["slack:message"]'),
+    );
+    const lines = describeSourceMapping(m);
+    expect(lines).toContain("source readwise:highlight is mined as note (pack research)");
+    expect(lines).toContain("source jira:issue is mined as ticket (built-in)");
+    expect(lines).toContain("source slack:message is excluded by base");
+    expect(lines).toContain("source slack:message is excluded by profile");
+    expect(lines.filter((l) => l === "source slack:message is excluded by base")).toHaveLength(1);
+    expect(lines.at(-1)).toBe(m.notes.at(-1));
+    expect(m.notes.length).toBeGreaterThan(0);
+  });
+
+  test("an owner entry shows its layer", () => {
+    const lines = describeSourceMapping(resolve(base('map = ["jira:issue=doc"]')));
+    expect(lines).toContain("source jira:issue is mined as doc (base)");
   });
 });

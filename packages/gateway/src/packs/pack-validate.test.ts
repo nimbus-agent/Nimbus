@@ -31,4 +31,14 @@ describe("validatePackContent", () => {
   test("an invalid fragment is reported", () => {
     expect(validatePackContent({ ...base, defaults: "x = 1\n" }, deps).length).toBeGreaterThan(0);
   });
+
+  test("a pack may add a new source but not a built-in or personal one", () => {
+    const map = (e: string): string => `[sources]\nmap = ["${e}"]\n`;
+    const run = (e: string) => validatePackContent({ ...base, defaults: map(e) }, deps);
+    expect(run("jira:issue=doc")).toContain('[sources] map names built-in source "jira:issue"');
+    expect(run("gmail:email=message")).toContain(
+      '[sources] map names personal source "gmail:email"',
+    );
+    expect(run("readwise:highlight=note")).toEqual([]);
+  });
 });

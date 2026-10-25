@@ -34,6 +34,7 @@ import { isVecLoaded, lastVecLoadFailure } from "../index/sqlite-vec-load.ts";
 import { mediaSourceBytes } from "../multimodal/media-source-registry.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
+import { describeSourceMapping, resolveSourceMapping } from "../sources/source-mapping.ts";
 import type { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
 import { buildTelemetryPreview } from "../telemetry/collector.ts";
 import type { ConsentCoordinator } from "./consent.ts";
@@ -241,6 +242,7 @@ function rpcConfigExplain(params: unknown, ctx: DiagnosticsRpcContext): Diagnost
       ...(ctx.fleetJobCheck === undefined ? {} : { fleetJobCheck: ctx.fleetJobCheck }),
       agentVisibilityNotes: () =>
         describeAgentVisibility(resolveAgentVisibility(reader.snapshot(), CATALOG_AGENT_NAMES)),
+      sourceMappingNotes: () => describeSourceMapping(resolveSourceMapping(reader.snapshot())),
     }),
   };
 }

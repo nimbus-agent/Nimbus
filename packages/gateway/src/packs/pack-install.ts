@@ -17,6 +17,7 @@ import { getLayeredConfig, type SkippedPack } from "../config/layered-config.ts"
 import type { LayerRef } from "../config/layered-merge.ts";
 import { checkPackFragment, PACK_ID_RE } from "../config/pack-settable.ts";
 import { parseString } from "../config/toml-primitives.ts";
+import { type SourceMapEntry, sourceMapFromList } from "../sources/source-mapping.ts";
 import { checkPackFleetJobs } from "./pack-job-check.ts";
 import { PackLayerRefusedError, type PackLayerStore } from "./pack-layer-store.ts";
 import {
@@ -90,6 +91,8 @@ export type PackListResult = {
     versionUnknown?: true;
     /** Agents the installed record's defaults make visible, normalised; `[]` when unreadable. */
     visibleAgents: readonly string[];
+    /** The `[sources] map` entries the installed record's defaults add; `[]` when unreadable. */
+    sourceMappings: readonly SourceMapEntry[];
   }[];
   readonly available: readonly { id: string; name: string; version: string; description: string }[];
   readonly skipped: readonly SkippedPack[];
@@ -273,6 +276,7 @@ async function buildPrompt(
   const m = r.manifest;
   const parsed = checkPackFragment(m.defaults, checkPackFleetJobs);
   const visibleAgents = parsed.ok ? (parsed.lists.get("agents.visible") ?? []) : [];
+  const sourceMappings = parsed.ok ? (parsed.lists.get("sources.map") ?? []) : [];
   const replaced = userJobNames(deps.configDir);
   const jobs = parseNimbusTomlFleetJobs(m.defaults).map((j) => ({
     name: j.name,
@@ -291,6 +295,7 @@ async function buildPrompt(
     ...(layerEdited ? { layerEdited } : {}),
     scalars: promptScalars(m.defaults, deps.configDir),
     visibleAgents,
+    sourceMappings,
     jobs,
     connectors,
   };
@@ -477,6 +482,7 @@ function installedEntry(
       ...(bundled === undefined ? {} : { bundledVersion: bundled.version }),
       versionUnknown: true,
       visibleAgents: [],
+      sourceMappings: [],
     };
   }
   const m = record.manifest;
@@ -492,6 +498,7 @@ function installedEntry(
     updateAvailable: newer,
     ...(newer ? { bundledVersion: bundled.version } : {}),
     visibleAgents: packVisibleAgents(m.defaults),
+    sourceMappings: packSourceMappings(m.defaults),
   };
 }
 
@@ -505,4 +512,14 @@ export function packVisibleAgents(defaults: string): readonly string[] {
     if (!out.includes(n)) out.push(n);
   }
   return out;
+}
+
+/** The source types a pack's defaults add, in written order; `[]` if the defaults are invalid. */
+export function packSourceMappings(defaults: string): readonly SourceMapEntry[] {
+  const parsed = checkPackFragment(defaults, checkPackFleetJobs);
+  if (!parsed.ok) return [];
+  return [...sourceMapFromList(parsed.lists.get("sources.map"))].map(([serviceType, kind]) => ({
+    serviceType,
+    kind,
+  }));
 }

@@ -176,9 +176,7 @@ describe("PACK_ID_RE", () => {
 });
 
 describe("[agents] visible", () => {
-  const VIS = (v: string) => `[agents]
-visible = ${v}
-`;
+  const VIS = (v: string) => `[agents]\nvisible = ${v}\n`;
 
   test("accepts [agents] visible with bare and prefixed names", () => {
     const r = checkPackFragment(VIS('["decisions", "agents.standup"]'), none);
@@ -220,11 +218,9 @@ visible = ${v}
   test("refuses other [agents] keys", () => {
     for (const key of ["synthesis", "show", "hide"]) {
       const value = key === "synthesis" ? '"local"' : '["x"]';
-      expect(
-        problemsOf(`[agents]
-${key} = ${value}
-`),
-      ).toContain(`[agents] ${key} is not pack-settable`);
+      expect(problemsOf(`[agents]\n${key} = ${value}\n`)).toContain(
+        `[agents] ${key} is not pack-settable`,
+      );
     }
   });
 
@@ -236,6 +232,20 @@ ${key} = ${value}
   test("refuses visible set twice", () => {
     expect(problemsOf('[agents]\nvisible = ["a"]\nvisible = ["b"]\n').join("\n")).toContain(
       "[agents] sets visible twice",
+    );
+  });
+});
+
+describe("[sources] map", () => {
+  test("accepts a map entry and refuses exclude and nimbus types", () => {
+    const r = checkPackFragment('[sources]\nmap = ["readwise:highlight=note"]\n', none);
+    if (!r.ok) throw new Error(r.problems.join("; "));
+    expect(r.lists.get("sources.map")).toEqual(["readwise:highlight=note"]);
+    expect(problemsOf('[sources]\nexclude = ["slack:message"]\n')).toContain(
+      "[sources] exclude is not pack-settable",
+    );
+    expect(problemsOf('[sources]\nmap = ["nimbus:capture=note"]\n').join(" ")).toContain(
+      "[sources] map",
     );
   });
 });
