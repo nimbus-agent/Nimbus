@@ -321,14 +321,26 @@ export function getTerm(db: Database, termKey: string): GlossaryTerm | null {
   return r === null ? null : toTerm(r);
 }
 
-export function findBySynonym(db: Database, normalizedQuery: string): GlossaryTerm | null {
+/**
+ * The first consolidated term, in `term_key` order, that lists the query as a synonym and that a
+ * reader resolving `sets` sees. A hidden holder is skipped rather than returned, so it cannot mask
+ * a visible one that lists the same synonym (the visibility check runs only on a synonym hit).
+ */
+export function findBySynonym(
+  db: Database,
+  normalizedQuery: string,
+  sets: GlossarySets,
+): GlossaryTerm | null {
   const rows = db
-    .query("SELECT * FROM glossary_term WHERE status = 'consolidated' AND synonyms <> '[]'")
+    .query(
+      `SELECT * FROM glossary_term WHERE status = 'consolidated' AND synonyms <> '[]'
+       ORDER BY term_key ASC`,
+    )
     .all() as Row[];
   const needle = normalizedQuery.toLowerCase();
   for (const r of rows) {
-    if (parseJsonArray<string>(r.synonyms).some((s) => s.toLowerCase() === needle))
-      return toTerm(r);
+    const hit = parseJsonArray<string>(r.synonyms).some((s) => s.toLowerCase() === needle);
+    if (hit && isRowVisible(db, r.term_key, r.definition_source, sets)) return toTerm(r);
   }
   return null;
 }
@@ -499,14 +511,24 @@ export function listVisibleConsolidated(
 }
 
 /**
- * One term as a reader resolving `sets` sees it: a mined term's `docFreq`, `serviceSpread` and
- * `topSources` recomputed over the EFFECTIVE set, since stored statistics are over the known set
- * (spec § 7). Display only: nothing is written. Identity on the fast path and for manual and
- * agent rows, which are never hidden and keep their stored figures.
+ * One term as a reader resolving `sets` sees it (spec § 7). Display only: nothing is written.
+ * Identity on the fast path. Otherwise:
+ * - stored `nearMisses` naming a term the reader cannot see are dropped, for every row (a
+ *   suggestion the reader follows to a miss is a loop with no exit);
+ * - a MINED term's `docFreq`, `serviceSpread` and `topSources` are recomputed over the EFFECTIVE
+ *   set, since stored statistics are over the known set. Manual and agent rows keep their stored
+ *   figures: they are never hidden, and their statistics are not the point of the entry.
  */
 export function effectiveView(db: Database, term: GlossaryTerm, sets: GlossarySets): GlossaryTerm {
-  if (sets.fast || term.definitionSource === "manual" || term.definitionSource === "agent") {
-    return term;
+  if (sets.fast) return term;
+  const nearMisses = term.nearMisses.filter((key) => {
+    const r = db
+      .query("SELECT definition_source FROM glossary_term WHERE term_key = ?")
+      .get(key) as { definition_source: string | null } | null;
+    return r === null || isRowVisible(db, key, r.definition_source, sets);
+  });
+  if (term.definitionSource === "manual" || term.definitionSource === "agent") {
+    return { ...term, nearMisses };
   }
   const stats = computeTermStats(db, term.termKey, sets.effective);
   return {
@@ -514,6 +536,7 @@ export function effectiveView(db: Database, term: GlossaryTerm, sets: GlossarySe
     docFreq: stats.docFreq,
     serviceSpread: stats.serviceSpread,
     topSources: stats.topSources,
+    nearMisses,
   };
 }
 
@@ -616,15 +639,17 @@ export function applyStats(
  * The brief's counts. `total` counts the consolidated terms a reader resolving `sets` sees: on the
  * fast path that is every consolidated row (one aggregate, no FTS query); otherwise mined rows
  * without an effective occurrence are subtracted, at one `EXISTS ... LIMIT 1` per consolidated
- * mined term. `pending` and `vetoed` stay whole-table: they are queue bookkeeping, and filtering
- * them would cost one FTS query per queued term on every brief, so the pending count includes
- * terms waiting on an excluded source.
+ * mined term. `hidden` is that subtracted count (0 on the fast path), so the brief can say why
+ * terms are missing. `pending` and `vetoed` stay whole-table: they are queue bookkeeping, and
+ * filtering them would cost one FTS query per queued term on every brief, so the pending count
+ * includes terms waiting on an excluded source.
  */
 export function countByStatus(
   db: Database,
   sets: GlossarySets,
 ): {
   total: number;
+  hidden: number;
   pending: number;
   vetoed: number;
   manual: number;
@@ -650,8 +675,10 @@ export function countByStatus(
   // `manual` is a SUBSET of `total`, not a fourth disjoint bucket: `total`
   // counts consolidated rows, which now include authored ones. Mined count is
   // `total - manual`.
+  const hidden = hiddenConsolidatedCount(db, sets);
   return {
-    total: (r?.total ?? 0) - hiddenConsolidatedCount(db, sets),
+    total: (r?.total ?? 0) - hidden,
+    hidden,
     pending: r?.pending ?? 0,
     vetoed: r?.vetoed ?? 0,
     manual: r?.manual ?? 0,
@@ -684,15 +711,26 @@ function hiddenConsolidatedCount(db: Database, sets: GlossarySets): number {
  * So `.get()` cannot return `null` and `n` cannot be null here; adding the
  * fallback back "for safety" would just re-introduce an unreachable branch.
  */
-export function countSnippetSourced(db: Database): number {
-  return (
-    db
-      .query(
-        `SELECT COUNT(*) AS n FROM glossary_term
-         WHERE status = 'consolidated' AND definition_source = 'snippet'`,
-      )
-      .get() as { n: number }
-  ).n;
+export function countSnippetSourced(db: Database, sets: GlossarySets): number {
+  if (sets.fast) {
+    return (
+      db
+        .query(
+          `SELECT COUNT(*) AS n FROM glossary_term
+           WHERE status = 'consolidated' AND definition_source = 'snippet'`,
+        )
+        .get() as { n: number }
+    ).n;
+  }
+  // Slow path: only the snippet terms `countByStatus`'s `total` counts, so the brief's "N of M"
+  // ratio can never read N > M (one existence check per consolidated snippet term).
+  const rows = db
+    .query(
+      `SELECT term_key, definition_source FROM glossary_term
+       WHERE status = 'consolidated' AND definition_source = 'snippet'`,
+    )
+    .all() as Array<{ term_key: string; definition_source: string | null }>;
+  return rows.filter((r) => isRowVisible(db, r.term_key, r.definition_source, sets)).length;
 }
 
 export type GlossaryPassState = {

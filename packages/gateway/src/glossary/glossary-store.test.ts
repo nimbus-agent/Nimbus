@@ -19,6 +19,7 @@ import {
   clearGlossary,
   computeTermStats,
   countByStatus,
+  countSnippetSourced,
   deleteAgentTerm,
   demoteTerm,
   effectiveView,
@@ -379,8 +380,9 @@ test("selectStaleForRecheck skips terms verified after the cutoff", () => {
 test("findBySynonym resolves the canonical term", () => {
   seedCandidate("cdr");
   consolidate("cdr", 2000, ["change data record"]);
-  expect(findBySynonym(db, "change data record")?.termKey).toBe("cdr");
-  expect(findBySynonym(db, "nope")).toBeNull();
+  const sets = glossarySets(db, BUILTIN_SOURCE_MAPPING);
+  expect(findBySynonym(db, "change data record", sets)?.termKey).toBe("cdr");
+  expect(findBySynonym(db, "nope", sets)).toBeNull();
 });
 
 test("demoteTerm returns a consolidated row to pending and clears its definition", () => {
@@ -1246,9 +1248,9 @@ describe("consolidated reads under an excluding mapping", () => {
     seedCandidate("xid");
     markVetoed(db, "xid", 3000);
     const slow = countByStatus(db, glossarySets(db, NO_SLACK));
-    expect(slow).toMatchObject({ total: 1, pending: 1, vetoed: 1 });
+    expect(slow).toMatchObject({ total: 1, hidden: 1, pending: 1, vetoed: 1 });
     const fast = countByStatus(db, glossarySets(db, BUILTIN_SOURCE_MAPPING));
-    expect(fast).toMatchObject({ total: 2, pending: 1, vetoed: 1 });
+    expect(fast).toMatchObject({ total: 2, hidden: 0, pending: 1, vetoed: 1 });
   });
 
   test("countByStatus's fast path issues no FTS query", () => {
@@ -1284,8 +1286,31 @@ describe("consolidated reads under an excluding mapping", () => {
     const start = performance.now();
     const counts = countByStatus(db, sets);
     const elapsed = performance.now() - start;
-    console.log(`countByStatus over 500 terms (slow path): ${elapsed.toFixed(1)} ms`);
     expect(counts.total).toBe(250);
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  test("countSnippetSourced counts visible snippet terms on the slow path only", () => {
+    seedConsolidatedIn("cdr", "slack", "message", 5);
+    seedConsolidatedIn("wal", "jira", "issue", 5);
+    dbRun(db, "UPDATE glossary_term SET definition_source = 'snippet'", []);
+    expect(countSnippetSourced(db, glossarySets(db, NO_SLACK))).toBe(1);
+    expect(countSnippetSourced(db, glossarySets(db, BUILTIN_SOURCE_MAPPING))).toBe(2);
+  });
+
+  test("list mode with recomputeStats at limit 50 over 300 terms stays under 2 s", () => {
+    db.transaction(() => {
+      for (let i = 0; i < 300; i++) {
+        const key = `r${String(i).padStart(3, "0")}q`;
+        if (i % 2 === 0) seedConsolidatedIn(key, "slack", "message", 3);
+        else seedConsolidatedIn(key, "jira", "issue", 3);
+      }
+    })();
+    const sets = glossarySets(db, NO_SLACK);
+    const start = performance.now();
+    const rows = listVisibleConsolidated(db, 50, sets, { recomputeStats: true });
+    const elapsed = performance.now() - start;
+    expect(rows).toHaveLength(50);
     expect(elapsed).toBeLessThan(2000);
   });
 });

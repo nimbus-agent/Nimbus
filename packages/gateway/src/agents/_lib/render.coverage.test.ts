@@ -152,6 +152,7 @@ function glossaryBrief(over: Partial<GlossaryBrief>): GlossaryBrief {
     suggestions: [],
     stats: {
       total: 0,
+      hidden: 0,
       pending: 0,
       vetoed: 0,
       manual: 0,

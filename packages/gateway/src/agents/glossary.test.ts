@@ -247,7 +247,15 @@ describe("reads under an excluding mapping", () => {
   }
 
   /** A consolidated term whose stored stats are measured over the built-in set, as a pass would. */
-  function consolidatedFromIndex(key: string, score = 5): void {
+  function consolidatedFromIndex(
+    key: string,
+    score = 5,
+    o: {
+      definitionSource?: "llm" | "snippet";
+      synonyms?: string[];
+      nearMisses?: string[];
+    } = {},
+  ): void {
     upsertCandidate(db, {
       key,
       surface: key.toUpperCase(),
@@ -259,12 +267,32 @@ describe("reads under an excluding mapping", () => {
     markConsolidated(db, {
       termKey: key,
       definition: `definition of ${key}`,
-      definitionSource: "llm",
+      definitionSource: o.definitionSource ?? "llm",
       definitionLocal: false,
-      synonyms: [],
-      nearMisses: [],
+      synonyms: o.synonyms ?? [],
+      nearMisses: o.nearMisses ?? [],
       nowMs: 1000,
     });
+  }
+
+  function passRan(): void {
+    writePassState(db, {
+      watermarkMs: 900,
+      watermarkId: "x",
+      lastPassAt: 1000,
+      lastPassNew: 1,
+      scannedItems: 1,
+    });
+  }
+
+  function slackOnly(key: string): void {
+    for (let i = 0; i < 3; i++) {
+      item("slack", "message", `${key}-s${String(i)}`, `the ${key.toUpperCase()} rollout`, 100 + i);
+    }
+  }
+
+  function jiraOnly(key: string): void {
+    item("jira", "issue", `${key}-j`, `the ${key.toUpperCase()} ticket`, 200);
   }
 
   function row(key: string): unknown {
@@ -317,5 +345,87 @@ describe("reads under an excluding mapping", () => {
 
     // The built-in mapping shows the stored figures.
     expect((await runGlossary({}, ctx())).entries[0]?.docFreq).toBe(5);
+  });
+
+  test("the snippet ratio counts visible snippet terms only", async () => {
+    slackOnly("cdr");
+    slackOnly("lsn");
+    jiraOnly("wal");
+    jiraOnly("xid");
+    consolidatedFromIndex("cdr", 5, { definitionSource: "snippet" });
+    consolidatedFromIndex("lsn", 5, { definitionSource: "snippet" });
+    consolidatedFromIndex("wal", 5, { definitionSource: "snippet" });
+    consolidatedFromIndex("xid", 5, { definitionSource: "llm" });
+    passRan();
+    const hidden = await runGlossary({}, ctx(NO_SLACK));
+    const note = hidden.gaps.find((g) => g.detail.includes("verbatim snippet"));
+    expect(note?.detail).toContain("1 of 2");
+    const all = await runGlossary({}, ctx());
+    expect(all.gaps.find((g) => g.detail.includes("verbatim snippet"))?.detail).toContain("3 of 4");
+  });
+
+  test("terms hidden by the mapping get their own gap note, never the min_doc_freq one", async () => {
+    slackOnly("cdr");
+    slackOnly("lsn");
+    consolidatedFromIndex("cdr");
+    consolidatedFromIndex("lsn");
+    passRan();
+    const brief = await runGlossary({}, ctx(NO_SLACK));
+    expect(brief.entries).toEqual([]);
+    expect(brief.stats.total).toBe(0);
+    expect(brief.stats.hidden).toBe(2);
+    const note = brief.gaps.find((g) => g.detail.includes("current source mapping"));
+    expect(note?.detail).toBe(
+      "2 consolidated term(s) are hidden because their sources are not in the current source mapping.",
+    );
+    expect(note?.remediation).toContain("nimbus config explain sources");
+    expect(brief.gaps.some((g) => g.detail.includes("minimum document frequency"))).toBe(false);
+    expect(brief.gaps.some((g) => (g.remediation ?? "").includes("min_doc_freq"))).toBe(false);
+
+    // Some visible, some hidden: the mapping note still states the hidden count.
+    jiraOnly("wal");
+    consolidatedFromIndex("wal");
+    const mixed = await runGlossary({}, ctx(NO_SLACK));
+    expect(mixed.entries.map((e) => e.term)).toEqual(["WAL"]);
+    expect(mixed.gaps.find((g) => g.detail.includes("current source mapping"))?.detail).toMatch(
+      /^2 consolidated term\(s\) are hidden/,
+    );
+    // The built-in mapping hides nothing and says nothing about it.
+    const builtin = await runGlossary({}, ctx());
+    expect(builtin.stats.hidden).toBe(0);
+    expect(builtin.gaps.some((g) => g.detail.includes("current source mapping"))).toBe(false);
+  });
+
+  test("stored near misses that name a hidden term are not shown", async () => {
+    slackOnly("cdr");
+    jiraOnly("cdq");
+    consolidatedFromIndex("cdr");
+    consolidatedFromIndex("cdq", 5, { nearMisses: ["cdr"] });
+    expect((await runGlossary({}, ctx(NO_SLACK))).entries[0]?.nearMisses).toEqual([]);
+    expect((await runGlossary({ term: "CDQ" }, ctx(NO_SLACK))).entries[0]?.nearMisses).toEqual([]);
+    expect((await runGlossary({ term: "CDQ" }, ctx())).entries[0]?.nearMisses).toEqual(["cdr"]);
+  });
+
+  test("a hidden exact match falls through to a visible synonym", async () => {
+    slackOnly("cdr");
+    jiraOnly("chg");
+    consolidatedFromIndex("cdr");
+    consolidatedFromIndex("chg", 5, { synonyms: ["CDR"] });
+    const brief = await runGlossary({ term: "CDR" }, ctx(NO_SLACK));
+    expect(brief.mode).toBe("term");
+    expect(brief.matchedVia).toBe("synonym");
+    expect(brief.entries[0]?.term).toBe("CHG");
+    // The built-in mapping still resolves the exact term.
+    expect((await runGlossary({ term: "CDR" }, ctx())).entries[0]?.term).toBe("CDR");
+  });
+
+  test("a hidden first synonym match does not hide a visible second one", async () => {
+    slackOnly("aaa");
+    jiraOnly("bbb");
+    consolidatedFromIndex("aaa", 5, { synonyms: ["Shared Name"] });
+    consolidatedFromIndex("bbb", 5, { synonyms: ["Shared Name"] });
+    const hidden = await runGlossary({ term: "Shared Name" }, ctx(NO_SLACK));
+    expect(hidden.entries[0]?.term).toBe("BBB");
+    expect((await runGlossary({ term: "Shared Name" }, ctx())).entries[0]?.term).toBe("AAA");
   });
 });

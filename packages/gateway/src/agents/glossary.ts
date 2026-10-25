@@ -75,16 +75,15 @@ function resolveTerm(
   const key = normalizeTerm(raw);
   if (key === "") return { term: null, matchedVia: null };
 
-  // A term the mapping hides is a miss, whichever way it was matched (spec § 7). It is shown
-  // through `effectiveView`, so its statistics are over the sources the reader sees.
+  // A term the mapping hides is never returned (spec § 7): a hidden exact match falls through to
+  // the synonym lookup, which itself skips hidden holders. A match is shown through
+  // `effectiveView`, so its statistics and near misses are over what the reader sees.
   const exact = getTerm(db, key);
-  if (exact !== null && exact.status === "consolidated") {
-    return isTermVisible(db, exact, sets)
-      ? { term: effectiveView(db, exact, sets), matchedVia: "exact" }
-      : { term: null, matchedVia: null };
+  if (exact !== null && exact.status === "consolidated" && isTermVisible(db, exact, sets)) {
+    return { term: effectiveView(db, exact, sets), matchedVia: "exact" };
   }
-  const bySynonym = findBySynonym(db, key);
-  if (bySynonym !== null && isTermVisible(db, bySynonym, sets)) {
+  const bySynonym = findBySynonym(db, key, sets);
+  if (bySynonym !== null) {
     return { term: effectiveView(db, bySynonym, sets), matchedVia: "synonym" };
   }
 
@@ -93,7 +92,8 @@ function resolveTerm(
 
 function buildGaps(
   db: Database,
-  counts: { total: number; pending: number; vetoed: number },
+  sets: GlossarySets,
+  counts: { total: number; hidden: number; pending: number; vetoed: number },
   lastPassAt: number | null,
   entryCount: number,
   truncation: { totalSources: number; truncatedSources: number },
@@ -120,7 +120,21 @@ function buildGaps(
     });
     return gaps;
   }
-  if (counts.total === 0) {
+  // Terms the current source mapping hides are not "below the frequency floor": telling that
+  // user to lower `min_doc_freq` would send them after the wrong setting. Stated whenever any term
+  // is hidden, not only when the list is empty, since the list is shorter than the glossary.
+  if (counts.hidden > 0) {
+    gaps.push({
+      category: "missing_connector",
+      detail:
+        `${String(counts.hidden)} consolidated term(s) are hidden because their sources are ` +
+        "not in the current source mapping.",
+      remediation:
+        "Run `nimbus config explain sources` to see the mapping; the terms reappear, unchanged, " +
+        "when their sources are mapped again.",
+    });
+  }
+  if (counts.total === 0 && counts.hidden === 0) {
     gaps.push({
       category: "missing_connector",
       detail: "A pass ran but no candidate met the minimum document frequency.",
@@ -139,7 +153,7 @@ function buildGaps(
   // simply not running has no way to notice the pattern — the glossary looks
   // built, just oddly worded. Report the ratio rather than picking a
   // "predominantly" threshold nobody can justify.
-  const snippetCount = countSnippetSourced(db);
+  const snippetCount = countSnippetSourced(db, sets);
   if (snippetCount > 0) {
     gaps.push({
       category: "missing_connector",
@@ -218,7 +232,7 @@ export async function runGlossary(
     const terms = decode<GlossaryTerm[]>(results[0]?.text, []);
     entries = terms.map(toEntry);
     mode = "list";
-    const gaps = buildGaps(ctx.db, counts, passState.lastPassAt, entries.length, truncation);
+    const gaps = buildGaps(ctx.db, sets, counts, passState.lastPassAt, entries.length, truncation);
     return {
       kind: "glossary",
       agentVersion: 1,
@@ -279,7 +293,7 @@ export async function runGlossary(
     agentVersion: 1,
     generatedAt: Date.now(),
     latencyMs: Math.round(performance.now() - start),
-    gaps: buildGaps(ctx.db, counts, passState.lastPassAt, entries.length, truncation),
+    gaps: buildGaps(ctx.db, sets, counts, passState.lastPassAt, entries.length, truncation),
     query: { term: rawTerm, limit },
     mode,
     entries,

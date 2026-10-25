@@ -699,6 +699,7 @@ const GLOSSARY_FIXTURE: GlossaryBrief = {
   suggestions: [],
   stats: {
     total: 0,
+    hidden: 0,
     pending: 0,
     vetoed: 0,
     manual: 0,
