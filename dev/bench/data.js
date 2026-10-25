@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792966600862,
+  "lastUpdate": 1792968268649,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "861cfb5940816619d6442de6da85ea8e495cb624",
-          "message": "test(mcp): 🧪 add unit tests for snowflake server.ts (#1121)\n\n🎯 **What:** Adds the missing `server.test.ts` file for the Snowflake MCP\nconnector to verify its main read-only tools and environment variable\nvalidation.\n📊 **Coverage:** Covers `snowflake_get`, `snowflake_search`, environment\nvariable verification for `SNOWFLAKE_ACCOUNT` and `SNOWFLAKE_TOKEN`, and\nAPI 500 error handling in `executeStatement`.\n✨ **Result:** Increased testing coverage and robustness for the\nSnowflake MCP connector tools and its underlying API invocation logic.\n\n---\n*PR created automatically by Jules for task\n[6910752213205173895](https://jules.google.com/task/6910752213205173895)\nstarted by @asafgolombek*\n\n---------\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-08T21:04:42+03:00",
-          "tree_id": "7d55a2755ae3f5155cafc9a2b8023c53b9427963",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/861cfb5940816619d6442de6da85ea8e495cb624"
-        },
-        "date": 1786212967497,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.9437716000037,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.5936142999937,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 275.55385490000555,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2e0dcd8517d200b9d241b9243eec057c47dc3c9b",
+          "message": "feat(desktop): onboarding asks what you do and installs the matching role pack (#1782)\n\nRole packs Project 5, PR 2 of 2: role-aware desktop onboarding. It\nbuilds on #1781 (merged), which added the gateway reads and `nimbus\ninit`.\n\n## What changes for a user\n\nDesktop onboarding is now **Welcome → What do you do? → (the pack) →\nConnect → Decisions or Syncing**.\n\n- **What do you do?** One card per role pack the gateway lists, then\nEngineering, Design and Something else. The renderer never names a pack\nid.\n- **The pack.** Says in plain words what the pack suggests and shows.\n**Continue** installs it through `pack.install`; the approval popup now\nshows the pack's exact prompt text in a bounded scroll box, with focus\nstarting on Reject. A refusal says why, and offers **Continue without\nthe pack**.\n- **Connect.** Offers the pack's suggested connectors, or six general\nones, from `catalog.list`, and signs each in its own way:\n  - browser sign-in, one connector at a time;\n- an inline Jira/Confluence form whose API token is cleared once the\ncall ends;\n  - the `nimbus connector auth <id>` command for token connectors.\n\nIt no longer jumps ahead on the first connection. It also sends\nconnector **ids**: the old screen sent display names such as \"Google\nDrive\", which `connector.auth` rejects.\n- **Decisions**, for a pack that shows them. Polls `decisions.status`\nand `connector.listStatus` every 3 s while the window is visible. It\nshows plain progress, then the decisions found, or what it read and the\none reason that applies (no decision language, or below the confidence\nfloor), with three next steps: add a channel, connect Notion or Google\nDrive, widen the window to a year. A disabled pass is stated outright,\nnever shown as a spinner.\n- **Existing installs** with no pack see a once-dismissible **Try a role\npack** card on the dashboard. Dismissing it sets the meta key\n`role_pack_card_dismissed`, added in #1781.\n- `/briefs/:agent` prefills a declared parameter from the query string,\naccepting a `sinceMs` only when it matches a preset; a \"1 year\" preset\nwas added. A prefill never runs a brief.\n\n## Security\n\n- The Tauri allowlist goes from **116 to 118**: `pack.install` and\n`decisions.status` are added. `pack.install` also joins\n`NO_TIMEOUT_METHODS` (7 → 8). `pack.remove`, `pack.show`,\n`decisions.refresh` and `decisions.rebuild` stay off. The enumeration is\npinned on both sides, Rust and `security-invariants.test.ts`, not just\nthe count.\n- **I47 widened.** A renderer connection may install a **bundled pack by\nid only**. `ipc/pack-rpc.ts` refuses the `fileText`/`filePath` form of\n`pack.install`/`pack.show` with `ERR_PACK_RENDERER_FILE` before the\nrequest is parsed and before any prompt. The flag comes from the\nconnection's declared kind, never from a request field, the same way\nI46's `fromRenderer` does.\n- Stated bound, in I46's shape: a compromised renderer can answer the\nprompt it raised. At worst it installs a first-party bundled pack, which\ncan only set allowlisted, local-only keys.\n- Docs updated: `docs/SECURITY-INVARIANTS.md` (I47 and the allowlist\nledger), CLAUDE.md, GEMINI.md and the `nimbus-tauri-allowlist` skill.\n\n## Design\n\nThe spec and plan are on `dev/asaf/role-packs`:\n- `docs/superpowers/specs/2026-10-25-role-packs-p5-onboarding-design.md`\n- `docs/superpowers/plans/2026-10-25-role-packs-p5-pr2-desktop.md`, with\nits Antigravity review\n\nMy calls, recorded in the spec:\n- The only in-app credential form is the Atlassian one, because the\nowner named Jira; every other token connector stays a terminal command.\n- The HITL popup stays non-resizable; the prompt box is capped instead.\n\n## Antigravity end-result review: disposition\n\n| # | Finding | Disposition |\n|---|---|---|\n| 1 | `decisions.status` has no handler | Declined: it is #1781's\nhandler, in a file outside this diff. `allowlist-resolves.test.ts`\nresolves both new methods over a real socket. |\n| 2, 16, 17 | Double-submit on sign-in, install and the Jira form |\nFixed with guards. The sign-in button shows \"Signing in…\" while it runs.\n|\n| 3 | Connect polls while hidden | Fixed. |\n| 4, 5, 6 | Back from Connect skips Pack; Pack has no Back; Pack with no\nchoice is a dead end | Fixed: Back goes to Pack when a pack was chosen,\nPack has a Back button, and Pack redirects to Role when nothing is\nchosen. Pack reads the choice once on mount, so clearing it on the way\nout cannot redirect mid-navigation. |\n| 7 | `packs.installed` undefined | Declined: the provider only hands\nover a reply whose `installed` is an array. |\n| 8 | Extension labels on the Pack step | Fixed: rows are indexed by\n`serviceId` too, matching Connect. |\n| 9 | Token cleared after `onConnected` | Fixed: cleared first, then\ncontrol is handed back. |\n| 10 | Closing the window on Decisions does not complete onboarding |\nFixed: on hide or unmount, as the Syncing step does. |\n| 11 | Overlapping ticks; empty names before the catalog answers |\nFixed: an in-flight guard, and every connected connector is shown until\nnames arrive. |\n| 12 | Loose `decisions.status` validation | Fixed: `pending` and\n`extracted` must be numbers. |\n| 13, 14 | Step labels and the header's last step | Fixed: named labels,\nand the header knows Decisions from the choice, which the store now\nkeeps. |\n| 15 | A \"no decision language\" reason when nothing was read | Fixed: no\nreason in that case. Tested. |\n| 18 | The popup's `decide` lacks a busy guard | Declined: pre-existing,\nand the buttons are already disabled while busy. |\n| 19 | No-timeout count not pinned on the TypeScript side | Fixed. |\n| 20 | Stale prefill across briefs | Declined: `BriefRunView` is already\nkeyed by agent name. |\n| 21 | List keys | Fixed. |\n| 22 | State update after unmount | Declined: harmless in React 18+, and\nthe effects already guard with `live`. |\n| 23 | Stale onboarding state | Fixed: Welcome resets the slice on\nmount. |\n\n## Verification\n\n- `bun run preflight:fast`: passed.\n- `typecheck:tests`: 0 new errors.\n- `packages/ui` vitest: 1200 pass.\n- `cargo test`: the allowlist and no-timeout tests pass.\n- Gateway `ipc` and `security-invariants` tests: green.\n- Full `bun test packages/gateway/src`: 21123 pass. The 6 failures are\nwhole-tree scans hitting the 5 s timeout under parallel load, and each\npasses when run on its own.\n- `bun test scripts`: the only failures are the 5 `pwsh`-dependent\ncases, because `pwsh` is not on PATH here.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+          "timestamp": "2026-10-25T22:33:56Z",
+          "tree_id": "66f9b93c1cb6ef11fe732d945295b65283185770",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2e0dcd8517d200b9d241b9243eec057c47dc3c9b"
+        },
+        "date": 1792968264376,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 275.17348330000203,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 275.41998810000734,
             "unit": "ms"
           }
         ]
