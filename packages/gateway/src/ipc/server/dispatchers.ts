@@ -1460,9 +1460,11 @@ export async function tryDispatchComputerRpc(
  * `[fleet] enabled` + the `agent_fleet` org-policy lockoff (I22) checked inside `runOnce` itself,
  * not a per-client consent broker — an unattended overnight run has no client present to consent
  * per-action. Present only when assembled at boot; the dispatcher skips cleanly when unset.
- * `fleet.*` is LAN-forbidden in full (`FORBIDDEN_OVER_LAN`, I5) and absent from the Tauri allowlist
- * (I7): `fleet.runNow` spends the machine's resources and the reads return synthesised answers over
- * the private index, neither of which a peer or the renderer needs.
+ * `fleet.*` is LAN-forbidden in full (`FORBIDDEN_OVER_LAN`, I5). Only `fleet.briefs` and
+ * `fleet.show` are on the Tauri allowlist (I7): they return stored local SQLite text the renderer
+ * could already regenerate through the `agents.*` reads it holds, so they widen nothing.
+ * `fleet.runNow` spends the machine's resources, and `fleet.digest`/`status`/`list` are terminal
+ * surfaces, so none of those is renderer-callable.
  */
 export async function tryDispatchFleetRpc(
   ctx: ServerCtx,

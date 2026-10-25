@@ -1423,9 +1423,24 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).not.toContain("toolgen.");
   });
 
-  test("allowlist_exact_size assertion is 111", async () => {
+  test("allowlist_exact_size assertion is 116", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*111\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*116\s*\)/);
+  });
+
+  // Role packs Project 4: 111 + 7 - 2 = 116. By NAME, since a swap keeps the count.
+  test("role packs desktop: only fleet.briefs/fleet.show and pack.list are exposed from those namespaces", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    const start = rust.indexOf("pub const ALLOWED_METHODS: &[&str] = &[");
+    const list = rust.slice(start, rust.indexOf("];", start));
+    expect([...list.matchAll(/"(fleet\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual([
+      "fleet.briefs",
+      "fleet.show",
+    ]);
+    expect([...list.matchAll(/"(pack\.[A-Za-z]+)"/g)].map((m) => m[1])).toEqual(["pack.list"]);
+    for (const m of ["catalog.list", "agents.oncall", "agents.standup", "agents.changelog"]) {
+      expect(list).toContain(`"${m}"`);
+    }
   });
 
   // By NAME, as for every brief/verb pair: a one-for-one swap of pushedGet for pushedRetry keeps
@@ -1504,16 +1519,17 @@ describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
     expect(rust).toContain(`assert!(!is_method_allowed("decisions.rebuild"));`);
   });
 
-  // The count above is NOT sufficient on its own — a one-for-one substitution (e.g.
-  // agents.premortem swapped out for the LAN-forbidden premortem.refresh, which has no rebuild
-  // counterpart) leaves the count unchanged and would sail through. Name the methods, mirroring
-  // the Rust-side `allowlist_premortem_brief_only` test.
-  test("S1 pre-mortem: agents.premortem is renderer-exposed; premortem.refresh stays absent", async () => {
+  // Role packs Project 4 removed agents.preflight and agents.premortem (the latter was the one
+  // renderer-callable entry that was not purely a read). By NAME, so a later swap that puts either
+  // back keeps the count and still fails here; mirrors the Rust-side
+  // `allowlist_preflight_and_premortem_removed` test.
+  test("agents.premortem and agents.preflight are NOT renderer-exposed; premortem.refresh stays absent", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
-    expect(rust).toMatch(/^\s*"agents\.premortem",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"agents\.premortem",\s*$/m);
+    expect(rust).not.toMatch(/^\s*"agents\.preflight",\s*$/m);
     expect(rust).not.toMatch(/^\s*"premortem\.refresh",\s*$/m);
-    // …and the Rust side asserts the same thing at runtime, not just by count.
-    expect(rust).toContain(`assert!(is_method_allowed("agents.premortem"));`);
+    expect(rust).toContain(`assert!(!is_method_allowed("agents.premortem"));`);
+    expect(rust).toContain(`assert!(!is_method_allowed("agents.preflight"));`);
     expect(rust).toContain(`assert!(!is_method_allowed("premortem.refresh"));`);
   });
 
@@ -7661,7 +7677,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
     }
     expect(rust).toContain('assert!(is_method_allowed("migration.list"));');
     expect(rust).toContain('assert!(is_method_allowed("migration.accept"));');
-    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*111\s*\)/);
+    expect(rust).toMatch(/assert_eq!\s*\(\s*ALLOWED_METHODS\.len\(\),\s*116\s*\)/);
   });
 
   // ---- the positive control ------------------------------------------------------------------
