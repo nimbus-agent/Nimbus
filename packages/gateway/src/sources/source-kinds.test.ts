@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { DECISION_SOURCE_TYPES, decisionSourceFilter } from "../decisions/decision-source-types.ts";
+import { DECISION_SOURCE_TYPES } from "../decisions/decision-source-types.ts";
 import { GLOSSARY_SOURCE_TYPES, glossarySourceFilter } from "../glossary/glossary-source-types.ts";
 import {
   builtinSourceEntries,
@@ -42,8 +42,7 @@ test("the glossary set is exactly today's list, in today's order", () => {
   expect([...GLOSSARY_SOURCE_TYPES]).toEqual(GLOSSARY_BEFORE);
 });
 
-test("the filters' params are unchanged", () => {
-  expect(decisionSourceFilter().params).toEqual(DECISIONS_BEFORE);
+test("the glossary filter's params are unchanged", () => {
   expect(glossarySourceFilter().params).toEqual(GLOSSARY_BEFORE);
 });
 

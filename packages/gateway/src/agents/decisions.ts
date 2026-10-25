@@ -282,6 +282,7 @@ export async function runDecisions(
       sourceItemId: r.sourceItemId,
       evidence: r.evidence,
       service,
+      mapping: ctx.mapping,
     });
     if (route === null) {
       serviceUnmatched++;

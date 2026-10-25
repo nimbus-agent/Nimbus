@@ -213,6 +213,14 @@ export function resolveSourceMapping(snapshot: Pick<ConfigSnapshot, "doc">): Sou
   const section = snapshot.doc.sections.find((s) => s.header === "sources" && !s.isArray);
   if (section === undefined) return BUILTIN_SOURCE_MAPPING;
   const walk: Walk = { slots: builtinSlots(), excluded: [], notes: [] };
+  // A misspelt key (`excludes`, `maps`) would otherwise do nothing, silently.
+  const knownKeys = new Set(["map", "exclude"]);
+  for (const key of new Set(section.entries.map((e) => e.key))) {
+    if (knownKeys.has(key)) continue;
+    for (const { layer } of layerValues(section.entries, key)) {
+      walk.notes.push(`[sources] ${key} in ${label(layer)} is not a known key; ignored`);
+    }
+  }
   for (const { layer, valRaw } of valuesOf(section.entries, "map", "pack")) {
     applyPack(walk, layer, valRaw);
   }

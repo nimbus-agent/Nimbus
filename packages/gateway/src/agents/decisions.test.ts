@@ -578,3 +578,27 @@ test("an excluded type's decisions leave the brief and its counts", async () => 
   expect(brief.stats.extracted).toBe(1);
   expect(brief.stats.total).toBe(1);
 });
+
+test("--service ticket-key matching follows the effective mapping", async () => {
+  seedItem("acme:T-1", "acme", "ticket", JSON.stringify({ key: "BILLING-7" }));
+  seedItem("jira:J-1", "jira", "issue", JSON.stringify({ key: "BILLING-12" }));
+  scoredRow("acme-d", "acme:T-1", null);
+  scoredRow("jira-d", "jira:J-1", "ticket");
+  writePassState(db, PASS_STATE);
+
+  // Added ticket type: matches by key. Built-in mapping does not know it.
+  const added = ownerMapping('map = ["acme:ticket=ticket"]');
+  const withAcme = await runDecisions(
+    { sinceMs: ALL_TIME_MS, service: "billing" },
+    { ...ctx(), mapping: added },
+  );
+  expect(withAcme.entries.map((e) => e.id).sort()).toEqual(["acme-d", "jira-d"]);
+
+  // Re-kinded away from ticket: a Jira item no longer matches by its key.
+  const asDoc = ownerMapping('map = ["jira:issue=doc"]');
+  const reKinded = await runDecisions(
+    { sinceMs: ALL_TIME_MS, service: "billing" },
+    { ...ctx(), mapping: asDoc },
+  );
+  expect(reKinded.entries.map((e) => e.id)).toEqual([]);
+});

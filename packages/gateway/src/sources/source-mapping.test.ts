@@ -46,6 +46,14 @@ describe("resolveSourceMapping", () => {
     expect(m.notes).toEqual([]);
   });
 
+  test("an unknown key in a [sources] section is a note naming the layer and key", () => {
+    const m = resolve(base('excludes = ["slack:message"]'));
+    expect(m.kindOf("slack:message")).toBe("message");
+    expect(m.notes.some((n) => n.includes("excludes") && n.includes("base"))).toBe(true);
+    const p = resolve(pack("research", 'maps = ["readwise:highlight=note"]'));
+    expect(p.notes.some((n) => n.includes("maps") && n.includes("research"))).toBe(true);
+  });
+
   test("a pack adds a type", () => {
     const m = resolve(pack("research", 'map = ["readwise:highlight=note"]'));
     expect(m.kindOf("readwise:highlight")).toBe("note");
