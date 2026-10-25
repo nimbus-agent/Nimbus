@@ -1,14 +1,14 @@
 import type { Database } from "bun:sqlite";
-import { knownSourceTypes } from "../sources/source-catchup.ts";
 
-import { projectTerm, unprojectTerm } from "./glossary-project.ts";
+import { unprojectTerm } from "./glossary-project.ts";
 import {
   applyStats,
   computeTermStats,
   demoteTerm,
-  getTerm,
   selectStaleForRecheck,
 } from "./glossary-store.ts";
+import type { GlossarySets } from "./glossary-types.ts";
+import { syncTermProjection } from "./glossary-visibility.ts";
 import { scoreTerm } from "./term-scoring.ts";
 
 export type ReconcileSummary = { verified: number; demoted: string[] };
@@ -25,7 +25,14 @@ export type ReconcileSummary = { verified: number; demoted: string[] };
  */
 export function reconcilePass(
   db: Database,
-  opts: { limit: number; minDocFreq: number; nowMs: number; cooldownMs: number },
+  opts: {
+    limit: number;
+    minDocFreq: number;
+    nowMs: number;
+    cooldownMs: number;
+    /** The pass's sets: statistics are over `known`, the re-projection is visibility- and routing-aware. */
+    sets: GlossarySets;
+  },
 ): ReconcileSummary {
   // The cooldown is what keeps this cheap. The pass fires after EVERY
   // successful connector sync, and each verified term costs 2 FTS queries —
@@ -36,7 +43,7 @@ export function reconcilePass(
   const demoted: string[] = [];
   // Over the KNOWN set, never the effective one: a type that left the mapping still counts, so
   // removing a pack never demotes a term mined from it, and re-adding never re-consolidates it.
-  const known = knownSourceTypes(db, "glossary");
+  const known = opts.sets.known;
 
   for (const term of stale) {
     const stats = computeTermStats(db, term.termKey, known);
@@ -89,9 +96,9 @@ export function reconcilePass(
     // Re-project so the searchable copy self-heals too — `applyStats` alone
     // only refreshes the `glossary_term` row; the projected `item` row (what
     // `nimbus ask` actually retrieves) would otherwise keep pointing at
-    // sources the reconcile pass just confirmed are stale.
-    const refreshed = getTerm(db, term.termKey);
-    if (refreshed !== null) projectTerm(db, refreshed, opts.nowMs);
+    // sources the reconcile pass just confirmed are stale. Through the chokepoint, so the copy is
+    // also hidden or re-routed when the term's contributing types moved (spec § 7.1).
+    syncTermProjection(db, term.termKey, opts.sets, opts.nowMs);
   }
 
   return { verified: stale.length, demoted };

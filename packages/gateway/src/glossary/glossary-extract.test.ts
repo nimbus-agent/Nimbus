@@ -548,7 +548,7 @@ test("vetoes an upgraded term, unprojects it, and names it in the summary", asyn
   // "glossary:cdr" search hit that the veto must remove.
   const seeded = getTerm(db, "cdr");
   if (seeded === null) throw new Error("seedSnippetTerm did not create the row");
-  projectTerm(db, seeded, 1);
+  projectTerm(db, seeded, 1, "glossary_term");
   const before = db
     .query("SELECT COUNT(*) AS n FROM item WHERE external_id = 'glossary:cdr'")
     .get() as { n: number };

@@ -113,7 +113,7 @@ function seedLlmTerm(project: boolean): void {
   if (!project) return;
   const t = getTerm(db, "wal");
   if (t === null) throw new Error("seed failed");
-  projectTerm(db, t, NOW);
+  projectTerm(db, t, NOW, "glossary_term");
 }
 
 describe("decision", () => {

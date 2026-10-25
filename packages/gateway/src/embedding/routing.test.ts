@@ -158,6 +158,13 @@ describe("routing — local-only prose types", () => {
     expect(LOCAL_ONLY_PROSE_TYPES.has("nimbus:capture")).toBe(true);
     expect(PROSE_HEAVY_TYPES.has("nimbus:capture")).toBe(false);
   });
+
+  test("nimbus:glossary_term_local (spec § 7.1) routes local; nimbus:glossary_term stays remote", () => {
+    expect(LOCAL_ONLY_PROSE_TYPES.has("nimbus:glossary_term_local")).toBe(true);
+    expect(PROSE_HEAVY_TYPES.has("nimbus:glossary_term_local")).toBe(false);
+    expect(isProseHeavy("nimbus", "glossary_term_local")).toBe(false);
+    expect(isProseHeavy("nimbus", "glossary_term")).toBe(true);
+  });
 });
 
 describe("the Readwise item types", () => {

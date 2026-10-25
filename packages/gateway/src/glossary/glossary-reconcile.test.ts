@@ -25,8 +25,15 @@ import {
   upsertCandidate,
   upsertManualTerm,
 } from "./glossary-store.ts";
+import type { GlossarySets } from "./glossary-types.ts";
+import { glossarySets } from "./glossary-visibility.ts";
 
 let db: Database;
+
+/** The built-in mapping's sets: every known type effective, so nothing is hidden. */
+function builtinSets(): GlossarySets {
+  return glossarySets(db, BUILTIN_SOURCE_MAPPING);
+}
 
 function seedItem(externalId: string, body: string, modifiedAt: number): void {
   upsertIndexedItem(db, {
@@ -65,7 +72,7 @@ function seedConsolidated(key: string, docFreq: number, nowMs = 1000): void {
     nowMs,
   });
   const t = getTerm(db, key);
-  if (t !== null) projectTerm(db, t, nowMs);
+  if (t !== null) projectTerm(db, t, nowMs, "glossary_term");
 }
 
 beforeEach(() => {
@@ -80,7 +87,13 @@ test("a term whose sources vanished is demoted and unprojected", () => {
   seedConsolidated("cdr", 3);
   db.run("DELETE FROM item WHERE type = 'message'");
 
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  const out = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 2000,
+    cooldownMs: 0,
+    sets: builtinSets(),
+  });
 
   expect(out.demoted).toEqual(["cdr"]);
   expect(getTerm(db, "cdr")?.status).toBe("pending");
@@ -93,7 +106,13 @@ test("a term still above the floor keeps its definition and is re-stamped", () =
   seedItem("c", "CDR three", 100);
   seedConsolidated("cdr", 3);
 
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  const out = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 2000,
+    cooldownMs: 0,
+    sets: builtinSets(),
+  });
 
   expect(out.demoted).toEqual([]);
   const t = getTerm(db, "cdr");
@@ -107,7 +126,7 @@ test("statistics are refreshed rather than left stale", () => {
   seedItem("b", "CDR two", 100);
   seedItem("c", "CDR three", 100);
   seedConsolidated("cdr", 99);
-  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0, sets: builtinSets() });
   expect(getTerm(db, "cdr")?.docFreq).toBe(3);
 });
 
@@ -126,7 +145,7 @@ test("a retained term's projected item is re-projected with its refreshed topSou
   } | null;
   expect(JSON.parse(before?.metadata ?? "{}").topSources).toEqual([]);
 
-  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0, sets: builtinSets() });
 
   const after = db.query("SELECT metadata FROM item WHERE type = 'glossary_term'").get() as {
     metadata: string;
@@ -140,13 +159,20 @@ test("the sweep honours its limit", () => {
   seedConsolidated("cdr", 3, 1000);
   seedConsolidated("aaa", 3, 1000);
   seedConsolidated("bbb", 3, 1000);
-  expect(reconcilePass(db, { limit: 2, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 }).verified).toBe(
-    2,
-  );
+  expect(
+    reconcilePass(db, { limit: 2, minDocFreq: 3, nowMs: 2000, cooldownMs: 0, sets: builtinSets() })
+      .verified,
+  ).toBe(2);
 });
 
 test("the sweep is a no-op on an empty glossary", () => {
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
+  const out = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 2000,
+    cooldownMs: 0,
+    sets: builtinSets(),
+  });
   expect(out).toEqual({ verified: 0, demoted: [] });
 });
 
@@ -154,8 +180,8 @@ test("round-robin reaches a different term on the next pass", () => {
   seedItem("a", "CDR one AAA", 100);
   seedConsolidated("cdr", 3, 1000);
   seedConsolidated("aaa", 3, 1000);
-  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 });
-  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 3000, cooldownMs: 0 });
+  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 2000, cooldownMs: 0, sets: builtinSets() });
+  reconcilePass(db, { limit: 1, minDocFreq: 3, nowMs: 3000, cooldownMs: 0, sets: builtinSets() });
   expect(getTerm(db, "cdr")?.statsVerifiedAt).toBeGreaterThan(1000);
   expect(getTerm(db, "aaa")?.statsVerifiedAt).toBeGreaterThan(1000);
 });
@@ -166,15 +192,33 @@ test("the cooldown makes a repeat sweep a no-op", () => {
   seedItem("c", "CDR three", 100);
   seedConsolidated("cdr", 3, 1000);
 
-  const first = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 100_000, cooldownMs: 1000 });
+  const first = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 100_000,
+    cooldownMs: 1000,
+    sets: builtinSets(),
+  });
   expect(first.verified).toBe(1);
 
   // Immediately after: the term was just verified, so nothing is due.
-  const second = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 100_500, cooldownMs: 1000 });
+  const second = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 100_500,
+    cooldownMs: 1000,
+    sets: builtinSets(),
+  });
   expect(second.verified).toBe(0);
 
   // Once the cooldown lapses it becomes due again.
-  const third = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 102_000, cooldownMs: 1000 });
+  const third = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 102_000,
+    cooldownMs: 1000,
+    sets: builtinSets(),
+  });
   expect(third.verified).toBe(1);
 });
 
@@ -203,7 +247,13 @@ test("demotion is atomic — a failure between the writes rolls all three back",
   );
 
   expect(() =>
-    reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 2000, cooldownMs: 0 }),
+    reconcilePass(db, {
+      limit: 10,
+      minDocFreq: 3,
+      nowMs: 2000,
+      cooldownMs: 0,
+      sets: builtinSets(),
+    }),
   ).toThrow();
 
   db.run("DROP TRIGGER simulated_crash_before_apply_stats");
@@ -241,6 +291,7 @@ test("the sweep refreshes a manual row's stats but never demotes it", () => {
     minDocFreq: 3,
     nowMs: 1_000_000,
     cooldownMs: 0,
+    sets: builtinSets(),
   });
 
   const t = getTerm(db, "cdr");
@@ -269,7 +320,13 @@ test("a stale owner-accepted agent term with zero mentions survives, unprojected
     score: 0,
     nowMs: 10,
   });
-  const out = reconcilePass(db, { limit: 10, minDocFreq: 3, nowMs: 5000, cooldownMs: 100 });
+  const out = reconcilePass(db, {
+    limit: 10,
+    minDocFreq: 3,
+    nowMs: 5000,
+    cooldownMs: 100,
+    sets: builtinSets(),
+  });
   expect(out.verified).toBe(1);
   expect(out.demoted).toEqual([]);
   expect(termOwnership(db, "wal")).toEqual({

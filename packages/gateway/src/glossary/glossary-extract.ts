@@ -10,7 +10,6 @@ import {
   type CatchupCursor,
   type CatchupSummary,
   catchupTypes,
-  knownSourceTypes,
   reconcileCatchupRows,
   runCatchup,
   SCAN_COLUMNS,
@@ -23,7 +22,7 @@ import {
   consolidateTerm,
 } from "./glossary-consolidate.ts";
 import { applyManualTerms } from "./glossary-manual.ts";
-import { projectTerm, unprojectTerm } from "./glossary-project.ts";
+import { unprojectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
 import {
   clearGlossary,
@@ -42,8 +41,8 @@ import {
   upsertCandidate,
   writePassState,
 } from "./glossary-store.ts";
-import type { GlossaryPassProgress, GlossaryTerm } from "./glossary-types.ts";
-import { glossarySets } from "./glossary-visibility.ts";
+import type { GlossaryPassProgress, GlossarySets, GlossaryTerm } from "./glossary-types.ts";
+import { glossarySets, sweepProjections, syncTermProjection } from "./glossary-visibility.ts";
 import { findNearMisses } from "./near-miss.ts";
 import { mineTerms } from "./term-mining.ts";
 import { scoreTerm } from "./term-scoring.ts";
@@ -279,13 +278,18 @@ export function loadGlossaryCandidates(
  * source set, kept if it clears the `minDocFreq` floor, scored and upserted. No transaction and no
  * cursor — the delta path and the catch-up path each own their cursor write. Returns how many
  * candidates were upserted.
+ *
+ * A key that is already `consolidated` gained occurrences here, so its search copy is re-synced at
+ * once: a hidden term whose new item is in an effective type reappears, and a term that just gained
+ * a local-only contributor is re-routed (spec § 7.1), instead of waiting for the reconcile cooldown.
  */
 function mineCandidates(
   db: Database,
   rows: readonly ScanRow[],
-  known: readonly string[],
+  sets: GlossarySets,
   opts: GlossaryPassOptions,
 ): number {
+  const known = sets.known;
   const seen = new Map<
     string,
     { surface: string; form: ReturnType<typeof mineTerms>[number]["form"] }
@@ -313,27 +317,45 @@ function mineCandidates(
       }),
       nowMs: opts.nowMs,
     });
+    if (getTerm(db, key)?.status === "consolidated") {
+      syncTermProjection(db, key, sets, opts.nowMs);
+    }
     discovered += 1;
   }
   return discovered;
 }
 
 /**
- * Catch-up, before the delta scan: reconcile the per-type rows, then drain every effective type
- * still behind the run-start main cursor, within `GLOSSARY_CATCHUP_BATCHES`. It NEVER writes
- * `glossary_pass_state` — its cursors are older than the main one by construction, so writing one
- * there would rewind the main watermark and re-scan the index.
+ * Reconciles the per-type catch-up rows against this run's mapping, then resolves the sets the
+ * whole run uses. It runs BEFORE anything projects, so a type mapped for the first time this run is
+ * already known: its occurrences count toward the candidates it yields, and toward the § 7.1
+ * routing of every term written this run (an authored one in the pre-pass included). Catch-up
+ * NEVER writes `glossary_pass_state`; the main cursor only bounds the rows it opens.
+ */
+function prepareSets(db: Database, opts: GlossaryPassOptions): GlossarySets {
+  reconcileCatchupRows(
+    db,
+    "glossary",
+    opts.mapping.typesFor("glossary"),
+    BUILTIN_GLOSSARY_TYPES,
+    readPassState(db),
+  );
+  return glossarySets(db, opts.mapping);
+}
+
+/**
+ * Catch-up, before the delta scan: drain every effective type still behind the run-start main
+ * cursor, within `GLOSSARY_CATCHUP_BATCHES` (the per-type rows were reconciled by `prepareSets`).
+ * It NEVER writes `glossary_pass_state` — its cursors are older than the main one by construction,
+ * so writing one there would rewind the main watermark and re-scan the index.
  */
 function catchupPhase(
   db: Database,
   opts: GlossaryPassOptions,
   mainCursor: CatchupCursor,
+  sets: GlossarySets,
 ): CatchupSummary {
   const effective = opts.mapping.typesFor("glossary");
-  reconcileCatchupRows(db, "glossary", effective, BUILTIN_GLOSSARY_TYPES, mainCursor);
-  // Read AFTER the reconcile, so a type mapped for the first time this run is already known and
-  // its own occurrences count toward the candidates it yields.
-  const known = knownSourceTypes(db, "glossary");
   const mappingAt = opts.mappingAt ?? (() => opts.mapping);
   return runCatchup(db, catchupTypes(db, "glossary", effective), {
     pass: "glossary",
@@ -341,7 +363,7 @@ function catchupPhase(
     maxBatches: GLOSSARY_CATCHUP_BATCHES,
     isEffective: (serviceType) => mappingAt().typesFor("glossary").includes(serviceType),
     scan: (serviceType, after, limit) => scanCatchup(db, serviceType, after, mainCursor, limit),
-    mine: (rows) => mineCandidates(db, rows, known, opts),
+    mine: (rows) => mineCandidates(db, rows, sets, opts),
   });
 }
 
@@ -355,12 +377,12 @@ function catchupPhase(
 function discoverPhase(
   db: Database,
   opts: GlossaryPassOptions,
+  sets: GlossarySets,
 ): { scanned: number; discovered: number; demoted: number } {
   const state = readPassState(db);
-  const catchup = catchupPhase(db, opts, state);
+  const catchup = catchupPhase(db, opts, state, sets);
   const rows = scanDelta(db, state, opts.mapping);
-  const discovered =
-    catchup.discovered + mineCandidates(db, rows, knownSourceTypes(db, "glossary"), opts);
+  const discovered = catchup.discovered + mineCandidates(db, rows, sets, opts);
   const scanned = catchup.scanned + rows.length;
 
   const reconciled = reconcilePass(db, {
@@ -368,7 +390,11 @@ function discoverPhase(
     minDocFreq: opts.minDocFreq,
     nowMs: opts.nowMs,
     cooldownMs: opts.statsRecheckCooldownMs,
+    sets,
   });
+  // After reconcile: hide, re-show and re-route search copies for a mapping that changed since the
+  // last sweep (a no-op when it did not). No model call — a derived item only.
+  sweepProjections(db, sets, opts.nowMs);
 
   // The cursor advances to the LAST row of the batch, which under
   // `ORDER BY modified_at, id` is the largest `(modified_at, id)` pair scanned.
@@ -404,7 +430,11 @@ type ConsolidationTally = {
  * Splits the per-pass budget between the pending queue and the snippet-upgrade
  * queue, and returns the flattened work list in execution order.
  */
-function selectConsolidationWork(db: Database, opts: GlossaryPassOptions): ConsolidationUnit[] {
+function selectConsolidationWork(
+  db: Database,
+  opts: GlossaryPassOptions,
+  sets: GlossarySets,
+): ConsolidationUnit[] {
   // Budget allocation. `UPGRADE_RESERVE` is a FLOOR on upgrade slots, never a
   // ceiling, and each queue absorbs the other's slack — both one-sided
   // formulations waste budget in a corner:
@@ -431,7 +461,6 @@ function selectConsolidationWork(db: Database, opts: GlossaryPassOptions): Conso
   const hasLlm = opts.llm !== undefined;
   const reserve = hasLlm ? Math.min(UPGRADE_RESERVE, Math.floor(budget / 2)) : 0;
   // A term the effective mapping hides is not spent a model call on; it stays as it is.
-  const sets = glossarySets(db, opts.mapping);
   const pendingAll = selectPendingBatch(
     db,
     budget,
@@ -459,6 +488,9 @@ function selectConsolidationWork(db: Database, opts: GlossaryPassOptions): Conso
     ...upgradeBatch.map((term) => ({ term, isUpgrade: true })),
   ];
 }
+
+/** What every outcome of one consolidate phase shares. */
+type ConsolidationContext = { knownKeys: string[]; nowMs: number; sets: GlossarySets };
 
 /** Only a model can veto, so reaching here proves the model answered. */
 function applyVetoedOutcome(
@@ -489,7 +521,7 @@ function applyDefinedOutcome(
   db: Database,
   unit: ConsolidationUnit,
   outcome: Extract<ConsolidationOutcome, { kind: "defined" }>,
-  ctx: { knownKeys: string[]; nowMs: number },
+  ctx: ConsolidationContext,
   tally: ConsolidationTally,
 ): void {
   if (outcome.source === "llm") tally.llmProduced = true;
@@ -512,7 +544,7 @@ function applyDefinedOutcome(
     // The row exists but the guarded UPDATE did not take: a capture for this key was accepted
     // during the model call. Agent text is never projected (it can be remote-embedded).
     if (!changed && stored !== null) return false;
-    if (stored !== null) projectTerm(db, stored, ctx.nowMs);
+    if (stored !== null) syncTermProjection(db, stored.termKey, ctx.sets, ctx.nowMs);
     return true;
   })();
   if (!applied) return;
@@ -524,7 +556,7 @@ function applyConsolidationOutcome(
   db: Database,
   unit: ConsolidationUnit,
   outcome: ConsolidationOutcome,
-  ctx: { knownKeys: string[]; nowMs: number },
+  ctx: ConsolidationContext,
   tally: ConsolidationTally,
 ): void {
   if (outcome.kind === "vetoed") {
@@ -551,8 +583,9 @@ function applyConsolidationOutcome(
 async function consolidatePhase(
   db: Database,
   opts: GlossaryPassOptions,
+  sets: GlossarySets,
 ): Promise<ConsolidationTally & { aborted: boolean }> {
-  const work = selectConsolidationWork(db, opts);
+  const work = selectConsolidationWork(db, opts, sets);
   // Consolidated keys only — mirrors the agent's near-miss lane. Drawing from
   // every status (via `listAllKeys`) let a `pending` or `vetoed` key surface
   // as a stored "Easily confused with:" suggestion, which either points at a
@@ -585,7 +618,7 @@ async function consolidatePhase(
     );
     const outcome = await consolidateTerm(unit.term, snippets, consolidateOpts); // NOSONAR S9382: deliberately sequential (see the doc above) - concurrent calls multiply resident model memory on a local Ollama, and each term re-checks the abort signal and reports ordered progress
 
-    applyConsolidationOutcome(db, unit, outcome, { knownKeys, nowMs: opts.nowMs }, tally);
+    applyConsolidationOutcome(db, unit, outcome, { knownKeys, nowMs: opts.nowMs, sets }, tally);
 
     done += 1;
     opts.onProgress?.({
@@ -615,13 +648,15 @@ export async function runGlossaryPass(
   // The authoring pre-pass runs FIRST, so `discoverPhase`'s `upsertCandidate`
   // refreshes an authored row's statistics in the same pass (its display_term
   // guard keeps the authored surface form).
-  const m = applyManualTerms(db, readManualConfig(opts), { nowMs: opts.nowMs });
+  // Built once for the whole run, before anything projects (see `prepareSets`).
+  const sets = prepareSets(db, opts);
+  const m = applyManualTerms(db, readManualConfig(opts), { nowMs: opts.nowMs, sets });
   const manual = {
     manualAdded: m.added,
     manualRemoved: m.removed,
     manualSkipped: m.skipped,
   };
-  const a = discoverPhase(db, opts);
+  const a = discoverPhase(db, opts, sets);
   if (opts.signal?.aborted === true) {
     return {
       ...a,
@@ -637,7 +672,7 @@ export async function runGlossaryPass(
       aborted: true,
     };
   }
-  const b = await consolidatePhase(db, opts);
+  const b = await consolidatePhase(db, opts, sets);
   return { ...a, ...manual, ...b, llmConfigured };
 }
 
@@ -668,7 +703,9 @@ export async function rebuildGlossary(
   db.transaction(() => {
     for (const key of listAllKeys(db)) unprojectTerm(db, key);
     clearGlossary(db);
-    restored = applyManualTerms(db, cfg, { nowMs: opts.nowMs });
+    // Re-derived after the clear, which drops the catch-up rows: the authored terms are projected
+    // against the same known set the pass below will use, never a pre-rebuild one.
+    restored = applyManualTerms(db, cfg, { nowMs: opts.nowMs, sets: prepareSets(db, opts) });
   })();
 
   // The pass below re-runs the pre-pass, which is idempotent: every authored

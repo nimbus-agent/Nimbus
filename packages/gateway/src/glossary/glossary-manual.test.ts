@@ -5,6 +5,7 @@ import { upsertIndexedItem } from "../index/item-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 import { applyManualTerms } from "./glossary-manual.ts";
 import { glossaryItemExternalId } from "./glossary-project.ts";
 import {
@@ -14,8 +15,15 @@ import {
   termOwnership,
   upsertAgentTerm,
 } from "./glossary-store.ts";
+import type { GlossarySets } from "./glossary-types.ts";
+import { glossarySets } from "./glossary-visibility.ts";
 
 let db: Database;
+
+/** The built-in mapping's sets: every known type effective, so nothing is hidden. */
+function builtinSets(): GlossarySets {
+  return glossarySets(db, BUILTIN_SOURCE_MAPPING);
+}
 
 beforeEach(() => {
   db = new Database(":memory:");
@@ -58,6 +66,7 @@ function projectedExists(termKey: string): boolean {
 test("an authored term lands consolidated with definition_source manual", () => {
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
     nowMs: 5000,
+    sets: builtinSets(),
   });
   const t = getTerm(db, "cdr");
   expect(t?.status).toBe("consolidated");
@@ -70,6 +79,7 @@ test("an authored term lands consolidated with definition_source manual", () => 
 test("an authored term with no mined evidence is still accepted", () => {
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
     nowMs: 5000,
+    sets: builtinSets(),
   });
   const t = getTerm(db, "cdr");
   expect(t?.status).toBe("consolidated");
@@ -81,7 +91,7 @@ test("statistics are measured when evidence exists", () => {
   applyManualTerms(
     db,
     cfg([{ termKey: "widget", displayTerm: "Widget", definition: "A thing." }]),
-    { nowMs: 5000 },
+    { nowMs: 5000, sets: builtinSets() },
   );
   const t = getTerm(db, "widget");
   expect(t?.docFreq).toBe(4);
@@ -95,7 +105,7 @@ test("synonyms from config reach the row", () => {
       [{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }],
       [["change data record", "cdr"]],
     ),
-    { nowMs: 5000 },
+    { nowMs: 5000, sets: builtinSets() },
   );
   expect(getTerm(db, "cdr")?.synonyms).toEqual(["change data record"]);
 
@@ -111,9 +121,11 @@ test("synonyms from config reach the row", () => {
 test("an edited definition replaces the stored one", () => {
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "First." }]), {
     nowMs: 5000,
+    sets: builtinSets(),
   });
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Second." }]), {
     nowMs: 6000,
+    sets: builtinSets(),
   });
   expect(getTerm(db, "cdr")?.definition).toBe("Second.");
 });
@@ -124,18 +136,20 @@ test("an edited display form replaces the stored one", () => {
   // mining-side test in glossary-extract.test.ts.
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "d" }]), {
     nowMs: 5000,
+    sets: builtinSets(),
   });
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDRs", definition: "d" }]), {
     nowMs: 6000,
+    sets: builtinSets(),
   });
   expect(getTerm(db, "cdr")?.displayTerm).toBe("CDRs");
 });
 
 test("an unchanged term is not rewritten on a later pass", () => {
   const conf = cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]);
-  applyManualTerms(db, conf, { nowMs: 5000 });
+  applyManualTerms(db, conf, { nowMs: 5000, sets: builtinSets() });
 
-  const second = applyManualTerms(db, conf, { nowMs: 6000 });
+  const second = applyManualTerms(db, conf, { nowMs: 6000, sets: builtinSets() });
 
   expect(second.added).toBe(0);
   // `updated_at` is the tell: an unchanged term must not be touched at all,
@@ -149,11 +163,12 @@ test("a changed definition IS rewritten even when the display form matches", () 
   // each field, so a check that compares only one of them cannot pass.
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "First." }]), {
     nowMs: 5000,
+    sets: builtinSets(),
   });
   const second = applyManualTerms(
     db,
     cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Second." }]),
-    { nowMs: 6000 },
+    { nowMs: 6000, sets: builtinSets() },
   );
   expect(second.added).toBe(1);
   expect(getTerm(db, "cdr")?.definition).toBe("Second.");
@@ -161,9 +176,10 @@ test("a changed definition IS rewritten even when the display form matches", () 
 
 test("a changed synonym set IS rewritten even when the definition matches", () => {
   const term = { termKey: "cdr", displayTerm: "CDR", definition: "Audit row." };
-  applyManualTerms(db, cfg([term]), { nowMs: 5000 });
+  applyManualTerms(db, cfg([term]), { nowMs: 5000, sets: builtinSets() });
   const second = applyManualTerms(db, cfg([term], [["change data record", "cdr"]]), {
     nowMs: 6000,
+    sets: builtinSets(),
   });
   expect(second.added).toBe(1);
   expect(getTerm(db, "cdr")?.synonyms).toEqual(["change data record"]);
@@ -175,7 +191,10 @@ test("splitting one alias into two IS rewritten, even though the joined text mat
   // string ("change data record") and would wrongly call this unchanged. An
   // author splitting or merging alias lines must not get a silent no-op.
   const term = { termKey: "cdr", displayTerm: "CDR", definition: "Audit row." };
-  applyManualTerms(db, cfg([term], [["change data record", "cdr"]]), { nowMs: 5000 });
+  applyManualTerms(db, cfg([term], [["change data record", "cdr"]]), {
+    nowMs: 5000,
+    sets: builtinSets(),
+  });
   expect(getTerm(db, "cdr")?.synonyms).toEqual(["change data record"]);
 
   const second = applyManualTerms(
@@ -187,7 +206,7 @@ test("splitting one alias into two IS rewritten, even though the joined text mat
         ["record", "cdr"],
       ],
     ),
-    { nowMs: 6000 },
+    { nowMs: 6000, sets: builtinSets() },
   );
 
   expect(second.added).toBe(1);
@@ -205,9 +224,9 @@ test("an unchanged multi-alias set is still skipped on a later pass", () => {
     ["change data", "cdr"],
     ["record", "cdr"],
   ];
-  applyManualTerms(db, cfg([term], synonyms), { nowMs: 5000 });
+  applyManualTerms(db, cfg([term], synonyms), { nowMs: 5000, sets: builtinSets() });
 
-  const second = applyManualTerms(db, cfg([term], synonyms), { nowMs: 6000 });
+  const second = applyManualTerms(db, cfg([term], synonyms), { nowMs: 6000, sets: builtinSets() });
 
   expect(second.added).toBe(0);
   expect(getTerm(db, "cdr")?.updatedAt).toBe(5000);
@@ -216,10 +235,11 @@ test("an unchanged multi-alias set is still skipped on a later pass", () => {
 test("removal demotes the row and deletes its projected item", () => {
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
     nowMs: 5000,
+    sets: builtinSets(),
   });
   expect(projectedExists("cdr")).toBe(true);
 
-  const summary = applyManualTerms(db, cfg([]), { nowMs: 6000 });
+  const summary = applyManualTerms(db, cfg([]), { nowMs: 6000, sets: builtinSets() });
 
   expect(summary.removed).toBe(1);
   const t = getTerm(db, "cdr");
@@ -232,9 +252,10 @@ test("removal demotes the row and deletes its projected item", () => {
 test("an unreadable config deletes nothing", () => {
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
     nowMs: 5000,
+    sets: builtinSets(),
   });
 
-  const summary = applyManualTerms(db, { loaded: false }, { nowMs: 6000 });
+  const summary = applyManualTerms(db, { loaded: false }, { nowMs: 6000, sets: builtinSets() });
 
   expect(summary.removed).toBe(0);
   expect(getTerm(db, "cdr")?.status).toBe("consolidated");
@@ -245,6 +266,7 @@ test("removal leaves a mined term's own row alone", () => {
   seedEvidence("widget", 4);
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "d" }]), {
     nowMs: 5000,
+    sets: builtinSets(),
   });
   db.run(
     `INSERT INTO glossary_term
@@ -253,7 +275,7 @@ test("removal leaves a mined term's own row alone", () => {
      VALUES ('widget', 'Widget', 'consolidated', 'mined', 'llm', 4, 1, 2, 3)`,
   );
 
-  applyManualTerms(db, cfg([]), { nowMs: 6000 });
+  applyManualTerms(db, cfg([]), { nowMs: 6000, sets: builtinSets() });
 
   const mined = getTerm(db, "widget");
   expect(mined?.status).toBe("consolidated");
@@ -277,6 +299,7 @@ test("the upsert is atomic — a crash between the row write and the projection 
   expect(() =>
     applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
       nowMs: 5000,
+      sets: builtinSets(),
     }),
   ).toThrow();
 
@@ -292,6 +315,7 @@ test("the upsert is atomic — a crash between the row write and the projection 
 test("the removal is atomic — a crash between unproject and demote rolls both back", () => {
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
     nowMs: 5000,
+    sets: builtinSets(),
   });
   expect(projectedExists("cdr")).toBe(true);
 
@@ -305,7 +329,7 @@ test("the removal is atomic — a crash between unproject and demote rolls both 
      BEGIN SELECT RAISE(ABORT, 'simulated crash before demoteTerm'); END`,
   );
 
-  expect(() => applyManualTerms(db, cfg([]), { nowMs: 6000 })).toThrow();
+  expect(() => applyManualTerms(db, cfg([]), { nowMs: 6000, sets: builtinSets() })).toThrow();
 
   db.run("DROP TRIGGER simulated_crash_before_demote");
 
@@ -333,6 +357,7 @@ test("a mined row is taken over when an authored entry exactly matches its store
 
   applyManualTerms(db, cfg([{ termKey: "cdr", displayTerm: "CDR", definition: "Audit row." }]), {
     nowMs: 5000,
+    sets: builtinSets(),
   });
 
   const t = getTerm(db, "cdr");
@@ -353,6 +378,7 @@ test("a config term takes over an agent row and clears its capture ownership", (
   });
   applyManualTerms(db, cfg([{ termKey: "wal", displayTerm: "WAL", definition: "mine" }]), {
     nowMs: 20,
+    sets: builtinSets(),
   });
   expect(getTerm(db, "wal")?.definitionSource).toBe("manual");
   expect(termOwnership(db, "wal")?.captureId).toBeNull();

@@ -4,8 +4,7 @@ import type {
   ManualSkip,
   ManualTerm,
 } from "../config/nimbus-toml-glossary-terms.ts";
-import { knownSourceTypes } from "../sources/source-catchup.ts";
-import { projectTerm, unprojectTerm } from "./glossary-project.ts";
+import { unprojectTerm } from "./glossary-project.ts";
 import {
   computeTermStats,
   demoteTerm,
@@ -14,7 +13,8 @@ import {
   listManualKeys,
   upsertManualTerm,
 } from "./glossary-store.ts";
-import type { GlossaryTerm } from "./glossary-types.ts";
+import type { GlossarySets, GlossaryTerm } from "./glossary-types.ts";
+import { syncTermProjection } from "./glossary-visibility.ts";
 import { findNearMisses } from "./near-miss.ts";
 import { scoreTerm } from "./term-scoring.ts";
 
@@ -72,7 +72,7 @@ function isUnchanged(
 export function applyManualTerms(
   db: Database,
   cfg: GlossaryManualConfig,
-  opts: { nowMs: number },
+  opts: { nowMs: number; sets: GlossarySets },
 ): ManualPassSummary {
   if (!cfg.loaded) {
     // The config could not be READ — which is not the same as "there are no
@@ -88,7 +88,7 @@ export function applyManualTerms(
 
   const knownKeys = listConsolidated(db, NEAR_MISS_POOL).map((t) => t.termKey);
   // Stored statistics are over every type the pass has tracked, never the effective mapping.
-  const known = knownSourceTypes(db, "glossary");
+  const known = opts.sets.known;
   let added = 0;
 
   for (const term of cfg.terms) {
@@ -128,8 +128,8 @@ export function applyManualTerms(
     // write nothing at all.
     const synonyms = aliasesFor.get(term.termKey) ?? [];
     const nearMisses = findNearMisses(term.termKey, knownKeys);
-    // Carried over from `existing` (or 'phrase' for a brand-new row) — the
-    // same expression `projectTerm`'s call below uses. Hardcoding "phrase"
+    // Carried over from `existing` (or 'phrase' for a brand-new row), matching the
+    // table default `upsertManualTerm` leaves in place. Hardcoding "phrase"
     // here diverged from that: an authored takeover of a mined acronym row
     // (`form: "acronym"`) would score as a phrase the FIRST time this pass
     // touches it, then never reconcile, because `isUnchanged` does not
@@ -150,39 +150,10 @@ export function applyManualTerms(
         score,
         nowMs: opts.nowMs,
       });
-      // `upsertManualTerm` just wrote exactly this row. Reading it back out
-      // via `getTerm` would only reconstruct what is already in hand, and it
-      // would leave a `stored === null` branch that no test could ever force
-      // (the write above always either applies or the transaction never
-      // reaches here) — a permanently-uncoverable branch the coverage floor
-      // cannot be satisfied against. Project directly from what was just
-      // written instead; `form` is the one field `upsertManualTerm` does not
-      // touch, so it is carried over from `existing` (or the table's
-      // 'phrase' default for a brand-new row) — `projectTerm` does not read
-      // it, but the value must still be a real `CandidateForm` to type-check.
-      projectTerm(
-        db,
-        {
-          termKey: term.termKey,
-          displayTerm: term.displayTerm,
-          status: "consolidated",
-          definition: term.definition,
-          definitionSource: "manual",
-          docFreq: stats.docFreq,
-          serviceSpread: stats.serviceSpread,
-          score,
-          form: existing?.form ?? "phrase",
-          firstSeenAt: stats.firstSeenAt,
-          lastSeenAt: stats.lastSeenAt,
-          topSources: stats.topSources,
-          synonyms,
-          nearMisses,
-          consolidatedAt: opts.nowMs,
-          statsVerifiedAt: opts.nowMs,
-          updatedAt: opts.nowMs,
-        },
-        opts.nowMs,
-      );
+      // Through the chokepoint, from the row just written: a manual term is never hidden by the
+      // mapping, but its copy is still routed by § 7.1, since its metadata carries top-source
+      // titles that may come from local-only items.
+      syncTermProjection(db, term.termKey, opts.sets, opts.nowMs);
     })();
     added += 1;
   }

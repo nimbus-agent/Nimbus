@@ -143,6 +143,15 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     reason:
       "itemAuthor reads the metadata gitlabMrMetadata just built for the SAME upsert, where withAuthor adds author_name alongside author_login.",
   },
+  // ── glossary/ ────────────────────────────────────────────────────────────────────────────
+  {
+    file: "packages/gateway/src/glossary/glossary-visibility.ts",
+    key: "glossary_term_local",
+    category: "census-blind",
+    reads: 1,
+    reason:
+      "antiJoinSuffices checks whether any nimbus:glossary_term_local item exists; syncTermProjection in glossary/glossary-visibility.ts writes it through projectTerm in glossary/glossary-project.ts, whose upsertIndexedItem call takes the type from a parameter (and glossary/ is outside WRITER_INCLUDE). Absent means no term routes locally, so the fast-path sweep may skip re-routing.",
+  },
   // ── graph/ ───────────────────────────────────────────────────────────────────────────────
   {
     file: "packages/gateway/src/graph/graph-populator.ts",
