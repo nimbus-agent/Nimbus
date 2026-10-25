@@ -11,20 +11,20 @@ function vaultWith(entries: Readonly<Record<string, string>>): NimbusVault {
 }
 
 describe("createProposableServiceConfigured", () => {
-  test("obsidian is configured only when [[filesystem.roots]] were present at boot", async () => {
+  test("a mesh-only server answers from its own check, never the vacuous manifest", async () => {
     const empty = vaultWith({});
     expect(
       await createProposableServiceConfigured({
         vault: empty,
         isUserMcpRegistered: () => false,
-        obsidianRootCount: 0,
+        meshOnly: { obsidian: () => false },
       })("obsidian"),
     ).toBe(false);
     expect(
       await createProposableServiceConfigured({
         vault: empty,
         isUserMcpRegistered: () => false,
-        obsidianRootCount: 2,
+        meshOnly: { obsidian: () => true },
       })("obsidian"),
     ).toBe(true);
   });
@@ -38,7 +38,7 @@ describe("createProposableServiceConfigured", () => {
     const check = createProposableServiceConfigured({
       vault: vaultWith({ "slack.oauth": "x" }),
       isUserMcpRegistered: () => false,
-      obsidianRootCount: 0,
+      meshOnly: { obsidian: () => false },
     });
     expect(await check("slack")).toBe(true);
     expect(await check("jira")).toBe(false);
@@ -52,7 +52,7 @@ describe("createProposableServiceConfigured", () => {
         seen.push(id);
         return id === "mcp_echo";
       },
-      obsidianRootCount: 0,
+      meshOnly: { obsidian: () => false },
     });
     expect(await check("mcp_echo")).toBe(true);
     expect(await check("mcp_other")).toBe(false);
@@ -60,17 +60,17 @@ describe("createProposableServiceConfigured", () => {
   });
 
   test("capture.status advertises obsidian.note.append only when obsidian can spawn", async () => {
-    const list = (obsidianRootCount: number) =>
+    const list = (canSpawn: boolean) =>
       listProposableActionTypes({
         modelAccessServices: () => new Set<string>(),
         userMcpModelAccessAllowed: () => false,
         isServiceConfigured: createProposableServiceConfigured({
           vault: vaultWith({}),
           isUserMcpRegistered: () => false,
-          obsidianRootCount,
+          meshOnly: { obsidian: () => canSpawn },
         }),
       });
-    expect(await list(1)).toContain("obsidian.note.append");
-    expect(await list(0)).not.toContain("obsidian.note.append");
+    expect(await list(true)).toContain("obsidian.note.append");
+    expect(await list(false)).not.toContain("obsidian.note.append");
   });
 });

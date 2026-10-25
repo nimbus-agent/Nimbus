@@ -103,6 +103,10 @@ describe("act-door routing table vs the installed connectors package", () => {
       expect(collisionCandidates("obsidian_append_to_daily_note")).toEqual([
         { server: "obsidian", tool: "append_to_daily_note" },
       ]);
+      expect(sourcesOfServer("obsidian").length).toBeGreaterThan(0);
+      expect(
+        quotedLiteral("obsidian_append_to_daily_note").test(sourcesOfServer("obsidian").join("\n")),
+      ).toBe(true);
       expect(sourcesOfServer("slack").length).toBeGreaterThan(0);
       expect(quotedLiteral("slack_message_post").test(sourcesOfServer("slack").join("\n"))).toBe(
         true,

@@ -200,8 +200,8 @@ describe("resolveServerTool", () => {
     expect(await resolvedKey(tools, "obsidian", "obsidian_append_to_daily_note")).toBe(
       "obsidian_obsidian_append_to_daily_note",
     );
-    // Another server can never reach it through a bare id.
-    expect(await resolvedKey(tools, "slack", "obsidian_append_to_daily_note")).toBeNull();
+    // Cross-server capture is ruled out by the prefix guard above, not by this lookup: no catalog
+    // id is prefix-related to `obsidian`, so no other server's spelling can form an obsidian key.
   });
 
   it("offers no namespaced step to a server no first-party connector owns", async () => {

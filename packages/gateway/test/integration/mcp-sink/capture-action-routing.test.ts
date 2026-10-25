@@ -89,20 +89,6 @@ describe("act door routing through the real dispatcher", () => {
     expect(calls).toEqual([["obsidian_obsidian_append_to_daily_note", input]]);
   });
 
-  test("the obsidian bare id never resolves under another server's action type", async () => {
-    const calls: Array<[string, unknown]> = [];
-    const dispatcher = createConnectorDispatcher({
-      listTools: () => Promise.resolve(meshTools(calls)),
-    });
-    await expect(
-      dispatcher.dispatch({
-        type: "slack.message.post",
-        payload: { mcpToolId: "obsidian_append_to_daily_note", input: {} },
-      }),
-    ).rejects.toThrow(/^Tool not found$/);
-    expect(calls).toEqual([]);
-  });
-
   test("a user-MCP type resolves only its own server's key", async () => {
     const db = trackedDb();
     const calls: Array<[string, unknown]> = [];

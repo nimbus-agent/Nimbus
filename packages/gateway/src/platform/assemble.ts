@@ -3758,10 +3758,11 @@ export async function assemblePlatformServices(
   };
   // Obsidian's server spawns from the boot-time `[[filesystem.roots]]` (createSchedulerWithMesh), so
   // the act door reads them at boot too rather than answering obsidian configured vacuously.
+  const obsidianCanSpawn = loadNimbusFilesystemRootsFromConfigDir(paths.configDir).length > 0;
   const isServiceConfigured = createProposableServiceConfigured({
     vault,
     isUserMcpRegistered: (id) => getUserMcpConnector(db, id) !== null,
-    obsidianRootCount: loadNimbusFilesystemRootsFromConfigDir(paths.configDir).length,
+    meshOnly: { obsidian: () => obsidianCanSpawn },
   });
   const captureGate: CaptureGateDeps = {
     db,
