@@ -5,8 +5,18 @@ import {
   loadGlossaryManualFromConfigDir,
   type ManualSkip,
 } from "../config/nimbus-toml-glossary-terms.ts";
+import {
+  CATCHUP_SCAN_SQL,
+  type CatchupCursor,
+  type CatchupSummary,
+  catchupTypes,
+  knownSourceTypes,
+  reconcileCatchupRows,
+  runCatchup,
+  SCAN_COLUMNS,
+} from "../sources/source-catchup.ts";
 import { sourceTypesFor } from "../sources/source-kinds.ts";
-import { sourceFilterSql } from "../sources/source-mapping.ts";
+import { type SourceMapping, sourceFilterSql } from "../sources/source-mapping.ts";
 import {
   type ConsolidationOutcome,
   type ConsolidatorLlm,
@@ -24,6 +34,7 @@ import {
   listManualKeys,
   markConsolidated,
   markVetoed,
+  NEAR_MISS_POOL,
   readPassState,
   recordAttempt,
   selectPendingBatch,
@@ -32,6 +43,7 @@ import {
   writePassState,
 } from "./glossary-store.ts";
 import type { GlossaryPassProgress, GlossaryTerm } from "./glossary-types.ts";
+import { glossarySets } from "./glossary-visibility.ts";
 import { findNearMisses } from "./near-miss.ts";
 import { mineTerms } from "./term-mining.ts";
 import { scoreTerm } from "./term-scoring.ts";
@@ -61,6 +73,17 @@ export type GlossaryPassOptions = {
    * desired-state wipe.
    */
   configDir?: string;
+  /**
+   * The effective source mapping this run mines (`sources/source-mapping.ts`). Required: the
+   * production caller resolves it from the layered config at the start of EVERY run, so a pack
+   * install or an owner edit applies without a restart.
+   */
+  mapping: SourceMapping;
+  /**
+   * The mapping as it stands NOW, re-read by catch-up between batches so a type that leaves the
+   * mapping mid-run stops. Defaults to `() => mapping`; a test injects one that changes.
+   */
+  mappingAt?: () => SourceMapping;
 };
 
 export type GlossaryPassSummary = {
@@ -95,8 +118,14 @@ export type GlossaryPassSummary = {
 
 const SCAN_BATCH_LIMIT = 5000;
 
-/** How many consolidated terms to consider as near-miss candidates — mirrors `agents/glossary.ts`. */
-const NEAR_MISS_POOL = 500;
+/**
+ * Catch-up batches per pass. The glossary's delta scan is a single batch (it has no drain loop),
+ * so catch-up gets its own small budget rather than sharing one; a type still behind the main
+ * cursor when it runs out resumes from its own cursor next pass.
+ */
+export const GLOSSARY_CATCHUP_BATCHES = 4;
+
+const BUILTIN_GLOSSARY_TYPES: ReadonlySet<string> = new Set(sourceTypesFor("glossary"));
 
 /**
  * Upgrade slots held back from `maxNewTermsPerPass`, clamped to at most half
@@ -132,6 +161,8 @@ const VETOED_TERMS_REPORTED = 10;
 
 type ScanRow = {
   id: string;
+  service: string;
+  type: string;
   title: string;
   body: string | null;
   body_complete: number;
@@ -150,14 +181,14 @@ type ScanRow = {
  * `(modified_at, id)` makes the cursor total, so a truncated batch resumes
  * exactly where it stopped.
  */
-function scanDelta(db: Database, cursor: { watermarkMs: number; watermarkId: string }): ScanRow[] {
+function scanDelta(db: Database, cursor: CatchupCursor, mapping: SourceMapping): ScanRow[] {
   const { sql: sourceFilter, params: sourceKeys } = sourceFilterSql(
-    sourceTypesFor("glossary"),
+    mapping.typesFor("glossary"),
     "i",
   );
   return db
     .query(
-      `SELECT i.id, i.title, i.body, i.body_complete, i.modified_at
+      `SELECT ${SCAN_COLUMNS}
        FROM item i
        WHERE ${sourceFilter}
          AND (i.modified_at > ? OR (i.modified_at = ? AND i.id > ?))
@@ -170,6 +201,28 @@ function scanDelta(db: Database, cursor: { watermarkMs: number; watermarkId: str
       cursor.watermarkMs,
       cursor.watermarkId,
       SCAN_BATCH_LIMIT,
+    ) as ScanRow[];
+}
+
+/** One catch-up batch of ONE type, up to and including the run-start main cursor. */
+function scanCatchup(
+  db: Database,
+  serviceType: string,
+  after: CatchupCursor,
+  upTo: CatchupCursor,
+  limit: number,
+): ScanRow[] {
+  const colon = serviceType.indexOf(":");
+  return db
+    .query(CATCHUP_SCAN_SQL)
+    .all(
+      serviceType.slice(0, colon),
+      serviceType.slice(colon + 1),
+      after.watermarkMs,
+      after.watermarkId,
+      upTo.watermarkMs,
+      upTo.watermarkId,
+      limit,
     ) as ScanRow[];
 }
 
@@ -197,17 +250,17 @@ function snippetsFor(db: Database, itemIds: readonly string[]): Array<{ text: st
  * `AgentCoordinator` JSON-stringify boundary just to discard it —
  * particularly costly here since `agents/glossary.ts` calls this
  * unconditionally on every invocation, list mode and single-term lookup
- * alike. Uses the SAME `sourceFilterSql(sourceTypesFor("glossary"), "i")` predicate as `scanDelta` so
- * the counted population always matches the mined population — that
+ * alike. Uses the SAME `sourceFilterSql(mapping.typesFor("glossary"), "i")` predicate as
+ * `scanDelta` so the counted population always matches the mined population — that
  * equivalence is what makes the reported number honest, so do not inline or
- * re-derive it.
+ * re-derive it. The mapping is required, so a caller cannot silently count an excluded type.
  */
 export function loadGlossaryCandidates(
   db: Database,
-  opts: { sinceMs: number },
+  opts: { sinceMs: number; mapping: SourceMapping },
 ): { total: number; truncatedSources: number } {
   const { sql: sourceFilter, params: sourceKeys } = sourceFilterSql(
-    sourceTypesFor("glossary"),
+    opts.mapping.typesFor("glossary"),
     "i",
   );
   const row = db
@@ -222,21 +275,17 @@ export function loadGlossaryCandidates(
 }
 
 /**
- * Phase A — discover. Pure SQL, committed before any LLM call.
- *
- * The watermark advances HERE, not after consolidation: candidates are durable
- * `pending` rows the moment this returns, so an interrupted phase B costs at
- * most one in-flight call rather than a full re-scan.
+ * Mines rows into candidates: each distinct term the rows mention is measured over the KNOWN
+ * source set, kept if it clears the `minDocFreq` floor, scored and upserted. No transaction and no
+ * cursor — the delta path and the catch-up path each own their cursor write. Returns how many
+ * candidates were upserted.
  */
-function discoverPhase(
+function mineCandidates(
   db: Database,
+  rows: readonly ScanRow[],
+  known: readonly string[],
   opts: GlossaryPassOptions,
-): { scanned: number; discovered: number; demoted: number } {
-  const state = readPassState(db);
-  const rows = scanDelta(db, state);
-
-  let discovered = 0;
-
+): number {
   const seen = new Map<
     string,
     { surface: string; form: ReturnType<typeof mineTerms>[number]["form"] }
@@ -248,8 +297,9 @@ function discoverPhase(
     }
   }
 
+  let discovered = 0;
   for (const [key, c] of seen) {
-    const stats = computeTermStats(db, key, sourceTypesFor("glossary"));
+    const stats = computeTermStats(db, key, known);
     if (stats.docFreq < opts.minDocFreq) continue;
     upsertCandidate(db, {
       key,
@@ -265,6 +315,53 @@ function discoverPhase(
     });
     discovered += 1;
   }
+  return discovered;
+}
+
+/**
+ * Catch-up, before the delta scan: reconcile the per-type rows, then drain every effective type
+ * still behind the run-start main cursor, within `GLOSSARY_CATCHUP_BATCHES`. It NEVER writes
+ * `glossary_pass_state` — its cursors are older than the main one by construction, so writing one
+ * there would rewind the main watermark and re-scan the index.
+ */
+function catchupPhase(
+  db: Database,
+  opts: GlossaryPassOptions,
+  mainCursor: CatchupCursor,
+): CatchupSummary {
+  const effective = opts.mapping.typesFor("glossary");
+  reconcileCatchupRows(db, "glossary", effective, BUILTIN_GLOSSARY_TYPES, mainCursor);
+  // Read AFTER the reconcile, so a type mapped for the first time this run is already known and
+  // its own occurrences count toward the candidates it yields.
+  const known = knownSourceTypes(db, "glossary");
+  const mappingAt = opts.mappingAt ?? (() => opts.mapping);
+  return runCatchup(db, catchupTypes(db, "glossary", effective), {
+    pass: "glossary",
+    batchLimit: SCAN_BATCH_LIMIT,
+    maxBatches: GLOSSARY_CATCHUP_BATCHES,
+    isEffective: (serviceType) => mappingAt().typesFor("glossary").includes(serviceType),
+    scan: (serviceType, after, limit) => scanCatchup(db, serviceType, after, mainCursor, limit),
+    mine: (rows) => mineCandidates(db, rows, known, opts),
+  });
+}
+
+/**
+ * Phase A — discover. Pure SQL, committed before any LLM call.
+ *
+ * The watermark advances HERE, not after consolidation: candidates are durable
+ * `pending` rows the moment this returns, so an interrupted phase B costs at
+ * most one in-flight call rather than a full re-scan.
+ */
+function discoverPhase(
+  db: Database,
+  opts: GlossaryPassOptions,
+): { scanned: number; discovered: number; demoted: number } {
+  const state = readPassState(db);
+  const catchup = catchupPhase(db, opts, state);
+  const rows = scanDelta(db, state, opts.mapping);
+  const discovered =
+    catchup.discovered + mineCandidates(db, rows, knownSourceTypes(db, "glossary"), opts);
+  const scanned = catchup.scanned + rows.length;
 
   const reconciled = reconcilePass(db, {
     limit: opts.statsRecheckPerPass,
@@ -275,17 +372,18 @@ function discoverPhase(
 
   // The cursor advances to the LAST row of the batch, which under
   // `ORDER BY modified_at, id` is the largest `(modified_at, id)` pair scanned.
-  // An empty batch leaves the cursor where it was.
+  // An empty batch leaves the cursor where it was. The watermark comes from the
+  // delta scan ALONE; catch-up's counts are this pass's work too, so they are added.
   const last = rows.at(-1);
   writePassState(db, {
     watermarkMs: last?.modified_at ?? state.watermarkMs,
     watermarkId: last?.id ?? state.watermarkId,
     lastPassAt: opts.nowMs,
     lastPassNew: discovered,
-    scannedItems: rows.length,
+    scannedItems: scanned,
   });
 
-  return { scanned: rows.length, discovered, demoted: reconciled.demoted.length };
+  return { scanned, discovered, demoted: reconciled.demoted.length };
 }
 
 /** One unit of Phase B work: a term, plus whether it came from the upgrade queue. */
@@ -332,16 +430,25 @@ function selectConsolidationWork(db: Database, opts: GlossaryPassOptions): Conso
   // itself created.
   const hasLlm = opts.llm !== undefined;
   const reserve = hasLlm ? Math.min(UPGRADE_RESERVE, Math.floor(budget / 2)) : 0;
-  const pendingAll = selectPendingBatch(db, budget, {
-    nowMs: opts.nowMs,
-    retryBaseCooldownMs: opts.retryBaseCooldownMs,
-    minDocFreq: opts.minDocFreq,
-  });
+  // A term the effective mapping hides is not spent a model call on; it stays as it is.
+  const sets = glossarySets(db, opts.mapping);
+  const pendingAll = selectPendingBatch(
+    db,
+    budget,
+    {
+      nowMs: opts.nowMs,
+      retryBaseCooldownMs: opts.retryBaseCooldownMs,
+      minDocFreq: opts.minDocFreq,
+    },
+    sets,
+  );
   const upgradeAll = hasLlm
-    ? selectSnippetUpgradeBatch(db, budget, {
-        nowMs: opts.nowMs,
-        retryBaseCooldownMs: opts.retryBaseCooldownMs,
-      })
+    ? selectSnippetUpgradeBatch(
+        db,
+        budget,
+        { nowMs: opts.nowMs, retryBaseCooldownMs: opts.retryBaseCooldownMs },
+        sets,
+      )
     : [];
   const upgradeTake = Math.min(upgradeAll.length, Math.max(reserve, budget - pendingAll.length));
   const batch = pendingAll.slice(0, Math.min(pendingAll.length, budget - upgradeTake));

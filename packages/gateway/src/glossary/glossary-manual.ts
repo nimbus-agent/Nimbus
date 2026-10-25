@@ -4,7 +4,7 @@ import type {
   ManualSkip,
   ManualTerm,
 } from "../config/nimbus-toml-glossary-terms.ts";
-import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { knownSourceTypes } from "../sources/source-catchup.ts";
 import { projectTerm, unprojectTerm } from "./glossary-project.ts";
 import {
   computeTermStats,
@@ -87,6 +87,8 @@ export function applyManualTerms(
   }
 
   const knownKeys = listConsolidated(db, NEAR_MISS_POOL).map((t) => t.termKey);
+  // Stored statistics are over every type the pass has tracked, never the effective mapping.
+  const known = knownSourceTypes(db, "glossary");
   let added = 0;
 
   for (const term of cfg.terms) {
@@ -107,7 +109,7 @@ export function applyManualTerms(
     // Measured, but EXEMPT from `min_doc_freq` — a human may define a term the
     // sources never mention. doc_freq is still recorded because it is what
     // discriminates the two removal cases above.
-    const stats = computeTermStats(db, term.termKey, sourceTypesFor("glossary"));
+    const stats = computeTermStats(db, term.termKey, known);
     // One transaction PER TERM, not one for the whole pre-pass.
     //
     // The unit of atomicity is deliberately the term, matching

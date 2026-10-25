@@ -3,9 +3,16 @@ import { beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type LayerKind, mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
+import { itemPrimaryKey } from "../index/item-key.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { sourceTypesFor } from "../sources/source-kinds.ts";
+import {
+  BUILTIN_SOURCE_MAPPING,
+  resolveSourceMapping,
+  type SourceMapping,
+} from "../sources/source-mapping.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -27,6 +34,7 @@ import {
   upsertAgentTerm,
   upsertCandidate,
   upsertManualTerm,
+  writePassState,
 } from "./glossary-store.ts";
 import type { GlossaryPassProgress } from "./glossary-types.ts";
 
@@ -40,6 +48,7 @@ const OPTS = {
   consolidateTimeoutMs: 1000,
   retryBaseCooldownMs: 1000,
   nowMs: 5000,
+  mapping: BUILTIN_SOURCE_MAPPING,
 };
 
 /**
@@ -881,7 +890,7 @@ test("loadGlossaryCandidates reports how many source bodies were truncated", () 
     syncedAt: 1,
   });
 
-  const loaded = loadGlossaryCandidates(db, { sinceMs: 0 });
+  const loaded = loadGlossaryCandidates(db, { sinceMs: 0, mapping: BUILTIN_SOURCE_MAPPING });
   expect(loaded.total).toBe(2);
   expect(loaded.truncatedSources).toBe(1);
 });
@@ -927,7 +936,7 @@ test("the SQL aggregate matches a hand-counted mixed fixture of complete and tru
     syncedAt: 1,
   });
 
-  const loaded = loadGlossaryCandidates(db, { sinceMs: 10 });
+  const loaded = loadGlossaryCandidates(db, { sinceMs: 10, mapping: BUILTIN_SOURCE_MAPPING });
   expect(loaded.total).toBe(3);
   expect(loaded.truncatedSources).toBe(1);
 });
@@ -942,7 +951,7 @@ test("an item outside the glossary source-type allowlist is not a candidate", ()
     modifiedAt: 1,
     syncedAt: 1,
   });
-  const loaded = loadGlossaryCandidates(db, { sinceMs: 0 });
+  const loaded = loadGlossaryCandidates(db, { sinceMs: 0, mapping: BUILTIN_SOURCE_MAPPING });
   expect(loaded.total).toBe(0);
 });
 
@@ -1031,4 +1040,154 @@ test("a capture accepted mid-veto is not vetoed and no veto is reported", async 
   expect(out.vetoed).toBe(0);
   expect(getTerm(db, "cdr")?.status).toBe("consolidated");
   expect(getTerm(db, "cdr")?.definitionSource).toBe("agent");
+});
+
+// ---------------------------------------------------------------------------
+// Source mapping + catch-up (role packs P2, spec §§ 6–7)
+// ---------------------------------------------------------------------------
+
+function mappingOf(kind: LayerKind, body: string): SourceMapping {
+  const doc = parseLayerDoc(
+    { kind, id: kind === "pack" ? "p" : kind, path: `/virtual/${kind}.toml` },
+    `[sources]\n${body}\n`,
+  );
+  return resolveSourceMapping({ doc: mergeLayerDocs([doc]) });
+}
+
+const WITH_NOTES = mappingOf("pack", 'map = ["ext_notes:highlight=note"]');
+const WITH_NOTES_AND_CLIPS = mappingOf(
+  "pack",
+  'map = ["ext_notes:highlight=note", "ext_clips:clip=doc"]',
+);
+
+function seedAs(service: string, type: string, id: string, text: string, at: number): void {
+  upsertIndexedItem(db, {
+    service,
+    type,
+    externalId: id,
+    title: text,
+    bodyPreview: text,
+    modifiedAt: at,
+    syncedAt: at,
+  });
+}
+
+const itemIdOf = (externalId: string): string => itemPrimaryKey("slack", externalId);
+
+/** No consolidation, so a discovered candidate stays observable as `pending`. */
+const DISCOVER_ONLY = { ...PASS_OPTS, maxNewTermsPerPass: 0 };
+
+type CatchupRow = {
+  service_type: string;
+  watermark_ms: number;
+  watermark_id: string;
+  done: number;
+};
+function glossaryCatchupRows(): CatchupRow[] {
+  return db
+    .query(
+      "SELECT service_type, watermark_ms, watermark_id, done FROM source_catchup_state WHERE pass = 'glossary' ORDER BY service_type",
+    )
+    .all() as CatchupRow[];
+}
+
+test("a newly mapped type's existing items become glossary candidates", async () => {
+  for (let i = 0; i < 3; i++) {
+    seedAs("ext_notes", "highlight", `h${String(i)}`, "the CDR pipeline runs nightly", 1000 + i);
+  }
+  seedAs("slack", "message", "s1", "an unrelated chat message", 9000);
+
+  await runGlossaryPass(db, { ...DISCOVER_ONLY, mapping: BUILTIN_SOURCE_MAPPING });
+  expect(getTerm(db, "cdr")).toBeNull();
+  expect(readPassState(db).watermarkMs).toBe(9000);
+
+  // The highlights sit BEHIND the main cursor, so only catch-up can reach them.
+  const out = await runGlossaryPass(db, { ...DISCOVER_ONLY, mapping: WITH_NOTES, nowMs: 6000 });
+  const t = getTerm(db, "cdr");
+  expect(t?.status).toBe("pending");
+  expect(t?.docFreq).toBe(3);
+  expect(out.scanned).toBe(3);
+  expect(out.discovered).toBeGreaterThan(0);
+  expect(readPassState(db).scannedItems).toBe(3);
+  expect(glossaryCatchupRows().find((r) => r.service_type === "ext_notes:highlight")?.done).toBe(1);
+});
+
+test("built-in types are not re-scanned on upgrade", async () => {
+  seedAs("slack", "message", "s1", "first message", 1000);
+  seedAs("slack", "message", "s2", "second message", 2000);
+  seedAs("slack", "message", "s3", "third message", 3000);
+  // What a pre-mapping gateway left behind: the main cursor at s2, no catch-up rows.
+  const upgradeCursor = readPassState(db);
+  writePassState(db, { ...upgradeCursor, watermarkMs: 2000, watermarkId: itemIdOf("s2") });
+
+  const out = await runGlossaryPass(db, { ...DISCOVER_ONLY, mapping: BUILTIN_SOURCE_MAPPING });
+
+  const rows = glossaryCatchupRows();
+  expect(rows.map((r) => r.service_type)).toEqual([...sourceTypesFor("glossary")].sort());
+  for (const r of rows) {
+    expect(r).toMatchObject({ watermark_ms: 2000, watermark_id: itemIdOf("s2"), done: 1 });
+  }
+  // Exactly what a run on `main` would do: scan only s3, leave the cursor on it.
+  expect(out.scanned).toBe(1);
+  expect(readPassState(db).watermarkMs).toBe(3000);
+  expect(readPassState(db).watermarkId).toBe(itemIdOf("s3"));
+});
+
+test("catch-up never moves the glossary main watermark", async () => {
+  seedAs("slack", "message", "s1", "an unrelated chat message", 9000);
+  await runGlossaryPass(db, { ...DISCOVER_ONLY, mapping: BUILTIN_SOURCE_MAPPING });
+  expect(readPassState(db).watermarkMs).toBe(9000);
+  for (let i = 0; i < 3; i++) {
+    seedAs("ext_notes", "highlight", `h${String(i)}`, "the CDR pipeline runs nightly", 1000 + i);
+    seedAs("ext_clips", "clip", `c${String(i)}`, "the WAL replays on boot", 2000 + i);
+  }
+
+  // Observed between catch-up batches too: a rewind there is what a crash would leave behind,
+  // even though the end-of-run pass-state write would cover it up.
+  const seen: number[] = [];
+  const mappingAt = () => {
+    seen.push(readPassState(db).watermarkMs);
+    return WITH_NOTES_AND_CLIPS;
+  };
+  await runGlossaryPass(db, {
+    ...DISCOVER_ONLY,
+    mapping: WITH_NOTES_AND_CLIPS,
+    mappingAt,
+    nowMs: 6000,
+  });
+  expect(getTerm(db, "cdr")?.status).toBe("pending");
+  expect(getTerm(db, "wal")?.status).toBe("pending");
+  expect(seen.length).toBeGreaterThan(1);
+  expect(new Set(seen)).toEqual(new Set([9000]));
+  expect(readPassState(db).watermarkMs).toBe(9000);
+  expect(readPassState(db).watermarkId).toBe(itemIdOf("s1"));
+});
+
+test("rebuild clears glossary catch-up cursors", async () => {
+  dbRun(
+    db,
+    "INSERT INTO source_catchup_state (pass, service_type, watermark_ms, watermark_id, done) VALUES ('glossary', 'ext_notes:highlight', 4242, 'mid', 0)",
+    [],
+  );
+  dbRun(
+    db,
+    "INSERT INTO source_catchup_state (pass, service_type, watermark_ms, watermark_id, done) VALUES ('decisions', 'ext_notes:highlight', 4242, 'mid', 0)",
+    [],
+  );
+  await rebuildGlossary(db, { ...DISCOVER_ONLY, mapping: BUILTIN_SOURCE_MAPPING });
+  expect(
+    db
+      .query(
+        "SELECT 1 FROM source_catchup_state WHERE pass = 'glossary' AND service_type = 'ext_notes:highlight'",
+      )
+      .get(),
+  ).toBeNull();
+  // The decisions pass's cursors are not the glossary's to clear.
+  expect(
+    db
+      .query(
+        "SELECT watermark_ms FROM source_catchup_state WHERE pass = 'decisions' AND service_type = 'ext_notes:highlight'",
+      )
+      .get(),
+  ).toEqual({ watermark_ms: 4242 });
 });

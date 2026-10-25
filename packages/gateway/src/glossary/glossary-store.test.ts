@@ -1,9 +1,11 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
+import { type LayerKind, mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { dbRun } from "../db/write.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING, resolveSourceMapping } from "../sources/source-mapping.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -21,6 +23,7 @@ import {
   demoteTerm,
   findBySynonym,
   getTerm,
+  hasEffectiveOccurrence,
   listAllKeys,
   listConsolidated,
   markConsolidated,
@@ -37,6 +40,8 @@ import {
   upsertManualTerm,
   writePassState,
 } from "./glossary-store.ts";
+import type { GlossarySets } from "./glossary-types.ts";
+import { glossarySets } from "./glossary-visibility.ts";
 
 let db: Database;
 
@@ -218,40 +223,60 @@ test("a term key with FTS-hostile characters degrades to zero, never throws", ()
 
 const QUEUE = { nowMs: 10_000, retryBaseCooldownMs: 1000, minDocFreq: 0 };
 
+/** The built-in mapping: every known type is effective, so the queues take the fast path. */
+const BUILTIN_SETS: GlossarySets = {
+  effective: sourceTypesFor("glossary"),
+  known: sourceTypesFor("glossary"),
+  fast: true,
+};
+
 test("markVetoed is sticky and keeps the row out of the pending batch", () => {
   seedCandidate("cdr");
   markVetoed(db, "cdr", 2000);
   expect(getTerm(db, "cdr")?.status).toBe("vetoed");
-  expect(selectPendingBatch(db, 10, QUEUE)).toHaveLength(0);
+  expect(selectPendingBatch(db, 10, QUEUE, BUILTIN_SETS)).toHaveLength(0);
 });
 
 test("selectPendingBatch orders by score descending and honours the limit", () => {
   seedCandidate("low", 1);
   seedCandidate("high", 9);
   seedCandidate("mid", 5);
-  expect(selectPendingBatch(db, 2, QUEUE).map((t) => t.termKey)).toEqual(["high", "mid"]);
+  expect(selectPendingBatch(db, 2, QUEUE, BUILTIN_SETS).map((t) => t.termKey)).toEqual([
+    "high",
+    "mid",
+  ]);
 });
 
 test("a freshly-attempted term is withheld while its backoff is active", () => {
   seedCandidate("high", 9);
   seedCandidate("low", 1);
   recordAttempt(db, "high", 10_000);
-  const batch = selectPendingBatch(db, 10, {
-    nowMs: 10_500,
-    retryBaseCooldownMs: 1000,
-    minDocFreq: 0,
-  });
+  const batch = selectPendingBatch(
+    db,
+    10,
+    {
+      nowMs: 10_500,
+      retryBaseCooldownMs: 1000,
+      minDocFreq: 0,
+    },
+    BUILTIN_SETS,
+  );
   expect(batch.map((t) => t.termKey)).toEqual(["low"]);
 });
 
 test("a term returns to the queue once its backoff expires", () => {
   seedCandidate("high", 9);
   recordAttempt(db, "high", 10_000);
-  const batch = selectPendingBatch(db, 10, {
-    nowMs: 12_000,
-    retryBaseCooldownMs: 1000,
-    minDocFreq: 0,
-  });
+  const batch = selectPendingBatch(
+    db,
+    10,
+    {
+      nowMs: 12_000,
+      retryBaseCooldownMs: 1000,
+      minDocFreq: 0,
+    },
+    BUILTIN_SETS,
+  );
   expect(batch.map((t) => t.termKey)).toEqual(["high"]);
 });
 
@@ -262,10 +287,20 @@ test("backoff grows with repeated failures", () => {
   recordAttempt(db, "high", 0);
   // attempts=3 -> base * 2^2 = 4000 ms
   expect(
-    selectPendingBatch(db, 10, { nowMs: 3000, retryBaseCooldownMs: 1000, minDocFreq: 0 }),
+    selectPendingBatch(
+      db,
+      10,
+      { nowMs: 3000, retryBaseCooldownMs: 1000, minDocFreq: 0 },
+      BUILTIN_SETS,
+    ),
   ).toHaveLength(0);
   expect(
-    selectPendingBatch(db, 10, { nowMs: 5000, retryBaseCooldownMs: 1000, minDocFreq: 0 }),
+    selectPendingBatch(
+      db,
+      10,
+      { nowMs: 5000, retryBaseCooldownMs: 1000, minDocFreq: 0 },
+      BUILTIN_SETS,
+    ),
   ).toHaveLength(1);
 });
 
@@ -290,11 +325,16 @@ test("selectPendingBatch excludes a term demoted below the floor", () => {
     3000,
   );
 
-  const batch = selectPendingBatch(db, 10, {
-    nowMs: 10_000,
-    retryBaseCooldownMs: 1000,
-    minDocFreq: 3,
-  });
+  const batch = selectPendingBatch(
+    db,
+    10,
+    {
+      nowMs: 10_000,
+      retryBaseCooldownMs: 1000,
+      minDocFreq: 3,
+    },
+    BUILTIN_SETS,
+  );
   expect(batch.map((t) => t.termKey)).toEqual(["slo"]);
   expect(getTerm(db, "cdr")?.status).toBe("pending");
 });
@@ -587,7 +627,9 @@ describe("selectSnippetUpgradeBatch", () => {
        VALUES ('pend_snip', 'PEND_SNIP', 'pending', 'snippet', 5, 2, 75, 'acronym', 1, 2, 1)`,
       [],
     );
-    expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual(["cdr"]);
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS, BUILTIN_SETS).map((t) => t.termKey)).toEqual([
+      "cdr",
+    ]);
   });
 
   // Ordering, not count: a count-only assertion passes under either ordering.
@@ -595,7 +637,7 @@ describe("selectSnippetUpgradeBatch", () => {
     seedConsolidated("recent", { source: "snippet", score: 99, lastAttemptAt: 900_000 });
     seedConsolidated("never", { source: "snippet", score: 1, lastAttemptAt: 0 });
     seedConsolidated("middle", { source: "snippet", score: 50, lastAttemptAt: 400_000 });
-    expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual([
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS, BUILTIN_SETS).map((t) => t.termKey)).toEqual([
       "never",
       "middle",
       "recent",
@@ -605,20 +647,22 @@ describe("selectSnippetUpgradeBatch", () => {
   test("withholds a term still inside its exponential backoff", () => {
     // attempts=1 -> cooldown 60_000; last attempt at 999_000 -> due at 1_059_000 > now.
     seedConsolidated("cdr", { source: "snippet", score: 10, attempts: 1, lastAttemptAt: 999_000 });
-    expect(selectSnippetUpgradeBatch(db, 10, OPTS)).toEqual([]);
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS, BUILTIN_SETS)).toEqual([]);
   });
 
   test("admits a term whose backoff has elapsed", () => {
     seedConsolidated("cdr", { source: "snippet", score: 10, attempts: 1, lastAttemptAt: 100_000 });
-    expect(selectSnippetUpgradeBatch(db, 10, OPTS).map((t) => t.termKey)).toEqual(["cdr"]);
+    expect(selectSnippetUpgradeBatch(db, 10, OPTS, BUILTIN_SETS).map((t) => t.termKey)).toEqual([
+      "cdr",
+    ]);
   });
 
   // SQLite treats LIMIT -1 as UNLIMITED, so a subtraction-derived caller that
   // goes negative would silently select the whole snippet population.
   test("returns nothing for a zero or negative limit", () => {
     seedConsolidated("cdr", { source: "snippet", score: 10 });
-    expect(selectSnippetUpgradeBatch(db, 0, OPTS)).toEqual([]);
-    expect(selectSnippetUpgradeBatch(db, -1, OPTS)).toEqual([]);
+    expect(selectSnippetUpgradeBatch(db, 0, OPTS, BUILTIN_SETS)).toEqual([]);
+    expect(selectSnippetUpgradeBatch(db, -1, OPTS, BUILTIN_SETS)).toEqual([]);
   });
 });
 
@@ -751,15 +795,25 @@ test("a manual row is selected by neither consolidation batch", () => {
 
   // High score, zero attempts, well above the floor — it qualifies on every
   // predicate except the ones that structurally exclude it.
-  const pending = selectPendingBatch(db, 10, {
-    nowMs: 9_000_000,
-    retryBaseCooldownMs: 1,
-    minDocFreq: 3,
-  });
-  const upgrades = selectSnippetUpgradeBatch(db, 10, {
-    nowMs: 9_000_000,
-    retryBaseCooldownMs: 1,
-  });
+  const pending = selectPendingBatch(
+    db,
+    10,
+    {
+      nowMs: 9_000_000,
+      retryBaseCooldownMs: 1,
+      minDocFreq: 3,
+    },
+    BUILTIN_SETS,
+  );
+  const upgrades = selectSnippetUpgradeBatch(
+    db,
+    10,
+    {
+      nowMs: 9_000_000,
+      retryBaseCooldownMs: 1,
+    },
+    BUILTIN_SETS,
+  );
 
   expect(pending.map((t) => t.termKey)).not.toContain("cdr");
   expect(upgrades.map((t) => t.termKey)).not.toContain("cdr");
@@ -888,4 +942,123 @@ test("computeTermStats lists the contributing service:type keys, sorted", () => 
   });
   const s = computeTermStats(db, "cdr", sourceTypesFor("glossary"));
   expect(s.contributingTypes).toEqual(["jira:issue", "slack:message"]);
+});
+
+// ---------------------------------------------------------------------------
+// Effective-mapping visibility of the model queues (role packs P2, spec § 7)
+// ---------------------------------------------------------------------------
+
+describe("queues under an excluding mapping", () => {
+  const mappingOf = (kind: LayerKind, body: string) =>
+    resolveSourceMapping({
+      doc: mergeLayerDocs([
+        parseLayerDoc(
+          { kind, id: kind, path: `/virtual/${kind}.toml` },
+          `[sources]
+${body}
+`,
+        ),
+      ]),
+    });
+  const NO_SLACK = mappingOf("base", 'exclude = ["slack:message"]');
+
+  function seedBacked(key: string, service: string, type: string, score: number): void {
+    for (let i = 0; i < 3; i++) {
+      seedItem({
+        externalId: `${key}-${String(i)}`,
+        service,
+        type,
+        title: `about ${key.toUpperCase()}`,
+        body: `the ${key.toUpperCase()} thing`,
+        modifiedAt: 100 + i,
+      });
+    }
+    seedCandidate(key, score);
+  }
+
+  /** Counts FTS queries issued through `db.query` while `run` executes. */
+  function ftsQueriesDuring(run: () => void): number {
+    const original = db.query.bind(db);
+    let n = 0;
+    const spy = (sql: string) => {
+      if (sql.includes("item_fts")) n++;
+      return original(sql);
+    };
+    (db as unknown as { query: typeof spy }).query = spy;
+    try {
+      run();
+    } finally {
+      (db as unknown as { query: typeof original }).query = original;
+    }
+    return n;
+  }
+
+  test("exclude keeps a Slack-only pending term out of the model batch", () => {
+    seedBacked("cdr", "slack", "message", 9);
+    seedBacked("wal", "jira", "issue", 1);
+    const sets = glossarySets(db, NO_SLACK);
+    expect(sets.fast).toBe(false);
+
+    expect(selectPendingBatch(db, 10, QUEUE, sets).map((t) => t.termKey)).toEqual(["wal"]);
+    const kept = db
+      .query("SELECT status, attempts FROM glossary_term WHERE term_key = 'cdr'")
+      .get() as { status: string; attempts: number };
+    expect(kept).toEqual({ status: "pending", attempts: 0 });
+    // The built-in mapping still selects it.
+    expect(
+      selectPendingBatch(db, 10, QUEUE, glossarySets(db, BUILTIN_SOURCE_MAPPING)).map(
+        (t) => t.termKey,
+      ),
+    ).toEqual(["cdr", "wal"]);
+  });
+
+  test("an excluded snippet term is skipped by the upgrade queue, not the manual one", () => {
+    seedBacked("cdr", "slack", "message", 9);
+    dbRun(
+      db,
+      "UPDATE glossary_term SET status = 'consolidated', definition = 'd', definition_source = 'snippet' WHERE term_key = 'cdr'",
+      [],
+    );
+    seedBacked("lsn", "slack", "message", 5);
+    dbRun(db, "UPDATE glossary_term SET definition_source = 'manual' WHERE term_key = 'lsn'", []);
+    const sets = glossarySets(db, NO_SLACK);
+    const opts = { nowMs: 10_000, retryBaseCooldownMs: 1000 };
+    expect(selectSnippetUpgradeBatch(db, 10, opts, sets)).toEqual([]);
+    expect(selectPendingBatch(db, 10, QUEUE, sets).map((t) => t.termKey)).toEqual(["lsn"]);
+  });
+
+  test("the over-fetch still fills the limit past hidden rows", () => {
+    seedBacked("aaa", "slack", "message", 9);
+    seedBacked("bbb", "slack", "message", 8);
+    seedBacked("ccc", "jira", "issue", 2);
+    seedBacked("ddd", "jira", "issue", 1);
+    const sets = glossarySets(db, NO_SLACK);
+    expect(selectPendingBatch(db, 2, QUEUE, sets).map((t) => t.termKey)).toEqual(["ccc", "ddd"]);
+  });
+
+  test("fast path issues no FTS existence check", () => {
+    seedBacked("cdr", "slack", "message", 9);
+    const fast = glossarySets(db, BUILTIN_SOURCE_MAPPING);
+    expect(fast.fast).toBe(true);
+    expect(
+      ftsQueriesDuring(() => {
+        selectPendingBatch(db, 10, QUEUE, fast);
+        selectSnippetUpgradeBatch(db, 10, { nowMs: 10_000, retryBaseCooldownMs: 1000 }, fast);
+      }),
+    ).toBe(0);
+    // Positive control: the same spy does see the slow path's check.
+    expect(
+      ftsQueriesDuring(() => {
+        selectPendingBatch(db, 10, QUEUE, glossarySets(db, NO_SLACK));
+      }),
+    ).toBeGreaterThan(0);
+  });
+
+  test("hasEffectiveOccurrence matches only the effective set", () => {
+    seedBacked("cdr", "slack", "message", 9);
+    expect(hasEffectiveOccurrence(db, "cdr", ["slack:message"])).toBe(true);
+    expect(hasEffectiveOccurrence(db, "cdr", ["jira:issue"])).toBe(false);
+    expect(hasEffectiveOccurrence(db, "cdr", [])).toBe(false);
+    expect(hasEffectiveOccurrence(db, 'we"ird^(term)', ["slack:message"])).toBe(false);
+  });
 });

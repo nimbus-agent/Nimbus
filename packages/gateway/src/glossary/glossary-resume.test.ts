@@ -3,6 +3,8 @@ import { beforeEach, expect, test } from "bun:test";
 
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -13,6 +15,7 @@ import { upsertIndexedItem } from "../index/item-store.ts";
 import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
 import { runGlossaryPass } from "./glossary-extract.ts";
 import { getTerm, readPassState, selectPendingBatch } from "./glossary-store.ts";
+import type { GlossarySets } from "./glossary-types.ts";
 
 let db: Database;
 
@@ -24,10 +27,18 @@ const BASE = {
   consolidateTimeoutMs: 1000,
   retryBaseCooldownMs: 1000,
   nowMs: 5000,
+  mapping: BUILTIN_SOURCE_MAPPING,
 };
 
 /** Far-future `nowMs` so assertions see every pending row regardless of backoff. */
 const QUEUE = { nowMs: 9_000_000, retryBaseCooldownMs: 1000, minDocFreq: 0 };
+
+/** The built-in mapping: every known type is effective, so the queue takes the fast path. */
+const BUILTIN_SETS: GlossarySets = {
+  effective: sourceTypesFor("glossary"),
+  known: sourceTypesFor("glossary"),
+  fast: true,
+};
 
 function seed(text: string, count = 3, startId = 0): void {
   for (let i = 0; i < count; i++) {
@@ -63,7 +74,7 @@ test("aborting phase B holds the watermark and leaves candidates pending", async
   expect(out.aborted).toBe(true);
   // Phase A committed before any LLM call, so the scan is not repeated.
   expect(readPassState(db).watermarkMs).toBeGreaterThan(0);
-  expect(selectPendingBatch(db, 10, QUEUE).length).toBeGreaterThan(0);
+  expect(selectPendingBatch(db, 10, QUEUE, BUILTIN_SETS).length).toBeGreaterThan(0);
 });
 
 test("the next pass completes candidates stranded by an abort", async () => {
@@ -82,7 +93,7 @@ test("the next pass completes candidates stranded by an abort", async () => {
   };
   await runGlossaryPass(db, { ...BASE, llm: goodLlm, nowMs: 6000 });
 
-  expect(selectPendingBatch(db, 10, QUEUE)).toHaveLength(0);
+  expect(selectPendingBatch(db, 10, QUEUE, BUILTIN_SETS)).toHaveLength(0);
 });
 
 test("a candidate stranded by the cap is reached by a later pass", async () => {
@@ -91,13 +102,13 @@ test("a candidate stranded by the cap is reached by a later pass", async () => {
     generateJson: async () => JSON.stringify({ isDomainTerm: true, definition: "d" }),
   };
   await runGlossaryPass(db, { ...BASE, maxNewTermsPerPass: 1, llm });
-  const afterFirst = selectPendingBatch(db, 10, QUEUE).length;
+  const afterFirst = selectPendingBatch(db, 10, QUEUE, BUILTIN_SETS).length;
   expect(afterFirst).toBeGreaterThan(0);
 
   // No new items — the batch must still be selected globally, not from this
   // pass's (empty) discoveries.
   await runGlossaryPass(db, { ...BASE, maxNewTermsPerPass: 10, llm, nowMs: 6000 });
-  expect(selectPendingBatch(db, 10, QUEUE)).toHaveLength(0);
+  expect(selectPendingBatch(db, 10, QUEUE, BUILTIN_SETS)).toHaveLength(0);
 });
 
 test("a retry outcome leaves the term pending rather than vetoed", async () => {
@@ -161,5 +172,5 @@ test("a signal aborted before the call starts skips phase B entirely, before any
   expect(calls).toBe(0);
   // Phase A (pure SQL) still ran and left work for the next pass.
   expect(out.discovered).toBeGreaterThan(0);
-  expect(selectPendingBatch(db, 10, QUEUE).length).toBeGreaterThan(0);
+  expect(selectPendingBatch(db, 10, QUEUE, BUILTIN_SETS).length).toBeGreaterThan(0);
 });

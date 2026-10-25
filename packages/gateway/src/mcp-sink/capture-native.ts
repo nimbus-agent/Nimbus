@@ -21,7 +21,7 @@ import {
   upsertGraphRelation,
 } from "../graph/relationship-graph.ts";
 import { clampBody } from "../index/body-caps.ts";
-import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { knownSourceTypes } from "../sources/source-catchup.ts";
 import { CaptureError, type CaptureKind, type NativeValidatedCapture } from "./capture-types.ts";
 
 /**
@@ -158,7 +158,8 @@ export function writeCaptureNative(
       return id;
     }
     case "term": {
-      const stats = computeTermStats(db, v.payload.termKey, sourceTypesFor("glossary"));
+      // The known set needs no mapping context, so stored stats match what the pass computes.
+      const stats = computeTermStats(db, v.payload.termKey, knownSourceTypes(db, "glossary"));
       const score = scoreTerm({
         docFreq: stats.docFreq,
         serviceSpread: stats.serviceSpread,

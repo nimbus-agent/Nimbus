@@ -1,8 +1,10 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
+import { type LayerKind, mergeLayerDocs, parseLayerDoc } from "../config/layered-merge.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { BUILTIN_SOURCE_MAPPING, resolveSourceMapping } from "../sources/source-mapping.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -10,6 +12,8 @@ function runMigrations(db: Database): void {
 }
 
 import { upsertIndexedItem } from "../index/item-store.ts";
+import type { ConsolidatorLlm } from "./glossary-consolidate.ts";
+import { runGlossaryPass } from "./glossary-extract.ts";
 import { projectTerm } from "./glossary-project.ts";
 import { reconcilePass } from "./glossary-reconcile.ts";
 import {
@@ -279,4 +283,55 @@ test("a stale owner-accepted agent term with zero mentions survives, unprojected
       .query("SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus' AND type = 'glossary_term'")
       .get(),
   ).toEqual({ n: 0 });
+});
+
+test("removing a mapping never demotes a term", async () => {
+  const mappingOf = (kind: LayerKind, body: string) =>
+    resolveSourceMapping({
+      doc: mergeLayerDocs([
+        parseLayerDoc(
+          { kind, id: "p", path: `/virtual/${kind}.toml` },
+          `[sources]
+${body}
+`,
+        ),
+      ]),
+    });
+  const withNotes = mappingOf("pack", 'map = ["ext_notes:highlight=note"]');
+  const text = "the CDR pipeline runs nightly";
+  const seedAs = (service: string, type: string, externalId: string, at: number) =>
+    upsertIndexedItem(db, {
+      service,
+      type,
+      externalId,
+      title: text,
+      bodyPreview: text,
+      modifiedAt: at,
+      syncedAt: at,
+    });
+  seedAs("jira", "issue", "j1", 1000);
+  seedAs("jira", "issue", "j2", 1001);
+  seedAs("ext_notes", "highlight", "h1", 1002);
+  seedAs("ext_notes", "highlight", "h2", 1003);
+  const llm: ConsolidatorLlm = {
+    generateJson: async () => JSON.stringify({ isDomainTerm: true, definition: "a definition" }),
+  };
+  const opts = {
+    maxNewTermsPerPass: 25,
+    statsRecheckPerPass: 50,
+    statsRecheckCooldownMs: 1000,
+    minDocFreq: 3,
+    consolidateTimeoutMs: 1000,
+    retryBaseCooldownMs: 1000,
+    llm,
+  };
+
+  await runGlossaryPass(db, { ...opts, nowMs: 5000, mapping: withNotes });
+  expect(getTerm(db, "cdr")).toMatchObject({ status: "consolidated", docFreq: 4 });
+
+  // The pack is removed; the sweep runs well past its cooldown.
+  await runGlossaryPass(db, { ...opts, nowMs: 50_000, mapping: BUILTIN_SOURCE_MAPPING });
+  const t = getTerm(db, "cdr");
+  expect(t?.statsVerifiedAt).toBe(50_000);
+  expect(t).toMatchObject({ status: "consolidated", docFreq: 4 });
 });

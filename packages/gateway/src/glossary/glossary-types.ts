@@ -70,3 +70,17 @@ export type GlossaryTerm = {
   statsVerifiedAt: number;
   updatedAt: number;
 };
+
+/**
+ * The source-type sets one read of the glossary resolves against (role packs P2, spec § 7).
+ *
+ * `effective` is what the current mapping mines; `known` is every type the pass has ever tracked
+ * (`knownSourceTypes`), which stored statistics are computed over so a mapping change never
+ * rewrites a row. `fast` is true when every known type is effective: nothing can be hidden, so the
+ * queues and counts skip the per-term existence check entirely.
+ */
+export type GlossarySets = {
+  readonly effective: readonly string[];
+  readonly known: readonly string[];
+  readonly fast: boolean;
+};

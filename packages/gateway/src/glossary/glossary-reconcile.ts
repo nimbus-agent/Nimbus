@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { knownSourceTypes } from "../sources/source-catchup.ts";
 
 import { projectTerm, unprojectTerm } from "./glossary-project.ts";
 import {
@@ -34,9 +34,12 @@ export function reconcilePass(
   // passes and still reaches full coverage daily.
   const stale = selectStaleForRecheck(db, opts.limit, opts.nowMs - opts.cooldownMs);
   const demoted: string[] = [];
+  // Over the KNOWN set, never the effective one: a type that left the mapping still counts, so
+  // removing a pack never demotes a term mined from it, and re-adding never re-consolidates it.
+  const known = knownSourceTypes(db, "glossary");
 
   for (const term of stale) {
-    const stats = computeTermStats(db, term.termKey, sourceTypesFor("glossary"));
+    const stats = computeTermStats(db, term.termKey, known);
     if (term.definitionSource === "agent") {
       // An owner-ACCEPTED agent term: its evidence floor does not apply (the owner vouched for it,
       // as for a manual term), and it is never projected — projection would embed agent text

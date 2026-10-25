@@ -5,6 +5,7 @@ import { sourceFilterSql } from "../sources/source-mapping.ts";
 import type {
   CandidateForm,
   DefinitionSource,
+  GlossarySets,
   GlossarySource,
   GlossaryStatus,
   GlossaryTerm,
@@ -108,28 +109,34 @@ export function computeTermStats(
   types: readonly string[],
 ): TermStats {
   const { sql: sourceFilter, params: sourceKeys } = sourceFilterSql(types, "i");
-  const agg = safeFtsGet(
+  // ONE grouped pass over the match: the aggregate and the contributing types are both derived
+  // from the per-`(service, type)` rows, so the FTS MATCH runs once for the two of them.
+  const groups = safeFtsGet(
     () =>
       db
         .query(
-          `SELECT COUNT(*) AS doc_freq,
-                  COUNT(DISTINCT i.service) AS service_spread,
+          `SELECT i.service AS service,
+                  i.type AS type,
+                  COUNT(*) AS doc_freq,
                   MIN(i.modified_at) AS first_seen,
                   MAX(i.modified_at) AS last_seen
            FROM item_fts f
            JOIN item i ON i.rowid = f.rowid
-           WHERE item_fts MATCH ? AND ${sourceFilter}`,
+           WHERE item_fts MATCH ? AND ${sourceFilter}
+           GROUP BY i.service, i.type
+           ORDER BY (i.service || ':' || i.type) ASC`,
         )
-        .get(ftsQuery(termKey), ...sourceKeys) as {
+        .all(ftsQuery(termKey), ...sourceKeys) as Array<{
+        service: string;
+        type: string;
         doc_freq: number;
-        service_spread: number;
-        first_seen: number | null;
-        last_seen: number | null;
-      } | null,
-    null,
+        first_seen: number;
+        last_seen: number;
+      }>,
+    [],
   );
 
-  if (agg === null || agg.doc_freq === 0) {
+  if (groups.length === 0) {
     return {
       docFreq: 0,
       serviceSpread: 0,
@@ -157,22 +164,12 @@ export function computeTermStats(
     modified_at: number;
   }>;
 
-  const contributing = db
-    .query(
-      `SELECT DISTINCT (i.service || ':' || i.type) AS key
-       FROM item_fts f
-       JOIN item i ON i.rowid = f.rowid
-       WHERE item_fts MATCH ? AND ${sourceFilter}
-       ORDER BY key ASC`,
-    )
-    .all(ftsQuery(termKey), ...sourceKeys) as Array<{ key: string }>;
-
   return {
-    docFreq: agg.doc_freq,
-    contributingTypes: contributing.map((c) => c.key),
-    serviceSpread: agg.service_spread,
-    firstSeenAt: agg.first_seen ?? 0,
-    lastSeenAt: agg.last_seen ?? 0,
+    docFreq: groups.reduce((n, g) => n + g.doc_freq, 0),
+    contributingTypes: groups.map((g) => `${g.service}:${g.type}`),
+    serviceSpread: new Set(groups.map((g) => g.service)).size,
+    firstSeenAt: Math.min(...groups.map((g) => g.first_seen)),
+    lastSeenAt: Math.max(...groups.map((g) => g.last_seen)),
     topSources: sources.map((s) => ({
       itemId: s.id,
       title: s.title,
@@ -181,6 +178,62 @@ export function computeTermStats(
       modifiedAt: s.modified_at,
     })),
   };
+}
+
+/**
+ * Whether the term occurs in at least one item of the EFFECTIVE set — the visibility test for a
+ * mined term (spec § 7). Stored statistics are over the known set, so a term whose only
+ * occurrences are in an excluded type keeps its row; this is what hides it. False for an empty
+ * set, and for a key FTS cannot parse (the same degradation `computeTermStats` applies).
+ */
+export function hasEffectiveOccurrence(
+  db: Database,
+  termKey: string,
+  effective: readonly string[],
+): boolean {
+  if (effective.length === 0) return false;
+  const { sql: sourceFilter, params: sourceKeys } = sourceFilterSql(effective, "i");
+  const row = safeFtsGet(
+    () =>
+      db
+        .query(
+          `SELECT EXISTS (
+             SELECT 1 FROM item_fts f
+             JOIN item i ON i.rowid = f.rowid
+             WHERE item_fts MATCH ? AND ${sourceFilter}
+             LIMIT 1
+           ) AS hit`,
+        )
+        .get(ftsQuery(termKey), ...sourceKeys) as { hit: number } | null,
+    null,
+  );
+  return row?.hit === 1;
+}
+
+/** How many consolidated terms near-miss suggestions draw from — mirrors `agents/glossary.ts`. */
+export const NEAR_MISS_POOL = 500;
+
+/**
+ * The queues' visibility filter. On the fast path (every known type effective) nothing can be
+ * hidden and the rows pass through untouched. Otherwise the caller over-fetched; a row is dropped
+ * when it is mined (not `manual`/`agent`, which the mapping never hides) and has no occurrence in
+ * the effective set. A dropped row is NOT touched — it stays as it was, with no attempt recorded.
+ */
+function visibleRows(db: Database, rows: Row[], limit: number, sets: GlossarySets): Row[] {
+  if (sets.fast) return rows;
+  const kept: Row[] = [];
+  for (const r of rows) {
+    if (kept.length >= limit) break;
+    const authored = r.definition_source === "manual" || r.definition_source === "agent";
+    if (authored || hasEffectiveOccurrence(db, r.term_key, sets.effective)) kept.push(r);
+  }
+  return kept;
+}
+
+/** Rows to fetch for `limit` visible ones: unchanged on the fast path, else over-fetched. */
+function fetchLimit(limit: number, sets: GlossarySets): number {
+  if (sets.fast) return limit;
+  return Math.max(limit, Math.min(limit * 4, NEAR_MISS_POOL));
 }
 
 export function upsertCandidate(
@@ -260,6 +313,7 @@ export function selectPendingBatch(
   db: Database,
   limit: number,
   opts: { nowMs: number; retryBaseCooldownMs: number; minDocFreq: number },
+  sets: GlossarySets,
 ): GlossaryTerm[] {
   // Selects across the WHOLE table, not just this pass's discoveries: a
   // high-scoring candidate deferred by the cap three passes ago must still
@@ -288,8 +342,8 @@ export function selectPendingBatch(
        ORDER BY score DESC
        LIMIT ?`,
     )
-    .all(opts.minDocFreq, opts.retryBaseCooldownMs, opts.nowMs, limit) as Row[];
-  return rows.map(toTerm);
+    .all(opts.minDocFreq, opts.retryBaseCooldownMs, opts.nowMs, fetchLimit(limit, sets)) as Row[];
+  return visibleRows(db, rows, limit, sets).map(toTerm);
 }
 
 /**
@@ -318,6 +372,7 @@ export function selectSnippetUpgradeBatch(
   db: Database,
   limit: number,
   opts: { nowMs: number; retryBaseCooldownMs: number },
+  sets: GlossarySets,
 ): GlossaryTerm[] {
   if (limit <= 0) return [];
   const rows = db
@@ -331,8 +386,8 @@ export function selectSnippetUpgradeBatch(
        ORDER BY last_attempt_at ASC, score DESC
        LIMIT ?`,
     )
-    .all(opts.retryBaseCooldownMs, opts.nowMs, limit) as Row[];
-  return rows.map(toTerm);
+    .all(opts.retryBaseCooldownMs, opts.nowMs, fetchLimit(limit, sets)) as Row[];
+  return visibleRows(db, rows, limit, sets).map(toTerm);
 }
 
 /** Records a failed consolidation so the backoff above takes effect. */
@@ -590,6 +645,9 @@ export function writePassState(db: Database, s: GlossaryPassState): void {
 export function clearGlossary(db: Database): void {
   dbRun(db, "DELETE FROM glossary_term WHERE definition_source IS NOT 'agent'", []);
   dbRun(db, "DELETE FROM glossary_pass_state", []);
+  // The per-type catch-up cursors are part of the pass state: left behind, a rebuilt glossary
+  // would treat every mapped type as already caught up.
+  dbRun(db, "DELETE FROM source_catchup_state WHERE pass = 'glossary'", []);
 }
 
 /**

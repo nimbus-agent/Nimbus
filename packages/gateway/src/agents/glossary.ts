@@ -13,6 +13,7 @@ import {
 import type { GlossaryTerm } from "../glossary/glossary-types.ts";
 import { findNearMisses } from "../glossary/near-miss.ts";
 import { normalizeTerm } from "../glossary/term-normalize.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../sources/source-mapping.ts";
 import { emitBriefWithSynthesis } from "./_lib/emit-brief.ts";
 import type { GapNote } from "./_lib/findings.ts";
 import type {
@@ -173,7 +174,10 @@ export async function runGlossary(
   // The honesty count: how many of the glossary-source items indexed so far
   // carry a truncated body. No time window here — unlike `decisions`, the
   // glossary has no `--since`, so this covers the whole corpus.
-  const candidates = loadGlossaryCandidates(ctx.db, { sinceMs: 0 });
+  const candidates = loadGlossaryCandidates(ctx.db, {
+    sinceMs: 0,
+    mapping: BUILTIN_SOURCE_MAPPING,
+  });
   const truncation = {
     totalSources: candidates.total,
     truncatedSources: candidates.truncatedSources,

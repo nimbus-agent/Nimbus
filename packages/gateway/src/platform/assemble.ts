@@ -772,6 +772,11 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
         // are content a user actively edits, so `--refresh` must apply an edit
         // without a gateway restart.
         configDir: paths.configDir,
+        // Resolved on EVERY run, never at assemble time, exactly as the decisions pass does: a
+        // pack install or an owner edit to `[sources]` applies to the next pass without a restart.
+        mapping: sourceMappingFor(paths.configDir),
+        // Catch-up re-reads it between batches, so a type removed mid-run stops there.
+        mappingAt: () => sourceMappingFor(paths.configDir),
         ...(consolidationLlm === undefined ? {} : { llm: consolidationLlm }),
         ...(runOpts.onProgress === undefined ? {} : { onProgress: runOpts.onProgress }),
         nowMs: Date.now(),

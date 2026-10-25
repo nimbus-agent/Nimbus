@@ -7,6 +7,7 @@ import { emitGlossaryBrief, runGlossary } from "../../../src/agents/glossary.ts"
 import { runGlossaryPass } from "../../../src/glossary/glossary-extract.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../../src/index/migrations/runner.ts";
+import { BUILTIN_SOURCE_MAPPING } from "../../../src/sources/source-mapping.ts";
 
 /** There is no `runMigrations` export — this wrapper matches every other test in the repo. */
 function runMigrations(db: Database): void {
@@ -28,6 +29,7 @@ const PASS = {
   // Required. Omitting it makes the backoff window NaN.
   retryBaseCooldownMs: 1000,
   nowMs: 5000,
+  mapping: BUILTIN_SOURCE_MAPPING,
 };
 
 /** Narrows the `glossary.briefReady` payload instead of casting it into shape. */
