@@ -136,6 +136,8 @@ function builtinSlots(): Map<string, Slot> {
 
 export const BUILTIN_SOURCE_MAPPING: SourceMapping = build(builtinSlots(), [], []);
 
+const layerOrigin = (l: LayerRef): string => (l.kind === "pack" ? `pack ${l.id}` : l.kind);
+
 type Walk = {
   slots: Map<string, Slot>;
   excluded: { serviceType: string; layer: LayerRef }[];
@@ -166,6 +168,14 @@ function applyPack(walk: Walk, layer: LayerRef, valRaw: string): void {
   for (const e of list.map(parseSourceMapEntry).filter(isDefined)) packEntry(walk, layer, e);
 }
 
+/** A pack-added type an owner layer is about to replace or remove: say so, it is otherwise silent. */
+function noteShadowedPack(walk: Walk, serviceType: string, outcome: string): void {
+  const cur = walk.slots.get(serviceType);
+  if (cur?.origin.kind === "layer" && cur.origin.layer.kind === "pack") {
+    walk.notes.push(`pack ${cur.origin.layer.id} maps ${serviceType} as ${cur.kind}; ${outcome}`);
+  }
+}
+
 function applyOwnerMap(walk: Walk, layer: LayerRef, mapRaw: string): void {
   const list = parseSourceMapList(mapRaw);
   if (list === undefined) {
@@ -173,6 +183,7 @@ function applyOwnerMap(walk: Walk, layer: LayerRef, mapRaw: string): void {
     return;
   }
   for (const [serviceType, kind] of sourceMapFromList(list)) {
+    noteShadowedPack(walk, serviceType, `overridden by ${layerOrigin(layer)} (${kind})`);
     walk.slots.set(serviceType, { kind, origin: { kind: "layer", layer } });
     // A later layer re-mapping a type an earlier layer excluded brings it back.
     walk.excluded = walk.excluded.filter((x) => x.serviceType !== serviceType);
@@ -188,6 +199,7 @@ function applyOwnerExclude(walk: Walk, layer: LayerRef, excludeRaw: string): voi
     return;
   }
   for (const serviceType of list) {
+    noteShadowedPack(walk, serviceType, `excluded by ${layerOrigin(layer)}`);
     walk.slots.delete(serviceType);
     walk.excluded.push({ serviceType, layer });
   }
@@ -226,8 +238,6 @@ export function sourceMappingFor(configDir: string | undefined): SourceMapping {
   if (configDir === undefined) return BUILTIN_SOURCE_MAPPING;
   return resolveSourceMapping(getLayeredConfig(configDir).snapshot());
 }
-
-const layerOrigin = (l: LayerRef): string => (l.kind === "pack" ? `pack ${l.id}` : l.kind);
 
 /** `config explain sources`: each effective entry with its origin, each exclusion, then the notes. */
 export function describeSourceMapping(mapping: SourceMapping): readonly string[] {

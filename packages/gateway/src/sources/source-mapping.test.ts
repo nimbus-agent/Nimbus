@@ -270,3 +270,26 @@ describe("describeSourceMapping", () => {
     expect(lines).toContain("source jira:issue is mined as doc (base)");
   });
 });
+
+describe("owner layers overriding a pack-added type", () => {
+  const pk = () => pack("devops", 'map = ["readwise:highlight=note"]');
+
+  test("a re-kind names the pack, its kind and the owner layer", () => {
+    const m = resolve(pk(), base('map = ["readwise:highlight=doc"]'));
+    const note = "pack devops maps readwise:highlight as note; overridden by base (doc)";
+    expect(m.notes).toContain(note);
+    expect(describeSourceMapping(m)).toContain(note);
+  });
+
+  test("an exclude names the pack and the owner layer", () => {
+    const m = resolve(pk(), profile('exclude = ["readwise:highlight"]'));
+    const note = "pack devops maps readwise:highlight as note; excluded by profile";
+    expect(m.notes).toContain(note);
+    expect(describeSourceMapping(m)).toContain(note);
+  });
+
+  test("a built-in re-kind and an owner-only type add no such note", () => {
+    const m = resolve(base('map = ["jira:issue=doc", "a:b=note"]'));
+    expect(m.notes.filter((n) => n.includes("overridden by"))).toEqual([]);
+  });
+});

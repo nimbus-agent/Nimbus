@@ -41,4 +41,12 @@ describe("validatePackContent", () => {
     );
     expect(run("readwise:highlight=note")).toEqual([]);
   });
+
+  test("a pack may not name one source twice, whatever the kinds", () => {
+    const run = (a: string, b: string) =>
+      validatePackContent({ ...base, defaults: `[sources]\nmap = ["${a}", "${b}"]\n` }, deps);
+    const want = '[sources] map names "readwise:highlight" more than once';
+    expect(run("readwise:highlight=note", "readwise:highlight=note")).toContain(want);
+    expect(run("readwise:highlight=note", "readwise:highlight=doc")).toContain(want);
+  });
 });
