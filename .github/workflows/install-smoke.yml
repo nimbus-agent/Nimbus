@@ -919,6 +919,11 @@ jobs:
               exit 1
             }
           }
+          # install.ps1 puts nothing else there, so an emptied bin dir must be gone too.
+          if (Test-Path "$env:LOCALAPPDATA\Programs\Nimbus\bin") {
+            Write-Error "uninstall left the emptied install directory behind"
+            exit 1
+          }
           $userPath = [Environment]::GetEnvironmentVariable("PATH","User")
           if ($userPath -and (($userPath -split ";") | Where-Object { $_ -ieq "$env:LOCALAPPDATA\Programs\Nimbus\bin" })) {
             Write-Error "uninstall did not remove the PATH segment"

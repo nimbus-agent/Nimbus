@@ -17,9 +17,27 @@ const TEST_TIMEOUT_MS = 90_000;
 
 type RunResult = { code: number; stdout: string; stderr: string };
 
-async function run(argv: string[], env: Record<string, string | undefined>): Promise<RunResult> {
+/**
+ * The parent env with `overrides` applied. Windows env names are case-insensitive, so a parent key
+ * spelled `LocalAppData` beside an override `LOCALAPPDATA` would leave the child two candidates,
+ * one of them the REAL profile. Drop every case variant of an overridden name first.
+ */
+function childEnv(overrides: Record<string, string>): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env };
+  const names = new Set(Object.keys(overrides).map((k) => k.toLowerCase()));
+  for (const key of Object.keys(env)) {
+    if (names.has(key.toLowerCase())) delete env[key];
+  }
+  return { ...env, ...overrides };
+}
+
+function tempProfile(root: string): Record<string, string> {
+  return { LOCALAPPDATA: join(root, "Local"), APPDATA: join(root, "Roaming") };
+}
+
+async function run(argv: string[], env: Record<string, string>): Promise<RunResult> {
   const proc = Bun.spawn(argv, {
-    env: { ...process.env, ...env },
+    env: childEnv(env),
     stdout: "pipe",
     stderr: "pipe",
     windowsHide: true,
@@ -56,7 +74,7 @@ function runUninstall(root: string, extraArgs: string[] = ["-Yes"]): Promise<Run
       UNINSTALL_PS1,
       ...extraArgs,
     ],
-    { LOCALAPPDATA: join(root, "Local"), APPDATA: join(root, "Roaming") },
+    tempProfile(root),
   );
 }
 
@@ -109,6 +127,18 @@ describe.skipIf(skip)("uninstall.ps1 on Windows PowerShell 5.1", () => {
     mkdirSync(join(root, "Roaming", "Nimbus"), { recursive: true });
     writeFileSync(join(root, "Roaming", "Nimbus", "nimbus.toml"), "keep");
     pathBefore = await realUserPath();
+    // Premise, checked BEFORE any uninstaller runs: a child given this env really resolves the
+    // install dir inside the temp root, never the real profile.
+    const probe = await run(
+      [
+        powershell ?? "powershell",
+        "-NoProfile",
+        "-Command",
+        'Join-Path $env:LOCALAPPDATA "Programs\\Nimbus\\bin"',
+      ],
+      tempProfile(root),
+    );
+    expect(probe.stdout.trim()).toBe(binDir);
   });
 
   afterEach(async () => {
@@ -163,7 +193,9 @@ describe.skipIf(skip)("uninstall.ps1 on Windows PowerShell 5.1", () => {
   );
 
   test(
-    "stops a gateway running from the install dir, so its exe can be deleted",
+    // With no gateway.json naming its pid this takes the Stop-Process path, not `nimbus stop`;
+    // `nimbus stop` is only a nicer first attempt and Stop-Process is what guarantees the delete.
+    "stops a gateway running from the install dir (Stop-Process path), so its exe can be deleted",
     async () => {
       const ours = startFakeProcess(join(binDir, "nimbus-gateway.exe"));
       spawned.push(ours);
@@ -238,9 +270,48 @@ describe.skipIf(skip)("uninstall.ps1 on Windows PowerShell 5.1", () => {
           "-Command",
           `& ([scriptblock]::Create((Get-Content -Raw -LiteralPath '${UNINSTALL_PS1}'))) -Yes`,
         ],
-        { LOCALAPPDATA: join(root, "Local"), APPDATA: join(root, "Roaming") },
+        tempProfile(root),
       );
       expect(r.stderr).toBe("");
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("Nimbus uninstalled.");
+      expect(existsSync(join(binDir, "nimbus.exe"))).toBe(false);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  /** Runs `argv` with `answer` typed at the confirmation prompt. */
+  async function withAnswer(argv: string[], answer: string): Promise<RunResult> {
+    const proc = Bun.spawn(argv, {
+      env: childEnv(tempProfile(root)),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    });
+    proc.stdin.write(`${answer}\r\n`);
+    proc.stdin.end();
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { code, stdout, stderr };
+  }
+  const asFile = (): string[] => [
+    powershell ?? "powershell",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    UNINSTALL_PS1,
+  ];
+
+  test(
+    "answering y at the prompt uninstalls (the answer is read, not defaulted)",
+    async () => {
+      writeFileSync(join(binDir, "nimbus.exe"), "x");
+      const r = await withAnswer(asFile(), "y");
       expect(r.code).toBe(0);
       expect(r.stdout).toContain("Nimbus uninstalled.");
       expect(existsSync(join(binDir, "nimbus.exe"))).toBe(false);
@@ -252,32 +323,29 @@ describe.skipIf(skip)("uninstall.ps1 on Windows PowerShell 5.1", () => {
     "declining the prompt removes nothing and exits 1 when run as a file",
     async () => {
       writeFileSync(join(binDir, "nimbus.exe"), "x");
-      const proc = Bun.spawn(
+      const r = await withAnswer(asFile(), "n");
+      expect(r.code).toBe(1);
+      expect(r.stdout).toContain("Aborted.");
+      expect(existsSync(join(binDir, "nimbus.exe"))).toBe(true);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "declining in the remote (scriptblock) form returns without closing the caller's shell",
+    async () => {
+      writeFileSync(join(binDir, "nimbus.exe"), "x");
+      const r = await withAnswer(
         [
           powershell ?? "powershell",
           "-NoProfile",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-File",
-          UNINSTALL_PS1,
+          "-Command",
+          `& ([scriptblock]::Create((Get-Content -Raw -LiteralPath '${UNINSTALL_PS1}'))); Write-Output SHELL_ALIVE`,
         ],
-        {
-          env: {
-            ...process.env,
-            LOCALAPPDATA: join(root, "Local"),
-            APPDATA: join(root, "Roaming"),
-          },
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-          windowsHide: true,
-        },
+        "n",
       );
-      proc.stdin.write("n\r\n");
-      proc.stdin.end();
-      const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-      expect(code).toBe(1);
-      expect(stdout).toContain("Aborted.");
+      expect(r.stdout).toContain("Aborted.");
+      expect(r.stdout).toContain("SHELL_ALIVE");
       expect(existsSync(join(binDir, "nimbus.exe"))).toBe(true);
     },
     TEST_TIMEOUT_MS,

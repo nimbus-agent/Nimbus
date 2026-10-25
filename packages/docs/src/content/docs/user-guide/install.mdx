@@ -214,7 +214,7 @@ not duplicate PATH entries.
 
 | Item | Location |
 |---|---|
-| `nimbus.exe`, `nimbus-gateway.exe` | `%LOCALAPPDATA%\Programs\Nimbus\bin\` |
+| `nimbus.exe`, `nimbus-gateway.exe`, `nimbus-sandbox-helper.exe`, `vec0.dll` | `%LOCALAPPDATA%\Programs\Nimbus\bin\` |
 | Gateway data dir | `%LOCALAPPDATA%\Nimbus\` (index, logs, extensions) |
 | Gateway config dir | `%APPDATA%\Nimbus\` (`nimbus.toml`) |
 | PATH update | User `PATH` registry key under `HKCU\Environment` |
@@ -245,8 +245,9 @@ first, then re-run the script.
 
 ## Uninstall
 
-The release tarball includes a companion uninstall script that reverses every
-change the installer makes:
+If you installed with the one-liner or from a release archive, run the companion
+uninstall script. (A `.deb` or `.rpm` install is removed with your package
+manager instead, for example `sudo apt remove nimbus-headless`.)
 
 <Tabs>
   <TabItem label="Linux / macOS">
