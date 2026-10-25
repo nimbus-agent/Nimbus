@@ -26,6 +26,12 @@ function isDestructive(action: string | undefined): boolean {
   return DESTRUCTIVE_PATTERNS.some((re) => re.test(action));
 }
 
+/**
+ * Not destructive, but changes how the whole install behaves: focus starts on Reject so Enter
+ * never approves a role pack the owner has not read.
+ */
+const FOCUS_REJECT: ReadonlySet<string> = new Set(["pack.install"]);
+
 export function HitlPopupPage(): ReactNode {
   const pending = useNimbusStore((s) => s.pending);
   const resolve = useNimbusStore((s) => s.resolve);
@@ -41,6 +47,9 @@ export function HitlPopupPage(): ReactNode {
   // the payload (the payload is the action's data) and not the prompt text (it embeds that data).
   const action = head?.actionType;
   const isMigrate = action === "extension.migrate";
+  // The gateway renders a role pack's prompt itself — the pack's exact defaults text — and it is
+  // multi-line, so it is shown verbatim in a bounded scroll box rather than as a heading.
+  const isPackInstall = action === "pack.install";
 
   // Focus is placed imperatively, keyed on the action, NOT via the `autoFocus` attribute. React
   // honours `autoFocus` only at mount, and this popup does not remount between queued requests —
@@ -55,7 +64,9 @@ export function HitlPopupPage(): ReactNode {
     // No `actionType` (an older installed gateway) means the type is unknown, and an unknown type
     // is not assumed safe: focus fails closed to Reject.
     const target =
-      action === undefined || isDestructive(action) ? rejectRef.current : approveRef.current;
+      action === undefined || isDestructive(action) || FOCUS_REJECT.has(action)
+        ? rejectRef.current
+        : approveRef.current;
     target?.focus();
   }, [action, head]);
 
@@ -91,10 +102,20 @@ export function HitlPopupPage(): ReactNode {
     <div className="p-5 space-y-4">
       <header>
         <h2 className="text-base font-medium text-[var(--color-fg)]">
-          {isMigrate ? "Keep this connector as a signed extension?" : head.prompt}
+          {packHeading(isMigrate, isPackInstall, head.prompt)}
         </h2>
       </header>
-      <StructuredPreview details={head.details} {...(action === undefined ? {} : { action })} />
+      {isPackInstall ? (
+        <pre
+          data-testid="pack-install-prompt"
+          className="whitespace-pre-wrap break-words font-mono text-xs border border-[var(--color-border)] rounded p-2"
+          style={{ maxHeight: 220, overflow: "auto" }}
+        >
+          {head.prompt}
+        </pre>
+      ) : (
+        <StructuredPreview details={head.details} {...(action === undefined ? {} : { action })} />
+      )}
       {error && (
         <div className="text-[var(--color-error)] text-xs" role="alert">
           {error}
@@ -123,4 +144,10 @@ export function HitlPopupPage(): ReactNode {
       {more > 0 && <p className="text-xs text-[var(--color-fg-muted)]">+{more} more pending</p>}
     </div>
   );
+}
+
+function packHeading(isMigrate: boolean, isPackInstall: boolean, prompt: string): string {
+  if (isMigrate) return "Keep this connector as a signed extension?";
+  if (isPackInstall) return "Install this role pack?";
+  return prompt;
 }

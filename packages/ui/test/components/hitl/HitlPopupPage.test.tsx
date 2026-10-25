@@ -50,6 +50,36 @@ describe("HitlPopupPage", () => {
     vi.useRealTimers();
   });
 
+  it("pack.install shows its prompt verbatim in a bounded scroll box, not as the heading", () => {
+    const prompt = 'Install the Product pack?\n\n[agents]\nvisible = ["decisions"]\n';
+    storeState.pending = [
+      {
+        requestId: "rp",
+        prompt,
+        details: { packId: "pm", promptText: prompt },
+        receivedAtMs: 1,
+        actionType: "pack.install",
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(screen.getByRole("heading", { name: "Install this role pack?" })).toBeInTheDocument();
+    const box = screen.getByTestId("pack-install-prompt");
+    expect(box.tagName).toBe("PRE");
+    expect(box.textContent).toBe(prompt);
+    expect(box.style.maxHeight).toBe("220px");
+    expect(box.style.overflow).toBe("auto");
+    // The structured preview would repeat the prompt text; it is not rendered for a pack install.
+    expect(screen.queryByText("promptText")).toBeNull();
+  });
+
+  it("pack.install starts with focus on Reject", () => {
+    storeState.pending = [
+      { requestId: "rq", prompt: "x", receivedAtMs: 1, actionType: "pack.install" },
+    ];
+    render(<HitlPopupPage />);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Reject/i }));
+  });
+
   it("renders the head-of-queue prompt", () => {
     storeState.pending = [{ requestId: "r1", prompt: "Send message?", receivedAtMs: Date.now() }];
     render(<HitlPopupPage />);
