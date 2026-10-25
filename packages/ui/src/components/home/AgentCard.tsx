@@ -72,7 +72,7 @@ function OncallCard({ agent }: { readonly agent: CatalogAgent }): ReactNode {
 
 function StoredCard({ agent }: { readonly agent: CatalogAgent }): ReactNode {
   const needsParams = hasRequiredParams(agent);
-  const { data } = useIpcQuery<FleetBriefsResult>(
+  const { data, error } = useIpcQuery<FleetBriefsResult>(
     "fleet.briefs",
     60_000,
     { agentMethod: agent.method, nonSweep: true, withMarkdown: true, limit: 1 },
@@ -80,10 +80,12 @@ function StoredCard({ agent }: { readonly agent: CatalogAgent }): ReactNode {
   );
   // A failed query reads as "nothing stored": the card has no error state by design.
   const row = needsParams ? undefined : data?.briefs[0];
+  // No "nothing stored" claim until the first fetch has answered (a result or an error).
+  const firstFetchInFlight = !needsParams && data === null && error === null;
   if (row === undefined)
     return (
       <Shell agent={agent} action={<RunLink agent={agent} />}>
-        {needsParams ? null : NONE}
+        {needsParams || firstFetchInFlight ? null : NONE}
       </Shell>
     );
   return (

@@ -47,7 +47,7 @@ function Shell({ children }: { readonly children: ReactNode }): ReactNode {
 
 export function BriefRun(): ReactNode {
   const { agent = "" } = useParams();
-  const { catalog } = useRolePacks();
+  const { catalog, catalogError } = useRolePacks();
 
   if (DESKTOP_EXCLUDED_AGENTS.has(agent)) {
     const cmd = CLI_COMMAND[agent] ?? `nimbus ${agent}`;
@@ -60,7 +60,13 @@ export function BriefRun(): ReactNode {
   if (catalog === null) {
     return (
       <Shell>
-        <p className="text-sm">Loading…</p>
+        {catalogError === null ? (
+          <p className="text-sm">Loading…</p>
+        ) : (
+          <p role="alert" className="text-sm text-[var(--color-error)]">
+            {`Could not load the brief list: ${catalogError}`}
+          </p>
+        )}
       </Shell>
     );
   }
@@ -157,7 +163,7 @@ function BriefRunView({ agent }: { readonly agent: CatalogAgent }): ReactNode {
           <div className="flex items-center gap-3">
             <button
               type="submit"
-              disabled={starting || pending}
+              disabled={starting || (run?.status === "pending" && !isPastDeadline(run, now))}
               className="px-3 py-1 text-sm border border-[var(--color-border)] rounded disabled:opacity-50"
             >
               Run
@@ -213,6 +219,18 @@ function Fields(props: {
               {g.required ? `${g.group} (choose one)` : `${g.group} (optional)`}
             </legend>
             <div className="flex gap-2">
+              {!g.required && (
+                <button
+                  type="button"
+                  aria-pressed={chosen === undefined}
+                  className={`px-2 py-1 text-sm border border-[var(--color-border)] rounded ${
+                    chosen === undefined ? "bg-[var(--color-surface)]" : ""
+                  }`}
+                  onClick={() => setArm(g.group, "")}
+                >
+                  None
+                </button>
+              )}
               {g.arms.map((a) => (
                 <button
                   key={a.arm}
@@ -247,7 +265,8 @@ function Field(props: {
   const raw = values[param.name];
   const text = typeof raw === "string" ? raw : "";
   const required = param.required || param.oneOf?.armRequired === true;
-  const label = required ? `${param.label} *` : param.label;
+  const baseLabel = param.name === "sinceMs" ? "Since" : param.label;
+  const label = required ? `${baseLabel} *` : baseLabel;
 
   let widget: ReactNode;
   if (param.kind === "boolean") {

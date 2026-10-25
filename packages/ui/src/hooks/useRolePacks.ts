@@ -5,6 +5,8 @@ import type { CatalogListResult, PackListResult } from "../ipc/types";
 export interface RolePacksState {
   readonly packs: PackListResult | null;
   readonly catalog: CatalogListResult | null;
+  /** The message of a failed `catalog.list`; cleared by the next successful answer. */
+  readonly catalogError: string | null;
   readonly sections: readonly PackSection[];
   /** True once both `pack.list` and `catalog.list` have returned data. */
   readonly loaded: boolean;

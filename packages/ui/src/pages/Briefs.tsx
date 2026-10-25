@@ -14,13 +14,20 @@ const CATEGORY_LABEL: Readonly<Record<(typeof CATEGORY_ORDER)[number], string>> 
 };
 
 export function Briefs(): ReactNode {
-  const { catalog } = useRolePacks();
+  const { catalog, catalogError } = useRolePacks();
   const agents = (catalog?.agents ?? []).filter((a) => !DESKTOP_EXCLUDED_AGENTS.has(a.name));
   return (
     <>
       <PageHeader title="Briefs" />
       <div className="p-6 space-y-6">
-        {catalog === null && <p className="text-sm">Loading…</p>}
+        {catalog === null &&
+          (catalogError === null ? (
+            <p className="text-sm">Loading…</p>
+          ) : (
+            <p role="alert" className="text-sm text-[var(--color-error)]">
+              {`Could not load the brief list: ${catalogError}`}
+            </p>
+          ))}
         {CATEGORY_ORDER.map((cat) => {
           const inCat = agents.filter((a) => a.category === cat);
           if (inCat.length === 0) return null;

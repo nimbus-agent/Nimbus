@@ -4,11 +4,17 @@ import { describe, expect, it, vi } from "vitest";
 import type { CatalogAgent, CatalogListResult } from "../../src/ipc/types";
 import { Briefs } from "../../src/pages/Briefs";
 
-const h = vi.hoisted(() => ({ catalog: null as unknown }));
+const h = vi.hoisted(() => ({ catalog: null as unknown, error: null as string | null }));
 
 vi.mock("../../src/ipc/client");
 vi.mock("../../src/hooks/useRolePacks", () => ({
-  useRolePacks: () => ({ packs: null, catalog: h.catalog, sections: [], loaded: true }),
+  useRolePacks: () => ({
+    packs: null,
+    catalog: h.catalog,
+    catalogError: h.error,
+    sections: [],
+    loaded: true,
+  }),
 }));
 
 import { callMock } from "../../src/ipc/__mocks__/client";
@@ -37,6 +43,19 @@ function setCatalog(agents: CatalogAgent[]): void {
 }
 
 describe("Briefs", () => {
+  it("shows the catalog error instead of Loading… when catalog.list failed", () => {
+    h.catalog = null;
+    h.error = "gateway down";
+    render(
+      <MemoryRouter>
+        <Briefs />
+      </MemoryRouter>,
+    );
+    h.error = null;
+    expect(screen.getByText("Could not load the brief list: gateway down")).toBeTruthy();
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
+
   it("groups by category in CATEGORY_ORDER, excludes preflight/premortem, includes negotiate", () => {
     callMock.mockClear();
     setCatalog([

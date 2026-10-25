@@ -129,6 +129,18 @@ describe("AgentCard", () => {
     expect(screen.getByRole("link", { name: /run/i })).toHaveAttribute("href", "/briefs/decisions");
   });
 
+  it("makes no 'No stored brief yet.' claim while the first fetch is in flight", () => {
+    q.result = { data: null, error: null, isLoading: true };
+    renderCard(agent("decisions"));
+    expect(screen.queryByText("No stored brief yet.")).toBeNull();
+    expect(screen.getByRole("link", { name: /run/i })).toBeInTheDocument();
+  });
+
+  it("a required-params agent shows no stored-brief claim either way", () => {
+    renderCard(agent("impact", true));
+    expect(screen.queryByText("No stored brief yet.")).toBeNull();
+  });
+
   it("a rejected fleet.briefs reads the same as empty, with no error text", () => {
     q.result = { data: null, error: "boom", isLoading: false };
     renderCard(agent("decisions"));

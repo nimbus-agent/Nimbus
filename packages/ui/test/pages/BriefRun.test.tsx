@@ -25,17 +25,21 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
 
 import { callMock } from "../../src/ipc/__mocks__/client";
 
-const CATALOG: { agents: CatalogAgent[] } = { agents: [] };
+const CATALOG: { agents: CatalogAgent[]; failed: string | null } = { agents: [], failed: null };
 vi.mock("../../src/hooks/useRolePacks", () => ({
   useRolePacks: () => ({
     packs: null,
-    catalog: {
-      agents: CATALOG.agents,
-      connectors: [],
-      visibility: { basis: "all", packs: [], notes: [] },
-    },
+    catalog:
+      CATALOG.failed === null
+        ? {
+            agents: CATALOG.agents,
+            connectors: [],
+            visibility: { basis: "all", packs: [], notes: [] },
+          }
+        : null,
+    catalogError: CATALOG.failed,
     sections: [],
-    loaded: true,
+    loaded: CATALOG.failed === null,
   }),
 }));
 
@@ -86,8 +90,9 @@ beforeEach(() => {
   h.start = vi.fn(() => Promise.resolve());
   h.writeText = vi.fn(() => Promise.resolve());
   callMock.mockClear();
+  CATALOG.failed = null;
   CATALOG.agents = [
-    agent("decisions", [{ name: "sinceMs", kind: "number", label: "Window", required: false }]),
+    agent("decisions", [{ name: "sinceMs", kind: "number", label: "Since (ms)", required: false }]),
     agent("huddle"),
     agent("ghost"),
     agent("a"),
@@ -110,7 +115,7 @@ describe("BriefRun", () => {
   it("Run calls start with the collected params", async () => {
     const user = userEvent.setup();
     renderAt("decisions");
-    await user.selectOptions(screen.getByLabelText("Window"), "7 days");
+    await user.selectOptions(screen.getByLabelText("Since"), "7 days");
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(h.start).toHaveBeenCalledWith("decisions", { sinceMs: 604_800_000 });
   });
@@ -162,6 +167,80 @@ describe("BriefRun", () => {
     h.runs.set("decisions", pending("decisions", Date.now() - BRIEF_WAIT_DEADLINE_MS - 1000));
     renderAt("decisions");
     expect(screen.getByText("Still running — check back.")).toBeTruthy();
+  });
+
+  it("re-enables Run once past the deadline, and clicking it starts again", async () => {
+    h.runs.set("decisions", pending("decisions", Date.now() - BRIEF_WAIT_DEADLINE_MS - 1000));
+    const user = userEvent.setup();
+    renderAt("decisions");
+    const run = screen.getByRole("button", { name: "Run" }) as HTMLButtonElement;
+    expect(run.disabled).toBe(false);
+    await user.click(run);
+    expect(h.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the catalog error instead of Loading… when catalog.list failed", () => {
+    CATALOG.failed = "gateway down";
+    renderAt("decisions");
+    expect(screen.getByText("Could not load the brief list: gateway down")).toBeTruthy();
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
+
+  it("labels the sinceMs select 'Since'", () => {
+    CATALOG.agents = [
+      agent("decisions", [
+        { name: "sinceMs", kind: "number", label: "Since (ms)", required: false },
+      ]),
+    ];
+    renderAt("decisions");
+    expect(screen.getByLabelText("Since")).toBeTruthy();
+    expect(screen.queryByLabelText("Since (ms)")).toBeNull();
+  });
+
+  it("an optional group can be un-chosen with None, sending none of its fields", async () => {
+    CATALOG.agents = [
+      agent("oncall", [
+        {
+          name: "incident",
+          kind: "string",
+          label: "Incident",
+          required: false,
+          oneOf: { group: "target", arm: "incident", required: false, armRequired: false },
+        },
+        {
+          name: "service",
+          kind: "string",
+          label: "Service",
+          required: false,
+          oneOf: { group: "target", arm: "service", required: false, armRequired: false },
+        },
+      ]),
+    ];
+    const user = userEvent.setup();
+    renderAt("oncall");
+    expect(screen.getByRole("button", { name: "None" }).getAttribute("aria-pressed")).toBe("true");
+    await user.click(screen.getByRole("button", { name: "incident" }));
+    await user.type(screen.getByLabelText("Incident"), "INC-1");
+    await user.click(screen.getByRole("button", { name: "None" }));
+    expect(screen.queryByLabelText("Incident")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(h.start).toHaveBeenCalledWith("oncall", {});
+  });
+
+  it("a required group has no None choice", () => {
+    CATALOG.agents = [
+      agent("impact", [
+        {
+          name: "a",
+          kind: "string",
+          label: "A",
+          required: false,
+          oneOf: { group: "target", arm: "a", required: true, armRequired: true },
+        },
+      ]),
+    ];
+    renderAt("impact");
+    expect(screen.queryByRole("button", { name: "None" })).toBeNull();
   });
 
   it("renders a ready run through Markdown and copies its source", async () => {

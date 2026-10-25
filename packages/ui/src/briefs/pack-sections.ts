@@ -1,6 +1,9 @@
 import type { CatalogAgent, CatalogListResult, PackListResult } from "../ipc/types";
 
-/** Agents the desktop does not surface (spec § 5.4): they need parameters the UI cannot collect. */
+/**
+ * Agents the desktop does not surface (spec § 5.1): they have side effects. `preflight` raises an
+ * owner HITL prompt (I24) and `premortem` writes watcher rows, so they stay CLI-only.
+ */
 export const DESKTOP_EXCLUDED_AGENTS: ReadonlySet<string> = new Set(["preflight", "premortem"]);
 
 export type PackSection = {

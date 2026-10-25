@@ -30,14 +30,16 @@ export function RolePacksProvider({ children }: { readonly children: ReactNode }
   const catalogQ = useIpcQuery<CatalogListResult>("catalog.list", 15_000, {}, opts);
   const packs = asPackList(packsQ.data);
   const catalog = asCatalog(catalogQ.data);
+  const catalogError = catalogQ.error;
   const value = useMemo<RolePacksState>(
     () => ({
       packs,
       catalog,
+      catalogError,
       sections: packSections(packs, catalog),
       loaded: packs !== null && catalog !== null,
     }),
-    [packs, catalog],
+    [packs, catalog, catalogError],
   );
   return <RolePacksContext.Provider value={value}>{children}</RolePacksContext.Provider>;
 }
