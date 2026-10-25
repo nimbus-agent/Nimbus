@@ -549,7 +549,8 @@ CREATE TABLE IF NOT EXISTS glossary_term (
     attempts          INTEGER NOT NULL DEFAULT 0,   -- failed-consolidation count; feeds the retry backoff
     last_attempt_at   INTEGER NOT NULL DEFAULT 0,   -- last consolidation attempt, success or failure
     updated_at        INTEGER NOT NULL,
-    capture_id        TEXT                   -- V68: the capture that currently OWNS the row; NULL on every pass-written row
+    capture_id        TEXT,                  -- V68: the capture that currently OWNS the row; NULL on every pass-written row
+    definition_local  INTEGER NOT NULL DEFAULT 0 CHECK (definition_local IN (0,1))  -- V75: 1 when the definition was written from a local-only source, so the search copy stays local
 );
 
 CREATE INDEX IF NOT EXISTS idx_glossary_term_status_score

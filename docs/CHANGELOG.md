@@ -25,8 +25,8 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   never demotes or rewrites a term, scans and queues over the effective set, and `--rebuild` clears its cursors. A term mined
   only from unmapped types is hidden from `nimbus glossary` (list, lookup, suggestions, counts), the `wow` tour and the fleet
   `terms` sweep, never deleted; manual and agent-accepted terms always show; displayed counts and top sources cover the mapped
-  types, and a gap note says how many are hidden. Search copies follow: a hidden term is unprojected and re-projected without a
-  model call, and a term embeds remotely only if every contributing type is prose-heavy or built-in and its definition was not
+  types, and a gap note says how many are hidden. Search copies follow: a hidden term is unprojected, and re-projected without a
+  model call, on the next glossary pass (the read side hides it immediately; `nimbus ask` can retrieve the copy until then), and a term embeds remotely only if every contributing type is prose-heavy or built-in and its definition was not
   written from a local-only source; otherwise it is projected as `nimbus:glossary_term_local` (embedded on this machine only).
   Schema V75 adds `glossary_term.definition_local`. The pack install prompt says when added sources have local-only glossary
   terms. Stated bounds: score and first/last-seen are still stored known-set values, and pending/vetoed counts are whole-table.

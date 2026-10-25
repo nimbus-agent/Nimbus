@@ -645,9 +645,16 @@ async function consolidatePhase(
   for (const unit of work) {
     if (opts.signal?.aborted === true) return { ...tally, aborted: true };
 
+    // The stored top sources come from the KNOWN set, so a source the mapping now hides could
+    // supply the definition of a term that stays visible through another. On the slow path
+    // (effective differs from known) recompute them over the EFFECTIVE set; `snippetTypes` below
+    // still feeds the locality decision, which is over the known set plus these snippets.
+    const snippetSources = sets.fast
+      ? unit.term.topSources
+      : computeTermStats(db, unit.term.termKey, sets.effective).topSources;
     const snippets = snippetsFor(
       db,
-      unit.term.topSources.map((s) => s.itemId),
+      snippetSources.map((s) => s.itemId),
     );
     const snippetTypes = snippets.map((s) => s.serviceType);
     const outcome = await consolidateTerm(unit.term, snippets, consolidateOpts); // NOSONAR S9382: deliberately sequential (see the doc above) - concurrent calls multiply resident model memory on a local Ollama, and each term re-checks the abort signal and reports ordered progress

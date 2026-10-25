@@ -153,7 +153,7 @@ export function applyManualTerms(
       // Through the chokepoint, from the row just written: a manual term is never hidden by the
       // mapping, but its copy is still routed by § 7.1, since its metadata carries top-source
       // titles that may come from local-only items.
-      syncTermProjection(db, term.termKey, opts.sets, opts.nowMs);
+      syncTermProjection(db, term.termKey, opts.sets, opts.nowMs, stats);
     })();
     added += 1;
   }

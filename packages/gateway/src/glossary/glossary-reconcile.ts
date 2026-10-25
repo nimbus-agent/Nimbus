@@ -98,7 +98,7 @@ export function reconcilePass(
     // `nimbus ask` actually retrieves) would otherwise keep pointing at
     // sources the reconcile pass just confirmed are stale. Through the chokepoint, so the copy is
     // also hidden or re-routed when the term's contributing types moved (spec § 7.1).
-    syncTermProjection(db, term.termKey, opts.sets, opts.nowMs);
+    syncTermProjection(db, term.termKey, opts.sets, opts.nowMs, stats);
   }
 
   return { verified: stale.length, demoted };

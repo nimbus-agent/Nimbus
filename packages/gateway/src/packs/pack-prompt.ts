@@ -207,18 +207,20 @@ function sourceRow(entry: string): string {
   return visibleText(entry.replace("=", " as "));
 }
 
-const LOCAL_GLOSSARY_LINE =
-  "glossary terms mined from these sources are embedded on this machine only";
-
 /** The `service:type` half of a `service:type=kind` entry. */
 function entryServiceType(entry: string): string {
   const eq = entry.indexOf("=");
   return eq < 0 ? entry : entry.slice(0, eq);
 }
 
-/** The ง 7.1 note, only when an added entry's type may not feed a remotely embedded term. */
+/** The ยง 7.1 note: names each added type that may not feed a remotely embedded term. */
 function localGlossaryNote(added: readonly string[]): string[] {
-  return added.some((e) => !routesRemotely([entryServiceType(e)])) ? [LOCAL_GLOSSARY_LINE] : [];
+  const localOnly = [
+    ...new Set(added.map(entryServiceType).filter((t) => !routesRemotely([t]))),
+  ].map(visibleText);
+  return localOnly.length === 0
+    ? []
+    : [`glossary terms mined from ${localOnly.join(", ")} are embedded on this machine only`];
 }
 
 function installSections(i: PackPromptInput): string[] {

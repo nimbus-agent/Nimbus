@@ -1301,7 +1301,9 @@ fleet `terms` sweep hide hidden terms, recompute displayed document frequency, s
 top sources over the effective set (score and first/last-seen remain stored known-set values), and
 add a gap note with the hidden count that points at `nimbus config explain sources`; pending and
 vetoed counts are whole-table. A hidden term keeps its row, status, stats and definition. Its
-search copy is unprojected and re-projected without a model call when it comes back.
+search copy is unprojected, and re-projected without a model call when it comes back, on the next
+glossary pass: the read side hides the term immediately, but `nimbus ask` can still retrieve the
+copy until that pass runs.
 
 **The second projection type.** A term's search copy embeds remotely only if every contributing
 type (over the known set) is in `PROSE_HEAVY_TYPES` or a built-in table type AND its definition

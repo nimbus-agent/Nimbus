@@ -1192,3 +1192,23 @@ test("rebuild clears glossary catch-up cursors", async () => {
       .get(),
   ).toEqual({ watermark_ms: 4242 });
 });
+
+test("an excluded source type never supplies the snippet a definition is written from", async () => {
+  seedAs("discord", "message", "s1", "CDR is the discord chatter envelope", 3000);
+  seedAs("discord", "message", "s2", "The CDR is the other discord chatter envelope", 3001);
+  seedAs("jira", "issue", "j1", "Ticket for the CDR rollup in the jira ticket tracker", 1002);
+
+  // Discovered over the whole known set, left pending.
+  await runGlossaryPass(db, { ...DISCOVER_ONLY, mapping: BUILTIN_SOURCE_MAPPING });
+  expect(getTerm(db, "cdr")?.status).toBe("pending");
+
+  // Discord is now excluded; the term stays visible through Jira. No model, so the definition is a
+  // verbatim snippet - which must come from Jira, the only source displayed under it.
+  const noDiscord = mappingOf("base", 'exclude = ["discord:message"]');
+  await runGlossaryPass(db, { ...OPTS, mapping: noDiscord, nowMs: 6000 });
+  const t = getTerm(db, "cdr");
+  expect(t?.status).toBe("consolidated");
+  expect(t?.definitionSource).toBe("snippet");
+  expect(t?.definition).toContain("jira ticket");
+  expect(t?.definition).not.toContain("discord");
+});
