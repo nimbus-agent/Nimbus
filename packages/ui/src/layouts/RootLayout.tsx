@@ -9,6 +9,7 @@ import { UpdaterRestartChrome } from "../components/updater/UpdaterRestartChrome
 import { useIpcSubscription } from "../hooks/useIpcSubscription";
 import type { HitlRequest } from "../ipc/types";
 import { restartApp } from "../lib/restart";
+import { BriefRunsProvider } from "../providers/BriefRunsProvider";
 import { OncallBriefsProvider } from "../providers/OncallBriefsProvider";
 import { useNimbusStore } from "../store";
 
@@ -113,10 +114,12 @@ export function RootLayout() {
       <UpdaterRestartChrome />
       <div className="flex flex-1 min-h-0">
         <OncallBriefsProvider>
-          <Sidebar />
-          <main className="flex-1 overflow-auto">
-            <Outlet />
-          </main>
+          <BriefRunsProvider>
+            <Sidebar />
+            <main className="flex-1 overflow-auto">
+              <Outlet />
+            </main>
+          </BriefRunsProvider>
         </OncallBriefsProvider>
       </div>
     </div>
