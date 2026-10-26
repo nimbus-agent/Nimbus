@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793020486808,
+  "lastUpdate": 1793025889136,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "edf3faf67a8a86234c6031418c94b1899dc683a6",
-          "message": "ci(release): require the workflow scope on WINGET_PAT and sync the winget fork explicitly (#1130)\n\n## What broke\n\nThe winget manifest for `NimbusAgent.Nimbus` has been frozen at\n**1.19.1** since 2026-08-03. Every release since (v1.20.0 → v1.26.0)\nfailed to publish: the `winget` job of `publish-package-managers.yml`\nhas failed **9 consecutive times**, always at `wingetcreate … --submit`\nwith\n\n```text\nThe forked repository could not be synced with the upstream commits. Sync your fork manually and try again.\n```\n\nThe `brew`/`scoop` job in the same workflow succeeded every time, so\nboth those channels are current at 1.26.0 — only winget lagged, which is\nwhy a red workflow read as background noise.\n\n## Root cause\n\nThe submission fork was **2326 commits behind, 0 ahead** — strictly\nbehind, so a fast-forward was always available. What blocked it was\nscope:\n\n- The first upstream commit after the fork's frozen head (`b0a5348a`,\n2026-08-03T22:19) added\n`.github/workflows/missing-dependency-assist.lock.yml`; four more\nworkflow-touching commits followed on 08-04 through 08-06.\n- GitHub refuses a token-attributed write that creates or updates files\nunder `.github/workflows/` unless the token carries the **`workflow`**\nscope. `WINGET_PAT` was provisioned — and asserted healthy — as\n`public_repo` only.\n\nSo the PAT worked until upstream first touched a workflow file, then\nfailed every release after. `wingetcreate`'s message names none of this,\nand the health check reported the PAT `ok`, because it only ever asked\nfor `public_repo`.\n\nThe fork has been synced by hand, so the current release can publish;\nthis PR is about the recurrence.\n\n## Changes\n\n- **`check-secret-health.ts`** — the `scopes` strategy takes a **list**\nand requires **all** of it (`required: readonly string[]`, `every`).\n`WINGET_PAT` now requires `[\"public_repo\", \"workflow\"]`, so a partial\ngrant reports `insufficient` instead of `ok`.\n- **`publish-package-managers.yml`** — a new `Sync the winget-pkgs fork\nwith upstream` step performs the sync explicitly, before `wingetcreate`,\nso the failure names its own cause instead of surfacing as the opaque\nwingetcreate line. Idempotent: an already-level fork is a no-op, and a\nnot-yet-existing fork is deliberately **not** an error (the first-ever\nsubmission has none). A revoked/expired PAT now also fails here, with a\nmessage saying so.\n- **`credential-registry.ts` / `docs/ci-secrets.md`** — record that both\nscopes are load-bearing, and why `workflow` is not optional.\n\n## Verification\n\n- `bun test scripts/release/check-secret-health.test.ts` — 66 pass, 0\nfail. Adds a test that a `public_repo`-only grant against the two-scope\nrequirement classifies `insufficient` — i.e. red-proving the gate that\nwas silent here.\n- `bun run preflight:fast` — PASSED (29 gates, including\n`audit:workflow-lint`, `audit:secret-inventory`, `audit:consumed-by`).\n\n## Still needs a human\n\nThe PAT itself: re-issue `WINGET_PAT` as a classic PAT with **both**\n`public_repo` and `workflow` (<https://github.com/settings/tokens>) and\nupdate the repo secret. Until then the new health check will report it\n`insufficient` — which is the point.\n\n## Detection note (not changed here)\n\n`audit:release-staleness` does cover winget, but it runs only in\n`org-drift-sweep.yml` on `cron: 0 7 * * 1`. The break started Tuesday\n08-04, one day after the last sweep, so the next scheduled detection was\nsix days out. Nine consecutive red publish runs alerted nobody in\nbetween.",
-          "timestamp": "2026-08-09T16:26:43Z",
-          "tree_id": "37b6337a60b8bf943492815824466fad7a651a88",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/edf3faf67a8a86234c6031418c94b1899dc683a6"
-        },
-        "date": 1786293486061,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.5506567999997,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.44390574999744,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 274.3943585500063,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e0321d86c03c9f6b6cf78718ddf29641b86e3c69",
+          "message": "feat(trust): refuse revoked or taken-down extensions at install, update and spawn until the owner re-approves (I48) (#1790)\n\nPhase 9.5 project 3 (marketplace trust layer), PR 2b of 5. PR 2a stored\ntrust statements. This PR **enforces** them. An extension whose\npublisher key is revoked, or that is taken down, by an authority whose\nscope covers it can no longer be installed, updated or run. The owner\ncan run it again only by re-approving with every block acknowledged. New\ninvariant **I48**, which binds static rule D37.\n\n## What changes\n\n- **One evaluator** (`extensions/trust/trust-blocks.ts`) decides which\nstored statements block one extension:\n- `key.revoke` matches the publisher id and the fingerprint of the key\nthat verified the code.\n- `extension.takedown` matches the extension id, the publisher id and\nthe version (or `\"*\"`).\n- Scope (spec R2): a statement signed by Nimbus, or by the revoked key\nitself, applies everywhere. One signed by a registry root applies only\nto code sourced from that registry under that root fingerprint.\n- Unsigned code is never matched. A stored row that no longer parses\nstill blocks, and is treated as covering every version.\n- **Every door refuses**, with `ERR_EXTENSION_KEY_REVOKED` (reported\nfirst, since it covers every version) or `ERR_EXTENSION_TAKEN_DOWN`:\n- **Registry install:** before any manifest or package request. A plain\n`install <id>` picks the newest version that nothing blocks.\n- **Local install:** before the install prompt. Archives re-enter the\nsame path.\n- **Update detector:** never offers a blocked version. Detection stays\nnewer-only.\n- **Update apply:** re-checked before the swap, with the new failure\nphase `trust_blocked`.\n- **Spawn (the I43 order):** step 4a runs before the tree is hashed.\nStep 6a re-checks the key the Vault holds now, before the signature\ncheck.\n- **The override:** `nimbus extension approve`'s `extension.run` prompt\nlists each block (`trustBlocks`).\n- The grant stores the statement ids it showed\n(`extension_run_grant.trust_ack_json`, a V76 column), so a block\npublished later stops the extension again.\n  - The no-change short-circuit compares the acknowledgement too.\n- A block that lands while the prompt is open refuses\n`ERR_EXTENSION_RUN_CHANGED`.\n  - A prompt-less migration of a blocked extension is refused.\n- **When a block lands:**\n- Every recording path (a verified registry index, the trust feed, the\nboot snapshot) reports the statement ids it newly stored.\n- `trust-block-enforcer.ts` stops the running client of each extension\nthose ids newly block, and raises one OS notification per extension.\n- **Fresh before acting (spec § 6.2):** registry install and update\napply refresh the trust feed first, best-effort.\n  - Skipped when the last fetch is under 5 minutes old; capped at 10 s.\n  - When the refresh fails, the install prompt says how old the feed is.\n  - This build bakes no feed, so the refresh is a no-op until PR 5.\n- **Surfaces:**\n- `extension list|info` show `runState: \"blocked\"` with `blockedBy`, and\n`info` prints one `Blocked:` line per block.\n  - `extension search` marks `[blocked]`.\n  - `nimbus doctor` names each blocked extension.\n\nNo migration (V76 shipped in PR 1), no new HITL type, no new egress\nclass. Rotation-taint (spec R4) lands with rotation in PR 3. Until then\nno key is reached by rotation: any key change is still\n`publisher_key_conflict`.\n\n## Verification\n\n- **I48** enforcement block in `security-invariants.test.ts`:\n- real install, approval and spawn: a revocation refuses, re-approval\nresumes, a new takedown refuses again;\n- a registry install of a taken-down version is refused before the\napprover is called, and the default pick skips it;\n  - the store never deletes a block;\n  - source pins on every door's ordering.\n  - Red-proved: removing the spawn checks fails it.\n- **The existing I43 source pin** was updated for the new\n`assertPublisherSignature` call.\n- **Unit tests** for each door and helper, including:\n  - scope across registries and re-pinned roots;\n  - revocation-before-takedown;\n  - the Vault-key check at step 6a;\n  - an archive install of a revoked key;\n  - newer-only detection from a taken-down version;\n- `trust_blocked` classification when the reason text quotes another\nphase.\n- **Gates:** `bun run preflight:fast` passes.\n- **Reviews:** the plan was reviewed by the Antigravity CLI; its record\nis in the plan. Applied: revocation-first at spawn, the feed-age\nfallback, and the detector's root fingerprint. Rejected with reasons:\n- the archive \"bypass\": the archive path re-enters the directory\ninstall;\n  - a downgrade path;\n  - an unsigned-manifest crash, which is already guarded.\n\n- **Branch review** (Antigravity). Applied one finding: approval,\nlist/info, the enforcer and spawn step 4a now read ONE block set\n(`blocksForInstalled`), covering both the recorded and the declared key,\nso an approval always acknowledges what a spawn can refuse. Rejected\nwith reasons:\n  - `reg.rootFingerprint` is \"undefined\": `RegistryRow` carries it.\n- The feed daemon \"misses the hook\": it refreshes with the shared\n`registryFetch` that carries the hook.\n  - \"Skip unparseable rows\": failing closed is deliberate.\n  - A `trust_blocked` hint: apply-time phases carry no hints.\n- **Full serial run** (`registry-format`, `gateway/src`, `cli/src`,\n`scripts`): 28,712 passed. It caught one I44 source pin that needed\nupdating for the refresh before update re-verification. The only other\nfailures are the five `pwsh` install-script tests, which fail the same\nway on `main` on this machine.\n\n## Not in this PR\n\nRotation, the verified badge and per-fingerprint Vault keys (PR 3);\nmaintainer tooling, `extension report` and provenance (PR 4); baking the\nfeed (PR 5).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-26T14:31:40Z",
+          "tree_id": "3d580996e12f1ed61ccc9dd667236f00cd2fc31c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e0321d86c03c9f6b6cf78718ddf29641b86e3c69"
+        },
+        "date": 1793025884700,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 172.7753924500024,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 165.79109750000242,
             "unit": "ms"
           }
         ]
