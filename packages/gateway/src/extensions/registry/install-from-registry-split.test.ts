@@ -40,7 +40,7 @@ let asked: ExtensionInstallApprovalRequest[];
 
 beforeEach(async () => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 71);
+  runIndexedSchemaMigrations(db, 76);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-instreg-split-"));
   extensionsDir = join(tmp, "extensions");
   stage = join(tmp, "stage");
@@ -58,6 +58,7 @@ beforeEach(async () => {
     lastSequence: 0,
     lastGeneratedAt: "2026-10-01T00:00:00Z",
     addedAt: NOW,
+    lastIndexSha256: null,
   });
 });
 
@@ -164,6 +165,7 @@ describe("fetchVerifiedRegistryPackage", () => {
       lastSequence: 0,
       lastGeneratedAt: "2026-10-01T00:00:00Z",
       addedAt: NOW,
+      lastIndexSha256: null,
     });
     await expect(fetchVerifiedRegistryPackage(deps(), { id: ID }, stage)).rejects.toThrow(
       "ERR_REGISTRY_HASH_MISMATCH",

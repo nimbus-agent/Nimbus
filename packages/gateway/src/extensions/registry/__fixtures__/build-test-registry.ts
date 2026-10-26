@@ -3,7 +3,7 @@
  * one extension at several versions. Used by the install and `registry.install` tests.
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type RegistryIndex, registryIndexSigningBytes } from "@nimbus-dev/registry-format";
 import * as tar from "tar";
@@ -29,6 +29,14 @@ export interface TestRegistry {
 
 const sha = (b: Uint8Array | string): string => createHash("sha256").update(b).digest("hex");
 
+/** One more than the sequence of the index already in `dir`, or 1. */
+function nextSequence(dir: string): number {
+  const path = join(dir, "index.json");
+  if (!existsSync(path)) return 1;
+  const prior = JSON.parse(readFileSync(path, "utf8")) as { sequence?: unknown };
+  return typeof prior.sequence === "number" ? prior.sequence + 1 : 1;
+}
+
 export async function buildTestRegistry(
   dir: string,
   opts: {
@@ -48,6 +56,12 @@ export async function buildTestRegistry(
      * E2E spawns. Absent means a one-line stub that exports the version.
      */
     entrySource?: string;
+    /**
+     * The index sequence. Absent means one more than the index already in `dir` (1 for a new
+     * folder), as a maintainer re-publishing would: a registry re-signed at an accepted sequence
+     * with different content is refused as equivocation (trust layer, V76).
+     */
+    sequence?: number;
   },
 ): Promise<TestRegistry> {
   const root = nacl.sign.keyPair.fromSeed(ROOT_SEED);
@@ -72,7 +86,7 @@ export async function buildTestRegistry(
   const unsignedIndex = {
     format: 1 as const,
     rootKey: encodeBase64(root.publicKey),
-    sequence: 1,
+    sequence: opts.sequence ?? nextSequence(dir),
     generatedAt: "2026-10-18T12:00:00Z",
     extensions: {
       [opts.id]: {

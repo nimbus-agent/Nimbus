@@ -54,6 +54,7 @@ export function builtinRegistryOf(deps: {
 
 type BuiltinStateRow = {
   last_sequence: number;
+  last_index_sha256: string | null;
   last_generated_at: string | null;
   last_fetched_at: number | null;
 };
@@ -64,7 +65,7 @@ function readBuiltinState(db: Database, rootKey: string): BuiltinStateRow | unde
   if (readIndexedUserVersion(db) < 73) return undefined;
   const r = db
     .query(
-      "SELECT last_sequence, last_generated_at, last_fetched_at FROM builtin_registry_state WHERE name = ? AND root_key = ?",
+      "SELECT last_sequence, last_index_sha256, last_generated_at, last_fetched_at FROM builtin_registry_state WHERE name = ? AND root_key = ?",
     )
     .get(BUILTIN_REGISTRY_NAME, rootKey) as BuiltinStateRow | null;
   return r ?? undefined;
@@ -82,6 +83,7 @@ export function builtinRegistryRow(db: Database, builtin: BuiltinRegistryConfig)
     lastGeneratedAt: state?.last_generated_at ?? "",
     addedAt: 0,
     lastFetchedAt: state?.last_fetched_at ?? null,
+    lastIndexSha256: state?.last_index_sha256 ?? null,
     builtin: true,
   };
 }
@@ -144,22 +146,29 @@ export function recordAnyRegistryFetch(
   sequence: number,
   generatedAt: string,
   now: number,
+  indexSha256: string,
 ): boolean {
   if (reg.builtin !== true) {
-    return recordRegistryFetch(db, reg.name, reg.rootKey, sequence, generatedAt, now);
+    return recordRegistryFetch(db, reg.name, reg.rootKey, sequence, generatedAt, now, indexSha256);
   }
+  // Same rule as the owner row: a higher sequence, or the same sequence with the same document (or
+  // none recorded yet). A different root key still replaces the floor (the known limit above).
   const r = dbRun(
     db,
-    `INSERT INTO builtin_registry_state (name, root_key, last_sequence, last_generated_at, last_fetched_at)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO builtin_registry_state (name, root_key, last_sequence, last_generated_at, last_fetched_at, last_index_sha256)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET
        root_key = excluded.root_key,
        last_sequence = excluded.last_sequence,
        last_generated_at = excluded.last_generated_at,
-       last_fetched_at = excluded.last_fetched_at
+       last_fetched_at = excluded.last_fetched_at,
+       last_index_sha256 = excluded.last_index_sha256
      WHERE builtin_registry_state.root_key <> excluded.root_key
-        OR builtin_registry_state.last_sequence <= excluded.last_sequence`,
-    [BUILTIN_REGISTRY_NAME, reg.rootKey, sequence, generatedAt, now],
+        OR builtin_registry_state.last_sequence < excluded.last_sequence
+        OR (builtin_registry_state.last_sequence = excluded.last_sequence
+            AND (builtin_registry_state.last_index_sha256 IS NULL
+                 OR builtin_registry_state.last_index_sha256 = excluded.last_index_sha256))`,
+    [BUILTIN_REGISTRY_NAME, reg.rootKey, sequence, generatedAt, now, indexSha256],
   );
   return r.changes > 0;
 }
@@ -168,9 +177,14 @@ export function recordAnyRegistryFetch(
 export function currentRegistryFloor(
   db: Database,
   reg: RegistryRow,
-): { lastSequence: number } | undefined {
-  if (reg.builtin === true)
-    return { lastSequence: readBuiltinState(db, reg.rootKey)?.last_sequence ?? 0 };
+): { lastSequence: number; lastIndexSha256: string | null } | undefined {
+  if (reg.builtin === true) {
+    const state = readBuiltinState(db, reg.rootKey);
+    return {
+      lastSequence: state?.last_sequence ?? 0,
+      lastIndexSha256: state?.last_index_sha256 ?? null,
+    };
+  }
   const cur = getRegistry(db, reg.name);
   return cur?.rootKey === reg.rootKey ? cur : undefined;
 }

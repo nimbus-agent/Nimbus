@@ -15,7 +15,7 @@ import {
 
 function freshDb(): Database {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 71);
+  runIndexedSchemaMigrations(db, 76);
   return db;
 }
 
@@ -35,7 +35,39 @@ const base = {
   lastSequence: 3,
   lastGeneratedAt: "2026-10-18T00:00:00Z",
   addedAt: 100,
+  lastIndexSha256: null,
 };
+
+describe("registry store: the index hash floor", () => {
+  test("insertRegistry alone stores the supplied hash", () => {
+    const db = freshDb();
+    try {
+      insertRegistry(db, { ...base, lastIndexSha256: "hA" });
+      expect(getRegistry(db, "main")?.lastIndexSha256).toBe("hA");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a row with no hash adopts one at its sequence; then only that document or a higher sequence", () => {
+    const db = freshDb();
+    try {
+      insertRegistry(db, { ...base, lastSequence: 5 });
+      const rec = (seq: number, hash: string) =>
+        recordRegistryFetch(db, "main", base.rootKey, seq, "2026-10-19T00:00:00Z", 1, hash);
+      expect(rec(5, "hA")).toBe(true);
+      expect(getRegistry(db, "main")?.lastIndexSha256).toBe("hA");
+      expect(rec(5, "hA")).toBe(true);
+      expect(rec(5, "hB")).toBe(false);
+      expect(getRegistry(db, "main")?.lastIndexSha256).toBe("hA");
+      expect(rec(6, "hB")).toBe(true);
+      expect(getRegistry(db, "main")).toMatchObject({ lastSequence: 6, lastIndexSha256: "hB" });
+      expect(rec(5, "hA")).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+});
 
 describe("registry store", () => {
   test("round trip: insert, get, list, record fetch, delete", () => {
@@ -44,13 +76,14 @@ describe("registry store", () => {
       expect(listRegistries(db)).toEqual([]);
       insertRegistry(db, base);
       expect(getRegistry(db, "main")).toEqual({ ...base, lastFetchedAt: null });
-      recordRegistryFetch(db, "main", base.rootKey, 4, "2026-10-19T00:00:00Z", 200);
+      recordRegistryFetch(db, "main", base.rootKey, 4, "2026-10-19T00:00:00Z", 200, "h4");
       expect(listRegistries(db)).toEqual([
         {
           ...base,
           lastSequence: 4,
           lastGeneratedAt: "2026-10-19T00:00:00Z",
           lastFetchedAt: 200,
+          lastIndexSha256: "h4",
         },
       ]);
       expect(deleteRegistry(db, "main")).toBe(true);

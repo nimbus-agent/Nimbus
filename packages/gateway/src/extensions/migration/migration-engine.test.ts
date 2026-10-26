@@ -98,13 +98,19 @@ let registerMode: "legacy" | "none" | "ext";
 const CODE_ID = "ext_com_example_reader";
 const extraCleanups: Array<() => Promise<void> | void> = [];
 
+// The folder is wiped on every rebuild, so the sequence is carried here: a rebuild re-publishes the
+// registry, and re-publishing at an accepted sequence with different content is refused (V76).
+let registrySequence = 0;
+
 async function buildRegistry(extra: Record<string, unknown> = MANIFEST_EXTRA): Promise<void> {
   rmSync(registryDir, { recursive: true, force: true });
+  registrySequence += 1;
   const built = await buildTestRegistry(registryDir, {
     id: EXT,
     versions: [{ version: "1.0.0" }],
     publisherId: "nimbus",
     manifestExtra: extra,
+    sequence: registrySequence,
   });
   builtin = { url: BUILTIN_URL, rootKey: built.rootKey };
   entry = {

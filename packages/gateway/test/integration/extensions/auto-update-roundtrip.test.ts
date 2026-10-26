@@ -105,6 +105,7 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         lastSequence: 0,
         lastGeneratedAt: "2026-10-01T00:00:00Z",
         addedAt: 1,
+        lastIndexSha256: null,
       });
       const vault = new MockVault();
       await installFromRegistry(

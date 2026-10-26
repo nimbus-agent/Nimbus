@@ -44,7 +44,7 @@ let fetchCalls: number;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 71);
+  runIndexedSchemaMigrations(db, 76);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-instreg-"));
   regDir = join(tmp, "registry");
   extensionsDir = join(tmp, "extensions");
@@ -71,6 +71,7 @@ async function setup(
     lastSequence: 0,
     lastGeneratedAt: "2026-10-01T00:00:00Z",
     addedAt: NOW,
+    lastIndexSha256: null,
   });
 }
 

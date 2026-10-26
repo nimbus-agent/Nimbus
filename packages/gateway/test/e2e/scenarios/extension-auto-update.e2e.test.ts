@@ -64,6 +64,7 @@ async function installedFromRegistry(
     lastSequence: 0,
     lastGeneratedAt: "2026-10-01T00:00:00Z",
     addedAt: 1,
+    lastIndexSha256: null,
   });
   await installFromRegistry(
     { db, extensionsDir, vault, fetch: NO_NETWORK, approve: async () => true },

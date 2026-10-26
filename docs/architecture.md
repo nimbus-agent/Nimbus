@@ -991,7 +991,7 @@ The Tauri desktop application ships an Extension Marketplace panel. It is not a 
 - **check** (on `pull_request`, `contents: read`, no secrets, public repository) validates the pull request against the signed index fetched from `gh-pages` and summarises it. It is a **reviewer aid**: a pull request can edit the check workflow itself, so a green check proves nothing about the package.
 - **sign** (on a push to the default branch or `workflow_dispatch`, behind the `registry-signing` environment's required reviewers, `concurrency: registry-sign`) is the **security boundary**. It refuses outright (nothing signed or pushed) if the `gh-pages` index does not verify against its own root key, if the root-key input is not that index's root key, if `nimbus-registry.json` is missing on the default branch or loosens `requirePublisherNamespace`, or if an already-signed version's files changed or were deleted; otherwise it re-validates every unsigned version (skipping and naming failures, each with a `::warning::`), signs the index at `sequence + 1` with the root key and pushes `gh-pages`. Only the environment's approval stops a changed workflow from using the key.
 
-`nimbus registry maintain init <dir> --github` writes the repository (workflows pinned to a 40-hex action commit, the release commit embedded by the build: `packages/cli/src/release-commit.ts`) plus the `gh-pages` site folder, and prints the owner's steps ([`registry-hosting.md`](./registry-hosting.md)). Bound: a force-push of `gh-pages` lets a later sign publish a different index at an already-used `sequence`, and the client accepts an equal sequence; the mitigation is branch protection on `gh-pages`, and client-side refusal is a trust-layer follow-up.
+`nimbus registry maintain init <dir> --github` writes the repository (workflows pinned to a 40-hex action commit, the release commit embedded by the build: `packages/cli/src/release-commit.ts`) plus the `gh-pages` site folder, and prints the owner's steps ([`registry-hosting.md`](./registry-hosting.md)). Bound: a force-push of `gh-pages` lets a later sign publish a different index at an already-used `sequence`; since the trust layer, a client that accepted the original at that sequence refuses it (`ERR_REGISTRY_EQUIVOCATION`) until a further sign moves past it, and a client that never saw the original cannot tell. Branch protection on `gh-pages` remains the way to avoid it.
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -2078,8 +2078,11 @@ and shown by `nimbus extension list|info`. The table lives in the index, not in 
 **Trust model.** Two roots, as in the format: the registry root key vouches for the catalogue, the publisher key vouches for the code.
 The root key is pinned by the owner at `nimbus registry add` (TTY only, no `--yes`, the `registry.add` HITL prompt shows the key's
 fingerprint, an optional `--fingerprint=` is checked against it); `registry.add` is owner-gated and never delegable (I20). Every fetch
-is then fetch-and-verify against that pinned key: the index signature, a strictly higher `sequence` than `last_sequence` (the write
-that advances it is conditional, so two racing refreshes cannot move it backwards), and per-file SHA-256s from the signed index. The
+is then fetch-and-verify against that pinned key: the index signature, a `sequence` no lower than `last_sequence` and, at an equal
+sequence, the same document (the SHA-256 of its signing bytes, `last_index_sha256` since V76; a different document is
+`ERR_REGISTRY_EQUIVOCATION`, and a row added before V76 adopts the first document it accepts), with the write that advances the floor
+conditional on both, so two racing refreshes can neither move it backwards nor swap the document accepted at it, and per-file SHA-256s
+from the signed index. The
 publisher key is taken from the signed index, never fetched separately.
 
 **Transports** (`registry-transport.ts`, `registry-fetch.ts`): https; loopback http outside production; and `file:` or absolute paths

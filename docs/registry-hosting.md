@@ -44,7 +44,7 @@ Then they approve. The run re-validates every unsigned version, skips and names 
 
 ## Bounds, stated plainly
 
-- **A force-push to `gh-pages` can roll the registry back.** The next sign publishes a different index at a sequence number that was already used, and today's client accepts an equal sequence. Protecting `gh-pages` (step 7) is the mitigation and is yours to keep; the sign workflow does not check it. Client-side refusal of an equal sequence belongs to the later trust-layer project.
+- **A force-push to `gh-pages` breaks the registry for clients that already saw it.** After a force-push rolls `gh-pages` back, the next sign publishes a different index at a sequence number that was already used. Since the trust layer (2026-10-26), a client that accepted the original index at that sequence refuses the new one with `ERR_REGISTRY_EQUIVOCATION` (it stores a hash of the index it accepted at each sequence). The fix is another sign: the index after that has a sequence no client has seen. A client that never saw the original cannot tell the difference. Protecting `gh-pages` (step 7) is still the way to avoid this, and it is yours to keep; the sign workflow does not check it.
 - **The registry repository must be public**, because the check job fetches without credentials. Private registries are not supported.
 - The check job is not a boundary: a pull request can change it. Only the approval on the sign job protects the key.
 - GitHub is the only forge supported.

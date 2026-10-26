@@ -6985,6 +6985,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
         lastSequence: 0,
         lastGeneratedAt: "2026-10-01T00:00:00Z",
         addedAt: 1,
+        lastIndexSha256: null,
       });
       dirs.set(name, dir);
     }

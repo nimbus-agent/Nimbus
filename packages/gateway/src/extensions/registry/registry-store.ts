@@ -13,6 +13,12 @@ export interface RegistryRow {
   addedAt: number;
   lastFetchedAt: number | null;
   /**
+   * SHA-256 of the signing bytes of the index accepted at `lastSequence` (`registryIndexDigest`), so
+   * an index re-served at that sequence with different content is refused. NULL on a row added before
+   * V76 until its next accepted fetch adopts the document it sees.
+   */
+  lastIndexSha256: string | null;
+  /**
    * Set only on the built-in official registry's row (`builtin-registry.ts`), which is not stored
    * here: a verified fetch of it records its sequence in `builtin_registry_state` instead.
    */
@@ -59,10 +65,11 @@ type RegistryDbRow = {
   last_generated_at: string;
   added_at: number;
   last_fetched_at: number | null;
+  last_index_sha256: string | null;
 };
 
 const COLUMNS =
-  "name, url, root_key, root_fingerprint, last_sequence, last_generated_at, added_at, last_fetched_at";
+  "name, url, root_key, root_fingerprint, last_sequence, last_generated_at, added_at, last_fetched_at, last_index_sha256";
 
 function toRow(r: RegistryDbRow): RegistryRow {
   return {
@@ -74,6 +81,7 @@ function toRow(r: RegistryDbRow): RegistryRow {
     lastGeneratedAt: r.last_generated_at,
     addedAt: r.added_at,
     lastFetchedAt: r.last_fetched_at,
+    lastIndexSha256: r.last_index_sha256,
   };
 }
 
@@ -106,7 +114,7 @@ export function insertRegistry(
         : `the registry at ${row.url} is already added as "${clash.name}"`,
     );
   }
-  dbRun(db, `INSERT INTO extension_registry (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`, [
+  dbRun(db, `INSERT INTO extension_registry (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`, [
     row.name,
     row.url,
     row.rootKey,
@@ -114,13 +122,16 @@ export function insertRegistry(
     row.lastSequence,
     row.lastGeneratedAt,
     row.addedAt,
+    row.lastIndexSha256,
   ]);
 }
 
 /**
- * Advances the anti-rollback floor. Conditional on the row still carrying the pinned key and a
- * floor no higher than `sequence`, so an overlapping fetch holding a stale snapshot cannot lower
- * it. Returns whether the row changed.
+ * Advances the anti-rollback floor. Conditional on the row still carrying the pinned key and on
+ * `sequence` being either higher than the floor, or equal to it with the same document (or no
+ * document recorded yet, which this write then adopts) — so an overlapping fetch holding a stale
+ * snapshot can neither lower the floor nor swap the document accepted at it. Returns whether the
+ * row changed.
  */
 export function recordRegistryFetch(
   db: Database,
@@ -129,11 +140,16 @@ export function recordRegistryFetch(
   sequence: number,
   generatedAt: string,
   now: number,
+  indexSha256: string,
 ): boolean {
   const r = dbRun(
     db,
-    "UPDATE extension_registry SET last_sequence = ?, last_generated_at = ?, last_fetched_at = ? WHERE name = ? AND root_key = ? AND last_sequence <= ?",
-    [sequence, generatedAt, now, name, rootKey, sequence],
+    `UPDATE extension_registry
+        SET last_sequence = ?, last_generated_at = ?, last_fetched_at = ?, last_index_sha256 = ?
+      WHERE name = ? AND root_key = ?
+        AND (last_sequence < ?
+             OR (last_sequence = ? AND (last_index_sha256 IS NULL OR last_index_sha256 = ?)))`,
+    [sequence, generatedAt, now, indexSha256, name, rootKey, sequence, sequence, indexSha256],
   );
   return r.changes > 0;
 }
