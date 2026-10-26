@@ -18,6 +18,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-26 — Marketplace trust layer PR 1 of 5: signed trust statements, the trust feed format, schema V76, and refusal of an equivocating registry index (no new invariant, no egress class).**
+  `@nimbus-dev/registry-format` gains signed trust statements — a publisher-key revocation (signed by the key itself, the Nimbus
+  trust root or a registry root), an extension takedown (a root only), a key rotation (signed by the old key) and a publisher
+  verification (the Nimbus root only) — and the format of `trust.json`, the signed Nimbus trust feed that later PRs fetch. A
+  registry index may now carry `statements` and a `reportUrl`; older clients ignore both. Schema **V76** adds the tables and
+  columns the rest of the trust layer uses (`trust_feed_state`, `trust_statement`, the registry hash floors,
+  `extension.publisher_key_fingerprint`, `extension_run_grant.trust_ack_json`). One change is live now: a registry index re-served
+  at a sequence the gateway already accepted, with different content (a force-pushed `gh-pages`), is refused with
+  `ERR_REGISTRY_EQUIVOCATION` instead of accepted; the registry recovers by signing again at a higher sequence. Nothing revokes,
+  blocks or shows a badge yet.
+
 - **2026-10-25 — Role packs P5 PR 2: desktop onboarding asks what you do and installs the matching role pack (no schema change, I47 widened, Tauri allowlist 116 → 118).**
   Desktop onboarding now runs Welcome → What do you do? → (the pack) → Connect → Decisions or Syncing. Picking a role pack
   shows what it suggests and shows, and installs it behind the usual `pack.install` approval, whose popup now renders the
