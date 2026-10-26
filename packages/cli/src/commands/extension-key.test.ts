@@ -150,6 +150,68 @@ describe("refusals", () => {
     expect(errs.join("")).toContain("Usage: nimbus extension key");
   });
 
+  test("no subcommand, and an option with no value, are usage errors", async () => {
+    expect(await runExtensionKey([], deps)).toBe(2);
+    expect(errs.join("")).toContain("unknown subcommand (none)");
+    errs = [];
+    expect(await runExtensionKey(["rotate", "--from"], deps)).toBe(2);
+    expect(errs.join("")).toContain("--from needs a value");
+  });
+
+  test("a reason over the format's limit is refused by the format's own rule", async () => {
+    const code = await runExtensionKey(
+      ["revoke", "--key", at("old-key"), "--publisher", "acme", "--reason", "x".repeat(501)],
+      deps,
+    );
+    expect(code).toBe(2);
+    expect(errs.join("")).toContain("reason exceeds");
+  });
+
+  test("a relative --out lands under the working directory", async () => {
+    const code = await runExtensionKey(
+      [
+        "rotate",
+        "--from",
+        at("old-key"),
+        "--to",
+        at("new-key"),
+        "--publisher",
+        "acme",
+        "--out",
+        "rel.json",
+      ],
+      deps,
+    );
+    expect(code).toBe(0);
+    expect(readJson(at("rel.json"))).toMatchObject({ kind: "key.rotate" });
+  });
+
+  test("an --out that cannot be written is an unexpected failure (exit 1), not a refusal", async () => {
+    const code = await runExtensionKey(
+      [
+        "rotate",
+        "--from",
+        at("old-key"),
+        "--to",
+        at("new-key"),
+        "--publisher",
+        "acme",
+        "--out",
+        join(dir, "no-such-dir", "r.json"),
+      ],
+      deps,
+    );
+    expect(code).toBe(1);
+    expect(errs.join("")).not.toContain("Usage:");
+  });
+
+  test("a required option that is missing is a usage error naming it", async () => {
+    expect(
+      await runExtensionKey(["rotate", "--to", at("new-key"), "--publisher", "acme"], deps),
+    ).toBe(2);
+    expect(errs.join("")).toContain("--from is required");
+  });
+
   test("the private seeds never reach stdout or stderr", async () => {
     await runExtensionKey(
       ["rotate", "--from", at("old-key"), "--to", at("new-key"), "--publisher", "acme"],
