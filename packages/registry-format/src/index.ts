@@ -65,6 +65,17 @@ export {
   validateAndNormalizePermissions,
 } from "./permissions-validator.ts";
 export {
+  admitPublisherStatements,
+  currentPublisherKeys,
+  isPublisherKeyRevoked,
+  MAX_REGISTRY_STATEMENTS,
+  MAX_ROTATIONS_PER_PUBLISHER,
+  type PublisherKeyStanding,
+  publisherKeyStanding,
+  type StatementAdmission,
+  type StatementIndex,
+} from "./publisher-statements.ts";
+export {
   CONNECTOR_ID_SHAPE_RE,
   MAX_ROLE_PACK_CONNECTORS,
   MAX_ROLE_PACK_MEMBERS,
