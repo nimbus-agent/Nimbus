@@ -2,6 +2,23 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.5.0](https://github.com/nimbus-agent/Nimbus/compare/v10.4.0...v10.5.0) (2026-10-25)
+
+
+### Features
+
+* **decisions:** role packs and your config choose which sources decisions are mined from ([#1774](https://github.com/nimbus-agent/Nimbus/issues/1774)) ([50391fb](https://github.com/nimbus-agent/Nimbus/commit/50391fb5cb51a1a56ada7b3cac8e05e3a457c687))
+* **desktop:** onboarding asks what you do and installs the matching role pack ([#1782](https://github.com/nimbus-agent/Nimbus/issues/1782)) ([2e0dcd8](https://github.com/nimbus-agent/Nimbus/commit/2e0dcd8517d200b9d241b9243eec057c47dc3c9b))
+* **glossary:** role packs and your config choose which sources glossary terms come from ([#1776](https://github.com/nimbus-agent/Nimbus/issues/1776)) ([fd29256](https://github.com/nimbus-agent/Nimbus/commit/fd292567daf9089b307b8cb87261d67d19262b71))
+* **google-drive:** index Google Docs with their text; the Product pack (1.1.0) mines them ([#1780](https://github.com/nimbus-agent/Nimbus/issues/1780)) ([4fbb00a](https://github.com/nimbus-agent/Nimbus/commit/4fbb00af11fd09ded8a934a6c7ee9aa8abc6ee6b))
+* **mcp-sink:** an MCP agent can propose obsidian.note.append ([#1779](https://github.com/nimbus-agent/Nimbus/issues/1779)) ([71eb151](https://github.com/nimbus-agent/Nimbus/commit/71eb15107912aceb9506a6c56263616c6706e5f2))
+* **onboarding:** nimbus init asks what you do and works outside a git repository ([#1781](https://github.com/nimbus-agent/Nimbus/issues/1781)) ([0c00274](https://github.com/nimbus-agent/Nimbus/commit/0c00274b53e69025d0ba6b226b702d248c238e03))
+
+
+### Bug Fixes
+
+* **install:** Windows uninstaller runs on PowerShell 5.1, stops its own gateway and reports what it could not remove ([#1778](https://github.com/nimbus-agent/Nimbus/issues/1778)) ([a4c99cf](https://github.com/nimbus-agent/Nimbus/commit/a4c99cfd6e5819e5566b90481fd680780d0a3a84))
+
 ## [10.4.0](https://github.com/nimbus-agent/Nimbus/compare/v10.3.1...v10.4.0) (2026-10-25)
 
 
