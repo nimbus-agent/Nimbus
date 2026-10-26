@@ -39,6 +39,8 @@ import {
 export const MAX_REGISTRY_STATEMENTS = 1000;
 /** At most this many admitted rotations per publisher, so one publisher cannot fill the index. */
 export const MAX_ROTATIONS_PER_PUBLISHER = 20;
+/** At most this many admitted statements of any kind per publisher, across the index. */
+export const MAX_STATEMENTS_PER_PUBLISHER = 50;
 
 /**
  * The publisher an index entry binds after a version signed by `signer` is added: unchanged for the
@@ -142,13 +144,16 @@ function currentOf(state: PublisherState): Set<string> {
   }
   const edges = edgesOf(state.rotations);
   const usable = (fp: string): boolean => !state.revokedFps.has(fp);
+  // A key that rotated away is superseded for good: revoking its successor never revives it.
+  const rotatedAway = new Set(edges.map((e) => e.from));
   const current = new Set<string>();
   for (const k of state.bound) {
     const fp = publisherKeyFingerprint(k);
     if (!usable(fp)) continue;
-    const { reachable, terminal } = successorsOf(edges, fp, usable);
-    if (reachable.size === 0) current.add(k);
-    for (const t of terminal) current.add(keyByFp.get(t) as string);
+    const { reachable } = successorsOf(edges, fp, usable);
+    for (const n of [fp, ...reachable]) {
+      if (!rotatedAway.has(n)) current.add(keyByFp.get(n) as string);
+    }
   }
   return current;
 }
@@ -241,7 +246,7 @@ function structural(index: StatementIndex, raw: unknown, skip: Skip): Parsed | u
   return { id, s };
 }
 
-/** (a) Every key reachable from the bound keys over ANY rotation, revocations ignored. */
+/** Every key reachable from `bound` over `rotations`, revocations ignored. */
 function reachOf(
   bound: ReadonlySet<string>,
   rotations: readonly KeyRotateStatement[],
@@ -260,38 +265,31 @@ function reachOf(
   return reach;
 }
 
+/** The index-wide and per-publisher room left for new statements. */
 interface Budget {
   total: number;
+  /** This publisher's admitted publisher statements, index and new. */
+  publisher: number;
 }
 
-function hasRoom(budget: Budget, id: string, skip: Skip): boolean {
+function hasRoom(budget: Budget, id: string, publisherId: string, skip: Skip): boolean {
   if (budget.total >= MAX_REGISTRY_STATEMENTS) {
     skip(id, `the index is at its statement cap (${String(MAX_REGISTRY_STATEMENTS)})`);
+    return false;
+  }
+  if (budget.publisher >= MAX_STATEMENTS_PER_PUBLISHER) {
+    skip(
+      id,
+      `publisher ${publisherId} is at its statement cap (${String(MAX_STATEMENTS_PER_PUBLISHER)})`,
+    );
     return false;
   }
   return true;
 }
 
-/** (b) Revocations of reachable keys; one per key. */
-function admitRevocations(
-  candidates: readonly Parsed[],
-  state: PublisherState,
-  budget: Budget,
-  skip: Skip,
-): Parsed[] {
-  const out: Parsed[] = [];
-  for (const c of candidates) {
-    if (c.s.kind !== "key.revoke") continue;
-    if (state.revokedFps.has(c.s.keyFingerprint)) {
-      skip(c.id, `redundant: key ${c.s.keyFingerprint} is already revoked`);
-      continue;
-    }
-    if (!hasRoom(budget, c.id, skip)) continue;
-    state.revokedFps.add(c.s.keyFingerprint);
-    budget.total++;
-    out.push(c);
-  }
-  return out;
+function spend(budget: Budget): void {
+  budget.total++;
+  budget.publisher++;
 }
 
 /** Rotations among `pending` that fork: another candidate or an admitted rotation leaves the same key elsewhere. */
@@ -311,61 +309,118 @@ function forks(pending: readonly Parsed[], admitted: readonly KeyRotateStatement
   return out;
 }
 
-/** (c) Rotations: a fixed point from the bound keys over admitted rotations, R3 and forks refused. */
-function admitRotations(
-  candidates: readonly Parsed[],
+/** One publisher's admission run: what is still pending, and the shared state it updates. */
+interface Run {
+  state: PublisherState;
+  budget: Budget;
+  skip: Skip;
+  revocations: Map<string, Parsed>;
+  rotations: Map<string, Parsed>;
+  admitted: Parsed[];
+}
+
+/** A rotation's source is revoked here, itself or through a revoked ancestor (R3, R4). */
+const fromRevoked = (run: Run, r: KeyRotateStatement): boolean =>
+  revokedIn(run.state, publisherKeyFingerprint(r.fromKey));
+
+/** Revocations of keys the bound keys reach over ADMITTED rotations; one per key. */
+function admitRevocationRound(run: Run, reach: ReadonlySet<string>): boolean {
+  let progressed = false;
+  for (const [id, p] of run.revocations) {
+    const r = p.s as KeyRevokeStatement;
+    if (!reach.has(r.signerKey)) continue;
+    run.revocations.delete(id);
+    if (run.state.revokedFps.has(r.keyFingerprint)) {
+      run.skip(id, `redundant: key ${r.keyFingerprint} is already revoked`);
+      continue;
+    }
+    if (!hasRoom(run.budget, id, r.publisherId, run.skip)) continue;
+    run.state.revokedFps.add(r.keyFingerprint);
+    spend(run.budget);
+    run.admitted.push(p);
+    progressed = true;
+  }
+  return progressed;
+}
+
+/** Rotations from a reached, unrevoked key to a key not reached yet (a loop is refused). */
+function admitRotationRound(run: Run, reach: Set<string>): boolean {
+  let progressed = false;
+  for (const [id, p] of run.rotations) {
+    const r = p.s as KeyRotateStatement;
+    if (!reach.has(r.fromKey) || fromRevoked(run, r)) continue;
+    run.rotations.delete(id);
+    if (reach.has(r.toKey)) {
+      run.skip(
+        id,
+        `key ${publisherKeyFingerprint(r.toKey)} is already reached: a loop or a repeat`,
+      );
+      continue;
+    }
+    if (run.state.rotations.length >= MAX_ROTATIONS_PER_PUBLISHER) {
+      run.skip(
+        id,
+        `publisher ${r.publisherId} is at its rotation cap (${String(MAX_ROTATIONS_PER_PUBLISHER)})`,
+      );
+      continue;
+    }
+    if (!hasRoom(run.budget, id, r.publisherId, run.skip)) continue;
+    run.state.rotations.push(r);
+    reach.add(r.toKey);
+    spend(run.budget);
+    run.admitted.push(p);
+    progressed = true;
+  }
+  return progressed;
+}
+
+/** Why a statement left pending at the fixed point was not admitted. */
+function leftoverReason(run: Run, p: Parsed, publisherId: string): string {
+  if (p.s.kind === "key.rotate" && fromRevoked(run, p.s)) {
+    return `from revoked key ${publisherKeyFingerprint(p.s.fromKey)}`;
+  }
+  return `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in this index (directly or through an admitted rotation)`;
+}
+
+/**
+ * One publisher's candidates, to a joint fixed point. Each round first admits revocations of keys
+ * the bound keys reach over ADMITTED rotations — so a refused rotation never lets its target's
+ * revocation in — then rotations from reached, unrevoked keys. Revocations go first in every round,
+ * so a rotation from a key revoked in the same batch is refused whatever the ids (R3).
+ */
+function admitForPublisher(
+  publisherId: string,
+  mine: readonly Parsed[],
   state: PublisherState,
   budget: Budget,
   skip: Skip,
 ): Parsed[] {
-  const pending = candidates.filter((c) => c.s.kind === "key.rotate");
-  const forked = forks(pending, state.rotations);
-  const live = (k: string): boolean => !state.revokedFps.has(publisherKeyFingerprint(k));
-  const reached = reachOf(
-    new Set([...state.bound].filter(live)),
-    state.rotations.filter((r) => live(r.fromKey)),
-  );
-  const out: Parsed[] = [];
-  const waiting = new Map(pending.filter((p) => !forked.has(p.id)).map((p) => [p.id, p]));
+  const pendingRotations = mine.filter((p) => p.s.kind === "key.rotate");
+  const forked = forks(pendingRotations, state.rotations);
+  for (const p of pendingRotations) {
+    if (!forked.has(p.id)) continue;
+    const from = publisherKeyFingerprint((p.s as KeyRotateStatement).fromKey);
+    skip(p.id, `fork: key ${from} already rotates, or is asked to rotate, to a different key`);
+  }
+  const run: Run = {
+    state,
+    budget,
+    skip,
+    revocations: new Map(mine.filter((p) => p.s.kind === "key.revoke").map((p) => [p.id, p])),
+    rotations: new Map(pendingRotations.filter((p) => !forked.has(p.id)).map((p) => [p.id, p])),
+    admitted: [],
+  };
   let progressed = true;
   while (progressed) {
-    progressed = false;
-    for (const [id, p] of waiting) {
-      const r = p.s as KeyRotateStatement;
-      if (!reached.has(r.fromKey) || !live(r.fromKey)) continue;
-      waiting.delete(id);
-      if (state.rotations.length >= MAX_ROTATIONS_PER_PUBLISHER) {
-        skip(
-          id,
-          `publisher ${r.publisherId} is at its rotation cap (${String(MAX_ROTATIONS_PER_PUBLISHER)})`,
-        );
-        continue;
-      }
-      if (!hasRoom(budget, id, skip)) continue;
-      state.rotations.push(r);
-      reached.add(r.toKey);
-      budget.total++;
-      out.push(p);
-      progressed = true;
-    }
+    const reach = reachOf(state.bound, state.rotations);
+    const revoked = admitRevocationRound(run, reach);
+    const rotated = admitRotationRound(run, reach);
+    progressed = revoked || rotated;
   }
-  for (const p of pending) {
-    const r = p.s as KeyRotateStatement;
-    if (forked.has(p.id)) {
-      skip(
-        p.id,
-        `fork: key ${publisherKeyFingerprint(r.fromKey)} already rotates, or is asked to rotate, to a different key`,
-      );
-    } else if (waiting.has(p.id)) {
-      skip(
-        p.id,
-        live(r.fromKey)
-          ? `key ${publisherKeyFingerprint(r.fromKey)} is not reached from a key bound to publisher ${r.publisherId}`
-          : `from revoked key ${publisherKeyFingerprint(r.fromKey)}`,
-      );
-    }
+  for (const p of [...run.revocations.values(), ...run.rotations.values()]) {
+    skip(p.id, leftoverReason(run, p, publisherId));
   }
-  return out;
+  return run.admitted;
 }
 
 /** Candidates that passed the structural checks, deduplicated, minus those already in the index. */
@@ -399,23 +454,16 @@ export function admitPublisherStatements<T extends StatementIndex>(
     skippedAll.push({ id, reason });
   };
   const fresh = newCandidates(index, candidates, existingIds, skip);
-  const budget: Budget = { total: existingRaw.length };
+  const total = { value: existingRaw.length };
   const admitted: Parsed[] = [];
   const publishers = [...new Set(fresh.map((p) => p.s.publisherId))].sort(codeUnitCompare);
   for (const publisherId of publishers) {
     const state = stateOf(index, publisherId, indexed);
     const mine = fresh.filter((p) => p.s.publisherId === publisherId);
-    const reach = reachOf(state.bound, [...state.rotations, ...rotationsOf(mine.map((p) => p.s))]);
-    const bound = mine.filter((p) => {
-      if (reach.has(signingKey(p.s))) return true;
-      skip(
-        p.id,
-        `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in this index`,
-      );
-      return false;
-    });
-    admitted.push(...admitRevocations(bound, state, budget, skip));
-    admitted.push(...admitRotations(bound, state, budget, skip));
+    const already = indexed.filter((x) => x.publisherId === publisherId).length;
+    const budget: Budget = { total: total.value, publisher: already };
+    admitted.push(...admitForPublisher(publisherId, mine, state, budget, skip));
+    total.value = budget.total;
   }
   return {
     index:
