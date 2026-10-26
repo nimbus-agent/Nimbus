@@ -257,6 +257,11 @@ describe("verifyExtensionsBestEffort — signed extensions (I16)", () => {
     await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
     expect(signatureDisabledRegistry.count()).toBe(0);
     expect(listExtensions(db).every((r) => r.enabled === 1)).toBe(true);
+    // A row that predates fingerprints (NULL) still verifies with the legacy key, which a rotation
+    // never overwrote, while its sibling on X keeps verifying with X.
+    setExtensionPublisherKeyFingerprint(db, "ext-on-k", null);
+    await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
+    expect(signatureDisabledRegistry.count()).toBe(0);
     // Recording the WRONG fingerprint fails closed instead of borrowing a sibling's key.
     setExtensionPublisherKeyFingerprint(
       db,

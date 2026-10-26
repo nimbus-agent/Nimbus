@@ -18,6 +18,14 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-26 — Marketplace trust layer PR 3a of 5: publisher key rotation (I16, I44 and I48 widened; no migration, no new HITL type).**
+  A publisher can now move to a new key without users being asked. A `key.rotate` signed by the old key, or Nimbus vouching
+  for the new one, lets installs and updates signed by the new key proceed, and the prompt states the change. A revoked key
+  never rotates, and keys reached from a revoked key are blocked unless Nimbus vouches for them (spec R3, R4). Two rotations
+  from one key give no automatic continuity (R8). Anything else stays a key conflict, which only
+  `--accept-publisher-key <fingerprint>` on `nimbus extension install|update` overrides; the existing prompt states it as
+  unvouched. The Vault keeps a key per fingerprint, and every reader (install, the startup signature pass, the pre-spawn step,
+  update apply) uses the key the extension's row recorded, so sibling extensions on different keys keep running.
 - **2026-10-26 — Marketplace trust layer PR 2b of 5: revoked or taken-down extensions are refused at install, update and spawn, until the owner re-approves (invariant I48, binding static D37; no migration, no new egress class).**
   A publisher key revoked, or an extension taken down, by Nimbus, by the publisher or by the maintainer of the extension's
   own registry now blocks that code. It is refused at registry and local install before any prompt, never offered as an

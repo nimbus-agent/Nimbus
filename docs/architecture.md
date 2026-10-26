@@ -2212,6 +2212,14 @@ again. The no-change short-circuit compares the acknowledgement too. A block tha
 `runState: "blocked"` with `blockedBy` (the unacknowledged blocks), `registry.search` marks `blocked`, and `nimbus doctor`
 names each blocked extension.
 
+**Rotation (PR 3a).** The Vault keeps one key per (publisher, fingerprint) beside the legacy one-per-publisher key, and every
+reader verifies with the key the extension row recorded. `extensions/trust/trust-keys.ts` answers whether a publisher may move
+from the keys the Vault trusts to a new one: a revoked key never (R4 taint included); the current Nimbus verification listing it,
+or ONE rotation chain from a trusted key that passes no revoked key (R3, R8), yes. `publisher-key-decision.ts` puts that
+behind every door that used to refuse any different key, adds the owner's `--accept-publisher-key <fingerprint>`, and states
+the change in the existing install/update prompt. `blocksFor` adds R4: a key reached from a revoked key is blocked unless
+Nimbus vouches for it.
+
 **When a block lands.** Every recording path (a verified registry index, the feed, the boot snapshot) hands the ids it newly
 stored to `RegistryFetchDeps.onTrustRecorded`. `extensions/trust/trust-block-enforcer.ts` then stops the running client of
 each extension they newly block and raises one OS notification per extension.
