@@ -5,11 +5,13 @@ import {
   parseRegistryIndex,
   RegistryError,
   type RegistryIndex,
+  readRegistryStatements,
   registryIndexDigest,
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
 } from "@nimbus-dev/registry-format";
 import { recordRegistryEgress } from "../../egress/registry-egress.ts";
+import { recordTrustStatements } from "../trust/trust-store.ts";
 import {
   type BuiltinRegistryConfig,
   currentRegistryFloor,
@@ -321,7 +323,42 @@ export async function fetchVerifiedIndex(
       `index sequence ${index.sequence} is older than the last seen ${cur.lastSequence}`,
     );
   }
+  ingestRegistryStatements(deps, reg, index);
   return index;
+}
+
+/**
+ * Stores the trust statements a verified index carries, scoped to this registry (trust layer). Only
+ * a PINNED, verified index is read: `fetchUnpinnedIndex` (registry add) stores nothing. A store
+ * failure never fails the index fetch: the statements are re-read on the next refresh.
+ */
+function ingestRegistryStatements(
+  deps: RegistryFetchDeps,
+  reg: RegistryRow,
+  index: RegistryIndex,
+): void {
+  const listedPublisherKeys = new Map<string, Set<string>>();
+  for (const entry of Object.values(index.extensions)) {
+    const keys = listedPublisherKeys.get(entry.publisher.id) ?? new Set<string>();
+    keys.add(entry.publisher.key);
+    listedPublisherKeys.set(entry.publisher.id, keys);
+  }
+  try {
+    recordTrustStatements(
+      deps.db,
+      readRegistryStatements(index).statements,
+      {
+        kind: "registry",
+        name: reg.name,
+        rootKey: reg.rootKey,
+        rootFingerprint: reg.rootFingerprint,
+        listedPublisherKeys,
+      },
+      deps.now(),
+    );
+  } catch {
+    // Best-effort: a locked or full database must not turn a verified index into a failed fetch.
+  }
 }
 
 /** Self-verify only (the key is not pinned yet); used by `registry add`. */
