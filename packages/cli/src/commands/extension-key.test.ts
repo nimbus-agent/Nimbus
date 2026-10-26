@@ -106,6 +106,16 @@ describe("nimbus extension key revoke", () => {
     expect(verifyTrustStatement(s, {})).toBe("publisher");
   });
 
+  test("the revoke hint points at a statement-only pull request, not at the next publish", async () => {
+    await runExtensionKey(
+      ["revoke", "--key", at("old-key"), "--publisher", "acme", "--reason", "leaked"],
+      deps,
+    );
+    const text = out.join("");
+    expect(text).not.toContain("Include it in your next publish");
+    expect(text).toContain(`statements/${extractId(out)}.json`);
+  });
+
   test("a missing --reason is a usage error", async () => {
     expect(
       await runExtensionKey(["revoke", "--key", at("old-key"), "--publisher", "acme"], deps),

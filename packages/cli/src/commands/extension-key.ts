@@ -110,27 +110,56 @@ async function buildStatement(p: ParsedArgs, issuedAt: string): Promise<TrustSta
   const publisherId = required(p, "--publisher");
   if (p.sub === "rotate") {
     const fromSeed = readSeed(required(p, "--from"));
-    const toKey = publicKeyOf(readSeed(required(p, "--to")));
-    const fromKey = publicKeyOf(fromSeed);
-    if (fromKey === toKey) throw new KeyCmdError("--from and --to are the same key");
-    return sign(
-      { kind: "key.rotate", issuedAt, signerKey: fromKey, publisherId, fromKey, toKey },
-      fromSeed,
-    );
+    const toSeed = readSeed(required(p, "--to"));
+    try {
+      const toKey = publicKeyOf(toSeed);
+      const fromKey = publicKeyOf(fromSeed);
+      if (fromKey === toKey) throw new KeyCmdError("--from and --to are the same key");
+      return await sign(
+        { kind: "key.rotate", issuedAt, signerKey: fromKey, publisherId, fromKey, toKey },
+        fromSeed,
+      );
+    } finally {
+      fromSeed.fill(0);
+      toSeed.fill(0);
+    }
   }
   const reason = required(p, "--reason");
   const seed = readSeed(required(p, "--key"));
-  const key = publicKeyOf(seed);
-  return sign(
-    {
-      kind: "key.revoke",
-      issuedAt,
-      signerKey: key,
-      publisherId,
-      keyFingerprint: publisherKeyFingerprint(key),
-      reason,
-    },
-    seed,
+  try {
+    const key = publicKeyOf(seed);
+    return await sign(
+      {
+        kind: "key.revoke",
+        issuedAt,
+        signerKey: key,
+        publisherId,
+        keyFingerprint: publisherKeyFingerprint(key),
+        reason,
+      },
+      seed,
+    );
+  } finally {
+    seed.fill(0);
+  }
+}
+
+/**
+ * Where the statement goes next. A rotation rides the first publish signed by the new key. A
+ * revocation cannot ride a publish when it revokes the publisher's current key (that key can no
+ * longer publish, and a revoked key never rotates), so it goes in a pull request of its own.
+ */
+function nextStep(s: TrustStatement, path: string, id: string): string {
+  if (s.kind === "key.revoke") {
+    return (
+      `Deliver it in a pull request of its own that adds it as statements/${id}.json to the ` +
+      "registry repository (the registry admits a statement-only pull request). If the key is " +
+      "already superseded, it may instead ride a publish with --statement.\n"
+    );
+  }
+  return (
+    "Include it in the first publish signed by the new key: nimbus extension publish <dir> " +
+    `--registry-repo <owner/repo> --statement ${path}\n`
   );
 }
 
@@ -182,8 +211,7 @@ export async function runExtensionKey(
       `wrote ${path}\n` +
         `statement id ${id}\n` +
         `${describeStatement(s)}\n` +
-        "Include it in your next publish: nimbus extension publish <dir> --registry-repo <owner/repo> " +
-        `--statement ${path}\n`,
+        nextStep(s, path, id),
     );
     return 0;
   } catch (e) {
