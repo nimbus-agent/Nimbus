@@ -43,8 +43,7 @@ function harness(answers: Record<string, unknown>) {
     },
   } as unknown as IPCClient;
   const deps: TrustCmdDeps = {
-    locate: () => Promise.resolve({ socketPath: "/sock", demo: false }),
-    createClient: () => client,
+    withGateway: (fn) => fn(client),
     stdout: (s) => void out.push(s),
     stderr: (s) => void err.push(s),
     exit: (code) => {
@@ -121,13 +120,13 @@ describe("runTrust", () => {
     }
   });
 
-  test("no gateway running is an error naming that", async () => {
+  test("a gateway error propagates", async () => {
     const h = harness({});
-    const deps = {
+    const deps: TrustCmdDeps = {
       ...h.deps,
-      locate: () => Promise.resolve({ socketPath: undefined, demo: false }),
+      withGateway: () => Promise.reject(new Error("gateway is not running")),
     };
-    await expect(runTrust(["status"], deps)).rejects.toThrow();
+    await expect(runTrust(["status"], deps)).rejects.toThrow("gateway is not running");
   });
 });
 

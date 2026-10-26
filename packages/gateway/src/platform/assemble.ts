@@ -3930,10 +3930,10 @@ export async function assemblePlatformServices(
     oncallPush,
   ]);
 
+  // Trust layer: record each installed extension's verifying key and apply the baked trust snapshot
+  // BEFORE the gate opens. Never throws, so the gate below still always resolves.
+  await prepareTrustAtBoot({ db, vault, logger: syncLogger });
   try {
-    // Trust layer: record each installed extension's verifying key and apply the baked trust
-    // snapshot BEFORE the gate opens. Never throws.
-    await prepareTrustAtBoot({ db, vault, logger: syncLogger });
     await verifyExtensionsBestEffort(
       db,
       syncLogger,
@@ -4010,7 +4010,7 @@ export async function assemblePlatformServices(
   const trustFeed = startTrustFeedForBoot({
     db,
     configDir: paths.configDir,
-    demo: paths.demo === true,
+    demoRooted: paths.demo === true,
     registryFetch,
     logger: syncLogger,
     sidecarStops,

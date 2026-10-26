@@ -5,7 +5,7 @@
  *
  * This build bakes NEITHER: `BUILTIN_TRUST_FEED` and `BUILTIN_TRUST_SNAPSHOT` are `null` until the
  * Nimbus trust repository and root key exist (trust layer PR 5), exactly as `BUILTIN_REGISTRY` was
- * `null` before the Readwise pilot baked it. With no feed configured nothing is fetched and no
+ * `null` before the first extension-unbundling release baked it. With no feed configured nothing is fetched and no
  * egress row is written.
  *
  * Fetching reuses `fetchRegistryBytes` under the reserved name `nimbus-trust`: air gap refuses, and

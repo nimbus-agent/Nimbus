@@ -3,11 +3,7 @@
  * machine, and a manual refresh. Both talk to the running gateway (`trust.status`, `trust.refresh`).
  */
 import type { IPCClient } from "../ipc-client/index.ts";
-import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
-import { readGatewayState } from "../lib/gateway-process.ts";
-import { createIpcClient } from "../lib/rpc-timeouts.ts";
-import { getCliPlatformPaths } from "../paths.ts";
-import { locateGateway, type RegistryGatewayDeps } from "./registry-cmd.ts";
+import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
 
 export const TRUST_USAGE =
   "Usage: nimbus trust status [--json]\n       nimbus trust refresh [--json]\n";
@@ -69,29 +65,20 @@ export function formatTrustRefresh(r: TrustRefreshView): string {
   }
 }
 
-export interface TrustCmdDeps extends RegistryGatewayDeps {
+export interface TrustCmdDeps {
+  /** Runs `fn` against the running gateway; the default is the shared `withGatewayIpc` lifecycle. */
+  readonly withGateway: <T>(fn: (c: IPCClient) => Promise<T>) => Promise<T>;
+  readonly stdout: (s: string) => void;
+  readonly stderr: (s: string) => void;
   readonly exit: (code: number) => never;
 }
 
 const DEFAULT_DEPS: TrustCmdDeps = {
-  locate: () => locateGateway(getCliPlatformPaths(), readGatewayState),
-  createClient: createIpcClient,
+  withGateway: (fn) => withGatewayIpc(fn),
   stdout: (s) => void process.stdout.write(s),
   stderr: (s) => void process.stderr.write(s),
   exit: (code) => process.exit(code),
 };
-
-async function withClient<T>(deps: TrustCmdDeps, fn: (c: IPCClient) => Promise<T>): Promise<T> {
-  const { socketPath, demo } = await deps.locate();
-  if (socketPath === undefined) throw new Error(gatewayNotRunningMessage(demo));
-  const client = deps.createClient(socketPath, undefined);
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.disconnect();
-  }
-}
 
 export async function runTrust(args: string[], deps: TrustCmdDeps = DEFAULT_DEPS): Promise<void> {
   const [sub, ...rest] = args;
@@ -102,11 +89,21 @@ export async function runTrust(args: string[], deps: TrustCmdDeps = DEFAULT_DEPS
     deps.exit(2);
   }
   if (sub === "status") {
-    const s = await withClient(deps, (c) => c.call<TrustStatusView>("trust.status", {}));
-    deps.stdout(json ? `${JSON.stringify(s, null, 2)}\n` : formatTrustStatus(s));
+    const s = await deps.withGateway((c) => c.call<TrustStatusView>("trust.status", {}));
+    deps.stdout(
+      json
+        ? `${JSON.stringify(s, null, 2)}
+`
+        : formatTrustStatus(s),
+    );
     return;
   }
-  const r = await withClient(deps, (c) => c.call<TrustRefreshView>("trust.refresh", {}));
-  deps.stdout(json ? `${JSON.stringify(r, null, 2)}\n` : formatTrustRefresh(r));
+  const r = await deps.withGateway((c) => c.call<TrustRefreshView>("trust.refresh", {}));
+  deps.stdout(
+    json
+      ? `${JSON.stringify(r, null, 2)}
+`
+      : formatTrustRefresh(r),
+  );
   if (r.status === "refused") deps.exit(1);
 }

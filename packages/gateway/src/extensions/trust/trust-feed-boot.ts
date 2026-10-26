@@ -54,13 +54,13 @@ export async function prepareTrustAtBoot(deps: {
 export function startTrustFeedForBoot(deps: {
   db: Database;
   configDir: string;
-  demo: boolean;
+  demoRooted: boolean;
   registryFetch: Omit<RegistryFetchDeps, "db">;
   logger: Pick<Logger, "info" | "warn">;
   sidecarStops: Array<() => void>;
   trustFeed?: TrustFeedConfig | null;
 }): TrustFeedHandle | undefined {
-  if (deps.demo) return undefined;
+  if (deps.demoRooted) return undefined;
   const config = deps.trustFeed === undefined ? BUILTIN_TRUST_FEED : deps.trustFeed;
   const intervalHours = loadNimbusExtensionsFromConfigDir(deps.configDir).trustCheckIntervalHours;
   const daemon = new TrustFeedDaemon({
