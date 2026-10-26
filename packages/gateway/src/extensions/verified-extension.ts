@@ -31,6 +31,7 @@ import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import {
   blockSubjectForInstalled,
   blocksFor,
+  blocksForInstalled,
   describeBlock,
   type TrustBlock,
   unacknowledged,
@@ -232,7 +233,7 @@ function assertNotBlocked(
   manifest: ExtensionManifest,
   grant: ExtensionRunGrantRow,
 ): void {
-  const blocks = blocksFor(db, blockSubjectForInstalled(row, manifest));
+  const blocks = blocksForInstalled(db, row, manifest);
   refuseUnacknowledged(
     row,
     "ERR_EXTENSION_KEY_REVOKED",

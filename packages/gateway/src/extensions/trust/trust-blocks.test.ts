@@ -14,6 +14,7 @@ import {
   type BlockSubject,
   blockSubjectForInstalled,
   blocksFor,
+  blocksForInstalled,
   MAX_REASON_CHARS,
   TrustBlockError,
   UNREADABLE_REASON,
@@ -255,5 +256,25 @@ describe("blockSubjectForInstalled", () => {
     expect(local.keyFingerprint).toBe(PUB_FP);
     expect(local.source).toBeNull();
     expect(blockSubjectForInstalled(row, {}).publisherId).toBeNull();
+  });
+});
+
+describe("blocksForInstalled", () => {
+  test("covers both the recorded and the declared key, once each", async () => {
+    record(FEED, await revoke(NIMBUS_KEY, NIMBUS_SEED));
+    const row = {
+      id: "acme/deploy",
+      version: "1.1.0",
+      source_registry: null,
+      source_root_fingerprint: null,
+      // A recorded fingerprint that differs from the declared key's must not hide its revocation.
+      publisher_key_fingerprint: "a".repeat(32),
+    };
+    const manifest = { publisher: { id: "acme", key: PUB_KEY } };
+    expect(blocksForInstalled(db, row, manifest).map((b) => b.kind)).toEqual(["key.revoke"]);
+    expect(
+      blocksForInstalled(db, { ...row, publisher_key_fingerprint: PUB_FP }, manifest),
+    ).toHaveLength(1);
+    expect(blocksForInstalled(db, row, {})).toEqual([]);
   });
 });

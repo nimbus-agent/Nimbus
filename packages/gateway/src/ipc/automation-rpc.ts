@@ -70,11 +70,7 @@ import {
 } from "../extensions/run-grant-store.ts";
 import { extensionRunFields } from "../extensions/run-state.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
-import {
-  blockSubjectForInstalled,
-  blocksFor,
-  type TrustBlock,
-} from "../extensions/trust/trust-blocks.ts";
+import { blocksForInstalled, type TrustBlock } from "../extensions/trust/trust-blocks.ts";
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
 import { newestPrevVersion, removeExtensionVersionStore } from "../extensions/version-store.ts";
@@ -542,7 +538,7 @@ type ExtensionListItem = ExtensionRow &
  */
 function trustBlocksOf(db: Database, row: ExtensionRow): TrustBlock[] {
   try {
-    return blocksFor(db, blockSubjectForInstalled(row, readVerifiedManifest(row)));
+    return blocksForInstalled(db, row, readVerifiedManifest(row));
   } catch {
     return [];
   }

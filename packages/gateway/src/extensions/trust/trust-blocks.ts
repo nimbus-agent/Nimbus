@@ -225,3 +225,29 @@ export function blockSubjectForInstalled(
         : null,
   };
 }
+
+/**
+ * Every block applying to an installed extension, for BOTH keys that can stand for its verifying
+ * key: the one recorded at install and the one its manifest declares (the spawn's Vault key must
+ * equal the declared one, or the signature check fails). Approval, list/info, the enforcer and the
+ * spawn's step 4a all read this one set, so an approval always acknowledges what a spawn checks.
+ */
+export function blocksForInstalled(
+  db: Database,
+  row: Parameters<typeof blockSubjectForInstalled>[0],
+  manifest: Pick<ExtensionManifest, "publisher">,
+): TrustBlock[] {
+  const base = blockSubjectForInstalled(row, manifest);
+  const declared =
+    manifest.publisher === undefined ? null : publisherKeyFingerprint(manifest.publisher.key);
+  const fingerprints = new Set([base.keyFingerprint, declared]);
+  const seen = new Map<string, TrustBlock>();
+  for (const keyFingerprint of fingerprints) {
+    for (const b of blocksFor(db, { ...base, keyFingerprint })) seen.set(b.statementId, b);
+  }
+  return [...seen.values()].sort((a, b) =>
+    a.issuedAt === b.issuedAt
+      ? a.statementId.localeCompare(b.statementId)
+      : b.issuedAt.localeCompare(a.issuedAt),
+  );
+}

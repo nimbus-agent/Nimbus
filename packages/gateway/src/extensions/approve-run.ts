@@ -36,8 +36,7 @@ import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./ru
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import {
   acknowledgementJson,
-  blockSubjectForInstalled,
-  blocksFor,
+  blocksForInstalled,
   type TrustBlock,
   trustBlockError,
 } from "./trust/trust-blocks.ts";
@@ -465,7 +464,7 @@ async function approveRun(
   const credentialsJson = serializeRunCredentials(credentials);
   // I48: every current block is shown and acknowledged, or nothing is granted. A migration has no
   // prompt of its own to show them in, so a blocked extension is never migrated.
-  const trustBlocks = blocksFor(deps.db, blockSubjectForInstalled(row, manifest));
+  const trustBlocks = blocksForInstalled(deps.db, row, manifest);
   if (opts.consent === null && trustBlocks.length > 0) {
     const refusal = trustBlockError({ extensionId: row.id, version: row.version }, trustBlocks);
     throw new ExtensionRunGrantError(refusal.code, refusal.message);
@@ -527,8 +526,7 @@ async function approveRun(
       resolvedCredentialsFor(after, manifest, serviceId, continuityTable).credentials,
     ) !== credentialsJson ||
     // A block that landed while the prompt was open was not shown, so it is not acknowledged.
-    acknowledgementJson(blocksFor(deps.db, blockSubjectForInstalled(after, manifest))) !==
-      trustAckJson
+    acknowledgementJson(blocksForInstalled(deps.db, after, manifest)) !== trustAckJson
   ) {
     throw new ExtensionRunGrantError(
       "ERR_EXTENSION_RUN_CHANGED",

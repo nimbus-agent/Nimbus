@@ -11,12 +11,7 @@ import type { Logger } from "pino";
 import { listExtensions } from "../../automation/extension-store.ts";
 import { readVerifiedManifest } from "../approve-run.ts";
 import { getRunGrant } from "../run-grant-store.ts";
-import {
-  blockSubjectForInstalled,
-  blocksFor,
-  type TrustBlock,
-  unacknowledged,
-} from "./trust-blocks.ts";
+import { blocksForInstalled, type TrustBlock, unacknowledged } from "./trust-blocks.ts";
 
 export interface TrustBlockEnforcerDeps {
   readonly db: Database;
@@ -50,9 +45,7 @@ function newBlocksFor(
   } catch {
     return []; // the spawn path refuses an unreadable manifest on its own
   }
-  const blocks = blocksFor(db, blockSubjectForInstalled(row, manifest)).filter((b) =>
-    inserted.has(b.statementId),
-  );
+  const blocks = blocksForInstalled(db, row, manifest).filter((b) => inserted.has(b.statementId));
   return unacknowledged(blocks, getRunGrant(db, row.id)?.trust_ack_json);
 }
 
