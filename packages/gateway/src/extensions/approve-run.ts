@@ -34,6 +34,12 @@ import { networkAccessLine } from "./network-access-line.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
+import {
+  acknowledgementJson,
+  blocksForInstalled,
+  type TrustBlock,
+  trustBlockError,
+} from "./trust/trust-blocks.ts";
 import { verifyOneExtensionStrict } from "./verify-extensions.ts";
 
 /** The I2 action type a run approval is asked under. */
@@ -179,6 +185,8 @@ export type RunConsentSubject = {
   readonly modelAccess: boolean;
   readonly credentials: ResolvedRunCredentials;
   readonly reusesConnector?: string | undefined;
+  /** I48: the current blocks, shown so the approval acknowledges each one by statement id. */
+  readonly trustBlocks?: readonly TrustBlock[];
 };
 
 export function buildRunConsentPayload(
@@ -194,6 +202,7 @@ export function buildRunConsentPayload(
     modelAccess,
     credentials,
     reusesConnector,
+    trustBlocks = [],
   } = subject;
   let installPath = row.install_path;
   try {
@@ -242,6 +251,20 @@ export function buildRunConsentPayload(
     // The legacy service id only — never its Vault key. Not named with "credential" for the same
     // redaction reason as `vaultEnv`.
     ...(reusesConnector === undefined ? {} : { reusesConnector }),
+    // I48: what blocks this extension, so approving it is an informed override. No field name here
+    // contains "key" or "credential" (both are redacted from the prompt and the audit row).
+    ...(trustBlocks.length === 0
+      ? {}
+      : {
+          trustBlocks: trustBlocks.map((b) => ({
+            statementId: b.statementId,
+            kind: b.kind,
+            issuer: b.issuer,
+            registry: b.registry,
+            reason: b.reason,
+            issuedAt: b.issuedAt,
+          })),
+        }),
   };
 }
 
@@ -381,6 +404,24 @@ export async function approveMigratedExtensionRun(
   });
 }
 
+/**
+ * I48: the blocks the approval must show and acknowledge. A migration has no prompt of its own to
+ * show them in, so with `prompting` false any block refuses before anything is granted.
+ */
+function currentTrustBlocks(
+  db: Database,
+  row: ExtensionRow,
+  manifest: ExtensionManifest,
+  prompting: boolean,
+): TrustBlock[] {
+  const blocks = blocksForInstalled(db, row, manifest);
+  if (!prompting && blocks.length > 0) {
+    const refusal = trustBlockError({ extensionId: row.id, version: row.version }, blocks);
+    throw new ExtensionRunGrantError(refusal.code, refusal.message);
+  }
+  return blocks;
+}
+
 /** Before the row lookup and any prompt: with the runtime off an approval could never be used. */
 function assertRuntimeEnabled(deps: { readonly runtimeEnabled: boolean }): void {
   if (!deps.runtimeEnabled) {
@@ -439,6 +480,8 @@ async function approveRun(
     assertMigrationBinding(row.id, opts.migratedFrom, binding, credentials);
   }
   const credentialsJson = serializeRunCredentials(credentials);
+  const trustBlocks = currentTrustBlocks(deps.db, row, manifest, opts.consent !== null);
+  const trustAckJson = acknowledgementJson(trustBlocks);
   const modelAccess = opts.modelAccess;
   const base = { id: row.id, serviceId, version: row.version, treeDigest, grants, modelAccess };
   if (
@@ -447,7 +490,8 @@ async function approveRun(
     existing.tree_digest === treeDigest &&
     existing.permissions_json === permissionsJson &&
     existing.credentials_json === credentialsJson &&
-    existing.model_access === (modelAccess ? 1 : 0)
+    existing.model_access === (modelAccess ? 1 : 0) &&
+    (existing.trust_ack_json ?? "[]") === trustAckJson
   ) {
     return { ...base, changed: false };
   }
@@ -465,6 +509,7 @@ async function approveRun(
           modelAccess,
           credentials,
           reusesConnector: binding?.legacyServiceId,
+          trustBlocks,
         },
         deps.env,
       ),
@@ -491,7 +536,9 @@ async function approveRun(
     // is open; the stored credentials must still be the ones the owner saw.
     serializeRunCredentials(
       resolvedCredentialsFor(after, manifest, serviceId, continuityTable).credentials,
-    ) !== credentialsJson
+    ) !== credentialsJson ||
+    // A block that landed while the prompt was open was not shown, so it is not acknowledged.
+    acknowledgementJson(blocksForInstalled(deps.db, after, manifest)) !== trustAckJson
   ) {
     throw new ExtensionRunGrantError(
       "ERR_EXTENSION_RUN_CHANGED",
@@ -524,6 +571,7 @@ async function approveRun(
     model_access: modelAccess ? 1 : 0,
     approved_at: deps.now(),
     credentials_json: credentialsJson,
+    trust_ack_json: trustAckJson,
   });
   return { ...base, changed: true };
 }

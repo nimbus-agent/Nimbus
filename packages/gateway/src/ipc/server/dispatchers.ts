@@ -2344,6 +2344,7 @@ export async function tryDispatchRegistryRpc(
       ? {}
       : { extensionsDir: ctx.options.extensionsDir }),
     vault: ctx.options.vault,
+    ...(ctx.options.trustFeed === undefined ? {} : { trustFeed: ctx.options.trustFeed }),
   });
   if (out.kind === "hit") {
     return out.value;

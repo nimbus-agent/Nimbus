@@ -22,6 +22,7 @@ const extensionMod = await import("./extension.ts");
 const {
   fetchSandboxPosture,
   formatEnabledLine,
+  formatBlockLines,
   formatRunLine,
   formatExtensionInfoHuman,
   formatExtensionListTable,
@@ -2529,6 +2530,42 @@ describe("run state in human output", () => {
       noColor: true,
     });
     expect(without).not.toMatch(/\bRun\b/);
+  });
+
+  test("formatBlockLines (I48): one line per block, issuer named, the override last", () => {
+    expect(formatBlockLines("a", [])).toEqual([]);
+    const lines = formatBlockLines("acme.tool", [
+      {
+        statementId: "s1",
+        kind: "key.revoke",
+        issuer: "nimbus",
+        registry: null,
+        reason: "leaked[2J",
+        issuedAt: "2026-10-26T12:00:00Z",
+      },
+      {
+        statementId: "s2",
+        kind: "extension.takedown",
+        issuer: "registry",
+        registry: "community",
+        reason: "malware",
+        issuedAt: "2026-10-26T13:00:00Z",
+      },
+      {
+        statementId: "s3",
+        kind: "key.revoke",
+        issuer: "publisher",
+        registry: null,
+        reason: "rotated away",
+        issuedAt: "2026-10-26T14:00:00Z",
+      },
+    ]);
+    expect(lines[0]).toBe(
+      "Blocked:   publisher key revoked by Nimbus on 2026-10-26T12:00:00Z: leaked[2J",
+    );
+    expect(lines[1]).toContain('taken down by the maintainer of registry "community"');
+    expect(lines[2]).toContain("by its publisher");
+    expect(lines[3]).toContain("nimbus extension approve acme.tool");
   });
 
   test("formatRunLine", () => {

@@ -102,6 +102,42 @@ describe("doctorExtensionsLines", () => {
   });
 });
 
+describe("doctorExtensionsLines — blocked extensions (I48)", () => {
+  const blocked = (id: string, kind: string, reason: string) => ({
+    id,
+    runState: "blocked",
+    blockedBy: [{ kind, reason }],
+  });
+  test("names each blocked extension, even with the runtime off", () => {
+    const r = doctorExtensionsLines({
+      runtimeEnabled: false,
+      extensions: [blocked("a", "key.revoke", "leaked"), blocked("b", "extension.takedown", "x")],
+    });
+    expect(r.exit).toBe(1);
+    expect(r.lines).toEqual([
+      "[warn] Extensions: a is blocked: its publisher key was revoked (leaked) — it does not run; nimbus extension info a",
+      "[warn] Extensions: b is blocked: it was taken down (x) — it does not run; nimbus extension info b",
+    ]);
+  });
+  test("comes before the not-approved line; control characters are stripped", () => {
+    const r = doctorExtensionsLines({
+      runtimeEnabled: true,
+      extensions: [blocked("c[31m", "extension.takedown", "r"), ext("d", "no_grant")],
+    });
+    expect(r.lines).toHaveLength(2);
+    expect(r.lines[0]).toContain("blocked");
+    expect([...(r.lines[0] ?? "")].some((c) => c.charCodeAt(0) < 0x20)).toBe(false);
+    expect(r.lines[1]).toContain("not approved");
+  });
+  test("a blocked entry without blockedBy still reads", () => {
+    expect(
+      doctorExtensionsLines({ runtimeEnabled: true, extensions: [ext("e", "blocked")] }).lines[0],
+    ).toBe(
+      "[warn] Extensions: e is blocked: it was taken down — it does not run; nimbus extension info e",
+    );
+  });
+});
+
 describe("doctorRegistryLines", () => {
   const reg = (name: string, stale: boolean, generatedAt = "2026-08-01T00:00:00Z") => ({
     name,

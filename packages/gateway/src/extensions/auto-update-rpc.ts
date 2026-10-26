@@ -248,6 +248,8 @@ function isStringSemverLess(a: string, b: string): boolean {
 }
 
 function extractPhase(message: string): AutoUpdateFailPhase | "internal_error" {
+  // First: a block's message quotes the statement's reason, which could contain any other word.
+  if (message.startsWith("trust_blocked")) return "trust_blocked";
   if (message.includes("source_registry_changed")) return "source_registry_changed";
   if (message.includes("sha256_mismatch")) return "sha256_mismatch";
   if (message.includes("package_hash_mismatch")) return "package_hash_mismatch";

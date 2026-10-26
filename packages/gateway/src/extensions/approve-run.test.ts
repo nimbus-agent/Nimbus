@@ -12,7 +12,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import {
+  publisherKeyFingerprint,
+  signTrustStatement,
+  trustStatementId,
+} from "@nimbus-dev/registry-format";
+import nacl from "tweetnacl";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import {
   insertExtensionRow,
@@ -38,6 +43,7 @@ import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
 import { recordMigrationPrepared } from "./migration/migration-store.ts";
 import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
+import { recordTrustStatements, type StatementSource } from "./trust/trust-store.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 
 const cleanups: Array<() => void> = [];
@@ -184,6 +190,7 @@ describe("approveExtensionRun", () => {
       model_access: 0,
       approved_at: 42,
       credentials_json: "{}",
+      trust_ack_json: "[]",
     });
   });
 
@@ -992,6 +999,32 @@ describe("approveMigratedExtensionRun", () => {
     expect(grant?.tree_digest).toBe(digest);
   });
 
+  test("a blocked extension is never migrated (I48): refused before anything is granted", async () => {
+    const { s, entry, digest } = await migrated();
+    pending(s.db, digest);
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 31);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const stmt = await signTrustStatement(
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: nimbusKey,
+        publisherId: "test-pub",
+        keyFingerprint: publisherKeyFingerprint(s.publisherKey ?? ""),
+        reason: "leaked",
+      },
+      seed,
+    );
+    recordTrustStatements(s.db, [stmt], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    await expect(
+      approveMigratedExtensionRun(
+        { db: s.db, env: s.env, runtimeEnabled: true, now: () => 7, continuityTable: [entry] },
+        MIG_ID,
+      ),
+    ).rejects.toThrow("ERR_EXTENSION_KEY_REVOKED");
+    expect(getRunGrant(s.db, MIG_ID)).toBeNull();
+  });
+
   test("no pending migration refuses ERR_EXTENSION_RUN_NOT_MIGRATED and grants nothing", async () => {
     const { s, entry } = await migrated();
     await expect(
@@ -1036,5 +1069,83 @@ describe("approveMigratedExtensionRun", () => {
         MIG_ID,
       ),
     ).rejects.toThrow(/ERR_EXTENSION_RUNTIME_DISABLED/);
+  });
+});
+
+describe("approving a blocked extension (I48)", () => {
+  const NIMBUS_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 21);
+  const NIMBUS_KEY = encodeBase64(nacl.sign.keyPair.fromSeed(NIMBUS_SEED).publicKey);
+  const FEED: StatementSource = { kind: "feed", nimbusRootKey: NIMBUS_KEY };
+  const ID = "com.example.blocked";
+
+  async function takedown(db: Database, reason: string): Promise<string> {
+    const s = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: NIMBUS_KEY,
+        extensionId: ID,
+        publisherId: "test-pub",
+        versions: "*",
+        reason,
+      },
+      NIMBUS_SEED,
+    );
+    expect(recordTrustStatements(db, [s], FEED, 1).inserted).toBe(1);
+    return trustStatementId(s);
+  }
+
+  const runDeps = (s: Awaited<ReturnType<typeof setup>>, gate: (a: Asked) => Promise<boolean>) => ({
+    db: s.db,
+    env: s.env,
+    gate,
+    runtimeEnabled: true,
+    now: () => 1,
+  });
+
+  test("the prompt shows each block, and the grant acknowledges exactly those ids", async () => {
+    const s = await setup({ id: ID, signed: true });
+    const id1 = await takedown(s.db, "malware");
+    const seen: Asked[] = [];
+    await approveExtensionRun(ID, runDeps(s, gateThat(true, seen)));
+    const shown = seen[0]?.payload["trustBlocks"] as Array<Record<string, unknown>>;
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toMatchObject({
+      statementId: id1,
+      kind: "extension.takedown",
+      issuer: "nimbus",
+      reason: "malware",
+    });
+    // Nothing the owner must see is hidden by the consent display's redaction.
+    expect(JSON.stringify(redactPayloadForConsentDisplay(seen[0]?.payload ?? {}))).toContain(
+      "malware",
+    );
+    expect(getRunGrant(s.db, ID)?.trust_ack_json).toBe(JSON.stringify([id1]));
+  });
+
+  test("re-approving an otherwise identical grant after a NEW block prompts again", async () => {
+    const s = await setup({ id: ID, signed: true });
+    const seen: Asked[] = [];
+    await approveExtensionRun(ID, runDeps(s, gateThat(true, seen)));
+    expect(getRunGrant(s.db, ID)?.trust_ack_json).toBe("[]");
+    const id1 = await takedown(s.db, "later report");
+    const out = await approveExtensionRun(ID, runDeps(s, gateThat(true, seen)));
+    expect(out.changed).toBe(true);
+    expect(seen).toHaveLength(2);
+    expect(getRunGrant(s.db, ID)?.trust_ack_json).toBe(JSON.stringify([id1]));
+  });
+
+  test("a block that lands while the prompt is open refuses RUN_CHANGED and grants nothing", async () => {
+    const s = await setup({ id: ID, signed: true });
+    await expect(
+      approveExtensionRun(
+        ID,
+        runDeps(s, async () => {
+          await takedown(s.db, "during the prompt");
+          return true;
+        }),
+      ),
+    ).rejects.toThrow("ERR_EXTENSION_RUN_CHANGED");
+    expect(getRunGrant(s.db, ID)).toBeNull();
   });
 });

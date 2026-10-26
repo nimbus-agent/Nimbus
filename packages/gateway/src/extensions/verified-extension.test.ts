@@ -13,6 +13,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  publisherKeyFingerprint,
+  signTrustStatement,
+  trustStatementId,
+} from "@nimbus-dev/registry-format";
+import nacl from "tweetnacl";
 
 import {
   insertExtensionRow,
@@ -31,6 +37,7 @@ import { evictPublisherKey } from "./publisher-keys.ts";
 import { ExtensionRunGrantError, type ExtensionRunGrantErrorCode } from "./run-grant-error.ts";
 import { getRunGrant, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
+import { recordTrustStatements, type StatementSource } from "./trust/trust-store.ts";
 import { readVerifiedExtensionForSpawn } from "./verified-extension.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 
@@ -615,5 +622,145 @@ describe("readVerifiedExtensionForSpawn — credentials (step 9)", () => {
       readVerifiedExtensionForSpawn(f.id, { ...deps(f), continuityTable: table }),
       "ERR_EXTENSION_RUN_CHANGED",
     );
+  });
+});
+
+describe("readVerifiedExtensionForSpawn — trust blocks (I48)", () => {
+  const NIMBUS_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 11);
+  const NIMBUS_KEY = encodeBase64(nacl.sign.keyPair.fromSeed(NIMBUS_SEED).publicKey);
+  const FEED: StatementSource = { kind: "feed", nimbusRootKey: NIMBUS_KEY };
+
+  function installedPublisherKey(f: Fixture): string {
+    const m = JSON.parse(readFileSync(join(f.installPath, "nimbus.extension.json"), "utf8")) as {
+      publisher: { key: string };
+    };
+    return m.publisher.key;
+  }
+
+  async function block(
+    f: Fixture,
+    kind: "key.revoke" | "extension.takedown",
+    reason = "bad",
+  ): Promise<string> {
+    const s =
+      kind === "key.revoke"
+        ? await signTrustStatement(
+            {
+              kind,
+              issuedAt: "2026-10-26T12:00:00Z",
+              signerKey: NIMBUS_KEY,
+              publisherId: "test-pub",
+              keyFingerprint: publisherKeyFingerprint(installedPublisherKey(f)),
+              reason,
+            },
+            NIMBUS_SEED,
+          )
+        : await signTrustStatement(
+            {
+              kind,
+              issuedAt: "2026-10-26T12:00:00Z",
+              signerKey: NIMBUS_KEY,
+              extensionId: f.id,
+              publisherId: "test-pub",
+              versions: "*",
+              reason,
+            },
+            NIMBUS_SEED,
+          );
+    expect(recordTrustStatements(f.db, [s], FEED, 1).inserted).toBe(1);
+    return trustStatementId(s);
+  }
+
+  function acknowledge(f: Fixture, ids: string[]): void {
+    const g = getRunGrant(f.db, f.id);
+    if (g === null) throw new Error("no grant");
+    upsertRunGrant(f.db, { ...g, trust_ack_json: JSON.stringify(ids) });
+  }
+
+  test("a taken-down extension refuses TAKEN_DOWN before its tree is hashed", async () => {
+    const f = await setup({ signed: true });
+    await block(f, "extension.takedown", "malware found");
+    let hashed = 0;
+    const treeDigest = (root: string): string => {
+      hashed++;
+      return computeExtensionTreeDigest(root);
+    };
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, { ...deps(f), treeDigest }),
+      "ERR_EXTENSION_TAKEN_DOWN",
+      /malware found.*nimbus extension approve/,
+    );
+    expect(hashed).toBe(0);
+  });
+
+  test("a revoked key refuses KEY_REVOKED although the signature is valid", async () => {
+    const f = await setup({ signed: true });
+    await block(f, "key.revoke", "key leaked");
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, deps(f)),
+      "ERR_EXTENSION_KEY_REVOKED",
+      /publisher key revoked by Nimbus.*key leaked/,
+    );
+  });
+
+  test("a revocation is reported before a takedown, and also before the tree is hashed", async () => {
+    const f = await setup({ signed: true });
+    await block(f, "extension.takedown");
+    await block(f, "key.revoke", "key leaked");
+    let hashed = 0;
+    const treeDigest = (root: string): string => {
+      hashed++;
+      return computeExtensionTreeDigest(root);
+    };
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, { ...deps(f), treeDigest }),
+      "ERR_EXTENSION_KEY_REVOKED",
+    );
+    expect(hashed).toBe(0);
+  });
+
+  test("a revocation of the key the Vault holds NOW refuses at step 6 even if the row recorded another", async () => {
+    const f = await setup({ signed: true });
+    f.db.run("UPDATE extension SET publisher_key_fingerprint = ? WHERE id = ?", [
+      "0".repeat(32),
+      f.id,
+    ]);
+    await block(f, "key.revoke", "vault key leaked");
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, deps(f)),
+      "ERR_EXTENSION_KEY_REVOKED",
+      /vault key leaked/,
+    );
+  });
+
+  test("blocks the grant acknowledged let it run; a NEW block refuses again", async () => {
+    const f = await setup({ signed: true });
+    const ids = [await block(f, "key.revoke"), await block(f, "extension.takedown")];
+    acknowledge(f, ids);
+    expect((await readVerifiedExtensionForSpawn(f.id, deps(f))).extensionId).toBe(f.id);
+    await block(f, "extension.takedown", "a second report");
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, deps(f)),
+      "ERR_EXTENSION_TAKEN_DOWN",
+      /a second report/,
+    );
+  });
+
+  test("an unsigned extension is never blocked", async () => {
+    const f = await setup();
+    const s = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: NIMBUS_KEY,
+        extensionId: f.id,
+        publisherId: "test-pub",
+        versions: "*",
+        reason: "x",
+      },
+      NIMBUS_SEED,
+    );
+    recordTrustStatements(f.db, [s], FEED, 1);
+    expect((await readVerifiedExtensionForSpawn(f.id, deps(f))).extensionId).toBe(f.id);
   });
 });

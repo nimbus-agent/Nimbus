@@ -12,7 +12,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import {
+  publisherKeyFingerprint,
+  signTrustStatement,
+  type UnsignedTrustStatement,
+} from "@nimbus-dev/registry-format";
 import * as tar from "tar";
 import nacl from "tweetnacl";
 import { listExtensions } from "../../automation/extension-store.ts";
@@ -21,6 +25,7 @@ import { encodeBase64 } from "../../util/base64.ts";
 import { MockVault } from "../../vault/mock.ts";
 import type { ExtensionInstallApprovalRequest } from "../install-from-local.ts";
 import { writePublisherKey } from "../publisher-keys.ts";
+import { recordTrustStatements } from "../trust/trust-store.ts";
 import {
   buildTestRegistry,
   PUBLISHER_SEED,
@@ -387,5 +392,91 @@ describe("installFromRegistry refusals before any prompt", () => {
     expect(out.version).toBe("1.0.0");
     expect(out.publisher.id).toBe("acme");
     expect(listExtensions(db).map((r) => r.id)).toEqual([ID]);
+  });
+});
+
+describe("installFromRegistry refuses blocked code (I48)", () => {
+  const NIMBUS_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 70);
+  const NIMBUS_KEY = encodeBase64(nacl.sign.keyPair.fromSeed(NIMBUS_SEED).publicKey);
+  const PUBLISHER_KEY = encodeBase64(nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey);
+
+  async function nimbus(statement: UnsignedTrustStatement): Promise<void> {
+    const s = await signTrustStatement(statement, NIMBUS_SEED);
+    recordTrustStatements(db, [s], { kind: "feed", nimbusRootKey: NIMBUS_KEY }, 1);
+  }
+  const takedown = (versions: string[]) =>
+    nimbus({
+      kind: "extension.takedown",
+      issuedAt: "2026-10-26T12:00:00Z",
+      signerKey: NIMBUS_KEY,
+      extensionId: ID,
+      publisherId: "acme",
+      versions,
+      reason: "malware",
+    });
+
+  test("the default pick skips a taken-down newest version for the clean one below it", async () => {
+    await setup([{ version: "1.0.9" }, { version: "1.1.0" }]);
+    await takedown(["1.1.0"]);
+    expect((await installFromRegistry(deps(), { id: ID })).version).toBe("1.0.9");
+  });
+
+  test("an explicit taken-down version is refused before its manifest is even read", async () => {
+    await setup([{ version: "1.0.9" }, { version: "1.1.0" }]);
+    await takedown(["1.1.0"]);
+    // Were the manifest read first, this would fail as a fetch error, not as a takedown.
+    rmSync(join(regDir, "extensions", ID, "1.1.0"), { recursive: true, force: true });
+    await expect(installFromRegistry(deps(), { id: ID, version: "1.1.0" })).rejects.toThrow(
+      "ERR_EXTENSION_TAKEN_DOWN",
+    );
+    expect(asked).toEqual([]);
+    expect(listExtensions(db)).toEqual([]);
+  });
+
+  test("a revoked publisher key refuses every version before the owner is asked", async () => {
+    await setup([{ version: "1.0.9" }, { version: "1.1.0" }]);
+    await nimbus({
+      kind: "key.revoke",
+      issuedAt: "2026-10-26T12:00:00Z",
+      signerKey: NIMBUS_KEY,
+      publisherId: "acme",
+      keyFingerprint: publisherKeyFingerprint(PUBLISHER_KEY),
+      reason: "leaked",
+    });
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      "ERR_EXTENSION_KEY_REVOKED",
+    );
+    expect(asked).toEqual([]);
+  });
+
+  test("a takedown scoped to ANOTHER registry does not reach this one", async () => {
+    await setup([{ version: "1.1.0" }]);
+    const otherSeed = Uint8Array.from({ length: 32 }, (_, i) => i + 90);
+    const otherRoot = encodeBase64(nacl.sign.keyPair.fromSeed(otherSeed).publicKey);
+    const s = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: otherRoot,
+        extensionId: ID,
+        publisherId: "acme",
+        versions: "*",
+        reason: "not yours",
+      },
+      otherSeed,
+    );
+    recordTrustStatements(
+      db,
+      [s],
+      {
+        kind: "registry",
+        name: "other",
+        rootKey: otherRoot,
+        rootFingerprint: publisherKeyFingerprint(otherRoot),
+        listedPublisherKeys: new Map(),
+      },
+      1,
+    );
+    expect((await installFromRegistry(deps(), { id: ID })).version).toBe("1.1.0");
   });
 });

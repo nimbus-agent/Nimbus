@@ -27,6 +27,12 @@ import {
   type RegistryRow,
   recordRegistryFetch,
 } from "../extensions/registry/registry-store.ts";
+import { blocksFor, TrustBlockError } from "../extensions/trust/trust-blocks.ts";
+import {
+  type FreshenHandle,
+  freshenTrustFeed,
+  trustFeedNote,
+} from "../extensions/trust/trust-freshen.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
@@ -51,6 +57,8 @@ export interface RegistryRpcOptions {
   /** `registry.install` only: where extensions install, and the Vault holding publisher keys. */
   extensionsDir?: string;
   vault?: NimbusVault;
+  /** `registry.install` only: the trust feed, refreshed best-effort first (spec § 6.2). */
+  trustFeed?: FreshenHandle;
 }
 
 type Hit = { kind: "hit"; value: unknown };
@@ -220,6 +228,9 @@ async function handleInstall(
 ): Promise<Hit> {
   const { id, registry, version, channel } = installParams(rec);
   const { ownerGate, fetch, extensionsDir, vault } = installDeps(o);
+  // Fresh before acting (I48): a revocation published since the last hourly fetch should refuse
+  // this install. Unreachable: proceed on stored state and tell the owner how old it is.
+  const note = trustFeedNote(await freshenTrustFeed(o.trustFeed, o.db, Date.now()));
   try {
     const installed = await installFromRegistry(
       {
@@ -228,7 +239,11 @@ async function handleInstall(
         vault,
         fetch,
         // The same HITL action as a local install; the request now also names the registry.
-        approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
+        approve: (request) =>
+          ownerGate({
+            type: "extension.install",
+            payload: { ...request, ...(note === undefined ? {} : { trustFeedNote: note }) },
+          }),
       },
       {
         id,
@@ -261,7 +276,10 @@ async function handleInstall(
       ok: false,
       error: e instanceof Error ? e.message : String(e),
     });
-    if (e instanceof RegistryError || e instanceof RpcMethodError) throw e;
+    // A trust block (I48) is a registry-class refusal like the others, not invalid params.
+    if (e instanceof RegistryError || e instanceof RpcMethodError || e instanceof TrustBlockError) {
+      throw e;
+    }
     // A refusal AFTER the owner was involved is internal-class, like `extension.install`'s.
     throw new RpcMethodError(
       e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
@@ -366,6 +384,8 @@ async function handleSearch(
     publisherId: string;
     latestStable: string | null;
     latestBeta: string | null;
+    /** I48: the publisher key is revoked, or the newest offered version is taken down. */
+    blocked: boolean;
   }> = [];
   for (const { reg, index } of read.ok) {
     for (const [id, entry] of Object.entries(index.extensions)) {
@@ -375,13 +395,25 @@ async function handleSearch(
       const name = newest[1].name;
       const hay = [id, name, entry.publisher.id].map((v) => v.toLowerCase());
       if (!hay.some((h) => h.includes(needle))) continue;
+      const latestStable = versions.find(([, v]) => v.channel === "stable")?.[0] ?? null;
+      const latestBeta = versions.find(([, v]) => v.channel === "beta")?.[0] ?? null;
+      const offered = latestStable ?? latestBeta ?? newest[0];
+      const blocked =
+        blocksFor(o.db, {
+          extensionId: id,
+          version: offered,
+          publisherId: entry.publisher.id,
+          keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+          source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
+        }).length > 0;
       results.push({
         registry: reg.name,
         id,
         name,
         publisherId: entry.publisher.id,
-        latestStable: versions.find(([, v]) => v.channel === "stable")?.[0] ?? null,
-        latestBeta: versions.find(([, v]) => v.channel === "beta")?.[0] ?? null,
+        latestStable,
+        latestBeta,
+        blocked,
       });
     }
   }
@@ -465,7 +497,9 @@ export async function dispatchRegistryRpc(o: RegistryRpcOptions): Promise<Hit | 
         return { kind: "miss" };
     }
   } catch (e) {
-    if (e instanceof RegistryError) throw new RpcMethodError(-32000, e.message);
+    if (e instanceof RegistryError || e instanceof TrustBlockError) {
+      throw new RpcMethodError(-32000, e.message);
+    }
     throw e;
   }
 }

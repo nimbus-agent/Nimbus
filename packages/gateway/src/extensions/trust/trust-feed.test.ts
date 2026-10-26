@@ -202,6 +202,24 @@ describe("applyTrustSnapshot", () => {
     expect((await refreshTrustFeed({ ...deps(), trustFeed: CFG() })).status).toBe("refused");
   });
 
+  test("statements a snapshot or a feed newly stores reach the hook; a throwing hook is ignored", async () => {
+    const seen: number[] = [];
+    const hook = (ids: readonly string[]) => void seen.push(ids.length);
+    await applyTrustSnapshot(db, await feedText(7, [await revoke("baked")]), CFG(), 1, hook);
+    await publish(8, [await revoke("baked"), await revoke("fresh")]);
+    await refreshTrustFeed({ ...deps(), trustFeed: CFG(), onTrustRecorded: hook });
+    expect(seen).toEqual([1, 1]);
+    await publish(9, [await revoke("third")]);
+    const r = await refreshTrustFeed({
+      ...deps(),
+      trustFeed: CFG(),
+      onTrustRecorded: () => {
+        throw new Error("hook");
+      },
+    });
+    expect(r.status).toBe("accepted");
+  });
+
   test("a snapshot older than the stored floor is unchanged, not refused", async () => {
     await publish(9, []);
     await refreshTrustFeed({ ...deps(), trustFeed: CFG() });
@@ -322,7 +340,7 @@ describe("TrustFeedDaemon", () => {
       {
         status: "accepted",
         sequence: 2,
-        recorded: { inserted: 1, alreadyKnown: 0, refused: 0, capped: 0 },
+        recorded: { inserted: 1, alreadyKnown: 0, refused: 0, capped: 0, insertedIds: ["s1"] },
         verified: 0,
       },
       { status: "unchanged", sequence: 2 },

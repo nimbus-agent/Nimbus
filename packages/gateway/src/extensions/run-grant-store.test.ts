@@ -40,6 +40,7 @@ function grant(over: Partial<ExtensionRunGrantRow> = {}): ExtensionRunGrantRow {
     model_access: 0,
     approved_at: 1,
     credentials_json: "{}",
+    trust_ack_json: "[]",
     ...over,
   };
 }
@@ -58,6 +59,16 @@ function withExtension(d: Database): void {
 }
 
 describe("run-grant-store", () => {
+  test("the trust acknowledgement round-trips; an upsert without one stores none (V76)", () => {
+    const d = db();
+    withExtension(d);
+    upsertRunGrant(d, grant({ trust_ack_json: '["s1","s2"]' }));
+    expect(getRunGrant(d, "com.example.a")?.trust_ack_json).toBe('["s1","s2"]');
+    const { trust_ack_json: _dropped, ...withoutAck } = grant();
+    upsertRunGrant(d, withoutAck);
+    expect(getRunGrant(d, "com.example.a")?.trust_ack_json).toBe("[]");
+  });
+
   test("upsert, get, list, delete round-trip", () => {
     const d = db();
     withExtension(d);

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { signTrustFeed, signTrustStatement, trustStatementId } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
 
 import { listExtensions } from "../../automation/extension-store.ts";
@@ -82,6 +83,43 @@ describe("prepareTrustAtBoot", () => {
     await prepareTrustAtBoot({ db, vault, logger: log.logger });
     expect(listExtensions(db)[0]?.publisher_key_fingerprint).toBeString();
     expect(log.info).toEqual(["recorded verifying-key fingerprints"]);
+  });
+
+  test("statements the snapshot newly stores reach the enforcement hook", async () => {
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 3);
+    const s = await signTrustStatement(
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: ROOT_KEY,
+        publisherId: "acme",
+        keyFingerprint: "0".repeat(32),
+        reason: "baked",
+      },
+      seed,
+    );
+    const snapshot = JSON.stringify(
+      await signTrustFeed(
+        {
+          format: 1,
+          rootKey: ROOT_KEY,
+          sequence: 1,
+          generatedAt: "2026-10-26T12:00:00Z",
+          statements: [s],
+        },
+        seed,
+      ),
+    );
+    const seen: string[][] = [];
+    await prepareTrustAtBoot({
+      db,
+      vault: new MockVault(),
+      logger: recordingLogger().logger,
+      trustFeed: { url: dir, rootKey: ROOT_KEY },
+      snapshot,
+      onTrustRecorded: (ids) => void seen.push([...ids]),
+    });
+    expect(seen).toEqual([[trustStatementId(s)]]);
   });
 
   test("a failed backfill is logged and does not stop the snapshot step", async () => {

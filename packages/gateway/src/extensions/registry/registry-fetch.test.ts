@@ -9,6 +9,7 @@ import {
   registryIndexSigningBytes,
   signTrustStatement,
   type TrustStatement,
+  trustStatementId,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
@@ -588,6 +589,36 @@ describe("fetchVerifiedIndex: trust statements in the index", () => {
     const sig = nacl.sign.detached(registryIndexSigningBytes(base), KEYPAIR.secretKey);
     return { ...base, signature: encodeBase64(sig) };
   }
+
+  test("newly stored statements reach the enforcement hook once; a re-fetch reports nothing", async () => {
+    const s = await rootRevoke();
+    const idx = indexWith(6, [s]);
+    const url = serve(() => new Response(JSON.stringify(idx)));
+    const seen: string[][] = [];
+    const withHook = {
+      ...deps(),
+      onTrustRecorded: (ids: readonly string[]) => void seen.push([...ids]),
+    };
+    await fetchVerifiedIndex(withHook, pinned(url, 5));
+    expect(seen).toEqual([[trustStatementId(s)]]);
+    await fetchVerifiedIndex(withHook, getRegistry(db, "main") ?? pinned(url, 5));
+    expect(seen).toHaveLength(1);
+  });
+
+  test("a throwing hook never fails the fetch", async () => {
+    const idx = indexWith(6, [await rootRevoke()]);
+    const url = serve(() => new Response(JSON.stringify(idx)));
+    const out = await fetchVerifiedIndex(
+      {
+        ...deps(),
+        onTrustRecorded: () => {
+          throw new Error("hook");
+        },
+      },
+      pinned(url, 5),
+    );
+    expect(out.sequence).toBe(6);
+  });
 
   test("a root-signed revocation in a pinned index is stored, scoped to that registry", async () => {
     const idx = indexWith(6, [await rootRevoke()]);

@@ -1,6 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
-import { RegistryError, type RegistryErrorCode } from "@nimbus-dev/registry-format";
+import {
+  publisherKeyFingerprint,
+  RegistryError,
+  type RegistryErrorCode,
+} from "@nimbus-dev/registry-format";
 import { listExtensions, updateExtensionRowVersion } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
@@ -31,6 +35,7 @@ import {
 import type { RegistryRow } from "./registry/registry-store.ts";
 import { collectRegistryUpdates } from "./registry/registry-update-source.ts";
 import { getRunGrant } from "./run-grant-store.ts";
+import { assertNotBlocked, TrustBlockError } from "./trust/trust-blocks.ts";
 import { prevVersionDir } from "./version-store.ts";
 
 export interface AutoUpdateInitOpts {
@@ -51,6 +56,11 @@ export interface AutoUpdateInitOpts {
    * unregistered and the index id paused with the re-approve reason. Never called on a failure.
    */
   onUpdateApplied?: (extensionId: string) => void;
+  /**
+   * Trust layer "fresh before acting" (spec § 6.2): refreshes the trust feed best-effort before an
+   * update is re-verified for apply. Must not reject.
+   */
+  freshenTrust?: () => Promise<unknown>;
 }
 
 /**
@@ -177,6 +187,13 @@ function sourceRegistryOf(fetchDeps: RegistryFetchDeps, update: AvailableUpdate)
   return reg;
 }
 
+function updateFailurePhase(e: unknown): "trust_blocked" | "download_failed" | "signature_failed" {
+  if (e instanceof TrustBlockError) return "trust_blocked";
+  return e instanceof RegistryError && FETCH_FAILURE_CODES.has(e.code)
+    ? "download_failed"
+    : "signature_failed";
+}
+
 /**
  * Apply-time re-verification (spec § 8.8, § 8.6 steps 2–4): the CURRENT signed index must still list
  * exactly this manifest and package for `id@toVersion`, the manifest must match its signed hash and
@@ -228,12 +245,17 @@ async function reverifyUpdateManifest(
       );
     }
     await verifyRegistryManifestSignature(fetched, update.id, update.toVersion);
+    // I48: a block that landed after detection (or since the last apply attempt) refuses here,
+    // before anything is downloaded or swapped.
+    assertNotBlocked(fetchDeps.db, {
+      extensionId: update.id,
+      version: update.toVersion,
+      publisherId: entry.publisher.id,
+      keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+      source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
+    });
   } catch (e) {
-    const phase =
-      e instanceof RegistryError && FETCH_FAILURE_CODES.has(e.code)
-        ? "download_failed"
-        : "signature_failed";
-    throw new Error(`${phase}: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(`${updateFailurePhase(e)}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
@@ -307,8 +329,10 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   const performUpgradeDeps: PerformUpgradeDeps = {
     extensionsRoot: opts.extensionsDir,
     signal: abortController.signal,
-    reverifyManifest: (update, signal) =>
-      reverifyUpdateManifest(fetchDeps, opts.vault, update, signal),
+    reverifyManifest: async (update, signal) => {
+      await opts.freshenTrust?.();
+      return reverifyUpdateManifest(fetchDeps, opts.vault, update, signal);
+    },
     fetchPackage: (update, signal) =>
       fetchRegistryBytes(
         fetchDeps,

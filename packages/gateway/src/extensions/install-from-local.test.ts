@@ -14,7 +14,8 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
-import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import { publisherKeyFingerprint, signTrustStatement } from "@nimbus-dev/registry-format";
+import nacl from "tweetnacl";
 import { listExtensions } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -26,6 +27,7 @@ import {
 import { extractTarGzToDirectory, resolveSystemTarCommand } from "./package-extract.ts";
 import { PublisherKeyRequired, readPublisherKey, writePublisherKey } from "./publisher-keys.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
+import { recordTrustStatements } from "./trust/trust-store.ts";
 import {
   encodeBase64,
   generateEd25519Keypair,
@@ -1564,5 +1566,73 @@ describe("installExtensionFromLocalDirectory — explicit publisherKey (registry
       }),
     ).rejects.toThrow("differs from the key supplied");
     expect(listExtensions(db)).toHaveLength(0);
+  });
+});
+
+describe("installExtensionFromLocalDirectory — revoked or taken-down code (I48)", () => {
+  async function revokedSource(prefix: string) {
+    const fx = createExtensionInstallFixture(prefix, "src");
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await writeSignedSource({ sourceDir: fx.src, id: "revoked.ext", privkey, pubkey });
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 50);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const s = await signTrustStatement(
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: nimbusKey,
+        publisherId: "test-pub",
+        keyFingerprint: publisherKeyFingerprint(encodeBase64(pubkey)),
+        reason: "leaked",
+      },
+      seed,
+    );
+    recordTrustStatements(fx.db, [s], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    return { ...fx, pubkey };
+  }
+
+  test("a directory signed by a revoked key is refused before the owner is asked", async () => {
+    const { extensionsDir, src, db, pubkey } = await revokedSource("nimbus-install-revoked-");
+    let asked = 0;
+    await expect(
+      installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: src,
+        vault: new MockVault(),
+        publisherKey: pubkey,
+        approve: async () => {
+          asked++;
+          return true;
+        },
+      }),
+    ).rejects.toThrow("ERR_EXTENSION_KEY_REVOKED");
+    expect(asked).toBe(0);
+    expect(listExtensions(db)).toEqual([]);
+  });
+
+  test("an archive of it is refused the same way (the archive path re-enters the directory install)", async () => {
+    const { extensionsDir, src, db, pubkey } = await revokedSource("nimbus-install-revoked-tgz-");
+    const archive = join(tmpdir(), `nimbus-revoked-${process.pid}-${Date.now()}.tgz`);
+    try {
+      const pack = spawnSync(
+        resolveSystemTarCommand(),
+        ["-czf", archive, "-C", dirname(src), basename(src)],
+        { windowsHide: true },
+      );
+      expect(pack.status).toBe(0);
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: archive,
+          vault: new MockVault(),
+          publisherKey: pubkey,
+        }),
+      ).rejects.toThrow("ERR_EXTENSION_KEY_REVOKED");
+      expect(listExtensions(db)).toEqual([]);
+    } finally {
+      rmSync(archive, { force: true });
+    }
   });
 });

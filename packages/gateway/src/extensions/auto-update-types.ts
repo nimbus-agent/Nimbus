@@ -69,7 +69,9 @@ export type AutoUpdateFailPhase =
   | "swap_failed"
   | "download_failed"
   | "extract_failed"
-  | "downgrade_unavailable";
+  | "downgrade_unavailable"
+  /** I48: the target version's key is revoked or the version is taken down (re-checked at apply). */
+  | "trust_blocked";
 
 /** Refused before the prompt, rejected at it, or — after approval — the phase the apply failed in. */
 export type UpdateRejectReason =

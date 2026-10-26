@@ -40,6 +40,12 @@ import {
 } from "../manifest.ts";
 import { extractPackage } from "../package-extract.ts";
 import { isStrictlyInside } from "../path-containment.ts";
+import {
+  assertNotBlocked,
+  type BlockSubject,
+  blocksFor,
+  TrustBlockError,
+} from "../trust/trust-blocks.ts";
 import { decodeBase64 } from "../verify-signature.ts";
 import { fetchRegistryBytes, type RegistryFetchDeps } from "./registry-fetch.ts";
 import {
@@ -70,10 +76,17 @@ export interface InstallFromRegistryRequest {
 }
 
 /** `--version` is exact; otherwise the semver-newest on `stable`, or on stable and beta for `--channel beta`. */
+/**
+ * The version to install. An explicit `--version` is taken as asked (and refused later if blocked);
+ * otherwise the newest on the channel that nothing blocks (I48), so a taken-down 1.1.0 does not
+ * hide a clean 1.0.9. When every candidate is blocked the newest is returned, and the block check
+ * that follows refuses it with the reason.
+ */
 function selectVersion(
   id: string,
   versions: Readonly<Record<string, RegistryVersionEntry>>,
   req: InstallFromRegistryRequest,
+  isBlocked: (version: string) => boolean,
 ): [string, RegistryVersionEntry] {
   if (req.version !== undefined) {
     const exact = versions[req.version];
@@ -86,9 +99,10 @@ function selectVersion(
     return [req.version, exact];
   }
   const wanted = req.channel === "beta" ? ["stable", "beta"] : ["stable"];
-  const newest = Object.entries(versions)
+  const candidates = Object.entries(versions)
     .filter(([, v]) => wanted.includes(v.channel))
-    .sort(([a], [b]) => Bun.semver.order(b, a))[0];
+    .sort(([a], [b]) => Bun.semver.order(b, a));
+  const newest = candidates.find(([v]) => !isBlocked(v)) ?? candidates[0];
   if (newest === undefined) {
     throw new RegistryError(
       "ERR_REGISTRY_VERSION_NOT_FOUND",
@@ -167,8 +181,22 @@ export async function fetchVerifiedRegistryPackage(
   assertEmptyStagingDir(intoDir);
   const fetchDeps: RegistryFetchDeps = { ...deps.fetch, db: deps.db };
   const { reg, entry } = await resolveRegistryEntry(fetchDeps, req.id, req.registry);
-  const [version, vEntry] = selectVersion(req.id, entry.versions, req);
   const rootFingerprint = publisherKeyFingerprint(reg.rootKey);
+  // I48: refused BEFORE any manifest or package request, and before the owner is asked anything.
+  const subjectAt = (version: string): BlockSubject => ({
+    extensionId: req.id,
+    version,
+    publisherId: entry.publisher.id,
+    keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+    source: { registry: reg.name, rootFingerprint },
+  });
+  const [version, vEntry] = selectVersion(
+    req.id,
+    entry.versions,
+    req,
+    (v) => blocksFor(deps.db, subjectAt(v)).length > 0,
+  );
+  assertNotBlocked(deps.db, subjectAt(version));
 
   const fetched = await fetchRegistryManifest(fetchDeps, reg, entry, req.id, version, vEntry);
   const packageBytes = await fetchRegistryBytes(fetchDeps, reg, vEntry.package, {
@@ -277,7 +305,13 @@ export async function installVerifiedRegistryPackage(
       approve: deps.approve,
     });
   } catch (e) {
-    if (e instanceof RegistryError || e instanceof ExtensionInstallNotApprovedError) throw e;
+    if (
+      e instanceof RegistryError ||
+      e instanceof ExtensionInstallNotApprovedError ||
+      e instanceof TrustBlockError
+    ) {
+      throw e;
+    }
     throw new RegistryError(
       "ERR_REGISTRY_INSTALL_REFUSED",
       e instanceof Error ? e.message : String(e),

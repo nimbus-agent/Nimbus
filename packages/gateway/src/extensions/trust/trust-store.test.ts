@@ -4,6 +4,7 @@ import {
   publisherKeyFingerprint,
   signTrustStatement,
   type TrustStatement,
+  trustStatementId,
   type UnsignedTrustStatement,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
@@ -100,8 +101,15 @@ const rows = (): Row[] =>
 
 describe("recordTrustStatements: authority", () => {
   test("a Nimbus-signed revoke from the feed is stored as nimbus, unscoped", async () => {
-    const out = recordTrustStatements(db, [await revoke(NIMBUS_KEY, NIMBUS_SEED)], FEED, 1);
-    expect(out).toEqual({ inserted: 1, alreadyKnown: 0, refused: 0, capped: 0 });
+    const s = await revoke(NIMBUS_KEY, NIMBUS_SEED);
+    const out = recordTrustStatements(db, [s], FEED, 1);
+    expect(out).toEqual({
+      inserted: 1,
+      alreadyKnown: 0,
+      refused: 0,
+      capped: 0,
+      insertedIds: [trustStatementId(s)],
+    });
     expect(rows()).toEqual([
       { kind: "key.revoke", signer_role: "nimbus", source: "feed", scope_registry: null },
     ]);
@@ -127,7 +135,7 @@ describe("recordTrustStatements: authority", () => {
 
   test("a statement signed by an unrelated key is refused", async () => {
     const out = recordTrustStatements(db, [await revoke(OTHER_KEY, OTHER_SEED)], FEED, 1);
-    expect(out).toEqual({ inserted: 0, alreadyKnown: 0, refused: 1, capped: 0 });
+    expect(out).toEqual({ inserted: 0, alreadyKnown: 0, refused: 1, capped: 0, insertedIds: [] });
     expect(rows()).toEqual([]);
   });
 
@@ -176,7 +184,7 @@ describe("recordTrustStatements: admission and idempotence", () => {
     const s = await revoke(PUB_KEY, PUB_SEED);
     expect(recordTrustStatements(db, [s], FEED, 1).inserted).toBe(1);
     const again = recordTrustStatements(db, [s], registrySource({ acme: [PUB_KEY] }), 2);
-    expect(again).toEqual({ inserted: 0, alreadyKnown: 1, refused: 0, capped: 0 });
+    expect(again).toEqual({ inserted: 0, alreadyKnown: 1, refused: 0, capped: 0, insertedIds: [] });
     expect(rows().map((r) => r.source)).toEqual(["feed"]);
   });
 
