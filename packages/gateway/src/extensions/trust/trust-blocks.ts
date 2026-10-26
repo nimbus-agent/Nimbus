@@ -10,8 +10,10 @@
  * fingerprint, so a maintainer never reaches an extension of the same id from another registry. An
  * unsigned subject (no publisher) is never blocked: it has no verifying key and no publisher id.
  *
- * Rotation (R3/R4) is not followed here yet: until trust layer PR 3 no key is ever reached through
- * a rotation, so the subject's one verifying key is the whole set to test.
+ * Rotation (spec R4): a key is also blocked when a revoked key reaches it through `key.rotate`
+ * statements — a leaked key can sign a rotation to an attacker's key before its revocation lands —
+ * unless the CURRENT Nimbus verification of the publisher lists that key. Vouching clears only
+ * that taint, never a revocation of the key itself.
  */
 import type { Database } from "bun:sqlite";
 import { parseTrustStatement, publisherKeyFingerprint } from "@nimbus-dev/registry-format";
@@ -19,7 +21,14 @@ import { parseTrustStatement, publisherKeyFingerprint } from "@nimbus-dev/regist
 import type { ExtensionRow } from "../../automation/extension-store.ts";
 import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
 import type { ExtensionManifest } from "../manifest.ts";
-import { type BlockCandidateRow, readBlockCandidates } from "./trust-store.ts";
+import { ancestorsOf } from "./rotation-graph.ts";
+import {
+  type BlockCandidateRow,
+  readBlockCandidates,
+  readCurrentVerifiedKeys,
+  readPublisherRevocations,
+  readRotationEdges,
+} from "./trust-store.ts";
 
 export type BlockSubject = {
   readonly extensionId: string;
@@ -71,7 +80,7 @@ export function sanitiseReason(reason: string): string {
   return flat.length > MAX_REASON_CHARS ? `${flat.slice(0, MAX_REASON_CHARS - 1)}…` : flat;
 }
 
-function inScope(row: BlockCandidateRow, s: BlockSubject): boolean {
+export function inScope(row: BlockCandidateRow, s: Pick<BlockSubject, "source">): boolean {
   if (row.signerRole !== "registry") return true;
   return (
     s.source !== null &&
@@ -128,16 +137,47 @@ export function blocksFor(db: Database, s: BlockSubject): TrustBlock[] {
     keyFingerprint: s.keyFingerprint,
     extensionId: s.extensionId,
   });
-  const out: TrustBlock[] = [];
+  const out = new Map<string, TrustBlock>();
   for (const row of rows) {
     const b = asBlock(row, s);
-    if (b !== null) out.push(b);
+    if (b !== null) out.set(b.statementId, b);
   }
-  return out.sort((a, b) =>
+  for (const b of taintBlocks(db, s)) if (!out.has(b.statementId)) out.set(b.statementId, b);
+  return newestFirst([...out.values()]);
+}
+
+function newestFirst(blocks: TrustBlock[]): TrustBlock[] {
+  return blocks.sort((a, b) =>
     a.issuedAt === b.issuedAt
       ? a.statementId.localeCompare(b.statementId)
       : b.issuedAt.localeCompare(a.issuedAt),
   );
+}
+
+/**
+ * R4: the in-scope revocations of keys from which `s.keyFingerprint` is reached by rotations, as
+ * blocks on `s` — none when the current Nimbus verification lists the key. Each keeps the
+ * revocation's statement id, so the owner's acknowledgement works exactly as for a direct one.
+ */
+export function taintBlocks(db: Database, s: BlockSubject): TrustBlock[] {
+  const fp = s.keyFingerprint;
+  if (s.publisherId === null || fp === null) return [];
+  if (readCurrentVerifiedKeys(db, s.publisherId)?.has(fp) === true) return [];
+  const ancestors = ancestorsOf(readRotationEdges(db, s.publisherId), fp);
+  if (ancestors.size === 0) return [];
+  const out: TrustBlock[] = [];
+  for (const row of readPublisherRevocations(db, s.publisherId)) {
+    if (!ancestors.has(row.keyFingerprint) || !inScope(row, s)) continue;
+    const b = asBlock(row, { ...s, keyFingerprint: row.keyFingerprint });
+    if (b === null) continue;
+    out.push({
+      ...b,
+      reason: sanitiseReason(
+        `key ${fp} was rotated from revoked key ${row.keyFingerprint}: ${b.reason}`,
+      ),
+    });
+  }
+  return out;
 }
 
 function issuerPhrase(b: TrustBlock): string {
@@ -247,9 +287,5 @@ export function blocksForInstalled(
   for (const keyFingerprint of fingerprints) {
     for (const b of blocksFor(db, { ...base, keyFingerprint })) seen.set(b.statementId, b);
   }
-  return [...seen.values()].sort((a, b) =>
-    a.issuedAt === b.issuedAt
-      ? a.statementId.localeCompare(b.statementId)
-      : b.issuedAt.localeCompare(a.issuedAt),
-  );
+  return newestFirst([...seen.values()]);
 }
