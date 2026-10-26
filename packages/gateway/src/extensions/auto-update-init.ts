@@ -121,6 +121,7 @@ function listInstalledRows(db: Database): InstalledExtensionRow[] {
         version: r.version,
         install_path: r.install_path,
         enabled: r.enabled,
+        ...(r.publisher_key_fingerprint != null && { keyFingerprint: r.publisher_key_fingerprint }),
         ...(r.source_registry != null &&
           r.source_root_fingerprint != null &&
           r.source_channel != null && {
@@ -218,8 +219,8 @@ async function reverifyUpdateManifest(
 ): Promise<VerifiedUpdateKey> {
   // The publisher the INSTALLED copy declares: an index that now lists another publisher for this
   // id is a different trust root, whatever the Vault holds for the new one.
-  const installedPublisher = listInstalledRows(fetchDeps.db).find((r) => r.id === update.id)
-    ?.manifest.publisher?.id;
+  const installedRow = listInstalledRows(fetchDeps.db).find((r) => r.id === update.id);
+  const installedPublisher = installedRow?.manifest.publisher?.id;
   const reg = sourceRegistryOf(fetchDeps, update);
   try {
     const index = await fetchVerifiedIndex(fetchDeps, reg, signal);
@@ -256,6 +257,7 @@ async function reverifyUpdateManifest(
         publisherId: entry.publisher.id,
         key: entry.publisher.key,
         source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
+        installedFingerprint: installedRow?.keyFingerprint ?? null,
         ...(update.acceptedPublisherKey === undefined
           ? {}
           : { acceptFingerprint: update.acceptedPublisherKey }),

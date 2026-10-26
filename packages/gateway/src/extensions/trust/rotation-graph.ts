@@ -60,8 +60,10 @@ export function successorsOf(
   const reachable = walk(fp, (n) => fwd.get(n) ?? [], usable);
   const terminal = new Set<string>();
   for (const n of reachable) {
+    // A rotation back to the start (or anywhere) means this key is not current: a loop has no
+    // current key, which `keyContinuity` treats as a fork (R8).
     const onward = (fwd.get(n) ?? []).filter((m) => usable(m) && m !== n);
-    if (onward.every((m) => m === fp)) terminal.add(n);
+    if (onward.length === 0) terminal.add(n);
   }
   return { reachable, terminal };
 }

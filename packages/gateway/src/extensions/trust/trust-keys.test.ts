@@ -96,8 +96,8 @@ describe("rotation-graph", () => {
     expect(successorsOf([e("k", "x")], "k", (f) => f !== "k").reachable.size).toBe(0);
     // A cycle among successors leaves no terminal key.
     expect(successorsOf([e("k", "x"), e("x", "y"), e("y", "x")], "k", all).terminal.size).toBe(0);
-    // An edge back to the start does not make its source non-terminal.
-    expect([...successorsOf([e("k", "x"), e("x", "k")], "k", all).terminal]).toEqual(["x"]);
+    // A rotation back to the start is a loop: no current key.
+    expect(successorsOf([e("k", "x"), e("x", "k")], "k", all).terminal.size).toBe(0);
   });
 });
 

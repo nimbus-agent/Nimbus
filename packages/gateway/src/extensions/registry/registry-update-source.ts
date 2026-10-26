@@ -31,6 +31,8 @@ export interface InstalledRegistryRow {
   enabled: number;
   source: { registry: string; rootFingerprint: string; channel: RegistryChannel };
   publisherId: string;
+  /** The fingerprint of the key that verified the installed copy, when recorded. */
+  keyFingerprint?: string;
   manifest: InstalledExtensionManifestSlice;
 }
 
@@ -128,6 +130,7 @@ async function detectOne(
             publisherId: entry.publisher.id,
             key: entry.publisher.key,
             source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
+            installedFingerprint: row.keyFingerprint ?? null,
           },
         )
       : null;

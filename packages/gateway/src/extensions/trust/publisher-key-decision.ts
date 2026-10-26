@@ -34,15 +34,25 @@ export interface PublisherKeyQuery {
   readonly source: BlockSubject["source"];
   /** `--accept-publisher-key`: must be exactly the fingerprint of `key`. */
   readonly acceptFingerprint?: string;
+  /**
+   * An UPDATE of an installed extension: the fingerprint its row recorded. Continuity then starts
+   * from that key alone, so one extension's update cannot fall back to a key only a sibling (or an
+   * older, superseded install) uses. `null`/absent (a fresh install, or a row with no recorded
+   * fingerprint, or one the Vault no longer holds) starts from every key the Vault trusts.
+   */
+  readonly installedFingerprint?: string | null;
 }
 
 export async function publisherKeyDecision(
   deps: { readonly db: Database; readonly vault: NimbusVault },
   q: PublisherKeyQuery,
 ): Promise<PublisherKeyDecision> {
-  const trusted = (await listTrustedPublisherKeys(deps.vault, q.publisherId)).map((k) =>
+  const inVault = (await listTrustedPublisherKeys(deps.vault, q.publisherId)).map((k) =>
     publisherKeyFingerprint(k),
   );
+  // Trust stays Vault-only: the installed key counts only while the Vault still holds it.
+  const own = q.installedFingerprint;
+  const trusted = own != null && inVault.includes(own) ? [own] : inVault;
   const candidate = publisherKeyFingerprint(q.key);
   if (q.acceptFingerprint !== undefined && q.acceptFingerprint !== candidate) {
     throw new RegistryError(

@@ -49,8 +49,8 @@ function fpKey(publisherId: string, fingerprint: string): string {
   return `${PUBLISHER_KEY_FP_VAULT_PREFIX}${fingerprint}.${publisherId}`;
 }
 
-function decodeKey(raw: string | null): Uint8Array | undefined {
-  if (raw === null || raw === "") return undefined;
+function decodeKey(raw: string | null | undefined): Uint8Array | undefined {
+  if (raw == null || raw === "") return undefined;
   const bytes = decodeBase64(raw);
   return bytes.length === 32 ? bytes : undefined;
 }
