@@ -138,12 +138,19 @@ function readStatementFile(
  * The `statements/<id>.json` files at `ref` — publisher-signed trust statements a publish brings —
  * as parsed JSON values for `admitPublisherStatements`, plus the files that cannot be one (a
  * file that does not parse as a statement, or is not named by its statement id, is refused here).
- * `statements/.gitkeep` is ignored.
+ * `statements/.gitkeep` is ignored; with `only`, so is every path not in it.
  */
-export function readStatementFiles(git: Git, ref: string, cwd: string): StatementFiles {
+export function readStatementFiles(
+  git: Git,
+  ref: string,
+  cwd: string,
+  only?: ReadonlySet<string>,
+): StatementFiles {
   const out: StatementFiles = { values: [], skipped: [] };
   for (const e of git.listTreeEntries(ref, STATEMENTS_DIR, { cwd })) {
-    if (e.path === `${STATEMENTS_DIR}.gitkeep`) continue;
+    if (e.path === `${STATEMENTS_DIR}.gitkeep` || (only !== undefined && !only.has(e.path))) {
+      continue;
+    }
     const r = readStatementFile(git, ref, e, cwd);
     if ("reason" in r) {
       out.skipped.push({ path: e.path, reason: r.reason });

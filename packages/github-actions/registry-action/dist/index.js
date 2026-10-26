@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:6939789b6dd74b7428f1392cc3cb1c200a8dd33283364be8098765cc83106ba3
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:bb9d089da97093959cf2dafca2b6416327364a28718cc686dbde92895aab0a10
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5174,6 +5174,7 @@ function privateKeyFromSeed(seed) {
 }
 
 // ../../registry-format/src/trust-statement.ts
+import { createHash as createHash2, sign } from "node:crypto";
 var import_tweetnacl = __toESM(require_nacl_fast(), 1);
 var TRUST_STATEMENT_KINDS = [
   "key.revoke",
@@ -5325,6 +5326,9 @@ function parseTrustStatement(raw) {
 function trustStatementSigningBytes(s) {
   const { signature: _omitted, ...rest } = s;
   return new TextEncoder().encode(canonicalize(rest));
+}
+function trustStatementId(s) {
+  return createHash2("sha256").update(canonicalize(s)).digest("hex");
 }
 function signatureVerifies(s) {
   try {
@@ -5563,7 +5567,7 @@ async function verifyRegistryIndexPinned(index, pinnedRootKey) {
   await verifyRegistryIndexSelf(index);
 }
 // ../../registry-format/src/inspect.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
@@ -8886,7 +8890,7 @@ async function inspectPackage(tgz, work) {
   return {
     manifestBytes,
     manifest: m,
-    entryHash: createHash2("sha256").update(entryBytes).digest("hex"),
+    entryHash: createHash3("sha256").update(entryBytes).digest("hex"),
     files: files.toSorted(codeUnitCompare)
   };
 }
@@ -8934,6 +8938,8 @@ function successorsOf(edges, fp, usable) {
 }
 
 // ../../registry-format/src/publisher-statements.ts
+var MAX_REGISTRY_STATEMENTS = 1000;
+var MAX_ROTATIONS_PER_PUBLISHER = 20;
 function indexedPublisherStatements(index) {
   return readStatementList(index.statements).statements.filter((s) => (s.kind === "key.rotate" || s.kind === "key.revoke") && verifyTrustStatement(s, {}) === "publisher");
 }
@@ -8950,6 +8956,7 @@ var edgesOf = (rotations) => rotations.map((r) => ({
   from: publisherKeyFingerprint(r.fromKey),
   to: publisherKeyFingerprint(r.toKey)
 }));
+var signingKey = (s) => s.kind === "key.rotate" ? s.fromKey : s.signerKey;
 function stateOf(index, publisherId, list = indexedPublisherStatements(index)) {
   const mine = list.filter((s) => s.publisherId === publisherId);
   return {
@@ -9012,8 +9019,166 @@ function publisherKeyStanding(index, publisherId, key) {
   const looped = current.length === 0 && [...state.bound].some((k) => !state.revokedFps.has(publisherKeyFingerprint(k)));
   return refuse(looped ? "fork" : "unrelated");
 }
+function structural(index, raw, skip) {
+  let s;
+  try {
+    s = parseTrustStatement(raw);
+  } catch (e) {
+    skip(undefined, `not a valid statement: ${e.message}`);
+    return;
+  }
+  const id = trustStatementId(s);
+  if (s.kind !== "key.rotate" && s.kind !== "key.revoke") {
+    skip(id, `${s.kind} is signed by a root key, not a publisher; a registry admits only key.rotate and key.revoke here`);
+    return;
+  }
+  if (verifyTrustStatement(s, {}) !== "publisher") {
+    skip(id, `${s.kind} is not signed by the key it concerns`);
+    return;
+  }
+  if (boundKeys(index, s.publisherId).size === 0) {
+    skip(id, `publisher ${s.publisherId} has no extension in this index`);
+    return;
+  }
+  return { id, s };
+}
+function reachOf(bound, rotations) {
+  const reach = new Set(bound);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const r of rotations) {
+      if (reach.has(r.fromKey) && !reach.has(r.toKey)) {
+        reach.add(r.toKey);
+        grew = true;
+      }
+    }
+  }
+  return reach;
+}
+function hasRoom(budget, id, skip) {
+  if (budget.total >= MAX_REGISTRY_STATEMENTS) {
+    skip(id, `the index is at its statement cap (${String(MAX_REGISTRY_STATEMENTS)})`);
+    return false;
+  }
+  return true;
+}
+function admitRevocations(candidates, state, budget, skip) {
+  const out = [];
+  for (const c of candidates) {
+    if (c.s.kind !== "key.revoke")
+      continue;
+    if (state.revokedFps.has(c.s.keyFingerprint)) {
+      skip(c.id, `redundant: key ${c.s.keyFingerprint} is already revoked`);
+      continue;
+    }
+    if (!hasRoom(budget, c.id, skip))
+      continue;
+    state.revokedFps.add(c.s.keyFingerprint);
+    budget.total++;
+    out.push(c);
+  }
+  return out;
+}
+function forks(pending, admitted) {
+  const targets = new Map;
+  const add = (from, to) => {
+    const set = targets.get(from) ?? new Set;
+    set.add(to);
+    targets.set(from, set);
+  };
+  for (const r of admitted)
+    add(r.fromKey, r.toKey);
+  for (const p of pending)
+    if (p.s.kind === "key.rotate")
+      add(p.s.fromKey, p.s.toKey);
+  const out = new Set;
+  for (const p of pending) {
+    if (p.s.kind === "key.rotate" && (targets.get(p.s.fromKey)?.size ?? 0) > 1)
+      out.add(p.id);
+  }
+  return out;
+}
+function admitRotations(candidates, state, budget, skip) {
+  const pending = candidates.filter((c) => c.s.kind === "key.rotate");
+  const forked = forks(pending, state.rotations);
+  const live = (k) => !state.revokedFps.has(publisherKeyFingerprint(k));
+  const reached = reachOf(new Set([...state.bound].filter(live)), state.rotations.filter((r) => live(r.fromKey)));
+  const out = [];
+  const waiting = new Map(pending.filter((p) => !forked.has(p.id)).map((p) => [p.id, p]));
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (const [id, p] of waiting) {
+      const r = p.s;
+      if (!reached.has(r.fromKey) || !live(r.fromKey))
+        continue;
+      waiting.delete(id);
+      if (state.rotations.length >= MAX_ROTATIONS_PER_PUBLISHER) {
+        skip(id, `publisher ${r.publisherId} is at its rotation cap (${String(MAX_ROTATIONS_PER_PUBLISHER)})`);
+        continue;
+      }
+      if (!hasRoom(budget, id, skip))
+        continue;
+      state.rotations.push(r);
+      reached.add(r.toKey);
+      budget.total++;
+      out.push(p);
+      progressed = true;
+    }
+  }
+  for (const p of pending) {
+    const r = p.s;
+    if (forked.has(p.id)) {
+      skip(p.id, `fork: key ${publisherKeyFingerprint(r.fromKey)} already rotates, or is asked to rotate, to a different key`);
+    } else if (waiting.has(p.id)) {
+      skip(p.id, live(r.fromKey) ? `key ${publisherKeyFingerprint(r.fromKey)} is not reached from a key bound to publisher ${r.publisherId}` : `from revoked key ${publisherKeyFingerprint(r.fromKey)}`);
+    }
+  }
+  return out;
+}
+function newCandidates(index, raws, existingIds, skip) {
+  const byId = new Map;
+  for (const raw of raws) {
+    const p = structural(index, raw, skip);
+    if (p !== undefined && !existingIds.has(p.id))
+      byId.set(p.id, p);
+  }
+  return [...byId.values()].sort((a, b) => codeUnitCompare(a.id, b.id));
+}
+function admitPublisherStatements(index, candidates) {
+  const existingRaw = Array.isArray(index.statements) ? [...index.statements] : [];
+  const indexed = indexedPublisherStatements(index);
+  const existingIds = new Set(readStatementList(index.statements).statements.map(trustStatementId));
+  const skippedAll = [];
+  const skip = (id, reason) => {
+    skippedAll.push({ id, reason });
+  };
+  const fresh = newCandidates(index, candidates, existingIds, skip);
+  const budget = { total: existingRaw.length };
+  const admitted = [];
+  const publishers = [...new Set(fresh.map((p) => p.s.publisherId))].sort(codeUnitCompare);
+  for (const publisherId of publishers) {
+    const state = stateOf(index, publisherId, indexed);
+    const mine = fresh.filter((p) => p.s.publisherId === publisherId);
+    const reach = reachOf(state.bound, [...state.rotations, ...rotationsOf(mine.map((p) => p.s))]);
+    const bound = mine.filter((p) => {
+      if (reach.has(signingKey(p.s)))
+        return true;
+      skip(p.id, `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in this index`);
+      return false;
+    });
+    admitted.push(...admitRevocations(bound, state, budget, skip));
+    admitted.push(...admitRotations(bound, state, budget, skip));
+  }
+  return {
+    index: admitted.length === 0 ? index : { ...index, statements: [...existingRaw, ...admitted.map((p) => p.s)] },
+    admitted: admitted.map((p) => p.s),
+    skipped: skippedAll
+  };
+}
 // ../../registry-format/src/sign.ts
-import { createPublicKey, sign, verify } from "node:crypto";
+import { createPublicKey, sign as sign2, verify } from "node:crypto";
 function publicKeyFromSeed(seed) {
   const jwk = createPublicKey(privateKeyFromSeed(seed)).export({ format: "jwk" });
   return new Uint8Array(Buffer.from(jwk.x, "base64url"));
@@ -9022,12 +9187,12 @@ var SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 function signIndex(unsigned, privkey) {
   return new Promise((resolve) => {
     const { signature: _omitted, ...rest } = unsigned;
-    const sig = sign(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
+    const sig = sign2(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
     resolve({ ...rest, signature: sig.toString("base64") });
   });
 }
 // ../../registry-format/src/validate-publish.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
 var import_semver5 = __toESM(require_semver2(), 1);
@@ -9226,7 +9391,7 @@ function assertFileSet(m, files) {
     throw fileSetInvalid(`package must hold ${PACKAGE_MANIFEST_FILE} and the entry ${entry}`);
   }
 }
-var sha256Hex = (b) => createHash3("sha256").update(b).digest("hex");
+var sha256Hex = (b) => createHash4("sha256").update(b).digest("hex");
 async function validatePublish(c, signed, config, work) {
   const req = parsePublishRequest(c.publishRequestBytes);
   const { manifest: m, raw } = parseCandidateManifest(c.manifestBytes);
@@ -9453,6 +9618,7 @@ var PAGES_BRANCH = "gh-pages";
 var PAGES_REF = `origin/${PAGES_BRANCH}`;
 var INDEX_FILE = "index.json";
 var CONFIG_FILE = "nimbus-registry.json";
+var STATEMENTS_DIR = "statements/";
 var CANDIDATE_FILES = ["manifest.json", "package.tgz", "publish-request.json"];
 function hasFile(git, ref, path, cwd) {
   return git.listTreeEntries(ref, path, { cwd }).some((e) => e.path === path);
@@ -9490,6 +9656,52 @@ function readCandidate(git, ref, dir, cwd) {
     publishRequestBytes: read("publish-request.json")
   };
 }
+var MAX_STATEMENT_FILE_BYTES = 16 * 1024;
+var STATEMENT_FILE_RE = /^statements\/([0-9a-f]{64})\.json$/;
+function readStatementFile(git, ref, e, cwd) {
+  const m = STATEMENT_FILE_RE.exec(e.path);
+  if (m === null)
+    return { reason: "must be statements/<64 lowercase hex statement id>.json" };
+  if (e.mode !== git.REGULAR_FILE_MODE)
+    return { reason: `git mode ${e.mode} is not a regular file` };
+  const bytes = git.readBlob(ref, e.path, { cwd });
+  if (bytes.byteLength > MAX_STATEMENT_FILE_BYTES) {
+    return { reason: `exceeds ${String(MAX_STATEMENT_FILE_BYTES)} bytes` };
+  }
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    return { reason: "is not valid UTF-8 JSON" };
+  }
+  let id;
+  try {
+    id = trustStatementId(parseTrustStatement(value));
+  } catch (e) {
+    return { reason: `is not a valid trust statement: ${e.message}` };
+  }
+  if (id !== m[1])
+    return { reason: "is not named by its statement id" };
+  return { value };
+}
+function readStatementFiles(git, ref, cwd, only) {
+  const out = { values: [], skipped: [] };
+  for (const e of git.listTreeEntries(ref, STATEMENTS_DIR, { cwd })) {
+    if (e.path === `${STATEMENTS_DIR}.gitkeep` || only !== undefined && !only.has(e.path)) {
+      continue;
+    }
+    const r = readStatementFile(git, ref, e, cwd);
+    if ("reason" in r) {
+      out.skipped.push({ path: e.path, reason: r.reason });
+    } else {
+      out.values.push(r.value);
+    }
+  }
+  return out;
+}
+function statementPath(id) {
+  return id === undefined ? STATEMENTS_DIR : `${STATEMENTS_DIR}${id}.json`;
+}
 
 // src/report.ts
 var GHA_IO = {
@@ -9513,43 +9725,87 @@ function code(s) {
 var SHARED = { validate: validatePublish, git: exports_git_tree, io: GHA_IO, tmpdir: osTmpdir };
 var CANDIDATE_ALTERNATION = CANDIDATE_FILES.join("|").replaceAll(".", String.raw`\.`);
 var FILE_RE = new RegExp(`^(extensions/.+)/(${CANDIDATE_ALTERNATION})$`);
-function assertSinglePublish(changes) {
+var STATEMENT_RE = /^statements\/[0-9a-f]{64}\.json$/;
+function assertPublishShape(changes) {
   if (changes.length === 0)
     throw new Error("the pull request changes no files");
   const offending = [];
   const dirs = new Set;
+  const statements = new Set;
+  let dirFiles = 0;
   for (const c of changes) {
     const m = FILE_RE.exec(c.path);
-    if (c.status !== "A" || m?.[1] === undefined) {
+    if (c.status === "A" && STATEMENT_RE.test(c.path)) {
+      statements.add(c.path);
+    } else if (c.status !== "A" || m?.[1] === undefined) {
       offending.push(`${c.status} ${c.path}`);
     } else {
       dirs.add(m[1]);
+      dirFiles++;
     }
   }
   if (offending.length > 0) {
-    throw new Error("a publish pull request may only add manifest.json, package.tgz and publish-request.json " + `under one extensions/<id>/<version>/; it also changes: ${offending.join(", ")}`);
+    throw new Error("a publish pull request may only add manifest.json, package.tgz and publish-request.json " + "under one extensions/<id>/<version>/, and statements/<statement id>.json files; " + `it also changes: ${offending.join(", ")}`);
   }
-  if (dirs.size !== 1) {
+  if (dirs.size > 1) {
     throw new Error(`a publish pull request adds exactly one extensions/<id>/<version>/; this one adds ${[...dirs].sort(codeUnitCompare).join(", ")}`);
   }
   const [dir] = dirs;
-  const coords = dir === undefined ? undefined : splitExtensionDir(dir);
-  if (coords === undefined || changes.length !== CANDIDATE_FILES.length) {
-    throw new Error(`${String(dir)}/ must add all of ${CANDIDATE_FILES.join(", ")}`);
+  if (dir === undefined)
+    return { dir: undefined, statements };
+  const coords = splitExtensionDir(dir);
+  if (coords === undefined || dirFiles !== CANDIDATE_FILES.length) {
+    throw new Error(`${dir}/ must add all of ${CANDIDATE_FILES.join(", ")}`);
   }
-  return coords;
+  return { dir: coords, statements };
+}
+function admitPullRequestStatements(git, index, added, cwd) {
+  if (added.size === 0)
+    return { index, admitted: [] };
+  const files = readStatementFiles(git, "HEAD", cwd, added);
+  const admission = admitPublisherStatements(index, files.values);
+  const problems = [
+    ...files.skipped.map((f) => `${f.path} ${f.reason}`),
+    ...admission.skipped.map((x) => `${statementPath(x.id)}: ${x.reason}`)
+  ];
+  if (problems.length > 0) {
+    throw new Error(`the registry would not admit these statements: ${problems.join("; ")}`);
+  }
+  return { index: admission.index, admitted: admission.admitted };
 }
 function effectiveConfig(git, baseRef, cwd) {
   return effectiveRegistryConfig(readConfigAt(git, PAGES_REF, cwd)?.config, readConfigAt(git, `origin/${baseRef}`, cwd)?.config);
 }
 var listOf = (items) => items.length === 0 ? "none" : items.map(code).join(", ");
-function checkSummary(v) {
+function statementSubject(s) {
+  if (s.kind === "key.rotate") {
+    return `${code(publisherKeyFingerprint(s.fromKey))} -> ${code(publisherKeyFingerprint(s.toKey))}`;
+  }
+  if (s.kind === "key.revoke")
+    return `key ${code(s.keyFingerprint)}, reason ${code(s.reason)}`;
+  return "";
+}
+function statementLines(admitted) {
+  if (admitted.length === 0)
+    return [];
+  const lines = ["**Publisher statements**", ""];
+  for (const s of admitted) {
+    lines.push(`- ${code(s.kind)} for ${code(s.publisherId)}: ${statementSubject(s)} (${code(trustStatementId(s))})`);
+  }
+  lines.push("");
+  return lines;
+}
+function statementOnlySummary(admitted) {
+  return ["## Registry statements", "", ...statementLines(admitted)].join(`
+`);
+}
+function checkSummary(v, admitted = []) {
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
   if (v.newId) {
     lines.push(`> [!WARNING]`, `> **NEW ID** — ${code(v.id)} is not in the signed index yet. Check the publisher and the name before approving.`, "");
   }
-  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, "", "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.");
+  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, "", ...statementLines(admitted), "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.");
   return lines.join(`
 `);
 }
@@ -9565,13 +9821,19 @@ async function runCheck(opts, deps = SHARED) {
     cwd,
     deepen: [opts.baseRef]
   });
-  const dir = assertSinglePublish(git.diffTree(mergeBase, "HEAD", { cwd }));
-  const candidate = readCandidate(git, "HEAD", dir, cwd);
+  const shape = assertPublishShape(git.diffTree(mergeBase, "HEAD", { cwd }));
+  const admitted = admitPullRequestStatements(git, index, shape.statements, cwd);
+  if (shape.dir === undefined) {
+    deps.io.summary(statementOnlySummary(admitted.admitted));
+    deps.io.log(`check passed: ${String(admitted.admitted.length)} statement(s), no publish`);
+    return;
+  }
+  const candidate = readCandidate(git, "HEAD", shape.dir, cwd);
   const config = effectiveConfig(git, opts.baseRef, cwd);
   const work = mkdtempSync2(join3(deps.tmpdir(), "nimbus-registry-check-"));
   try {
-    const verdict = await deps.validate(candidate, index, config, work);
-    deps.io.summary(checkSummary(verdict));
+    const verdict = await deps.validate(candidate, admitted.index, config, work);
+    deps.io.summary(checkSummary(verdict, admitted.admitted));
     deps.io.log(`check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`);
   } finally {
     rmSync2(work, { recursive: true, force: true });
@@ -9579,7 +9841,7 @@ async function runCheck(opts, deps = SHARED) {
 }
 
 // src/sign.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { mkdtempSync as mkdtempSync4, rmSync as rmSync4 } from "node:fs";
 import { tmpdir as osTmpdir2 } from "node:os";
 import { join as join5 } from "node:path";
@@ -9678,7 +9940,7 @@ function extensionDirs(git, ref, cwd) {
   }
   return { dirs, paths };
 }
-var sha256Hex2 = (b) => createHash4("sha256").update(b).digest("hex");
+var sha256Hex2 = (b) => createHash5("sha256").update(b).digest("hex");
 function assertSignedIntact(git, index, ref, paths, cwd) {
   const problems = [];
   const signedDirs = new Set;
@@ -9724,10 +9986,11 @@ async function attemptSign(opts, seed, rootKey, deps) {
   }
   const { dirs, paths } = extensionDirs(git, mainRef, cwd);
   const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd);
+  const skipped = [];
+  const admission = admitStatements(git, index, mainRef, cwd, skipped);
   const extensions = { ...index.extensions };
   const publishedAt = git.commitTime(mainRef, { cwd });
   const added = [];
-  const skipped = [];
   const files = [{ path: CONFIG_FILE, bytes: config.bytes }];
   const work = mkdtempSync4(join5(deps.tmpdir(), "nimbus-registry-sign-"));
   try {
@@ -9744,7 +10007,7 @@ async function attemptSign(opts, seed, rootKey, deps) {
       const candidate = readCandidate(git, mainRef, coords, cwd);
       let v;
       try {
-        v = await deps.validate(candidate, { ...index, extensions }, config.config, work);
+        v = await deps.validate(candidate, { ...admission.index, extensions }, config.config, work);
       } catch (e) {
         if (!(e instanceof RegistryError))
           throw e;
@@ -9754,7 +10017,7 @@ async function attemptSign(opts, seed, rootKey, deps) {
       const base = `extensions/${v.id}/${v.version}`;
       const existing = extensions[v.id];
       extensions[v.id] = {
-        publisher: existing?.publisher ?? v.publisher,
+        publisher: entryPublisher(existing, v.publisher),
         versions: {
           ...existing?.versions,
           [v.version]: {
@@ -9776,9 +10039,10 @@ async function attemptSign(opts, seed, rootKey, deps) {
   } finally {
     rmSync4(work, { recursive: true, force: true });
   }
+  const statements = admission.admitted.map(trustStatementId);
   let sequence = index.sequence;
-  if (added.length > 0) {
-    const { signature: _previousSignature, ...carried } = index;
+  if (added.length > 0 || statements.length > 0) {
+    const { signature: _previousSignature, ...carried } = admission.index;
     const signed = await deps.sign({
       ...carried,
       format: 1,
@@ -9794,9 +10058,37 @@ async function attemptSign(opts, seed, rootKey, deps) {
 `)
     });
   }
-  const message = added.length > 0 ? `Sign ${added.map(versionRef).join(", ")} (sequence ${String(sequence)})` : `Copy ${CONFIG_FILE} from ${opts.defaultBranch}`;
   const parent = git.commitOf(PAGES_REF, { cwd });
-  return { commit: commitSite(parent, files, message, cwd), added, skipped, sequence };
+  const message = commitMessage(added, statements, sequence, opts.defaultBranch);
+  return {
+    commit: commitSite(parent, files, message, cwd),
+    added,
+    statements,
+    skipped,
+    sequence
+  };
+}
+function admitStatements(git, index, ref, cwd, skipped) {
+  const files = readStatementFiles(git, ref, cwd);
+  for (const f of files.skipped)
+    skipped.push({ dir: f.path, reason: f.reason });
+  const admission = admitPublisherStatements(index, files.values);
+  for (const s of admission.skipped)
+    skipped.push({ dir: statementPath(s.id), reason: s.reason });
+  return admission;
+}
+function entryPublisher(existing, signer) {
+  return existing !== undefined && existing.publisher.key === signer.key ? existing.publisher : signer;
+}
+function commitMessage(added, statements, sequence, defaultBranch) {
+  if (added.length === 0 && statements.length === 0) {
+    return `Copy ${CONFIG_FILE} from ${defaultBranch}`;
+  }
+  const parts = [
+    ...added.map(versionRef),
+    ...statements.map((id) => `statement ${id.slice(0, 12)}`)
+  ];
+  return `Sign ${parts.join(", ")} (sequence ${String(sequence)})`;
 }
 function versionRef(x) {
   return `${x.id}@${x.version}`;
@@ -9804,22 +10096,24 @@ function versionRef(x) {
 function report(io, a, pushed) {
   warnSkipped(io, a);
   const lines = ["## Registry sign", ""];
-  if (a.added.length === 0) {
+  if (a.added.length === 0 && a.statements.length === 0) {
     lines.push("Nothing new to sign.");
   } else {
     lines.push(`Signed index sequence ${String(a.sequence)}:`, "");
     for (const x of a.added)
       lines.push(`- ${code(versionRef(x))} (${x.channel})`);
+    for (const id of a.statements)
+      lines.push(`- statement ${code(id)}`);
   }
   if (a.skipped.length > 0) {
-    lines.push("", "**Skipped** (not signed; fix the directory and it is signed on a later run):", "");
+    lines.push("", "**Skipped** (not signed; fix the directory or statement file and it is signed on a later run):", "");
     for (const s of a.skipped)
       lines.push(`- ${code(s.dir)}: ${code(s.reason)}`);
   }
   lines.push("", pushed ? `Pushed to ${code(PAGES_BRANCH)}.` : "No change: nothing was committed.");
   io.summary(lines.join(`
 `));
-  io.log(pushed ? `signed ${String(a.added.length)} version(s), skipped ${String(a.skipped.length)}; pushed ${PAGES_BRANCH}` : `nothing to sign; skipped ${String(a.skipped.length)}; no commit`);
+  io.log(pushed ? `signed ${String(a.added.length)} version(s) and ${String(a.statements.length)} statement(s), skipped ${String(a.skipped.length)}; pushed ${PAGES_BRANCH}` : `nothing to sign; skipped ${String(a.skipped.length)}; no commit`);
 }
 function warnSkipped(io, a) {
   for (const s of a.skipped)
