@@ -16,13 +16,12 @@
 import { createHash, sign } from "node:crypto";
 import { canonicalize } from "@nimbus-dev/sdk"; // NOSONAR S1874
 import nacl from "tweetnacl";
-
+import { privateKeyFromSeed } from "./ed25519-seed.ts";
 import { RegistryError } from "./errors.ts";
 import { assertSafeExtensionId } from "./extension-id.ts";
 import { publisherKeyFingerprint } from "./fingerprint.ts";
 import { PUBLISHER_ID_RE } from "./manifest.ts";
 import { isValidSemver } from "./semver.ts";
-import { privateKeyFromSeed } from "./sign.ts";
 
 export type TrustStatementKind =
   | "key.revoke"

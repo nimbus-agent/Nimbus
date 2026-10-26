@@ -7,6 +7,9 @@ import {
   parseRegistryIndex,
   type RegistryIndex,
   readRegistryPacks,
+  readRegistryReportUrl,
+  readRegistryStatements,
+  registryIndexDigest,
   registryIndexSigningBytes,
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
@@ -455,5 +458,39 @@ describe("readRegistryPacks", () => {
     const packs = validPacks();
     (packs["devops"] as Json)["publisher"] = { id: "nimbus" };
     expect(readRegistryPacks(indexWith(packs)).packs["devops"]).toBeDefined();
+  });
+});
+
+describe("trust-layer fields on a registry index", () => {
+  // Pinned once from the fixture index; a change to the index's signing bytes must be deliberate.
+  const PINNED_FIXTURE_DIGEST = "20a18551046d6ea71569520ae7f464c914f8d2d0e440b0688ef68e9090749ae9";
+
+  test("an index without statements or reportUrl reads as empty", () => {
+    const parsed = parseRegistryIndex(enc(sign(unsigned)));
+    expect(readRegistryStatements(parsed)).toEqual({ statements: [], dropped: 0, unknownKinds: 0 });
+    expect(readRegistryReportUrl(parsed)).toBeUndefined();
+  });
+
+  test("only an https reportUrl is returned", () => {
+    for (const bad of ["http://x.example/issues", "javascript:alert(1)", "not a url", 42]) {
+      const parsed = parseRegistryIndex(enc(sign({ ...unsigned, reportUrl: bad })));
+      expect(readRegistryReportUrl(parsed)).toBeUndefined();
+    }
+    const good = "https://github.com/o/r/issues/new";
+    const parsed = parseRegistryIndex(enc(sign({ ...unsigned, reportUrl: good })));
+    expect(readRegistryReportUrl(parsed)).toBe(good);
+  });
+
+  test("an index carrying statements still parses and self-verifies", async () => {
+    const statements = [{ kind: "key.unrevoke" }, { kind: "key.revoke" }];
+    const parsed = parseRegistryIndex(enc(sign({ ...unsigned, statements })));
+    await verifyRegistryIndexSelf(parsed);
+    expect(readRegistryStatements(parsed)).toEqual({ statements: [], dropped: 1, unknownKinds: 1 });
+  });
+
+  test("the digest of the fixture index is pinned and stable across re-parse", () => {
+    const parsed = parseRegistryIndex(enc(sign(unsigned)));
+    expect(registryIndexDigest(parsed)).toBe(PINNED_FIXTURE_DIGEST);
+    expect(registryIndexDigest(parseRegistryIndex(enc(parsed)))).toBe(PINNED_FIXTURE_DIGEST);
   });
 });
