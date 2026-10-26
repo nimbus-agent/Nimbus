@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792968268649,
+  "lastUpdate": 1792991468554,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5b27b05a1fb3f55b55578a64790255cacc585823",
-          "message": "docs(user-guide): add screenshot of onboarding welcome page (#1127)\n\nAdds the missing screenshot for the onboarding welcome page to\n`first-run-setup.mdx` using the Astro Image component.\nGenerated the actual PNG screenshot by launching the local UI on port\n1420 and capturing the `/onboarding/welcome` route with a playwright\nscript.\n\n---\n*PR created automatically by Jules for task\n[2560711239141318406](https://jules.google.com/task/2560711239141318406)\nstarted by @asafgolombek*\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-09T08:39:27+03:00",
-          "tree_id": "3d831afaffd90cd9f586e6db546bc8df290b31b2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5b27b05a1fb3f55b55578a64790255cacc585823"
-        },
-        "date": 1786254635493,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.8665394999989,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 327.4972741000012,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 275.41998810000734,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "efe8b5ee4fa099345aad8ee8939165e20f137240",
+          "message": "chore: release main (#1775)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.5.0</summary>\n\n##\n[10.5.0](https://github.com/nimbus-agent/Nimbus/compare/v10.4.0...v10.5.0)\n(2026-10-25)\n\n\n### Features\n\n* **decisions:** role packs and your config choose which sources\ndecisions are mined from\n([#1774](https://github.com/nimbus-agent/Nimbus/issues/1774))\n([50391fb](https://github.com/nimbus-agent/Nimbus/commit/50391fb5cb51a1a56ada7b3cac8e05e3a457c687))\n* **desktop:** onboarding asks what you do and installs the matching\nrole pack ([#1782](https://github.com/nimbus-agent/Nimbus/issues/1782))\n([2e0dcd8](https://github.com/nimbus-agent/Nimbus/commit/2e0dcd8517d200b9d241b9243eec057c47dc3c9b))\n* **glossary:** role packs and your config choose which sources glossary\nterms come from\n([#1776](https://github.com/nimbus-agent/Nimbus/issues/1776))\n([fd29256](https://github.com/nimbus-agent/Nimbus/commit/fd292567daf9089b307b8cb87261d67d19262b71))\n* **google-drive:** index Google Docs with their text; the Product pack\n(1.1.0) mines them\n([#1780](https://github.com/nimbus-agent/Nimbus/issues/1780))\n([4fbb00a](https://github.com/nimbus-agent/Nimbus/commit/4fbb00af11fd09ded8a934a6c7ee9aa8abc6ee6b))\n* **mcp-sink:** an MCP agent can propose obsidian.note.append\n([#1779](https://github.com/nimbus-agent/Nimbus/issues/1779))\n([71eb151](https://github.com/nimbus-agent/Nimbus/commit/71eb15107912aceb9506a6c56263616c6706e5f2))\n* **onboarding:** nimbus init asks what you do and works outside a git\nrepository ([#1781](https://github.com/nimbus-agent/Nimbus/issues/1781))\n([0c00274](https://github.com/nimbus-agent/Nimbus/commit/0c00274b53e69025d0ba6b226b702d248c238e03))\n\n\n### Bug Fixes\n\n* **install:** Windows uninstaller runs on PowerShell 5.1, stops its own\ngateway and reports what it could not remove\n([#1778](https://github.com/nimbus-agent/Nimbus/issues/1778))\n([a4c99cf](https://github.com/nimbus-agent/Nimbus/commit/a4c99cfd6e5819e5566b90481fd680780d0a3a84))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-26T07:02:42+02:00",
+          "tree_id": "727917ae97807c4ef2c8ebfe234852103f846442",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/efe8b5ee4fa099345aad8ee8939165e20f137240"
+        },
+        "date": 1792991465025,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 209.02161560000204,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 206.42589869999682,
             "unit": "ms"
           }
         ]
