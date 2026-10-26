@@ -7461,7 +7461,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     // The production runtime wires the REAL re-verification and fetches from the source only.
     const init = stripComments(await read("packages/gateway/src/extensions/auto-update-init.ts"));
     expect(init).toMatch(
-      /reverifyManifest: async \(update, signal\) => \{\s*await opts\.freshenTrust\?\.\(\);\s*return reverifyUpdateManifest\(fetchDeps, opts\.vault, update, signal\);\s*\},/,
+      /reverifyManifest: async \(update, signal\) => \{\s*await opts\.freshenTrust\?\.\(\);\s*verifiedKeys\.set\(\s*updateKey\(update\),\s*await reverifyUpdateManifest\(fetchDeps, opts\.vault, update, signal\),\s*\);\s*\},/,
     );
     expect(init).toMatch(
       /fetchRegistryBytes\(\s*fetchDeps,\s*sourceRegistryOf\(fetchDeps, update\),/,

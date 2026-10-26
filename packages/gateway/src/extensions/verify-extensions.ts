@@ -32,7 +32,7 @@ import {
 } from "./manifest.ts";
 import { missingDependencyRegistry } from "./missing-dependency-registry.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
-import { readPublisherKey } from "./publisher-keys.ts";
+import { readPublisherKeyFor } from "./publisher-keys.ts";
 import {
   errorToHardDisableReason,
   type SignatureDisableReason,
@@ -438,7 +438,12 @@ async function computeRowSignatureReason(
   } catch {
     return "skip";
   }
-  const pubkey = await readPublisherKey(vault, m.publisher.id);
+  // The key this row was verified with at install (rotation keeps several per publisher).
+  const pubkey = await readPublisherKeyFor(
+    vault,
+    m.publisher.id,
+    row.publisher_key_fingerprint ?? null,
+  );
   if (pubkey === undefined) {
     return "publisher_key_missing";
   }

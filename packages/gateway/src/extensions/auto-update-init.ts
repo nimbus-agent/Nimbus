@@ -5,8 +5,13 @@ import {
   RegistryError,
   type RegistryErrorCode,
 } from "@nimbus-dev/registry-format";
-import { listExtensions, updateExtensionRowVersion } from "../automation/extension-store.ts";
+import {
+  listExtensions,
+  setExtensionPublisherKeyFingerprint,
+  updateExtensionRowVersion,
+} from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
+import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { ExtensionAutoUpdater, type InstalledExtensionRow } from "./auto-update.ts";
@@ -20,6 +25,7 @@ import {
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
 import { extractPackage } from "./package-extract.ts";
+import { writePublisherKeyFor } from "./publisher-keys.ts";
 import { builtinRegistryOf, resolveRegistry } from "./registry/builtin-registry.ts";
 import {
   fetchRegistryBytes,
@@ -187,6 +193,9 @@ function sourceRegistryOf(fetchDeps: RegistryFetchDeps, update: AvailableUpdate)
   return reg;
 }
 
+/** The key an update's manifest verified with at apply time, recorded once the swap succeeds. */
+type VerifiedUpdateKey = { publisherId: string; key: Uint8Array };
+
 function updateFailurePhase(e: unknown): "trust_blocked" | "download_failed" | "signature_failed" {
   if (e instanceof TrustBlockError) return "trust_blocked";
   return e instanceof RegistryError && FETCH_FAILURE_CODES.has(e.code)
@@ -206,7 +215,7 @@ async function reverifyUpdateManifest(
   vault: NimbusVault,
   update: AvailableUpdate,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<VerifiedUpdateKey> {
   // The publisher the INSTALLED copy declares: an index that now lists another publisher for this
   // id is a different trust root, whatever the Vault holds for the new one.
   const installedPublisher = listInstalledRows(fetchDeps.db).find((r) => r.id === update.id)
@@ -254,9 +263,36 @@ async function reverifyUpdateManifest(
       keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
       source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
     });
+    return { publisherId: entry.publisher.id, key: fetched.publisherKey };
   } catch (e) {
     throw new Error(`${updateFailurePhase(e)}: ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+const updateKey = (u: AvailableUpdate): string => `${u.id}@${u.toVersion}`;
+
+/** Stores an applied update's verifying key under its fingerprint and records it on the row. */
+async function recordVerifyingKey(
+  opts: AutoUpdateInitOpts,
+  extensionId: string,
+  verified: VerifiedUpdateKey,
+): Promise<void> {
+  const fingerprint = await writePublisherKeyFor(opts.vault, verified.publisherId, verified.key);
+  if (readIndexedUserVersion(opts.db) >= 76) {
+    setExtensionPublisherKeyFingerprint(opts.db, extensionId, fingerprint);
+  }
+}
+
+/** After a downgrade: the row's fingerprint is the restored manifest's declared key's. */
+function recordDeclaredFingerprint(db: Database, extensionId: string): void {
+  if (readIndexedUserVersion(db) < 76) return;
+  const row = listInstalledRows(db).find((r) => r.id === extensionId);
+  const declared = row?.manifest.publisher?.key;
+  setExtensionPublisherKeyFingerprint(
+    db,
+    extensionId,
+    declared === undefined ? null : publisherKeyFingerprint(declared),
+  );
 }
 
 export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRuntime {
@@ -325,13 +361,17 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   });
 
   const noopStop = async (_id: string): Promise<void> => {};
+  const verifiedKeys = new Map<string, VerifiedUpdateKey>();
 
   const performUpgradeDeps: PerformUpgradeDeps = {
     extensionsRoot: opts.extensionsDir,
     signal: abortController.signal,
     reverifyManifest: async (update, signal) => {
       await opts.freshenTrust?.();
-      return reverifyUpdateManifest(fetchDeps, opts.vault, update, signal);
+      verifiedKeys.set(
+        updateKey(update),
+        await reverifyUpdateManifest(fetchDeps, opts.vault, update, signal),
+      );
     },
     fetchPackage: (update, signal) =>
       fetchRegistryBytes(
@@ -352,18 +392,25 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     dbUpdateExtensionRow,
   };
 
-  const performUpgrade = withUpdateAppliedHook(
-    createPerformUpgrade(performUpgradeDeps),
-    opts.onUpdateApplied,
-  );
-  const performDowngrade = withUpdateAppliedHook(
-    createPerformDowngrade({
-      extensionsRoot: opts.extensionsDir,
-      stopExtensionClient: opts.stopExtensionClient ?? noopStop,
-      dbUpdateExtensionRow,
-    }),
-    opts.onUpdateApplied,
-  );
+  const upgrade = createPerformUpgrade(performUpgradeDeps);
+  const downgrade = createPerformDowngrade({
+    extensionsRoot: opts.extensionsDir,
+    stopExtensionClient: opts.stopExtensionClient ?? noopStop,
+    dbUpdateExtensionRow,
+  });
+  const performUpgrade = withUpdateAppliedHook(async (update) => {
+    await upgrade(update);
+    // The new code may be signed by a rotated key: keep that key under its fingerprint and record
+    // it on the row, so the boot pass and every spawn verify with it (I16).
+    const verified = verifiedKeys.get(updateKey(update));
+    verifiedKeys.delete(updateKey(update));
+    if (verified !== undefined) await recordVerifyingKey(opts, update.id, verified);
+  }, opts.onUpdateApplied);
+  const performDowngrade = withUpdateAppliedHook(async (update) => {
+    await downgrade(update);
+    // The restored copy is signed by the key it was installed with: its declared one.
+    recordDeclaredFingerprint(opts.db, update.id);
+  }, opts.onUpdateApplied);
 
   const deps: AutoUpdateRuntimeBag = {
     cache,
