@@ -52,8 +52,10 @@ nimbus extension publish <extension-dir> --registry-repo <owner>/<repo> --statem
 \`nimbus extension key revoke --key <key file> --publisher <id> --reason <text>\` writes a
 revocation, which may be the only file in a pull request. The registry admits a statement only
 when it is signed by the key it concerns, for a publisher already in the index, by a key the index
-binds to that publisher; a rotation from a revoked key and two rotations from one key to different
-keys are refused. A statement once signed into the index is never removed.
+binds to that publisher; a rotation from a revoked key, two rotations from one key to different
+keys and a rotation back to a key already reached are refused, and each publisher may have at most
+50 statements. The first version under a new key must be on the stable channel. A statement once
+signed into the index is never removed.
 
 ## Approving a signing run
 

@@ -19,13 +19,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 ## Post-Phase-6 deliveries
 
 - **2026-10-26 — Marketplace trust layer PR 3b of 5: publisher key statements through a registry (no migration, no new
-  invariant, no gateway behaviour change).** A publisher signs a rotation or a revocation with `nimbus extension key
+  invariant; one gateway change: registry-statement admission follows rotations).** A publisher signs a rotation or a revocation with `nimbus extension key
   rotate|revoke` and sends it with the next publish (`nimbus extension publish --statement <file>`, repeatable; `registry
   maintain add --statement` for a local-folder registry). The pull request adds `statements/<statement id>.json`. The registry
   action's `check` and `sign` admit it into the signed index by one shared rule, `admitPublisherStatements` in
   `@nimbus-dev/registry-format`: the statement must be self-signed, for a publisher already in the index, by a key the index
   binds to that publisher; revocations are admitted before rotations (R3); a fork is refused; there are caps; and nothing once
-  admitted is removed. A revocation-only pull request is valid and re-signs the index. `validatePublish` now accepts the
+  admitted is removed. A revocation-only pull request is valid and re-signs the index. Admission runs revocations and rotations to a joint
+  fixed point over admitted rotations only, refuses loops, and caps each publisher at 50 statements; `check` admits the base
+  branch's unsigned statements first, as `sign` will. A key that rotated away stays superseded even if its successor is
+  revoked, and the first version under a new key of an existing extension must be stable. On clients, a registry's listed
+  publisher keys are now closed over its rotations, so a revocation of an old key still lands after the entry moved. `validatePublish` now accepts the
   publisher's CURRENT key, the one every bound key leads to through rotations, and refuses a superseded, forked, unrelated or
   revoked key (`ERR_REGISTRY_PUBLISHER_KEY_REVOKED`, new). A version signed by the new key moves the extension's index entry to
   that key, so a rotation and the first version under the new key land in ONE pull request. The rotation-graph walk moved from

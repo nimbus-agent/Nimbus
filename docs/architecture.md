@@ -2166,7 +2166,8 @@ fingerprint as its scope — the V76 CHECK enforces exactly that), or the key th
 `publisher.verified` never enters as a block: verification is the feed's CURRENT state, replaced by each accepted feed,
 while every block is a monotonic union no later document removes. A publisher-signed statement from a registry is stored only
 when that registry's index lists the publisher with the key it concerns (for a rotation, either end) or an installed extension
-was verified with it, and at most 1,000 such rows per registry; the registry's own root-signed blocks are never capped, so
+was verified with it — "listed" meaning an entry's key closed in both directions over the index's own publisher-signed
+rotations (PR 3b), so a revocation of a publisher's OLD key still lands after the registry moved the entry to the rotated key, and at most 1,000 such rows per registry; the registry's own root-signed blocks are never capped, so
 filling the cap cannot suppress a later revocation.
 
 **Sources.** (1) Every PINNED, verified registry index (`fetchVerifiedIndex` ingests its `statements` after the floor write;
@@ -2229,17 +2230,22 @@ key it revokes) using `nimbus extension key rotate|revoke`, and passes the file 
 skips with a warning, as it does for a bad version directory). Admission does not depend on the order statements arrive in. A
 statement must be publisher-signed (no root key is passed, so a root-signed one confers nothing here and is carried verbatim),
 for a publisher with an extension in the index, and signed by a key the index binds to that publisher, directly or through
-rotations. Revocations are admitted before rotations, so a rotation away from a key revoked in the same batch is refused (R3).
-Two rotations from one key to different keys are a fork: both are refused inside one batch, and against an admitted rotation
-the newcomer is refused. Caps: 20 rotations per publisher, 1,000 statements per index. A statement once in the signed index is
+admitted rotations. Admission runs to a joint fixed point: each round first admits revocations of keys the bound keys reach
+over admitted rotations, then rotations from reached keys that are not revoked (R3, and R4 taint). So a rotation away from a key
+revoked in the same batch is refused, and a refused rotation never lets its target's revocation in. Two rotations from one key
+to different keys are a fork: both are refused inside one batch, and against an admitted rotation the newcomer is refused. A
+rotation back to an already reached key (a loop or a repeat) is refused. Caps: 20 rotations and 50 statements per publisher,
+1,000 statements per index. `check` admits the base branch's not-yet-signed statement files before the pull request's own, as
+`sign` will see them. A statement once in the signed index is
 never removed: deleting its file changes nothing. The pure rotation-graph walk (`rotation-graph.ts`) lives in
 `registry-format` too, so the validator and the gateway (`trust-keys.ts`, `trust-blocks.ts`) follow chains with the same code.
 
 `validatePublish`'s one-key-per-publisher rule became "the publisher's CURRENT key": the one key that every key the index
-binds to the publisher leads to through admitted rotations, not revoked there (R4 included). A new publisher may use any key
-the index does not revoke. Refusals name the case: `superseded` (sign with the current key), `fork`, `unrelated` (include the
+binds to the publisher leads to through admitted rotations, not revoked there (R4 included). A key that rotated away stays superseded even if its successor is later revoked: the publisher is then locked
+until the registry maintainer or Nimbus acts. A new publisher may use any key the index does not revoke. Refusals name the case: `superseded` (sign with the current key), `fork`, `unrelated` (include the
 `key.rotate` with `--statement`), and a revoked key is `ERR_REGISTRY_PUBLISHER_KEY_REVOKED`. When a version signed by the new key
-is added, the extension's index entry moves to that key (`publisherAfterPublish`). Stated bounds: (1) versions signed by an
+is added, the extension's index entry moves to that key (`publisherAfterPublish`). So that a default install keeps working,
+the first version under a new key of an existing extension must be on the stable channel. Stated bounds: (1) versions signed by an
 earlier key stay listed but can no longer be installed from that registry by explicit version, because the gateway requires the
 manifest key to equal the entry key (installed copies keep running, and `extension downgrade` restores from the local version
 store); (2) a sibling extension still bound to the old key shows as a key conflict to a client that trusts only the new key,
