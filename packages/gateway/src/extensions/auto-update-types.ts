@@ -56,7 +56,7 @@ export interface AvailableUpdate {
   /** The fingerprint of the publisher key the index names for this version. */
   publisherKeyFingerprint?: string;
   /** Set when that key differs from every key the Vault trusts (fingerprints only). */
-  publisherKeyChange?: { from: readonly string[]; to: string };
+  publisherKeyChange?: { from: readonly string[]; to: string; via?: "rotation" | "nimbus" };
   /** Set by `extension.update --accept-publisher-key`: the owner accepted this exact key. */
   acceptedPublisherKey?: string;
   detectedAt: number;

@@ -113,6 +113,80 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     expect(res.hint).not.toMatch(/extension sync/);
   });
 
+  it("--accept-publisher-key with the update's exact fingerprint proceeds, stating the change", async () => {
+    const deps = baseDeps();
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({
+      ...cur,
+      verificationStatus: "publisher_key_conflict",
+      publisherKeyFingerprint: "b".repeat(32),
+      publisherKeyChange: { from: ["a".repeat(32)], to: "b".repeat(32) },
+    });
+    const prompts: Array<Record<string, unknown>> = [];
+    deps.gate = async (a) => {
+      prompts.push(a.payload);
+      return "proceed" as const;
+    };
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0", acceptPublisherKey: "b".repeat(32) },
+      deps,
+    )) as { applied: boolean };
+    expect(res.applied).toBe(true);
+    expect(prompts[0]?.["publisherChange"]).toEqual({
+      from: ["a".repeat(32)],
+      to: "b".repeat(32),
+      via: "owner",
+    });
+    expect(prompts[0]?.["publisherChangeNote"]).toContain(
+      "not vouched for by any rotation or by Nimbus",
+    );
+    // The apply carries the accepted fingerprint, so its re-verification decides with it.
+    const applied = (deps.performUpgrade as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+      acceptedPublisherKey?: string;
+    };
+    expect(applied.acceptedPublisherKey).toBe("b".repeat(32));
+  });
+
+  it("--accept-publisher-key naming another fingerprint is refused, not treated as acceptance", async () => {
+    const deps = baseDeps();
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({
+      ...cur,
+      verificationStatus: "publisher_key_conflict",
+      publisherKeyFingerprint: "b".repeat(32),
+    });
+    await expect(
+      dispatchAutoUpdateRpc(
+        "extension.update",
+        { id: "com.example.a", toVersion: "1.1.0", acceptPublisherKey: "0".repeat(32) },
+        deps,
+      ),
+    ).rejects.toThrow(/must name the key this update is signed with/);
+    expect(deps.performUpgrade).not.toHaveBeenCalled();
+  });
+
+  it("a rotation-vouched change is stated in the prompt without any flag", async () => {
+    const deps = baseDeps();
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({
+      ...cur,
+      publisherKeyFingerprint: "b".repeat(32),
+      publisherKeyChange: { from: ["a".repeat(32)], to: "b".repeat(32), via: "nimbus" },
+    });
+    const prompts: Array<Record<string, unknown>> = [];
+    deps.gate = async (a) => {
+      prompts.push(a.payload);
+      return "proceed" as const;
+    };
+    await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    );
+    expect(prompts[0]?.["publisherChangeNote"]).toContain("vouched for by Nimbus");
+  });
+
   it("rejects signature_failed", async () => {
     const deps = baseDeps();
     const cur = deps.cache.get("com.example.a")!;

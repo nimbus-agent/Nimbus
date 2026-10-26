@@ -56,7 +56,8 @@ export function stripFlags(args: string[]): string[] {
       a === "--registry" ||
       a === "--version" ||
       a === "--channel" ||
-      a === "--to"
+      a === "--to" ||
+      a === "--accept-publisher-key"
     ) {
       i += 1;
       continue;
@@ -403,7 +404,7 @@ function looksLikePath(arg: string): boolean {
 }
 
 const INSTALL_USAGE =
-  "Usage: nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes]";
+  "Usage: nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes]";
 
 /** `nimbus extension install <id>`: resolve, verify and install from a registry (never `--yes`). */
 async function runExtensionInstallFromRegistry(
@@ -429,6 +430,7 @@ async function runExtensionInstallFromRegistry(
     ["--registry", "registry"],
     ["--version", "version"],
     ["--channel", "channel"],
+    ["--accept-publisher-key", "acceptPublisherKey"],
   ] as const) {
     const v = takeFlagValue(args, flag);
     if (v !== undefined) params[key] = v;
@@ -468,7 +470,7 @@ export async function runExtensionInstall(
     await runExtensionInstallFromRegistry(client, args, sourceRaw);
     return;
   }
-  for (const flag of ["--registry", "--version", "--channel"]) {
+  for (const flag of ["--registry", "--version", "--channel", "--accept-publisher-key"]) {
     if (hasFlag(args, flag)) {
       throw new Error(`${flag} applies to a registry install; ${sourceRaw} is an existing path`);
     }
@@ -880,7 +882,7 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--json] | downgrade <id> [--json] | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]";
 
 /**
  * Subcommands that need no gateway. `publish` gets the RAW args: `stripFlags` drops `--channel` and
@@ -1098,6 +1100,7 @@ async function applyExtensionUpdate(
   id: string,
   toVersion: string | undefined,
   isJson: boolean,
+  acceptPublisherKey?: string,
 ): Promise<number> {
   const list = (await opts.caller("extension.checkForUpdates", {})) as AvailableUpdateCli[];
   const entry = list.find((e) => e.id === id);
@@ -1111,6 +1114,7 @@ async function applyExtensionUpdate(
   const res = (await opts.caller("extension.update", {
     id,
     toVersion: targetVersion,
+    ...(acceptPublisherKey === undefined ? {} : { acceptPublisherKey }),
   })) as UpdateApplyResultCli;
 
   if (isJson) {
@@ -1139,7 +1143,13 @@ export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts)
     // No id, or `--check`, is strictly read-only: it never reaches `extension.update`.
     return listExtensionUpdates(opts, isJson, isCheck, id);
   }
-  return applyExtensionUpdate(opts, id, toVersion, isJson);
+  return applyExtensionUpdate(
+    opts,
+    id,
+    toVersion,
+    isJson,
+    takeFlagValue(args, "--accept-publisher-key"),
+  );
 }
 
 export async function runExtensionUpdate(client: IPCClient, args: string[]): Promise<number> {

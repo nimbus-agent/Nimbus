@@ -7,6 +7,7 @@ import {
   type AvailableUpdate,
   type UpdateApplyResult,
 } from "./auto-update-types.ts";
+import { keyChangeNote } from "./trust/publisher-key-decision.ts";
 
 interface PlannedAction {
   type: typeof ACTION_TYPE_AUTO_UPDATE | typeof ACTION_TYPE_DOWNGRADE;
@@ -41,6 +42,16 @@ const mutex = new Map<string, Promise<void>>();
 /** The consent note an update shows when it will leave the extension's run grant stale. */
 export function runGrantNoteFor(id: string): string {
   return `Running the new version will need a new \`nimbus extension approve ${id}\`.`;
+}
+
+function publisherChangeFields(cached: AvailableUpdate): Record<string, unknown> {
+  const change = cached.publisherKeyChange;
+  if (change === undefined) return {};
+  const via = cached.acceptedPublisherKey === undefined ? (change.via ?? "rotation") : "owner";
+  return {
+    publisherChange: { from: [...change.from], to: change.to, via },
+    publisherChangeNote: keyChangeNote(change, via),
+  };
 }
 
 function buildUpdateAction(
@@ -78,6 +89,8 @@ function buildUpdateAction(
       sourceRegistry: cached.sourceRegistry,
       rootFingerprint: cached.rootFingerprint,
       ...(hasRunGrant && { runGrantNote: runGrantNoteFor(cached.id) }),
+      // A publisher key change, stated in the prompt (fingerprints only; never `*Key`-named).
+      ...publisherChangeFields(cached),
     },
   };
 }
@@ -97,11 +110,12 @@ async function resolveUpdateTarget(
     return { applied: false, reason: "cache_miss" };
   }
 
-  if (cached.verificationStatus === "publisher_key_conflict") {
+  const accepted = acceptedKeyFor(params, cached);
+  if (cached.verificationStatus === "publisher_key_conflict" && accepted === undefined) {
     return {
       applied: false,
       reason: "publisher_key_conflict",
-      hint: `registry ${cached.sourceRegistry} names a different publisher key than the one this gateway trusts; the update is not applied`,
+      hint: `registry ${cached.sourceRegistry} names publisher key ${cached.publisherKeyFingerprint ?? "?"}, which no rotation from a key this gateway trusts and no Nimbus verification vouches for; to apply it anyway, pass --accept-publisher-key ${cached.publisherKeyFingerprint ?? "<fingerprint>"}`,
     };
   }
   if (cached.verificationStatus === "signature_failed") {
@@ -132,7 +146,28 @@ async function resolveUpdateTarget(
       return { applied: false, reason: "downgrade_unavailable" };
     }
   }
-  return { cached, isDowngrade };
+  return {
+    cached: accepted === undefined ? cached : { ...cached, acceptedPublisherKey: accepted },
+    isDowngrade,
+  };
+}
+
+/**
+ * `--accept-publisher-key`: the exact fingerprint of the key the cached update names, or nothing.
+ * A different value is refused outright, never read as acceptance of whatever key the index names.
+ */
+function acceptedKeyFor(
+  params: Record<string, unknown>,
+  cached: AvailableUpdate,
+): string | undefined {
+  const v = params["acceptPublisherKey"];
+  if (v === undefined) return undefined;
+  if (typeof v !== "string" || v !== cached.publisherKeyFingerprint) {
+    throw new Error(
+      `--accept-publisher-key must name the key this update is signed with (${cached.publisherKeyFingerprint ?? "unknown"}); nothing was accepted`,
+    );
+  }
+  return v;
 }
 
 async function applyUpdateUnderMutex(

@@ -165,7 +165,16 @@ async function detectOne(
     permissionDiff: diffPermissions(row.manifest.permissions, m.permissions),
     verificationStatus,
     publisherKeyFingerprint: publisherKeyFingerprint(entry.publisher.key),
-    ...(decision?.change == null ? {} : { publisherKeyChange: decision.change }),
+    ...(decision?.change == null
+      ? {}
+      : {
+          publisherKeyChange: {
+            ...decision.change,
+            ...(decision.ok && (decision.via === "rotation" || decision.via === "nimbus")
+              ? { via: decision.via }
+              : {}),
+          },
+        }),
     detectedAt: deps.now(),
   });
   if (m.dependsOn !== undefined) out.dependsOn.set(row.id, m.dependsOn);

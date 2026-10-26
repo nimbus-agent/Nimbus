@@ -411,6 +411,13 @@ describe("runExtensionInstall — path versus registry id", () => {
     await expect(
       runExtensionInstall(client, ["install", ".", "--version", "1.0.0"], ["."]),
     ).rejects.toThrow(/--version applies to a registry install/);
+    await expect(
+      runExtensionInstall(
+        client,
+        ["install", ".", "--accept-publisher-key", "b".repeat(32)],
+        ["."],
+      ),
+    ).rejects.toThrow(/--accept-publisher-key applies to a registry install/);
     expect(calls).toHaveLength(0);
   });
 
@@ -432,13 +439,30 @@ describe("runExtensionInstall — path versus registry id", () => {
     );
     await runExtensionInstall(
       client,
-      ["install", "acme.tool", "--registry", "main", "--version", "1.0.0", "--channel", "beta"],
+      [
+        "install",
+        "acme.tool",
+        "--registry",
+        "main",
+        "--version",
+        "1.0.0",
+        "--channel",
+        "beta",
+        "--accept-publisher-key",
+        "b".repeat(32),
+      ],
       ["acme.tool"],
     );
     expect(calls).toEqual([
       {
         method: "registry.install",
-        params: { id: "acme.tool", registry: "main", version: "1.0.0", channel: "beta" },
+        params: {
+          id: "acme.tool",
+          registry: "main",
+          version: "1.0.0",
+          channel: "beta",
+          acceptPublisherKey: "b".repeat(32),
+        },
       },
     ]);
     expect(handlers.has("consent.request")).toBe(true);

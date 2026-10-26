@@ -159,6 +159,25 @@ describe("runExtensionUpdateWithCaller — apply mode (id supplied)", () => {
     const applyCall = calls.find((c) => c.method === "extension.update");
     expect(applyCall?.params).toEqual({ id: "com.x.a", toVersion: "0.9.0" });
   });
+
+  test("--accept-publisher-key is passed to extension.update", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const caller: AutoUpdateIpcCaller = async (method, params) => {
+      calls.push({ method, params });
+      if (method === "extension.checkForUpdates") return [sampleUpdate()];
+      return { applied: true } satisfies UpdateApplyResultCli;
+    };
+    await runExtensionUpdateWithCaller({
+      args: ["com.x.a", "--accept-publisher-key", "b".repeat(32)],
+      caller,
+      writeStdout: () => {},
+      writeStderr: () => {},
+    });
+    expect(calls.find((c) => c.method === "extension.update")?.params).toMatchObject({
+      id: "com.x.a",
+      acceptPublisherKey: "b".repeat(32),
+    });
+  });
 });
 
 describe("runExtensionDowngradeWithCaller", () => {
