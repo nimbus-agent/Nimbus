@@ -822,10 +822,10 @@ test("V52 leaves resolve_key NULL for a row with neither url", () => {
   db.close();
 });
 
-test("CURRENT_SCHEMA_VERSION is 75, so the newest step runs in production", () => {
+test("CURRENT_SCHEMA_VERSION is 76, so the newest step runs in production", () => {
   // Without this bump the step exists but never executes: runIndexedSchemaMigrations early-returns
   // once user_version >= targetVersion, and every production caller passes CURRENT_SCHEMA_VERSION.
-  expect(CURRENT_SCHEMA_VERSION).toBe(75);
+  expect(CURRENT_SCHEMA_VERSION).toBe(76);
   const db = freshDb();
   runIndexedSchemaMigrations(db, 53);
   expect(tableNames(db)).toContain("item");

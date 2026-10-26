@@ -90,6 +90,7 @@ import { V35_TEAM_VAULT_SQL } from "../team-vault-v35-sql.ts";
 import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../tool-call-log-v29-sql.ts";
 import { TOOL_CALL_PARAMS_V42_SQL } from "../tool-call-params-v42-sql.ts";
 import { TRIBAL_CLUSTERS_V39_SQL } from "../tribal-clusters-v39-sql.ts";
+import { TRUST_LAYER_V76_SQL } from "../trust-layer-v76-sql.ts";
 import {
   UNIFIED_ITEM_V3_MIGRATE_FROM_LEGACY_SQL,
   UNIFIED_ITEM_V3_SCHEMA_SQL,
@@ -687,6 +688,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     75,
     "glossary_term.definition_local (§ 7.1 routing of a stored definition)",
     GLOSSARY_DEFINITION_LOCAL_V75_SQL,
+  ),
+  simpleStep(
+    75,
+    76,
+    "trust layer: statements, feed state, index hash floors, verifying-key fingerprint, run-grant acknowledgements",
+    TRUST_LAYER_V76_SQL,
   ),
 ];
 

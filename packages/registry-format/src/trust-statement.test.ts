@@ -135,7 +135,7 @@ describe("trust statements", () => {
   ];
   for (const [name, raw] of bad) {
     test(`rejects: ${name}`, () => {
-      const withSig = { ...raw, signature: "A".repeat(86) + "==" };
+      const withSig = { ...raw, signature: `${"A".repeat(86)}==` };
       expect(() => parseTrustStatement(JSON.parse(JSON.stringify(withSig)))).toThrow(
         "ERR_TRUST_STATEMENT_INVALID",
       );
