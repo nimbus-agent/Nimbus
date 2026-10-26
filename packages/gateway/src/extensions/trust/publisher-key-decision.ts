@@ -90,7 +90,12 @@ export function publisherKeyConflict(
   const why = CONFLICT_REASON[d.reason];
   return new RegistryError(
     "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
-    `publisher "${publisherId}" now uses key ${d.change.to} (trusted: ${d.change.from.join(", ")}); ${why}. To trust it anyway, pass --accept-publisher-key ${d.change.to}`,
+    `publisher "${publisherId}" now uses key ${d.change.to} (trusted: ${d.change.from.join(", ")}); ${why}.${
+      // A revoked key is accepted by no path, so offering the override would only mislead.
+      d.reason === "revoked"
+        ? ""
+        : ` To trust it anyway, pass --accept-publisher-key ${d.change.to}`
+    }`,
   );
 }
 

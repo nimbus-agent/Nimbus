@@ -166,6 +166,31 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     expect(deps.performUpgrade).not.toHaveBeenCalled();
   });
 
+  it("an acceptance on an already-vouched update keeps saying what vouched for it", async () => {
+    const deps = baseDeps();
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({
+      ...cur,
+      publisherKeyFingerprint: "b".repeat(32),
+      publisherKeyChange: { from: ["a".repeat(32)], to: "b".repeat(32), via: "rotation" },
+    });
+    const prompts: Array<Record<string, unknown>> = [];
+    deps.gate = async (a) => {
+      prompts.push(a.payload);
+      return "proceed" as const;
+    };
+    await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0", acceptPublisherKey: "b".repeat(32) },
+      deps,
+    );
+    expect((prompts[0]?.["publisherChange"] as { via: string }).via).toBe("rotation");
+    const applied = (deps.performUpgrade as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+      acceptedPublisherKey?: string;
+    };
+    expect(applied.acceptedPublisherKey).toBeUndefined();
+  });
+
   it("a rotation-vouched change is stated in the prompt without any flag", async () => {
     const deps = baseDeps();
     const cur = deps.cache.get("com.example.a")!;

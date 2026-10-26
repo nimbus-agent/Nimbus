@@ -8554,6 +8554,59 @@ describe("I44/I48 — publisher key rotation (trust layer PR 3a)", () => {
     expect(blocks[0]?.reason).toContain("was rotated from revoked key");
   });
 
+  test("the owner's exact-fingerprint acceptance installs, and the prompt discloses the unvouched change", async () => {
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    const x = await registryWithTrustedOldKey();
+    const asked: Array<Record<string, unknown>> = [];
+    const out = await installFromRegistry(
+      {
+        ...x.deps,
+        approve: async (r: Record<string, unknown>) => {
+          asked.push(r);
+          return true;
+        },
+      },
+      { id: "com.example.rot", acceptPublisherKey: publisherKeyFingerprint(x.newKey) },
+    );
+    expect(out.version).toBe("1.0.0");
+    expect(asked[0]?.["publisherChange"]).toEqual({
+      from: [publisherKeyFingerprint(x.oldKey)],
+      to: publisherKeyFingerprint(x.newKey),
+      via: "owner",
+    });
+    expect(asked[0]?.["publisherChangeNote"]).toBe(
+      `publisher key CHANGED from ${publisherKeyFingerprint(x.oldKey)} to ${publisherKeyFingerprint(x.newKey)}, not vouched for by any rotation or by Nimbus`,
+    );
+  });
+
+  test("a revoked key is refused even with the owner's matching acceptance, before the owner is asked", async () => {
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    const x = await registryWithTrustedOldKey();
+    const nacl = (await import("tweetnacl")).default;
+    const { PUBLISHER_SEED } = await import(
+      "./extensions/registry/__fixtures__/build-test-registry.ts"
+    );
+    await store(
+      x.db,
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-27T12:00:00Z",
+        signerKey: x.newKey,
+        publisherId: "acme",
+        keyFingerprint: publisherKeyFingerprint(x.newKey),
+        reason: "leaked",
+      },
+      nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).secretKey.slice(0, 32),
+    );
+    await expect(
+      installFromRegistry(x.deps, {
+        id: "com.example.rot",
+        acceptPublisherKey: publisherKeyFingerprint(x.newKey),
+      }),
+    ).rejects.toThrow("ERR_EXTENSION_KEY_REVOKED");
+    expect(x.asked()).toBe(0);
+  });
+
   test("source pins: every door decides through publisherKeyDecision; the old any-different-key check is gone", async () => {
     const files = await readDirFiles("packages/gateway/src");
     expect(

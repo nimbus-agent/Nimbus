@@ -167,7 +167,9 @@ function acceptedKeyFor(
       `--accept-publisher-key must name the key this update is signed with (${cached.publisherKeyFingerprint ?? "unknown"}); nothing was accepted`,
     );
   }
-  return v;
+  // Only an unvouched change needs (or records) the owner's acceptance: a rotation- or
+  // Nimbus-vouched one keeps saying what vouched for it.
+  return cached.verificationStatus === "publisher_key_conflict" ? v : undefined;
 }
 
 async function applyUpdateUnderMutex(
