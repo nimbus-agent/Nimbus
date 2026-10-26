@@ -36,6 +36,8 @@ export async function prepareTrustAtBoot(deps: {
   logger: Pick<Logger, "info" | "warn">;
   trustFeed?: TrustFeedConfig | null;
   snapshot?: string | null;
+  /** Statements the snapshot newly stored (I48 enforcement: notify; nothing is running yet). */
+  onTrustRecorded?: (insertedIds: readonly string[]) => void;
 }): Promise<void> {
   try {
     const filled = await backfillPublisherKeyFingerprints(deps.db, deps.vault);
@@ -45,7 +47,7 @@ export async function prepareTrustAtBoot(deps: {
   }
   const cfg = deps.trustFeed === undefined ? BUILTIN_TRUST_FEED : deps.trustFeed;
   const snapshot = deps.snapshot === undefined ? BUILTIN_TRUST_SNAPSHOT : deps.snapshot;
-  const result = await applyTrustSnapshot(deps.db, snapshot, cfg, Date.now());
+  const result = await applyTrustSnapshot(deps.db, snapshot, cfg, Date.now(), deps.onTrustRecorded);
   if (result.status === "refused") {
     deps.logger.warn({ code: result.code, detail: result.detail }, "baked trust snapshot refused");
   }

@@ -56,6 +56,11 @@ export interface AutoUpdateInitOpts {
    * unregistered and the index id paused with the re-approve reason. Never called on a failure.
    */
   onUpdateApplied?: (extensionId: string) => void;
+  /**
+   * Trust layer "fresh before acting" (spec § 6.2): refreshes the trust feed best-effort before an
+   * update is re-verified for apply. Must not reject.
+   */
+  freshenTrust?: () => Promise<unknown>;
 }
 
 /**
@@ -324,8 +329,10 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   const performUpgradeDeps: PerformUpgradeDeps = {
     extensionsRoot: opts.extensionsDir,
     signal: abortController.signal,
-    reverifyManifest: (update, signal) =>
-      reverifyUpdateManifest(fetchDeps, opts.vault, update, signal),
+    reverifyManifest: async (update, signal) => {
+      await opts.freshenTrust?.();
+      return reverifyUpdateManifest(fetchDeps, opts.vault, update, signal);
+    },
     fetchPackage: (update, signal) =>
       fetchRegistryBytes(
         fetchDeps,

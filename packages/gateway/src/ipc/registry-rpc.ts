@@ -17,7 +17,6 @@ import {
   type RegistryFetchDeps,
 } from "../extensions/registry/registry-fetch.ts";
 import { readIndexes, resolveRegistryEntry } from "../extensions/registry/registry-resolve.ts";
-import { blocksFor, TrustBlockError } from "../extensions/trust/trust-blocks.ts";
 import {
   assertRegistryNameNotReserved,
   deleteRegistry,
@@ -28,6 +27,12 @@ import {
   type RegistryRow,
   recordRegistryFetch,
 } from "../extensions/registry/registry-store.ts";
+import { blocksFor, TrustBlockError } from "../extensions/trust/trust-blocks.ts";
+import {
+  type FreshenHandle,
+  freshenTrustFeed,
+  trustFeedNote,
+} from "../extensions/trust/trust-freshen.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
@@ -52,6 +57,8 @@ export interface RegistryRpcOptions {
   /** `registry.install` only: where extensions install, and the Vault holding publisher keys. */
   extensionsDir?: string;
   vault?: NimbusVault;
+  /** `registry.install` only: the trust feed, refreshed best-effort first (spec § 6.2). */
+  trustFeed?: FreshenHandle;
 }
 
 type Hit = { kind: "hit"; value: unknown };
@@ -221,6 +228,9 @@ async function handleInstall(
 ): Promise<Hit> {
   const { id, registry, version, channel } = installParams(rec);
   const { ownerGate, fetch, extensionsDir, vault } = installDeps(o);
+  // Fresh before acting (I48): a revocation published since the last hourly fetch should refuse
+  // this install. Unreachable: proceed on stored state and tell the owner how old it is.
+  const note = trustFeedNote(await freshenTrustFeed(o.trustFeed, o.db, Date.now()));
   try {
     const installed = await installFromRegistry(
       {
@@ -229,7 +239,11 @@ async function handleInstall(
         vault,
         fetch,
         // The same HITL action as a local install; the request now also names the registry.
-        approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
+        approve: (request) =>
+          ownerGate({
+            type: "extension.install",
+            payload: { ...request, ...(note === undefined ? {} : { trustFeedNote: note }) },
+          }),
       },
       {
         id,

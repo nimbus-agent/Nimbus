@@ -38,6 +38,12 @@ export interface RegistryFetchDeps {
    * IPC parameter.
    */
   builtin?: BuiltinRegistryConfig | null;
+  /**
+   * Trust layer (I48): called with the ids of trust statements a verified registry index or the
+   * trust feed just stored for the first time, so the gateway can stop and notify what they newly
+   * block. Must not throw; a throw is swallowed.
+   */
+  onTrustRecorded?: (insertedIds: readonly string[]) => void;
 }
 
 export type RegistryFetchMeta = {
@@ -344,7 +350,7 @@ function ingestRegistryStatements(
       keys.add(entry.publisher.key);
       listedPublisherKeys.set(entry.publisher.id, keys);
     }
-    recordTrustStatements(
+    const out = recordTrustStatements(
       deps.db,
       readRegistryStatements(index).statements,
       {
@@ -356,6 +362,7 @@ function ingestRegistryStatements(
       },
       deps.now(),
     );
+    if (out.insertedIds.length > 0) deps.onTrustRecorded?.(out.insertedIds);
   } catch {
     // Best-effort: a locked or full database must not turn a verified index into a failed fetch.
   }

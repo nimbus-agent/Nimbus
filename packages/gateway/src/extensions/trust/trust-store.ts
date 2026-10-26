@@ -45,6 +45,8 @@ export type RecordOutcome = {
   alreadyKnown: number;
   refused: number;
   capped: number;
+  /** The ids of the statements this call stored for the first time (what may newly block, I48). */
+  insertedIds: string[];
 };
 
 export const MAX_STORED_STATEMENTS_PER_SOURCE = 1000;
@@ -159,7 +161,13 @@ export function recordTrustStatements(
   source: StatementSource,
   now: number,
 ): RecordOutcome {
-  const out: RecordOutcome = { inserted: 0, alreadyKnown: 0, refused: 0, capped: 0 };
+  const out: RecordOutcome = {
+    inserted: 0,
+    alreadyKnown: 0,
+    refused: 0,
+    capped: 0,
+    insertedIds: [],
+  };
   const column = sourceColumn(source);
   db.transaction(() => {
     let storedPublisher = source.kind === "registry" ? storedPublisherCount(db, column) : 0;
@@ -179,6 +187,7 @@ export function recordTrustStatements(
       }
       if (insertStatement(db, s, role, source, now)) {
         out.inserted++;
+        out.insertedIds.push(trustStatementId(s));
         if (role === "publisher") storedPublisher++;
       } else {
         out.alreadyKnown++;

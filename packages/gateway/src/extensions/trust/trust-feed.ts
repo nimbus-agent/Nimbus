@@ -114,6 +114,20 @@ function lastAcceptedSequence(db: Database): number | undefined {
   return readFeedFloor(db, TRUST_FEED_NAME)?.lastSequence;
 }
 
+/** Hands newly stored statement ids to the enforcement hook; a throwing hook is ignored. */
+function reportRecorded(
+  hook: ((ids: readonly string[]) => void) | undefined,
+  result: TrustFeedResult,
+): void {
+  if (hook === undefined || result.status !== "accepted") return;
+  if (result.recorded.insertedIds.length === 0) return;
+  try {
+    hook(result.recorded.insertedIds);
+  } catch {
+    // Enforcement is best-effort here; the pre-spawn check refuses blocked code regardless.
+  }
+}
+
 /**
  * Fetches, verifies and records the trust feed. Never throws: every failure is a `refused` result,
  * and an attempt that did not advance the floor is noted on the existing floor row.
@@ -136,6 +150,7 @@ export async function refreshTrustFeed(
     const feed = parseTrustFeed(bytes);
     const before = lastAcceptedSequence(deps.db);
     const result = await acceptFeed(deps.db, feed, cfg, "feed", now);
+    reportRecorded(deps.onTrustRecorded, result);
     if (result.status === "accepted" && before === feed.sequence) {
       return { status: "unchanged", sequence: feed.sequence };
     }
@@ -159,6 +174,7 @@ export async function applyTrustSnapshot(
   snapshot: string | null,
   cfg: TrustFeedConfig | null,
   now: number,
+  onRecorded?: (insertedIds: readonly string[]) => void,
 ): Promise<TrustFeedResult> {
   if (snapshot === null || cfg === null) return { status: "not_configured" };
   try {
@@ -169,7 +185,9 @@ export async function applyTrustSnapshot(
     if (before !== undefined && feed.sequence <= before) {
       return { status: "unchanged", sequence: before };
     }
-    return await acceptFeed(db, feed, cfg, "snapshot", now);
+    const result = await acceptFeed(db, feed, cfg, "snapshot", now);
+    reportRecorded(onRecorded, result);
+    return result;
   } catch (e) {
     return refused(e);
   }

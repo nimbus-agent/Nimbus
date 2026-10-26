@@ -73,7 +73,14 @@ export class TrustFeedDaemon {
       );
     } else if (result.status === "accepted") {
       this.opts.logger.info(
-        { sequence: result.sequence, ...result.recorded, verified: result.verified },
+        {
+          sequence: result.sequence,
+          inserted: result.recorded.inserted,
+          alreadyKnown: result.recorded.alreadyKnown,
+          refused: result.recorded.refused,
+          capped: result.recorded.capped,
+          verified: result.verified,
+        },
         "trust feed accepted",
       );
     }

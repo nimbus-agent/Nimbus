@@ -456,9 +456,19 @@ describe("registry.search and registry.info", () => {
           value: { results: Array<{ blocked: boolean }> };
         }
       ).value.results[0]?.blocked;
-    recordTrustStatements(db, [await takedown(["1.0.0"])], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    recordTrustStatements(
+      db,
+      [await takedown(["1.0.0"])],
+      { kind: "feed", nimbusRootKey: nimbusKey },
+      1,
+    );
     expect(await search()).toBe(false);
-    recordTrustStatements(db, [await takedown(["1.1.0"])], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    recordTrustStatements(
+      db,
+      [await takedown(["1.1.0"])],
+      { kind: "feed", nimbusRootKey: nimbusKey },
+      1,
+    );
     expect(await search()).toBe(true);
   });
 
@@ -631,6 +641,48 @@ describe("registry.install", () => {
         payload: { extensionId: "acme.tool", action: "install", ok: false },
       },
     });
+  });
+
+  test("a trust feed that cannot be refreshed first is disclosed in the install prompt", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    const g = gateRecorder(true);
+    let refreshed = 0;
+    await dispatchRegistryRpc({
+      method: "registry.install",
+      params: { id: "acme.tool" },
+      db,
+      fetch: fetchBag(),
+      extensionsDir,
+      vault: new MockVault(),
+      ownerGate: g.gate,
+      trustFeed: {
+        config: { url: "https://trust.example/", rootKey: ROOT_KEY },
+        refreshNow: () => {
+          refreshed++;
+          return Promise.resolve({
+            status: "refused",
+            code: "ERR_REGISTRY_UNREACHABLE",
+            detail: "x",
+          });
+        },
+      },
+    });
+    expect(refreshed).toBe(1);
+    const payload = (g.asked[0] as { payload: Record<string, unknown> }).payload;
+    expect(payload["trustFeedNote"]).toContain("the trust feed could not be refreshed");
+  });
+
+  test("with no trust feed configured the prompt carries no note", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    const g = gateRecorder(true);
+    await install({ id: "acme.tool" }, g.gate);
+    expect((g.asked[0] as { payload: Record<string, unknown> }).payload).not.toHaveProperty(
+      "trustFeedNote",
+    );
   });
 
   test("a denied approval is an internal-class error and installs nothing", async () => {

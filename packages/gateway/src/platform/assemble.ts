@@ -200,7 +200,9 @@ import {
   buildExtensionRunGrantEnv,
   isExtensionRuntimeEnabled,
 } from "../extensions/run-grant-env.ts";
+import { createTrustBlockEnforcer } from "../extensions/trust/trust-block-enforcer.ts";
 import { prepareTrustAtBoot, startTrustFeedForBoot } from "../extensions/trust/trust-feed-boot.ts";
+import { freshenTrustFeed } from "../extensions/trust/trust-freshen.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
@@ -2107,6 +2109,7 @@ function maybeStartAutoUpdateRuntime(deps: {
   sidecarStops: Array<() => void>;
   registryFetch: Omit<RegistryFetchDeps, "db">;
   onUpdateApplied: (extensionId: string) => void;
+  freshenTrust: () => Promise<unknown>;
 }): AutoUpdateRuntime | undefined {
   const { db, vault, paths, connectorMesh, sidecarStops, registryFetch, onUpdateApplied } = deps;
   let autoUpdateRuntime: AutoUpdateRuntime | undefined;
@@ -2122,6 +2125,7 @@ function maybeStartAutoUpdateRuntime(deps: {
       intervalHours: extensionsCfg.updateCheckIntervalHours,
       stopExtensionClient: (id) => connectorMesh.stopExtensionClient(id),
       onUpdateApplied,
+      freshenTrust: deps.freshenTrust,
     });
     void autoUpdateRuntime.daemon.start();
     sidecarStops.push(() => {
@@ -3930,9 +3934,19 @@ export async function assemblePlatformServices(
     oncallPush,
   ]);
 
-  // Trust layer: record each installed extension's verifying key and apply the baked trust snapshot
-  // BEFORE the gate opens. Never throws, so the gate below still always resolves.
-  await prepareTrustAtBoot({ db, vault, logger: syncLogger });
+  // Trust layer (I48): when a statement newly blocks an installed extension, stop its client and
+  // notify the owner once. Every recording path reaches this hook: the boot snapshot below, and the
+  // registry fetches and trust feed through the shared `registryFetch` deps.
+  const trustEnforcer = createTrustBlockEnforcer({
+    db,
+    stop: (id) => connectorMesh.stopExtensionClient(id),
+    notify: (title, body) => showIgnoringFailure(notifications, title, body),
+    logger: syncLogger,
+  });
+  const onTrustRecorded = (ids: readonly string[]): void => void trustEnforcer.onRecorded(ids);
+  // Record each installed extension's verifying key and apply the baked trust snapshot BEFORE the
+  // gate opens. Never throws, so the gate below still always resolves.
+  await prepareTrustAtBoot({ db, vault, logger: syncLogger, onTrustRecorded });
   try {
     await verifyExtensionsBestEffort(
       db,
@@ -3983,6 +3997,7 @@ export async function assemblePlatformServices(
     // The SAME built-in the migration engine gets (ruling B1): the baked built-in registry, unless a
     // test runner passed a fixture to this function. No env var, config key or IPC param sets it.
     builtin: migration.builtin,
+    onTrustRecorded,
   };
 
   // The connector migration engine (connector-unbundling spec § 7.2): built after the extension boot
@@ -4023,6 +4038,7 @@ export async function assemblePlatformServices(
     sidecarStops,
     registryFetch,
     onUpdateApplied: (id) => extensionSyncRegistrar.refresh(id),
+    freshenTrust: () => freshenTrustFeed(trustFeed, db, Date.now()),
   });
 
   rt?.startBackgroundJobs();
