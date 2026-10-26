@@ -24,6 +24,12 @@ export type ExtensionRunGrantRow = {
   approved_at: number;
   /** Canonical `serializeRunCredentials` output (V72); `'{}'` when none declared or pre-V72. */
   credentials_json: string;
+  /**
+   * The trust statements (by id) the owner acknowledged when approving a blocked extension (V76,
+   * invariant I48); `'[]'` when none, or below V76. A block whose id is not here refuses the spawn.
+   * Optional on write: absent stores `'[]'` (acknowledges nothing, so it can only narrow).
+   */
+  trust_ack_json?: string;
 };
 
 const BASE_COLS =
@@ -38,9 +44,17 @@ function hasCredentialsColumn(db: Database): boolean {
   return readIndexedUserVersion(db) >= RUN_GRANT_CREDENTIALS_SCHEMA_VERSION;
 }
 
-/** The select list: below V72 the column does not exist yet, so it reads as `'{}'`. */
+/** V76 added `trust_ack_json`. */
+const RUN_GRANT_TRUST_ACK_SCHEMA_VERSION = 76;
+
+function hasTrustAckColumn(db: Database): boolean {
+  return readIndexedUserVersion(db) >= RUN_GRANT_TRUST_ACK_SCHEMA_VERSION;
+}
+
+/** The select list: a column not created yet reads as its empty value (`'{}'` / `'[]'`). */
 function readCols(db: Database): string {
-  return hasCredentialsColumn(db) ? WRITE_COLS : `${BASE_COLS}, '{}' AS credentials_json`;
+  const credentials = hasCredentialsColumn(db) ? WRITE_COLS : `${BASE_COLS}, '{}' AS credentials_json`;
+  return `${credentials}, ${hasTrustAckColumn(db) ? "trust_ack_json" : "'[]' AS trust_ack_json"}`;
 }
 
 export function getRunGrant(db: Database, extensionId: string): ExtensionRunGrantRow | null {
@@ -95,27 +109,38 @@ export function upsertRunGrant(db: Database, row: ExtensionRunGrantRow): void {
   if (!hasCredentialsColumn(db)) {
     throw new Error("Extension run grants require schema v72+");
   }
-  dbRun(
-    db,
-    `INSERT INTO extension_run_grant (${WRITE_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(extension_id) DO UPDATE SET
-       service_id = excluded.service_id,
+  const params = [
+    row.extension_id,
+    row.service_id,
+    row.version,
+    row.tree_digest,
+    row.permissions_json,
+    row.model_access,
+    row.approved_at,
+    row.credentials_json,
+  ];
+  const updates = `service_id = excluded.service_id,
        version = excluded.version,
        tree_digest = excluded.tree_digest,
        permissions_json = excluded.permissions_json,
        model_access = excluded.model_access,
        approved_at = excluded.approved_at,
-       credentials_json = excluded.credentials_json`,
-    [
-      row.extension_id,
-      row.service_id,
-      row.version,
-      row.tree_digest,
-      row.permissions_json,
-      row.model_access,
-      row.approved_at,
-      row.credentials_json,
-    ],
+       credentials_json = excluded.credentials_json`;
+  if (hasTrustAckColumn(db)) {
+    dbRun(
+      db,
+      `INSERT INTO extension_run_grant (${WRITE_COLS}, trust_ack_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(extension_id) DO UPDATE SET ${updates},
+         trust_ack_json = excluded.trust_ack_json`,
+      [...params, row.trust_ack_json ?? "[]"],
+    );
+    return;
+  }
+  dbRun(
+    db,
+    `INSERT INTO extension_run_grant (${WRITE_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(extension_id) DO UPDATE SET ${updates}`,
+    params,
   );
 }
 

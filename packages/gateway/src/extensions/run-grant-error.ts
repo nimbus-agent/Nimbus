@@ -17,7 +17,9 @@ export type ExtensionRunGrantErrorCode =
   | "ERR_EXTENSION_RUN_START_FAILED"
   | "ERR_EXTENSION_RUN_STOPPED"
   | "ERR_EXTENSION_RUNTIME_DISABLED"
-  | "ERR_EXTENSION_ENTRY_OUTSIDE";
+  | "ERR_EXTENSION_ENTRY_OUTSIDE"
+  | "ERR_EXTENSION_KEY_REVOKED"
+  | "ERR_EXTENSION_TAKEN_DOWN";
 
 /** A refusal on the way to an extension run grant. The code leads the message, so a CLI shows it. */
 export class ExtensionRunGrantError extends Error {

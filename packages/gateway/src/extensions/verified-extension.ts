@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 
 import { type ExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { isSameOrInside, pathApiFor } from "../util/path-overlap.ts";
@@ -27,6 +28,13 @@ import { readPublisherKey } from "./publisher-keys.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { type ExtensionRunGrantRow, getRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
+import {
+  blockSubjectForInstalled,
+  blocksFor,
+  describeBlock,
+  type TrustBlock,
+  unacknowledged,
+} from "./trust/trust-blocks.ts";
 import { verifyOneExtensionStrict } from "./verify-extensions.ts";
 import { type SignedManifestShape, verifyManifestSignature } from "./verify-signature.ts";
 
@@ -198,6 +206,60 @@ function readRawManifestForSignature(row: ExtensionRow): SignedManifestShape {
   return parsed as SignedManifestShape;
 }
 
+/** I48: the refusal for blocks the grant's acknowledgement does not name, if any. */
+function refuseUnacknowledged(
+  row: ExtensionRow,
+  code: "ERR_EXTENSION_KEY_REVOKED" | "ERR_EXTENSION_TAKEN_DOWN",
+  blocks: readonly TrustBlock[],
+  grant: ExtensionRunGrantRow,
+): void {
+  const open = unacknowledged(blocks, grant.trust_ack_json);
+  if (open.length === 0) return;
+  refuse(
+    code,
+    `${row.id}: ${open.map(describeBlock).join("; ")}. It runs again only if you approve it with \`nimbus extension approve ${row.id}\``,
+  );
+}
+
+/**
+ * Step 4a (I48): a takedown of this extension that the run grant did not acknowledge refuses the
+ * spawn BEFORE the tree is hashed.
+ */
+function assertNotTakenDown(
+  db: Database,
+  row: ExtensionRow,
+  manifest: ExtensionManifest,
+  grant: ExtensionRunGrantRow,
+): void {
+  const blocks = blocksFor(db, blockSubjectForInstalled(row, manifest)).filter(
+    (b) => b.kind === "extension.takedown",
+  );
+  refuseUnacknowledged(row, "ERR_EXTENSION_TAKEN_DOWN", blocks, grant);
+}
+
+/**
+ * Step 6a (I48): a revocation of the key that verifies the code — the Vault key read in step 6, and
+ * the key recorded at install if it differs — that the grant did not acknowledge refuses the spawn,
+ * before the signature is checked, so the refusal names the revocation.
+ */
+function assertKeyNotRevoked(
+  db: Database,
+  row: ExtensionRow,
+  manifest: ExtensionManifest,
+  grant: ExtensionRunGrantRow,
+  vaultKey: Uint8Array,
+): void {
+  const base = blockSubjectForInstalled(row, manifest);
+  const fingerprints = new Set([
+    publisherKeyFingerprint(Buffer.from(vaultKey).toString("base64")),
+    ...(base.keyFingerprint === null ? [] : [base.keyFingerprint]),
+  ]);
+  const blocks = [...fingerprints].flatMap((keyFingerprint) =>
+    blocksFor(db, { ...base, keyFingerprint }).filter((b) => b.kind === "key.revoke"),
+  );
+  refuseUnacknowledged(row, "ERR_EXTENSION_KEY_REVOKED", blocks, grant);
+}
+
 /**
  * Step 6 (I16 at spawn): a manifest that names a publisher must verify against the key cached in
  * the Vault NOW. Fail-closed on every arm — a key evicted after approval, a missing signature, a
@@ -205,8 +267,10 @@ function readRawManifestForSignature(row: ExtensionRow): SignedManifestShape {
  * unsigned, which is what the owner approved for it.
  */
 async function assertPublisherSignature(
+  db: Database,
   row: ExtensionRow,
   manifest: ExtensionManifest,
+  grant: ExtensionRunGrantRow,
   vault: NimbusVault,
 ): Promise<void> {
   if (manifest.publisher === undefined) return;
@@ -233,6 +297,8 @@ async function assertPublisherSignature(
       `${row.id}'s publisher key for "${manifest.publisher.id}" is not in the Vault; reinstall it`,
     );
   }
+  // 6a
+  assertKeyNotRevoked(db, row, manifest, grant, key);
   try {
     await verifyManifestSignature(raw, key);
   } catch (e) {
@@ -297,6 +363,8 @@ export async function readVerifiedExtensionForSpawn(
   assertHashesVerified(row);
   // 4
   const manifest = readManifestTyped(row);
+  // 4a
+  assertNotTakenDown(deps.db, row, manifest, grant);
   const rowDigest = row.tree_digest;
   if (rowDigest === null) {
     refuse(
@@ -313,7 +381,7 @@ export async function readVerifiedExtensionForSpawn(
     deps.treeDigest ?? computeExtensionTreeDigest,
   );
   // 6
-  await assertPublisherSignature(row, manifest, deps.vault);
+  await assertPublisherSignature(deps.db, row, manifest, grant, deps.vault);
   // 7
   const { installPath, entryPath } = resolveEntryInside(row, manifest, deps.env);
   // 8 — throws its own GRANT_* refusal when a declared path no longer resolves.
