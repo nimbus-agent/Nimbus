@@ -674,6 +674,32 @@ describe("registry.install", () => {
     expect(payload["trustFeedNote"]).toContain("the trust feed could not be refreshed");
   });
 
+  test("a blocked install is a registry-class refusal (-32000) carrying its code", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 61);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const s = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: nimbusKey,
+        extensionId: "acme.tool",
+        publisherId: "acme",
+        versions: "*",
+        reason: "malware",
+      },
+      seed,
+    );
+    recordTrustStatements(db, [s], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    const err = await install({ id: "acme.tool" }, gateRecorder(true).gate).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toMatchObject({ rpcCode: -32000 });
+    expect((err as Error).message).toMatch(/^ERR_EXTENSION_TAKEN_DOWN:/);
+  });
+
   test("with no trust feed configured the prompt carries no note", async () => {
     const dir = join(tmp, "reg");
     await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });

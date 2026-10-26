@@ -276,7 +276,10 @@ async function handleInstall(
       ok: false,
       error: e instanceof Error ? e.message : String(e),
     });
-    if (e instanceof RegistryError || e instanceof RpcMethodError) throw e;
+    // A trust block (I48) is a registry-class refusal like the others, not invalid params.
+    if (e instanceof RegistryError || e instanceof RpcMethodError || e instanceof TrustBlockError) {
+      throw e;
+    }
     // A refusal AFTER the owner was involved is internal-class, like `extension.install`'s.
     throw new RpcMethodError(
       e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,

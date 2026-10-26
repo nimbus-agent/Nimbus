@@ -15,7 +15,8 @@ import { insertExtensionRow } from "../../automation/extension-store.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { encodeBase64 } from "../../util/base64.ts";
 import { upsertRunGrant } from "../run-grant-store.ts";
-import { createTrustBlockEnforcer } from "./trust-block-enforcer.ts";
+import { createTrustBlockEnforcer, notificationBody } from "./trust-block-enforcer.ts";
+import type { TrustBlock } from "./trust-blocks.ts";
 import { recordTrustStatements } from "./trust-store.ts";
 
 const NIMBUS_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 9);
@@ -173,5 +174,31 @@ describe("createTrustBlockEnforcer", () => {
     db = new Database(":memory:"); // afterEach closes this one
     await h.enforcer.onRecorded(["x"]);
     expect(h.warns).toEqual(["trust block enforcement could not list extensions"]);
+  });
+});
+
+describe("notificationBody", () => {
+  const block = (over: Partial<TrustBlock>): TrustBlock => ({
+    statementId: "s",
+    kind: "key.revoke",
+    issuer: "publisher",
+    registry: null,
+    reason: "r",
+    issuedAt: "2026-10-26T12:00:00Z",
+    ...over,
+  });
+  test("names what happened and who did it, for every issuer", () => {
+    expect(notificationBody("a", block({}))).toBe(
+      "a: its publisher key was revoked by its publisher (r). It will not run until you re-approve it.",
+    );
+    expect(notificationBody("a", block({ issuer: "registry", registry: "community" }))).toContain(
+      'by the maintainer of registry "community"',
+    );
+    expect(notificationBody("a", block({ issuer: "registry", registry: null }))).toContain(
+      'registry "?"',
+    );
+    expect(
+      notificationBody("a", block({ kind: "extension.takedown", issuer: "nimbus" })),
+    ).toContain("it was taken down by Nimbus");
   });
 });

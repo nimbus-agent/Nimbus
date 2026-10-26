@@ -26,7 +26,8 @@ export interface TrustBlockEnforcer {
   onRecorded(insertedIds: readonly string[]): Promise<void>;
 }
 
-function notificationBody(id: string, b: TrustBlock): string {
+/** The toast text for one newly blocked extension. Exported for its test. */
+export function notificationBody(id: string, b: TrustBlock): string {
   const what = b.kind === "key.revoke" ? "its publisher key was revoked" : "it was taken down";
   let by = "by its publisher";
   if (b.issuer === "nimbus") by = "by Nimbus";

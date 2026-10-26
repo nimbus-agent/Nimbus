@@ -8367,11 +8367,10 @@ describe("I48 — revoked or taken-down extension code is never installed, updat
     replaceCurrentVerifications(db, [], await nimbusKey(), 2);
     expect(trustStoreCounts(db).revocations).toBe(1);
     // The store's only DELETE removes the CURRENT verifications (spec R7), never a block.
-    const store = stripStringLiterals(
-      stripComments(await read("packages/gateway/src/extensions/trust/trust-store.ts")),
-    );
+    // On the source WITH its string literals: the SQL lives in them.
     const raw = stripComments(await read("packages/gateway/src/extensions/trust/trust-store.ts"));
-    expect(store).not.toMatch(/\bUPDATE\s+trust_statement\b/i);
+    expect(raw).not.toMatch(/\bUPDATE\s+(?:OR\s+\w+\s+)?trust_statement\b/i);
+    expect(raw).not.toMatch(/\bINSERT\s+OR\s+REPLACE\s+INTO\s+trust_statement\b/i);
     expect(raw.match(/DELETE FROM trust_statement[^"`]*/g)).toEqual([
       "DELETE FROM trust_statement WHERE kind = 'publisher.verified' AND source IN ('feed', 'snapshot')",
     ]);
