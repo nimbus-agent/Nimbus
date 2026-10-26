@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793025889136,
+  "lastUpdate": 1793034725120,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ba54754432f3fb15d61020dff948b6ec8b4fdaf2",
-          "message": "fix(ci): accept repo as satisfying public_repo on WINGET_PAT, and add a scope-check script (#1131)\n\nFollow-up to #1130, which merged while this work was in flight — the\nsecond commit landed on a branch whose PR was already closed, so it\nnever reached `main`.\n\n## The bug #1130 introduced\n\n#1130 made `check-secret-health.ts` require the literal strings\n`public_repo` **and** `workflow` on `WINGET_PAT`. That combination\n**cannot be issued**: ticking `workflow` in the classic-PAT UI pulls in\nthe whole `repo` group, so every real token reports `repo, workflow` —\nnever `public_repo, workflow`.\n\nAs merged, the weekly health run would therefore report the **only\nobtainable** token as `insufficient`. Crying wolf at a healthy\ncredential is precisely how the real finding went unnoticed for six\ndays, so this is worth fixing rather than living with.\n\n## Changes\n\n- **`check-secret-health.ts`** — a `SCOPE_IMPLIED_BY` map records that\n`repo` subsumes `public_repo`, so a `repo, workflow` token classifies\n`ok`. The implication is one-way and deliberately narrow: it is not a\nplace to record \"close enough\", and it never excuses a genuinely absent\nscope. `workflow` missing is still `insufficient`, which is the case\nthat actually broke publishing.\n- **`check-winget-pat.ps1`** (new) — a maintainer script answering \"is\nthis token usable as `WINGET_PAT`?\" *before* it becomes a repo secret.\nAuthenticates it, prints and judges the granted scopes, and compares the\nsubmission fork against upstream; `-Sync` performs the fork sync — both\nthe operation that fails without `workflow` and the manual remediation\nonce it has. Read-only otherwise. The token comes from a no-echo prompt\nor `$env:WINGET_PAT`, is never printed, and never appears in a URL.\n- **`docs/ci-secrets.md`** — records that `repo, workflow` is the\nnarrowest obtainable shape, that the check accepts it, and that the\nresidual blast radius (full control of the owner's private repos, for a\njob touching only public ones) cannot be narrowed by scope — the only\nlever is whose account owns the token. Points at the new script from the\nminting instructions.\n\n## Verification\n\n- `bun test scripts/release/check-secret-health.test.ts` — 67 pass, 0\nfail. New cases: `repo, workflow` → `ok`; `repo` alone → `insufficient`;\nand the reverse implication is *not* granted (`public_repo` does not\nstand in for a required `repo`).\n- `bun run preflight:fast` — PASSED.\n- The script was exercised on both outcomes: a live token (`repo,\nworkflow` → OK + the breadth NOTE, exit 0) and a bogus one (401 → FAIL,\nexit 1).",
-          "timestamp": "2026-08-09T20:43:36+03:00",
-          "tree_id": "d826c1c5be276941592902a8aeea8ff1a3dfe207",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ba54754432f3fb15d61020dff948b6ec8b4fdaf2"
-        },
-        "date": 1786298091434,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.29215774999614,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.125603600005,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 165.79109750000242,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "88fe6de0c9d60208be4c4b77645cf5a3c8c465bc",
+          "message": "feat(trust): publishers can rotate keys; a revoked key taints the keys it rotated to (rotation, R3–R5, R8) (#1792)\n\nPhase 9.5 project 3 (marketplace trust layer), PR 3a of 5: **publisher\nkey rotation, gateway side.** A publisher can now move to a new key\nwithout users being asked. A leaked key can neither rotate itself to an\nattacker's key nor escape its revocation that way. Anything unvouched\nstays a conflict that only the owner can override, and the existing\nprompt states that override explicitly.\n\n## What changes\n\n- **Per-fingerprint publisher keys** (`extensions/publisher-keys.ts`):\n- The Vault keeps one key per (publisher, fingerprint) under\n`extension.publisher_keyfp.<fp>.<publisherId>`, beside the legacy\none-per-publisher key. A rotation never overwrites the legacy key, so\nolder rows keep verifying with it.\n- Every reader uses the key the extension's row recorded: install, the\nstartup signature pass (`computeRowSignatureReason`), the pre-spawn\nstep, and update apply (which now records the key it verified with).\n- Sibling extensions of one publisher on different keys therefore keep\nrunning. A row whose recorded key is absent fails closed instead of\nborrowing a sibling's.\n- **Rotation rules** (`extensions/trust/trust-keys.ts`,\n`rotation-graph.ts`; spec R3, R4, R5, R8):\n- **R4:** a key reached from a revoked key through `key.rotate`\nstatements is blocked, whatever the rotation's date, unless the current\nNimbus verification lists it. Vouching never clears a revocation of the\nkey itself.\n- **R4 surfaces as an I48 block:** it carries the revocation's statement\nid, so re-approval works unchanged.\n- **R3, R5:** a new key continues from a trusted one only along\nrotations that pass through no revoked key.\n- **R8:** two rotations from one key (a fork), or a cycle, give no\nautomatic continuity.\n- Nimbus vouching (the current `publisher.verified` entry) also counts\nas continuity.\n- **One decision at every door**\n(`extensions/trust/publisher-key-decision.ts`): it replaces the old \"any\ndifferent key is a conflict\" check (`vaultPublisherKeyConflicts`,\ndeleted) at registry install, the update detector, update apply and\nmigration accept.\n- A rotation- or Nimbus-vouched change installs and updates with no\nextra prompt, and is stated in the existing `extension.install` /\n`extension.autoUpdate` prompt (`publisherChange`,\n`publisherChangeNote`).\n- Anything else stays `ERR_REGISTRY_PUBLISHER_KEY_CONFLICT` /\n`publisher_key_conflict`, refused before any prompt; the message names\nthe new fingerprint.\n- **`--accept-publisher-key <fingerprint>`** on `nimbus extension\ninstall <id>` and `nimbus extension update <id>`:\n- It accepts exactly that key. A different fingerprint is refused, never\nread as acceptance, and a revoked key is never accepted.\n- The prompt states `publisher key CHANGED from <fp> to <fp>, not\nvouched for by any rotation or by Nimbus`.\n  - No new HITL type.\n\nNo migration, no new egress class. The publisher-side tooling (`nimbus\nextension key rotate|revoke`, `publish` accepting a rotated key) and the\nverified badge are PR 3b.\n\n## Verification\n\n- `security-invariants.test.ts`:\n- an unvouched key change, and a mismatched acceptance, are refused\nbefore the owner is asked;\n- a rotation from the trusted key installs, and once the old key is\nrevoked the new key is blocked (red-proved by disabling the taint);\n- a source pin that every door calls `publisherKeyDecision` and\n`vaultPublisherKeyConflicts` is gone.\n- The existing I43 and I44 source pins were updated for the new key\nreads and the decision.\n- Unit tests, by area:\n- **Rotation rules:** every rule in `trust-keys.test.ts`, including\nback-dated rotations, vouching limits, registry-scoped taint, forks,\ncycles and an intermediate revoked key.\n- **Vault keys:** round-trips, legacy fallback only on a matching\nfingerprint, dotted publisher ids, and evicting every key.\n- **Siblings:** a key-K, key-X and legacy-row mix passes the startup\npass.\n- **Doors:** registry install with rotation, fork, acceptance and\nmismatch; the detector across a rotation; a migration across a rotation;\nupdate RPC acceptance; CLI flags.\n- Gates: `bun run preflight:fast` passes.\n- Reviews: the plan was reviewed by the Antigravity CLI, and the review\nrecord is in the plan. Applied: revocation is checked first in\n`keyContinuity`, the accepted fingerprint travels through to apply, and\nstronger tests. The others were rejected with reasons, e.g. the taint\nwas already implemented and the boot backfill had already shipped.\n- **Branch review** (Antigravity). Three findings applied:\n- an update's continuity starts from the extension row's own recorded\nkey, so it can't fall back to a key only a sibling uses;\n  - a rotation loop back to the start counts as a fork;\n  - `decodeKey` tolerates `undefined`.\n\nFour rejected with reasons. Revocations do carry the publisher id: the\ncolumn is `NOT NULL`, and the taint tests prove it. A crash between the\nswap and recording the key fails closed, which is now stated as an I16\nbound.\n- **Full serial run** (`registry-format`, `gateway/src`, `cli/src`,\n`scripts`): 28,752 passed. The only failures are the five `pwsh`\ninstall-script tests, which fail the same way on `main` on this machine.\n\n## Not in this PR\n\nPR 3b: the publisher's `nimbus extension key rotate|revoke`, `publish`\naccepting a rotated key, and the verified badge. PR 4: maintainer\ntooling, `extension report`, provenance. PR 5: bake the trust feed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-26T16:59:02Z",
+          "tree_id": "9cb8e7a09808934a85a4d98786dfc51125188e5c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/88fe6de0c9d60208be4c4b77645cf5a3c8c465bc"
+        },
+        "date": 1793034719972,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 207.58841674999894,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 200.8286087999968,
             "unit": "ms"
           }
         ]
