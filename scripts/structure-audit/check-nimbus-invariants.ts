@@ -2029,6 +2029,31 @@ export function checkRunGrantWriters(files: readonly FileEntry[]): Violation[] {
   return out;
 }
 
+// ---- D37 (the trust store) -----------------------------------------------------------------------
+// `trust_statement` and `trust_feed_state` are named only by the trust store and their V76 DDL: what
+// may enter the store (authority, admission, the per-registry cap) and the feed's anti-rollback
+// floor are decided there, so no other code may write a statement or move the floor around them.
+// Same shape and same stated bound as D33(b): a dynamically composed identifier evades a text scan,
+// and capability confinement (only the store holds queries against the tables) is the real defense.
+// Tied to no invariant in trust layer PR 2a; PR 2b's enforcement invariant binds it.
+const D37_TRUST_TABLES_RE = new RegExp(
+  `${sqlTableReferenceRe("trust_statement").source}|${sqlTableReferenceRe("trust_feed_state").source}`,
+  "g",
+);
+const D37_TRUST_TABLES_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/trust/trust-store.ts",
+  "packages/gateway/src/index/trust-layer-v76-sql.ts",
+];
+
+export function checkTrustTableConfinement(files: readonly FileEntry[]): Violation[] {
+  return checkTableConfinement(
+    files,
+    D37_TRUST_TABLES_RE,
+    D37_TRUST_TABLES_ALLOWED,
+    "trust-tables-confined",
+  );
+}
+
 // ---- D36 (role-pack layer writers, I47) ----------------------------------------------------------
 // A role-pack layer changes the owner's effective config, so I47 lets `packs/pack-install.ts` write
 // one only after the LOCAL owner approved `pack.install` over the pack's exact `defaults` text. The
@@ -3058,6 +3083,9 @@ export const RULE_ANCHORS: readonly string[] = [
   // D36 — anchored on the pack RPC, which the rule SCANS (it is not allow-listed) and which sits
   // one call from the store's write half without naming it.
   "packages/gateway/src/ipc/pack-rpc.ts",
+  // D37 — anchored on the trust feed module, which the rule SCANS (it is not allow-listed) and which
+  // reaches the feed floor only through the store.
+  "packages/gateway/src/extensions/trust/trust-feed.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -3380,6 +3408,15 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D33(c) a run-grant writer (upsertRunGrant/deleteRunGrant) named outside the store and the approve/revoke path — a run grant could be created or removed without the owner's extension.run approval: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkTrustTableConfinement(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D37 trust_statement or trust_feed_state reached outside extensions/trust/trust-store.ts — a trust statement could be stored, or the trust feed's floor moved, without the store's authority and admission checks: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
