@@ -10,7 +10,8 @@ import { type RegistryIndex, registryIndexSigningBytes } from "./index-format.ts
 // PKCS#8 wrapper for a raw 32-byte Ed25519 seed.
 const PKCS8_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 
-function privateKeyFromSeed(seed: Uint8Array): KeyObject {
+/** A node:crypto private key for a raw 32-byte Ed25519 seed. */
+export function privateKeyFromSeed(seed: Uint8Array): KeyObject {
   if (seed.byteLength !== 32) throw new Error("Ed25519 seed must be 32 bytes");
   return createPrivateKey({
     key: Buffer.concat([PKCS8_ED25519_PREFIX, seed]),
