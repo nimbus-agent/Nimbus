@@ -395,6 +395,28 @@ describe("final review fixes", () => {
     expect(reasons(a)[0]).toContain("revoked");
   });
 
+  test("K->X, X->Y and revoke X in one batch: X->Y is refused whatever the ids (R3)", async () => {
+    const outcomes = new Set<string>();
+    for (const issuedAt of [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z",
+      "2026-03-01T00:00:00Z",
+      "2026-04-01T00:00:00Z",
+    ]) {
+      const batch = [await rotate(K, X, issuedAt), await rotate(X, Y, issuedAt), await revoke(X)];
+      const a = admitPublisherStatements(index(ACME), batch);
+      outcomes.add(
+        a.admitted
+          .map((st) =>
+            st.kind === "key.rotate" ? `rotate>${st.toKey === X.key ? "X" : "Y"}` : st.kind,
+          )
+          .sort(codeUnitCompare)
+          .join(","),
+      );
+    }
+    expect([...outcomes]).toEqual(["key.revoke,rotate>X"]);
+  });
+
   test("M3: a rotation back to an already-reached key (a loop) is refused", async () => {
     const idx = index(ACME, [await rotate(K, X)]);
     const a = admitPublisherStatements(idx, [await rotate(X, K)]);

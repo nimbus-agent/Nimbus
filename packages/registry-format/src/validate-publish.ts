@@ -282,6 +282,11 @@ function assertCurrentPublisherKey(
   if (standing.ok) return;
   const fp = publisherKeyFingerprint(publisher.key);
   const current = standing.current.map(publisherKeyFingerprint).join(", ");
+  if (standing.current.length === 0 && standing.reason !== "revoked") {
+    throw keyConflict(
+      `publisher ${publisher.id} has no current key in this registry (its key chain ends in a revoked key, or loops); no key can publish until the registry maintainer resolves it`,
+    );
+  }
   switch (standing.reason) {
     case "revoked":
       throw new RegistryError(

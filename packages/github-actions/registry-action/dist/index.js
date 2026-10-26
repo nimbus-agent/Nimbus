@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:78c33a25fc5624d8c8204be55dd994249a68566b6dfafcd2c56d3200da6c76f3
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:726f37db4c399f652cbd1ee40d428d47baee1bd31dd71d75ebc3e62aaa0e1615
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -9118,12 +9118,13 @@ function admitRevocationRound(run, reach) {
 }
 function admitRotationRound(run, reach) {
   let progressed = false;
+  const reachedNow = new Set;
   for (const [id, p] of run.rotations) {
     const r = p.s;
     if (!reach.has(r.fromKey) || fromRevoked(run, r))
       continue;
     run.rotations.delete(id);
-    if (reach.has(r.toKey)) {
+    if (reach.has(r.toKey) || reachedNow.has(r.toKey)) {
       run.skip(id, `key ${publisherKeyFingerprint(r.toKey)} is already reached: a loop or a repeat`);
       continue;
     }
@@ -9134,7 +9135,7 @@ function admitRotationRound(run, reach) {
     if (!hasRoom(run.budget, id, r.publisherId, run.skip))
       continue;
     run.state.rotations.push(r);
-    reach.add(r.toKey);
+    reachedNow.add(r.toKey);
     spend(run.budget);
     run.admitted.push(p);
     progressed = true;
@@ -9362,6 +9363,9 @@ function assertCurrentPublisherKey(publisher, signed) {
     return;
   const fp = publisherKeyFingerprint(publisher.key);
   const current = standing.current.map(publisherKeyFingerprint).join(", ");
+  if (standing.current.length === 0 && standing.reason !== "revoked") {
+    throw keyConflict(`publisher ${publisher.id} has no current key in this registry (its key chain ends in a revoked key, or loops); no key can publish until the registry maintainer resolves it`);
+  }
   switch (standing.reason) {
     case "revoked":
       throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_REVOKED", `publisher ${publisher.id}'s key ${fp} is revoked in this registry (itself or a key it was rotated from)`);

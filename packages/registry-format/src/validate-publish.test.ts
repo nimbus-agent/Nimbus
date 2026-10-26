@@ -696,6 +696,30 @@ describe("validatePublish", () => {
       expect(v.channel).toBe("beta");
     });
 
+    test("a chain that ends in a revoked key says so, instead of naming an empty current key", async () => {
+      const signed = await indexOf(
+        { "acme/echo": entryFor("acme/echo", "acme", OTHER_KEY, ["0.9.0"]) },
+        [await rotateKey(OTHER_SEED, KEY), await revokeKey(SEED)],
+      );
+      const third = new Uint8Array(32).fill(11);
+      const thirdKey = Buffer.from(publicKeyFromSeed(third)).toString("base64");
+      const manifest = await signedManifest({ seed: third });
+      const e = await refusal(
+        validatePublish(
+          await candidate({
+            manifest,
+            req: request({ publisherFingerprint: publisherKeyFingerprint(thirdKey) }),
+          }),
+          signed,
+          NS,
+          work,
+        ),
+      );
+      expect(e.code).toBe("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT");
+      expect(e.detail).toContain("has no current key");
+      expect(e.detail).not.toContain("superseded by ;");
+    });
+
     test("a brand-new publisher with no statements is accepted", async () => {
       expect((await validatePublish(await candidate(), await indexOf(), NS, work)).newId).toBe(
         true,

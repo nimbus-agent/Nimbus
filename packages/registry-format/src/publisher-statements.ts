@@ -343,14 +343,20 @@ function admitRevocationRound(run: Run, reach: ReadonlySet<string>): boolean {
   return progressed;
 }
 
-/** Rotations from a reached, unrevoked key to a key not reached yet (a loop is refused). */
-function admitRotationRound(run: Run, reach: Set<string>): boolean {
+/**
+ * Rotations from a reached, unrevoked key to a key not reached yet (a loop is refused). `reach` is
+ * this round's snapshot: a key reached in this round becomes a source only in the NEXT round, after
+ * that round's revocations, so a rotation from a key revoked in the same batch is refused whatever
+ * the statement ids (R3).
+ */
+function admitRotationRound(run: Run, reach: ReadonlySet<string>): boolean {
   let progressed = false;
+  const reachedNow = new Set<string>();
   for (const [id, p] of run.rotations) {
     const r = p.s as KeyRotateStatement;
     if (!reach.has(r.fromKey) || fromRevoked(run, r)) continue;
     run.rotations.delete(id);
-    if (reach.has(r.toKey)) {
+    if (reach.has(r.toKey) || reachedNow.has(r.toKey)) {
       run.skip(
         id,
         `key ${publisherKeyFingerprint(r.toKey)} is already reached: a loop or a repeat`,
@@ -366,7 +372,7 @@ function admitRotationRound(run: Run, reach: Set<string>): boolean {
     }
     if (!hasRoom(run.budget, id, r.publisherId, run.skip)) continue;
     run.state.rotations.push(r);
-    reach.add(r.toKey);
+    reachedNow.add(r.toKey);
     spend(run.budget);
     run.admitted.push(p);
     progressed = true;
