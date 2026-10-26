@@ -967,7 +967,7 @@ Both are in `FORBIDDEN_OVER_LAN` (I5) and in Tauri `ALLOWED_METHODS` (I7 — the
 
 ### Extension Marketplace — Tauri UI
 
-The Tauri desktop application ships an Extension Marketplace panel. It is not a cloud service: a registry is a static folder or website, and all installation, validation, and loading is performed by the local Gateway. The registry client (adding registries, search, install, updates) lands in the next PR; what exists today is the signed registry format and the offline tooling that builds one.
+The Tauri desktop application ships an Extension Marketplace panel. It is not a cloud service: a registry is a static folder or website, and all installation, validation, and loading is performed by the local Gateway. The registry client (adding registries, search, install, updates) shipped for the CLI on 2026-10-18; see [§ Extension registry client](#extension-registry-client). The desktop panel does not search or install from registries yet; it offers the Readwise migration ([§ Connector migration](#connector-migration)).
 
 **Registry layout.**
 
@@ -1883,9 +1883,22 @@ environment**. See [Model Router](#model-router-local-llm) above for how a route
 
 ## Spine S3 Subsystems — Open Surface
 
-S3 opens the Gateway to other agents and to third-party code. Three slices have shipped: the extension
-runtime's install gate (PR 1 of 4, 2026-10-11) and run grants (PR 2 of 4, 2026-10-16), both recorded in
-[`CHANGELOG.md`](./CHANGELOG.md), and the MCP capture sink (below).
+S3 opens the Gateway to other agents and to third-party code. It is the active slot, and it closes when
+all seven Phase 9.5 projects have shipped ([`roadmap.md` § Phase 9.5](./roadmap.md#phase-95--marketplace-registry)).
+Shipped so far, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
+
+- **The extension runtime, 4 of 4** (2026-10-11 → 2026-10-17): the install gate, run grants, the
+  sandboxed runtime and `--model` access ([§ Extension run grants](#extension-run-grants),
+  [§ Extension runtime](#extension-runtime), [§ Extension sync](#extension-sync)).
+- **The MCP capture sink, 3 of 3** (2026-10-12 → 2026-10-15; [§ MCP capture sink](#mcp-capture-sink)).
+- **The registry**: the client (2026-10-18), publishing (2026-10-23) and the Readwise unbundling pilot
+  ([§ Extension registry client](#extension-registry-client), [§ Connector migration](#connector-migration)).
+- **The trust layer, PR 1 and PR 2a of 5** (2026-10-26; [§ Trust layer](#trust-layer)): statements are
+  stored and the feed is fetched, and nothing is enforced yet.
+- **Role packs, 5 of 5** (2026-10-22 → 2026-10-26). They are config layers rather than an S3 subsystem of
+  their own, so they are described where they act: [§ Layered config](#layered-config),
+  [§ Source kinds](#source-kinds-decisions-and-glossary-inputs) and the desktop notes in
+  [§ Tauri Desktop — UI behaviour notes](#tauri-desktop--ui-behaviour-notes).
 
 ### Extension run grants
 
