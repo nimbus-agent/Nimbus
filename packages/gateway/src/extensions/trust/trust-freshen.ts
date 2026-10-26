@@ -66,9 +66,10 @@ export async function freshenTrustFeed(
 /** The line an install prompt carries when the feed could not be refreshed; `undefined` otherwise. */
 export function trustFeedNote(outcome: FreshenOutcome): string | undefined {
   if (outcome.status !== "stale") return undefined;
-  const age =
-    outcome.ageDays === null
-      ? ""
-      : `; it was last updated ${outcome.ageDays} day${outcome.ageDays === 1 ? "" : "s"} ago`;
+  let age = "";
+  if (outcome.ageDays !== null) {
+    const unit = outcome.ageDays === 1 ? "day" : "days";
+    age = `; it was last updated ${outcome.ageDays} ${unit} ago`;
+  }
   return `the trust feed could not be refreshed${age}, so a revocation published since then may not have reached this machine`;
 }

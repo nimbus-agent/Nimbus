@@ -404,6 +404,24 @@ export async function approveMigratedExtensionRun(
   });
 }
 
+/**
+ * I48: the blocks the approval must show and acknowledge. A migration has no prompt of its own to
+ * show them in, so with `prompting` false any block refuses before anything is granted.
+ */
+function currentTrustBlocks(
+  db: Database,
+  row: ExtensionRow,
+  manifest: ExtensionManifest,
+  prompting: boolean,
+): TrustBlock[] {
+  const blocks = blocksForInstalled(db, row, manifest);
+  if (!prompting && blocks.length > 0) {
+    const refusal = trustBlockError({ extensionId: row.id, version: row.version }, blocks);
+    throw new ExtensionRunGrantError(refusal.code, refusal.message);
+  }
+  return blocks;
+}
+
 /** Before the row lookup and any prompt: with the runtime off an approval could never be used. */
 function assertRuntimeEnabled(deps: { readonly runtimeEnabled: boolean }): void {
   if (!deps.runtimeEnabled) {
@@ -462,13 +480,7 @@ async function approveRun(
     assertMigrationBinding(row.id, opts.migratedFrom, binding, credentials);
   }
   const credentialsJson = serializeRunCredentials(credentials);
-  // I48: every current block is shown and acknowledged, or nothing is granted. A migration has no
-  // prompt of its own to show them in, so a blocked extension is never migrated.
-  const trustBlocks = blocksForInstalled(deps.db, row, manifest);
-  if (opts.consent === null && trustBlocks.length > 0) {
-    const refusal = trustBlockError({ extensionId: row.id, version: row.version }, trustBlocks);
-    throw new ExtensionRunGrantError(refusal.code, refusal.message);
-  }
+  const trustBlocks = currentTrustBlocks(deps.db, row, manifest, opts.consent !== null);
   const trustAckJson = acknowledgementJson(trustBlocks);
   const modelAccess = opts.modelAccess;
   const base = { id: row.id, serviceId, version: row.version, treeDigest, grants, modelAccess };

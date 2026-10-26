@@ -195,7 +195,9 @@ export function unacknowledged(
 
 /** The canonical acknowledgement for `blocks`: their sorted statement ids, as JSON. */
 export function acknowledgementJson(blocks: readonly TrustBlock[]): string {
-  return JSON.stringify([...new Set(blocks.map((b) => b.statementId))].sort());
+  return JSON.stringify(
+    [...new Set(blocks.map((b) => b.statementId))].sort((a, b) => a.localeCompare(b)),
+  );
 }
 
 /**

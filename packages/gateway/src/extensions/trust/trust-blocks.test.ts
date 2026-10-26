@@ -172,7 +172,7 @@ describe("blocksFor", () => {
     expect(blocks.map((b) => b.kind)).toEqual(["extension.takedown", "key.revoke"]);
     const reason = blocks[1]?.reason ?? "";
     expect(reason.startsWith("a b c")).toBe(true);
-    expect(reason.length).toBe(MAX_REASON_CHARS);
+    expect(reason).toHaveLength(MAX_REASON_CHARS);
     expect([...reason].some((c) => c.charCodeAt(0) < 0x20)).toBe(false);
   });
 
