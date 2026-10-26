@@ -159,20 +159,23 @@ async function completeExtensionInstallAfterCopy(options: {
   const treeDigest = computeExtensionTreeDigest(options.dest);
 
   const now = Date.now();
-  insertExtensionRow(options.db, {
-    id: options.manifest.id,
-    version: options.manifest.version,
-    install_path: options.dest,
-    manifest_hash: manifestHex,
-    entry_hash: entryHex,
-    tree_digest: treeDigest,
-    enabled: 1,
-    installed_at: now,
-    last_verified_at: now,
-  });
-  if (verifiedKeyFingerprint !== null && readIndexedUserVersion(options.db) >= 76) {
-    setExtensionPublisherKeyFingerprint(options.db, options.manifest.id, verifiedKeyFingerprint);
-  }
+  // One transaction: a signed row never exists without the key that verified it.
+  options.db.transaction(() => {
+    insertExtensionRow(options.db, {
+      id: options.manifest.id,
+      version: options.manifest.version,
+      install_path: options.dest,
+      manifest_hash: manifestHex,
+      entry_hash: entryHex,
+      tree_digest: treeDigest,
+      enabled: 1,
+      installed_at: now,
+      last_verified_at: now,
+    });
+    if (verifiedKeyFingerprint !== null && readIndexedUserVersion(options.db) >= 76) {
+      setExtensionPublisherKeyFingerprint(options.db, options.manifest.id, verifiedKeyFingerprint);
+    }
+  })();
 
   return {
     id: options.manifest.id,

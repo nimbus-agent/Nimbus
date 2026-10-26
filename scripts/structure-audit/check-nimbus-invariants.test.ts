@@ -3192,6 +3192,8 @@ describe("D37 — the trust tables are named only by the trust store and their D
     ["a statement write", "INSERT INTO trust_statement (statement_id) VALUES (?)"],
     ["a statement delete", "DELETE FROM trust_statement WHERE kind = 'key.revoke'"],
     ["a floor update", "UPDATE trust_feed_state SET last_sequence = 0"],
+    ["CREATE TABLE IF NOT EXISTS", "CREATE TABLE IF NOT EXISTS trust_statement (id TEXT)"],
+    ["DROP TABLE IF EXISTS", "DROP TABLE IF EXISTS trust_feed_state"],
     ["a quoted name", 'SELECT 1 FROM "trust_feed_state"'],
     ["a schema-qualified name", "SELECT 1 FROM main.trust_statement"],
   ])("FAILS on %s from anywhere else", (_n, sql) => {

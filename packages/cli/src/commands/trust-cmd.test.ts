@@ -74,6 +74,25 @@ describe("formatTrustStatus", () => {
     expect(text).toContain("(1 day ago)");
     expect(text).toContain("verified publishers 3");
   });
+
+  test("unknown fields read as '?', plural ages, and no sequence yet", () => {
+    const text = formatTrustStatus({
+      ...configured,
+      url: null,
+      rootFingerprint: null,
+      sequence: null,
+      lastFetchedAt: null,
+      ageDays: 3,
+      intervalHours: null,
+    });
+    expect(text).toContain("Trust feed: ?");
+    expect(text).toContain("Root fingerprint: ?");
+    expect(text).toContain("Sequence: none accepted yet");
+    expect(text).toContain("Last updated: never (3 days ago)");
+    expect(text).toContain("Checked every: ?");
+    const noAge = formatTrustStatus({ ...configured, ageDays: null });
+    expect(noAge).not.toContain("ago");
+  });
 });
 
 describe("formatTrustRefresh", () => {
@@ -103,6 +122,13 @@ describe("runTrust", () => {
   test("a refused refresh exits 1", async () => {
     const h = harness({ "trust.refresh": { status: "refused", code: "X", detail: "y" } });
     await expect(runTrust(["refresh"], h.deps)).rejects.toEqual(new Exit(1));
+  });
+
+  test("refresh --json prints the result as JSON", async () => {
+    const r = { status: "accepted", sequence: 5, verified: 0 };
+    const h = harness({ "trust.refresh": r });
+    await runTrust(["refresh", "--json"], h.deps);
+    expect(JSON.parse(h.out.join(""))).toEqual(r);
   });
 
   test("an unchanged refresh exits 0", async () => {

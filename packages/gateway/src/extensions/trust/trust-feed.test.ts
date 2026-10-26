@@ -292,8 +292,60 @@ describe("TrustFeedDaemon", () => {
       firstRefreshDelayMs: 1,
     });
     daemon.start();
+    daemon.start(); // a second start is a no-op: still one first refresh
     await new Promise((r) => setTimeout(r, 30));
     daemon.stop();
     expect(calls).toBe(1);
+  });
+
+  test("stop before start is harmless; the default first delay has not elapsed at once", async () => {
+    let calls = 0;
+    const daemon = new TrustFeedDaemon({
+      refresh: () => {
+        calls++;
+        return Promise.resolve({ status: "not_configured" });
+      },
+      intervalHours: 1,
+      logger,
+    });
+    daemon.stop();
+    daemon.start();
+    await new Promise((r) => setTimeout(r, 10));
+    daemon.stop();
+    expect(calls).toBe(0);
+  });
+
+  test("a non-Error rejection is refused with its text; outcomes are logged by kind", async () => {
+    const info: string[] = [];
+    const warn: string[] = [];
+    const results: TrustFeedResult[] = [
+      {
+        status: "accepted",
+        sequence: 2,
+        recorded: { inserted: 1, alreadyKnown: 0, refused: 0, capped: 0 },
+        verified: 0,
+      },
+      { status: "unchanged", sequence: 2 },
+    ];
+    let rejectNext = true;
+    const daemon = new TrustFeedDaemon({
+      refresh: () => {
+        if (rejectNext) {
+          rejectNext = false;
+          return Promise.reject("plain string");
+        }
+        return Promise.resolve(results.shift() as TrustFeedResult);
+      },
+      intervalHours: 1,
+      logger: {
+        info: (_o: unknown, msg: string) => void info.push(msg),
+        warn: (_o: unknown, msg: string) => void warn.push(msg),
+      } as never,
+    });
+    expect(await daemon.refreshNow()).toMatchObject({ status: "refused", detail: "plain string" });
+    expect((await daemon.refreshNow()).status).toBe("accepted");
+    expect((await daemon.refreshNow()).status).toBe("unchanged");
+    expect(warn).toEqual(["trust feed refresh refused"]);
+    expect(info).toEqual(["trust feed accepted"]);
   });
 });

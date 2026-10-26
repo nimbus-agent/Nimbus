@@ -1868,7 +1868,7 @@ export function checkMediaGrantStoreConfinement(files: readonly FileEntry[]): Vi
 function sqlTableReferenceRe(table: string): RegExp {
   const ident = `(?:[\`"[]?[A-Za-z_]\\w*[\`"\\]]?\\.)?[\`"[]?${table}[\`"\\]]?(?![A-Za-z0-9_])`;
   return new RegExp(
-    `\\b(?:(?:FROM|INTO|UPDATE(?:\\s+OR\\s+\\w+)?|TABLE|JOIN|REFERENCES)\\s+|FROM\\s+[^;()]*?,\\s*|CREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[\\w"\`[\\].]+\\s+ON\\s+|CREATE\\s+(?:TEMP(?:ORARY)?\\s+)?TRIGGER\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[\\w"\`[\\].]+\\s+[A-Za-z_,\\s]*?\\bON\\s+)${ident}`,
+    `\\b(?:(?:FROM|INTO|UPDATE(?:\\s+OR\\s+\\w+)?|JOIN|REFERENCES)\\s+|TABLE\\s+(?:IF\\s+(?:NOT\\s+)?EXISTS\\s+)?|FROM\\s+[^;()]*?,\\s*|CREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[\\w"\`[\\].]+\\s+ON\\s+|CREATE\\s+(?:TEMP(?:ORARY)?\\s+)?TRIGGER\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[\\w"\`[\\].]+\\s+[A-Za-z_,\\s]*?\\bON\\s+)${ident}`,
     "i",
   );
 }
