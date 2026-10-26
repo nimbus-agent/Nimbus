@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792991468554,
+  "lastUpdate": 1793008572422,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4778ad8ace48ef411beff0d613d1e6023db08f88",
-          "message": "docs(user-guide): add screenshot of HITL popup window (#1124)\n\nThis PR addresses the issue of adding a valid screenshot for the HITL\npopup window in the `hitl-and-safety.mdx` documentation.\n\n* Wrote a Playwright script to launch the local UI (`/hitl-popup`) and\ninject a mock `file.create` action.\n* Captured a screenshot showing the `file.create` action, the path\n`/Reports/Q3-summary.md`, and the Approve/Reject buttons.\n* Updated `hitl-and-safety.mdx` to import and render the screenshot\nusing Astro's `<Image />` component.\n* Verified documentation builds successfully using Astro.\n\n---\n*PR created automatically by Jules for task\n[14006654769008953233](https://jules.google.com/task/14006654769008953233)\nstarted by @asafgolombek*\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated the HITL and safety guide to use the site’s optimized image\ncomponent for the popup illustration.\n  * Improved image asset handling in the documentation.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-09T08:39:49+03:00",
-          "tree_id": "e5c2cb2e4d3097fd39023c3d399983eaa1c2e064",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4778ad8ace48ef411beff0d613d1e6023db08f88"
-        },
-        "date": 1786255341889,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.5453119500009,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.3044457000084,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 206.42589869999682,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c0beb97f98c322377476be99f561b79d955a1bb",
+          "message": "feat(registry): trust-layer formats and storage; refuse an equivocating registry index (#1783)\n\nPhase 9.5 project 3, the marketplace trust layer, PR 1 of 5. It adds the\nformats and storage that the next PRs build on, plus one behaviour\nchange that is live now.\n\n## Live now: an equivocating registry index is refused\n\nA registry index re-served at a sequence the gateway already accepted,\nwith **different content**, is now refused with\n`ERR_REGISTRY_EQUIVOCATION`. This is what a force-pushed `gh-pages`\nproduces. Before this PR it was accepted, the bound project 2 left open.\n\n- Both registry floors store the SHA-256 of the index's signing bytes\nalongside `last_sequence` (`extension_registry.last_index_sha256`,\n`builtin_registry_state.last_index_sha256`).\n- The check happens twice: once before the write, and again in the\nconditional write's `WHERE` clause, so a racing fetch cannot swap the\ndocument either.\n- An unchanged refresh (same sequence, same document) still succeeds.\n- A row added before V76 has no stored hash; it adopts the first\ndocument it accepts.\n- `registry add` records the document it showed the owner.\n- A registry that hits this recovers by signing again at a higher\nsequence.\n\n## Formats (`@nimbus-dev/registry-format`, not read by the gateway yet)\n\n- **Trust statements:**\n- `key.revoke`: signed by the revoked key itself, the Nimbus trust root,\nor a registry root.\n  - `extension.takedown`: signed by a root only.\n  - `key.rotate`: signed by its `fromKey`.\n- `publisher.verified`: signed by the Nimbus root **only**; a registry\nroot cannot vouch for a publisher.\n- `verifyTrustStatement` returns the signer's role (`publisher` /\n`nimbus` / `registry`) or `null`.\n  - A statement's id is the SHA-256 of its signed bytes.\n- **Trust feed (`trust.json`):** parse, sign, pinned verify and digest.\nA feed with two `publisher.verified` entries for one publisher is\nrefused. A bad entry is dropped and counted, and an unknown statement\nkind is skipped and counted.\n- **Registry index:** two optional fields, `statements` and `reportUrl`,\nwhich older clients ignore.\n- **Refactor:** the Ed25519 seed helper moved to a leaf module\n(`ed25519-seed.ts`) so the three signers share it without an import\ncycle.\n\n## Schema V76 (inert in this PR except the hash floors)\n\n`trust_feed_state`, `trust_statement`,\n`extension.publisher_key_fingerprint` and\n`extension_run_grant.trust_ack_json`. The `trust_statement` CHECK\nrequires a registry scope on registry-signed rows and forbids it on all\nother rows.\n\n## Not in this PR\n\nFeed fetching, blocking revoked or taken-down code, re-approval,\nrotation, the verified badge, `extension report`, provenance. Those are\nPRs 2–4. PR 5 bakes in the feed after the owner creates the trust\nrepository and its key.\n\nNo new invariant, no new egress class, no new IPC method, no CLI change.\n\n## Verification\n\n- **New tests:**\n  - Golden vectors for statement and feed signatures.\n- The authority table, including the Nimbus-only rule for\n`publisher.verified`.\n  - The V76 CHECK, including half-filled scopes.\n- Equivocation for owner and built-in registries, the race through the\nfailed-write branch, and the no-change refresh. These were red-proved by\nreverting the guard.\n- **Test fixtures:** those that re-publish a registry now bump its\nsequence, as a real maintainer does.\n- **Runs:**\n  - `bun run preflight:fast` passes.\n- Whole `packages/gateway/src` + `scripts` + `registry-format`: 23,887\npass. The 5 failures are the `pwsh` install-script tests, which fail\nidentically on `main` on this machine because `pwsh` isn't on PATH.\n- Registry / migration / readwise / publish e2e pass with the sandbox\nhelper built.\n- **Action bundle:** the registry action's bundle was rebuilt with Bun\n1.4.3, since it bundles `registry-format`.\n- **Review:** spec, plan and branch were reviewed by the Antigravity CLI\nand a builder-check subagent; the review records are on\n`dev/asaf/trust-layer`, not in this PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Registries now reject changed content served under a sequence number\nalready accepted by the client. Identical content at that sequence\nremains valid, and a higher sequence can update the registry.\n* **Documentation**\n* Updated registry hosting guidance to explain how clients handle\nchanged indexes and the limits of detecting changes they have not\npreviously seen.\n* Documented the initial signed trust-feed and registry trust-statement\nformats. Trust-feed consumption and related user-facing trust indicators\nare not included in this release.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-26T09:37:51Z",
+          "tree_id": "3170c70ebd5d9b94061272e09b821cf6a80f9e64",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4c0beb97f98c322377476be99f561b79d955a1bb"
+        },
+        "date": 1793008569373,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 169.9142224500014,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 165.76624719999927,
             "unit": "ms"
           }
         ]
