@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793008572422,
+  "lastUpdate": 1793017103614,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "99f43c81647a021aee1f18101aaf312bb6193efc",
-          "message": "docs(user-guide): 📸 add Connectors panel screenshot (#1125)\n\nUpdates the connect-your-first-service documentation to align with the\ncurrent Connectors panel UI terminology and includes an accurate\nscreenshot of the connected Google Drive row. Replaces the previous\n`TODO: screenshot` request by accurately providing the requested image\nand making the documentation reflect the \"Enabled\" row UI instead of a\nconnector tile, ensuring clarity for users.\n\n---\n*PR created automatically by Jules for task\n[1631211466899876916](https://jules.google.com/task/1631211466899876916)\nstarted by @asafgolombek*\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-09T13:02:57+03:00",
-          "tree_id": "d6fc77ba251385602833ec5b8acbeca730daa233",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/99f43c81647a021aee1f18101aaf312bb6193efc"
-        },
-        "date": 1786270472641,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 324.5094460000015,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 323.48620175001054,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 165.76624719999927,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ad7cb3c885fe81d597f3cd644ad8e79eb61f4cda",
+          "message": "feat(trust): store trust statements, fetch the trust feed on a timer, nimbus trust status|refresh (#1785)\n\nPhase 9.5 project 3 (marketplace trust layer), PR 2a of 5. The gateway\nnow **accepts and stores** trust statements: publisher-key revocations,\nextension takedowns, key rotations and Nimbus publisher verifications.\n**Nothing is blocked yet.** Blocking is PR 2b.\n\n## What changes\n\n- **Trust store** (`extensions/trust/trust-store.ts`, the only code that\nnames the two V76 trust tables, enforced by the new static rule\n**D37**):\n- A statement's authority comes from the root of the document that\ncarried it. Statements from the feed are checked against the Nimbus\ntrust root; statements in a registry index are checked against that\nregistry's pinned root and stored with that registry as their scope.\n- Each statement is stored once, keyed by the hash of its signed bytes.\n- Blocks (revocations and takedowns) accumulate and are never removed.\nPublisher verifications are different: each accepted feed replaces the\nprevious set.\n- A publisher-signed statement from a registry is admitted only when\nthat registry lists the publisher with the key it concerns (for a\nrotation, either the old or the new key), or when an installed extension\nwas verified with that key.\n- At most 1,000 publisher-signed statements are kept per registry. The\nregistry's own root-signed blocks are never capped, so filling the cap\ncan never suppress a revocation.\n- **Statements from registries:** every pinned, verified registry index\nnow has its `statements` stored. `registry add` (unpinned) stores\nnothing, and a store failure never fails the index fetch.\n- **The Nimbus trust feed** (`trust.json`):\n- It is fetched through `fetchRegistryBytes` under the reserved name\n`nimbus-trust`, which `registry add` now refuses. So air gap refuses it,\nand each remote request appends one I29 `registry`-class egress row.\n- It is verified against the pinned trust root. A lower sequence is\nrefused with `ERR_TRUST_FEED_ROLLBACK`, and different content at an\nalready-accepted sequence with `ERR_TRUST_FEED_EQUIVOCATION`.\n- The floor, the statements and the verifications commit in one\ntransaction.\n- A snapshot of the feed baked into the release is applied at boot\nwithout any network access. It anchors the floor but never counts as a\nfetch.\n- **This build bakes no feed** (`BUILTIN_TRUST_FEED` and\n`BUILTIN_TRUST_SNAPSHOT` are `null` until PR 5), so nothing is fetched\nand no egress row is written.\n- **Timer:** the feed is fetched a few seconds after start, then every\n`[extensions] trust_check_interval_hours` (default 1, range 1–24). A\ndemo-rooted gateway fetches nothing.\n- **Verifying keys:** installs now write\n`extension.publisher_key_fingerprint`. Existing installs are backfilled\nfrom the Vault at boot, before the extension spawn gate opens.\n- **Commands:**\n- `trust.status` / `trust.refresh` and `nimbus trust status|refresh` are\nCLI-only. They are LAN-forbidden, `refresh` is refused on a demo root,\nand neither is on the Tauri allowlist.\n- `nimbus doctor` warns when a configured feed is more than 7 days old\nor was never fetched.\n\nNo new invariant, no migration (V76 shipped in PR 1), and no new egress\nclass.\n\n## Verification\n\n- **Real-socket e2e:** `test/e2e/trust.e2e.test.ts` proves both\ndispatcher layers route `trust.*`.\n- **Red-proved tests:**\n  - registry-index ingestion;\n- D37, against a reference planted in `trust-feed.ts` in the real tree;\n  - the equivocation, rollback and snapshot cases.\n- **Gates:** `bun run preflight:fast` passes.\n- **Full serial run** of `registry-format`, `gateway/src`, `cli/src` and\n`scripts`: 28,629 pass. That run surfaced four real failures, all fixed\nin `e63563a4`: the I41 and I43 source pins, the CLI lifecycle rule, and\nthe Readwise acceptance test. The failures left are the five `pwsh`\nscript tests, which fail the same way on `main` on this machine, plus\ntwo snapshot tests that ran while I was editing them; those two pass\nwhen re-run.\n- **Reviews:** the plan and the finished branch were reviewed by the\nAntigravity CLI. The branch review found five defects, all fixed in\n`c1a8d812`:\n  - feed acceptance wasn't atomic;\n- a boot snapshot reset the \"last fetched\" time, which silenced the\nstaleness warning;\n- a fetch-attempt write could reject a function that promises never to;\n  - index ingestion was only partly inside its try/catch;\n  - snapshot verifications were labelled as coming from the feed.\n- **After review** (`271f347e`): CodeRabbit's two findings are fixed.\nThe extension row and its verifying-key fingerprint now commit in one\ntransaction. The shared SQL table matcher (D32–D34, D37) now catches\n`CREATE TABLE IF NOT EXISTS` and `DROP TABLE IF EXISTS`; that fix is\nred-proved. New tests bring `trust-feed-boot.ts`, `trust-feed-daemon.ts`\nand `trust-cmd.ts` over the coverage floor.\n\n## Not in this PR\n\nBlocking revoked or taken-down code at install, update and spawn; the\n`blocked` run state; re-approval with acknowledgement; the \"fresh before\nacting\" feed refresh; invariant I48 (PR 2b). Rotation and the verified\nbadge (PR 3), maintainer tooling, `extension report` and provenance (PR\n4), and baking the feed (PR 5).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-26T12:04:37Z",
+          "tree_id": "21c3106fc3743550ac514e79063a9050fd8256c1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ad7cb3c885fe81d597f3cd644ad8e79eb61f4cda"
+        },
+        "date": 1793017099883,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 283.0839127000028,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 282.60302970000373,
             "unit": "ms"
           }
         ]
