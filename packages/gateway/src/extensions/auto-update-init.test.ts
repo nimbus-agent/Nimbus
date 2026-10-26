@@ -12,7 +12,7 @@ import { MockVault } from "../vault/mock.ts";
 import { createAutoUpdateRuntime, withUpdateAppliedHook } from "./auto-update-init.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
-import { writePublisherKey } from "./publisher-keys.ts";
+import { evictPublisherKey, writePublisherKey } from "./publisher-keys.ts";
 import {
   buildTestRegistry,
   PUBLISHER_SEED,
@@ -538,6 +538,8 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     await runtime.deps.forcePoll();
     const cached = runtime.deps.cache.get(ID);
     if (cached === undefined) throw new Error("no update detected");
+    // The Vault no longer trusts the index's key at all (an extra trusted key would not matter).
+    await evictPublisherKey(vault, "acme");
     await writePublisherKey(vault, "acme", generateEd25519Keypair().pubkey);
     await expect(runtime.deps.performUpgrade(cached)).rejects.toThrow(
       /^signature_failed: .*ERR_REGISTRY_PUBLISHER_KEY_CONFLICT/,

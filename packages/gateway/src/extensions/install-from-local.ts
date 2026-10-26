@@ -298,6 +298,16 @@ export type ExtensionInstallApprovalRequest = {
    */
   readonly sourceRegistry?: string;
   readonly rootFingerprint?: string;
+  /**
+   * Set when the publisher's key differs from every key the Vault trusts (marketplace trust layer,
+   * rotation): fingerprints only, and what vouched for the change. Never `*Key`-named (redaction).
+   */
+  readonly publisherChange?: {
+    readonly from: readonly string[];
+    readonly to: string;
+    readonly via: string;
+  };
+  readonly publisherChangeNote?: string;
 };
 
 /** Resolves `true` only when the local owner approved; anything else installs nothing. */

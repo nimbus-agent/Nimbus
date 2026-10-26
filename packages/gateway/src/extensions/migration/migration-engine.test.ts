@@ -20,8 +20,9 @@ import {
 } from "node:fs";
 import os, { tmpdir } from "node:os";
 import { join } from "node:path";
-import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import { publisherKeyFingerprint, signTrustStatement } from "@nimbus-dev/registry-format";
 import pino from "pino";
+import nacl from "tweetnacl";
 
 import { listExtensions, setExtensionEnabled } from "../../automation/extension-store.ts";
 import { createExtensionCredentialsResolver } from "../../connectors/extension-sync/extension-identity.ts";
@@ -43,6 +44,7 @@ import type { BuiltinRegistryConfig } from "../registry/builtin-registry.ts";
 import { installVerifiedRegistryPackage } from "../registry/install-from-registry.ts";
 import { deleteRunGrant, getRunGrant, upsertRunGrant } from "../run-grant-store.ts";
 import { computeExtensionTreeDigest } from "../tree-digest.ts";
+import { recordTrustStatements } from "../trust/trust-store.ts";
 import {
   awaitingApprovalReason,
   createMigrationEngine,
@@ -2213,6 +2215,28 @@ describe("Task 7.4 (C11): accept re-checks the Vault's publisher key before the 
     expect(getRunGrant(db, EXT)).toBeNull();
     expect(Buffer.from((await readPublisherKey(vault, "nimbus")) ?? []).equals(other)).toBe(true);
     expect(getMigration(db, id)?.state).toBe("failed");
+  });
+
+  test("a key the publisher rotated to from the Vault's key is no conflict (spec R5)", async () => {
+    const e = engine();
+    await e.evaluate();
+    const oldSeed = Uint8Array.from({ length: 32 }, (_, i) => i + 77);
+    const oldKey = Buffer.from(nacl.sign.keyPair.fromSeed(oldSeed).publicKey);
+    await writePublisherKey(vault, "nimbus", oldKey);
+    const rotation = await signTrustStatement(
+      {
+        kind: "key.rotate",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: oldKey.toString("base64"),
+        publisherId: "nimbus",
+        fromKey: oldKey.toString("base64"),
+        toKey: entry.publisherKey,
+      },
+      oldSeed,
+    );
+    const feedRoot = Buffer.from(new Uint8Array(32).fill(9)).toString("base64");
+    recordTrustStatements(db, [rotation], { kind: "feed", nimbusRootKey: feedRoot }, 1);
+    expect((await e.accept(onlyRow().id, consentThat(true, []))).state).toBe("approved");
   });
 
   test("the same key already in the Vault is no conflict", async () => {

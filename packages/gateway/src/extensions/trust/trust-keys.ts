@@ -67,9 +67,11 @@ export function keyContinuity(
   trusted: readonly string[],
   candidate: string,
 ): Continuity {
+  // Revocation first: a revoked key is never a continuation, even one the Vault already trusts or
+  // the first one a publisher is seen with (I48 refuses it at every door as well).
+  if (isKeyRevoked(db, ctx, candidate)) return { ok: false, reason: "revoked" };
   if (trusted.includes(candidate)) return { ok: true, via: "trusted" };
   if (trusted.length === 0) return { ok: true, via: "new_publisher" };
-  if (isKeyRevoked(db, ctx, candidate)) return { ok: false, reason: "revoked" };
   if (readCurrentVerifiedKeys(db, ctx.publisherId)?.has(candidate) === true) {
     return { ok: true, via: "nimbus" };
   }

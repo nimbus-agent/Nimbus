@@ -12,6 +12,7 @@ import { recordTrustStatements } from "../trust/trust-store.ts";
 import { verifyManifestSignature } from "../verify-signature.ts";
 import {
   buildTestRegistry,
+  PUBLISHER_SEED,
   resignIndex,
   type TestVersion,
 } from "./__fixtures__/build-test-registry.ts";
@@ -240,6 +241,38 @@ describe("collectRegistryUpdates", () => {
     expect(out.updates[0]).toMatchObject({
       verificationStatus: "publisher_key_conflict",
       publisherStatus: "unverified",
+    });
+  });
+
+  test("a key the publisher rotated to from the trusted key is verified, and the change is reported", async () => {
+    const dir = await buildRegistry("main", { "com.a": V12 });
+    addRegistry("main", dir, false);
+    const oldSeed = Uint8Array.from({ length: 32 }, (_, i) => i + 7);
+    const oldKey = Buffer.from(nacl.sign.keyPair.fromSeed(oldSeed).publicKey).toString("base64");
+    const newKey = Buffer.from(nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey).toString(
+      "base64",
+    );
+    await writePublisherKey(vault, "acme", Buffer.from(oldKey, "base64"));
+    const rotation = await signTrustStatement(
+      {
+        kind: "key.rotate",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: oldKey,
+        publisherId: "acme",
+        fromKey: oldKey,
+        toKey: newKey,
+      },
+      oldSeed,
+    );
+    recordTrustStatements(db, [rotation], { kind: "feed", nimbusRootKey: oldKey }, 1);
+    const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
+    expect(out.updates[0]).toMatchObject({
+      verificationStatus: "verified",
+      publisherKeyFingerprint: publisherKeyFingerprint(newKey),
+      publisherKeyChange: {
+        from: [publisherKeyFingerprint(oldKey)],
+        to: publisherKeyFingerprint(newKey),
+      },
     });
   });
 

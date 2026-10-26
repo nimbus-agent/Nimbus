@@ -7250,7 +7250,8 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       /sha256HexEqualConstantTime\(sha256Hex\(packageBytes\), vEntry\.packageSha256\)/,
     );
     const sigAt = fetchBody.indexOf("await verifyRegistryManifestSignature(");
-    const vaultAt = fetchBody.indexOf("await vaultPublisherKeyConflicts(");
+    // The publisher-key decision (trusted, rotation, Nimbus or owner-accepted; spec R5).
+    const vaultAt = fetchBody.indexOf("await publisherKeyDecision(deps, {");
     const writeAt = fetchBody.indexOf("writeFileSync(archivePath, packageBytes)");
     const returnAt = fetchBody.indexOf("return {");
     for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, writeAt, returnAt]) {
@@ -7262,8 +7263,9 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     // The package carries the INDEX's publisher key, the one the signature and Vault checks used.
     expect(fetchBody).toMatch(/publisherKey: entry\.publisher\.key,/);
     expect(fetchBody).toMatch(
-      /vaultPublisherKeyConflicts\(deps\.vault, entry\.publisher\.id, fetched\.publisherKey\)/,
+      /publisherKeyDecision\(deps, \{\s*publisherId: entry\.publisher\.id,\s*key: entry\.publisher\.key,/,
     );
+    expect(fetchBody).toMatch(/if \(!decision\.ok\) throw publisherKeyConflict\(/);
     // (3) The install half installs ONLY through installExtensionFromLocalDirectory, handed that
     // index key and recorded against the SOURCE registry; the post-copy entry hash is compared to
     // the signed index's before the source is recorded, and a mismatch undoes the install.
@@ -7473,7 +7475,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       "const reg = sourceRegistryOf(fetchDeps, update);",
       "await fetchVerifiedIndex(fetchDeps, reg, signal);",
       "await fetchRegistryManifest(",
-      "await vaultPublisherKeyConflicts(",
+      "await publisherKeyDecision(",
       "await verifyRegistryManifestSignature(",
     ].map((needle) => rv.indexOf(needle));
     for (const at of order) expect(at).toBeGreaterThan(-1);

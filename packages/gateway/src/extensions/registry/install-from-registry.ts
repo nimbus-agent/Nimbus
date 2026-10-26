@@ -41,6 +41,13 @@ import {
 import { extractPackage } from "../package-extract.ts";
 import { isStrictlyInside } from "../path-containment.ts";
 import {
+  type KeyChange,
+  type KeyVia,
+  keyChangeNote,
+  publisherKeyConflict,
+  publisherKeyDecision,
+} from "../trust/publisher-key-decision.ts";
+import {
   assertNotBlocked,
   type BlockSubject,
   blocksFor,
@@ -52,7 +59,6 @@ import {
   fetchRegistryManifest,
   registryHashMismatch,
   sha256Hex,
-  vaultPublisherKeyConflicts,
   verifyRegistryManifestSignature,
 } from "./registry-manifest.ts";
 import { resolveRegistryEntry } from "./registry-resolve.ts";
@@ -73,6 +79,8 @@ export interface InstallFromRegistryRequest {
   registry?: string;
   version?: string;
   channel?: RegistryChannel;
+  /** `--accept-publisher-key`: the exact fingerprint of a new key nothing else vouches for. */
+  acceptPublisherKey?: string;
 }
 
 /** `--version` is exact; otherwise the semver-newest on `stable`, or on stable and beta for `--channel beta`. */
@@ -137,6 +145,8 @@ export interface VerifiedRegistryPackage {
   readonly entryHash: string;
   readonly reg: RegistryRow;
   readonly rootFingerprint: string;
+  /** A move from the publisher's trusted keys to this one, and what vouched for it; else null. */
+  readonly publisherChange: { readonly change: KeyChange; readonly via: KeyVia } | null;
 }
 
 /** `intoDir` must be absent or an empty directory: a staged package is never merged into another tree. */
@@ -212,12 +222,15 @@ export async function fetchVerifiedRegistryPackage(
   const { manifest } = fetched;
   await verifyRegistryManifestSignature(fetched, req.id, version);
 
-  if (await vaultPublisherKeyConflicts(deps.vault, entry.publisher.id, fetched.publisherKey)) {
-    throw new RegistryError(
-      "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
-      `the Vault already holds a different key for publisher "${entry.publisher.id}"; refusing to replace it`,
-    );
-  }
+  // A key the Vault does not trust yet is accepted only along the publisher's rotation chain, when
+  // Nimbus vouches for it, or when the owner named its exact fingerprint (spec R5).
+  const decision = await publisherKeyDecision(deps, {
+    publisherId: entry.publisher.id,
+    key: entry.publisher.key,
+    source: { registry: reg.name, rootFingerprint },
+    ...(req.acceptPublisherKey === undefined ? {} : { acceptFingerprint: req.acceptPublisherKey }),
+  });
+  if (!decision.ok) throw publisherKeyConflict(entry.publisher.id, decision);
 
   const archivePath = join(intoDir, "package.tgz");
   const extractDir = join(intoDir, "pkg");
@@ -258,6 +271,8 @@ export async function fetchVerifiedRegistryPackage(
       entryHash: vEntry.entryHash,
       reg,
       rootFingerprint,
+      publisherChange:
+        decision.change === null ? null : { change: decision.change, via: decision.via },
     };
   } catch (e) {
     try {
@@ -278,6 +293,20 @@ export async function fetchVerifiedRegistryPackage(
  * version's: a `--channel beta` install that resolved to a stable version keeps tracking beta.
  * The staged tree under `pkg.sourceRoot` is left for the caller to remove.
  */
+/** The approver, showing a publisher key change (fingerprints, and what vouched for it) when there is one. */
+function withKeyChange(
+  approve: ExtensionInstallApprover,
+  pc: VerifiedRegistryPackage["publisherChange"],
+): ExtensionInstallApprover {
+  if (pc === null) return approve;
+  return (request) =>
+    approve({
+      ...request,
+      publisherChange: { ...pc.change, via: pc.via },
+      publisherChangeNote: keyChangeNote(pc.change, pc.via),
+    });
+}
+
 export async function installVerifiedRegistryPackage(
   deps: InstallFromRegistryDeps,
   pkg: VerifiedRegistryPackage,
@@ -302,7 +331,7 @@ export async function installVerifiedRegistryPackage(
       publisherKey: decodeBase64(pkg.publisherKey),
       sourceRegistry: reg.name,
       rootFingerprint,
-      approve: deps.approve,
+      approve: withKeyChange(deps.approve, pkg.publisherChange),
     });
   } catch (e) {
     if (

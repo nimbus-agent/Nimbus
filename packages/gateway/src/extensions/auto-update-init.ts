@@ -34,13 +34,13 @@ import {
 } from "./registry/registry-fetch.ts";
 import {
   fetchRegistryManifest,
-  vaultPublisherKeyConflicts,
   verifyRegistryManifestSignature,
   verifySignedManifest,
 } from "./registry/registry-manifest.ts";
 import type { RegistryRow } from "./registry/registry-store.ts";
 import { collectRegistryUpdates } from "./registry/registry-update-source.ts";
 import { getRunGrant } from "./run-grant-store.ts";
+import { publisherKeyConflict, publisherKeyDecision } from "./trust/publisher-key-decision.ts";
 import { assertNotBlocked, TrustBlockError } from "./trust/trust-blocks.ts";
 import { prevVersionDir } from "./version-store.ts";
 
@@ -244,15 +244,24 @@ async function reverifyUpdateManifest(
       vEntry,
       signal,
     );
-    if (
-      entry.publisher.id !== installedPublisher ||
-      (await vaultPublisherKeyConflicts(vault, entry.publisher.id, fetched.publisherKey))
-    ) {
+    if (entry.publisher.id !== installedPublisher) {
       throw new RegistryError(
         "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
-        `the index names publisher "${entry.publisher.id}" with a key the Vault does not trust for ${update.id}`,
+        `the index names publisher "${entry.publisher.id}", not the installed one, for ${update.id}`,
       );
     }
+    const decision = await publisherKeyDecision(
+      { db: fetchDeps.db, vault },
+      {
+        publisherId: entry.publisher.id,
+        key: entry.publisher.key,
+        source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
+        ...(update.acceptedPublisherKey === undefined
+          ? {}
+          : { acceptFingerprint: update.acceptedPublisherKey }),
+      },
+    );
+    if (!decision.ok) throw publisherKeyConflict(entry.publisher.id, decision);
     await verifyRegistryManifestSignature(fetched, update.id, update.toVersion);
     // I48: a block that landed after detection (or since the last apply attempt) refuses here,
     // before anything is downloaded or swapped.
