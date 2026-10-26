@@ -44,8 +44,12 @@ export const MAX_ROTATIONS_PER_PUBLISHER = 20;
 export type StatementIndex = Pick<RegistryIndex, "extensions" | "statements">;
 
 export interface StatementAdmission<T extends StatementIndex> {
-  /** `index` with every admitted statement appended to `statements`. Its signature (if any) is stale. */
-  index: T & { statements: unknown[] };
+  /**
+   * `index` with every admitted statement appended to `statements` (the SAME object when nothing
+   * was admitted, so an index without statements gains no empty field). Its signature (if any) is
+   * stale once anything was admitted.
+   */
+  index: T;
   /** The statements this call admitted (not the ones already in the index). */
   admitted: TrustStatement[];
   skipped: Array<{ id: string | undefined; reason: string }>;
@@ -400,7 +404,10 @@ export function admitPublisherStatements<T extends StatementIndex>(
     admitted.push(...admitRotations(bound, state, budget, skip));
   }
   return {
-    index: { ...index, statements: [...existingRaw, ...admitted.map((p) => p.s)] },
+    index:
+      admitted.length === 0
+        ? index
+        : { ...index, statements: [...existingRaw, ...admitted.map((p) => p.s)] },
     admitted: admitted.map((p) => p.s),
     skipped: skippedAll,
   };

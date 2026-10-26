@@ -210,6 +210,13 @@ describe("admitPublisherStatements — order independence", () => {
     expect(a.index.statements).toEqual([kx]);
   });
 
+  test("nothing admitted returns the index itself: no empty statements field appears", async () => {
+    const idx = index(ACME);
+    const a = admitPublisherStatements(idx, [await rotate(STRANGER, Z)]);
+    expect(a.index).toBe(idx);
+    expect("statements" in a.index).toBe(false);
+  });
+
   test("existing raw statements (even unknown kinds) are carried first, verbatim", async () => {
     const raw = { kind: "future.kind", x: 1 };
     const kx = await rotate(K, X);

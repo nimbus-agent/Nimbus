@@ -18,7 +18,9 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  publicKeyFromSeed,
   signIndex,
+  trustStatementId,
   validatePublish,
   verifyRegistryIndexPinned,
 } from "../../../registry-format/src/index.ts";
@@ -31,10 +33,13 @@ import {
   git,
   makeExtension,
   makeRegistryRepo,
+  makeRevocation,
+  makeRotation,
   OTHER_SEED,
   originFile,
   originHead,
   originIndex,
+  PUBLISHER_SEED,
   pushMaintainer,
   type RegistryRepo,
   ROOT_KEY_INPUT,
@@ -43,6 +48,7 @@ import {
   syncMaintainer,
   write,
   writePublish,
+  writeStatement,
 } from "./testing/registry-repo.ts";
 
 // Each test copies real repositories and spawns git dozens of times.
@@ -427,6 +433,95 @@ describe("runSign", () => {
   test("an uninitialised registry says so", async () => {
     git(repo.origin, "branch", "-D", "gh-pages");
     await expect(sign()).rejects.toThrow(gitTree.REGISTRY_NOT_INITIALISED);
+  });
+});
+
+describe("publisher statements", () => {
+  const OTHER_KEY = b64(publicKeyFromSeed(OTHER_SEED));
+  const STRANGER_SEED = new Uint8Array(32).fill(13);
+
+  async function mergeStatement(s: unknown, name?: string): Promise<string> {
+    syncMaintainer(repo, "main");
+    const rel = writeStatement(repo.maintainer, s, name);
+    pushMaintainer(repo, "main", "merge statement");
+    return rel;
+  }
+
+  test("a rotation and the first version under the new key land in ONE merge", async () => {
+    await mergePublish();
+    await sign();
+    syncMaintainer(repo, "main");
+    const rotation = await makeRotation(PUBLISHER_SEED, OTHER_SEED);
+    writeStatement(repo.maintainer, rotation);
+    writePublish(
+      repo.maintainer,
+      await makeExtension(scratch, { version: "1.1.0", seed: OTHER_SEED }),
+    );
+    pushMaintainer(repo, "main", "merge rotation + publish");
+    await sign();
+
+    const index = originIndex(repo);
+    await verifyRegistryIndexPinned(index, ROOT_PUBLIC_KEY);
+    expect(index.sequence).toBe(3);
+    expect(index.statements).toEqual([rotation]);
+    expect(index.extensions["acme/echo"]?.publisher.key).toBe(OTHER_KEY);
+    expect(Object.keys(index.extensions["acme/echo"]?.versions ?? {}).sort()).toEqual([
+      "1.0.0",
+      "1.1.0",
+    ]);
+    expect(warnings).toEqual([]);
+    expect(git(repo.origin, "log", "-1", "--format=%s", "gh-pages")).toContain(
+      trustStatementId(rotation).slice(0, 12),
+    );
+  });
+
+  test("a revocation-only merge re-signs at sequence + 1 so it reaches clients", async () => {
+    await mergePublish();
+    await sign();
+    const revocation = await makeRevocation(PUBLISHER_SEED);
+    await mergeStatement(revocation);
+    await sign();
+    const index = originIndex(repo);
+    expect(index.sequence).toBe(3);
+    expect(index.statements).toEqual([revocation]);
+  });
+
+  test("deleting a statement file later never removes it from the signed index", async () => {
+    await mergePublish();
+    await sign();
+    const revocation = await makeRevocation(PUBLISHER_SEED);
+    const rel = await mergeStatement(revocation);
+    await sign();
+    syncMaintainer(repo, "main");
+    rmSync(join(repo.maintainer, ...rel.split("/")));
+    writePublish(
+      repo.maintainer,
+      await makeExtension(scratch, { id: "beta/other", seed: OTHER_SEED, publisherId: "beta" }),
+    );
+    pushMaintainer(repo, "main", "delete statement");
+    await sign();
+    expect(originIndex(repo).statements).toEqual([revocation]);
+  });
+
+  test("a stranger's statement is skipped with a warning; nothing else changes, nothing is signed", async () => {
+    await mergePublish();
+    await sign();
+    const head = originHead(repo, "gh-pages");
+    const rel = await mergeStatement(await makeRotation(STRANGER_SEED, OTHER_SEED));
+    await sign();
+    expect(originHead(repo, "gh-pages")).toBe(head);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(`skipped ${rel}`);
+    expect(warnings[0]).toContain("not bound to publisher acme");
+  });
+
+  test("a statement file not named by its statement id is skipped", async () => {
+    await mergePublish();
+    await sign();
+    await mergeStatement(await makeRevocation(PUBLISHER_SEED), "a".repeat(64));
+    await sign();
+    expect(originIndex(repo).statements).toBeUndefined();
+    expect(warnings[0]).toContain("is not named by its statement id");
   });
 });
 
