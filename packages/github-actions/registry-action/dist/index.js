@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:1bb488e7001b5e71748d52d8e20e1e4e36896fd123cb41cd2484b0dbda7454f0
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:78c33a25fc5624d8c8204be55dd994249a68566b6dfafcd2c56d3200da6c76f3
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -8940,6 +8940,7 @@ function successorsOf(edges, fp, usable) {
 // ../../registry-format/src/publisher-statements.ts
 var MAX_REGISTRY_STATEMENTS = 1000;
 var MAX_ROTATIONS_PER_PUBLISHER = 20;
+var MAX_STATEMENTS_PER_PUBLISHER = 50;
 function publisherAfterPublish(existing, signer) {
   return existing !== undefined && existing.publisher.key === signer.key ? existing.publisher : signer;
 }
@@ -8987,16 +8988,17 @@ function currentOf(state) {
   }
   const edges = edgesOf(state.rotations);
   const usable = (fp) => !state.revokedFps.has(fp);
+  const rotatedAway = new Set(edges.map((e) => e.from));
   const current = new Set;
   for (const k of state.bound) {
     const fp = publisherKeyFingerprint(k);
     if (!usable(fp))
       continue;
-    const { reachable, terminal } = successorsOf(edges, fp, usable);
-    if (reachable.size === 0)
-      current.add(k);
-    for (const t of terminal)
-      current.add(keyByFp.get(t));
+    const { reachable } = successorsOf(edges, fp, usable);
+    for (const n of [fp, ...reachable]) {
+      if (!rotatedAway.has(n))
+        current.add(keyByFp.get(n));
+    }
   }
   return current;
 }
@@ -9059,29 +9061,20 @@ function reachOf(bound, rotations) {
   }
   return reach;
 }
-function hasRoom(budget, id, skip) {
+function hasRoom(budget, id, publisherId, skip) {
   if (budget.total >= MAX_REGISTRY_STATEMENTS) {
     skip(id, `the index is at its statement cap (${String(MAX_REGISTRY_STATEMENTS)})`);
     return false;
   }
+  if (budget.publisher >= MAX_STATEMENTS_PER_PUBLISHER) {
+    skip(id, `publisher ${publisherId} is at its statement cap (${String(MAX_STATEMENTS_PER_PUBLISHER)})`);
+    return false;
+  }
   return true;
 }
-function admitRevocations(candidates, state, budget, skip) {
-  const out = [];
-  for (const c of candidates) {
-    if (c.s.kind !== "key.revoke")
-      continue;
-    if (state.revokedFps.has(c.s.keyFingerprint)) {
-      skip(c.id, `redundant: key ${c.s.keyFingerprint} is already revoked`);
-      continue;
-    }
-    if (!hasRoom(budget, c.id, skip))
-      continue;
-    state.revokedFps.add(c.s.keyFingerprint);
-    budget.total++;
-    out.push(c);
-  }
-  return out;
+function spend(budget) {
+  budget.total++;
+  budget.publisher++;
 }
 function forks(pending, admitted) {
   const targets = new Map;
@@ -9102,43 +9095,86 @@ function forks(pending, admitted) {
   }
   return out;
 }
-function admitRotations(candidates, state, budget, skip) {
-  const pending = candidates.filter((c) => c.s.kind === "key.rotate");
-  const forked = forks(pending, state.rotations);
-  const live = (k) => !state.revokedFps.has(publisherKeyFingerprint(k));
-  const reached = reachOf(new Set([...state.bound].filter(live)), state.rotations.filter((r) => live(r.fromKey)));
-  const out = [];
-  const waiting = new Map(pending.filter((p) => !forked.has(p.id)).map((p) => [p.id, p]));
+var fromRevoked = (run, r) => revokedIn(run.state, publisherKeyFingerprint(r.fromKey));
+function admitRevocationRound(run, reach) {
+  let progressed = false;
+  for (const [id, p] of run.revocations) {
+    const r = p.s;
+    if (!reach.has(r.signerKey))
+      continue;
+    run.revocations.delete(id);
+    if (run.state.revokedFps.has(r.keyFingerprint)) {
+      run.skip(id, `redundant: key ${r.keyFingerprint} is already revoked`);
+      continue;
+    }
+    if (!hasRoom(run.budget, id, r.publisherId, run.skip))
+      continue;
+    run.state.revokedFps.add(r.keyFingerprint);
+    spend(run.budget);
+    run.admitted.push(p);
+    progressed = true;
+  }
+  return progressed;
+}
+function admitRotationRound(run, reach) {
+  let progressed = false;
+  for (const [id, p] of run.rotations) {
+    const r = p.s;
+    if (!reach.has(r.fromKey) || fromRevoked(run, r))
+      continue;
+    run.rotations.delete(id);
+    if (reach.has(r.toKey)) {
+      run.skip(id, `key ${publisherKeyFingerprint(r.toKey)} is already reached: a loop or a repeat`);
+      continue;
+    }
+    if (run.state.rotations.length >= MAX_ROTATIONS_PER_PUBLISHER) {
+      run.skip(id, `publisher ${r.publisherId} is at its rotation cap (${String(MAX_ROTATIONS_PER_PUBLISHER)})`);
+      continue;
+    }
+    if (!hasRoom(run.budget, id, r.publisherId, run.skip))
+      continue;
+    run.state.rotations.push(r);
+    reach.add(r.toKey);
+    spend(run.budget);
+    run.admitted.push(p);
+    progressed = true;
+  }
+  return progressed;
+}
+function leftoverReason(run, p, publisherId) {
+  if (p.s.kind === "key.rotate" && fromRevoked(run, p.s)) {
+    return `from revoked key ${publisherKeyFingerprint(p.s.fromKey)}`;
+  }
+  return `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in this index (directly or through an admitted rotation)`;
+}
+function admitForPublisher(publisherId, mine, state, budget, skip) {
+  const pendingRotations = mine.filter((p) => p.s.kind === "key.rotate");
+  const forked = forks(pendingRotations, state.rotations);
+  for (const p of pendingRotations) {
+    if (!forked.has(p.id))
+      continue;
+    const from = publisherKeyFingerprint(p.s.fromKey);
+    skip(p.id, `fork: key ${from} already rotates, or is asked to rotate, to a different key`);
+  }
+  const run = {
+    state,
+    budget,
+    skip,
+    revocations: new Map(mine.filter((p) => p.s.kind === "key.revoke").map((p) => [p.id, p])),
+    rotations: new Map(pendingRotations.filter((p) => !forked.has(p.id)).map((p) => [p.id, p])),
+    admitted: []
+  };
   let progressed = true;
   while (progressed) {
-    progressed = false;
-    for (const [id, p] of waiting) {
-      const r = p.s;
-      if (!reached.has(r.fromKey) || !live(r.fromKey))
-        continue;
-      waiting.delete(id);
-      if (state.rotations.length >= MAX_ROTATIONS_PER_PUBLISHER) {
-        skip(id, `publisher ${r.publisherId} is at its rotation cap (${String(MAX_ROTATIONS_PER_PUBLISHER)})`);
-        continue;
-      }
-      if (!hasRoom(budget, id, skip))
-        continue;
-      state.rotations.push(r);
-      reached.add(r.toKey);
-      budget.total++;
-      out.push(p);
-      progressed = true;
-    }
+    const reach = reachOf(state.bound, state.rotations);
+    const revoked = admitRevocationRound(run, reach);
+    const rotated = admitRotationRound(run, reach);
+    progressed = revoked || rotated;
   }
-  for (const p of pending) {
-    const r = p.s;
-    if (forked.has(p.id)) {
-      skip(p.id, `fork: key ${publisherKeyFingerprint(r.fromKey)} already rotates, or is asked to rotate, to a different key`);
-    } else if (waiting.has(p.id)) {
-      skip(p.id, live(r.fromKey) ? `key ${publisherKeyFingerprint(r.fromKey)} is not reached from a key bound to publisher ${r.publisherId}` : `from revoked key ${publisherKeyFingerprint(r.fromKey)}`);
-    }
+  for (const p of [...run.revocations.values(), ...run.rotations.values()]) {
+    skip(p.id, leftoverReason(run, p, publisherId));
   }
-  return out;
+  return run.admitted;
 }
 function newCandidates(index, raws, existingIds, skip) {
   const byId = new Map;
@@ -9158,21 +9194,16 @@ function admitPublisherStatements(index, candidates) {
     skippedAll.push({ id, reason });
   };
   const fresh = newCandidates(index, candidates, existingIds, skip);
-  const budget = { total: existingRaw.length };
+  const total = { value: existingRaw.length };
   const admitted = [];
   const publishers = [...new Set(fresh.map((p) => p.s.publisherId))].sort(codeUnitCompare);
   for (const publisherId of publishers) {
     const state = stateOf(index, publisherId, indexed);
     const mine = fresh.filter((p) => p.s.publisherId === publisherId);
-    const reach = reachOf(state.bound, [...state.rotations, ...rotationsOf(mine.map((p) => p.s))]);
-    const bound = mine.filter((p) => {
-      if (reach.has(signingKey(p.s)))
-        return true;
-      skip(p.id, `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in this index`);
-      return false;
-    });
-    admitted.push(...admitRevocations(bound, state, budget, skip));
-    admitted.push(...admitRotations(bound, state, budget, skip));
+    const already = indexed.filter((x) => x.publisherId === publisherId).length;
+    const budget = { total: total.value, publisher: already };
+    admitted.push(...admitForPublisher(publisherId, mine, state, budget, skip));
+    total.value = budget.total;
   }
   return {
     index: admitted.length === 0 ? index : { ...index, statements: [...existingRaw, ...admitted.map((p) => p.s)] },
@@ -9344,6 +9375,13 @@ function assertCurrentPublisherKey(publisher, signed) {
     }
   }
 }
+function assertKeyMoveOnStable(id, publisher, channel, signed) {
+  const existing = Object.hasOwn(signed.extensions, id) ? signed.extensions[id] : undefined;
+  if (existing === undefined || existing.publisher.key === publisher.key || channel === "stable") {
+    return;
+  }
+  throw keyConflict(`${id} is bound to key ${publisherKeyFingerprint(existing.publisher.key)}; publish the first version under key ${publisherKeyFingerprint(publisher.key)} on the stable channel, or default installs of the newest stable version would break`);
+}
 var keyConflict = (detail) => new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", detail);
 function assertRegistryState(m, publisher, serviceId, signed) {
   const existing = Object.hasOwn(signed.extensions, m.id) ? signed.extensions[m.id] : undefined;
@@ -9411,6 +9449,7 @@ async function validatePublish(c, signed, config, work) {
   }
   const serviceId = deriveExtensionServiceId(m.id);
   const newId = assertRegistryState(m, publisher, serviceId, signed);
+  assertKeyMoveOnStable(m.id, publisher, req.channel, signed);
   if (c.packageBytes.byteLength > MAX_PACKAGE_BYTES) {
     throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `package exceeds ${String(MAX_PACKAGE_BYTES)} bytes`);
   }
@@ -9762,7 +9801,8 @@ function assertPublishShape(changes) {
   }
   return { dir: coords, statements };
 }
-function admitPullRequestStatements(git, index, added, cwd) {
+function admitPullRequestStatements(git, signed, baseRef, added, cwd) {
+  const index = admitPublisherStatements(signed, readStatementFiles(git, `origin/${baseRef}`, cwd).values).index;
   if (added.size === 0)
     return { index, admitted: [] };
   const files = readStatementFiles(git, "HEAD", cwd, added);
@@ -9825,7 +9865,7 @@ async function runCheck(opts, deps = SHARED) {
     deepen: [opts.baseRef]
   });
   const shape = assertPublishShape(git.diffTree(mergeBase, "HEAD", { cwd }));
-  const admitted = admitPullRequestStatements(git, index, shape.statements, cwd);
+  const admitted = admitPullRequestStatements(git, index, opts.baseRef, shape.statements, cwd);
   if (shape.dir === undefined) {
     deps.io.summary(statementOnlySummary(admitted.admitted));
     deps.io.log(`check passed: ${String(admitted.admitted.length)} statement(s), no publish`);

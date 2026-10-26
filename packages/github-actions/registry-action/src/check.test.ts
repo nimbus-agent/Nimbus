@@ -355,6 +355,25 @@ describe("publisher statements in a pull request", () => {
     await expect(run()).rejects.toThrow(/is not named by its statement id/);
   });
 
+  test("a rotation merged on the base branch but not signed yet counts, as it will for sign", async () => {
+    await signedEcho();
+    writeStatement(repo.maintainer, await makeRotation(PUBLISHER_SEED, OTHER_SEED));
+    pushMaintainer(repo, "main", "merge rotation, not signed yet");
+    const next = await makeExtension(scratch, { version: "1.1.0", seed: OTHER_SEED });
+    openPr((ws) => writePublish(ws, next));
+    await run();
+    expect(logs.join("\n")).toContain("check passed: acme/echo@1.1.0");
+  });
+
+  test("a rotation that forks one merged on the base branch fails, as sign would refuse it", async () => {
+    await signedEcho();
+    writeStatement(repo.maintainer, await makeRotation(PUBLISHER_SEED, OTHER_SEED));
+    pushMaintainer(repo, "main", "merge rotation, not signed yet");
+    const fork = await makeRotation(PUBLISHER_SEED, new Uint8Array(32).fill(17));
+    openPr((ws) => writeStatement(ws, fork));
+    await expect(run()).rejects.toThrow(/fork/);
+  });
+
   test("any other file under statements/ is still refused by the path rule", async () => {
     await signedEcho();
     openPr((ws) => write(ws, "statements/notes.txt", "hi"));

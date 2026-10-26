@@ -113,15 +113,22 @@ function assertPublishShape(changes: readonly gitTree.TreeChange[]): PullRequest
 }
 
 /**
- * The pull request's statement files admitted into `index` exactly as `sign` would admit them. A
- * file `sign` would skip fails the check: the reviewer aid should be loud.
+ * The pull request's statement files admitted into `index` exactly as `sign` would admit them. The
+ * base branch's statement files go in first, as `sign` will see them merged there (one already in
+ * the index is a no-op; one `sign` would skip is ignored here — it is not this pull request's). A
+ * file of THIS pull request that `sign` would skip fails the check: the reviewer aid should be loud.
  */
 function admitPullRequestStatements(
   git: typeof gitTree,
-  index: RegistryIndex,
+  signed: RegistryIndex,
+  baseRef: string,
   added: ReadonlySet<string>,
   cwd: string,
 ): { index: RegistryIndex; admitted: TrustStatement[] } {
+  const index = admitPublisherStatements(
+    signed,
+    readStatementFiles(git, `origin/${baseRef}`, cwd).values,
+  ).index;
   if (added.size === 0) return { index, admitted: [] };
   const files = readStatementFiles(git, "HEAD", cwd, added);
   const admission = admitPublisherStatements(index, files.values);
@@ -220,7 +227,7 @@ export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Pr
     deepen: [opts.baseRef],
   });
   const shape = assertPublishShape(git.diffTree(mergeBase, "HEAD", { cwd }));
-  const admitted = admitPullRequestStatements(git, index, shape.statements, cwd);
+  const admitted = admitPullRequestStatements(git, index, opts.baseRef, shape.statements, cwd);
   if (shape.dir === undefined) {
     deps.io.summary(statementOnlySummary(admitted.admitted));
     deps.io.log(`check passed: ${String(admitted.admitted.length)} statement(s), no publish`);
