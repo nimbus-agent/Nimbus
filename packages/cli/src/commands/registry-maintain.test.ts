@@ -11,7 +11,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { signIndex, verifyIndexSignature } from "@nimbus-dev/registry-format";
+import {
+  publicKeyFromSeed,
+  publisherKeyFingerprint,
+  signIndex,
+  signTrustStatement,
+  trustStatementId,
+  verifyIndexSignature,
+} from "@nimbus-dev/registry-format";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "../lib/extension-signing.ts";
 import { readIndexFile } from "../lib/registry-index.ts";
 import { runRegistryMaintain } from "./registry-maintain.ts";
@@ -56,7 +63,7 @@ async function makeExtension(
   writeFileSync(join(dir, "dist", "index.js"), "export default 1;\n");
   const pair = opts.seed === undefined ? generateEd25519Keypair() : undefined;
   const privkey = opts.seed ?? (pair as { privkey: Uint8Array }).privkey;
-  const pubkey = pair?.pubkey ?? generateEd25519Keypair().pubkey;
+  const pubkey = pair?.pubkey ?? publicKeyFromSeed(privkey);
   const manifest: Record<string, unknown> = {
     id: opts.id ?? "com.example.tool",
     name: "Example Tool",
@@ -194,6 +201,81 @@ describe("registry maintain", () => {
     err.length = 0;
     expect(await runRegistryMaintain(["add", dir, other, "--key", key], io)).toBe(2);
     expect(err.join("")).toContain("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT");
+  });
+
+  describe("add --statement", () => {
+    const OLD_SEED = new Uint8Array(32).fill(41);
+    const NEW_SEED = new Uint8Array(32).fill(42);
+    const keyOf = (seed: Uint8Array): string => encodeBase64(publicKeyFromSeed(seed));
+
+    async function statementFile(name: string, fromSeed: Uint8Array, toSeed: Uint8Array) {
+      const fromKey = keyOf(fromSeed);
+      const s = await signTrustStatement(
+        {
+          kind: "key.rotate",
+          issuedAt: "2026-10-26T12:00:00Z",
+          signerKey: fromKey,
+          publisherId: "example",
+          fromKey,
+          toKey: keyOf(toSeed),
+        },
+        fromSeed,
+      );
+      const path = join(tmp, name);
+      writeFileSync(path, JSON.stringify(s));
+      return { path, s };
+    }
+
+    test("a rotation and the first version under the new key are added together", async () => {
+      const { dir, key } = await init();
+      await runRegistryMaintain(
+        ["add", dir, await makeExtension("a", { seed: OLD_SEED }), "--key", key],
+        io,
+      );
+      const rot = await statementFile("rot.json", OLD_SEED, NEW_SEED);
+      const next = await makeExtension("b", { version: "1.1.0", seed: NEW_SEED });
+      expect(
+        await runRegistryMaintain(["add", dir, next, "--statement", rot.path, "--key", key], io),
+      ).toBe(0);
+      const index = readIndexFile(join(dir, "index.json"));
+      expect(verifyIndexSignature(index)).toBe(true);
+      expect(index.statements).toEqual([rot.s]);
+      expect(index.extensions["com.example.tool"]?.publisher.key).toBe(keyOf(NEW_SEED));
+      expect(out.join("")).toContain(trustStatementId(rot.s).slice(0, 12));
+    });
+
+    test("a statement the registry would not admit refuses the whole add", async () => {
+      const { dir, key } = await init();
+      await runRegistryMaintain(
+        ["add", dir, await makeExtension("a", { seed: OLD_SEED }), "--key", key],
+        io,
+      );
+      const stranger = await statementFile("s.json", new Uint8Array(32).fill(43), NEW_SEED);
+      const next = await makeExtension("b", { version: "1.1.0", seed: NEW_SEED });
+      err.length = 0;
+      expect(
+        await runRegistryMaintain(
+          ["add", dir, next, "--statement", stranger.path, "--key", key],
+          io,
+        ),
+      ).toBe(2);
+      expect(err.join("")).toContain("would not admit");
+      expect(err.join("")).toContain(publisherKeyFingerprint(keyOf(new Uint8Array(32).fill(43))));
+      expect(readIndexFile(join(dir, "index.json")).sequence).toBe(2);
+    });
+
+    test("an unreadable statement file is refused", async () => {
+      const { dir, key } = await init();
+      const ext = await makeExtension("a", { seed: OLD_SEED });
+      err.length = 0;
+      expect(
+        await runRegistryMaintain(
+          ["add", dir, ext, "--statement", join(tmp, "nope.json"), "--key", key],
+          io,
+        ),
+      ).toBe(2);
+      expect(err.join("")).toContain("nope.json");
+    });
   });
 
   test("add refuses an unsigned extension", async () => {

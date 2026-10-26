@@ -10,6 +10,7 @@ import {
   isPublisherKeyRevoked,
   MAX_REGISTRY_STATEMENTS,
   MAX_ROTATIONS_PER_PUBLISHER,
+  publisherAfterPublish,
   publisherKeyStanding,
   type StatementIndex,
 } from "./publisher-statements.ts";
@@ -329,5 +330,20 @@ describe("currentPublisherKeys / isPublisherKeyRevoked / publisherKeyStanding", 
     const forged = { ...(await rotate(K, X)), toKey: Y.key };
     const idx = index(ACME, [forged]);
     expect(sorted(currentPublisherKeys(idx, "acme"))).toEqual([K.key]);
+  });
+});
+
+describe("publisherAfterPublish", () => {
+  test("keeps the entry's publisher for the same key and moves to the signer on a new key", () => {
+    const existing = entry("acme", K.key);
+    expect(publisherAfterPublish(existing, { id: "acme", key: K.key })).toBe(existing.publisher);
+    expect(publisherAfterPublish(existing, { id: "acme", key: X.key })).toEqual({
+      id: "acme",
+      key: X.key,
+    });
+    expect(publisherAfterPublish(undefined, { id: "acme", key: X.key })).toEqual({
+      id: "acme",
+      key: X.key,
+    });
   });
 });

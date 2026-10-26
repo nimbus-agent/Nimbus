@@ -25,17 +25,20 @@ import {
   packExtensionDir,
   parseRegistryConfig,
   publicKeyFromSeed,
+  publisherAfterPublish,
   publisherKeyFingerprint,
   type RegistryConfig,
   RegistryError,
   type RegistryIndex,
   signIndex,
+  trustStatementId,
   validatePublish,
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
 import { decodeBase64, encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
 import { buildPublishCandidate, DEFAULT_REGISTRY_CONFIG } from "../lib/publish-candidate.ts";
 import { readIndexFile, writeIndexAtomic } from "../lib/registry-index.ts";
+import { admitAllStatements, readStatementArgs } from "../lib/statement-files.ts";
 import { NIMBUS_RELEASE_COMMIT } from "../release-commit.ts";
 import { NIMBUS_VERSION } from "../version.ts";
 import { ownerNextSteps, registryReadme } from "./registry-templates/readme.ts";
@@ -67,13 +70,15 @@ const DEFAULT_BUILD: MaintainBuild = {
 };
 
 const USAGE =
-  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>]\n";
+  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--statement <file>]... [--key <path>] | remove <dir> <id>[@<version>] [--key <path>]\n";
 
 class MaintainError extends Error {}
 
 interface ParsedArgs {
   positional: string[];
   options: Map<string, string>;
+  /** Every value of a repeatable option, in order. */
+  lists: Map<string, string[]>;
   flags: Set<string>;
 }
 
@@ -81,16 +86,19 @@ function parseArgs(
   args: string[],
   valued: readonly string[],
   boolean: readonly string[],
+  repeatable: readonly string[] = [],
 ): ParsedArgs {
   const positional: string[] = [];
   const options = new Map<string, string>();
+  const lists = new Map<string, string[]>();
   const flags = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string;
-    if (valued.includes(a)) {
+    if (valued.includes(a) || repeatable.includes(a)) {
       const v = args[i + 1];
       if (v === undefined || v.startsWith("--")) throw new MaintainError(`${a} needs a value`);
-      options.set(a, v);
+      if (repeatable.includes(a)) lists.set(a, [...(lists.get(a) ?? []), v]);
+      else options.set(a, v);
       i++;
     } else if (boolean.includes(a)) {
       flags.add(a);
@@ -100,7 +108,7 @@ function parseArgs(
       positional.push(a);
     }
   }
-  return { positional, options, flags };
+  return { positional, options, lists, flags };
 }
 
 function keyPathOf(p: ParsedArgs): string {
@@ -402,8 +410,17 @@ function readRegistryConfig(dir: string): RegistryConfig {
   return parseRegistryConfig(readFileSync(path));
 }
 
+/** The `--statement` files admitted into `index`; a file it cannot admit refuses the add. */
+function admitStatementArgs(index: RegistryIndex, paths: readonly string[]) {
+  try {
+    return admitAllStatements(index, readStatementArgs(paths));
+  } catch (e) {
+    throw new MaintainError((e as Error).message);
+  }
+}
+
 async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
-  const p = parseArgs(args, ["--key", "--channel"], []);
+  const p = parseArgs(args, ["--key", "--channel"], [], ["--statement"]);
   const [dir, source] = p.positional;
   if (dir === undefined || source === undefined || p.positional.length !== 2) {
     throw new MaintainError("add needs <dir> <package.tgz|extension-dir>");
@@ -414,6 +431,8 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
   }
   const seed = loadSeed(keyPathOf(p));
   const index = loadOwnedIndex(dir, seed);
+  // Statements first: a rotation and the first version signed by the new key are added together.
+  const admission = admitStatementArgs(index, p.lists.get("--statement") ?? []);
   const fileBytes = readSourceFile(source);
 
   const work = mkdtempSync(join(tmpdir(), "nimbus-registry-add-"));
@@ -431,7 +450,7 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
     // The signed index was verified by `loadOwnedIndex` above; the validator trusts it.
     const config = readRegistryConfig(dir);
     const candidate = await buildPublishCandidate(tgz, work, channel);
-    const v = await validatePublish(candidate, index, config, work);
+    const v = await validatePublish(candidate, admission.index, config, work);
     const existing = index.extensions[v.id];
 
     const rel = `extensions/${v.id}/${v.version}`;
@@ -451,14 +470,19 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
       entryHash: v.entryHash,
       publishedAt: new Date().toISOString(),
     };
-    const next = await resign(dir, seed, index, {
+    const next = await resign(dir, seed, admission.index, {
       ...index.extensions,
       [v.id]: {
-        publisher: existing?.publisher ?? v.publisher,
+        publisher: publisherAfterPublish(existing, v.publisher),
         versions: { ...existing?.versions, [v.version]: entry },
       },
     });
-    io.stdout(`added ${v.id}@${v.version} (${channel}); sequence ${String(next.sequence)}\n`);
+    const statements = admission.admitted.map(
+      (s) => ` statement ${trustStatementId(s).slice(0, 12)}`,
+    );
+    io.stdout(
+      `added ${v.id}@${v.version} (${channel})${statements.join(",")}; sequence ${String(next.sequence)}\n`,
+    );
   } finally {
     rmSync(work, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }

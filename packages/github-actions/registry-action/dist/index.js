@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:bb9d089da97093959cf2dafca2b6416327364a28718cc686dbde92895aab0a10
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:1bb488e7001b5e71748d52d8e20e1e4e36896fd123cb41cd2484b0dbda7454f0
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -8940,6 +8940,9 @@ function successorsOf(edges, fp, usable) {
 // ../../registry-format/src/publisher-statements.ts
 var MAX_REGISTRY_STATEMENTS = 1000;
 var MAX_ROTATIONS_PER_PUBLISHER = 20;
+function publisherAfterPublish(existing, signer) {
+  return existing !== undefined && existing.publisher.key === signer.key ? existing.publisher : signer;
+}
 function indexedPublisherStatements(index) {
   return readStatementList(index.statements).statements.filter((s) => (s.kind === "key.rotate" || s.kind === "key.revoke") && verifyTrustStatement(s, {}) === "publisher");
 }
@@ -10017,7 +10020,7 @@ async function attemptSign(opts, seed, rootKey, deps) {
       const base = `extensions/${v.id}/${v.version}`;
       const existing = extensions[v.id];
       extensions[v.id] = {
-        publisher: entryPublisher(existing, v.publisher),
+        publisher: publisherAfterPublish(existing, v.publisher),
         versions: {
           ...existing?.versions,
           [v.version]: {
@@ -10076,9 +10079,6 @@ function admitStatements(git, index, ref, cwd, skipped) {
   for (const s of admission.skipped)
     skipped.push({ dir: statementPath(s.id), reason: s.reason });
   return admission;
-}
-function entryPublisher(existing, signer) {
-  return existing !== undefined && existing.publisher.key === signer.key ? existing.publisher : signer;
 }
 function commitMessage(added, statements, sequence, defaultBranch) {
   if (added.length === 0 && statements.length === 0) {

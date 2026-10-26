@@ -71,6 +71,7 @@ export {
   MAX_REGISTRY_STATEMENTS,
   MAX_ROTATIONS_PER_PUBLISHER,
   type PublisherKeyStanding,
+  publisherAfterPublish,
   publisherKeyStanding,
   type StatementAdmission,
   type StatementIndex,

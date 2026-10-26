@@ -23,7 +23,7 @@
  */
 import { codeUnitCompare } from "./code-unit-compare.ts";
 import { publisherKeyFingerprint } from "./fingerprint.ts";
-import type { RegistryIndex } from "./index-format.ts";
+import type { RegistryExtensionEntry, RegistryIndex } from "./index-format.ts";
 import { ancestorsOf, type RotationEdge, successorsOf } from "./rotation-graph.ts";
 import { readStatementList } from "./trust-feed.ts";
 import {
@@ -39,6 +39,20 @@ import {
 export const MAX_REGISTRY_STATEMENTS = 1000;
 /** At most this many admitted rotations per publisher, so one publisher cannot fill the index. */
 export const MAX_ROTATIONS_PER_PUBLISHER = 20;
+
+/**
+ * The publisher an index entry binds after a version signed by `signer` is added: unchanged for the
+ * same key; the new key after a rotation (the validator accepted it as the publisher's current key).
+ * Versions signed by an earlier key stay listed but no longer verify against the entry's key.
+ */
+export function publisherAfterPublish(
+  existing: RegistryExtensionEntry | undefined,
+  signer: { id: string; key: string },
+): RegistryExtensionEntry["publisher"] {
+  return existing !== undefined && existing.publisher.key === signer.key
+    ? existing.publisher
+    : signer;
+}
 
 /** The parts of an index this module reads; a signed or an unsigned index both qualify. */
 export type StatementIndex = Pick<RegistryIndex, "extensions" | "statements">;

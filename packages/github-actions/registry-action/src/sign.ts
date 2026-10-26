@@ -26,6 +26,7 @@ import {
   admitPublisherStatements,
   codeUnitCompare,
   publicKeyFromSeed,
+  publisherAfterPublish,
   publisherKeyFingerprint,
   RegistryError,
   type RegistryExtensionEntry,
@@ -248,7 +249,7 @@ async function attemptSign(
       const base = `extensions/${v.id}/${v.version}`;
       const existing = extensions[v.id];
       extensions[v.id] = {
-        publisher: entryPublisher(existing, v.publisher),
+        publisher: publisherAfterPublish(existing, v.publisher),
         versions: {
           ...existing?.versions,
           [v.version]: {
@@ -323,20 +324,6 @@ function admitStatements(
   const admission = admitPublisherStatements(index, files.values);
   for (const s of admission.skipped) skipped.push({ dir: statementPath(s.id), reason: s.reason });
   return admission;
-}
-
-/**
- * The publisher an entry binds after adding a version signed by `signer`: unchanged for the same
- * key; the new key after a rotation (the validator accepted it as the publisher's current key).
- * Versions signed by the earlier key stay listed but no longer verify against the entry's key.
- */
-function entryPublisher(
-  existing: RegistryExtensionEntry | undefined,
-  signer: { id: string; key: string },
-): RegistryExtensionEntry["publisher"] {
-  return existing !== undefined && existing.publisher.key === signer.key
-    ? existing.publisher
-    : signer;
 }
 
 function commitMessage(
