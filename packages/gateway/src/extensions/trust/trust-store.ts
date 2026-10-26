@@ -8,9 +8,12 @@
  *   statement (the Nimbus trust root for the feed and snapshot, the registry's pinned root for a
  *   registry index); a statement without authority is refused;
  * - a publisher-signed statement from a registry is stored only when that registry lists the
- *   publisher with the signing key, or an installed extension was verified with that key, and each
- *   registry may hold at most `MAX_STORED_STATEMENTS_PER_SOURCE` rows, so a hostile registry cannot
- *   grow the store without bound;
+ *   publisher with the key it concerns (for a rotation, either end), or an installed extension was
+ *   verified with that key, and each registry may hold at most `MAX_STORED_STATEMENTS_PER_SOURCE`
+ *   such rows, so throwaway publisher keys cannot grow the store without bound. The cap counts
+ *   PUBLISHER-signed rows only: a registry's own root-signed blocks are never capped, so filling the
+ *   cap can never suppress a later revocation or takedown (each document is already bounded by
+ *   `MAX_STATEMENTS_PER_DOCUMENT` at read time);
  * - `publisher.verified` never enters through `recordTrustStatements`: verification is the feed's
  *   CURRENT state (`replaceCurrentVerifications`), while every block is a monotonic union — no later
  *   document removes one.
@@ -64,20 +67,29 @@ function installedWithKey(db: Database, fingerprint: string): boolean {
   );
 }
 
+/** The keys a publisher-signed statement concerns: the signer, and for a rotation its new key too. */
+function concernedKeys(s: TrustStatement): string[] {
+  return s.kind === "key.rotate" ? [s.fromKey, s.toKey] : [s.signerKey];
+}
+
 function publisherAdmitted(
   db: Database,
   s: TrustStatement,
   source: Extract<StatementSource, { kind: "registry" }>,
 ): boolean {
-  if (source.listedPublisherKeys.get(s.publisherId)?.has(s.signerKey) === true) return true;
-  return installedWithKey(db, publisherKeyFingerprint(s.signerKey));
+  const listed = source.listedPublisherKeys.get(s.publisherId);
+  return concernedKeys(s).some(
+    (k) => listed?.has(k) === true || installedWithKey(db, publisherKeyFingerprint(k)),
+  );
 }
 
-function storedCount(db: Database, source: string): number {
+function storedPublisherCount(db: Database, source: string): number {
   return (
-    db.query("SELECT COUNT(*) AS n FROM trust_statement WHERE source = ?").get(source) as {
-      n: number;
-    }
+    db
+      .query(
+        "SELECT COUNT(*) AS n FROM trust_statement WHERE source = ? AND signer_role = 'publisher'",
+      )
+      .get(source) as { n: number }
   ).n;
 }
 
@@ -150,26 +162,24 @@ export function recordTrustStatements(
   const out: RecordOutcome = { inserted: 0, alreadyKnown: 0, refused: 0, capped: 0 };
   const column = sourceColumn(source);
   db.transaction(() => {
-    let stored = source.kind === "registry" ? storedCount(db, column) : 0;
+    let storedPublisher = source.kind === "registry" ? storedPublisherCount(db, column) : 0;
     for (const s of statements) {
       const role = s.kind === "publisher.verified" ? null : authorityOf(s, source);
       if (role === null) {
         out.refused++;
         continue;
       }
-      if (source.kind === "registry") {
-        if (role === "publisher" && !publisherAdmitted(db, s, source)) {
-          out.capped++;
-          continue;
-        }
-        if (stored >= MAX_STORED_STATEMENTS_PER_SOURCE) {
-          out.capped++;
-          continue;
-        }
+      const capped =
+        source.kind === "registry" &&
+        role === "publisher" &&
+        (!publisherAdmitted(db, s, source) || storedPublisher >= MAX_STORED_STATEMENTS_PER_SOURCE);
+      if (capped) {
+        out.capped++;
+        continue;
       }
       if (insertStatement(db, s, role, source, now)) {
         out.inserted++;
-        stored++;
+        if (role === "publisher") storedPublisher++;
       } else {
         out.alreadyKnown++;
       }

@@ -180,16 +180,21 @@ describe("recordTrustStatements: admission and idempotence", () => {
     expect(rows().map((r) => r.source)).toEqual(["feed"]);
   });
 
-  test("a registry source stops storing at the per-source cap; the feed is not capped", async () => {
-    // Distinct statements: vary the reason so each has its own id.
-    const distinct = await Promise.all(
+  test("publisher-signed statements stop at the per-registry cap; the registry's own blocks never do", async () => {
+    const listed = registrySource({ acme: [PUB_KEY] });
+    const publisherSigned = await Promise.all(
       Array.from({ length: MAX_STORED_STATEMENTS_PER_SOURCE + 1 }, (_, i) =>
-        revoke(REGISTRY_KEY, REGISTRY_SEED, `r${i}`),
+        revoke(PUB_KEY, PUB_SEED, `p${i}`),
       ),
     );
-    const out = recordTrustStatements(db, distinct, registrySource(), 1);
+    const out = recordTrustStatements(db, publisherSigned, listed, 1);
     expect(out.inserted).toBe(MAX_STORED_STATEMENTS_PER_SOURCE);
     expect(out.capped).toBe(1);
+    // The cap is full, and a later root-signed revocation from the same registry is still stored.
+    const rootSigned = await Promise.all(
+      Array.from({ length: 3 }, (_, i) => revoke(REGISTRY_KEY, REGISTRY_SEED, `root${i}`)),
+    );
+    expect(recordTrustStatements(db, rootSigned, listed, 2).inserted).toBe(3);
     const feedOut = recordTrustStatements(
       db,
       [await revoke(NIMBUS_KEY, NIMBUS_SEED, "past the registry cap")],
@@ -197,6 +202,30 @@ describe("recordTrustStatements: admission and idempotence", () => {
       1,
     );
     expect(feedOut.inserted).toBe(1);
+  });
+
+  test("a rotation is admitted when the registry lists its NEW key (the old one is not listed)", async () => {
+    const rotate = await signTrustStatement(
+      {
+        kind: "key.rotate",
+        issuedAt: ISSUED,
+        signerKey: OTHER_KEY,
+        publisherId: "acme",
+        fromKey: OTHER_KEY,
+        toKey: PUB_KEY,
+      },
+      OTHER_SEED,
+    );
+    expect(
+      recordTrustStatements(db, [rotate], registrySource({ acme: [PUB_KEY] }), 1).inserted,
+    ).toBe(1);
+    const stored = db
+      .query("SELECT key_fingerprint, to_key_fingerprint FROM trust_statement")
+      .get() as { key_fingerprint: string; to_key_fingerprint: string };
+    expect(stored).toEqual({
+      key_fingerprint: publisherKeyFingerprint(OTHER_KEY),
+      to_key_fingerprint: publisherKeyFingerprint(PUB_KEY),
+    });
   });
 });
 
