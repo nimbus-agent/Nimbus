@@ -4,7 +4,7 @@ A Nimbus extension registry is a folder of signed static files (see [architectur
 
 ## What you get
 
-- `main` holds sources: `extensions/<id>/<version>/{manifest.json,package.tgz,publish-request.json}`, the rules in `nimbus-registry.json`, and two workflows. It never holds a signed `index.json`.
+- `main` holds sources: `extensions/<id>/<version>/{manifest.json,package.tgz,publish-request.json}`, publishers' signed key statements under `statements/<statement id>.json` (a `key.rotate` or `key.revoke` sent with `nimbus extension publish --statement`; the sign run admits them into the index, and one never leaves it once signed), the rules in `nimbus-registry.json`, and two workflows. It never holds a signed `index.json`.
 - `gh-pages` holds the published site: the signed `index.json` and the files it references. Only the sign workflow writes it.
 - **Registry check** runs on every pull request to `main` with a read-only token and no secrets. It is a reviewer aid.
 - **Registry sign** runs after a merge (or by hand), behind the `registry-signing` environment's required reviewers, with the root key. It is the security boundary.

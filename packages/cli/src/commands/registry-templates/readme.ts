@@ -33,10 +33,27 @@ Build and sign your extension, then open a publish pull request:
 nimbus extension publish <extension-dir> --registry-repo <owner>/<repo>
 \`\`\`
 
-A publish pull request may only ADD the three files of exactly one new \`<id>@<version>\`.
+A publish pull request may only ADD the three files of exactly one new \`<id>@<version>\`, plus
+any \`statements/<statement id>.json\` files.
 ${namespace}The **Registry check** workflow validates it against the signed index and writes a summary for the
 reviewer. A green check is a reviewer aid, not a guarantee: a pull request can edit the check
 workflow itself, and no runtime check of the package is performed.
+
+## Rotating or revoking a publisher key
+
+A publisher moves to a new key by signing a rotation with the OLD key and sending it with the
+first version signed by the new one:
+
+\`\`\`bash
+nimbus extension key rotate --from <old key file> --to <new key file> --publisher <id>
+nimbus extension publish <extension-dir> --registry-repo <owner>/<repo> --statement <statement file>
+\`\`\`
+
+\`nimbus extension key revoke --key <key file> --publisher <id> --reason <text>\` writes a
+revocation, which may be the only file in a pull request. The registry admits a statement only
+when it is signed by the key it concerns, for a publisher already in the index, by a key the index
+binds to that publisher; a rotation from a revoked key and two rotations from one key to different
+keys are refused. A statement once signed into the index is never removed.
 
 ## Approving a signing run
 
@@ -46,7 +63,7 @@ After a merge to \`${main}\`, the **Registry sign** workflow waits for approval 
 - the workflow file it runs is the one you expect (\`.github/workflows/registry-sign.yml\`
   unchanged, or changed only as you reviewed); the approval is what stops a changed workflow
   from using the root key;
-- the versions it will add are the ones that were reviewed and merged.
+- the versions and statements it will add are the ones that were reviewed and merged.
 
 The run re-validates every unsigned version, skips (and names) any that fail, signs the rest at
 the next sequence number and pushes the site to \`gh-pages\`. A version that is already signed

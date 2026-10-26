@@ -1893,8 +1893,9 @@ Shipped so far, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
 - **The MCP capture sink, 3 of 3** (2026-10-12 → 2026-10-15; [§ MCP capture sink](#mcp-capture-sink)).
 - **The registry**: the client (2026-10-18), publishing (2026-10-23) and the Readwise unbundling pilot
   ([§ Extension registry client](#extension-registry-client), [§ Connector migration](#connector-migration)).
-- **The trust layer, PR 1 and PR 2a of 5** (2026-10-26; [§ Trust layer](#trust-layer)): statements are
-  stored and the feed is fetched, and nothing is enforced yet.
+- **The trust layer, PRs 1–3b of 5** (2026-10-26; [§ Trust layer](#trust-layer)): statements are stored,
+  the feed is fetched (unset in this build), revoked or taken-down code is refused (I48), publishers can
+  rotate keys, and a registry carries their rotations and revocations.
 - **Role packs, 5 of 5** (2026-10-22 → 2026-10-26). They are config layers rather than an S3 subsystem of
   their own, so they are described where they act: [§ Layered config](#layered-config),
   [§ Source kinds](#source-kinds-decisions-and-glossary-inputs) and the desktop notes in
@@ -2152,9 +2153,10 @@ I44. `registry search` reads the owner's registries only, so it does not include
 
 ### Trust layer
 
-**PRs 2a and 2b of 5 (marketplace trust layer, Phase 9.5 project 3; schema V76 from PR 1; invariant I48 with static D37).**
+**PRs 2a–3b of 5 (marketplace trust layer, Phase 9.5 project 3; schema V76 from PR 1; invariant I48 with static D37).**
 The gateway accepts and stores trust statements (publisher-key revocations, extension takedowns, key rotations and Nimbus
-publisher verifications, PR 2a), and refuses revoked or taken-down code at install, update and spawn (PR 2b).
+publisher verifications, PR 2a), refuses revoked or taken-down code at install, update and spawn (PR 2b), and follows a
+publisher's key rotations (PR 3a); a registry admits publishers' own rotations and revocations into its signed index (PR 3b).
 
 **Store** (`extensions/trust/trust-store.ts`, the only code naming `trust_statement` and `trust_feed_state`, D37). A statement
 is stored once, keyed by the SHA-256 of its signed bytes (the first source is kept). Authority comes from
@@ -2203,8 +2205,6 @@ or `ERR_EXTENSION_TAKEN_DOWN`:
 - the pre-spawn verifier: step 4a, before the tree is hashed, then step 6a for the key the Vault holds now, before the
   signature check.
 
-Rotation-taint (spec R4) lands with rotation in PR 3.
-
 **The override.** `nimbus extension approve` shows each block in the `extension.run` prompt and stores the statement ids it
 showed in `extension_run_grant.trust_ack_json`. A block whose id is not there refuses the spawn, so a later takedown blocks
 again. The no-change short-circuit compares the acknowledgement too. A block that lands while the prompt is open refuses
@@ -2219,6 +2219,31 @@ or ONE rotation chain from a trusted key that passes no revoked key (R3, R8), ye
 behind every door that used to refuse any different key, adds the owner's `--accept-publisher-key <fingerprint>`, and states
 the change in the existing install/update prompt. `blocksFor` adds R4: a key reached from a revoked key is blocked unless
 Nimbus vouches for it.
+
+**Publisher statements in a registry (PR 3b).** A publisher signs `key.rotate` (with the old key) or `key.revoke` (with the
+key it revokes) using `nimbus extension key rotate|revoke`, and passes the file to `nimbus extension publish --statement`
+(or `registry maintain add --statement` for a local-folder registry). The publish pull request then also adds
+`statements/<statement id>.json`. One function in `@nimbus-dev/registry-format`, `admitPublisherStatements`
+(`publisher-statements.ts`), decides what a registry admits, and every writer and pre-check calls it: CLI `publish` and
+`maintain add` (which refuse when anything is not admitted), and the registry action's `check` (which fails) and `sign` (which
+skips with a warning, as it does for a bad version directory). Admission does not depend on the order statements arrive in. A
+statement must be publisher-signed (no root key is passed, so a root-signed one confers nothing here and is carried verbatim),
+for a publisher with an extension in the index, and signed by a key the index binds to that publisher, directly or through
+rotations. Revocations are admitted before rotations, so a rotation away from a key revoked in the same batch is refused (R3).
+Two rotations from one key to different keys are a fork: both are refused inside one batch, and against an admitted rotation
+the newcomer is refused. Caps: 20 rotations per publisher, 1,000 statements per index. A statement once in the signed index is
+never removed: deleting its file changes nothing. The pure rotation-graph walk (`rotation-graph.ts`) lives in
+`registry-format` too, so the validator and the gateway (`trust-keys.ts`, `trust-blocks.ts`) follow chains with the same code.
+
+`validatePublish`'s one-key-per-publisher rule became "the publisher's CURRENT key": the one key that every key the index
+binds to the publisher leads to through admitted rotations, not revoked there (R4 included). A new publisher may use any key
+the index does not revoke. Refusals name the case: `superseded` (sign with the current key), `fork`, `unrelated` (include the
+`key.rotate` with `--statement`), and a revoked key is `ERR_REGISTRY_PUBLISHER_KEY_REVOKED`. When a version signed by the new key
+is added, the extension's index entry moves to that key (`publisherAfterPublish`). Stated bounds: (1) versions signed by an
+earlier key stay listed but can no longer be installed from that registry by explicit version, because the gateway requires the
+manifest key to equal the entry key (installed copies keep running, and `extension downgrade` restores from the local version
+store); (2) a sibling extension still bound to the old key shows as a key conflict to a client that trusts only the new key,
+because R5 follows rotations forward only, so `publish` names those siblings and tells the publisher to republish them.
 
 **When a block lands.** Every recording path (a verified registry index, the feed, the boot snapshot) hands the ids it newly
 stored to `RegistryFetchDeps.onTrustRecorded`. `extensions/trust/trust-block-enforcer.ts` then stops the running client of
