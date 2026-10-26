@@ -10,10 +10,12 @@ import {
   type RegistryIndex,
   registryIndexDigest,
   registryIndexSigningBytes,
+  signTrustStatement,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
 import { buildTestRegistry } from "../extensions/registry/__fixtures__/build-test-registry.ts";
 import { getRegistry, insertRegistry } from "../extensions/registry/registry-store.ts";
+import { recordTrustStatements } from "../extensions/trust/trust-store.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { encodeBase64 } from "../util/base64.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -408,6 +410,7 @@ describe("registry.search and registry.info", () => {
         publisherId: "acme",
         latestStable: "1.1.0",
         latestBeta: "1.2.0-beta.1",
+        blocked: false,
       },
       {
         registry: "second",
@@ -416,8 +419,47 @@ describe("registry.search and registry.info", () => {
         publisherId: "other",
         latestStable: "2.0.0",
         latestBeta: null,
+        blocked: false,
       },
     ]);
+  });
+
+  test("search marks an extension whose newest offered version is taken down (I48)", async () => {
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [
+          { version: "1.0.0", channel: "stable", name: "Tool" },
+          { version: "1.1.0", channel: "stable", name: "Tool" },
+        ],
+      },
+    });
+    pin("main", tmp);
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 60);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const takedown = (versions: string[]) =>
+      signTrustStatement(
+        {
+          kind: "extension.takedown",
+          issuedAt: "2026-10-26T12:00:00Z",
+          signerKey: nimbusKey,
+          extensionId: "acme.tool",
+          publisherId: "acme",
+          versions,
+          reason: "malware",
+        },
+        seed,
+      );
+    const search = async () =>
+      (
+        (await call("registry.search", { query: "tool" })) as {
+          value: { results: Array<{ blocked: boolean }> };
+        }
+      ).value.results[0]?.blocked;
+    recordTrustStatements(db, [await takedown(["1.0.0"])], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    expect(await search()).toBe(false);
+    recordTrustStatements(db, [await takedown(["1.1.0"])], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    expect(await search()).toBe(true);
   });
 
   test("search reports an unreachable registry and still returns others", async () => {

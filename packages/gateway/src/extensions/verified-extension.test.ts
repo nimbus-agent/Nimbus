@@ -703,6 +703,33 @@ describe("readVerifiedExtensionForSpawn — trust blocks (I48)", () => {
     );
   });
 
+  test("a revocation is reported before a takedown, and also before the tree is hashed", async () => {
+    const f = await setup({ signed: true });
+    await block(f, "extension.takedown");
+    await block(f, "key.revoke", "key leaked");
+    let hashed = 0;
+    const treeDigest = (root: string): string => {
+      hashed++;
+      return computeExtensionTreeDigest(root);
+    };
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, { ...deps(f), treeDigest }),
+      "ERR_EXTENSION_KEY_REVOKED",
+    );
+    expect(hashed).toBe(0);
+  });
+
+  test("a revocation of the key the Vault holds NOW refuses at step 6 even if the row recorded another", async () => {
+    const f = await setup({ signed: true });
+    f.db.run("UPDATE extension SET publisher_key_fingerprint = ? WHERE id = ?", ["0".repeat(32), f.id]);
+    await block(f, "key.revoke", "vault key leaked");
+    await expectCode(
+      readVerifiedExtensionForSpawn(f.id, deps(f)),
+      "ERR_EXTENSION_KEY_REVOKED",
+      /vault key leaked/,
+    );
+  });
+
   test("blocks the grant acknowledged let it run; a NEW block refuses again", async () => {
     const f = await setup({ signed: true });
     const ids = [await block(f, "key.revoke"), await block(f, "extension.takedown")];

@@ -79,7 +79,42 @@ type ExtensionListEntry = {
   runState?: string;
   runGrant?: { serviceId: string; approvedAt: number; modelAccess: boolean } | null;
   source_registry?: string | null;
+  /** I48: revocations and takedowns the run grant has not acknowledged. */
+  blockedBy?: TrustBlockView[];
 };
+
+export type TrustBlockView = {
+  statementId: string;
+  kind: string;
+  issuer: string;
+  registry: string | null;
+  reason: string;
+  issuedAt: string;
+};
+
+function blockIssuerPhrase(b: TrustBlockView): string {
+  if (b.issuer === "registry") {
+    return `the maintainer of registry "${stripControl(b.registry ?? "?")}"`;
+  }
+  return b.issuer === "nimbus" ? "Nimbus" : "its publisher";
+}
+
+/**
+ * `nimbus extension info`'s lines for each block (I48). Every value came from a signed statement a
+ * third party wrote, so control characters are stripped before it reaches the terminal.
+ */
+export function formatBlockLines(id: string, blocks: readonly TrustBlockView[]): string[] {
+  if (blocks.length === 0) return [];
+  const lines = blocks.map((b) => {
+    const what = b.kind === "key.revoke" ? "publisher key revoked" : "taken down";
+    const by = blockIssuerPhrase(b);
+    return `Blocked:   ${what} by ${by} on ${stripControl(b.issuedAt)}: ${stripControl(b.reason)}`;
+  });
+  lines.push(
+    `           It does not run. To run it anyway: nimbus extension approve ${stripControl(id)}`,
+  );
+  return lines;
+}
 
 export interface ExtensionListTableRow {
   id: string;
@@ -340,6 +375,7 @@ export async function runExtensionInfo(
   console.log(`Enabled:   ${formatEnabledLine(e)}`);
   const runLine = formatRunLine(e);
   if (runLine !== null) console.log(`Run:       ${runLine}`);
+  for (const line of formatBlockLines(e.id, e.blockedBy ?? [])) console.log(line);
   printExtensionInfoPublisher(e);
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");

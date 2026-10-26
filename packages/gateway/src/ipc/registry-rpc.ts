@@ -17,6 +17,7 @@ import {
   type RegistryFetchDeps,
 } from "../extensions/registry/registry-fetch.ts";
 import { readIndexes, resolveRegistryEntry } from "../extensions/registry/registry-resolve.ts";
+import { blocksFor } from "../extensions/trust/trust-blocks.ts";
 import {
   assertRegistryNameNotReserved,
   deleteRegistry,
@@ -366,6 +367,8 @@ async function handleSearch(
     publisherId: string;
     latestStable: string | null;
     latestBeta: string | null;
+    /** I48: the publisher key is revoked, or the newest offered version is taken down. */
+    blocked: boolean;
   }> = [];
   for (const { reg, index } of read.ok) {
     for (const [id, entry] of Object.entries(index.extensions)) {
@@ -375,13 +378,25 @@ async function handleSearch(
       const name = newest[1].name;
       const hay = [id, name, entry.publisher.id].map((v) => v.toLowerCase());
       if (!hay.some((h) => h.includes(needle))) continue;
+      const latestStable = versions.find(([, v]) => v.channel === "stable")?.[0] ?? null;
+      const latestBeta = versions.find(([, v]) => v.channel === "beta")?.[0] ?? null;
+      const offered = latestStable ?? latestBeta ?? newest[0];
+      const blocked =
+        blocksFor(o.db, {
+          extensionId: id,
+          version: offered,
+          publisherId: entry.publisher.id,
+          keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+          source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
+        }).length > 0;
       results.push({
         registry: reg.name,
         id,
         name,
         publisherId: entry.publisher.id,
-        latestStable: versions.find(([, v]) => v.channel === "stable")?.[0] ?? null,
-        latestBeta: versions.find(([, v]) => v.channel === "beta")?.[0] ?? null,
+        latestStable,
+        latestBeta,
+        blocked,
       });
     }
   }

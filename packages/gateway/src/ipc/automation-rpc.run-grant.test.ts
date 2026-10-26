@@ -1,14 +1,27 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { signTrustStatement } from "@nimbus-dev/registry-format";
+import nacl from "tweetnacl";
 
 import { listExtensions, setExtensionTreeDigest } from "../automation/extension-store.ts";
 import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
 import { getRunGrant } from "../extensions/run-grant-store.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
+import { recordTrustStatements } from "../extensions/trust/trust-store.ts";
+import { encodeBase64 } from "../extensions/verify-signature.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { type AutomationRpcExtensionMeshHandle, dispatchAutomationRpc } from "./automation-rpc.ts";
 import { setGatewayEventBroadcast } from "./gateway-events.ts";
@@ -490,5 +503,47 @@ describe("the extension runtime over the automation dispatcher (PR 3)", () => {
     });
     expect(stoppedWhileEnabled).toBe(false);
     expect(settled).toBe(true);
+  });
+});
+
+describe("extension.list / extension.info show a blocked extension (I48)", () => {
+  test("a Nimbus takedown makes it blocked, with the block listed", async () => {
+    const { db } = await installed();
+    // Give the installed copy a publisher (display only: list/info read the hash-checked manifest).
+    const installPath = listExtensions(db)[0]?.install_path ?? "";
+    const manifestPath = join(installPath, "nimbus.extension.json");
+    const m = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    m["publisher"] = { id: "acme", key: encodeBase64(new Uint8Array(32).fill(7)) };
+    m["signature"] = `${"A".repeat(86)}==`;
+    writeFileSync(manifestPath, JSON.stringify(m));
+    db.run("UPDATE extension SET manifest_hash = ? WHERE id = 'rpc.run'", [
+      createHash("sha256").update(readFileSync(manifestPath)).digest("hex"),
+    ]);
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 5);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const s = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: nimbusKey,
+        extensionId: "rpc.run",
+        publisherId: "acme",
+        versions: "*",
+        reason: "malware",
+      },
+      seed,
+    );
+    recordTrustStatements(db, [s], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+
+    const item = (await listed(db))[0] as ListItem & { blockedBy: Array<{ reason: string }> };
+    expect(item.runState).toBe("blocked");
+    expect(item.blockedBy.map((b) => b.reason)).toEqual(["malware"]);
+    const info = (await dispatchAutomationRpc({
+      method: "extension.info",
+      params: { id: "rpc.run" },
+      db,
+    })) as { value: { extension: { runState: string; blockedBy: unknown[] } } };
+    expect(info.value.extension.runState).toBe("blocked");
+    expect(info.value.extension.blockedBy).toHaveLength(1);
   });
 });

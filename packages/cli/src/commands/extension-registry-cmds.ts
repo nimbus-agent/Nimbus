@@ -18,6 +18,8 @@ interface SearchResult {
   publisherId: string;
   latestStable: string | null;
   latestBeta: string | null;
+  /** I48: revoked key or a taken-down newest version. Absent from an older gateway. */
+  blocked?: boolean;
 }
 
 interface InfoVersion {
@@ -84,7 +86,7 @@ export async function runExtensionSearch(
         out.results.map((r) => [
           r.registry,
           r.id,
-          r.name,
+          r.blocked === true ? `${r.name} [blocked]` : r.name,
           r.publisherId,
           r.latestStable ?? "-",
           r.latestBeta ?? "-",

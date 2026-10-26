@@ -53,6 +53,25 @@ describe("nimbus extension search", () => {
     expect(lines.at(-1)).toBe("registry gone: ERR_REGISTRY_UNREACHABLE: nope");
   });
 
+  test("a blocked result is marked in the name column", async () => {
+    const h = harness(() => ({
+      results: [
+        {
+          registry: "main",
+          id: "acme.tool",
+          name: "Tool",
+          publisherId: "acme",
+          latestStable: "1.0.0",
+          latestBeta: null,
+          blocked: true,
+        },
+      ],
+      errors: [],
+    }));
+    await runExtensionSearch("tool", false, h.deps);
+    expect(h.stdout()).toContain("Tool [blocked]");
+  });
+
   test("an empty query is a usage error and calls nothing", async () => {
     const h = harness(() => ({}));
     expect(await runExtensionSearch("  ", false, h.deps)).toBe(2);

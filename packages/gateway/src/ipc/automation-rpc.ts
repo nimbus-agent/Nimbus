@@ -33,6 +33,7 @@ import { deleteConnectorHealthRow } from "../connectors/health.ts";
 import {
   approveExtensionRun,
   currentRunCredentials,
+  readVerifiedManifest,
   revokeExtensionRun,
 } from "../extensions/approve-run.ts";
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
@@ -68,6 +69,11 @@ import {
   listRunGrants,
 } from "../extensions/run-grant-store.ts";
 import { extensionRunFields } from "../extensions/run-state.ts";
+import {
+  blockSubjectForInstalled,
+  blocksFor,
+  type TrustBlock,
+} from "../extensions/trust/trust-blocks.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
@@ -530,7 +536,20 @@ type ExtensionListItem = ExtensionRow &
  * and the signature pass only iterates rows that are still `enabled = 1` — but pre-T2 is checked first
  * regardless rather than relying on that ordering.
  */
+/**
+ * The trust blocks applying to an installed row (I48), for display. A manifest that no longer reads
+ * gives `[]` here; the spawn path refuses such a row on its own checks.
+ */
+function trustBlocksOf(db: Database, row: ExtensionRow): TrustBlock[] {
+  try {
+    return blocksFor(db, blockSubjectForInstalled(row, readVerifiedManifest(row)));
+  } catch {
+    return [];
+  }
+}
+
 function decorateExtensionList(
+  db: Database,
   rows: readonly ExtensionRow[],
   grants: ReadonlyMap<string, ExtensionRunGrantRow>,
   isRunning: (id: string) => boolean,
@@ -538,7 +557,12 @@ function decorateExtensionList(
   const preT2 = new Set(preT2DisabledIds());
   const signature = new Map(signatureDisabledRegistry.list().map((e) => [e.id, e.reason]));
   return rows.map((r) => {
-    const run = extensionRunFields(r, grants.get(r.id) ?? null, isRunning(r.id));
+    const run = extensionRunFields(
+      r,
+      grants.get(r.id) ?? null,
+      isRunning(r.id),
+      trustBlocksOf(db, r),
+    );
     if (preT2.has(r.id)) {
       return { ...r, ...run, disabled_reason: PRE_T2_DISABLE_REASON, needs_reinstall: true };
     }
@@ -560,7 +584,7 @@ function isRunningIn(ctx: AutomationCtx, id: string): boolean {
 function handleExtensionList(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
   const filter = rec !== undefined && typeof rec["filter"] === "string" ? rec["filter"] : "";
   const grants = new Map(listRunGrants(ctx.db).map((g) => [g.extension_id, g]));
-  const all = decorateExtensionList(listExtensions(ctx.db), grants, (id) => isRunningIn(ctx, id));
+  const all = decorateExtensionList(ctx.db, listExtensions(ctx.db), grants, (id) => isRunningIn(ctx, id));
   const filtered =
     filter === "needs-reinstall" || filter === "needs_reinstall"
       ? all.filter((e) => e.needs_reinstall === true)
@@ -580,7 +604,12 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
   }
   const fwd = forwardDeps(ctx.db, row.id);
   const rev = reverseDeps(ctx.db, row.id);
-  const run = extensionRunFields(row, getRunGrant(ctx.db, row.id), isRunningIn(ctx, row.id));
+  const run = extensionRunFields(
+    row,
+    getRunGrant(ctx.db, row.id),
+    isRunningIn(ctx, row.id),
+    trustBlocksOf(ctx.db, row),
+  );
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {
     return {

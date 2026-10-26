@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { ExtensionRunGrantRow } from "./run-grant-store.ts";
 import { type ExtensionRunState, extensionRunFields, extensionRunState } from "./run-state.ts";
+import type { TrustBlock } from "./trust/trust-blocks.ts";
 
 const row = { enabled: 1, version: "1.0.0", tree_digest: "a".repeat(64) };
 const grant: ExtensionRunGrantRow = {
@@ -46,8 +47,48 @@ describe("extensionRunFields", () => {
     expect(extensionRunFields(full, grant, false)).toEqual({
       runGrant: { serviceId: "ext_x", approvedAt: 5, modelAccess: false },
       runState: "ready",
+      blockedBy: [],
     });
-    expect(extensionRunFields(full, null, false)).toEqual({ runGrant: null, runState: "no_grant" });
+    expect(extensionRunFields(full, null, false)).toEqual({
+      runGrant: null,
+      runState: "no_grant",
+      blockedBy: [],
+    });
+  });
+});
+
+describe("the blocked state (I48)", () => {
+  const block = (statementId: string): TrustBlock => ({
+    statementId,
+    kind: "extension.takedown",
+    issuer: "nimbus",
+    registry: null,
+    reason: "malware",
+    issuedAt: "2026-10-26T12:00:00Z",
+  });
+  test("an unacknowledged block wins over every approval state, after disabled", () => {
+    expect(extensionRunState(row, grant, true, [block("s1")])).toBe("blocked");
+    expect(extensionRunState(row, null, false, [block("s1")])).toBe("blocked");
+    expect(extensionRunState({ ...row, enabled: 0 }, grant, false, [block("s1")])).toBe("disabled");
+  });
+  test("acknowledged blocks leave the approval state; only the open ones are listed", () => {
+    const acked = { ...grant, trust_ack_json: '["s1"]' };
+    expect(extensionRunState(row, acked, false, [block("s1")])).toBe("ready");
+    const full = {
+      ...row,
+      id: "x",
+      install_path: "/x",
+      manifest_hash: "m",
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    };
+    const f = extensionRunFields(full, acked, false, [block("s1"), block("s2")]);
+    expect(f.runState).toBe("blocked");
+    expect(f.blockedBy.map((b) => b.statementId)).toEqual(["s2"]);
+    expect(extensionRunFields({ ...full, enabled: 0 }, acked, false, [block("s2")]).blockedBy).toEqual(
+      [],
+    );
   });
 });
 

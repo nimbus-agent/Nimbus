@@ -222,25 +222,35 @@ function refuseUnacknowledged(
 }
 
 /**
- * Step 4a (I48): a takedown of this extension that the run grant did not acknowledge refuses the
- * spawn BEFORE the tree is hashed.
+ * Step 4a (I48): a block on this extension that the run grant did not acknowledge refuses the spawn
+ * BEFORE the tree is hashed — a revocation of the key recorded at install (or, before the backfill,
+ * the declared key) first, since it covers every version; then a takedown.
  */
-function assertNotTakenDown(
+function assertNotBlocked(
   db: Database,
   row: ExtensionRow,
   manifest: ExtensionManifest,
   grant: ExtensionRunGrantRow,
 ): void {
-  const blocks = blocksFor(db, blockSubjectForInstalled(row, manifest)).filter(
-    (b) => b.kind === "extension.takedown",
+  const blocks = blocksFor(db, blockSubjectForInstalled(row, manifest));
+  refuseUnacknowledged(
+    row,
+    "ERR_EXTENSION_KEY_REVOKED",
+    blocks.filter((b) => b.kind === "key.revoke"),
+    grant,
   );
-  refuseUnacknowledged(row, "ERR_EXTENSION_TAKEN_DOWN", blocks, grant);
+  refuseUnacknowledged(
+    row,
+    "ERR_EXTENSION_TAKEN_DOWN",
+    blocks.filter((b) => b.kind === "extension.takedown"),
+    grant,
+  );
 }
 
 /**
- * Step 6a (I48): a revocation of the key that verifies the code — the Vault key read in step 6, and
- * the key recorded at install if it differs — that the grant did not acknowledge refuses the spawn,
- * before the signature is checked, so the refusal names the revocation.
+ * Step 6a (I48): a revocation of the key the Vault holds NOW — the one the signature is about to be
+ * checked against, which step 4a could not see — that the grant did not acknowledge refuses the
+ * spawn before the signature is checked, so the refusal names the revocation.
  */
 function assertKeyNotRevoked(
   db: Database,
@@ -250,13 +260,8 @@ function assertKeyNotRevoked(
   vaultKey: Uint8Array,
 ): void {
   const base = blockSubjectForInstalled(row, manifest);
-  const fingerprints = new Set([
-    publisherKeyFingerprint(Buffer.from(vaultKey).toString("base64")),
-    ...(base.keyFingerprint === null ? [] : [base.keyFingerprint]),
-  ]);
-  const blocks = [...fingerprints].flatMap((keyFingerprint) =>
-    blocksFor(db, { ...base, keyFingerprint }).filter((b) => b.kind === "key.revoke"),
-  );
+  const keyFingerprint = publisherKeyFingerprint(Buffer.from(vaultKey).toString("base64"));
+  const blocks = blocksFor(db, { ...base, keyFingerprint }).filter((b) => b.kind === "key.revoke");
   refuseUnacknowledged(row, "ERR_EXTENSION_KEY_REVOKED", blocks, grant);
 }
 
@@ -364,7 +369,7 @@ export async function readVerifiedExtensionForSpawn(
   // 4
   const manifest = readManifestTyped(row);
   // 4a
-  assertNotTakenDown(deps.db, row, manifest, grant);
+  assertNotBlocked(deps.db, row, manifest, grant);
   const rowDigest = row.tree_digest;
   if (rowDigest === null) {
     refuse(
