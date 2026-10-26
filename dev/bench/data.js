@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793018165188,
+  "lastUpdate": 1793020486808,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b8ded95015a6047d7403f029b6e3ea35fdf10eef",
-          "message": "chore: release main (#1129)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.26.0</summary>\n\n##\n[1.26.0](https://github.com/nimbus-agent/Nimbus/compare/v1.25.2...v1.26.0)\n(2026-08-09)\n\n\n### Features\n\n* **gateway:** index Jira/Linear ticket depth and recover it via rebody\n--since ([#1128](https://github.com/nimbus-agent/Nimbus/issues/1128))\n([bdbecd1](https://github.com/nimbus-agent/Nimbus/commit/bdbecd16438824333aa5014bcf10a3ef19225a58))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-09T13:22:46Z",
-          "tree_id": "db4fdc02c13317bca3bfa2c6faab435422e85a7a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b8ded95015a6047d7403f029b6e3ea35fdf10eef"
-        },
-        "date": 1786282294793,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 246.7013998000013,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 253.1736616999937,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 281.0066445000051,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1e0c204e90505e1b72ff21f7a04acce32e7a6727",
+          "message": "docs: bring S3 status up to date in CLAUDE.md, GEMINI.md, README and architecture (#1789)\n\nDocs only. A follow-up to #1788: it brings S3 status up to date in the\nAI context files, the README and the architecture doc.\n\n## CLAUDE.md / GEMINI.md\n\n- **The owner's local condensation of both files.** It shortens the\nStatus paragraph and the invariant bullets.\n- **Three changes from `main` that the condensation predated, re-applied\non top of it:**\n  - schema **V76**;\n  - I44's \"refusing different content at an equal one\";\n- **D37** among the static rules tied to no invariant. The `D10–D36`\nrange is now `D10–D37`, which `audit:status-drift` requires.\n- **Status paragraph.** The trust layer is no longer \"next\": PR 1 and PR\n2a of 5 have shipped (statements are stored and the feed is fetched;\nnothing is enforced yet). The paragraph also states the S3 exit\ncondition: all seven Phase 9.5 projects.\n\n## docs/README.md\n\n- **Status table.** S3 now has its own row, \"In progress (since\n2026-10-11)\", and S4–S5 are Planned. Before, the table said S3 was next.\n- **New S3 paragraph.** It covers the capture sink, the extension\nruntime, role packs, the registry and the trust layer, and the exit\ncondition.\n- **\"Extensible.\"** `--model` access shipped on 2026-10-17, but the\nsection still called it \"a later PR\". It now also covers registries,\npublishing and the Readwise unbundling.\n- **On-call push.** \"Nimbus has no OS notification implementation yet\"\nwas wrong: OS notifications have shipped and a pushed brief raises a\ntoast.\n- **Platform section.** It said PRs gate on Ubuntu only. They also run\nthe whole test suite on macOS and Windows.\n\n## docs/architecture.md\n\n- **The \"Spine S3 Subsystems\" intro** still listed three slices from\n2026-10-16. It now lists everything shipped, with links to each section,\nand states the exit condition.\n- **The Marketplace section** said the registry client \"lands in the\nnext PR\". The client shipped on 2026-10-18, and the section now says the\ndesktop panel does not search or install from registries yet.\n\n## docs/cli-reference.md\n\nI checked it and changed nothing. #1785 and the earlier S3 PRs kept it\ncurrent.\n\n## Verification\n\n`bun run preflight:fast` passes. It failed once on `audit:status-drift`\n(the D36 range), and that is fixed. All ten in-page anchors added to\n`architecture.md` match a heading.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-26T15:04:08+02:00",
+          "tree_id": "131ac1822e252e08f01f304168f0f4ad5efe14d2",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1e0c204e90505e1b72ff21f7a04acce32e7a6727"
+        },
+        "date": 1793020483162,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 276.65708870000054,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 274.3943585500063,
             "unit": "ms"
           }
         ]
