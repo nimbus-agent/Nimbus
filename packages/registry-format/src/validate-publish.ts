@@ -18,6 +18,7 @@ import { verifyManifestSignature } from "@nimbus-dev/sdk"; // NOSONAR S1874
 import semver from "semver";
 
 import { MAX_MANIFEST_BYTES, MAX_PACKAGE_BYTES } from "./caps.ts";
+import { codeUnitCompare } from "./code-unit-compare.ts";
 import { RegistryError } from "./errors.ts";
 import {
   assertCanonicalExtensionId,
@@ -36,6 +37,7 @@ import {
 } from "./manifest.ts";
 import { isPackageFile, PACKAGE_MANIFEST_FILE } from "./package-set.ts";
 import type { SandboxPermissions } from "./permissions-validator.ts";
+import { publisherKeyStanding } from "./publisher-statements.ts";
 
 /** `nimbus-registry.json`: the registry's own rules. */
 export interface RegistryConfig {
@@ -267,6 +269,49 @@ function indexedServiceIds(signed: RegistryIndex): Map<string, string> {
   return out;
 }
 
+/**
+ * Rule 9: a publisher publishes with its ONE current key — the key every key the index binds to it
+ * leads to through the index's `key.rotate` statements — and never with a revoked one
+ * (`publisher-statements.ts`). A publisher with no bound key may use any key not revoked here.
+ */
+function assertCurrentPublisherKey(
+  publisher: { id: string; key: string },
+  signed: RegistryIndex,
+): void {
+  const standing = publisherKeyStanding(signed, publisher.id, publisher.key);
+  if (standing.ok) return;
+  const fp = publisherKeyFingerprint(publisher.key);
+  const current = standing.current.map(publisherKeyFingerprint).join(", ");
+  switch (standing.reason) {
+    case "revoked":
+      throw new RegistryError(
+        "ERR_REGISTRY_PUBLISHER_KEY_REVOKED",
+        `publisher ${publisher.id}'s key ${fp} is revoked in this registry (itself or a key it was rotated from)`,
+      );
+    case "superseded":
+      throw keyConflict(
+        `publisher ${publisher.id}'s key ${fp} is superseded by ${current}; sign with the current key`,
+      );
+    case "fork":
+      throw keyConflict(
+        `publisher ${publisher.id}'s key rotations fork or loop (current keys: ${current || "none"}); no key can publish until the registry maintainer resolves it`,
+      );
+    case "unrelated": {
+      const bound = Object.entries(signed.extensions)
+        .filter(([, e]) => e.publisher.id === publisher.id)
+        .map(([id]) => id)
+        .sort(codeUnitCompare)
+        .join(", ");
+      throw keyConflict(
+        `publisher ${publisher.id} is bound to key ${current || "(revoked)"} by indexed extension ${bound}; this manifest is signed by ${fp}, which no key.rotate in the index reaches — include the key.rotate statement with --statement`,
+      );
+    }
+  }
+}
+
+const keyConflict = (detail: string): RegistryError =>
+  new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", detail);
+
 // Rules 8, 9, 10: everything decided by the signed registry state.
 function assertRegistryState(
   m: ExtensionManifest,
@@ -285,22 +330,14 @@ function assertRegistryState(
       );
     }
   }
-  // Clients key the Vault by publisher id, so one publisher id has ONE key across the registry.
-  for (const [id, entry] of Object.entries(signed.extensions)) {
-    if (entry.publisher.id === publisher.id && entry.publisher.key !== publisher.key) {
-      throw new RegistryError(
-        "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
-        `publisher ${publisher.id} is bound to a different key by indexed extension ${id}`,
-      );
-    }
+  if (existing !== undefined && existing.publisher.id !== publisher.id) {
+    throw new RegistryError(
+      "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
+      `${m.id} is bound to publisher ${existing.publisher.id}`,
+    );
   }
+  assertCurrentPublisherKey(publisher, signed);
   if (existing !== undefined) {
-    if (existing.publisher.id !== publisher.id || existing.publisher.key !== publisher.key) {
-      throw new RegistryError(
-        "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
-        `${m.id} is bound to publisher ${existing.publisher.id} with a different key`,
-      );
-    }
     // Equal precedence, not just an equal string: an indexed `1.0.0+r1` already IS `1.0.0`.
     const taken = Object.keys(existing.versions).find(
       (v) => v === m.version || semver.compare(v, m.version) === 0,

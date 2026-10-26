@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:9383bc63bec665397d83ddab6f39cc31f9a0767468976cee0288e9bab5fbc501
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:6939789b6dd74b7428f1392cc3cb1c200a8dd33283364be8098765cc83106ba3
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5175,9 +5175,215 @@ function privateKeyFromSeed(seed) {
 
 // ../../registry-format/src/trust-statement.ts
 var import_tweetnacl = __toESM(require_nacl_fast(), 1);
+var TRUST_STATEMENT_KINDS = [
+  "key.revoke",
+  "extension.takedown",
+  "key.rotate",
+  "publisher.verified"
+];
+var MAX_STATEMENT_REASON_CHARS = 500;
+var MAX_TAKEDOWN_VERSIONS = 100;
+var MAX_VERIFIED_KEYS = 10;
+var KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
+var SIGNATURE_RE2 = /^[A-Za-z0-9+/]{86}==$/;
+var FINGERPRINT_RE = /^[0-9a-f]{32}$/;
+var GITHUB_HANDLE_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+function invalid(detail) {
+  return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
+}
+function asObject(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw invalid("a statement must be an object");
+  }
+  return value;
+}
+function str(o, key) {
+  const v = o[key];
+  if (typeof v !== "string" || v === "")
+    throw invalid(`${key} must be a non-empty string`);
+  return v;
+}
+function matching(o, key, re) {
+  const v = str(o, key);
+  if (!re.test(v))
+    throw invalid(`${key} is malformed`);
+  return v;
+}
+function timestamp(o, key) {
+  const v = str(o, key);
+  if (Number.isNaN(Date.parse(v)))
+    throw invalid(`${key} is not a timestamp`);
+  return v;
+}
+function publisherId(o) {
+  const v = str(o, "publisherId");
+  if (v.length > 64 || !PUBLISHER_ID_RE.test(v))
+    throw invalid("publisherId is malformed");
+  return v;
+}
+function reason(o) {
+  const v = str(o, "reason");
+  if ([...v].length > MAX_STATEMENT_REASON_CHARS) {
+    throw invalid(`reason exceeds ${String(MAX_STATEMENT_REASON_CHARS)} characters`);
+  }
+  return v;
+}
+function versions(o) {
+  const v = o["versions"];
+  if (v === "*")
+    return v;
+  if (!Array.isArray(v) || v.length === 0) {
+    throw invalid('versions must be "*" or a non-empty list');
+  }
+  if (v.length > MAX_TAKEDOWN_VERSIONS) {
+    throw invalid(`versions lists more than ${String(MAX_TAKEDOWN_VERSIONS)} entries`);
+  }
+  const seen = new Set;
+  for (const item of v) {
+    if (typeof item !== "string" || !isValidSemver(item))
+      throw invalid("versions has a non-semver entry");
+    if (seen.has(item))
+      throw invalid("versions has a duplicate entry");
+    seen.add(item);
+  }
+  return v;
+}
+function verifiedKeys(o) {
+  const v = o["keys"];
+  if (!Array.isArray(v) || v.length === 0 || v.length > MAX_VERIFIED_KEYS) {
+    throw invalid(`keys must list 1 to ${String(MAX_VERIFIED_KEYS)} keys`);
+  }
+  const seen = new Set;
+  for (const k of v) {
+    if (typeof k !== "string" || !KEY_RE.test(k))
+      throw invalid("keys has a malformed key");
+    if (seen.has(k))
+      throw invalid("keys has a duplicate key");
+    seen.add(k);
+  }
+  return v;
+}
+function isKnownStatementKind(raw) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return false;
+  const kind = raw["kind"];
+  return typeof kind === "string" && TRUST_STATEMENT_KINDS.includes(kind);
+}
+function parseTrustStatement(raw) {
+  const o = asObject(raw);
+  if (!isKnownStatementKind(o))
+    throw invalid("kind is not known");
+  const base = {
+    ...o,
+    issuedAt: timestamp(o, "issuedAt"),
+    signerKey: matching(o, "signerKey", KEY_RE),
+    signature: matching(o, "signature", SIGNATURE_RE2)
+  };
+  switch (o["kind"]) {
+    case "key.revoke":
+      return {
+        ...base,
+        kind: "key.revoke",
+        publisherId: publisherId(o),
+        keyFingerprint: matching(o, "keyFingerprint", FINGERPRINT_RE),
+        reason: reason(o)
+      };
+    case "extension.takedown": {
+      const extensionId = str(o, "extensionId");
+      try {
+        assertSafeExtensionId(extensionId);
+      } catch (e) {
+        throw invalid(`extensionId is not safe: ${e.message}`);
+      }
+      return {
+        ...base,
+        kind: "extension.takedown",
+        extensionId,
+        publisherId: publisherId(o),
+        versions: versions(o),
+        reason: reason(o)
+      };
+    }
+    case "key.rotate": {
+      const fromKey = matching(o, "fromKey", KEY_RE);
+      const toKey = matching(o, "toKey", KEY_RE);
+      if (fromKey === toKey)
+        throw invalid("fromKey and toKey are the same key");
+      return { ...base, kind: "key.rotate", publisherId: publisherId(o), fromKey, toKey };
+    }
+    case "publisher.verified":
+      return {
+        ...base,
+        kind: "publisher.verified",
+        publisherId: publisherId(o),
+        keys: verifiedKeys(o),
+        github: matching(o, "github", GITHUB_HANDLE_RE),
+        verifiedAt: timestamp(o, "verifiedAt")
+      };
+  }
+}
+function trustStatementSigningBytes(s) {
+  const { signature: _omitted, ...rest } = s;
+  return new TextEncoder().encode(canonicalize(rest));
+}
+function signatureVerifies(s) {
+  try {
+    return import_tweetnacl.default.sign.detached.verify(trustStatementSigningBytes(s), new Uint8Array(Buffer.from(s.signature, "base64")), new Uint8Array(Buffer.from(s.signerKey, "base64")));
+  } catch {
+    return false;
+  }
+}
+function verifyTrustStatement(s, opts) {
+  if (!signatureVerifies(s))
+    return null;
+  const root = opts.nimbusRootKey !== undefined && s.signerKey === opts.nimbusRootKey ? "nimbus" : opts.registryRootKey !== undefined && s.signerKey === opts.registryRootKey ? "registry" : null;
+  switch (s.kind) {
+    case "key.revoke":
+      if (publisherKeyFingerprint(s.signerKey) === s.keyFingerprint)
+        return "publisher";
+      return root;
+    case "extension.takedown":
+      return root;
+    case "publisher.verified":
+      return root === "nimbus" ? "nimbus" : null;
+    case "key.rotate":
+      return s.signerKey === s.fromKey ? "publisher" : null;
+  }
+}
 
 // ../../registry-format/src/trust-feed.ts
 var MAX_TRUST_FEED_BYTES = 8 * 1024 * 1024;
+var MAX_STATEMENTS_PER_DOCUMENT = 1e4;
+function hasStringKind(entry) {
+  return entry !== null && typeof entry === "object" && !Array.isArray(entry) && typeof entry["kind"] === "string";
+}
+function readStatementList(raw) {
+  if (raw === undefined)
+    return { statements: [], dropped: 0, unknownKinds: 0 };
+  if (!Array.isArray(raw))
+    return { statements: [], dropped: 1, unknownKinds: 0 };
+  const statements = [];
+  let dropped = Math.max(0, raw.length - MAX_STATEMENTS_PER_DOCUMENT);
+  let unknownKinds = 0;
+  for (const entry of raw.slice(0, MAX_STATEMENTS_PER_DOCUMENT)) {
+    if (!hasStringKind(entry)) {
+      dropped++;
+      continue;
+    }
+    if (!isKnownStatementKind(entry)) {
+      unknownKinds++;
+      continue;
+    }
+    try {
+      statements.push(parseTrustStatement(entry));
+    } catch (err) {
+      if (!(err instanceof RegistryError))
+        throw err;
+      dropped++;
+    }
+  }
+  return { statements, dropped, unknownKinds };
+}
 
 // ../../registry-format/src/index-format.ts
 function decodeBase642(s) {
@@ -5185,44 +5391,44 @@ function decodeBase642(s) {
 }
 var MAX_INDEX_BYTES = 8 * 1024 * 1024;
 var HEX64_RE = /^[0-9a-f]{64}$/;
-var KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
-var SIGNATURE_RE2 = /^[A-Za-z0-9+/]{86}==$/;
-function invalid(detail) {
+var KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
+var SIGNATURE_RE3 = /^[A-Za-z0-9+/]{86}==$/;
+function invalid2(detail) {
   return new RegistryError("ERR_REGISTRY_INDEX_INVALID", detail);
 }
-function asObject(value, what) {
+function asObject2(value, what) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw invalid(`${what} must be an object`);
+    throw invalid2(`${what} must be an object`);
   }
   return value;
 }
 function requireKeys(o, keys, what) {
   for (const k of keys) {
     if (!(k in o))
-      throw invalid(`${what} is missing key: ${k}`);
+      throw invalid2(`${what} is missing key: ${k}`);
   }
 }
-function str(o, key, what) {
+function str2(o, key, what) {
   const v = o[key];
   if (typeof v !== "string" || v === "")
-    throw invalid(`${what}.${key} must be a non-empty string`);
+    throw invalid2(`${what}.${key} must be a non-empty string`);
   return v;
 }
-function matching(o, key, re, what) {
-  const v = str(o, key, what);
+function matching2(o, key, re, what) {
+  const v = str2(o, key, what);
   if (!re.test(v))
-    throw invalid(`${what}.${key} is malformed`);
+    throw invalid2(`${what}.${key} is malformed`);
   return v;
 }
 function isoTimestamp(o, key, what) {
-  const v = str(o, key, what);
+  const v = str2(o, key, what);
   if (Number.isNaN(Date.parse(v)))
-    throw invalid(`${what}.${key} is not a timestamp`);
+    throw invalid2(`${what}.${key} is not a timestamp`);
   return v;
 }
 function parseVersionEntry(raw, id, version) {
   const what = `extensions.${id}.versions.${version}`;
-  const o = asObject(raw, what);
+  const o = asObject2(raw, what);
   requireKeys(o, [
     "channel",
     "name",
@@ -5236,28 +5442,28 @@ function parseVersionEntry(raw, id, version) {
   ], what);
   const channel = o["channel"];
   if (channel !== "stable" && channel !== "beta")
-    throw invalid(`${what}.channel is not known`);
+    throw invalid2(`${what}.channel is not known`);
   const base = `extensions/${id}/${version}`;
-  const manifest = str(o, "manifest", what);
+  const manifest = str2(o, "manifest", what);
   if (manifest !== `${base}/manifest.json`)
-    throw invalid(`${what}.manifest is not canonical`);
-  const pkg = str(o, "package", what);
+    throw invalid2(`${what}.manifest is not canonical`);
+  const pkg = str2(o, "package", what);
   if (pkg !== `${base}/package.tgz`)
-    throw invalid(`${what}.package is not canonical`);
+    throw invalid2(`${what}.package is not canonical`);
   const size = o["packageSizeBytes"];
   if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0) {
-    throw invalid(`${what}.packageSizeBytes must be a positive integer`);
+    throw invalid2(`${what}.packageSizeBytes must be a positive integer`);
   }
   return {
     ...o,
     channel,
-    name: str(o, "name", what),
+    name: str2(o, "name", what),
     manifest,
-    manifestSha256: matching(o, "manifestSha256", HEX64_RE, what),
+    manifestSha256: matching2(o, "manifestSha256", HEX64_RE, what),
     package: pkg,
-    packageSha256: matching(o, "packageSha256", HEX64_RE, what),
+    packageSha256: matching2(o, "packageSha256", HEX64_RE, what),
     packageSizeBytes: size,
-    entryHash: matching(o, "entryHash", HEX64_RE, what),
+    entryHash: matching2(o, "entryHash", HEX64_RE, what),
     publishedAt: isoTimestamp(o, "publishedAt", what)
   };
 }
@@ -5265,27 +5471,27 @@ function parseExtensionEntry(raw, id) {
   try {
     assertSafeExtensionId(id);
   } catch (e) {
-    throw invalid(`extension id ${JSON.stringify(id)} is not safe: ${e.message}`);
+    throw invalid2(`extension id ${JSON.stringify(id)} is not safe: ${e.message}`);
   }
   const what = `extensions.${id}`;
-  const o = asObject(raw, what);
+  const o = asObject2(raw, what);
   requireKeys(o, ["publisher", "versions"], what);
-  const p = asObject(o["publisher"], `${what}.publisher`);
+  const p = asObject2(o["publisher"], `${what}.publisher`);
   requireKeys(p, ["id", "key"], `${what}.publisher`);
-  const pid = str(p, "id", `${what}.publisher`);
+  const pid = str2(p, "id", `${what}.publisher`);
   if (pid.length > 64 || !PUBLISHER_ID_RE.test(pid)) {
-    throw invalid(`${what}.publisher.id is malformed`);
+    throw invalid2(`${what}.publisher.id is malformed`);
   }
-  const key = matching(p, "key", KEY_RE, `${what}.publisher`);
-  const versionsRaw = asObject(o["versions"], `${what}.versions`);
+  const key = matching2(p, "key", KEY_RE2, `${what}.publisher`);
+  const versionsRaw = asObject2(o["versions"], `${what}.versions`);
   const versions = {};
   for (const [version, entry] of Object.entries(versionsRaw)) {
     if (!isValidSemver(version))
-      throw invalid(`${what} has a non-semver version: ${version}`);
+      throw invalid2(`${what} has a non-semver version: ${version}`);
     versions[version] = parseVersionEntry(entry, id, version);
   }
   if (Object.keys(versions).length === 0)
-    throw invalid(`${what} has no versions`);
+    throw invalid2(`${what} has no versions`);
   return { ...o, publisher: { ...p, id: pid, key }, versions };
 }
 function parseRegistryIndex(bytes) {
@@ -5296,7 +5502,7 @@ function parseRegistryIndex(bytes) {
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
-    throw invalid("index.json is not valid UTF-8");
+    throw invalid2("index.json is not valid UTF-8");
   }
   if (text.startsWith("\uFEFF"))
     text = text.slice(1);
@@ -5304,17 +5510,17 @@ function parseRegistryIndex(bytes) {
   try {
     raw = JSON.parse(text);
   } catch {
-    throw invalid("index.json is not valid JSON");
+    throw invalid2("index.json is not valid JSON");
   }
-  const o = asObject(raw, "index");
+  const o = asObject2(raw, "index");
   requireKeys(o, ["format", "rootKey", "sequence", "generatedAt", "extensions", "signature"], "index");
   if (o["format"] !== 1)
-    throw invalid("unsupported index format");
+    throw invalid2("unsupported index format");
   const sequence = o["sequence"];
   if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence <= 0) {
-    throw invalid("index.sequence must be a positive integer");
+    throw invalid2("index.sequence must be a positive integer");
   }
-  const extensionsRaw = asObject(o["extensions"], "index.extensions");
+  const extensionsRaw = asObject2(o["extensions"], "index.extensions");
   const extensions = {};
   for (const [id, entry] of Object.entries(extensionsRaw)) {
     extensions[id] = parseExtensionEntry(entry, id);
@@ -5322,11 +5528,11 @@ function parseRegistryIndex(bytes) {
   return {
     ...o,
     format: 1,
-    rootKey: matching(o, "rootKey", KEY_RE, "index"),
+    rootKey: matching2(o, "rootKey", KEY_RE2, "index"),
     sequence,
     generatedAt: isoTimestamp(o, "generatedAt", "index"),
     extensions,
-    signature: matching(o, "signature", SIGNATURE_RE2, "index")
+    signature: matching2(o, "signature", SIGNATURE_RE3, "index")
   };
 }
 function registryIndexSigningBytes(index) {
@@ -8684,6 +8890,128 @@ async function inspectPackage(tgz, work) {
     files: files.toSorted(codeUnitCompare)
   };
 }
+// ../../registry-format/src/rotation-graph.ts
+function walk(start, next, allow) {
+  const seen = new Set;
+  const queue = [start];
+  while (queue.length > 0) {
+    const node = queue.shift();
+    for (const n of next(node)) {
+      if (seen.has(n) || n === start || !allow(n))
+        continue;
+      seen.add(n);
+      queue.push(n);
+    }
+  }
+  return seen;
+}
+function adjacency(edges, reverse) {
+  const out = new Map;
+  for (const e of edges) {
+    const [a, b] = reverse ? [e.to, e.from] : [e.from, e.to];
+    const list = out.get(a) ?? [];
+    list.push(b);
+    out.set(a, list);
+  }
+  return out;
+}
+function ancestorsOf(edges, fp) {
+  const back = adjacency(edges, true);
+  return walk(fp, (n) => back.get(n) ?? [], () => true);
+}
+function successorsOf(edges, fp, usable) {
+  if (!usable(fp))
+    return { reachable: new Set, terminal: new Set };
+  const fwd = adjacency(edges, false);
+  const reachable = walk(fp, (n) => fwd.get(n) ?? [], usable);
+  const terminal = new Set;
+  for (const n of reachable) {
+    const onward = (fwd.get(n) ?? []).filter((m) => usable(m) && m !== n);
+    if (onward.length === 0)
+      terminal.add(n);
+  }
+  return { reachable, terminal };
+}
+
+// ../../registry-format/src/publisher-statements.ts
+function indexedPublisherStatements(index) {
+  return readStatementList(index.statements).statements.filter((s) => (s.kind === "key.rotate" || s.kind === "key.revoke") && verifyTrustStatement(s, {}) === "publisher");
+}
+function boundKeys(index, publisherId) {
+  const out = new Set;
+  for (const e of Object.values(index.extensions)) {
+    if (e.publisher.id === publisherId)
+      out.add(e.publisher.key);
+  }
+  return out;
+}
+var rotationsOf = (list) => list.filter((s) => s.kind === "key.rotate");
+var edgesOf = (rotations) => rotations.map((r) => ({
+  from: publisherKeyFingerprint(r.fromKey),
+  to: publisherKeyFingerprint(r.toKey)
+}));
+function stateOf(index, publisherId, list = indexedPublisherStatements(index)) {
+  const mine = list.filter((s) => s.publisherId === publisherId);
+  return {
+    bound: boundKeys(index, publisherId),
+    rotations: rotationsOf(mine),
+    revokedFps: new Set(mine.filter((s) => s.kind === "key.revoke").map((s) => s.keyFingerprint))
+  };
+}
+function revokedIn(state, fp) {
+  if (state.revokedFps.has(fp))
+    return true;
+  for (const a of ancestorsOf(edgesOf(state.rotations), fp)) {
+    if (state.revokedFps.has(a))
+      return true;
+  }
+  return false;
+}
+function currentOf(state) {
+  const keyByFp = new Map;
+  for (const k of state.bound)
+    keyByFp.set(publisherKeyFingerprint(k), k);
+  for (const r of state.rotations) {
+    keyByFp.set(publisherKeyFingerprint(r.fromKey), r.fromKey);
+    keyByFp.set(publisherKeyFingerprint(r.toKey), r.toKey);
+  }
+  const edges = edgesOf(state.rotations);
+  const usable = (fp) => !state.revokedFps.has(fp);
+  const current = new Set;
+  for (const k of state.bound) {
+    const fp = publisherKeyFingerprint(k);
+    if (!usable(fp))
+      continue;
+    const { reachable, terminal } = successorsOf(edges, fp, usable);
+    if (reachable.size === 0)
+      current.add(k);
+    for (const t of terminal)
+      current.add(keyByFp.get(t));
+  }
+  return current;
+}
+function publisherKeyStanding(index, publisherId, key) {
+  const state = stateOf(index, publisherId);
+  const current = [...currentOf(state)].sort(codeUnitCompare);
+  const refuse = (reason) => ({
+    ok: false,
+    reason,
+    current
+  });
+  if (revokedIn(state, publisherKeyFingerprint(key)))
+    return refuse("revoked");
+  if (state.bound.size === 0)
+    return { ok: true };
+  if (current.length === 1 && current[0] === key)
+    return { ok: true };
+  if (current.length > 1)
+    return refuse("fork");
+  const known = new Set([...state.bound, ...state.rotations.map((r) => r.fromKey)]);
+  if (known.has(key))
+    return refuse("superseded");
+  const looped = current.length === 0 && [...state.bound].some((k) => !state.revokedFps.has(publisherKeyFingerprint(k)));
+  return refuse(looped ? "fork" : "unrelated");
+}
 // ../../registry-format/src/sign.ts
 import { createPublicKey, sign, verify } from "node:crypto";
 function publicKeyFromSeed(seed) {
@@ -8706,7 +9034,7 @@ var import_semver5 = __toESM(require_semver2(), 1);
 var MAX_SMALL_JSON_BYTES = 4096;
 var PUBLISH_REQUEST_KEYS = ["id", "version", "channel", "publisherFingerprint"];
 var CONFIG_KEYS = ["format", "requirePublisherNamespace"];
-var FINGERPRINT_RE = /^[0-9a-f]{32}$/;
+var FINGERPRINT_RE2 = /^[0-9a-f]{32}$/;
 var DIST_PREFIX = "dist/";
 function decodeJsonObject(bytes, what, fail) {
   let raw;
@@ -8765,7 +9093,7 @@ function parsePublishRequest(bytes) {
   if (channel !== "stable" && channel !== "beta") {
     throw requestInvalid(`${what}.channel must be "stable" or "beta"`);
   }
-  if (typeof publisherFingerprint !== "string" || !FINGERPRINT_RE.test(publisherFingerprint)) {
+  if (typeof publisherFingerprint !== "string" || !FINGERPRINT_RE2.test(publisherFingerprint)) {
     throw requestInvalid(`${what}.publisherFingerprint must be 32 lowercase hex characters`);
   }
   return { id, version, channel, publisherFingerprint };
@@ -8829,6 +9157,26 @@ function indexedServiceIds(signed) {
   }
   return out;
 }
+function assertCurrentPublisherKey(publisher, signed) {
+  const standing = publisherKeyStanding(signed, publisher.id, publisher.key);
+  if (standing.ok)
+    return;
+  const fp = publisherKeyFingerprint(publisher.key);
+  const current = standing.current.map(publisherKeyFingerprint).join(", ");
+  switch (standing.reason) {
+    case "revoked":
+      throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_REVOKED", `publisher ${publisher.id}'s key ${fp} is revoked in this registry (itself or a key it was rotated from)`);
+    case "superseded":
+      throw keyConflict(`publisher ${publisher.id}'s key ${fp} is superseded by ${current}; sign with the current key`);
+    case "fork":
+      throw keyConflict(`publisher ${publisher.id}'s key rotations fork or loop (current keys: ${current || "none"}); no key can publish until the registry maintainer resolves it`);
+    case "unrelated": {
+      const bound = Object.entries(signed.extensions).filter(([, e]) => e.publisher.id === publisher.id).map(([id]) => id).sort(codeUnitCompare).join(", ");
+      throw keyConflict(`publisher ${publisher.id} is bound to key ${current || "(revoked)"} by indexed extension ${bound}; this manifest is signed by ${fp}, which no key.rotate in the index reaches — include the key.rotate statement with --statement`);
+    }
+  }
+}
+var keyConflict = (detail) => new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", detail);
 function assertRegistryState(m, publisher, serviceId, signed) {
   const existing = Object.hasOwn(signed.extensions, m.id) ? signed.extensions[m.id] : undefined;
   if (existing === undefined) {
@@ -8838,15 +9186,11 @@ function assertRegistryState(m, publisher, serviceId, signed) {
       throw new RegistryError("ERR_REGISTRY_SERVICE_ID_COLLISION", `service id ${serviceId} of new id ${m.id} collides with ${hit} of indexed id ${String(indexed.get(hit))}`);
     }
   }
-  for (const [id, entry] of Object.entries(signed.extensions)) {
-    if (entry.publisher.id === publisher.id && entry.publisher.key !== publisher.key) {
-      throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", `publisher ${publisher.id} is bound to a different key by indexed extension ${id}`);
-    }
+  if (existing !== undefined && existing.publisher.id !== publisher.id) {
+    throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", `${m.id} is bound to publisher ${existing.publisher.id}`);
   }
+  assertCurrentPublisherKey(publisher, signed);
   if (existing !== undefined) {
-    if (existing.publisher.id !== publisher.id || existing.publisher.key !== publisher.key) {
-      throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", `${m.id} is bound to publisher ${existing.publisher.id} with a different key`);
-    }
     const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver5.default.compare(v, m.version) === 0);
     if (taken !== undefined) {
       throw new RegistryError("ERR_REGISTRY_VERSION_EXISTS", `${m.id}@${m.version} is already in the index (as ${taken})`);
