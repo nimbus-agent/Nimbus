@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { signTrustStatement, trustStatementId } from "@nimbus-dev/registry-format";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "../lib/extension-signing.ts";
 import { rmDirWithRetry } from "../lib/rm-dir-with-retry.ts";
 import { type RunTool, runTool, TOOL_NOT_STARTED, type ToolResult } from "../lib/run-git.ts";
@@ -367,6 +368,121 @@ describe("nimbus extension publish", () => {
     expect(code).toBe(2);
     expect(err.join("")).toContain("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT: ");
     expect(wroteToGit(t.calls)).toBe(false);
+  });
+
+  describe("--statement", () => {
+    type Pair = { privkey: Uint8Array; pubkey: Uint8Array };
+
+    async function rotationFile(from: Pair, to: Pair, name = "rotation.json") {
+      const fromKey = encodeBase64(from.pubkey);
+      const s = await signTrustStatement(
+        {
+          kind: "key.rotate",
+          issuedAt: "2026-10-26T12:00:00Z",
+          signerKey: fromKey,
+          publisherId: "acme",
+          fromKey,
+          toKey: encodeBase64(to.pubkey),
+        },
+        from.privkey,
+      );
+      const path = join(tmp, name);
+      writeFileSync(path, JSON.stringify(s, null, 2));
+      return { path, id: trustStatementId(s) };
+    }
+
+    test("a rotation rides the publish: statements/<id>.json is on the branch beside the three files", async () => {
+      const oldPair = generateEd25519Keypair();
+      const newPair = generateEd25519Keypair();
+      const remote = await makeRegistry({
+        indexed: [await makeExtension("indexed", { pair: oldPair })],
+      });
+      const ext = await makeExtension("ext", { version: "1.1.0", pair: newPair });
+      const rot = await rotationFile(oldPair, newPair);
+      const t = tools("authed");
+      const code = await runExtensionPublish(
+        [ext, "--registry-repo", REPO, "--statement", rot.path],
+        deps(t.run, remote),
+      );
+      expect(err.join("")).toBe("");
+      expect(code).toBe(0);
+      const branch = "publish/acme/tool/1.1.0";
+      const changed = gitText(t.fork, "show", "--name-only", "--format=", branch).split("\n");
+      expect(changed.sort()).toEqual([
+        "extensions/acme/tool/1.1.0/manifest.json",
+        "extensions/acme/tool/1.1.0/package.tgz",
+        "extensions/acme/tool/1.1.0/publish-request.json",
+        `statements/${rot.id}.json`,
+      ]);
+      const pr = t.calls.find((c) => c.cmd === "gh" && c.args[0] === "pr")?.args ?? [];
+      expect(pr[11]).toContain(rot.id.slice(0, 12));
+    });
+
+    test("without the rotation the publish is refused with the --statement hint, before writing to git", async () => {
+      const oldPair = generateEd25519Keypair();
+      const remote = await makeRegistry({
+        indexed: [await makeExtension("indexed", { pair: oldPair })],
+      });
+      const ext = await makeExtension("ext", { version: "1.1.0" });
+      const t = tools("authed");
+      expect(await runExtensionPublish([ext, "--registry-repo", REPO], deps(t.run, remote))).toBe(
+        2,
+      );
+      expect(err.join("")).toContain("--statement");
+      expect(wroteToGit(t.calls)).toBe(false);
+    });
+
+    test("a statement the registry would not admit refuses before writing to git", async () => {
+      const oldPair = generateEd25519Keypair();
+      const remote = await makeRegistry({
+        indexed: [await makeExtension("indexed", { pair: oldPair })],
+      });
+      const ext = await makeExtension("ext", { version: "1.1.0", pair: oldPair });
+      const stranger = await rotationFile(generateEd25519Keypair(), generateEd25519Keypair());
+      const t = tools("authed");
+      const code = await runExtensionPublish(
+        [ext, "--registry-repo", REPO, "--statement", stranger.path],
+        deps(t.run, remote),
+      );
+      expect(code).toBe(2);
+      expect(err.join("")).toContain("would not admit");
+      expect(wroteToGit(t.calls)).toBe(false);
+    });
+
+    test("an unreadable statement file refuses before anything else", async () => {
+      const remote = await makeRegistry();
+      const ext = await makeExtension("ext");
+      const t = tools("authed");
+      const code = await runExtensionPublish(
+        [ext, "--registry-repo", REPO, "--statement", join(tmp, "missing.json")],
+        deps(t.run, remote),
+      );
+      expect(code).toBe(2);
+      expect(err.join("")).toContain("missing.json");
+      expect(wroteToGit(t.calls)).toBe(false);
+    });
+
+    test("names the publisher's other extensions still bound to the old key", async () => {
+      const oldPair = generateEd25519Keypair();
+      const newPair = generateEd25519Keypair();
+      const remote = await makeRegistry({
+        indexed: [
+          await makeExtension("indexed", { pair: oldPair }),
+          await makeExtension("sibling", { id: "acme/other", pair: oldPair }),
+        ],
+      });
+      const ext = await makeExtension("ext", { version: "1.1.0", pair: newPair });
+      const rot = await rotationFile(oldPair, newPair);
+      const t = tools("authed");
+      const code = await runExtensionPublish(
+        [ext, "--registry-repo", REPO, "--statement", rot.path],
+        deps(t.run, remote),
+      );
+      expect(code).toBe(0);
+      const text = out.join("");
+      expect(text).toContain("acme/other");
+      expect(text).toContain("republish");
+    });
   });
 
   test("refuses a non-namespaced id when gh-pages' config requires one", async () => {

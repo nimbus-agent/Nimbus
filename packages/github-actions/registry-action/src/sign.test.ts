@@ -18,6 +18,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  currentPublisherKeys,
   publicKeyFromSeed,
   signIndex,
   trustStatementId,
@@ -465,6 +466,8 @@ describe("publisher statements", () => {
     expect(index.sequence).toBe(3);
     expect(index.statements).toEqual([rotation]);
     expect(index.extensions["acme/echo"]?.publisher.key).toBe(OTHER_KEY);
+    // What a client reads from this index: the publisher's one current key is the new one.
+    expect([...currentPublisherKeys(index, "acme")]).toEqual([OTHER_KEY]);
     expect(Object.keys(index.extensions["acme/echo"]?.versions ?? {}).sort()).toEqual([
       "1.0.0",
       "1.1.0",

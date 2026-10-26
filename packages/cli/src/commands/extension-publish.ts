@@ -1,17 +1,22 @@
 /**
  * `nimbus extension publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel
- * stable|beta] [--no-pr]` (design § 7.2, § 11.9): opens a pull request that adds
- * `extensions/<id>/<version>/{manifest.json,package.tgz,publish-request.json}` to a git-repository
- * registry. No gateway, no Vault, no token: `gh` owns GitHub auth and Nimbus never reads it.
+ * stable|beta] [--statement <file>]... [--no-pr]` (design § 7.2, § 11.9): opens a pull request that
+ * adds `extensions/<id>/<version>/{manifest.json,package.tgz,publish-request.json}` to a
+ * git-repository registry, plus `statements/<id>.json` for each publisher-signed trust statement
+ * given (`nimbus extension key rotate|revoke`), so a rotation and the first version signed by the
+ * new key land in one pull request. No gateway, no Vault, no token: `gh` owns GitHub auth and
+ * Nimbus never reads it.
  *
  * Everything that can refuse runs before the first git WRITE: the package is packed and validated
  * by the same `validatePublish` the registry's own check runs, against the signed `index.json` on
- * `gh-pages`, which is verified against its own root key first (the validator trusts its index).
+ * `gh-pages` — verified against its own root key first (the validator trusts its index) — with the
+ * given statements admitted by the same `admitPublisherStatements` the registry's sign job runs.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  codeUnitCompare,
   effectiveRegistryConfig,
   type PublishVerdict,
   packExtensionDir,
@@ -22,6 +27,8 @@ import {
   type RegistryConfig,
   RegistryError,
   type RegistryIndex,
+  type TrustStatement,
+  trustStatementId,
   validatePublish,
   verifyRegistryIndexSelf,
 } from "@nimbus-dev/registry-format";
@@ -29,6 +36,7 @@ import { buildPublishCandidate } from "../lib/publish-candidate.ts";
 import { rmDirWithRetry } from "../lib/rm-dir-with-retry.ts";
 import { type RunTool, runTool } from "../lib/run-git.ts";
 import { quoteForPrintedCommand } from "../lib/shell-quote.ts";
+import { admitAllStatements, readStatementArgs } from "../lib/statement-files.ts";
 
 export interface PublishDeps {
   runTool: RunTool;
@@ -49,7 +57,7 @@ const DEFAULT_DEPS: PublishDeps = {
 };
 
 const USAGE =
-  "Usage: nimbus extension publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]\n";
+  "Usage: nimbus extension publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr]\n";
 
 const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/;
 const FORK_REMOTE = "fork";
@@ -73,18 +81,22 @@ interface PublishArgs {
   clone: string | undefined;
   channel: RegistryChannel;
   noPr: boolean;
+  /** `--statement` files, in order. */
+  statements: string[];
 }
 
 function parsePublishArgs(args: string[]): PublishArgs {
   const positional: string[] = [];
   const options = new Map<string, string>();
+  const statements: string[] = [];
   let noPr = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i] as string;
-    if (a === "--registry-repo" || a === "--clone" || a === "--channel") {
+    if (a === "--registry-repo" || a === "--clone" || a === "--channel" || a === "--statement") {
       const v = args[i + 1];
       if (v === undefined || v.startsWith("--")) throw new PublishError(`${a} needs a value`);
-      options.set(a, v);
+      if (a === "--statement") statements.push(v);
+      else options.set(a, v);
       i++;
     } else if (a === "--no-pr") {
       noPr = true;
@@ -106,7 +118,7 @@ function parsePublishArgs(args: string[]): PublishArgs {
   if (channel !== "stable" && channel !== "beta") {
     throw new PublishError("--channel must be stable or beta");
   }
-  return { dir, repo, clone: options.get("--clone"), channel, noPr };
+  return { dir, repo, clone: options.get("--clone"), channel, noPr, statements };
 }
 
 /** Run git in `cwd`; a non-zero exit is a `PublishError` (exit 1) carrying git's own message. */
@@ -280,6 +292,9 @@ const files = (v: PublishVerdict): string[] =>
     (f) => `extensions/${v.id}/${v.version}/${f}`,
   );
 
+/** Where a statement goes in the registry repository: named by its statement id. */
+const statementFile = (s: TrustStatement): string => `statements/${trustStatementId(s)}.json`;
+
 async function commitBranch(
   deps: PublishDeps,
   clone: string,
@@ -287,6 +302,7 @@ async function commitBranch(
   branch: string,
   v: PublishVerdict,
   bytes: { manifest: Uint8Array; package: Uint8Array; request: Uint8Array },
+  statements: readonly TrustStatement[],
 ): Promise<void> {
   const exists = await deps.runTool(
     "git",
@@ -314,7 +330,17 @@ async function commitBranch(
   writeFileSync(join(dest, "manifest.json"), bytes.manifest);
   writeFileSync(join(dest, "package.tgz"), bytes.package);
   writeFileSync(join(dest, "publish-request.json"), bytes.request);
-  await git(deps, clone, [...RAW_BYTES, "add", "--", ...files(v)]);
+  if (statements.length > 0) mkdirSync(join(clone, "statements"), { recursive: true });
+  for (const s of statements) {
+    writeFileSync(join(clone, ...statementFile(s).split("/")), `${JSON.stringify(s, null, 2)}\n`);
+  }
+  await git(deps, clone, [
+    ...RAW_BYTES,
+    "add",
+    "--",
+    ...files(v),
+    ...statements.map(statementFile),
+  ]);
   const identity = await identityArgs(deps, clone, v.publisher.id);
   await git(deps, clone, [
     ...RAW_BYTES,
@@ -325,11 +351,29 @@ async function commitBranch(
   ]);
 }
 
-function prBody(v: PublishVerdict): string {
+function prBody(v: PublishVerdict, statements: readonly TrustStatement[]): string {
+  const carried =
+    statements.length === 0
+      ? ""
+      : ` Carries ${statements.map((s) => `${s.kind} ${trustStatementId(s).slice(0, 12)}`).join(", ")}.`;
   return (
     `Publishes ${v.id}@${v.version} (${v.channel}) from publisher ${v.publisher.id}, ` +
-    `key fingerprint ${publisherKeyFingerprint(v.publisher.key)}. Opened by nimbus extension publish.`
+    `key fingerprint ${publisherKeyFingerprint(v.publisher.key)}.${carried} Opened by nimbus extension publish.`
   );
+}
+
+/**
+ * The publisher's other extensions the index still binds to a different key. Clients that trust
+ * only the new key see them as a key conflict until each is republished under it.
+ */
+function siblingsOnOtherKeys(index: RegistryIndex, v: PublishVerdict): string[] {
+  return Object.entries(index.extensions)
+    .filter(
+      ([id, e]) =>
+        id !== v.id && e.publisher.id === v.publisher.id && e.publisher.key !== v.publisher.key,
+    )
+    .map(([id]) => id)
+    .sort(codeUnitCompare);
 }
 
 /** Quote an argument for a printed command line; plain tokens stay bare, nothing else expands. */
@@ -342,6 +386,7 @@ function printManualSteps(
   defaultBranch: string,
   branch: string,
   v: PublishVerdict,
+  statements: readonly TrustStatement[],
 ): void {
   const pr = [
     "gh pr create --repo",
@@ -353,7 +398,7 @@ function printManualSteps(
     "--title",
     `"Publish ${v.id}@${v.version}"`,
     "--body",
-    q(prBody(v)),
+    q(prBody(v, statements)),
   ].join(" ");
   deps.log(
     `Committed ${v.id}@${v.version} on branch ${branch} in ${clone}.\n` +
@@ -387,6 +432,7 @@ async function openPullRequest(
   defaultBranch: string,
   branch: string,
   v: PublishVerdict,
+  statements: readonly TrustStatement[],
 ): Promise<string> {
   const gh = async (args: string[]): Promise<string> => {
     const r = await deps.runTool("gh", args, { cwd: clone });
@@ -425,9 +471,27 @@ async function openPullRequest(
     "--title",
     `Publish ${v.id}@${v.version}`,
     "--body",
-    prBody(v),
+    prBody(v, statements),
   ]);
   return prUrl.trim();
+}
+
+/** The `--statement` files, read before anything else; an unreadable one is a refusal. */
+function statementArgs(paths: readonly string[]): unknown[] {
+  try {
+    return readStatementArgs(paths);
+  } catch (e) {
+    throw new PublishError((e as Error).message);
+  }
+}
+
+/** Every given statement admitted (or already in the index); otherwise a refusal naming each. */
+function admitStatements(index: RegistryIndex, values: readonly unknown[]) {
+  try {
+    return admitAllStatements(index, values);
+  } catch (e) {
+    throw new PublishError((e as Error).message);
+  }
 }
 
 async function publish(a: PublishArgs, deps: PublishDeps): Promise<number> {
@@ -435,6 +499,7 @@ async function publish(a: PublishArgs, deps: PublishDeps): Promise<number> {
   let clone: { clone: string; temp: boolean; remote: RemoteState } | undefined;
   let keepClone = false;
   try {
+    const statementValues = statementArgs(a.statements);
     const tgz = join(work, "package.tgz");
     await packExtensionDir(a.dir, tgz);
     const candidate = await buildPublishCandidate(tgz, work, a.channel);
@@ -443,30 +508,49 @@ async function publish(a: PublishArgs, deps: PublishDeps): Promise<number> {
     const { defaultBranch } = clone.remote;
     const index = await readSignedIndex(deps, clone.clone, a.repo);
     const config = await readConfig(deps, clone.clone, defaultBranch);
-    const v = await validatePublish(candidate, index, config, work);
+    // Exactly what the sign job will do: admit the statements, then validate against the result.
+    const admission = admitStatements(index, statementValues);
+    const statements = admission.admitted;
+    const v = await validatePublish(candidate, admission.index, config, work);
 
     const branch = `publish/${v.id}/${v.version}`;
-    await commitBranch(deps, clone.clone, defaultBranch, branch, v, {
-      manifest: candidate.manifestBytes,
-      package: candidate.packageBytes,
-      request: candidate.publishRequestBytes,
-    });
+    await commitBranch(
+      deps,
+      clone.clone,
+      defaultBranch,
+      branch,
+      v,
+      {
+        manifest: candidate.manifestBytes,
+        package: candidate.packageBytes,
+        request: candidate.publishRequestBytes,
+      },
+      statements,
+    );
+    const siblings = siblingsOnOtherKeys(index, v);
+    if (siblings.length > 0) {
+      deps.log(
+        `Publisher ${v.publisher.id}'s ${siblings.join(", ")} still bound to an earlier key: ` +
+          `republish each under key ${publisherKeyFingerprint(v.publisher.key)} so users who trust ` +
+          "only the new key can install them without a key conflict.\n",
+      );
+    }
 
     const ghReady =
       !a.noPr && (await deps.runTool("gh", ["auth", "status"], { cwd: clone.clone })).code === 0;
     if (!ghReady) {
       keepClone = true;
       if (!a.noPr) deps.log("gh is not installed or not signed in; not opening the PR.\n");
-      printManualSteps(deps, a, clone.clone, defaultBranch, branch, v);
+      printManualSteps(deps, a, clone.clone, defaultBranch, branch, v, statements);
       return 0;
     }
     try {
-      const url = await openPullRequest(deps, a, clone.clone, defaultBranch, branch, v);
+      const url = await openPullRequest(deps, a, clone.clone, defaultBranch, branch, v, statements);
       deps.log(`Opened ${url}\n`);
       return 0;
     } catch (e) {
       keepClone = true;
-      printManualSteps(deps, a, clone.clone, defaultBranch, branch, v);
+      printManualSteps(deps, a, clone.clone, defaultBranch, branch, v, statements);
       throw e;
     }
   } finally {
