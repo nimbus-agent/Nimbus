@@ -215,6 +215,50 @@ export function replaceCurrentVerifications(
   return written;
 }
 
+/** A stored block that may concern a subject; `trust-blocks.ts` applies scope and versions. */
+export type BlockCandidateRow = {
+  statementId: string;
+  kind: "key.revoke" | "extension.takedown";
+  signerRole: StatementSignerRole;
+  scopeRegistry: string | null;
+  scopeRootFingerprint: string | null;
+  statementJson: string;
+};
+
+/**
+ * Every stored revocation of `(publisherId, keyFingerprint)` and takedown of
+ * `(extensionId, publisherId)`. Scope and takedown versions are NOT applied here.
+ */
+export function readBlockCandidates(
+  db: Database,
+  q: { publisherId: string; keyFingerprint: string | null; extensionId: string },
+): BlockCandidateRow[] {
+  const rows = db
+    .query(
+      `SELECT statement_id, kind, signer_role, scope_registry, scope_root_fingerprint, statement_json
+         FROM trust_statement
+        WHERE publisher_id = ?
+          AND ((kind = 'key.revoke' AND key_fingerprint = ?)
+            OR (kind = 'extension.takedown' AND extension_id = ?))`,
+    )
+    .all(q.publisherId, q.keyFingerprint, q.extensionId) as Array<{
+    statement_id: string;
+    kind: "key.revoke" | "extension.takedown";
+    signer_role: StatementSignerRole;
+    scope_registry: string | null;
+    scope_root_fingerprint: string | null;
+    statement_json: string;
+  }>;
+  return rows.map((r) => ({
+    statementId: r.statement_id,
+    kind: r.kind,
+    signerRole: r.signer_role,
+    scopeRegistry: r.scope_registry,
+    scopeRootFingerprint: r.scope_root_fingerprint,
+    statementJson: r.statement_json,
+  }));
+}
+
 export type FeedFloor = {
   rootKey: string;
   lastSequence: number;
