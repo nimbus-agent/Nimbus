@@ -670,6 +670,32 @@ describe("validatePublish", () => {
       );
     });
 
+    test("the first version under a rotated key must be stable, so default installs keep working", async () => {
+      const signed = await indexOf(
+        { "acme/echo": entryFor("acme/echo", "acme", OTHER_KEY, ["0.9.0"]) },
+        [await rotateKey(OTHER_SEED, KEY)],
+      );
+      await expectRefused(
+        validatePublish(await candidate({ req: request({ channel: "beta" }) }), signed, NS, work),
+        "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
+        "stable",
+      );
+    });
+
+    test("a new extension under a rotated key may start on beta", async () => {
+      const signed = await indexOf(
+        { "acme/other": entryFor("acme/other", "acme", OTHER_KEY, ["1.0.0"]) },
+        [await rotateKey(OTHER_SEED, KEY)],
+      );
+      const v = await validatePublish(
+        await candidate({ req: request({ channel: "beta" }) }),
+        signed,
+        NS,
+        work,
+      );
+      expect(v.channel).toBe("beta");
+    });
+
     test("a brand-new publisher with no statements is accepted", async () => {
       expect((await validatePublish(await candidate(), await indexOf(), NS, work)).newId).toBe(
         true,

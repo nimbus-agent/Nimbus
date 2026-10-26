@@ -309,6 +309,28 @@ function assertCurrentPublisherKey(
   }
 }
 
+/**
+ * Rule 9, second half: adding a version signed by a rotated key moves the extension's index entry
+ * to that key (`publisherAfterPublish`), and the gateway installs a version only when its manifest
+ * key equals the entry's. A beta under the new key would therefore break the default install of
+ * the newest stable version, still signed by the old key — so the first version under a new key
+ * of an EXISTING extension must be stable.
+ */
+function assertKeyMoveOnStable(
+  id: string,
+  publisher: { id: string; key: string },
+  channel: RegistryChannel,
+  signed: RegistryIndex,
+): void {
+  const existing = Object.hasOwn(signed.extensions, id) ? signed.extensions[id] : undefined;
+  if (existing === undefined || existing.publisher.key === publisher.key || channel === "stable") {
+    return;
+  }
+  throw keyConflict(
+    `${id} is bound to key ${publisherKeyFingerprint(existing.publisher.key)}; publish the first version under key ${publisherKeyFingerprint(publisher.key)} on the stable channel, or default installs of the newest stable version would break`,
+  );
+}
+
 const keyConflict = (detail: string): RegistryError =>
   new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", detail);
 
@@ -419,6 +441,7 @@ export async function validatePublish(
   }
   const serviceId = deriveExtensionServiceId(m.id); // 7
   const newId = assertRegistryState(m, publisher, serviceId, signed); // 8, 9, 10
+  assertKeyMoveOnStable(m.id, publisher, req.channel, signed); // 9
 
   if (c.packageBytes.byteLength > MAX_PACKAGE_BYTES) {
     throw new RegistryError(
