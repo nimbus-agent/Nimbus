@@ -11,6 +11,7 @@ import {
   doctorExtensionsLines,
   doctorMigrationLines,
   doctorRegistryLines,
+  doctorTrustLines,
 } from "./extension-doctor-format.ts";
 import { doctorNotificationsLine, parseNotificationsStatus } from "./notifications-format.ts";
 
@@ -869,6 +870,27 @@ export async function doctorPrintRegistries(client: Pick<IPCClient, "call">): Pr
 }
 
 /**
+ * The Nimbus trust feed (trust layer): a `[warn]` (exit 1) when a configured feed was last updated
+ * more than 7 days ago, since revocations published after that have not reached this machine.
+ * Silent when the build has no feed configured, and quiet on an older gateway (-32601).
+ */
+export async function doctorPrintTrust(client: Pick<IPCClient, "call">): Promise<number> {
+  let raw: unknown;
+  try {
+    raw = await client.call<unknown>("trust.status", {});
+  } catch (e) {
+    if (isMethodNotFound(e)) return 0;
+    console.log(
+      `[warn] Trust feed: status check failed (${e instanceof Error ? e.message : String(e)}).`,
+    );
+    return 1;
+  }
+  const { lines, exit } = doctorTrustLines(raw);
+  for (const l of lines) console.log(l);
+  return exit;
+}
+
+/**
  * Connector migrations (Readwise unbundling spec § 7.2): a `[warn]` (exit 1) for one awaiting the
  * owner's answer or one that failed, a quiet `[info]` for one the owner declined. Silent with none.
  * Quiet on an older gateway (-32601); any other failure is a `[warn]`.
@@ -1108,6 +1130,7 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
   exit = Math.max(exit, await doctorPrintCaptures(client));
   exit = Math.max(exit, await doctorPrintExtensions(client));
   exit = Math.max(exit, await doctorPrintRegistries(client));
+  exit = Math.max(exit, await doctorPrintTrust(client));
   exit = Math.max(exit, await doctorPrintMigrations(client));
   exit = Math.max(exit, await doctorPrintPackUpdates(client));
   // Reported BEFORE connector health: a dead embedding runtime disables semantic search for the

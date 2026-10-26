@@ -192,6 +192,8 @@ describe("checkLanMethodAllowed", () => {
   );
 
   test.each([
+    "trust.status",
+    "trust.refresh",
     "registry.add",
     "registry.list",
     "registry.refresh",

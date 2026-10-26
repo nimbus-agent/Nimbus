@@ -169,3 +169,33 @@ export function doctorMigrationLines(raw: unknown): { lines: string[]; exit: num
   }
   return { lines, exit };
 }
+
+/** A configured trust feed older than this many days earns a doctor warning. */
+export const TRUST_FEED_STALE_DAYS = 7;
+
+/**
+ * The trust-feed doctor line (trust layer): a `[warn]` when a configured feed was last updated more
+ * than `TRUST_FEED_STALE_DAYS` ago, or was configured but never accepted. Nothing when the build has
+ * no feed configured.
+ */
+export function doctorTrustLines(raw: unknown): { lines: string[]; exit: number } {
+  if (!isRecord(raw) || raw["configured"] !== true) return { lines: [], exit: 0 };
+  const age = raw["ageDays"];
+  if (age === null) {
+    return {
+      lines: [
+        "[warn] Trust feed: never fetched. Revocations and takedowns cannot reach this machine until it is (`nimbus trust refresh`).",
+      ],
+      exit: 1,
+    };
+  }
+  if (typeof age === "number" && age > TRUST_FEED_STALE_DAYS) {
+    return {
+      lines: [
+        `[warn] Trust feed: last updated ${age} days ago; revocations published since then have not reached this machine (\`nimbus trust refresh\`).`,
+      ],
+      exit: 1,
+    };
+  }
+  return { lines: [], exit: 0 };
+}

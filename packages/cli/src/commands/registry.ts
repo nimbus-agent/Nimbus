@@ -73,6 +73,7 @@ export const COMMAND_NAMES = [
   "test",
   "tool",
   "tribal",
+  "trust",
   "tui",
   "update",
   "vault",

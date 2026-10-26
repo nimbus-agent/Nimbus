@@ -71,6 +71,7 @@ export { runTelemetry } from "./telemetry.ts";
 export { runTest } from "./test.ts";
 export { runTool } from "./tool.ts";
 export { runTribal } from "./tribal.ts";
+export { runTrust } from "./trust-cmd.ts";
 export { runTui } from "./tui.tsx";
 export { runUpdate } from "./update.ts";
 export { runVault } from "./vault.ts";

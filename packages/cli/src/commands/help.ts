@@ -129,6 +129,7 @@ AUTOMATION & EXTENSIONS
   nimbus pack list|show|install|remove …  Role packs: curated settings layers (install is owner-approved)
   nimbus registry add|list|refresh|remove …  Pin and manage extension registries
   nimbus registry maintain …  Build a signed static extension registry (init/add/remove)
+  nimbus trust status|refresh  What the Nimbus trust feed last said (revocations, takedowns)
   nimbus scaffold mcp <name>        Minimal, tested MCP server you can register with connector add --mcp
   nimbus scaffold extension <name> [--publisher <id>]  Installable extension (bundled MCP server) ready to sign and publish
   nimbus test [dir]         Extension manifest contract + bun test when a test script exists
