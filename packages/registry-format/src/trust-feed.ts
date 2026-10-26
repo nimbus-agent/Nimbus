@@ -49,10 +49,20 @@ function invalid(detail: string): RegistryError {
   return new RegistryError("ERR_TRUST_FEED_INVALID", detail);
 }
 
+function hasStringKind(entry: unknown): boolean {
+  return (
+    entry !== null &&
+    typeof entry === "object" &&
+    !Array.isArray(entry) &&
+    typeof (entry as Record<string, unknown>)["kind"] === "string"
+  );
+}
+
 /**
  * Reads a raw statement list. Never throws on data: absent is empty, a non-list counts as one drop,
- * a malformed statement of a known kind is dropped, an unknown kind is skipped, and entries past
- * `MAX_STATEMENTS_PER_DOCUMENT` are dropped. Signatures are NOT checked here.
+ * an entry with no string `kind` or a malformed statement of a known kind is dropped, an unknown
+ * kind is skipped, and entries past `MAX_STATEMENTS_PER_DOCUMENT` are dropped. Signatures are NOT
+ * checked here.
  */
 export function readStatementList(raw: unknown): StatementsRead {
   if (raw === undefined) return { statements: [], dropped: 0, unknownKinds: 0 };
@@ -61,6 +71,11 @@ export function readStatementList(raw: unknown): StatementsRead {
   let dropped = Math.max(0, raw.length - MAX_STATEMENTS_PER_DOCUMENT);
   let unknownKinds = 0;
   for (const entry of raw.slice(0, MAX_STATEMENTS_PER_DOCUMENT)) {
+    // Not a statement at all (no object, or no string `kind`): malformed, not a later kind.
+    if (!hasStringKind(entry)) {
+      dropped++;
+      continue;
+    }
     if (!isKnownStatementKind(entry)) {
       unknownKinds++;
       continue;

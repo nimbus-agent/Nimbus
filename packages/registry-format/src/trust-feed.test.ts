@@ -151,6 +151,19 @@ describe("trust feed", () => {
 });
 
 describe("readStatementList", () => {
+  test("an entry that is not an object or has no string kind is dropped, not an unknown kind", () => {
+    expect(readStatementList([null, 123, "x", [], {}, { kind: 7 }])).toEqual({
+      statements: [],
+      dropped: 6,
+      unknownKinds: 0,
+    });
+    expect(readStatementList([{ kind: "key.unrevoke" }])).toEqual({
+      statements: [],
+      dropped: 0,
+      unknownKinds: 1,
+    });
+  });
+
   test("absent is empty, a non-array is one drop", () => {
     expect(readStatementList(undefined)).toEqual({ statements: [], dropped: 0, unknownKinds: 0 });
     expect(readStatementList({ a: 1 })).toEqual({ statements: [], dropped: 1, unknownKinds: 0 });

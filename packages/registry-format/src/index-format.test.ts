@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import nacl from "tweetnacl";
 
 import { MAX_ROLE_PACK_MANIFEST_BYTES } from "./caps.ts";
+import { publisherKeyFingerprint } from "./fingerprint.ts";
 import {
   MAX_INDEX_BYTES,
   parseRegistryIndex,
@@ -15,6 +16,7 @@ import {
   verifyRegistryIndexSelf,
 } from "./index-format.ts";
 import { publicKeyFromSeed, signIndex } from "./sign.ts";
+import { signTrustStatement } from "./trust-statement.ts";
 
 const encodeBase64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64");
 
@@ -481,11 +483,26 @@ describe("trust-layer fields on a registry index", () => {
     expect(readRegistryReportUrl(parsed)).toBe(good);
   });
 
-  test("an index carrying statements still parses and self-verifies", async () => {
-    const statements = [{ kind: "key.unrevoke" }, { kind: "key.revoke" }];
+  test("an index carrying statements still parses, self-verifies and yields the valid ones", async () => {
+    const revoke = await signTrustStatement(
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: ROOT_KEY,
+        publisherId: "acme",
+        keyFingerprint: publisherKeyFingerprint(PUBKEY_B),
+        reason: "leaked",
+      },
+      SEED,
+    );
+    const statements = [revoke, { kind: "key.unrevoke" }, { kind: "key.revoke" }];
     const parsed = parseRegistryIndex(enc(sign({ ...unsigned, statements })));
     await verifyRegistryIndexSelf(parsed);
-    expect(readRegistryStatements(parsed)).toEqual({ statements: [], dropped: 1, unknownKinds: 1 });
+    expect(readRegistryStatements(parsed)).toEqual({
+      statements: [revoke],
+      dropped: 1,
+      unknownKinds: 1,
+    });
   });
 
   test("the digest of the fixture index is pinned and stable across re-parse", () => {
