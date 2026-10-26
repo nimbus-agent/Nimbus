@@ -337,13 +337,13 @@ function ingestRegistryStatements(
   reg: RegistryRow,
   index: RegistryIndex,
 ): void {
-  const listedPublisherKeys = new Map<string, Set<string>>();
-  for (const entry of Object.values(index.extensions)) {
-    const keys = listedPublisherKeys.get(entry.publisher.id) ?? new Set<string>();
-    keys.add(entry.publisher.key);
-    listedPublisherKeys.set(entry.publisher.id, keys);
-  }
   try {
+    const listedPublisherKeys = new Map<string, Set<string>>();
+    for (const entry of Object.values(index.extensions)) {
+      const keys = listedPublisherKeys.get(entry.publisher.id) ?? new Set<string>();
+      keys.add(entry.publisher.key);
+      listedPublisherKeys.set(entry.publisher.id, keys);
+    }
     recordTrustStatements(
       deps.db,
       readRegistryStatements(index).statements,

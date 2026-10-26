@@ -211,6 +211,30 @@ describe("applyTrustSnapshot", () => {
     });
   });
 
+  test("a snapshot moves the floor without claiming a fetch, and its verifications say snapshot", async () => {
+    await applyTrustSnapshot(db, await feedText(7, [await verified("acme")]), CFG(), 1);
+    expect(readFeedFloor(db, TRUST_FEED_NAME)).toMatchObject({
+      lastSequence: 7,
+      lastFetchedAt: null,
+      lastAttemptedAt: null,
+    });
+    expect(
+      db.query("SELECT source FROM trust_statement WHERE kind = 'publisher.verified'").all(),
+    ).toEqual([{ source: "snapshot" }]);
+  });
+
+  test("the same snapshot on a later boot is unchanged and leaves the last fetch time alone", async () => {
+    await publish(7, []);
+    await refreshTrustFeed({ ...deps({ now: () => 500 }), trustFeed: CFG() });
+    const snap = await feedText(7, []);
+    // A fetched feed at 7 is stored; a snapshot at the same sequence must not refresh "last fetched".
+    expect(await applyTrustSnapshot(db, snap, CFG(), 9_999)).toEqual({
+      status: "unchanged",
+      sequence: 7,
+    });
+    expect(readFeedFloor(db, TRUST_FEED_NAME)?.lastFetchedAt).toBe(500);
+  });
+
   test("no snapshot or no feed configured: not_configured", async () => {
     expect(await applyTrustSnapshot(db, null, CFG(), 1)).toEqual({ status: "not_configured" });
     expect(await applyTrustSnapshot(db, "{}", null, 1)).toEqual({ status: "not_configured" });

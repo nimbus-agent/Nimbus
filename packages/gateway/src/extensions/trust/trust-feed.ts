@@ -77,33 +77,37 @@ async function acceptFeed(
 ): Promise<TrustFeedResult> {
   await verifyTrustFeedPinned(feed, cfg.rootKey);
   const read = readTrustFeedStatements(feed);
-  const verdict = recordFeedAccepted(db, TRUST_FEED_NAME, {
-    rootKey: cfg.rootKey,
-    sequence: feed.sequence,
-    documentSha256: trustFeedDigest(feed),
-    generatedAt: feed.generatedAt,
-    now,
-  });
-  if (verdict === "rollback") {
-    throw new RegistryError(
-      "ERR_TRUST_FEED_ROLLBACK",
-      `trust feed sequence ${feed.sequence} is older than the one already accepted`,
+  // ONE transaction: the floor never advances past a document whose statements were not stored.
+  return db.transaction((): TrustFeedResult => {
+    const verdict = recordFeedAccepted(db, TRUST_FEED_NAME, {
+      rootKey: cfg.rootKey,
+      sequence: feed.sequence,
+      documentSha256: trustFeedDigest(feed),
+      generatedAt: feed.generatedAt,
+      now,
+      fetched: source === "feed",
+    });
+    if (verdict === "rollback") {
+      throw new RegistryError(
+        "ERR_TRUST_FEED_ROLLBACK",
+        `trust feed sequence ${feed.sequence} is older than the one already accepted`,
+      );
+    }
+    if (verdict === "equivocation") {
+      throw new RegistryError(
+        "ERR_TRUST_FEED_EQUIVOCATION",
+        `trust feed sequence ${feed.sequence} was already accepted with different content`,
+      );
+    }
+    const recorded = recordTrustStatements(
+      db,
+      read.statements,
+      { kind: source, nimbusRootKey: cfg.rootKey },
+      now,
     );
-  }
-  if (verdict === "equivocation") {
-    throw new RegistryError(
-      "ERR_TRUST_FEED_EQUIVOCATION",
-      `trust feed sequence ${feed.sequence} was already accepted with different content`,
-    );
-  }
-  const recorded = recordTrustStatements(
-    db,
-    read.statements,
-    { kind: source, nimbusRootKey: cfg.rootKey },
-    now,
-  );
-  const verified = replaceCurrentVerifications(db, read.statements, cfg.rootKey, now);
-  return { status: "accepted", sequence: feed.sequence, recorded, verified };
+    const verified = replaceCurrentVerifications(db, read.statements, cfg.rootKey, now, source);
+    return { status: "accepted", sequence: feed.sequence, recorded, verified };
+  })();
 }
 
 function lastAcceptedSequence(db: Database): number | undefined {
@@ -137,7 +141,11 @@ export async function refreshTrustFeed(
     }
     return result;
   } catch (e) {
-    recordFeedAttempt(deps.db, TRUST_FEED_NAME, now);
+    try {
+      recordFeedAttempt(deps.db, TRUST_FEED_NAME, now);
+    } catch {
+      // A locked database must not turn a refusal into a rejection: this function never throws.
+    }
     return refused(e);
   }
 }
@@ -156,14 +164,12 @@ export async function applyTrustSnapshot(
   try {
     const feed = parseTrustFeed(new TextEncoder().encode(snapshot));
     const before = lastAcceptedSequence(db);
-    if (before !== undefined && feed.sequence < before) {
+    // At or below the stored floor there is nothing to apply: re-applying the same snapshot on every
+    // boot would re-verify it and rewrite the verifications for nothing.
+    if (before !== undefined && feed.sequence <= before) {
       return { status: "unchanged", sequence: before };
     }
-    const result = await acceptFeed(db, feed, cfg, "snapshot", now);
-    if (result.status === "accepted" && before === feed.sequence) {
-      return { status: "unchanged", sequence: feed.sequence };
-    }
-    return result;
+    return await acceptFeed(db, feed, cfg, "snapshot", now);
   } catch (e) {
     return refused(e);
   }

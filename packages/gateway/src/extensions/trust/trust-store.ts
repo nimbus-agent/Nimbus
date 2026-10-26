@@ -197,9 +197,10 @@ export function replaceCurrentVerifications(
   statements: readonly TrustStatement[],
   nimbusRootKey: string,
   now: number,
+  sourceKind: "feed" | "snapshot" = "feed",
 ): number {
   let written = 0;
-  const source: StatementSource = { kind: "feed", nimbusRootKey };
+  const source: StatementSource = { kind: sourceKind, nimbusRootKey };
   db.transaction(() => {
     dbRun(
       db,
@@ -252,6 +253,8 @@ export function readFeedFloor(db: Database, name: string): FeedFloor | undefined
 /**
  * Advances the feed's floor, conditional like the registry floors: a higher sequence, or the same
  * sequence with the same document. A different root key replaces the floor (a release re-pin).
+ * `fetched` false (the baked snapshot) moves the floor without claiming a fetch: `last_fetched_at`
+ * keeps its value, so a snapshot never hides how long ago the feed itself last answered.
  */
 export function recordFeedAccepted(
   db: Database,
@@ -262,8 +265,10 @@ export function recordFeedAccepted(
     documentSha256: string;
     generatedAt: string;
     now: number;
+    fetched?: boolean;
   },
 ): "accepted" | "rollback" | "equivocation" {
+  const fetchedAt = f.fetched === false ? null : f.now;
   const r = dbRun(
     db,
     `INSERT INTO trust_feed_state (name, root_key, last_sequence, last_document_sha256, last_generated_at, last_fetched_at, last_attempted_at)
@@ -273,13 +278,13 @@ export function recordFeedAccepted(
        last_sequence = excluded.last_sequence,
        last_document_sha256 = excluded.last_document_sha256,
        last_generated_at = excluded.last_generated_at,
-       last_fetched_at = excluded.last_fetched_at,
-       last_attempted_at = excluded.last_attempted_at
+       last_fetched_at = COALESCE(excluded.last_fetched_at, trust_feed_state.last_fetched_at),
+       last_attempted_at = COALESCE(excluded.last_attempted_at, trust_feed_state.last_attempted_at)
      WHERE trust_feed_state.root_key <> excluded.root_key
         OR trust_feed_state.last_sequence < excluded.last_sequence
         OR (trust_feed_state.last_sequence = excluded.last_sequence
             AND trust_feed_state.last_document_sha256 = excluded.last_document_sha256)`,
-    [name, f.rootKey, f.sequence, f.documentSha256, f.generatedAt, f.now, f.now],
+    [name, f.rootKey, f.sequence, f.documentSha256, f.generatedAt, fetchedAt, fetchedAt],
   );
   if (r.changes > 0) return "accepted";
   const cur = readFeedFloor(db, name);
