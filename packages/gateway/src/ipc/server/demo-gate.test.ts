@@ -66,6 +66,7 @@ describe("demoRefusal", () => {
     "migration.accept",
     "migration.decline",
     "migration.retry",
+    "trust.refresh",
   ])("%s is refused", (m) => {
     expect(demoRefusal(m)?.rpcCode).toBe(-32000);
   });
@@ -77,6 +78,7 @@ describe("demoRefusal", () => {
     "diag.snapshot",
     "connector.listStatus",
     "migration.list",
+    "trust.status",
     "pack.list",
     "pack.show",
   ])("%s is allowed", (m) => {

@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import { listExtensions } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -246,6 +247,10 @@ describe("installExtensionFromLocalDirectory — signed extensions (I16)", () =>
       });
       expect(result.id).toBe("test-ext-ok");
       expect(await readPublisherKey(vault, "test-pub")).toEqual(pubkey);
+      // The row records which key verified it (V76), for the trust layer's revocation checks.
+      expect(
+        listExtensions(db).find((r) => r.id === "test-ext-ok")?.publisher_key_fingerprint,
+      ).toBe(publisherKeyFingerprint(encodeBase64(pubkey)));
     } finally {
       rmSync(keyDir, { recursive: true, force: true });
     }
@@ -298,6 +303,9 @@ describe("installExtensionFromLocalDirectory — signed extensions (I16)", () =>
     });
     expect(result.id).toBe("test-ext-unsigned");
     expect(await readPublisherKey(vault, "test-pub")).toBeUndefined();
+    expect(
+      listExtensions(db).find((r) => r.id === "test-ext-unsigned")?.publisher_key_fingerprint,
+    ).toBeNull();
   });
 });
 

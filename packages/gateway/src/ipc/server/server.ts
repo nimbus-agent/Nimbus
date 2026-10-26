@@ -29,6 +29,7 @@ import {
   registryRpcSkipped,
   type ServerCtx,
   sessionRpcSkipped,
+  trustRpcSkipped,
 } from "./context.ts";
 import { demoRefusal } from "./demo-gate.ts";
 import {
@@ -40,6 +41,7 @@ import {
   tryDispatchPhase4Rpc,
   tryDispatchRegistryRpc,
   tryDispatchSessionRpc,
+  tryDispatchTrustRpc,
 } from "./dispatchers.ts";
 import {
   dispatchAgentInvoke,
@@ -188,6 +190,9 @@ export function createIpcServer(
 
     const registryOutcome = await tryDispatchRegistryRpc(ctx, clientId, method, params);
     if (registryOutcome !== registryRpcSkipped) return registryOutcome;
+
+    const trustOutcome = await tryDispatchTrustRpc(ctx, method);
+    if (trustOutcome !== trustRpcSkipped) return trustOutcome;
 
     const packOutcome = await tryDispatchPackRpc(ctx, clientId, method, params);
     if (packOutcome !== packRpcSkipped) return packOutcome;

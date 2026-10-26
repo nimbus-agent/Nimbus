@@ -7,10 +7,13 @@ import {
   type RegistryIndex,
   registryIndexDigest,
   registryIndexSigningBytes,
+  signTrustStatement,
+  type TrustStatement,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { encodeBase64 } from "../../util/base64.ts";
+import { trustStoreCounts } from "../trust/trust-store.ts";
 import {
   fetchRegistryBytes,
   fetchUnpinnedIndex,
@@ -553,5 +556,60 @@ describe("fetchVerifiedIndex: equivocation", () => {
     });
     await expect(fetchVerifiedIndex(d, stale)).rejects.toThrow("ERR_REGISTRY_EQUIVOCATION");
     expect(getRegistry(db, "main")?.lastIndexSha256).toBe(registryIndexDigest(A));
+  });
+});
+
+describe("fetchVerifiedIndex: trust statements in the index", () => {
+  const ROOT_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+
+  async function rootRevoke(): Promise<TrustStatement> {
+    return signTrustStatement(
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: ROOT_KEY,
+        publisherId: "acme",
+        keyFingerprint: "0".repeat(32),
+        reason: "leaked",
+      },
+      ROOT_SEED,
+    );
+  }
+
+  function indexWith(sequence: number, statements: unknown): RegistryIndex {
+    const base = {
+      format: 1 as const,
+      rootKey: ROOT_KEY,
+      sequence,
+      generatedAt: "2026-10-18T12:00:00Z",
+      extensions: {},
+      statements,
+    };
+    const sig = nacl.sign.detached(registryIndexSigningBytes(base), KEYPAIR.secretKey);
+    return { ...base, signature: encodeBase64(sig) };
+  }
+
+  test("a root-signed revocation in a pinned index is stored, scoped to that registry", async () => {
+    const idx = indexWith(6, [await rootRevoke()]);
+    const url = serve(() => new Response(JSON.stringify(idx)));
+    await fetchVerifiedIndex(deps(), pinned(url, 5));
+    expect(trustStoreCounts(db).revocations).toBe(1);
+    expect(
+      db.query("SELECT signer_role, scope_registry, source FROM trust_statement").get(),
+    ).toEqual({ signer_role: "registry", scope_registry: "main", source: "registry:main" });
+  });
+
+  test("a hostile statements field does not fail the fetch", async () => {
+    const url = serve(() => new Response(JSON.stringify(indexWith(6, "not a list"))));
+    const idx = await fetchVerifiedIndex(deps(), pinned(url, 5));
+    expect(idx.sequence).toBe(6);
+    expect(trustStoreCounts(db).revocations).toBe(0);
+  });
+
+  test("an unpinned fetch (registry add) stores no statement", async () => {
+    const idx = indexWith(3, [await rootRevoke()]);
+    const url = serve(() => new Response(JSON.stringify(idx)));
+    await fetchUnpinnedIndex(deps(), { name: "new", url });
+    expect(trustStoreCounts(db).revocations).toBe(0);
   });
 });

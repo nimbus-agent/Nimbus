@@ -4684,7 +4684,7 @@ An approval (`nimbus extension approve`) records what may run. The extension sta
 
 The runtime is controlled by `[extensions] runtime` in `nimbus.toml` (default `true`). Set it to `false` to run no extension at all: nothing spawns, and `nimbus extension approve` refuses with `ERR_EXTENSION_RUNTIME_DISABLED`. The switch is read once, when the gateway starts: changing it takes effect only after a gateway restart. A demo-rooted gateway (`--demo`) runs none either.
 
-Under a signed org policy that sets a connector allowlist, an approved extension runs only if its `ext_` service id is on that list; otherwise every start, and every listing of an already-running extension, refuses `ERR_EXTENSION_RUN_POLICY` (a running child is stopped). The allowlist must name the `ext_` id itself: the mesh's catalog filter applies to first-party connector ids only. `[extensions] update_check_interval_hours` (default 24, range 1..168) is unrelated and controls the auto-update poll.
+Under a signed org policy that sets a connector allowlist, an approved extension runs only if its `ext_` service id is on that list; otherwise every start, and every listing of an already-running extension, refuses `ERR_EXTENSION_RUN_POLICY` (a running child is stopped). The allowlist must name the `ext_` id itself: the mesh's catalog filter applies to first-party connector ids only. `[extensions] update_check_interval_hours` (default 24, range 1..168) is unrelated and controls the auto-update poll. `[extensions] trust_check_interval_hours` (default 1, range 1..24) controls the trust feed poll (see [Trust Feed](#trust-feed)).
 
 ---
 
@@ -4997,6 +4997,22 @@ nimbus registry maintain init ./extensions --github
 nimbus registry maintain add ./registry ./my-extension --channel beta --key ./registry-key
 nimbus registry maintain remove ./registry com.example.tool@1.0.0 --key ./registry-key
 ```
+
+---
+
+## Trust Feed
+
+The Nimbus trust feed is one signed `trust.json` that carries publisher-key revocations, extension takedowns and verified publishers. The gateway fetches it on a timer and stores what it carries, together with the same kinds of statement found in every verified registry index. **This release bakes no feed:** both commands below report "No trust feed is configured in this build", and nothing is fetched. Blocking revoked or taken-down code ships in a later release.
+
+### `nimbus trust status [--json]`
+
+What the feed last told this machine: its URL, root-key fingerprint, the sequence accepted, when it was last updated and last attempted, how often it is checked, and how many revocations, takedowns, key rotations and verified publishers are stored. `nimbus doctor` warns when a configured feed was last updated more than 7 days ago, or never.
+
+### `nimbus trust refresh [--json]`
+
+Fetches the feed now. It prints `updated to sequence N`, `unchanged`, `not configured`, or `refused` with a code, and exits 1 on `refused`. A feed served at an older sequence than the one already accepted is refused with `ERR_TRUST_FEED_ROLLBACK`; different content at an accepted sequence is refused with `ERR_TRUST_FEED_EQUIVOCATION`. Under `[llm] enforce_air_gap` the fetch is refused. Every remote fetch appends one egress-ledger row of the `registry` class, under the reserved name `nimbus-trust`, which `nimbus registry add` refuses. On a demo root, `refresh` is refused.
+
+`[extensions] trust_check_interval_hours` (default 1, range 1..24) sets how often the feed is fetched.
 
 ---
 

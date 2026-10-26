@@ -7,7 +7,8 @@ export type RegistryLocation = { kind: "remote"; base: URL } | { kind: "local"; 
 
 const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
-const REL_PATH_RE = /^(index\.json|extensions\/.+\/(manifest\.json|package\.tgz))$/;
+// `trust.json` is the Nimbus trust feed (trust layer), fetched through this same transport.
+const REL_PATH_RE = /^(index\.json|trust\.json|extensions\/.+\/(manifest\.json|package\.tgz))$/;
 
 function refuse(detail: string): never {
   throw new RegistryError("ERR_REGISTRY_TRANSPORT_REFUSED", detail);

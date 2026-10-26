@@ -43,6 +43,7 @@ import {
   checkSyncContextNoRawHandles,
   checkToolgenVaultKeyConfinement,
   checkTribalKbWriteInvariant,
+  checkTrustTableConfinement,
   checkVaultKeyAllowList,
   checkWrapServerSpecInvariant,
   collectDbRunCensus,
@@ -3166,6 +3167,51 @@ describe("D31-listener-registry-registration — a listen site registers with th
         /\bBun\.(?:serve|listen)\b|\bcreateServer\s*\(/.test(f.contents),
     );
     expect(listenSites.length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe("D37 — the trust tables are named only by the trust store and their DDL", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+
+  test("allows the store and the V76 SQL module", () => {
+    expect(
+      checkTrustTableConfinement([
+        file(
+          "packages/gateway/src/extensions/trust/trust-store.ts",
+          "INSERT OR IGNORE INTO trust_statement (x) VALUES (?); SELECT 1 FROM trust_feed_state",
+        ),
+        file(
+          "packages/gateway/src/index/trust-layer-v76-sql.ts",
+          "CREATE TABLE IF NOT EXISTS trust_statement ( CREATE TABLE IF NOT EXISTS trust_feed_state (",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["a statement write", "INSERT INTO trust_statement (statement_id) VALUES (?)"],
+    ["a statement delete", "DELETE FROM trust_statement WHERE kind = 'key.revoke'"],
+    ["a floor update", "UPDATE trust_feed_state SET last_sequence = 0"],
+    ["CREATE TABLE IF NOT EXISTS", "CREATE TABLE IF NOT EXISTS trust_statement (id TEXT)"],
+    ["DROP TABLE IF EXISTS", "DROP TABLE IF EXISTS trust_feed_state"],
+    ["a quoted name", 'SELECT 1 FROM "trust_feed_state"'],
+    ["a schema-qualified name", "SELECT 1 FROM main.trust_statement"],
+  ])("FAILS on %s from anywhere else", (_n, sql) => {
+    expect(
+      checkTrustTableConfinement([
+        file("packages/gateway/src/extensions/trust/trust-feed.ts", sql),
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("does not match a look-alike identifier, a comment, or a test file", () => {
+    expect(
+      checkTrustTableConfinement([
+        file("packages/gateway/src/ipc/trust-rpc.ts", "SELECT 1 FROM trust_statements_view"),
+        file("packages/gateway/src/ipc/trust-rpc.ts", "// INSERT INTO trust_statement"),
+        file("packages/gateway/src/ipc/trust-rpc.test.ts", "DELETE FROM trust_statement"),
+      ]),
+    ).toEqual([]);
   });
 });
 

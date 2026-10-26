@@ -18,6 +18,18 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-26 — Marketplace trust layer PR 2a of 5: the gateway stores trust statements, fetches the trust feed on a timer, and adds `nimbus trust status|refresh` (static D37; no new invariant; nothing is blocked yet).**
+  Every verified registry index's `statements` are now stored, scoped to that registry, as is the Nimbus trust feed, which
+  is fetched shortly after start and then every `[extensions] trust_check_interval_hours` (default 1, range 1–24), together
+  with a snapshot of it baked into each release. **This release bakes no feed**, so nothing is fetched and `nimbus trust status`
+  says so. Each statement's authority is checked against the root of the document that carried it. A registry's
+  publisher-signed statements are admitted only for publishers it lists, at most 1,000 per registry; its own root-signed
+  revocations and takedowns are never capped. The feed refuses a lower sequence (`ERR_TRUST_FEED_ROLLBACK`) and different
+  content at an accepted one (`ERR_TRUST_FEED_EQUIVOCATION`), and its requests are ledgered as `registry`-class egress under the
+  reserved name `nimbus-trust`, which `nimbus registry add` now refuses. Installs record which publisher key verified each
+  extension, and existing installs are backfilled from the Vault at boot. `nimbus doctor` warns about a configured feed more
+  than 7 days old. Blocking revoked or taken-down code is PR 2b.
+
 - **2026-10-26 — Marketplace trust layer PR 1 of 5: signed trust statements, the trust feed format, schema V76, and refusal of an equivocating registry index (no new invariant, no egress class).**
   `@nimbus-dev/registry-format` gains signed trust statements — a publisher-key revocation (signed by the key itself, the Nimbus
   trust root or a registry root), an extension takedown (a root only), a key rotation (signed by the old key) and a publisher

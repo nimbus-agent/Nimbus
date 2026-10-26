@@ -71,6 +71,8 @@ const FORBIDDEN_OVER_LAN = new Set([
   // Extension registries (PR 3): `registry.add` pins a trust root behind the LOCAL owner's HITL
   // prompt, and the rest drive outbound fetches. The WHOLE namespace is CLI-only.
   "registry",
+  // The trust layer's status and feed refresh: CLI-only, like the registries it guards.
+  "trust",
   // Role packs: `pack.install` writes the owner's config behind the LOCAL owner's HITL prompt.
   // The WHOLE namespace is CLI-only.
   "pack",

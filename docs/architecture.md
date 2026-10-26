@@ -2137,6 +2137,44 @@ I44. `registry search` reads the owner's registries only, so it does not include
 - *Registries in `nimbus.toml`.* A trust root is state the owner approved through a HITL prompt, with a rollback anchor that must
   update atomically with a fetch; a hand-edited config file has neither the approval nor the transaction.
 
+### Trust layer
+
+**PR 2a of 5 (marketplace trust layer, Phase 9.5 project 3; schema V76 from PR 1; static D37; no new invariant yet).** The
+gateway now accepts and STORES trust statements — publisher-key revocations, extension takedowns, key rotations and Nimbus
+publisher verifications — but blocks nothing; enforcement is PR 2b.
+
+**Store** (`extensions/trust/trust-store.ts`, the only code naming `trust_statement` and `trust_feed_state`, D37). A statement
+is stored once, keyed by the SHA-256 of its signed bytes (the first source is kept). Authority comes from
+`verifyTrustStatement` against the root of the document that CARRIED it: the Nimbus trust root for the feed and its baked
+snapshot (`nimbus`), the registry's pinned root for a registry index (`registry`, stored with that registry's name and root
+fingerprint as its scope — the V76 CHECK enforces exactly that), or the key the statement concerns (`publisher`). A
+`publisher.verified` never enters as a block: verification is the feed's CURRENT state, replaced by each accepted feed,
+while every block is a monotonic union no later document removes. A publisher-signed statement from a registry is stored only
+when that registry's index lists the publisher with the key it concerns (for a rotation, either end) or an installed extension
+was verified with it, and at most 1,000 such rows per registry; the registry's own root-signed blocks are never capped, so
+filling the cap cannot suppress a later revocation.
+
+**Sources.** (1) Every PINNED, verified registry index (`fetchVerifiedIndex` ingests its `statements` after the floor write;
+`registry add`'s unpinned fetch stores nothing; a store failure never fails the fetch). (2) The trust feed
+(`extensions/trust/trust-feed.ts`): `trust.json` fetched through `fetchRegistryBytes` under the reserved name `nimbus-trust`
+(`registry add` refuses it), so air gap refuses and each remote request appends one I29 `registry`-class row (method
+`trust.feed`); verified against the pinned trust root, with the registries' floor rules (lower sequence
+`ERR_TRUST_FEED_ROLLBACK`, different content at an accepted one `ERR_TRUST_FEED_EQUIVOCATION`). (3) A snapshot of the feed
+baked into the release, applied at boot with no network; it anchors the floor, and one older than the stored floor is
+`unchanged`, never refused. **This build bakes neither** (`BUILTIN_TRUST_FEED`/`BUILTIN_TRUST_SNAPSHOT` are `null` until
+PR 5, as `BUILTIN_REGISTRY` was before the Readwise pilot), so nothing is fetched and no egress row is written.
+
+**Timer and boot.** Before the extension spawn gate opens, the boot pass records each installed extension's verifying-key
+fingerprint (`extension.publisher_key_fingerprint`, backfilled from the Vault for rows installed before V76; an install
+writes it directly) and applies the snapshot. After the gate opens, `TrustFeedDaemon` fetches a few seconds after start and
+then every `[extensions] trust_check_interval_hours` (default 1, range 1–24); overlapping refreshes share one request. A
+demo-rooted gateway (I41) gets no feed handle.
+
+**IPC.** `trust.status` (feed URL, root fingerprint, accepted sequence, last fetched/attempted, age in days, interval, stored
+counts) and `trust.refresh`, CLI-only (`nimbus trust status|refresh`): the `trust` namespace is LAN-forbidden, `trust.refresh`
+is refused on a demo root, and neither is on the Tauri allowlist. `nimbus doctor` warns when a configured feed is more than 7
+days old or was never fetched.
+
 ### Connector migration
 
 **Readwise unbundling pilot, gateway PR 5** (the V73 `connector_migration` table; HITL type `extension.migrate` in the I2 frozen

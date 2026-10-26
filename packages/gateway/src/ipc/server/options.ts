@@ -15,6 +15,7 @@ import type { AutoUpdateRuntimeBag } from "../../extensions/auto-update-init.ts"
 import type { ContinuityEntry } from "../../extensions/continuity/continuity-table.ts";
 import type { MigrationEngine } from "../../extensions/migration/migration-engine.ts";
 import type { RegistryFetchDeps } from "../../extensions/registry/registry-fetch.ts";
+import type { TrustFeedHandle } from "../../extensions/trust/trust-feed-boot.ts";
 import type { DiscoveryProvider } from "../../federation/discovery.ts";
 import type { PeerPairing } from "../../federation/peer-pairing.ts";
 import type { GlossaryRefresher } from "../../glossary/glossary-refresh.ts";
@@ -112,6 +113,12 @@ export type CreateIpcServerOptions = {
    * registry method that fetches refuses.
    */
   registryFetch?: Omit<RegistryFetchDeps, "db">;
+  /**
+   * The Nimbus trust feed's handle (trust layer): its configured feed (or `null` in a build without
+   * one), interval and refresh trigger. Absent on a demo-rooted gateway, where `trust.refresh`
+   * answers `not_configured` and `trust.status` reports no feed.
+   */
+  trustFeed?: TrustFeedHandle;
   /**
    * The ONE pack-layer store `platform/assemble.ts` also hands the layered reader, so a `pack.*`
    * write bumps the running reader's snapshot. Absent means every `pack.*` method refuses.

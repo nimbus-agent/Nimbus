@@ -1390,10 +1390,13 @@ export function loadNimbusAutomationFromConfigDir(configDir: string): NimbusAuto
 
 export type NimbusExtensionsToml = {
   updateCheckIntervalHours: number;
+  /** `[extensions] trust_check_interval_hours`, [1, 24], default 1 (trust layer). */
+  trustCheckIntervalHours: number;
 };
 
 export const DEFAULT_NIMBUS_EXTENSIONS_TOML: NimbusExtensionsToml = {
   updateCheckIntervalHours: 24,
+  trustCheckIntervalHours: 1,
 };
 
 /**
@@ -1416,11 +1419,28 @@ function parseUpdateCheckIntervalHours(valRaw: string): number {
   return n;
 }
 
+/** `[extensions] trust_check_interval_hours`: how often the trust feed is fetched (trust layer). */
+function parseTrustCheckIntervalHours(valRaw: string): number {
+  const n = Number(valRaw);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    throw new TypeError(
+      `[extensions].trust_check_interval_hours must be an integer (got: ${valRaw})`,
+    );
+  }
+  if (n < 1 || n > 24) {
+    throw new Error(`[extensions].trust_check_interval_hours must be in [1, 24] (got: ${n})`);
+  }
+  return n;
+}
+
 function parseNimbusTomlExtensionsSection(source: string): Partial<NimbusExtensionsToml> {
   const out: Partial<NimbusExtensionsToml> = {};
   forEachSectionEntry(source, "[extensions]", (key, valRaw) => {
     if (key === "update_check_interval_hours") {
       out.updateCheckIntervalHours = parseUpdateCheckIntervalHours(valRaw);
+    }
+    if (key === "trust_check_interval_hours") {
+      out.trustCheckIntervalHours = parseTrustCheckIntervalHours(valRaw);
     }
   });
   return out;

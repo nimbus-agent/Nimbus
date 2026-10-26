@@ -23,6 +23,11 @@ export type ExtensionRow = {
   source_registry?: string | null;
   source_root_fingerprint?: string | null;
   source_channel?: "stable" | "beta" | null;
+  /**
+   * V76: `publisherKeyFingerprint` of the key that verified the installed copy; `null` for an
+   * unsigned extension, or until the boot backfill fills it for a row installed before V76.
+   */
+  publisher_key_fingerprint?: string | null;
 };
 
 /** V66 added `tree_digest`; below it the column does not exist and every row reads `null`. */
@@ -30,6 +35,9 @@ const TREE_DIGEST_SCHEMA_VERSION = 66;
 
 /** V71 added the three `source_*` columns; below it every row reads `null` for each. */
 const SOURCE_SCHEMA_VERSION = 71;
+
+/** V76 added `publisher_key_fingerprint`; below it every row reads `null`. */
+const PUBLISHER_KEY_FINGERPRINT_SCHEMA_VERSION = 76;
 
 function hasTreeDigestColumn(db: Database): boolean {
   return readIndexedUserVersion(db) >= TREE_DIGEST_SCHEMA_VERSION;
@@ -44,9 +52,13 @@ export function listExtensions(db: Database): ExtensionRow[] {
     readIndexedUserVersion(db) >= SOURCE_SCHEMA_VERSION
       ? "source_registry, source_root_fingerprint, source_channel"
       : "NULL AS source_registry, NULL AS source_root_fingerprint, NULL AS source_channel";
+  const keyFp =
+    readIndexedUserVersion(db) >= PUBLISHER_KEY_FINGERPRINT_SCHEMA_VERSION
+      ? "publisher_key_fingerprint"
+      : "NULL AS publisher_key_fingerprint";
   return db
     .query(
-      `SELECT id, version, install_path, manifest_hash, entry_hash, enabled, installed_at, last_verified_at, ${digest}, ${source}
+      `SELECT id, version, install_path, manifest_hash, entry_hash, enabled, installed_at, last_verified_at, ${digest}, ${source}, ${keyFp}
        FROM extension ORDER BY id`,
     )
     .all() as ExtensionRow[];
@@ -61,6 +73,25 @@ export function setExtensionTreeDigest(db: Database, id: string, treeDigest: str
     throw new Error("Extension tree digest requires schema v66+");
   }
   const r = dbRun(db, `UPDATE extension SET tree_digest = ? WHERE id = ?`, [treeDigest, id]);
+  return r.changes > 0;
+}
+
+/**
+ * Records which publisher key verified the installed copy (V76). Throws below V76 rather than
+ * dropping a fingerprint a caller believes it stored.
+ */
+export function setExtensionPublisherKeyFingerprint(
+  db: Database,
+  id: string,
+  fingerprint: string | null,
+): boolean {
+  if (readIndexedUserVersion(db) < PUBLISHER_KEY_FINGERPRINT_SCHEMA_VERSION) {
+    throw new Error("Extension publisher key fingerprint requires schema v76+");
+  }
+  const r = dbRun(db, "UPDATE extension SET publisher_key_fingerprint = ? WHERE id = ?", [
+    fingerprint,
+    id,
+  ]);
   return r.changes > 0;
 }
 

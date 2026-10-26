@@ -17,8 +17,13 @@ import { join, relative, resolve, sep } from "node:path";
 
 import { assertSafeExtensionId, publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 
-import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
+import {
+  insertExtensionRow,
+  listExtensions,
+  setExtensionPublisherKeyFingerprint,
+} from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
+import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { resolveClosure } from "./dependency-graph.ts";
 import { recordInstall } from "./dependency-store.ts";
@@ -56,14 +61,15 @@ async function verifyAndRecordSignature(
   },
   destManifest: ExtensionManifest,
   destManifestText: string,
-): Promise<void> {
-  if (destManifest.publisher === undefined) return;
+): Promise<string | null> {
+  if (destManifest.publisher === undefined) return null;
   if (options.vault === undefined) {
     throw new Error("signed-extension install requires the vault to be wired");
   }
   const publisherId = destManifest.publisher.id;
   const rawManifestObj = JSON.parse(destManifestText) as Record<string, unknown>;
   const vault = options.vault;
+  let verifiedFingerprint: string | null = null;
   try {
     // A key passed explicitly (a registry install: the signed index named it) replaces the
     // path/Vault resolution entirely, but must still be the key the manifest declares. A local
@@ -84,6 +90,7 @@ async function verifyAndRecordSignature(
     }
     await verifyManifestSignature(rawManifestObj, resolvedPubkey);
     await writePublisherKey(vault, publisherId, resolvedPubkey);
+    verifiedFingerprint = publisherKeyFingerprint(Buffer.from(resolvedPubkey).toString("base64"));
     appendAuditEntry(options.db, {
       actionType: "extension.signature_verified",
       hitlStatus: "not_required",
@@ -108,6 +115,7 @@ async function verifyAndRecordSignature(
     });
     throw err;
   }
+  return verifiedFingerprint;
 }
 
 async function completeExtensionInstallAfterCopy(options: {
@@ -133,9 +141,10 @@ async function completeExtensionInstallAfterCopy(options: {
     throw new Error("manifest id/version changed across copy");
   }
 
-  if (destManifest.publisher !== undefined) {
-    await verifyAndRecordSignature(options, destManifest, destManifestText);
-  }
+  const verifiedKeyFingerprint =
+    destManifest.publisher === undefined
+      ? null
+      : await verifyAndRecordSignature(options, destManifest, destManifestText);
 
   const entryRelRaw = extensionEntryRelPath(destManifest);
   if (entryRelRaw.startsWith("/") || /^[A-Za-z]:[\\/]/.test(entryRelRaw)) {
@@ -150,17 +159,23 @@ async function completeExtensionInstallAfterCopy(options: {
   const treeDigest = computeExtensionTreeDigest(options.dest);
 
   const now = Date.now();
-  insertExtensionRow(options.db, {
-    id: options.manifest.id,
-    version: options.manifest.version,
-    install_path: options.dest,
-    manifest_hash: manifestHex,
-    entry_hash: entryHex,
-    tree_digest: treeDigest,
-    enabled: 1,
-    installed_at: now,
-    last_verified_at: now,
-  });
+  // One transaction: a signed row never exists without the key that verified it.
+  options.db.transaction(() => {
+    insertExtensionRow(options.db, {
+      id: options.manifest.id,
+      version: options.manifest.version,
+      install_path: options.dest,
+      manifest_hash: manifestHex,
+      entry_hash: entryHex,
+      tree_digest: treeDigest,
+      enabled: 1,
+      installed_at: now,
+      last_verified_at: now,
+    });
+    if (verifiedKeyFingerprint !== null && readIndexedUserVersion(options.db) >= 76) {
+      setExtensionPublisherKeyFingerprint(options.db, options.manifest.id, verifiedKeyFingerprint);
+    }
+  })();
 
   return {
     id: options.manifest.id,

@@ -30,6 +30,8 @@ const DEMO_REFUSED_METHODS: ReadonlySet<string> = new Set([
   // Installing a pack writes the owner's config layer; the demo root is read-only synthetic data.
   "pack.install",
   "pack.remove",
+  // A demo gateway fetches no trust feed (I41); `trust.status` stays a read.
+  "trust.refresh",
 ]);
 
 /** The refusal for `method` on a demo-rooted gateway, or `undefined` when it may proceed. */
