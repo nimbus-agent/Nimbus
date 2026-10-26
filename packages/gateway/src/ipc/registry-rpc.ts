@@ -17,7 +17,7 @@ import {
   type RegistryFetchDeps,
 } from "../extensions/registry/registry-fetch.ts";
 import { readIndexes, resolveRegistryEntry } from "../extensions/registry/registry-resolve.ts";
-import { blocksFor } from "../extensions/trust/trust-blocks.ts";
+import { blocksFor, TrustBlockError } from "../extensions/trust/trust-blocks.ts";
 import {
   assertRegistryNameNotReserved,
   deleteRegistry,
@@ -480,7 +480,9 @@ export async function dispatchRegistryRpc(o: RegistryRpcOptions): Promise<Hit | 
         return { kind: "miss" };
     }
   } catch (e) {
-    if (e instanceof RegistryError) throw new RpcMethodError(-32000, e.message);
+    if (e instanceof RegistryError || e instanceof TrustBlockError) {
+      throw new RpcMethodError(-32000, e.message);
+    }
     throw e;
   }
 }

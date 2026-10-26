@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import { publisherKeyFingerprint, signTrustStatement } from "@nimbus-dev/registry-format";
+import nacl from "tweetnacl";
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -17,6 +18,7 @@ import { installFromRegistry } from "./registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "./registry/registry-fetch.ts";
 import { deleteRegistry, insertRegistry } from "./registry/registry-store.ts";
 import { upsertRunGrant } from "./run-grant-store.ts";
+import { recordTrustStatements } from "./trust/trust-store.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 import { prevVersionDir } from "./version-store.ts";
 
@@ -528,6 +530,40 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       /^signature_failed: .*ERR_REGISTRY_PUBLISHER_KEY_CONFLICT/,
     );
     expect(installedVersion()).toBe("1.0.0");
+  });
+
+  it("apply refuses a version taken down after detection as trust_blocked (I48)", async () => {
+    const { runtime } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    if (cached === undefined) throw new Error("no update detected");
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 40);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const s = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: nimbusKey,
+        extensionId: ID,
+        publisherId: "acme",
+        versions: ["1.2.0"],
+        // A reason quoting another phase must not be classified as that phase.
+        reason: "signature_failed lookalike",
+      },
+      seed,
+    );
+    recordTrustStatements(db, [s], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    await expect(runtime.deps.performUpgrade(cached)).rejects.toThrow(
+      /^trust_blocked: ERR_EXTENSION_TAKEN_DOWN/,
+    );
+    expect(installedVersion()).toBe("1.0.0");
+    _resetAutoUpdateMutexForTests();
+    const res = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: ID, toVersion: "1.2.0" },
+      { ...runtime.deps, gate: async () => "proceed" as const },
+    )) as { applied: boolean; reason?: string };
+    expect(res).toMatchObject({ applied: false, reason: "trust_blocked" });
   });
 });
 

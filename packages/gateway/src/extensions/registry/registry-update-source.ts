@@ -6,7 +6,11 @@
  * downloads a package or touches the install tree.
  */
 import type { Database } from "bun:sqlite";
-import type { RegistryChannel, RegistryVersionEntry } from "@nimbus-dev/registry-format";
+import {
+  publisherKeyFingerprint,
+  type RegistryChannel,
+  type RegistryVersionEntry,
+} from "@nimbus-dev/registry-format";
 import type { NimbusVault } from "../../vault/index.ts";
 import { diffPermissions } from "../auto-update-permissions-diff.ts";
 import type {
@@ -14,6 +18,7 @@ import type {
   InstalledExtensionManifestSlice,
   VerificationStatus,
 } from "../auto-update-types.ts";
+import { type BlockSubject, blocksFor } from "../trust/trust-blocks.ts";
 import { builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
 import { fetchVerifiedIndex, type RegistryFetchDeps } from "./registry-fetch.ts";
 import {
@@ -51,14 +56,19 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** A `stable` install is offered `stable` only; a `beta` install the newest across stable ∪ beta. */
+/**
+ * A `stable` install is offered `stable` only; a `beta` install the newest across stable ∪ beta.
+ * A version something blocks (I48) is never offered, so a taken-down 1.1.0 does not hide a clean
+ * 1.0.9 — though only a version NEWER than the installed one becomes an update.
+ */
 function newestOnChannel(
   versions: Readonly<Record<string, RegistryVersionEntry>>,
   channel: RegistryChannel,
+  isBlocked: (version: string) => boolean,
 ): [string, RegistryVersionEntry] | undefined {
   const wanted: readonly RegistryChannel[] = channel === "beta" ? ["stable", "beta"] : ["stable"];
   return Object.entries(versions)
-    .filter(([, v]) => wanted.includes(v.channel))
+    .filter(([v, e]) => wanted.includes(e.channel) && !isBlocked(v))
     .sort(([a], [b]) => Bun.semver.order(b, a))[0];
 }
 
@@ -85,7 +95,18 @@ async function detectOne(
 ): Promise<void> {
   const entry = index.extensions[row.id];
   if (entry === undefined) return;
-  const newest = newestOnChannel(entry.versions, row.source.channel);
+  const subjectAt = (version: string): BlockSubject => ({
+    extensionId: row.id,
+    version,
+    publisherId: entry.publisher.id,
+    keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+    source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
+  });
+  const newest = newestOnChannel(
+    entry.versions,
+    row.source.channel,
+    (v) => blocksFor(deps.db, subjectAt(v)).length > 0,
+  );
   if (newest === undefined) return;
   const [toVersion, vEntry] = newest;
   if (Bun.semver.order(toVersion, row.version) <= 0) return;

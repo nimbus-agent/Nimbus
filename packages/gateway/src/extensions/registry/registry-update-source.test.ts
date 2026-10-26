@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import { publisherKeyFingerprint, signTrustStatement } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { MockVault } from "../../vault/mock.ts";
 import { writePublisherKey } from "../publisher-keys.ts";
+import { recordTrustStatements } from "../trust/trust-store.ts";
 import { verifyManifestSignature } from "../verify-signature.ts";
 import {
   buildTestRegistry,
@@ -316,5 +317,59 @@ describe("collectRegistryUpdates", () => {
     addRegistry("main", dir, false);
     const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
     expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
+  });
+});
+
+describe("collectRegistryUpdates never offers a blocked version (I48)", () => {
+  const NIMBUS_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 80);
+  const NIMBUS_KEY = Buffer.from(nacl.sign.keyPair.fromSeed(NIMBUS_SEED).publicKey).toString(
+    "base64",
+  );
+  async function takedown(id: string, versions: string[]): Promise<void> {
+    const s = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: NIMBUS_KEY,
+        extensionId: id,
+        publisherId: "acme",
+        versions,
+        reason: "malware",
+      },
+      NIMBUS_SEED,
+    );
+    recordTrustStatements(db, [s], { kind: "feed", nimbusRootKey: NIMBUS_KEY }, 1);
+  }
+
+  test("a taken-down newest version is skipped for the clean one below it", async () => {
+    const dir = await buildRegistry("main", {
+      "com.a": [{ version: "1.0.0" }, { version: "1.0.9" }, { version: "1.1.0" }],
+    });
+    addRegistry("main", dir, true);
+    await takedown("com.a", ["1.1.0"]);
+    const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
+    expect(out.updates.map((u) => u.toVersion)).toEqual(["1.0.9"]);
+  });
+
+  test("an installed taken-down version is offered the clean NEWER one, never a downgrade", async () => {
+    const dir = await buildRegistry("main", {
+      "com.a": [{ version: "1.0.9" }, { version: "1.1.0" }, { version: "1.1.1" }],
+    });
+    addRegistry("main", dir, true);
+    await takedown("com.a", ["1.1.0"]);
+    const onTakenDown = await collectRegistryUpdates(
+      deps(),
+      [row("com.a", "main", { version: "1.1.0" })],
+      signal,
+    );
+    expect(onTakenDown.updates.map((u) => u.toVersion)).toEqual(["1.1.1"]);
+    await takedown("com.a", ["1.1.1"]);
+    const nothingNewer = await collectRegistryUpdates(
+      deps(),
+      [row("com.a", "main", { version: "1.1.0" })],
+      signal,
+    );
+    expect(nothingNewer.updates).toEqual([]);
+    expect(ledger("registry.manifest")).toBe(1);
   });
 });

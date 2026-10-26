@@ -38,6 +38,7 @@ import {
 import { extractPackage } from "./package-extract.ts";
 import { resolvePublisherKey, writePublisherKey } from "./publisher-keys.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
+import { assertNotBlocked } from "./trust/trust-blocks.ts";
 import { verifyManifestSignature } from "./verify-signature.ts";
 
 function sha256HexOfBytes(buf: Buffer): string {
@@ -661,6 +662,19 @@ export async function installExtensionFromLocalDirectory(
     activeConstraints,
   });
 
+  // I48: code signed by a revoked key, or taken down, is refused before the owner is asked. The key
+  // checked is the one the manifest declares: the signature step below verifies against exactly it.
+  assertNotBlocked(options.db, {
+    extensionId: manifest.id,
+    version: manifest.version,
+    publisherId: manifest.publisher?.id ?? null,
+    keyFingerprint:
+      manifest.publisher === undefined ? null : publisherKeyFingerprint(manifest.publisher.key),
+    source:
+      options.sourceRegistry !== undefined && options.rootFingerprint !== undefined
+        ? { registry: options.sourceRegistry, rootFingerprint: options.rootFingerprint }
+        : null,
+  });
   await requireInstallApproval(options, manifest, plan, sourceResolved);
 
   await installPlanNodes(options, plan, sourceResolved, manifest);
