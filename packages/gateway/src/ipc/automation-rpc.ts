@@ -69,12 +69,12 @@ import {
   listRunGrants,
 } from "../extensions/run-grant-store.ts";
 import { extensionRunFields } from "../extensions/run-state.ts";
+import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import {
   blockSubjectForInstalled,
   blocksFor,
   type TrustBlock,
 } from "../extensions/trust/trust-blocks.ts";
-import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
 import { newestPrevVersion, removeExtensionVersionStore } from "../extensions/version-store.ts";
@@ -584,7 +584,9 @@ function isRunningIn(ctx: AutomationCtx, id: string): boolean {
 function handleExtensionList(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
   const filter = rec !== undefined && typeof rec["filter"] === "string" ? rec["filter"] : "";
   const grants = new Map(listRunGrants(ctx.db).map((g) => [g.extension_id, g]));
-  const all = decorateExtensionList(ctx.db, listExtensions(ctx.db), grants, (id) => isRunningIn(ctx, id));
+  const all = decorateExtensionList(ctx.db, listExtensions(ctx.db), grants, (id) =>
+    isRunningIn(ctx, id),
+  );
   const filtered =
     filter === "needs-reinstall" || filter === "needs_reinstall"
       ? all.filter((e) => e.needs_reinstall === true)

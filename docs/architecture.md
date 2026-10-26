@@ -2152,9 +2152,9 @@ I44. `registry search` reads the owner's registries only, so it does not include
 
 ### Trust layer
 
-**PR 2a of 5 (marketplace trust layer, Phase 9.5 project 3; schema V76 from PR 1; static D37; no new invariant yet).** The
-gateway now accepts and STORES trust statements — publisher-key revocations, extension takedowns, key rotations and Nimbus
-publisher verifications — but blocks nothing; enforcement is PR 2b.
+**PRs 2a and 2b of 5 (marketplace trust layer, Phase 9.5 project 3; schema V76 from PR 1; invariant I48 with static D37).**
+The gateway accepts and stores trust statements (publisher-key revocations, extension takedowns, key rotations and Nimbus
+publisher verifications, PR 2a), and refuses revoked or taken-down code at install, update and spawn (PR 2b).
 
 **Store** (`extensions/trust/trust-store.ts`, the only code naming `trust_statement` and `trust_feed_state`, D37). A statement
 is stored once, keyed by the SHA-256 of its signed bytes (the first source is kept). Authority comes from
@@ -2187,6 +2187,38 @@ demo-rooted gateway (I41) gets no feed handle.
 counts) and `trust.refresh`, CLI-only (`nimbus trust status|refresh`): the `trust` namespace is LAN-forbidden, `trust.refresh`
 is refused on a demo root, and neither is on the Tauri allowlist. `nimbus doctor` warns when a configured feed is more than 7
 days old or was never fetched.
+
+**Blocks (I48, PR 2b).** `extensions/trust/trust-blocks.ts` turns stored statements into the blocks applying to one subject:
+extension id, version, publisher id, the fingerprint of the key that verified (or would verify) the code, and its source
+registry with that registry's root fingerprint. A `key.revoke` matches publisher id + key; an `extension.takedown` matches
+extension id + publisher id + version (or `"*"`). Statements signed by Nimbus or by the revoked key apply everywhere; one
+signed by a registry root applies only to code sourced from that registry under that root. Unsigned code is never matched,
+and a stored row that no longer parses still blocks. The doors, each refusing `ERR_EXTENSION_KEY_REVOKED` (reported first)
+or `ERR_EXTENSION_TAKEN_DOWN`:
+
+- registry install, before any manifest or package request, where an implicit pick takes the newest unblocked version;
+- local install, before the prompt;
+- the update detector, which never offers a blocked version;
+- update apply, re-checked before the swap, with failure phase `trust_blocked`;
+- the pre-spawn verifier: step 4a, before the tree is hashed, then step 6a for the key the Vault holds now, before the
+  signature check.
+
+Rotation-taint (spec R4) lands with rotation in PR 3.
+
+**The override.** `nimbus extension approve` shows each block in the `extension.run` prompt and stores the statement ids it
+showed in `extension_run_grant.trust_ack_json`. A block whose id is not there refuses the spawn, so a later takedown blocks
+again. The no-change short-circuit compares the acknowledgement too. A block that lands while the prompt is open refuses
+`ERR_EXTENSION_RUN_CHANGED`, and a prompt-less migration of a blocked extension is refused. `extension list|info` report
+`runState: "blocked"` with `blockedBy` (the unacknowledged blocks), `registry.search` marks `blocked`, and `nimbus doctor`
+names each blocked extension.
+
+**When a block lands.** Every recording path (a verified registry index, the feed, the boot snapshot) hands the ids it newly
+stored to `RegistryFetchDeps.onTrustRecorded`. `extensions/trust/trust-block-enforcer.ts` then stops the running client of
+each extension they newly block and raises one OS notification per extension.
+
+**Fresh before acting.** `registry.install` and update apply first refresh the feed best-effort (`trust-freshen.ts`: skipped
+when the last fetch is under 5 minutes old, capped at 10 s). When that fails, the install prompt carries `trustFeedNote`
+saying how old the feed is, and both proceed on stored state.
 
 ### Connector migration
 
@@ -3570,7 +3602,7 @@ A new structural defense lands as a *triple*: the production wiring, an entry in
 
 ### Active invariants summary
 
-The canonical invariant table (currently **I1–I47**) lives in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) — each row names the defense, its production wiring site, the anti-pattern that regresses it, and the enforcement test. It is deliberately **not** duplicated here: a third copy (alongside the compact summaries in `CLAUDE.md` / `GEMINI.md`) is how it drifts. When changing a wiring site, update the invariants file *and* the enforcement test in the same commit.
+The canonical invariant table (currently **I1–I48**) lives in [`SECURITY-INVARIANTS.md`](./SECURITY-INVARIANTS.md) — each row names the defense, its production wiring site, the anti-pattern that regresses it, and the enforcement test. It is deliberately **not** duplicated here: a third copy (alongside the compact summaries in `CLAUDE.md` / `GEMINI.md`) is how it drifts. When changing a wiring site, update the invariants file *and* the enforcement test in the same commit.
 
 A static-time complement (`scripts/structure-audit/check-nimbus-invariants.ts`) catches I1 (`spawn` under `connectors/` must use `extensionProcessEnv()`), the vault-key allow-list, I14 (`D12` — direct `db.run`/`db.exec` outside `db/write.ts` exits 1), I15 (`D10` — every `ServerSpec` under `connectors/lazy-mesh/` must pass through `wrapServerSpec(...)`), I17 (`D13` — federation modules other than `query-gate.ts` may not import the item-list query), I18 (`D14` — identity-token Vault-key literals are forbidden outside `identity/`), I19 (`D15` — the `teamvault.` Vault-key prefix is composed only in `team-vault-keys.ts`), I22 (`D16` — `parsePolicyToml` may be imported only under `policy/`), I23 (`D17` — the `slack_chat_post` / `teams_chat_post` operational-post tools are referenced only from `chatops/reply-dispatcher.ts` and the transport), I24 (`D18` — a federated preflight action resolves its command from local config only and runs behind the local owner's HITL gate, scoped to `federation/preflight-gate.ts`), I25 (`D19` — the `notion_kb_append` / `confluence_kb_append` tribal-KB write tools are confined to `tribal/tribal-write-gate.ts` and the connector), I26 (`D20` — connector write tool ids (warehouse/BI ∪ GitOps/ML) are confined to their SSoT + connector + transport sites and rejected by the federated invoke gate), I27 (`D21` — an outbound share emit + the `createShare()` call are confined to `share/share-gate.ts` and `ipc/share-rpc.ts`), I29 (`D22` — seven rules: `connectors.dispatch` confined to `engine/executor.ts`, the `egress_ledger` append to `egress/*`, `recordAgentBriefEgress` pinned to its single caller, the `agents/<name>.ts` emitters unimportable outside `ipc/agents-rpc.ts`, `registerRoute` confined to `llm/registry.ts`, `wrapLedgeredEmbedder` to `egress/embedding-egress.ts` plus its three construction sites, and `wrapLedgeredVlm` to `egress/vlm-egress.ts` plus `multimodal/build-media-pass-deps.ts` — keeping the egress chokepoints total), I33 (`D23` — `runConfined` is confined to `exec/exec-gate.ts`, so user-supplied code has one spawn path), I35 (`D26` — three rules: `performActuation` confined to the computer-use gate, the driver capability (an automation-library import **or** a raw CDP `Domain.method` literal) confined to `computer-use/cu-lanes/`, and each lane constructor nameable only by its own definition plus `platform/assemble.ts`), I37 (`D27` — two rules: the non-local `VlmProvider` CONSTRUCTOR confined to `multimodal/build-media-pass-deps.ts` inside a `wrapLedgeredVlm(...)` argument list, and the `media_grant` table confined to `multimodal/media-grant-store.ts`, `multimodal/media-discovery.ts`'s correlated read, and `index/media-grant-v59-sql.ts`'s DDL), I38 (`D28` — the `fleet` `ClientKind` ASSIGNMENT shapes confined to `ipc/server/client-kind.ts`, `egress/egress-bearing-kinds.ts` and `fleet/fleet-invoker.ts`; it deliberately does NOT match a bare `"fleet"` string, which is a legitimate namespace token in the LAN forbid-list and the CLI command map, and it states its own residual bound — an indirection or a computed key evades it, so capability confinement, not the regex, is the primary defense), I39 (`D29` — four rules: the `nimbus/fetch` brokered-method literal confined to `toolgen/toolgen-types.ts`, `buildGeneratedManifest` confined to `toolgen-stub.ts` with a static ban on a non-empty `network:` literal there, the `toolgen.` Vault-key prefix confined to `toolgen-credentials.ts`, and — added with I40 — a saved artifact's body/fields handed to a caller only by `toolgen-saved-store.ts`'s `readVerifiedSavedTool`), I28 (`D32` — seven rules confining the capture table, the gate entry points and module importers, the agent-row writers, the act door's accept path, the sink's executor/connector import ban and the `mcpToolId` literal), I43 (`D33(a)` — the `__nimbus-extension` self-role sentinel named only by `platform/runtime-layout.ts` and `selfSpawn("extension", …)` called only from `extensions/extension-runtime.ts`; a raw `Bun.spawn` of an entry file or a second caller of the spec builders is outside it, the latter covered by an `I43` source pin), `D33(b)`/`D33(c)` (tied to the extension runtime, not an invariant: the `extension_run_grant` table confined to its store and DDL, and `upsertRunGrant`/`deleteRunGrant` to their named callers), `D34` (tied to the connector migration, not an invariant: the `connector_migration` table confined to its store and DDL, `approveMigratedExtensionRun` to `approve-run.ts` and the migration engine, and the `extension.migrate` consent to the engine and `ipc/migration-rpc.ts`, with the `migrationEngine` option confined to `assemble.ts`, `options.ts` and `dispatchers.ts` — whole-file in that last, where a test pins the one read to `tryDispatchMigrationRpc` and the one `accept` caller to `migration-rpc.ts`), the SyncContext capability boundary (`D24`), `D30` — every non-test file that value-imports the `bun:sqlite` `Database` CONSTRUCTOR must name `ensureFullSqlite` (`platform/sqlite-runtime.ts`), which on macOS points the process at a full SQLite build before the first database is opened; without that call `db.loadExtension()` cannot work at all against Apple's system libsqlite3, which is issue #1029 — sqlite-vec never loading on darwin, in CI or on a user's machine. Tied to no invariant, as `D24` is not; the rule has NO allow-list, so a new entry point is a violation the day it is written, and it catches the aliased and static-factory forms a `new Database(` text scan misses. Stated bound: it proves the call is present in the file, never that it precedes the open.), and **`D31`** — also tied to no invariant — every non-test gateway file that opens a listening socket via `Bun.serve`/`Bun.listen`/`net.createServer` (a `typeof` type query exempted) must name a `registerListener(` CALL, anchored so `unregisterListener` (which contains that identifier as a substring) cannot satisfy it, so a new listen site among those three shapes cannot silently miss `nimbus wow`'s locality panel (`locality/listener-registry.ts`). Stated bound, two shapes this rule cannot see: a socket a LIBRARY opens internally — the sixth listener, `mdns` (`federation/mdns-discovery-provider.ts`'s `bonjour-service` UDP 5353 multicast bind), registers by hand and is proven only by its own test — and a socket opened by a gateway-SPAWNED CHILD PROCESS, such as the CDP debugging port Chromium binds during a live `nimbus computer` browser session (`computer-use/cu-lanes/browser-launch.ts`'s `--remote-debugging-port=0`), which is why the locality panel's own heading reads "Listeners the gateway has open right now:" rather than an unqualified claim. At audit time. The runtime tests in `packages/gateway/src/security-invariants.test.ts` remain authoritative for invariant wiring; the static checks just catch regressions before the tests run.
 

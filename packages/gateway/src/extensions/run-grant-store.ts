@@ -53,7 +53,9 @@ function hasTrustAckColumn(db: Database): boolean {
 
 /** The select list: a column not created yet reads as its empty value (`'{}'` / `'[]'`). */
 function readCols(db: Database): string {
-  const credentials = hasCredentialsColumn(db) ? WRITE_COLS : `${BASE_COLS}, '{}' AS credentials_json`;
+  const credentials = hasCredentialsColumn(db)
+    ? WRITE_COLS
+    : `${BASE_COLS}, '{}' AS credentials_json`;
   return `${credentials}, ${hasTrustAckColumn(db) ? "trust_ack_json" : "'[]' AS trust_ack_json"}`;
 }
 

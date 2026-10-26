@@ -6766,7 +6766,7 @@ describe("I43 — an installed extension's code runs only through the verified s
     const hashesAt = verify.indexOf("assertHashesVerified(row);");
     const manifestAt = verify.indexOf("const manifest = readManifestTyped(row);");
     const signatureAt = verify.indexOf(
-      "await assertPublisherSignature(row, manifest, deps.vault);",
+      "await assertPublisherSignature(deps.db, row, manifest, grant, deps.vault);",
     );
     const deriveAt = verify.search(
       /const \{ credentials \} = resolvedCredentialsFor\(\s*row,\s*manifest,\s*grant\.service_id,/,
@@ -8156,5 +8156,273 @@ describe("I47 — a role-pack layer is written only after the owner approved pac
       "packages/gateway/src/packs/pack-install.ts",
       "packages/gateway/src/packs/pack-layer-store.ts",
     ]);
+  });
+});
+
+describe("I48 — revoked or taken-down extension code is never installed, updated or spawned without an acknowledging approval", () => {
+  // Real statements signed by a test Nimbus trust root and stored through the real store; a real
+  // install, approval and spawn verification; a real local-folder registry. Nothing spawns.
+  const NIMBUS_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 48);
+  const roots: string[] = [];
+  const dbs: Database[] = [];
+  afterEach(() => {
+    for (const db of dbs.splice(0)) db.close();
+    for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
+  });
+
+  async function nimbusKey(): Promise<string> {
+    const nacl = (await import("tweetnacl")).default;
+    return encodeBase64(nacl.sign.keyPair.fromSeed(NIMBUS_SEED).publicKey);
+  }
+
+  /** Stores one Nimbus-signed statement through the real store; returns its id. */
+  async function block(
+    db: Database,
+    s:
+      | { kind: "key.revoke"; publisherId: string; keyFingerprint: string; reason: string }
+      | {
+          kind: "extension.takedown";
+          extensionId: string;
+          publisherId: string;
+          versions: "*" | string[];
+          reason: string;
+        },
+  ): Promise<string> {
+    const { signTrustStatement, trustStatementId } = await import("@nimbus-dev/registry-format");
+    const { recordTrustStatements } = await import("./extensions/trust/trust-store.ts");
+    const key = await nimbusKey();
+    const signed = await signTrustStatement(
+      { ...s, issuedAt: "2026-10-26T12:00:00Z", signerKey: key },
+      NIMBUS_SEED,
+    );
+    expect(
+      recordTrustStatements(db, [signed], { kind: "feed", nimbusRootKey: key }, 1).inserted,
+    ).toBe(1);
+    return trustStatementId(signed);
+  }
+
+  /** A signed extension, installed and approved through the production functions. */
+  async function installedSigned() {
+    const { installExtensionFromLocalDirectory } = await import(
+      "./extensions/install-from-local.ts"
+    );
+    const { signManifest } = await import("./extensions/verify-signature.ts");
+    const { MockVault } = await import("./vault/mock.ts");
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-i48-")));
+    roots.push(root);
+    const db = new Database(":memory:");
+    dbs.push(db);
+    LocalIndex.ensureSchema(db);
+    mkdirSync(join(root, "data"), { recursive: true });
+    const env = {
+      platform: process.platform,
+      protectedRoots: [join(root, "data")],
+      runtimeReadPaths: [],
+      realpath: (p: string) => realpathSync.native(p),
+    };
+    const kp = generateEd25519Keypair();
+    const manifest: Record<string, unknown> = {
+      id: "com.example.i48",
+      version: "1.0.0",
+      entry: "dist/index.js",
+      permissions: {},
+      publisher: { id: "i48-pub", key: encodeBase64(kp.pubkey) },
+    };
+    manifest["signature"] = await signManifest(manifest, kp.privkey);
+    const src = join(root, "src");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    writeFileSync(join(src, "nimbus.extension.json"), JSON.stringify(manifest));
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    const vault = new MockVault();
+    await installExtensionFromLocalDirectory({
+      db,
+      extensionsDir: join(root, "data", "extensions"),
+      sourcePath: src,
+      vault,
+      publisherKey: kp.pubkey,
+      approve: async () => true,
+    });
+    const asked: Array<Record<string, unknown>> = [];
+    const approve = async () => {
+      const { approveExtensionRun } = await import("./extensions/approve-run.ts");
+      return approveExtensionRun("com.example.i48", {
+        db,
+        env,
+        gate: async (a) => {
+          asked.push(a.payload);
+          return true;
+        },
+        runtimeEnabled: true,
+        now: () => 1,
+      });
+    };
+    const spawn = async () => {
+      const { readVerifiedExtensionForSpawn } = await import("./extensions/verified-extension.ts");
+      return readVerifiedExtensionForSpawn("com.example.i48", { db, vault, env });
+    };
+    return {
+      db,
+      asked,
+      approve,
+      spawn,
+      fingerprint: publisherKeyFingerprint(encodeBase64(kp.pubkey)),
+    };
+  }
+
+  test("a revoked key refuses the spawn; the approval that shows and acknowledges it resumes it; a NEW block refuses again", async () => {
+    const x = await installedSigned();
+    await x.approve();
+    expect((await x.spawn()).extensionId).toBe("com.example.i48");
+    const revoked = await block(x.db, {
+      kind: "key.revoke",
+      publisherId: "i48-pub",
+      keyFingerprint: x.fingerprint,
+      reason: "leaked",
+    });
+    await expect(x.spawn()).rejects.toThrow("ERR_EXTENSION_KEY_REVOKED");
+    // Re-approval is the override: the prompt names the block, the grant records its id.
+    expect((await x.approve()).changed).toBe(true);
+    const shown = x.asked.at(-1)?.["trustBlocks"] as Array<{ statementId: string }>;
+    expect(shown.map((b) => b.statementId)).toEqual([revoked]);
+    expect((await x.spawn()).extensionId).toBe("com.example.i48");
+    // A later block was never acknowledged.
+    await block(x.db, {
+      kind: "extension.takedown",
+      extensionId: "com.example.i48",
+      publisherId: "i48-pub",
+      versions: "*",
+      reason: "malware",
+    });
+    await expect(x.spawn()).rejects.toThrow("ERR_EXTENSION_TAKEN_DOWN");
+  });
+
+  test("a registry install of a taken-down version is refused before the owner is asked; the default pick skips it", async () => {
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    const { insertRegistry } = await import("./extensions/registry/registry-store.ts");
+    const { MockVault } = await import("./vault/mock.ts");
+    const root = mkdtempSync(join(tmpdir(), "nimbus-i48-reg-"));
+    roots.push(root);
+    const db = new Database(":memory:");
+    dbs.push(db);
+    LocalIndex.ensureSchema(db);
+    const dir = join(root, "registry");
+    const built = await buildTestRegistry(dir, {
+      id: "com.example.i48r",
+      versions: [{ version: "1.0.0" }, { version: "1.1.0" }],
+    });
+    insertRegistry(db, {
+      name: "main",
+      url: dir,
+      rootKey: built.rootKey,
+      rootFingerprint: publisherKeyFingerprint(built.rootKey),
+      lastSequence: 0,
+      lastGeneratedAt: "2026-10-01T00:00:00Z",
+      addedAt: 1,
+      lastIndexSha256: null,
+    });
+    await block(db, {
+      kind: "extension.takedown",
+      extensionId: "com.example.i48r",
+      publisherId: "acme",
+      versions: ["1.1.0"],
+      reason: "malware",
+    });
+    let asked = 0;
+    const deps = {
+      db,
+      extensionsDir: join(root, "extensions"),
+      vault: new MockVault(),
+      fetch: {
+        fetchFn: () => Promise.reject(new Error("no network in the I48 tests")),
+        enforceAirGap: () => false,
+        now: () => Date.now(),
+        production: false,
+        builtin: null,
+      },
+      approve: async () => {
+        asked++;
+        return true;
+      },
+    };
+    await expect(
+      installFromRegistry(deps, { id: "com.example.i48r", version: "1.1.0" }),
+    ).rejects.toThrow("ERR_EXTENSION_TAKEN_DOWN");
+    expect(asked).toBe(0);
+    expect((await installFromRegistry(deps, { id: "com.example.i48r" })).version).toBe("1.0.0");
+  });
+
+  test("stored blocks are a monotonic union: no later verification set, feed or store call removes one", async () => {
+    const db = new Database(":memory:");
+    dbs.push(db);
+    LocalIndex.ensureSchema(db);
+    await block(db, {
+      kind: "key.revoke",
+      publisherId: "acme",
+      keyFingerprint: "0".repeat(32),
+      reason: "leaked",
+    });
+    const { replaceCurrentVerifications, trustStoreCounts } = await import(
+      "./extensions/trust/trust-store.ts"
+    );
+    replaceCurrentVerifications(db, [], await nimbusKey(), 2);
+    expect(trustStoreCounts(db).revocations).toBe(1);
+    // The store's only DELETE removes the CURRENT verifications (spec R7), never a block.
+    const store = stripStringLiterals(
+      stripComments(await read("packages/gateway/src/extensions/trust/trust-store.ts")),
+    );
+    const raw = stripComments(await read("packages/gateway/src/extensions/trust/trust-store.ts"));
+    expect(store).not.toMatch(/\bUPDATE\s+trust_statement\b/i);
+    expect(raw.match(/DELETE FROM trust_statement[^"`]*/g)).toEqual([
+      "DELETE FROM trust_statement WHERE kind = 'publisher.verified' AND source IN ('feed', 'snapshot')",
+    ]);
+  });
+
+  test("source pins: every door checks BEFORE it acts", async () => {
+    const spawn = stripComments(
+      await read("packages/gateway/src/extensions/verified-extension.ts"),
+    );
+    const verify = spawn.slice(
+      spawn.indexOf("export async function readVerifiedExtensionForSpawn("),
+    );
+    const blockedAt = verify.indexOf("assertNotBlocked(deps.db, row, manifest, grant);");
+    expect(blockedAt).toBeGreaterThan(-1);
+    expect(blockedAt).toBeLessThan(verify.indexOf("assertTreeAndVersion("));
+    const sig = spawn.slice(spawn.indexOf("async function assertPublisherSignature("));
+    const revokedAt = sig.indexOf("assertKeyNotRevoked(db, row, manifest, grant, key);");
+    expect(revokedAt).toBeGreaterThan(-1);
+    expect(revokedAt).toBeLessThan(sig.indexOf("await verifyManifestSignature(raw, key);"));
+
+    const reg = stripComments(
+      await read("packages/gateway/src/extensions/registry/install-from-registry.ts"),
+    );
+    const fetchFn = reg.slice(reg.indexOf("export async function fetchVerifiedRegistryPackage("));
+    expect(fetchFn.indexOf("assertNotBlocked(deps.db, subjectAt(version));")).toBeGreaterThan(-1);
+    expect(fetchFn.indexOf("assertNotBlocked(deps.db, subjectAt(version));")).toBeLessThan(
+      fetchFn.indexOf("await fetchRegistryManifest("),
+    );
+
+    const local = stripComments(
+      await read("packages/gateway/src/extensions/install-from-local.ts"),
+    );
+    const main = local.slice(
+      local.indexOf("export async function installExtensionFromLocalDirectory("),
+    );
+    expect(main.indexOf("assertNotBlocked(options.db,")).toBeGreaterThan(-1);
+    expect(main.indexOf("assertNotBlocked(options.db,")).toBeLessThan(
+      main.indexOf("await requireInstallApproval("),
+    );
+
+    const apply = stripComments(await read("packages/gateway/src/extensions/auto-update-init.ts"));
+    const reverify = apply.slice(apply.indexOf("async function reverifyUpdateManifest("));
+    expect(reverify.slice(0, reverify.indexOf("\n}\n"))).toContain(
+      "assertNotBlocked(fetchDeps.db,",
+    );
+
+    const detect = stripComments(
+      await read("packages/gateway/src/extensions/registry/registry-update-source.ts"),
+    );
+    expect(detect).toMatch(
+      /\.filter\(\(\[v, e\]\) => wanted\.includes\(e\.channel\) && !isBlocked\(v\)\)/,
+    );
   });
 });

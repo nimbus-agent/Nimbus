@@ -18,6 +18,14 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-26 — Marketplace trust layer PR 2b of 5: revoked or taken-down extensions are refused at install, update and spawn, until the owner re-approves (invariant I48, binding static D37; no migration, no new egress class).**
+  A publisher key revoked, or an extension taken down, by Nimbus, by the publisher or by the maintainer of the extension's
+  own registry now blocks that code. It is refused at registry and local install before any prompt, never offered as an
+  update, re-checked at update apply (`trust_blocked`), and refused before every spawn (`ERR_EXTENSION_KEY_REVOKED` /
+  `ERR_EXTENSION_TAKEN_DOWN`). A running copy is stopped when the block lands, with one OS notification. The only override is
+  `nimbus extension approve`, whose prompt lists each block and whose grant records exactly those, so a later block stops it
+  again. `extension list|info` show `blocked`, `extension search` marks it, and `nimbus doctor` names it. Registry install
+  and update apply refresh the trust feed first, best-effort. Rotation-taint (spec R4) lands with rotation in PR 3.
 - **2026-10-26 — Marketplace trust layer PR 2a of 5: the gateway stores trust statements, fetches the trust feed on a timer, and adds `nimbus trust status|refresh` (static D37; no new invariant; nothing is blocked yet).**
   Every verified registry index's `statements` are now stored, scoped to that registry, as is the Nimbus trust feed, which
   is fetched shortly after start and then every `[extensions] trust_check_interval_hours` (default 1, range 1–24), together

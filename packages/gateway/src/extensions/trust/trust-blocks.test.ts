@@ -172,7 +172,7 @@ describe("blocksFor", () => {
     const reason = blocks[1]?.reason ?? "";
     expect(reason.startsWith("a b c")).toBe(true);
     expect(reason.length).toBe(MAX_REASON_CHARS);
-    expect(reason).not.toMatch(/[\u0000-\u001f]/);
+    expect([...reason].some((c) => c.charCodeAt(0) < 0x20)).toBe(false);
   });
 
   test("a stored row that no longer parses still blocks, every version", async () => {

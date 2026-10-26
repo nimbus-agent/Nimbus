@@ -1110,9 +1110,16 @@ describe("approving a blocked extension (I48)", () => {
     await approveExtensionRun(ID, runDeps(s, gateThat(true, seen)));
     const shown = seen[0]?.payload["trustBlocks"] as Array<Record<string, unknown>>;
     expect(shown).toHaveLength(1);
-    expect(shown[0]).toMatchObject({ statementId: id1, kind: "extension.takedown", issuer: "nimbus", reason: "malware" });
+    expect(shown[0]).toMatchObject({
+      statementId: id1,
+      kind: "extension.takedown",
+      issuer: "nimbus",
+      reason: "malware",
+    });
     // Nothing the owner must see is hidden by the consent display's redaction.
-    expect(JSON.stringify(redactPayloadForConsentDisplay(seen[0]?.payload ?? {}))).toContain("malware");
+    expect(JSON.stringify(redactPayloadForConsentDisplay(seen[0]?.payload ?? {}))).toContain(
+      "malware",
+    );
     expect(getRunGrant(s.db, ID)?.trust_ack_json).toBe(JSON.stringify([id1]));
   });
 

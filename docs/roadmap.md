@@ -12,8 +12,8 @@ Phases are thematic, not calendar-bound. A phase begins when its dependencies ar
 > shipped as five projects between 2026-10-22 and 2026-10-26 and are now recorded in the S3 row. The
 > [Phase 9.5](#phase-95--marketplace-registry) section now lists its seven projects, which the owner ruled
 > on 2026-10-18 must ALL ship before S3 closes: projects 1 (registry protocol and client) and 2 (publishing) are
-> done, along with the Readwise unbundling pilot (I46), and project 3, the trust layer, is under way (PR 1 and
-> PR 2a of 5 merged 2026-10-26). The undefined phrase "extension maturity" in the S3 row is replaced by that exit
+> done, along with the Readwise unbundling pilot (I46), and project 3, the trust layer, is under way (PR 1, PR 2a and
+> PR 2b of 5 merged 2026-10-26). The undefined phrase "extension maturity" in the S3 row is replaced by that exit
 > condition, and the owner's 2026-10-19 decisions (a static registry with a git pull-request write path and no
 > hosted service; ratings deferred; unbundle the first-party connectors over time) are now written into Phase 9.5.
 >
@@ -98,7 +98,7 @@ Commercial license also available now for organizations that need to embed Nimbu
 | Phase 7 | Engineering Excellence | Planned |
 | Phase 8 | Security Engineering | Planned |
 | Phase 9 | AI Engineering Loop | Planned |
-| Phase 9.5 | Marketplace Registry | In progress — project 1 of 7 (registry protocol + client) ✅ 2026-10-18; project 2 (publishing) ✅ 2026-10-23; project 3 (trust layer) in progress — PR 1 of 5 ✅ 2026-10-26, PR 2a (statement store, feed timer) 2026-10-26 |
+| Phase 9.5 | Marketplace Registry | In progress — project 1 of 7 (registry protocol + client) ✅ 2026-10-18; project 2 (publishing) ✅ 2026-10-23; project 3 (trust layer) in progress — PR 1 of 5 ✅ 2026-10-26, PR 2a (statement store, feed timer) 2026-10-26, PR 2b (enforcement, I48) 2026-10-26 |
 | Phase 10 | The Autonomous Agent | Planned |
 | Phase 11 | Sovereign Mesh | Planned |
 | Phase 12 | Enterprise | Planned |
@@ -1253,7 +1253,7 @@ multimodal row, and *User MCP servers that actually run*, which shipped inside t
 | MCP capture sink (`I28`) | ✅ 3 of 3: agent-authored notes 2026-10-12, proposals 2026-10-14, the act door 2026-10-15; a read-only desktop Captures page 2026-10-16; `obsidian.note.append` proposable since 2026-10-25 |
 | Extension runtime (`I43`) | ✅ 4 of 4: install gate and tree digest 2026-10-11, run grants 2026-10-16, the sandboxed runtime 2026-10-17, `--model` access 2026-10-17 |
 | Role packs (`I47`) | ✅ 5 of 5, 2026-10-22 → 2026-10-26: foundations (the layered config reader, per-job fleet merging, agent visibility and the catalog), source mapping (`[sources] map`, schema V74–V75; Google Docs indexed with their text), the PM and DevOps packs with `nimbus pack list\|show\|install\|remove` behind the `pack.install` HITL prompt, the desktop pages, and onboarding (`nimbus init` and the desktop app ask what you do and install the matching pack). Not in the original S3 row; recorded here 2026-10-26. Detail: [`cli-reference.md` § `nimbus pack`](./cli-reference.md#nimbus-pack) and [`CHANGELOG.md`](./CHANGELOG.md) |
-| Marketplace registry (Phase 9.5) | 🔄 projects 1 and 2 ✅, the Readwise unbundling pilot (`I46`) ✅, project 3 (the trust layer) under way: PR 1 and PR 2a of 5 merged 2026-10-26 (statements are stored and the feed is fetched; nothing is enforced yet). Projects 4–7 not started. Full list: [§ Phase 9.5 → Projects](#phase-95--marketplace-registry) |
+| Marketplace registry (Phase 9.5) | 🔄 projects 1 and 2 ✅, the Readwise unbundling pilot (`I46`) ✅, project 3 (the trust layer) under way: PR 1, PR 2a and PR 2b of 5 merged 2026-10-26 (statements are stored, the feed is fetched, and revoked or taken-down code is refused at install, update and spawn until the owner re-approves, I48). Projects 4–7 not started. Full list: [§ Phase 9.5 → Projects](#phase-95--marketplace-registry) |
 
 ### Pre-S3 close-out
 

@@ -86,9 +86,9 @@ describe("the blocked state (I48)", () => {
     const f = extensionRunFields(full, acked, false, [block("s1"), block("s2")]);
     expect(f.runState).toBe("blocked");
     expect(f.blockedBy.map((b) => b.statementId)).toEqual(["s2"]);
-    expect(extensionRunFields({ ...full, enabled: 0 }, acked, false, [block("s2")]).blockedBy).toEqual(
-      [],
-    );
+    expect(
+      extensionRunFields({ ...full, enabled: 0 }, acked, false, [block("s2")]).blockedBy,
+    ).toEqual([]);
   });
 });
 

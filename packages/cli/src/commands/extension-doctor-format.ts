@@ -22,8 +22,10 @@ function blockedLines(extensions: readonly unknown[]): string[] {
     if (!isRecord(e) || typeof e["id"] !== "string" || e["runState"] !== "blocked") return [];
     const id = stripControl(e["id"]);
     const first = Array.isArray(e["blockedBy"]) ? e["blockedBy"].find(isRecord) : undefined;
-    const kind = first?.["kind"] === "key.revoke" ? "its publisher key was revoked" : "it was taken down";
-    const reason = typeof first?.["reason"] === "string" ? ` (${stripControl(first["reason"])})` : "";
+    const kind =
+      first?.["kind"] === "key.revoke" ? "its publisher key was revoked" : "it was taken down";
+    const reason =
+      typeof first?.["reason"] === "string" ? ` (${stripControl(first["reason"])})` : "";
     return [
       `[warn] Extensions: ${id} is blocked: ${kind}${reason} — it does not run; nimbus extension info ${id}`,
     ];

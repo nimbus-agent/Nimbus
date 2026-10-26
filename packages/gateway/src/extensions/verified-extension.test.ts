@@ -721,7 +721,10 @@ describe("readVerifiedExtensionForSpawn — trust blocks (I48)", () => {
 
   test("a revocation of the key the Vault holds NOW refuses at step 6 even if the row recorded another", async () => {
     const f = await setup({ signed: true });
-    f.db.run("UPDATE extension SET publisher_key_fingerprint = ? WHERE id = ?", ["0".repeat(32), f.id]);
+    f.db.run("UPDATE extension SET publisher_key_fingerprint = ? WHERE id = ?", [
+      "0".repeat(32),
+      f.id,
+    ]);
     await block(f, "key.revoke", "vault key leaked");
     await expectCode(
       readVerifiedExtensionForSpawn(f.id, deps(f)),

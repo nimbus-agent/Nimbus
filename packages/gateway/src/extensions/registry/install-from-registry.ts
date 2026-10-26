@@ -40,7 +40,12 @@ import {
 } from "../manifest.ts";
 import { extractPackage } from "../package-extract.ts";
 import { isStrictlyInside } from "../path-containment.ts";
-import { assertNotBlocked, type BlockSubject, blocksFor, TrustBlockError } from "../trust/trust-blocks.ts";
+import {
+  assertNotBlocked,
+  type BlockSubject,
+  blocksFor,
+  TrustBlockError,
+} from "../trust/trust-blocks.ts";
 import { decodeBase64 } from "../verify-signature.ts";
 import { fetchRegistryBytes, type RegistryFetchDeps } from "./registry-fetch.ts";
 import {
