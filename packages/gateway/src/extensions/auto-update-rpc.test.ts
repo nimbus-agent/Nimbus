@@ -184,7 +184,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
       { id: "com.example.a", toVersion: "1.1.0", acceptPublisherKey: "b".repeat(32) },
       deps,
     );
-    expect((prompts[0]?.["publisherChange"] as { via: string }).via).toBe("rotation");
+    expect(prompts[0]?.["publisherChange"]).toMatchObject({ via: "rotation" });
     const applied = (deps.performUpgrade as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
       acceptedPublisherKey?: string;
     };
