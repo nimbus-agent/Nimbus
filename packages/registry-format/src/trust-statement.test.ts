@@ -107,9 +107,9 @@ describe("trust statements", () => {
     const s = await signTrustStatement({ ...takedownUnsigned, note: "see #12" }, ROOT_SEED);
     const back = roundTrip(s) as TrustStatement & { note?: string };
     expect(back.note).toBe("see #12");
-    expect(verifyTrustStatement(back, { rootKey: ROOT_KEY })).toBe("root");
+    expect(verifyTrustStatement(back, { nimbusRootKey: ROOT_KEY })).toBe("nimbus");
     const tampered = { ...back, note: "changed" };
-    expect(verifyTrustStatement(tampered, { rootKey: ROOT_KEY })).toBeNull();
+    expect(verifyTrustStatement(tampered, { nimbusRootKey: ROOT_KEY })).toBeNull();
   });
 
   const bad: Array<[string, Record<string, unknown>]> = [
@@ -156,43 +156,61 @@ describe("trust statements", () => {
       expect(verifyTrustStatement(s, {})).toBe("publisher");
     });
 
-    test("a revoke signed by the root key is a root statement only when that root is given", async () => {
+    test("a revoke signed by a root is nimbus or registry by which root was passed", async () => {
       const s = await signTrustStatement({ ...revokeUnsigned, signerKey: ROOT_KEY }, ROOT_SEED);
-      expect(verifyTrustStatement(s, { rootKey: ROOT_KEY })).toBe("root");
+      expect(verifyTrustStatement(s, { nimbusRootKey: ROOT_KEY })).toBe("nimbus");
+      expect(verifyTrustStatement(s, { registryRootKey: ROOT_KEY })).toBe("registry");
       expect(verifyTrustStatement(s, {})).toBeNull();
-      expect(verifyTrustStatement(s, { rootKey: OTHER_KEY })).toBeNull();
+      expect(verifyTrustStatement(s, { nimbusRootKey: OTHER_KEY })).toBeNull();
     });
 
     test("a revoke signed by an unrelated key has no authority", async () => {
       const s = await signTrustStatement({ ...revokeUnsigned, signerKey: OTHER_KEY }, OTHER_SEED);
-      expect(verifyTrustStatement(s, { rootKey: ROOT_KEY })).toBeNull();
+      expect(
+        verifyTrustStatement(s, { nimbusRootKey: ROOT_KEY, registryRootKey: ROOT_KEY }),
+      ).toBeNull();
     });
 
-    test("takedown and verified need the root", async () => {
-      for (const u of [takedownUnsigned, verifiedUnsigned]) {
-        const byRoot = await signTrustStatement(u, ROOT_SEED);
-        expect(verifyTrustStatement(byRoot, { rootKey: ROOT_KEY })).toBe("root");
-        const byPublisher = await signTrustStatement({ ...u, signerKey: PUB_KEY }, PUB_SEED);
-        expect(verifyTrustStatement(byPublisher, { rootKey: ROOT_KEY })).toBeNull();
-      }
+    test("a takedown needs a root", async () => {
+      const byRoot = await signTrustStatement(takedownUnsigned, ROOT_SEED);
+      expect(verifyTrustStatement(byRoot, { nimbusRootKey: ROOT_KEY })).toBe("nimbus");
+      expect(verifyTrustStatement(byRoot, { registryRootKey: ROOT_KEY })).toBe("registry");
+      const byPublisher = await signTrustStatement(
+        { ...takedownUnsigned, signerKey: PUB_KEY },
+        PUB_SEED,
+      );
+      expect(
+        verifyTrustStatement(byPublisher, { nimbusRootKey: ROOT_KEY, registryRootKey: ROOT_KEY }),
+      ).toBeNull();
+    });
+
+    test("only Nimbus can vouch for a publisher", async () => {
+      const s = await signTrustStatement(verifiedUnsigned, ROOT_SEED);
+      expect(verifyTrustStatement(s, { nimbusRootKey: ROOT_KEY })).toBe("nimbus");
+      expect(verifyTrustStatement(s, { registryRootKey: ROOT_KEY })).toBeNull();
+      const byPublisher = await signTrustStatement(
+        { ...verifiedUnsigned, signerKey: PUB_KEY },
+        PUB_SEED,
+      );
+      expect(verifyTrustStatement(byPublisher, { nimbusRootKey: ROOT_KEY })).toBeNull();
     });
 
     test("a rotate is valid only when signed by its fromKey", async () => {
       const s = await signTrustStatement(rotateUnsigned, PUB_SEED);
-      expect(verifyTrustStatement(s, { rootKey: ROOT_KEY })).toBe("publisher");
+      expect(verifyTrustStatement(s, { nimbusRootKey: ROOT_KEY })).toBe("publisher");
       const byTo = await signTrustStatement(
         { ...rotateUnsigned, signerKey: OTHER_KEY },
         OTHER_SEED,
       );
-      expect(verifyTrustStatement(byTo, { rootKey: ROOT_KEY })).toBeNull();
+      expect(verifyTrustStatement(byTo, { nimbusRootKey: ROOT_KEY })).toBeNull();
       const byRoot = await signTrustStatement(
         { ...rotateUnsigned, signerKey: ROOT_KEY },
         ROOT_SEED,
       );
-      expect(verifyTrustStatement(byRoot, { rootKey: ROOT_KEY })).toBeNull();
+      expect(verifyTrustStatement(byRoot, { nimbusRootKey: ROOT_KEY })).toBeNull();
     });
 
-    test("a signature that does not match signerKey has no authority", async () => {
+    test("a signature that does not match signerKey has no authority", () => {
       // Signed by OTHER while claiming PUB as signer.
       const s = naclSign(revokeUnsigned, OTHER_SEED);
       expect(verifyTrustStatement(s, {})).toBeNull();

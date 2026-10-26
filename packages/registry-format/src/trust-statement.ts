@@ -264,8 +264,12 @@ export function signTrustStatement(
   });
 }
 
-/** Who signed a statement, as far as authority goes: the key it concerns, or a document's root. */
-export type StatementSignerRole = "publisher" | "root";
+/**
+ * The authority a statement's signer carries: the key the statement concerns (`publisher`), the
+ * Nimbus trust root (`nimbus`, applies everywhere), or a registry's root (`registry`, applies only to
+ * extensions installed from that registry — the gateway enforces that scope).
+ */
+export type StatementSignerRole = "publisher" | "nimbus" | "registry";
 
 function signatureVerifies(s: TrustStatement): boolean {
   try {
@@ -280,27 +284,34 @@ function signatureVerifies(s: TrustStatement): boolean {
 }
 
 /**
- * The authority a validly signed statement carries, or `null`. `rootKey` is the root of the document
- * the statement arrived in (the trust feed's or a registry's); without it no statement is a root
- * statement. Never throws.
+ * The authority a validly signed statement carries, or `null`. Pass the Nimbus trust root and/or the
+ * root of the registry whose index carried the statement; a root that is not passed confers nothing.
+ * Never throws.
  *
- * - `key.revoke`: by the revoked key itself (`publisher`), or by the root (`root`).
- * - `extension.takedown`, `publisher.verified`: by the root only.
+ * - `key.revoke`: by the revoked key itself, by Nimbus, or by a registry root.
+ * - `extension.takedown`: by Nimbus or a registry root.
+ * - `publisher.verified`: by Nimbus ONLY — a registry root cannot vouch for a publisher.
  * - `key.rotate`: by its `fromKey` only.
  */
 export function verifyTrustStatement(
   s: TrustStatement,
-  opts: { readonly rootKey?: string },
+  opts: { readonly nimbusRootKey?: string; readonly registryRootKey?: string },
 ): StatementSignerRole | null {
   if (!signatureVerifies(s)) return null;
-  const byRoot = opts.rootKey !== undefined && s.signerKey === opts.rootKey;
+  const root: StatementSignerRole | null =
+    opts.nimbusRootKey !== undefined && s.signerKey === opts.nimbusRootKey
+      ? "nimbus"
+      : opts.registryRootKey !== undefined && s.signerKey === opts.registryRootKey
+        ? "registry"
+        : null;
   switch (s.kind) {
     case "key.revoke":
       if (publisherKeyFingerprint(s.signerKey) === s.keyFingerprint) return "publisher";
-      return byRoot ? "root" : null;
+      return root;
     case "extension.takedown":
+      return root;
     case "publisher.verified":
-      return byRoot ? "root" : null;
+      return root === "nimbus" ? "nimbus" : null;
     case "key.rotate":
       return s.signerKey === s.fromKey ? "publisher" : null;
   }
