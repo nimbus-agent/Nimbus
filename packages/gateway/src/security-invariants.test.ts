@@ -7124,6 +7124,33 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(installedIds(s2.db)).toEqual([]);
   });
 
+  test("behavioural: an index re-served at an accepted sequence with different content refuses the install; nothing is asked or installed", async () => {
+    const { getRegistry } = await import("./extensions/registry/registry-store.ts");
+    const { fetchVerifiedIndex } = await import("./extensions/registry/registry-fetch.ts");
+    const { resignIndex } = await import(
+      "./extensions/registry/__fixtures__/build-test-registry.ts"
+    );
+    const s = await setup({ main: ["1.0.0"] });
+    const row = getRegistry(s.db, "main");
+    if (row === undefined) throw new Error("registry row missing");
+    // The gateway accepts the index once: its sequence AND the document at it are now the floor.
+    const accepted = await fetchVerifiedIndex({ ...NO_NETWORK, db: s.db }, row);
+    expect(getRegistry(s.db, "main")?.lastIndexSha256).toMatch(/^[0-9a-f]{64}$/);
+    // A force-pushed gh-pages: a validly signed, DIFFERENT index at that same sequence.
+    const indexPath = join(s.dirOf("main"), "index.json");
+    resignIndex(indexPath, {
+      ...(JSON.parse(await readFile(indexPath, "utf8")) as Record<string, unknown>),
+      sequence: accepted.sequence,
+      generatedAt: "2026-10-30T00:00:00Z",
+    });
+    const run = await install(s, { id: ID });
+    expect(await refusalOf(run.result)).toMatch(
+      /^ERR_REGISTRY_EQUIVOCATION .*main: failed verification/,
+    );
+    expect(run.asked()).toBe(0);
+    expect(installedIds(s.db)).toEqual([]);
+  });
+
   test("behavioural: a bare id carried by two registries is refused, never prioritised", async () => {
     const { getExtensionSource } = await import("./extensions/registry/registry-store.ts");
     const s = await setup({ alpha: ["1.0.0"], beta: ["1.0.0"] });
