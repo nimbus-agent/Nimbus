@@ -76,6 +76,7 @@ export {
   type RolePackManifest,
   rolePackDigest,
 } from "./role-pack.ts";
+export { ancestorsOf, type RotationEdge, successorsOf } from "./rotation-graph.ts";
 export { emptyIndex, publicKeyFromSeed, signIndex, verifyIndexSignature } from "./sign.ts";
 export {
   MAX_STATEMENTS_PER_DOCUMENT,

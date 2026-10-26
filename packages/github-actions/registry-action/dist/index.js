@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:a74c4df9afcb698c421ec58da05966c0acd57ececdd0b4ad3120153d6dac4254
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:9383bc63bec665397d83ddab6f39cc31f9a0767468976cee0288e9bab5fbc501
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;

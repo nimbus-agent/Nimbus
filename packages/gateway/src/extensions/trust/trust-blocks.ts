@@ -16,12 +16,15 @@
  * that taint, never a revocation of the key itself.
  */
 import type { Database } from "bun:sqlite";
-import { parseTrustStatement, publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import {
+  ancestorsOf,
+  parseTrustStatement,
+  publisherKeyFingerprint,
+} from "@nimbus-dev/registry-format";
 
 import type { ExtensionRow } from "../../automation/extension-store.ts";
 import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
 import type { ExtensionManifest } from "../manifest.ts";
-import { ancestorsOf } from "./rotation-graph.ts";
 import {
   type BlockCandidateRow,
   readBlockCandidates,

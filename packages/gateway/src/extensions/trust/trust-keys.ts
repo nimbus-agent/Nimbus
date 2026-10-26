@@ -9,8 +9,8 @@
  *   current key (R8: a fork gives no automatic continuity).
  */
 import type { Database } from "bun:sqlite";
+import { successorsOf } from "@nimbus-dev/registry-format";
 
-import { successorsOf } from "./rotation-graph.ts";
 import { type BlockSubject, blocksFor } from "./trust-blocks.ts";
 import { readCurrentVerifiedKeys, readRotationEdges } from "./trust-store.ts";
 

@@ -8,7 +8,6 @@ import {
 import nacl from "tweetnacl";
 
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
-import { ancestorsOf, successorsOf } from "./rotation-graph.ts";
 import { blocksFor } from "./trust-blocks.ts";
 import { isKeyRevoked, type KeyContext, keyContinuity } from "./trust-keys.ts";
 import {
@@ -81,25 +80,6 @@ const vouch = (...keys: string[]) =>
     },
     NIMBUS.seed,
   );
-
-describe("rotation-graph", () => {
-  const e = (from: string, to: string) => ({ from, to });
-  test("ancestors walk back through chains and terminate on cycles", () => {
-    expect([...ancestorsOf([e("k", "x"), e("x", "y")], "y")].sort()).toEqual(["k", "x"]);
-    expect([...ancestorsOf([e("a", "b"), e("b", "a")], "a")]).toEqual(["b"]);
-    expect(ancestorsOf([], "y").size).toBe(0);
-  });
-  test("successors: one chain has one terminal; a fork two; an unusable start none", () => {
-    const all = () => true;
-    expect([...successorsOf([e("k", "x"), e("x", "y")], "k", all).terminal]).toEqual(["y"]);
-    expect(successorsOf([e("k", "x"), e("k", "y")], "k", all).terminal.size).toBe(2);
-    expect(successorsOf([e("k", "x")], "k", (f) => f !== "k").reachable.size).toBe(0);
-    // A cycle among successors leaves no terminal key.
-    expect(successorsOf([e("k", "x"), e("x", "y"), e("y", "x")], "k", all).terminal.size).toBe(0);
-    // A rotation back to the start is a loop: no current key.
-    expect(successorsOf([e("k", "x"), e("x", "k")], "k", all).terminal.size).toBe(0);
-  });
-});
 
 describe("R4 — revocation taints keys reached by rotation", () => {
   test("a rotation K→X signed BEFORE K's revocation still taints X (dates are not trusted)", async () => {
