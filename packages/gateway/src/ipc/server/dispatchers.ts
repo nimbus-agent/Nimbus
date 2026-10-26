@@ -96,6 +96,7 @@ import { dispatchTeamVaultRpc, TeamVaultRpcError } from "../teamvault-rpc.ts";
 import { dispatchToolgenRpc, ToolgenRpcError } from "../toolgen-rpc.ts";
 import { dispatchTourRpc, TourRpcError } from "../tour-rpc.ts";
 import { dispatchTribalRpc } from "../tribal-rpc.ts";
+import { dispatchTrustRpc } from "../trust-rpc.ts";
 import { dispatchUpdaterRpc, UpdaterRpcError } from "../updater-rpc.ts";
 import { dispatchVoiceRpc, VoiceRpcError } from "../voice-rpc.ts";
 import { createWorkflowCancelHandler } from "../workflow-cancel.ts";
@@ -112,6 +113,7 @@ import {
   registryRpcSkipped,
   type ServerCtx,
   sessionRpcSkipped,
+  trustRpcSkipped,
 } from "./context.ts";
 import { dispatchWorkflowRunRpc } from "./inline-handlers.ts";
 import type { CreateIpcServerOptions } from "./options.ts";
@@ -2293,6 +2295,27 @@ export async function tryDispatchDiagnosticsRpc(
  * executor as the extension lifecycle approvals (no connector dispatch, so no egress row of its
  * own — the registry fetch it triggers is ledgered by the `registry` class).
  */
+/** `trust.status` / `trust.refresh` (trust layer): CLI-only reads of the trust store and feed. */
+export async function tryDispatchTrustRpc(ctx: ServerCtx, method: string): Promise<unknown> {
+  if (!method.startsWith("trust.")) {
+    return trustRpcSkipped;
+  }
+  const localIndex = ctx.options.localIndex;
+  if (localIndex === undefined) {
+    throw new RpcMethodError(-32603, "Local index is not available");
+  }
+  const out = await dispatchTrustRpc({
+    method,
+    db: localIndex.getDatabase(),
+    trustFeed: ctx.options.trustFeed,
+    now: Date.now,
+  });
+  if (out.kind === "hit") {
+    return out.value;
+  }
+  throw new RpcMethodError(-32601, `Method not found: ${method}`);
+}
+
 export async function tryDispatchRegistryRpc(
   ctx: ServerCtx,
   clientId: string,

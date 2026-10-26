@@ -41,7 +41,7 @@ export interface RegistryFetchDeps {
 }
 
 export type RegistryFetchMeta = {
-  method: "registry.index" | "registry.manifest" | "registry.package";
+  method: "registry.index" | "registry.manifest" | "registry.package" | "trust.feed";
   extensionId?: string;
   version?: string;
   maxBytes: number;

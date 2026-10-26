@@ -32,7 +32,9 @@ export type RegistryErrorCode =
   | "ERR_TRUST_STATEMENT_INVALID"
   | "ERR_TRUST_FEED_INVALID"
   | "ERR_TRUST_FEED_SIGNATURE_INVALID"
-  | "ERR_TRUST_FEED_ROOT_KEY_CHANGED";
+  | "ERR_TRUST_FEED_ROOT_KEY_CHANGED"
+  | "ERR_TRUST_FEED_ROLLBACK"
+  | "ERR_TRUST_FEED_EQUIVOCATION";
 
 /** A registry refusal. The code leads the message, so a CLI shows it; `detail` is the rest. */
 export class RegistryError extends Error {

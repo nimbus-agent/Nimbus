@@ -200,6 +200,7 @@ import {
   buildExtensionRunGrantEnv,
   isExtensionRuntimeEnabled,
 } from "../extensions/run-grant-env.ts";
+import { prepareTrustAtBoot, startTrustFeedForBoot } from "../extensions/trust/trust-feed-boot.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { federationConsent } from "../federation/consent-broker.ts";
 import { loadOrCreateFederationIdentity } from "../federation/federation-identity.ts";
@@ -3930,6 +3931,9 @@ export async function assemblePlatformServices(
   ]);
 
   try {
+    // Trust layer: record each installed extension's verifying key and apply the baked trust
+    // snapshot BEFORE the gate opens. Never throws.
+    await prepareTrustAtBoot({ db, vault, logger: syncLogger });
     await verifyExtensionsBestEffort(
       db,
       syncLogger,
@@ -4001,6 +4005,16 @@ export async function assemblePlatformServices(
     logger: syncLogger,
   });
   void startMigrationBootEvaluation(migrationEngine, paths.demo === true, syncLogger);
+  // The Nimbus trust feed (trust layer), on the same fetch deps as the registries; nothing is
+  // fetched when this build has no feed configured, and a demo-rooted gateway gets no handle (I41).
+  const trustFeed = startTrustFeedForBoot({
+    db,
+    configDir: paths.configDir,
+    demo: paths.demo === true,
+    registryFetch,
+    logger: syncLogger,
+    sidecarStops,
+  });
   const autoUpdateRuntime = maybeStartAutoUpdateRuntime({
     db,
     vault,
@@ -4042,6 +4056,7 @@ export async function assemblePlatformServices(
     // `extension.approveRun`, `extension.credentialSet` and `connector.remove` bind through it.
     continuityTable: migration.continuityTable,
     registryFetch,
+    ...(trustFeed === undefined ? {} : { trustFeed }),
     packLayerStore,
     openUrl: openUrlInDefaultBrowser,
     syncScheduler,

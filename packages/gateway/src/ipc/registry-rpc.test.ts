@@ -612,6 +612,17 @@ describe("the reserved built-in registry name", () => {
   /** A fixture built-in registry: the official root key, served from `tmp`. */
   const builtinBag = (): RegistryFetchBag => fetchBag({ builtin: { url: tmp, rootKey: ROOT_KEY } });
 
+  test("registry add nimbus-trust (the trust feed's ledger name) refused, naming the feed", async () => {
+    const g = gateRecorder(true);
+    for (const name of ["nimbus-trust", " Nimbus-Trust "]) {
+      await expect(call("registry.add", { name, url: tmp }, { gate: g.gate })).rejects.toThrow(
+        /ERR_REGISTRY_NAME_RESERVED.*trust feed/,
+      );
+    }
+    expect(g.asked).toEqual([]);
+    expect(ledgerCount()).toBe(0);
+  });
+
   test("registry add nimbus-official refused", async () => {
     const g = gateRecorder(true);
     let fetched = 0;

@@ -114,7 +114,33 @@ runtime = false
 runtime = false
 `),
       ),
-    ).toEqual(["updateCheckIntervalHours"]);
+    ).toEqual(["updateCheckIntervalHours", "trustCheckIntervalHours"]);
+  });
+});
+
+describe("[extensions] trust_check_interval_hours", () => {
+  test("defaults to 1 hour", () => {
+    expect(parseNimbusExtensionsToml("").trustCheckIntervalHours).toBe(1);
+  });
+
+  test("accepts 1 through 24", () => {
+    for (const n of [1, 6, 24]) {
+      expect(
+        parseNimbusExtensionsToml(`[extensions]
+trust_check_interval_hours = ${n}
+`).trustCheckIntervalHours,
+      ).toBe(n);
+    }
+  });
+
+  test("refuses 0, 25 and a non-integer", () => {
+    for (const bad of ["0", "25", "1.5", '"x"']) {
+      expect(() =>
+        parseNimbusExtensionsToml(`[extensions]
+trust_check_interval_hours = ${bad}
+`),
+      ).toThrow(/trust_check_interval_hours/);
+    }
   });
 });
 

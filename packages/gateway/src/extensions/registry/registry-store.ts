@@ -36,16 +36,32 @@ export const BUILTIN_REGISTRY_NAME = "nimbus-official";
  * column has no collation), and `registry.add` trims before validating, so any spelling that trims
  * and lowercases to the reserved name is refused — including ones the name rule would reject anyway.
  */
+/**
+ * The name the Nimbus trust feed's requests are ledgered under (trust layer). Reserved for the same
+ * reason as the official registry's: an owner registry under it would share its egress rows.
+ */
+export const TRUST_FEED_REGISTRY_NAME = "nimbus-trust";
+
+const RESERVED_NAMES: readonly string[] = [BUILTIN_REGISTRY_NAME, TRUST_FEED_REGISTRY_NAME];
+
+function reservedNameOf(name: string): string | undefined {
+  const n = name.trim().toLowerCase();
+  return RESERVED_NAMES.find((r) => r === n);
+}
+
 export function isReservedRegistryName(name: string): boolean {
-  return name.trim().toLowerCase() === BUILTIN_REGISTRY_NAME;
+  return reservedNameOf(name) !== undefined;
 }
 
 /** Throws `ERR_REGISTRY_NAME_RESERVED` for the built-in registry's reserved name. */
 export function assertRegistryNameNotReserved(name: string): void {
-  if (isReservedRegistryName(name)) {
+  const reserved = reservedNameOf(name);
+  if (reserved !== undefined) {
     throw new RegistryError(
       "ERR_REGISTRY_NAME_RESERVED",
-      `"${BUILTIN_REGISTRY_NAME}" is reserved for the built-in official registry; add it under another name`,
+      reserved === BUILTIN_REGISTRY_NAME
+        ? `"${BUILTIN_REGISTRY_NAME}" is reserved for the built-in official registry; add it under another name`
+        : `"${reserved}" is reserved for the Nimbus trust feed; add the registry under another name`,
     );
   }
 }
