@@ -7,8 +7,10 @@ import {
   type RegistryIndex,
   readRegistryStatements,
   registryIndexDigest,
+  type TrustStatement,
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
+  verifyTrustStatement,
 } from "@nimbus-dev/registry-format";
 import { recordRegistryEgress } from "../../egress/registry-egress.ts";
 import { recordTrustStatements } from "../trust/trust-store.ts";
@@ -344,21 +346,16 @@ function ingestRegistryStatements(
   index: RegistryIndex,
 ): void {
   try {
-    const listedPublisherKeys = new Map<string, Set<string>>();
-    for (const entry of Object.values(index.extensions)) {
-      const keys = listedPublisherKeys.get(entry.publisher.id) ?? new Set<string>();
-      keys.add(entry.publisher.key);
-      listedPublisherKeys.set(entry.publisher.id, keys);
-    }
+    const { statements } = readRegistryStatements(index);
     const out = recordTrustStatements(
       deps.db,
-      readRegistryStatements(index).statements,
+      statements,
       {
         kind: "registry",
         name: reg.name,
         rootKey: reg.rootKey,
         rootFingerprint: reg.rootFingerprint,
-        listedPublisherKeys,
+        listedPublisherKeys: listedPublisherKeysOf(index, statements),
       },
       deps.now(),
     );
@@ -366,6 +363,49 @@ function ingestRegistryStatements(
   } catch {
     // Best-effort: a locked or full database must not turn a verified index into a failed fetch.
   }
+}
+
+/**
+ * The keys this index ties to each publisher: every entry's key, closed in BOTH directions over the
+ * index's publisher-signed `key.rotate` statements. A registry moves an entry to the publisher's
+ * rotated key when a version signed by it is published, so without the closure a later revocation of
+ * the OLD key would no longer concern a "listed" key and clients on the new key would drop it,
+ * escaping R4. Closing over rotations only widens admission to keys the publisher's own signed chain
+ * connects to a listed key (the registry's admission already requires that chain to start at one).
+ */
+function listedPublisherKeysOf(
+  index: RegistryIndex,
+  statements: readonly TrustStatement[],
+): Map<string, Set<string>> {
+  const listed = new Map<string, Set<string>>();
+  for (const entry of Object.values(index.extensions)) {
+    const keys = listed.get(entry.publisher.id) ?? new Set<string>();
+    keys.add(entry.publisher.key);
+    listed.set(entry.publisher.id, keys);
+  }
+  const rotations = statements.filter(
+    (s): s is Extract<TrustStatement, { kind: "key.rotate" }> =>
+      s.kind === "key.rotate" && verifyTrustStatement(s, {}) === "publisher",
+  );
+  for (const [publisherId, keys] of listed) {
+    const mine = rotations.filter((r) => r.publisherId === publisherId);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const r of mine) {
+        for (const [a, b] of [
+          [r.fromKey, r.toKey],
+          [r.toKey, r.fromKey],
+        ] as const) {
+          if (keys.has(a) && !keys.has(b)) {
+            keys.add(b);
+            grew = true;
+          }
+        }
+      }
+    }
+  }
+  return listed;
 }
 
 /** Self-verify only (the key is not pinned yet); used by `registry add`. */

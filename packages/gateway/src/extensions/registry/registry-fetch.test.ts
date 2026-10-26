@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  publisherKeyFingerprint,
   type RegistryIndex,
   registryIndexDigest,
   registryIndexSigningBytes,
@@ -577,13 +578,17 @@ describe("fetchVerifiedIndex: trust statements in the index", () => {
     );
   }
 
-  function indexWith(sequence: number, statements: unknown): RegistryIndex {
+  function indexWith(
+    sequence: number,
+    statements: unknown,
+    extensions: RegistryIndex["extensions"] = {},
+  ): RegistryIndex {
     const base = {
       format: 1 as const,
       rootKey: ROOT_KEY,
       sequence,
       generatedAt: "2026-10-18T12:00:00Z",
-      extensions: {},
+      extensions,
       statements,
     };
     const sig = nacl.sign.detached(registryIndexSigningBytes(base), KEYPAIR.secretKey);
@@ -635,6 +640,60 @@ describe("fetchVerifiedIndex: trust statements in the index", () => {
     const idx = await fetchVerifiedIndex(deps(), pinned(url, 5));
     expect(idx.sequence).toBe(6);
     expect(trustStoreCounts(db).revocations).toBe(0);
+  });
+
+  test("after the entry moved to a rotated key, a revocation of the OLD key is still stored (R4 on clients)", async () => {
+    const k1 = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(61));
+    const k2 = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(62));
+    const k1Key = encodeBase64(k1.publicKey);
+    const k2Key = encodeBase64(k2.publicKey);
+    const seed1 = new Uint8Array(32).fill(61);
+    const rotation = await signTrustStatement(
+      {
+        kind: "key.rotate",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: k1Key,
+        publisherId: "acme",
+        fromKey: k1Key,
+        toKey: k2Key,
+      },
+      seed1,
+    );
+    const revocation = await signTrustStatement(
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-26T13:00:00Z",
+        signerKey: k1Key,
+        publisherId: "acme",
+        keyFingerprint: publisherKeyFingerprint(k1Key),
+        reason: "leaked after the rotation",
+      },
+      seed1,
+    );
+    const hex = "a".repeat(64);
+    const extensions = {
+      "acme/tool": {
+        publisher: { id: "acme", key: k2Key },
+        versions: {
+          "2.0.0": {
+            channel: "stable" as const,
+            name: "Tool",
+            manifest: "extensions/acme/tool/2.0.0/manifest.json",
+            manifestSha256: hex,
+            package: "extensions/acme/tool/2.0.0/package.tgz",
+            packageSha256: hex,
+            packageSizeBytes: 1,
+            entryHash: hex,
+            publishedAt: "2026-10-26T12:00:00Z",
+          },
+        },
+      },
+    };
+    const url = serve(
+      () => new Response(JSON.stringify(indexWith(6, [rotation, revocation], extensions))),
+    );
+    await fetchVerifiedIndex(deps(), pinned(url, 5));
+    expect(trustStoreCounts(db).revocations).toBe(1);
   });
 
   test("an unpinned fetch (registry add) stores no statement", async () => {
