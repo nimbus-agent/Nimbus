@@ -480,3 +480,95 @@ describe("installFromRegistry refuses blocked code (I48)", () => {
     expect((await installFromRegistry(deps(), { id: ID })).version).toBe("1.1.0");
   });
 });
+
+describe("installFromRegistry follows a publisher's key rotation (spec R5, R8)", () => {
+  const PUB = nacl.sign.keyPair.fromSeed(PUBLISHER_SEED);
+  const PUB_KEY = encodeBase64(PUB.publicKey);
+  const OLD_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 150);
+  const OLD = nacl.sign.keyPair.fromSeed(OLD_SEED);
+  const OLD_KEY = encodeBase64(OLD.publicKey);
+  const OTHER_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 180);
+  const OTHER_KEY = encodeBase64(nacl.sign.keyPair.fromSeed(OTHER_SEED).publicKey);
+  const NIMBUS_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 210);
+  const NIMBUS_KEY = encodeBase64(nacl.sign.keyPair.fromSeed(NIMBUS_SEED).publicKey);
+
+  async function rotate(toKey: string): Promise<void> {
+    const s = await signTrustStatement(
+      {
+        kind: "key.rotate",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: OLD_KEY,
+        publisherId: "acme",
+        fromKey: OLD_KEY,
+        toKey,
+      },
+      OLD_SEED,
+    );
+    recordTrustStatements(db, [s], { kind: "feed", nimbusRootKey: NIMBUS_KEY }, 1);
+  }
+
+  beforeEach(async () => {
+    // The machine trusts only the publisher's OLD key; the index now names the new one.
+    await writePublisherKey(vault, "acme", OLD.publicKey);
+  });
+
+  test("a rotation from the trusted key installs, and the prompt states the change", async () => {
+    await setup([{ version: "1.0.0" }]);
+    await rotate(PUB_KEY);
+    await installFromRegistry(deps(), { id: ID });
+    expect(asked[0]).toMatchObject({
+      publisherChange: {
+        from: [publisherKeyFingerprint(OLD_KEY)],
+        to: publisherKeyFingerprint(PUB_KEY),
+        via: "rotation",
+      },
+    });
+    expect(asked[0]?.publisherChangeNote).toContain("via the publisher's signed rotation");
+    // Both keys are now trusted; the row records the new one.
+    expect(listExtensions(db)[0]?.publisher_key_fingerprint).toBe(publisherKeyFingerprint(PUB_KEY));
+  });
+
+  test("with no rotation the new key is a conflict, refused before the owner is asked", async () => {
+    await setup([{ version: "1.0.0" }]);
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_PUBLISHER_KEY_CONFLICT.*--accept-publisher-key/,
+    );
+    expect(asked).toEqual([]);
+  });
+
+  test("a fork (two rotations from the trusted key) is a conflict", async () => {
+    await setup([{ version: "1.0.0" }]);
+    await rotate(PUB_KEY);
+    await rotate(OTHER_KEY);
+    await expect(installFromRegistry(deps(), { id: ID })).rejects.toThrow(
+      /ERR_REGISTRY_PUBLISHER_KEY_CONFLICT.*more than one key/,
+    );
+  });
+
+  test("--accept-publisher-key with the exact fingerprint installs, and the prompt says it is unvouched", async () => {
+    await setup([{ version: "1.0.0" }]);
+    await installFromRegistry(deps(), {
+      id: ID,
+      acceptPublisherKey: publisherKeyFingerprint(PUB_KEY),
+    });
+    expect(asked[0]?.publisherChange?.via).toBe("owner");
+    expect(asked[0]?.publisherChangeNote).toBe(
+      `publisher key CHANGED from ${publisherKeyFingerprint(OLD_KEY)} to ${publisherKeyFingerprint(PUB_KEY)}, not vouched for by any rotation or by Nimbus`,
+    );
+  });
+
+  test("--accept-publisher-key naming another fingerprint is refused, not taken as acceptance", async () => {
+    await setup([{ version: "1.0.0" }]);
+    await expect(
+      installFromRegistry(deps(), { id: ID, acceptPublisherKey: "0".repeat(32) }),
+    ).rejects.toThrow(/--accept-publisher-key names 0{32}/);
+    expect(asked).toEqual([]);
+  });
+
+  test("an unchanged key states no change", async () => {
+    await setup([{ version: "1.0.0" }]);
+    await writePublisherKey(vault, "acme", PUB.publicKey); // replaces the legacy key: now trusted
+    await installFromRegistry(deps(), { id: ID });
+    expect(asked[0]?.publisherChange).toBeUndefined();
+  });
+});

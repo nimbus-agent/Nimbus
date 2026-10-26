@@ -700,6 +700,14 @@ describe("registry.install", () => {
     expect((err as Error).message).toMatch(/^ERR_EXTENSION_TAKEN_DOWN:/);
   });
 
+  test("acceptPublisherKey must be a fingerprint, checked before anything runs", async () => {
+    for (const bad of ["nope", 7, "A".repeat(32)]) {
+      await expect(
+        install({ id: "acme.tool", acceptPublisherKey: bad }, gateRecorder(true).gate),
+      ).rejects.toThrow("ERR_INVALID_PARAMS");
+    }
+  });
+
   test("with no trust feed configured the prompt carries no note", async () => {
     const dir = join(tmp, "reg");
     await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });

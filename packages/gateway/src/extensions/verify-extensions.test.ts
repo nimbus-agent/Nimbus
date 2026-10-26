@@ -4,13 +4,18 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import pino, { type Logger } from "pino";
 
 import {
   setupFreshExtensionDb,
   stageSignedExtensionOnDisk,
 } from "../../test/fixtures/extension.ts";
-import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
+import {
+  insertExtensionRow,
+  listExtensions,
+  setExtensionPublisherKeyFingerprint,
+} from "../automation/extension-store.ts";
 import { dbRun } from "../db/write.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -25,9 +30,9 @@ import {
   missingDependencyRegistry,
 } from "./missing-dependency-registry.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
-import { writePublisherKey } from "./publisher-keys.ts";
+import { writePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
 import { verifyExtensionsBestEffort, verifyOneExtensionStrict } from "./verify-extensions.ts";
-import { generateEd25519Keypair } from "./verify-signature.ts";
+import { encodeBase64, generateEd25519Keypair } from "./verify-signature.ts";
 import { prevVersionDir, prevVersionsDir, removeExtensionVersionStore } from "./version-store.ts";
 
 afterEach(() => recoveredPendingRehashRegistry.reset());
@@ -224,6 +229,47 @@ describe("verifyExtensionsBestEffort — signed extensions (I16)", () => {
     const row = listExtensions(db).find((r) => r.id === "ext-test-pub");
     expect(row?.enabled).toBe(1);
     expect(signatureDisabledRegistry.count()).toBe(0);
+  });
+
+  test("rotation: siblings of one publisher on keys K and X both pass, each with its recorded key", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const vault = new MockVault();
+    const k = generateEd25519Keypair();
+    const x = generateEd25519Keypair();
+    for (const [id, kp] of [
+      ["ext-on-k", k],
+      ["ext-on-x", x],
+    ] as const) {
+      await stageSignedExtensionOnDisk({
+        db,
+        extensionsDir,
+        publisherId: "test-pub",
+        pubkey: kp.pubkey,
+        privkey: kp.privkey,
+        extensionId: id,
+      });
+      setExtensionPublisherKeyFingerprint(
+        db,
+        id,
+        await writePublisherKeyFor(vault, "test-pub", kp.pubkey),
+      );
+    }
+    await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
+    expect(signatureDisabledRegistry.count()).toBe(0);
+    expect(listExtensions(db).every((r) => r.enabled === 1)).toBe(true);
+    // A row that predates fingerprints (NULL) still verifies with the legacy key, which a rotation
+    // never overwrote, while its sibling on X keeps verifying with X.
+    setExtensionPublisherKeyFingerprint(db, "ext-on-k", null);
+    await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
+    expect(signatureDisabledRegistry.count()).toBe(0);
+    // Recording the WRONG fingerprint fails closed instead of borrowing a sibling's key.
+    setExtensionPublisherKeyFingerprint(
+      db,
+      "ext-on-x",
+      publisherKeyFingerprint(encodeBase64(k.pubkey)),
+    );
+    await verifyExtensionsBestEffort(db, silentLogger, undefined, { vault });
+    expect(signatureDisabledRegistry.reasonFor("ext-on-x")).toBe("publisher_key_mismatch");
   });
 
   test("vault key missing → row disabled + registry marked publisher_key_missing", async () => {

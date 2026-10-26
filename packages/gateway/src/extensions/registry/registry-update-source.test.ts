@@ -7,11 +7,12 @@ import { publisherKeyFingerprint, signTrustStatement } from "@nimbus-dev/registr
 import nacl from "tweetnacl";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { MockVault } from "../../vault/mock.ts";
-import { writePublisherKey } from "../publisher-keys.ts";
+import { writePublisherKey, writePublisherKeyFor } from "../publisher-keys.ts";
 import { recordTrustStatements } from "../trust/trust-store.ts";
 import { verifyManifestSignature } from "../verify-signature.ts";
 import {
   buildTestRegistry,
+  PUBLISHER_SEED,
   resignIndex,
   type TestVersion,
 } from "./__fixtures__/build-test-registry.ts";
@@ -241,6 +242,59 @@ describe("collectRegistryUpdates", () => {
       verificationStatus: "publisher_key_conflict",
       publisherStatus: "unverified",
     });
+  });
+
+  test("a key the publisher rotated to from the trusted key is verified, and the change is reported", async () => {
+    const dir = await buildRegistry("main", { "com.a": V12 });
+    addRegistry("main", dir, false);
+    const oldSeed = Uint8Array.from({ length: 32 }, (_, i) => i + 7);
+    const oldKey = Buffer.from(nacl.sign.keyPair.fromSeed(oldSeed).publicKey).toString("base64");
+    const newKey = Buffer.from(nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey).toString(
+      "base64",
+    );
+    await writePublisherKey(vault, "acme", Buffer.from(oldKey, "base64"));
+    const rotation = await signTrustStatement(
+      {
+        kind: "key.rotate",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: oldKey,
+        publisherId: "acme",
+        fromKey: oldKey,
+        toKey: newKey,
+      },
+      oldSeed,
+    );
+    recordTrustStatements(db, [rotation], { kind: "feed", nimbusRootKey: oldKey }, 1);
+    const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
+    expect(out.updates[0]).toMatchObject({
+      verificationStatus: "verified",
+      publisherKeyFingerprint: publisherKeyFingerprint(newKey),
+      publisherKeyChange: {
+        from: [publisherKeyFingerprint(oldKey)],
+        to: publisherKeyFingerprint(newKey),
+      },
+    });
+  });
+
+  test("an update continues from ITS OWN recorded key, never a key only a sibling uses", async () => {
+    const dir = await buildRegistry("main", { "com.a": V12 });
+    addRegistry("main", dir, false);
+    // The Vault trusts the index's key (a sibling installed with it) AND this row's own key X.
+    const siblingKey = nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey;
+    const own = nacl.sign.keyPair.fromSeed(
+      Uint8Array.from({ length: 32 }, (_, i) => i + 9),
+    ).publicKey;
+    await writePublisherKeyFor(vault, "acme", siblingKey);
+    const ownFp = await writePublisherKeyFor(vault, "acme", own);
+    const out = await collectRegistryUpdates(
+      deps(),
+      [row("com.a", "main", { keyFingerprint: ownFp })],
+      signal,
+    );
+    expect(out.updates[0]?.verificationStatus).toBe("publisher_key_conflict");
+    // Without a recorded key (a legacy row), every trusted key counts, as before.
+    const legacy = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
+    expect(legacy.updates[0]?.verificationStatus).toBe("verified");
   });
 
   test("a publisher id other than the installed one is a publisher_key_conflict", async () => {

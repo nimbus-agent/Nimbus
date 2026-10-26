@@ -28,13 +28,13 @@
  * bundled-connector predicate. With the production defaults `evaluate()` acts on the one bound
  * legacy connector alone; tests drive a fixture entry whose legacy id is not bundled.
  */
+
 import type { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { publisherKeyFingerprint, RegistryError } from "@nimbus-dev/registry-format";
 import type { Logger } from "pino";
-
 import {
   deleteExtensionById,
   type ExtensionRow,
@@ -49,7 +49,6 @@ import { transitionHealth } from "../../connectors/health.ts";
 import { enableSuffix, reapproveSuffix } from "../../platform/register-extension-sync.ts";
 import { resumeOrPauseForConfinement as resumeUnlessPreflightRefuses } from "../../sync/scheduler.ts";
 import { setPaused, upsertSchedulerRegistration } from "../../sync/scheduler-store.ts";
-import { decodeBase64 } from "../../util/base64.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import {
   approveMigratedExtensionRun,
@@ -97,9 +96,9 @@ import {
   type VerifiedRegistryPackage,
 } from "../registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "../registry/registry-fetch.ts";
-import { vaultPublisherKeyConflicts } from "../registry/registry-manifest.ts";
 import { getRunGrant } from "../run-grant-store.ts";
 import { computeExtensionTreeDigest } from "../tree-digest.ts";
+import { publisherKeyDecision } from "../trust/publisher-key-decision.ts";
 import { migrationRedactionRoots, redactMigrationPaths } from "./migration-redact.ts";
 import {
   finishMigration,
@@ -1010,6 +1009,8 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       manifest,
       publisherKey: entry.publisherKey,
       entryHash: sha256File(entryPath),
+      // The migration's key decision ran in `refuseVaultKeyConflict`; it has no prompt to show it in.
+      publisherChange: null,
       reg: builtinRegistryRow(db, reg),
       rootFingerprint,
     };
@@ -1068,9 +1069,15 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     entry: ContinuityEntry,
     publisherId: string,
   ): Promise<void> => {
-    if (
-      await vaultPublisherKeyConflicts(deps.vault, publisherId, decodeBase64(entry.publisherKey))
-    ) {
+    const decision = await publisherKeyDecision(
+      { db, vault: deps.vault },
+      {
+        publisherId,
+        key: entry.publisherKey,
+        source: { registry: BUILTIN_REGISTRY_NAME, rootFingerprint: entry.sourceRootFingerprint },
+      },
+    );
+    if (!decision.ok) {
       failAccept(
         row,
         `the Vault already holds a different key for publisher "${publisherId}"; refusing to replace it`,

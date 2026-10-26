@@ -22,6 +22,7 @@ import nacl from "tweetnacl";
 
 import {
   insertExtensionRow,
+  listExtensions,
   setExtensionEnabled,
   setExtensionTreeDigest,
 } from "../automation/extension-store.ts";
@@ -331,10 +332,11 @@ describe("readVerifiedExtensionForSpawn", () => {
 
   test("6b: a cached key that no longer matches the manifest's refuses RUN_UNVERIFIED", async () => {
     const f = await setup({ signed: true });
-    await f.vault.set(
-      "extension.publisher_key.test-pub",
-      encodeBase64(generateEd25519Keypair().pubkey),
-    );
+    // Swap what the Vault holds under the fingerprint the row recorded, and the legacy key.
+    const fp = listExtensions(f.db).find((r) => r.id === f.id)?.publisher_key_fingerprint ?? "";
+    const other = encodeBase64(generateEd25519Keypair().pubkey);
+    await f.vault.set(`extension.publisher_keyfp.${fp}.test-pub`, other);
+    await f.vault.set("extension.publisher_key.test-pub", other);
     await expectCode(readVerifiedExtensionForSpawn(f.id, deps(f)), "ERR_EXTENSION_RUN_UNVERIFIED");
   });
 

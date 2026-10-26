@@ -10,7 +10,7 @@ import {
   _resetAutoUpdateMutexForTests,
   dispatchAutoUpdateRpc,
 } from "../../../src/extensions/auto-update-rpc.ts";
-import { writePublisherKey } from "../../../src/extensions/publisher-keys.ts";
+import { evictPublisherKey, writePublisherKey } from "../../../src/extensions/publisher-keys.ts";
 import { buildTestRegistry } from "../../../src/extensions/registry/__fixtures__/build-test-registry.ts";
 import { installFromRegistry } from "../../../src/extensions/registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "../../../src/extensions/registry/registry-fetch.ts";
@@ -249,7 +249,9 @@ describe("E2E: nimbus extension update / downgrade (CLI ↔ IPC contract)", () =
     try {
       const vault = new MockVault();
       await installedFromRegistry(db, extensionsDir, vault);
-      // The Vault now trusts a DIFFERENT key for "pub-1" than the one the signed index names.
+      // The Vault now trusts only a DIFFERENT key for "pub-1" than the one the signed index names
+      // (every key it held is evicted first: per-fingerprint keys outlive a legacy-key overwrite).
+      await evictPublisherKey(vault, "pub-1");
       await writePublisherKey(vault, "pub-1", generateEd25519Keypair().pubkey);
 
       const runtime = createAutoUpdateRuntime({

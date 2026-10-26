@@ -18,14 +18,11 @@ import type {
   InstalledExtensionManifestSlice,
   VerificationStatus,
 } from "../auto-update-types.ts";
+import { publisherKeyDecision } from "../trust/publisher-key-decision.ts";
 import { type BlockSubject, blocksFor } from "../trust/trust-blocks.ts";
 import { builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
 import { fetchVerifiedIndex, type RegistryFetchDeps } from "./registry-fetch.ts";
-import {
-  fetchRegistryManifest,
-  vaultPublisherKeyConflicts,
-  verifyRegistryManifestSignature,
-} from "./registry-manifest.ts";
+import { fetchRegistryManifest, verifyRegistryManifestSignature } from "./registry-manifest.ts";
 import type { RegistryRow } from "./registry-store.ts";
 
 export interface InstalledRegistryRow {
@@ -34,6 +31,8 @@ export interface InstalledRegistryRow {
   enabled: number;
   source: { registry: string; rootFingerprint: string; channel: RegistryChannel };
   publisherId: string;
+  /** The fingerprint of the key that verified the installed copy, when recorded. */
+  keyFingerprint?: string;
   manifest: InstalledExtensionManifestSlice;
 }
 
@@ -120,13 +119,23 @@ async function detectOne(
     vEntry,
     signal,
   );
-  // The signed index is the publisher-key authority; a key (or a publisher) other than the one the
-  // Vault already trusts is surfaced, never applied (spec § 8.6 step 4; rotation is project 3).
+  // The signed index is the publisher-key authority. A key the Vault does not trust is applied only
+  // along the publisher's rotation chain or when Nimbus vouches (spec R5); anything else, or another
+  // publisher, is surfaced as a conflict, never applied.
+  const decision =
+    entry.publisher.id === row.publisherId
+      ? await publisherKeyDecision(
+          { db: deps.db, vault: deps.vault },
+          {
+            publisherId: entry.publisher.id,
+            key: entry.publisher.key,
+            source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
+            installedFingerprint: row.keyFingerprint ?? null,
+          },
+        )
+      : null;
   let verificationStatus: VerificationStatus;
-  if (
-    entry.publisher.id !== row.publisherId ||
-    (await vaultPublisherKeyConflicts(deps.vault, entry.publisher.id, fetched.publisherKey))
-  ) {
+  if (decision === null || !decision.ok) {
     verificationStatus = "publisher_key_conflict";
   } else {
     verificationStatus = await verifyRegistryManifestSignature(
@@ -158,6 +167,17 @@ async function detectOne(
     packagePath: vEntry.package,
     permissionDiff: diffPermissions(row.manifest.permissions, m.permissions),
     verificationStatus,
+    publisherKeyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+    ...(decision?.change == null
+      ? {}
+      : {
+          publisherKeyChange: {
+            ...decision.change,
+            ...(decision.ok && (decision.via === "rotation" || decision.via === "nimbus")
+              ? { via: decision.via }
+              : {}),
+          },
+        }),
     detectedAt: deps.now(),
   });
   if (m.dependsOn !== undefined) out.dependsOn.set(row.id, m.dependsOn);

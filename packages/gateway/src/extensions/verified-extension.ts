@@ -24,7 +24,7 @@ import {
   extensionEntryRelPath,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
-import { readPublisherKey } from "./publisher-keys.ts";
+import { readPublisherKeyFor } from "./publisher-keys.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { type ExtensionRunGrantRow, getRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
@@ -289,7 +289,12 @@ async function assertPublisherSignature(
   }
   let key: Uint8Array | undefined;
   try {
-    key = await readPublisherKey(vault, manifest.publisher.id);
+    // The key the row recorded at install (several may be trusted after a rotation).
+    key = await readPublisherKeyFor(
+      vault,
+      manifest.publisher.id,
+      row.publisher_key_fingerprint ?? null,
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     refuse(

@@ -4639,7 +4639,7 @@ To re-enable: `nimbus config set telemetry.enabled true`
 
 ## Extensions
 
-### `nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--publisher-key <path>] [--yes]`
+### `nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes]`
 
 Install a third-party extension, from a local path or from a registry you added with `nimbus registry add`. The manifest SHA-256 is verified before installation.
 
@@ -4687,6 +4687,8 @@ The runtime is controlled by `[extensions] runtime` in `nimbus.toml` (default `t
 Under a signed org policy that sets a connector allowlist, an approved extension runs only if its `ext_` service id is on that list; otherwise every start, and every listing of an already-running extension, refuses `ERR_EXTENSION_RUN_POLICY` (a running child is stopped). The allowlist must name the `ext_` id itself: the mesh's catalog filter applies to first-party connector ids only. `[extensions] update_check_interval_hours` (default 24, range 1..168) is unrelated and controls the auto-update poll. `[extensions] trust_check_interval_hours` (default 1, range 1..24) controls the trust feed poll (see [Trust Feed](#trust-feed)).
 
 ---
+
+**Publisher key changes (registry installs).** When the registry names a key for the publisher that differs from every key this machine trusts, the install proceeds only if the publisher signed a rotation to it from a trusted key (one chain, through no revoked key) or Nimbus verifies the publisher with it; the prompt then says so. Otherwise it is refused before you are asked (`ERR_REGISTRY_PUBLISHER_KEY_CONFLICT`, naming the new fingerprint). `--accept-publisher-key <fingerprint>` installs anyway, only for exactly that fingerprint, and the prompt states `publisher key CHANGED from … to …, not vouched for by any rotation or by Nimbus`. A revoked key is never accepted.
 
 ### `nimbus extension rehash <id> [--yes]`
 
@@ -4848,11 +4850,11 @@ nimbus extension remove nimbus-notion --yes --json
 
 ---
 
-### `nimbus extension update [<id>] [--check] [--to <version>] [--json]`
+### `nimbus extension update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json]`
 
 Apply a cached auto-update bump (T2 PR 3). Without an id, lists pending updates the daemon detected on its last poll; with `--check`, forces an immediate poll first. With an `<id>`, applies the cached bump for that extension after HITL consent (`extension.autoUpdate` for a forward bump, `extension.downgrade` for a backward one).
 
-**Updates come only from an extension's own source registry.** The daemon (constructed on every boot unless `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE=1`) reads the current `nimbus registry` table on each tick, groups the registry-installed extensions by the registry they came from, fetches each registry's signed `index.json` once, and fetches a `manifest.json` only for an extension whose index shows a newer version on its channel (`stable`, or `stable` plus `beta` for an extension installed with `--channel beta`). It checks an extension only while that registry's root fingerprint is still the one it was installed under; a local-path install is never auto-updated, a removed registry yields nothing, and the same id in another registry is ignored. Each list row names the source registry (`from <registry>`). A row whose registry now names a different publisher key than the Vault trusts reads `publisher_key_conflict` with a `publisher key changed` marker, and applying it is refused (`reason: publisher_key_conflict`).
+**Updates come only from an extension's own source registry.** The daemon (constructed on every boot unless `NIMBUS_EXTENSIONS_DISABLE_AUTO_UPDATE=1`) reads the current `nimbus registry` table on each tick, groups the registry-installed extensions by the registry they came from, fetches each registry's signed `index.json` once, and fetches a `manifest.json` only for an extension whose index shows a newer version on its channel (`stable`, or `stable` plus `beta` for an extension installed with `--channel beta`). It checks an extension only while that registry's root fingerprint is still the one it was installed under; a local-path install is never auto-updated, a removed registry yields nothing, and the same id in another registry is ignored. Each list row names the source registry (`from <registry>`). A new publisher key is followed without a prompt of its own when the publisher signed a rotation to it from a key the Vault trusts, or Nimbus verifies the publisher with it; the update prompt then states the change. Otherwise the row reads `publisher_key_conflict` with a `publisher key changed` marker, and applying it is refused (`reason: publisher_key_conflict`, whose hint names the new fingerprint) unless you pass `--accept-publisher-key <that fingerprint>`, which the prompt states as `publisher key CHANGED from … to …, not vouched for by any rotation or by Nimbus`.
 
 The daemon only detects; applying is always the owner's `extension.autoUpdate` prompt, which shows the source registry and its root fingerprint. Apply re-verifies against the registry's current signed index (manifest hash, publisher key, I16 signature) and checks the package hash before anything is swapped. An applied update changes the extension's tree digest, so its run approval no longer matches: run `nimbus extension approve <id>` again before it runs. `[llm] enforce_air_gap` refuses remote registries here exactly as it does for install and search; a local-folder registry still works.
 

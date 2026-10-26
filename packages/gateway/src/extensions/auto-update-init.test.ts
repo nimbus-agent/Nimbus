@@ -12,8 +12,12 @@ import { MockVault } from "../vault/mock.ts";
 import { createAutoUpdateRuntime, withUpdateAppliedHook } from "./auto-update-init.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
-import { writePublisherKey } from "./publisher-keys.ts";
-import { buildTestRegistry, resignIndex } from "./registry/__fixtures__/build-test-registry.ts";
+import { evictPublisherKey, writePublisherKey } from "./publisher-keys.ts";
+import {
+  buildTestRegistry,
+  PUBLISHER_SEED,
+  resignIndex,
+} from "./registry/__fixtures__/build-test-registry.ts";
 import { installFromRegistry } from "./registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "./registry/registry-fetch.ts";
 import { deleteRegistry, insertRegistry } from "./registry/registry-store.ts";
@@ -423,6 +427,15 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     // A new tree digest is what leaves any I43 run grant stale: the owner must re-approve.
     expect(row.tree_digest).not.toBe(before.tree_digest);
     expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.2.0");
+    // The key the update verified with is recorded on the row and kept under its fingerprint.
+    const fp = (
+      db.query("SELECT publisher_key_fingerprint AS fp FROM extension WHERE id = ?").get(ID) as {
+        fp: string | null;
+      }
+    ).fp;
+    expect(fp).toBe(
+      publisherKeyFingerprint(encodeBase64(nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey)),
+    );
   });
 
   it("apply refuses a package whose sha differs from the one the index signed", async () => {
@@ -525,6 +538,8 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     await runtime.deps.forcePoll();
     const cached = runtime.deps.cache.get(ID);
     if (cached === undefined) throw new Error("no update detected");
+    // The Vault no longer trusts the index's key at all (an extra trusted key would not matter).
+    await evictPublisherKey(vault, "acme");
     await writePublisherKey(vault, "acme", generateEd25519Keypair().pubkey);
     await expect(runtime.deps.performUpgrade(cached)).rejects.toThrow(
       /^signature_failed: .*ERR_REGISTRY_PUBLISHER_KEY_CONFLICT/,

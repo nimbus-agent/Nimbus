@@ -26,6 +26,8 @@ export interface InstalledExtensionRow {
   enabled: number;
   /** The registry the extension was installed from; absent for a local-path install. */
   source?: ExtensionSource;
+  /** The fingerprint of the key that verified the installed copy (V76); absent when unknown. */
+  keyFingerprint?: string;
   manifest: InstalledExtensionManifestSlice;
 }
 
@@ -58,6 +60,7 @@ function registryRows(installed: readonly InstalledExtensionRow[]): InstalledReg
       enabled: r.enabled,
       source: r.source,
       publisherId: r.manifest.publisher.id,
+      ...(r.keyFingerprint === undefined ? {} : { keyFingerprint: r.keyFingerprint }),
       manifest: r.manifest,
     });
   }

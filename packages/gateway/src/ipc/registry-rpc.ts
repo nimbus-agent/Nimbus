@@ -190,6 +190,7 @@ function installParams(rec: Record<string, unknown> | undefined): {
   registry: string | undefined;
   version: string | undefined;
   channel: "stable" | "beta" | undefined;
+  acceptPublisherKey: string | undefined;
 } {
   const id = stringParam(rec, "id");
   const registry = rec?.["registry"] === undefined ? undefined : stringParam(rec, "registry");
@@ -198,7 +199,11 @@ function installParams(rec: Record<string, unknown> | undefined): {
   if (channel !== undefined && channel !== "stable" && channel !== "beta") {
     throw invalidParams("channel must be stable or beta");
   }
-  return { id, registry, version, channel };
+  const accept = rec?.["acceptPublisherKey"];
+  if (accept !== undefined && (typeof accept !== "string" || !FINGERPRINT_RE.test(accept))) {
+    throw invalidParams("acceptPublisherKey must be a 32-hex-character key fingerprint");
+  }
+  return { id, registry, version, channel, acceptPublisherKey: accept };
 }
 
 /** What `registry.install` needs wired: the owner's HITL gate, the fetch bag, an extensions dir and Vault. */
@@ -226,7 +231,7 @@ async function handleInstall(
   rec: Record<string, unknown> | undefined,
   o: RegistryRpcOptions,
 ): Promise<Hit> {
-  const { id, registry, version, channel } = installParams(rec);
+  const { id, registry, version, channel, acceptPublisherKey } = installParams(rec);
   const { ownerGate, fetch, extensionsDir, vault } = installDeps(o);
   // Fresh before acting (I48): a revocation published since the last hourly fetch should refuse
   // this install. Unreachable: proceed on stored state and tell the owner how old it is.
@@ -250,6 +255,7 @@ async function handleInstall(
         ...(registry !== undefined && { registry }),
         ...(version !== undefined && { version }),
         ...(channel !== undefined && { channel }),
+        ...(acceptPublisherKey !== undefined && { acceptPublisherKey }),
       },
     );
     emitGatewayEvent("extension.stateChanged", {

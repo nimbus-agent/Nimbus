@@ -19,7 +19,7 @@ export interface PerformUpgradeDeps {
    * verify with the index's publisher key (spec § 8.8 — apply verifies as § 8.6 steps 2–5).
    * Throws an error whose message starts `signature_failed` when it does not.
    */
-  reverifyManifest: (update: AvailableUpdate, signal: AbortSignal) => Promise<void>;
+  reverifyManifest: (update: AvailableUpdate, signal: AbortSignal) => Promise<unknown>;
   /** One ledgered `registry.package` fetch of `update.packagePath` from `update.sourceRegistry`. */
   fetchPackage: (update: AvailableUpdate, signal: AbortSignal) => Promise<Uint8Array>;
   sha256OfPackage: (bytes: Uint8Array) => Promise<string>;

@@ -7250,7 +7250,8 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       /sha256HexEqualConstantTime\(sha256Hex\(packageBytes\), vEntry\.packageSha256\)/,
     );
     const sigAt = fetchBody.indexOf("await verifyRegistryManifestSignature(");
-    const vaultAt = fetchBody.indexOf("await vaultPublisherKeyConflicts(");
+    // The publisher-key decision (trusted, rotation, Nimbus or owner-accepted; spec R5).
+    const vaultAt = fetchBody.indexOf("await publisherKeyDecision(deps, {");
     const writeAt = fetchBody.indexOf("writeFileSync(archivePath, packageBytes)");
     const returnAt = fetchBody.indexOf("return {");
     for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, writeAt, returnAt]) {
@@ -7262,8 +7263,9 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     // The package carries the INDEX's publisher key, the one the signature and Vault checks used.
     expect(fetchBody).toMatch(/publisherKey: entry\.publisher\.key,/);
     expect(fetchBody).toMatch(
-      /vaultPublisherKeyConflicts\(deps\.vault, entry\.publisher\.id, fetched\.publisherKey\)/,
+      /publisherKeyDecision\(deps, \{\s*publisherId: entry\.publisher\.id,\s*key: entry\.publisher\.key,/,
     );
+    expect(fetchBody).toMatch(/if \(!decision\.ok\) throw publisherKeyConflict\(/);
     // (3) The install half installs ONLY through installExtensionFromLocalDirectory, handed that
     // index key and recorded against the SOURCE registry; the post-copy entry hash is compared to
     // the signed index's before the source is recorded, and a mismatch undoes the install.
@@ -7461,7 +7463,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     // The production runtime wires the REAL re-verification and fetches from the source only.
     const init = stripComments(await read("packages/gateway/src/extensions/auto-update-init.ts"));
     expect(init).toMatch(
-      /reverifyManifest: async \(update, signal\) => \{\s*await opts\.freshenTrust\?\.\(\);\s*return reverifyUpdateManifest\(fetchDeps, opts\.vault, update, signal\);\s*\},/,
+      /reverifyManifest: async \(update, signal\) => \{\s*await opts\.freshenTrust\?\.\(\);\s*verifiedKeys\.set\(\s*updateKey\(update\),\s*await reverifyUpdateManifest\(fetchDeps, opts\.vault, update, signal\),\s*\);\s*\},/,
     );
     expect(init).toMatch(
       /fetchRegistryBytes\(\s*fetchDeps,\s*sourceRegistryOf\(fetchDeps, update\),/,
@@ -7473,7 +7475,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       "const reg = sourceRegistryOf(fetchDeps, update);",
       "await fetchVerifiedIndex(fetchDeps, reg, signal);",
       "await fetchRegistryManifest(",
-      "await vaultPublisherKeyConflicts(",
+      "await publisherKeyDecision(",
       "await verifyRegistryManifestSignature(",
     ].map((needle) => rv.indexOf(needle));
     for (const at of order) expect(at).toBeGreaterThan(-1);
@@ -8425,3 +8427,207 @@ describe("I48 — revoked or taken-down extension code is never installed, updat
     );
   });
 });
+
+describe("I44/I48 — publisher key rotation (trust layer PR 3a)", () => {
+  // Real stored statements, a real local-folder registry and the real installer; nothing spawns.
+  const roots: string[] = [];
+  const dbs: Database[] = [];
+  afterEach(() => {
+    for (const db of dbs.splice(0)) db.close();
+    for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
+  });
+
+  async function registryWithTrustedOldKey() {
+    const nacl = (await import("tweetnacl")).default;
+    const { PUBLISHER_SEED } = await import(
+      "./extensions/registry/__fixtures__/build-test-registry.ts"
+    );
+    const { insertRegistry } = await import("./extensions/registry/registry-store.ts");
+    const { writePublisherKey } = await import("./extensions/publisher-keys.ts");
+    const { MockVault } = await import("./vault/mock.ts");
+    const root = mkdtempSync(join(tmpdir(), "nimbus-rot-"));
+    roots.push(root);
+    const db = new Database(":memory:");
+    dbs.push(db);
+    LocalIndex.ensureSchema(db);
+    const dir = join(root, "registry");
+    const built = await buildTestRegistry(dir, {
+      id: "com.example.rot",
+      versions: [{ version: "1.0.0" }],
+    });
+    insertRegistry(db, {
+      name: "main",
+      url: dir,
+      rootKey: built.rootKey,
+      rootFingerprint: publisherKeyFingerprint(built.rootKey),
+      lastSequence: 0,
+      lastGeneratedAt: "2026-10-01T00:00:00Z",
+      addedAt: 1,
+      lastIndexSha256: null,
+    });
+    const oldSeed = Uint8Array.from({ length: 32 }, (_, i) => i + 160);
+    const oldKey = encodeBase64(nacl.sign.keyPair.fromSeed(oldSeed).publicKey);
+    const newKey = encodeBase64(nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey);
+    const vault = new MockVault();
+    await writePublisherKey(vault, "acme", Buffer.from(oldKey, "base64"));
+    let asked = 0;
+    const deps = {
+      db,
+      extensionsDir: join(root, "extensions"),
+      vault,
+      fetch: {
+        fetchFn: () => Promise.reject(new Error("no network")),
+        enforceAirGap: () => false,
+        now: () => Date.now(),
+        production: false,
+        builtin: null,
+      },
+      approve: async () => {
+        asked++;
+        return true;
+      },
+    };
+    return { db, deps, oldSeed, oldKey, newKey, asked: () => asked };
+  }
+
+  async function store(
+    db: Database,
+    s: Parameters<typeof signTrustStatementDyn>[0],
+    seed: Uint8Array,
+  ) {
+    const { recordTrustStatements } = await import("./extensions/trust/trust-store.ts");
+    const signed = await signTrustStatementDyn(s, seed);
+    const feedRoot = encodeBase64(new Uint8Array(32).fill(4));
+    recordTrustStatements(db, [signed], { kind: "feed", nimbusRootKey: feedRoot }, 1);
+  }
+
+  test("an unvouched key change refuses install before the owner is asked; a mismatched acceptance too", async () => {
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    const x = await registryWithTrustedOldKey();
+    await expect(installFromRegistry(x.deps, { id: "com.example.rot" })).rejects.toThrow(
+      "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
+    );
+    await expect(
+      installFromRegistry(x.deps, { id: "com.example.rot", acceptPublisherKey: "0".repeat(32) }),
+    ).rejects.toThrow("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT");
+    expect(x.asked()).toBe(0);
+  });
+
+  test("a rotation from the trusted key installs; once the old key is revoked the new one is blocked (R4)", async () => {
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    const { blocksFor } = await import("./extensions/trust/trust-blocks.ts");
+    const x = await registryWithTrustedOldKey();
+    await store(
+      x.db,
+      {
+        kind: "key.rotate",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: x.oldKey,
+        publisherId: "acme",
+        fromKey: x.oldKey,
+        toKey: x.newKey,
+      },
+      x.oldSeed,
+    );
+    expect((await installFromRegistry(x.deps, { id: "com.example.rot" })).version).toBe("1.0.0");
+    // The leaked old key revokes itself later: the key it rotated to is now blocked as well.
+    await store(
+      x.db,
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-27T12:00:00Z",
+        signerKey: x.oldKey,
+        publisherId: "acme",
+        keyFingerprint: publisherKeyFingerprint(x.oldKey),
+        reason: "leaked",
+      },
+      x.oldSeed,
+    );
+    const blocks = blocksFor(x.db, {
+      extensionId: "com.example.rot",
+      version: "1.0.0",
+      publisherId: "acme",
+      keyFingerprint: publisherKeyFingerprint(x.newKey),
+      source: null,
+    });
+    expect(blocks.map((b) => b.kind)).toEqual(["key.revoke"]);
+    expect(blocks[0]?.reason).toContain("was rotated from revoked key");
+  });
+
+  test("the owner's exact-fingerprint acceptance installs, and the prompt discloses the unvouched change", async () => {
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    const x = await registryWithTrustedOldKey();
+    const asked: Array<Record<string, unknown>> = [];
+    const out = await installFromRegistry(
+      {
+        ...x.deps,
+        approve: async (r: Record<string, unknown>) => {
+          asked.push(r);
+          return true;
+        },
+      },
+      { id: "com.example.rot", acceptPublisherKey: publisherKeyFingerprint(x.newKey) },
+    );
+    expect(out.version).toBe("1.0.0");
+    expect(asked[0]?.["publisherChange"]).toEqual({
+      from: [publisherKeyFingerprint(x.oldKey)],
+      to: publisherKeyFingerprint(x.newKey),
+      via: "owner",
+    });
+    expect(asked[0]?.["publisherChangeNote"]).toBe(
+      `publisher key CHANGED from ${publisherKeyFingerprint(x.oldKey)} to ${publisherKeyFingerprint(x.newKey)}, not vouched for by any rotation or by Nimbus`,
+    );
+  });
+
+  test("a revoked key is refused even with the owner's matching acceptance, before the owner is asked", async () => {
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    const x = await registryWithTrustedOldKey();
+    const nacl = (await import("tweetnacl")).default;
+    const { PUBLISHER_SEED } = await import(
+      "./extensions/registry/__fixtures__/build-test-registry.ts"
+    );
+    await store(
+      x.db,
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-27T12:00:00Z",
+        signerKey: x.newKey,
+        publisherId: "acme",
+        keyFingerprint: publisherKeyFingerprint(x.newKey),
+        reason: "leaked",
+      },
+      nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).secretKey.slice(0, 32),
+    );
+    await expect(
+      installFromRegistry(x.deps, {
+        id: "com.example.rot",
+        acceptPublisherKey: publisherKeyFingerprint(x.newKey),
+      }),
+    ).rejects.toThrow("ERR_EXTENSION_KEY_REVOKED");
+    expect(x.asked()).toBe(0);
+  });
+
+  test("source pins: every door decides through publisherKeyDecision; the old any-different-key check is gone", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    expect(
+      files.filter((f) => /\bvaultPublisherKeyConflicts\b/.test(stripComments(f.contents))),
+    ).toEqual([]);
+    const callers = files
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => /\bpublisherKeyDecision\(/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .filter((r) => r !== "extensions/trust/publisher-key-decision.ts")
+      .sort();
+    expect(callers).toEqual([
+      "extensions/auto-update-init.ts",
+      "extensions/migration/migration-engine.ts",
+      "extensions/registry/install-from-registry.ts",
+      "extensions/registry/registry-update-source.ts",
+    ]);
+  });
+});
+
+const signTrustStatementDyn = async (
+  s: import("@nimbus-dev/registry-format").UnsignedTrustStatement,
+  seed: Uint8Array,
+) => (await import("@nimbus-dev/registry-format")).signTrustStatement(s, seed);

@@ -20,6 +20,7 @@
  */
 import type { Database } from "bun:sqlite";
 import {
+  parseTrustStatement,
   publisherKeyFingerprint,
   type StatementSignerRole,
   type TrustStatement,
@@ -266,6 +267,87 @@ export function readBlockCandidates(
     scopeRootFingerprint: r.scope_root_fingerprint,
     statementJson: r.statement_json,
   }));
+}
+
+/** Every stored `key.rotate` of `publisherId`: an edge from one key fingerprint to the next. */
+export function readRotationEdges(
+  db: Database,
+  publisherId: string,
+): Array<{ from: string; to: string; statementId: string }> {
+  return (
+    db
+      .query(
+        `SELECT statement_id, key_fingerprint, to_key_fingerprint FROM trust_statement
+          WHERE kind = 'key.rotate' AND publisher_id = ?
+            AND key_fingerprint IS NOT NULL AND to_key_fingerprint IS NOT NULL
+          ORDER BY statement_id`,
+      )
+      .all(publisherId) as Array<{
+      statement_id: string;
+      key_fingerprint: string;
+      to_key_fingerprint: string;
+    }>
+  ).map((r) => ({
+    from: r.key_fingerprint,
+    to: r.to_key_fingerprint,
+    statementId: r.statement_id,
+  }));
+}
+
+/** Every stored `key.revoke` of `publisherId`, whatever key it names. Scope is NOT applied here. */
+export function readPublisherRevocations(
+  db: Database,
+  publisherId: string,
+): Array<BlockCandidateRow & { keyFingerprint: string }> {
+  return (
+    db
+      .query(
+        `SELECT statement_id, signer_role, scope_registry, scope_root_fingerprint, statement_json,
+                key_fingerprint
+           FROM trust_statement
+          WHERE kind = 'key.revoke' AND publisher_id = ? AND key_fingerprint IS NOT NULL
+          ORDER BY statement_id`,
+      )
+      .all(publisherId) as Array<{
+      statement_id: string;
+      signer_role: StatementSignerRole;
+      scope_registry: string | null;
+      scope_root_fingerprint: string | null;
+      statement_json: string;
+      key_fingerprint: string;
+    }>
+  ).map((r) => ({
+    statementId: r.statement_id,
+    kind: "key.revoke" as const,
+    signerRole: r.signer_role,
+    scopeRegistry: r.scope_registry,
+    scopeRootFingerprint: r.scope_root_fingerprint,
+    statementJson: r.statement_json,
+    keyFingerprint: r.key_fingerprint,
+  }));
+}
+
+/**
+ * The key fingerprints the CURRENT Nimbus verification of `publisherId` lists (spec R7), or `null`
+ * when there is none. More than one stored entry (which `replaceCurrentVerifications` never leaves)
+ * is treated as none: vouching must be unambiguous.
+ */
+export function readCurrentVerifiedKeys(db: Database, publisherId: string): Set<string> | null {
+  const rows = db
+    .query(
+      `SELECT statement_json FROM trust_statement
+        WHERE kind = 'publisher.verified' AND publisher_id = ? AND signer_role = 'nimbus'`,
+    )
+    .all(publisherId) as Array<{ statement_json: string }>;
+  const only = rows.length === 1 ? rows[0] : undefined;
+  if (only === undefined) return null;
+  try {
+    const v = parseTrustStatement(JSON.parse(only.statement_json));
+    if (v.kind !== "publisher.verified") return null;
+    return new Set(v.keys.map((k) => publisherKeyFingerprint(k)));
+  } catch {
+    return null;
+  }
 }
 
 export type FeedFloor = {

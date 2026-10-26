@@ -10,9 +10,7 @@ import {
   type RegistryVersionEntry,
 } from "@nimbus-dev/registry-format";
 import { sha256HexEqualConstantTime } from "../../util/timing-safe-compare.ts";
-import type { NimbusVault } from "../../vault/index.ts";
 import { type ExtensionManifest, parseExtensionManifestForRegistry } from "../manifest.ts";
-import { readPublisherKey } from "../publisher-keys.ts";
 import { decodeBase64, verifyManifestSignature } from "../verify-signature.ts";
 import { fetchRegistryBytes, type RegistryFetchDeps } from "./registry-fetch.ts";
 
@@ -115,14 +113,4 @@ export async function verifyRegistryManifestSignature(
       `the manifest signature of ${id}@${version} does not verify: ${e instanceof Error ? e.message : String(e)}`,
     );
   }
-}
-
-/** Whether the Vault already caches a DIFFERENT key for `publisherId` (spec § 8.6 step 4). */
-export async function vaultPublisherKeyConflicts(
-  vault: NimbusVault,
-  publisherId: string,
-  publisherKey: Uint8Array,
-): Promise<boolean> {
-  const cached = await readPublisherKey(vault, publisherId);
-  return cached !== undefined && !Buffer.from(cached).equals(Buffer.from(publisherKey));
 }

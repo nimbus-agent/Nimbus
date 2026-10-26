@@ -36,7 +36,7 @@ import {
   resolveExtensionManifestPath,
 } from "./manifest.ts";
 import { extractPackage } from "./package-extract.ts";
-import { resolvePublisherKey, writePublisherKey } from "./publisher-keys.ts";
+import { resolvePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { assertNotBlocked } from "./trust/trust-blocks.ts";
 import { verifyManifestSignature } from "./verify-signature.ts";
@@ -81,6 +81,7 @@ async function verifyAndRecordSignature(
         publisherId,
         explicitKeyPath: options.publisherKeyPath,
         vault,
+        declaredKey: destManifest.publisher.key,
       });
     } else {
       resolvedPubkey = options.publisherKey;
@@ -90,8 +91,7 @@ async function verifyAndRecordSignature(
       }
     }
     await verifyManifestSignature(rawManifestObj, resolvedPubkey);
-    await writePublisherKey(vault, publisherId, resolvedPubkey);
-    verifiedFingerprint = publisherKeyFingerprint(Buffer.from(resolvedPubkey).toString("base64"));
+    verifiedFingerprint = await writePublisherKeyFor(vault, publisherId, resolvedPubkey);
     appendAuditEntry(options.db, {
       actionType: "extension.signature_verified",
       hitlStatus: "not_required",
@@ -298,6 +298,16 @@ export type ExtensionInstallApprovalRequest = {
    */
   readonly sourceRegistry?: string;
   readonly rootFingerprint?: string;
+  /**
+   * Set when the publisher's key differs from every key the Vault trusts (marketplace trust layer,
+   * rotation): fingerprints only, and what vouched for the change. Never `*Key`-named (redaction).
+   */
+  readonly publisherChange?: {
+    readonly from: readonly string[];
+    readonly to: string;
+    readonly via: string;
+  };
+  readonly publisherChangeNote?: string;
 };
 
 /** Resolves `true` only when the local owner approved; anything else installs nothing. */

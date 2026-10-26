@@ -3,14 +3,20 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+
 import { MockVault } from "../vault/mock.ts";
 import {
   evictPublisherKey,
+  listTrustedPublisherKeys,
+  PUBLISHER_KEY_FP_VAULT_PREFIX,
   PUBLISHER_KEY_VAULT_PREFIX,
   PublisherKeyRequired,
   readPublisherKey,
+  readPublisherKeyFor,
   resolvePublisherKey,
   writePublisherKey,
+  writePublisherKeyFor,
 } from "./publisher-keys.ts";
 import { decodeBase64, encodeBase64, generateEd25519Keypair } from "./verify-signature.ts";
 
@@ -179,5 +185,80 @@ describe("readPublisherKey branch: non-32-byte cached value", () => {
     await vault.set(`${PUBLISHER_KEY_VAULT_PREFIX}test-pub`, encodeBase64(sixteenBytes));
     const result = await readPublisherKey(vault, "test-pub");
     expect(result).toBeUndefined();
+  });
+});
+
+describe("per-fingerprint publisher keys (rotation)", () => {
+  const fpOf = (k: Uint8Array): string => publisherKeyFingerprint(encodeBase64(k));
+
+  it("writes under the fingerprint, and as the legacy key only when there was none", async () => {
+    const vault = new MockVault();
+    const k = generateEd25519Keypair().pubkey;
+    const x = generateEd25519Keypair().pubkey;
+    expect(await writePublisherKeyFor(vault, "acme", k)).toBe(fpOf(k));
+    await writePublisherKeyFor(vault, "acme", x);
+    // A rotation never overwrites the legacy key that older rows verify with.
+    expect(await readPublisherKey(vault, "acme")).toEqual(k);
+    expect(await readPublisherKeyFor(vault, "acme", fpOf(x))).toEqual(x);
+    expect(await readPublisherKeyFor(vault, "acme", fpOf(k))).toEqual(k);
+    expect(await readPublisherKeyFor(vault, "acme", null)).toEqual(k);
+  });
+
+  it("falls back to the legacy key only when it has the asked fingerprint", async () => {
+    const vault = new MockVault();
+    const k = generateEd25519Keypair().pubkey;
+    await writePublisherKey(vault, "acme", k); // a pre-rotation install: legacy only
+    expect(await readPublisherKeyFor(vault, "acme", fpOf(k))).toEqual(k);
+    expect(await readPublisherKeyFor(vault, "acme", "0".repeat(32))).toBeUndefined();
+    expect(await readPublisherKeyFor(vault, "acme", "not-a-fingerprint")).toBeUndefined();
+  });
+
+  it("refuses a per-fingerprint entry whose bytes have another fingerprint", async () => {
+    const vault = new MockVault();
+    const k = generateEd25519Keypair().pubkey;
+    const other = generateEd25519Keypair().pubkey;
+    await vault.set(`${PUBLISHER_KEY_FP_VAULT_PREFIX}${fpOf(k)}.acme`, encodeBase64(other));
+    expect(await readPublisherKeyFor(vault, "acme", fpOf(k))).toBeUndefined();
+  });
+
+  it("lists every trusted key for a publisher, a dotted id kept apart from its prefix", async () => {
+    const vault = new MockVault();
+    const k = generateEd25519Keypair().pubkey;
+    const x = generateEd25519Keypair().pubkey;
+    const y = generateEd25519Keypair().pubkey;
+    await writePublisherKeyFor(vault, "acme", k);
+    await writePublisherKeyFor(vault, "acme", x);
+    await writePublisherKeyFor(vault, "acme.labs", y);
+    expect(await listTrustedPublisherKeys(vault, "acme")).toEqual(
+      [encodeBase64(k), encodeBase64(x)].sort((a, b) => a.localeCompare(b)),
+    );
+    expect(await listTrustedPublisherKeys(vault, "acme.labs")).toEqual([encodeBase64(y)]);
+    expect(await listTrustedPublisherKeys(vault, "nobody")).toEqual([]);
+  });
+
+  it("evict removes the legacy key and every per-fingerprint key, nobody else's", async () => {
+    const vault = new MockVault();
+    await writePublisherKeyFor(vault, "acme", generateEd25519Keypair().pubkey);
+    await writePublisherKeyFor(vault, "acme", generateEd25519Keypair().pubkey);
+    await writePublisherKeyFor(vault, "acme.labs", generateEd25519Keypair().pubkey);
+    await evictPublisherKey(vault, "acme");
+    expect(await listTrustedPublisherKeys(vault, "acme")).toEqual([]);
+    expect(await listTrustedPublisherKeys(vault, "acme.labs")).toHaveLength(1);
+  });
+
+  it("a local install with no key file finds the cached key with the DECLARED fingerprint", async () => {
+    const vault = new MockVault();
+    const k = generateEd25519Keypair().pubkey;
+    const x = generateEd25519Keypair().pubkey;
+    await writePublisherKeyFor(vault, "acme", k);
+    await writePublisherKeyFor(vault, "acme", x);
+    expect(
+      await resolvePublisherKey({
+        publisherId: "acme",
+        explicitKeyPath: undefined,
+        vault,
+        declaredKey: encodeBase64(x),
+      }),
+    ).toEqual(x);
   });
 });
