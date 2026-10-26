@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:eca62c0ab932ab7cccfa61c2d059ef40ddf9f9244521d8c1b96fb59805db1f96
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:41a7096793b1821188be4bd4273cd83b3d87b9b0e6859703178e0001bf2a667b
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4806,7 +4806,7 @@ var NETWORK_BLOCKED_CODES = new Set([
 ]);
 var FS_DENIED_CODES = new Set(["EACCES", "EPERM", "EBUSY"]);
 // ../../registry-format/src/index-format.ts
-var import_tweetnacl = __toESM(require_nacl_fast(), 1);
+var import_tweetnacl3 = __toESM(require_nacl_fast(), 1);
 
 // ../../registry-format/src/manifest.ts
 var import_semver = __toESM(require_semver2(), 1);
@@ -5157,6 +5157,28 @@ var ALLOWED_KEYS = new Set([
   "defaults"
 ]);
 
+// ../../registry-format/src/trust-feed.ts
+var import_tweetnacl2 = __toESM(require_nacl_fast(), 1);
+
+// ../../registry-format/src/ed25519-seed.ts
+import { createPrivateKey } from "node:crypto";
+var PKCS8_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
+function privateKeyFromSeed(seed) {
+  if (seed.byteLength !== 32)
+    throw new Error("Ed25519 seed must be 32 bytes");
+  return createPrivateKey({
+    key: Buffer.concat([PKCS8_ED25519_PREFIX, seed]),
+    format: "der",
+    type: "pkcs8"
+  });
+}
+
+// ../../registry-format/src/trust-statement.ts
+var import_tweetnacl = __toESM(require_nacl_fast(), 1);
+
+// ../../registry-format/src/trust-feed.ts
+var MAX_TRUST_FEED_BYTES = 8 * 1024 * 1024;
+
 // ../../registry-format/src/index-format.ts
 function decodeBase642(s) {
   return new Uint8Array(Buffer.from(s, "base64"));
@@ -5320,7 +5342,7 @@ function verifyRegistryIndexSelf(index) {
 function assertRegistryIndexSelf(index) {
   let ok;
   try {
-    ok = import_tweetnacl.default.sign.detached.verify(registryIndexSigningBytes(index), decodeBase642(index.signature), decodeBase642(index.rootKey));
+    ok = import_tweetnacl3.default.sign.detached.verify(registryIndexSigningBytes(index), decodeBase642(index.signature), decodeBase642(index.rootKey));
   } catch {
     ok = false;
   }
@@ -8663,17 +8685,7 @@ async function inspectPackage(tgz, work) {
   };
 }
 // ../../registry-format/src/sign.ts
-import { createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
-var PKCS8_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
-function privateKeyFromSeed(seed) {
-  if (seed.byteLength !== 32)
-    throw new Error("Ed25519 seed must be 32 bytes");
-  return createPrivateKey({
-    key: Buffer.concat([PKCS8_ED25519_PREFIX, seed]),
-    format: "der",
-    type: "pkcs8"
-  });
-}
+import { createPublicKey, sign, verify } from "node:crypto";
 function publicKeyFromSeed(seed) {
   const jwk = createPublicKey(privateKeyFromSeed(seed)).export({ format: "jwk" });
   return new Uint8Array(Buffer.from(jwk.x, "base64url"));
@@ -8690,7 +8702,7 @@ function signIndex(unsigned, privkey) {
 import { createHash as createHash3 } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
-var import_semver4 = __toESM(require_semver2(), 1);
+var import_semver5 = __toESM(require_semver2(), 1);
 var MAX_SMALL_JSON_BYTES = 4096;
 var PUBLISH_REQUEST_KEYS = ["id", "version", "channel", "publisherFingerprint"];
 var CONFIG_KEYS = ["format", "requirePublisherNamespace"];
@@ -8835,7 +8847,7 @@ function assertRegistryState(m, publisher, serviceId, signed) {
     if (existing.publisher.id !== publisher.id || existing.publisher.key !== publisher.key) {
       throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", `${m.id} is bound to publisher ${existing.publisher.id} with a different key`);
     }
-    const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver4.default.compare(v, m.version) === 0);
+    const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver5.default.compare(v, m.version) === 0);
     if (taken !== undefined) {
       throw new RegistryError("ERR_REGISTRY_VERSION_EXISTS", `${m.id}@${m.version} is already in the index (as ${taken})`);
     }

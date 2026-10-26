@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type RegistryIndex, registryIndexSigningBytes } from "@nimbus-dev/registry-format";
+import {
+  type RegistryIndex,
+  registryIndexDigest,
+  registryIndexSigningBytes,
+} from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { encodeBase64 } from "../../util/base64.ts";
@@ -19,12 +23,16 @@ const KEYPAIR = nacl.sign.keyPair.fromSeed(Uint8Array.from({ length: 32 }, (_, i
 const OTHER = nacl.sign.keyPair.fromSeed(Uint8Array.from({ length: 32 }, (_, i) => i + 50));
 const ROOT_KEY = encodeBase64(KEYPAIR.publicKey);
 
-function signedIndex(sequence: number, kp = KEYPAIR): RegistryIndex {
+function signedIndex(
+  sequence: number,
+  kp = KEYPAIR,
+  generatedAt = "2026-10-18T12:00:00Z",
+): RegistryIndex {
   const base = {
     format: 1 as const,
     rootKey: encodeBase64(kp.publicKey),
     sequence,
-    generatedAt: "2026-10-18T12:00:00Z",
+    generatedAt,
     extensions: {},
   };
   const sig = nacl.sign.detached(registryIndexSigningBytes(base), kp.secretKey);
@@ -40,7 +48,7 @@ let server: ReturnType<typeof Bun.serve> | undefined;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 71);
+  runIndexedSchemaMigrations(db, 76);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-regfetch-"));
 });
 
@@ -80,6 +88,7 @@ function pinned(url: string, lastSequence = 5) {
     lastSequence,
     lastGeneratedAt: "2026-10-01T00:00:00Z",
     addedAt: 1,
+    lastIndexSha256: null,
   });
   const row = getRegistry(db, "main");
   if (row === undefined) throw new Error("registry row missing");
@@ -490,5 +499,59 @@ describe("fetchVerifiedIndex: the row changes during the fetch", () => {
     await expect(fetchVerifiedIndex(d, reg)).rejects.toThrow("ERR_REGISTRY_ROOT_KEY_CHANGED");
     expect(getRegistry(db, "main")?.rootKey).toBe(otherKey);
     expect(getRegistry(db, "main")?.lastSequence).toBe(5);
+  });
+});
+
+describe("fetchVerifiedIndex: equivocation", () => {
+  // A and B share sequence 3 and the root key but differ in content: a force-pushed gh-pages.
+  const A = signedIndex(3);
+  const B = signedIndex(3, KEYPAIR, "2026-10-30T00:00:00Z");
+
+  function serving(initial: RegistryIndex): { url: string; set(i: RegistryIndex): void } {
+    let current = initial;
+    const url = serve(() => new Response(JSON.stringify(current)));
+    return { url, set: (i) => (current = i) };
+  }
+
+  test("the same document again is accepted; different content at that sequence is refused", async () => {
+    const s = serving(A);
+    pinned(s.url, 2);
+    await fetchVerifiedIndex(deps(), getRegistry(db, "main") ?? pinned(s.url));
+    expect(getRegistry(db, "main")?.lastIndexSha256).toBe(registryIndexDigest(A));
+    const again = await fetchVerifiedIndex(deps(), getRegistry(db, "main") ?? pinned(s.url));
+    expect(again.sequence).toBe(3);
+    s.set(B);
+    await expect(
+      fetchVerifiedIndex(deps(), getRegistry(db, "main") ?? pinned(s.url)),
+    ).rejects.toThrow("ERR_REGISTRY_EQUIVOCATION");
+    expect(getRegistry(db, "main")?.lastIndexSha256).toBe(registryIndexDigest(A));
+    s.set(signedIndex(4));
+    expect(
+      (await fetchVerifiedIndex(deps(), getRegistry(db, "main") ?? pinned(s.url))).sequence,
+    ).toBe(4);
+  });
+
+  test("a row from before V76 (no hash) adopts the first document at its sequence", async () => {
+    const s = serving(B);
+    const reg = pinned(s.url, 3);
+    expect(reg.lastIndexSha256).toBeNull();
+    await fetchVerifiedIndex(deps(), reg);
+    expect(getRegistry(db, "main")?.lastIndexSha256).toBe(registryIndexDigest(B));
+  });
+
+  test("a stale snapshot loses the race to a fetch that recorded other content", async () => {
+    const s = serving(B);
+    const stale = pinned(s.url, 3);
+    const d = deps({
+      fetchFn: async (u, init) => {
+        const res = await fetch(u, init);
+        db.run("UPDATE extension_registry SET last_index_sha256 = ? WHERE name = 'main'", [
+          registryIndexDigest(A),
+        ]);
+        return res;
+      },
+    });
+    await expect(fetchVerifiedIndex(d, stale)).rejects.toThrow("ERR_REGISTRY_EQUIVOCATION");
+    expect(getRegistry(db, "main")?.lastIndexSha256).toBe(registryIndexDigest(A));
   });
 });

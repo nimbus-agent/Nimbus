@@ -5,6 +5,7 @@ import {
   RegistryError,
   type RegistryExtensionEntry,
   type RegistryVersionEntry,
+  registryIndexDigest,
 } from "@nimbus-dev/registry-format";
 import { ExtensionInstallNotApprovedError } from "../extensions/install-from-local.ts";
 import { parseExtensionManifestForRegistry } from "../extensions/manifest.ts";
@@ -150,6 +151,7 @@ async function handleAdd(
     );
   }
   // One transaction: an approved add never leaves a row without its recorded first fetch.
+  const indexSha256 = registryIndexDigest(index);
   o.db.transaction(() => {
     insertRegistry(o.db, {
       name,
@@ -159,8 +161,17 @@ async function handleAdd(
       lastSequence: index.sequence,
       lastGeneratedAt: index.generatedAt,
       addedAt: fetch.now(),
+      lastIndexSha256: indexSha256,
     });
-    recordRegistryFetch(o.db, name, index.rootKey, index.sequence, index.generatedAt, fetch.now());
+    recordRegistryFetch(
+      o.db,
+      name,
+      index.rootKey,
+      index.sequence,
+      index.generatedAt,
+      fetch.now(),
+      indexSha256,
+    );
   })();
   return { kind: "hit", value: summary };
 }

@@ -20,7 +20,7 @@ let tmp: string;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 71);
+  runIndexedSchemaMigrations(db, 76);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-regresolve-"));
 });
 
@@ -51,6 +51,7 @@ async function addRegistry(name: string, id = ID): Promise<string> {
     lastSequence: 0,
     lastGeneratedAt: "2026-10-01T00:00:00Z",
     addedAt: 1,
+    lastIndexSha256: null,
   });
   return dir;
 }

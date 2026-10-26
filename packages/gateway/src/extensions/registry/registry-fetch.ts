@@ -5,6 +5,7 @@ import {
   parseRegistryIndex,
   RegistryError,
   type RegistryIndex,
+  registryIndexDigest,
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
 } from "@nimbus-dev/registry-format";
@@ -268,7 +269,17 @@ async function fetchIndex(
   return parseRegistryIndex(bytes);
 }
 
-/** Pinned verify (root key must equal the pinned one), anti-rollback, then record the fetch. */
+function equivocation(sequence: number): RegistryError {
+  return new RegistryError(
+    "ERR_REGISTRY_EQUIVOCATION",
+    `index sequence ${sequence} was already accepted with different content`,
+  );
+}
+
+/**
+ * Pinned verify (root key must equal the pinned one), anti-rollback, anti-equivocation (an index at
+ * the accepted sequence must be the document accepted at it), then record the fetch.
+ */
 export async function fetchVerifiedIndex(
   deps: RegistryFetchDeps,
   reg: RegistryRow,
@@ -282,15 +293,28 @@ export async function fetchVerifiedIndex(
       `index sequence ${index.sequence} is older than the last seen ${reg.lastSequence}`,
     );
   }
+  const digest = registryIndexDigest(index);
+  if (
+    index.sequence === reg.lastSequence &&
+    reg.lastIndexSha256 !== null &&
+    digest !== reg.lastIndexSha256
+  ) {
+    throw equivocation(index.sequence);
+  }
   // Conditional write: the row may have moved (or gone) while this fetch was in flight. The built-in
-  // registry's floor lives in its own table; the rollback rule is the same for both stores.
-  if (!recordAnyRegistryFetch(deps.db, reg, index.sequence, index.generatedAt, deps.now())) {
+  // registry's floor lives in its own table; the rollback and equivocation rules are the same.
+  if (
+    !recordAnyRegistryFetch(deps.db, reg, index.sequence, index.generatedAt, deps.now(), digest)
+  ) {
     const cur = currentRegistryFloor(deps.db, reg);
     if (cur === undefined) {
       throw new RegistryError(
         "ERR_REGISTRY_ROOT_KEY_CHANGED",
         "registry was removed or re-pinned during the fetch",
       );
+    }
+    if (cur.lastSequence === index.sequence && cur.lastIndexSha256 !== digest) {
+      throw equivocation(index.sequence);
     }
     throw new RegistryError(
       "ERR_REGISTRY_ROLLBACK",

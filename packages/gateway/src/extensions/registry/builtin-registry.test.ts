@@ -7,7 +7,11 @@ import { publisherKeyFingerprint, RegistryError } from "@nimbus-dev/registry-for
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { MockVault } from "../../vault/mock.ts";
 import { verifyManifestSignature } from "../verify-signature.ts";
-import { buildTestRegistry, type TestVersion } from "./__fixtures__/build-test-registry.ts";
+import {
+  buildTestRegistry,
+  resignIndex,
+  type TestVersion,
+} from "./__fixtures__/build-test-registry.ts";
 import {
   BUILTIN_REGISTRY,
   BUILTIN_REGISTRY_NAME,
@@ -35,7 +39,7 @@ let builtin: BuiltinRegistryConfig;
 
 beforeEach(async () => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 73);
+  runIndexedSchemaMigrations(db, 76);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-builtin-reg-"));
   builtinDir = join(tmp, "official");
 });
@@ -84,6 +88,7 @@ function addOwnerRegistry(name: string, rootKey: string, url = join(tmp, name)):
     lastSequence: 0,
     lastGeneratedAt: "2026-10-01T00:00:00Z",
     addedAt: 1,
+    lastIndexSha256: null,
   });
 }
 
@@ -191,13 +196,46 @@ describe("the built-in official registry", () => {
     ]);
   });
 
+  test("the builtin floor adopts a hash, then accepts only that document or a higher sequence", async () => {
+    await buildBuiltin();
+    const reg = resolveRegistry(db, BUILTIN_REGISTRY_NAME, builtin);
+    if (reg === undefined) throw new Error("unreachable");
+    const rec = (seq: number, hash: string) =>
+      recordAnyRegistryFetch(db, reg, seq, "2026-10-19T00:00:00Z", 7, hash);
+    expect(rec(5, "hA")).toBe(true);
+    expect(rec(5, "hA")).toBe(true);
+    expect(rec(5, "hB")).toBe(false);
+    expect(currentRegistryFloor(db, reg)).toEqual({ lastSequence: 5, lastIndexSha256: "hA" });
+    expect(rec(6, "hB")).toBe(true);
+    expect(currentRegistryFloor(db, reg)).toEqual({ lastSequence: 6, lastIndexSha256: "hB" });
+  });
+
+  test("fetchVerifiedIndex refuses the builtin index re-served at its sequence with other content", async () => {
+    await buildBuiltin();
+    const first = resolveRegistry(db, BUILTIN_REGISTRY_NAME, builtin);
+    if (first === undefined) throw new Error("unreachable");
+    expect((await fetchVerifiedIndex(deps(builtin), first)).sequence).toBe(1);
+    // Same sequence, same document: the ordinary no-change refresh.
+    const again = resolveRegistry(db, BUILTIN_REGISTRY_NAME, builtin);
+    if (again === undefined) throw new Error("unreachable");
+    expect((await fetchVerifiedIndex(deps(builtin), again)).sequence).toBe(1);
+    // Same sequence, different (validly signed) document: a force-pushed gh-pages.
+    const indexPath = join(builtinDir, "index.json");
+    const served = JSON.parse(readFileSync(indexPath, "utf8")) as Record<string, unknown>;
+    resignIndex(indexPath, { ...served, generatedAt: "2026-10-30T00:00:00Z" });
+    const later = resolveRegistry(db, BUILTIN_REGISTRY_NAME, builtin);
+    if (later === undefined) throw new Error("unreachable");
+    const e = await refusal(fetchVerifiedIndex(deps(builtin), later));
+    expect(e.code).toBe("ERR_REGISTRY_EQUIVOCATION");
+  });
+
   test("builtin rollback refused", async () => {
     await buildBuiltin();
     const stale = resolveRegistry(db, BUILTIN_REGISTRY_NAME, builtin);
     if (stale === undefined) throw new Error("unreachable");
-    expect(recordAnyRegistryFetch(db, stale, 5, "2026-10-19T00:00:00Z", 7)).toBe(true);
+    expect(recordAnyRegistryFetch(db, stale, 5, "2026-10-19T00:00:00Z", 7, "h5")).toBe(true);
     // A lower sequence never lowers the floor.
-    expect(recordAnyRegistryFetch(db, stale, 4, "2026-10-19T01:00:00Z", 8)).toBe(false);
+    expect(recordAnyRegistryFetch(db, stale, 4, "2026-10-19T01:00:00Z", 8, "h4")).toBe(false);
     // The index serves sequence 1. A fresh resolve refuses it up front ...
     const fresh = resolveRegistry(db, BUILTIN_REGISTRY_NAME, builtin);
     if (fresh === undefined) throw new Error("unreachable");
@@ -221,25 +259,25 @@ describe("the built-in official registry", () => {
     await buildBuiltin();
     const oldReg = resolveRegistry(db, BUILTIN_REGISTRY_NAME, builtin);
     if (oldReg === undefined) throw new Error("unreachable");
-    expect(recordAnyRegistryFetch(db, oldReg, 5, "2026-10-19T00:00:00Z", 7)).toBe(true);
-    expect(currentRegistryFloor(db, oldReg)).toEqual({ lastSequence: 5 });
+    expect(recordAnyRegistryFetch(db, oldReg, 5, "2026-10-19T00:00:00Z", 7, "h5")).toBe(true);
+    expect(currentRegistryFloor(db, oldReg)).toEqual({ lastSequence: 5, lastIndexSha256: "h5" });
 
     // A later release re-pins the built-in root; its registry restarts at a lower sequence.
     const newKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     const rePinned = resolveRegistry(db, BUILTIN_REGISTRY_NAME, { ...builtin, rootKey: newKey });
     expect(rePinned?.lastSequence).toBe(0);
     if (rePinned === undefined) throw new Error("unreachable");
-    expect(currentRegistryFloor(db, rePinned)).toEqual({ lastSequence: 0 });
-    expect(recordAnyRegistryFetch(db, rePinned, 1, "2026-10-20T00:00:00Z", 9)).toBe(true);
+    expect(currentRegistryFloor(db, rePinned)).toEqual({ lastSequence: 0, lastIndexSha256: null });
+    expect(recordAnyRegistryFetch(db, rePinned, 1, "2026-10-20T00:00:00Z", 9, "h1")).toBe(true);
     expect(db.query("SELECT root_key, last_sequence FROM builtin_registry_state").all()).toEqual([
       { root_key: newKey, last_sequence: 1 },
     ]);
 
     // Under the new key the floor is enforced as before: a lower sequence is refused.
-    expect(recordAnyRegistryFetch(db, rePinned, 0, "2026-10-20T01:00:00Z", 10)).toBe(false);
-    expect(currentRegistryFloor(db, rePinned)).toEqual({ lastSequence: 1 });
+    expect(recordAnyRegistryFetch(db, rePinned, 0, "2026-10-20T01:00:00Z", 10, "h0")).toBe(false);
+    expect(currentRegistryFloor(db, rePinned)).toEqual({ lastSequence: 1, lastIndexSha256: "h1" });
     // The superseded key's floor no longer applies to a snapshot of the old registry either.
-    expect(currentRegistryFloor(db, oldReg)).toEqual({ lastSequence: 0 });
+    expect(currentRegistryFloor(db, oldReg)).toEqual({ lastSequence: 0, lastIndexSha256: null });
   });
 
   test("collectRegistryUpdates sees an extension sourced from the builtin registry", async () => {

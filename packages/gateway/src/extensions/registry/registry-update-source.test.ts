@@ -32,7 +32,7 @@ let failing: Set<string>;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 71);
+  runIndexedSchemaMigrations(db, 76);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-regupd-"));
   vault = new MockVault();
   served.clear();
@@ -73,6 +73,7 @@ function addRegistry(name: string, dir: string, remote: boolean): void {
     lastSequence: 0,
     lastGeneratedAt: "2026-10-01T00:00:00Z",
     addedAt: 1,
+    lastIndexSha256: null,
   });
 }
 

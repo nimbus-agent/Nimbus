@@ -1,12 +1,14 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  parseRegistryIndex,
   publisherKeyFingerprint,
   type RegistryIndex,
+  registryIndexDigest,
   registryIndexSigningBytes,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
@@ -44,7 +46,7 @@ let tmp: string;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 71);
+  runIndexedSchemaMigrations(db, 76);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-registry-rpc-"));
   writeFileSync(join(tmp, "index.json"), JSON.stringify(signedIndex(3)));
 });
@@ -122,6 +124,9 @@ describe("registry.add", () => {
     const row = getRegistry(db, "main");
     expect(row?.rootKey).toBe(ROOT_KEY);
     expect(row?.lastSequence).toBe(3);
+    // The add records the document it showed the owner, so a later fetch at sequence 3 must be it.
+    const served = parseRegistryIndex(readFileSync(join(tmp, "index.json")));
+    expect(row?.lastIndexSha256).toBe(registryIndexDigest(served));
   });
 
   test("a denial stores nothing and reports ERR_REGISTRY_ADD_NOT_APPROVED", async () => {
@@ -218,6 +223,7 @@ describe("registry.list", () => {
         lastSequence: 1,
         lastGeneratedAt: generatedAt,
         addedAt: 1,
+        lastIndexSha256: null,
       });
     }
     const out = await call("registry.list", {});
@@ -242,6 +248,7 @@ describe("registry.refresh", () => {
       lastSequence: 1,
       lastGeneratedAt: "2026-10-01T00:00:00Z",
       addedAt: 1,
+      lastIndexSha256: null,
     });
     const out = (await call("registry.refresh", {})) as {
       value: {
@@ -355,6 +362,7 @@ function pin(name: string, url: string): void {
     lastSequence: 1,
     lastGeneratedAt: "2026-10-18T12:00:00Z",
     addedAt: 1,
+    lastIndexSha256: null,
   });
 }
 
@@ -651,6 +659,7 @@ describe("the reserved built-in registry name", () => {
         lastSequence: 0,
         lastGeneratedAt: "2026-10-01T00:00:00Z",
         addedAt: 1,
+        lastIndexSha256: null,
       }),
     ).toThrow("ERR_REGISTRY_NAME_RESERVED");
     // The official URL and root key under ANOTHER name stay the owner's HITL decision.
@@ -677,6 +686,7 @@ describe("the reserved built-in registry name", () => {
       lastSequence: 1,
       lastGeneratedAt: "2026-10-10T00:00:00Z",
       addedAt: 1,
+      lastIndexSha256: null,
     });
     const one = await call("registry.list", {}, { fetch: builtinBag() });
     const value = (one as { value: { registries: Array<Record<string, unknown>> } }).value;

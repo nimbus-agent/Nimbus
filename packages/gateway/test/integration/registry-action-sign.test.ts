@@ -149,6 +149,7 @@ describe("registry action sign → gateway install", () => {
         lastSequence: 0,
         lastGeneratedAt: "2026-10-01T00:00:00Z",
         addedAt: Date.now(),
+        lastIndexSha256: null,
       });
       const asked: ExtensionInstallApprovalRequest[] = [];
       const installed = await installFromRegistry(

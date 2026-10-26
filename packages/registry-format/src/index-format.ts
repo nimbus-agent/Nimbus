@@ -8,6 +8,8 @@
 // NOSONAR S1874: deprecated in SDK 1.32.0. The registry signs and verifies the bytes of this export
 // (the gateway's `extensions/canonical-json.ts` wraps the same one); `@nimbus-dev/sdk/signing`
 // NFC-normalises differently and would change the signed bytes for any non-ASCII string.
+
+import { createHash } from "node:crypto";
 import { canonicalize } from "@nimbus-dev/sdk"; // NOSONAR S1874
 import nacl from "tweetnacl";
 
@@ -17,6 +19,7 @@ import { assertSafeExtensionId } from "./extension-id.ts";
 import { PUBLISHER_ID_RE } from "./manifest.ts";
 import { ROLE_PACK_ID_RE } from "./role-pack.ts";
 import { isValidSemver } from "./semver.ts";
+import { readStatementList, type StatementsRead } from "./trust-feed.ts";
 
 export { isValidSemver };
 
@@ -54,6 +57,13 @@ export interface RegistryIndex {
    * never rewritten there); read it with `readRegistryPacks`.
    */
   readonly packs?: unknown;
+  /**
+   * Trust statements this registry publishes (marketplace trust layer), carried RAW like `packs`;
+   * read with `readRegistryStatements`.
+   */
+  readonly statements?: unknown;
+  /** Where users report an extension from this registry, carried RAW; read with `readRegistryReportUrl`. */
+  readonly reportUrl?: unknown;
   signature: string;
 }
 
@@ -307,6 +317,27 @@ export function parseRegistryIndex(bytes: Uint8Array): RegistryIndex {
     extensions,
     signature: matching(o, "signature", SIGNATURE_RE, "index"),
   };
+}
+
+/** The index's trust statements. Never throws on data; signatures are not checked here. */
+export function readRegistryStatements(index: RegistryIndex): StatementsRead {
+  return readStatementList(index.statements);
+}
+
+/** The index's report URL when it is a parseable `https:` URL, else `undefined`. */
+export function readRegistryReportUrl(index: RegistryIndex): string | undefined {
+  const v = index.reportUrl;
+  if (typeof v !== "string") return undefined;
+  try {
+    return new URL(v).protocol === "https:" ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** SHA-256 (hex) of the index's signing bytes: what a client stores to refuse equivocation. */
+export function registryIndexDigest(index: RegistryIndex): string {
+  return createHash("sha256").update(registryIndexSigningBytes(index)).digest("hex");
 }
 
 export function registryIndexSigningBytes(

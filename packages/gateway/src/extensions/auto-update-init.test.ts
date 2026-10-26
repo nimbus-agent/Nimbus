@@ -377,6 +377,7 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       lastSequence: 0,
       lastGeneratedAt: "2026-10-01T00:00:00Z",
       addedAt: 1,
+      lastIndexSha256: null,
     });
     const vault = new MockVault();
     await installFromRegistry(

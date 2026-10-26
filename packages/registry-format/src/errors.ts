@@ -27,7 +27,12 @@ export type RegistryErrorCode =
   | "ERR_REGISTRY_VERSION_EXISTS"
   | "ERR_REGISTRY_PACKAGE_FILE_SET"
   | "ERR_REGISTRY_CONFIG_INVALID"
-  | "ERR_REGISTRY_ROLE_PACK_INVALID";
+  | "ERR_REGISTRY_ROLE_PACK_INVALID"
+  | "ERR_REGISTRY_EQUIVOCATION"
+  | "ERR_TRUST_STATEMENT_INVALID"
+  | "ERR_TRUST_FEED_INVALID"
+  | "ERR_TRUST_FEED_SIGNATURE_INVALID"
+  | "ERR_TRUST_FEED_ROOT_KEY_CHANGED";
 
 /** A registry refusal. The code leads the message, so a CLI shows it; `detail` is the rest. */
 export class RegistryError extends Error {

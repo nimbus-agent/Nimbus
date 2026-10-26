@@ -3,21 +3,10 @@
  * publishing tools. The bytes signed are `registryIndexSigningBytes` — the same function the
  * verifier reads — and the golden vector in `index-format.test.ts` pins them.
  */
-import { createPrivateKey, createPublicKey, type KeyObject, sign, verify } from "node:crypto";
+import { createPublicKey, sign, verify } from "node:crypto";
 
+import { privateKeyFromSeed } from "./ed25519-seed.ts";
 import { type RegistryIndex, registryIndexSigningBytes } from "./index-format.ts";
-
-// PKCS#8 wrapper for a raw 32-byte Ed25519 seed.
-const PKCS8_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
-
-function privateKeyFromSeed(seed: Uint8Array): KeyObject {
-  if (seed.byteLength !== 32) throw new Error("Ed25519 seed must be 32 bytes");
-  return createPrivateKey({
-    key: Buffer.concat([PKCS8_ED25519_PREFIX, seed]),
-    format: "der",
-    type: "pkcs8",
-  });
-}
 
 /** The 32-byte public point for a 32-byte Ed25519 seed. */
 export function publicKeyFromSeed(seed: Uint8Array): Uint8Array {
