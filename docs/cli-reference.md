@@ -5056,6 +5056,23 @@ Fetches the feed now. It prints `updated to sequence N`, `unchanged`, `not confi
 
 `[extensions] trust_check_interval_hours` (default 1, range 1..24) sets how often the feed is fetched.
 
+### `nimbus trust maintain …` — running the feed (Nimbus maintainers)
+
+Offline tooling for whoever runs the Nimbus trust feed: no gateway, no network, no Vault. The feed's default branch holds its **source**, never a signed document: `publishers/<publisherId>.json` (one per verified publisher: `{ "publisherId", "keys", "github" }`), `requests/<name>.json` (a `key.revoke` or `extension.takedown` to sign with the Nimbus trust root) and `statements/<statement id>.json` (a verified publisher's own signed rotation or revocation). Every command below except `init`, `plan` and `sign` only writes those files, so it works the same on a local feed folder and on a clone of the GitHub feed repository (commit, open a pull request, merge; the `trust-sign` workflow signs).
+
+| Command | What it does |
+|---|---|
+| `init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>]]` | Generates the trust root key (default `~/.nimbus/trust-root-key`; refused inside `<dir>` or the site), writes the source skeleton and a signed empty `trust.json` at sequence 1 — beside the source for a local folder, into `--site` (default `<dir>-site`) for `--github`, which also writes `trust-check.yml`, `trust-sign.yml` (behind the `trust-signing` environment and its `NIMBUS_TRUST_ROOT_KEY` secret) and a README, and prints the owner's next steps. |
+| `verify-publisher <dir> <publisherId> --key <public key file\|base64>... --github <handle>` | Writes `publishers/<id>.json` (1–10 keys). It records that you checked the publisher's GitHub identity; it does not check it. |
+| `unverify-publisher <dir> <publisherId>` | Removes that file: the next feed drops the badge. It never removes a block. |
+| `revoke-key <dir> <fingerprint> --publisher <id> --reason <text>` | Writes a revocation request. |
+| `takedown <dir> <id>[@<version>] --publisher <id> --reason <text>` | Writes a takedown request; `--publisher` is required (the feed binds no extensions). |
+| `add-statement <dir> <statement file>` | Copies a publisher-signed `key.rotate` / `key.revoke` (one that verifies against the key it concerns) to `statements/`. |
+| `plan <dir>` | Prints what the next feed would change and every file that would be skipped, with its reason. |
+| `sign <dir> [--key <path>]` | Local folder only: builds and signs the next `trust.json` (sequence + 1). A `--github` feed is refused — its sign workflow signs it. |
+
+What the next feed carries (the same rule for `sign` and the `trust-sign` workflow): every block already in the feed, always — a deleted request file or an un-verified publisher removes none; each request signed once by meaning (a re-run, a renamed copy or one covered by a wider takedown adds nothing); one `publisher.verified` per publisher file, kept byte for byte while the file is unchanged; and a publisher statement only when it is signed by a key the publisher is verified with, or one reached from such a key by a rotation the feed carries — so a stranger's key cannot plant a rotation or revocation for a publisher it does not hold. A revocation of the trust root's own key is refused. Nothing new means nothing is signed.
+
 ---
 
 ## Workflows

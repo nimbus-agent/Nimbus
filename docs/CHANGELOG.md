@@ -18,6 +18,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-27 — Marketplace trust layer PR 4b: `nimbus trust maintain` runs the Nimbus trust feed (no migration, no new
+  invariant, no gateway change).** The feed's default branch holds its source — `publishers/<id>.json` (verified publishers),
+  `requests/` (Nimbus-root revocations and takedowns) and `statements/` (a verified publisher's own signed statements) — and
+  one builder in `registry-format` (`buildTrustFeed`) turns it into the next signed `trust.json`, run by `nimbus trust maintain
+  sign` for a local folder and by the registry action's new `trust-sign` mode, behind the `trust-signing` environment, for the
+  GitHub feed (`trust maintain init --github` writes both workflows; `trust-check` banners every pull request). Every block
+  already in the feed is carried verbatim, whatever is deleted; a request is signed once; an unchanged verified entry keeps
+  its exact bytes; a publisher statement rides the feed only for a Nimbus-verified key. Un-verifying a publisher removes its
+  entry. The release still bakes no feed: the snapshot refresh script and its audit land with the bake (PR 5).
+
 - **2026-10-27 — Marketplace trust layer PR 4a: registry maintainers block, users report, local installs carry no badge (no
   migration, no new invariant).** `nimbus registry maintain revoke-key` / `takedown` sign a block for that registry with its
   root key — at once for a local-folder registry; for a GitHub registry, `--github <clone>` writes `trust-requests/<name>.json`
