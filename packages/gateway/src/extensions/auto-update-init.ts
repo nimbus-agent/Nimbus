@@ -42,6 +42,7 @@ import { collectRegistryUpdates } from "./registry/registry-update-source.ts";
 import { getRunGrant } from "./run-grant-store.ts";
 import { publisherKeyConflict, publisherKeyDecision } from "./trust/publisher-key-decision.ts";
 import { assertNotBlocked, TrustBlockError } from "./trust/trust-blocks.ts";
+import { type VerifiedPublisher, verifiedPublisherFor } from "./trust/verified-publisher.ts";
 import { prevVersionDir } from "./version-store.ts";
 
 export interface AutoUpdateInitOpts {
@@ -100,6 +101,8 @@ export interface AutoUpdateRuntimeBag {
   hasRunGrant?: (id: string) => Promise<boolean>;
   /** Whether the update's source registry still exists under the detected root fingerprint. */
   isSourceCurrent?: (cached: AvailableUpdate) => Promise<boolean>;
+  /** The verified publisher (R6) of an update's key, asked at read time; never cached. */
+  verifiedPublisherOf?: (cached: AvailableUpdate) => VerifiedPublisher | null;
 }
 
 export interface AutoUpdateRuntime {
@@ -442,6 +445,13 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     hasRunGrant: (id) => Promise.try(() => getRunGrant(opts.db, id) !== null),
     isSourceCurrent: (cached) =>
       Promise.try(() => currentSourceRegistry(fetchDeps, cached) !== undefined),
+    // R6, asked at read time with the detector's own subject (the source registry, I44).
+    verifiedPublisherOf: (cached) =>
+      verifiedPublisherFor(opts.db, {
+        publisherId: cached.publisherId ?? null,
+        keyFingerprint: cached.publisherKeyFingerprint ?? null,
+        source: { registry: cached.sourceRegistry, rootFingerprint: cached.rootFingerprint },
+      }),
   };
 
   return { daemon, deps, abortController };

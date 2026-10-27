@@ -55,6 +55,8 @@ export interface AvailableUpdate {
   verificationStatus: VerificationStatus;
   /** The fingerprint of the publisher key the index names for this version. */
   publisherKeyFingerprint?: string;
+  /** The publisher id the index names (identity, not a badge: the badge is never cached, R7). */
+  publisherId?: string;
   /** Set when that key differs from every key the Vault trusts (fingerprints only). */
   publisherKeyChange?: { from: readonly string[]; to: string; via?: "rotation" | "nimbus" };
   /** Set by `extension.update --accept-publisher-key`: the owner accepted this exact key. */

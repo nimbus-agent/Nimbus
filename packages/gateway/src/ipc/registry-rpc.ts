@@ -33,6 +33,10 @@ import {
   freshenTrustFeed,
   trustFeedNote,
 } from "../extensions/trust/trust-freshen.ts";
+import {
+  type VerifiedPublisher,
+  verifiedPublisherFor,
+} from "../extensions/trust/verified-publisher.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
@@ -392,6 +396,8 @@ async function handleSearch(
     latestBeta: string | null;
     /** I48: the publisher key is revoked, or the newest offered version is taken down. */
     blocked: boolean;
+    /** R6: the current Nimbus verification lists the index's key for this publisher. */
+    verifiedPublisher: VerifiedPublisher | null;
   }> = [];
   for (const { reg, index } of read.ok) {
     for (const [id, entry] of Object.entries(index.extensions)) {
@@ -404,14 +410,14 @@ async function handleSearch(
       const latestStable = versions.find(([, v]) => v.channel === "stable")?.[0] ?? null;
       const latestBeta = versions.find(([, v]) => v.channel === "beta")?.[0] ?? null;
       const offered = latestStable ?? latestBeta ?? newest[0];
-      const blocked =
-        blocksFor(o.db, {
-          extensionId: id,
-          version: offered,
-          publisherId: entry.publisher.id,
-          keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
-          source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
-        }).length > 0;
+      const subject = {
+        extensionId: id,
+        version: offered,
+        publisherId: entry.publisher.id,
+        keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+        source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
+      };
+      const blocked = blocksFor(o.db, subject).length > 0;
       results.push({
         registry: reg.name,
         id,
@@ -420,6 +426,7 @@ async function handleSearch(
         latestStable,
         latestBeta,
         blocked,
+        verifiedPublisher: verifiedPublisherFor(o.db, subject),
       });
     }
   }
@@ -469,6 +476,11 @@ async function handleInfo(
       id,
       publisherId: entry.publisher.id,
       publisherFingerprint: publisherKeyFingerprint(entry.publisher.key),
+      verifiedPublisher: verifiedPublisherFor(o.db, {
+        publisherId: entry.publisher.id,
+        keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+        source: { registry: found.reg.name, rootFingerprint: found.reg.rootFingerprint },
+      }),
       versions: versions.map(([version, v], i) => ({
         version,
         channel: v.channel,

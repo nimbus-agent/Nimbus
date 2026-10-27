@@ -72,6 +72,36 @@ describe("nimbus extension search", () => {
     expect(h.stdout()).toContain("Tool [blocked]");
   });
 
+  test("a verified publisher is marked with its handle; others get a dash (R6)", async () => {
+    const h = harness(() => ({
+      results: [
+        {
+          registry: "main",
+          id: "acme.tool",
+          name: "Tool",
+          publisherId: "acme",
+          latestStable: "1.0.0",
+          latestBeta: null,
+          verifiedPublisher: { github: "acme-dev", verifiedAt: "2026-10-20T00:00:00Z" },
+        },
+        {
+          registry: "main",
+          id: "other.tool",
+          name: "Other",
+          publisherId: "other",
+          latestStable: "1.0.0",
+          latestBeta: null,
+          verifiedPublisher: null,
+        },
+      ],
+      errors: [],
+    }));
+    await runExtensionSearch("tool", false, h.deps);
+    const [, verified, unverified] = h.stdout().trimEnd().split("\n");
+    expect(verified).toContain("✓ @acme-dev");
+    expect(unverified).not.toContain("✓");
+  });
+
   test("an empty query is a usage error and calls nothing", async () => {
     const h = harness(() => ({}));
     expect(await runExtensionSearch("  ", false, h.deps)).toBe(2);
@@ -109,6 +139,20 @@ describe("nimbus extension info --remote", () => {
     expect(h.calls[0]?.params).toEqual({ id: "acme.tool", registry: "main" });
     expect(h.stdout()).toContain("f".repeat(32));
     expect(h.stdout()).toContain("api.example.com");
+    expect(h.stdout()).toContain("Unverified publisher");
+  });
+
+  test("names a verified publisher and its verification date (R6)", async () => {
+    const h = harness(() => ({
+      registry: "main",
+      id: "acme.tool",
+      publisherId: "acme",
+      publisherFingerprint: "f".repeat(32),
+      verifiedPublisher: { github: "acme-dev", verifiedAt: "2026-10-20T00:00:00Z" },
+      versions: [],
+    }));
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    expect(h.stdout()).toContain("Verified publisher: @acme-dev (verified 2026-10-20)");
   });
 });
 
@@ -153,7 +197,7 @@ describe("nimbus extension search — output modes", () => {
     }));
     expect(await runExtensionSearch("acme", false, h.deps)).toBe(0);
     const [header, beta, none] = h.stdout().trimEnd().split("\n");
-    expect(header).toMatch(/^Registry\s+ID\s+Name\s+Publisher\s+Stable\s+Beta$/);
+    expect(header).toMatch(/^Registry\s+ID\s+Name\s+Publisher\s+Verified\s+Stable\s+Beta$/);
     expect(beta?.split(/\s+/).slice(-2)).toEqual(["-", "0.2.0-beta.1"]);
     expect(none?.split(/\s+/).slice(-2)).toEqual(["-", "-"]);
   });

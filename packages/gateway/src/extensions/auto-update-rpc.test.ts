@@ -650,3 +650,66 @@ describe("dispatchAutoUpdateRpc extension.update — runGrantNote (extension run
     expect("runGrantNote" in (await askedPayload())).toBe(false);
   });
 });
+
+describe("the verified-publisher badge on updates (R6, trust layer PR 3c)", () => {
+  const BADGE = { github: "acme-dev", verifiedAt: "2026-10-20T00:00:00Z" };
+
+  async function askedPayload(deps: Deps): Promise<Record<string, unknown>> {
+    const asked: Array<Record<string, unknown>> = [];
+    deps.gate = async (a) => {
+      asked.push(a.payload);
+      return { status: "rejected" };
+    };
+    await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    );
+    return asked[0] ?? {};
+  }
+
+  it("the listing and the prompt carry the badge, computed at read time — never cached", async () => {
+    const deps = baseDeps();
+    let current: typeof BADGE | null = BADGE;
+    deps.verifiedPublisherOf = () => current;
+    const list = (await dispatchAutoUpdateRpc("extension.checkForUpdates", {}, deps)) as Array<{
+      verifiedPublisher: unknown;
+    }>;
+    expect(list[0]?.verifiedPublisher).toEqual(BADGE);
+    const p = await askedPayload(deps);
+    expect(p["verifiedPublisher"]).toEqual(BADGE);
+    expect(p["publisherBadge"]).toBe("Verified publisher: @acme-dev (verified 2026-10-20)");
+    // The verification is replaced (or the key revoked) after detection: no re-detection needed.
+    current = null;
+    const after = (await dispatchAutoUpdateRpc("extension.checkForUpdates", {}, deps)) as Array<{
+      verifiedPublisher: unknown;
+    }>;
+    expect(after[0]?.verifiedPublisher).toBeNull();
+    expect((await askedPayload(deps))["publisherBadge"]).toBe("Unverified publisher");
+    expect("verifiedPublisher" in (deps.cache.get("com.example.a") ?? {})).toBe(false);
+  });
+
+  it("no badge unless the update's signature verified", async () => {
+    for (const status of ["signature_failed", "publisher_key_conflict"] as const) {
+      const deps = baseDeps();
+      const u = deps.cache.get("com.example.a");
+      if (u === undefined) throw new Error("fixture");
+      deps.cache.upsert({ ...u, verificationStatus: status, publisherStatus: "unverified" });
+      deps.verifiedPublisherOf = () => BADGE;
+      const list = (await dispatchAutoUpdateRpc("extension.checkForUpdates", {}, deps)) as Array<{
+        verifiedPublisher: unknown;
+      }>;
+      expect(list[0]?.verifiedPublisher).toBeNull();
+    }
+  });
+
+  it("the prompt carries the signature status, so the desktop labels the signature, not the publisher", async () => {
+    expect((await askedPayload(baseDeps()))["verificationStatus"]).toBe("verified");
+  });
+
+  it("without a way to ask, an update is shown as from an unverified publisher", async () => {
+    const p = await askedPayload(baseDeps());
+    expect(p["verifiedPublisher"]).toBeNull();
+    expect(p["publisherBadge"]).toBe("Unverified publisher");
+  });
+});

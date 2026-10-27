@@ -357,6 +357,9 @@ describe("extension.install through the RPC", () => {
       id: "test.ext.signed",
       version: "1.0.0",
       sourcePath: src,
+      // R6: no Nimbus verification is stored, so the prompt says so plainly.
+      verifiedPublisher: null,
+      publisherBadge: "Unverified publisher",
       publisher: {
         id: "test-pub",
         fingerprint: publisherKeyFingerprint(encodeBase64(keypair.pubkey)),

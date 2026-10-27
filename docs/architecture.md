@@ -1893,9 +1893,9 @@ Shipped so far, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
 - **The MCP capture sink, 3 of 3** (2026-10-12 → 2026-10-15; [§ MCP capture sink](#mcp-capture-sink)).
 - **The registry**: the client (2026-10-18), publishing (2026-10-23) and the Readwise unbundling pilot
   ([§ Extension registry client](#extension-registry-client), [§ Connector migration](#connector-migration)).
-- **The trust layer, PRs 1–3b of 5** (2026-10-26; [§ Trust layer](#trust-layer)): statements are stored,
-  the feed is fetched (unset in this build), revoked or taken-down code is refused (I48), publishers can
-  rotate keys, and a registry carries their rotations and revocations.
+- **The trust layer, PRs 1–3c of 5** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
+  stored, the feed is fetched (unset in this build), revoked or taken-down code is refused (I48), publishers can
+  rotate keys, a registry carries their rotations and revocations, and the verified-publisher badge is shown.
 - **Role packs, 5 of 5** (2026-10-22 → 2026-10-26). They are config layers rather than an S3 subsystem of
   their own, so they are described where they act: [§ Layered config](#layered-config),
   [§ Source kinds](#source-kinds-decisions-and-glossary-inputs) and the desktop notes in
@@ -2255,6 +2255,21 @@ earlier key stay listed but can no longer be installed from that registry by exp
 manifest key to equal the entry key (installed copies keep running, and `extension downgrade` restores from the local version
 store); (2) a sibling extension still bound to the old key shows as a key conflict to a client that trusts only the new key,
 because R5 follows rotations forward only, so `publish` names those siblings and tells the publisher to republish them.
+
+**The verified-publisher badge (PR 3c, spec R6).** `extensions/trust/verified-publisher.ts` `verifiedPublisherFor` answers
+one question from the store: does the CURRENT Nimbus verification (`readCurrentVerification`; two entries, or one that no
+longer parses, count as none) list the key that verified — or, for a registry entry, would verify — the code, and is that
+key unrevoked here (`isKeyRevoked`, scoped exactly as I48's blocks)? Every surface asks it with the subject it already
+builds for `blocksFor`: `registry.search` / `registry.info` (the index key, that registry), `extension.list` /
+`extension.info` (the row's recorded key and source; none unless the copy still matches its installed manifest and entry hashes,
+and none for a copy this boot's signature check disabled), the install prompt (only after
+the SOURCE manifest's signature verifies with the key it declares — the copy's I16 check runs after approval, and a
+forged manifest claiming a verified key must not show a badge), and the update listing and prompt (computed when served,
+never stored on the cached update, and none unless the update's signature verified). Responses and prompts carry
+`verifiedPublisher` (`{ github, verifiedAt }` or `null`), prompts also `publisherBadge`, a sentence. Nothing is refused on
+it. The old `publisherStatus` field (it means "the signature verified") is kept for clients but no longer rendered as
+"publisher: verified" anywhere: the CLI and the desktop label the signature from `verificationStatus`, and an extension
+with no publisher is "(unsigned)". This build bakes no feed (PR 5), so production shows every publisher as unverified.
 
 **When a block lands.** Every recording path (a verified registry index, the feed, the boot snapshot) hands the ids it newly
 stored to `RegistryFetchDeps.onTrustRecorded`. `extensions/trust/trust-block-enforcer.ts` then stops the running client of

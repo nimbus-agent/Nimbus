@@ -20,6 +20,7 @@ import { listExtensions } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import {
+  type ExtensionInstallApprovalRequest,
   ExtensionInstallNotApprovedError,
   extensionInstallDirectory,
   installExtensionFromLocalDirectory,
@@ -1634,5 +1635,83 @@ describe("installExtensionFromLocalDirectory — revoked or taken-down code (I48
     } finally {
       rmSync(archive, { force: true });
     }
+  });
+});
+
+describe("the install prompt states whether the publisher is verified (R6, trust layer PR 3c)", () => {
+  async function vouchFor(db: Database, publisherKey: Uint8Array): Promise<void> {
+    const { signTrustStatement } = await import("@nimbus-dev/registry-format");
+    const nacl = (await import("tweetnacl")).default;
+    const { replaceCurrentVerifications } = await import("./trust/trust-store.ts");
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 70);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const vouch = await signTrustStatement(
+      {
+        kind: "publisher.verified",
+        issuedAt: "2026-10-27T12:00:00Z",
+        signerKey: nimbusKey,
+        publisherId: "test-pub",
+        keys: [encodeBase64(publisherKey)],
+        github: "test-dev",
+        verifiedAt: "2026-10-20T00:00:00Z",
+      },
+      seed,
+    );
+    replaceCurrentVerifications(db, [vouch], nimbusKey, 1);
+  }
+
+  async function askedFor(prefix: string, opts: { vouch: boolean; forge?: boolean }) {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(prefix, "src");
+    const { privkey, pubkey } = generateEd25519Keypair();
+    await writeSignedSource({ sourceDir: src, id: "test-ext-badge", privkey, pubkey });
+    if (opts.forge === true) {
+      const path = join(src, "nimbus.extension.json");
+      const m = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      m["signature"] = `${"A".repeat(86)}==`;
+      writeFileSync(path, JSON.stringify(m));
+    }
+    if (opts.vouch) await vouchFor(db, pubkey);
+    const asked: ExtensionInstallApprovalRequest[] = [];
+    await installExtensionFromLocalDirectory({
+      db,
+      extensionsDir,
+      sourcePath: src,
+      vault: new MockVault(),
+      publisherKey: pubkey,
+      approve: async (r) => {
+        asked.push(r);
+        return false;
+      },
+    }).catch(() => {});
+    return asked[0];
+  }
+
+  test("a signature that verifies with a vouched key gets the badge in the prompt", async () => {
+    const r = await askedFor("nimbus-install-badge-", { vouch: true });
+    expect(r?.verifiedPublisher).toEqual({
+      github: "test-dev",
+      verifiedAt: "2026-10-20T00:00:00Z",
+    });
+    expect(r?.publisherBadge).toBe("Verified publisher: @test-dev (verified 2026-10-20)");
+  });
+
+  test("an unvouched key is an unverified publisher", async () => {
+    const r = await askedFor("nimbus-install-nobadge-", { vouch: false });
+    expect(r?.verifiedPublisher).toBeNull();
+    expect(r?.publisherBadge).toBe("Unverified publisher");
+  });
+
+  test("a manifest CLAIMING a vouched key with a forged signature gets no badge", async () => {
+    const r = await askedFor("nimbus-install-forged-", { vouch: true, forge: true });
+    expect(r?.verifiedPublisher ?? null).toBeNull();
+    expect(r?.publisherBadge ?? "Unverified publisher").toBe("Unverified publisher");
+  });
+
+  test("the CLI's consent text (formatConsentPrompt Details) carries the badge, unredacted", async () => {
+    const { formatConsentPrompt } = await import("../engine/executor.ts");
+    const r = await askedFor("nimbus-install-badge-text-", { vouch: true });
+    const text = formatConsentPrompt({ type: "extension.install", payload: { ...r } });
+    expect(text).toContain("Verified publisher: @test-dev (verified 2026-10-20)");
+    expect(text).toContain('"verifiedPublisher":{"github":"test-dev"');
   });
 });

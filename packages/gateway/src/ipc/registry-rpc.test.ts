@@ -15,7 +15,10 @@ import {
 import nacl from "tweetnacl";
 import { buildTestRegistry } from "../extensions/registry/__fixtures__/build-test-registry.ts";
 import { getRegistry, insertRegistry } from "../extensions/registry/registry-store.ts";
-import { recordTrustStatements } from "../extensions/trust/trust-store.ts";
+import {
+  recordTrustStatements,
+  replaceCurrentVerifications,
+} from "../extensions/trust/trust-store.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { encodeBase64 } from "../util/base64.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -411,6 +414,7 @@ describe("registry.search and registry.info", () => {
         latestStable: "1.1.0",
         latestBeta: "1.2.0-beta.1",
         blocked: false,
+        verifiedPublisher: null,
       },
       {
         registry: "second",
@@ -420,8 +424,48 @@ describe("registry.search and registry.info", () => {
         latestStable: "2.0.0",
         latestBeta: null,
         blocked: false,
+        verifiedPublisher: null,
       },
     ]);
+  });
+
+  test("search and info report the verified publisher when the current Nimbus verification lists the key (R6)", async () => {
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [{ version: "1.0.0", channel: "stable", name: "Tool" }],
+      },
+    });
+    pin("main", tmp);
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 90);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const vouch = await signTrustStatement(
+      {
+        kind: "publisher.verified",
+        issuedAt: "2026-10-27T12:00:00Z",
+        signerKey: nimbusKey,
+        publisherId: "acme",
+        keys: [ROOT_KEY],
+        github: "acme-dev",
+        verifiedAt: "2026-10-20T00:00:00Z",
+      },
+      seed,
+    );
+    replaceCurrentVerifications(db, [vouch], nimbusKey, 1);
+    const badge = { github: "acme-dev", verifiedAt: "2026-10-20T00:00:00Z" };
+    const search = (await call("registry.search", { query: "tool" })) as {
+      value: { results: Array<{ verifiedPublisher: unknown }> };
+    };
+    expect(search.value.results[0]?.verifiedPublisher).toEqual(badge);
+    const info = (await call("registry.info", { id: "acme.tool" })) as {
+      value: { verifiedPublisher: unknown };
+    };
+    expect(info.value.verifiedPublisher).toEqual(badge);
+    replaceCurrentVerifications(db, [], nimbusKey, 2);
+    const after = (await call("registry.search", { query: "tool" })) as {
+      value: { results: Array<{ verifiedPublisher: unknown }> };
+    };
+    expect(after.value.results[0]?.verifiedPublisher).toBeNull();
   });
 
   test("search marks an extension whose newest offered version is taken down (I48)", async () => {
@@ -532,6 +576,7 @@ describe("registry.search and registry.info", () => {
       id: "acme.tool",
       publisherId: "acme",
       publisherFingerprint: FINGERPRINT,
+      verifiedPublisher: null,
       versions: [
         {
           version: "1.1.0",

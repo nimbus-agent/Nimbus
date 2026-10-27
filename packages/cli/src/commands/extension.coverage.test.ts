@@ -114,9 +114,9 @@ describe("runExtensionList — edges", () => {
       else process.env["NO_COLOR"] = savedNoColor;
     }
     // The publisher-less row is the one the renderer colours.
-    expect(suppressed).toContain("(unverified)");
+    expect(suppressed).toContain("(unsigned)");
     expect(suppressed).not.toContain(ESC);
-    expect(empty).toContain(`${ESC}2;33m(unverified)`);
+    expect(empty).toContain(`${ESC}2;33m(unsigned)`);
   });
 
   test("--tree treats an info reply with no forwardDeps as a leaf", async () => {

@@ -70,7 +70,15 @@ import {
 } from "../extensions/run-grant-store.ts";
 import { extensionRunFields } from "../extensions/run-state.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
-import { blocksForInstalled, type TrustBlock } from "../extensions/trust/trust-blocks.ts";
+import {
+  blockSubjectForInstalled,
+  blocksForInstalled,
+  type TrustBlock,
+} from "../extensions/trust/trust-blocks.ts";
+import {
+  type VerifiedPublisher,
+  verifiedPublisherFor,
+} from "../extensions/trust/verified-publisher.ts";
 import { verifyOneExtensionStrict } from "../extensions/verify-extensions.ts";
 import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
 import { newestPrevVersion, removeExtensionVersionStore } from "../extensions/version-store.ts";
@@ -512,6 +520,8 @@ async function stopExtensionBestEffort(
 
 type ExtensionListItem = ExtensionRow &
   ReturnType<typeof extensionRunFields> & {
+    /** R6: the current Nimbus verification lists the key that verified this copy (null otherwise). */
+    verifiedPublisher: VerifiedPublisher | null;
     disabled_reason?:
       | typeof PRE_T2_DISABLE_REASON
       | typeof RECOVERED_PENDING_REHASH_REASON
@@ -544,6 +554,23 @@ function trustBlocksOf(db: Database, row: ExtensionRow): TrustBlock[] {
   }
 }
 
+/**
+ * The verified publisher of an installed copy (R6), from the same subject its trust blocks use. No
+ * badge unless the copy still matches the manifest and entry hashes recorded at install
+ * (`verifyOneExtensionStrict`) — a durable check, unlike the per-boot signature registry, which a
+ * restart clears and which a hash-only boot failure never marks — and none for a copy this boot's
+ * signature check disabled, or whose manifest no longer reads.
+ */
+function verifiedPublisherOf(db: Database, row: ExtensionRow): VerifiedPublisher | null {
+  if (preT2DisabledIds().includes(row.id) || signatureDisabledRegistry.has(row.id)) return null;
+  try {
+    if (!verifyOneExtensionStrict(row)) return null;
+    return verifiedPublisherFor(db, blockSubjectForInstalled(row, readVerifiedManifest(row)));
+  } catch {
+    return null;
+  }
+}
+
 function decorateExtensionList(
   db: Database,
   rows: readonly ExtensionRow[],
@@ -553,12 +580,10 @@ function decorateExtensionList(
   const preT2 = new Set(preT2DisabledIds());
   const signature = new Map(signatureDisabledRegistry.list().map((e) => [e.id, e.reason]));
   return rows.map((r) => {
-    const run = extensionRunFields(
-      r,
-      grants.get(r.id) ?? null,
-      isRunning(r.id),
-      trustBlocksOf(db, r),
-    );
+    const run = {
+      ...extensionRunFields(r, grants.get(r.id) ?? null, isRunning(r.id), trustBlocksOf(db, r)),
+      verifiedPublisher: verifiedPublisherOf(db, r),
+    };
     if (preT2.has(r.id)) {
       return { ...r, ...run, disabled_reason: PRE_T2_DISABLE_REASON, needs_reinstall: true };
     }
@@ -602,12 +627,15 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
   }
   const fwd = forwardDeps(ctx.db, row.id);
   const rev = reverseDeps(ctx.db, row.id);
-  const run = extensionRunFields(
-    row,
-    getRunGrant(ctx.db, row.id),
-    isRunningIn(ctx, row.id),
-    trustBlocksOf(ctx.db, row),
-  );
+  const run = {
+    ...extensionRunFields(
+      row,
+      getRunGrant(ctx.db, row.id),
+      isRunningIn(ctx, row.id),
+      trustBlocksOf(ctx.db, row),
+    ),
+    verifiedPublisher: verifiedPublisherOf(ctx.db, row),
+  };
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {
     return {

@@ -4,6 +4,11 @@
  * registry's index; this file only formats.
  */
 import type { IPCClient } from "../ipc-client/index.ts";
+import {
+  type VerifiedPublisherCli,
+  verifiedPublisherCell,
+  verifiedPublisherLine,
+} from "../lib/verified-publisher-text.ts";
 
 export interface ExtensionRegistryDeps {
   client: IPCClient;
@@ -20,6 +25,8 @@ interface SearchResult {
   latestBeta: string | null;
   /** I48: revoked key or a taken-down newest version. Absent from an older gateway. */
   blocked?: boolean;
+  /** R6: Nimbus verified this publisher and vouches for the index's key. Absent from an older gateway. */
+  verifiedPublisher?: VerifiedPublisherCli | null;
 }
 
 interface InfoVersion {
@@ -38,6 +45,7 @@ interface RemoteInfo {
   id: string;
   publisherId: string;
   publisherFingerprint: string;
+  verifiedPublisher?: VerifiedPublisherCli | null;
   versions: InfoVersion[];
 }
 
@@ -82,12 +90,13 @@ export async function runExtensionSearch(
   } else {
     deps.stdout(
       table(
-        ["Registry", "ID", "Name", "Publisher", "Stable", "Beta"],
+        ["Registry", "ID", "Name", "Publisher", "Verified", "Stable", "Beta"],
         out.results.map((r) => [
           r.registry,
           r.id,
           r.blocked === true ? `${r.name} [blocked]` : r.name,
           r.publisherId,
+          verifiedPublisherCell(r.verifiedPublisher),
           r.latestStable ?? "-",
           r.latestBeta ?? "-",
         ]),
@@ -136,6 +145,7 @@ export async function runExtensionInfoRemote(
   deps.stdout(`Registry:  ${out.registry}\n`);
   deps.stdout(`Publisher: ${out.publisherId}\n`);
   deps.stdout(`  key fingerprint: ${out.publisherFingerprint}\n`);
+  deps.stdout(`  ${verifiedPublisherLine(out.verifiedPublisher)}\n`);
   deps.stdout("Versions:\n");
   for (const v of out.versions) {
     deps.stdout(`  ${v.version}  ${v.channel}  ${v.publishedAt}  ${v.packageSizeBytes} bytes\n`);

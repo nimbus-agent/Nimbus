@@ -76,13 +76,24 @@ function Value({ v, depth }: { readonly v: unknown; readonly depth: number }): R
   return null;
 }
 
+type SignatureStatus = "verified" | "signature_failed" | "publisher_key_conflict";
+
+/** What the gateway says about the publisher (R6), when it says anything. */
+interface PublisherBadge {
+  verified: boolean;
+  text: string;
+}
+
 interface AutoUpdatePayload {
   displayName?: string;
   fromVersion?: string;
   toVersion?: string;
   channel?: string;
   changelog?: string;
-  publisherStatus?: "verified" | "unverified";
+  /** Derived from `verificationStatus` (or, from an older gateway, `publisherStatus`). */
+  signature?: SignatureStatus;
+  badge?: PublisherBadge;
+  notes: string[];
   addedPermissions?: {
     network?: string[];
     filesystem?: { read?: string[]; write?: string[] };
@@ -102,17 +113,63 @@ function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v) => typeof v === "string") : [];
 }
 
+const SIGNATURE_STATUSES: readonly string[] = [
+  "verified",
+  "signature_failed",
+  "publisher_key_conflict",
+];
+
+/**
+ * The update's signature status. `publisherStatus` meant "the signature verified" (never "Nimbus
+ * verified the publisher"), so an older gateway's `verified` still reads as a verified signature.
+ */
+function readSignature(details: Record<string, unknown>): SignatureStatus | undefined {
+  const v = details["verificationStatus"];
+  if (typeof v === "string") {
+    return SIGNATURE_STATUSES.includes(v) ? (v as SignatureStatus) : undefined;
+  }
+  return details["publisherStatus"] === "verified" ? "verified" : undefined;
+}
+
+/**
+ * The verified-publisher badge, from `verifiedPublisher` (rendered here) or, failing a well-formed
+ * one, the gateway's own `publisherBadge` sentence. Neither present (an older gateway, a downgrade):
+ * no badge line at all, rather than a claim the gateway did not make.
+ */
+export function readPublisherBadge(details: Record<string, unknown>): PublisherBadge | undefined {
+  const v = details["verifiedPublisher"];
+  if (v !== null && typeof v === "object") {
+    const rec = v as Record<string, unknown>;
+    const github = rec["github"];
+    const at = rec["verifiedAt"];
+    if (typeof github === "string" && typeof at === "string") {
+      return {
+        verified: true,
+        text: `Verified publisher: @${github} (verified ${at.slice(0, 10)})`,
+      };
+    }
+  }
+  const sentence = readStringField(details, "publisherBadge");
+  if (sentence !== undefined) return { verified: false, text: "Unverified publisher" };
+  return v === null ? { verified: false, text: "Unverified publisher" } : undefined;
+}
+
+/** Owner-relevant notes the gateway attaches to a prompt; each is shown as its own line. */
+const NOTE_FIELDS: readonly string[] = ["publisherChangeNote", "runGrantNote", "trustFeedNote"];
+
+function readNotes(details: Record<string, unknown>): string[] {
+  return NOTE_FIELDS.map((k) => readStringField(details, k)).filter(
+    (n): n is string => n !== undefined && n !== "",
+  );
+}
+
 function readAutoUpdatePayload(details: Record<string, unknown>): AutoUpdatePayload {
   const added = (details["addedPermissions"] ?? {}) as Record<string, unknown>;
   const removed = (details["removedPermissions"] ?? {}) as Record<string, unknown>;
   const addedFs = (added["filesystem"] ?? {}) as Record<string, unknown>;
   const removedFs = (removed["filesystem"] ?? {}) as Record<string, unknown>;
-  const publisherStatusRaw = details["publisherStatus"];
-  const publisherStatus =
-    publisherStatusRaw === "verified" || publisherStatusRaw === "unverified"
-      ? publisherStatusRaw
-      : undefined;
   const out: AutoUpdatePayload = {
+    notes: readNotes(details),
     addedPermissions: {
       network: readStringArray(added["network"]),
       filesystem: {
@@ -138,8 +195,47 @@ function readAutoUpdatePayload(details: Record<string, unknown>): AutoUpdatePayl
   if (ch !== undefined) out.channel = ch;
   const cl = readStringField(details, "changelog");
   if (cl !== undefined) out.changelog = cl;
-  if (publisherStatus !== undefined) out.publisherStatus = publisherStatus;
+  const signature = readSignature(details);
+  if (signature !== undefined) out.signature = signature;
+  const badge = readPublisherBadge(details);
+  if (badge !== undefined) out.badge = badge;
   return out;
+}
+
+/** The signature chip: about the SIGNATURE only; none on a key conflict (it was never checked). */
+function SignatureChip({ status }: { readonly status: SignatureStatus | undefined }): ReactNode {
+  if (status === "verified")
+    return <span className="text-xs text-green-700">signature verified</span>;
+  if (status === "signature_failed") {
+    return <span className="text-xs text-red-700">signature failed</span>;
+  }
+  return null;
+}
+
+function BadgeAndNotes({
+  badge,
+  notes,
+}: {
+  readonly badge: PublisherBadge | undefined;
+  readonly notes: readonly string[];
+}): ReactNode {
+  return (
+    <>
+      {badge !== undefined && (
+        <p
+          data-testid="publisher-badge"
+          className={`text-sm ${badge.verified ? "text-green-700" : "text-[var(--color-fg-muted)]"}`}
+        >
+          {badge.text}
+        </p>
+      )}
+      {notes.map((n) => (
+        <p key={n} className="text-sm">
+          {n}
+        </p>
+      ))}
+    </>
+  );
 }
 
 function PermissionRow({
@@ -198,9 +294,6 @@ function AutoUpdatePreview({
     (added?.network?.length ?? 0) > 0 ||
     (added?.filesystem?.read?.length ?? 0) > 0 ||
     (added?.filesystem?.write?.length ?? 0) > 0;
-  const publisherClass =
-    payload.publisherStatus === "verified" ? "text-green-700" : "text-amber-700";
-
   return (
     <div data-testid="auto-update-preview" className="flex flex-col gap-3">
       <p className="text-sm">
@@ -212,10 +305,9 @@ function AutoUpdatePreview({
         {payload.channel !== undefined && (
           <span className="px-1.5 py-0.5 rounded bg-neutral-200 text-xs">{payload.channel}</span>
         )}{" "}
-        {payload.publisherStatus !== undefined && (
-          <span className={`text-xs ${publisherClass}`}>publisher: {payload.publisherStatus}</span>
-        )}
+        <SignatureChip status={payload.signature} />
       </p>
+      <BadgeAndNotes badge={payload.badge} notes={payload.notes} />
       {payload.changelog !== undefined && payload.changelog !== "" && (
         <details>
           <summary className="text-sm cursor-pointer">Changelog</summary>
@@ -355,9 +447,30 @@ function MigratePreview({ details }: { readonly details: Record<string, unknown>
   );
 }
 
+/** Fields `InstallPreview` renders as the badge or a note; everything else is shown generically. */
+const INSTALL_RENDERED = new Set(["verifiedPublisher", "publisherBadge", ...NOTE_FIELDS]);
+
+/**
+ * `extension.install`: the verified-publisher badge and the notes first, then EVERY other field the
+ * gateway sent, generically — a new field can never be hidden from the owner. Not renderer-callable
+ * (I7), but a CLI-started install's consent can still reach this popup.
+ */
+function InstallPreview({ details }: { readonly details: Record<string, unknown> }): ReactNode {
+  const rest = Object.fromEntries(
+    Object.entries(details).filter(([k]) => !INSTALL_RENDERED.has(k)),
+  );
+  return (
+    <div data-testid="install-preview" className="flex flex-col gap-3">
+      <BadgeAndNotes badge={readPublisherBadge(details)} notes={readNotes(details)} />
+      <PreviewRows record={rest} depth={0} />
+    </div>
+  );
+}
+
 export function StructuredPreview({ details, action }: Props): ReactNode {
   if (!details) return null;
   if (action === "extension.migrate") return <MigratePreview details={details} />;
+  if (action === "extension.install") return <InstallPreview details={details} />;
   if (action === "extension.autoUpdate") {
     return <AutoUpdatePreview payload={readAutoUpdatePayload(details)} direction="upgrade" />;
   }

@@ -8,6 +8,7 @@ import {
   type UpdateApplyResult,
 } from "./auto-update-types.ts";
 import { keyChangeNote } from "./trust/publisher-key-decision.ts";
+import { publisherBadgeText, type VerifiedPublisher } from "./trust/verified-publisher.ts";
 
 interface PlannedAction {
   type: typeof ACTION_TYPE_AUTO_UPDATE | typeof ACTION_TYPE_DOWNGRADE;
@@ -35,6 +36,12 @@ export interface AutoUpdateRpcDeps {
    * under. Absent ⇒ not checked here (apply still re-checks it).
    */
   isSourceCurrent?: (cached: AvailableUpdate) => Promise<boolean>;
+  /**
+   * The verified publisher (R6) of a cached update's key, asked each time an update is served or
+   * prompted — never stored on the cache entry, so a verification replaced or a key revoked after
+   * detection takes the badge away at once. Absent ⇒ every update shows as unverified.
+   */
+  verifiedPublisherOf?: (cached: AvailableUpdate) => VerifiedPublisher | null;
 }
 
 const mutex = new Map<string, Promise<void>>();
@@ -42,6 +49,12 @@ const mutex = new Map<string, Promise<void>>();
 /** The consent note an update shows when it will leave the extension's run grant stale. */
 export function runGrantNoteFor(id: string): string {
   return `Running the new version will need a new \`nimbus extension approve ${id}\`.`;
+}
+
+/** R6 for an update: never a badge for code whose signature did not verify. */
+function updateBadge(cached: AvailableUpdate, deps: AutoUpdateRpcDeps): VerifiedPublisher | null {
+  if (cached.verificationStatus !== "verified") return null;
+  return deps.verifiedPublisherOf?.(cached) ?? null;
 }
 
 function publisherChangeFields(cached: AvailableUpdate): Record<string, unknown> {
@@ -58,6 +71,7 @@ function buildUpdateAction(
   cached: AvailableUpdate,
   isDowngrade: boolean,
   hasRunGrant: boolean,
+  badge: VerifiedPublisher | null,
 ): PlannedAction {
   return {
     type: isDowngrade ? ACTION_TYPE_DOWNGRADE : ACTION_TYPE_AUTO_UPDATE,
@@ -69,6 +83,8 @@ function buildUpdateAction(
       channel: cached.channel,
       changelog: cached.changelog,
       publisherStatus: cached.publisherStatus,
+      // The desktop labels the SIGNATURE from this, never `publisherStatus` as "publisher: verified".
+      verificationStatus: cached.verificationStatus,
       addedPermissions: {
         network: cached.permissionDiff.network.added,
         filesystem: {
@@ -91,6 +107,8 @@ function buildUpdateAction(
       ...(hasRunGrant && { runGrantNote: runGrantNoteFor(cached.id) }),
       // A publisher key change, stated in the prompt (fingerprints only; never `*Key`-named).
       ...publisherChangeFields(cached),
+      // A downgrade restores a local previous version, which the update's key does not describe.
+      ...(!isDowngrade && { verifiedPublisher: badge, publisherBadge: publisherBadgeText(badge) }),
     },
   };
 }
@@ -238,7 +256,9 @@ async function handleExtensionUpdate(
   const { cached, isDowngrade } = target;
 
   const hasRunGrant = (await deps.hasRunGrant?.(cached.id)) === true;
-  const gateResult = await deps.gate(buildUpdateAction(cached, isDowngrade, hasRunGrant));
+  const gateResult = await deps.gate(
+    buildUpdateAction(cached, isDowngrade, hasRunGrant, updateBadge(cached, deps)),
+  );
   if (gateResult !== "proceed") {
     return { applied: false, reason: "user_rejected" };
   }
@@ -255,7 +275,7 @@ export async function dispatchAutoUpdateRpc(
     if (params["force"] === true) {
       await deps.forcePoll();
     }
-    return deps.cache.list();
+    return deps.cache.list().map((u) => ({ ...u, verifiedPublisher: updateBadge(u, deps) }));
   }
 
   if (method === "extension.update") {

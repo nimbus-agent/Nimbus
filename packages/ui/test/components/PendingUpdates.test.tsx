@@ -51,7 +51,19 @@ describe("PendingUpdates", () => {
     expect(screen.getByText(/X/)).toBeInTheDocument();
     expect(screen.getByText(/1\.0\.0 → 1\.1\.0/)).toBeInTheDocument();
     expect(screen.getByText("stable")).toBeInTheDocument();
-    expect(screen.getByText(/publisher: verified/)).toBeInTheDocument();
+    expect(screen.getByText("signature verified")).toBeInTheDocument();
+    expect(screen.queryByText(/publisher: verified/)).toBeNull();
+    expect(screen.getByTestId("publisher-badge-com.x.a").textContent).toBe("Unverified publisher");
+  });
+
+  it("names a verified publisher when the gateway reports one (R6)", async () => {
+    callMock.mockResolvedValue([
+      sample({ verifiedPublisher: { github: "acme-dev", verifiedAt: "2026-10-20T00:00:00Z" } }),
+    ]);
+    render(<PendingUpdates offline={false} />);
+    const badge = await screen.findByTestId("publisher-badge-com.x.a");
+    expect(badge.textContent).toBe("Verified publisher @acme-dev");
+    expect(badge.className).toContain("text-green-700");
   });
 
   it("fires extension.update on click when verified", async () => {

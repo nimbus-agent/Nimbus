@@ -18,6 +18,19 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-27 — Marketplace trust layer PR 3c of 5: the verified-publisher badge (spec R6; no migration, no new invariant,
+  no new IPC method).** Wherever Nimbus shows an extension with publisher data it says `Verified publisher: @handle
+  (verified <date>)` exactly when the current Nimbus verification lists the key that verified (or would verify) the code
+  and that key is not revoked here, and `Unverified publisher` otherwise: `extension search` (a Verified column), `info`
+  (installed and remote), `list` (a marker), the update listing, the install and update prompts (CLI through the consent
+  Details, desktop through new install and update previews). One gateway function decides it with the same subject the
+  blocks use. The update badge is computed when served, never cached; the install badge is asked only after the source
+  manifest's signature verifies, so a forged manifest claiming a verified key shows as unverified. The misleading
+  `publisher: verified` label (it meant "the signature verified") is gone from the CLI and desktop; signatures are
+  labelled as signatures, and an extension with no publisher reads `(unsigned)`, not `(unverified)`. The desktop update
+  preview now also shows the publisher-key-change and run-grant notes it used to drop. No trust feed is baked yet, so
+  every publisher shows as unverified until PR 5.
+
 - **2026-10-26 — Marketplace trust layer PR 3b of 5: publisher key statements through a registry (schema V77, no new
   invariant; I48's scope amended).** A publisher signs a rotation or a revocation with `nimbus extension key
   rotate|revoke` and sends it with the next publish (`nimbus extension publish --statement <file>`, repeatable; `registry
