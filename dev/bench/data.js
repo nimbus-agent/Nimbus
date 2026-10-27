@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793034725120,
+  "lastUpdate": 1793081704766,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c335f35808bb0f744c7eeacab2ea6be8497eb2b5",
-          "message": "ci(release): alert when a channel publish fails, and check channel drift daily (#1133)\n\nCloses the detection gap behind the winget outage: the winget job failed\n**nine consecutive times** across v1.20.0 → v1.26.0 and alerted nobody\nfor six days.\n\n## Why nothing fired\n\nTwo independent holes, and each needs its own fix:\n\n1. **`publish-package-managers.yml` runs on `workflow_run`.** Nothing\nblocks on it, no PR turns red, and the only notification goes to the\nupstream run's actor. brew/scoop kept succeeding in the same run, so\neven the run list looked half-healthy. `release.yml` has filed a\nrelease-health issue on failure since it shipped — this workflow, one\nstep closer to users, had no such thing.\n2. **`audit:release-staleness` ran weekly**, inside\n`org-drift-sweep.yml`. The break landed on a Tuesday, one day after the\nsweep, so the next scheduled look was six days out — and that job was\n*already red* on an unrelated edge, so a new finding would have been\ninvisible anyway. A red job inside a large sweep is not a signal anyone\nreads.\n\n## Changes\n\n**Alert at the source** — `publish-package-managers.yml` gains\n`alert-on-failure` (on `failure()`) and `resolve-alert` (on\n`success()`), mirroring `release.yml`'s proven `alert-on-failure` block.\nOne issue per key rather than per tag: this failure mode recurs every\nrelease until someone fixes the cause, and nine issues for one root\ncause is noise people filter. The state hash still comments on each new\ntag, so a recurrence stays visible without a new thread.\n\n**Detect independently** — `release-staleness` moves out of the weekly\nsweep into `release-channel-drift.yml` on a **daily** cron, filing a\n`release-health` issue whose body carries the actual findings and\nclosing it when they clear. This catches what an alert on failure\ncannot: our publish going green while the channel still doesn't serve\nthe version — a winget PR that Microsoft's validation closes unmerged\nlooks exactly like success from here.\n\n**`open-health-issue.ts`** — the CLI entry point gains `HEALTH_RESOLVE`,\nexposing the already-exported `closeHealthIssue` so an alert can clear\nitself. An alert that stays red once fixed is the disease, not the cure.\nNo open issue for the key is success, not an error.\n\nPublic reads only in both workflows; `github.token` with `issues:\nwrite`, no App token and no PAT.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED, including `audit:workflow-lint`,\n`audit:action-sha-pins` and `audit:consumed-by` over the new workflow.\n- `bun test scripts/release/open-health-issue.test.ts` — 6 pass, 0 fail.\n- Both new CLI paths exercised live against this repo:\n`HEALTH_RESOLVE=1` with a key owning no issue → clean no-op, exit 0;\nomitting `HEALTH_TITLE` without `HEALTH_RESOLVE` → exit 2 with the\nreason.\n- The capture step was simulated locally against the real audit: exit 1,\nfindings redirected to `findings.txt`, and the composed issue body\nrenders them in a fenced block.\n\n## Heads-up: this alert starts red, for a real reason\n\nThe audit's one current finding is pre-existing and unrelated to winget:\n\n```\n::error::sdk:nimbus-vscode: 1.10.0 < npm 1.16.0 and no bump PR open\n```\n\n`nimbus-vscode`'s lockfile resolves `@nimbus-dev/sdk` 1.10.0 while npm\n`@latest` is 1.16.0. It has been red in the weekly sweep since at least\n2026-08-03 with nobody acting — which is the strongest evidence for this\nPR's premise. Once this merges, the first daily run files an issue for\nit. That is correct behaviour, but it means the new channel is red on\nday one, and fixing it needs a PR in `nimbus-vscode`, not here.",
-          "timestamp": "2026-08-09T18:15:29Z",
-          "tree_id": "7d992877261971aade45cd85ff5a35aeb8aae620",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c335f35808bb0f744c7eeacab2ea6be8497eb2b5"
-        },
-        "date": 1786300020020,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.22387935000154,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.8152515000023,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 200.8286087999968,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e57561067bf9edb3ac47728ee19b605782857a92",
+          "message": "feat(trust): publishers rotate and revoke keys through a registry (extension key rotate|revoke, publish --statement) (#1793)\n\nTrust layer PR 3b of 5 (Phase 9.5 project 3). PR 3a taught the gateway\nto follow a publisher's key rotations. This PR gives a real registry a\nway to deliver them: a publisher signs a rotation or revocation, it\nrides a publish into the signed index, and the registry accepts versions\nsigned by the rotated key.\n\nThe spec's PR 3 was \"rotation + badge\". It is split: 3a shipped the\ngateway side, this PR covers publisher statements through a registry,\nand the verified-publisher badge (R6) is PR 3c.\n\n## What changes\n\n- **`nimbus extension key rotate|revoke`** (new, offline). Writes a\n`key.rotate` signed by the old key, or a `key.revoke` signed by the key\nit revokes, to `<statement id>.json`. Seeds are never printed and are\nzeroed after use. For a revocation, the command points at a\nstatement-only pull request, because a revoked current key can no longer\npublish.\n- **One admission rule, `admitPublisherStatements`**\n(`@nimbus-dev/registry-format`). It is called by CLI `publish`,\n`registry maintain add`, and the registry action's `check` and `sign`,\nso they cannot disagree. A statement is admitted only if it is:\n  - self-signed;\n  - for a publisher that already has an extension in the index;\n- signed by a key the index binds to that publisher, directly or through\nADMITTED rotations.\n\nAdmission runs to a joint fixed point. In each round, revocations are\nadmitted before rotations, so a rotation from a key revoked in the same\nbatch is refused (R3). A refused rotation never lets its target's\nrevocation in. A rotation is refused if it forks, if it loops back to a\nkey already reached, or if its source is revoked or tainted (R4). Caps:\n20 rotations and 50 statements per publisher, 1,000 statements per\nindex. A statement, once signed into the index, is never removed.\n- **`validatePublish`** now accepts the publisher's CURRENT key: the one\nkey that every bound key leads to through admitted rotations, provided\nit is not revoked.\n- A key that rotated away stays superseded, even if its successor is\nlater revoked.\n- Refusals name the case: superseded, fork, or unrelated (with a hint to\npass `--statement`). A revoked key gets the new\n`ERR_REGISTRY_PUBLISHER_KEY_REVOKED`.\n- The first version under a new key of an existing extension must be\nstable.\n- **Registry action.**\n- `sign` admits `statements/*.json` before validating versions, and\nmoves an extension's entry to the rotated key. A statement-only run\nstill re-signs, so a revocation reaches clients.\n- `check` accepts statement files in the path rule and allows a\nstatement-only pull request. It admits the base branch's not-yet-signed\nstatements first, as `sign` will, and fails on any statement of this\npull request that `sign` would skip.\n- **`extension publish --statement <file>`** (repeatable) commits\n`statements/<id>.json` in the same pull request. It also names the\npublisher's other extensions still bound to the old key. **`registry\nmaintain add --statement`** does the same for local-folder registries.\n- **Gateway, one change.** A registry's listed publisher keys are now\nclosed in both directions over its rotations. Without that, once the\nregistry moved an entry to K2, every machine not still on K1 dropped a\nlater revocation of K1, and R4 never applied there.\n- The pure rotation-graph walk moved from the gateway into\n`registry-format`, so the gateway and the validator share it.\n\n## Stated bounds\n\nThese are documented in `architecture.md` and the I44 bound 6 in\n`SECURITY-INVARIANTS.md`:\n\n- Versions signed by an earlier key can no longer be installed from that\nregistry by explicit version. Installed copies keep running, and\n`extension downgrade` restores from the local version store.\n- A sibling extension still bound to the old key is a key conflict for a\nclient that trusts only the new key, because R5 follows rotations\nforward only. `publish` names those siblings.\n\n## Review\n\n- **Plan:** reviewed by the Antigravity CLI, which raised 11 findings. 9\nwere applied and 2 declined with reasons.\n- **Final whole-branch review:** a fresh reviewer found 0 Critical, 4\nImportant and 5 Minor. All nine are fixed, each with a test that failed\nfirst: I1 client closure, I2 superseded key revived, I3 beta under new\nkey, I4 refused rotations widening reach, M1 check vs sign, M2 tainted\nsource, M3 loops, M4 revoke hint, M5 seed zeroing. M5 has no such test,\nbecause internal buffers are not observable.\n\n**One follow-up, outside this diff, in PR 3a's gateway code.** A hostile\nthird-party registry can list a victim's publisher id under its own key\nS, then publish `rotate S to K_victim` plus `revoke S`, both self-signed\nby S. The gateway stores both, and R4 taint then blocks K_victim on\nmachines that have that registry configured, including the victim's\nextensions from other registries. This needs a design decision before it\nis fixed: taint only keys this machine accepted through that rotation,\nor scope publisher-signed statements from third-party registries.\n\nAlso fixed: stale trust-layer status lines in `architecture.md` and\n`cli-reference.md`, and I44 bound 6, which still said rotation was a\nlater project.\n\n## Verification\n\n- `bun run preflight:fast`: all gates green.\n- Full serial run: `registry-format` 408, the registry action 104,\n`cli/src` 4714, `gateway/src` 21309 plus the one test later fixed,\n`gateway/test` 3135, `scripts` 2393. The 5 local `scripts` failures are\nthe `ps1` tests, which need `pwsh` on PATH; that is an environment issue\nthat also fails on main.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added offline commands for creating signed publisher-key rotation and\nrevocation statements.\n- Publishing workflows can now submit statements with extensions or on\ntheir own. Verified rotations allow publishing under a new key, while\nrevocations and superseded or otherwise invalid keys are rejected.\n- Registry checks and signing now admit valid statements and update\npublisher records when a rotated key is used.\n\n- **Documentation**\n- Updated CLI, registry, security, and roadmap documentation with the\nnew key-management and statement-submission workflows and their limits.\n\n- **Tests**\n- Added coverage for statement admission, key rotation and revocation,\npublishing, and registry checks.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T06:06:54Z",
+          "tree_id": "957d34fbf07737a66f4970627f24d8a3987d0d22",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e57561067bf9edb3ac47728ee19b605782857a92"
+        },
+        "date": 1793081701121,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 213.71229225000243,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 210.40004060000211,
             "unit": "ms"
           }
         ]
