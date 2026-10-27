@@ -15,11 +15,13 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   emptyIndex,
+  emptyTrustFeed,
   packExtensionDir,
   publicKeyFromSeed,
   publisherKeyFingerprint,
   type RegistryIndex,
   signIndex,
+  signTrustFeed,
   signTrustStatement,
   type TrustStatement,
   trustStatementId,
@@ -348,4 +350,41 @@ export function writeRequest(root: string, name: string, request: unknown): stri
   const rel = `trust-requests/${name}.json`;
   write(root, rel, `${JSON.stringify(request, null, 2)}\n`);
   return rel;
+}
+
+/** The Nimbus trust feed's repository as `trust maintain init --github` lays it out (trust layer PR 4b). */
+export async function makeTrustFeedRepo(
+  root: string,
+  rootSeed: Uint8Array = ROOT_SEED,
+): Promise<RegistryRepo> {
+  const maintainer = join(root, "maintainer");
+  mkdirSync(maintainer, { recursive: true });
+  git(maintainer, "init", "-q", "-b", "main");
+  write(maintainer, "nimbus-trust.json", `${JSON.stringify({ format: 1 }, null, 2)}\n`);
+  for (const d of ["publishers", "requests", "statements"]) write(maintainer, `${d}/.gitkeep`, "");
+  write(maintainer, ".github/workflows/trust-sign.yml", "name: sign\n");
+  git(maintainer, "add", "-A");
+  git(maintainer, "commit", "-q", "-m", "init");
+
+  git(maintainer, "checkout", "-q", "--orphan", "gh-pages");
+  git(maintainer, "rm", "-rq", "--cached", ".");
+  git(maintainer, "clean", "-fdq");
+  const feed = await signTrustFeed(
+    emptyTrustFeed(b64(publicKeyFromSeed(rootSeed)), "2026-10-27T00:00:00.000Z"),
+    rootSeed,
+  );
+  write(maintainer, "trust.json", `${JSON.stringify(feed, null, 2)}\n`);
+  write(maintainer, ".nojekyll", "");
+  git(maintainer, "add", "trust.json", ".nojekyll");
+  git(maintainer, "commit", "-q", "-m", "site");
+  git(maintainer, "checkout", "-q", "main");
+
+  const origin = join(root, "origin.git");
+  git(root, "init", "-q", "--bare", "-b", "main", origin);
+  const originUrl = pathToFileURL(origin).href;
+  git(maintainer, "remote", "add", "origin", originUrl);
+  git(maintainer, "push", "-q", "origin", "main", "gh-pages");
+  const workspace = join(root, "workspace");
+  git(root, "clone", "-q", "--branch", "main", originUrl, workspace);
+  return { root, origin, originUrl, maintainer, workspace };
 }

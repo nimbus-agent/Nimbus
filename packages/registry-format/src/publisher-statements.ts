@@ -114,10 +114,11 @@ function stateOf(
   index: StatementIndex,
   publisherId: string,
   list = indexedPublisherStatements(index),
+  bound = boundKeys(index, publisherId),
 ): PublisherState {
   const mine = list.filter((s) => s.publisherId === publisherId);
   return {
-    bound: boundKeys(index, publisherId),
+    bound: new Set(bound),
     rotations: rotationsOf(mine),
     revokedFps: new Set(
       mine
@@ -218,8 +219,42 @@ interface Parsed {
 
 type Skip = (id: string | undefined, reason: string) => void;
 
+/**
+ * Who admits: a registry (the default — a publisher's bound keys are its index entries' keys, at
+ * most `MAX_REGISTRY_STATEMENTS` statements) or another document that supplies them, e.g. the Nimbus
+ * trust feed, whose bound keys are the publisher's Nimbus-verified keys.
+ */
+export interface AdmissionOptions {
+  /** The keys (base64) bound to `publisherId`; default: the index's entries for it. */
+  readonly boundKeys?: (publisherId: string) => ReadonlySet<string>;
+  /** The document's statement cap; default `MAX_REGISTRY_STATEMENTS`. */
+  readonly maxStatements?: number;
+  /** How messages name the document; default `"this index"`. */
+  readonly where?: string;
+  /** Why a publisher with no bound key is refused; default: it has no extension in the index. */
+  readonly unbound?: (publisherId: string) => string;
+}
+
+/** `AdmissionOptions` with every default resolved against `index`. */
+interface Admitter {
+  bound: (publisherId: string) => ReadonlySet<string>;
+  cap: number;
+  where: string;
+  unbound: (publisherId: string) => string;
+}
+
+function admitterOf(index: StatementIndex, opts: AdmissionOptions): Admitter {
+  return {
+    bound: opts.boundKeys ?? ((publisherId) => boundKeys(index, publisherId)),
+    cap: opts.maxStatements ?? MAX_REGISTRY_STATEMENTS,
+    where: opts.where ?? "this index",
+    unbound:
+      opts.unbound ?? ((publisherId) => `publisher ${publisherId} has no extension in this index`),
+  };
+}
+
 /** Structural checks: parses, a publisher kind, signed by the key it concerns, a known publisher. */
-function structural(index: StatementIndex, raw: unknown, skip: Skip): Parsed | undefined {
+function structural(at: Admitter, raw: unknown, skip: Skip): Parsed | undefined {
   let s: TrustStatement;
   try {
     s = parseTrustStatement(raw);
@@ -239,8 +274,8 @@ function structural(index: StatementIndex, raw: unknown, skip: Skip): Parsed | u
     skip(id, `${s.kind} is not signed by the key it concerns`);
     return undefined;
   }
-  if (boundKeys(index, s.publisherId).size === 0) {
-    skip(id, `publisher ${s.publisherId} has no extension in this index`);
+  if (at.bound(s.publisherId).size === 0) {
+    skip(id, at.unbound(s.publisherId));
     return undefined;
   }
   return { id, s };
@@ -270,11 +305,13 @@ interface Budget {
   total: number;
   /** This publisher's admitted publisher statements, index and new. */
   publisher: number;
+  cap: number;
+  where: string;
 }
 
 function hasRoom(budget: Budget, id: string, publisherId: string, skip: Skip): boolean {
-  if (budget.total >= MAX_REGISTRY_STATEMENTS) {
-    skip(id, `the index is at its statement cap (${String(MAX_REGISTRY_STATEMENTS)})`);
+  if (budget.total >= budget.cap) {
+    skip(id, `${budget.where} is at its statement cap (${String(budget.cap)})`);
     return false;
   }
   if (budget.publisher >= MAX_STATEMENTS_PER_PUBLISHER) {
@@ -385,7 +422,7 @@ function leftoverReason(run: Run, p: Parsed, publisherId: string): string {
   if (p.s.kind === "key.rotate" && fromRevoked(run, p.s)) {
     return `from revoked key ${publisherKeyFingerprint(p.s.fromKey)}`;
   }
-  return `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in this index (directly or through an admitted rotation)`;
+  return `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in ${run.budget.where} (directly or through an admitted rotation)`;
 }
 
 /**
@@ -431,14 +468,14 @@ function admitForPublisher(
 
 /** Candidates that passed the structural checks, deduplicated, minus those already in the index. */
 function newCandidates(
-  index: StatementIndex,
+  at: Admitter,
   raws: readonly unknown[],
   existingIds: ReadonlySet<string>,
   skip: Skip,
 ): Parsed[] {
   const byId = new Map<string, Parsed>();
   for (const raw of raws) {
-    const p = structural(index, raw, skip);
+    const p = structural(at, raw, skip);
     if (p !== undefined && !existingIds.has(p.id)) byId.set(p.id, p);
   }
   return [...byId.values()].sort((a, b) => codeUnitCompare(a.id, b.id));
@@ -446,12 +483,15 @@ function newCandidates(
 
 /**
  * Decide which of `candidates` (raw parsed JSON values, e.g. the contents of `statements/*.json`)
- * this registry admits, and return the index with them appended. Never throws on data.
+ * this registry admits, and return the index with them appended. Never throws on data. `opts` lets
+ * another document (the trust feed) supply the bound keys, cap and wording; the rules are the same.
  */
 export function admitPublisherStatements<T extends StatementIndex>(
   index: T,
   candidates: readonly unknown[],
+  opts: AdmissionOptions = {},
 ): StatementAdmission<T> {
+  const at = admitterOf(index, opts);
   const existingRaw: unknown[] = Array.isArray(index.statements) ? [...index.statements] : [];
   const indexed = indexedPublisherStatements(index);
   const existingIds = new Set(readStatementList(index.statements).statements.map(trustStatementId));
@@ -459,15 +499,20 @@ export function admitPublisherStatements<T extends StatementIndex>(
   const skip: Skip = (id, reason) => {
     skippedAll.push({ id, reason });
   };
-  const fresh = newCandidates(index, candidates, existingIds, skip);
+  const fresh = newCandidates(at, candidates, existingIds, skip);
   const total = { value: existingRaw.length };
   const admitted: Parsed[] = [];
   const publishers = [...new Set(fresh.map((p) => p.s.publisherId))].sort(codeUnitCompare);
   for (const publisherId of publishers) {
-    const state = stateOf(index, publisherId, indexed);
+    const state = stateOf(index, publisherId, indexed, new Set(at.bound(publisherId)));
     const mine = fresh.filter((p) => p.s.publisherId === publisherId);
     const already = indexed.filter((x) => x.publisherId === publisherId).length;
-    const budget: Budget = { total: total.value, publisher: already };
+    const budget: Budget = {
+      total: total.value,
+      publisher: already,
+      cap: at.cap,
+      where: at.where,
+    };
     admitted.push(...admitForPublisher(publisherId, mine, state, budget, skip));
     total.value = budget.total;
   }

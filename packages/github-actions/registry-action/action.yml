@@ -11,14 +11,14 @@ branding:
 
 inputs:
   mode:
-    description: "Which job this is — one of: check | sign."
+    description: "Which job this is — one of: check | sign (a registry) | trust-check | trust-sign (the Nimbus trust feed)."
     required: true
   default-branch:
-    description: "The branch publish pull requests merge into (sign only). Empty means origin's HEAD."
+    description: "The branch pull requests merge into (sign and trust-sign). Empty means origin's HEAD."
     required: false
     default: ""
   root-key:
-    description: "The registry root signing key (sign only). Pass via an environment secret — never inline."
+    description: "The registry root signing key (sign), or the Nimbus trust root key (trust-sign). Pass via an environment secret — never inline."
     required: false
     default: ""
 

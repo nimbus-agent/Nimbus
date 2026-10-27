@@ -1,13 +1,29 @@
 import { emitAnnotation, getInput, inputEnvName } from "../../shared/gha-io.ts";
 import { runCheck } from "./check.ts";
 import { runSign, type SignOptions } from "./sign.ts";
+import { runTrustCheck } from "./trust-check.ts";
+import { runTrustSign } from "./trust-sign.ts";
 
-export type Mode = "check" | "sign";
+export type Mode = "check" | "sign" | "trust-check" | "trust-sign";
 
-/** The `mode` input, refused unless it is exactly `check` or `sign`. */
+const MODES: readonly Mode[] = ["check", "sign", "trust-check", "trust-sign"];
+
+/** The `mode` input, refused unless it is exactly one of `MODES`. */
 export function parseMode(raw: string): Mode {
-  if (raw === "check" || raw === "sign") return raw;
-  throw new Error(`input "mode" must be "check" or "sign"; got ${JSON.stringify(raw)}`);
+  const mode = MODES.find((m) => m === raw);
+  if (mode !== undefined) return mode;
+  throw new Error(
+    `input "mode" must be "check", "sign", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
+  );
+}
+
+/** The `root-key` input, masked and dropped from the environment before anything else runs. */
+function takeRootKey(): string {
+  const rootKey = requireInput("root-key");
+  maskSecret(rootKey);
+  // Every git child inherits this process's environment: the key must not ride along.
+  delete process.env[inputEnvName("root-key")];
+  return rootKey;
 }
 
 function requireInput(name: string): string {
@@ -60,13 +76,21 @@ function workspace(): string {
 export async function main(): Promise<void> {
   try {
     const mode = parseMode(getInput("mode"));
+    const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef: process.env["GITHUB_BASE_REF"] ?? "" });
+      await runCheck({ workspace: workspace(), baseRef });
+    } else if (mode === "trust-check") {
+      await runTrustCheck({ workspace: workspace(), baseRef });
+    } else if (mode === "trust-sign") {
+      const rootKey = takeRootKey();
+      const defaultBranch = getInput("default-branch");
+      await runTrustSign({
+        workspace: workspace(),
+        rootKey,
+        ...(defaultBranch !== "" && { defaultBranch }),
+      });
     } else {
-      const rootKey = requireInput("root-key");
-      maskSecret(rootKey);
-      // Every git child inherits this process's environment: the key must not ride along.
-      delete process.env[inputEnvName("root-key")];
+      const rootKey = takeRootKey();
       await runSign(
         signOptions(
           workspace(),

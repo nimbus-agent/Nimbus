@@ -1,11 +1,4 @@
-/**
- * `nimbus registry maintain init|add|remove` — offline builder for a signed static extension
- * registry folder (spec § 9). Pure CLI: no gateway, no network, no Vault. The root key is a file
- * holding base64 of the 32-byte Ed25519 seed (the format `nimbus extension keygen` writes).
- */
-import { createHash } from "node:crypto";
 import {
-  chmodSync,
   closeSync,
   existsSync,
   constants as fsConstants,
@@ -19,18 +12,15 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   alreadyCarried,
   emptyIndex,
-  isValidSemver,
   packExtensionDir,
   parseRegistryConfig,
-  parseRegistryRequest,
   publicKeyFromSeed,
   publisherAfterPublish,
   publisherKeyFingerprint,
-  REQUEST_NAME_RE,
   type RegistryConfig,
   RegistryError,
   type RegistryIndex,
@@ -41,12 +31,32 @@ import {
   validatePublish,
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
-import { decodeBase64, encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
+import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
+import {
+  DEFAULT_BUILD,
+  DEFAULT_IO,
+  httpsUrl,
+  isSameOrInside,
+  loadSeed,
+  type MaintainBuild,
+  MaintainError,
+  type MaintainIo,
+  type ParsedArgs,
+  parseArgs,
+  requestFrom,
+  resolveActionPin,
+  resolveDefaultBranch,
+  SITE_FILES,
+  splitIdVersion,
+  writeRequestJson,
+  writeRootKey,
+} from "../lib/maintain-shared.ts";
 import { buildPublishCandidate, DEFAULT_REGISTRY_CONFIG } from "../lib/publish-candidate.ts";
 import { readIndexFile, writeIndexAtomic } from "../lib/registry-index.ts";
 import { admitAllStatements, readStatementArgs } from "../lib/statement-files.ts";
-import { NIMBUS_RELEASE_COMMIT } from "../release-commit.ts";
-import { NIMBUS_VERSION } from "../version.ts";
+
+export type { MaintainBuild, MaintainIo } from "../lib/maintain-shared.ts";
+
 import { ownerNextSteps, registryReadme } from "./registry-templates/readme.ts";
 import {
   type ActionPin,
@@ -54,84 +64,11 @@ import {
   registrySignWorkflow,
 } from "./registry-templates/workflows.ts";
 
-export interface MaintainIo {
-  stdout: (s: string) => void;
-  stderr: (s: string) => void;
-}
-
-const DEFAULT_IO: MaintainIo = {
-  stdout: (s) => process.stdout.write(s),
-  stderr: (s) => process.stderr.write(s),
-};
-
-/** What this binary knows about its own build: the release commit (undefined in a dev build). */
-export interface MaintainBuild {
-  releaseCommit: string | undefined;
-  version: string;
-}
-
-const DEFAULT_BUILD: MaintainBuild = {
-  releaseCommit: NIMBUS_RELEASE_COMMIT,
-  version: NIMBUS_VERSION,
-};
-
 const USAGE =
   "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--statement <file>]... [--key <path>] | remove <dir> <id>[@<version>] [--key <path>] | revoke-key (<dir> | --github <clone>) <fingerprint> --publisher <id> --reason <text> [--key <path>] | takedown (<dir> | --github <clone>) <id>[@<version>] --reason <text> [--publisher <id>] [--key <path>] | set-report-url <dir> <https url> [--key <path>]\n";
 
-class MaintainError extends Error {}
-
-interface ParsedArgs {
-  positional: string[];
-  options: Map<string, string>;
-  /** Every value of a repeatable option, in order. */
-  lists: Map<string, string[]>;
-  flags: Set<string>;
-}
-
-function parseArgs(
-  args: string[],
-  valued: readonly string[],
-  boolean: readonly string[],
-  repeatable: readonly string[] = [],
-): ParsedArgs {
-  const positional: string[] = [];
-  const options = new Map<string, string>();
-  const lists = new Map<string, string[]>();
-  const flags = new Set<string>();
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i] as string;
-    if (valued.includes(a) || repeatable.includes(a)) {
-      const v = args[i + 1];
-      if (v === undefined || v.startsWith("--")) throw new MaintainError(`${a} needs a value`);
-      if (repeatable.includes(a)) lists.set(a, [...(lists.get(a) ?? []), v]);
-      else options.set(a, v);
-      i++;
-    } else if (boolean.includes(a)) {
-      flags.add(a);
-    } else if (a.startsWith("--")) {
-      throw new MaintainError(`unknown option ${a}`);
-    } else {
-      positional.push(a);
-    }
-  }
-  return { positional, options, lists, flags };
-}
-
 function keyPathOf(p: ParsedArgs): string {
   return p.options.get("--key") ?? join(homedir(), ".nimbus", "registry-key");
-}
-
-function loadSeed(keyPath: string): Uint8Array {
-  let seed: Uint8Array;
-  try {
-    seed = decodeBase64(readFileSync(keyPath, "utf8").trim());
-  } catch (e) {
-    throw new MaintainError(
-      `could not read key file ${keyPath}: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-  if (seed.length !== 32) throw new MaintainError(`key file ${keyPath} did not decode to 32 bytes`);
-  return seed;
 }
 
 /** Read the folder's index and require it to be signed by THIS key before anything is changed. */
@@ -173,8 +110,6 @@ async function resign(
   return next;
 }
 
-const COMMIT_SHA_RE = /^[0-9a-f]{40}$/;
-
 /** Options that only mean something with `--github`. */
 const GITHUB_ONLY = [
   "--action-ref",
@@ -182,17 +117,6 @@ const GITHUB_ONLY = [
   "--default-branch",
   "--no-publisher-namespace",
 ] as const;
-
-/**
- * Fixed files of the gh-pages site. `.nojekyll` stops GitHub Pages' Jekyll from dropping paths
- * that start with `_` or `.`; `.gitattributes` keeps git from rewriting the line endings of the
- * hashed and signed bytes the site serves. The sign action builds on the previous site tree, so
- * both survive every sign run.
- */
-const SITE_FILES: ReadonlyArray<readonly [string, string]> = [
-  [".nojekyll", ""],
-  [".gitattributes", "* -text\n"],
-];
 
 /** Everything `init --github` will write, decided and checked before the key is generated. */
 interface GithubPlan {
@@ -202,54 +126,6 @@ interface GithubPlan {
   /** Main-branch files, relative to `<dir>` (`/`-separated), with their contents. */
   mainFiles: ReadonlyArray<readonly [string, string]>;
   configText: string;
-}
-
-function resolveActionPin(p: ParsedArgs, build: MaintainBuild): ActionPin {
-  const given = p.options.get("--action-ref");
-  const commit = given ?? build.releaseCommit;
-  if (commit === undefined) {
-    throw new MaintainError(
-      "--github needs a Nimbus commit to pin the registry action to, and this build has no embedded release commit: pass --action-ref <40-hex commit SHA>",
-    );
-  }
-  if (!COMMIT_SHA_RE.test(commit)) {
-    throw new MaintainError(
-      given === undefined
-        ? `this build's embedded release commit is not a 40-hex SHA (${commit}); pass --action-ref <40-hex commit SHA>`
-        : "--action-ref must be a 40-hex lowercase commit SHA",
-    );
-  }
-  return { commit, version: build.version };
-}
-
-function isSameOrInside(child: string, parent: string): boolean {
-  const rel = relative(resolve(parent), resolve(child));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-/**
- * A conservative subset of git's ref-format rules, so the name is safe both as a branch and inside
- * the emitted YAML: ASCII letters, digits, `.`, `_`, `-` and `/`; no leading `-` or `.`; no `..`,
- * `//`, `/.`, trailing `/` or `.`, or `.lock` suffix.
- */
-const BRANCH_RE = /^\w[\w./-]{0,99}$/;
-
-function resolveDefaultBranch(p: ParsedArgs): string {
-  const branch = p.options.get("--default-branch") ?? "main";
-  const unsafe =
-    !BRANCH_RE.test(branch) ||
-    branch.includes("..") ||
-    branch.includes("//") ||
-    branch.includes("/.") ||
-    branch.endsWith("/") ||
-    branch.endsWith(".") ||
-    branch.endsWith(".lock");
-  if (unsafe) {
-    throw new MaintainError(
-      "--default-branch must be a plain branch name (letters, digits, . _ - /; no leading - or ., no .., no trailing / or .)",
-    );
-  }
-  return branch;
 }
 
 function planGithubInit(
@@ -303,19 +179,6 @@ function planGithubInit(
     }
   }
   return { pin, site, defaultBranch, mainFiles, configText };
-}
-
-function writeRootKey(keyPath: string, privkey: Uint8Array, force: boolean): void {
-  mkdirSync(dirname(keyPath), { recursive: true });
-  try {
-    writeFileSync(keyPath, `${encodeBase64(privkey)}\n`, { flag: force ? "w" : "wx", mode: 0o600 });
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new MaintainError(`refusing to overwrite ${keyPath} without --force`);
-    }
-    throw e;
-  }
-  if (process.platform !== "win32") chmodSync(keyPath, 0o600);
 }
 
 function writeGithubRegistry(dir: string, plan: GithubPlan, index: RegistryIndex): void {
@@ -504,14 +367,6 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
   }
 }
 
-function splitIdVersion(ref: string): { id: string; version: string | undefined } {
-  const at = ref.lastIndexOf("@");
-  if (at > 0 && isValidSemver(ref.slice(at + 1))) {
-    return { id: ref.slice(0, at), version: ref.slice(at + 1) };
-  }
-  return { id: ref, version: undefined };
-}
-
 async function maintainRemove(args: string[], io: MaintainIo): Promise<void> {
   const p = parseArgs(args, ["--key"], []);
   const [dir, ref] = p.positional;
@@ -539,83 +394,16 @@ async function maintainRemove(args: string[], io: MaintainIo): Promise<void> {
   io.stdout(`removed ${what}; sequence ${String(next.sequence)}\n`);
 }
 
-/** An `https:` URL, or a refusal naming the option. */
-function httpsUrl(raw: string, what: string): string {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new MaintainError(`${what} is not a URL`);
-  }
-  if (url.protocol !== "https:") throw new MaintainError(`${what} must be an https: URL`);
-  return url.toString();
-}
-
-/**
- * A file-name-safe slug of an extension id (`/` becomes `-`), short enough that
- * `takedown-<slug>-<8-char hash>` stays within REQUEST_NAME_RE's 64 characters.
- */
-const slugOf = (id: string): string =>
-  id
-    .toLowerCase()
-    .replaceAll("/", "-")
-    .replace(/[^a-z0-9._-]/g, "")
-    .slice(0, 64 - "takedown-".length - "-".length - 8);
-
-/** The request a `revoke-key` / `takedown` invocation describes, checked by the format's rules. */
-function requestFrom(
-  kind: "key.revoke" | "extension.takedown",
-  p: ParsedArgs,
-  subject: string,
-): RegistryRequest {
-  const reason = p.options.get("--reason");
-  if (reason === undefined) throw new MaintainError("--reason <text> is required");
-  const publisher = p.options.get("--publisher");
-  if (kind === "key.revoke") {
-    if (publisher === undefined) throw new MaintainError("revoke-key needs --publisher <id>");
-    return parseRegistryRequest({ kind, publisherId: publisher, keyFingerprint: subject, reason });
-  }
-  const { id, version } = splitIdVersion(subject);
-  return parseRegistryRequest({
-    kind,
-    extensionId: id,
-    ...(publisher === undefined ? {} : { publisherId: publisher }),
-    versions: version === undefined ? "*" : [version],
-    reason,
-  });
-}
-
 /**
  * `--github <clone>`: the root key lives only in the registry's CI, so the request is written as
  * `trust-requests/<name>.json` for a pull request; the sign job signs it on merge, behind the
  * `registry-signing` environment's approval. No git command runs here.
  */
 function writeRequestFile(clone: string, req: RegistryRequest, io: MaintainIo): void {
-  const text = `${JSON.stringify(req, null, 2)}\n`;
-  // The subject plus a short hash of the request: a second block for the same id (another version)
-  // gets its own file, and the identical request maps to the same name.
-  const hash = createHash("sha256").update(text).digest("hex").slice(0, 8);
-  const subject =
-    req.kind === "key.revoke"
-      ? `revoke-${req.keyFingerprint.slice(0, 12)}`
-      : `takedown-${slugOf(req.extensionId)}`;
-  const name = `${subject}-${hash}`;
-  if (!REQUEST_NAME_RE.test(name))
-    throw new MaintainError(`cannot name a request file for ${name}`);
-  const path = join(clone, "trust-requests", `${name}.json`);
-  mkdirSync(join(clone, "trust-requests"), { recursive: true });
-  // Exclusive create (`wx`), so nothing can appear between a check for the file and the write.
-  try {
-    writeFileSync(path, text, { flag: "wx" });
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-    if (readFileSync(path, "utf8") === text) {
-      io.stdout(`${path} already requested; nothing written\n`);
-      return;
-    }
-    throw new MaintainError(
-      `${path} exists with different content; remove it or choose another clone`,
-    );
+  const { path, status } = writeRequestJson(clone, "trust-requests", req);
+  if (status === "same") {
+    io.stdout(`${path} already requested; nothing written\n`);
+    return;
   }
   io.stdout(
     `wrote ${path}\n` +

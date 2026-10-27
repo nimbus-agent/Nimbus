@@ -22,6 +22,7 @@ import {
   parseTrustStatement,
   signTrustStatement,
   type TrustStatement,
+  type UnsignedTrustStatement,
   verifyTrustStatement,
 } from "./trust-statement.ts";
 
@@ -211,18 +212,60 @@ function sameBlock(
 }
 
 /**
- * True when the index already carries `req`'s block: a statement verifying as `registry` under the
- * index's own root, of the same kind and subject (and, for a takedown, versions covering the
- * request's). A publisher-signed or forged statement never counts.
+ * True when the index already carries `req`'s block: a statement verifying as `role` under the
+ * document's own root, of the same kind and subject (and, for a takedown, versions covering the
+ * request's). A publisher-signed or forged statement never counts. `role` is `"registry"` for a
+ * registry index and `"nimbus"` for the trust feed, which passes `extensions: {}` — a feed request
+ * names its takedown's publisher, so none is looked up.
  */
 export function alreadyCarried(
   index: StatementIndex & Pick<RegistryIndex, "rootKey">,
   req: RegistryRequest,
+  role: "registry" | "nimbus" = "registry",
 ): boolean {
+  const roots =
+    role === "nimbus" ? { nimbusRootKey: index.rootKey } : { registryRootKey: index.rootKey };
   return readStatementList(index.statements).statements.some(
     (s) =>
-      verifyTrustStatement(s, { registryRootKey: index.rootKey }) === "registry" &&
+      verifyTrustStatement(s, roots) === role &&
       s.signerKey === index.rootKey &&
       sameBlock(s, req, index),
   );
+}
+
+/**
+ * Signs a request with the Nimbus trust root for the trust feed (`nimbus trust maintain`, the
+ * registry action's `trust-sign`). The feed binds no extensions, so a takedown must name its
+ * publisher; a revocation of the trust root's own key is refused for the reason
+ * `assertRequestSignable` gives for a registry root; and the seed must be `feedRootKey`'s.
+ */
+export async function signFeedRequest(
+  req: RegistryRequest,
+  feedRootKey: string,
+  rootSeed: Uint8Array,
+  issuedAt: string,
+): Promise<TrustStatement> {
+  const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
+  if (signerKey !== feedRootKey) {
+    throw invalid(
+      `the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not the trust feed's root key (${publisherKeyFingerprint(feedRootKey)})`,
+    );
+  }
+  assertFeedRequestSignable(req, feedRootKey);
+  return signTrustStatement({ ...req, issuedAt, signerKey } as UnsignedTrustStatement, rootSeed);
+}
+
+/** Throws when the trust feed could never sign `req`: see `signFeedRequest`. */
+export function assertFeedRequestSignable(req: RegistryRequest, feedRootKey: string): void {
+  if (req.kind === "extension.takedown") {
+    if (req.publisherId === undefined) {
+      throw invalid(
+        `a trust feed takedown of ${req.extensionId} must name its publisher (the feed binds no extensions)`,
+      );
+    }
+    return;
+  }
+  if (req.keyFingerprint === publisherKeyFingerprint(feedRootKey)) {
+    throw invalid("the trust feed cannot revoke its own root key");
+  }
 }

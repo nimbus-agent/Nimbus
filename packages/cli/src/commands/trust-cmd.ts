@@ -1,12 +1,14 @@
 /**
  * `nimbus trust status|refresh` (marketplace trust layer): what the Nimbus trust feed last told this
  * machine, and a manual refresh. Both talk to the running gateway (`trust.status`, `trust.refresh`).
+ * `nimbus trust maintain …` is the feed maintainer's offline tooling (`trust-maintain.ts`).
  */
 import type { IPCClient } from "../ipc-client/index.ts";
 import { withGatewayIpc } from "../lib/with-gateway-ipc.ts";
+import { runTrustMaintain } from "./trust-maintain.ts";
 
 export const TRUST_USAGE =
-  "Usage: nimbus trust status [--json]\n       nimbus trust refresh [--json]\n";
+  "Usage: nimbus trust status [--json]\n       nimbus trust refresh [--json]\n       nimbus trust maintain init|verify-publisher|unverify-publisher|revoke-key|takedown|add-statement|plan|sign ...\n";
 
 export type TrustStatusView = {
   configured: boolean;
@@ -68,6 +70,8 @@ export function formatTrustRefresh(r: TrustRefreshView): string {
 export interface TrustCmdDeps {
   /** Runs `fn` against the running gateway; the default is the shared `withGatewayIpc` lifecycle. */
   readonly withGateway: <T>(fn: (c: IPCClient) => Promise<T>) => Promise<T>;
+  /** `nimbus trust maintain …`: offline, no gateway; returns the exit code. */
+  readonly maintain: (args: string[]) => Promise<number>;
   readonly stdout: (s: string) => void;
   readonly stderr: (s: string) => void;
   readonly exit: (code: number) => never;
@@ -75,6 +79,7 @@ export interface TrustCmdDeps {
 
 const DEFAULT_DEPS: TrustCmdDeps = {
   withGateway: (fn) => withGatewayIpc(fn),
+  maintain: (args) => runTrustMaintain(args),
   stdout: (s) => void process.stdout.write(s),
   stderr: (s) => void process.stderr.write(s),
   exit: (code) => process.exit(code),
@@ -82,6 +87,11 @@ const DEFAULT_DEPS: TrustCmdDeps = {
 
 export async function runTrust(args: string[], deps: TrustCmdDeps = DEFAULT_DEPS): Promise<void> {
   const [sub, ...rest] = args;
+  if (sub === "maintain") {
+    const code = await deps.maintain(rest);
+    if (code !== 0) deps.exit(code);
+    return;
+  }
   const json = rest.includes("--json");
   const unknown = rest.filter((a) => a !== "--json");
   if ((sub !== "status" && sub !== "refresh") || unknown.length > 0) {

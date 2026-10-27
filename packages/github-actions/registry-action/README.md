@@ -1,7 +1,8 @@
 # nimbus-agent/registry-action
 
 First-party GitHub Action run by a Nimbus extension registry repository (the repository
-`nimbus registry maintain init <dir> --github` creates). One action, two modes:
+`nimbus registry maintain init <dir> --github` creates), and by the Nimbus trust feed's repository
+(`nimbus trust maintain init <dir> --github`). One action, four modes:
 
 - **`check`** — on a publish pull request: the reviewer aid. Admits the pull request's
   `statements/<statement id>.json` files (publisher-signed `key.rotate` / `key.revoke`) exactly as
@@ -19,17 +20,27 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   (an unsigned `key.revoke` / `extension.takedown`) with the root key, once per block, and sets the
   index's `reportUrl` to this repository's issue form when it has none. `check` admits a
   request-only pull request under a `MAINTAINER REQUEST` banner.
+- **`trust-check`** — on a pull request to the trust feed: the reviewer aid. Refuses a pull
+  request that changes anything outside `publishers/`, `requests/` and `statements/`, or adds a
+  source file the feed would not sign, and summarises what the merged result would sign under a
+  `NIMBUS TRUST FEED` banner.
+- **`trust-sign`** — on a push to the feed's default branch, behind the `trust-signing`
+  environment's required approval: builds the next `trust.json` from the source with the same
+  builder `nimbus trust maintain sign` runs (`buildTrustFeed` in `registry-format`), signs it with
+  the Nimbus trust root key and pushes it to `gh-pages`. Every block already in the feed is
+  carried; nothing new means no commit.
 
-Both modes read the registry from the git tree, never the working directory: an entry under
-`extensions/` that is not a regular `100644` file (a symlink or a submodule above all) is refused.
+All four modes read the repository from the git tree, never the working directory: an entry under
+`extensions/` (or a trust feed's `publishers/`, `requests/`, `statements/`) that is not a regular
+`100644` file (a symlink or a submodule above all) is refused or skipped.
 
 ## Inputs
 
 | Input | Required | Description |
 | --- | --- | --- |
-| `mode` | yes | `check` or `sign`. Anything else fails. |
-| `default-branch` | no (`sign` only) | The branch publish pull requests merge into. `init --github` writes it into the sign workflow. When empty, `sign` asks for `origin`'s `HEAD`, which is `gh-pages` if that branch was pushed first to an empty repository. |
-| `root-key` | `sign` only | The registry root signing key. Pass it from an environment secret, never inline. |
+| `mode` | yes | `check`, `sign`, `trust-check` or `trust-sign`. Anything else fails. |
+| `default-branch` | no (`sign`, `trust-sign`) | The branch pull requests merge into. `init --github` writes it into the sign workflow. When empty, `sign` asks for `origin`'s `HEAD`, which is `gh-pages` if that branch was pushed first to an empty repository. |
+| `root-key` | `sign`, `trust-sign` | The registry root signing key (`sign`) or the Nimbus trust root key (`trust-sign`). Pass it from an environment secret, never inline. |
 
 ## Building
 

@@ -1893,10 +1893,10 @@ Shipped so far, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
 - **The MCP capture sink, 3 of 3** (2026-10-12 → 2026-10-15; [§ MCP capture sink](#mcp-capture-sink)).
 - **The registry**: the client (2026-10-18), publishing (2026-10-23) and the Readwise unbundling pilot
   ([§ Extension registry client](#extension-registry-client), [§ Connector migration](#connector-migration)).
-- **The trust layer, PRs 1–4a** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
+- **The trust layer, PRs 1–4b** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
   stored, the feed is fetched (unset in this build), revoked or taken-down code is refused (I48), publishers can
   rotate keys, a registry carries their rotations and revocations, the verified-publisher badge is shown, registry
-  maintainers can block, and users can report.
+  maintainers can block, users can report, and Nimbus can run its trust feed.
 - **Role packs, 5 of 5** (2026-10-22 → 2026-10-26). They are config layers rather than an S3 subsystem of
   their own, so they are described where they act: [§ Layered config](#layered-config),
   [§ Source kinds](#source-kinds-decisions-and-glossary-inputs) and the desktop notes in
@@ -2154,7 +2154,7 @@ I44. `registry search` reads the owner's registries only, so it does not include
 
 ### Trust layer
 
-**PRs 2a–3b of 5 (marketplace trust layer, Phase 9.5 project 3; schema migrations V76 (PR 1) and V77 (PR 3b); invariant I48 with static D37).**
+**PRs 2a–4b of 5 (marketplace trust layer, Phase 9.5 project 3; schema migrations V76 (PR 1) and V77 (PR 3b); invariant I48 with static D37).**
 The gateway accepts and stores trust statements (publisher-key revocations, extension takedowns, key rotations and Nimbus
 publisher verifications, PR 2a), refuses revoked or taken-down code at install, update and spawn (PR 2b), and follows a
 publisher's key rotations (PR 3a); a registry admits publishers' own rotations and revocations into its signed index (PR 3b).
@@ -2287,6 +2287,23 @@ only the signed index, so an extension whose manifest fails its hash can still b
 report` uses for the extension's own source registry only — pre-filling public metadata, opening an `https:` URL only
 after a yes on a terminal. Per the owner's 2026-10-27 amendment to R6, a local-path install never carries the
 verified-publisher badge: its manifest signature does not bind its entry file.
+
+**Maintaining the trust feed (PR 4b).** A feed repository's default branch holds the feed's SOURCE, never a signed
+document: `publishers/<publisherId>.json` (the current verification state, R7 — removing the file un-verifies),
+`requests/<name>.json` (Nimbus-root blocks, unsigned) and `statements/<id>.json` (publisher-signed). One pure builder,
+`registry-format`'s `trust-feed-build.ts`, turns (previous signed feed, source) into the next feed: `planTrustFeed` (no key)
+and `buildTrustFeed`. `nimbus trust maintain sign` (a local folder) and the registry action's `trust-sign` mode (behind
+the `trust-signing` environment, the only holder of the trust root key) both run it, and `trust-check` summarises its
+plan on a pull request. Its rules: every RAW entry of the previous feed that is not `publisher.verified` is carried
+verbatim — kinds this version does not know and entries it cannot parse included — so no source deletion and no
+older tool's re-sign removes a block (R1); a request is signed once by meaning (`alreadyCarried` with role `nimbus`);
+an unchanged publisher file keeps its signed statement byte for byte; and publisher statements go through
+`admitPublisherStatements` with the publisher's Nimbus-verified keys as its bound keys, since a feed-carried
+statement applies everywhere (R2) — a stranger's key cannot plant `rotate S→victim` + `revoke S`. Un-verifying
+removes the entry rather than signing one with no keys, which every shipped client would drop as malformed. Stated
+bound: whoever can merge into the feed's default branch and approve the signing run decides what every install
+trusts; `verify-publisher` records the owner's GitHub identity check, it does not perform one. The snapshot refresh
+and its audit land with the bake (PR 5).
 
 **When a block lands.** Every recording path (a verified registry index, the feed, the boot snapshot) hands the ids it newly
 stored to `RegistryFetchDeps.onTrustRecorded`. `extensions/trust/trust-block-enforcer.ts` then stops the running client of
