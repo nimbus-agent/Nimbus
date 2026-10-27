@@ -1,0 +1,43 @@
+[
+  {
+    "verificationResult": {
+      "signature": {
+        "certificate": {
+          "certificateIssuer": "CN=sigstore-intermediate,O=sigstore.dev",
+          "subjectAlternativeName": "https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk",
+          "issuer": "https://token.actions.githubusercontent.com",
+          "githubWorkflowTrigger": "workflow_dispatch",
+          "githubWorkflowSHA": "b300f2ec7ec9dc9addc39b2ad88c54097ded7ca0",
+          "githubWorkflowName": "Deployment",
+          "githubWorkflowRepository": "cli/cli",
+          "githubWorkflowRef": "refs/heads/trunk",
+          "buildSignerURI": "https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk",
+          "buildSignerDigest": "b300f2ec7ec9dc9addc39b2ad88c54097ded7ca0",
+          "runnerEnvironment": "github-hosted",
+          "sourceRepositoryURI": "https://github.com/cli/cli",
+          "sourceRepositoryDigest": "b300f2ec7ec9dc9addc39b2ad88c54097ded7ca0",
+          "sourceRepositoryRef": "refs/heads/trunk",
+          "sourceRepositoryIdentifier": "212613049",
+          "sourceRepositoryOwnerURI": "https://github.com/cli",
+          "sourceRepositoryOwnerIdentifier": "59704711",
+          "buildConfigURI": "https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk",
+          "buildConfigDigest": "b300f2ec7ec9dc9addc39b2ad88c54097ded7ca0",
+          "buildTrigger": "workflow_dispatch",
+          "runInvocationURI": "https://github.com/cli/cli/actions/runs/28622199740/attempts/1",
+          "sourceRepositoryVisibilityAtSigning": "public"
+        }
+      },
+      "statement": {
+        "predicateType": "https://slsa.dev/provenance/v1",
+        "subject": [
+          {
+            "name": "gh_2.96.0_linux_386.deb",
+            "digest": {
+              "sha256": "f146e594bdba65fdc499c43c86d6d07c0e0733257152067c4f9fe2acee4f4629"
+            }
+          }
+        ]
+      }
+    }
+  }
+]
