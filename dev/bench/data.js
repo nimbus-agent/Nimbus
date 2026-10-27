@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793128608824,
+  "lastUpdate": 1793143089851,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "49699333+dependabot[bot]@users.noreply.github.com",
-            "name": "dependabot[bot]",
-            "username": "dependabot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d031579c84629e49be3003077edcc54f0f9a12aa",
-          "message": "chore(deps): bump thiserror from 2.0.19 to 2.0.20 in /packages/ui/src-tauri in the cargo-all-minor-patch group (#1143)\n\nBumps the cargo-all-minor-patch group in /packages/ui/src-tauri with 1\nupdate: [thiserror](https://github.com/dtolnay/thiserror).\n\nUpdates `thiserror` from 2.0.19 to 2.0.20\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a\nhref=\"https://github.com/dtolnay/thiserror/releases\">thiserror's\nreleases</a>.</em></p>\n<blockquote>\n<h2>2.0.20</h2>\n<ul>\n<li>Suppress redundant_field_names clippy lint in generated code (<a\nhref=\"https://redirect.github.com/dtolnay/thiserror/issues/454\">#454</a>)</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a\nhref=\"https://github.com/dtolnay/thiserror/commit/b1d5db5e039275d95bf7536a2b2192aeb4dc28bf\"><code>b1d5db5</code></a>\nRelease 2.0.20</li>\n<li><a\nhref=\"https://github.com/dtolnay/thiserror/commit/c4c3ebd337911af7bad544a9bce03a04bf465384\"><code>c4c3ebd</code></a>\nMerge pull request <a\nhref=\"https://redirect.github.com/dtolnay/thiserror/issues/454\">#454</a>\nfrom dtolnay/clippy</li>\n<li><a\nhref=\"https://github.com/dtolnay/thiserror/commit/2266152b163168df75a3b091208b86dd05485e66\"><code>2266152</code></a>\nSuppress redundant_field_names clippy lint</li>\n<li><a\nhref=\"https://github.com/dtolnay/thiserror/commit/2901cfdc9411e883c9709c5a3adcf1ab2e3651ff\"><code>2901cfd</code></a>\nRaise minimum tested compiler to rust 1.88</li>\n<li><a\nhref=\"https://github.com/dtolnay/thiserror/commit/aa9d91f75302025e0c1d4c535d84a5bfdad62508\"><code>aa9d91f</code></a>\nUpdate ui tests for version 2.0.19</li>\n<li>See full diff in <a\nhref=\"https://github.com/dtolnay/thiserror/compare/2.0.19...2.0.20\">compare\nview</a></li>\n</ul>\n</details>\n<br />\n\n\n[![Dependabot compatibility\nscore](https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=thiserror&package-manager=cargo&previous-version=2.0.19&new-version=2.0.20)](https://docs.github.com/en/github/managing-security-vulnerabilities/about-dependabot-security-updates#about-compatibility-scores)\n\nDependabot will resolve any conflicts with this PR as long as you don't\nalter it yourself. You can also trigger a rebase manually by commenting\n`@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits\nthat have been made to it\n- `@dependabot show <dependency name> ignore conditions` will show all\nof the ignore conditions of the specified dependency\n- `@dependabot ignore <dependency name> major version` will close this\ngroup update PR and stop Dependabot creating any more for the specific\ndependency's major version (unless you unignore this specific\ndependency's major version or upgrade to it yourself)\n- `@dependabot ignore <dependency name> minor version` will close this\ngroup update PR and stop Dependabot creating any more for the specific\ndependency's minor version (unless you unignore this specific\ndependency's minor version or upgrade to it yourself)\n- `@dependabot ignore <dependency name>` will close this group update PR\nand stop Dependabot creating any more for the specific dependency\n(unless you unignore this specific dependency or upgrade to it yourself)\n- `@dependabot unignore <dependency name>` will remove all of the ignore\nconditions of the specified dependency\n- `@dependabot unignore <dependency name> <ignore condition>` will\nremove the ignore condition of the specified dependency and ignore\nconditions\n\n\n</details>\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-11T18:17:32+03:00",
-          "tree_id": "f4293a629053d0267ae3132427d6ac590c843314",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d031579c84629e49be3003077edcc54f0f9a12aa"
-        },
-        "date": 1786462144011,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.62822754999763,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.93566179999726,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 228.0528264499986,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "19cdfe7a81ad0fce55c0a4e7708f0a47147aa062",
+          "message": "fix(deps): @modelcontextprotocol/node 2.1.1 (GHSA-f897-62hf-6gxq) (#1804)\n\nClears GHSA-f897-62hf-6gxq (high, published 2026-10-27 19:02 UTC): the\nMCP TypeScript SDK's HTTP server transports did not limit request body\nsize or JSON-RPC batch length. It affects `@modelcontextprotocol/node`\nfrom 2.0.0 up to (not including) 2.1.0. Our lockfile resolved 2.0.0,\npulled in transitively through `@mastra/mcp@2.1.2`, which pins exactly\n`2.0.0`. Since the advisory was published, `Dependency audit`, a\nrequired check, has been red on every PR, including #1803.\n\n**Fix:** a root `overrides` entry, `\"@modelcontextprotocol/node\":\n\"2.1.1\"`, next to the existing client/core/server overrides (precedent\n#1624). 2.1.1 is patched and declares `peerDependencies: {\n\"@modelcontextprotocol/server\": \"^2.3.0\" }`, so it fits the 2.3.1 line\nalready pinned. 2.1.2 is the newest release, but it requires `server`\n^2.4.0, which would also move client, core and server.\n\n**Verification:**\n- `bun audit --audit-level high` with the accepted-advisory ignores:\nclean.\n- `bun run preflight:fast`: passes, including `audit:override-drift`.\n- Every test beside a file that imports `@mastra/mcp`, plus\n`packages/gateway/src/connectors`: 4249 pass, 0 fail.\n\n**Also carries one `.gitleaks.toml` entry (from #1803).** The PR\ngitleaks scan reads every branch, so #1803's baked trust-feed root key\nreds this PR's `Gitleaks secret scan`. That key is a public Ed25519 key,\nthe `rootKey` of the served `trust.json`. Meanwhile #1803 cannot go\ngreen until this advisory fix is on main. The anchored by-value\nallowlist entry for that key (entry 10, the same shape as entry 9 for\nthe official registry's keys) is cherry-picked here to break the\ndeadlock. #1803 carries the identical change, so it merges cleanly after\nthis.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T23:07:05Z",
+          "tree_id": "f1505106401edadf9106fc0f0315a34933df71dd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/19cdfe7a81ad0fce55c0a4e7708f0a47147aa062"
+        },
+        "date": 1793143085619,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 288.68014425000473,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 287.9809954499957,
             "unit": "ms"
           }
         ]
