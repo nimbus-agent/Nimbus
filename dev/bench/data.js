@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793124815062,
+  "lastUpdate": 1793125486405,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d618aae6c305bf952d688b583dd0073fca7dde1c",
-          "message": "chore: release main (#1139)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.28.0</summary>\n\n##\n[1.28.0](https://github.com/nimbus-agent/Nimbus/compare/v1.27.0...v1.28.0)\n(2026-08-10)\n\n\n### Features\n\n* **automation:** add incident_opened and deploy_failed watcher\nconditions ([#1138](https://github.com/nimbus-agent/Nimbus/issues/1138))\n([34601b2](https://github.com/nimbus-agent/Nimbus/commit/34601b24b98026e61f3785965cf38b38b1d414f6))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-11T06:45:59+03:00",
-          "tree_id": "93103a8570facd7eac38f2873c58c9f930ef1caf",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d618aae6c305bf952d688b583dd0073fca7dde1c"
-        },
-        "date": 1786420335168,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 187.399053049997,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 183.89984409999562,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 261.80057035000425,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1313e3def340cdcac65b6b9fa8cdd0e525bb9edd",
+          "message": "feat(trust): a registry vouches for a version's build provenance (#1801)\n\nTrust layer PR 4c, Phase 9.5 project 3: registry-verified build\nprovenance (spec G8, § 6.12). Optional throughout; it never blocks a\nsign or an install.\n\n## What changes\n\n- **Publisher side.** The signed manifest may declare `repository`\n(`owner/repo`). The publisher attests the exact `package.tgz` they\npublish with `actions/attest-build-provenance`; the author walkthrough\nsays how, using `publish --clone <path> --no-pr` and attesting that\nfile. A malformed `repository` (a URL, `git@…`) is ignored, never a\nmanifest error.\n- **Registry sign job.** For each version it ADDS whose manifest\ndeclares `repository`, it runs `gh attestation verify <the bytes it\nhashes into the entry> --repo <repository> --format json` and records\n`provenance` (`sourceRepository`, `commit`, `workflow`, `runner`,\n`verifiedAt`) in the signed version entry.\n- **How gh is run:** argv only, a 60 s deadline, and `GH_TOKEN` only in\ngh's own environment, from a new optional `github-token` input that is\nmasked and dropped from the environment.\n- **Retries:** one retry for any non-definitive failure. `no\nattestations found` and a missing `gh` are final.\n- **Never blocks:** a verifier that throws is a reason too. Any failure\nis one warning, and the version is signed without provenance.\n- **Once per run:** results are memoised by package digest, so a\npush-race retry never asks `gh` twice, and the result is re-stamped with\nthat attempt's commit time.\n- **The rule, `provenanceFromGhVerify`.** It was written and tested\nagainst real `gh` 2.96.0 output from `cli/cli`'s own release. It walks\nevery attestation entry, so an SBOM before the SLSA one is fine, and\ntakes the first SLSA v1 entry whose certificate meets all of these:\n- `sourceRepositoryURI` path is exactly `/<owner>/<repo>`, comparing the\ntwo segments case-insensitively, so `owner/repo-malicious` never matches\n`owner/repo`.\n  - The commit is 40 or 64 hex.\n- `buildConfigURI`, the top-level workflow, is in that repository. A\nreusable workflow signs from elsewhere, so `buildSignerURI` is not used.\n- **Check job.** It shows the reviewer what sign would record —\nverified, none with the reason, or `repository` ignored — and never\nfails on it.\n- **Clients.**\n- **`registry.info`** returns `provenance` for the NEWEST version only,\nthe one whose manifest it fetches and hash-checks, and only when that\npublisher-signed manifest names the same repository.\n- **The registry install prompt** carries `provenance` +\n`provenanceNote` under the same rule.\n- **`nimbus extension info --registry`** prints `Provenance verified by\n<registry>: built from … at … by …` or `Provenance: none`.\n- **The desktop install preview** shows the note; the raw field still\nrenders too, so nothing the gateway sends is hidden.\n- **Workflows.** The ones `registry maintain init --github` writes pass\n`github-token: ${{ github.token }}`. An existing registry adds that line\nto both workflows to record provenance, as documented in\nregistry-hosting.\n- **Stated bounds:**\n- Provenance is what the registry's CI checked against GitHub's\nattestation service at sign time, vouched for by the registry root.\nClients do not re-verify it, and there is no Sigstore in the gateway, so\nthe roadmap row is marked shipped narrower than written.\n- A version signed while that service was unreachable carries none for\ngood.\n  - Installed copies do not carry it.\n\nNo migration, no new invariant, no new IPC method, no allowlist change.\nOld index readers ignore the new field, because version entries already\ncarry unknown keys.\n\n## Review\n\n- **Plan:** Antigravity reviewed it, with a real `gh` sample in the\nbundle. 13 of 14 findings were applied, e.g. compare path segments not\nprefixes, walk every attestation, handle reusable workflows, show the\nnewest version only, ignore rather than refuse a malformed `repository`,\nand catch ENOENT. One was declined with evidence: version entries\nalready spread unknown keys.\n- **Whole branch:** a fresh reviewer confirmed all five properties (no\nwrong-repository attribution; added versions only, exact bytes, never\nblocks; the token never reaches argv or logs; clients show only matching\nprovenance; no network in the gateway). It found 0 Critical and 0\nImportant. Five Minors were fixed with tests:\n  - any non-definitive gh failure is now retried, as documented;\n  - a throwing verifier is a reason;\n  - a memoised result is re-stamped;\n  - check says when a `repository` was ignored;\n  - stale doc comments.\n\nThe sixth, the desktop showing the raw object beside the note, is\nintentional.\n\n## Verification\n\n- `bun run preflight:fast`: green.\n- registry-format 455 pass; registry action 150 pass; gateway extensions\n+ ipc + security-invariants 4558 pass; CLI registry commands 17 +\ntemplates 43 pass; the desktop `StructuredPreview` 21 pass (vitest).\n- Red-proved by mutation: dropping the entry's `provenance` field fails\ntwo sign tests.\n- `gateway/src` + `cli/src` + `scripts` in parallel: green except the 5\n`ps1` tests, which need `pwsh` as on main, plus two parallel-load\nfailures that pass serially.\n- Istanbul coverage of the new files: registry-format `provenance.ts`\n96% branch; action `provenance.ts` 100% branch / 87.5% line; `sign.ts`\nand `check.ts` above the floor.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Registry checks and signing can verify package build provenance and\nrecord the source repository, commit, workflow, and runner for a\nversion.\n* Verified provenance appears in extension information and installation\nprompts when it matches the repository listed in the package manifest.\n* **Improvements**\n* Missing or unsuccessful provenance verification displays as\nunavailable and does not prevent publishing or signing.\n* Updated publishing and registry-hosting guides explain provenance\nsetup and display behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T18:12:10Z",
+          "tree_id": "9b0491f7c2113574cb1ff07cc00e3bfd3ee23adc",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1313e3def340cdcac65b6b9fa8cdd0e525bb9edd"
+        },
+        "date": 1793125481669,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 276.0025185000046,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 275.96972889999995,
             "unit": "ms"
           }
         ]
