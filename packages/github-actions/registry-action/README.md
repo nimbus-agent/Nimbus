@@ -30,8 +30,9 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   the Nimbus trust root key and pushes it to `gh-pages`. Every block already in the feed is
   carried; nothing new means no commit.
 
-Both modes read the registry from the git tree, never the working directory: an entry under
-`extensions/` that is not a regular `100644` file (a symlink or a submodule above all) is refused.
+All four modes read the repository from the git tree, never the working directory: an entry under
+`extensions/` (or a trust feed's `publishers/`, `requests/`, `statements/`) that is not a regular
+`100644` file (a symlink or a submodule above all) is refused or skipped.
 
 ## Inputs
 

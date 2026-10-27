@@ -2154,7 +2154,7 @@ I44. `registry search` reads the owner's registries only, so it does not include
 
 ### Trust layer
 
-**PRs 2a–3b of 5 (marketplace trust layer, Phase 9.5 project 3; schema migrations V76 (PR 1) and V77 (PR 3b); invariant I48 with static D37).**
+**PRs 2a–4b of 5 (marketplace trust layer, Phase 9.5 project 3; schema migrations V76 (PR 1) and V77 (PR 3b); invariant I48 with static D37).**
 The gateway accepts and stores trust statements (publisher-key revocations, extension takedowns, key rotations and Nimbus
 publisher verifications, PR 2a), refuses revoked or taken-down code at install, update and spawn (PR 2b), and follows a
 publisher's key rotations (PR 3a); a registry admits publishers' own rotations and revocations into its signed index (PR 3b).
