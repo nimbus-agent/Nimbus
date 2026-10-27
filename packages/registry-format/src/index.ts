@@ -77,6 +77,13 @@ export {
   type StatementIndex,
 } from "./publisher-statements.ts";
 export {
+  alreadyCarried,
+  parseRegistryRequest,
+  REQUEST_NAME_RE,
+  type RegistryRequest,
+  signRegistryRequest,
+} from "./registry-requests.ts";
+export {
   CONNECTOR_ID_SHAPE_RE,
   MAX_ROLE_PACK_CONNECTORS,
   MAX_ROLE_PACK_MEMBERS,
