@@ -43,7 +43,13 @@ export function signOptions(
   rootKey: string,
   defaultBranch: string,
 ): SignOptions {
-  return { workspace, rootKey, ...(defaultBranch !== "" && { defaultBranch }) };
+  const repository = process.env["GITHUB_REPOSITORY"];
+  return {
+    workspace,
+    rootKey,
+    ...(defaultBranch !== "" && { defaultBranch }),
+    ...(repository !== undefined && repository !== "" && { repository }),
+  };
 }
 
 function workspace(): string {

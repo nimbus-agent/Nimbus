@@ -34,6 +34,7 @@ import {
   ROOT_KEY_INPUT,
   write,
   writePublish,
+  writeRequest,
   writeStatement,
 } from "./testing/registry-repo.ts";
 
@@ -387,5 +388,38 @@ describe("check summary", () => {
     openPr((ws) => writePublish(ws, ext));
     await run();
     expect(summaries[0]).toContain("- **Name:** `` **bold** <img src=x> `tick` ``");
+  });
+});
+
+describe("maintainer requests in a pull request (trust layer PR 4a)", () => {
+  const takedown = {
+    kind: "extension.takedown",
+    extensionId: "acme/echo",
+    versions: "*",
+    reason: "malware",
+  };
+
+  test("a request-only pull request passes with a loud maintainer banner", async () => {
+    openPr((ws) => writeRequest(ws, "takedown-echo", takedown));
+    summaries = [];
+    validated = 0;
+    await run();
+    expect(validated).toBe(0);
+    expect(summaries[0]).toContain("MAINTAINER REQUEST");
+    expect(summaries[0]).toContain("acme/echo");
+  });
+
+  test("an invalid request fails the check", async () => {
+    openPr((ws) => writeRequest(ws, "bad", { kind: "key.revoke" }));
+    await expect(run()).rejects.toThrow(/trust-requests\/bad\.json/);
+  });
+
+  test("a request mixed with an extension directory fails the check", async () => {
+    const ext = await makeExtension(scratch);
+    openPr((ws) => {
+      writeRequest(ws, "takedown-echo", takedown);
+      writePublish(ws, ext);
+    });
+    await expect(run()).rejects.toThrow(/maintainer request/i);
   });
 });

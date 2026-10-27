@@ -29,8 +29,11 @@ import {
   CANDIDATE_FILES,
   PAGES_BRANCH,
   PAGES_REF,
+  REQUESTS_DIR,
+  type RequestFile,
   readCandidate,
   readConfigAt,
+  readRequestFiles,
   readStatementFiles,
   readVerifiedIndex,
   splitExtensionDir,
@@ -212,6 +215,53 @@ function checkSummary(v: PublishVerdict, admitted: readonly TrustStatement[] = [
   return lines.join("\n");
 }
 
+/** One reviewer line per maintainer request: what it blocks, for whom. */
+function requestLine(f: RequestFile): string {
+  const r = f.request;
+  if (r.kind === "key.revoke") {
+    return `- ${code(f.path)}: revoke publisher ${code(r.publisherId)}'s key ${code(r.keyFingerprint)} — ${code(r.reason)}`;
+  }
+  const versions = r.versions === "*" ? "every version" : r.versions.map(code).join(", ");
+  const publisher = r.publisherId === undefined ? "" : ` (publisher ${code(r.publisherId)})`;
+  return `- ${code(f.path)}: take down ${code(r.extensionId)}${publisher}, ${versions} — ${code(r.reason)}`;
+}
+
+/**
+ * A maintainer-request pull request: it may only ADD `trust-requests/<name>.json` files, each a valid
+ * request. Anyone can propose one, as anyone can propose a publish; merging it and approving the
+ * signing run are the maintainers' decision, so the summary says so loudly.
+ */
+function checkRequestPullRequest(
+  git: typeof gitTree,
+  changes: readonly gitTree.TreeChange[],
+  cwd: string,
+  io: ActionIo,
+): void {
+  const offending = changes.filter((c) => c.status !== "A" || !c.path.startsWith(REQUESTS_DIR));
+  if (offending.length > 0) {
+    throw new Error(
+      `a maintainer request pull request may only add ${REQUESTS_DIR}<name>.json files; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")}`,
+    );
+  }
+  const files = readRequestFiles(git, "HEAD", cwd, new Set(changes.map((c) => c.path)));
+  if (files.skipped.length > 0) {
+    throw new Error(
+      `invalid maintainer request: ${files.skipped.map((f) => `${f.path} ${f.reason}`).join("; ")}`,
+    );
+  }
+  io.summary(
+    [
+      "## Registry maintainer request",
+      "",
+      "> [!CAUTION]",
+      "> **MAINTAINER REQUEST — merge only if you, a maintainer of this registry, intend this block.** On merge the sign job signs it with the registry root key, and every client that installed from this registry applies it.",
+      "",
+      ...files.requests.map(requestLine),
+    ].join("\n"),
+  );
+  io.log(`check passed: ${String(files.requests.length)} maintainer request(s)`);
+}
+
 /** Run the `check` mode. Throws (failing the step) on any refusal. */
 export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Promise<void> {
   const { git } = deps;
@@ -226,7 +276,12 @@ export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Pr
     cwd,
     deepen: [opts.baseRef],
   });
-  const shape = assertPublishShape(git.diffTree(mergeBase, "HEAD", { cwd }));
+  const changes = git.diffTree(mergeBase, "HEAD", { cwd });
+  if (changes.some((c) => c.path.startsWith(REQUESTS_DIR))) {
+    checkRequestPullRequest(git, changes, cwd, deps.io);
+    return;
+  }
+  const shape = assertPublishShape(changes);
   const admitted = admitPullRequestStatements(git, index, opts.baseRef, shape.statements, cwd);
   if (shape.dir === undefined) {
     deps.io.summary(statementOnlySummary(admitted.admitted));

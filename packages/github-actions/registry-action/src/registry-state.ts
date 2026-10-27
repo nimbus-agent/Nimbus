@@ -8,9 +8,12 @@ import {
   type PublishCandidate,
   parseRegistryConfig,
   parseRegistryIndex,
+  parseRegistryRequest,
   parseTrustStatement,
+  REQUEST_NAME_RE,
   type RegistryConfig,
   type RegistryIndex,
+  type RegistryRequest,
   trustStatementId,
   verifyRegistryIndexSelf,
 } from "../../../registry-format/src/index.ts";
@@ -22,6 +25,8 @@ export const INDEX_FILE = "index.json";
 export const CONFIG_FILE = "nimbus-registry.json";
 /** Where a publish puts publisher-signed trust statements (`key.rotate`, `key.revoke`). */
 export const STATEMENTS_DIR = "statements/";
+/** Where a maintainer puts an unsigned block request for the sign job to sign with the root key. */
+export const REQUESTS_DIR = "trust-requests/";
 
 /** The three files a publish adds, and the only files an `extensions/<id>/<version>/` may hold. */
 export const CANDIDATE_FILES = ["manifest.json", "package.tgz", "publish-request.json"] as const;
@@ -164,4 +169,49 @@ export function readStatementFiles(
 /** The file a statement with this id was read from (files are named by their statement id). */
 export function statementPath(id: string | undefined): string {
   return id === undefined ? STATEMENTS_DIR : `${STATEMENTS_DIR}${id}.json`;
+}
+
+/** A maintainer request file read from the tree. */
+export interface RequestFile {
+  path: string;
+  name: string;
+  request: RegistryRequest;
+}
+
+/**
+ * The `trust-requests/<name>.json` files at `ref` (maintainer block requests, unsigned), parsed, plus
+ * the ones that cannot be a request. With `only`, every other path is ignored.
+ */
+export function readRequestFiles(
+  git: Git,
+  ref: string,
+  cwd: string,
+  only?: ReadonlySet<string>,
+): { requests: RequestFile[]; skipped: StatementFileSkip[] } {
+  const requests: RequestFile[] = [];
+  const skipped: StatementFileSkip[] = [];
+  for (const e of git.listTreeEntries(ref, REQUESTS_DIR, { cwd })) {
+    if (e.path === `${REQUESTS_DIR}.gitkeep` || (only !== undefined && !only.has(e.path))) continue;
+    const name = /^trust-requests\/(.+)\.json$/.exec(e.path)?.[1];
+    if (name === undefined || !REQUEST_NAME_RE.test(name)) {
+      skipped.push({
+        path: e.path,
+        reason: "must be trust-requests/<name>.json (lowercase letters, digits, . _ -)",
+      });
+      continue;
+    }
+    if (e.mode !== git.REGULAR_FILE_MODE) {
+      skipped.push({ path: e.path, reason: `git mode ${e.mode} is not a regular file` });
+      continue;
+    }
+    const bytes = git.readBlob(ref, e.path, { cwd });
+    try {
+      if (bytes.byteLength > MAX_STATEMENT_FILE_BYTES) throw new Error("too large");
+      const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+      requests.push({ path: e.path, name, request: parseRegistryRequest(value) });
+    } catch (err) {
+      skipped.push({ path: e.path, reason: `is not a valid request: ${(err as Error).message}` });
+    }
+  }
+  return { requests, skipped };
 }
