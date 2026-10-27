@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793125486405,
+  "lastUpdate": 1793128608824,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "322ea683266d97a96aaa05e182b6208365ad5dbe",
-          "message": "fix(gateway): log why the process exits instead of dying silently (#1140)\n\nThe gateway died silently twice during a working session on Windows,\neach time leaving nothing in the log: no `level:50`/`60` lines, no\nshutdown message, no crash dialog, no WER event. It was investigated as\na crash. It is not one.\n\n## Root cause\n\n**The gateway is being killed, not crashing.** A death was reproduced\nunder a watcher that captured the exit status: **exit code 1, zero bytes\non stderr, memory flat at 232 MB one second before it ended.**\n\nThat is conclusive because every other death mode was measured first, on\nthe same machine and Bun (1.3.14, Windows 11), with output redirected to\na file exactly the way `spawn-gateway.ts` does it (`stdio: [\"ignore\",\nlogFd, logFd]`):\n\n| mode | exit code | stderr |\n| --- | --- | --- |\n| uncaught exception | 1 | **full stack trace** |\n| unhandled rejection | 1 | **full stack trace** |\n| event-loop drain | 0 | empty |\n| observed death | **1** | **empty** |\n\nAn uncaught exception or unhandled rejection would have written a stack\ninto the daily log, because stderr *is* redirected there. Nothing did,\nall day. Both are ruled out. A drained event loop exits 0, not 1 — also\nruled out, and independently implausible given the many ref'd\n`setInterval` sidecars.\n\n## Why nothing was logged\n\nBefore this PR the gateway's only process-level hooks were `SIGTERM` and\n`SIGINT`, and the only code that logs anything about termination is the\n`shutdown()` path those two signals reach.\n\n**On Windows that path is unreachable.** `process.kill(pid, \"SIGTERM\")`\n— exactly what `nimbus stop` issues — is `TerminateProcess(handle, 1)`.\nMeasured directly: the `SIGTERM` handler does not run, **an `exit`\nhandler does not run either**, and the process ends with code 1 and no\noutput.\n\nSo a deliberate `nimbus stop` and an unexplained death left\nbyte-identical evidence: nothing. The absence of a shutdown line was\nnever a clue — it is the normal state of affairs on this platform.\n\n## What this PR changes\n\n`platform/exit-diagnostics.ts`, armed on the **first statement** of\n`main()` so it covers assembly too. Records are written with\n`appendFileSync`, deliberately bypassing the daily pino logger — that\nlogger is `pino.destination({ sync: false })`, whose buffered final\nwrite is precisely the one an abrupt exit loses, i.e. the record that\nmatters most. They keep pino's field names (`level`/`time`/`pid`/`msg`),\nso greps already used against this log match them.\n\n| event | what it tells you |\n| --- | --- |\n| `boot` | pid + version, tying a death to its spawn banner |\n| `heartbeat` | uptime, rss, heap, in-flight sync services,\nembedding-runtime state |\n| `before_exit` | the event loop drained — the discriminator for a clean\nexit-0 |\n| `process_exit` | exit code + a `drained` flag |\n| `uncaught_exception` / `unhandled_rejection` | full stack, **still\nexiting 1** |\n\nBecause no in-process handler can observe `TerminateProcess`, **the\nabsence of a `process_exit` record is itself the diagnosis** — the\nprocess was killed from outside — and the last heartbeat bounds when,\nwith the memory trend and what it was doing. Interval via\n`NIMBUS_HEARTBEAT_MS` (default 60 s, `0` disables).\n\nThe heartbeat timer is `unref`'d: a ref'd one would keep the loop alive\nand mask the very drain `before_exit` exists to detect. That is asserted\nby a test that hangs if it regresses.\n\nThe two uncaught arms deliberately preserve exit code 1. This makes a\nfatal error **logged**, not survivable — turning it into a swallowed\nerror is a separate decision, not an observability fix.\n\n### Two silent-failure sites found alongside\n\n- **`ipc/server/socket-listeners.ts`** — the win32 named-pipe server's\nonly `error` listener called `reject()` on a promise that had already\nresolved. Every post-listen pipe fault was a no-op that nonetheless\ncounted as an `error` handler, so the fault vanished entirely. The\nstartup listener is now scoped to the bind, and real faults are\nreported. A deliberate `stop()` is not reported as one\n(`markExpectedClose`).\n- **`embedding/worker-bridge.ts`** — no `onerror`. Verified: an uncaught\nthrow inside a Bun `Worker` neither crashes the parent nor prints\nanything. It cannot kill the gateway, but it left semantic search\nreading `warming` for the full 600 s init window instead of\n`unavailable`.\n\n`gateway-log-file.ts` gains `platformDailyLogPath()`, collapsing the\nper-OS switch that `emergencyGatewayLog` already had rather than adding\na second copy.\n\n## What this PR does *not* do\n\nIt does not stop the killing — it makes the next death identify its own\ncause.\n\n**Who** terminates the process is undetermined. The reproduction ran as\na child of a tool-spawned shell, so its killer is plausibly that\nharness's task lifetime; it corroborates the *signature*, not the\n*agent*.\n\nLeading hypothesis, explicitly unproven: `detached: true` on Windows\nsets only `DETACHED_PROCESS` — Node/libuv never sets\n`CREATE_BREAKAWAY_FROM_JOB` and does not expose it — so the gateway\nstays in the job object of the shell that launched it, and a terminal or\nVS Code window closing/reloading kills it with exactly this signature.\nAgainst it: a detached grandchild *did* survive its parent's death in a\nplain pwsh here. No spawn flag can fix that case; it needs a different\nlaunch strategy, which is a design change not taken here.\n\nAlso ruled out with evidence, and left alone: **memory** (30 min of\n3-second sampling — peak 312 MB, settled ~232 MB, handles flat ~275; the\n209 s blame sync is 400 sequential `git blame` spawns via\n`MAX_BLAME_FILES`, not a leak) and **timing** (lifetimes of 9.5 h / 2 h\n/ 83 s / ~6 min / 30 min correlate with neither sync activity nor idle).\n\nOne latent bug was noticed and **not** fixed, as it is outside this\nchange's scope: `connectors/blame-index-sync.ts` `runGit` awaits\n`proc.exited` *before* draining stdout, which can block on a full pipe\nbuffer until the 30 s abort — `git blame --line-porcelain` output\nexceeds it easily. It inflates blame duration and silently yields empty\nblame.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED\n- 2125 tests pass, 0 fail across `platform` + `ipc` + `embedding`\n- New file: 89.4% lines / 92.9% branches (istanbul preload), above both\nfloors\n- Every load-bearing assertion red-proven by breaking the implementation\nand confirming the test fails\n- Six end-to-end tests drive the **real** `process` in real\nsubprocesses, because the property that matters is \"the record is on\ndisk after the process is gone\", which only a real exit can show\n\nNot run: `audit:coverage-floor` under Docker (it is\nLinux-authoritative).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-11T06:59:40+03:00",
-          "tree_id": "ddabe73b3182fbefdf66069d961497dab5dd5ebe",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/322ea683266d97a96aaa05e182b6208365ad5dbe"
-        },
-        "date": 1786421464429,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.78290179999857,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 317.7920741500078,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 275.96972889999995,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c6e86dc7fdfac83314f089a8f788306cef64c21",
+          "message": "chore: release main (#1800)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.7.0</summary>\n\n##\n[10.7.0](https://github.com/nimbus-agent/Nimbus/compare/v10.6.0...v10.7.0)\n(2026-10-27)\n\n\n### Features\n\n* **trust:** a registry vouches for a version's build provenance\n([#1801](https://github.com/nimbus-agent/Nimbus/issues/1801))\n([1313e3d](https://github.com/nimbus-agent/Nimbus/commit/1313e3def340cdcac65b6b9fa8cdd0e525bb9edd))\n* **trust:** nimbus trust maintain builds and signs the Nimbus trust\nfeed ([#1799](https://github.com/nimbus-agent/Nimbus/issues/1799))\n([001b8eb](https://github.com/nimbus-agent/Nimbus/commit/001b8eb9c09696605f9060f878a481ca94737009))\n* **trust:** registry maintainers revoke keys and take extensions down;\nnimbus extension report\n([#1796](https://github.com/nimbus-agent/Nimbus/issues/1796))\n([9c67412](https://github.com/nimbus-agent/Nimbus/commit/9c6741245dffb6882e99f20d11cbae3b64de1e0d))\n* **trust:** show a verified-publisher badge everywhere an extension's\npublisher appears (R6)\n([#1794](https://github.com/nimbus-agent/Nimbus/issues/1794))\n([c3360b6](https://github.com/nimbus-agent/Nimbus/commit/c3360b67538f9a18b882d28dbfd234ae8008952c))\n\n\n### Bug Fixes\n\n* **deps:** qs 6.16.1 (GHSA-6pq8-jhm2-2vcw)\n([#1802](https://github.com/nimbus-agent/Nimbus/issues/1802))\n([ae231c7](https://github.com/nimbus-agent/Nimbus/commit/ae231c70b2e3938ace3b944de69ffab948800f3a))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-27T21:08:20+02:00",
+          "tree_id": "6b36c4f035dd0b97e7b996f08db032a8608dfbdc",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7c6e86dc7fdfac83314f089a8f788306cef64c21"
+        },
+        "date": 1793128604003,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 219.55761735000524,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 228.0528264499986,
             "unit": "ms"
           }
         ]
