@@ -4793,7 +4793,7 @@ nimbus extension list --tree
 
 ### `nimbus extension info <id> [--deps] [--registry <name> | --remote] [--json]`
 
-Show details for an installed extension. `--deps` appends a Dependencies section showing forward deps (extensions this one requires) and reverse deps (extensions that depend on this one) from the `extension_dependency` table (T2 PR 4).
+Show details for an installed extension (with `--registry` / `--remote`: an extension in a registry, including a `Provenance:` line — "Provenance verified by <registry>: built from <owner/repo> at <commit> by <workflow>" for the newest version when the registry recorded a build attestation and the signed manifest names the same repository, else `Provenance: none`). `--deps` appends a Dependencies section showing forward deps (extensions this one requires) and reverse deps (extensions that depend on this one) from the `extension_dependency` table (T2 PR 4).
 
 When the extension was hard-disabled by the startup signature check (I16), the `Enabled:` line names the reason and the remediation follows below it:
 
