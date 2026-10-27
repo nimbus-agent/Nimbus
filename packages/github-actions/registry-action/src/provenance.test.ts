@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -7,6 +8,7 @@ import {
   ghProvenance,
   ghRunOf,
   type ProvenanceDeps,
+  verifyNeverThrowing,
   verifyProvenance,
 } from "./provenance.ts";
 
@@ -74,6 +76,28 @@ describe("ghRunOf", () => {
   });
 });
 
+describe("verifyNeverThrowing", () => {
+  test("a throwing verifier, or an unwritable path, is a reason, never a rejection", async () => {
+    const at = {
+      pkgPath: join(tmpdir(), `nimbus-prov-${String(process.pid)}.tgz`),
+      packageBytes: new Uint8Array([1]),
+      repository: "cli/cli",
+      verifiedAt: AT,
+    };
+    expect(await verifyNeverThrowing(() => Promise.reject(new Error("boom")), at)).toEqual({
+      ok: false,
+      reason: "verification failed: boom",
+    });
+    const bad = { ...at, pkgPath: join(tmpdir(), "no-such-dir-nimbus", "x", "p.tgz") };
+    const r = await verifyNeverThrowing(
+      () => Promise.resolve({ ok: false, reason: "unreached" }),
+      bad,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.ok ? "" : r.reason).toStartWith("verification failed:");
+  });
+});
+
 describe("verifyProvenance", () => {
   test("a verified attestation is provenance; gh gets argv only and the token in its env", async () => {
     const { d, calls } = deps([ok]);
@@ -128,17 +152,27 @@ describe("verifyProvenance", () => {
     expect(calls).toHaveLength(1);
   });
 
-  test("another failure quotes gh's first stderr line, flattened and capped", async () => {
-    const { d } = deps([
-      { code: 1, stdout: "", stderr: `\nHTTP 404: Not Found\u001b[31m ${"x".repeat(300)}\nmore` },
-    ]);
+  test("another failure is retried once, then quotes gh's first stderr line, flattened and capped", async () => {
+    const failing: GhRun = {
+      code: 1,
+      stdout: "",
+      stderr: `\nHTTP 404: Not Found\u001b[31m ${"x".repeat(300)}\nmore`,
+    };
+    const { d, calls, slept } = deps([failing, failing]);
     const r = await verifyProvenance("p", "acme/private", AT, d);
+    expect(calls).toHaveLength(2);
+    expect(slept).toEqual([5_000]);
     expect(r.ok).toBe(false);
     const reason = r.ok ? "" : r.reason;
     expect(reason.startsWith("gh: HTTP 404: Not Found")).toBe(true);
     expect(reason).not.toContain("\u001b");
     expect(reason.length).toBeLessThanOrEqual(204);
-    const silent = deps([{ code: 2, stdout: "", stderr: "" }]);
+    const transient = deps([{ code: 1, stdout: "", stderr: "HTTP 502: Bad Gateway" }, ok]);
+    expect((await verifyProvenance("p", "cli/cli", AT, transient.d)).ok).toBe(true);
+    const silent = deps([
+      { code: 2, stdout: "", stderr: "" },
+      { code: 2, stdout: "", stderr: "" },
+    ]);
     expect(await verifyProvenance("p", "cli/cli", AT, silent.d)).toEqual({
       ok: false,
       reason: "gh exited 2",

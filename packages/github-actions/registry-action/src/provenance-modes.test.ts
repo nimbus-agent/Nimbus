@@ -160,6 +160,56 @@ describe("sign records provenance", () => {
     expect(Object.hasOwn(versionEntry() as object, "provenance")).toBe(false);
   });
 
+  test("a throwing verifier never blocks the sign", async () => {
+    await mergePublish({ repository: "acme/echo" });
+    await sign(() => Promise.reject(new Error("boom")));
+    expect(versionEntry()).toBeDefined();
+    expect(Object.hasOwn(versionEntry() as object, "provenance")).toBe(false);
+    expect(warnings[0]).toContain("verification failed: boom");
+  });
+
+  test("a push-race retry asks gh once and stamps this attempt's commit time", async () => {
+    await mergePublish({ repository: "acme/echo" });
+    const v = verifier(() => ({ ok: true, provenance: PROV }));
+    let raced = false;
+    await runSign(
+      { workspace: repo.workspace, rootKey: ROOT_KEY_INPUT },
+      {
+        git: gitTree,
+        io,
+        tmpdir: () => scratch,
+        sign: signIndex,
+        validate: validatePublish,
+        provenance: v.verify,
+        beforePush: () => {
+          if (raced) return;
+          raced = true;
+          syncMaintainer(repo, "gh-pages");
+          writePublish(repo.maintainer, {
+            id: "x",
+            version: "0",
+            manifest: new Uint8Array(),
+            pkg: new Uint8Array(),
+            request: new Uint8Array(),
+          });
+          pushMaintainer(repo, "gh-pages", "concurrent");
+        },
+      },
+    );
+    expect(raced).toBe(true);
+    expect(v.calls).toHaveLength(1);
+    const entry = versionEntry() as { publishedAt: string };
+    expect(readVersionProvenance(entry)?.verifiedAt).toBe(entry.publishedAt);
+  });
+
+  test("a malformed repository is ignored: gh is never asked", async () => {
+    await mergePublish({ repository: "https://github.com/acme/echo" });
+    const v = verifier(() => ({ ok: true, provenance: PROV }));
+    await sign(v.verify);
+    expect(v.calls).toEqual([]);
+    expect(versionEntry()).toBeDefined();
+  });
+
   test("an already-signed version is never re-verified", async () => {
     await mergePublish({ repository: "acme/echo" });
     const first = verifier(() => ({ ok: false, reason: "down" }));
@@ -201,6 +251,18 @@ describe("check reports provenance and never fails on it", () => {
     await check(verifier(() => ({ ok: false, reason: "gh: HTTP 404: Not Found" })).verify);
     expect(summaries[0]).toContain("**Provenance:** none for `acme/echo`");
     expect(summaries[0]).toContain("HTTP 404");
+  });
+
+  test("a throwing verifier does not fail the check", async () => {
+    await openPr({ repository: "acme/echo" });
+    await check(() => Promise.reject(new Error("boom")));
+    expect(summaries[0]).toContain("verification failed: boom");
+  });
+
+  test("a malformed repository is reported as ignored", async () => {
+    await openPr({ repository: "acme/echo/extra" });
+    await check(verifier(() => ({ ok: true, provenance: PROV })).verify);
+    expect(summaries[0]).toContain("is not `owner/repo`, so it is ignored");
   });
 
   test("no repository declared", async () => {

@@ -10,6 +10,7 @@
  * (a timeout, a spawn error, an exit without "no attestations found") is retried once.
  */
 import { execFile } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import {
   provenanceFromGhVerify,
   type VersionProvenance,
@@ -95,10 +96,8 @@ function classify(r: GhRun): { definitive: boolean; reason: string } {
   if (/no attestations found/i.test(r.stderr)) {
     return { definitive: true, reason: "no attestation found for the package" };
   }
-  return {
-    definitive: r.code !== null,
-    reason: line === "" ? `gh exited ${String(r.code)}` : `gh: ${line}`,
-  };
+  // Anything else (a 5xx, a network error, an attestation not yet visible) may pass on a retry.
+  return { definitive: false, reason: line === "" ? `gh exited ${String(r.code)}` : `gh: ${line}` };
 }
 
 /** One `gh` call: a provenance, a definitive refusal, or a retryable failure. */
@@ -139,6 +138,25 @@ export async function verifyProvenance(
   if (first.ok || first.retry !== true) return strip(first);
   await deps.sleep(RETRY_DELAY_MS);
   return strip(await attempt(pkgPath, repository, verifiedAt, deps));
+}
+
+/**
+ * Writes the package bytes and runs `verify`, turning ANY throw (a write error, an unexpected
+ * rejection) into a reason: provenance never blocks a sign or a check.
+ */
+export async function verifyNeverThrowing(
+  verify: VerifyPackage,
+  at: { pkgPath: string; packageBytes: Uint8Array; repository: string; verifiedAt: string },
+): Promise<ProvenanceResult> {
+  try {
+    writeFileSync(at.pkgPath, at.packageBytes);
+    return await verify(at.pkgPath, at.repository, at.verifiedAt);
+  } catch (e) {
+    return {
+      ok: false,
+      reason: `verification failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
 }
 
 /** A package-provenance verifier: what `sign` and `check` call; tests inject one. */

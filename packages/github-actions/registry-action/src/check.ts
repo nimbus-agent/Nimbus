@@ -9,7 +9,7 @@
  * runs (any statement it would skip fails the check); then `validatePublish` over the committed
  * bytes against the index with those statements admitted; then the reviewer's job summary.
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -26,7 +26,12 @@ import {
   validatePublish,
 } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
-import { ghProvenance, type ProvenanceResult, type VerifyPackage } from "./provenance.ts";
+import {
+  ghProvenance,
+  type ProvenanceResult,
+  type VerifyPackage,
+  verifyNeverThrowing,
+} from "./provenance.ts";
 import {
   CANDIDATE_FILES,
   PAGES_BRANCH,
@@ -189,9 +194,11 @@ function statementOnlySummary(admitted: readonly TrustStatement[]): string {
   return ["## Registry statements", "", ...statementLines(admitted)].join("\n");
 }
 
-/** The reviewer's job summary for an accepted publish. */
 /** The summary line for the version's build provenance; informational, never a failure. */
 function provenanceLine(v: PublishVerdict, r: ProvenanceResult | undefined): string {
+  if (v.repositoryIgnored === true) {
+    return "- **Provenance:** none (the manifest's `repository` is not `owner/repo`, so it is ignored)";
+  }
   if (v.repository === undefined) {
     return "- **Provenance:** none (the manifest declares no `repository`)";
   }
@@ -202,6 +209,7 @@ function provenanceLine(v: PublishVerdict, r: ProvenanceResult | undefined): str
   return `- **Provenance:** built from ${code(p.sourceRepository)} at ${code(p.commit.slice(0, 12))} by ${code(p.workflow)} (${p.runner})`;
 }
 
+/** The reviewer's job summary for an accepted publish. */
 function checkSummary(
   v: PublishVerdict,
   admitted: readonly TrustStatement[] = [],
@@ -303,10 +311,12 @@ async function checkProvenance(
   deps: CheckDeps,
 ): Promise<ProvenanceResult | undefined> {
   if (v.repository === undefined) return undefined;
-  const pkgPath = join(work, "provenance-check.tgz");
-  writeFileSync(pkgPath, packageBytes);
-  const verify = deps.provenance ?? ghProvenance(opts.githubToken ?? "");
-  return verify(pkgPath, v.repository, new Date().toISOString());
+  return verifyNeverThrowing(deps.provenance ?? ghProvenance(opts.githubToken ?? ""), {
+    pkgPath: join(work, "provenance-check.tgz"),
+    packageBytes,
+    repository: v.repository,
+    verifiedAt: new Date().toISOString(),
+  });
 }
 
 /** Run the `check` mode. Throws (failing the step) on any refusal. */

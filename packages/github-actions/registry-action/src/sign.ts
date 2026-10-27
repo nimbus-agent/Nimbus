@@ -19,7 +19,7 @@
  * a message: refusals name fingerprints of PUBLIC keys. `main.ts` masks the input before this runs.
  */
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -43,7 +43,12 @@ import {
   verifyRegistryIndexPinned,
 } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
-import { ghProvenance, type ProvenanceResult, type VerifyPackage } from "./provenance.ts";
+import {
+  ghProvenance,
+  type ProvenanceResult,
+  type VerifyPackage,
+  verifyNeverThrowing,
+} from "./provenance.ts";
 import {
   CANDIDATE_FILES,
   CONFIG_FILE,
@@ -200,7 +205,6 @@ function sameFileSet(names: ReadonlySet<string>): boolean {
   return names.size === CANDIDATE_FILES.length && CANDIDATE_FILES.every((f) => names.has(f));
 }
 
-/** One attempt, from a fresh fetch to a commit ready to push. Throws on any refusal. */
 /** Provenance results by package digest: a push-race retry never asks `gh` twice. */
 type ProvenanceMemo = Map<string, ProvenanceResult>;
 
@@ -219,9 +223,12 @@ async function provenanceFor(
   if (v.repository === undefined) return undefined;
   let r = memo.get(v.packageSha256);
   if (r === undefined) {
-    const pkgPath = join(at.work, `provenance-${v.packageSha256}.tgz`);
-    writeFileSync(pkgPath, packageBytes);
-    r = await deps.verify(pkgPath, v.repository, at.verifiedAt);
+    r = await verifyNeverThrowing(deps.verify, {
+      pkgPath: join(at.work, `provenance-${v.packageSha256}.tgz`),
+      packageBytes,
+      repository: v.repository,
+      verifiedAt: at.verifiedAt,
+    });
     memo.set(v.packageSha256, r);
     if (!r.ok) {
       deps.io.annotate(
@@ -230,9 +237,11 @@ async function provenanceFor(
       );
     }
   }
-  return r.ok ? r.provenance : undefined;
+  // A memo hit from an earlier attempt is re-stamped with THIS attempt's commit time.
+  return r.ok ? { ...r.provenance, verifiedAt: at.verifiedAt } : undefined;
 }
 
+/** One attempt, from a fresh fetch to a commit ready to push. Throws on any refusal. */
 async function attemptSign(
   opts: SignOptions & { defaultBranch: string },
   seed: Uint8Array,

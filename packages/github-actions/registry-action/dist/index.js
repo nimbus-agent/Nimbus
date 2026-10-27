@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:8075ea270cf4e0ff2f50f131986ab23e1f63c13483351510731b083cbece4f1e
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:21f8931d2b7370dadc0f4b9929443202c9af92a7908f4a8025e3a0c6b8d1ac38
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4231,7 +4231,7 @@ function emitAnnotation(level, message) {
 }
 
 // src/check.ts
-import { mkdtempSync as mkdtempSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { mkdtempSync as mkdtempSync2, rmSync as rmSync2 } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join as join3 } from "node:path";
 
@@ -10065,7 +10065,8 @@ async function validatePublish(c, signed, config, work) {
       packageSizeBytes: c.packageBytes.byteLength,
       newId,
       permissions: m.permissions,
-      ...repository !== undefined && { repository }
+      ...repository !== undefined && { repository },
+      ...repository === undefined && raw["repository"] !== undefined && { repositoryIgnored: true }
     };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -10242,6 +10243,7 @@ function remoteDefaultBranch(opts) {
 
 // src/provenance.ts
 import { execFile } from "node:child_process";
+import { writeFileSync as writeFileSync2 } from "node:fs";
 var TIMEOUT_MS = 60000;
 var RETRY_DELAY_MS = 5000;
 function ghRunOf(err, stdout, stderr) {
@@ -10277,10 +10279,7 @@ function classify(r) {
   if (/no attestations found/i.test(r.stderr)) {
     return { definitive: true, reason: "no attestation found for the package" };
   }
-  return {
-    definitive: r.code !== null,
-    reason: line === "" ? `gh exited ${String(r.code)}` : `gh: ${line}`
-  };
+  return { definitive: false, reason: line === "" ? `gh exited ${String(r.code)}` : `gh: ${line}` };
 }
 async function attempt(pkgPath, repository, verifiedAt, deps) {
   const env = { ...process.env, GH_TOKEN: deps.token };
@@ -10305,6 +10304,17 @@ async function verifyProvenance(pkgPath, repository, verifiedAt, deps) {
     return strip(first);
   await deps.sleep(RETRY_DELAY_MS);
   return strip(await attempt(pkgPath, repository, verifiedAt, deps));
+}
+async function verifyNeverThrowing(verify, at) {
+  try {
+    writeFileSync2(at.pkgPath, at.packageBytes);
+    return await verify(at.pkgPath, at.repository, at.verifiedAt);
+  } catch (e) {
+    return {
+      ok: false,
+      reason: `verification failed: ${e instanceof Error ? e.message : String(e)}`
+    };
+  }
 }
 function ghProvenance(token) {
   return (pkgPath, repository, verifiedAt) => verifyProvenance(pkgPath, repository, verifiedAt, {
@@ -10538,6 +10548,9 @@ function statementOnlySummary(admitted) {
 `);
 }
 function provenanceLine(v, r) {
+  if (v.repositoryIgnored === true) {
+    return "- **Provenance:** none (the manifest's `repository` is not `owner/repo`, so it is ignored)";
+  }
   if (v.repository === undefined) {
     return "- **Provenance:** none (the manifest declares no `repository`)";
   }
@@ -10596,10 +10609,12 @@ function checkRequestPullRequest(git, index, changes, cwd, io) {
 async function checkProvenance(v, packageBytes, work, opts, deps) {
   if (v.repository === undefined)
     return;
-  const pkgPath = join3(work, "provenance-check.tgz");
-  writeFileSync2(pkgPath, packageBytes);
-  const verify = deps.provenance ?? ghProvenance(opts.githubToken ?? "");
-  return verify(pkgPath, v.repository, new Date().toISOString());
+  return verifyNeverThrowing(deps.provenance ?? ghProvenance(opts.githubToken ?? ""), {
+    pkgPath: join3(work, "provenance-check.tgz"),
+    packageBytes,
+    repository: v.repository,
+    verifiedAt: new Date().toISOString()
+  });
 }
 async function runCheck(opts, deps = SHARED) {
   const { git } = deps;
@@ -10640,7 +10655,7 @@ async function runCheck(opts, deps = SHARED) {
 
 // src/sign.ts
 import { createHash as createHash6 } from "node:crypto";
-import { mkdtempSync as mkdtempSync4, rmSync as rmSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { mkdtempSync as mkdtempSync4, rmSync as rmSync4 } from "node:fs";
 import { tmpdir as osTmpdir2 } from "node:os";
 import { join as join5 } from "node:path";
 
@@ -10770,15 +10785,18 @@ async function provenanceFor(v, packageBytes, at, deps, memo) {
     return;
   let r = memo.get(v.packageSha256);
   if (r === undefined) {
-    const pkgPath = join5(at.work, `provenance-${v.packageSha256}.tgz`);
-    writeFileSync3(pkgPath, packageBytes);
-    r = await deps.verify(pkgPath, v.repository, at.verifiedAt);
+    r = await verifyNeverThrowing(deps.verify, {
+      pkgPath: join5(at.work, `provenance-${v.packageSha256}.tgz`),
+      packageBytes,
+      repository: v.repository,
+      verifiedAt: at.verifiedAt
+    });
     memo.set(v.packageSha256, r);
     if (!r.ok) {
       deps.io.annotate("warning", `no provenance for ${v.id}@${v.version} (repository ${v.repository}): ${r.reason}; signed without it`);
     }
   }
-  return r.ok ? r.provenance : undefined;
+  return r.ok ? { ...r.provenance, verifiedAt: at.verifiedAt } : undefined;
 }
 async function attemptSign(opts, seed, rootKey, deps, memo) {
   const { git } = deps;

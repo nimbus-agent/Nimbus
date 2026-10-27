@@ -75,6 +75,8 @@ export interface PublishVerdict {
   permissions: SandboxPermissions;
   /** The manifest's well-formed `repository` (`owner/repo`), when it declares one (provenance). */
   repository?: string;
+  /** True when the manifest declares a `repository` that is not `owner/repo` (ignored, not refused). */
+  repositoryIgnored?: true;
 }
 
 interface PublishRequest {
@@ -493,6 +495,8 @@ export async function validatePublish(
       newId,
       permissions: m.permissions,
       ...(repository !== undefined && { repository }),
+      ...(repository === undefined &&
+        raw["repository"] !== undefined && { repositoryIgnored: true }),
     };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
