@@ -2,6 +2,17 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.6.0](https://github.com/nimbus-agent/Nimbus/compare/v10.5.0...v10.6.0) (2026-10-27)
+
+
+### Features
+
+* **registry:** trust-layer formats and storage; refuse an equivocating registry index ([#1783](https://github.com/nimbus-agent/Nimbus/issues/1783)) ([4c0beb9](https://github.com/nimbus-agent/Nimbus/commit/4c0beb97f98c322377476be99f561b79d955a1bb))
+* **trust:** publishers can rotate keys; a revoked key taints the keys it rotated to (rotation, R3–R5, R8) ([#1792](https://github.com/nimbus-agent/Nimbus/issues/1792)) ([88fe6de](https://github.com/nimbus-agent/Nimbus/commit/88fe6de0c9d60208be4c4b77645cf5a3c8c465bc))
+* **trust:** publishers rotate and revoke keys through a registry (extension key rotate|revoke, publish --statement) ([#1793](https://github.com/nimbus-agent/Nimbus/issues/1793)) ([e575610](https://github.com/nimbus-agent/Nimbus/commit/e57561067bf9edb3ac47728ee19b605782857a92))
+* **trust:** refuse revoked or taken-down extensions at install, update and spawn until the owner re-approves (I48) ([#1790](https://github.com/nimbus-agent/Nimbus/issues/1790)) ([e0321d8](https://github.com/nimbus-agent/Nimbus/commit/e0321d86c03c9f6b6cf78718ddf29641b86e3c69))
+* **trust:** store trust statements, fetch the trust feed on a timer, nimbus trust status|refresh ([#1785](https://github.com/nimbus-agent/Nimbus/issues/1785)) ([ad7cb3c](https://github.com/nimbus-agent/Nimbus/commit/ad7cb3c885fe81d597f3cd644ad8e79eb61f4cda))
+
 ## [10.5.0](https://github.com/nimbus-agent/Nimbus/compare/v10.4.0...v10.5.0) (2026-10-25)
 
 
