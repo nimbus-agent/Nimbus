@@ -64,8 +64,9 @@ export function trustOwnerNextSteps(opts: {
      sign workflow's push still lands).
   7. Only now push ${opts.dir} to the ${opts.defaultBranch} branch.
   8. Protect ${opts.defaultBranch}: require pull requests, and set it as the default branch.
-  9. Hand the Pages URL (with its trailing slash) and the root public key above to the Nimbus
-     release that bakes the feed (trust layer PR 5).
+  9. Bake the Pages URL (with its trailing slash) and the root public key above into the gateway
+     build that follows this feed (BUILTIN_TRUST_FEED in Nimbus), then refresh its snapshot from
+     the live feed (bun run trust:refresh-snapshot in the Nimbus repository).
 Keep the key file offline and backed up: it signs what every Nimbus install trusts. On Windows the
 CLI sets no ACL on it; keep it under your user profile, never on a shared or synced path.
 `;

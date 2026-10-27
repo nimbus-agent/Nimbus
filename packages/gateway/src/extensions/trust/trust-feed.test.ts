@@ -15,6 +15,8 @@ import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { RegistryFetchDeps } from "../registry/registry-fetch.ts";
 import {
   applyTrustSnapshot,
+  BUILTIN_TRUST_FEED,
+  BUILTIN_TRUST_SNAPSHOT,
   refreshTrustFeed,
   TRUST_FEED_NAME,
   type TrustFeedConfig,
@@ -256,6 +258,33 @@ describe("applyTrustSnapshot", () => {
   test("no snapshot or no feed configured: not_configured", async () => {
     expect(await applyTrustSnapshot(db, null, CFG(), 1)).toEqual({ status: "not_configured" });
     expect(await applyTrustSnapshot(db, "{}", null, 1)).toEqual({ status: "not_configured" });
+  });
+});
+
+describe("the baked trust feed (trust layer PR 5)", () => {
+  test("follows nimbus-agent/nimbus-trust over https, with the trailing slash URL resolution needs", () => {
+    expect(BUILTIN_TRUST_FEED?.url).toBe("https://nimbus-agent.github.io/nimbus-trust/");
+    expect(new URL("trust.json", BUILTIN_TRUST_FEED?.url).href).toBe(
+      "https://nimbus-agent.github.io/nimbus-trust/trust.json",
+    );
+  });
+
+  test("pins the Nimbus trust root, which is not the official registry's root", () => {
+    expect(publisherKeyFingerprint(BUILTIN_TRUST_FEED?.rootKey ?? "")).toBe(
+      "2a4f4e3d803f239da2cdd04fe41e6feb",
+    );
+  });
+
+  test("the baked snapshot verifies against the baked root and applies at boot", async () => {
+    const r = await applyTrustSnapshot(db, BUILTIN_TRUST_SNAPSHOT, BUILTIN_TRUST_FEED, 1);
+    expect(r.status).toBe("accepted");
+    const baked = JSON.parse(BUILTIN_TRUST_SNAPSHOT ?? "null") as { sequence: number };
+    expect(readFeedFloor(db, TRUST_FEED_NAME)?.lastSequence).toBe(baked.sequence);
+  });
+
+  test("the baked snapshot is refused under any other root key", async () => {
+    const r = await applyTrustSnapshot(db, BUILTIN_TRUST_SNAPSHOT, CFG(), 1);
+    expect(r).toMatchObject({ status: "refused", code: "ERR_TRUST_FEED_ROOT_KEY_CHANGED" });
   });
 });
 

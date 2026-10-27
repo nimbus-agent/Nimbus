@@ -101,3 +101,81 @@ jobs:
         run: |
           echo "::error::release-staleness reported drift — see the release-health issue"
           exit 1
+
+  # Does the trust-feed snapshot baked into the release still match the live Nimbus trust feed?
+  # (marketplace trust layer PR 5). A stale snapshot is not a security failure, since every gateway
+  # fetches the feed hourly, but it lowers the offline floor a fresh install starts from. So the
+  # comparison runs here, daily, and files an issue; the offline half of the same audit gates PRs.
+  # Fix: the `trust:refresh-snapshot` package script, then a PR with the regenerated module.
+  trust-snapshot:
+    name: trust-snapshot-staleness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout Nimbus
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The audit imports registry-format and the gateway's trust-feed module, so it needs the
+      # workspace dependencies, installed with CI's own Bun (not `latest`, which can disagree with
+      # the frozen lockfile).
+      - name: Setup Bun + install
+        uses: ./.github/actions/setup-nimbus-ci
+        with:
+          verify-lock: "false"
+
+      # Same shape as the staleness job: the finding becomes the issue body, and the final step
+      # decides the job's colour.
+      - name: Compare the baked snapshot with the live trust feed
+        id: audit
+        continue-on-error: true
+        run: |
+          set +e
+          bun scripts/trust/check-trust-snapshot.ts --live > findings.txt 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat findings.txt
+
+      - name: File a trust-snapshot issue
+        if: ${{ steps.audit.outputs.code != '0' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEALTH_KEY: trust-snapshot-stale
+          HEALTH_TITLE: "🚨 The baked trust-feed snapshot does not match the live trust feed"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "\`audit:trust-snapshot --live\` found the snapshot baked into the next release out of step with the live trust feed. If the live feed is AHEAD, refresh the snapshot with the \`trust:refresh-snapshot\` package script and open a PR before the next release. If it went BACKWARDS or differs at the same sequence, that is an integrity problem, not staleness: every gateway refuses that feed, the refresh script refuses it too, and the nimbus-trust gh-pages history needs investigating."
+            echo
+            echo '```'
+            cat findings.txt
+            echo '```'
+            echo
+            echo "Run: $RUN_URL"
+          } > body.md
+          HEALTH_BODY="$(cat body.md)" bun scripts/release/open-health-issue.ts
+
+      - name: Close the trust-snapshot issue, if any
+        if: ${{ steps.audit.outputs.code == '0' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEALTH_KEY: trust-snapshot-stale
+          HEALTH_RESOLVE: "1"
+          HEALTH_BODY: "Resolved: the baked snapshot matches the live trust feed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: bun scripts/release/open-health-issue.ts
+
+      - name: Fail if the snapshot is out of step
+        if: ${{ steps.audit.outputs.code != '0' }}
+        run: |
+          echo "::error::audit:trust-snapshot --live failed — see the trust-snapshot issue"
+          exit 1

@@ -204,6 +204,16 @@ export const TRUST_FEED_STALE_DAYS = 7;
 export function doctorTrustLines(raw: unknown): { lines: string[]; exit: number } {
   if (!isRecord(raw) || raw["configured"] !== true) return { lines: [], exit: 0 };
   const age = raw["ageDays"];
+  // Every release follows a feed, so a gateway that has just started has not fetched it yet: that
+  // is not a fault until a fetch has been attempted (the baked snapshot applies meanwhile).
+  if (age === null && typeof raw["lastAttemptedAt"] !== "number") {
+    return {
+      lines: [
+        "[info] Trust feed: not fetched yet; the first check runs a few seconds after the gateway starts, and the release's snapshot applies until then.",
+      ],
+      exit: 0,
+    };
+  }
   if (age === null) {
     return {
       lines: [

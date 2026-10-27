@@ -178,13 +178,19 @@ describe("doctorTrustLines", () => {
     expect(doctorTrustLines({ configured: true, ageDays: 7 })).toEqual({ lines: [], exit: 0 });
   });
 
-  test("warns past 7 days, and when a configured feed was never fetched", () => {
+  test("warns past 7 days, and when a configured feed was attempted but never fetched", () => {
     const stale = doctorTrustLines({ configured: true, ageDays: 8 });
     expect(stale.exit).toBe(1);
     expect(stale.lines[0]).toContain("last updated 8 days ago");
-    const never = doctorTrustLines({ configured: true, ageDays: null });
+    const never = doctorTrustLines({ configured: true, ageDays: null, lastAttemptedAt: 1_000 });
     expect(never.exit).toBe(1);
     expect(never.lines[0]).toContain("never fetched");
+  });
+
+  test("a feed not attempted yet (a gateway that just started) is informational, not a warning", () => {
+    const fresh = doctorTrustLines({ configured: true, ageDays: null, lastAttemptedAt: null });
+    expect(fresh.exit).toBe(0);
+    expect(fresh.lines[0]).toStartWith("[info] Trust feed: not fetched yet");
   });
 
   test("garbage is silent rather than a crash", () => {

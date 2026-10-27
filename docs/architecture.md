@@ -2182,8 +2182,16 @@ statement.
 `trust.feed`); verified against the pinned trust root, with the registries' floor rules (lower sequence
 `ERR_TRUST_FEED_ROLLBACK`, different content at an accepted one `ERR_TRUST_FEED_EQUIVOCATION`). (3) A snapshot of the feed
 baked into the release, applied at boot with no network; it anchors the floor, and one older than the stored floor is
-`unchanged`, never refused. **This build bakes neither** (`BUILTIN_TRUST_FEED`/`BUILTIN_TRUST_SNAPSHOT` are `null` until
-PR 5, as `BUILTIN_REGISTRY` was before the Readwise pilot), so nothing is fetched and no egress row is written.
+`unchanged`, never refused. **Both are baked (PR 5):** `BUILTIN_TRUST_FEED` follows `https://nimbus-agent.github.io/nimbus-trust/`
+(repository `nimbus-agent/nimbus-trust`, signed in its protected `trust-signing` environment; root fingerprint
+`2a4f4e3d803f239da2cdd04fe41e6feb`, separate from the official registry's root), and `BUILTIN_TRUST_SNAPSHOT` is that feed's
+`trust.json` exactly as served when `bun run trust:refresh-snapshot` last ran, carried in the generated
+`extensions/trust/trust-snapshot.ts`. `bun run audit:trust-snapshot` (preflight and PR CI, offline) verifies the snapshot
+against the baked root key with every statement readable, and that the module is the script's output; `--live` (daily, in
+`release-channel-drift.yml`) files an issue when the live feed is ahead of the snapshot, behind it, or different at the
+same sequence. Before a release whose feed moved: run the refresh script and merge the regenerated module. Neither value
+is read from the environment, config or IPC; tests inject theirs through `AssembleCompositionOptions.trust`, and the E2E
+runner boots with none, so no E2E gateway fetches the real feed.
 
 **Timer and boot.** Before the extension spawn gate opens, the boot pass records each installed extension's verifying-key
 fingerprint (`extension.publisher_key_fingerprint`, backfilled from the Vault for rows installed before V76; an install
@@ -2194,7 +2202,8 @@ demo-rooted gateway (I41) gets no feed handle.
 **IPC.** `trust.status` (feed URL, root fingerprint, accepted sequence, last fetched/attempted, age in days, interval, stored
 counts) and `trust.refresh`, CLI-only (`nimbus trust status|refresh`): the `trust` namespace is LAN-forbidden, `trust.refresh`
 is refused on a demo root, and neither is on the Tauri allowlist. `nimbus doctor` warns when a configured feed is more than 7
-days old or was never fetched.
+days old or a fetch was attempted and none has ever succeeded; before the first attempt (a gateway that just started) it
+prints an `[info]` line instead.
 
 **Blocks (I48, PR 2b).** `extensions/trust/trust-blocks.ts` turns stored statements into the blocks applying to one subject:
 extension id, version, publisher id, the fingerprint of the key that verified (or would verify) the code, and its source

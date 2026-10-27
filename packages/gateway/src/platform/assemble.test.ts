@@ -40,6 +40,10 @@ import { gatewayDailyLogPath } from "./gateway-log-file.ts";
 import type { PlatformPaths } from "./paths.ts";
 import type { PlatformServices } from "./types.ts";
 
+// The baked trust feed is fetched 5 s after boot; several boots below live longer than that, and a
+// unit test must not reach the real feed (nor append its ledger row).
+const NO_TRUST_FEED = { trust: { feed: null, snapshot: null } } as const;
+
 // Every in-process `assemblePlatformServices` below builds the REAL notification runtime. It must
 // never probe for (Windows: register an AUMID under HKCU) or raise a real OS toast. The repo-root
 // test preload already forces this, but a `bun test` run from a package directory does not load
@@ -439,7 +443,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       ].join("\n"),
     );
 
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
     expect(services).toBeDefined();
     expect(typeof services.vault.get).toBe("function");
     expect(typeof services.ipc.stop).toBe("function");
@@ -462,7 +466,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
         "\n",
       ),
     );
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
     expect(services.chatops).toBeUndefined();
     expect(services.oncallPush.chatopsSinkState()).toBe("none");
   }, 30000);
@@ -472,7 +476,9 @@ describe("assemblePlatformServices — in-process assembly", () => {
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(join(paths.configDir, ".nimbus-profile"), "bad name!", "utf8");
-    await expect(assemblePlatformServices(paths, makeInMemoryVault())).rejects.toMatchObject({
+    await expect(
+      assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED),
+    ).rejects.toMatchObject({
       name: "InvalidProfileNameError",
       value: "bad name!",
       source: "marker",
@@ -497,7 +503,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     processEnvSet("NIMBUS_HTTP_PORT", httpPort);
     processEnvSet("NIMBUS_METRICS_PORT", metricsPort);
     try {
-      services = await assemblePlatformServices(paths, makeInMemoryVault());
+      services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
       expect(typeof services.disposeSidecars).toBe("function");
       services.disposeSidecars?.();
     } finally {
@@ -532,7 +538,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       ].join("\n"),
     );
 
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
 
     // The owner-side delegation dep is built only when federation is enabled (I20). The executor
     // gate uses it to route a HITL action to an active delegate before the local owner prompt.
@@ -559,7 +565,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       ),
     );
 
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
 
     expect(services.chatops).toBeDefined();
     const status = services.chatops?.rpcCtx.status();
@@ -579,7 +585,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
     expect(services.chatops).toBeUndefined();
     expect(services.oncallPush.chatopsSinkState()).toBe("none");
   }, 30000);
@@ -603,7 +609,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       ].join("\n"),
     );
 
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
     expect(services).toBeDefined();
     expect(typeof services.ipc.stop).toBe("function");
   }, 30000);
@@ -619,7 +625,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
 
     const probeServiceId = "assemble-egress-probe";
     const fakeSyncable: Syncable = {
@@ -681,7 +687,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
 
     const probeServiceIds = ["github", "slack", "notion"] as const;
     await Promise.all(probeServiceIds.map((id) => services?.syncScheduler.forceSync(id)));
@@ -709,7 +715,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
 
     const emptyManifestServiceIds = [
       "google_drive",
@@ -784,7 +790,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       }),
     );
     try {
-      services = await assemblePlatformServices(paths, makeInMemoryVault());
+      services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
       const db = services.localIndex.getDatabase();
       const registered = (
         db.query("SELECT COUNT(*) AS c FROM scheduler_state").get() as { c: number }
@@ -818,7 +824,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const paths = makePaths();
     rmSync(paths.configDir, { recursive: true, force: true });
     mkdirSync(paths.configDir, { recursive: true });
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
     // `github_actions` has a 60s scheduled interval and the scheduler is already ticking at this
     // point — pausing it (a paused connector's own tick is skipped, but "forceSync on a paused
     // connector still runs" per `scheduler.test.ts`) rules out a natural scheduled tick racing
@@ -889,7 +895,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
       `[[filesystem.roots]]\npath = "${rootDir.replace(/\\/g, "/")}"\n`,
     );
 
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
     // `registerFilesystemRootSyncables` (called synchronously inside assembly) registers both
     // `filesystem` and `blame` for any non-empty root set — forcing either proves the exclusion;
     // `filesystem` is forced here, `blame` is covered by the unit-level
@@ -986,7 +992,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     mkdirSync(paths.configDir, { recursive: true });
     writeFileSync(join(paths.configDir, "nimbus.work.toml"), "schema_version = 1\n");
 
-    services = await assemblePlatformServices(paths, makeInMemoryVault());
+    services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
     await services.ipc.start();
 
     const raw = await rpcOverSocket(services.ipc.listenPath, "profile.list");
@@ -1013,7 +1019,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const originalLevel = process.env["NIMBUS_LOG_LEVEL"];
     processEnvSet("NIMBUS_LOG_LEVEL", "warn");
     try {
-      services = await assemblePlatformServices(paths, makeInMemoryVault());
+      services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
     } finally {
       processEnvSet("NIMBUS_LOG_LEVEL", originalLevel);
     }
@@ -1072,7 +1078,7 @@ describe("assemblePlatformServices — in-process assembly", () => {
     const originalHttpPort = process.env["NIMBUS_HTTP_PORT"];
     processEnvSet("NIMBUS_HTTP_PORT", String(discoverFreePort()));
     try {
-      services = await assemblePlatformServices(paths, makeInMemoryVault());
+      services = await assemblePlatformServices(paths, makeInMemoryVault(), NO_TRUST_FEED);
       await services.ipc.start();
 
       const raw = await rpcOverSocket(services.ipc.listenPath, "clip.pair");

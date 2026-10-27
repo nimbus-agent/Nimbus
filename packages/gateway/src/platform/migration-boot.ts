@@ -29,6 +29,11 @@ import {
   type BuiltinRegistryConfig,
 } from "../extensions/registry/builtin-registry.ts";
 import type { RegistryFetchDeps } from "../extensions/registry/registry-fetch.ts";
+import {
+  BUILTIN_TRUST_FEED,
+  BUILTIN_TRUST_SNAPSHOT,
+  type TrustFeedConfig,
+} from "../extensions/trust/trust-feed.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 
 /**
@@ -41,6 +46,29 @@ export interface AssembleCompositionOptions {
     readonly builtin?: BuiltinRegistryConfig | null;
     /** Absent means the production `CONTINUITY_TABLE`. */
     readonly continuityTable?: readonly ContinuityEntry[];
+  };
+  readonly trust?: {
+    /** Absent means the baked `BUILTIN_TRUST_FEED`; `null` means none (nothing is fetched). */
+    readonly feed?: TrustFeedConfig | null;
+    /** Absent means the baked `BUILTIN_TRUST_SNAPSHOT`; `null` means none. */
+    readonly snapshot?: string | null;
+  };
+}
+
+/** The trust feed and snapshot the boot passes to `prepareTrustAtBoot` and `startTrustFeedForBoot`. */
+export interface TrustComposition {
+  readonly feed: TrustFeedConfig | null;
+  readonly snapshot: string | null;
+}
+
+export function resolveTrustComposition(
+  opts: AssembleCompositionOptions | undefined,
+): TrustComposition {
+  const feed = opts?.trust?.feed;
+  const snapshot = opts?.trust?.snapshot;
+  return {
+    feed: feed === undefined ? BUILTIN_TRUST_FEED : feed,
+    snapshot: snapshot === undefined ? BUILTIN_TRUST_SNAPSHOT : snapshot,
   };
 }
 

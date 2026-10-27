@@ -12,7 +12,9 @@
 //                                production entry points pass no composition options at all.
 //                                The runner boots `builtin: null` unless the fixture names its own
 //                                builtin, so no E2E reaches the real registry host — including one
-//                                whose fixture sets only `continuityTable`.
+//                                whose fixture sets only `continuityTable`. It also boots with NO
+//                                trust feed and no snapshot (composition `trust`), so no E2E fetches
+//                                the real Nimbus trust feed or gains its ledger row mid-test.
 //   NIMBUS_E2E_SEED_LEGACY_JSON — { serviceId, items, scheduler }: the index rows and scheduler row
 //                                a bundled connector would have left, seeded AFTER assembly
 // The engine read path is bound to a deterministic stub: this harness proves the CHATOPS wiring
@@ -71,6 +73,9 @@ const migrationFixture = envJson<NonNullable<AssembleCompositionOptions["migrati
 // would otherwise fall back to the baked built-in. A test that wants one names it.
 const services = await assemblePlatformServices(paths, undefined, {
   migration: { builtin: null, ...migrationFixture },
+  // The baked trust feed would be fetched 5 s after boot (a real cloud call and one `registry`
+  // ledger row, which can land inside a test's own row-count window).
+  trust: { feed: null, snapshot: null },
 });
 
 // Seed what a bundled connector leaves behind (connector-migration e2e): its index rows and its

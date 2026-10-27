@@ -136,6 +136,14 @@ const FAST: readonly Gate[] = [
     cmd: ["bun", "run", "audit:action-dist"],
     tier: "fast",
   },
+  {
+    // The baked trust feed (trust layer PR 5): the snapshot verifies against the baked root key and
+    // the generated module is the refresh script's output. Offline; the live comparison runs daily
+    // in release-channel-drift.yml, so a feed that moved never turns a PR red.
+    name: "audit:trust-snapshot",
+    cmd: ["bun", "run", "audit:trust-snapshot"],
+    tier: "fast",
+  },
   { name: "audit:status-drift", cmd: ["bun", "run", "audit:status-drift"], tier: "fast" },
   { name: "audit:action-sha-pins", cmd: ["bun", "run", "audit:action-sha-pins"], tier: "fast" },
   {
