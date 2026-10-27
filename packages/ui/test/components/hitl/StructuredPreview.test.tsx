@@ -96,7 +96,72 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(screen.getByText("1.0.0")).toBeInTheDocument();
     expect(screen.getByText("1.1.0")).toBeInTheDocument();
     expect(screen.getByText("stable")).toBeInTheDocument();
-    expect(screen.getByText(/publisher: verified/)).toBeInTheDocument();
+    expect(screen.getByText("signature verified")).toBeInTheDocument();
+    expect(screen.queryByText(/publisher: verified/)).toBeNull();
+  });
+
+  it("states the verified publisher and the owner-relevant notes (R6)", () => {
+    render(
+      <StructuredPreview
+        details={autoUpdateDetails({
+          verificationStatus: "verified",
+          verifiedPublisher: { github: "acme-dev", verifiedAt: "2026-10-20T00:00:00Z" },
+          publisherBadge: "Verified publisher: @acme-dev (verified 2026-10-20)",
+          publisherChangeNote: "publisher key changed from a to b via rotation",
+          runGrantNote: "Running the new version will need a new approval.",
+        })}
+        action="extension.autoUpdate"
+      />,
+    );
+    const badge = screen.getByTestId("publisher-badge");
+    expect(badge.textContent).toBe("Verified publisher: @acme-dev (verified 2026-10-20)");
+    expect(badge.className).toContain("text-green-700");
+    expect(screen.getByText("publisher key changed from a to b via rotation")).toBeInTheDocument();
+    expect(
+      screen.getByText("Running the new version will need a new approval."),
+    ).toBeInTheDocument();
+  });
+
+  it("an unverified publisher is labelled plainly, not as a warning", () => {
+    render(
+      <StructuredPreview
+        details={autoUpdateDetails({
+          verificationStatus: "verified",
+          verifiedPublisher: null,
+          publisherBadge: "Unverified publisher",
+        })}
+        action="extension.autoUpdate"
+      />,
+    );
+    const badge = screen.getByTestId("publisher-badge");
+    expect(badge.textContent).toBe("Unverified publisher");
+    expect(badge.className).not.toContain("text-green-700");
+  });
+
+  it("an extension.install prompt shows the badge, then every other field", () => {
+    render(
+      <StructuredPreview
+        details={{
+          id: "acme.tool",
+          version: "1.0.0",
+          sourceRegistry: "main",
+          publisher: { id: "acme", fingerprint: "f".repeat(32) },
+          verifiedPublisher: { github: "acme-dev", verifiedAt: "2026-10-20T00:00:00Z" },
+          publisherBadge: "Verified publisher: @acme-dev (verified 2026-10-20)",
+          trustFeedNote: "The trust feed was last updated 3 days ago.",
+        }}
+        action="extension.install"
+      />,
+    );
+    expect(screen.getByTestId("install-preview")).toBeInTheDocument();
+    expect(screen.getByTestId("publisher-badge").textContent).toBe(
+      "Verified publisher: @acme-dev (verified 2026-10-20)",
+    );
+    expect(screen.getByText("The trust feed was last updated 3 days ago.")).toBeInTheDocument();
+    expect(screen.getByText("acme.tool")).toBeInTheDocument();
+    expect(screen.getByText("main")).toBeInTheDocument();
+    // The badge fields are rendered as the badge, not repeated as raw rows.
+    expect(screen.queryByText("verifiedPublisher")).toBeNull();
   });
 
   it("renders 'Roll back extension' for extension.downgrade direction", () => {

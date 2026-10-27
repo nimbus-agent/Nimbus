@@ -83,6 +83,8 @@ function buildUpdateAction(
       channel: cached.channel,
       changelog: cached.changelog,
       publisherStatus: cached.publisherStatus,
+      // The desktop labels the SIGNATURE from this, never `publisherStatus` as "publisher: verified".
+      verificationStatus: cached.verificationStatus,
       addedPermissions: {
         network: cached.permissionDiff.network.added,
         filesystem: {

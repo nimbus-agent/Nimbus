@@ -141,33 +141,58 @@ describe("StructuredPreview — auto-update payload coercion", () => {
     expect(screen.queryByText("Changelog")).toBeNull();
   });
 
-  it("styles an unverified publisher amber and a verified one green", () => {
+  it("the signature chip follows verificationStatus: green verified, red failed, none on a key conflict", () => {
     const { unmount } = render(
       <StructuredPreview
-        details={autoUpdateDetails({ publisherStatus: "unverified" })}
+        details={autoUpdateDetails({
+          verificationStatus: "signature_failed",
+          publisherStatus: "unverified",
+        })}
         action="extension.autoUpdate"
       />,
     );
-    const unverified = screen.getByText("publisher: unverified");
-    expect(unverified.className).toContain("text-amber-700");
-    expect(unverified.className).not.toContain("text-green-700");
+    expect(screen.getByText("signature failed").className).toContain("text-red-700");
     unmount();
 
+    const conflict = render(
+      <StructuredPreview
+        details={autoUpdateDetails({
+          verificationStatus: "publisher_key_conflict",
+          publisherStatus: "unverified",
+        })}
+        action="extension.autoUpdate"
+      />,
+    );
+    expect(screen.getByTestId("auto-update-preview").textContent).not.toContain("signature");
+    conflict.unmount();
+
     render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
-    const verified = screen.getByText("publisher: verified");
-    expect(verified.className).toContain("text-green-700");
-    expect(verified.className).not.toContain("text-amber-700");
+    expect(screen.getByText("signature verified").className).toContain("text-green-700");
   });
 
-  it("drops a publisher status outside the verified/unverified vocabulary", () => {
+  it("drops a status outside the known vocabulary, and never says 'publisher: …'", () => {
     render(
       <StructuredPreview
-        details={autoUpdateDetails({ publisherStatus: "trusted-by-me" })}
+        details={autoUpdateDetails({ publisherStatus: "trusted-by-me", verificationStatus: "meh" })}
         action="extension.autoUpdate"
       />,
     );
     expect(screen.getByTestId("auto-update-preview").textContent).not.toContain("publisher:");
-    expect(screen.queryByText(/trusted-by-me/)).toBeNull();
+    expect(screen.getByTestId("auto-update-preview").textContent).not.toContain("signature");
+    expect(screen.queryByText(/trusted-by-me|meh/)).toBeNull();
+  });
+
+  it("a badge from a malformed verifiedPublisher falls back to the gateway's sentence", () => {
+    render(
+      <StructuredPreview
+        details={autoUpdateDetails({
+          verifiedPublisher: { github: 7 },
+          publisherBadge: "Unverified publisher",
+        })}
+        action="extension.autoUpdate"
+      />,
+    );
+    expect(screen.getByTestId("publisher-badge").textContent).toBe("Unverified publisher");
   });
 
   it("ignores permission lists that are not arrays and non-string entries", () => {
@@ -246,7 +271,7 @@ describe("StructuredPreview — auto-update payload coercion", () => {
       screen.getByTestId("auto-update-preview").querySelectorAll("p"),
     );
     expect(header?.textContent).toBe("Update extension Notion");
-    expect(versions?.textContent).toBe("1.0.0 → 1.1.0 stable publisher: verified");
+    expect(versions?.textContent).toBe("1.0.0 → 1.1.0 stable signature verified");
   });
 
   it("does not show the diff when only removals happened (nothing widened)", () => {

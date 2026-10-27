@@ -9,8 +9,11 @@ export interface AvailableUpdateUi {
   readonly fromVersion: string;
   readonly toVersion: string;
   readonly channel: "stable" | "beta";
+  /** Whether the signature verified — NOT a verified publisher; the row reads `verificationStatus`. */
   readonly publisherStatus: "verified" | "unverified";
   readonly verificationStatus: "verified" | "signature_failed" | "publisher_key_conflict";
+  /** R6, computed by the gateway when it served the list. Absent from an older gateway. */
+  readonly verifiedPublisher?: { readonly github: string; readonly verifiedAt: string } | null;
 }
 
 export interface UpdateApplyResultUi {
@@ -280,12 +283,18 @@ export function PendingUpdates({
                   </span>
                   <span className="text-xs text-neutral-500 flex items-center gap-2">
                     <span className="px-1.5 py-0.5 rounded bg-neutral-200">{u.channel}</span>
+                    {u.verificationStatus === "verified" && (
+                      <span className="text-green-700">signature verified</span>
+                    )}
                     <span
+                      data-testid={`publisher-badge-${u.id}`}
                       className={
-                        u.publisherStatus === "verified" ? "text-green-700" : "text-amber-700"
+                        u.verifiedPublisher == null ? "text-neutral-500" : "text-green-700"
                       }
                     >
-                      publisher: {u.publisherStatus}
+                      {u.verifiedPublisher == null
+                        ? "Unverified publisher"
+                        : `Verified publisher @${u.verifiedPublisher.github}`}
                     </span>
                     {u.verificationStatus === "publisher_key_conflict" && (
                       <span

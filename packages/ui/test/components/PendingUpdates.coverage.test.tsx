@@ -152,14 +152,23 @@ describe("PendingUpdates — applying", () => {
 });
 
 describe("PendingUpdates — listing", () => {
-  it("styles an unverified publisher amber and a verified one green", async () => {
-    stub([sample(), sample({ id: "com.x.b", publisherStatus: "unverified" })], async () => ({
-      applied: true,
-    }));
+  it("shows 'signature verified' only for a row whose signature verified; never 'publisher: …'", async () => {
+    stub(
+      [
+        sample(),
+        sample({
+          id: "com.x.b",
+          publisherStatus: "unverified",
+          verificationStatus: "publisher_key_conflict",
+        }),
+      ],
+      async () => ({ applied: true }),
+    );
     render(<PendingUpdates offline={false} />);
     await screen.findByTestId("pending-update-row-com.x.b");
-    expect(screen.getByText("publisher: unverified").className).toContain("text-amber-700");
-    expect(screen.getByText("publisher: verified").className).toContain("text-green-700");
+    expect(screen.getAllByText("signature verified")).toHaveLength(1);
+    expect(screen.getByText("signature verified").className).toContain("text-green-700");
+    expect(screen.queryByText(/publisher: /)).toBeNull();
   });
 
   it("labels a verified row with its version pair, an accessible action and no warning badges", async () => {

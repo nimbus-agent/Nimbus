@@ -703,6 +703,10 @@ describe("the verified-publisher badge on updates (R6, trust layer PR 3c)", () =
     }
   });
 
+  it("the prompt carries the signature status, so the desktop labels the signature, not the publisher", async () => {
+    expect((await askedPayload(baseDeps()))["verificationStatus"]).toBe("verified");
+  });
+
   it("without a way to ask, an update is shown as from an unverified publisher", async () => {
     const p = await askedPayload(baseDeps());
     expect(p["verifiedPublisher"]).toBeNull();
