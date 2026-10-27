@@ -2261,7 +2261,8 @@ one question from the store: does the CURRENT Nimbus verification (`readCurrentV
 longer parses, count as none) list the key that verified — or, for a registry entry, would verify — the code, and is that
 key unrevoked here (`isKeyRevoked`, scoped exactly as I48's blocks)? Every surface asks it with the subject it already
 builds for `blocksFor`: `registry.search` / `registry.info` (the index key, that registry), `extension.list` /
-`extension.info` (the row's recorded key and source; none for a signature-disabled copy), the install prompt (only after
+`extension.info` (the row's recorded key and source; none unless the copy still matches its installed manifest and entry hashes,
+and none for a copy this boot's signature check disabled), the install prompt (only after
 the SOURCE manifest's signature verifies with the key it declares — the copy's I16 check runs after approval, and a
 forged manifest claiming a verified key must not show a badge), and the update listing and prompt (computed when served,
 never stored on the cached update, and none unless the update's signature verified). Responses and prompts carry

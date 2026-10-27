@@ -555,13 +555,16 @@ function trustBlocksOf(db: Database, row: ExtensionRow): TrustBlock[] {
 }
 
 /**
- * The verified publisher of an installed copy (R6), from the same subject its trust blocks use. A
- * copy whose signature check disabled it, or whose manifest no longer reads, gets none: a badge is
- * never shown for code whose signature did not verify.
+ * The verified publisher of an installed copy (R6), from the same subject its trust blocks use. No
+ * badge unless the copy still matches the manifest and entry hashes recorded at install
+ * (`verifyOneExtensionStrict`) — a durable check, unlike the per-boot signature registry, which a
+ * restart clears and which a hash-only boot failure never marks — and none for a copy this boot's
+ * signature check disabled, or whose manifest no longer reads.
  */
 function verifiedPublisherOf(db: Database, row: ExtensionRow): VerifiedPublisher | null {
   if (preT2DisabledIds().includes(row.id) || signatureDisabledRegistry.has(row.id)) return null;
   try {
+    if (!verifyOneExtensionStrict(row)) return null;
     return verifiedPublisherFor(db, blockSubjectForInstalled(row, readVerifiedManifest(row)));
   } catch {
     return null;
