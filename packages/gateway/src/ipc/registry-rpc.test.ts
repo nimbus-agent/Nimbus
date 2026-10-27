@@ -641,6 +641,13 @@ describe("registry.search and registry.info", () => {
     await expect(call("registry.info", { id: "acme.tool", registry: "main" })).rejects.toThrow(
       "ERR_REGISTRY_HASH_MISMATCH",
     );
+    // `reportOnly` reads the signed index alone, so the extension can still be reported.
+    const report = (await call("registry.info", {
+      id: "acme.tool",
+      registry: "main",
+      reportOnly: true,
+    })) as { value: Record<string, unknown> };
+    expect(report.value).toEqual({ registry: "main", id: "acme.tool", reportUrl: null });
   });
 
   test("info for an id no registry carries is ERR_REGISTRY_NOT_FOUND", async () => {

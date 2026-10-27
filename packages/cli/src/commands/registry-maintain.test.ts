@@ -504,6 +504,21 @@ describe("registry maintain revoke-key / takedown / set-report-url (trust layer 
     expect(readdirSync(join(clone, "trust-requests"))).toHaveLength(2);
   });
 
+  test("--github names a request for a long extension id within the 64-character limit", async () => {
+    const clone = join(tmp, "clone");
+    mkdirSync(clone, { recursive: true });
+    const longId = `com.example.${"a".repeat(60)}`;
+    expect(
+      await runRegistryMaintain(
+        ["takedown", "--github", clone, longId, "--reason", "malware", "--publisher", "acme"],
+        io,
+      ),
+    ).toBe(0);
+    const files = readdirSync(join(clone, "trust-requests"));
+    expect(files).toHaveLength(1);
+    expect((files[0] ?? "").replace(/\.json$/, "").length).toBeLessThanOrEqual(64);
+  });
+
   test("set-report-url sets an https report URL; init --report-url too; http is refused", async () => {
     const { dir, key } = await init();
     expect(

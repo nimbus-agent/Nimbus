@@ -25,8 +25,7 @@ export interface ReportDeps {
 }
 
 const USAGE = "Usage: nimbus extension report <id>\n";
-const GITHUB_ISSUE_FORM_RE =
-  /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+\/issues\/new$/;
+const GITHUB_ISSUE_FORM_PATH_RE = /^\/[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+\/issues\/new$/;
 
 class ReportError extends Error {}
 
@@ -76,6 +75,7 @@ async function reportUrlOf(client: IPCClient, f: ReportFacts): Promise<string> {
     info = await client.call<{ reportUrl?: string | null }>("registry.info", {
       id: f.id,
       registry: f.registry,
+      reportOnly: true,
     });
   } catch (e) {
     throw noDestination(
@@ -91,7 +91,13 @@ async function reportUrlOf(client: IPCClient, f: ReportFacts): Promise<string> {
 
 /** The destination, pre-filled with public metadata when it is a GitHub issue form. */
 function prefilled(url: string, f: ReportFacts, deps: ReportDeps): string {
-  if (!GITHUB_ISSUE_FORM_RE.test(url)) return url;
+  if (!URL.canParse(url)) return url;
+  const form = new URL(url);
+  const isIssueForm =
+    form.protocol === "https:" &&
+    form.host === "github.com" &&
+    GITHUB_ISSUE_FORM_PATH_RE.test(form.pathname);
+  if (!isIssueForm) return url;
   const body = [
     "<!-- Describe the problem here. Only the public facts below were filled in by Nimbus. -->",
     "",
@@ -102,8 +108,10 @@ function prefilled(url: string, f: ReportFacts, deps: ReportDeps): string {
     `- Installed from registry: ${f.registry}`,
     `- Nimbus: ${deps.nimbusVersion} (${deps.osFamily})`,
   ].join("\n");
-  const params = new URLSearchParams({ title: `Report: ${f.id}@${f.version}`, body });
-  return `${url}?${params.toString()}`;
+  // Keep the registry's own query (e.g. `?template=report.yml`) and add the prefill to it.
+  form.searchParams.set("title", `Report: ${f.id}@${f.version}`);
+  form.searchParams.set("body", body);
+  return form.href;
 }
 
 /** Exit 0 on success; 2 for a usage error or no destination. */

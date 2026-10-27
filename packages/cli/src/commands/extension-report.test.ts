@@ -67,7 +67,7 @@ describe("nimbus extension report", () => {
     expect(await runExtensionReport(["acme/tool"], h.deps)).toBe(0);
     expect(h.calls[1]).toEqual({
       method: "registry.info",
-      params: { id: "acme/tool", registry: "main" },
+      params: { id: "acme/tool", registry: "main", reportOnly: true },
     });
     const printed =
       h
@@ -97,6 +97,23 @@ describe("nimbus extension report", () => {
     await runExtensionReport(["acme/tool"], yes.deps);
     expect(yes.opened).toHaveLength(1);
     expect(yes.opened[0]).toStartWith("https://github.com/acme/registry/issues/new?");
+  });
+
+  test("a GitHub issue form with its own query keeps it and still gets the pre-fill", async () => {
+    const h = harness({
+      reportUrl: "https://github.com/acme/registry/issues/new?template=report.yml",
+    });
+    await runExtensionReport(["acme/tool"], h.deps);
+    const printed =
+      h
+        .out()
+        .split("\n")
+        .find((l) => l.startsWith("https://")) ?? "";
+    const url = new URL(printed);
+    expect(url.origin + url.pathname).toBe("https://github.com/acme/registry/issues/new");
+    expect(url.searchParams.get("template")).toBe("report.yml");
+    expect(url.searchParams.get("title")).toBe("Report: acme/tool@1.2.3");
+    expect(url.searchParams.get("body")).toContain("acme/tool");
   });
 
   test("a non-GitHub https destination is shown as it is, with no pre-fill", async () => {

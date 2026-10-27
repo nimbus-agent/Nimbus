@@ -551,13 +551,16 @@ function httpsUrl(raw: string, what: string): string {
   return url.toString();
 }
 
-/** A file-name-safe slug of an extension id (`/` becomes `-`). */
+/**
+ * A file-name-safe slug of an extension id (`/` becomes `-`), short enough that
+ * `takedown-<slug>-<8-char hash>` stays within REQUEST_NAME_RE's 64 characters.
+ */
 const slugOf = (id: string): string =>
   id
     .toLowerCase()
     .replaceAll("/", "-")
     .replace(/[^a-z0-9._-]/g, "")
-    .slice(0, 50);
+    .slice(0, 64 - "takedown-".length - "-".length - 8);
 
 /** The request a `revoke-key` / `takedown` invocation describes, checked by the format's rules. */
 function requestFrom(
@@ -600,7 +603,12 @@ function writeRequestFile(clone: string, req: RegistryRequest, io: MaintainIo): 
   if (!REQUEST_NAME_RE.test(name))
     throw new MaintainError(`cannot name a request file for ${name}`);
   const path = join(clone, "trust-requests", `${name}.json`);
-  if (existsSync(path)) {
+  mkdirSync(join(clone, "trust-requests"), { recursive: true });
+  // Exclusive create (`wx`), so nothing can appear between a check for the file and the write.
+  try {
+    writeFileSync(path, text, { flag: "wx" });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     if (readFileSync(path, "utf8") === text) {
       io.stdout(`${path} already requested; nothing written\n`);
       return;
@@ -609,8 +617,6 @@ function writeRequestFile(clone: string, req: RegistryRequest, io: MaintainIo): 
       `${path} exists with different content; remove it or choose another clone`,
     );
   }
-  mkdirSync(join(clone, "trust-requests"), { recursive: true });
-  writeFileSync(path, text);
   io.stdout(
     `wrote ${path}\n` +
       "Commit it on a branch and open a pull request against the registry. On merge, the sign workflow signs it with the registry root key (after the registry-signing approval) and every client that installed from this registry applies it.\n",

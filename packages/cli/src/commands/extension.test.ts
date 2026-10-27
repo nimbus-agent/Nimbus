@@ -989,7 +989,7 @@ describe("runExtension top-level dispatcher", () => {
     });
     await runExtension(["report", "acme/tool"]);
     expect(ipcCalls.map((c) => c.method)).toEqual(["extension.info", "registry.info"]);
-    expect(ipcCalls[1]?.params).toEqual({ id: "acme/tool", registry: "main" });
+    expect(ipcCalls[1]?.params).toEqual({ id: "acme/tool", registry: "main", reportOnly: true });
   });
 
   // Note: testing per-handler logic is covered by the dedicated describe blocks above.

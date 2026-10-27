@@ -466,6 +466,14 @@ async function handleInfo(
     id,
     registryName,
   );
+  // `reportOnly`: the report destination comes from the signed index alone, so an extension whose
+  // newest manifest is missing or fails its hash (the case most worth reporting) still has one.
+  if (rec?.["reportOnly"] === true) {
+    return {
+      kind: "hit",
+      value: { registry: found.reg.name, id, reportUrl: reportUrlOf(found, o) },
+    };
+  }
   const entry = found.entry;
   const versions = versionsNewestFirst(entry);
   const newest = versions[0];

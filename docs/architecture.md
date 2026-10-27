@@ -2282,7 +2282,8 @@ only holder of the root key — signs it on merge, behind the `registry-signing`
 takedown may target an id the same merge adds. Merging and approving are the authority; the check banners a request PR
 `MAINTAINER REQUEST`. The gateway already scopes registry-signed blocks to that registry's extensions under its root
 (I48). The sign job also sets the index's `reportUrl` to the repository's issue form when it has none, and
-`registry.info` returns the resolved registry's report URL (the built-in registry's is baked), which `nimbus extension
+`registry.info` returns the resolved registry's report URL (the built-in registry's is baked; with `reportOnly` it reads
+only the signed index, so an extension whose manifest fails its hash can still be reported), which `nimbus extension
 report` uses for the extension's own source registry only — pre-filling public metadata, opening an `https:` URL only
 after a yes on a terminal. Per the owner's 2026-10-27 amendment to R6, a local-path install never carries the
 verified-publisher badge: its manifest signature does not bind its entry file.

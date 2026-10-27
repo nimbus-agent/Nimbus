@@ -58,7 +58,7 @@ describe("parseRegistryRequest", () => {
       extensionId: "acme/tool",
       versions: "*",
       reason: "malware",
-    };
+    } as const;
     expect(parseRegistryRequest(takedown)).toEqual(takedown);
     expect(parseRegistryRequest({ ...takedown, publisherId: "acme", versions: ["1.0.0"] })).toEqual(
       {
