@@ -65,6 +65,7 @@ export {
   validateAndNormalizePermissions,
 } from "./permissions-validator.ts";
 export {
+  type AdmissionOptions,
   admitPublisherStatements,
   currentPublisherKeys,
   isPublisherKeyRevoked,
@@ -78,10 +79,12 @@ export {
 } from "./publisher-statements.ts";
 export {
   alreadyCarried,
+  assertFeedRequestSignable,
   assertRequestSignable,
   parseRegistryRequest,
   REQUEST_NAME_RE,
   type RegistryRequest,
+  signFeedRequest,
   signRegistryRequest,
 } from "./registry-requests.ts";
 export {
@@ -111,6 +114,23 @@ export {
   trustFeedSigningBytes,
   verifyTrustFeedPinned,
 } from "./trust-feed.ts";
+export {
+  buildTrustFeed,
+  emptyTrustFeed,
+  FEED_CONFIG_FILE,
+  FEED_PUBLISHERS_DIR,
+  FEED_REQUESTS_DIR,
+  FEED_STATEMENTS_DIR,
+  type FeedPlan,
+  type FeedSkip,
+  type FeedSource,
+  type FeedSourceFile,
+  type PublisherEntry,
+  parseFeedConfig,
+  parsePublisherFile,
+  planTrustFeed,
+  TRUST_FEED_FILE,
+} from "./trust-feed-build.ts";
 export {
   type ExtensionTakedownStatement,
   isKnownStatementKind,
