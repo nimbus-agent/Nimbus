@@ -92,7 +92,7 @@ describe("verifyNeverThrowing", () => {
       ok: false,
       reason: "verification failed: boom",
     });
-    const bad = { ...at, pkgPath: join(tmpdir(), "no-such-dir-nimbus", "x", "p.tgz") };
+    const bad = { ...at, pkgPath: join(dir, "missing", "x", "p.tgz") };
     const r = await verifyNeverThrowing(
       () => Promise.resolve({ ok: false, reason: "unreached" }),
       bad,
