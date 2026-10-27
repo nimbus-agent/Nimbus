@@ -970,6 +970,28 @@ describe("runExtension top-level dispatcher", () => {
     }
   });
 
+  test("dispatches 'report' through the gateway: extension.info, then registry.info for its source", async () => {
+    const ipcCalls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: "fake.sock" },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          ipcCalls.push({ method, params });
+          if (method === "extension.info") {
+            return { extension: { id: "acme/tool", version: "1.0.0", source_registry: "main" } };
+          }
+          if (method === "registry.info") return { reportUrl: "https://reports.example.com/form" };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+      },
+    });
+    await runExtension(["report", "acme/tool"]);
+    expect(ipcCalls.map((c) => c.method)).toEqual(["extension.info", "registry.info"]);
+    expect(ipcCalls[1]?.params).toEqual({ id: "acme/tool", registry: "main" });
+  });
+
   // Note: testing per-handler logic is covered by the dedicated describe blocks above.
 });
 

@@ -5,10 +5,15 @@ import {
   RegistryError,
   type RegistryExtensionEntry,
   type RegistryVersionEntry,
+  readRegistryReportUrl,
   registryIndexDigest,
 } from "@nimbus-dev/registry-format";
 import { ExtensionInstallNotApprovedError } from "../extensions/install-from-local.ts";
 import { parseExtensionManifestForRegistry } from "../extensions/manifest.ts";
+import {
+  BUILTIN_REGISTRY_NAME,
+  builtinRegistryOf,
+} from "../extensions/registry/builtin-registry.ts";
 import { installFromRegistry } from "../extensions/registry/install-from-registry.ts";
 import {
   fetchRegistryBytes,
@@ -16,7 +21,11 @@ import {
   fetchVerifiedIndex,
   type RegistryFetchDeps,
 } from "../extensions/registry/registry-fetch.ts";
-import { readIndexes, resolveRegistryEntry } from "../extensions/registry/registry-resolve.ts";
+import {
+  type ResolvedEntry,
+  readIndexes,
+  resolveRegistryEntry,
+} from "../extensions/registry/registry-resolve.ts";
 import {
   assertRegistryNameNotReserved,
   deleteRegistry,
@@ -433,6 +442,19 @@ async function handleSearch(
   return { kind: "hit", value: { results, errors: read.errors } };
 }
 
+/**
+ * Where users report an extension of the registry `found` resolved (spec § 6.11): its signed
+ * index's `reportUrl` when that is a valid `https:` URL, else — for the built-in official registry
+ * only — the baked one; otherwise `null`. Always the extension's OWN registry, so a third-party
+ * extension is never reported to Nimbus's repository.
+ */
+function reportUrlOf(found: ResolvedEntry, o: RegistryRpcOptions): string | null {
+  const fromIndex = readRegistryReportUrl(found.index);
+  if (fromIndex !== undefined) return fromIndex;
+  if (found.reg.name !== BUILTIN_REGISTRY_NAME) return null;
+  return builtinRegistryOf(o.fetch ?? {})?.reportUrl ?? null;
+}
+
 async function handleInfo(
   rec: Record<string, unknown> | undefined,
   o: RegistryRpcOptions,
@@ -476,6 +498,7 @@ async function handleInfo(
       id,
       publisherId: entry.publisher.id,
       publisherFingerprint: publisherKeyFingerprint(entry.publisher.key),
+      reportUrl: reportUrlOf(found, o),
       verifiedPublisher: verifiedPublisherFor(o.db, {
         publisherId: entry.publisher.id,
         keyFingerprint: publisherKeyFingerprint(entry.publisher.key),

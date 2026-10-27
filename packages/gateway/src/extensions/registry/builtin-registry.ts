@@ -32,6 +32,8 @@ export interface BuiltinRegistryConfig {
   readonly url: string;
   /** Base64 Ed25519 root public key; the fingerprint I44 compares is derived from it. */
   readonly rootKey: string;
+  /** Where users report an extension from it, when its signed index names none (`nimbus extension report`). */
+  readonly reportUrl?: string;
 }
 
 /**
@@ -43,6 +45,7 @@ export interface BuiltinRegistryConfig {
 export const BUILTIN_REGISTRY: BuiltinRegistryConfig | null = {
   url: "https://nimbus-agent.github.io/nimbus-mcp-servers/",
   rootKey: "tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=",
+  reportUrl: "https://github.com/nimbus-agent/nimbus-mcp-servers/issues/new",
 };
 
 /** The built-in config a set of deps carries: its own `builtin` when given, else the baked one. */
