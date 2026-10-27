@@ -20,17 +20,22 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
+  alreadyCarried,
   emptyIndex,
   isValidSemver,
   packExtensionDir,
   parseRegistryConfig,
+  parseRegistryRequest,
   publicKeyFromSeed,
   publisherAfterPublish,
   publisherKeyFingerprint,
+  REQUEST_NAME_RE,
   type RegistryConfig,
   RegistryError,
   type RegistryIndex,
+  type RegistryRequest,
   signIndex,
+  signRegistryRequest,
   trustStatementId,
   validatePublish,
   verifyIndexSignature,
@@ -70,7 +75,7 @@ const DEFAULT_BUILD: MaintainBuild = {
 };
 
 const USAGE =
-  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--statement <file>]... [--key <path>] | remove <dir> <id>[@<version>] [--key <path>]\n";
+  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--statement <file>]... [--key <path>] | remove <dir> <id>[@<version>] [--key <path>] | revoke-key (<dir> | --github <clone>) <fingerprint> --publisher <id> --reason <text> [--key <path>] | takedown (<dir> | --github <clone>) <id>[@<version>] --reason <text> [--publisher <id>] [--key <path>] | set-report-url <dir> <https url> [--key <path>]\n";
 
 class MaintainError extends Error {}
 
@@ -147,6 +152,7 @@ async function resign(
   seed: Uint8Array,
   prev: RegistryIndex,
   extensions: RegistryIndex["extensions"],
+  fields: { statements?: unknown[]; reportUrl?: string } = {},
 ): Promise<RegistryIndex> {
   // Carry every field this command does not manage (e.g. `packs`) through: rebuilding the index
   // from a fixed field list would drop them under a signature that still verifies.
@@ -154,6 +160,7 @@ async function resign(
   const next = await signIndex(
     {
       ...carried,
+      ...fields,
       format: 1,
       sequence: prev.sequence + 1,
       generatedAt: new Date().toISOString(),
@@ -325,9 +332,11 @@ function writeGithubRegistry(dir: string, plan: GithubPlan, index: RegistryIndex
 async function maintainInit(args: string[], io: MaintainIo, build: MaintainBuild): Promise<void> {
   const p = parseArgs(
     args,
-    ["--key", "--action-ref", "--site", "--default-branch"],
+    ["--key", "--action-ref", "--site", "--default-branch", "--report-url"],
     ["--force", "--github", "--no-publisher-namespace"],
   );
+  const reportUrlOpt = p.options.get("--report-url");
+  const reportUrl = reportUrlOpt === undefined ? undefined : httpsUrl(reportUrlOpt, "--report-url");
   const dir = p.positional[0];
   if (dir === undefined || p.positional.length !== 1) throw new MaintainError("init needs <dir>");
   const force = p.flags.has("--force");
@@ -347,7 +356,13 @@ async function maintainInit(args: string[], io: MaintainIo, build: MaintainBuild
   }
   const { privkey, pubkey } = generateEd25519Keypair();
   writeRootKey(keyPath, privkey, force);
-  const index = await signIndex(emptyIndex(encodeBase64(pubkey)), privkey);
+  const index = await signIndex(
+    {
+      ...emptyIndex(encodeBase64(pubkey)),
+      ...(reportUrl === undefined ? {} : { reportUrl }),
+    },
+    privkey,
+  );
   if (plan === undefined) {
     mkdirSync(join(dir, "extensions"), { recursive: true });
     writeIndexAtomic(dir, index);
@@ -523,6 +538,121 @@ async function maintainRemove(args: string[], io: MaintainIo): Promise<void> {
   io.stdout(`removed ${what}; sequence ${String(next.sequence)}\n`);
 }
 
+/** An `https:` URL, or a refusal naming the option. */
+function httpsUrl(raw: string, what: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new MaintainError(`${what} is not a URL`);
+  }
+  if (url.protocol !== "https:") throw new MaintainError(`${what} must be an https: URL`);
+  return url.toString();
+}
+
+/** A file-name-safe slug of an extension id (`/` becomes `-`). */
+const slugOf = (id: string): string =>
+  id
+    .toLowerCase()
+    .replaceAll("/", "-")
+    .replace(/[^a-z0-9._-]/g, "")
+    .slice(0, 50);
+
+/** The request a `revoke-key` / `takedown` invocation describes, checked by the format's rules. */
+function requestFrom(
+  kind: "key.revoke" | "extension.takedown",
+  p: ParsedArgs,
+  subject: string,
+): RegistryRequest {
+  const reason = p.options.get("--reason");
+  if (reason === undefined) throw new MaintainError("--reason <text> is required");
+  const publisher = p.options.get("--publisher");
+  if (kind === "key.revoke") {
+    if (publisher === undefined) throw new MaintainError("revoke-key needs --publisher <id>");
+    return parseRegistryRequest({ kind, publisherId: publisher, keyFingerprint: subject, reason });
+  }
+  const { id, version } = splitIdVersion(subject);
+  return parseRegistryRequest({
+    kind,
+    extensionId: id,
+    ...(publisher === undefined ? {} : { publisherId: publisher }),
+    versions: version === undefined ? "*" : [version],
+    reason,
+  });
+}
+
+/**
+ * `--github <clone>`: the root key lives only in the registry's CI, so the request is written as
+ * `trust-requests/<name>.json` for a pull request; the sign job signs it on merge, behind the
+ * `registry-signing` environment's approval. No git command runs here.
+ */
+function writeRequestFile(clone: string, req: RegistryRequest, io: MaintainIo): void {
+  const name =
+    req.kind === "key.revoke"
+      ? `revoke-${req.keyFingerprint.slice(0, 12)}`
+      : `takedown-${slugOf(req.extensionId)}`;
+  if (!REQUEST_NAME_RE.test(name))
+    throw new MaintainError(`cannot name a request file for ${name}`);
+  const path = join(clone, "trust-requests", `${name}.json`);
+  if (existsSync(path)) {
+    throw new MaintainError(`${path} exists; a request for this subject is already waiting`);
+  }
+  mkdirSync(join(clone, "trust-requests"), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(req, null, 2)}\n`);
+  io.stdout(
+    `wrote ${path}\n` +
+      "Commit it on a branch and open a pull request against the registry. On merge, the sign workflow signs it with the registry root key (after the registry-signing approval) and every client that installed from this registry applies it.\n",
+  );
+}
+
+async function maintainBlock(
+  kind: "key.revoke" | "extension.takedown",
+  args: string[],
+  io: MaintainIo,
+): Promise<void> {
+  const p = parseArgs(args, ["--key", "--github", "--publisher", "--reason"], []);
+  const github = p.options.get("--github");
+  const needed = github === undefined ? 2 : 1;
+  if (p.positional.length !== needed) {
+    const subject = kind === "key.revoke" ? "<fingerprint>" : "<id>[@<version>]";
+    throw new MaintainError(
+      `${kind === "key.revoke" ? "revoke-key" : "takedown"} needs (<dir> | --github <clone>) ${subject}`,
+    );
+  }
+  const subject = p.positional[needed - 1] as string;
+  const req = requestFrom(kind, p, subject);
+  if (github !== undefined) {
+    writeRequestFile(github, req, io);
+    return;
+  }
+  const dir = p.positional[0] as string;
+  const seed = loadSeed(keyPathOf(p));
+  const index = loadOwnedIndex(dir, seed);
+  if (alreadyCarried(index, req)) {
+    io.stdout("this registry's index already carries that block; nothing changed\n");
+    return;
+  }
+  const statement = await signRegistryRequest(req, index, seed, new Date().toISOString());
+  const existing = Array.isArray(index.statements) ? index.statements : [];
+  const next = await resign(dir, seed, index, index.extensions, {
+    statements: [...existing, statement],
+  });
+  io.stdout(`signed ${statement.kind} into the index; sequence ${String(next.sequence)}\n`);
+}
+
+async function maintainSetReportUrl(args: string[], io: MaintainIo): Promise<void> {
+  const p = parseArgs(args, ["--key"], []);
+  const [dir, raw] = p.positional;
+  if (dir === undefined || raw === undefined || p.positional.length !== 2) {
+    throw new MaintainError("set-report-url needs <dir> <https url>");
+  }
+  const reportUrl = httpsUrl(raw, "the report URL");
+  const seed = loadSeed(keyPathOf(p));
+  const index = loadOwnedIndex(dir, seed);
+  const next = await resign(dir, seed, index, index.extensions, { reportUrl });
+  io.stdout(`report URL set; sequence ${String(next.sequence)}\n`);
+}
+
 export async function runRegistryMaintain(
   args: string[],
   io: MaintainIo = DEFAULT_IO,
@@ -536,6 +666,9 @@ export async function runRegistryMaintain(
     init: maintainInit,
     add: maintainAdd,
     remove: maintainRemove,
+    "revoke-key": (a, i) => maintainBlock("key.revoke", a, i),
+    takedown: (a, i) => maintainBlock("extension.takedown", a, i),
+    "set-report-url": maintainSetReportUrl,
   };
   const handler = sub === undefined ? undefined : handlers[sub];
   if (handler === undefined) {
